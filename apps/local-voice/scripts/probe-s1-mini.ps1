@@ -165,19 +165,37 @@ Write-Host ("[OK] ModelDir       : $ModelDir ({0} Datei(en))" -f $modelFiles.Cou
 
 # Codec-Datei per Muster suchen (Dateiname unterscheidet sich je nach
 # fish-speech-Version): zuerst codec.pth, dann aeltere firefly-gan-vq-*.pth.
+# -Recurse auf allen drei Suchen (Treffer, Fallback-Kandidatenliste), damit die
+# Tiefe zur "ModelDir nicht leer"-Pruefung oben passt - ein HF-Download legt
+# Gewichte manchmal eine Ebene tiefer ab (Review-Befund a4, Important).
 $codecCandidates = @()
-$codecCandidates += @(Get-ChildItem -LiteralPath $ModelDir -Filter 'codec.pth' -File -ErrorAction SilentlyContinue)
-$codecCandidates += @(Get-ChildItem -LiteralPath $ModelDir -Filter 'firefly-gan-vq-*.pth' -File -ErrorAction SilentlyContinue)
+$codecCandidates += @(Get-ChildItem -LiteralPath $ModelDir -Filter 'codec.pth' -File -Recurse -ErrorAction SilentlyContinue)
+$codecCandidates += @(Get-ChildItem -LiteralPath $ModelDir -Filter 'firefly-gan-vq-*.pth' -File -Recurse -ErrorAction SilentlyContinue)
 $codecCandidates = @($codecCandidates | Sort-Object FullName -Unique)
 
 if ($codecCandidates.Count -eq 0) {
-    $allPth = @(Get-ChildItem -LiteralPath $ModelDir -Filter '*.pth' -File -ErrorAction SilentlyContinue)
-    $list = if ($allPth.Count -gt 0) { ($allPth.Name -join ', ') } else { '(keine .pth-Dateien im ModelDir gefunden)' }
-    Fail ("Kein Codec-Checkpoint gefunden (erwartet: codec.pth oder firefly-gan-vq-*.pth).`n" +
+    $allPth = @(Get-ChildItem -LiteralPath $ModelDir -Filter '*.pth' -File -Recurse -ErrorAction SilentlyContinue)
+    $list = if ($allPth.Count -gt 0) { ($allPth.FullName -join ', ') } else { '(keine .pth-Dateien im ModelDir gefunden, auch nicht in Unterordnern)' }
+    Fail ("Kein Codec-Checkpoint gefunden (erwartet: codec.pth oder firefly-gan-vq-*.pth, auch in Unterordnern gesucht).`n" +
           "         Gefundene .pth-Kandidaten im ModelDir: $list")
 }
+
+# Bei mehreren Treffern (z. B. eine Kopie in einem Unterordner) den obersten,
+# kuerzesten Pfad nehmen - das ist so gut wie immer die eigentliche Modelldatei,
+# nicht ein Duplikat/Backup in einem verschachtelten Ordner.
+$codecCandidates = @($codecCandidates | Sort-Object -Property `
+    @{ Expression = { (@($_.FullName -split '[\\/]+') | Where-Object { $_ -ne '' }).Count } }, `
+    @{ Expression = { $_.FullName.Length } })
 $codecFile = $codecCandidates[0]
-Write-Host "[OK] Codec-Datei    : $($codecFile.Name)"
+
+if ($codecCandidates.Count -gt 1) {
+    $otherPaths = @($codecCandidates | Select-Object -Skip 1 | ForEach-Object { $_.FullName }) -join '; '
+    $codecNote = "mehrere Kandidaten gefunden, oberster/kuerzester Pfad gewaehlt; weitere: $otherPaths"
+    Write-Host "[OK] Codec-Datei    : $($codecFile.Name) ($($codecFile.FullName)) - $codecNote" -ForegroundColor Yellow
+} else {
+    $codecNote = $null
+    Write-Host "[OK] Codec-Datei    : $($codecFile.Name) ($($codecFile.FullName))"
+}
 
 if ($CheckOnly) {
     Write-Host ""
@@ -392,7 +410,8 @@ $report += "===================="
 $report += "Zeitpunkt        : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 $report += "FishDir          : $FishDir"
 $report += "ModelDir         : $ModelDir"
-$report += "Codec-Datei      : $($codecFile.Name)"
+$report += "Codec-Datei      : $($codecFile.Name) ($($codecFile.FullName))"
+if ($codecNote) { $report += "Codec-Hinweis    : $codecNote" }
 $report += "Port             : $Port"
 $report += "Server geladen   : $loadedText"
 $report += "Ladezeit         : $loadSeconds s (Timeout $timeoutSec s)"
