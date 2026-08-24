@@ -14,3 +14,6 @@ apps/local-voice/src-tauri/resources/models/*.onnx
 apps/local-voice/src-tauri/resources/models/*.gguf
 **/__pycache__/
 *-workspace/
+
+# Agent-Worktrees (Orchestrierung) niemals versionieren
+.claude/worktrees/

@@ -1,8 +1,9 @@
 //! Tauri-Commands des Vorlesen-Bereichs (TP1).
 
+use crate::managers::tts::models::{TtsDownloadInfo, TtsModelManager};
 use crate::managers::tts::{ReadingInfo, TtsManager, TtsStatus};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[tauri::command]
@@ -469,4 +470,45 @@ pub async fn tts_synthesize_to_file(
 ) -> Result<(), String> {
     let tts = app.state::<Arc<TtsManager>>().inner().clone();
     tts.synthesize_to_file(&text, &out_path).await.map(|_| ())
+}
+
+// ── Piper-Katalog: Laufzeit + Stimmen (Paket B-E3) ──────────────────────────
+//
+// Fortschritt laeuft ueber die BESTEHENDEN Download-Events der ASR-Modelle
+// (`model-download-progress`/`model-verification-*`/`model-download-complete`/
+// `model-deleted`/`model-download-failed`) — siehe `TtsModelManager::run_download`.
+// Eigene Events waeren hier reine Verdopplung gewesen.
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_list_downloads(app: AppHandle) -> Result<Vec<TtsDownloadInfo>, String> {
+    Ok(app.state::<Arc<TtsModelManager>>().list_downloads())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_download_model(app: AppHandle, id: String) -> Result<(), String> {
+    let manager = app.state::<Arc<TtsModelManager>>().inner().clone();
+    let result = manager.download(&id).await;
+    if let Err(ref error) = result {
+        log::error!("Piper download failed for {}: {}", id, error);
+        let _ = app.emit(
+            "model-download-failed",
+            serde_json::json!({ "model_id": &id, "error": error }),
+        );
+    }
+    result
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_cancel_download(app: AppHandle, id: String) -> Result<(), String> {
+    app.state::<Arc<TtsModelManager>>().cancel(&id);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_delete_model(app: AppHandle, id: String) -> Result<(), String> {
+    app.state::<Arc<TtsModelManager>>().delete(&id)
 }

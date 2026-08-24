@@ -10,6 +10,7 @@ pub mod dsp;
 pub mod engine;
 pub mod enhance;
 pub mod loudness;
+pub mod models;
 pub mod piper;
 pub mod player;
 pub mod protocol;
