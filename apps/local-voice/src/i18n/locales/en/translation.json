@@ -311,7 +311,9 @@
       "rejectAll": "Discard all",
       "appliedToast": "{{count}} tags inserted",
       "undo": "Undo",
-      "missingApiKey": "No Anthropic API key set — add one in Settings → Post-Processing."
+      "missingApiKey": "No Anthropic API key set — add one in Settings → Post-Processing.",
+      "textChangedDuringRun": "The text changed while Auto-Tagging was running — please run it again.",
+      "staleSuggestionsDiscarded": "Suggestion discarded — the text changed since then."
     },
     "writingRules": {
       "title": "Writing rules: speakers & tags",

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
@@ -128,6 +128,13 @@ export function resolveAllSuggestions(
 // Die Leiste
 // ---------------------------------------------------------------------------
 
+/** UI-Sentinel fuer "Standard-KI" — leerer String gilt der Select-Komponente
+ *  als "nichts gewaehlt" und zeigte den Platzhalter statt des Labels (gleiche
+ *  Falle wie bei der Stimmenwahl weiter oben in TtsSettings.tsx, dort schon
+ *  mit demselben Muster geloest). Settings-Wert bleibt "" — nur die UI-Seite
+ *  bekommt den Sentinel. */
+const DEFAULT_PROVIDER_UI_VALUE = "@default";
+
 interface AutoTagBarProps {
   /** Der Text des AKTIVEN Reiters (nur der Original-Reiter montiert diese
    *  Leiste — siehe TtsSettings.tsx). */
@@ -135,7 +142,14 @@ interface AutoTagBarProps {
   /** Offene Vorschläge, UTF-16-Offsets — dieselbe Liste, die der Editor als
    *  `suggestions`-Prop bekommt. */
   suggestions: ChipEditorSuggestion[];
-  onSuggestionsChange: (next: ChipEditorSuggestion[]) => void;
+  /** Text, gegen den `suggestions`-Offsets aktuell gültig sind — `null` ohne
+   *  offene Liste. Weicht `text` davon ab, hat der Nutzer seit der letzten
+   *  Anwendung getippt: Annehmen würde blind splicen (Review-Befund 2). */
+  sourceText: string | null;
+  onSuggestionsChange: (
+    next: ChipEditorSuggestion[],
+    sourceText: string | null,
+  ) => void;
   /** Text wirklich ändern (Annehmen) — bekommt den vorherigen Text mit, damit
    *  der Aufrufer einen Undo-Toast anbieten kann. */
   onApplyText: (nextText: string, previousText: string, count: number) => void;
@@ -144,6 +158,7 @@ interface AutoTagBarProps {
 export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   text,
   suggestions,
+  sourceText,
   onSuggestionsChange,
   onApplyText,
 }) => {
@@ -151,6 +166,14 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   const { getSetting, updateSetting } = useSettings();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Immer der ZULETZT gerenderte Text — anders als eine in runAutoTag()
+  // eingefangene Variable bleibt ein Ref waehrend eines laufenden `await`
+  // aktuell, wenn der Nutzer zwischenzeitlich weiterschreibt (Review-Befund 2).
+  const textRef = useRef(text);
+  useEffect(() => {
+    textRef.current = text;
+  }, [text]);
 
   const providerValue = getSetting("tts_tag_provider") ?? "";
   const activeProviderId = getSetting("post_process_provider_id") ?? "";
@@ -166,7 +189,10 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
     effectiveProviderId === "anthropic" && anthropicKey.trim() === "";
 
   const providerOptions = [
-    { value: "", label: t("tts.autotag.providerDefault") },
+    {
+      value: DEFAULT_PROVIDER_UI_VALUE,
+      label: t("tts.autotag.providerDefault"),
+    },
     { value: "anthropic", label: t("tts.autotag.providerClaude") },
   ];
 
@@ -178,9 +204,10 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
     }
     setError(null);
     setLoading(true);
+    const textAtStart = text;
     const allowedTags = TAG_REGISTRY.map((tag) => tag.insert);
     const result = await commands.ttsAutoTag(
-      text,
+      textAtStart,
       allowedTags,
       providerValue || null,
     );
@@ -189,12 +216,32 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
       setError(result.error);
       return;
     }
-    onSuggestionsChange(insertionsToSuggestions(text, result.data));
+    // Race (Review-Befund 2): waehrend der Anfrage lief, koennte der Text
+    // editiert worden sein — die Offsets waeren dann gegen den FALSCHEN Text
+    // berechnet. textRef.current ist der zum Zeitpunkt der Antwort tatsaechlich
+    // aktuelle Text; weicht er vom Anfrage-Start ab, werden die Vorschlaege
+    // verworfen statt (moeglicherweise falsch positioniert) angezeigt.
+    if (textRef.current !== textAtStart) {
+      setError(t("tts.autotag.textChangedDuringRun"));
+      return;
+    }
+    onSuggestionsChange(
+      insertionsToSuggestions(textAtStart, result.data),
+      textAtStart,
+    );
   };
 
   const acceptAll = () => {
+    if (suggestions.length === 0) return;
+    if (sourceText !== null && text !== sourceText) {
+      // Seit der letzten Anwendung wurde getippt — die Offsets sind nicht
+      // mehr vertrauenswuerdig: verwerfen statt blind zu splicen.
+      onSuggestionsChange([], null);
+      toast.info(t("tts.autotag.staleSuggestionsDiscarded"));
+      return;
+    }
     const outcome = resolveAllSuggestions(text, suggestions, true);
-    onSuggestionsChange(outcome.suggestions);
+    onSuggestionsChange(outcome.suggestions, null);
     if (outcome.text !== text) {
       onApplyText(outcome.text, text, outcome.count);
     }
@@ -203,6 +250,7 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   const rejectAll = () => {
     onSuggestionsChange(
       resolveAllSuggestions(text, suggestions, false).suggestions,
+      null,
     );
   };
 
@@ -225,11 +273,16 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
       </Button>
       <div className="w-40">
         <Select
-          value={providerValue}
+          value={
+            providerValue === "" ? DEFAULT_PROVIDER_UI_VALUE : providerValue
+          }
           options={providerOptions}
           isClearable={false}
           onChange={(value) => {
-            void updateSetting("tts_tag_provider", value ?? "");
+            void updateSetting(
+              "tts_tag_provider",
+              value === DEFAULT_PROVIDER_UI_VALUE ? "" : (value ?? ""),
+            );
           }}
         />
       </div>

@@ -311,7 +311,9 @@
       "rejectAll": "Alle verwerfen",
       "appliedToast": "{{count}} Tags eingefügt",
       "undo": "Rückgängig",
-      "missingApiKey": "Kein Anthropic-API-Key hinterlegt — API-Key in Einstellungen → Nachbearbeitung hinterlegen."
+      "missingApiKey": "Kein Anthropic-API-Key hinterlegt — API-Key in Einstellungen → Nachbearbeitung hinterlegen.",
+      "textChangedDuringRun": "Der Text wurde währenddessen geändert — bitte Auto-Tagging erneut starten.",
+      "staleSuggestionsDiscarded": "Vorschlag verworfen — der Text wurde seitdem geändert."
     },
     "writingRules": {
       "title": "Schreibregeln: Sprecher & Tags",

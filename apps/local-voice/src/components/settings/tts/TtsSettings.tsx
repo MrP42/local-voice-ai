@@ -79,6 +79,15 @@ export const TtsSettings = () => {
   const [tagSuggestions, setTagSuggestions] = useState<ChipEditorSuggestion[]>(
     [],
   );
+  /** Text, gegen den `tagSuggestions`-Offsets aktuell gültig sind (Review-
+   *  Befund 2: Race zwischen Erzeugung/Anzeige eines Vorschlags und seiner
+   *  Anwendung). `null` ohne offene Liste. Wird bei JEDER erfolgreichen
+   *  Text-Änderung (Einzel- oder Alle-annehmen) auf den neuen Text
+   *  nachgezogen — weicht der tatsächliche `text` trotzdem davon ab, hat der
+   *  Nutzer zwischendurch getippt, und Annehmen verwirft statt zu splicen. */
+  const [tagSuggestionsSourceText, setTagSuggestionsSourceText] = useState<
+    string | null
+  >(null);
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [activePage, setActivePage] = usePersistentState<string>(
     "tts.activePage",
@@ -613,6 +622,8 @@ export const TtsSettings = () => {
    * T4 Auto-Tagging: Tags wirklich in den Text übernehmen (Annehmen, einzeln
    * oder "Alle annehmen") — mit Undo-Toast, der den Vortext wiederherstellt.
    * Reines Verwerfen ruft das NICHT auf (der Text ändert sich dabei nicht).
+   * Zieht `tagSuggestionsSourceText` auf den neuen Text nach — die noch
+   * offenen (nachgezogenen) Vorschläge gelten jetzt gegen DIESEN Text.
    */
   const applyAutoTagText = (
     nextText: string,
@@ -620,6 +631,7 @@ export const TtsSettings = () => {
     count: number,
   ) => {
     setText(nextText);
+    setTagSuggestionsSourceText(nextText);
     toast(t("tts.autotag.appliedToast", { count }), {
       action: {
         label: t("tts.autotag.undo"),
@@ -628,14 +640,39 @@ export const TtsSettings = () => {
     });
   };
 
-  /** An `TtsChipEditor.onResolveSuggestion` gereicht: Annehmen/Verwerfen
-   *  EINES Vorschlags aus dessen Popover (Check/X-Buttons). */
+  /**
+   * An `TtsChipEditor.onResolveSuggestion` gereicht: Annehmen/Verwerfen EINES
+   * Vorschlags aus dessen Popover (Check/X-Buttons). Review-Befund 2: wurde
+   * der Text seit der letzten Anwendung editiert (`tagSuggestionsSourceText`
+   * weicht ab), würde Annehmen blind an einem möglicherweise falschen Offset
+   * splicen — dann wird der betroffene Vorschlag stattdessen verworfen.
+   * Verwerfen selbst ist davon nie betroffen: es ändert den Text nicht.
+   */
   const resolveTagSuggestion = (id: string, accept: boolean) => {
+    if (
+      accept &&
+      tagSuggestionsSourceText !== null &&
+      text !== tagSuggestionsSourceText
+    ) {
+      setTagSuggestions((prev) => prev.filter((s) => s.id !== id));
+      toast.info(t("tts.autotag.staleSuggestionsDiscarded"));
+      return;
+    }
     const outcome = resolveSuggestion(text, tagSuggestions, id, accept);
     setTagSuggestions(outcome.suggestions);
     if (outcome.inserted) {
       applyAutoTagText(outcome.text, text, 1);
     }
+  };
+
+  /** An `AutoTagBar.onSuggestionsChange` gereicht — hält Vorschlagsliste und
+   *  ihren Referenztext (`tagSuggestionsSourceText`) synchron. */
+  const changeTagSuggestions = (
+    next: ChipEditorSuggestion[],
+    sourceText: string | null,
+  ) => {
+    setTagSuggestions(next);
+    setTagSuggestionsSourceText(sourceText);
   };
 
   /**
@@ -964,7 +1001,8 @@ export const TtsSettings = () => {
               <AutoTagBar
                 text={text}
                 suggestions={tagSuggestions}
-                onSuggestionsChange={setTagSuggestions}
+                sourceText={tagSuggestionsSourceText}
+                onSuggestionsChange={changeTagSuggestions}
                 onApplyText={applyAutoTagText}
               />
             )}
