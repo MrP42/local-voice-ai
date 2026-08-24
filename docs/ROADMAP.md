@@ -68,12 +68,29 @@ EINEM gebündelten Release (Tag `app-v*`).
 
 **Artefakt:** ein echtes Meeting-Protokoll mit Sprecherlabels als Screenshot/Export.
 
-### E3 — Vorlesen ausbauen (v0.16.x) · ~150 kTok
-1. Stimmen-Verwaltung (Fish-Speech-Stimmen importieren, benennen, Standard je Sprache).
-2. Satz-Synchronisation: mitlaufende Hervorhebung im Text, Klick springt zum Satz.
-3. Export als Audiodatei (WAV/MP3) inkl. Kapitelmarken aus Überschriften.
+### E3 — Vorlesen ausbauen · GRÖSSTENTEILS VORGEZOGEN (v0.14.0, 2026-08-24)
 
-**Artefakt:** vorgelesenes Dokument mit Highlight-Video/GIF + exportierte MP3.
+Der Fish-Speech-Vollausbau (Plan `alle-features-von-fish-speech`) hat E3 vorgezogen
+und erweitert. **Geliefert in v0.14.0:** Emotion-Tag-System (Chip-Editor mit
+Mirror-Overlay, Palette mit ~95 kuratierten Tags, Autocomplete, Kontextmenü,
+Pointer-Drag), KI-Auto-Tagging mit Nur-Einfügen-Validierung (Ollama/Claude Haiku),
+Sprecher-Registry-Backend (meta.json je Stimme: Anzeigename, Farbe, Avatar, Stile,
+Default-Tags; security-gehärtet), TTS-Engine-Abstraktion mit cache-stabiler Naht,
+Piper-CPU-Engine + Katalog-Downloads mit SHA-Pins („Vorlesestimmen" auf der
+Modelle-Seite), s1-mini-Probeskript.
+
+**Offener Rest (nächste Etappe, Briefs liegen im SDD-Workspace des Plans):**
+1. Sprecher-Chips im Editor (`<Name>`-Syntax, Validierung, Popover) — S3.
+2. Stimmen-UI v2 (VoicesCard: Meta/Stile/Analyse) — S2; Baukasten (Seed→Probe→
+   Speichern) — S4; Stil-Auflösung in der Pipeline — S5.
+3. Blitz-Vorschau-UX + Telemetrie + „Text speichern" — E4-Preview; Export-Pfad
+   „Dialog-Qualität" (`<|speaker:N|>`, msgpack) — S7.
+4. Diktat-Auto-Tag-Toggle; SenseVoice-Rich-Fork (akustische Emotionen); s1-mini-
+   Integration (nach Probe); Dubbing (Autofit-Konzept, UI in Besprechungen).
+5. Aus E3 alt weiter offen: Satz-Synchronisation im Text (Klick springt zum Satz),
+   Kapitelmarken beim Export.
+
+**Artefakt:** v0.14.0-Release mit Tag-Editor (dieser Abschnitt), Rest-Artefakte je Folge-Etappe.
 
 ### E4 — Design & UX nach WAI-Sprache (v0.17.x) · ~180 kTok
 Grundlage existiert (`src/styles/theme.css`, Gelb auf Ink, Logo-Regeln). Vertiefen:
