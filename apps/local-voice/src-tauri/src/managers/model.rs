@@ -19,7 +19,11 @@ use std::time::{Duration, Instant};
 use tar::Archive;
 use tauri::{AppHandle, Emitter, Manager};
 
-mod download;
+// `pub(crate)`: `managers::tts::models` reuses the resumable HTTP downloader
+// (resume, stall timeout, SHA-256 verification) for Piper runtime/voice
+// downloads instead of re-implementing it — see `download::HttpDownloadEvent`
+// and `ModelManager::download_http_resumable_with_events`.
+pub(crate) mod download;
 
 use download::{HttpDownloadOutcome, DOWNLOAD_STALL_TIMEOUT};
 
@@ -132,6 +136,14 @@ pub struct QuantFile {
     /// mirror). `None` only for catalogs predating the field.
     #[serde(default)]
     pub sha256: Option<String>,
+    /// Explicit absolute download URL, used instead of the Hugging-Face
+    /// `repo_id`+`revision` resolution. `None` for every `asr` entry (all
+    /// Hugging-Face hosted); `tts-runtime`/`tts-voice` entries always set it
+    /// (see [`crate::catalog::tts_entries`]) — some are GitHub release
+    /// assets, and even the Hugging-Face-hosted Piper voices live at repo
+    /// paths that differ from the flat local filename we want.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// Pick the default quant among `files`: the one whose `quant` matches
@@ -2838,12 +2850,14 @@ mod tests {
                     quant: "Q4_K_M".to_string(),
                     size_bytes: 1,
                     sha256: None,
+                    url: None,
                 },
                 QuantFile {
                     filename: "model-Q8_0.gguf".to_string(),
                     quant: "Q8_0".to_string(),
                     size_bytes: 2,
                     sha256: None,
+                    url: None,
                 },
             ],
             default_quant: Some("Q8_0".to_string()),

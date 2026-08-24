@@ -5,6 +5,9 @@ import { ChevronDown, Globe, RefreshCw, Search } from "lucide-react";
 import type { ModelCardStatus } from "@/components/onboarding";
 import { ModelCard } from "@/components/onboarding";
 import { useModelStore } from "@/stores/modelStore";
+import { useTtsModelStore } from "@/stores/ttsModelStore";
+import { TtsVoiceCard } from "./TtsVoiceCard";
+import { SettingsGroup } from "@/components/ui/SettingsGroup";
 import {
   getLanguageLabel,
   MODEL_CAPABILITY_LANGUAGES,
@@ -48,6 +51,15 @@ export const ModelsSettings: React.FC = () => {
     deleteModel,
     rescanLocalModels,
   } = useModelStore();
+  const {
+    downloads: ttsDownloads,
+    downloadingIds: ttsDownloadingIds,
+    verifyingIds: ttsVerifyingIds,
+    downloadProgress: ttsDownloadProgress,
+    downloadModel: downloadTtsModel,
+    cancelDownload: cancelTtsDownload,
+    deleteModel: deleteTtsModel,
+  } = useTtsModelStore();
 
   // click outside handler for language dropdown
   useEffect(() => {
@@ -156,6 +168,30 @@ export const ModelsSettings: React.FC = () => {
     }
   };
 
+  const ttsDisplayName = (info: (typeof ttsDownloads)[number]): string =>
+    t(
+      info.kind === "runtime"
+        ? "settings.models.ttsVoices.runtime.name"
+        : `settings.models.ttsVoices.voices.${info.id}.name`,
+      { defaultValue: info.name },
+    );
+
+  const handleTtsDelete = async (id: string) => {
+    const info = ttsDownloads.find((d) => d.id === id);
+    const name = info ? ttsDisplayName(info) : id;
+    const confirmed = await ask(
+      t("settings.models.ttsVoices.deleteConfirm", { name }),
+      { title: t("settings.models.ttsVoices.deleteTitle"), kind: "warning" },
+    );
+    if (confirmed) {
+      try {
+        await deleteTtsModel(id);
+      } catch (err) {
+        console.error(`Failed to delete Piper download ${id}:`, err);
+      }
+    }
+  };
+
   const handleModelCancel = async (modelId: string) => {
     try {
       await cancelDownload(modelId);
@@ -255,6 +291,29 @@ export const ModelsSettings: React.FC = () => {
           className="flex-1 min-w-0 bg-transparent text-sm focus:outline-none placeholder:text-text/40"
         />
       </label>
+
+      {/* Piper reading voices (Paket B-E3) — a separate download family (CPU,
+          offline, no GPU) from the ASR transcription models above, so it gets
+          its own group rather than being folded into the search/filter above. */}
+      {ttsDownloads.length > 0 && (
+        <SettingsGroup
+          title={t("settings.models.ttsVoices.title")}
+          description={t("settings.models.ttsVoices.description")}
+        >
+          {ttsDownloads.map((info) => (
+            <TtsVoiceCard
+              key={info.id}
+              info={info}
+              onDownload={downloadTtsModel}
+              onCancel={cancelTtsDownload}
+              onDelete={deleteTtsModel}
+              isDownloading={info.id in ttsDownloadingIds}
+              isVerifying={info.id in ttsVerifyingIds}
+              downloadProgress={ttsDownloadProgress[info.id]?.percentage}
+            />
+          ))}
+        </SettingsGroup>
+      )}
 
       {filteredModels.length > 0 ? (
         <div className="space-y-6">

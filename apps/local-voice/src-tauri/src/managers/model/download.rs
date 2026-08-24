@@ -33,8 +33,12 @@ fn content_range_start(value: &str) -> Option<u64> {
 
 /// How a [`ModelManager::download_http_resumable`] call ended, cancellation
 /// being an outcome (partial kept, no error surfaced) rather than a failure.
+///
+/// `pub(crate)`: `managers::tts::models` matches on this too when it drives
+/// [`ModelManager::download_http_resumable_with_events`] directly for Piper
+/// downloads.
 #[derive(Debug)]
-pub(super) enum HttpDownloadOutcome {
+pub(crate) enum HttpDownloadOutcome {
     Completed,
     Cancelled,
 }
@@ -42,7 +46,10 @@ pub(super) enum HttpDownloadOutcome {
 /// Side-channel notifications from the resumable HTTP downloader, decoupled
 /// from Tauri (the production wrapper maps them onto app events) so the
 /// transport logic is testable without an `AppHandle`.
-enum HttpDownloadEvent<'a> {
+///
+/// `pub(crate)`: `managers::tts::models` builds its own emit closure over this
+/// type — reusing the transport, not copy-pasting it, for Piper downloads.
+pub(crate) enum HttpDownloadEvent<'a> {
     Progress(&'a DownloadProgress),
     VerificationStarted,
     VerificationCompleted,
@@ -181,7 +188,12 @@ impl ModelManager {
     ///   at the first excess byte, not trusted until it closes the stream
     /// - the final bytes are checked against `expected_size` (catalog, or
     ///   content-length when unknown) and `expected_sha256` before returning
-    async fn download_http_resumable_with_events(
+    ///
+    /// `pub(crate)`: this is the actual reusable transport (it takes no
+    /// `&self` — it never touched `ModelManager` state to begin with), shared
+    /// with `managers::tts::models` for Piper runtime/voice downloads instead
+    /// of a second implementation.
+    pub(crate) async fn download_http_resumable_with_events(
         model_id: &str,
         url: &str,
         partial_path: &Path,

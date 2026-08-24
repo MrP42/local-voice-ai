@@ -432,6 +432,47 @@
         "fast": "Schnell (~240 ms)",
         "balanced": "Ausgewogen (~480 ms)",
         "accurate": "Genau (~1 s)"
+      },
+      "ttsVoices": {
+        "title": "Vorlesestimmen",
+        "description": "Piper-Stimmen sind eine schnelle, offline laufende Sprachausgabe auf der CPU — keine GPU nötig. Lade herunter, was du zum Vorlesen nutzen möchtest.",
+        "runtime": {
+          "name": "Piper (Vorlese-Engine)",
+          "description": "Das Piper-Programm selbst. Wird automatisch mit deiner ersten Stimme mitgeladen."
+        },
+        "voices": {
+          "de_DE-thorsten-high": {
+            "name": "Thorsten (hohe Qualität)",
+            "description": "Deutsch. Beste Qualität, größter Download."
+          },
+          "de_DE-thorsten-medium": {
+            "name": "Thorsten (mittlere Qualität)",
+            "description": "Deutsch. Gute Qualität, kleinerer Download."
+          },
+          "de_DE-kerstin-low": {
+            "name": "Kerstin (niedrige Qualität)",
+            "description": "Deutsch. Schnell und klein."
+          },
+          "de_DE-eva_k-x_low": {
+            "name": "Eva K. (sehr niedrige Qualität)",
+            "description": "Deutsch. Die kleinste und schnellste Stimme."
+          },
+          "en_US-lessac-medium": {
+            "name": "Lessac (mittlere Qualität)",
+            "description": "Englisch (USA). Gute Qualität."
+          }
+        },
+        "status": {
+          "installed": "Installiert",
+          "downloading": "Lädt … {{percentage}}%"
+        },
+        "actions": {
+          "download": "Herunterladen",
+          "cancel": "Abbrechen",
+          "delete": "Löschen"
+        },
+        "deleteConfirm": "{{name}} löschen? Du musst sie erneut herunterladen, um sie wieder zu nutzen.",
+        "deleteTitle": "Löschen"
       }
     },
     "general": {

@@ -175,6 +175,47 @@
       "rescan": {
         "label": "重新扫描",
         "tooltip": "重新扫描在 Local Voice AI 之外添加到模型文件夹或 Hugging Face 缓存中的模型"
+      },
+      "ttsVoices": {
+        "title": "Reading Voices",
+        "description": "Piper voices are a fast, offline text-to-speech option that runs on the CPU — no GPU required. Download the ones you want to use for reading aloud.",
+        "runtime": {
+          "name": "Piper (reading engine)",
+          "description": "The Piper program itself. Downloaded automatically together with your first voice."
+        },
+        "voices": {
+          "de_DE-thorsten-high": {
+            "name": "Thorsten (High Quality)",
+            "description": "German. The best quality, and the largest download."
+          },
+          "de_DE-thorsten-medium": {
+            "name": "Thorsten (Medium Quality)",
+            "description": "German. Good quality, smaller download."
+          },
+          "de_DE-kerstin-low": {
+            "name": "Kerstin (Low Quality)",
+            "description": "German. Fast and small."
+          },
+          "de_DE-eva_k-x_low": {
+            "name": "Eva K. (Very Low Quality)",
+            "description": "German. The smallest and fastest voice."
+          },
+          "en_US-lessac-medium": {
+            "name": "Lessac (Medium Quality)",
+            "description": "English (US). Good quality."
+          }
+        },
+        "status": {
+          "installed": "Installed",
+          "downloading": "Downloading… {{percentage}}%"
+        },
+        "actions": {
+          "download": "Download",
+          "cancel": "Cancel",
+          "delete": "Delete"
+        },
+        "deleteConfirm": "Delete {{name}}? You will need to download it again to use it.",
+        "deleteTitle": "Delete"
       }
     },
     "general": {

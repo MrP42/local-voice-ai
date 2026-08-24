@@ -10,6 +10,10 @@ pub mod dsp;
 pub mod engine;
 pub mod enhance;
 pub mod loudness;
+// Paket B-E3 (Katalog + Downloads): reine Modul-Deklaration, damit
+// `models.rs` ueberhaupt Teil des Crates wird — keine andere Datei kann das
+// leisten. Der Rest dieser Datei (TtsManager selbst) ist bewusst unberuehrt.
+pub mod models;
 pub mod player;
 pub mod protocol;
 pub mod state;
