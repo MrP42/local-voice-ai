@@ -1237,6 +1237,7 @@ mod tests {
             PasteFallback::FocusChangedDuringPaste,
             PasteFallback::TargetElevated,
             PasteFallback::InjectionFailed,
+            PasteFallback::AccessibilityDenied,
             PasteFallback::ClipboardUnverified,
         ];
         let keys: Vec<&str> = reasons.iter().copied().map(paste_fallback_reason).collect();

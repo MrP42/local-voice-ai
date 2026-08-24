@@ -670,11 +670,21 @@ pub fn paste_transcript_guarded(
 ) -> GuardedPasteOutcome {
     if !cfg!(target_os = "windows") {
         let settings = get_settings(&app_handle);
+        // What a manual paste should insert: same trailing-space transform
+        // that paste() applies internally, so parked clipboard content and a
+        // delivered paste are byte-identical.
+        let parked_text = if settings.append_trailing_space {
+            format!("{} ", text)
+        } else {
+            text.clone()
+        };
+
         if settings.paste_method == PasteMethod::None {
-            // Parity with the Windows branch below: honour the opt-in
-            // copy-to-clipboard side effect instead of dropping the text.
+            // Same shape as the Windows branch below: honour the opt-in
+            // copy-to-clipboard side effect (which paste() would also do,
+            // but the guarded outcome must say NothingToDo, not Pasted).
             if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
-                let _ = app_handle.clipboard().write_text(&text);
+                let _ = app_handle.clipboard().write_text(&parked_text);
             }
             return GuardedPasteOutcome::NothingToDo;
         }
@@ -685,11 +695,14 @@ pub fn paste_transcript_guarded(
         // the text would survive only in history. Park it instead and tell
         // the user what is missing. (Ad-hoc-signed builds lose the granted
         // permission on every update, so this is a common state, not an
-        // edge case.)
+        // edge case.) ExternalScript stays exempt: a user script needs no
+        // Accessibility permission and may be exactly the workaround for it.
         #[cfg(target_os = "macos")]
-        if !macos_accessibility_trusted() {
+        if settings.paste_method != PasteMethod::ExternalScript
+            && !macos_accessibility_trusted()
+        {
             warn!("paste: macOS Accessibility permission missing — parking transcript in clipboard");
-            if write_clipboard_verified(&app_handle, &text) {
+            if write_clipboard_verified(&app_handle, &parked_text) {
                 return GuardedPasteOutcome::Fallback(PasteFallback::AccessibilityDenied);
             }
             return GuardedPasteOutcome::Fallback(PasteFallback::ClipboardUnverified);
@@ -698,10 +711,11 @@ pub fn paste_transcript_guarded(
         return match paste(text.clone(), app_handle.clone()) {
             Ok(()) => GuardedPasteOutcome::Pasted,
             Err(_) => {
-                // The legacy path restores or clears the clipboard on its way
-                // out; re-park the transcript so the fallback notice's "press
-                // Cmd+V" claim is actually true.
-                if write_clipboard_verified(&app_handle, &text) {
+                // paste() only errors BEFORE delivering the keystroke (post-
+                // paste steps log instead of erroring, see its tail), and its
+                // clipboard restore has then already run — re-park so the
+                // fallback notice's "the text is in the clipboard" is true.
+                if write_clipboard_verified(&app_handle, &parked_text) {
                     GuardedPasteOutcome::Fallback(PasteFallback::InjectionFailed)
                 } else {
                     GuardedPasteOutcome::Fallback(PasteFallback::ClipboardUnverified)
@@ -898,6 +912,20 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
         .lock()
         .map_err(|e| format!("Failed to lock Enigo: {}", e))?;
 
+    // Streaming/segment callers reach paste() directly (segmenter.rs), so the
+    // Accessibility probe must also live here: without it macOS swallows the
+    // keystroke silently, this function reports Ok, and the clipboard restore
+    // wipes the text. Fail loudly instead. ExternalScript needs no permission.
+    #[cfg(target_os = "macos")]
+    if !matches!(paste_method, PasteMethod::None | PasteMethod::ExternalScript)
+        && !macos_accessibility_trusted()
+    {
+        return Err(
+            "macOS Accessibility permission missing; synthetic keystrokes would be dropped"
+                .to_string(),
+        );
+    }
+
     // Perform the paste operation
     match paste_method {
         PasteMethod::None => {
@@ -931,17 +959,22 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
         }
     }
 
+    // Everything below runs AFTER the text was delivered. These steps must
+    // not turn into an Err: callers treat Err as "nothing was inserted"
+    // (paste_transcript_guarded re-parks the clipboard and tells the user to
+    // paste manually — which would duplicate the already-inserted text).
     if should_send_auto_submit(settings.auto_submit, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
-        send_return_key(&mut enigo, settings.auto_submit_key)?;
+        if let Err(e) = send_return_key(&mut enigo, settings.auto_submit_key) {
+            warn!("paste: auto-submit keystroke failed after successful paste: {e}");
+        }
     }
 
     // After pasting, optionally copy to clipboard based on settings
     if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
-        let clipboard = app_handle.clipboard();
-        clipboard
-            .write_text(&text)
-            .map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
+        if let Err(e) = app_handle.clipboard().write_text(&text) {
+            warn!("paste: copy-to-clipboard after successful paste failed: {e}");
+        }
     }
 
     Ok(())

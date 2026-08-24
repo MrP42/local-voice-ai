@@ -909,7 +909,7 @@
     "processing": "Verarbeite...",
     "notice": {
       "title": "Text wurde nicht eingefügt",
-      "inClipboard": "Der vollständige Text liegt in der Zwischenablage — mit Strg+V einfügen.",
+      "inClipboard": "Der vollständige Text liegt in der Zwischenablage — mit Strg+V (Mac: Cmd+V) einfügen.",
       "inHistory": "Die Zwischenablage ließ sich nicht beschreiben. Der Text steht im Verlauf.",
       "reason": {
         "no_target": "Beim Beenden der Aufnahme war kein Zielfenster bestimmbar.",
@@ -918,7 +918,7 @@
         "target_elevated": "Die Zielanwendung läuft mit Administratorrechten; Windows blockiert Eingaben von Local Voice AI.",
         "injection_failed": "Der Tastendruck zum Einfügen ließ sich nicht zustellen.",
         "clipboard_unverified": "Der Text ließ sich nicht nachweisbar in die Zwischenablage legen.",
-        "accessibility_denied": "macOS blockiert simulierte Tastatureingaben: Local Voice AI braucht die Bedienungshilfen-Berechtigung (Systemeinstellungen > Datenschutz & Sicherheit > Bedienungshilfen). Nach einem Update muss die Berechtigung neu erteilt werden."
+        "accessibility_denied": "macOS blockiert simulierte Tastendrücke. Erteile Local Voice AI die Bedienungshilfen-Berechtigung (Systemeinstellungen > Datenschutz & Sicherheit > Bedienungshilfen) — nach jedem Update erneut."
       }
     }
   },

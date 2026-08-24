@@ -912,7 +912,7 @@
     "processing": "Processing...",
     "notice": {
       "title": "Text was not inserted",
-      "inClipboard": "The full text is in the clipboard — press Ctrl+V to insert it.",
+      "inClipboard": "The full text is in the clipboard — insert it with Ctrl+V (Cmd+V on Mac).",
       "inHistory": "The clipboard could not be written. The text is in the history window.",
       "reason": {
         "no_target": "No target window could be determined when the recording stopped.",
@@ -921,7 +921,7 @@
         "target_elevated": "The target application runs with administrator rights; Windows blocks input from Local Voice AI.",
         "injection_failed": "The insertion keystroke could not be delivered.",
         "clipboard_unverified": "The text could not be verifiably placed in the clipboard.",
-        "accessibility_denied": "macOS is blocking simulated keystrokes: Local Voice AI needs the Accessibility permission (System Settings > Privacy & Security > Accessibility). After an update the permission must be granted again."
+        "accessibility_denied": "macOS blocks simulated keystrokes. Grant Local Voice AI the Accessibility permission (System Settings > Privacy & Security > Accessibility) — again after every update."
       }
     }
   },

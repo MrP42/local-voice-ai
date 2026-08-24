@@ -63,12 +63,14 @@ export const TtsSettings = () => {
   );
   // Beide Seitenspalten starten eingeklappt: der Lesetext ist die Arbeit,
   // die Spalten sind Navigation. Wer sie aufklappt, behaelt das (persistent).
+  // ".v2"-Schluessel: der alte Schluessel hat bei jedem Bestandsnutzer "0"
+  // persistiert — ohne Umbenennung saehe niemand den neuen Default.
   const [pagesCollapsed, setPagesCollapsed] = usePersistentState<string>(
-    "tts.pagesCollapsed",
+    "tts.pagesCollapsed.v2",
     "1",
   );
   const [filesCollapsed, setFilesCollapsed] = usePersistentState<string>(
-    "tts.filesCollapsed",
+    "tts.filesCollapsed.v2",
     "1",
   );
   /** Erst nach dem Laden einer Seite darf gespeichert werden — sonst
