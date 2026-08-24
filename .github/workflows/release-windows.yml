@@ -172,7 +172,7 @@ jobs:
           releaseBody: "Automatischer Windows-Build. Die App aktualisiert sich hierauf selbst."
           # Published, not draft: `releases/latest/download/latest.json` — the
           # updater endpoint — does not resolve to a draft.
-          draft: false
+          releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
           args: --bundles nsis,updater

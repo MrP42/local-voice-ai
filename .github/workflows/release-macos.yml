@@ -138,7 +138,7 @@ jobs:
           tagName: app-v${{ steps.version.outputs.version }}
           releaseName: Local Voice AI ${{ steps.version.outputs.version }}
           releaseBody: "Automatischer Build (Windows + macOS). Die App aktualisiert sich hierauf selbst."
-          draft: false
+          releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
           args: --target ${{ matrix.target }} --bundles app,dmg,updater
