@@ -1192,10 +1192,39 @@ export function localizedLabel(tag: TagDef, uiLang: string): string {
 const normalize = (value: string): string => value.trim().toLowerCase();
 
 /**
- * Praefix-Treffer auf Label/Insert/Id schlagen Substring-Treffer, die
- * wiederum Alias-Treffer schlagen — in jeder Stufe bleibt die Registry-
- * Reihenfolge erhalten (stabil sortiert), damit die Ergebnisliste nicht bei
- * jedem Tastendruck neu durcheinanderspringt.
+ * Suche bleibt bewusst zweisprachig — wer auf Deutsch nach "whisper" tippt
+ * (z. B. weil der Fish-Speech-Tag selbst englisch ist), soll trotzdem
+ * treffen. `uiLang` entscheidet nur die REIHENFOLGE, nicht die Treffermenge:
+ * ein Treffer in der aktiven UI-Sprache steht vor einem gleichwertigen
+ * Treffer in der anderen Sprache.
+ *
+ * Fuenf Stufen, von genau zu lose (stabil sortiert innerhalb jeder Stufe —
+ * die Registry-Reihenfolge bleibt erhalten, damit die Liste nicht bei jedem
+ * Tastendruck neu durcheinanderspringt):
+ *   0. Praefix in der aktiven Sprache (uiLang)
+ *   1. Praefix in der jeweils anderen Sprache
+ *   2. Substring in der aktiven Sprache
+ *   3. Substring in der jeweils anderen Sprache
+ *   4. Alias (Praefix oder Substring, sprachuebergreifend)
+ *
+ * `insert`/`id` sind der kanonische S2-Klammertext und immer englisch —
+ * sie zaehlen deshalb zu den englischen Feldern, unabhaengig von `uiLang`.
+ *
+ * Beispiele (per manuellem tsx-Stichprobentest verifiziert, siehe
+ * Fix-Bericht zu Paket A2):
+ *   - searchTags("sp", "en") → "speaking-slowly"/"speaking-rapidly" (Praefix
+ *     auf dem englischen Insert, Stufe 0) stehen VOR "break" (das englische
+ *     Label ist "Break" — kein Praefix-Treffer; nur das deutsche Label
+ *     "Sprechpause" beginnt mit "sp", Stufe 1).
+ *   - searchTags("sp", "de") kehrt genau das um: "break" (deutsches Label
+ *     "Sprechpause", jetzt Stufe 0) steht VOR "speaking-slowly"/
+ *     "speaking-rapidly" (nur ueber das jetzt "andere" englische Insert,
+ *     Stufe 1) — derselbe Suchbegriff, andere Reihenfolge, weil nur
+ *     `uiLang` sich geaendert hat.
+ *   - searchTags("whisper", "de") findet "whisper"/"whispering" trotzdem
+ *     (ueber die englischen Felder, da kein deutsches Label mit "whisper"
+ *     beginnt oder es enthaelt) — die Suche bleibt zweisprachig, `uiLang`
+ *     versteckt nie einen Treffer, er sortiert ihn nur um.
  */
 export function searchTags(query: string, uiLang: string): TagDef[] {
   const q = normalize(query);
@@ -1205,20 +1234,25 @@ export function searchTags(query: string, uiLang: string): TagDef[] {
   const ranked: Ranked[] = [];
 
   TAG_REGISTRY.forEach((tag, index) => {
-    const primary = [tag.insert, tag.id, tag.label.en, tag.label.de].map(
-      normalize,
-    );
+    const enFields = [tag.insert, tag.id, tag.label.en].map(normalize);
+    const deFields = [tag.label.de].map(normalize);
+    const activeFields = uiLang === "de" ? deFields : enFields;
+    const otherFields = uiLang === "de" ? enFields : deFields;
     const aliases = (tag.aliases ?? []).map(normalize);
 
     let rank: number | null = null;
-    if (primary.some((field) => field.startsWith(q))) {
+    if (activeFields.some((field) => field.startsWith(q))) {
       rank = 0;
-    } else if (primary.some((field) => field.includes(q))) {
+    } else if (otherFields.some((field) => field.startsWith(q))) {
       rank = 1;
+    } else if (activeFields.some((field) => field.includes(q))) {
+      rank = 2;
+    } else if (otherFields.some((field) => field.includes(q))) {
+      rank = 3;
     } else if (
       aliases.some((field) => field.startsWith(q) || field.includes(q))
     ) {
-      rank = 2;
+      rank = 4;
     }
 
     if (rank !== null) ranked.push({ tag, rank, index });
