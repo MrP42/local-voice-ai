@@ -19,6 +19,68 @@
     "about": "Informazioni",
     "meetings": "Meetings"
   },
+  "tts": {
+    "tags": {
+      "title": "Tags",
+      "searchPlaceholder": "Search tags…",
+      "collapse": "Collapse tag palette",
+      "expand": "Expand tag palette",
+      "favorites": "Favorites",
+      "recent": "Recent",
+      "tabsAriaLabel": "Tag categories",
+      "categories": {
+        "emotionBasic": "Basic emotions",
+        "emotionAdvanced": "Advanced emotions",
+        "tone": "Tone",
+        "dynamics": "Dynamics",
+        "effects": "Effects",
+        "pauses": "Pauses",
+        "special": "Special"
+      },
+      "customPlaceholder": "Custom tag…",
+      "customInsert": "Insert",
+      "customHint": "Free-form text works too — Fish Speech S2-Pro understands tags beyond this list.",
+      "emptyFavorites": "No favorites yet — click the star on a tag to pin it here.",
+      "emptyRecent": "Nothing used yet.",
+      "emptySearch": "No tags match your search.",
+      "favoriteAdd": "Add \"{{tag}}\" to favorites",
+      "favoriteRemove": "Remove \"{{tag}}\" from favorites"
+    },
+    "editor": {
+      "tagPopoverAria": "Edit tag",
+      "deleteTag": "Delete tag",
+      "replaceHint": "Picking a suggestion replaces this tag.",
+      "autocompleteAria": "Tag suggestions",
+      "menuAria": "Text editor menu",
+      "menuCut": "Cut",
+      "menuCopy": "Copy",
+      "menuPaste": "Paste",
+      "menuInsertTag": "Insert tag",
+      "suggestionAria": "Tag suggestion",
+      "suggestionAccept": "Accept suggestion",
+      "suggestionReject": "Dismiss suggestion"
+    },
+    "autotag": {
+      "button": "Auto-Tagging",
+      "providerDefault": "Default AI",
+      "providerClaude": "Claude Haiku",
+      "counter": "{{count}} suggestions",
+      "acceptAll": "Accept all",
+      "rejectAll": "Discard all",
+      "appliedToast": "{{count}} tags inserted",
+      "undo": "Undo",
+      "missingApiKey": "No Anthropic API key set — add one in Settings → Post-Processing.",
+      "textChangedDuringRun": "The text changed while Auto-Tagging was running — please run it again.",
+      "staleSuggestionsDiscarded": "Suggestion discarded — the text changed since then."
+    },
+    "writingRules": {
+      "title": "Writing rules: speakers & tags",
+      "tagsIntro": "Emotion and effect tags go in square brackets exactly where they should be heard:",
+      "example1": "[whisper] Come closer…",
+      "example2": "He opened the door. [short pause] Nothing.",
+      "example3": "[laughing] You can't be serious!"
+    }
+  },
   "onboarding": {
     "subtitle": "Per cominciare, scegli un modello di riconoscimento vocale",
     "existingModelsTitle": "Modelli compatibili",
@@ -175,6 +237,47 @@
       "rescan": {
         "label": "Riscansiona",
         "tooltip": "Riscansiona per trovare modelli aggiunti alla cartella dei modelli o alla cache di Hugging Face al di fuori di Local Voice AI"
+      },
+      "ttsVoices": {
+        "title": "Reading Voices",
+        "description": "Piper voices are a fast, offline text-to-speech option that runs on the CPU — no GPU required. Download the ones you want to use for reading aloud.",
+        "runtime": {
+          "name": "Piper (reading engine)",
+          "description": "The Piper program itself. Downloaded automatically together with your first voice."
+        },
+        "voices": {
+          "de_DE-thorsten-high": {
+            "name": "Thorsten (High Quality)",
+            "description": "German. The best quality, and the largest download."
+          },
+          "de_DE-thorsten-medium": {
+            "name": "Thorsten (Medium Quality)",
+            "description": "German. Good quality, smaller download."
+          },
+          "de_DE-kerstin-low": {
+            "name": "Kerstin (Low Quality)",
+            "description": "German. Fast and small."
+          },
+          "de_DE-eva_k-x_low": {
+            "name": "Eva K. (Very Low Quality)",
+            "description": "German. The smallest and fastest voice."
+          },
+          "en_US-lessac-medium": {
+            "name": "Lessac (Medium Quality)",
+            "description": "English (US). Good quality."
+          }
+        },
+        "status": {
+          "installed": "Installed",
+          "downloading": "Downloading… {{percentage}}%"
+        },
+        "actions": {
+          "download": "Download",
+          "cancel": "Cancel",
+          "delete": "Delete"
+        },
+        "deleteConfirm": "Delete {{name}}? You will need to download it again to use it.",
+        "deleteTitle": "Delete"
       }
     },
     "general": {

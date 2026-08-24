@@ -25,6 +25,7 @@ mod settings;
 mod shortcut;
 mod signal_handle;
 mod summarizer;
+mod tagging;
 mod transcription_coordinator;
 mod translator;
 mod tray;
@@ -211,6 +212,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let history_manager =
         Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
     let tts_manager = managers::tts::TtsManager::new(app_handle);
+    // Piper-Katalog: Laufzeit- und Stimmen-Downloads (Paket B-E3). Getrennt
+    // vom eigentlichen TtsManager (parallele Pakete bauen die Piper-Engine
+    // selbst) — dieser Manager kennt nur Katalog + Downloads.
+    let tts_model_manager = Arc::new(
+        managers::tts::models::TtsModelManager::new(app_handle)
+            .expect("Failed to initialize Piper model manager"),
+    );
     // Meetings (M8): the store is shared by recorder and commands. A store
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.
@@ -235,6 +243,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(tts_manager);
+    app_handle.manage(tts_model_manager);
     app_handle.manage(tray::CurrentTrayIconState::new());
 
     if let Some(store) = meeting_store {
@@ -1268,6 +1277,9 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_tts_speed_setting,
             shortcut::change_tts_export_format_setting,
             shortcut::change_tts_context_menu_setting,
+            shortcut::change_tts_tag_favorites_setting,
+            shortcut::change_tts_tag_provider_setting,
+            shortcut::change_tts_tag_model_setting,
             shortcut::change_overlay_position_setting,
             shortcut::change_overlay_style_setting,
             shortcut::change_debug_mode_setting,
@@ -1440,6 +1452,22 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_export_cancel,
             commands::tts::tts_speak_seek,
             commands::tts::tts_synthesize_to_file,
+            commands::tts::tts_list_downloads,
+            commands::tts::tts_download_model,
+            commands::tts::tts_cancel_download,
+            commands::tts::tts_delete_model,
+            commands::tts::tts_list_voice_infos,
+            commands::tts::tts_get_voice_meta,
+            commands::tts::tts_set_voice_meta,
+            commands::tts::tts_set_voice_avatar,
+            commands::tts::tts_clear_voice_avatar,
+            commands::tts::tts_save_style_reference,
+            commands::tts::tts_delete_style,
+            commands::tts::tts_analyze_reference,
+            commands::tts::tts_analyze_pending_reference,
+            commands::tts::tts_seed_preview,
+            commands::tts::tts_save_seed_voice_v2,
+            commands::tts::tts_auto_tag,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![

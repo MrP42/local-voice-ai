@@ -262,6 +262,66 @@
       "projectFile": "Datei zu den Projekt-Dateien kopieren",
       "urlDialogTitle": "Webseite als Text laden"
     },
+    "tags": {
+      "title": "Tags",
+      "searchPlaceholder": "Tags durchsuchen…",
+      "collapse": "Tag-Palette einklappen",
+      "expand": "Tag-Palette aufklappen",
+      "favorites": "Favoriten",
+      "recent": "Zuletzt",
+      "tabsAriaLabel": "Tag-Kategorien",
+      "categories": {
+        "emotionBasic": "Emotionen (Basis)",
+        "emotionAdvanced": "Emotionen (erweitert)",
+        "tone": "Tonfall",
+        "dynamics": "Dynamik",
+        "effects": "Effekte",
+        "pauses": "Pausen",
+        "special": "Spezial"
+      },
+      "customPlaceholder": "Eigenes Tag…",
+      "customInsert": "Einfügen",
+      "customHint": "Auch Freitext funktioniert — Fish Speech S2-Pro versteht Tags über diese Liste hinaus.",
+      "emptyFavorites": "Noch keine Favoriten — Stern auf einem Tag anklicken, um es hier anzuheften.",
+      "emptyRecent": "Noch nichts benutzt.",
+      "emptySearch": "Keine Tags gefunden.",
+      "favoriteAdd": "„{{tag}}“ zu Favoriten hinzufügen",
+      "favoriteRemove": "„{{tag}}“ aus Favoriten entfernen"
+    },
+    "editor": {
+      "tagPopoverAria": "Tag bearbeiten",
+      "deleteTag": "Tag löschen",
+      "replaceHint": "Ein gewählter Vorschlag ersetzt dieses Tag.",
+      "autocompleteAria": "Tag-Vorschläge",
+      "menuAria": "Texteditor-Menü",
+      "menuCut": "Ausschneiden",
+      "menuCopy": "Kopieren",
+      "menuPaste": "Einfügen",
+      "menuInsertTag": "Tag einfügen",
+      "suggestionAria": "Tag-Vorschlag",
+      "suggestionAccept": "Vorschlag übernehmen",
+      "suggestionReject": "Vorschlag verwerfen"
+    },
+    "autotag": {
+      "button": "Auto-Tagging",
+      "providerDefault": "Standard-KI",
+      "providerClaude": "Claude Haiku",
+      "counter": "{{count}} Vorschläge",
+      "acceptAll": "Alle annehmen",
+      "rejectAll": "Alle verwerfen",
+      "appliedToast": "{{count}} Tags eingefügt",
+      "undo": "Rückgängig",
+      "missingApiKey": "Kein Anthropic-API-Key hinterlegt — API-Key in Einstellungen → Nachbearbeitung hinterlegen.",
+      "textChangedDuringRun": "Der Text wurde währenddessen geändert — bitte Auto-Tagging erneut starten.",
+      "staleSuggestionsDiscarded": "Vorschlag verworfen — der Text wurde seitdem geändert."
+    },
+    "writingRules": {
+      "title": "Schreibregeln: Sprecher & Tags",
+      "tagsIntro": "Emotions- und Effekt-Tags stehen in eckigen Klammern genau dort, wo sie zu hören sein sollen:",
+      "example1": "[whisper] Komm näher …",
+      "example2": "Er öffnete die Tür. [short pause] Nichts.",
+      "example3": "[laughing] Das darf doch nicht wahr sein!"
+    },
     "serverStartTitle": "Fish-Speech-Server starten?",
     "serverStartBody": "Der Server lädt das Sprachmodell in den Grafikspeicher — rund 17 GB — und braucht dafür je nach Einstellung bis zu zwei Minuten. Solange er läuft, rechnet die Übersetzung auf der CPU. Beendet wird er über dasselbe Symbol oder von selbst nach der eingestellten Leerlaufzeit."
   },
@@ -432,6 +492,47 @@
         "fast": "Schnell (~240 ms)",
         "balanced": "Ausgewogen (~480 ms)",
         "accurate": "Genau (~1 s)"
+      },
+      "ttsVoices": {
+        "title": "Vorlesestimmen",
+        "description": "Piper-Stimmen sind eine schnelle, offline laufende Sprachausgabe auf der CPU — keine GPU nötig. Lade herunter, was du zum Vorlesen nutzen möchtest.",
+        "runtime": {
+          "name": "Piper (Vorlese-Engine)",
+          "description": "Das Piper-Programm selbst. Wird automatisch mit deiner ersten Stimme mitgeladen."
+        },
+        "voices": {
+          "de_DE-thorsten-high": {
+            "name": "Thorsten (hohe Qualität)",
+            "description": "Deutsch. Beste Qualität, größter Download."
+          },
+          "de_DE-thorsten-medium": {
+            "name": "Thorsten (mittlere Qualität)",
+            "description": "Deutsch. Gute Qualität, kleinerer Download."
+          },
+          "de_DE-kerstin-low": {
+            "name": "Kerstin (niedrige Qualität)",
+            "description": "Deutsch. Schnell und klein."
+          },
+          "de_DE-eva_k-x_low": {
+            "name": "Eva K. (sehr niedrige Qualität)",
+            "description": "Deutsch. Die kleinste und schnellste Stimme."
+          },
+          "en_US-lessac-medium": {
+            "name": "Lessac (mittlere Qualität)",
+            "description": "Englisch (USA). Gute Qualität."
+          }
+        },
+        "status": {
+          "installed": "Installiert",
+          "downloading": "Lädt … {{percentage}}%"
+        },
+        "actions": {
+          "download": "Herunterladen",
+          "cancel": "Abbrechen",
+          "delete": "Löschen"
+        },
+        "deleteConfirm": "{{name}} löschen? Du musst sie erneut herunterladen, um sie wieder zu nutzen.",
+        "deleteTitle": "Löschen"
       }
     },
     "general": {

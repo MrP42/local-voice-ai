@@ -1,8 +1,10 @@
 //! Tauri-Commands des Vorlesen-Bereichs (TP1).
 
+use crate::managers::tts::models::{TtsDownloadInfo, TtsModelManager};
+use crate::managers::tts::registry::{ReferenceAnalysis, VoiceInfo, VoiceMeta};
 use crate::managers::tts::{ReadingInfo, TtsManager, TtsStatus};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[tauri::command]
@@ -469,4 +471,178 @@ pub async fn tts_synthesize_to_file(
 ) -> Result<(), String> {
     let tts = app.state::<Arc<TtsManager>>().inner().clone();
     tts.synthesize_to_file(&text, &out_path).await.map(|_| ())
+}
+
+// ── Piper-Katalog: Laufzeit + Stimmen (Paket B-E3) ──────────────────────────
+//
+// Fortschritt laeuft ueber die BESTEHENDEN Download-Events der ASR-Modelle
+// (`model-download-progress`/`model-verification-*`/`model-download-complete`/
+// `model-deleted`/`model-download-failed`) — siehe `TtsModelManager::run_download`.
+// Eigene Events waeren hier reine Verdopplung gewesen.
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_list_downloads(app: AppHandle) -> Result<Vec<TtsDownloadInfo>, String> {
+    Ok(app.state::<Arc<TtsModelManager>>().list_downloads())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_download_model(app: AppHandle, id: String) -> Result<(), String> {
+    let manager = app.state::<Arc<TtsModelManager>>().inner().clone();
+    let result = manager.download(&id).await;
+    if let Err(ref error) = result {
+        log::error!("Piper download failed for {}: {}", id, error);
+        let _ = app.emit(
+            "model-download-failed",
+            serde_json::json!({ "model_id": &id, "error": error }),
+        );
+    }
+    result
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_cancel_download(app: AppHandle, id: String) -> Result<(), String> {
+    app.state::<Arc<TtsModelManager>>().cancel(&id);
+    Ok(())
+}
+
+// ---- Sprecher-Registry (Paket B-S1) ---------------------------------------
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_list_voice_infos(app: AppHandle) -> Vec<VoiceInfo> {
+    app.state::<Arc<TtsManager>>().list_voice_infos()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_get_voice_meta(app: AppHandle, id: String) -> Result<VoiceMeta, String> {
+    app.state::<Arc<TtsManager>>().get_voice_meta(&id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_set_voice_meta(app: AppHandle, id: String, meta: VoiceMeta) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>().set_voice_meta(&id, meta)
+}
+
+/// Avatar-Bytes kommen roh als `Vec<u8>`, nicht als Base64-String: das
+/// Projekt hat kein direktes base64-Crate, und eines nur fuer den
+/// Avatar-Upload wollte der Auftrag ausdruecklich vermeiden (siehe
+/// `voices::save_avatar`).
+#[tauri::command]
+#[specta::specta]
+pub fn tts_set_voice_avatar(
+    app: AppHandle,
+    id: String,
+    bytes: Vec<u8>,
+    ext: String,
+) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>()
+        .set_voice_avatar(&id, bytes, &ext)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_delete_model(app: AppHandle, id: String) -> Result<(), String> {
+    app.state::<Arc<TtsModelManager>>().delete(&id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_clear_voice_avatar(app: AppHandle, id: String) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>().clear_voice_avatar(&id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_save_style_reference(
+    app: AppHandle,
+    voice: String,
+    style_id: String,
+    name: String,
+) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>()
+        .save_style_reference(&voice, &style_id, &name)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_delete_style(app: AppHandle, voice: String, style_id: String) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>()
+        .delete_style(&voice, &style_id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_analyze_reference(app: AppHandle, voice: String) -> Result<ReferenceAnalysis, String> {
+    app.state::<Arc<TtsManager>>().analyze_reference(&voice)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_analyze_pending_reference(app: AppHandle) -> Result<ReferenceAnalysis, String> {
+    app.state::<Arc<TtsManager>>().analyze_pending_reference()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_seed_preview(app: AppHandle, seed: i64) -> Result<Vec<u8>, String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tts.seed_preview(seed).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_save_seed_voice_v2(
+    app: AppHandle,
+    seed: i64,
+    display_name: String,
+    meta: VoiceMeta,
+) -> Result<String, String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tts.save_seed_voice_v2(seed, &display_name, meta).await
+}
+
+/// T4 Auto-Tagging: schlägt Emotions-/Vortrags-Tags fürs `text` vor. Der
+/// LLM-Output erreicht die Oberfläche NIE unvalidiert — `crate::tagging`
+/// prüft ihn hart gegen die Nur-Einfüge-Invariante (höchstens ein Retry,
+/// danach ein verständlicher Fehler statt eines möglicherweise veränderten
+/// Texts). `provider_override`: `None` = aktiver Post-Processing-Provider,
+/// `Some("anthropic")` = fest Claude (Modell aus `tts_tag_model`).
+///
+/// Rückgabe: `offset_in_original` ist ein BYTE-Offset in `text` (Rust-Art);
+/// das Frontend arbeitet mit UTF-16-Offsets und muss `offset_chars`
+/// (Unicode-Skalarwert-Zählung) selbst umrechnen — siehe die Dokumentation
+/// an `tagging::TagInsertion` und die Umrechnung in `AutoTagBar.tsx`.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_auto_tag(
+    app: AppHandle,
+    text: String,
+    allowed_tags: Vec<String>,
+    provider_override: Option<String>,
+) -> Result<Vec<crate::tagging::TagInsertion>, String> {
+    let settings = crate::settings::get_settings(&app);
+    use tauri::Emitter;
+    // Dasselbe llm-activity-Event wie die Übersetzung — treibt dasselbe
+    // BrainCircuit-Symbol, ohne dass diese Seite es gesondert verdrahten muss.
+    let _ = app.emit("llm-activity", serde_json::json!({ "busy": true }));
+    let outcome = crate::tagging::auto_tag(
+        &settings,
+        &text,
+        &allowed_tags,
+        provider_override.as_deref(),
+    )
+    .await;
+    let _ = app.emit(
+        "llm-activity",
+        serde_json::json!({
+            "busy": false,
+            "error": outcome.as_ref().err().cloned(),
+        }),
+    );
+    outcome
 }

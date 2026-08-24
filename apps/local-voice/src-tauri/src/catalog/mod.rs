@@ -33,22 +33,41 @@ struct CatalogRoot {
     models: Vec<CatalogModel>,
 }
 
+/// What a catalog entry is for. Defaults to [`Purpose::Asr`] when the field is
+/// absent from `catalog.json` — every one of the 68 pre-existing entries omits
+/// it and stays exactly as it was. `TtsVoice`/`TtsRuntime` entries are Piper
+/// downloads (runtime binary, voice files): [`CATALOG`] below filters to `Asr`
+/// only, so they never reach [`ModelDescriptor`] (an ASR/HF-shaped producer);
+/// `managers::tts::models` reads them separately via [`tts_entries`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Purpose {
+    #[default]
+    Asr,
+    TtsVoice,
+    TtsRuntime,
+}
+
 /// One model as written in `catalog.json`. Only the fields the descriptor needs
 /// are declared; serde ignores the rest (slug, family, license, …).
 #[derive(Deserialize)]
 struct CatalogModel {
-    /// HF repo id, e.g. `handy-computer/whisper-small-gguf`.
+    /// HF repo id for an `asr` entry, e.g. `handy-computer/whisper-small-gguf`.
+    /// For `tts-*` entries this is just a stable identifier — their files carry
+    /// an explicit [`QuantFile::url`] instead of being HF-resolved from it.
     id: String,
     /// Commit sha the catalog's sizes/hashes were generated from. Both HF
     /// acquisition and mirror keys use it, so downloaded bytes provably match
     /// the hashes regardless of source. Cache *lookup* additionally falls back
     /// to `main` (see `hf_cached_path`) so downloads that predate pinning keep
-    /// resolving.
+    /// resolving. Unused by `tts-*` entries.
     revision: Option<String>,
     name: String,
     description: String,
     architecture: Option<String>,
+    #[serde(default)]
     languages: Vec<String>,
+    #[serde(default)]
     capabilities: CatalogCaps,
     speed_score: Option<f32>,
     accuracy_score: Option<f32>,
@@ -59,12 +78,18 @@ struct CatalogModel {
     /// from `recommended_rank`, which only orders the full list.
     #[serde(default)]
     recommended: bool,
+    /// See [`Purpose`].
+    #[serde(default)]
+    purpose: Purpose,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct CatalogCaps {
+    #[serde(default)]
     streaming: bool,
+    #[serde(default)]
     translate: bool,
+    #[serde(default)]
     lang_detect: bool,
     // `timestamps` (a string enum) is present in the catalog but has no
     // `CapabilityProbe` field yet — wire it through when the probe gains one.
@@ -120,8 +145,67 @@ static ROOT: Lazy<CatalogRoot> = Lazy::new(|| {
 });
 
 /// The bundled catalog, parsed once and normalised into descriptors.
-pub static CATALOG: Lazy<Vec<ModelDescriptor>> =
-    Lazy::new(|| ROOT.models.iter().map(ModelDescriptor::from).collect());
+///
+/// Filtered to `purpose == Asr` — the one place that happens. TTS entries
+/// never reach [`ModelDescriptor`] (an ASR/Hugging-Face-shaped producer);
+/// [`tts_entries`] reads them separately.
+pub static CATALOG: Lazy<Vec<ModelDescriptor>> = Lazy::new(|| {
+    ROOT.models
+        .iter()
+        .filter(|m| m.purpose == Purpose::Asr)
+        .map(ModelDescriptor::from)
+        .collect()
+});
+
+/// One file belonging to a `tts-runtime`/`tts-voice` catalog entry, with its
+/// download URL already resolved. Unlike ASR files (always Hugging-Face
+/// resolved from the entry's `id`+`revision`), a TTS file only ever carries an
+/// explicit [`QuantFile::url`] — some are GitHub release assets, and even the
+/// Hugging-Face-hosted Piper voices live at repo paths that differ from the
+/// flat local filename we want, so there is no single reconstruction rule.
+/// A file without a `url` is dropped rather than guessed at.
+pub struct TtsCatalogFile {
+    pub filename: String,
+    pub url: String,
+    pub size_bytes: u64,
+    pub sha256: Option<String>,
+}
+
+/// One `tts-runtime`/`tts-voice` catalog entry, read directly by
+/// `managers::tts::models` (bypassing [`ModelDescriptor`] entirely).
+pub struct TtsCatalogEntry {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub files: Vec<TtsCatalogFile>,
+}
+
+/// All bundled catalog entries of the given TTS `purpose`, in catalog order.
+/// Files lacking a `url` (see [`TtsCatalogFile`]) are silently dropped — a
+/// data bug in `catalog.json`, not something to paper over with a guessed URL.
+pub fn tts_entries(purpose: Purpose) -> Vec<TtsCatalogEntry> {
+    ROOT.models
+        .iter()
+        .filter(|m| m.purpose == purpose)
+        .map(|m| TtsCatalogEntry {
+            id: m.id.clone(),
+            name: m.name.clone(),
+            description: m.description.clone(),
+            files: m
+                .files
+                .iter()
+                .filter_map(|f| {
+                    Some(TtsCatalogFile {
+                        filename: f.filename.clone(),
+                        url: f.url.clone()?,
+                        size_bytes: f.size_bytes,
+                        sha256: f.sha256.clone(),
+                    })
+                })
+                .collect(),
+        })
+        .collect()
+}
 
 /// A mirror copy of a catalog model's default file, with the expected content
 /// hash for end-to-end verification. Mirrors are untrusted bit-pipes: the
@@ -256,6 +340,82 @@ mod tests {
                 assert!(m.size_bytes > 0, "{}: mirror entry lacks a size", d.id);
                 assert!(m.url.starts_with("https://"), "{}: bad url {}", d.id, m.url);
             }
+        }
+    }
+
+    /// Requirement: a catalog entry without `purpose` deserializes as `asr`,
+    /// and ALL 68 pre-existing entries are still exactly that — none of them
+    /// were accidentally reinterpreted as `tts-voice`/`tts-runtime`.
+    #[test]
+    fn catalog_without_purpose_stays_asr() {
+        assert_eq!(
+            CATALOG.len(),
+            68,
+            "the 68 pre-existing entries must still be the only `asr` ones \
+             (new tts-* entries must be excluded from CATALOG)"
+        );
+    }
+
+    #[test]
+    fn purpose_defaults_to_asr_when_absent_from_json() {
+        let json = r#"{
+            "id": "some/repo", "name": "n", "description": "d",
+            "architecture": null, "files": [],
+            "revision": null, "default_quant": null, "recommended_rank": null
+        }"#;
+        let m: CatalogModel = serde_json::from_str(json).unwrap();
+        assert_eq!(m.purpose, Purpose::Asr);
+    }
+
+    #[test]
+    fn purpose_tts_variants_parse_and_are_excluded_from_catalog() {
+        let voice_json = r#"{
+            "id": "rhasspy/piper-voices", "name": "n", "description": "d",
+            "architecture": null, "files": [],
+            "revision": null, "default_quant": null, "recommended_rank": null,
+            "purpose": "tts-voice"
+        }"#;
+        let voice: CatalogModel = serde_json::from_str(voice_json).unwrap();
+        assert_eq!(voice.purpose, Purpose::TtsVoice);
+        assert_ne!(voice.purpose, Purpose::Asr);
+
+        let runtime_json = r#"{
+            "id": "piper-runtime-windows-x64", "name": "n", "description": "d",
+            "architecture": null, "files": [],
+            "revision": null, "default_quant": null, "recommended_rank": null,
+            "purpose": "tts-runtime"
+        }"#;
+        let runtime: CatalogModel = serde_json::from_str(runtime_json).unwrap();
+        assert_eq!(runtime.purpose, Purpose::TtsRuntime);
+    }
+
+    #[test]
+    fn tts_entries_only_returns_files_with_a_url() {
+        let runtimes = tts_entries(Purpose::TtsRuntime);
+        assert!(
+            !runtimes.is_empty(),
+            "expected at least one tts-runtime entry"
+        );
+        for entry in &runtimes {
+            for file in &entry.files {
+                assert!(
+                    file.url.starts_with("https://"),
+                    "{}: bad url {}",
+                    entry.id,
+                    file.url
+                );
+            }
+        }
+
+        let voices = tts_entries(Purpose::TtsVoice);
+        assert_eq!(voices.len(), 5, "expected the 5 curated Piper voices");
+        for entry in &voices {
+            assert_eq!(
+                entry.files.len(),
+                2,
+                "{}: a Piper voice ships an .onnx + .onnx.json",
+                entry.id
+            );
         }
     }
 

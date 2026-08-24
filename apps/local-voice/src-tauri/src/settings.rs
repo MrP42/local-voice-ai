@@ -576,6 +576,31 @@ pub struct AppSettings {
     /// Dokumente (txt/md/pdf/docx). Benutzer-Registry, kein Admin nötig.
     #[serde(default)]
     pub tts_context_menu: bool,
+    /// TTS-Engine des Vorlesens: "fish" (Standard, GPU) oder "piper" (CPU,
+    /// Paket E1). Unbekannte Werte fallen auf Fish zurück.
+    #[serde(default = "default_tts_engine")]
+    pub tts_engine: String,
+    /// Engine für die schnelle Vorschau ("" = aus): spricht sofort mit einer
+    /// leichten CPU-Stimme, während die Hauptengine noch lädt.
+    #[serde(default)]
+    pub tts_preview_engine: String,
+    /// Gewählte Piper-Stimme (Modellkennung) oder None = keine gewählt.
+    #[serde(default)]
+    pub tts_piper_voice: Option<String>,
+    /// T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
+    /// Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die
+    /// Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
+    #[serde(default)]
+    pub tts_tag_favorites: Vec<String>,
+    /// T4 Auto-Tagging: welcher Provider die Tag-Vorschläge liefert.
+    /// "" = aktiver Post-Processing-Provider, "anthropic" = fest Claude
+    /// (Modell aus `tts_tag_model`). Der Anthropic-Key selbst wird NICHT
+    /// hier gepflegt, sondern im bestehenden Post-Processing-Tab.
+    #[serde(default)]
+    pub tts_tag_provider: String,
+    /// T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
+    #[serde(default = "default_tts_tag_model")]
+    pub tts_tag_model: String,
     /// M8 Meetings: wie lange Audiodateien nach einer Aufnahme/einem Import
     /// aufbewahrt werden, bevor sie hart gelöscht werden. Default: sobald ein
     /// Protokoll existiert (Spec Default-Verhalten).
@@ -636,6 +661,15 @@ fn default_tts_export_format() -> String {
 
 fn default_tts_compile() -> bool {
     true
+}
+
+fn default_tts_engine() -> String {
+    "fish".to_string()
+}
+
+/// T4 Auto-Tagging: Standard-Claude-Modell, wenn "Claude Haiku" gewählt ist.
+fn default_tts_tag_model() -> String {
+    "claude-haiku-4-5".to_string()
 }
 
 fn default_model() -> String {
@@ -1241,6 +1275,12 @@ pub fn get_default_settings() -> AppSettings {
         tts_speed: default_tts_speed(),
         tts_export_format: default_tts_export_format(),
         tts_context_menu: false,
+        tts_engine: default_tts_engine(),
+        tts_preview_engine: String::new(),
+        tts_piper_voice: None,
+        tts_tag_favorites: Vec::new(),
+        tts_tag_provider: String::new(),
+        tts_tag_model: default_tts_tag_model(),
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,
@@ -1925,6 +1965,9 @@ mod tests {
         assert_eq!(s.tts_seed, 42);
         assert_eq!(s.tts_idle_minutes, 15);
         assert_eq!(s.tts_max_chars, 5000);
+        assert_eq!(s.tts_engine, "fish");
+        assert_eq!(s.tts_preview_engine, "", "Vorschau-Engine ist aus");
+        assert_eq!(s.tts_piper_voice, None);
         let b = &s.bindings["speak_clipboard"];
         assert_eq!(b.default_binding, "ctrl+alt+space");
         assert_eq!(b.current_binding, "ctrl+alt+space");
@@ -1936,5 +1979,6 @@ mod tests {
         let s: AppSettings = serde_json::from_value(serde_json::json!({})).unwrap();
         assert_eq!(s.tts_port, 8080);
         assert_eq!(s.tts_max_chars, 5000);
+        assert_eq!(s.tts_engine, "fish", "ohne Engine-Key bleibt es bei Fish");
     }
 }

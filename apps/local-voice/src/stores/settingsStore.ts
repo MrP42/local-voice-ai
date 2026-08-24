@@ -138,6 +138,11 @@ const settingUpdaters: {
     commands.changeTtsExportFormatSetting(value as string),
   tts_context_menu: (value) =>
     commands.changeTtsContextMenuSetting(value as boolean),
+  tts_tag_favorites: (value) =>
+    commands.changeTtsTagFavoritesSetting(value as string[]),
+  tts_tag_provider: (value) =>
+    commands.changeTtsTagProviderSetting(value as string),
+  tts_tag_model: (value) => commands.changeTtsTagModelSetting(value as string),
   selected_language: (value) =>
     commands.changeSelectedLanguageSetting(value as string),
   overlay_position: (value) =>

@@ -23,6 +23,10 @@ import "./i18n";
 import { useModelStore } from "./stores/modelStore";
 useModelStore.getState().initialize();
 
+// Initialize Piper (Vorlesestimmen) download store — same pattern (Paket B-E3)
+import { useTtsModelStore } from "./stores/ttsModelStore";
+useTtsModelStore.getState().initialize();
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />
