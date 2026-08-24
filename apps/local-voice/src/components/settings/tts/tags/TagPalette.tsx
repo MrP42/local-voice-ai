@@ -1,7 +1,15 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { LucideIcon } from "lucide-react";
-import { ChevronDown, ChevronUp, Clock, Plus, Search, Star } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Plus,
+  Search,
+  Star,
+} from "lucide-react";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { useSettings } from "@/hooks/useSettings";
 import { Input } from "@/components/ui/Input";
@@ -92,8 +100,13 @@ const TabButton: React.FC<{
  */
 export const TagPalette: React.FC<{
   onInsert: (tagText: string) => void;
+  /** Pointer-Drag aus der Palette (kein HTML5-Drag&Drop — das kollidiert
+   *  mit dem Tauri-File-Drop): bekommt die Viewport-Koordinaten des
+   *  Loslassens und den fertigen Klammertext; `true` heißt eingefügt
+   *  (zählt dann für „Zuletzt"). */
+  onDragInsert?: (x: number, y: number, tagText: string) => boolean;
   uiLang: string;
-}> = ({ onInsert, uiLang }) => {
+}> = ({ onInsert, onDragInsert, uiLang }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
 
@@ -129,10 +142,86 @@ export const TagPalette: React.FC<{
     setRecentRaw(JSON.stringify(next));
   };
 
+  /** Ghost-Chip, der beim Pointer-Drag dem Cursor folgt. */
+  const [ghost, setGhost] = useState<{
+    x: number;
+    y: number;
+    label: string;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+
   const insertItem = (item: ChipItem) => {
+    // Nach einem Drag feuert der Browser auf dem Ursprungs-Chip noch ein
+    // click — das darf nicht ZUSÄTZLICH am Cursor einfügen.
+    if (suppressClickRef.current) return;
     onInsert(`[${item.insertText}]`);
     rememberRecent(item.insertText);
   };
+
+  const handleChipPointerDown =
+    (item: ChipItem) => (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (!onDragInsert) return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      const el = event.currentTarget;
+      const drag = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+      };
+      // Sofort einfangen: sonst enden die Move-Ereignisse, sobald der
+      // Zeiger den Chip verlässt. Ein normaler Klick bleibt ein Klick.
+      try {
+        el.setPointerCapture(drag.pointerId);
+      } catch {
+        // z. B. Pointer schon weg — dann eben kein Drag.
+      }
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== drag.pointerId) return;
+        if (!drag.moved) {
+          if (
+            Math.hypot(ev.clientX - drag.startX, ev.clientY - drag.startY) < 5
+          ) {
+            return;
+          }
+          drag.moved = true;
+        }
+        setGhost({ x: ev.clientX, y: ev.clientY, label: item.label });
+      };
+      const finish = (ev: PointerEvent, drop: boolean) => {
+        if (ev.pointerId !== drag.pointerId) return;
+        el.removeEventListener("pointermove", onMove);
+        el.removeEventListener("pointerup", onUp);
+        el.removeEventListener("pointercancel", onCancel);
+        try {
+          el.releasePointerCapture(drag.pointerId);
+        } catch {
+          // schon freigegeben
+        }
+        setGhost(null);
+        if (drag.moved) {
+          suppressClickRef.current = true;
+          // click feuert (wenn überhaupt) synchron direkt nach pointerup —
+          // der Timeout räumt die Sperre danach zuverlässig wieder ab.
+          window.setTimeout(() => {
+            suppressClickRef.current = false;
+          }, 0);
+          if (drop) {
+            const inserted = onDragInsert(
+              ev.clientX,
+              ev.clientY,
+              `[${item.insertText}]`,
+            );
+            if (inserted) rememberRecent(item.insertText);
+          }
+        }
+      };
+      const onUp = (ev: PointerEvent) => finish(ev, true);
+      const onCancel = (ev: PointerEvent) => finish(ev, false);
+      el.addEventListener("pointermove", onMove);
+      el.addEventListener("pointerup", onUp);
+      el.addEventListener("pointercancel", onCancel);
+    };
 
   const insertCustom = () => {
     const text = customText.trim();
@@ -167,8 +256,8 @@ export const TagPalette: React.FC<{
         return match ? toChipItem(match, uiLang) : toCustomChipItem(text);
       });
     }
-    return TAG_REGISTRY.filter((tag) => tag.category === activeTab).map(
-      (tag) => toChipItem(tag, uiLang),
+    return TAG_REGISTRY.filter((tag) => tag.category === activeTab).map((tag) =>
+      toChipItem(tag, uiLang),
     );
   }, [query, uiLang, activeTab, favorites, recent]);
 
@@ -250,9 +339,7 @@ export const TagPalette: React.FC<{
 
           <div className="flex flex-wrap gap-1 p-2">
             {visibleTags.length === 0 ? (
-              <p className="px-1 py-2 text-xs text-text/50">
-                {emptyMessage}
-              </p>
+              <p className="px-1 py-2 text-xs text-text/50">{emptyMessage}</p>
             ) : (
               visibleTags.map((item) => {
                 const isFavorite =
@@ -266,6 +353,9 @@ export const TagPalette: React.FC<{
                     <TagChip
                       label={item.label}
                       onClick={() => insertItem(item)}
+                      onPointerDown={
+                        onDragInsert ? handleChipPointerDown(item) : undefined
+                      }
                       title={item.description}
                       className="p-3"
                     />
@@ -332,6 +422,18 @@ export const TagPalette: React.FC<{
           </div>
         </>
       )}
+
+      {ghost &&
+        createPortal(
+          <span
+            aria-hidden="true"
+            style={{ left: ghost.x, top: ghost.y }}
+            className="pointer-events-none fixed z-[60] -translate-x-1/2 -translate-y-1/2 rounded border border-logo-primary/40 bg-background px-2 py-1 text-xs font-medium text-text shadow-lg"
+          >
+            {ghost.label}
+          </span>,
+          document.body,
+        )}
     </div>
   );
 };
