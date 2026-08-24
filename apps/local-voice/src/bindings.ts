@@ -2035,21 +2035,7 @@ tts_tag_provider?: string;
 /**
  * T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
  */
-tts_tag_model?: string; 
-/**
- * TTS-Engine des Vorlesens: "fish" (Standard, GPU) oder "piper" (CPU,
- * Paket E1). Unbekannte Werte fallen auf Fish zurück.
- */
-tts_engine?: string; 
-/**
- * Engine für die schnelle Vorschau ("" = aus): spricht sofort mit einer
- * leichten CPU-Stimme, während die Hauptengine noch lädt.
- */
-tts_preview_engine?: string; 
-/**
- * Gewählte Piper-Stimme (Modellkennung) oder None = keine gewählt.
- */
-tts_piper_voice?: string | null; 
+tts_tag_model?: string;
 /**
  * M8 Meetings: wie lange Audiodateien nach einer Aufnahme/einem Import
  * aufbewahrt werden, bevor sie hart gelöscht werden. Default: sobald ein
