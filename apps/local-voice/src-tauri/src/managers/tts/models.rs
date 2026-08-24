@@ -58,6 +58,23 @@ fn runtime_dir(piper_dir: &Path, platform: &str) -> PathBuf {
     piper_dir.join(platform)
 }
 
+/// Whether a COMPLETE Piper runtime sits at `runtime_dir(piper_dir, platform)`
+/// — the binary itself AND its `espeak-ng-data` directory, both required to
+/// run. Mirrors the voice check (`.onnx` AND `.onnx.json`, not just "the
+/// directory exists"): a bare `is_dir()` also reads a leftover empty
+/// directory, or one an interrupted extraction only half-filled, as
+/// "installed" — this is the one place that decides "installed", used by
+/// every caller instead of each re-deriving its own (looser) check.
+fn runtime_is_installed(piper_dir: &Path, platform: &str) -> bool {
+    let dir = runtime_dir(piper_dir, platform);
+    let binary_name = if platform.starts_with("windows") {
+        "piper.exe"
+    } else {
+        "piper"
+    };
+    dir.join(binary_name).is_file() && dir.join("espeak-ng-data").is_dir()
+}
+
 /// `(<piper_dir>/voices/<voice_id>.onnx, <piper_dir>/voices/<voice_id>.onnx.json)`
 /// — the model file and its sidecar config, Piper's own naming convention.
 /// Pure so it's testable without touching disk or an `AppHandle`.
@@ -153,6 +170,17 @@ impl TtsModelManager {
     /// Runtime entry + voices, in that order (the runtime is the "program"
     /// row and belongs at the top — see the task brief).
     pub fn list_downloads(&self) -> Vec<TtsDownloadInfo> {
+        Self::build_downloads(&self.piper_dir, |id| self.is_downloading(id))
+    }
+
+    /// Pure core of [`Self::list_downloads`] — everything except the live
+    /// downloading-flag lookup (which needs `&self`/`cancel_flags`), so it's
+    /// directly testable against a tempdir fixture without a
+    /// `TtsModelManager` (and so without an `AppHandle`) at all.
+    fn build_downloads(
+        piper_dir: &Path,
+        is_downloading: impl Fn(&str) -> bool,
+    ) -> Vec<TtsDownloadInfo> {
         let mut out = Vec::new();
 
         if let Some(platform) = current_platform() {
@@ -169,19 +197,19 @@ impl TtsModelManager {
                     description: entry.description,
                     language: None,
                     size_mb: size_bytes / (1024 * 1024),
-                    is_downloaded: runtime_dir(&self.piper_dir, platform).is_dir(),
-                    is_downloading: self.is_downloading(RUNTIME_ID),
+                    is_downloaded: runtime_is_installed(piper_dir, platform),
+                    is_downloading: is_downloading(RUNTIME_ID),
                 });
             }
         }
 
         for entry in catalog::tts_entries(Purpose::TtsVoice) {
             let size_bytes: u64 = entry.files.iter().map(|f| f.size_bytes).sum();
-            let (onnx_path, json_path) = voice_paths(&self.piper_dir, &entry.id);
+            let (onnx_path, json_path) = voice_paths(piper_dir, &entry.id);
             out.push(TtsDownloadInfo {
                 language: language_of_voice_id(&entry.id),
                 is_downloaded: onnx_path.is_file() && json_path.is_file(),
-                is_downloading: self.is_downloading(&entry.id),
+                is_downloading: is_downloading(&entry.id),
                 id: entry.id,
                 kind: TtsDownloadKind::Voice,
                 name: entry.name,
@@ -243,7 +271,7 @@ impl TtsModelManager {
         let platform = current_platform()
             .ok_or_else(|| "No Piper runtime is available for this platform".to_string())?;
         let dest_dir = runtime_dir(&self.piper_dir, platform);
-        if dest_dir.is_dir() {
+        if runtime_is_installed(&self.piper_dir, platform) {
             return Ok(());
         }
         let catalog_id = format!("piper-runtime-{platform}");
@@ -290,12 +318,28 @@ impl TtsModelManager {
             .find(|e| e.id == voice_id)
             .ok_or_else(|| format!("Unknown Piper voice: {voice_id}"))?;
 
-        // Auto-fetch the runtime on the first voice download (task brief) —
-        // on a platform with no Piper runtime at all this is a no-op, the
-        // voice files themselves aren't platform-specific.
+        // Auto-fetch the runtime on the first voice download (task brief).
+        // On a platform with NO Piper runtime CATALOG ENTRY (e.g. linux-x64 —
+        // not shipped yet, see `current_platform`) this must be a true
+        // no-op: `download_runtime()` would return an error there ("No
+        // catalog entry for …"), which must NOT abort the voice download —
+        // the voice files themselves aren't platform-specific. A platform
+        // that DOES have an entry still propagates real download failures
+        // (network, SHA mismatch) via `?`, same as calling it directly.
         if let Some(platform) = current_platform() {
-            if !runtime_dir(&self.piper_dir, platform).is_dir() {
-                self.download_runtime().await?;
+            if !runtime_is_installed(&self.piper_dir, platform) {
+                let catalog_id = format!("piper-runtime-{platform}");
+                let has_runtime_entry = catalog::tts_entries(Purpose::TtsRuntime)
+                    .into_iter()
+                    .any(|e| e.id == catalog_id);
+                if has_runtime_entry {
+                    self.download_runtime().await?;
+                } else {
+                    log::warn!(
+                        "No Piper runtime catalog entry for platform {platform}; \
+                         downloading voice {voice_id} without a bundled runtime"
+                    );
+                }
             }
         }
 
@@ -365,6 +409,9 @@ impl TtsModelManager {
             let platform = current_platform()
                 .ok_or_else(|| "No Piper runtime for this platform".to_string())?;
             let dir = runtime_dir(&self.piper_dir, platform);
+            // Deliberately `is_dir()`, not `runtime_is_installed`: deletion
+            // must be able to clear away a stray/incomplete directory (e.g.
+            // an interrupted extraction) too, not just a complete install.
             if !dir.is_dir() {
                 return Err("Piper runtime is not installed".to_string());
             }
@@ -524,20 +571,120 @@ mod tests {
         ));
     }
 
-    // ── list_downloads reflects the catalog ─────────────────────────────────
+    // ── list_downloads reflects the catalog AND real on-disk completeness ───
+    // Drives the actual `build_downloads` (the pure core of `list_downloads`)
+    // against a tempdir fixture — no AppHandle needed, since the live
+    // downloading-flag lookup is injected as a plain closure.
 
     #[test]
-    fn list_downloads_offers_the_runtime_first_then_all_five_voices() {
-        // No AppHandle needed: this only exercises catalog consumption + disk
-        // status against a directory that (almost certainly) doesn't exist.
-        let piper_dir = std::env::temp_dir().join("local-voice-ai-test-piper-does-not-exist");
-        let voices: Vec<_> = catalog::tts_entries(Purpose::TtsVoice);
-        assert_eq!(voices.len(), 5);
-        for v in &voices {
-            let (onnx, json) = voice_paths(&piper_dir, &v.id);
-            assert!(!onnx.exists());
-            assert!(!json.exists());
+    fn build_downloads_orders_runtime_first_and_lists_all_five_voices() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let piper_dir = dir.path().join("piper");
+
+        let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
+
+        let voice_rows: Vec<_> = downloads
+            .iter()
+            .filter(|d| d.kind == TtsDownloadKind::Voice)
+            .collect();
+        assert_eq!(voice_rows.len(), 5, "expected the 5 curated Piper voices");
+        assert!(
+            voice_rows.iter().all(|d| !d.is_downloaded),
+            "nothing on disk yet — no voice may read as downloaded"
+        );
+
+        if current_platform().is_some() {
+            assert_eq!(
+                downloads[0].kind,
+                TtsDownloadKind::Runtime,
+                "the runtime row belongs at the top"
+            );
+            assert_eq!(downloads[0].id, RUNTIME_ID);
+            assert!(!downloads[0].is_downloaded);
+        } else {
+            assert_eq!(
+                downloads.len(),
+                5,
+                "no runtime row at all on a platform current_platform() doesn't recognise"
+            );
         }
+    }
+
+    #[test]
+    fn build_downloads_needs_both_voice_files_not_just_the_onnx() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let piper_dir = dir.path().join("piper");
+        let voice_id = &catalog::tts_entries(Purpose::TtsVoice)[0].id.clone();
+        let (onnx_path, json_path) = voice_paths(&piper_dir, voice_id);
+        fs::create_dir_all(onnx_path.parent().unwrap()).unwrap();
+
+        fs::write(&onnx_path, b"fake onnx").unwrap();
+        let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
+        let row = downloads.iter().find(|d| &d.id == voice_id).unwrap();
+        assert!(
+            !row.is_downloaded,
+            "the .onnx alone must not count as installed"
+        );
+
+        fs::write(&json_path, b"{}").unwrap();
+        let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
+        let row = downloads.iter().find(|d| &d.id == voice_id).unwrap();
+        assert!(
+            row.is_downloaded,
+            ".onnx + .onnx.json together must count as installed"
+        );
+    }
+
+    #[test]
+    fn build_downloads_needs_the_binary_and_espeak_data_not_just_the_directory() {
+        let Some(platform) = current_platform() else {
+            return; // nothing to assert on a platform with no runtime entry
+        };
+        let dir = tempfile::TempDir::new().unwrap();
+        let piper_dir = dir.path().join("piper");
+        let rt_dir = runtime_dir(&piper_dir, platform);
+
+        // An interrupted/empty extraction — the directory exists, nothing in it.
+        fs::create_dir_all(&rt_dir).unwrap();
+        let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
+        assert!(
+            !downloads[0].is_downloaded,
+            "an empty runtime directory must not read as installed"
+        );
+
+        // Binary present, espeak-ng-data still missing.
+        let binary_name = if platform.starts_with("windows") {
+            "piper.exe"
+        } else {
+            "piper"
+        };
+        fs::write(rt_dir.join(binary_name), b"fake binary").unwrap();
+        let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
+        assert!(
+            !downloads[0].is_downloaded,
+            "the binary alone, without espeak-ng-data, must not read as installed"
+        );
+
+        // Both present: now it's complete.
+        fs::create_dir_all(rt_dir.join("espeak-ng-data")).unwrap();
+        let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
+        assert!(
+            downloads[0].is_downloaded,
+            "binary + espeak-ng-data together must count as installed"
+        );
+    }
+
+    #[test]
+    fn build_downloads_reports_the_injected_downloading_flag() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let piper_dir = dir.path().join("piper");
+        let voice_id = catalog::tts_entries(Purpose::TtsVoice)[0].id.clone();
+
+        let downloads = TtsModelManager::build_downloads(&piper_dir, |id| id == voice_id);
+        let row = downloads.iter().find(|d| d.id == voice_id).unwrap();
+        assert!(row.is_downloading);
+        let other = downloads.iter().find(|d| d.id != voice_id).unwrap();
+        assert!(!other.is_downloading);
     }
 
     // ── SHA-mismatch on the REUSED downloader is still an error ─────────────
