@@ -10,6 +10,7 @@ pub mod dsp;
 pub mod engine;
 pub mod enhance;
 pub mod loudness;
+pub mod piper;
 pub mod player;
 pub mod protocol;
 pub mod state;
@@ -115,14 +116,60 @@ pub struct TtsCore {
 /// (async ohne neue Dependency, Begründung in engine.rs), und so ein Trait
 /// ist nicht dyn-kompatibel. Die Fish-Synthese braucht ohnehin `&TtsCore`
 /// (HTTP-Client, Caches) — ein besitzendes Trait-Objekt im Kern ergäbe eine
-/// Besitz-Schleife. Die Piper-Variante kommt im nächsten Paket als eigener
-/// Eintrag mit eigener Engine-Struktur hinzu.
+/// Besitz-Schleife.
+///
+/// `Clone`, damit `fetch_wav` je Auftrag EINEN konsistenten Schnappschuss
+/// ziehen kann: Cache-Tag und Synthese desselben Satzes stammen dann
+/// garantiert aus derselben Engine, auch wenn die Settings mittendrin
+/// umgeschaltet werden (TOCTOU-Befund aus dem A3/E1-Review).
+#[derive(Clone)]
 enum EngineImpl {
     /// Fish Speech über den bestehenden HTTP-Pfad (`fish_synthesize`).
     Fish,
+    /// Piper als CPU-Subprozess; trägt seine aufgelösten Pfade selbst.
+    Piper(piper::PiperEngine),
     /// Austauschbare Engine für Tests: beweist, dass die Naht trägt.
     #[cfg(test)]
     Mock(Arc<tests::MockEngine>),
+}
+
+impl EngineImpl {
+    fn kind(&self) -> TtsEngineKind {
+        match self {
+            Self::Fish => TtsEngineKind::Fish,
+            Self::Piper(p) => p.kind(),
+            #[cfg(test)]
+            Self::Mock(mock) => mock.kind(),
+        }
+    }
+
+    fn caps(&self) -> EngineCaps {
+        match self {
+            Self::Fish => engine::FISH_CAPS,
+            Self::Piper(p) => p.caps(),
+            #[cfg(test)]
+            Self::Mock(mock) => mock.caps(),
+        }
+    }
+
+    fn cache_tag(&self, voice: Option<&str>) -> String {
+        match self {
+            Self::Fish => engine::fish_cache_tag(voice),
+            Self::Piper(p) => p.cache_tag(voice),
+            #[cfg(test)]
+            Self::Mock(mock) => mock.cache_tag(voice),
+        }
+    }
+
+    /// Verfügbarkeit als vergleichbares Paar (Art, Unverfügbarkeits-Grund) —
+    /// die Warnzeile in [`TtsCore::set_engine`] feuert nur, wenn sich genau
+    /// das ändert, nicht bei jedem Settings-Refresh.
+    fn availability(&self) -> (TtsEngineKind, Option<&'static str>) {
+        match self {
+            Self::Piper(p) => (TtsEngineKind::Piper, p.unavailable_reason()),
+            other => (other.kind(), None),
+        }
+    }
 }
 
 /// Prozess-lebenszeitiger Audio-Cache mit Byte-Limit und FIFO-Verdrängung —
@@ -239,51 +286,58 @@ impl TtsCore {
 
     /// Engine-Art für Dispatch-Entscheidungen des Managers.
     pub fn engine_kind(&self) -> TtsEngineKind {
-        match &*self.engine.lock().unwrap() {
-            EngineImpl::Fish => TtsEngineKind::Fish,
-            #[cfg(test)]
-            EngineImpl::Mock(mock) => mock.kind(),
-        }
+        self.engine.lock().unwrap().kind()
     }
 
     /// Fähigkeiten der aktiven Engine (u. a. für das GPU-Flag der Übersetzung).
     pub fn engine_caps(&self) -> EngineCaps {
-        match &*self.engine.lock().unwrap() {
-            EngineImpl::Fish => engine::FISH_CAPS,
-            #[cfg(test)]
-            EngineImpl::Mock(mock) => mock.caps(),
-        }
+        self.engine.lock().unwrap().caps()
     }
 
     /// Engine wählen (aus den Settings gespiegelt).
     ///
-    /// Die Piper-Implementierung folgt im nächsten Paket; bis dahin fällt
-    /// `Piper` auf Fish zurück. Bewusst die GANZE Wahl und nicht nur die
-    /// Synthese: sonst trüge ein vorzeitig gesetzter Settings-Wert schon den
-    /// Piper-Cache-Tag und das CPU-GPU-Flag, ohne dass eine Engine dahinter
-    /// stünde — Fish-Verhalten bliebe nicht identisch.
-    pub fn set_engine_kind(&self, kind: TtsEngineKind) {
+    /// `Piper` verlangt eine aufgelöste [`piper::PiperEngine`] — und die
+    /// Wahl BLEIBT Piper, auch wenn Binary oder Stimme (noch) fehlen:
+    /// `ensure_ready`/`synthesize` liefern dann die konstante Fehler-ID,
+    /// statt still auf den Fish-GPU-Server zurückzufallen. Ein
+    /// unbrauchbarer Piper-Zustand wird EINMAL je Änderung gewarnt
+    /// (Review-Befund: der frühere Fallback war still), nicht bei jedem
+    /// Settings-Refresh.
+    pub fn set_engine(&self, kind: TtsEngineKind, piper: Option<piper::PiperEngine>) {
         let chosen = match kind {
             TtsEngineKind::Fish => EngineImpl::Fish,
-            TtsEngineKind::Piper => EngineImpl::Fish,
+            TtsEngineKind::Piper => EngineImpl::Piper(
+                // Ohne mitgelieferte Auflösung (kein Datenverzeichnis):
+                // eine Engine, die ihren Fehlgrund kennt.
+                piper.unwrap_or_else(|| piper::PiperEngine::resolve(None, None)),
+            ),
         };
-        *self.engine.lock().unwrap() = chosen;
+        let mut slot = self.engine.lock().unwrap();
+        if slot.availability() != chosen.availability() {
+            if let (TtsEngineKind::Piper, Some(reason)) = chosen.availability() {
+                log::warn!("Piper-Engine gewählt, aber nicht einsatzbereit: {reason}");
+            }
+        }
+        *slot = chosen;
     }
 
     /// Cache-Tag der aktiven Engine (siehe [`WavCache::key`]).
     fn engine_cache_tag(&self, voice: Option<&str>) -> String {
-        match &*self.engine.lock().unwrap() {
-            EngineImpl::Fish => engine::fish_cache_tag(voice),
-            #[cfg(test)]
-            EngineImpl::Mock(mock) => mock.cache_tag(voice),
-        }
+        self.engine.lock().unwrap().cache_tag(voice)
+    }
+
+    /// Konsistenter Schnappschuss der aktiven Engine — siehe [`EngineImpl`].
+    fn engine_snapshot(&self) -> EngineImpl {
+        self.engine.lock().unwrap().clone()
     }
 
     /// Dispatch-Punkt der Synthese: ein Cache-Miss in [`Self::fetch_wav`]
-    /// geht durch die aktive Engine. Für Fish ist das der unveränderte
-    /// HTTP-Pfad ([`Self::fish_synthesize`]).
+    /// geht durch die übergebene Engine (den Schnappschuss des Aufrufs).
+    /// Für Fish ist das der unveränderte HTTP-Pfad
+    /// ([`Self::fish_synthesize`]), für Piper der Subprozess.
     async fn engine_synthesize(
         &self,
+        engine: &EngineImpl,
         port: u16,
         seed: i64,
         text: &str,
@@ -293,20 +347,17 @@ impl TtsCore {
             text,
             voice,
             seed,
-            // Fish ignoriert das Tempo bewusst — es regelt die Wiedergabe.
+            // Tempo bleibt Sache der Wiedergabe — für BEIDE Engines: in die
+            // Synthese eingebacken läge es dauerhaft im Satz-Cache und gälte
+            // doppelt, weil der Player bereits live skaliert.
             speed: None,
         };
-        #[cfg(test)]
-        {
-            let mock = match &*self.engine.lock().unwrap() {
-                EngineImpl::Mock(mock) => Some(Arc::clone(mock)),
-                _ => None,
-            };
-            if let Some(mock) = mock {
-                return mock.synthesize(req).await;
-            }
+        match engine {
+            EngineImpl::Fish => self.fish_synthesize(port, req).await,
+            EngineImpl::Piper(p) => p.synthesize(req).await,
+            #[cfg(test)]
+            EngineImpl::Mock(mock) => mock.synthesize(req).await,
         }
-        self.fish_synthesize(port, req).await
     }
 
     /// Der BESTEHENDE Fish-Pfad: HTTP-POST an den lokalen Server, Antwort
@@ -497,10 +548,15 @@ impl TtsCore {
             Some(explicit) => Some(explicit.to_string()),
             None => self.voice.lock().unwrap().clone(),
         };
+        // EIN Engine-Schnappschuss je Aufruf: Cache-Tag und Synthese dieses
+        // Satzes stammen garantiert aus derselben Engine — ein
+        // Settings-Wechsel währenddessen kann keine Bytes mehr unter
+        // fremdem Tag ablegen (TOCTOU-Befund aus dem A3/E1-Review).
+        let engine = self.engine_snapshot();
         // Unveränderter Satz + gleiche Stimme/Seed/Engine → aus dem Cache,
         // ohne Server. Der Cache-Lookup bleibt VOR der Engine: was schon
         // synthetisiert ist, braucht keine Engine — egal welche.
-        let engine_tag = self.engine_cache_tag(voice.as_deref());
+        let engine_tag = engine.cache_tag(voice.as_deref());
         let cache_key = WavCache::key(&engine_tag, text, seed, voice.as_deref());
         if let Some(cached) = self.wav_cache.lock().unwrap().get(cache_key) {
             return Ok(cached);
@@ -517,9 +573,10 @@ impl TtsCore {
                 }
             }
         }
-        // Cache-Miss: durch die aktive Engine (Fish: der bisherige HTTP-POST).
+        // Cache-Miss: durch den Engine-Schnappschuss (Fish: der bisherige
+        // HTTP-POST; Piper: ein Subprozess).
         let bytes = self
-            .engine_synthesize(port, seed, text, voice.as_deref())
+            .engine_synthesize(&engine, port, seed, text, voice.as_deref())
             .await?;
         self.wav_cache
             .lock()
@@ -1171,8 +1228,11 @@ impl TtsManager {
         if crate::settings::get_settings(app).tts_prewarm {
             let warming = Arc::clone(&manager);
             tauri::async_runtime::spawn(async move {
-                log::info!("Vorwaermen: starte den TTS-Server im Hintergrund");
-                if let Err(e) = warming.ensure_server().await {
+                log::info!("Vorwaermen: mache die TTS-Engine im Hintergrund bereit");
+                // Durch die Engine-Naht, nicht Fish-hart: bei aktiver
+                // Piper-Engine ist das nur ein Pfad-Check — der Fish-Server
+                // (17 GB VRAM) darf dann nicht anlaufen.
+                if let Err(e) = warming.ensure_engine_ready().await {
                     log::warn!("Vorwaermen fehlgeschlagen: {e}");
                 }
             });
@@ -1217,10 +1277,17 @@ impl TtsManager {
         *self.core.output_device.lock().unwrap() = settings.selected_output_device;
         *self.core.voice.lock().unwrap() = settings.tts_voice;
         // Engine-Wahl in den Kern spiegeln; unbekannte Werte fallen auf
-        // Fish zurück (from_setting), Piper bis zu seinem Paket ebenfalls
-        // (set_engine_kind).
-        self.core
-            .set_engine_kind(TtsEngineKind::from_setting(&settings.tts_engine));
+        // Fish zurück (from_setting). Für Piper werden Binary und Stimme
+        // hier — also vor jedem Auftrag — neu aufgelöst: eben erst geladene
+        // Dateien (Paket E3) wirken damit ohne App-Neustart.
+        let kind = TtsEngineKind::from_setting(&settings.tts_engine);
+        let piper_engine = (kind == TtsEngineKind::Piper).then(|| {
+            piper::PiperEngine::resolve(
+                self.data_base_dir().as_deref(),
+                settings.tts_piper_voice.as_deref(),
+            )
+        });
+        self.core.set_engine(kind, piper_engine);
         // Beim Umschalten die gemessenen Faktoren verwerfen: sonst hinge der
         // Pegel an einer Messung aus der Zeit vor dem Umschalten.
         let previous = self
@@ -1315,15 +1382,17 @@ impl TtsManager {
     }
 
     /// Die konfigurierte Engine bereitmachen — der zweite Dispatch-Punkt der
-    /// Engine-Naht. Für Fish führt das über [`engine::FishEngine`] zur
-    /// BESTEHENDEN Startlogik ([`Self::ensure_server`]): Spawn, Health-Poll,
-    /// Compile-Cache-Reparatur und Doppelstart-Schutz bleiben unangetastet.
+    /// Engine-Naht. Für Fish ist das die BESTEHENDE Startlogik
+    /// ([`Self::ensure_server`]): Spawn, Health-Poll, Compile-Cache-Reparatur
+    /// und Doppelstart-Schutz bleiben unangetastet. Für Piper nur ein
+    /// Pfad-Check — es gibt keinen Server, und der Fish-GPU-Server darf bei
+    /// aktiver Piper-Engine NIRGENDS anlaufen.
     pub async fn ensure_engine_ready(&self) -> Result<(), String> {
-        match self.core.engine_kind() {
-            TtsEngineKind::Fish => engine::FishEngine::new(self).ensure_ready().await,
-            // Bis zur Piper-Implementierung nicht erreichbar (set_engine_kind
-            // fällt auf Fish zurück) — aber der Vertrag steht schon.
-            TtsEngineKind::Piper => Err("Die Piper-Engine folgt im nächsten Paket".to_string()),
+        match self.core.engine_snapshot() {
+            EngineImpl::Fish => self.ensure_server().await,
+            EngineImpl::Piper(p) => p.ensure_ready().await,
+            #[cfg(test)]
+            EngineImpl::Mock(mock) => mock.ensure_ready().await,
         }
     }
 
@@ -1967,9 +2036,15 @@ impl TtsManager {
 
     /// Text in der aktiven Stimme als Audiodatei synthetisieren (ein Request,
     /// ohne Playback) — der Datei-Export. Format aus `tts_export_format`
-    /// (wav/mp3/opus, der Fish-Server encodiert direkt).
+    /// (wav/mp3/opus, der Fish-Server encodiert direkt). Bei aktiver
+    /// Piper-Engine geht der Export durch die Naht ([`TtsCore::fetch_wav`])
+    /// statt durch den Fish-HTTP-Pfad — dieser Weg lief bis Paket E2
+    /// komplett an der Engine vorbei und hätte den GPU-Server gestartet.
     pub async fn synthesize_to_file(&self, text: &str, out_path: &str) -> Result<usize, String> {
         self.refresh_from_settings();
+        if self.core.engine_kind() == TtsEngineKind::Piper {
+            return self.piper_synthesize_to_file(text, out_path).await;
+        }
         self.ensure_server().await?;
         let prepared = {
             let max_chars = *self.core.max_chars.lock().unwrap();
@@ -2003,6 +2078,34 @@ impl TtsManager {
         Ok(audio.len())
     }
 
+    /// Der Piper-Zweig des Datei-Exports: ein Lauf durch die Engine-Naht
+    /// (samt Satz-Cache), das Ergebnis als WAV auf die Platte. Andere
+    /// Formate encodiert der Fish-Server; Piper kann nur WAV
+    /// (`PIPER_CAPS.export_formats`) — dann lieber eine klare Ansage als
+    /// eine Datei mit falscher Endung.
+    async fn piper_synthesize_to_file(&self, text: &str, out_path: &str) -> Result<usize, String> {
+        self.ensure_engine_ready().await?;
+        let format = self.core.export_format.lock().unwrap().clone();
+        if format != "wav" {
+            return Err(format!(
+                "Die Piper-Engine exportiert nur WAV — eingestellt ist {format}"
+            ));
+        }
+        let prepared = {
+            let max_chars = *self.core.max_chars.lock().unwrap();
+            protocol::prepare_text(text, max_chars).ok_or_else(|| "empty text".to_string())?
+        };
+        let port = *self.core.port.lock().unwrap();
+        let seed = *self.core.seed.lock().unwrap();
+        let wav = self
+            .core
+            .fetch_wav(port, seed, &prepared.text, None)
+            .await?;
+        std::fs::write(out_path, &wav).map_err(|e| format!("could not write {out_path}: {e}"))?;
+        *self.core.last_used.lock().unwrap() = Instant::now();
+        Ok(wav.len())
+    }
+
     /// Derselbe Satz für jede Stimme — nur so vergleicht man Stimmen und nicht
     /// zwei verschiedene Aufnahmen. Bewusst kurz und vollständig: Klangfarbe,
     /// Tempo und Satzmelodie hört man an einem Satz, nicht an einem Wort.
@@ -2018,11 +2121,17 @@ impl TtsManager {
     /// Der Name behält das Präfix `torchinductor_`, weil die Reparatur in
     /// [`compile_cache`] nur in solchen Verzeichnissen etwas löscht.
     fn inductor_cache_dir(&self) -> Option<std::path::PathBuf> {
+        Some(self.data_base_dir()?.join("torchinductor_cache"))
+    }
+
+    /// Basis des App-Datenverzeichnisses (portable-bewusst) — darunter
+    /// liegen tts_cache, torchinductor_cache und die Piper-Ablage
+    /// (`tts/piper/…`, Vertrag siehe [`piper`]).
+    fn data_base_dir(&self) -> Option<std::path::PathBuf> {
         use tauri::Manager;
-        let base = crate::portable::data_dir()
+        crate::portable::data_dir()
             .cloned()
-            .or_else(|| self.app.path().app_local_data_dir().ok())?;
-        Some(base.join("torchinductor_cache"))
+            .or_else(|| self.app.path().app_local_data_dir().ok())
     }
 
     /// Einen vorhandenen Cache aus `%TEMP%` an den neuen Ort holen.
@@ -2195,6 +2304,12 @@ impl TtsManager {
     /// `core.voice` auf die Seed-Referenz setzen, wenn keine Stimme gewaehlt
     /// ist. Vor jedem Sprechlauf aufgerufen, nachdem der Server steht.
     async fn bind_seed_voice(&self) {
+        // Seed-Referenzen sind eine Fish-Faehigkeit (Cloning). Bei anderen
+        // Engines laeuft kein Server — der HTTP-Versuch dahinter waere ein
+        // sinnloser Fehlschlag je Sprechlauf.
+        if self.core.engine_kind() != TtsEngineKind::Fish {
+            return;
+        }
         if self.core.voice.lock().unwrap().is_some() {
             return;
         }
@@ -2315,7 +2430,11 @@ impl TtsManager {
             return Err("empty text".to_string());
         }
         self.refresh_from_settings();
-        self.ensure_server().await?;
+        // Die Bereitschaft durch die Naht, nicht Fish-hart: die Synthese
+        // unten läuft ohnehin über `fetch_wav` durch die aktive Engine —
+        // nur der Startpfad war bis Paket E2 auf den Fish-Server verdrahtet
+        // (und hätte bei Piper 180 s im Health-Timeout gehangen).
+        self.ensure_engine_ready().await?;
         self.bind_seed_voice().await;
         let port = *self.core.port.lock().unwrap();
         let seed = *self.core.seed.lock().unwrap();
@@ -2765,10 +2884,15 @@ impl TtsManager {
         if let Some(voice) = voice_override {
             *self.core.voice.lock().unwrap() = Some(voice.to_string());
         }
-        let already_running = self.core.ensure_server_core().await.is_ok();
+        // Der Health-Poll und das "läuft schon"-Konzept gehören zum
+        // Fish-Server; bei Piper gibt es keinen Prozess, der schon laufen
+        // könnte — dort misst der Startanteil nur den Pfad-Check (~0 ms)
+        // und der Fish-Server bleibt aus.
+        let fish = self.core.engine_kind() == TtsEngineKind::Fish;
+        let already_running = fish && self.core.ensure_server_core().await.is_ok();
         let start = Instant::now();
         if !already_running {
-            self.ensure_server().await?;
+            self.ensure_engine_ready().await?;
         }
         let server_start_ms = if already_running {
             0
@@ -3465,10 +3589,11 @@ mod tests {
         );
     }
 
-    /// Standard und Rückfall: der Kern startet mit Fish, und `Piper` fällt
-    /// bis zu seinem Paket auf Fish zurück — samt Legacy-Cache-Tag.
+    /// Der Kern startet mit Fish (samt Legacy-Cache-Tag) — und eine
+    /// Piper-Wahl BLEIBT Piper, auch wenn Binary/Stimme fehlen: kein
+    /// stiller Rückfall auf die GPU-Engine mehr (Review-Befund zu A3/E1).
     #[test]
-    fn die_fish_engine_ist_standard_und_piper_faellt_auf_sie_zurueck() {
+    fn die_fish_engine_ist_standard_und_eine_piper_wahl_bleibt_piper() {
         let core = TtsCore::for_test(1);
         assert_eq!(core.engine_kind(), TtsEngineKind::Fish);
         assert!(core.engine_caps().needs_gpu);
@@ -3477,11 +3602,36 @@ mod tests {
             "",
             "Fish trägt den leeren Legacy-Tag"
         );
-        core.set_engine_kind(TtsEngineKind::Piper);
-        assert_eq!(
-            core.engine_kind(),
-            TtsEngineKind::Fish,
-            "die Piper-Implementierung folgt im nächsten Paket"
+        core.set_engine(
+            TtsEngineKind::Piper,
+            Some(piper::PiperEngine::resolve(None, Some("eva"))),
         );
+        assert_eq!(core.engine_kind(), TtsEngineKind::Piper);
+        assert!(!core.engine_caps().needs_gpu, "Piper ist die CPU-Engine");
+        assert_eq!(
+            core.engine_cache_tag(Some("patrick")),
+            "piper/eva",
+            "der Tag trägt die Piper-Stimme, nicht die Fish-Referenz"
+        );
+        core.set_engine(TtsEngineKind::Fish, None);
+        assert_eq!(core.engine_kind(), TtsEngineKind::Fish, "und zurück");
+    }
+
+    /// Eine gewählte, aber nicht einsatzbereite Piper-Engine meldet ihre
+    /// konstante Fehler-ID — statt heimlich über Fish zu synthetisieren
+    /// (Port 1: ein Fish-Versuch ergäbe einen Verbindungsfehler, keinen
+    /// Piper-Text).
+    #[tokio::test]
+    async fn eine_unaufgeloeste_piper_engine_faellt_beim_sprechen_nicht_auf_fish_zurueck() {
+        let core = TtsCore::for_test(1);
+        core.set_engine(
+            TtsEngineKind::Piper,
+            Some(piper::PiperEngine::resolve(None, None)),
+        );
+        let err = core
+            .speak_core("Dieser Satz verlangt die Piper-Engine.")
+            .await
+            .unwrap_err();
+        assert_eq!(err, piper::ERR_BINARY_MISSING);
     }
 }

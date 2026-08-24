@@ -1,11 +1,14 @@
-//! Engine-Abstraktion des Vorlesens (Paket A3).
+//! Engine-Abstraktion des Vorlesens (Paket A3, Piper seit Paket E2).
 //!
-//! Hier liegt die NAHT, an der im nächsten Paket eine zweite Engine (Piper,
-//! CPU) andocken kann, ohne dass die Satz-Pipeline, die Caches oder der
-//! Server-Lebenszyklus in `mod.rs` umgebaut werden müssen. Fish-Verhalten
-//! bleibt bit-identisch: `FishEngine` ist ein dünner Wrapper, der an die
-//! BESTEHENDEN Pfade delegiert (HTTP-POST in `TtsCore::fish_synthesize`,
-//! Startlogik in `TtsManager::ensure_server`).
+//! Hier liegt die NAHT, über die neben Fish Speech eine zweite Engine
+//! ([`super::piper::PiperEngine`], CPU) spricht, ohne dass die
+//! Satz-Pipeline, die Caches oder der Server-Lebenszyklus in `mod.rs`
+//! umgebaut werden mussten. Fish-Verhalten bleibt bit-identisch: der Kern
+//! dispatcht Fish direkt auf die BESTEHENDEN Pfade (HTTP-POST in
+//! `TtsCore::fish_synthesize`, Startlogik in `TtsManager::ensure_server`).
+//! Der frühere `FishEngine`-Wrapper ist entfallen: sein `synthesize` zog
+//! den Port aus einer eigenen Quelle und lief in Produktion nie — toter
+//! Code mit Drift-Risiko (Review-Befund zu A3/E1).
 //!
 //! ## Entscheidung: async ohne `async-trait`, Dispatch per Enum
 //!
@@ -20,8 +23,7 @@
 //! Fish-Synthese `&TtsCore` braucht (HTTP-Client, Port, Caches) — ein
 //! besitzendes Trait-Objekt im Kern ergäbe eine Besitz-Schleife.
 
-/// Welche Synthese-Engine spricht. `Piper` existiert als Wert bereits —
-/// die Implementierung folgt im nächsten Paket.
+/// Welche Synthese-Engine spricht.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type,
 )]
@@ -44,8 +46,8 @@ impl TtsEngineKind {
 /// Was eine Engine kann. Die Oberfläche und der Manager entscheiden daran,
 /// welche Bedienelemente sinnvoll sind und ob die GPU als belegt gilt.
 ///
-/// dead_code: außer `needs_gpu` liest die Felder erst das Piper-/UI-Paket —
-/// die Naht definiert den Vertrag trotzdem schon vollständig.
+/// dead_code: außer `needs_gpu` liest die Felder erst das UI-Paket (E4) —
+/// der Vertrag ist trotzdem schon vollständig definiert.
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct EngineCaps {
@@ -75,9 +77,10 @@ pub struct SynthesisRequest<'a> {
     pub text: &'a str,
     pub voice: Option<&'a str>,
     pub seed: i64,
-    /// Fish: ignoriert (immer `None`) — Tempo regelt dort die Wiedergabe.
-    /// Piper später: `length_scale`. Bis dahin liest das Feld niemand:
-    #[allow(dead_code)]
+    /// Fish: ignoriert. Piper: wird zu `--length_scale` (Kehrwert, geklemmt).
+    /// Der Kern übergibt heute für BEIDE Engines `None`: das Tempo regelt
+    /// einheitlich die Wiedergabe — eingebacken läge es dauerhaft im Cache
+    /// und gälte doppelt (der Player skaliert bereits).
     pub speed: Option<f32>,
 }
 
@@ -85,10 +88,10 @@ pub struct SynthesisRequest<'a> {
 /// wer bist du, was kannst du, wie heißt dein Cache-Fach, bist du bereit,
 /// und: sprich diesen Satz.
 ///
-/// dead_code: in Produktion läuft heute nur `ensure_ready` über den Trait
-/// (der Kern dispatcht Fish per Enum direkt); die übrigen Methoden gehen mit
-/// der Piper-Engine in Betrieb und werden bis dahin von der Mock-Engine der
-/// Tests ausgeübt.
+/// In Produktion übt die Piper-Engine den Trait aus (Fish dispatcht der
+/// Kern per Enum direkt auf seine bestehenden Pfade); in den Tests
+/// zusätzlich die Mock-Engine. dead_code: `shutdown` ruft heute niemand —
+/// der Server-Lebenszyklus gehört dem Manager.
 #[allow(dead_code)]
 pub trait TtsEngine: Send + Sync {
     fn kind(&self) -> TtsEngineKind;
@@ -115,49 +118,6 @@ pub trait TtsEngine: Send + Sync {
 /// Die Stimme braucht der Tag nicht: sie steckt bereits selbst im Schlüssel.
 pub fn fish_cache_tag(_voice: Option<&str>) -> String {
     String::new()
-}
-
-/// Fish Speech als [`TtsEngine`]: ein dünner, leihender Wrapper über die
-/// bestehenden Pfade. Server-Spawn, Health-Poll und Doppelstart-Schutz
-/// bleiben im Manager, der HTTP-POST im Kern — hier wird nur delegiert.
-pub struct FishEngine<'a> {
-    manager: &'a super::TtsManager,
-}
-
-impl<'a> FishEngine<'a> {
-    pub fn new(manager: &'a super::TtsManager) -> Self {
-        Self { manager }
-    }
-}
-
-impl TtsEngine for FishEngine<'_> {
-    fn kind(&self) -> TtsEngineKind {
-        TtsEngineKind::Fish
-    }
-
-    fn caps(&self) -> EngineCaps {
-        FISH_CAPS
-    }
-
-    fn cache_tag(&self, voice: Option<&str>) -> String {
-        fish_cache_tag(voice)
-    }
-
-    /// Delegiert an die bestehende Startlogik: adoptieren oder spawnen,
-    /// samt Compile-Cache-Reparatur und Doppelstart-Schutz.
-    async fn ensure_ready(&self) -> Result<(), String> {
-        self.manager.ensure_server().await
-    }
-
-    /// Delegiert an den bestehenden HTTP-Pfad des Kerns. `speed` ignoriert
-    /// Fish bewusst — das Tempo regelt die Wiedergabe, nicht die Synthese.
-    async fn synthesize(&self, req: SynthesisRequest<'_>) -> Result<Vec<u8>, String> {
-        let port = *self.manager.core.port.lock().unwrap();
-        self.manager.core.fish_synthesize(port, req).await
-    }
-
-    // shutdown(): bewusst der leere Default — der Server-Lebenszyklus
-    // (Idle-Watchdog, Exit-Teardown) gehört dem Manager, nicht dem Wrapper.
 }
 
 #[cfg(test)]
