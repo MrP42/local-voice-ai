@@ -156,8 +156,26 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
         onClose();
       }
     };
+    // Wheel geht durch das Backdrop hindurch: scrollt die Seite, stünde das
+    // fixierte Menü an veralteten Viewport-Koordinaten — schließen. Scrollen
+    // INNERHALB des Menüs (Tag-Liste) bleibt davon unberührt. capture, weil
+    // scroll-Ereignisse nicht bubbeln.
+    const onScroll = (event: Event) => {
+      if (
+        menuRef.current &&
+        event.target instanceof Node &&
+        menuRef.current.contains(event.target)
+      ) {
+        return;
+      }
+      onClose();
+    };
     document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
+    document.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("scroll", onScroll, true);
+    };
   }, [onClose]);
 
   const moveFocus = (direction: 1 | -1) => {

@@ -77,8 +77,10 @@ export interface ChipEditorInsertApi {
   insertAtCursor(text: string): void;
   /** Optionale Erweiterung über den Vertrag hinaus (Palette-Drag):
    *  Einfügen an Viewport-Koordinaten. `false`, wenn der Punkt nicht über
-   *  dem Editor liegt. */
-  insertAtPoint(x: number, y: number, text: string): boolean;
+   *  dem Editor liegt. Optionales Member, damit ein wörtlich gegen den
+   *  Brief-Vertrag (`{ insertAtCursor }`) typisierter Consumer kompiliert —
+   *  dieser Editor stellt es immer bereit. */
+  insertAtPoint?(x: number, y: number, text: string): boolean;
 }
 
 interface TtsChipEditorProps {
@@ -173,11 +175,26 @@ const AnchoredPopover: React.FC<{
         onClose();
       }
     };
+    // Scrollt die SEITE (nicht eine Liste im Popover selbst), stünde das
+    // fixierte Popover an veralteten Viewport-Koordinaten — schließen.
+    // capture, weil scroll-Ereignisse nicht bubbeln.
+    const onScroll = (event: Event) => {
+      if (
+        ref.current &&
+        event.target instanceof Node &&
+        ref.current.contains(event.target)
+      ) {
+        return;
+      }
+      onClose();
+    };
     document.addEventListener("keydown", onKey, true);
     document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("scroll", onScroll, true);
     return () => {
       document.removeEventListener("keydown", onKey, true);
       document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("scroll", onScroll, true);
     };
   }, [onClose]);
 
@@ -554,6 +571,18 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     return () => document.removeEventListener("selectionchange", handler);
   }, [detectAutocomplete]);
 
+  // Scrollt die SEITE (oder irgendein Container darüber), wandert der
+  // Caret-Anker im Viewport mit — das offene Autocomplete misst neu
+  // (capture, weil scroll-Ereignisse nicht bubbeln). Die eigene textarea
+  // ist über handleScroll ohnehin abgedeckt; ein doppeltes tick++ ist
+  // harmlos, der Rect-Vergleich verhindert Zustands-Flattern.
+  useEffect(() => {
+    if (!ac) return;
+    const onAnyScroll = () => setTick((n) => n + 1);
+    document.addEventListener("scroll", onAnyScroll, true);
+    return () => document.removeEventListener("scroll", onAnyScroll, true);
+  }, [ac]);
+
   // ---- Mirror-Segmente ----------------------------------------------------
 
   const segments = useMemo<Segment[]>(() => {
@@ -737,14 +766,16 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     setMenu({ x, y, selStart: ta.selectionStart, selEnd: ta.selectionEnd });
   };
 
+  // preventScroll: Ein Schließen durch Seiten-Scroll darf den Viewport
+  // nicht zurück zur textarea reißen.
   const closePopover = useCallback(() => {
     setPopover(null);
-    taRef.current?.focus();
+    taRef.current?.focus({ preventScroll: true });
   }, []);
 
   const closeMenu = useCallback(() => {
     setMenu(null);
-    taRef.current?.focus();
+    taRef.current?.focus({ preventScroll: true });
   }, []);
 
   // Textänderungen machen gespeicherte Match-Offsets ungültig — Popover zu.

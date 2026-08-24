@@ -913,7 +913,7 @@ export const TtsSettings = () => {
                 editorApiRef.current?.insertAtCursor(tagText)
               }
               onDragInsert={(x, y, tagText) =>
-                editorApiRef.current?.insertAtPoint(x, y, tagText) ?? false
+                editorApiRef.current?.insertAtPoint?.(x, y, tagText) ?? false
               }
             />
 
