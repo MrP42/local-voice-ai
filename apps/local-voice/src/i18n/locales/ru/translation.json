@@ -19,6 +19,34 @@
     "about": "О программе",
     "meetings": "Meetings"
   },
+  "tts": {
+    "tags": {
+      "title": "Tags",
+      "searchPlaceholder": "Search tags…",
+      "collapse": "Collapse tag palette",
+      "expand": "Expand tag palette",
+      "favorites": "Favorites",
+      "recent": "Recent",
+      "tabsAriaLabel": "Tag categories",
+      "categories": {
+        "emotionBasic": "Basic emotions",
+        "emotionAdvanced": "Advanced emotions",
+        "tone": "Tone",
+        "dynamics": "Dynamics",
+        "effects": "Effects",
+        "pauses": "Pauses",
+        "special": "Special"
+      },
+      "customPlaceholder": "Custom tag…",
+      "customInsert": "Insert",
+      "customHint": "Free-form text works too — Fish Speech S2-Pro understands tags beyond this list.",
+      "emptyFavorites": "No favorites yet — click the star on a tag to pin it here.",
+      "emptyRecent": "Nothing used yet.",
+      "emptySearch": "No tags match your search.",
+      "favoriteAdd": "Add \"{{tag}}\" to favorites",
+      "favoriteRemove": "Remove \"{{tag}}\" from favorites"
+    }
+  },
   "onboarding": {
     "subtitle": "Для начала выберите модель транскрипции",
     "existingModelsTitle": "Compatible Models",

@@ -576,6 +576,11 @@ pub struct AppSettings {
     /// Dokumente (txt/md/pdf/docx). Benutzer-Registry, kein Admin nötig.
     #[serde(default)]
     pub tts_context_menu: bool,
+    /// T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
+    /// Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die
+    /// Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
+    #[serde(default)]
+    pub tts_tag_favorites: Vec<String>,
     /// M8 Meetings: wie lange Audiodateien nach einer Aufnahme/einem Import
     /// aufbewahrt werden, bevor sie hart gelöscht werden. Default: sobald ein
     /// Protokoll existiert (Spec Default-Verhalten).
@@ -1241,6 +1246,7 @@ pub fn get_default_settings() -> AppSettings {
         tts_speed: default_tts_speed(),
         tts_export_format: default_tts_export_format(),
         tts_context_menu: false,
+        tts_tag_favorites: Vec::new(),
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,

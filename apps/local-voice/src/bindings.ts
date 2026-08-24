@@ -189,6 +189,14 @@ async changeTtsContextMenuSetting(value: boolean) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
+async changeTtsTagFavoritesSetting(value: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_favorites_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeOverlayPositionSetting(position: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_overlay_position_setting", { position }) };
@@ -1831,7 +1839,13 @@ tts_export_format?: string;
  * Windows-Explorer-Kontextmenü „Mit Local Voice AI vorlesen" für
  * Dokumente (txt/md/pdf/docx). Benutzer-Registry, kein Admin nötig.
  */
-tts_context_menu?: boolean; 
+tts_context_menu?: boolean;
+/**
+ * T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
+ * Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die
+ * Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
+ */
+tts_tag_favorites?: string[];
 /**
  * M8 Meetings: wie lange Audiodateien nach einer Aufnahme/einem Import
  * aufbewahrt werden, bevor sie hart gelöscht werden. Default: sobald ein
