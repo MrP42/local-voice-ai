@@ -142,9 +142,15 @@ jobs:
       - name: Fetch Silero VAD model
         shell: pwsh
         run: |
+          # Third-party host -> pinned SHA-256: a swapped model fails the
+          # build instead of shipping inside the installer.
+          $ErrorActionPreference = 'Stop'
+          $vadSha256 = "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28"
           New-Item -ItemType Directory -Force src-tauri/resources/models | Out-Null
-          Invoke-WebRequest -Uri "https://blob.handy.computer/silero_vad_v4.onnx" `
-            -OutFile "src-tauri/resources/models/silero_vad_v4.onnx"
+          $out = "src-tauri/resources/models/silero_vad_v4.onnx"
+          Invoke-WebRequest -Uri "https://blob.handy.computer/silero_vad_v4.onnx" -OutFile $out
+          $actual = (Get-FileHash $out -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $vadSha256) { throw "silero_vad_v4.onnx hash mismatch: $actual" }
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile

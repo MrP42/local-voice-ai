@@ -85,16 +85,21 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Microsoft's ONNX Runtime build for Intel Macs (mirrors the inherited
-      # Handy build.yml step): pyke's default download does not serve a
-      # cross-compile-safe x86_64 dylib here, and the versioned dylib must be
-      # bundled as a framework to satisfy the @rpath install name.
+      # ONNX Runtime for Intel Macs (mirrors the inherited Handy build.yml
+      # step): Microsoft ships no osx-x86_64 asset for this version anymore,
+      # so the tarball comes from upstream Handy's blob store — a third-party
+      # host, hence the pinned SHA-256 (integrity anchor lives in this repo;
+      # a swapped tarball fails the build instead of shipping in the DMG).
+      # The versioned dylib must be bundled as a framework to satisfy the
+      # @rpath install name.
       - name: Install ONNX Runtime (x86_64 only)
         if: matrix.target == 'x86_64-apple-darwin'
         shell: bash
         run: |
           ORT_VERSION="1.24.2"
+          ORT_SHA256="590cee05699047b85e4a8115b4cec792073c2972ce78de383356a552a296a9c4"
           curl -fL -o ort.tgz "https://blob.handy.computer/onnxruntime-osx-x86_64-${ORT_VERSION}.tgz"
+          echo "${ORT_SHA256}  ort.tgz" | shasum -a 256 -c -
           tar xzf ort.tgz
           ORT_DIR="$(pwd)/onnxruntime-osx-x86_64-${ORT_VERSION}"
           echo "ORT_LIB_LOCATION=$ORT_DIR/lib" >> $GITHUB_ENV
@@ -104,13 +109,16 @@ jobs:
             src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
 
       # Not in git (gitignored *.onnx-class binaries); the app cannot compile
-      # without it (see AGENTS.md, "Model Setup").
+      # without it (see AGENTS.md, "Model Setup"). Third-party host → pinned
+      # SHA-256, same rationale as the ONNX Runtime step above.
       - name: Fetch Silero VAD model
         shell: bash
         run: |
+          VAD_SHA256="a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28"
           mkdir -p src-tauri/resources/models
           curl -fL -o src-tauri/resources/models/silero_vad_v4.onnx \
             https://blob.handy.computer/silero_vad_v4.onnx
+          echo "${VAD_SHA256}  src-tauri/resources/models/silero_vad_v4.onnx" | shasum -a 256 -c -
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
