@@ -61,13 +61,15 @@ export const TtsSettings = () => {
     "tts.activePage",
     "",
   );
+  // Beide Seitenspalten starten eingeklappt: der Lesetext ist die Arbeit,
+  // die Spalten sind Navigation. Wer sie aufklappt, behaelt das (persistent).
   const [pagesCollapsed, setPagesCollapsed] = usePersistentState<string>(
     "tts.pagesCollapsed",
-    "0",
+    "1",
   );
   const [filesCollapsed, setFilesCollapsed] = usePersistentState<string>(
     "tts.filesCollapsed",
-    "0",
+    "1",
   );
   /** Erst nach dem Laden einer Seite darf gespeichert werden — sonst
    *  ueberschriebe der leere Anfangszustand den echten. */

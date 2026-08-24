@@ -343,9 +343,13 @@ function App() {
                 className={`flex flex-col w-full mx-auto p-3 sm:p-4 gap-4 min-w-0 ${
                   // Vorlesen ist eine dreispaltige Arbeitsflaeche (Seiten,
                   // Inhalt, Dateien) — der Lese-Deckel wuerde dort die MITTE
-                  // verjuengen, denn die Leisten haben feste Breiten. Alle
+                  // verjuengen, denn die Leisten haben feste Breiten.
+                  // Besprechungen sind ebenfalls eine Arbeitsflaeche (Liste,
+                  // Transkript, Protokoll) und nutzen die volle Breite. Alle
                   // anderen Bereiche behalten die lesefreundliche Obergrenze.
-                  currentSection === "tts" ? "" : "max-w-5xl"
+                  currentSection === "tts" || currentSection === "meetings"
+                    ? ""
+                    : "max-w-5xl"
                 }`}
               >
                 <AccessibilityPermissions />

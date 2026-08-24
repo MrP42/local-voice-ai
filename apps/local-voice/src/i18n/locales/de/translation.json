@@ -917,7 +917,8 @@
         "focus_changed_during_paste": "Der Fokus wechselte während des Einfügens in ein anderes Fenster.",
         "target_elevated": "Die Zielanwendung läuft mit Administratorrechten; Windows blockiert Eingaben von Local Voice AI.",
         "injection_failed": "Der Tastendruck zum Einfügen ließ sich nicht zustellen.",
-        "clipboard_unverified": "Der Text ließ sich nicht nachweisbar in die Zwischenablage legen."
+        "clipboard_unverified": "Der Text ließ sich nicht nachweisbar in die Zwischenablage legen.",
+        "accessibility_denied": "macOS blockiert simulierte Tastatureingaben: Local Voice AI braucht die Bedienungshilfen-Berechtigung (Systemeinstellungen > Datenschutz & Sicherheit > Bedienungshilfen). Nach einem Update muss die Berechtigung neu erteilt werden."
       }
     }
   },

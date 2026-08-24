@@ -52,6 +52,7 @@ fn paste_fallback_reason(reason: PasteFallback) -> &'static str {
         PasteFallback::FocusChangedDuringPaste => "focus_changed_during_paste",
         PasteFallback::TargetElevated => "target_elevated",
         PasteFallback::InjectionFailed => "injection_failed",
+        PasteFallback::AccessibilityDenied => "accessibility_denied",
         PasteFallback::ClipboardUnverified => "clipboard_unverified",
     }
 }

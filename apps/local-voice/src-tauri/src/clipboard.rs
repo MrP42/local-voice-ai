@@ -622,6 +622,17 @@ pub enum GuardedPasteOutcome {
     Fallback(PasteFallback),
 }
 
+/// `AXIsProcessTrusted` — whether macOS lets this process post synthetic
+/// input events. Querying it does NOT show the permission prompt.
+#[cfg(target_os = "macos")]
+fn macos_accessibility_trusted() -> bool {
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrusted() -> u8;
+    }
+    unsafe { AXIsProcessTrusted() != 0 }
+}
+
 /// Write `text` to the clipboard and verify it landed there by reading it
 /// back. One silent retry, because another process can hold the clipboard
 /// open for a moment.
@@ -658,9 +669,44 @@ pub fn paste_transcript_guarded(
     target: Option<PasteTarget>,
 ) -> GuardedPasteOutcome {
     if !cfg!(target_os = "windows") {
-        return match paste(text, app_handle) {
+        let settings = get_settings(&app_handle);
+        if settings.paste_method == PasteMethod::None {
+            // Parity with the Windows branch below: honour the opt-in
+            // copy-to-clipboard side effect instead of dropping the text.
+            if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
+                let _ = app_handle.clipboard().write_text(&text);
+            }
+            return GuardedPasteOutcome::NothingToDo;
+        }
+
+        // Without the Accessibility permission macOS drops synthetic
+        // keystrokes WITHOUT an error: paste() would report success, and its
+        // clipboard-restore step would then remove the transcript again —
+        // the text would survive only in history. Park it instead and tell
+        // the user what is missing. (Ad-hoc-signed builds lose the granted
+        // permission on every update, so this is a common state, not an
+        // edge case.)
+        #[cfg(target_os = "macos")]
+        if !macos_accessibility_trusted() {
+            warn!("paste: macOS Accessibility permission missing — parking transcript in clipboard");
+            if write_clipboard_verified(&app_handle, &text) {
+                return GuardedPasteOutcome::Fallback(PasteFallback::AccessibilityDenied);
+            }
+            return GuardedPasteOutcome::Fallback(PasteFallback::ClipboardUnverified);
+        }
+
+        return match paste(text.clone(), app_handle.clone()) {
             Ok(()) => GuardedPasteOutcome::Pasted,
-            Err(_) => GuardedPasteOutcome::Fallback(PasteFallback::InjectionFailed),
+            Err(_) => {
+                // The legacy path restores or clears the clipboard on its way
+                // out; re-park the transcript so the fallback notice's "press
+                // Cmd+V" claim is actually true.
+                if write_clipboard_verified(&app_handle, &text) {
+                    GuardedPasteOutcome::Fallback(PasteFallback::InjectionFailed)
+                } else {
+                    GuardedPasteOutcome::Fallback(PasteFallback::ClipboardUnverified)
+                }
+            }
         };
     }
 

@@ -920,7 +920,8 @@
         "focus_changed_during_paste": "The focus moved to a different window while inserting.",
         "target_elevated": "The target application runs with administrator rights; Windows blocks input from Local Voice AI.",
         "injection_failed": "The insertion keystroke could not be delivered.",
-        "clipboard_unverified": "The text could not be verifiably placed in the clipboard."
+        "clipboard_unverified": "The text could not be verifiably placed in the clipboard.",
+        "accessibility_denied": "macOS is blocking simulated keystrokes: Local Voice AI needs the Accessibility permission (System Settings > Privacy & Security > Accessibility). After an update the permission must be granted again."
       }
     }
   },

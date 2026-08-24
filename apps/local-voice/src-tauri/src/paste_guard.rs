@@ -31,6 +31,9 @@ pub(crate) enum PasteFallback {
     TargetElevated,
     /// The paste keystroke itself reported an error.
     InjectionFailed,
+    /// macOS refuses synthetic keystrokes without the Accessibility
+    /// permission — the event is dropped silently, so we do not even try.
+    AccessibilityDenied,
     /// The transcript could not be verifiably placed in the clipboard. The
     /// text then only survives in the history window.
     ClipboardUnverified,
@@ -228,6 +231,7 @@ mod tests {
         assert!(PasteFallback::FocusChanged.transcript_in_clipboard());
         assert!(PasteFallback::TargetElevated.transcript_in_clipboard());
         assert!(PasteFallback::InjectionFailed.transcript_in_clipboard());
+        assert!(PasteFallback::AccessibilityDenied.transcript_in_clipboard());
         assert!(PasteFallback::FocusChangedDuringPaste.transcript_in_clipboard());
         assert!(!PasteFallback::ClipboardUnverified.transcript_in_clipboard());
     }
