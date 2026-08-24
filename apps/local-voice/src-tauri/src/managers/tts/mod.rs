@@ -14,6 +14,7 @@ pub mod models;
 pub mod piper;
 pub mod player;
 pub mod protocol;
+pub mod registry;
 pub mod state;
 pub mod voices;
 
@@ -3036,6 +3037,231 @@ impl TtsManager {
             }
             let _ = child.wait();
         }
+    }
+
+    // ---- Sprecher-Registry (Paket B-S1) ------------------------------------
+
+    /// Alle bekannten Sprecher fuer den Sprecher-Parser
+    /// (`protocol::split_speaker_segments`): id und Anzeigename als Namen,
+    /// gegen die ein `<Name>`/`Name:`-Marker im Vorlesetext abgeglichen wird.
+    /// Nur nicht-interne Stimmen (siehe `voices::list_voices`).
+    pub fn known_speakers(&self) -> Vec<protocol::KnownSpeaker> {
+        let fish_dir = self.fish_dir();
+        voices::list_voices(&fish_dir)
+            .into_iter()
+            .map(|id| {
+                let meta = registry::read_meta(&fish_dir, &id);
+                protocol::KnownSpeaker {
+                    names: vec![id.clone(), meta.display_name],
+                    id,
+                }
+            })
+            .collect()
+    }
+
+    /// Alle Stimmen samt Metadaten, Herkunft und Avatar-Pfad — Grundlage der
+    /// Stimmenuebersicht.
+    pub fn list_voice_infos(&self) -> Vec<registry::VoiceInfo> {
+        let fish_dir = self.fish_dir();
+        voices::list_voices(&fish_dir)
+            .into_iter()
+            .map(|id| {
+                let meta = registry::read_meta(&fish_dir, &id);
+                let origin = match voices::read_seed_marker(&fish_dir, &id) {
+                    Some(seed) => registry::VoiceOrigin::Seed(seed),
+                    None => registry::VoiceOrigin::Recording,
+                };
+                let avatar_path =
+                    voices::avatar_path(&fish_dir, &id).map(|p| p.to_string_lossy().into_owned());
+                registry::VoiceInfo {
+                    id,
+                    meta,
+                    origin,
+                    avatar_path,
+                }
+            })
+            .collect()
+    }
+
+    /// Metadaten einer Stimme lesen (Default, falls keine `meta.json`
+    /// existiert). Lehnt Pfad-Traversal UND unbekannte Stimmen ab — siehe
+    /// `registry::require_known_voice`.
+    pub fn get_voice_meta(&self, id: &str) -> Result<registry::VoiceMeta, String> {
+        registry::get_voice_meta_checked(&self.fish_dir(), id)
+    }
+
+    /// Metadaten einer Stimme validieren und speichern.
+    pub fn set_voice_meta(&self, id: &str, meta: registry::VoiceMeta) -> Result<(), String> {
+        registry::set_voice_meta_checked(&self.fish_dir(), id, meta)
+    }
+
+    /// Avatar-Datei einer Stimme setzen/ersetzen (und `meta.avatar`
+    /// mitfuehren). `ext` ohne Punkt (`png`/`webp`/`jpg`). Bytes kommen roh
+    /// (kein Base64 — siehe `voices::save_avatar`).
+    pub fn set_voice_avatar(&self, id: &str, bytes: Vec<u8>, ext: &str) -> Result<(), String> {
+        registry::set_voice_avatar_checked(&self.fish_dir(), id, &bytes, ext)
+    }
+
+    /// Avatar-Datei einer Stimme entfernen (und `meta.avatar` zuruecksetzen,
+    /// falls er ein Bild war).
+    pub fn clear_voice_avatar(&self, id: &str) -> Result<(), String> {
+        registry::clear_voice_avatar_checked(&self.fish_dir(), id)
+    }
+
+    /// Die einbehaltene Referenzaufnahme (siehe `record_reference_stop`) als
+    /// Stil-Referenz einer Stimme speichern und in ihrer `meta.json`
+    /// eintragen (ersetzt einen vorhandenen Stil gleicher `style_id`).
+    ///
+    /// Anders als beim Speichern der Hauptreferenz gibt es hier keinen
+    /// Zwischenschritt zum Nachbearbeiten des Transkripts durch den Nutzer:
+    /// die STT laeuft genau hier, einmalig. Schlaegt sie fehl, bleibt das
+    /// Transkript leer — und `save_voice` lehnt eine leere Transkription ab,
+    /// genau wie bei jeder anderen Referenz.
+    pub fn save_style_reference(
+        &self,
+        voice: &str,
+        style_id: &str,
+        name: &str,
+    ) -> Result<(), String> {
+        use tauri::Manager;
+        let fish_dir = self.fish_dir();
+        // Traversal-/Existenzschutz fuer BEIDE Kennungen, ALS ALLERERSTES —
+        // per tempdir-Test in registry.rs belegt (`resolve_style_target`),
+        // dass ein Fehler hier `pending_reference` unangetastet laesst:
+        // diese Zeile kommt vor jedem Zugriff darauf.
+        let (voice, style_id) = registry::resolve_style_target(&fish_dir, voice, style_id)?;
+        let samples = self
+            .pending_reference
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| "keine Referenzaufnahme vorhanden".to_string())?;
+        let tm = self
+            .app
+            .state::<Arc<crate::managers::transcription::TranscriptionManager>>();
+        let transcript = tm.transcribe(samples.clone()).unwrap_or_default();
+        let reference = match voices::save_style_voice(
+            &fish_dir,
+            &voice,
+            &style_id,
+            &samples,
+            &transcript,
+            *self.core.enhance.lock().unwrap(),
+        ) {
+            Ok(reference) => reference,
+            Err(e) => {
+                *self.pending_reference.lock().unwrap() = Some(samples);
+                return Err(e);
+            }
+        };
+        let mut meta = registry::read_meta(&fish_dir, &voice);
+        meta.styles.retain(|s| s.id != style_id);
+        meta.styles.push(registry::VoiceStyle {
+            id: style_id,
+            name: name.to_string(),
+            tags: Vec::new(),
+            reference: Some(reference),
+        });
+        registry::write_meta(&fish_dir, &voice, &meta)
+    }
+
+    /// Einen Stil samt seiner Referenzaufnahme entfernen.
+    pub fn delete_style(&self, voice: &str, style_id: &str) -> Result<(), String> {
+        registry::delete_style_checked(&self.fish_dir(), voice, style_id)
+    }
+
+    /// Referenzaufnahme einer gespeicherten Stimme auf die Lautstaerke-
+    /// Heuristik hin analysieren (siehe `registry::analyze_reference`).
+    pub fn analyze_reference(&self, voice: &str) -> Result<registry::ReferenceAnalysis, String> {
+        registry::analyze_stored_reference(&self.fish_dir(), voice)
+    }
+
+    /// Wie `analyze_reference`, aber fuer die noch nicht gespeicherte,
+    /// einbehaltene Aufnahme (`pending_reference`) — fuer die Vorschau VOR
+    /// dem Speichern einer neuen Stimme.
+    pub fn analyze_pending_reference(&self) -> Result<registry::ReferenceAnalysis, String> {
+        let samples = self
+            .pending_reference
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| "keine Referenzaufnahme vorhanden".to_string())?;
+        Ok(registry::analyze_reference(&samples, 16_000))
+    }
+
+    /// Hoerprobe eines beliebigen Seeds, ohne ihn als Stimme zu sichern —
+    /// Verallgemeinerung von `ensure_seed_reference`/`synthesize_voice_demo`
+    /// mit explizitem Seed statt dem eingestellten. Liefert die WAV-Bytes
+    /// direkt, ohne sie im Hoerproben-Cache abzulegen: der Aufrufer
+    /// entscheidet erst danach, ob dieser Seed ueberhaupt eine Stimme wird.
+    pub async fn seed_preview(&self, seed: i64) -> Result<Vec<u8>, String> {
+        self.refresh_from_settings();
+        self.ensure_server().await?;
+        let port = *self.core.port.lock().unwrap();
+        let body = protocol::tts_request_body_in_format(Self::DEMO_TEXT, seed, None, "wav");
+        let resp = self
+            .core
+            .http
+            .post(format!("{}/v1/tts", protocol::base_url(port)))
+            .json(&body)
+            .timeout(TTS_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| format!("TTS request failed: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("TTS server answered {}", resp.status()));
+        }
+        let audio = resp.bytes().await.map_err(|e| e.to_string())?.to_vec();
+        if !protocol::looks_like_wav(&audio) {
+            return Err("TTS response is not a WAV file".to_string());
+        }
+        Ok(normalize_wav_bytes(&audio).unwrap_or(audio))
+    }
+
+    /// Wie `save_seed_voice`, aber mit explizitem Seed (statt dem
+    /// eingestellten) und mit `VoiceMeta` statt bloss einem Namen — die
+    /// Metadaten werden vor dem Speichern validiert.
+    pub async fn save_seed_voice_v2(
+        &self,
+        seed: i64,
+        display_name: &str,
+        meta: registry::VoiceMeta,
+    ) -> Result<String, String> {
+        let id = voices::sanitize_voice_id(display_name)
+            .ok_or_else(|| "Der Name ergibt keinen brauchbaren Stimmennamen".to_string())?;
+        let fish_dir = self.fish_dir();
+        if voices::voice_is_complete(&fish_dir, &id) {
+            return Err(format!("Die Stimme '{id}' existiert bereits"));
+        }
+        let others = registry::other_voice_names(&fish_dir, Some(&id));
+        registry::validate_meta(&meta, &others)?;
+
+        self.refresh_from_settings();
+        self.ensure_server().await?;
+        let port = *self.core.port.lock().unwrap();
+        let source_id = self
+            .ensure_seed_reference(port, seed)
+            .await
+            .ok_or_else(|| "Die Seed-Referenz liess sich nicht erzeugen".to_string())?;
+        let source = voices::voice_dir(&fish_dir, &source_id);
+        let target = voices::voice_dir(&fish_dir, &id);
+        std::fs::create_dir_all(&target)
+            .map_err(|e| format!("could not create {}: {e}", target.display()))?;
+        for file in ["sample.wav", "sample.lab"] {
+            if let Err(e) = std::fs::copy(source.join(file), target.join(file)) {
+                // Unvollstaendiges Verzeichnis nicht stehen lassen — sonst
+                // meldet `voice_is_complete` beim naechsten Versuch
+                // faelschlich "existiert bereits" fuer eine Stimme, die nie
+                // fertig wurde.
+                let _ = std::fs::remove_dir_all(&target);
+                return Err(format!("could not copy {file}: {e}"));
+            }
+        }
+        voices::write_seed_marker(&fish_dir, &id, seed);
+        registry::write_meta(&fish_dir, &id, &meta)?;
+        voices::update_registry(&fish_dir);
+        log::info!("Seed {seed} als Stimme '{id}' (mit Metadaten) gespeichert");
+        Ok(id)
     }
 }
 
