@@ -3000,10 +3000,11 @@ impl TtsManager {
     ) -> Result<(), String> {
         use tauri::Manager;
         let fish_dir = self.fish_dir();
-        // Traversal-/Existenzschutz fuer BEIDE Kennungen — vorher war nur
-        // `style_id` saniert, `voice` ging roh in den Pfad (Review-Befund).
-        let voice = registry::require_known_voice(&fish_dir, voice)?;
-        let style_id = registry::require_valid_id(style_id)?;
+        // Traversal-/Existenzschutz fuer BEIDE Kennungen, ALS ALLERERSTES —
+        // per tempdir-Test in registry.rs belegt (`resolve_style_target`),
+        // dass ein Fehler hier `pending_reference` unangetastet laesst:
+        // diese Zeile kommt vor jedem Zugriff darauf.
+        let (voice, style_id) = registry::resolve_style_target(&fish_dir, voice, style_id)?;
         let samples = self
             .pending_reference
             .lock()

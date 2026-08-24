@@ -436,6 +436,23 @@ pub fn delete_style_checked(fish_dir: &Path, voice: &str, style_id: &str) -> Res
     write_meta(fish_dir, &voice, &meta)
 }
 
+/// Traversal-/Existenzschutz fuer `TtsManager::save_style_reference`,
+/// herausgezogen aus dem AppHandle-Teil (STT, `pending_reference`), damit
+/// er wie die uebrigen Guards per tempdir testbar ist — OHNE einen Mock-
+/// AppHandle. `save_style_reference` ruft dies als ALLERERSTES mit `?`;
+/// schlaegt es fehl, wird die einbehaltene Aufnahme gar nicht erst
+/// angefasst (`pending_reference` bleibt unveraendert), weil die Funktion
+/// gar nicht bis dorthin kommt.
+pub fn resolve_style_target(
+    fish_dir: &Path,
+    voice: &str,
+    style_id: &str,
+) -> Result<(String, String), String> {
+    let voice = require_known_voice(fish_dir, voice)?;
+    let style_id = require_valid_id(style_id)?;
+    Ok((voice, style_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -779,5 +796,35 @@ mod tests {
         assert!(delete_style_checked(fish, "geist", "stil").is_err());
         // Ein nicht existierender, aber gueltig geformter Stil ist ein No-op.
         assert!(delete_style_checked(fish, "anna", "nie-angelegt").is_ok());
+    }
+
+    #[test]
+    fn resolve_style_target_lehnt_traversal_und_unbekannte_stimmen_ab() {
+        // Belegt die Verdrahtungsreihenfolge in
+        // `TtsManager::save_style_reference`: diese Funktion ist der
+        // ALLERERSTE Aufruf dort, vor jedem Zugriff auf
+        // `pending_reference`/STT. Schlaegt sie fehl, kommt
+        // `save_style_reference` gar nicht erst dorthin — die einbehaltene
+        // Aufnahme bleibt unangetastet, weil der Code sie nie erreicht.
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        real_voice(fish, "anna");
+
+        for (voice, style_id) in [
+            ("../anna", "stil"),
+            ("anna", "../stil"),
+            ("anna\\x", "stil"),
+            ("anna", "a/b"),
+            ("geist", "stil"),
+        ] {
+            assert!(
+                resolve_style_target(fish, voice, style_id).is_err(),
+                "haette ('{voice}', '{style_id}') ablehnen muessen"
+            );
+        }
+        assert_eq!(
+            resolve_style_target(fish, "anna", "fluesternd").unwrap(),
+            ("anna".to_string(), "fluesternd".to_string())
+        );
     }
 }
