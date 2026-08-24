@@ -102,7 +102,7 @@
     },
     "permissions": {
       "title": "Cần cấp quyền",
-      "description": "Handy cần một số quyền để hoạt động bình thường.",
+      "description": "Local Voice AI cần một số quyền để hoạt động bình thường.",
       "microphone": {
         "title": "Quyền truy cập Micrô",
         "description": "Cần thiết để nghe giọng nói của bạn để chuyển đổi."
@@ -174,13 +174,13 @@
       "searchPlaceholder": "Tìm mô hình theo tên…",
       "rescan": {
         "label": "Quét lại",
-        "tooltip": "Quét lại các mô hình được thêm vào thư mục mô hình hoặc bộ nhớ đệm Hugging Face bên ngoài Handy"
+        "tooltip": "Quét lại các mô hình được thêm vào thư mục mô hình hoặc bộ nhớ đệm Hugging Face bên ngoài Local Voice AI"
       }
     },
     "general": {
       "title": "Chung",
       "shortcut": {
-        "title": "Phím tắt Handy",
+        "title": "Phím tắt Local Voice AI",
         "description": "Cấu hình phím tắt để kích hoạt ghi âm chuyển đổi giọng nói thành văn bản",
         "loading": "Đang tải phím tắt...",
         "none": "Chưa cấu hình phím tắt",
@@ -276,11 +276,11 @@
       },
       "autostart": {
         "label": "Khởi động cùng hệ thống",
-        "description": "Tự động khởi động Handy khi bạn đăng nhập vào máy tính."
+        "description": "Tự động khởi động Local Voice AI khi bạn đăng nhập vào máy tính."
       },
       "showTrayIcon": {
         "label": "Hiển thị biểu tượng khay",
-        "description": "Hiển thị biểu tượng Handy trong khay hệ thống."
+        "description": "Hiển thị biểu tượng Local Voice AI trong khay hệ thống."
       },
       "overlay": {
         "style": {
@@ -463,7 +463,7 @@
       },
       "updateChecks": {
         "label": "Kiểm tra cập nhật",
-        "description": "Tự động kiểm tra phiên bản mới của Handy"
+        "description": "Tự động kiểm tra phiên bản mới của Local Voice AI"
       },
       "soundTheme": {
         "label": "Chủ đề âm thanh",
@@ -542,11 +542,11 @@
       "title": "Giới thiệu",
       "version": {
         "title": "Phiên bản",
-        "description": "Phiên bản hiện tại của Handy"
+        "description": "Phiên bản hiện tại của Local Voice AI"
       },
       "appDataDirectory": {
         "title": "Thư mục dữ liệu ứng dụng",
-        "description": "Vị trí Handy lưu trữ dữ liệu"
+        "description": "Vị trí Local Voice AI lưu trữ dữ liệu"
       },
       "sourceCode": {
         "title": "Mã nguồn",
@@ -555,7 +555,7 @@
       },
       "supportDevelopment": {
         "title": "Hỗ trợ phát triển",
-        "description": "Giúp chúng tôi tiếp tục xây dựng Handy",
+        "description": "Giúp chúng tôi tiếp tục xây dựng Local Voice AI",
         "button": "Quyên góp"
       },
       "acknowledgments": {
@@ -563,12 +563,12 @@
         "ggml": {
           "title": "ggml",
           "description": "Suy luận hiệu suất cao của mô hình nhận dạng giọng nói tự động Whisper của OpenAI",
-          "details": "Handy sử dụng ggml để xử lý chuyển đổi giọng nói thành văn bản nhanh, cục bộ. Cảm ơn công việc tuyệt vời của Georgi Gerganov và các cộng tác viên."
+          "details": "Local Voice AI sử dụng ggml để xử lý chuyển đổi giọng nói thành văn bản nhanh, cục bộ. Cảm ơn công việc tuyệt vời của Georgi Gerganov và các cộng tác viên."
         }
       },
       "whatsNewUpdates": {
         "label": "Hiển thị điểm mới",
-        "description": "Hiển thị ghi chú phát hành sau khi Handy cập nhật"
+        "description": "Hiển thị ghi chú phát hành sau khi Local Voice AI cập nhật"
       }
     }
   },
@@ -595,7 +595,7 @@
     "noOptionsFound": "Không tìm thấy tùy chọn"
   },
   "accessibility": {
-    "permissionsDescription": "Handy cần quyền truy cập để gõ văn bản đã chuyển đổi.",
+    "permissionsDescription": "Local Voice AI cần quyền truy cập để gõ văn bản đã chuyển đổi.",
     "openSettings": "Mở Cài đặt Hệ thống"
   },
   "errors": {
@@ -618,11 +618,11 @@
   },
   "appLanguage": {
     "title": "Ngôn ngữ ứng dụng",
-    "description": "Thay đổi ngôn ngữ giao diện của Handy"
+    "description": "Thay đổi ngôn ngữ giao diện của Local Voice AI"
   },
   "theme": {
     "title": "Giao diện ứng dụng",
-    "description": "Chọn xem Handy theo chủ đề hệ thống hay giữ ở chế độ sáng hoặc tối",
+    "description": "Chọn xem Local Voice AI theo chủ đề hệ thống hay giữ ở chế độ sáng hoặc tối",
     "options": {
       "system": "Hệ thống",
       "light": "Sáng",
@@ -634,7 +634,7 @@
     "processing": "Đang xử lý..."
   },
   "whatsNew": {
-    "title": "Điểm mới trong Handy v{{version}}"
+    "title": "Điểm mới trong Local Voice AI v{{version}}"
   },
   "meetings": {
     "recordingIndicator": "Meeting recording is running",

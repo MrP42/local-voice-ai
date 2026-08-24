@@ -102,7 +102,7 @@
     },
     "permissions": {
       "title": "Требуются разрешения",
-      "description": "Handy требуются некоторые разрешения для корректной работы.",
+      "description": "Local Voice AI требуются некоторые разрешения для корректной работы.",
       "microphone": {
         "title": "Доступ к микрофону",
         "description": "Необходим для прослушивания вашего голоса для транскрипции."
@@ -174,13 +174,13 @@
       "searchPlaceholder": "Поиск моделей по имени…",
       "rescan": {
         "label": "Пересканировать",
-        "tooltip": "Пересканировать модели, добавленные в папку моделей или кэш Hugging Face вне Handy"
+        "tooltip": "Пересканировать модели, добавленные в папку моделей или кэш Hugging Face вне Local Voice AI"
       }
     },
     "general": {
       "title": "Общие",
       "shortcut": {
-        "title": "Ярлыки Handy",
+        "title": "Ярлыки Local Voice AI",
         "description": "Настройте сочетания клавиш для запуска записи речи в текст",
         "loading": "Загрузка ярлыков...",
         "none": "Ярлыки не настроены",
@@ -276,11 +276,11 @@
       },
       "autostart": {
         "label": "Запускать при старте",
-        "description": "Автоматически запускать Handy при входе в систему."
+        "description": "Автоматически запускать Local Voice AI при входе в систему."
       },
       "showTrayIcon": {
         "label": "Показать значок в трее",
-        "description": "Отображать значок Handy в системном трее."
+        "description": "Отображать значок Local Voice AI в системном трее."
       },
       "overlay": {
         "style": {
@@ -463,7 +463,7 @@
       },
       "updateChecks": {
         "label": "Проверять наличие обновлений",
-        "description": "Автоматически проверять наличие новых версий Handy"
+        "description": "Автоматически проверять наличие новых версий Local Voice AI"
       },
       "soundTheme": {
         "label": "Звуковая тема",
@@ -542,11 +542,11 @@
       "title": "О программе",
       "version": {
         "title": "Версия",
-        "description": "Текущая версия Handy"
+        "description": "Текущая версия Local Voice AI"
       },
       "appDataDirectory": {
         "title": "Каталог данных приложения",
-        "description": "Место, где Handy хранит свои данные"
+        "description": "Место, где Local Voice AI хранит свои данные"
       },
       "sourceCode": {
         "title": "Исходный код",
@@ -555,7 +555,7 @@
       },
       "supportDevelopment": {
         "title": "Поддержка развития",
-        "description": "Помогите нам продолжать развитие Handy",
+        "description": "Помогите нам продолжать развитие Local Voice AI",
         "button": "Поддержать"
       },
       "acknowledgments": {
@@ -563,12 +563,12 @@
         "ggml": {
           "title": "ggml",
           "description": "Высокопроизводительная модель автоматического распознавания речи OpenAI Whisper",
-          "details": "Handy использует ggml для быстрого локального преобразования речи в текст. Спасибо великолепной работе Георгия Герганова и участников."
+          "details": "Local Voice AI использует ggml для быстрого локального преобразования речи в текст. Спасибо великолепной работе Георгия Герганова и участников."
         }
       },
       "whatsNewUpdates": {
         "label": "Показывать новинки",
-        "description": "Показывать примечания к выпуску после обновлений Handy"
+        "description": "Показывать примечания к выпуску после обновлений Local Voice AI"
       }
     }
   },
@@ -595,7 +595,7 @@
     "noOptionsFound": "Вариантов не найдено"
   },
   "accessibility": {
-    "permissionsDescription": "Handy необходимы разрешения на доступ для ввода расшифрованного текста.",
+    "permissionsDescription": "Local Voice AI необходимы разрешения на доступ для ввода расшифрованного текста.",
     "openSettings": "Открыть настройки системы"
   },
   "errors": {
@@ -618,11 +618,11 @@
   },
   "appLanguage": {
     "title": "Язык приложения",
-    "description": "Изменить язык интерфейса Handy"
+    "description": "Изменить язык интерфейса Local Voice AI"
   },
   "theme": {
     "title": "Тема приложения",
-    "description": "Выберите, следует ли Handy системной теме или остаётся светлым либо тёмным",
+    "description": "Выберите, следует ли Local Voice AI системной теме или остаётся светлым либо тёмным",
     "options": {
       "system": "Системная",
       "light": "Светлая",
@@ -634,7 +634,7 @@
     "processing": "Обработка..."
   },
   "whatsNew": {
-    "title": "Новое в Handy v{{version}}"
+    "title": "Новое в Local Voice AI v{{version}}"
   },
   "meetings": {
     "recordingIndicator": "Meeting recording is running",

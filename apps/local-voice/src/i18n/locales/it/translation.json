@@ -102,7 +102,7 @@
     },
     "permissions": {
       "title": "Permessi Richiesti",
-      "description": "Handy ha bisogno di alcuni permessi per funzionare correttamente.",
+      "description": "Local Voice AI ha bisogno di alcuni permessi per funzionare correttamente.",
       "microphone": {
         "title": "Accesso al Microfono",
         "description": "Necessario per sentire la tua voce per la trascrizione."
@@ -174,13 +174,13 @@
       "searchPlaceholder": "Cerca modelli per nome…",
       "rescan": {
         "label": "Riscansiona",
-        "tooltip": "Riscansiona per trovare modelli aggiunti alla cartella dei modelli o alla cache di Hugging Face al di fuori di Handy"
+        "tooltip": "Riscansiona per trovare modelli aggiunti alla cartella dei modelli o alla cache di Hugging Face al di fuori di Local Voice AI"
       }
     },
     "general": {
       "title": "Generale",
       "shortcut": {
-        "title": "Scorciatoie di Handy",
+        "title": "Scorciatoie di Local Voice AI",
         "description": "Configura le scorciatoie per attivare la trascrizione vocale",
         "loading": "Caricamento delle scorciatoie...",
         "none": "Nessuna scorciatoia configurata",
@@ -276,11 +276,11 @@
       },
       "autostart": {
         "label": "Avvia all'Accensione",
-        "description": "Avvia Handy automaticamente quando accedi al computer."
+        "description": "Avvia Local Voice AI automaticamente quando accedi al computer."
       },
       "showTrayIcon": {
         "label": "Mostra icona nella barra di sistema",
-        "description": "Mostra l'icona di Handy nella barra di sistema."
+        "description": "Mostra l'icona di Local Voice AI nella barra di sistema."
       },
       "overlay": {
         "style": {
@@ -463,7 +463,7 @@
       },
       "updateChecks": {
         "label": "Controlla aggiornamenti",
-        "description": "Controlla automaticamente la disponibilità di nuove versioni di Handy"
+        "description": "Controlla automaticamente la disponibilità di nuove versioni di Local Voice AI"
       },
       "soundTheme": {
         "label": "Tema Sonoro",
@@ -542,11 +542,11 @@
       "title": "Informazioni",
       "version": {
         "title": "Versione",
-        "description": "Versione attuale di Handy"
+        "description": "Versione attuale di Local Voice AI"
       },
       "appDataDirectory": {
         "title": "Cartella Dati App",
-        "description": "Cartella in cui Handy salva i dati"
+        "description": "Cartella in cui Local Voice AI salva i dati"
       },
       "sourceCode": {
         "title": "Codice Sorgente",
@@ -555,7 +555,7 @@
       },
       "supportDevelopment": {
         "title": "Supporta lo Sviluppo",
-        "description": "Aiutaci a sviluppare Handy",
+        "description": "Aiutaci a sviluppare Local Voice AI",
         "button": "Dona"
       },
       "acknowledgments": {
@@ -563,12 +563,12 @@
         "ggml": {
           "title": "ggml",
           "description": "Inferenza ad alte prestazioni del modello di riconoscimento vocale automatico Whisper di OpenAI",
-          "details": "Handy usa ggml per il riconoscimento vocale veloce in locale. Grazie a Georgi Gerganov e collaboratori per il fantastico lavoro."
+          "details": "Local Voice AI usa ggml per il riconoscimento vocale veloce in locale. Grazie a Georgi Gerganov e collaboratori per il fantastico lavoro."
         }
       },
       "whatsNewUpdates": {
         "label": "Mostra novità",
-        "description": "Mostra le note di rilascio dopo gli aggiornamenti di Handy"
+        "description": "Mostra le note di rilascio dopo gli aggiornamenti di Local Voice AI"
       }
     }
   },
@@ -595,7 +595,7 @@
     "noOptionsFound": "Nessuna opzione trovata"
   },
   "accessibility": {
-    "permissionsDescription": "Handy ha bisogno dei permessi di accessibilità per digitare il testo trascritto.",
+    "permissionsDescription": "Local Voice AI ha bisogno dei permessi di accessibilità per digitare il testo trascritto.",
     "openSettings": "Apri Impostazioni di Sistema"
   },
   "errors": {
@@ -618,11 +618,11 @@
   },
   "appLanguage": {
     "title": "Lingua Applicazione",
-    "description": "Cambia la lingua dell'interfaccia di Handy"
+    "description": "Cambia la lingua dell'interfaccia di Local Voice AI"
   },
   "theme": {
     "title": "Tema dell'applicazione",
-    "description": "Scegli se Handy segue il tema di sistema o resta chiaro o scuro",
+    "description": "Scegli se Local Voice AI segue il tema di sistema o resta chiaro o scuro",
     "options": {
       "system": "Sistema",
       "light": "Chiaro",
@@ -634,7 +634,7 @@
     "processing": "Elaborazione..."
   },
   "whatsNew": {
-    "title": "Novità in Handy v{{version}}"
+    "title": "Novità in Local Voice AI v{{version}}"
   },
   "meetings": {
     "recordingIndicator": "Meeting recording is running",

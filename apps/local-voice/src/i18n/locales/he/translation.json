@@ -102,7 +102,7 @@
     },
     "permissions": {
       "title": "נדרשות הרשאות",
-      "description": "Handy צריך כמה הרשאות כדי לעבוד כמו שצריך.",
+      "description": "Local Voice AI צריך כמה הרשאות כדי לעבוד כמו שצריך.",
       "microphone": {
         "title": "גישה למיקרופון",
         "description": "נדרש כדי לשמוע את הקול שלך לצורך תמלול."
@@ -162,7 +162,7 @@
     "general": {
       "title": "כללי",
       "shortcut": {
-        "title": "קיצורי מקשים של Handy",
+        "title": "קיצורי מקשים של Local Voice AI",
         "description": "הגדר קיצורי מקשים כדי להפעיל הקלטה ותמלול דיבור",
         "loading": "טוען קיצורי מקשים...",
         "none": "לא הוגדרו קיצורי מקשים",
@@ -215,7 +215,7 @@
       "searchPlaceholder": "חיפוש מודלים לפי שם…",
       "rescan": {
         "label": "סריקה מחדש",
-        "tooltip": "סריקה מחדש לאיתור מודלים שנוספו לתיקיית המודלים או למטמון של Hugging Face מחוץ ל-Handy"
+        "tooltip": "סריקה מחדש לאיתור מודלים שנוספו לתיקיית המודלים או למטמון של Hugging Face מחוץ ל-Local Voice AI"
       }
     },
     "sound": {
@@ -276,11 +276,11 @@
       },
       "autostart": {
         "label": "הפעל עם עליית המערכת",
-        "description": "הפעל את Handy אוטומטית כשאתה מתחבר למחשב."
+        "description": "הפעל את Local Voice AI אוטומטית כשאתה מתחבר למחשב."
       },
       "showTrayIcon": {
         "label": "הצג אייקון במגש",
-        "description": "הצג את האייקון של Handy במגש המערכת."
+        "description": "הצג את האייקון של Local Voice AI במגש המערכת."
       },
       "overlay": {
         "style": {
@@ -463,7 +463,7 @@
       },
       "updateChecks": {
         "label": "בדוק עדכונים",
-        "description": "בדוק אוטומטית אם קיימות גרסאות חדשות של Handy"
+        "description": "בדוק אוטומטית אם קיימות גרסאות חדשות של Local Voice AI"
       },
       "soundTheme": {
         "label": "ערכת צלילים",
@@ -542,11 +542,11 @@
       "title": "אודות",
       "version": {
         "title": "גרסה",
-        "description": "הגרסה הנוכחית של Handy"
+        "description": "הגרסה הנוכחית של Local Voice AI"
       },
       "appDataDirectory": {
         "title": "תיקיית נתוני אפליקציה",
-        "description": "המיקום שבו Handy שומר את הנתונים שלו"
+        "description": "המיקום שבו Local Voice AI שומר את הנתונים שלו"
       },
       "sourceCode": {
         "title": "קוד מקור",
@@ -555,7 +555,7 @@
       },
       "supportDevelopment": {
         "title": "תמיכה בפיתוח",
-        "description": "עזור לנו להמשיך לבנות את Handy",
+        "description": "עזור לנו להמשיך לבנות את Local Voice AI",
         "button": "תרומה"
       },
       "acknowledgments": {
@@ -563,12 +563,12 @@
         "ggml": {
           "title": "ggml",
           "description": "הסקה מהירה לביצועים גבוהים עבור מודל זיהוי הדיבור Whisper של OpenAI",
-          "details": "Handy משתמש ב-ggml לתמלול מהיר ומקומי. תודה לעבודה המדהימה של Georgi Gerganov וכל התורמים."
+          "details": "Local Voice AI משתמש ב-ggml לתמלול מהיר ומקומי. תודה לעבודה המדהימה של Georgi Gerganov וכל התורמים."
         }
       },
       "whatsNewUpdates": {
         "label": "הצג מה חדש",
-        "description": "הצג הערות גרסה לאחר עדכוני Handy"
+        "description": "הצג הערות גרסה לאחר עדכוני Local Voice AI"
       }
     }
   },
@@ -595,7 +595,7 @@
     "noOptionsFound": "לא נמצאו אפשרויות"
   },
   "accessibility": {
-    "permissionsDescription": "Handy צריך הרשאות נגישות כדי להקליד את הטקסט המתומלל.",
+    "permissionsDescription": "Local Voice AI צריך הרשאות נגישות כדי להקליד את הטקסט המתומלל.",
     "openSettings": "פתח את הגדרות המערכת"
   },
   "errors": {
@@ -618,11 +618,11 @@
   },
   "appLanguage": {
     "title": "שפת האפליקציה",
-    "description": "שנה את שפת הממשק של Handy"
+    "description": "שנה את שפת הממשק של Local Voice AI"
   },
   "theme": {
     "title": "ערכת נושא של האפליקציה",
-    "description": "בחר אם Handy יעקוב אחר ערכת הנושא של המערכת או יישאר בהיר או כהה",
+    "description": "בחר אם Local Voice AI יעקוב אחר ערכת הנושא של המערכת או יישאר בהיר או כהה",
     "options": {
       "system": "מערכת",
       "light": "בהיר",
@@ -634,7 +634,7 @@
     "processing": "מעבד..."
   },
   "whatsNew": {
-    "title": "חדש ב-Handy v{{version}}"
+    "title": "חדש ב-Local Voice AI v{{version}}"
   },
   "meetings": {
     "recordingIndicator": "Meeting recording is running",

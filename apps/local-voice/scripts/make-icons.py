@@ -104,7 +104,7 @@ save(tray_icon(64, YELLOW), "resources/tray_transcribing.png")
 save(tray_icon(64, YELLOW), "resources/tray_transcribing_dark.png")
 
 # Farbige Linux-Varianten: Glyphe auf Kachel.
-save(tile_icon(64), "resources/handy.png")
+save(tile_icon(64), "resources/local-voice.png")
 
 
 def tile_icon_colored(size, color):

@@ -1,4 +1,4 @@
-# macOS release (DMG) for Local Voice AI, Apple Silicon.
+# macOS release (DMG) for Local Voice AI — Apple Silicon and Intel.
 #
 # Companion to release-windows.yml; see there for why root-level workflows are
 # the only ones GitHub runs. Both trigger on the same `app-v*` tag and attach
@@ -6,11 +6,16 @@
 # latest.json, so the updater serves both platforms from one file. (A race is
 # only possible if both jobs finish within seconds of each other.)
 #
-# Apple Silicon only: GitHub retired its Intel macOS runners, and the app's
-# GPU path on macOS is the ggml Metal backend, which Cargo.toml enables
-# unconditionally for target_os = "macos" (transcribe-cpp feature "metal") —
-# no build flag needed here. The upstream Handy build needed a pinned ONNX
-# Runtime dylib only for x86_64; aarch64 needs none of that.
+# Two architectures from one ARM runner: aarch64 natively, x86_64 as a
+# cross-compile (--target x86_64-apple-darwin) — the same way the upstream
+# Handy release built its Intel DMG after GitHub retired Intel runners.
+# The app's GPU path on macOS is the ggml Metal backend, which Cargo.toml
+# enables unconditionally for target_os = "macos" (transcribe-cpp feature
+# "metal") — no build flag needed here. x86_64 additionally needs the pinned
+# ONNX Runtime dylib (SSE2 baseline) bundled as a framework; aarch64 does not.
+#
+# max-parallel: 1 — both jobs attach to the same release and merge their
+# platform into latest.json; running them serially rules out the write race.
 #
 # The DMG is ad-hoc signed (signingIdentity "-" in tauri.conf.json): no Apple
 # Developer certificate or notarization. First launch needs right-click → Open.
@@ -35,6 +40,13 @@ jobs:
     permissions:
       contents: write
     runs-on: macos-latest
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+          - target: x86_64-apple-darwin
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -71,7 +83,25 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: ${{ matrix.target }}
+
+      # Microsoft's ONNX Runtime build for Intel Macs (mirrors the inherited
+      # Handy build.yml step): pyke's default download does not serve a
+      # cross-compile-safe x86_64 dylib here, and the versioned dylib must be
+      # bundled as a framework to satisfy the @rpath install name.
+      - name: Install ONNX Runtime (x86_64 only)
+        if: matrix.target == 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          ORT_VERSION="1.24.2"
+          curl -fL -o ort.tgz "https://blob.handy.computer/onnxruntime-osx-x86_64-${ORT_VERSION}.tgz"
+          tar xzf ort.tgz
+          ORT_DIR="$(pwd)/onnxruntime-osx-x86_64-${ORT_VERSION}"
+          echo "ORT_LIB_LOCATION=$ORT_DIR/lib" >> $GITHUB_ENV
+          echo "ORT_PREFER_DYNAMIC_LINK=1" >> $GITHUB_ENV
+          jq --arg lib "$ORT_DIR/lib/libonnxruntime.${ORT_VERSION}.dylib" \
+            '.bundle.macOS.frameworks = [$lib]' \
+            src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
 
       # Not in git (gitignored *.onnx-class binaries); the app cannot compile
       # without it (see AGENTS.md, "Model Setup").
@@ -103,4 +133,4 @@ jobs:
           draft: false
           prerelease: false
           includeUpdaterJson: true
-          args: --target aarch64-apple-darwin --bundles app,dmg,updater
+          args: --target ${{ matrix.target }} --bundles app,dmg,updater

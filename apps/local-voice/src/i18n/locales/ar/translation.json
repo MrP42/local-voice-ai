@@ -102,7 +102,7 @@
     },
     "permissions": {
       "title": "الأذونات المطلوبة",
-      "description": ".يحتاج Handy إلى بعض الأذونات ليعمل بشكل صحيح",
+      "description": ".يحتاج Local Voice AI إلى بعض الأذونات ليعمل بشكل صحيح",
       "microphone": {
         "title": "الوصول إلى الميكروفون",
         "description": ".مطلوب لسماع صوتك من أجل التفريغ الصوتي"
@@ -159,7 +159,7 @@
     "general": {
       "title": "عام",
       "shortcut": {
-        "title": "اختصارات Handy",
+        "title": "اختصارات Local Voice AI",
         "description": "إعداد اختصارات لوحة المفاتيح لبدء تسجيل التفريغ الصوتي",
         "loading": "...جاري تحميل الاختصارات",
         "none": "لا توجد اختصارات مجهزة",
@@ -255,11 +255,11 @@
       },
       "autostart": {
         "label": "التشغيل عند بدء التشغيل",
-        "description": ".بدء تشغيل Handy تلقائياً عند تسجيل الدخول إلى جهاز الكمبيوتر الخاص بك"
+        "description": ".بدء تشغيل Local Voice AI تلقائياً عند تسجيل الدخول إلى جهاز الكمبيوتر الخاص بك"
       },
       "showTrayIcon": {
         "label": "إظهار أيقونة شريط النظام",
-        "description": ".عرض أيقونة Handy في شريط النظام"
+        "description": ".عرض أيقونة Local Voice AI في شريط النظام"
       },
       "overlay": {
         "style": {
@@ -442,7 +442,7 @@
       },
       "updateChecks": {
         "label": "التحقق من وجود تحديثات",
-        "description": "التحقق تلقائياً من وجود إصدارات جديدة من Handy"
+        "description": "التحقق تلقائياً من وجود إصدارات جديدة من Local Voice AI"
       },
       "soundTheme": {
         "label": "سمة الصوت",
@@ -521,11 +521,11 @@
       "title": "حول",
       "version": {
         "title": "الإصدار",
-        "description": "الإصدار الحالي من Handy"
+        "description": "الإصدار الحالي من Local Voice AI"
       },
       "appDataDirectory": {
         "title": "مجلد بيانات التطبيق",
-        "description": "الموقع الذي يخزن فيه Handy بياناته"
+        "description": "الموقع الذي يخزن فيه Local Voice AI بياناته"
       },
       "sourceCode": {
         "title": "كود المصدر",
@@ -534,7 +534,7 @@
       },
       "supportDevelopment": {
         "title": "دعم التطوير",
-        "description": "ساعدنا في مواصلة بناء Handy",
+        "description": "ساعدنا في مواصلة بناء Local Voice AI",
         "button": "تبرع"
       },
       "acknowledgments": {
@@ -542,12 +542,12 @@
         "ggml": {
           "title": "ggml",
           "description": "استنتاج عالي الأداء لنموذج التعرف التلقائي على الكلام Whisper من OpenAI",
-          "details": ".يستخدم Handy برنامج ggml لمعالجة سريعة ومحلية لتحويل الكلام إلى نص. شكراً للعمل الرائع الذي قام به Georgi Gerganov والمساهمون"
+          "details": ".يستخدم Local Voice AI برنامج ggml لمعالجة سريعة ومحلية لتحويل الكلام إلى نص. شكراً للعمل الرائع الذي قام به Georgi Gerganov والمساهمون"
         }
       },
       "whatsNewUpdates": {
         "label": "إظهار الجديد",
-        "description": "إظهار ملاحظات الإصدار بعد تحديثات Handy"
+        "description": "إظهار ملاحظات الإصدار بعد تحديثات Local Voice AI"
       }
     },
     "modelSettings": {
@@ -568,7 +568,7 @@
       "searchPlaceholder": "ابحث عن النماذج بالاسم…",
       "rescan": {
         "label": "إعادة الفحص",
-        "tooltip": "إعادة الفحص بحثًا عن النماذج المضافة إلى مجلد النماذج أو ذاكرة Hugging Face التخزينية المؤقتة خارج Handy"
+        "tooltip": "إعادة الفحص بحثًا عن النماذج المضافة إلى مجلد النماذج أو ذاكرة Hugging Face التخزينية المؤقتة خارج Local Voice AI"
       }
     }
   },
@@ -595,7 +595,7 @@
     "noOptionsFound": "لم يتم العثور على خيارات"
   },
   "accessibility": {
-    "permissionsDescription": ".يحتاج Handy إلى أذونات إمكانية الوصول لكتابة النص المفرغ",
+    "permissionsDescription": ".يحتاج Local Voice AI إلى أذونات إمكانية الوصول لكتابة النص المفرغ",
     "openSettings": "فتح إعدادات النظام"
   },
   "errors": {
@@ -618,11 +618,11 @@
   },
   "appLanguage": {
     "title": "لغة التطبيق",
-    "description": "تغيير لغة واجهة Handy"
+    "description": "تغيير لغة واجهة Local Voice AI"
   },
   "theme": {
     "title": "سمة التطبيق",
-    "description": "اختر ما إذا كان Handy يتبع مظهر النظام أو يبقى فاتحًا أو داكنًا",
+    "description": "اختر ما إذا كان Local Voice AI يتبع مظهر النظام أو يبقى فاتحًا أو داكنًا",
     "options": {
       "system": "النظام",
       "light": "فاتح",
@@ -634,7 +634,7 @@
     "processing": "...جاري المعالجة"
   },
   "whatsNew": {
-    "title": "الجديد في Handy v{{version}}"
+    "title": "الجديد في Local Voice AI v{{version}}"
   },
   "meetings": {
     "recordingIndicator": "Meeting recording is running",

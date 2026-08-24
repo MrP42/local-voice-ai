@@ -102,7 +102,7 @@
     },
     "permissions": {
       "title": "権限が必要です",
-      "description": "Handy が正常に動作するにはいくつかの権限が必要です。",
+      "description": "Local Voice AI が正常に動作するにはいくつかの権限が必要です。",
       "microphone": {
         "title": "マイクへのアクセス",
         "description": "文字起こしのためにあなたの声を聞くために必要です。"
@@ -174,13 +174,13 @@
       "searchPlaceholder": "モデルを名前で検索…",
       "rescan": {
         "label": "再スキャン",
-        "tooltip": "Handy を使わずに models フォルダーまたは Hugging Face キャッシュに追加されたモデルを再スキャンします"
+        "tooltip": "Local Voice AI を使わずに models フォルダーまたは Hugging Face キャッシュに追加されたモデルを再スキャンします"
       }
     },
     "general": {
       "title": "一般",
       "shortcut": {
-        "title": "Handy ショートカット",
+        "title": "Local Voice AI ショートカット",
         "description": "音声録音を開始するキーボードショートカットを設定",
         "loading": "ショートカットを読み込み中…",
         "none": "ショートカットが設定されていません",
@@ -276,11 +276,11 @@
       },
       "autostart": {
         "label": "起動時に実行",
-        "description": "コンピューターにログインしたときに Handy を自動的に起動。"
+        "description": "コンピューターにログインしたときに Local Voice AI を自動的に起動。"
       },
       "showTrayIcon": {
         "label": "トレイアイコンを表示",
-        "description": "システムトレイに Handy のアイコンを表示します。"
+        "description": "システムトレイに Local Voice AI のアイコンを表示します。"
       },
       "overlay": {
         "style": {
@@ -463,7 +463,7 @@
       },
       "updateChecks": {
         "label": "アップデートを確認",
-        "description": "Handy の新しいバージョンを自動的にチェック"
+        "description": "Local Voice AI の新しいバージョンを自動的にチェック"
       },
       "soundTheme": {
         "label": "サウンドテーマ",
@@ -542,11 +542,11 @@
       "title": "概要",
       "version": {
         "title": "バージョン",
-        "description": "Handy の現在のバージョン"
+        "description": "Local Voice AI の現在のバージョン"
       },
       "appDataDirectory": {
         "title": "アプリデータディレクトリ",
-        "description": "Handy がデータを保存する場所"
+        "description": "Local Voice AI がデータを保存する場所"
       },
       "sourceCode": {
         "title": "ソースコード",
@@ -555,7 +555,7 @@
       },
       "supportDevelopment": {
         "title": "開発を支援",
-        "description": "Handy の開発を支援してください",
+        "description": "Local Voice AI の開発を支援してください",
         "button": "寄付する"
       },
       "acknowledgments": {
@@ -563,12 +563,12 @@
         "ggml": {
           "title": "ggml",
           "description": "オンデバイス機械学習推論のための高性能テンソルライブラリ",
-          "details": "Handy のローカルの音声からテキストへの文字起こしは transcribe.cpp と ggml を基盤としています。Georgi Gerganov 氏と貢献者の皆様の素晴らしい仕事に感謝します。"
+          "details": "Local Voice AI のローカルの音声からテキストへの文字起こしは transcribe.cpp と ggml を基盤としています。Georgi Gerganov 氏と貢献者の皆様の素晴らしい仕事に感謝します。"
         }
       },
       "whatsNewUpdates": {
         "label": "新機能を表示",
-        "description": "Handy のアップデート後にリリースノートを表示"
+        "description": "Local Voice AI のアップデート後にリリースノートを表示"
       }
     }
   },
@@ -595,7 +595,7 @@
     "noOptionsFound": "オプションが見つかりません"
   },
   "accessibility": {
-    "permissionsDescription": "Handy が文字起こしテキストを入力するには、アクセシビリティ権限が必要です。",
+    "permissionsDescription": "Local Voice AI が文字起こしテキストを入力するには、アクセシビリティ権限が必要です。",
     "openSettings": "システム設定を開く"
   },
   "errors": {
@@ -618,11 +618,11 @@
   },
   "appLanguage": {
     "title": "アプリの言語",
-    "description": "Handy インターフェースの言語を変更"
+    "description": "Local Voice AI インターフェースの言語を変更"
   },
   "theme": {
     "title": "アプリのテーマ",
-    "description": "Handy をシステムのテーマに合わせるか、ライトまたはダークで固定するかを選択します",
+    "description": "Local Voice AI をシステムのテーマに合わせるか、ライトまたはダークで固定するかを選択します",
     "options": {
       "system": "システム",
       "light": "ライト",
@@ -634,7 +634,7 @@
     "processing": "処理中…"
   },
   "whatsNew": {
-    "title": "Handy v{{version}} の新機能"
+    "title": "Local Voice AI v{{version}} の新機能"
   },
   "meetings": {
     "recordingIndicator": "Meeting recording is running",

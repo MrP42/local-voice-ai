@@ -2,7 +2,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone, Default)]
-#[command(name = "sprechstift", about = "Local Voice AI - lokale Sprach-KI")]
+#[command(name = "local-voice-ai", about = "Local Voice AI - lokale Sprach-KI")]
 pub struct CliArgs {
     /// Start with the main window hidden
     #[arg(long)]
