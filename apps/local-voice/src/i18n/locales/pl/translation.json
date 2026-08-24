@@ -45,6 +45,27 @@
       "emptySearch": "No tags match your search.",
       "favoriteAdd": "Add \"{{tag}}\" to favorites",
       "favoriteRemove": "Remove \"{{tag}}\" from favorites"
+    },
+    "editor": {
+      "tagPopoverAria": "Edit tag",
+      "deleteTag": "Delete tag",
+      "replaceHint": "Picking a suggestion replaces this tag.",
+      "autocompleteAria": "Tag suggestions",
+      "menuAria": "Text editor menu",
+      "menuCut": "Cut",
+      "menuCopy": "Copy",
+      "menuPaste": "Paste",
+      "menuInsertTag": "Insert tag",
+      "suggestionAria": "Tag suggestion",
+      "suggestionAccept": "Accept suggestion",
+      "suggestionReject": "Dismiss suggestion"
+    },
+    "writingRules": {
+      "title": "Writing rules: speakers & tags",
+      "tagsIntro": "Emotion and effect tags go in square brackets exactly where they should be heard:",
+      "example1": "[whisper] Come closer…",
+      "example2": "He opened the door. [short pause] Nothing.",
+      "example3": "[laughing] You can't be serious!"
     }
   },
   "onboarding": {

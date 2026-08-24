@@ -288,6 +288,27 @@
       "favoriteAdd": "„{{tag}}“ zu Favoriten hinzufügen",
       "favoriteRemove": "„{{tag}}“ aus Favoriten entfernen"
     },
+    "editor": {
+      "tagPopoverAria": "Tag bearbeiten",
+      "deleteTag": "Tag löschen",
+      "replaceHint": "Ein gewählter Vorschlag ersetzt dieses Tag.",
+      "autocompleteAria": "Tag-Vorschläge",
+      "menuAria": "Texteditor-Menü",
+      "menuCut": "Ausschneiden",
+      "menuCopy": "Kopieren",
+      "menuPaste": "Einfügen",
+      "menuInsertTag": "Tag einfügen",
+      "suggestionAria": "Tag-Vorschlag",
+      "suggestionAccept": "Vorschlag übernehmen",
+      "suggestionReject": "Vorschlag verwerfen"
+    },
+    "writingRules": {
+      "title": "Schreibregeln: Sprecher & Tags",
+      "tagsIntro": "Emotions- und Effekt-Tags stehen in eckigen Klammern genau dort, wo sie zu hören sein sollen:",
+      "example1": "[whisper] Komm näher …",
+      "example2": "Er öffnete die Tür. [short pause] Nichts.",
+      "example3": "[laughing] Das darf doch nicht wahr sein!"
+    },
     "serverStartTitle": "Fish-Speech-Server starten?",
     "serverStartBody": "Der Server lädt das Sprachmodell in den Grafikspeicher — rund 17 GB — und braucht dafür je nach Einstellung bis zu zwei Minuten. Solange er läuft, rechnet die Übersetzung auf der CPU. Beendet wird er über dasselbe Symbol oder von selbst nach der eingestellten Leerlaufzeit."
   },
