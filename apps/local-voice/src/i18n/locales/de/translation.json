@@ -302,6 +302,17 @@
       "suggestionAccept": "Vorschlag übernehmen",
       "suggestionReject": "Vorschlag verwerfen"
     },
+    "autotag": {
+      "button": "Auto-Tagging",
+      "providerDefault": "Standard-KI",
+      "providerClaude": "Claude Haiku",
+      "counter": "{{count}} Vorschläge",
+      "acceptAll": "Alle annehmen",
+      "rejectAll": "Alle verwerfen",
+      "appliedToast": "{{count}} Tags eingefügt",
+      "undo": "Rückgängig",
+      "missingApiKey": "Kein Anthropic-API-Key hinterlegt — API-Key in Einstellungen → Nachbearbeitung hinterlegen."
+    },
     "writingRules": {
       "title": "Schreibregeln: Sprecher & Tags",
       "tagsIntro": "Emotions- und Effekt-Tags stehen in eckigen Klammern genau dort, wo sie zu hören sein sollen:",

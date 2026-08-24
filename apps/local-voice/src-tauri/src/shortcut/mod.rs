@@ -756,6 +756,27 @@ pub fn change_tts_tag_favorites_setting(app: AppHandle, value: Vec<String>) -> R
     Ok(())
 }
 
+/// T4 Auto-Tagging: welcher Provider Tag-Vorschläge liefert ("" = aktiver
+/// Post-Processing-Provider, "anthropic" = fest Claude).
+#[tauri::command]
+#[specta::specta]
+pub fn change_tts_tag_provider_setting(app: AppHandle, value: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_tag_provider = value;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_tts_tag_model_setting(app: AppHandle, value: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_tag_model = value;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_tts_translate_lang_setting(app: AppHandle, value: String) -> Result<(), String> {

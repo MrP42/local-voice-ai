@@ -165,6 +165,38 @@ async changeTtsVolumeSetting(value: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async changeTtsNormalizeSetting(value: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_normalize_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeTtsPrewarmSetting(value: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_prewarm_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeTtsEnhanceSetting(value: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_enhance_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeTtsEnhanceStrengthSetting(value: Strength) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_enhance_strength_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsSpeedSetting(value: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_speed_setting", { value }) };
@@ -189,9 +221,36 @@ async changeTtsContextMenuSetting(value: boolean) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * T2 Tag-Palette: favorisierte Tag-Ids sichern. Der Aufrufer schickt immer
+ * die vollstaendige Liste — dieselbe Form wie `update_custom_words`.
+ */
 async changeTtsTagFavoritesSetting(value: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_favorites_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * T4 Auto-Tagging: welcher Provider Tag-Vorschläge liefert ("" = aktiver
+ * Post-Processing-Provider, "anthropic" = fest Claude).
+ */
+async changeTtsTagProviderSetting(value: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_provider_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
+ */
+async changeTtsTagModelSetting(value: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_model_setting", { value }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1141,38 +1200,66 @@ async meetingsMinutesFile(meetingId: string) : Promise<Result<string | null, str
     else return { status: "error", error: e  as any };
 }
 },
-async changeTtsNormalizeSetting(value: boolean) : Promise<Result<null, string>> {
+/**
+ * Writes a document the user assembled in the app to a path they picked in
+ * the system save dialog — as Markdown, plain text or Word, chosen by the
+ * file extension.
+ * 
+ * This deliberately does NOT go through the fs plugin from the frontend:
+ * its capability scope is limited to `$APPDATA`, so saving into Documents —
+ * what the save dialog offers — failed with "not allowed by ACL". The path
+ * comes from the user's own choice in a system dialog; re-checking it
+ * against an allowlist protects nobody. Writing here also makes Word export
+ * possible at all, since a .docx is a ZIP archive rather than text.
+ */
+async meetingsExportDocument(path: string, body: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_tts_normalize_setting", { value }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_export_document", { path, body }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async changeTtsPrewarmSetting(value: boolean) : Promise<Result<null, string>> {
+async ttsSpeakText(text: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_tts_prewarm_setting", { value }) };
+    return { status: "ok", data: await TAURI_INVOKE("tts_speak_text", { text }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async changeTtsEnhanceSetting(value: boolean) : Promise<Result<null, string>> {
+async ttsSpeakClipboard() : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_tts_enhance_setting", { value }) };
+    return { status: "ok", data: await TAURI_INVOKE("tts_speak_clipboard") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async changeTtsEnhanceStrengthSetting(value: EnhanceStrength) : Promise<Result<null, string>> {
+async ttsCancel() : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_tts_enhance_strength_setting", { value }) };
+    return { status: "ok", data: await TAURI_INVOKE("tts_cancel") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Alles beenden, was auf dem TTS-Port lauscht — ohne Gesundheitsprüfung.
+ * Der Ausweg, wenn ein hängender Server die Grafikkarte festhält.
+ */
+async ttsServerKill() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_server_kill") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Text uebersetzen, ohne ihn abzuspielen. Zwischengespeichert je Text und
+ * Sprache; laeuft der Fish-Server, rechnet die Uebersetzung auf der CPU.
+ */
 async ttsTranslate(text: string, targetLang: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_translate", { text, targetLang }) };
@@ -1181,9 +1268,68 @@ async ttsTranslate(text: string, targetLang: string) : Promise<Result<string, st
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Liegt fuer diesen Text in dieser Sprache schon eine Uebersetzung bereit?
+ * Damit die Oberflaeche beim Umschalten zwischen Sprachen sofort zeigen
+ * kann, was da ist, ohne eine Uebersetzung anzustossen.
+ */
 async ttsCachedTranslation(text: string, targetLang: string) : Promise<string | null> {
     return await TAURI_INVOKE("tts_cached_translation", { text, targetLang });
 },
+/**
+ * Den aktuellen Stimm-Seed unter einem Namen als Stimme sichern.
+ * Rueckgabe: die bereinigte Stimmen-Kennung.
+ */
+async ttsSaveSeedVoice(name: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_save_seed_voice", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Welche Modelle das lokale Ollama gerade geladen hat.
+ * 
+ * Grundlage der Sprachmodell-Anzeige neben dem Serversymbol. Kein lokales
+ * Ollama konfiguriert oder nicht erreichbar → leere Liste: fuer die Anzeige
+ * ist "nichts geladen" und "nichts da" derselbe graue Zustand.
+ */
+async llmPs() : Promise<string[]> {
+    return await TAURI_INVOKE("llm_ps");
+},
+/**
+ * Alle geladenen Ollama-Modelle sofort entladen. Rueckgabe: wie viele.
+ */
+async llmUnload() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_unload") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Das konfigurierte Modell vorwaermen: laden, ohne etwas zu erzeugen.
+ * 
+ * Fuer den Fall "gleich uebersetze ich mehrmals": das Laden passiert jetzt,
+ * nicht mitten im ersten Auftrag. keep_alive bewusst begrenzt — wer es
+ * laenger halten will, waermt erneut oder laesst die Uebersetzung selbst
+ * laden.
+ */
+async llmWarm() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_warm") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle Seiten in Anzeige-Reihenfolge. Gibt es keine, entsteht die erste —
+ * eine leere Liste hieße für die Oberfläche „nichts, worin man arbeiten
+ * kann", und diesen Zustand soll es nie geben.
+ */
 async pagesList() : Promise<Result<PageInfo[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pages_list") };
@@ -1208,6 +1354,10 @@ async pagesRename(id: string, title: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Seite löschen — mitsamt ihrem Ordner und allen Dateien darin. Die
+ * Rückfrage dazu stellt die Oberfläche; hier wird nur noch ausgeführt.
+ */
 async pagesDelete(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pages_delete", { id }) };
@@ -1216,6 +1366,11 @@ async pagesDelete(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Neue Reihenfolge, als vollständige Liste der Kennungen. Unbekannte werden
+ * übergangen, vergessene hinten angehängt — die Liste der Oberfläche kann
+ * einen Moment alt sein, und deshalb darf hier keine Seite verloren gehen.
+ */
 async pagesReorder(ids: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pages_reorder", { ids }) };
@@ -1248,6 +1403,11 @@ async pageDir(id: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Die Dateien einer Seite, jüngste zuerst. `state.json` gehört der App und
+ * erscheint nicht — für den Nutzer ist sie kein Inhalt, und löschen soll er
+ * sie erst recht nicht.
+ */
 async pageFiles(id: string) : Promise<Result<PageFile[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("page_files", { id }) };
@@ -1272,6 +1432,10 @@ async pageFileRename(id: string, name: string, newName: string) : Promise<Result
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Eine vorhandene Datei in den Seitenordner kopieren (nicht verschieben:
+ * das Original gehört dem Nutzer und bleibt, wo es ist).
+ */
 async pageFileAdd(id: string, source: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("page_file_add", { id, source }) };
@@ -1280,6 +1444,11 @@ async pageFileAdd(id: string, source: string) : Promise<Result<string, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Datei mit ihrer Standardanwendung öffnen. Über `explorer`, weil das
+ * opener-Plugin beliebige Pfade nur mit erweiterten Berechtigungen öffnet —
+ * und der Pfad hier ohnehin aus dem eigenen Seitenordner stammt.
+ */
 async pageFileOpen(id: string, name: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("page_file_open", { id, name }) };
@@ -1288,33 +1457,9 @@ async pageFileOpen(id: string, name: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async llmPs() : Promise<string[]> {
-    return await TAURI_INVOKE("llm_ps");
-},
-async llmUnload() : Promise<Result<number, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("llm_unload") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async llmWarm() : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("llm_warm") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async ttsSaveSeedVoice(name: string) : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_save_seed_voice", { name }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
+/**
+ * Diktat fuer das Vorlesefeld: Aufnahme starten.
+ */
 async ttsDictateStart() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_dictate_start") };
@@ -1323,49 +1468,12 @@ async ttsDictateStart() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Diktat beenden und den erkannten Text zurueckgeben.
+ */
 async ttsDictateStop() : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_dictate_stop") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async ttsServerKill() : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_server_kill") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async meetingsExportDocument(path: string, body: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_export_document", { path, body }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async ttsSpeakText(text: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_speak_text", { text }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async ttsSpeakClipboard() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_speak_clipboard") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async ttsCancel() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_cancel") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1649,6 +1757,27 @@ async ttsSynthesizeToFile(text: string, outPath: string) : Promise<Result<null, 
 }
 },
 /**
+ * T4 Auto-Tagging: schlägt Emotions-/Vortrags-Tags fürs `text` vor. Der
+ * LLM-Output erreicht die Oberfläche NIE unvalidiert — `crate::tagging`
+ * prüft ihn hart gegen die Nur-Einfüge-Invariante (höchstens ein Retry,
+ * danach ein verständlicher Fehler statt eines möglicherweise veränderten
+ * Texts). `provider_override`: `None` = aktiver Post-Processing-Provider,
+ * `Some("anthropic")` = fest Claude (Modell aus `tts_tag_model`).
+ * 
+ * Rückgabe: `offset_in_original` ist ein BYTE-Offset in `text` (Rust-Art);
+ * das Frontend arbeitet mit UTF-16-Offsets und muss `offset_chars`
+ * (Unicode-Skalarwert-Zählung) selbst umrechnen — siehe die Dokumentation
+ * an `tagging::TagInsertion` und die Umrechnung in `AutoTagBar.tsx`.
+ */
+async ttsAutoTag(text: string, allowedTags: string[], providerOverride: string | null) : Promise<Result<TagInsertion[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_auto_tag", { text, allowedTags, providerOverride }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stub implementation for non-macOS platforms
  * Always returns false since laptop detection is macOS-specific
  */
@@ -1690,12 +1819,6 @@ streamTextEvent: "stream-text-event"
  * object, so a partial store can never fail the whole load (#1619).
  * Field-level defaults below take precedence where present.
  */
-export type EnhanceStrength = "gentle" | "medium" | "strong"
-
-export type PageInfo = { id: string; title: string }
-
-export type PageFile = { name: string; size: number; modified_ms: number }
-
 export type AppSettings = { 
 /**
  * Internal settings schema marker for one-time migrations. Fresh installs
@@ -1816,15 +1939,25 @@ tts_volume?: number;
  */
 tts_normalize?: boolean; 
 /**
- * Klangbearbeitung der Sprache: Hochpass, Rauschgatter, Kompressor,
- * Begrenzer.
+ * Den Fish-Speech-Server schon beim Start der App hochfahren.
+ * 
+ * Verkürzt die Wartezeit nicht — sie verlagert sie dorthin, wo man
+ * ohnehin etwas anderes tut. Standardmäßig aus: der Server belegt rund
+ * 17 GB Grafikspeicher, und wer die App nur zum Diktieren öffnet, will
+ * das nicht.
  */
 tts_prewarm?: boolean; 
+/**
+ * Klangbearbeitung der Sprache: Hochpass, Rauschgatter, Kompressor,
+ * Begrenzer. Wirkt an drei Stellen — beim Aufnehmen und Importieren
+ * einer Referenzstimme, beim Vorlesen und beim Datei-Export. Am meisten
+ * bringt sie bei der Referenz: Fish Speech klont, was darin steckt.
+ */
 tts_enhance?: boolean; 
 /**
  * Wie stark die Klangbearbeitung eingreift.
  */
-tts_enhance_strength?: EnhanceStrength; 
+tts_enhance_strength?: Strength; 
 /**
  * Wiedergabegeschwindigkeit (0.5–2.0; verändert per Resampling auch die
  * Tonhöhe leicht — kleiner Bereich um 1.0 klingt natürlich).
@@ -1839,13 +1972,38 @@ tts_export_format?: string;
  * Windows-Explorer-Kontextmenü „Mit Local Voice AI vorlesen" für
  * Dokumente (txt/md/pdf/docx). Benutzer-Registry, kein Admin nötig.
  */
-tts_context_menu?: boolean;
+tts_context_menu?: boolean; 
+/**
+ * TTS-Engine des Vorlesens: "fish" (Standard, GPU) oder "piper" (CPU,
+ * Paket E1). Unbekannte Werte fallen auf Fish zurück.
+ */
+tts_engine?: string; 
+/**
+ * Engine für die schnelle Vorschau ("" = aus): spricht sofort mit einer
+ * leichten CPU-Stimme, während die Hauptengine noch lädt.
+ */
+tts_preview_engine?: string; 
+/**
+ * Gewählte Piper-Stimme (Modellkennung) oder None = keine gewählt.
+ */
+tts_piper_voice?: string | null; 
 /**
  * T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
  * Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die
  * Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
  */
-tts_tag_favorites?: string[];
+tts_tag_favorites?: string[]; 
+/**
+ * T4 Auto-Tagging: welcher Provider die Tag-Vorschläge liefert.
+ * "" = aktiver Post-Processing-Provider, "anthropic" = fest Claude
+ * (Modell aus `tts_tag_model`). Der Anthropic-Key selbst wird NICHT
+ * hier gepflegt, sondern im bestehenden Post-Processing-Tab.
+ */
+tts_tag_provider?: string; 
+/**
+ * T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
+ */
+tts_tag_model?: string; 
 /**
  * M8 Meetings: wie lange Audiodateien nach einer Aufnahme/einem Import
  * aufbewahrt werden, bevor sie hart gelöscht werden. Default: sobald ein
@@ -1976,6 +2134,8 @@ export type OverlayPosition = "top" | "bottom"
  * streaming mode (that is driven purely by model capability).
  */
 export type OverlayStyle = "none" | "minimal" | "live"
+export type PageFile = { name: string; size: number; modified_ms: number }
+export type PageInfo = { id: string; title: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
@@ -2029,6 +2189,22 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
+/**
+ * Wie stark die Kette eingreift.
+ */
+export type Strength = 
+/**
+ * Aufräumen, nichts formen. Für gute Aufnahmen.
+ */
+"gentle" | 
+/**
+ * Der Normalfall: hörbar ruhiger, ohne dass die Stimme sich ändert.
+ */
+"medium" | 
+/**
+ * Für hörbar verrauschte Aufnahmen. Kann die Stimme etwas verfärben.
+ */
+"strong"
 export type SummaryOptions = { 
 /**
  * "kurz" (~150 Wörter) | "mittel" (~400) | "lang" (~900)
@@ -2042,6 +2218,15 @@ detail: string;
  * "allgemein" | "fachpublikum" | "management" | "einfache_sprache"
  */
 audience: string }
+/**
+ * Eine vom LLM vorgeschlagene Tag-Einfügung. `offset_in_original` ist ein
+ * BYTE-Offset in `original` (Rust-Konvention), `offset_chars` der
+ * Unicode-Skalarwert-Offset (was `chars().count()` bis dahin liefert). Das
+ * Frontend arbeitet mit UTF-16-Offsets (JS-String-Indizes) — es rechnet
+ * `offset_chars` selbst um (Iteration über die Codepoints, Surrogatpaare bei
+ * Zeichen jenseits der Basisebene wie Emoji zählen dort doppelt).
+ */
+export type TagInsertion = { offset_in_original: number; offset_chars: number; tag: string }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.

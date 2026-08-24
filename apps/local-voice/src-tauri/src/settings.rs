@@ -592,6 +592,15 @@ pub struct AppSettings {
     /// Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
     #[serde(default)]
     pub tts_tag_favorites: Vec<String>,
+    /// T4 Auto-Tagging: welcher Provider die Tag-Vorschläge liefert.
+    /// "" = aktiver Post-Processing-Provider, "anthropic" = fest Claude
+    /// (Modell aus `tts_tag_model`). Der Anthropic-Key selbst wird NICHT
+    /// hier gepflegt, sondern im bestehenden Post-Processing-Tab.
+    #[serde(default)]
+    pub tts_tag_provider: String,
+    /// T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
+    #[serde(default = "default_tts_tag_model")]
+    pub tts_tag_model: String,
     /// M8 Meetings: wie lange Audiodateien nach einer Aufnahme/einem Import
     /// aufbewahrt werden, bevor sie hart gelöscht werden. Default: sobald ein
     /// Protokoll existiert (Spec Default-Verhalten).
@@ -656,6 +665,11 @@ fn default_tts_compile() -> bool {
 
 fn default_tts_engine() -> String {
     "fish".to_string()
+}
+
+/// T4 Auto-Tagging: Standard-Claude-Modell, wenn "Claude Haiku" gewählt ist.
+fn default_tts_tag_model() -> String {
+    "claude-haiku-4-5".to_string()
 }
 
 fn default_model() -> String {
@@ -1265,6 +1279,8 @@ pub fn get_default_settings() -> AppSettings {
         tts_preview_engine: String::new(),
         tts_piper_voice: None,
         tts_tag_favorites: Vec::new(),
+        tts_tag_provider: String::new(),
+        tts_tag_model: default_tts_tag_model(),
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,
