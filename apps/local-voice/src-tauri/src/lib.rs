@@ -1440,6 +1440,17 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_export_cancel,
             commands::tts::tts_speak_seek,
             commands::tts::tts_synthesize_to_file,
+            commands::tts::tts_list_voice_infos,
+            commands::tts::tts_get_voice_meta,
+            commands::tts::tts_set_voice_meta,
+            commands::tts::tts_set_voice_avatar,
+            commands::tts::tts_clear_voice_avatar,
+            commands::tts::tts_save_style_reference,
+            commands::tts::tts_delete_style,
+            commands::tts::tts_analyze_reference,
+            commands::tts::tts_analyze_pending_reference,
+            commands::tts::tts_seed_preview,
+            commands::tts::tts_save_seed_voice_v2,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![

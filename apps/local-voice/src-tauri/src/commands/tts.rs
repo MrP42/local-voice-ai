@@ -1,5 +1,6 @@
 //! Tauri-Commands des Vorlesen-Bereichs (TP1).
 
+use crate::managers::tts::registry::{ReferenceAnalysis, VoiceInfo, VoiceMeta};
 use crate::managers::tts::{ReadingInfo, TtsManager, TtsStatus};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -469,4 +470,96 @@ pub async fn tts_synthesize_to_file(
 ) -> Result<(), String> {
     let tts = app.state::<Arc<TtsManager>>().inner().clone();
     tts.synthesize_to_file(&text, &out_path).await.map(|_| ())
+}
+
+// ---- Sprecher-Registry (Paket B-S1) ---------------------------------------
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_list_voice_infos(app: AppHandle) -> Vec<VoiceInfo> {
+    app.state::<Arc<TtsManager>>().list_voice_infos()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_get_voice_meta(app: AppHandle, id: String) -> VoiceMeta {
+    app.state::<Arc<TtsManager>>().get_voice_meta(&id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_set_voice_meta(app: AppHandle, id: String, meta: VoiceMeta) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>().set_voice_meta(&id, meta)
+}
+
+/// Avatar-Bytes kommen roh als `Vec<u8>`, nicht als Base64-String: das
+/// Projekt hat kein direktes base64-Crate, und eines nur fuer den
+/// Avatar-Upload wollte der Auftrag ausdruecklich vermeiden (siehe
+/// `voices::save_avatar`).
+#[tauri::command]
+#[specta::specta]
+pub fn tts_set_voice_avatar(
+    app: AppHandle,
+    id: String,
+    bytes: Vec<u8>,
+    ext: String,
+) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>()
+        .set_voice_avatar(&id, bytes, &ext)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_clear_voice_avatar(app: AppHandle, id: String) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>().clear_voice_avatar(&id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_save_style_reference(
+    app: AppHandle,
+    voice: String,
+    style_id: String,
+    name: String,
+) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>()
+        .save_style_reference(&voice, &style_id, &name)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_delete_style(app: AppHandle, voice: String, style_id: String) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>()
+        .delete_style(&voice, &style_id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_analyze_reference(app: AppHandle, voice: String) -> Result<ReferenceAnalysis, String> {
+    app.state::<Arc<TtsManager>>().analyze_reference(&voice)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_analyze_pending_reference(app: AppHandle) -> Result<ReferenceAnalysis, String> {
+    app.state::<Arc<TtsManager>>().analyze_pending_reference()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_seed_preview(app: AppHandle, seed: i64) -> Result<Vec<u8>, String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tts.seed_preview(seed).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_save_seed_voice_v2(
+    app: AppHandle,
+    seed: i64,
+    display_name: String,
+    meta: VoiceMeta,
+) -> Result<String, String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tts.save_seed_voice_v2(seed, &display_name, meta).await
 }

@@ -70,6 +70,37 @@ pub fn voice_dir(fish_dir: &Path, id: &str) -> PathBuf {
     references_dir(fish_dir).join(id)
 }
 
+/// Interner Ordnername der Stil-Referenz einer Stimme: `__style_<voice>_<style>`.
+/// Dieselbe Kennung wird als `VoiceStyle::reference` in der Registry
+/// abgelegt (siehe `registry::VoiceStyle`).
+fn style_voice_id(voice: &str, style: &str) -> String {
+    format!("{INTERNAL_PREFIX}style_{voice}_{style}")
+}
+
+/// Verzeichnis der Stil-Referenzaufnahme einer Stimme. Liegt unter demselben
+/// `references/`-Wurzelverzeichnis wie jede andere Stimme, ist aber wegen des
+/// `__`-Präfixes aus `list_voices` ausgenommen (siehe dort).
+pub fn style_dir(fish_dir: &Path, voice: &str, style: &str) -> PathBuf {
+    voice_dir(fish_dir, &style_voice_id(voice, style))
+}
+
+/// Die Stil-Referenz wie jede andere Referenz speichern (gleiches Format,
+/// gleiche Pegelung) — nur unter dem Stil-Ordnernamen statt dem der Stimme.
+/// Rückgabe bei Erfolg: die interne reference_id (`__style_<voice>_<style>`),
+/// zum Ablegen in `VoiceStyle::reference`.
+pub fn save_style_voice(
+    fish_dir: &Path,
+    voice: &str,
+    style: &str,
+    samples: &[f32],
+    transcript: &str,
+    enhance: Option<super::enhance::Strength>,
+) -> Result<String, String> {
+    let id = style_voice_id(voice, style);
+    save_voice(fish_dir, &id, samples, transcript, enhance)?;
+    Ok(id)
+}
+
 /// Alle Stimmen mit mindestens einem WAV samt gleichnamiger .lab-Datei —
 /// dieselbe Gültigkeitsregel, die der Fish-Server beim Laden anwendet.
 pub fn list_voices(fish_dir: &Path) -> Vec<String> {
@@ -535,12 +566,101 @@ pub fn update_registry(fish_dir: &Path) {
 
 /// Referenzverzeichnis entfernen. Eine nicht (mehr) existierende Stimme ist
 /// kein Fehler — das Ziel „weg" ist erreicht.
+///
+/// Räumt zusätzlich alle Stil-Referenzordner dieser Stimme ab
+/// (`__style_<id>_*`, siehe `style_dir`) — ohne diese Kaskade blieben
+/// verwaiste Stil-Aufnahmen liegen, für die keine Stimme mehr existiert.
 pub fn delete_voice(fish_dir: &Path, id: &str) -> Result<(), String> {
     let dir = voice_dir(fish_dir, id);
-    if !dir.exists() {
-        return Ok(());
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)
+            .map_err(|e| format!("could not delete {}: {e}", dir.display()))?;
     }
-    std::fs::remove_dir_all(&dir).map_err(|e| format!("could not delete {}: {e}", dir.display()))
+    delete_style_dirs(fish_dir, id);
+    Ok(())
+}
+
+/// Alle Stil-Referenzordner einer Stimme entfernen. Eine einzelne
+/// fehlgeschlagene Löschung bricht die übrigen nicht ab — verwaiste Ordner
+/// sind bedauerlich, dürfen aber das Löschen der Stimme selbst nicht
+/// blockieren.
+fn delete_style_dirs(fish_dir: &Path, id: &str) {
+    let prefix = format!("{INTERNAL_PREFIX}style_{id}_");
+    let Ok(entries) = std::fs::read_dir(references_dir(fish_dir)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(&prefix) && entry.path().is_dir() {
+            if let Err(e) = std::fs::remove_dir_all(entry.path()) {
+                log::warn!("could not delete style dir {name}: {e}");
+            }
+        }
+    }
+}
+
+/// Erweiterungen, in denen eine Avatar-Datei je Stimme abgelegt sein kann —
+/// genau eine gleichzeitig, siehe `save_avatar`.
+const AVATAR_EXTENSIONS: [&str; 3] = ["png", "webp", "jpg"];
+
+/// Obergrenze einer Avatar-Datei: 2 MiB. Ein Avatar ist ein kleines Icon/Foto
+/// neben dem Stimmennamen, kein Liefergegenstand — alles darüber ist
+/// vermutlich ein Versehen (falsche Datei gewählt).
+pub const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
+
+/// Avatar-Datei im Stimmenordner ablegen. Ersetzt eine vorhandene Avatar-
+/// Datei ANDERER Erweiterung (immer höchstens ein Avatar je Stimme) und
+/// liefert den geschriebenen Dateinamen (`avatar.<ext>`) zurück.
+///
+/// `ext` ohne führenden Punkt, eine von `png`/`webp`/`jpg` (case-insensitiv).
+/// Die Bytes kommen vom Frontend-Command als `Vec<u8>`, nicht als
+/// Base64-String: das Projekt hat kein direktes base64-Crate, und ein neues
+/// nur für den Avatar-Upload wollte die Aufgabe ausdrücklich vermeiden.
+pub fn save_avatar(fish_dir: &Path, id: &str, bytes: &[u8], ext: &str) -> Result<String, String> {
+    let ext = ext.trim_start_matches('.').to_lowercase();
+    if !AVATAR_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!("nicht unterstuetzter Avatar-Typ: {ext}"));
+    }
+    if bytes.len() > MAX_AVATAR_BYTES {
+        return Err(format!(
+            "Avatar zu gross ({} Bytes, erlaubt sind {MAX_AVATAR_BYTES})",
+            bytes.len()
+        ));
+    }
+    let dir = voice_dir(fish_dir, id);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    clear_avatar(fish_dir, id);
+    let filename = format!("avatar.{ext}");
+    let path = dir.join(&filename);
+    std::fs::write(&path, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    Ok(filename)
+}
+
+/// Vorhandene Avatar-Datei(en) einer Stimme entfernen. Keine Fehler, wenn
+/// keine existiert — „weg" ist bereits das Ziel.
+pub fn clear_avatar(fish_dir: &Path, id: &str) {
+    let dir = voice_dir(fish_dir, id);
+    for ext in AVATAR_EXTENSIONS {
+        let _ = std::fs::remove_file(dir.join(format!("avatar.{ext}")));
+    }
+}
+
+/// Pfad der Avatar-Datei einer Stimme, falls eine existiert.
+pub fn avatar_path(fish_dir: &Path, id: &str) -> Option<PathBuf> {
+    let dir = voice_dir(fish_dir, id);
+    AVATAR_EXTENSIONS
+        .iter()
+        .map(|ext| dir.join(format!("avatar.{ext}")))
+        .find(|p| p.exists())
+}
+
+/// Den Seed einer gesicherten Stimme lesen, falls sie aus einem Seed
+/// hervorgegangen ist (siehe `write_seed_marker`).
+pub fn read_seed_marker(fish_dir: &Path, id: &str) -> Option<i64> {
+    std::fs::read_to_string(voice_dir(fish_dir, id).join(SEED_FILE))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
 }
 
 #[cfg(test)]
@@ -693,5 +813,91 @@ mod tests {
         std::fs::write(&bogus, b"definitiv kein wav").unwrap();
         assert!(import_voice(dir.path(), "x", &bogus, "text", None).is_err());
         assert!(list_voices(dir.path()).is_empty());
+    }
+
+    // ---- Stil-Referenzen & ihre Loeschkaskade ------------------------------
+
+    #[test]
+    fn stil_referenz_landet_im_praefixierten_ordner_und_ist_keine_eigene_stimme() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        let samples = vec![0.1f32; 4 * 16_000];
+        let reference_id =
+            save_style_voice(fish, "anna", "fluesternd", &samples, "Ganz leise.", None).unwrap();
+        assert_eq!(reference_id, "__style_anna_fluesternd");
+        assert!(style_dir(fish, "anna", "fluesternd")
+            .join("sample.wav")
+            .exists());
+        // Stil-Ordner sind intern (Praefix) und tauchen nie in list_voices auf.
+        assert!(list_voices(fish).is_empty());
+    }
+
+    #[test]
+    fn das_loeschen_einer_stimme_reisst_alle_ihre_stilordner_mit() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        let samples = vec![0.1f32; 4 * 16_000];
+        save_voice(fish, "anna", &samples, "Guten Tag.", None).unwrap();
+        save_style_voice(fish, "anna", "fluesternd", &samples, "Ganz leise.", None).unwrap();
+        save_style_voice(fish, "anna", "aufgeregt", &samples, "Toll!", None).unwrap();
+        // Eine andere Stimme darf von der Kaskade nicht beruehrt werden.
+        save_style_voice(fish, "olga", "fluesternd", &samples, "Psst.", None).unwrap();
+
+        delete_voice(fish, "anna").unwrap();
+
+        assert!(!voice_dir(fish, "anna").exists());
+        assert!(!style_dir(fish, "anna", "fluesternd").exists());
+        assert!(!style_dir(fish, "anna", "aufgeregt").exists());
+        assert!(
+            style_dir(fish, "olga", "fluesternd").exists(),
+            "Stilordner anderer Stimmen bleiben unberuehrt"
+        );
+    }
+
+    // ---- Avatar -------------------------------------------------------------
+
+    #[test]
+    fn avatar_wird_gespeichert_gefunden_und_bei_neuem_typ_ersetzt() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        let png_bytes = vec![1u8, 2, 3, 4];
+        save_avatar(fish, "anna", &png_bytes, "png").unwrap();
+        assert_eq!(
+            avatar_path(fish, "anna"),
+            Some(voice_dir(fish, "anna").join("avatar.png"))
+        );
+
+        // Ersetzen durch einen anderen Dateityp darf keine zwei Avatare
+        // hinterlassen.
+        let webp_bytes = vec![5u8, 6, 7];
+        save_avatar(fish, "anna", &webp_bytes, ".webp").unwrap();
+        assert_eq!(
+            avatar_path(fish, "anna"),
+            Some(voice_dir(fish, "anna").join("avatar.webp"))
+        );
+        assert!(!voice_dir(fish, "anna").join("avatar.png").exists());
+
+        clear_avatar(fish, "anna");
+        assert_eq!(avatar_path(fish, "anna"), None);
+    }
+
+    #[test]
+    fn zu_grosse_oder_unbekannte_avatare_werden_abgelehnt() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        let too_big = vec![0u8; MAX_AVATAR_BYTES + 1];
+        assert!(save_avatar(fish, "anna", &too_big, "png").is_err());
+        assert!(save_avatar(fish, "anna", &[1, 2, 3], "gif").is_err());
+        assert_eq!(avatar_path(fish, "anna"), None);
+    }
+
+    #[test]
+    fn seed_marker_wird_gelesen_wenn_vorhanden() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        assert_eq!(read_seed_marker(fish, "seedvoice"), None);
+        std::fs::create_dir_all(voice_dir(fish, "seedvoice")).unwrap();
+        write_seed_marker(fish, "seedvoice", 42);
+        assert_eq!(read_seed_marker(fish, "seedvoice"), Some(42));
     }
 }
