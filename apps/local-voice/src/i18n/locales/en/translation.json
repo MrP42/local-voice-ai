@@ -302,6 +302,19 @@
       "suggestionAccept": "Accept suggestion",
       "suggestionReject": "Dismiss suggestion"
     },
+    "autotag": {
+      "button": "Auto-Tagging",
+      "providerDefault": "Default AI",
+      "providerClaude": "Claude Haiku",
+      "counter": "{{count}} suggestions",
+      "acceptAll": "Accept all",
+      "rejectAll": "Discard all",
+      "appliedToast": "{{count}} tags inserted",
+      "undo": "Undo",
+      "missingApiKey": "No Anthropic API key set — add one in Settings → Post-Processing.",
+      "textChangedDuringRun": "The text changed while Auto-Tagging was running — please run it again.",
+      "staleSuggestionsDiscarded": "Suggestion discarded — the text changed since then."
+    },
     "writingRules": {
       "title": "Writing rules: speakers & tags",
       "tagsIntro": "Emotion and effect tags go in square brackets exactly where they should be heard:",

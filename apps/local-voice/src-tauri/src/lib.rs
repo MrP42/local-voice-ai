@@ -25,6 +25,7 @@ mod settings;
 mod shortcut;
 mod signal_handle;
 mod summarizer;
+mod tagging;
 mod transcription_coordinator;
 mod translator;
 mod tray;
@@ -1277,6 +1278,8 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_tts_export_format_setting,
             shortcut::change_tts_context_menu_setting,
             shortcut::change_tts_tag_favorites_setting,
+            shortcut::change_tts_tag_provider_setting,
+            shortcut::change_tts_tag_model_setting,
             shortcut::change_overlay_position_setting,
             shortcut::change_overlay_style_setting,
             shortcut::change_debug_mode_setting,
@@ -1464,6 +1467,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_analyze_pending_reference,
             commands::tts::tts_seed_preview,
             commands::tts::tts_save_seed_voice_v2,
+            commands::tts::tts_auto_tag,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![

@@ -221,9 +221,36 @@ async changeTtsContextMenuSetting(value: boolean) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * T2 Tag-Palette: favorisierte Tag-Ids sichern. Der Aufrufer schickt immer
+ * die vollstaendige Liste — dieselbe Form wie `update_custom_words`.
+ */
 async changeTtsTagFavoritesSetting(value: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_favorites_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * T4 Auto-Tagging: welcher Provider Tag-Vorschläge liefert ("" = aktiver
+ * Post-Processing-Provider, "anthropic" = fest Claude).
+ */
+async changeTtsTagProviderSetting(value: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_provider_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
+ */
+async changeTtsTagModelSetting(value: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_model_setting", { value }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1762,6 +1789,27 @@ async ttsDeleteModel(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * T4 Auto-Tagging: schlägt Emotions-/Vortrags-Tags fürs `text` vor. Der
+ * LLM-Output erreicht die Oberfläche NIE unvalidiert — `crate::tagging`
+ * prüft ihn hart gegen die Nur-Einfüge-Invariante (höchstens ein Retry,
+ * danach ein verständlicher Fehler statt eines möglicherweise veränderten
+ * Texts). `provider_override`: `None` = aktiver Post-Processing-Provider,
+ * `Some("anthropic")` = fest Claude (Modell aus `tts_tag_model`).
+ * 
+ * Rückgabe: `offset_in_original` ist ein BYTE-Offset in `text` (Rust-Art);
+ * das Frontend arbeitet mit UTF-16-Offsets und muss `offset_chars`
+ * (Unicode-Skalarwert-Zählung) selbst umrechnen — siehe die Dokumentation
+ * an `tagging::TagInsertion` und die Umrechnung in `AutoTagBar.tsx`.
+ */
+async ttsAutoTag(text: string, allowedTags: string[], providerOverride: string | null) : Promise<Result<TagInsertion[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_auto_tag", { text, allowedTags, providerOverride }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stub implementation for non-macOS platforms
  * Always returns false since laptop detection is macOS-specific
  */
@@ -1956,13 +2004,38 @@ tts_export_format?: string;
  * Windows-Explorer-Kontextmenü „Mit Local Voice AI vorlesen" für
  * Dokumente (txt/md/pdf/docx). Benutzer-Registry, kein Admin nötig.
  */
-tts_context_menu?: boolean;
+tts_context_menu?: boolean; 
+/**
+ * TTS-Engine des Vorlesens: "fish" (Standard, GPU) oder "piper" (CPU,
+ * Paket E1). Unbekannte Werte fallen auf Fish zurück.
+ */
+tts_engine?: string; 
+/**
+ * Engine für die schnelle Vorschau ("" = aus): spricht sofort mit einer
+ * leichten CPU-Stimme, während die Hauptengine noch lädt.
+ */
+tts_preview_engine?: string; 
+/**
+ * Gewählte Piper-Stimme (Modellkennung) oder None = keine gewählt.
+ */
+tts_piper_voice?: string | null; 
 /**
  * T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
  * Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die
  * Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
  */
-tts_tag_favorites?: string[];
+tts_tag_favorites?: string[]; 
+/**
+ * T4 Auto-Tagging: welcher Provider die Tag-Vorschläge liefert.
+ * "" = aktiver Post-Processing-Provider, "anthropic" = fest Claude
+ * (Modell aus `tts_tag_model`). Der Anthropic-Key selbst wird NICHT
+ * hier gepflegt, sondern im bestehenden Post-Processing-Tab.
+ */
+tts_tag_provider?: string; 
+/**
+ * T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
+ */
+tts_tag_model?: string; 
 /**
  * TTS-Engine des Vorlesens: "fish" (Standard, GPU) oder "piper" (CPU,
  * Paket E1). Unbekannte Werte fallen auf Fish zurück.
@@ -2191,6 +2264,15 @@ detail: string;
  * "allgemein" | "fachpublikum" | "management" | "einfache_sprache"
  */
 audience: string }
+/**
+ * Eine vom LLM vorgeschlagene Tag-Einfügung. `offset_in_original` ist ein
+ * BYTE-Offset in `original` (Rust-Konvention), `offset_chars` der
+ * Unicode-Skalarwert-Offset (was `chars().count()` bis dahin liefert). Das
+ * Frontend arbeitet mit UTF-16-Offsets (JS-String-Indizes) — es rechnet
+ * `offset_chars` selbst um (Iteration über die Codepoints, Surrogatpaare bei
+ * Zeichen jenseits der Basisebene wie Emoji zählen dort doppelt).
+ */
+export type TagInsertion = { offset_in_original: number; offset_chars: number; tag: string }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import { commands, type PageInfo, type TtsStatus } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
@@ -19,9 +20,11 @@ import { ReadingCard } from "./ReadingCard";
 import {
   TtsChipEditor,
   type ChipEditorInsertApi,
+  type ChipEditorSuggestion,
 } from "./editor/TtsChipEditor";
 import { useTagProvider } from "./tags/tagProvider";
 import { TagPalette } from "./tags";
+import { AutoTagBar, resolveSuggestion } from "./tags/AutoTagBar";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import {
   TTS_TARGET_LANGS,
@@ -69,6 +72,22 @@ export const TtsSettings = () => {
   // gespeichert (state.json im Seitenordner). Die localStorage-Werte von
   // frueher werden einmalig in die erste Seite uebernommen.
   const [text, setText] = useState<string>("");
+  /** T4 Auto-Tagging: offene Vorschläge im Original-Reiter (gestrichelte
+   *  Chips im Editor). Gehört der Seite hier, weil sowohl der Editor
+   *  (Popover-Buttons) als auch AutoTagBar ("Alle annehmen/verwerfen")
+   *  dieselbe Liste + denselben Text splicen müssen. */
+  const [tagSuggestions, setTagSuggestions] = useState<ChipEditorSuggestion[]>(
+    [],
+  );
+  /** Text, gegen den `tagSuggestions`-Offsets aktuell gültig sind (Review-
+   *  Befund 2: Race zwischen Erzeugung/Anzeige eines Vorschlags und seiner
+   *  Anwendung). `null` ohne offene Liste. Wird bei JEDER erfolgreichen
+   *  Text-Änderung (Einzel- oder Alle-annehmen) auf den neuen Text
+   *  nachgezogen — weicht der tatsächliche `text` trotzdem davon ab, hat der
+   *  Nutzer zwischendurch getippt, und Annehmen verwirft statt zu splicen. */
+  const [tagSuggestionsSourceText, setTagSuggestionsSourceText] = useState<
+    string | null
+  >(null);
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [activePage, setActivePage] = usePersistentState<string>(
     "tts.activePage",
@@ -600,6 +619,63 @@ export const TtsSettings = () => {
   };
 
   /**
+   * T4 Auto-Tagging: Tags wirklich in den Text übernehmen (Annehmen, einzeln
+   * oder "Alle annehmen") — mit Undo-Toast, der den Vortext wiederherstellt.
+   * Reines Verwerfen ruft das NICHT auf (der Text ändert sich dabei nicht).
+   * Zieht `tagSuggestionsSourceText` auf den neuen Text nach — die noch
+   * offenen (nachgezogenen) Vorschläge gelten jetzt gegen DIESEN Text.
+   */
+  const applyAutoTagText = (
+    nextText: string,
+    previousText: string,
+    count: number,
+  ) => {
+    setText(nextText);
+    setTagSuggestionsSourceText(nextText);
+    toast(t("tts.autotag.appliedToast", { count }), {
+      action: {
+        label: t("tts.autotag.undo"),
+        onClick: () => setText(previousText),
+      },
+    });
+  };
+
+  /**
+   * An `TtsChipEditor.onResolveSuggestion` gereicht: Annehmen/Verwerfen EINES
+   * Vorschlags aus dessen Popover (Check/X-Buttons). Review-Befund 2: wurde
+   * der Text seit der letzten Anwendung editiert (`tagSuggestionsSourceText`
+   * weicht ab), würde Annehmen blind an einem möglicherweise falschen Offset
+   * splicen — dann wird der betroffene Vorschlag stattdessen verworfen.
+   * Verwerfen selbst ist davon nie betroffen: es ändert den Text nicht.
+   */
+  const resolveTagSuggestion = (id: string, accept: boolean) => {
+    if (
+      accept &&
+      tagSuggestionsSourceText !== null &&
+      text !== tagSuggestionsSourceText
+    ) {
+      setTagSuggestions((prev) => prev.filter((s) => s.id !== id));
+      toast.info(t("tts.autotag.staleSuggestionsDiscarded"));
+      return;
+    }
+    const outcome = resolveSuggestion(text, tagSuggestions, id, accept);
+    setTagSuggestions(outcome.suggestions);
+    if (outcome.inserted) {
+      applyAutoTagText(outcome.text, text, 1);
+    }
+  };
+
+  /** An `AutoTagBar.onSuggestionsChange` gereicht — hält Vorschlagsliste und
+   *  ihren Referenztext (`tagSuggestionsSourceText`) synchron. */
+  const changeTagSuggestions = (
+    next: ChipEditorSuggestion[],
+    sourceText: string | null,
+  ) => {
+    setTagSuggestions(next);
+    setTagSuggestionsSourceText(sourceText);
+  };
+
+  /**
    * Diktieren — nur diktieren. Der erkannte Text landet im Feld; was damit
    * geschieht, entscheidet danach der Nutzer.
    */
@@ -883,6 +959,8 @@ export const TtsSettings = () => {
                 placeholder={t("tts.inputPlaceholder")}
                 rows={5}
                 className="w-full"
+                suggestions={tagSuggestions}
+                onResolveSuggestion={resolveTagSuggestion}
               />
             ) : tab === "translation" ? (
               <TtsChipEditor
@@ -916,6 +994,18 @@ export const TtsSettings = () => {
                 editorApiRef.current?.insertAtPoint?.(x, y, tagText) ?? false
               }
             />
+
+            {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
+                Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
+            {tab === "original" && (
+              <AutoTagBar
+                text={text}
+                suggestions={tagSuggestions}
+                sourceText={tagSuggestionsSourceText}
+                onSuggestionsChange={changeTagSuggestions}
+                onApplyText={applyAutoTagText}
+              />
+            )}
 
             {/* Je Reiter nur die Aktionen, die er braucht — und die Quellen
                 gebuendelt hinter EINEM Plus (Dokument, Webseite,

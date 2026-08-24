@@ -605,3 +605,44 @@ pub async fn tts_save_seed_voice_v2(
     let tts = app.state::<Arc<TtsManager>>().inner().clone();
     tts.save_seed_voice_v2(seed, &display_name, meta).await
 }
+
+/// T4 Auto-Tagging: schlägt Emotions-/Vortrags-Tags fürs `text` vor. Der
+/// LLM-Output erreicht die Oberfläche NIE unvalidiert — `crate::tagging`
+/// prüft ihn hart gegen die Nur-Einfüge-Invariante (höchstens ein Retry,
+/// danach ein verständlicher Fehler statt eines möglicherweise veränderten
+/// Texts). `provider_override`: `None` = aktiver Post-Processing-Provider,
+/// `Some("anthropic")` = fest Claude (Modell aus `tts_tag_model`).
+///
+/// Rückgabe: `offset_in_original` ist ein BYTE-Offset in `text` (Rust-Art);
+/// das Frontend arbeitet mit UTF-16-Offsets und muss `offset_chars`
+/// (Unicode-Skalarwert-Zählung) selbst umrechnen — siehe die Dokumentation
+/// an `tagging::TagInsertion` und die Umrechnung in `AutoTagBar.tsx`.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_auto_tag(
+    app: AppHandle,
+    text: String,
+    allowed_tags: Vec<String>,
+    provider_override: Option<String>,
+) -> Result<Vec<crate::tagging::TagInsertion>, String> {
+    let settings = crate::settings::get_settings(&app);
+    use tauri::Emitter;
+    // Dasselbe llm-activity-Event wie die Übersetzung — treibt dasselbe
+    // BrainCircuit-Symbol, ohne dass diese Seite es gesondert verdrahten muss.
+    let _ = app.emit("llm-activity", serde_json::json!({ "busy": true }));
+    let outcome = crate::tagging::auto_tag(
+        &settings,
+        &text,
+        &allowed_tags,
+        provider_override.as_deref(),
+    )
+    .await;
+    let _ = app.emit(
+        "llm-activity",
+        serde_json::json!({
+            "busy": false,
+            "error": outcome.as_ref().err().cloned(),
+        }),
+    );
+    outcome
+}
