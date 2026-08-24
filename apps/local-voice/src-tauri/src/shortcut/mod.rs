@@ -745,6 +745,17 @@ pub fn change_tts_context_menu_setting(app: AppHandle, value: bool) -> Result<()
     Ok(())
 }
 
+/// T2 Tag-Palette: favorisierte Tag-Ids sichern. Der Aufrufer schickt immer
+/// die vollstaendige Liste — dieselbe Form wie `update_custom_words`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_tts_tag_favorites_setting(app: AppHandle, value: Vec<String>) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_tag_favorites = value;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_tts_translate_lang_setting(app: AppHandle, value: String) -> Result<(), String> {

@@ -262,6 +262,32 @@
       "projectFile": "Copy a file into the project files",
       "urlDialogTitle": "Load a web page as text"
     },
+    "tags": {
+      "title": "Tags",
+      "searchPlaceholder": "Search tags…",
+      "collapse": "Collapse tag palette",
+      "expand": "Expand tag palette",
+      "favorites": "Favorites",
+      "recent": "Recent",
+      "tabsAriaLabel": "Tag categories",
+      "categories": {
+        "emotionBasic": "Basic emotions",
+        "emotionAdvanced": "Advanced emotions",
+        "tone": "Tone",
+        "dynamics": "Dynamics",
+        "effects": "Effects",
+        "pauses": "Pauses",
+        "special": "Special"
+      },
+      "customPlaceholder": "Custom tag…",
+      "customInsert": "Insert",
+      "customHint": "Free-form text works too — Fish Speech S2-Pro understands tags beyond this list.",
+      "emptyFavorites": "No favorites yet — click the star on a tag to pin it here.",
+      "emptyRecent": "Nothing used yet.",
+      "emptySearch": "No tags match your search.",
+      "favoriteAdd": "Add \"{{tag}}\" to favorites",
+      "favoriteRemove": "Remove \"{{tag}}\" from favorites"
+    },
     "serverStartTitle": "Start the Fish Speech server?",
     "serverStartBody": "The server loads the speech model into graphics memory — roughly 17 GB — and takes up to two minutes depending on your settings. While it runs, translation computes on the CPU. Stop it via the same icon, or it stops itself after the configured idle time."
   },

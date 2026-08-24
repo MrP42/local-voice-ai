@@ -1268,6 +1268,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_tts_speed_setting,
             shortcut::change_tts_export_format_setting,
             shortcut::change_tts_context_menu_setting,
+            shortcut::change_tts_tag_favorites_setting,
             shortcut::change_overlay_position_setting,
             shortcut::change_overlay_style_setting,
             shortcut::change_debug_mode_setting,

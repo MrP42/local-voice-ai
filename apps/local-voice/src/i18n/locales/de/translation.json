@@ -262,6 +262,32 @@
       "projectFile": "Datei zu den Projekt-Dateien kopieren",
       "urlDialogTitle": "Webseite als Text laden"
     },
+    "tags": {
+      "title": "Tags",
+      "searchPlaceholder": "Tags durchsuchen…",
+      "collapse": "Tag-Palette einklappen",
+      "expand": "Tag-Palette aufklappen",
+      "favorites": "Favoriten",
+      "recent": "Zuletzt",
+      "tabsAriaLabel": "Tag-Kategorien",
+      "categories": {
+        "emotionBasic": "Emotionen (Basis)",
+        "emotionAdvanced": "Emotionen (erweitert)",
+        "tone": "Tonfall",
+        "dynamics": "Dynamik",
+        "effects": "Effekte",
+        "pauses": "Pausen",
+        "special": "Spezial"
+      },
+      "customPlaceholder": "Eigenes Tag…",
+      "customInsert": "Einfügen",
+      "customHint": "Auch Freitext funktioniert — Fish Speech S2-Pro versteht Tags über diese Liste hinaus.",
+      "emptyFavorites": "Noch keine Favoriten — Stern auf einem Tag anklicken, um es hier anzuheften.",
+      "emptyRecent": "Noch nichts benutzt.",
+      "emptySearch": "Keine Tags gefunden.",
+      "favoriteAdd": "„{{tag}}“ zu Favoriten hinzufügen",
+      "favoriteRemove": "„{{tag}}“ aus Favoriten entfernen"
+    },
     "serverStartTitle": "Fish-Speech-Server starten?",
     "serverStartBody": "Der Server lädt das Sprachmodell in den Grafikspeicher — rund 17 GB — und braucht dafür je nach Einstellung bis zu zwei Minuten. Solange er läuft, rechnet die Übersetzung auf der CPU. Beendet wird er über dasselbe Symbol oder von selbst nach der eingestellten Leerlaufzeit."
   },

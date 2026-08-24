@@ -587,6 +587,11 @@ pub struct AppSettings {
     /// Gewählte Piper-Stimme (Modellkennung) oder None = keine gewählt.
     #[serde(default)]
     pub tts_piper_voice: Option<String>,
+    /// T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
+    /// Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die
+    /// Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
+    #[serde(default)]
+    pub tts_tag_favorites: Vec<String>,
     /// M8 Meetings: wie lange Audiodateien nach einer Aufnahme/einem Import
     /// aufbewahrt werden, bevor sie hart gelöscht werden. Default: sobald ein
     /// Protokoll existiert (Spec Default-Verhalten).
@@ -1259,6 +1264,7 @@ pub fn get_default_settings() -> AppSettings {
         tts_engine: default_tts_engine(),
         tts_preview_engine: String::new(),
         tts_piper_voice: None,
+        tts_tag_favorites: Vec::new(),
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,
