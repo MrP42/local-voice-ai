@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands, type PageInfo, type TtsStatus } from "@/bindings";
@@ -10,13 +10,18 @@ import { VoiceChangerCard } from "./VoiceChangerCard";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
-import { Textarea } from "../../ui/Textarea";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
 import { ReadingCard } from "./ReadingCard";
+import {
+  TtsChipEditor,
+  type ChipEditorInsertApi,
+} from "./editor/TtsChipEditor";
+import { useTagProvider } from "./tags/tagProvider";
+import { TagPalette } from "./tags";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import {
   TTS_TARGET_LANGS,
@@ -45,8 +50,16 @@ import {
 const SPEEDS = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
 export const TtsSettings = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
+  const uiLang = i18n.language?.split("-")[0] ?? "en";
+  /** Tag-Chips in allen drei Text-Reitern; der Sprecher-Provider eines
+   *  späteren Pakets kommt einfach mit in dieses Array. */
+  const tagProvider = useTagProvider();
+  const chipProviders = useMemo(() => [tagProvider], [tagProvider]);
+  /** Einfüge-API des Editors im AKTIVEN Reiter (es ist immer nur einer
+   *  gemountet) — Ziel für Palette-Klick und Palette-Drag. */
+  const editorApiRef = useRef<ChipEditorInsertApi | null>(null);
   const [status, setStatus] = useState<TtsStatus | null>(null);
   // The text you were about to have read out survives leaving the page —
   // losing a pasted article because you glanced at the model list is the
@@ -858,32 +871,51 @@ export const TtsSettings = () => {
               </button>
             </div>
 
+            {/* Der Chip-Editor ist Drop-in für die frühere Textarea: die
+                native textarea darin bleibt die einzige Wahrheit, Tags
+                (`[…]`) erscheinen als Chips im Mirror-Overlay. */}
             {tab === "original" ? (
-              <Textarea
+              <TtsChipEditor
                 value={text}
-                onChange={(e) => setText(e.target.value)}
+                onChange={setText}
+                providers={chipProviders}
+                insertApiRef={editorApiRef}
                 placeholder={t("tts.inputPlaceholder")}
                 rows={5}
                 className="w-full"
               />
             ) : tab === "translation" ? (
-              <Textarea
+              <TtsChipEditor
                 value={translation ?? ""}
-                onChange={(e) => setTranslation(e.target.value)}
+                onChange={setTranslation}
+                providers={chipProviders}
+                insertApiRef={editorApiRef}
                 placeholder={t("tts.translationPlaceholder")}
                 rows={5}
                 className="w-full"
                 lang={targetLangCode(targetLang)}
               />
             ) : (
-              <Textarea
+              <TtsChipEditor
                 value={summary}
-                onChange={(e) => setSummary(e.target.value)}
+                onChange={setSummary}
+                providers={chipProviders}
+                insertApiRef={editorApiRef}
                 placeholder={t("tts.summaryPlaceholder")}
                 rows={5}
                 className="w-full"
               />
             )}
+
+            <TagPalette
+              uiLang={uiLang}
+              onInsert={(tagText) =>
+                editorApiRef.current?.insertAtCursor(tagText)
+              }
+              onDragInsert={(x, y, tagText) =>
+                editorApiRef.current?.insertAtPoint(x, y, tagText) ?? false
+              }
+            />
 
             {/* Je Reiter nur die Aktionen, die er braucht — und die Quellen
                 gebuendelt hinter EINEM Plus (Dokument, Webseite,
@@ -1233,9 +1265,35 @@ export const TtsSettings = () => {
                 </span>
               )}
             </div>
-            {/* Sprecherwechsel sind eine Schreibregel, keine Einstellung — der
-              Hinweis steht deshalb bei dem Feld, in das man ihn tippt. */}
-            <p className="text-xs text-text/50">{t("tts.dialogHint")}</p>
+            {/* Sprecherwechsel und Tags sind Schreibregeln, keine
+              Einstellungen — der aufklappbare Block steht deshalb bei dem
+              Feld, in das man sie tippt. */}
+            <details className="text-xs text-text/50">
+              <summary className="cursor-pointer select-none transition-colors hover:text-text/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary rounded-sm">
+                {t("tts.writingRules.title")}
+              </summary>
+              <div className="mt-1 space-y-1 ps-4">
+                <p>{t("tts.dialogHint")}</p>
+                <p>{t("tts.writingRules.tagsIntro")}</p>
+                <ul className="list-disc space-y-0.5 ps-4">
+                  <li>
+                    <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                      {t("tts.writingRules.example1")}
+                    </code>
+                  </li>
+                  <li>
+                    <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                      {t("tts.writingRules.example2")}
+                    </code>
+                  </li>
+                  <li>
+                    <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                      {t("tts.writingRules.example3")}
+                    </code>
+                  </li>
+                </ul>
+              </div>
+            </details>
             {speaking && currentSentence && (
               <p className="text-sm italic text-text/70 border-s-2 border-logo-primary ps-2">
                 {currentSentence}
