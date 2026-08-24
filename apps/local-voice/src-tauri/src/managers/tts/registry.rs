@@ -50,6 +50,16 @@ pub struct VoiceMeta {
     pub default_style: Option<String>,
     #[serde(default)]
     pub styles: Vec<VoiceStyle>,
+    /// Catch-all fuer Felder, die diese Version nicht kennt. OHNE das
+    /// waere `write_meta` verlustbehaftet: eine AELTERE App-Version wuerde
+    /// beim naechsten Speichern jedes Feld einer NEUEREN stillschweigend
+    /// wegwerfen (Read→Write→Read haette dann NICHT mehr denselben Inhalt).
+    /// `#[specta(skip)]`, weil `serde_json::Map` kein `specta::Type` hat —
+    /// die generierte TS-Definition braucht dieses Feld ohnehin nicht, das
+    /// Frontend liest/schreibt nur die benannten Felder.
+    #[serde(flatten)]
+    #[specta(skip)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 fn current_version() -> u32 {
@@ -223,6 +233,7 @@ pub fn default_meta(id: &str, all_ids: &[String]) -> VoiceMeta {
         default_tags: Vec::new(),
         default_style: None,
         styles: Vec::new(),
+        extra: serde_json::Map::new(),
     }
 }
 
@@ -301,6 +312,128 @@ pub fn analyze_reference(samples: &[f32], sample_rate: u32) -> ReferenceAnalysis
             Vec::new()
         },
     }
+}
+
+// ---- Traversal-/Existenz-Schutz und darauf aufbauende Operationen --------
+//
+// Jede der folgenden Funktionen nimmt eine `fish_dir: &Path` PLUS eine vom
+// Aufrufer gelieferte id entgegen und ist damit ohne AppHandle/Tauri per
+// tempdir testbar — bewusst so geschnitten, damit `TtsManager` nur noch
+// `self.fish_dir()` ermittelt und hierher durchreicht (siehe `mod.rs`).
+
+/// Sanitiert `id` UND prueft, dass sie zu einer WIRKLICH existierenden
+/// Stimme gehoert — der zentrale Schutz gegen Pfad-Traversal.
+///
+/// Zwei Schranken, beide noetig:
+/// 1. [`voices::sanitize_voice_id`] laesst nur `a-z0-9_-` durch — `.`, `/`
+///    und `\` landen nie im Ergebnis, ein `..`-Segment kann so gar nicht
+///    erst entstehen. Weicht das sanierte Ergebnis vom Original ab, war
+///    die Eingabe nicht schon die kanonische id (die JEDE echte Stimme
+///    traegt, weil sie beim Anlegen genau so saniert wurde) — das wird
+///    abgelehnt statt still umgeschrieben: sonst koennte z. B. `../anna`
+///    unbemerkt auf eine ANDERE, zufaellig existierende Stimme `anna`
+///    matchen, oder ein Tippfehler eine fremde Stimme treffen.
+/// 2. Existenzpruefung gegen [`voices::list_voices`]: eine unbekannte id
+///    darf keinen Pfad mehr anfassen — sonst entstuende z. B. ein
+///    verwaistes `meta.json` fuer eine nie angelegte Stimme.
+pub fn require_known_voice(fish_dir: &Path, id: &str) -> Result<String, String> {
+    let id = require_valid_id(id)?;
+    if !voices::list_voices(fish_dir).iter().any(|v| v == &id) {
+        return Err(format!("Stimme '{id}' nicht gefunden"));
+    }
+    Ok(id)
+}
+
+/// Wie [`require_known_voice`], aber ohne Existenzpruefung — fuer
+/// Kennungen (Stile), die nicht in `voices::list_voices` auftauchen. Reine
+/// Zeichenfilterung, aber genau die IST hier der Traversal-Schutz.
+pub fn require_valid_id(id: &str) -> Result<String, String> {
+    voices::sanitize_voice_id(id)
+        .filter(|sanitized| sanitized == id)
+        .ok_or_else(|| format!("ungueltige Kennung: '{id}'"))
+}
+
+/// (voice_id, display_name) aller Stimmen ausser `exclude` — Grundlage
+/// fuer [`validate_meta`]s Duplikatpruefung.
+pub fn other_voice_names(fish_dir: &Path, exclude: Option<&str>) -> Vec<(String, String)> {
+    voices::list_voices(fish_dir)
+        .into_iter()
+        .filter(|id| Some(id.as_str()) != exclude)
+        .map(|id| {
+            let display_name = read_meta(fish_dir, &id).display_name;
+            (id, display_name)
+        })
+        .collect()
+}
+
+/// Metadaten einer Stimme lesen — mit Existenz-/Traversal-Pruefung.
+pub fn get_voice_meta_checked(fish_dir: &Path, id: &str) -> Result<VoiceMeta, String> {
+    let id = require_known_voice(fish_dir, id)?;
+    Ok(read_meta(fish_dir, &id))
+}
+
+/// Metadaten einer Stimme validieren und speichern — mit Existenz-/
+/// Traversal-Pruefung.
+pub fn set_voice_meta_checked(fish_dir: &Path, id: &str, meta: VoiceMeta) -> Result<(), String> {
+    let id = require_known_voice(fish_dir, id)?;
+    let others = other_voice_names(fish_dir, Some(&id));
+    validate_meta(&meta, &others)?;
+    write_meta(fish_dir, &id, &meta)
+}
+
+/// Avatar setzen/ersetzen UND `meta.avatar` synchron mitfuehren — ohne
+/// diesen Abgleich zeigte die Registry weiter das alte Icon/keinen Avatar,
+/// obwohl laengst eine Bilddatei auf der Platte liegt.
+pub fn set_voice_avatar_checked(
+    fish_dir: &Path,
+    id: &str,
+    bytes: &[u8],
+    ext: &str,
+) -> Result<(), String> {
+    let id = require_known_voice(fish_dir, id)?;
+    let filename = voices::save_avatar(fish_dir, &id, bytes, ext)?;
+    let mut meta = read_meta(fish_dir, &id);
+    meta.avatar = Some(Avatar::Image { file: filename });
+    write_meta(fish_dir, &id, &meta)
+}
+
+/// Avatar entfernen UND `meta.avatar` auf `None` zuruecksetzen, wenn er
+/// zuvor ein Bild war (ein Icon-Avatar bleibt unberuehrt — das Icon liegt
+/// nicht auf der Platte, „Avatar-Datei loeschen" betrifft es nicht).
+pub fn clear_voice_avatar_checked(fish_dir: &Path, id: &str) -> Result<(), String> {
+    let id = require_known_voice(fish_dir, id)?;
+    voices::clear_avatar(fish_dir, &id);
+    let mut meta = read_meta(fish_dir, &id);
+    if matches!(meta.avatar, Some(Avatar::Image { .. })) {
+        meta.avatar = None;
+        write_meta(fish_dir, &id, &meta)?;
+    }
+    Ok(())
+}
+
+/// Referenzaufnahme einer GESPEICHERTEN Stimme analysieren (siehe
+/// [`analyze_reference`]) — mit Existenz-/Traversal-Pruefung.
+pub fn analyze_stored_reference(fish_dir: &Path, voice: &str) -> Result<ReferenceAnalysis, String> {
+    let voice = require_known_voice(fish_dir, voice)?;
+    let (wav_path, _) = voices::voice_sample(fish_dir, &voice)
+        .ok_or_else(|| format!("keine Referenz fuer '{voice}' gefunden"))?;
+    let samples = voices::load_wav_mono_16k(&wav_path)?;
+    Ok(analyze_reference(&samples, 16_000))
+}
+
+/// Stil samt Referenzaufnahme entfernen — mit Existenz-/Traversal-Pruefung
+/// fuer BEIDE Kennungen (Stimme und Stil).
+pub fn delete_style_checked(fish_dir: &Path, voice: &str, style_id: &str) -> Result<(), String> {
+    let voice = require_known_voice(fish_dir, voice)?;
+    let style_id = require_valid_id(style_id)?;
+    let dir = voices::style_dir(fish_dir, &voice, &style_id);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)
+            .map_err(|e| format!("could not delete {}: {e}", dir.display()))?;
+    }
+    let mut meta = read_meta(fish_dir, &voice);
+    meta.styles.retain(|s| s.id != style_id);
+    write_meta(fish_dir, &voice, &meta)
 }
 
 #[cfg(test)]
@@ -390,6 +523,7 @@ mod tests {
                 tags: vec!["whisper".to_string()],
                 reference: Some("__style_anna_fluesternd".to_string()),
             }],
+            extra: serde_json::Map::new(),
         };
         write_meta(fish, "anna", &meta).unwrap();
         let read_back = read_meta(fish, "anna");
@@ -405,10 +539,12 @@ mod tests {
     }
 
     #[test]
-    fn unbekannte_felder_ueberleben_den_roundtrip_nicht_aber_stoeren_das_lesen_nicht() {
+    fn unbekannte_felder_ueberleben_lesen_und_roundtrip() {
         // Eine kuenftige App-Version koennte ein Feld ergaenzen; eine AELTERE
-        // Version muss die Datei trotzdem lesen koennen, statt auf den
-        // Default zurueckzufallen (das waere ein Datenverlust).
+        // Version muss die Datei trotzdem lesen koennen UND darf es beim
+        // naechsten Speichern nicht wegwerfen (`extra`/`#[serde(flatten)]`)
+        // — sonst waere jedes Oeffnen mit der alten Version ein stiller
+        // Datenverlust, sobald irgendetwas anderes neu gespeichert wird.
         let dir = tempfile::tempdir().unwrap();
         let fish = dir.path();
         let voice_dir = fish.join("references").join("olga");
@@ -418,9 +554,25 @@ mod tests {
             r#"{"version":1,"display_name":"Olga","color":"rose","future_field":{"nested":true}}"#,
         )
         .unwrap();
+
         let meta = read_meta(fish, "olga");
         assert_eq!(meta.display_name, "Olga");
         assert_eq!(meta.color, "rose");
+        assert_eq!(
+            meta.extra.get("future_field"),
+            Some(&serde_json::json!({"nested": true}))
+        );
+
+        // Read -> Write -> Read: das unbekannte Feld muss den kompletten
+        // Umlauf ueberleben, nicht nur das erste Lesen.
+        write_meta(fish, "olga", &meta).unwrap();
+        let read_again = read_meta(fish, "olga");
+        assert_eq!(
+            read_again.extra.get("future_field"),
+            Some(&serde_json::json!({"nested": true})),
+            "unbekanntes Feld ist beim Schreiben verlorengegangen"
+        );
+        assert_eq!(read_again, meta);
     }
 
     // ---- Validierung -------------------------------------------------------
@@ -436,6 +588,7 @@ mod tests {
             default_tags: Vec::new(),
             default_style: None,
             styles: Vec::new(),
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -521,5 +674,110 @@ mod tests {
     fn zu_kurze_oder_stille_signale_bekommen_keinen_vorschlag() {
         assert!(!analyze_reference(&[0.0; 100], 16_000).quiet);
         assert!(!analyze_reference(&[], 16_000).quiet);
+    }
+
+    // ---- Traversal-/Existenz-Schutz (Review-Befund) -----------------------
+
+    /// Legt eine ECHTE, vollstaendige Stimme an (WAV + lab), damit die
+    /// Existenzpruefung etwas Reales findet.
+    fn real_voice(fish: &Path, id: &str) {
+        voices::save_voice(fish, id, &[0.1f32; 4 * 16_000], "Hallo Test.", None).unwrap();
+    }
+
+    #[test]
+    fn require_valid_id_lehnt_traversal_versuche_ab() {
+        for bogus in ["../x", "a/b", "a\\b", "..", ""] {
+            assert!(
+                require_valid_id(bogus).is_err(),
+                "haette '{bogus}' ablehnen muessen"
+            );
+        }
+        assert_eq!(require_valid_id("anna_m").unwrap(), "anna_m");
+    }
+
+    #[test]
+    fn require_known_voice_lehnt_traversal_und_unbekannte_stimmen_ab() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        real_voice(fish, "anna");
+
+        for bogus in ["../anna", "anna/../anna", "anna\\x", "geist"] {
+            assert!(
+                require_known_voice(fish, bogus).is_err(),
+                "haette '{bogus}' ablehnen muessen"
+            );
+        }
+        assert_eq!(require_known_voice(fish, "anna").unwrap(), "anna");
+    }
+
+    #[test]
+    fn get_und_set_voice_meta_checked_lehnen_unbekannte_stimmen_ohne_verwaiste_datei_ab() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        real_voice(fish, "anna");
+
+        assert!(get_voice_meta_checked(fish, "geist").is_err());
+        assert!(get_voice_meta_checked(fish, "../anna").is_err());
+        assert!(set_voice_meta_checked(fish, "geist", meta_named("Geist")).is_err());
+        assert!(
+            !voices::voice_dir(fish, "geist").join("meta.json").exists(),
+            "eine abgelehnte Stimme darf keine meta.json hinterlassen"
+        );
+
+        assert!(set_voice_meta_checked(fish, "anna", meta_named("Anna")).is_ok());
+        assert_eq!(
+            get_voice_meta_checked(fish, "anna").unwrap().display_name,
+            "Anna"
+        );
+    }
+
+    #[test]
+    fn set_und_clear_voice_avatar_checked_halten_meta_avatar_synchron() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        real_voice(fish, "anna");
+
+        let png = [
+            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n', 0, 0, 0, 0,
+        ];
+        set_voice_avatar_checked(fish, "anna", &png, "png").unwrap();
+        assert_eq!(
+            get_voice_meta_checked(fish, "anna").unwrap().avatar,
+            Some(Avatar::Image {
+                file: "avatar.png".to_string()
+            })
+        );
+
+        clear_voice_avatar_checked(fish, "anna").unwrap();
+        assert_eq!(get_voice_meta_checked(fish, "anna").unwrap().avatar, None);
+
+        // Traversal/unbekannte Stimme auch hier abgelehnt.
+        assert!(set_voice_avatar_checked(fish, "../anna", &png, "png").is_err());
+        assert!(set_voice_avatar_checked(fish, "geist", &png, "png").is_err());
+        assert!(clear_voice_avatar_checked(fish, "geist").is_err());
+    }
+
+    #[test]
+    fn analyze_stored_reference_lehnt_traversal_und_unbekannte_stimmen_ab() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        real_voice(fish, "anna");
+
+        assert!(analyze_stored_reference(fish, "geist").is_err());
+        assert!(analyze_stored_reference(fish, "../anna").is_err());
+        assert!(analyze_stored_reference(fish, "anna").is_ok());
+    }
+
+    #[test]
+    fn delete_style_checked_lehnt_traversal_in_beiden_kennungen_ab() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        real_voice(fish, "anna");
+
+        assert!(delete_style_checked(fish, "../anna", "stil").is_err());
+        assert!(delete_style_checked(fish, "anna", "../stil").is_err());
+        assert!(delete_style_checked(fish, "geist", "stil").is_err());
+        // Ein nicht existierender, aber gueltig geformter Stil ist ein No-op.
+        assert!(delete_style_checked(fish, "anna", "nie-angelegt").is_ok());
     }
 }

@@ -608,6 +608,18 @@ const AVATAR_EXTENSIONS: [&str; 3] = ["png", "webp", "jpg"];
 /// vermutlich ein Versehen (falsche Datei gewählt).
 pub const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
 
+/// Signatur-Pruefung gegen den behaupteten Dateityp — die Erweiterung
+/// allein ist nur eine Behauptung des Aufrufers, kein Beleg fuer den
+/// tatsaechlichen Inhalt.
+fn looks_like_avatar(bytes: &[u8], ext: &str) -> bool {
+    match ext {
+        "png" => bytes.starts_with(&[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n']),
+        "jpg" => bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "webp" => bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
+        _ => false,
+    }
+}
+
 /// Avatar-Datei im Stimmenordner ablegen. Ersetzt eine vorhandene Avatar-
 /// Datei ANDERER Erweiterung (immer höchstens ein Avatar je Stimme) und
 /// liefert den geschriebenen Dateinamen (`avatar.<ext>`) zurück.
@@ -616,6 +628,11 @@ pub const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
 /// Die Bytes kommen vom Frontend-Command als `Vec<u8>`, nicht als
 /// Base64-String: das Projekt hat kein direktes base64-Crate, und ein neues
 /// nur für den Avatar-Upload wollte die Aufgabe ausdrücklich vermeiden.
+///
+/// Schreibt ERST die neue Datei, entfernt DANACH einen alten Avatar anderer
+/// Erweiterung — nicht umgekehrt: schlaegt das Schreiben fehl (Platte voll,
+/// Rechte), bleibt der bisherige Avatar stehen statt dass die Stimme
+/// kommentarlos avatarlos dasteht.
 pub fn save_avatar(fish_dir: &Path, id: &str, bytes: &[u8], ext: &str) -> Result<String, String> {
     let ext = ext.trim_start_matches('.').to_lowercase();
     if !AVATAR_EXTENSIONS.contains(&ext.as_str()) {
@@ -627,13 +644,22 @@ pub fn save_avatar(fish_dir: &Path, id: &str, bytes: &[u8], ext: &str) -> Result
             bytes.len()
         ));
     }
+    if !looks_like_avatar(bytes, &ext) {
+        return Err(format!(
+            "Datei sieht nicht wie ein gueltiges {ext}-Bild aus"
+        ));
+    }
     let dir = voice_dir(fish_dir, id);
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-    clear_avatar(fish_dir, id);
     let filename = format!("avatar.{ext}");
     let path = dir.join(&filename);
     std::fs::write(&path, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    for other_ext in AVATAR_EXTENSIONS {
+        if other_ext != ext {
+            let _ = std::fs::remove_file(dir.join(format!("avatar.{other_ext}")));
+        }
+    }
     Ok(filename)
 }
 
@@ -856,12 +882,28 @@ mod tests {
 
     // ---- Avatar -------------------------------------------------------------
 
+    /// Minimal gueltige Signatur-Bytes je Typ — reicht fuer `looks_like_avatar`,
+    /// muss kein dekodierbares Bild sein.
+    fn png_bytes() -> Vec<u8> {
+        vec![
+            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n', 0, 0, 0, 0,
+        ]
+    }
+    fn webp_bytes() -> Vec<u8> {
+        let mut v = b"RIFF".to_vec();
+        v.extend_from_slice(&[0, 0, 0, 0]); // Groessenfeld, ungeprueft
+        v.extend_from_slice(b"WEBP");
+        v
+    }
+    fn jpg_bytes() -> Vec<u8> {
+        vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0]
+    }
+
     #[test]
     fn avatar_wird_gespeichert_gefunden_und_bei_neuem_typ_ersetzt() {
         let dir = tempfile::tempdir().unwrap();
         let fish = dir.path();
-        let png_bytes = vec![1u8, 2, 3, 4];
-        save_avatar(fish, "anna", &png_bytes, "png").unwrap();
+        save_avatar(fish, "anna", &png_bytes(), "png").unwrap();
         assert_eq!(
             avatar_path(fish, "anna"),
             Some(voice_dir(fish, "anna").join("avatar.png"))
@@ -869,8 +911,7 @@ mod tests {
 
         // Ersetzen durch einen anderen Dateityp darf keine zwei Avatare
         // hinterlassen.
-        let webp_bytes = vec![5u8, 6, 7];
-        save_avatar(fish, "anna", &webp_bytes, ".webp").unwrap();
+        save_avatar(fish, "anna", &webp_bytes(), ".webp").unwrap();
         assert_eq!(
             avatar_path(fish, "anna"),
             Some(voice_dir(fish, "anna").join("avatar.webp"))
@@ -882,6 +923,22 @@ mod tests {
     }
 
     #[test]
+    fn ein_fehlschlagendes_schreiben_darf_den_alten_avatar_nicht_verlieren() {
+        // Erst schreiben, dann den alten entfernen (siehe Doc-Kommentar an
+        // `save_avatar`): eine unbekannte Erweiterung schlaegt VOR jedem
+        // Schreiben fehl, der alte Avatar muss also unangetastet bleiben.
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        save_avatar(fish, "anna", &png_bytes(), "png").unwrap();
+        assert!(save_avatar(fish, "anna", &[1, 2, 3], "gif").is_err());
+        assert_eq!(
+            avatar_path(fish, "anna"),
+            Some(voice_dir(fish, "anna").join("avatar.png")),
+            "der alte Avatar muss trotz fehlgeschlagenem Ersetzungsversuch bleiben"
+        );
+    }
+
+    #[test]
     fn zu_grosse_oder_unbekannte_avatare_werden_abgelehnt() {
         let dir = tempfile::tempdir().unwrap();
         let fish = dir.path();
@@ -889,6 +946,21 @@ mod tests {
         assert!(save_avatar(fish, "anna", &too_big, "png").is_err());
         assert!(save_avatar(fish, "anna", &[1, 2, 3], "gif").is_err());
         assert_eq!(avatar_path(fish, "anna"), None);
+    }
+
+    #[test]
+    fn avatare_mit_falscher_magic_number_werden_trotz_passender_endung_abgelehnt() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        // Endung "png", aber die Bytes sehen nicht wie ein PNG aus — die
+        // Endung allein ist nur eine Behauptung des Aufrufers.
+        let fake = vec![0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        assert!(save_avatar(fish, "anna", &fake, "png").is_err());
+        assert!(save_avatar(fish, "anna", &jpg_bytes(), "png").is_err());
+        assert_eq!(avatar_path(fish, "anna"), None);
+
+        // Echte Signaturen bleiben weiterhin gueltig.
+        assert!(save_avatar(fish, "anna", &jpg_bytes(), "jpg").is_ok());
     }
 
     #[test]

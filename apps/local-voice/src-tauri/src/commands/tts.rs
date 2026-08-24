@@ -482,7 +482,7 @@ pub fn tts_list_voice_infos(app: AppHandle) -> Vec<VoiceInfo> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn tts_get_voice_meta(app: AppHandle, id: String) -> VoiceMeta {
+pub fn tts_get_voice_meta(app: AppHandle, id: String) -> Result<VoiceMeta, String> {
     app.state::<Arc<TtsManager>>().get_voice_meta(&id)
 }
 

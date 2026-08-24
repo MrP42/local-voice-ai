@@ -2934,23 +2934,6 @@ impl TtsManager {
             .collect()
     }
 
-    /// (voice_id, display_name) aller Stimmen ausser `exclude` — Grundlage
-    /// fuer `registry::validate_meta`s Duplikatpruefung.
-    fn other_voice_names(
-        &self,
-        fish_dir: &std::path::Path,
-        exclude: Option<&str>,
-    ) -> Vec<(String, String)> {
-        voices::list_voices(fish_dir)
-            .into_iter()
-            .filter(|id| Some(id.as_str()) != exclude)
-            .map(|id| {
-                let display_name = registry::read_meta(fish_dir, &id).display_name;
-                (id, display_name)
-            })
-            .collect()
-    }
-
     /// Alle Stimmen samt Metadaten, Herkunft und Avatar-Pfad — Grundlage der
     /// Stimmenuebersicht.
     pub fn list_voice_infos(&self) -> Vec<registry::VoiceInfo> {
@@ -2975,30 +2958,29 @@ impl TtsManager {
             .collect()
     }
 
-    /// Metadaten einer Stimme lesen (Default, falls keine `meta.json` existiert).
-    pub fn get_voice_meta(&self, id: &str) -> registry::VoiceMeta {
-        registry::read_meta(&self.fish_dir(), id)
+    /// Metadaten einer Stimme lesen (Default, falls keine `meta.json`
+    /// existiert). Lehnt Pfad-Traversal UND unbekannte Stimmen ab — siehe
+    /// `registry::require_known_voice`.
+    pub fn get_voice_meta(&self, id: &str) -> Result<registry::VoiceMeta, String> {
+        registry::get_voice_meta_checked(&self.fish_dir(), id)
     }
 
     /// Metadaten einer Stimme validieren und speichern.
     pub fn set_voice_meta(&self, id: &str, meta: registry::VoiceMeta) -> Result<(), String> {
-        let fish_dir = self.fish_dir();
-        let others = self.other_voice_names(&fish_dir, Some(id));
-        registry::validate_meta(&meta, &others)?;
-        registry::write_meta(&fish_dir, id, &meta)
+        registry::set_voice_meta_checked(&self.fish_dir(), id, meta)
     }
 
-    /// Avatar-Datei einer Stimme setzen/ersetzen. `ext` ohne Punkt
-    /// (`png`/`webp`/`jpg`). Bytes kommen roh (kein Base64 — siehe
-    /// `voices::save_avatar`).
+    /// Avatar-Datei einer Stimme setzen/ersetzen (und `meta.avatar`
+    /// mitfuehren). `ext` ohne Punkt (`png`/`webp`/`jpg`). Bytes kommen roh
+    /// (kein Base64 — siehe `voices::save_avatar`).
     pub fn set_voice_avatar(&self, id: &str, bytes: Vec<u8>, ext: &str) -> Result<(), String> {
-        voices::save_avatar(&self.fish_dir(), id, &bytes, ext).map(|_| ())
+        registry::set_voice_avatar_checked(&self.fish_dir(), id, &bytes, ext)
     }
 
-    /// Avatar-Datei einer Stimme entfernen.
+    /// Avatar-Datei einer Stimme entfernen (und `meta.avatar` zuruecksetzen,
+    /// falls er ein Bild war).
     pub fn clear_voice_avatar(&self, id: &str) -> Result<(), String> {
-        voices::clear_avatar(&self.fish_dir(), id);
-        Ok(())
+        registry::clear_voice_avatar_checked(&self.fish_dir(), id)
     }
 
     /// Die einbehaltene Referenzaufnahme (siehe `record_reference_stop`) als
@@ -3017,8 +2999,11 @@ impl TtsManager {
         name: &str,
     ) -> Result<(), String> {
         use tauri::Manager;
-        let style_id = voices::sanitize_voice_id(style_id)
-            .ok_or_else(|| "Stilname ergibt keine gueltige Kennung".to_string())?;
+        let fish_dir = self.fish_dir();
+        // Traversal-/Existenzschutz fuer BEIDE Kennungen — vorher war nur
+        // `style_id` saniert, `voice` ging roh in den Pfad (Review-Befund).
+        let voice = registry::require_known_voice(&fish_dir, voice)?;
+        let style_id = registry::require_valid_id(style_id)?;
         let samples = self
             .pending_reference
             .lock()
@@ -3029,10 +3014,9 @@ impl TtsManager {
             .app
             .state::<Arc<crate::managers::transcription::TranscriptionManager>>();
         let transcript = tm.transcribe(samples.clone()).unwrap_or_default();
-        let fish_dir = self.fish_dir();
         let reference = match voices::save_style_voice(
             &fish_dir,
-            voice,
+            &voice,
             &style_id,
             &samples,
             &transcript,
@@ -3044,7 +3028,7 @@ impl TtsManager {
                 return Err(e);
             }
         };
-        let mut meta = registry::read_meta(&fish_dir, voice);
+        let mut meta = registry::read_meta(&fish_dir, &voice);
         meta.styles.retain(|s| s.id != style_id);
         meta.styles.push(registry::VoiceStyle {
             id: style_id,
@@ -3052,30 +3036,18 @@ impl TtsManager {
             tags: Vec::new(),
             reference: Some(reference),
         });
-        registry::write_meta(&fish_dir, voice, &meta)
+        registry::write_meta(&fish_dir, &voice, &meta)
     }
 
     /// Einen Stil samt seiner Referenzaufnahme entfernen.
     pub fn delete_style(&self, voice: &str, style_id: &str) -> Result<(), String> {
-        let fish_dir = self.fish_dir();
-        let dir = voices::style_dir(&fish_dir, voice, style_id);
-        if dir.exists() {
-            std::fs::remove_dir_all(&dir)
-                .map_err(|e| format!("could not delete {}: {e}", dir.display()))?;
-        }
-        let mut meta = registry::read_meta(&fish_dir, voice);
-        meta.styles.retain(|s| s.id != style_id);
-        registry::write_meta(&fish_dir, voice, &meta)
+        registry::delete_style_checked(&self.fish_dir(), voice, style_id)
     }
 
     /// Referenzaufnahme einer gespeicherten Stimme auf die Lautstaerke-
     /// Heuristik hin analysieren (siehe `registry::analyze_reference`).
     pub fn analyze_reference(&self, voice: &str) -> Result<registry::ReferenceAnalysis, String> {
-        let fish_dir = self.fish_dir();
-        let (wav_path, _) = voices::voice_sample(&fish_dir, voice)
-            .ok_or_else(|| format!("keine Referenz fuer '{voice}' gefunden"))?;
-        let samples = voices::load_wav_mono_16k(&wav_path)?;
-        Ok(registry::analyze_reference(&samples, 16_000))
+        registry::analyze_stored_reference(&self.fish_dir(), voice)
     }
 
     /// Wie `analyze_reference`, aber fuer die noch nicht gespeicherte,
@@ -3135,7 +3107,7 @@ impl TtsManager {
         if voices::voice_is_complete(&fish_dir, &id) {
             return Err(format!("Die Stimme '{id}' existiert bereits"));
         }
-        let others = self.other_voice_names(&fish_dir, Some(&id));
+        let others = registry::other_voice_names(&fish_dir, Some(&id));
         registry::validate_meta(&meta, &others)?;
 
         self.refresh_from_settings();
@@ -3150,8 +3122,14 @@ impl TtsManager {
         std::fs::create_dir_all(&target)
             .map_err(|e| format!("could not create {}: {e}", target.display()))?;
         for file in ["sample.wav", "sample.lab"] {
-            std::fs::copy(source.join(file), target.join(file))
-                .map_err(|e| format!("could not copy {file}: {e}"))?;
+            if let Err(e) = std::fs::copy(source.join(file), target.join(file)) {
+                // Unvollstaendiges Verzeichnis nicht stehen lassen — sonst
+                // meldet `voice_is_complete` beim naechsten Versuch
+                // faelschlich "existiert bereits" fuer eine Stimme, die nie
+                // fertig wurde.
+                let _ = std::fs::remove_dir_all(&target);
+                return Err(format!("could not copy {file}: {e}"));
+            }
         }
         voices::write_seed_marker(&fish_dir, &id, seed);
         registry::write_meta(&fish_dir, &id, &meta)?;
