@@ -2,6 +2,29 @@ import XCTest
 @testable import VoiceCore
 
 final class ReplyTests: XCTestCase {
+    func testUnsendableGeneratedReplyDoesNotCompleteCapture() throws {
+        for reply in ["", "  \n", String(repeating: "x", count: 501)] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let store = try DurableStore(root: root)
+            let capture = Packet.capture(audio: Data([1]))
+            _ = try store.accept(capture)
+            XCTAssertThrowsError(try store.update(capture.sessionId, reply: reply, state: .answered))
+            let entry = try XCTUnwrap(store.entries().first)
+            XCTAssertNil(entry.reply)
+            XCTAssertEqual(entry.state, .saved)
+            XCTAssertEqual(try store.audio(for: entry.id), capture.audio)
+        }
+    }
+    func testWhitespaceIncomingReplyIsNotAcknowledged() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root)
+        let capture = Packet.capture(audio: Data([1]))
+        _ = try store.accept(capture)
+        XCTAssertThrowsError(try store.acceptReply(VoiceEnvelope(sessionId: capture.sessionId, reply: " \n")))
+        XCTAssertNil(try store.entries().first?.replyReceipt)
+    }
     func testReplyAndReceiptSurviveRestartWithoutDuplicatePlayback() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -87,6 +87,7 @@ public final class DurableStore {
         guard var entry = try entries().first(where: { $0.id == id }) else { throw VoiceError.missing }
         if let transcript { entry.transcript = transcript }
         if let reply {
+            guard !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, reply.count <= 500 else { throw VoiceError.invalid }
             if let previous = entry.reply, previous != reply { throw VoiceError.conflict }
             entry.reply = reply
             if entry.replyMessageId == nil { entry.replyMessageId = UUID() }
@@ -111,7 +112,7 @@ public final class DurableStore {
     public func acceptReply(_ envelope: VoiceEnvelope) throws -> (receipt: Receipt, isNew: Bool) {
         guard envelope.schemaVersion == 1 else { throw VoiceError.version }
         guard envelope.kind == "reply", let id = envelope.sessionId, let text = envelope.reply,
-              !text.isEmpty, text.count <= 500, (envelope.transcript?.count ?? 0) <= 16000 else { throw VoiceError.invalid }
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 500, (envelope.transcript?.count ?? 0) <= 16000 else { throw VoiceError.invalid }
         guard var entry = try entries().first(where: { $0.id == id }) else { throw VoiceError.missing }
         if let previous = entry.reply {
             guard previous == text, entry.transcript == envelope.transcript else { throw VoiceError.conflict }
