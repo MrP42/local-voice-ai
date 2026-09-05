@@ -247,6 +247,19 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(commands::tts::AutoTagRun::default());
     app_handle.manage(tray::CurrentTrayIconState::new());
 
+    // Entwuerfe des Stimmen-Baukastens aelter als 30 Tage entfernen:
+    // Kandidaten-WAVs sind gross, und ein vergessener Entwurf haelt
+    // sonst dauerhaft Platz. Best effort — ein Fehler hier darf den
+    // Start nicht aufhalten.
+    {
+        let fish_dir =
+            std::path::PathBuf::from(crate::settings::get_settings(app_handle).tts_fish_dir);
+        let removed = crate::managers::tts::builder::prune_drafts(&fish_dir, 30);
+        if removed > 0 {
+            log::info!("Baukasten: {removed} alte Entwuerfe entfernt");
+        }
+    }
+
     if let Some(store) = meeting_store {
         let recorder = Arc::new(managers::meetings::recorder::MeetingRecorderManager::new(
             app_handle,
