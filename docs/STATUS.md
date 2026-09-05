@@ -241,25 +241,23 @@ Als Issues erfasst unter https://github.com/MrP42/local-voice-ai/issues
 | `upstream` | `https://github.com/cjpais/Handy.git` — fremdes Fork-Original, **niemals dorthin pushen** |
 | Arbeitsbranch | `feat/m3-stabilize-paste-path` |
 
-## Apple P0/P1 — Simulator-Spike 2026-09-05
+## Native Apple P0/P1 – abgeschlossener Simulatorumfang, 05.09.2026
 
-Isolierter Branch `codex/apple-p0-p1`, native SwiftUI-Targets unter `apps/apple`.
-Benutzer hat für diese Runde virtuelle Xcode-Geräte angefordert. Zehn Kerntests
-und Simulator-/unsignierte Geräte-Builds bestehen. Entwicklungs-Dauerlauf mit
-101 synthetischen Aufnahmen über WCSession ohne fehlende bestätigte Aufnahme;
-Hintergrund/Neustart geprüft. P0/P1 noch nicht vollständig abgenommen: Watch-
-Mikrofondialog wartet auf Benutzeraktion, finale Transportregression und mehrere
-Lifecycle-Fälle offen; SpeechTranscriber/Foundation Models im Intel-Simulator
-nicht verfügbar. Keine Akku-/Hardwarelatenzbehauptung. Details und Messgrenzen:
-`docs/apple-evidence/2026-09-05-simulator-report.md`; P2 nur als Folgeplan.
+Isolierter Branch `codex/apple-p0-p1`: native SwiftUI-Apps für iPhone und Watch,
+dauerhafte Audioübergabe, lokale CPU-STT und kurze lokale Modellantwort, System-TTS
+auf der Watch und Verlauf auf dem iPhone. Der Benutzer hat virtuelle Xcode-Geräte
+anstelle physischer Geräte beauftragt. Finaler Programmstand `aad2e0f`:
+31 Kerntests, je ein frischer nativer iPhone-/Watch-Bedienungstest sowie Simulator-Build
+bestanden; 100/100 lokale Sprachaufträge mit Hintergrund, Neustarts und
+Verbindungsunterbrechung vollständig beantwortet und quittiert (896,018 s).
+Lock, Wrist Down, benutzerseitiges App-Ende, Duplikate, Mikrofonverweigerung und
+expliziter Wiedergabestop sind mit ihren Simulatorgrenzen dokumentiert.
+Zwei Claude-Reviews abgeschlossen, bestätigte Befunde bearbeitet.
 
-## Native Apple P0/P1 – Simulatorstand 05.09.2026
-
-Isolierter Branch `codex/apple-p0-p1`: SwiftUI-Watch/iPhone mit dauerhafter
-Übergabe, lokaler CPU-STT und kurzer Modellantwort. 17 Kerntests sowie nativer
-Watch-UI-Test bestanden; 100 lokale Turns mit Neustarts/Verbindungsunterbrechung
-dauerhaft beantwortet und quittiert. Lock/Wrist Down inzwischen als Deferred-Fälle im Simulator nachgewiesen.
-Benutzerseitiges Wegwischen im App-Umschalter inzwischen ebenfalls mit späterer
-Verarbeitung geprüft. Externer Review offen; physische Audio-Routen nicht verifiziert. Latenzziele nicht erreicht, Akku unbekannt.
+P0/P1 als Machbarkeitsprototyp abgeschlossen. Vorläufige Latenzziele nicht erreicht,
+Akkuauswirkung unbekannt; keine physische Audio-/Funk-/Data-Protection-Abnahme.
+Bei inaktivem, gesperrtem oder beendetem iPhone bleibt die Aufnahme gespeichert;
+Verarbeitung wird nach Aktivierung fortgesetzt. Desktop-Bestand und lokale Änderungen
+im ursprünglichen Checkout erhalten; kein Push und keine Veröffentlichung.
 Details: [Simulatorbericht](apple-evidence/2026-09-05-simulator-report.md),
-[P2-Folgeplan](apple-evidence/P2-follow-up.md). Desktop-Bestand unverändert.
+[P2-Folgeplan](apple-evidence/P2-follow-up.md). P2 ist geplant, nicht implementiert.

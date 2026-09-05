@@ -58,8 +58,10 @@ be returned. Repeated session/message/content produces the same persisted receip
 conflicting IDs or corrupt stored audio are rejected. The UI confirms only after
 persistence. Original Watch audio remains retained even after iPhone acceptance
 for this spike. There is no automatic deletion in P1. Raw recordings awaiting a
-successful save are left hidden in the outbox directory for recovery; they are
-never labelled confirmed. A recovery UI and retention policy belong to P2.
+successful save stay in the outbox directory and are never labelled confirmed.
+On activation, readable nonempty drafts are recovered automatically using the stable
+UUID in their filename. Unreadable drafts remain on disk with a visible status.
+A recovery UI and retention policy belong to P2.
 
 Both receivers use the same store. Replies update an existing session; a late
 receipt cannot regress answered state. Unknown reply sessions are rejected.
@@ -106,3 +108,13 @@ report's unavailable Apple-model result still holds; CPU inference
 measurements and limits are recorded in docs/apple-evidence/2026-09-05-simulator-report.md.
 Optional `--small` also downloads Whisper Small (487.6 MB); its presence in
 Documents/Models selects it over Base. It uses more time and memory.
+
+## Recording permission lifecycle
+
+A recording request is invalidated when the scene becomes inactive. If the first
+system permission dialog interrupts the scene, allowing access does not start a
+surprise recording afterward: the UI explicitly asks for another tap. A denial
+remains visible. Duplicate or delayed callbacks cannot consume a newer intent.
+This behavior has six core regression tests and fresh iPhone/Watch UI coverage.
+Empty, whitespace-only, or oversized generated replies are rejected before a job
+is marked answered; the saved recording remains eligible for later processing.

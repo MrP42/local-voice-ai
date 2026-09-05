@@ -21,8 +21,16 @@ Read apps/local-voice/AGENTS.md, apps/local-voice/CLAUDE.md, docs/STATUS.md and 
 
 From apps/local-voice: bun run tauri dev/build, bun run build, bun run lint, bun run format:check, bun run test:playwright. Backend: cargo test --lib from src-tauri. Intel BUILD.md requires ONNX Runtime via ORT_LIB_LOCATION and ORT_PREFER_DYNAMIC_LINK=1 for desktop builds. These commands were inspected, not executed in this preflight. No desktop sources changed.
 
-## P0 gate still open
+## Historical initial gate (superseded by simulator scope)
 
 Connect and trust the reference iPhone, make the paired Watch available to Xcode, enable Developer Mode where required, and provide/select a signing team. Installed iOS/watchOS versions, pairing, microphone/audio routes, and physical device deployment remain unverified.
 
 P0 and P1 are not complete. No prototype build, lifecycle pass, latency measurement, or battery measurement is claimed. All ten requested lifecycle scenarios remain NOT RUN pending device setup and implementation. P2 planning must follow actual P1 evidence.
+
+## Scope update
+
+The user subsequently explicitly requested virtual Xcode devices. The initial
+hardware gate above is retained as preflight history, not a current request for
+signing or connected hardware. The paired iPhone 15 Pro Max (iOS 26.3.1) and
+Watch Ultra 3 (watchOS 26.2) simulators are installed and used. See the current
+[simulator report](2026-09-05-simulator-report.md) for implementation and test results.

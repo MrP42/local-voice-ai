@@ -1,7 +1,9 @@
 # P0/P1 – Simulator-Nachweis, 05.09.2026
 
 Der native SwiftUI-Prototyp läuft auf dem gekoppelten iPhone-15-Pro-Max- und
-Watch-Ultra-3-Simulator. **P1 ist noch nicht vollständig abgenommen.** Der Benutzer
+Watch-Ultra-3-Simulator. **P0/P1 sind als Machbarkeitsprototyp im vereinbarten Simulatorumfang abgeschlossen.**
+Die vorläufigen Performanceziele sind nicht erreicht; dies ist keine Hardware-
+oder Produktfreigabe. Der Benutzer
 hat ausdrücklich virtuelle Xcode-Geräte statt physischer Geräte beauftragt.
 Dieser Bericht ersetzt die frühere Zwischenabnahme mit ausschließlich fester Antwort.
 
@@ -17,9 +19,10 @@ Kein Push und keine Veröffentlichung. Simulator-Builds benötigen kein Develope
 ## Ausgeführte Prüfungen
 
 - Frischer VoicePhone-Simulator-Build inklusive Watch: erfolgreich.
-- Persistenz-/Protokolltests: 17 Tests, 0 Fehler, 2,620 Sekunden am 05.09.2026.
+- Persistenz-/Protokolltests: 31 Tests, 0 Fehler, 2,651 Sekunden am 05.09.2026.
 - Native Watch-UI-Prüfung für Aufnahme, Stop, Home und Wiederöffnung: 1 Test bestanden,
-  47,8 Sekunden. Derselbe iPhone-UI-Test frisch bestanden: 1 Test, 61,568 Sekunden.
+  13,896 Sekunden. Derselbe iPhone-UI-Test frisch bestanden: 1 Test, 16,888 Sekunden.
+  Beide auf dem finalen App-Quellstand `aad2e0f`, mit gewachsenem Verlauf.
   Kein unabhängiger akustischer Hörnachweis.
 - Native CPU-Inferenz für Gerätearchitektur zuvor erfolgreich ohne Signing kompiliert;
   kein physischer Gerätetest.
@@ -41,6 +44,11 @@ Watch verwendet ausschließlich native Aufnahme, Transport und System-TTS.
 
 ## Lifecycle-Matrix
 
+Die gezielten Einzelfälle wurden während P1 geprüft; ihre Rohdaten halten den
+jeweiligen Versuch fest. Auf dem finalen Programmstand wurden Build, beide
+Bedienungstests und der neue 100-Turn-Lauf wiederholt. Nicht jeder einzelne
+Lock-/Wrist-/Audio-Hilfstest wurde nach jeder späteren Korrektur erneut ausgeführt.
+
 | Fall | Ergebnis und Nachweis | Verbleibende Grenze |
 |---|---|---|
 | iPhone Vordergrund | PASS: lokaler STT-/Antwortpfad, 100 geprüfte Turns | Simulator, synthetische Audiodateien |
@@ -57,10 +65,36 @@ Watch verwendet ausschließlich native Aufnahme, Transport und System-TTS.
 | Speicherlimit/Versionsfehler/korruptes Audio | PASS im Kern: keine Annahmequittung und keine Überschreibung | kein voller physischer Datenträger |
 | Modelle fehlen | PASS: Aufnahme bleibt deferred | explizite lokale Modellinstallation erforderlich |
 
-## Messwerte
+## Abschließende Messung (`aad2e0f`)
+
+Frischer unveränderter Programmstand, neuer Satz von genau 100 synthetischen
+Sprachaufträgen, **896,018 Sekunden** einschließlich Hintergrund, App-Neustarts und
+Simulator-Verbindungsunterbrechung. **100/100** auf beiden Seiten gespeichert,
+transkribiert, beantwortet und dauerhaft quittiert. Der frische Abschlussaudit prüft
+Audio-Digest, identische Transkripte/Antworten, stabile Antwort-ID, Antwortquittung,
+Zustand und vorhandene STT-/Generierungszeiten für jede ID.
+Rohdaten und Statistik: `results/native-local-100-final.json`.
+
+| Stufe | n | Median ms | p95 ms | Maximum ms |
+|---|---:|---:|---:|---:|
+| Transfer bis dauerhafte Empfangsquittung | 100 | 1418,91 | 2497,83 | 57421,27 |
+| STT (Whisper Base) | 100 | 5226,03 | 5522,75 | 7800,64 |
+| Lokale Antwort (Qwen) | 100 | 1959,77 | 2234,13 | 4130,14 |
+| Watch-TTS-Aufruf bis Startcallback | 96 | 6,70 | 92,65 | 379,01 |
+
+Die Transfermessung enthält keine vorherige Outbox-Wartezeit. 96 TTS-Proben sind
+vorhanden, weil nicht jede Antwort im aktiven Wiedergabezustand eintraf. Der Callback
+ist kein akustischer Hörnachweis. Kein kontrollierter Warm-/Kaltstartvergleich;
+Stufenquantile dürfen nicht zu einem Ende-zu-Ende-p95 addiert werden.
+Die separate Recorderprobe unten bleibt n=1. Build und Bedienungstests wurden vor
+Beginn dieses Messlaufs abgeschlossen, ohne konkurrierenden Build während der Messung.
+
+## Frühere Vergleichsmessung (`a907d58`)
 
 Gemischter Simulator-Dauerlauf mit Hintergrund, Neustarts und Verbindungsunterbrechung.
-Keine kontrollierte Warm-/Kaltstart- oder physische Referenzmessung. Die folgenden
+Keine kontrollierte Warm-/Kaltstart- oder physische Referenzmessung.
+Transferzeit beginnt beim Versandversuch und enthält keine vorherige Wartezeit
+in der Outbox. TTS misst den API-Startcallback, nicht den ersten akustisch hörbaren Ton. Die folgenden
 Werte gehören genau zu den 100 IDs im lokalen Modelllauf, nicht zum älteren Festantwortlauf.
 
 | Stufe | n | Median ms | p95 ms | Maximum ms |
@@ -94,7 +128,7 @@ Aktivierung; Quittungen erfolgen erst nach dauerhafter Sicherung. Bestätigte Or
 werden in P1 nicht automatisch gelöscht. Partielle Transferquittungen sind keine
 Bestätigung einer vollständig gesicherten Aufnahme auf dem iPhone.
 
-## Akku und offene Freigaben
+## Akku und Review
 
 **Akkuauswirkung unbekannt und im Simulator nicht belastbar messbar.** Der geplante
 8-Stunden-Vergleich wurde nicht ausgeführt. Keine Leerlauf-Mikrofon-/ML-Schleife,
@@ -103,9 +137,11 @@ kein Heartbeat-Polling; daraus folgt keine bezifferte Akkuersparnis.
 Der Benutzer hat die macOS-Entwicklerfreigabe aktiviert. Der frische macOS-UI-Test
 kann den Simulator steuern; Lock/Wrist-Down sind nun als Deferred-Fälle nachgewiesen.
 Frühere fehlgeschlagene Automationstests bleiben historische Fehlversuche.
-Der angefragte externe Claude-Code-Review wurde von der automatischen Freigabeprüfung
-wegen fehlender ausdrücklicher Zustimmung zur Übermittlung der vier konkreten privaten
-Quelldateien abgelehnt. Kein Claude-Review wurde durchgeführt.
+Die ausdrückliche Freigabe für die vier Quelldateien liegt inzwischen vor, und die
+Claude-Code-Anmeldung wurde erfolgreich abgeschlossen. Zwei externe Claude-Reviews
+sind durchgeführt; bestätigte Befunde wurden mit Regressionstests bearbeitet. Der
+zweite Review findet in den vier übermittelten Dateien keine weiteren bewiesenen
+P0/P1-Blocker. Umfang, abgelehnte Vorschläge und Grenzen: `claude-review-triage.md`.
 P2 wird in `P2-follow-up.md` geplant; spätere Produktstufen werden nicht umgesetzt.
 
 ### Zusätzliche gezielte Simulatorprüfungen
@@ -159,3 +195,37 @@ als Erfolg. Die geprüfte Sequenz ist `testOpenPhoneSwitcher`, visuelle Kontroll
 Local-Voice-Karte, anschließend `testDismissVisiblePhoneCard` im macOS-Testziel.
 Die Koordinaten des zweiten Hilfstests gelten ausschließlich für den dokumentierten
 Simulatorfensterzustand; nicht blind auf einen anderen App-Umschalter anwenden.
+
+### Lokale Regressionen während des externen Reviews
+
+Commit `bf919ba`: verspätete Mikrofonfreigaben können nach einem Szenenwechsel keine
+unerwartete Aufnahme mehr starten. Sechs zuerst rote, anschließend grüne Kernfälle
+prüfen Inaktivität, Wiederkehr, Ablehnung und alte/doppelte Callbacks. iPhone- und
+Watch-Aufnahme-UI-Test danach jeweils frisch bestanden.
+Commit `a15fb1b`: leere, nur aus Leerraum bestehende oder über 500 Zeichen lange
+Modellantworten schließen einen Auftrag nicht mehr fälschlich ab. Zwei weitere
+zuerst rote Regressionstests prüfen den Sender und die Watch-Annahme.
+Finaler Kernlauf nach Wiederherstellung, Speicherwartung und Textgrenzen:
+**31 Tests, 0 Fehler, 2,651 Sekunden**.
+Die früheren 100-Turn-Messungen bleiben als abgegrenzter Datensatz ihres damaligen
+Quellstands erhalten und werden nicht nachträglich als Lauf dieser Fixes bezeichnet.
+
+### Wiederherstellung und abschließende Regressionen
+
+`results/recovery-after-review.json`: Eine gültige Audio-Draftdatei vor App-Start
+wurde automatisch mit der UUID aus ihrem Dateinamen dauerhaft angenommen. Nach
+Übertragung stimmen Digest, Transkript, Antwort und stabile Antwortquittung auf
+beiden Geräten überein. Rohdatei erst nach Annahme entfernt; bestätigtes Original
+bleibt im Verlauf. Der Kern prüft auch erneutes Auftauchen desselben Drafts.
+
+`results/native-local-100-after-review.json`: Alle 100 Aufnahmen abschließend
+geprüft, 1594,579 Sekunden einschließlich gezielter Controllerpause und Versionswechsel
+von `6ac0f79` zu `3498c44`. Dieser Wiederaufnahme-/Regressionslauf ist ausdrücklich
+keine Messung eines unveränderten Quellstands. Er deckte zusätzliche Dateitransfers
+bei belegtem interaktivem Slot als Latenzproblem auf; der finale Pfad sendet interaktiv
+seriell und nutzt den dauerhaften Dateifallback bei Fehlern oder Unerreichbarkeit.
+
+Eine folgende UI-Prüfung scheiterte bei großem Verlauf: gleichzeitig aufgebaute
+Verlaufseinträge verlangsamten die Bedienung bis über das 30-Sekunden-Aufnahmelimit.
+`aad2e0f` baut sichtbare Inhalte mit LazyVStack bedarfsgerecht auf. Der unveränderte
+Test besteht danach auf beiden Simulatoren; kein Verlauf wurde entfernt.

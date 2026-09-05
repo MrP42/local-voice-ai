@@ -1,7 +1,11 @@
 # P2 nach dem nativen Simulator-Prototyp
 
-P0/P1 bleiben der aktuelle Implementierungsumfang. Vor vollständiger P1-Abnahme
-ist der angefragte externe Review noch offen. Lock, Wrist Down und benutzerseitiges
+P0/P1 bleiben der aktuelle Implementierungsumfang. Der abschließende Dauerlauf
+auf `aad2e0f` ist mit 100/100 lokal beantworteten und quittierten Aufträgen bestanden;
+31 Kerntests, beide nativen Bedienungstests und frischer Simulator-Build bestehen.
+Damit ist P1 im vereinbarten Simulatorumfang abgeschlossen, bei weiterhin
+nicht erreichten Latenzzielen. Der externe Claude-Review
+ist inzwischen durchgeführt und die bestätigten P0/P1-Befunde sind bearbeitet. Lock, Wrist Down und benutzerseitiges
 Beenden sind inzwischen als Deferred-Fälle im Simulator nachgewiesen. Physische
 Audio-Routen und Anrufunterbrechungen sind nicht aus dem expliziten Stop-Test ableitbar. Physische Akku-/Funknachweise sind damit nicht ersetzbar.
 
@@ -29,3 +33,19 @@ Audio-Routen und Anrufunterbrechungen sind nicht aus dem expliziten Stop-Test ab
 Keine Desktop-Neugestaltung, Android-Portierung, App-Store-Veröffentlichung oder Push
 nach main innerhalb dieses Auftrags. Suche, Sammlung und weitere Produktfunktionen
 folgen erst nach belastbarer Machbarkeitsentscheidung.
+
+## Ergänzungen aus Review und Wiederholung
+
+- Verwaiste Staging-Verzeichnisse sicher zuordnen und bereinigen, ohne unbestätigte
+  Recorderdateien oder bestätigte Originale still zu löschen.
+- Korrupten Verlauf sichtbar isolieren und übrige Verarbeitung ermöglichen; keinen
+  `compactMap`-Fallback einführen, der bestätigte Daten aus der Anzeige entfernt.
+- Native Speech-/Foundation-Models-Cancellation und Segmentgrenzen auf einem
+  tatsächlich unterstützten Ausführungsziel prüfen. Simulator-CPU-Ergebnisse sind
+  kein Nachweis für Apples Modelle.
+- Leere/geräuschhaltige Aufnahmen und frei erfundene Transkripte/Antworten in das
+  Qualitätsset aufnehmen. Base/Small unterscheiden sich in Qualität und Laufzeit;
+  kein getesteter Kandidat erfüllt bislang das ursprüngliche Latenzziel.
+- Transport-Laufzeittests beibehalten: statische Reviews hatten die nun gemessene
+  zusätzliche Transferlatenz nicht erkannt. Interaktiven Pfad und Dateifallback
+  mit begrenztem Rückstand getrennt messen.

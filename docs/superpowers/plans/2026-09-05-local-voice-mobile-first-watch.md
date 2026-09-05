@@ -125,17 +125,17 @@ Vorläufige Performanceziele, noch keine Messwerte: Aufnahmefeedback p95 ≤150 
 
 ## 10. Konkreter Startauftrag für die Umsetzung
 
-Nur P0/P1 zuerst ausführen. Vorgeschlagene neue Bereiche relativ zum Projektroot: `apps/apple/` für Xcode-iOS-/watchOS-Targets und `packages/voice-protocol/` für versionierte Nachrichten und Fixtures. Diese Pfade sind geplant und noch nicht angelegt.
+Nur P0/P1 zuerst ausführen. Vorgeschlagene neue Bereiche relativ zum Projektroot: `apps/apple/` für Xcode-iOS-/watchOS-Targets und `packages/voice-protocol/` für versionierte Nachrichten und Fixtures. Die Umsetzung liegt unter `apps/apple/`; das gemeinsame Protokoll ist als Swift-Paket `apps/apple/VoiceCore` angelegt.
 
-- [ ] Aktuellen HEAD, lokale Änderungen, Desktop-Startbefehle und bestehende Tests dokumentieren; isolierten Entwicklungsbranch mit sicherem Zwischenstand anlegen.
-- [ ] Am Mac Modell/OS mit `system_profiler SPHardwareDataType` und `sw_vers`, Xcode mit `xcodebuild -version`, SDKs mit `xcodebuild -showsdks` erfassen. Keine Seriennummern in geteilte Reports übernehmen.
-- [ ] Minimale signierte iPhone-/Watch-App mit Aufnahme, Stop und Wiedergabe auf den Referenzgeräten ausführen; keine Desktop-Engine mitportieren.
-- [ ] Versioniertes Envelope mit `sessionId`, `messageId`, `schemaVersion`, `kind`, `createdAt`, `payload` und Receipt definieren. Fixtures für Duplikat, falsche Version und verspätete Antwort erstellen.
-- [ ] Watch-Aufnahme dauerhaft puffern, auf iPhone empfangen und erst nach Persistenz bestätigen. Wiederholung derselben messageId muss dieselbe Quittung liefern.
-- [ ] Feste Antwort zurückspielen, Transportlatenz und Unterbrechungen messen. Erreichbarkeit und Hintergrundtransfer getrennt anzeigen.
-- [ ] Deutsche On-Device-STT und System-TTS ergänzen; verfügbare lokale KI für eine kurze Gesprächsrunde einsetzen. Ohne KI den erfolgreichen Notizpfad erhalten.
-- [ ] Gerätematrix aus P1 mindestens mit Vordergrund, gesperrtem iPhone, Hintergrund, erzwungenem App-Ende, Verbindungsabriss und Neustart abarbeiten.
-- [ ] Ergebnis mit Messdaten und Entscheidung festhalten: vollständig lokal responsive unter welchen Bedingungen, wann deferred, welche offene Lücke. Erst anschließend P2/P3 detailliert planen.
+- [x] Aktuellen HEAD, lokale Änderungen, Desktop-Startbefehle und bestehende Tests dokumentieren; isolierten Entwicklungsbranch mit sicherem Zwischenstand anlegen.
+- [x] Am Mac Modell/OS mit `system_profiler SPHardwareDataType` und `sw_vers`, Xcode mit `xcodebuild -version`, SDKs mit `xcodebuild -showsdks` erfassen. Keine Seriennummern in geteilte Reports übernehmen.
+- [x] Minimale native iPhone-/Watch-App mit Aufnahme, Stop und Wiedergabe auf den vom Benutzer stattdessen angeforderten Xcode-Simulatoren ausführen. Physische Signierung/Geräteabnahme nicht Bestandteil dieser Runde; keine Desktop-Engine auf die Watch portieren.
+- [x] Versioniertes Envelope mit `sessionId`, `messageId`, `schemaVersion`, `kind`, `createdAt`, `payload` und Receipt definieren. Fixtures für Duplikat, falsche Version und verspätete Antwort erstellen.
+- [x] Watch-Aufnahme dauerhaft puffern, auf iPhone empfangen und erst nach Persistenz bestätigen. Wiederholung derselben messageId muss dieselbe Quittung liefern.
+- [x] Feste Antwort zurückspielen, Transportlatenz und Unterbrechungen messen. Erreichbarkeit und Hintergrundtransfer getrennt anzeigen.
+- [x] Deutsche On-Device-STT und System-TTS ergänzen; verfügbare lokale KI für eine kurze Gesprächsrunde einsetzen. Ohne KI den erfolgreichen Notizpfad erhalten.
+- [x] Gerätematrix aus P1 mindestens mit Vordergrund, gesperrtem iPhone, Hintergrund, erzwungenem App-Ende, Verbindungsabriss und Neustart abarbeiten.
+- [x] Ergebnis mit Messdaten und Entscheidung festhalten: vollständig lokal responsive unter welchen Bedingungen, wann deferred, welche offene Lücke. Erst anschließend P2/P3 detailliert planen.
 
 P0/P1 ist ein überprüfbarer Machbarkeitsauftrag, noch kein fertig ausgeschriebener Implementierungsplan für sämtliche Plattformen. Aufwand für die Gesamt-App erst nach diesen Ergebnissen schätzen; AI-Tokenzahlen oder pauschale Kalenderzusagen wären jetzt nicht belastbar.
 
@@ -153,14 +153,18 @@ Das Entwicklungsmodell wird nicht automatisch das Laufzeitmodell der App. Für r
 
 Die Planung ist mit den bestätigten Geräten und macOS 15.7.9 vollständig als Vorschlag nutzbar. Vor Apple-Implementierung sind die installierten iOS-/watchOS-Versionen, der genaue Intel-Mac, Signing-Zugang und der Zugriff des ausführenden Agenten auf den Mac zu ermitteln. Vor optionalem Cloudbetrieb ist die Nutzerpräferenz für Datenübertragung einzuholen; Standard bleibt ohne Cloud. Ganztägiges Watch-Zuhören und latenzarme Verarbeitung bei jedem iOS-Lifecycle-Zustand sind ausdrücklich nicht verifiziert.
 
-## Umsetzungsstand 05.09.2026 – vereinbarter Simulatorumfang
+## Umsetzungsstand 05.09.2026 – vereinbarter Simulatorumfang abgeschlossen
 
-P0/P1 werden im isolierten Branch `codex/apple-p0-p1` umgesetzt. Die vom Benutzer
-gewünschten Xcode-Simulatoren ersetzen für diese Runde echte Geräte. Native Apps,
-17 Kerntests, je ein iPhone-/Watch-UI-Test und 100 vollständig lokale Sprachturns
-sind nachgewiesen. Lock, Wrist Down und Beenden per App-Umschalter sind inzwischen
-als Deferred-Fälle geprüft. Externer Review und physische Audio-Routen bleiben offen;
-P1 ist noch nicht vollständig abgenommen. Latenzziele sind nicht erreicht,
-reale Akkuauswirkung ist nicht ermittelbar. Siehe
-[aktuellen Simulatorbericht](../../apple-evidence/2026-09-05-simulator-report.md)
+P0/P1 sind im isolierten Branch `codex/apple-p0-p1` als Machbarkeitsprototyp
+umgesetzt. Die vom Benutzer gewünschten Xcode-Simulatoren ersetzen für diese Runde
+echte Geräte. Finaler Programmstand `aad2e0f`: 31 Kerntests, je ein frischer
+iPhone-/Watch-UI-Test, frischer Build und 100 vollständig lokale Sprachturns mit
+Neustarts und Verbindungsunterbrechung bestehen. Jeder Turn wurde anhand seiner ID,
+Audiodaten, Transkripte, Antworten und dauerhaften Quittungen abschließend geprüft.
+Lock, Wrist Down und App-Ende sind als Deferred-Fälle geprüft. Zwei Claude-Reviews
+abgeschlossen und bestätigte Befunde bearbeitet. Physische Audio-Routen, Funk,
+Data Protection und Akkuauswirkung sind nicht durch Simulatorergebnisse belegt.
+Vorläufige Latenzziele werden nicht erreicht. Der P2-Folgeplan priorisiert diese
+Grenzen; spätere Produktstufen wurden nicht umgesetzt. Siehe
+[Simulatorbericht](../../apple-evidence/2026-09-05-simulator-report.md)
 und [P2-Folgeplan](../../apple-evidence/P2-follow-up.md).

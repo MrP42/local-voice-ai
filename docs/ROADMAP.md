@@ -135,3 +135,13 @@ sichtbar und tragen jede Demo; E2/E3 bauen auf stabilem Fundament.
    Windows-Update von 0.12.x prüfen.
 2. Entscheidung Apple-Developer-Account (blockiert E1.2).
 3. `theme.css` in den Token-Drift-Check aufnehmen (E5.1, 30 Minuten, sofort möglich).
+
+
+## Apple Mobile/Watch – P0/P1-Ergebnis 05.09.2026
+
+Der native iPhone-/Watch-Machbarkeitsprototyp ist im vom Benutzer angeforderten
+Simulatorumfang abgeschlossen, isoliert in `codex/apple-p0-p1`. Der bestehende
+Desktop-Plan bleibt unverändert. P2 beginnt mit Qualität, Laufzeit und sicherer
+Job-/Speicherwartung; physische Abnahme wird gesondert beauftragt.
+[Messwerte und Lifecycle-Grenzen](apple-evidence/2026-09-05-simulator-report.md),
+[aktualisierter P2-Plan](apple-evidence/P2-follow-up.md).

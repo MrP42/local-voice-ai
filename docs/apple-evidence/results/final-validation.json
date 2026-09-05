@@ -1,0 +1,32 @@
+{
+  "sourceCommit": "aad2e0fa868b47908d9a47dce4ed6ab8e393f936",
+  "simulatorBuild": {
+    "passed": true,
+    "log": "/tmp/local-voice-final-build.log"
+  },
+  "coreTests": {
+    "count": 31,
+    "passed": true,
+    "seconds": 2.651,
+    "log": "/tmp/local-voice-review-core-final.log"
+  },
+  "uiTests": {
+    "phone": {
+      "passed": true,
+      "seconds": 16.888,
+      "log": "/tmp/local-voice-final-phone-ui-lazy.log",
+      "resultBundle": "/Users/patrick/Documents/Codex/local-voice-ai-apple-p0-p1/apps/apple/DerivedData/Logs/Test/Test-VoicePhoneUITests-2026.09.05_18-00-44-+0200.xcresult"
+    },
+    "watch": {
+      "passed": true,
+      "seconds": 13.896,
+      "log": "/tmp/local-voice-final-watch-ui-lazy.log",
+      "resultBundle": "/Users/patrick/Documents/Codex/local-voice-ai-apple-p0-p1/apps/apple/DerivedData/Logs/Test/Test-VoiceWatchUITests-2026.09.05_18-01-29-+0200.xcresult"
+    }
+  },
+  "historicalUIFailure": {
+    "log": "/tmp/local-voice-final-phone-ui.log",
+    "cause": "Eager history rendering delayed stop tap past the 30-second recording cap",
+    "fix": "LazyVStack; identical test passes without deleting history"
+  }
+}
