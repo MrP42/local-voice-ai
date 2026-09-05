@@ -698,10 +698,10 @@ pub fn paste_transcript_guarded(
         // edge case.) ExternalScript stays exempt: a user script needs no
         // Accessibility permission and may be exactly the workaround for it.
         #[cfg(target_os = "macos")]
-        if settings.paste_method != PasteMethod::ExternalScript
-            && !macos_accessibility_trusted()
-        {
-            warn!("paste: macOS Accessibility permission missing — parking transcript in clipboard");
+        if settings.paste_method != PasteMethod::ExternalScript && !macos_accessibility_trusted() {
+            warn!(
+                "paste: macOS Accessibility permission missing — parking transcript in clipboard"
+            );
             if write_clipboard_verified(&app_handle, &parked_text) {
                 return GuardedPasteOutcome::Fallback(PasteFallback::AccessibilityDenied);
             }
@@ -917,8 +917,10 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     // keystroke silently, this function reports Ok, and the clipboard restore
     // wipes the text. Fail loudly instead. ExternalScript needs no permission.
     #[cfg(target_os = "macos")]
-    if !matches!(paste_method, PasteMethod::None | PasteMethod::ExternalScript)
-        && !macos_accessibility_trusted()
+    if !matches!(
+        paste_method,
+        PasteMethod::None | PasteMethod::ExternalScript
+    ) && !macos_accessibility_trusted()
     {
         return Err(
             "macOS Accessibility permission missing; synthetic keystrokes would be dropped"

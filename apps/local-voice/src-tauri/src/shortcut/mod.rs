@@ -777,6 +777,19 @@ pub fn change_tts_tag_model_setting(app: AppHandle, value: String) -> Result<(),
     Ok(())
 }
 
+/// Auto-Tagging-Gerät fürs lokale Ollama: "auto" | "cpu" | "gpu".
+#[tauri::command]
+#[specta::specta]
+pub fn change_tts_tag_device_setting(app: AppHandle, value: String) -> Result<(), String> {
+    if !matches!(value.as_str(), "auto" | "cpu" | "gpu") {
+        return Err(format!("Unbekanntes Auto-Tagging-Gerät '{value}'"));
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.tts_tag_device = value;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_tts_translate_lang_setting(app: AppHandle, value: String) -> Result<(), String> {

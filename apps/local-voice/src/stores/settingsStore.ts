@@ -143,6 +143,8 @@ const settingUpdaters: {
   tts_tag_provider: (value) =>
     commands.changeTtsTagProviderSetting(value as string),
   tts_tag_model: (value) => commands.changeTtsTagModelSetting(value as string),
+  tts_tag_device: (value) =>
+    commands.changeTtsTagDeviceSetting(value as string),
   selected_language: (value) =>
     commands.changeSelectedLanguageSetting(value as string),
   overlay_position: (value) =>

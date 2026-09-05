@@ -256,6 +256,17 @@ async changeTtsTagModelSetting(value: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Auto-Tagging-Gerät fürs lokale Ollama: "auto" | "cpu" | "gpu".
+ */
+async changeTtsTagDeviceSetting(value: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_device_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeOverlayPositionSetting(position: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_overlay_position_setting", { position }) };
@@ -1810,6 +1821,19 @@ async ttsAutoTag(text: string, allowedTags: string[], providerOverride: string |
 }
 },
 /**
+ * Bricht den laufenden Auto-Tagging-Lauf ab (falls einer läuft): die
+ * laufende LLM-Anfrage wird gekappt, `tts_auto_tag` kehrt mit den bis
+ * dahin gesammelten Vorschlägen zurück und entlädt das Ollama-Modell.
+ */
+async ttsAutoTagCancel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_auto_tag_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stub implementation for non-macOS platforms
  * Always returns false since laptop detection is macOS-specific
  */
@@ -2036,6 +2060,14 @@ tts_tag_provider?: string;
  * T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
  */
 tts_tag_model?: string;
+/**
+ * Auto-Tagging mit einem LOKALEN Ollama: auf welchem Gerät das Modell
+ * läuft. "auto" = GPU nur, wenn der TTS-Server sie gerade nicht braucht
+ * (wie die Übersetzung), "cpu" = immer CPU (schont Grafikspeicher),
+ * "gpu" = immer GPU (schnell, kann neben Fish-Speech knapp werden).
+ * Bei entfernten Anbietern wirkungslos.
+ */
+tts_tag_device?: string;
 /**
  * M8 Meetings: wie lange Audiodateien nach einer Aufnahme/einem Import
  * aufbewahrt werden, bevor sie hart gelöscht werden. Default: sobald ein

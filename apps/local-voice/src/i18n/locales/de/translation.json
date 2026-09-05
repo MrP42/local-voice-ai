@@ -313,7 +313,14 @@
       "undo": "Rückgängig",
       "missingApiKey": "Kein Anthropic-API-Key hinterlegt — API-Key in Einstellungen → Nachbearbeitung hinterlegen.",
       "textChangedDuringRun": "Der Text wurde währenddessen geändert — bitte Auto-Tagging erneut starten.",
-      "staleSuggestionsDiscarded": "Vorschlag verworfen — der Text wurde seitdem geändert."
+      "staleSuggestionsDiscarded": "Vorschlag verworfen — der Text wurde seitdem geändert.",
+      "deviceAuto": "Auto (GPU wenn frei)",
+      "deviceCpu": "CPU",
+      "deviceGpu": "GPU",
+      "deviceHint": "Auf welchem Gerät ein lokales Ollama-Modell läuft. Auto nutzt die GPU nur, solange das Vorlesen sie nicht braucht. Bei entfernten Anbietern ohne Wirkung.",
+      "progress": "Abschnitt {{done}}/{{total}}…",
+      "starting": "Starte…",
+      "cancel": "Abbrechen"
     },
     "writingRules": {
       "title": "Schreibregeln: Sprecher & Tags",

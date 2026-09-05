@@ -244,6 +244,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tts_manager);
     app_handle.manage(tts_model_manager);
+    app_handle.manage(commands::tts::AutoTagRun::default());
     app_handle.manage(tray::CurrentTrayIconState::new());
 
     if let Some(store) = meeting_store {
@@ -1279,6 +1280,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_tts_context_menu_setting,
             shortcut::change_tts_tag_favorites_setting,
             shortcut::change_tts_tag_provider_setting,
+            shortcut::change_tts_tag_device_setting,
             shortcut::change_tts_tag_model_setting,
             shortcut::change_overlay_position_setting,
             shortcut::change_overlay_style_setting,
@@ -1468,6 +1470,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_seed_preview,
             commands::tts::tts_save_seed_voice_v2,
             commands::tts::tts_auto_tag,
+            commands::tts::tts_auto_tag_cancel,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![

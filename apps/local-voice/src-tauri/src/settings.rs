@@ -601,6 +601,13 @@ pub struct AppSettings {
     /// T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
     #[serde(default = "default_tts_tag_model")]
     pub tts_tag_model: String,
+    /// Auto-Tagging mit einem LOKALEN Ollama: auf welchem Gerät das Modell
+    /// läuft. "auto" = GPU nur, wenn der TTS-Server sie gerade nicht braucht
+    /// (wie die Übersetzung), "cpu" = immer CPU (schont Grafikspeicher),
+    /// "gpu" = immer GPU (schnell, kann neben Fish-Speech knapp werden).
+    /// Bei entfernten Anbietern wirkungslos.
+    #[serde(default = "default_tts_tag_device")]
+    pub tts_tag_device: String,
     /// M8 Meetings: wie lange Audiodateien nach einer Aufnahme/einem Import
     /// aufbewahrt werden, bevor sie hart gelöscht werden. Default: sobald ein
     /// Protokoll existiert (Spec Default-Verhalten).
@@ -670,6 +677,11 @@ fn default_tts_engine() -> String {
 /// T4 Auto-Tagging: Standard-Claude-Modell, wenn "Claude Haiku" gewählt ist.
 fn default_tts_tag_model() -> String {
     "claude-haiku-4-5".to_string()
+}
+
+/// Auto-Tagging-Gerät: "auto" = GPU, wenn der TTS-Server sie freilässt.
+fn default_tts_tag_device() -> String {
+    "auto".to_string()
 }
 
 fn default_model() -> String {
@@ -1281,6 +1293,7 @@ pub fn get_default_settings() -> AppSettings {
         tts_tag_favorites: Vec::new(),
         tts_tag_provider: String::new(),
         tts_tag_model: default_tts_tag_model(),
+        tts_tag_device: default_tts_tag_device(),
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,

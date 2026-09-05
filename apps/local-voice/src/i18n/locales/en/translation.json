@@ -313,7 +313,14 @@
       "undo": "Undo",
       "missingApiKey": "No Anthropic API key set — add one in Settings → Post-Processing.",
       "textChangedDuringRun": "The text changed while Auto-Tagging was running — please run it again.",
-      "staleSuggestionsDiscarded": "Suggestion discarded — the text changed since then."
+      "staleSuggestionsDiscarded": "Suggestion discarded — the text changed since then.",
+      "deviceAuto": "Auto (GPU if free)",
+      "deviceCpu": "CPU",
+      "deviceGpu": "GPU",
+      "deviceHint": "Which device a local Ollama model runs on. Auto uses the GPU only while it is not needed for reading aloud. Has no effect on remote providers.",
+      "progress": "Section {{done}}/{{total}}…",
+      "starting": "Starting…",
+      "cancel": "Cancel"
     },
     "writingRules": {
       "title": "Writing rules: speakers & tags",

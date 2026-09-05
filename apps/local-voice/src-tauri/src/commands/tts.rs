@@ -606,12 +606,26 @@ pub async fn tts_save_seed_voice_v2(
     tts.save_seed_voice_v2(seed, &display_name, meta).await
 }
 
+/// Zustand des laufenden Auto-Tagging-Laufs: der watch-Sender, über den
+/// `tts_auto_tag_cancel` den Lauf abbricht. `None` = kein Lauf aktiv.
+/// In `lib.rs` per `.manage()` registriert.
+#[derive(Default)]
+pub struct AutoTagRun(pub std::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>);
+
 /// T4 Auto-Tagging: schlägt Emotions-/Vortrags-Tags fürs `text` vor. Der
 /// LLM-Output erreicht die Oberfläche NIE unvalidiert — `crate::tagging`
 /// prüft ihn hart gegen die Nur-Einfüge-Invariante (höchstens ein Retry,
 /// danach ein verständlicher Fehler statt eines möglicherweise veränderten
 /// Texts). `provider_override`: `None` = aktiver Post-Processing-Provider,
 /// `Some("anthropic")` = fest Claude (Modell aus `tts_tag_model`).
+///
+/// Der Text wird ABSCHNITTSWEISE getaggt; je fertigem Abschnitt geht ein
+/// `tts-autotag-progress`-Event `{done, total, insertions}` an die UI —
+/// Tags erscheinen damit fortlaufend statt alle am Ende. Abbrechen:
+/// `tts_auto_tag_cancel`; die Rückgabe ist dann das bis dahin Gesammelte.
+///
+/// Gerätewahl (`tts_tag_device`, nur lokales Ollama): "cpu"/"gpu" fest,
+/// "auto" = GPU nur, wenn der TTS-Server sie gerade nicht braucht.
 ///
 /// Rückgabe: `offset_in_original` ist ein BYTE-Offset in `text` (Rust-Art);
 /// das Frontend arbeitet mit UTF-16-Offsets und muss `offset_chars`
@@ -626,17 +640,49 @@ pub async fn tts_auto_tag(
     provider_override: Option<String>,
 ) -> Result<Vec<crate::tagging::TagInsertion>, String> {
     let settings = crate::settings::get_settings(&app);
-    use tauri::Emitter;
+    let cpu_only = match settings.tts_tag_device.as_str() {
+        "cpu" => true,
+        "gpu" => false,
+        _ => app.state::<Arc<TtsManager>>().gpu_busy(),
+    };
+
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    // Ein evtl. noch registrierter älterer Lauf wird abgebrochen — es gibt
+    // genau EINEN Auto-Tagging-Lauf zugleich.
+    let previous_run = app
+        .state::<AutoTagRun>()
+        .0
+        .lock()
+        .unwrap()
+        .replace(cancel_tx);
+    if let Some(old) = previous_run {
+        let _ = old.send(true);
+    }
+
     // Dasselbe llm-activity-Event wie die Übersetzung — treibt dasselbe
     // BrainCircuit-Symbol, ohne dass diese Seite es gesondert verdrahten muss.
     let _ = app.emit("llm-activity", serde_json::json!({ "busy": true }));
+    let progress_app = app.clone();
     let outcome = crate::tagging::auto_tag(
         &settings,
         &text,
         &allowed_tags,
         provider_override.as_deref(),
+        cpu_only,
+        cancel_rx,
+        |done, total, insertions| {
+            let _ = progress_app.emit(
+                "tts-autotag-progress",
+                serde_json::json!({
+                    "done": done,
+                    "total": total,
+                    "insertions": insertions,
+                }),
+            );
+        },
     )
     .await;
+    app.state::<AutoTagRun>().0.lock().unwrap().take();
     let _ = app.emit(
         "llm-activity",
         serde_json::json!({
@@ -645,4 +691,16 @@ pub async fn tts_auto_tag(
         }),
     );
     outcome
+}
+
+/// Bricht den laufenden Auto-Tagging-Lauf ab (falls einer läuft): die
+/// laufende LLM-Anfrage wird gekappt, `tts_auto_tag` kehrt mit den bis
+/// dahin gesammelten Vorschlägen zurück und entlädt das Ollama-Modell.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_auto_tag_cancel(app: AppHandle) -> Result<(), String> {
+    if let Some(tx) = app.state::<AutoTagRun>().0.lock().unwrap().as_ref() {
+        let _ = tx.send(true);
+    }
+    Ok(())
 }

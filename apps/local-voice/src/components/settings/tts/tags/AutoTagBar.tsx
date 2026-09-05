@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { Sparkles } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
@@ -166,6 +167,11 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   const { getSetting, updateSetting } = useSettings();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Fortschritt des laufenden Auto-Taggings (Abschnitte), null = kein Lauf. */
+  const [progress, setProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
 
   // Immer der ZULETZT gerenderte Text — anders als eine in runAutoTag()
   // eingefangene Variable bleibt ein Ref waehrend eines laufenden `await`
@@ -196,6 +202,15 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
     { value: "anthropic", label: t("tts.autotag.providerClaude") },
   ];
 
+  // Geraetewahl fuers LOKALE Ollama (bei entfernten Anbietern wirkungslos):
+  // auto = GPU nur, wenn der TTS-Server sie nicht braucht; cpu/gpu = fest.
+  const deviceValue = getSetting("tts_tag_device") ?? "auto";
+  const deviceOptions = [
+    { value: "auto", label: t("tts.autotag.deviceAuto") },
+    { value: "cpu", label: t("tts.autotag.deviceCpu") },
+    { value: "gpu", label: t("tts.autotag.deviceGpu") },
+  ];
+
   const runAutoTag = async () => {
     if (!text.trim() || loading) return;
     if (missingAnthropicKey) {
@@ -204,31 +219,61 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
     }
     setError(null);
     setLoading(true);
+    setProgress(null);
     const textAtStart = text;
     const allowedTags = TAG_REGISTRY.map((tag) => tag.insert);
+
+    // Abschnittsweise Vorschlaege: das Backend meldet je fertigem Abschnitt
+    // ein Event mit dessen Insertions — die erscheinen SOFORT als Vorschlaege
+    // (Tag fuer Tag statt alles am Ende). `accumulated` sammelt sie, weil die
+    // `suggestions`-Prop waehrend eines laufenden await veraltet sein kann.
+    const accumulated: ChipEditorSuggestion[] = [];
+    const unlisten = await listen<{
+      done: number;
+      total: number;
+      insertions: AutoTagInsertion[];
+    }>("tts-autotag-progress", (e) => {
+      setProgress({ done: e.payload.done, total: e.payload.total });
+      // Race (Review-Befund 2): tippt der Nutzer waehrenddessen, sind die
+      // Offsets gegen den FALSCHEN Text berechnet — Events dann ignorieren.
+      if (textRef.current !== textAtStart) return;
+      if (e.payload.insertions.length > 0) {
+        accumulated.push(
+          ...insertionsToSuggestions(textAtStart, e.payload.insertions),
+        );
+        onSuggestionsChange([...accumulated], textAtStart);
+      }
+    });
+
     const result = await commands.ttsAutoTag(
       textAtStart,
       allowedTags,
       providerValue || null,
     );
+    unlisten();
     setLoading(false);
+    setProgress(null);
     if (result.status === "error") {
       setError(result.error);
       return;
     }
-    // Race (Review-Befund 2): waehrend der Anfrage lief, koennte der Text
-    // editiert worden sein — die Offsets waeren dann gegen den FALSCHEN Text
-    // berechnet. textRef.current ist der zum Zeitpunkt der Antwort tatsaechlich
-    // aktuelle Text; weicht er vom Anfrage-Start ab, werden die Vorschlaege
-    // verworfen statt (moeglicherweise falsch positioniert) angezeigt.
+    // Dieselbe Race-Pruefung fuers Endergebnis: weicht der Text inzwischen
+    // ab, werden die Vorschlaege verworfen statt falsch positioniert gezeigt.
     if (textRef.current !== textAtStart) {
       setError(t("tts.autotag.textChangedDuringRun"));
+      onSuggestionsChange([], null);
       return;
     }
+    // Autoritative Endliste (bei Abbruch: das bis dahin Gesammelte) —
+    // ersetzt die per Event aufgelaufenen Vorschlaege deckungsgleich.
     onSuggestionsChange(
       insertionsToSuggestions(textAtStart, result.data),
       textAtStart,
     );
+  };
+
+  const cancelAutoTag = () => {
+    void commands.ttsAutoTagCancel();
   };
 
   const acceptAll = () => {
@@ -286,6 +331,38 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
           }}
         />
       </div>
+      <div className="w-40" title={t("tts.autotag.deviceHint")}>
+        <Select
+          value={deviceValue}
+          options={deviceOptions}
+          isClearable={false}
+          onChange={(value) => {
+            void updateSetting("tts_tag_device", value ?? "auto");
+          }}
+        />
+      </div>
+      {loading && (
+        <>
+          <span className="text-xs text-text/60" aria-live="polite">
+            {progress
+              ? t("tts.autotag.progress", {
+                  done: progress.done,
+                  total: progress.total,
+                })
+              : t("tts.autotag.starting")}
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={cancelAutoTag}
+            title={t("tts.autotag.cancel")}
+            aria-label={t("tts.autotag.cancel")}
+          >
+            <X width={14} height={14} />
+            {t("tts.autotag.cancel")}
+          </Button>
+        </>
+      )}
       {suggestions.length > 0 && (
         <>
           <span className="text-xs text-text/60">

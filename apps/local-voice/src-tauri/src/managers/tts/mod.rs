@@ -1792,6 +1792,15 @@ impl TtsManager {
 
     /// Text übersetzen — ohne ihn abzuspielen.
     ///
+    /// Ob die Grafikkarte gerade dem TTS-Server gehört. Nicht "gehört der
+    /// Server uns", sondern "läuft überhaupt einer": ein fremd gestarteter
+    /// belegt dieselbe Grafikkarte. Und nur bei einer GPU-Engine (Fish:
+    /// needs_gpu) — eine CPU-Engine wie Piper lässt die Grafikkarte frei,
+    /// dann dürfen Übersetzung und Auto-Tagging sie nutzen.
+    pub fn gpu_busy(&self) -> bool {
+        self.core.engine_caps().needs_gpu && self.core.phase() != TtsPhase::Stopped
+    }
+
     /// Bewusst getrennt vom Vorlesen: ein Knopf, der zwei Dinge tut, nimmt
     /// die Entscheidung ab, welches der beiden man wollte. Abspielen gibt es
     /// bereits; hier entsteht nur der Text.
@@ -1812,12 +1821,7 @@ impl TtsManager {
             return Ok(hit);
         }
         let settings = crate::settings::get_settings(&self.app);
-        // Nicht "gehört der Server uns", sondern "läuft überhaupt einer":
-        // ein fremd gestarteter belegt dieselbe Grafikkarte. Und nur bei
-        // einer GPU-Engine (Fish: needs_gpu, Verhalten unverändert) — eine
-        // CPU-Engine wie Piper lässt die Grafikkarte frei, dann darf die
-        // Übersetzung sie nutzen.
-        let gpu_busy = self.core.engine_caps().needs_gpu && self.core.phase() != TtsPhase::Stopped;
+        let gpu_busy = self.gpu_busy();
         // Die Sprachmodell-Anzeige lebt von diesen beiden Ereignissen: Gelb,
         // solange uebersetzt wird, danach zurueck (oder Orange bei Fehler).
         use tauri::Emitter;

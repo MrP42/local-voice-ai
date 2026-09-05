@@ -263,6 +263,84 @@ pub fn resolve_provider(
 }
 
 // ---------------------------------------------------------------------------
+// Chunking: der Text wird abschnittsweise getaggt (Fortschritt + Abbruch)
+// ---------------------------------------------------------------------------
+
+/// Ein zusammenhängender Abschnitt des Originaltexts. Die Chunks überdecken
+/// den Text LÜCKENLOS und in Reihenfolge — `byte_start`/`char_start` sind die
+/// Offsets des Abschnittsanfangs im Gesamttext, damit die je Abschnitt
+/// berechneten [`TagInsertion`]-Offsets zurück auf den Gesamttext gerechnet
+/// werden können.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Chunk<'a> {
+    pub byte_start: usize,
+    pub char_start: usize,
+    pub text: &'a str,
+}
+
+/// Zielgröße eines Abschnitts. Klein genug für sichtbaren Fortschritt und
+/// schnelle erste Tags, groß genug, dass das Modell Satzkontext hat.
+pub const CHUNK_TARGET_CHARS: usize = 800;
+
+/// Satz-/Absatzgrenzen: nach `.`/`!`/`?`/`\n` (samt direkt folgendem
+/// Whitespace) darf ein Abschnitt enden. Segmente werden gierig bis
+/// `max_chars` zusammengelegt; ein einzelnes überlanges Segment (Satz ohne
+/// Ende) bleibt EIN Abschnitt — mitten im Satz zu schneiden würde dem Modell
+/// halbe Sätze zeigen und die Tag-Qualität kosten.
+pub fn split_chunks(text: &str, max_chars: usize) -> Vec<Chunk<'_>> {
+    // 1. Segmentgrenzen (Byte-Offsets NACH einem Satzende samt Whitespace).
+    let mut segment_ends: Vec<usize> = Vec::new();
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if matches!(c, '.' | '!' | '?' | '\n') {
+            let mut end = i + c.len_utf8();
+            while let Some(&(j, next)) = chars.peek() {
+                if next.is_whitespace() {
+                    chars.next();
+                    end = j + next.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            segment_ends.push(end);
+        }
+    }
+    if segment_ends.last() != Some(&text.len()) {
+        segment_ends.push(text.len());
+    }
+
+    // 2. Segmente gierig zu Chunks zusammenlegen.
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+    let mut char_start = 0usize;
+    let mut chars_in_chunk = 0usize;
+    let mut seg_start = 0usize;
+    for &end in &segment_ends {
+        let seg_chars = text[seg_start..end].chars().count();
+        if chars_in_chunk > 0 && chars_in_chunk + seg_chars > max_chars {
+            chunks.push(Chunk {
+                byte_start: start,
+                char_start,
+                text: &text[start..seg_start],
+            });
+            char_start += chars_in_chunk;
+            start = seg_start;
+            chars_in_chunk = 0;
+        }
+        chars_in_chunk += seg_chars;
+        seg_start = end;
+    }
+    if start < text.len() {
+        chunks.push(Chunk {
+            byte_start: start,
+            char_start,
+            text: &text[start..],
+        });
+    }
+    chunks
+}
+
+// ---------------------------------------------------------------------------
 // System-Prompt
 // ---------------------------------------------------------------------------
 
@@ -295,31 +373,33 @@ fn retry_system_prompt(base_prompt: &str, diagnosis: &str) -> String {
 // LLM-Aufruf (analog translator.rs: pure Anfrage, kein AppHandle nötig)
 // ---------------------------------------------------------------------------
 
-/// Eine Anfrage an den gewählten Provider. GPU gehört dem Fish-Speech-Server:
-/// ein lokales Ollama läuft für Auto-Tagging IMMER `cpu_only` (anders als bei
-/// der Übersetzung wird hier nicht gegen den Live-Phasenstatus des
-/// TTS-Managers geprüft — dieses Modul bleibt bewusst frei von
-/// `managers::tts::mod`-Zugriffen, das ist Nachbarpaket-Terrain). Bei
-/// entfernten Anbietern (Claude, OpenAI, …) greift die Bedingung ohnehin
-/// nicht (`ollama_native_url` erkennt nur lokale Basis-URLs).
+/// Eine Anfrage an den gewählten Provider. `cpu_only` greift nur bei einem
+/// lokalen Ollama (dessen nativer Endpunkt nimmt `num_gpu: 0` entgegen) —
+/// den Wert entscheidet der Aufrufer aus `tts_tag_device` ("cpu"/"gpu") bzw.
+/// im Auto-Modus aus dem Live-Phasenstatus des TTS-Managers (wie bei der
+/// Übersetzung: GPU nur, wenn der Fish-Speech-Server sie gerade nicht
+/// braucht). Bei entfernten Anbietern (Claude, OpenAI, …) greift die
+/// Bedingung ohnehin nicht (`ollama_native_url` erkennt nur lokale
+/// Basis-URLs).
 async fn ask_llm_for_tags(
     provider: &PostProcessProvider,
     api_key: String,
     model: &str,
     system_prompt: &str,
     user_text: &str,
+    cpu_only: bool,
 ) -> Result<String, String> {
     if let Some(url) = llm_client::ollama_native_url(&provider.base_url) {
         let combined = format!("{system_prompt}\n\n{user_text}");
-        match llm_client::send_ollama_native(&url, model, combined, true).await {
+        match llm_client::send_ollama_native(&url, model, combined, cpu_only).await {
             Ok(Some(content)) if !content.trim().is_empty() => {
                 return Ok(content.trim().to_string());
             }
             Ok(_) => {
-                log::warn!("Ollama (CPU) ohne verwertbaren Inhalt fürs Auto-Tagging — versuche den üblichen Weg")
+                log::warn!("Ollama (nativ) ohne verwertbaren Inhalt fürs Auto-Tagging — versuche den üblichen Weg")
             }
             Err(e) => {
-                log::warn!("Ollama (CPU) nicht erreichbar ({e}) — versuche den üblichen Weg")
+                log::warn!("Ollama (nativ) nicht erreichbar ({e}) — versuche den üblichen Weg")
             }
         }
     }
@@ -359,16 +439,24 @@ async fn tag_text_with_retry(
     model: &str,
     allowed_tags: &[String],
     original: &str,
+    cpu_only: bool,
 ) -> Result<String, String> {
     let system_prompt = auto_tag_system_prompt(allowed_tags);
-    let first_raw =
-        ask_llm_for_tags(provider, api_key.clone(), model, &system_prompt, original).await?;
+    let first_raw = ask_llm_for_tags(
+        provider,
+        api_key.clone(),
+        model,
+        &system_prompt,
+        original,
+        cpu_only,
+    )
+    .await?;
     let first = strip_code_fence(&first_raw).to_string();
     if let Err(diagnosis) = validate_tag_only_edit(original, &first) {
         log::warn!("Auto-Tagging: erster Versuch verändert den Text ({diagnosis}) — ein Retry");
         let retry_prompt = retry_system_prompt(&system_prompt, &diagnosis);
         let second_raw =
-            ask_llm_for_tags(provider, api_key, model, &retry_prompt, original).await?;
+            ask_llm_for_tags(provider, api_key, model, &retry_prompt, original, cpu_only).await?;
         let second = strip_code_fence(&second_raw).to_string();
         validate_tag_only_edit(original, &second).map_err(|diag2| {
             format!("Auto-Tagging hat den Text auch im zweiten Versuch verändert: {diag2}")
@@ -378,15 +466,39 @@ async fn tag_text_with_retry(
     Ok(first)
 }
 
-/// Vollständiger Ablauf: Provider wählen, LLM fragen (mit einem Retry),
-/// validieren, in Einfüge-Positionen übersetzen. Entlädt ein lokales Ollama
-/// danach (best effort) — dieselbe Rücksicht auf den Fish-Speech-Server wie
-/// bei der Übersetzung.
+/// Die Insertions eines Abschnitts auf den Gesamttext umrechnen.
+fn shift_insertions(insertions: Vec<TagInsertion>, chunk: &Chunk<'_>) -> Vec<TagInsertion> {
+    insertions
+        .into_iter()
+        .map(|ins| TagInsertion {
+            offset_in_original: ins.offset_in_original + chunk.byte_start,
+            offset_chars: ins.offset_chars + chunk.char_start,
+            tag: ins.tag,
+        })
+        .collect()
+}
+
+/// Vollständiger Ablauf, ABSCHNITTSWEISE: Provider wählen, den Text in
+/// Satz-/Absatz-Chunks teilen, je Chunk das LLM fragen (mit einem Retry),
+/// validieren, die Einfüge-Positionen auf den Gesamttext umrechnen und über
+/// `on_chunk` sofort melden — die UI zeigt Tags damit Abschnitt für
+/// Abschnitt statt alles am Ende.
+///
+/// `cancel` (watch-Channel, `true` = abbrechen) wird vor jedem Abschnitt
+/// geprüft UND unterbricht per `select!` eine laufende Anfrage — der Rückweg
+/// ist dann `Ok` mit den bis dahin gesammelten Insertions, kein Fehler.
+/// Scheitert ein einzelner Abschnitt (auch nach Retry), läuft der Rest
+/// weiter; nur wenn GAR NICHTS gelang, kommt der erste Fehler zurück.
+/// Entlädt ein lokales Ollama danach (best effort) — dieselbe Rücksicht auf
+/// den Fish-Speech-Server wie bei der Übersetzung.
 pub async fn auto_tag(
     settings: &AppSettings,
     text: &str,
     allowed_tags: &[String],
     provider_override: Option<&str>,
+    cpu_only: bool,
+    mut cancel: tokio::sync::watch::Receiver<bool>,
+    mut on_chunk: impl FnMut(usize, usize, &[TagInsertion]),
 ) -> Result<Vec<TagInsertion>, String> {
     if text.trim().is_empty() {
         return Err("Kein Text zum Auto-Tagging".to_string());
@@ -397,18 +509,63 @@ pub async fn auto_tag(
         .get(&resolved.provider.id)
         .cloned()
         .unwrap_or_default();
-    let outcome = tag_text_with_retry(
-        &resolved.provider,
-        api_key,
-        &resolved.model,
-        allowed_tags,
-        text,
-    )
-    .await;
-    // Best effort, auch nach einem Fehler — ein abgebrochener Lauf ließe das
-    // Modell sonst geladen stehen (siehe translator::translate_on).
+
+    let chunks = split_chunks(text, CHUNK_TARGET_CHARS);
+    let total = chunks.len();
+    let mut collected: Vec<TagInsertion> = Vec::new();
+    let mut first_error: Option<String> = None;
+    let mut any_ok = false;
+
+    for (idx, chunk) in chunks.iter().enumerate() {
+        if *cancel.borrow() {
+            break;
+        }
+        if chunk.text.trim().is_empty() {
+            on_chunk(idx + 1, total, &[]);
+            continue;
+        }
+        let request = tag_text_with_retry(
+            &resolved.provider,
+            api_key.clone(),
+            &resolved.model,
+            allowed_tags,
+            chunk.text,
+            cpu_only,
+        );
+        let outcome = tokio::select! {
+            r = request => Some(r),
+            _ = cancel.changed() => None,
+        };
+        let Some(outcome) = outcome else {
+            break; // abgebrochen — das Gesammelte ist das Ergebnis
+        };
+        match outcome.and_then(|tagged| diff_insertions(chunk.text, &tagged)) {
+            Ok(insertions) => {
+                any_ok = true;
+                let shifted = shift_insertions(insertions, chunk);
+                on_chunk(idx + 1, total, &shifted);
+                collected.extend(shifted);
+            }
+            Err(e) => {
+                log::warn!(
+                    "Auto-Tagging: Abschnitt {}/{} übersprungen: {e}",
+                    idx + 1,
+                    total
+                );
+                first_error.get_or_insert(e);
+                on_chunk(idx + 1, total, &[]);
+            }
+        }
+    }
+
+    // Best effort, auch nach Fehler/Abbruch — ein abgebrochener Lauf ließe
+    // das Modell sonst geladen stehen (siehe translator::translate_on).
     llm_client::ollama_unload(&resolved.provider.base_url, &resolved.model).await;
-    diff_insertions(text, &outcome?)
+
+    match first_error {
+        Some(e) if !any_ok => Err(e),
+        _ => Ok(collected),
+    }
 }
 
 #[cfg(test)]
@@ -717,11 +874,26 @@ mod tests {
         settings
     }
 
+    /// Ein `auto_tag`-Aufruf mit den Standard-Nebenparametern der Tests:
+    /// CPU-only, nie abgebrochen, Fortschritt verworfen. Der Sender bleibt
+    /// bis nach dem Await am Leben — ein gedroppter watch-Sender gälte als
+    /// Abbruch.
+    async fn run_auto_tag(
+        settings: &AppSettings,
+        text: &str,
+        tags: &[String],
+    ) -> Result<Vec<TagInsertion>, String> {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let result = auto_tag(settings, text, tags, None, true, rx, |_, _, _| {}).await;
+        drop(tx);
+        result
+    }
+
     #[tokio::test]
     async fn ein_guter_llm_output_wird_zu_insertions() {
         let port = spawn_llm_mock("Hallo [whisper] Welt.").await;
         let settings = settings_with_mock_provider(port);
-        let insertions = auto_tag(&settings, "Hallo Welt.", &["whisper".to_string()], None)
+        let insertions = run_auto_tag(&settings, "Hallo Welt.", &["whisper".to_string()])
             .await
             .unwrap();
         assert_eq!(insertions.len(), 1);
@@ -736,7 +908,7 @@ mod tests {
         // dritten Versuch zu starten.
         let port = spawn_llm_mock("Hallo Erde.").await;
         let settings = settings_with_mock_provider(port);
-        let err = auto_tag(&settings, "Hallo Welt.", &["whisper".to_string()], None)
+        let err = run_auto_tag(&settings, "Hallo Welt.", &["whisper".to_string()])
             .await
             .unwrap_err();
         assert!(
@@ -749,10 +921,130 @@ mod tests {
     async fn ein_codeblock_um_die_antwort_wird_vor_dem_validieren_entfernt() {
         let port = spawn_llm_mock("```\\nHallo [whisper] Welt.\\n```").await;
         let settings = settings_with_mock_provider(port);
-        let insertions = auto_tag(&settings, "Hallo Welt.", &["whisper".to_string()], None)
+        let insertions = run_auto_tag(&settings, "Hallo Welt.", &["whisper".to_string()])
             .await
             .unwrap();
         assert_eq!(insertions.len(), 1);
         assert_eq!(insertions[0].tag, "whisper");
+    }
+
+    // ---- Chunking ----------------------------------------------------------
+
+    /// Grundinvariante: Chunks überdecken den Text lückenlos, in Reihenfolge,
+    /// und ihre byte-/char-Offsets stimmen mit der Lage im Gesamttext überein.
+    fn assert_chunks_cover(text: &str, chunks: &[Chunk<'_>]) {
+        let mut byte = 0usize;
+        let mut chars = 0usize;
+        for chunk in chunks {
+            assert_eq!(chunk.byte_start, byte, "Byte-Offset lückenlos");
+            assert_eq!(chunk.char_start, chars, "Char-Offset lückenlos");
+            assert_eq!(&text[byte..byte + chunk.text.len()], chunk.text);
+            byte += chunk.text.len();
+            chars += chunk.text.chars().count();
+        }
+        assert_eq!(byte, text.len(), "alles überdeckt");
+    }
+
+    #[test]
+    fn kurzer_text_ist_ein_einziger_chunk() {
+        let text = "Hallo Welt. Wie geht es dir?";
+        let chunks = split_chunks(text, 800);
+        assert_eq!(chunks.len(), 1);
+        assert_chunks_cover(text, &chunks);
+    }
+
+    #[test]
+    fn langer_text_wird_an_satzgrenzen_geteilt() {
+        let text = "Erster Satz. Zweiter Satz! Dritter Satz? Vierter Satz.";
+        let chunks = split_chunks(text, 20);
+        assert!(chunks.len() >= 2, "bei max 20 Zeichen muss geteilt werden");
+        assert_chunks_cover(text, &chunks);
+        for chunk in &chunks[..chunks.len() - 1] {
+            let trimmed = chunk.text.trim_end();
+            assert!(
+                trimmed.ends_with('.') || trimmed.ends_with('!') || trimmed.ends_with('?'),
+                "Chunk endet an einer Satzgrenze: {:?}",
+                chunk.text
+            );
+        }
+    }
+
+    #[test]
+    fn ein_ueberlanger_satz_bleibt_ein_chunk() {
+        // Kein Satzende → keine Schnittstelle → ein Chunk, egal wie lang.
+        let text = "wort ".repeat(50);
+        let chunks = split_chunks(&text, 20);
+        assert_eq!(chunks.len(), 1);
+        assert_chunks_cover(&text, &chunks);
+    }
+
+    #[test]
+    fn umlaute_verschieben_die_chunk_offsets_nicht() {
+        let text = "Schöne Grüße. Ähnliche Öfen! Übrige Worte.";
+        let chunks = split_chunks(text, 15);
+        assert!(chunks.len() >= 2);
+        assert_chunks_cover(text, &chunks);
+    }
+
+    #[test]
+    fn shift_insertions_rechnet_auf_den_gesamttext_um() {
+        let text = "Erster Satz. Zweiter Satz.";
+        let chunks = split_chunks(text, 13);
+        assert_eq!(chunks.len(), 2);
+        let second = &chunks[1];
+        // Im Chunk "Zweiter Satz." eine Einfügung an Position 0.
+        let local = vec![TagInsertion {
+            offset_in_original: 0,
+            offset_chars: 0,
+            tag: "whisper".into(),
+        }];
+        let shifted = shift_insertions(local, second);
+        assert_eq!(shifted[0].offset_in_original, second.byte_start);
+        assert_eq!(shifted[0].offset_chars, second.char_start);
+        assert_eq!(&text[shifted[0].offset_in_original..], "Zweiter Satz.");
+    }
+
+    // ---- Abbruch -----------------------------------------------------------
+
+    #[tokio::test]
+    async fn ein_vorab_gesetzter_abbruch_liefert_ok_und_leer_ohne_anfrage() {
+        // Kein Mock-Server: wäre der Abbruch wirkungslos, liefe die Anfrage
+        // gegen eine tote Adresse und der Test käme mit einem FEHLER zurück.
+        let settings = settings_with_mock_provider(1); // Port 1: nichts lauscht
+        let (tx, rx) = tokio::sync::watch::channel(true);
+        let result = auto_tag(
+            &settings,
+            "Hallo Welt.",
+            &["whisper".to_string()],
+            None,
+            true,
+            rx,
+            |_, _, _| {},
+        )
+        .await;
+        drop(tx);
+        assert_eq!(result.unwrap(), Vec::new());
+    }
+
+    #[tokio::test]
+    async fn der_fortschritt_meldet_jeden_abschnitt_mit_seinen_insertions() {
+        let port = spawn_llm_mock("Hallo [whisper] Welt.").await;
+        let settings = settings_with_mock_provider(port);
+        let mut reported: Vec<(usize, usize, usize)> = Vec::new();
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let result = auto_tag(
+            &settings,
+            "Hallo Welt.",
+            &["whisper".to_string()],
+            None,
+            true,
+            rx,
+            |done, total, ins| reported.push((done, total, ins.len())),
+        )
+        .await
+        .unwrap();
+        drop(tx);
+        assert_eq!(reported, vec![(1, 1, 1)]);
+        assert_eq!(result.len(), 1);
     }
 }
