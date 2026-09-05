@@ -1909,6 +1909,30 @@ async ttsBuilderCommit(id: string, meta: VoiceMeta) : Promise<Result<string, str
 }
 },
 /**
+ * Metadaten einer Stimme lesen (Anzeigename, Farbe, Beschreibung,
+ * Default-Tags, Stile, Klangregler).
+ */
+async ttsGetVoiceMeta(id: string) : Promise<Result<VoiceMeta, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_get_voice_meta", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Metadaten einer Stimme schreiben. Das uebergebene Objekt ERSETZT die
+ * gespeicherten Angaben — ein weggelassenes Feld ist ein geloeschtes Feld.
+ */
+async ttsSetVoiceMeta(id: string, meta: VoiceMeta) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_set_voice_meta", { id, meta }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Eine Stimme als .lvvoice-Archiv schreiben.
  */
 async ttsExportVoice(id: string, outPath: string) : Promise<Result<null, string>> {
