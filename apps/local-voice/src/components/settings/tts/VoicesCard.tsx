@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { commands, type VoiceSample } from "@/bindings";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Play, Trash2, Upload } from "lucide-react";
+import { Play, Trash2, Upload, Wand2 } from "lucide-react";
 import { AudioPlayer } from "../../ui/AudioPlayer";
 import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -12,6 +12,7 @@ import { Textarea } from "../../ui/Textarea";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import Badge from "../../ui/Badge";
+import { VoiceBuilder } from "./builder";
 
 type Mode =
   | { kind: "idle" }
@@ -47,6 +48,10 @@ export const VoicesCard = () => {
   // same person has to sit down and speak again. That deserves a question,
   // especially since the button sits right next to "Activate".
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  // Der Stimmen-Baukasten liegt in dieser Karte statt in einem eigenen Reiter
+  // (AGENTS.md: kein neuer Menuepunkt) und ist zugeklappt, bis jemand ihn
+  // aufmacht — die Karte ist ohnehin lang genug.
+  const [builderOpen, setBuilderOpen] = useState(false);
 
   const activeVoice = getSetting("tts_voice") ?? null;
 
@@ -199,6 +204,16 @@ export const VoicesCard = () => {
     await refreshVoices();
   };
 
+  // Nach dem Baukasten dasselbe wie nach einer Aufnahme: Liste neu laden
+  // (das loest `lv-voices-changed` aus, damit Transportleiste und
+  // Sprecher-Chips nachziehen) und die frische Stimme aktiv schalten.
+  const builderSaved = async (id: string) => {
+    setBuilderOpen(false);
+    await refreshVoices();
+    window.dispatchEvent(new CustomEvent("lv-voices-changed"));
+    await updateSetting("tts_voice", id);
+  };
+
   return (
     <SettingsGroup title={t("tts.voices.title")}>
       <div className="px-4 py-3 space-y-3">
@@ -323,13 +338,25 @@ export const VoicesCard = () => {
         </div>
 
         {mode.kind === "idle" && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button onClick={startRecording}>{t("tts.voices.record")}</Button>
             <Button variant="secondary" onClick={pickFile}>
               <Upload width={14} height={14} />
               {t("tts.voices.import")}
             </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setBuilderOpen((open) => !open)}
+              aria-expanded={builderOpen}
+            >
+              <Wand2 width={14} height={14} />
+              {builderOpen ? t("common.close") : t("tts.builder.open")}
+            </Button>
           </div>
+        )}
+
+        {mode.kind === "idle" && builderOpen && (
+          <VoiceBuilder onSaved={(id) => void builderSaved(id)} />
         )}
 
         {mode.kind === "recording" && (
