@@ -45,6 +45,43 @@ final class StoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: root.appendingPathComponent(".partial-test"), withIntermediateDirectories: true)
         XCTAssertEqual(try DurableStore(root: root).entries().count, 1)
     }
+    func testLateReceiptCannotRegressAnsweredState() throws {
+        let root = temporary(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root)
+        let packet = Packet.capture(audio: Data([1]))
+        _ = try store.accept(packet)
+        try store.update(packet.sessionId, reply: "Antwort", state: .answered)
+        try store.update(packet.sessionId, state: .accepted)
+        XCTAssertEqual(try store.entries().first?.state, .answered)
+    }
+    func testCorruptedAudioIsNotAcknowledgedAgain() throws {
+        let root = temporary(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root)
+        let packet = Packet.capture(audio: Data([1]))
+        _ = try store.accept(packet)
+        try Data([2]).write(to: store.audioURL(for: packet.sessionId))
+        XCTAssertThrowsError(try store.accept(packet))
+    }
+    func testWireHasVersionedPayload() throws {
+        let data = try JSONEncoder().encode(Packet.capture(audio: Data([1])))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNotNil(object["payload"])
+        XCTAssertNil(object["audio"])
+        XCTAssertEqual(object["schemaVersion"] as? Int, 1)
+    }
+    func testTransportEnvelopeRoundTripsCaptureAndReceipt() throws {
+        let packet = Packet.capture(audio: Data([1, 2, 3]))
+        let encoded = try JSONEncoder().encode(VoiceEnvelope(capture: packet))
+        let decoded = try JSONDecoder().decode(VoiceEnvelope.self, from: encoded)
+        XCTAssertEqual(decoded.sessionId, packet.sessionId)
+        XCTAssertEqual(decoded.messageId, packet.messageId)
+        XCTAssertEqual(decoded.kind, "capture")
+        XCTAssertEqual(decoded.capture?.audio, packet.audio)
+        let receipt = Receipt(sessionId: packet.sessionId, messageId: packet.messageId, receiptId: UUID())
+        let response = try JSONDecoder().decode(VoiceEnvelope.self, from: JSONEncoder().encode(VoiceEnvelope(receipt: receipt)))
+        XCTAssertEqual(response.receipt, receipt)
+        XCTAssertEqual(response.messageId, receipt.receiptId)
+    }
     func testHundredTurnsReplayedInReverseAfterRestart() throws {
         let root = temporary(); defer { try? FileManager.default.removeItem(at: root) }
         let packets = (0..<100).map { Packet.capture(audio: Data([UInt8($0)])) }

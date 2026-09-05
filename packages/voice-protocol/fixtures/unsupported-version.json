@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 2,
+  "sessionId": "00000000-0000-4000-8000-000000000001",
+  "messageId": "00000000-0000-4000-8000-000000000002",
+  "kind": "capture",
+  "createdAt": 810259200,
+  "payload": {
+    "audio": "AQID"
+  }
+}

@@ -15,9 +15,11 @@ public struct Packet: Codable, Sendable {
     public var messageId: UUID
     public var kind: String
     public var createdAt: Date
-    public var audio: Data
+    public struct Payload: Codable, Sendable { public var audio: Data }
+    public var payload: Payload
+    public var audio: Data { get { payload.audio } set { payload.audio = newValue } }
     public static func capture(audio: Data) -> Packet {
-        Packet(sessionId: UUID(), messageId: UUID(), kind: "capture", createdAt: Date(), audio: audio)
+        Packet(sessionId: UUID(), messageId: UUID(), kind: "capture", createdAt: Date(), payload: Payload(audio: audio))
     }
 }
 public struct Entry: Codable, Identifiable, Sendable {
@@ -50,7 +52,7 @@ public final class DurableStore {
     public func audioURL(for id: UUID) -> URL { root.appendingPathComponent(id.uuidString).appendingPathComponent("audio.m4a") }
     public func audio(for id: UUID) throws -> Data { try Data(contentsOf: audioURL(for: id)) }
     public func packet(for entry: Entry) throws -> Packet {
-        Packet(sessionId: entry.id, messageId: entry.receipt.messageId, kind: "capture", createdAt: entry.createdAt, audio: try audio(for: entry.id))
+        Packet(sessionId: entry.id, messageId: entry.receipt.messageId, kind: "capture", createdAt: entry.createdAt, payload: Packet.Payload(audio: try audio(for: entry.id)))
     }
     public func accept(_ packet: Packet) throws -> Receipt {
         guard packet.schemaVersion == 1 else { throw VoiceError.version }
@@ -59,6 +61,7 @@ public final class DurableStore {
         let current = try entries()
         if let existing = current.first(where: { $0.id == packet.sessionId || $0.receipt.messageId == packet.messageId }) {
             guard existing.id == packet.sessionId, existing.receipt.messageId == packet.messageId, existing.digest == digest else { throw VoiceError.conflict }
+            guard try audio(for: existing.id) == packet.audio else { throw VoiceError.persistence }
             return existing.receipt
         }
         let used = try current.reduce(0) { try $0 + audio(for: $1.id).count }
@@ -79,7 +82,7 @@ public final class DurableStore {
         guard var entry = try entries().first(where: { $0.id == id }) else { throw VoiceError.missing }
         if let transcript { entry.transcript = transcript }
         if let reply { entry.reply = reply }
-        entry.state = state
+        if entry.state != .answered { entry.state = state }
         if let timing { entry.timings[timing.0] = timing.1 }
         let folder = root.appendingPathComponent(id.uuidString)
         try write(JSONEncoder().encode(entry), to: folder.appendingPathComponent("entry.json"))
