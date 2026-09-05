@@ -111,11 +111,16 @@ extension DurableStore {
             try syncDirectory(root)
         }
     }
+    public func temporaryBytes(excludingIncomingParts: Bool = false) throws -> Int {
+        try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix(".partial-") || $0.lastPathComponent.hasPrefix(".transfer-") || $0.lastPathComponent == ".incoming-parts" && !excludingIncomingParts }
+            .reduce(0) { try $0 + diskBytes(at: $1) }
+    }
     public func prepareTransfer(for id: UUID, data: Data) throws -> URL {
         guard try entries().contains(where: { $0.id == id }) else { throw VoiceError.missing }
         let url = root.appendingPathComponent(".transfer-" + id.uuidString + ".json")
         // Include old bytes as well: an atomic replacement temporarily needs both copies.
-        guard try inventory().temporaryBytes + data.count <= temporaryLimit else { throw VoiceError.full }
+        guard try temporaryBytes() + data.count <= temporaryLimit else { throw VoiceError.full }
         try write(data, to: url)
         try syncDirectory(root)
         return url

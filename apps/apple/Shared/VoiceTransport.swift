@@ -22,7 +22,8 @@ final class VoiceTransport: NSObject, WCSessionDelegate {
     private let encoder = JSONEncoder()
     init(store: DurableStore) throws {
         self.store = store
-        chunks = try ChunkInbox(root: store.root.appendingPathComponent(".incoming-parts"))
+        chunks = try ChunkInbox(root: store.root.appendingPathComponent(".incoming-parts"), limit: 6 * 1024 * 1024,
+                                additionalBytes: { try store.temporaryBytes(excludingIncomingParts: true) })
         super.init()
         refresh()
         if WCSession.isSupported() { WCSession.default.delegate = self; WCSession.default.activate() }

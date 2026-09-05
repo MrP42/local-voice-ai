@@ -1,0 +1,121 @@
+{
+  "sourceCommit": "ebab6e255687ef854b967a919834681c6eecf04b",
+  "testedWorkingChanges": true,
+  "finishedAt": 1788632414.6390998,
+  "cases": [
+    {
+      "mode": "capture",
+      "checkpoint": "beforeWrite",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 0,
+      "retainedUnidentifiedStages": 1
+    },
+    {
+      "mode": "capture",
+      "checkpoint": "fileSynced",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 0,
+      "retainedUnidentifiedStages": 1
+    },
+    {
+      "mode": "capture",
+      "checkpoint": "captureMetadataSynced",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    },
+    {
+      "mode": "capture",
+      "checkpoint": "captureRenamed",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    },
+    {
+      "mode": "capture",
+      "checkpoint": "captureCommitted",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    },
+    {
+      "mode": "reply",
+      "checkpoint": "beforeWrite",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    },
+    {
+      "mode": "reply",
+      "checkpoint": "fileSynced",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    },
+    {
+      "mode": "reply",
+      "checkpoint": "replyCommitted",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    },
+    {
+      "mode": "ack",
+      "checkpoint": "beforeWrite",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    },
+    {
+      "mode": "ack",
+      "checkpoint": "fileSynced",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    },
+    {
+      "mode": "ack",
+      "checkpoint": "replyAckCommitted",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    },
+    {
+      "mode": "job",
+      "checkpoint": "jobStarted",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    },
+    {
+      "mode": "job",
+      "checkpoint": "transcriptCommitted",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    },
+    {
+      "mode": "job",
+      "checkpoint": "generatedReplyCommitted",
+      "exitCode": 77,
+      "passed": true,
+      "recoverableImmediately": 1,
+      "retainedUnidentifiedStages": 0
+    }
+  ],
+  "passed": true,
+  "limit": "Process exits, not physical power loss; injected ENOSPC covered separately by core tests"
+}

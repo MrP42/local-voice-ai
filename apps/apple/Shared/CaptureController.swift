@@ -46,6 +46,7 @@ final class CaptureController: NSObject, AVAudioRecorderDelegate {
                 case .stale: return
                 }
                 do {
+                    guard try self.store?.canStartRecording() == true else { throw VoiceError.full }
                     let audio = AVAudioSession.sharedInstance()
                     try audio.setCategory(.playAndRecord, mode: .default)
                     #if os(iOS)
@@ -62,7 +63,8 @@ final class CaptureController: NSObject, AVAudioRecorderDelegate {
                     #if os(watchOS)
                     WKInterfaceDevice.current().play(.start)
                     #endif
-                } catch { self.status = "Aufnahme konnte nicht starten" }
+                } catch VoiceError.full { self.status = "Speicherbudget voll – vorhandene Aufnahmen bleiben erhalten" }
+                catch { self.status = "Aufnahme konnte nicht starten" }
             }
         }
     }

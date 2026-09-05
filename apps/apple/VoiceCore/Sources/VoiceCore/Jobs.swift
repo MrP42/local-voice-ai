@@ -21,6 +21,7 @@ extension DurableStore {
         job.attempts += 1; job.failure = nil; job.nextAttemptAt = nil
         job.phase = entry.transcript == nil ? .transcribing : .generating
         entry.job = job; try save(entry)
+        try fault?(.jobStarted)
         return true
     }
     public func setJobPhase(_ id: UUID, phase: JobPhase) throws {

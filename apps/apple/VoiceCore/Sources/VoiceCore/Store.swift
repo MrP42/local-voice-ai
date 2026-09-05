@@ -2,6 +2,8 @@ import Foundation
 import CryptoKit
 import Darwin
 
+public enum StorageCheckpoint: String, CaseIterable, Sendable { case beforeWrite, fileSynced, captureMetadataSynced, captureRenamed, captureCommitted, replyCommitted, replyAckCommitted, jobStarted, transcriptCommitted, generatedReplyCommitted }
+
 public enum VoiceError: Error { case version, invalid, conflict, full, missing, persistence }
 public enum CaptureState: String, Codable, Sendable { case saved, accepted, deferred, answered }
 public struct Receipt: Codable, Equatable, Sendable {
@@ -54,12 +56,16 @@ public final class DurableStore {
     private let limit: Int
     let fm = FileManager.default
     let temporaryLimit: Int
-    public init(root: URL, limit: Int = 64 * 1024 * 1024, temporaryLimit: Int = 8 * 1024 * 1024) throws {
-        self.root = root; self.limit = limit; self.temporaryLimit = temporaryLimit
+    let fault: ((StorageCheckpoint) throws -> Void)?
+    public init(root: URL, limit: Int = 64 * 1024 * 1024, temporaryLimit: Int = 8 * 1024 * 1024, fault: ((StorageCheckpoint) throws -> Void)? = nil) throws {
+        self.root = root; self.limit = limit; self.temporaryLimit = temporaryLimit; self.fault = fault
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
     }
     public func entries() throws -> [Entry] {
         try inventory(includeUsage: false).entries
+    }
+    public func canStartRecording() throws -> Bool {
+        try diskBytes(at: root) + 1024 * 1024 <= limit + temporaryLimit
     }
     public func audioURL(for id: UUID) -> URL { root.appendingPathComponent(id.uuidString).appendingPathComponent("audio.m4a") }
     public func audio(for id: UUID) throws -> Data { try Data(contentsOf: audioURL(for: id)) }
@@ -89,15 +95,21 @@ public final class DurableStore {
         guard used + packet.audio.count <= limit else { throw VoiceError.full }
         let receipt = Receipt(sessionId: packet.sessionId, messageId: packet.messageId, receiptId: UUID())
         let entry = Entry(receipt: receipt, createdAt: packet.createdAt, digest: digest, state: .saved, replyToWatch: replyToWatch)
+        let metadata = try JSONEncoder().encode(entry)
+        let identity = try JSONEncoder().encode(receipt)
+        guard try temporaryBytes() + packet.audio.count + metadata.count + identity.count <= temporaryLimit else { throw VoiceError.full }
         let staging = root.appendingPathComponent(".partial-" + UUID().uuidString)
         try fm.createDirectory(at: staging, withIntermediateDirectories: false)
         defer { try? fm.removeItem(at: staging) }
         try write(packet.audio, to: staging.appendingPathComponent("audio.m4a"))
-        try write(JSONEncoder().encode(entry), to: staging.appendingPathComponent("entry.json"))
-        try write(JSONEncoder().encode(receipt), to: staging.appendingPathComponent("identity.json"))
+        try write(metadata, to: staging.appendingPathComponent("entry.json"))
+        try write(identity, to: staging.appendingPathComponent("identity.json"))
         try syncDirectory(staging)
+        try fault?(.captureMetadataSynced)
         try fm.moveItem(at: staging, to: root.appendingPathComponent(packet.sessionId.uuidString))
+        try fault?(.captureRenamed)
         try syncDirectory(root)
+        try fault?(.captureCommitted)
         return receipt
     }
     /// Draft filenames provide stable identity even if the process exits before removing the source.
@@ -145,6 +157,8 @@ public final class DurableStore {
         let folder = root.appendingPathComponent(id.uuidString)
         try write(JSONEncoder().encode(entry), to: folder.appendingPathComponent("entry.json"))
         try syncDirectory(folder)
+        if transcript != nil { try fault?(.transcriptCommitted) }
+        if reply != nil { try fault?(.generatedReplyCommitted) }
     }
     /// Prepare and persist a stable response identity before handing it to transport.
     public func replyEnvelope(for id: UUID) throws -> VoiceEnvelope {
@@ -173,6 +187,7 @@ public final class DurableStore {
         entry.reply = text; entry.transcript = envelope.transcript
         entry.replyMessageId = envelope.messageId; entry.replyReceipt = receipt; entry.state = .answered
         try save(entry)
+        try fault?(.replyCommitted)
         return (receipt, isNew)
     }
     public func acknowledgeReply(_ receipt: Receipt) throws {
@@ -180,6 +195,7 @@ public final class DurableStore {
         guard entry.replyMessageId == receipt.messageId else { throw VoiceError.invalid }
         entry.replyAcknowledged = true
         try save(entry)
+        try fault?(.replyAckCommitted)
     }
     func save(_ entry: Entry) throws {
         let folder = root.appendingPathComponent(entry.id.uuidString)
@@ -187,10 +203,12 @@ public final class DurableStore {
         try syncDirectory(folder)
     }
     func write(_ data: Data, to url: URL) throws {
+        try fault?(.beforeWrite)
         try data.write(to: url, options: .atomic)
         let handle = try FileHandle(forWritingTo: url)
         defer { try? handle.close() }
         try handle.synchronize()
+        try fault?(.fileSynced)
     }
     func syncDirectory(_ url: URL) throws {
         let descriptor = open(url.path, O_RDONLY)

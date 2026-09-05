@@ -58,9 +58,9 @@ final class StorageIsolationTests: XCTestCase {
     func testTransferBudgetRejectsExtraCopiesWithoutAffectingOriginal() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = try DurableStore(root: root, temporaryLimit: 4)
+        let store = try DurableStore(root: root, temporaryLimit: 2048)
         let packet = Packet.capture(audio: Data([1])); _ = try store.accept(packet)
-        XCTAssertThrowsError(try store.prepareTransfer(for: packet.sessionId, data: Data(repeating: 2, count: 5)))
+        XCTAssertThrowsError(try store.prepareTransfer(for: packet.sessionId, data: Data(repeating: 2, count: 2049)))
         XCTAssertEqual(try store.audio(for: packet.sessionId), packet.audio)
         _ = try store.prepareTransfer(for: packet.sessionId, data: Data([2, 3]))
         XCTAssertEqual(try store.inventory().temporaryBytes, 2)

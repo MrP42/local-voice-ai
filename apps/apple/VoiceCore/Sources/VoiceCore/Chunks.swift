@@ -34,8 +34,10 @@ public struct CaptureChunk: Codable, Sendable {
 public final class ChunkInbox {
     private let root: URL
     private let fm = FileManager.default
-    public init(root: URL) throws {
-        self.root = root
+    private let limit: Int
+    private let additionalBytes: () throws -> Int
+    public init(root: URL, limit: Int = 8 * 1024 * 1024, additionalBytes: @escaping () throws -> Int = { 0 }) throws {
+        self.root = root; self.limit = limit; self.additionalBytes = additionalBytes
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
     }
     public func receive(_ part: CaptureChunk) throws -> Packet? {
@@ -45,27 +47,25 @@ public final class ChunkInbox {
               part.index >= 0, part.index < part.count,
               part.data.count == min(32768, part.byteCount - part.index * 32768) else { throw VoiceError.invalid }
         let directory = root.appendingPathComponent(part.sessionId.uuidString)
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         let manifestURL = directory.appendingPathComponent("manifest.json")
+        var newManifest: Data?
         if fm.fileExists(atPath: manifestURL.path) {
             let previous = try JSONDecoder().decode(CaptureChunk.self, from: Data(contentsOf: manifestURL))
             guard previous.captureMessageId == part.captureMessageId, previous.createdAt == part.createdAt,
                   previous.digest == part.digest, previous.byteCount == part.byteCount, previous.count == part.count else { throw VoiceError.conflict }
         } else {
             var manifest = part; manifest.data = Data()
-            try write(JSONEncoder().encode(manifest), to: manifestURL)
+            newManifest = try JSONEncoder().encode(manifest)
         }
         let url = directory.appendingPathComponent("\(part.index).part")
-        if fm.fileExists(atPath: url.path) {
-            guard try Data(contentsOf: url) == part.data else { throw VoiceError.conflict }
-        } else {
-            var used = 0
-            if let files = fm.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey]) {
-                for case let file as URL in files { used += try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0 }
-            }
-            guard used + part.data.count <= 64 * 1024 * 1024 else { throw VoiceError.full }
-            try write(part.data, to: url)
-        }
+        let exists = fm.fileExists(atPath: url.path)
+        if exists { guard try Data(contentsOf: url) == part.data else { throw VoiceError.conflict } }
+        let extra = (newManifest?.count ?? 0) + (exists ? 0 : part.data.count)
+        // Repeated durable pieces are acknowledged even when no capacity remains for new bytes.
+        if extra > 0 { guard try bytes(at: root) + additionalBytes() + extra <= limit else { throw VoiceError.full } }
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        if let newManifest { try write(newManifest, to: manifestURL) }
+        if !exists { try write(part.data, to: url) }
         try sync(directory); try sync(root)
         var audio = Data()
         for i in 0..<part.count {
@@ -80,6 +80,14 @@ public final class ChunkInbox {
     public func removeCompleted(_ sessionId: UUID) throws {
         let directory = root.appendingPathComponent(sessionId.uuidString)
         if fm.fileExists(atPath: directory.path) { try fm.removeItem(at: directory); try sync(root) }
+    }
+    private func bytes(at url: URL) throws -> Int {
+        let attributes = try fm.attributesOfItem(atPath: url.path)
+        if attributes[.type] as? FileAttributeType == .typeDirectory {
+            return try fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil).reduce(0) { try $0 + bytes(at: $1) }
+        }
+        guard attributes[.type] as? FileAttributeType == .typeRegular, let size = attributes[.size] as? NSNumber else { throw VoiceError.persistence }
+        return size.intValue
     }
     private func write(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: .atomic)
