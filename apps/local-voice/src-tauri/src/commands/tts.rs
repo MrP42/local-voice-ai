@@ -1,5 +1,6 @@
 //! Tauri-Commands des Vorlesen-Bereichs (TP1).
 
+use crate::managers::tts::builder;
 use crate::managers::tts::models::{TtsDownloadInfo, TtsModelManager};
 use crate::managers::tts::registry::{ReferenceAnalysis, VoiceInfo, VoiceMeta};
 use crate::managers::tts::{ReadingInfo, TtsManager, TtsStatus};
@@ -703,4 +704,122 @@ pub fn tts_auto_tag_cancel(app: AppHandle) -> Result<(), String> {
         let _ = tx.send(true);
     }
     Ok(())
+}
+
+// ---- Stimmen-Baukasten (Etappe 1) -----------------------------------------
+
+/// Zustand des laufenden Kandidaten-Laufs — wie `AutoTagRun`, damit
+/// `tts_builder_cancel` ihn abbrechen kann. `None` = kein Lauf aktiv.
+#[derive(Default)]
+pub struct BuilderRun(pub std::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>);
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_create_draft(
+    app: AppHandle,
+    display_name: String,
+    description: String,
+    probe_text: String,
+    tags: Vec<String>,
+) -> Result<builder::BuilderDraft, String> {
+    let tts = app.state::<Arc<TtsManager>>();
+    let now = chrono::Utc::now().timestamp();
+    let draft = builder::BuilderDraft {
+        id: ulid::Ulid::new().to_string(),
+        display_name,
+        description,
+        probe_text,
+        tags,
+        depth: 1.0,
+        candidates: Vec::new(),
+        selected: None,
+        created_at: now,
+        updated_at: now,
+    };
+    builder::save_draft(&tts.fish_dir_public(), &draft)?;
+    Ok(draft)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_list_drafts(app: AppHandle) -> Vec<builder::BuilderDraft> {
+    let tts = app.state::<Arc<TtsManager>>();
+    builder::list_drafts(&tts.fish_dir_public())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_update_draft(
+    app: AppHandle,
+    mut draft: builder::BuilderDraft,
+) -> Result<(), String> {
+    let tts = app.state::<Arc<TtsManager>>();
+    // Der Regler kommt aus der Oberflaeche und wird hier hart begrenzt:
+    // ueber 1,15 klingt es kuenstlich, unter 1,0 hebt es die Stimme an, was
+    // der Regler nicht anbietet.
+    draft.depth = draft.depth.clamp(1.0, 1.15);
+    draft.updated_at = chrono::Utc::now().timestamp();
+    builder::save_draft(&tts.fish_dir_public(), &draft)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_delete_draft(app: AppHandle, id: String) -> Result<(), String> {
+    let tts = app.state::<Arc<TtsManager>>();
+    builder::delete_draft(&tts.fish_dir_public(), &id)
+}
+
+/// Kandidaten erzeugen. Je fertigem Kandidaten geht ein
+/// `tts-builder-progress`-Event `{done, total, seed}` an die Oberflaeche —
+/// Kandidaten erscheinen damit einzeln statt alle am Ende.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_builder_generate(
+    app: AppHandle,
+    id: String,
+    count: usize,
+) -> Result<builder::BuilderDraft, String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    *app.state::<BuilderRun>().0.lock().unwrap() = Some(tx);
+    let progress_app = app.clone();
+    let result = tts
+        .builder_generate(&id, count.clamp(1, 12), rx, move |done, total, cand| {
+            let _ = progress_app.emit(
+                "tts-builder-progress",
+                serde_json::json!({ "done": done, "total": total, "seed": cand.seed }),
+            );
+        })
+        .await;
+    *app.state::<BuilderRun>().0.lock().unwrap() = None;
+    result
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_cancel(app: AppHandle) -> Result<(), String> {
+    if let Some(tx) = app.state::<BuilderRun>().0.lock().unwrap().as_ref() {
+        let _ = tx.send(true);
+    }
+    Ok(())
+}
+
+/// WAV-Bytes eines Kandidaten mit dem aktuellen Tiefe-Regler. Roh als
+/// `Vec<u8>` wie beim Avatar-Upload — das Projekt hat kein base64-Crate.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_candidate_wav(app: AppHandle, id: String, seed: i64) -> Result<Vec<u8>, String> {
+    app.state::<Arc<TtsManager>>()
+        .builder_candidate_wav(&id, seed)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_builder_commit(
+    app: AppHandle,
+    id: String,
+    meta: VoiceMeta,
+) -> Result<String, String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tts.builder_commit(&id, meta).await
 }

@@ -1702,6 +1702,13 @@ impl TtsManager {
         std::path::PathBuf::from(crate::settings::get_settings(&self.app).tts_fish_dir)
     }
 
+    /// `fish_dir` fuer die Command-Schicht: die Commands brauchen den Pfad,
+    /// der Manager haelt ihn aber bewusst privat, damit niemand am Manager
+    /// vorbei am Stimmenordner arbeitet.
+    pub fn fish_dir_public(&self) -> std::path::PathBuf {
+        self.fish_dir()
+    }
+
     pub fn list_voice_ids(&self) -> Vec<String> {
         voices::list_voices(&self.fish_dir())
     }
