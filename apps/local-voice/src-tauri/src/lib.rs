@@ -245,7 +245,21 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(tts_manager);
     app_handle.manage(tts_model_manager);
     app_handle.manage(commands::tts::AutoTagRun::default());
+    app_handle.manage(commands::tts::BuilderRun::default());
     app_handle.manage(tray::CurrentTrayIconState::new());
+
+    // Entwuerfe des Stimmen-Baukastens aelter als 30 Tage entfernen:
+    // Kandidaten-WAVs sind gross, und ein vergessener Entwurf haelt
+    // sonst dauerhaft Platz. Best effort — ein Fehler hier darf den
+    // Start nicht aufhalten.
+    {
+        let fish_dir =
+            std::path::PathBuf::from(crate::settings::get_settings(app_handle).tts_fish_dir);
+        let removed = crate::managers::tts::builder::prune_drafts(&fish_dir, 30);
+        if removed > 0 {
+            log::info!("Baukasten: {removed} alte Entwuerfe entfernt");
+        }
+    }
 
     if let Some(store) = meeting_store {
         let recorder = Arc::new(managers::meetings::recorder::MeetingRecorderManager::new(
@@ -1471,6 +1485,19 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_save_seed_voice_v2,
             commands::tts::tts_auto_tag,
             commands::tts::tts_auto_tag_cancel,
+            commands::tts::tts_builder_create_draft,
+            commands::tts::tts_builder_list_drafts,
+            commands::tts::tts_builder_update_draft,
+            commands::tts::tts_builder_delete_draft,
+            commands::tts::tts_builder_generate,
+            commands::tts::tts_builder_cancel,
+            commands::tts::tts_builder_candidate_wav,
+            commands::tts::tts_builder_add_wav,
+            commands::tts::tts_builder_commit,
+            commands::tts::tts_export_voice,
+            commands::tts::tts_inspect_voice_archive,
+            commands::tts::tts_import_voice_archive,
+            commands::tts::tts_rename_voice_id,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![

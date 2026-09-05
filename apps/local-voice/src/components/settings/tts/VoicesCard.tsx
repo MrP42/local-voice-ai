@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
-import { commands, type VoiceSample } from "@/bindings";
+import { commands, type VoiceInfo, type VoiceSample } from "@/bindings";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Play, Trash2, Upload } from "lucide-react";
+import { Pencil, Play, Trash2, Upload, Wand2 } from "lucide-react";
 import { AudioPlayer } from "../../ui/AudioPlayer";
 import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -12,6 +12,8 @@ import { Textarea } from "../../ui/Textarea";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import Badge from "../../ui/Badge";
+import { VoiceBuilder } from "./builder";
+import { VoiceArchiveImport, VoiceEditor } from "./voices";
 
 type Mode =
   | { kind: "idle" }
@@ -26,7 +28,9 @@ const SEED_VOICE = "";
 export const VoicesCard = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
-  const [voices, setVoices] = useState<string[]>([]);
+  // Die Liste traegt seit Etappe 5 die Metadaten mit: das Bearbeiten-Panel
+  // braucht den Anzeigenamen, und die Zeile soll ihn zeigen statt nur der id.
+  const [voices, setVoices] = useState<VoiceInfo[]>([]);
   const [mode, setMode] = useState<Mode>({ kind: "idle" });
   const [name, setName] = useState("");
   const [transcript, setTranscript] = useState("");
@@ -47,12 +51,18 @@ export const VoicesCard = () => {
   // same person has to sit down and speak again. That deserves a question,
   // especially since the button sits right next to "Activate".
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  // Der Stimmen-Baukasten liegt in dieser Karte statt in einem eigenen Reiter
+  // (AGENTS.md: kein neuer Menuepunkt) und ist zugeklappt, bis jemand ihn
+  // aufmacht — die Karte ist ohnehin lang genug.
+  const [builderOpen, setBuilderOpen] = useState(false);
+  // Welche Stimme gerade bearbeitet wird — hoechstens eine, sonst wird die
+  // Karte unlesbar lang. Der Stift schaltet das Panel auf und wieder zu.
+  const [editTarget, setEditTarget] = useState<string | null>(null);
 
   const activeVoice = getSetting("tts_voice") ?? null;
 
   const refreshVoices = useCallback(async () => {
-    const result = await commands.ttsListVoices();
-    if (result.status === "ok") setVoices(result.data);
+    setVoices(await commands.ttsListVoiceInfos());
     // Das Dropdown an der Transportleiste haelt seine eigene Liste — dieses
     // Ereignis haelt beide zusammen, ohne dass sie sich kennen muessen.
     window.dispatchEvent(new CustomEvent("lv-voices-changed"));
@@ -199,6 +209,36 @@ export const VoicesCard = () => {
     await refreshVoices();
   };
 
+  // Nach dem Baukasten dasselbe wie nach einer Aufnahme: Liste neu laden
+  // (das loest `lv-voices-changed` aus, damit Transportleiste und
+  // Sprecher-Chips nachziehen) und die frische Stimme aktiv schalten.
+  const builderSaved = async (id: string) => {
+    setBuilderOpen(false);
+    await refreshVoices();
+    window.dispatchEvent(new CustomEvent("lv-voices-changed"));
+    await updateSetting("tts_voice", id);
+  };
+
+  // Nach jeder Aenderung im Bearbeiten-Panel: Liste neu laden. Beim Umzug der
+  // voice_id zieht die aktive Stimme nach — sonst zeigt die Einstellung auf
+  // einen Ordner, den es nicht mehr gibt.
+  const voiceEdited = async (newId?: string) => {
+    if (newId !== undefined && newId !== editTarget) {
+      if (activeVoice === editTarget) {
+        await updateSetting("tts_voice", newId);
+      }
+      setEditTarget(newId);
+    }
+    await refreshVoices();
+  };
+
+  // Eine eingespielte Stimme ist wie eine frisch aufgenommene: Liste neu
+  // laden und die neue Stimme aktiv schalten.
+  const archiveImported = async (id: string) => {
+    await refreshVoices();
+    await updateSetting("tts_voice", id);
+  };
+
   return (
     <SettingsGroup title={t("tts.voices.title")}>
       <div className="px-4 py-3 space-y-3">
@@ -255,10 +295,12 @@ export const VoicesCard = () => {
                 </p>
               ))}
           </div>
-          {voices.map((id) => (
+          {voices.map(({ id, meta }) => (
             <div key={id} className="py-1">
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className="text-sm font-medium">{id}</span>
+                <span className="text-sm font-medium">
+                  {meta.display_name || id}
+                </span>
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"
@@ -283,6 +325,21 @@ export const VoicesCard = () => {
                       {t("tts.voices.activate")}
                     </Button>
                   )}
+                  {/* Der Stift oeffnet das Bearbeiten-Panel dieser Stimme:
+                      Anzeigename, Farbe, Beschreibung, Tags, Klang — und die
+                      Aktionen Umbenennen und Exportieren. */}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() =>
+                      setEditTarget((current) => (current === id ? null : id))
+                    }
+                    aria-expanded={editTarget === id}
+                    title={t("tts.voiceEdit.open")}
+                    aria-label={t("tts.voiceEdit.open")}
+                  >
+                    <Pencil width={14} height={14} />
+                  </Button>
                   {/* Nur das Symbol: die Zeile traegt schon drei Knoepfe, und
                       der Papierkorb ist eindeutiger als ein viertes Wort.
                       Beschriftung wandert in title + aria-label. */}
@@ -315,6 +372,12 @@ export const VoicesCard = () => {
                     {sample.error ?? t("tts.voices.previewMissing")}
                   </p>
                 ))}
+              {editTarget === id && (
+                <VoiceEditor
+                  id={id}
+                  onChanged={(newId) => void voiceEdited(newId)}
+                />
+              )}
             </div>
           ))}
           {voices.length === 0 && (
@@ -323,13 +386,32 @@ export const VoicesCard = () => {
         </div>
 
         {mode.kind === "idle" && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button onClick={startRecording}>{t("tts.voices.record")}</Button>
             <Button variant="secondary" onClick={pickFile}>
               <Upload width={14} height={14} />
               {t("tts.voices.import")}
             </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setBuilderOpen((open) => !open)}
+              aria-expanded={builderOpen}
+            >
+              <Wand2 width={14} height={14} />
+              {builderOpen ? t("common.close") : t("tts.builder.open")}
+            </Button>
           </div>
+        )}
+
+        {/* Ein Archiv-Import gehoert zu keiner vorhandenen Stimme — er legt
+            eine neue an und steht deshalb bei den Karten-Aktionen, nicht in
+            einem Bearbeiten-Panel. */}
+        {mode.kind === "idle" && (
+          <VoiceArchiveImport onImported={(id) => void archiveImported(id)} />
+        )}
+
+        {mode.kind === "idle" && builderOpen && (
+          <VoiceBuilder onSaved={(id) => void builderSaved(id)} />
         )}
 
         {mode.kind === "recording" && (

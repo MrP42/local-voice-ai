@@ -1840,6 +1840,157 @@ async ttsAutoTagCancel() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async ttsBuilderCreateDraft(displayName: string, description: string, probeText: string, tags: string[]) : Promise<Result<BuilderDraft, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_builder_create_draft", { displayName, description, probeText, tags }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsBuilderListDrafts() : Promise<BuilderDraft[]> {
+    return await TAURI_INVOKE("tts_builder_list_drafts");
+},
+async ttsBuilderUpdateDraft(draft: BuilderDraft) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_builder_update_draft", { draft }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsBuilderDeleteDraft(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_builder_delete_draft", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kandidaten erzeugen. Je fertigem Kandidaten geht ein
+ * `tts-builder-progress`-Event `{done, total, seed}` an die Oberflaeche —
+ * Kandidaten erscheinen damit einzeln statt alle am Ende.
+ */
+async ttsBuilderGenerate(id: string, count: number) : Promise<Result<BuilderDraft, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_builder_generate", { id, count }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsBuilderCancel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_builder_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * WAV-Bytes eines Kandidaten mit dem aktuellen Tiefe-Regler. Roh als
+ * `Vec<u8>` wie beim Avatar-Upload — das Projekt hat kein base64-Crate.
+ */
+async ttsBuilderCandidateWav(id: string, seed: number) : Promise<Result<number[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_builder_candidate_wav", { id, seed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine eigene Aufnahme oder WAV-Datei als Kandidat in den Entwurf holen.
+ * `startSec`/`endSec` schneiden zu; 0/0 nimmt die ganze Datei. Laenger als
+ * 30 Sekunden wird immer gekappt — eine laengere Referenz macht die Stimme
+ * nicht besser.
+ */
+async ttsBuilderAddWav(id: string, wavPath: string, startSec: number, endSec: number) : Promise<Result<BuilderDraft, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_builder_add_wav", { id, wavPath, startSec, endSec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsBuilderCommit(id: string, meta: VoiceMeta) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_builder_commit", { id, meta }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Metadaten einer Stimme lesen (Anzeigename, Farbe, Beschreibung,
+ * Default-Tags, Stile, Klangregler).
+ */
+async ttsGetVoiceMeta(id: string) : Promise<Result<VoiceMeta, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_get_voice_meta", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Metadaten einer Stimme schreiben. Das uebergebene Objekt ERSETZT die
+ * gespeicherten Angaben — ein weggelassenes Feld ist ein geloeschtes Feld.
+ */
+async ttsSetVoiceMeta(id: string, meta: VoiceMeta) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_set_voice_meta", { id, meta }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Stimme als .lvvoice-Archiv schreiben.
+ */
+async ttsExportVoice(id: string, outPath: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_export_voice", { id, outPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Was in einem Archiv steckt, ohne es auszupacken — fuer die Vorschau.
+ */
+async ttsInspectVoiceArchive(archivePath: string) : Promise<Result<VoiceMeta, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_inspect_voice_archive", { archivePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Archiv als neue Stimme einspielen; liefert die vergebene voice_id.
+ */
+async ttsImportVoiceArchive(archivePath: string, displayNameOverride: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_import_voice_archive", { archivePath, displayNameOverride }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die voice_id einer Stimme aendern — ein Umzug, kein Feld. Liefert die
+ * neue voice_id.
+ */
+async ttsRenameVoiceId(oldId: string, newDisplayName: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_rename_voice_id", { oldId, newDisplayName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Stub implementation for non-macOS platforms
  * Always returns false since laptop detection is macOS-specific
@@ -2101,6 +2252,34 @@ export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+/**
+ * Der Arbeitsstand einer noch nicht gespeicherten Stimme.
+ */
+export type BuilderDraft = { id: string; display_name: string; description: string; probe_text: string; tags: string[]; 
+/**
+ * Tiefe-Regler, 1,00 bis 1,15 (siehe `dsp::resample_stretch`).
+ */
+depth: number; candidates: Candidate[]; 
+/**
+ * Seed des gewaehlten Kandidaten.
+ */
+selected: number | null; created_at: number; updated_at: number }
+/**
+ * Ein Kandidat: ein Wurf, der als Datei auf der Platte liegt.
+ */
+export type CandidateSource = "Seed" | "Recording" | "Import"
+export type Candidate = { seed: number; 
+/**
+ * Dateiname innerhalb des Entwurfsordners, NICHT der volle Pfad —
+ * damit ein verschobener Stimmenordner den Entwurf nicht entwertet.
+ */
+file: string; created_at: number; 
+/**
+ * Woher der Kandidat stammt. Nur ein gewuerfelter traegt beim Speichern
+ * einen Seed-Vermerk — eine Zahl, die nichts reproduziert, waere eine
+ * vorgetaeuschte Nachvollziehbarkeit.
+ */
+source: CandidateSource }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
 export type EngineType = 
@@ -2338,8 +2517,24 @@ display_name: string;
 /**
  * Palette-Key (`"teal"`, `"rose"`, …), KEIN Hex-Wert.
  */
-color: string; avatar: Avatar | null; language: string | null; description: string | null; default_tags: string[]; default_style: string | null; styles: VoiceStyle[] }
+color: string; avatar: Avatar | null; language: string | null; description: string | null; default_tags: string[]; default_style: string | null; styles: VoiceStyle[]; 
+/**
+ * Dauerhafte Klangregler dieser Stimme — gelten bei JEDEM Vorlesen.
+ */
+sound: VoiceSound | null }
 export type VoiceOrigin = { kind: "seed"; value: number } | { kind: "recording" }
+/**
+ * Dauerhafte Klangregler einer Stimme.
+ */
+export type VoiceSound = { 
+/**
+ * Wiedergabetempo, 0,5 bis 2,0. 1,0 = unveraendert.
+ */
+speed: number; 
+/**
+ * Zusaetzliche Lautstaerke in Dezibel, -12 bis +12. 0 = unveraendert.
+ */
+gain_db: number }
 /**
  * Ein benannter Stil einer Stimme (z. B. „fluesternd").
  */

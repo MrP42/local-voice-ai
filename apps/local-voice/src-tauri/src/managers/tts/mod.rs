@@ -5,6 +5,7 @@
 //! einen Mock-Server getestet; `TtsManager` ergänzt AppHandle-Belange:
 //! Settings, Events, Prozess-Spawn, Idle-Watchdog und Exit-Teardown.
 
+pub mod builder;
 pub mod compile_cache;
 pub mod dsp;
 pub mod engine;
@@ -13,6 +14,7 @@ pub mod loudness;
 pub mod models;
 pub mod piper;
 pub mod player;
+pub mod portable;
 pub mod protocol;
 pub mod registry;
 pub mod state;
@@ -109,6 +111,12 @@ pub struct TtsCore {
     /// wirklich stört, ist der Sprung ZWISCHEN Stimmen; genau den nimmt ein
     /// konstanter Faktor je Stimme heraus.
     voice_gains: Mutex<std::collections::HashMap<String, f32>>,
+    /// Dauerhafte Klangregler je Stimme, aus `meta.json` gespiegelt
+    /// (Schluessel wie bei `voice_gains`). Bewusst ein Spiegel und KEIN Cache
+    /// mit eigener Invalidierung: `TtsManager::refresh_from_settings` fuellt
+    /// ihn vor jedem Auftrag neu — ein geaenderter Regler wirkt damit ab dem
+    /// naechsten Vorlesen, und im laufenden Auftrag liest niemand die Platte.
+    voice_sounds: Mutex<std::collections::HashMap<String, registry::VoiceSound>>,
     on_phase_change: Mutex<Option<Box<dyn Fn(TtsStatus) + Send + Sync>>>,
 }
 
@@ -261,6 +269,7 @@ impl TtsCore {
             normalize: AtomicBool::new(true),
             enhance: Mutex::new(None),
             voice_gains: Mutex::new(std::collections::HashMap::new()),
+            voice_sounds: Mutex::new(std::collections::HashMap::new()),
             on_phase_change: Mutex::new(None),
         }
     }
@@ -602,43 +611,82 @@ impl TtsCore {
     /// Satz auf den Zielpegel gezogen, ohne dass Betonung glattgebügelt wird
     /// oder die Lautheit zwischen zwei Sätzen hörbar pumpt.
     fn playback_gain(&self, voice: Option<&str>, wav: &[u8]) -> f32 {
-        if !self.normalize.load(Ordering::Acquire) {
+        let normalize = self.normalize.load(Ordering::Acquire);
+        let key = self.voice_key(voice);
+        // Dritte Stufe, unabhaengig von den beiden anderen: der dauerhafte
+        // Regler dieser Stimme (`meta.json` → `sound.gain_db`). Er gilt auch
+        // OHNE Normalisierung — er ist eine Eigenschaft der Stimme, keine
+        // Messung.
+        let voice_gain = self
+            .voice_sounds
+            .lock()
+            .unwrap()
+            .get(&key)
+            .map(registry::VoiceSound::gain_factor)
+            .unwrap_or(1.0);
+        if !normalize && (voice_gain - 1.0).abs() <= f32::EPSILON {
             return 1.0;
         }
-        let key = match voice {
-            Some(explicit) => explicit.to_string(),
-            // "die eingestellte Stimme" muss denselben Schlüssel ergeben wie
-            // ihr expliziter Name — sonst bekäme dieselbe Stimme zwei Faktoren.
-            None => self.voice.lock().unwrap().clone().unwrap_or_default(),
-        };
         let Some((mono, rate, peak)) = decode_wav(wav) else {
             return 1.0;
         };
-        let sentence = loudness::gain_to_target(&mono, rate, peak);
+        let normalized = if normalize {
+            let sentence = loudness::gain_to_target(&mono, rate, peak);
 
-        // Gemittelt wird in dB, nicht im Faktor: Lautheit ist logarithmisch,
-        // der arithmetische Mittelwert zweier Faktoren träfe die Mitte nicht.
-        let base = {
-            let mut gains = self.voice_gains.lock().unwrap();
-            let mixed = match gains.get(&key) {
-                Some(&previous) => {
-                    let db = |g: f32| 20.0 * g.max(1e-6).log10();
-                    10f32.powf((db(previous) * 0.75 + db(sentence) * 0.25) / 20.0)
-                }
-                None => sentence,
+            // Gemittelt wird in dB, nicht im Faktor: Lautheit ist logarithmisch,
+            // der arithmetische Mittelwert zweier Faktoren träfe die Mitte nicht.
+            let base = {
+                let mut gains = self.voice_gains.lock().unwrap();
+                let mixed = match gains.get(&key) {
+                    Some(&previous) => {
+                        let db = |g: f32| 20.0 * g.max(1e-6).log10();
+                        10f32.powf((db(previous) * 0.75 + db(sentence) * 0.25) / 20.0)
+                    }
+                    None => sentence,
+                };
+                gains.insert(key, mixed);
+                mixed
             };
-            gains.insert(key, mixed);
-            mixed
-        };
 
-        let limit = 10f32.powf(SENTENCE_TRIM_DB / 20.0);
-        let corrected = sentence.clamp(base / limit, base * limit);
+            let limit = 10f32.powf(SENTENCE_TRIM_DB / 20.0);
+            sentence.clamp(base / limit, base * limit)
+        } else {
+            1.0
+        };
+        let corrected = normalized * voice_gain;
         if peak <= f32::EPSILON {
-            return 1.0;
+            // Stille: die Messung sagt nichts, der Dauerregler schon.
+            return voice_gain;
         }
-        // Die Spitze hat immer das letzte Wort: die Dämpfung oben darf den
-        // Faktor wieder über die Aussteuerungsgrenze gehoben haben.
+        // Die Spitze hat immer das letzte Wort: die Dämpfung oben und der
+        // Dauerregler duerfen den Faktor über die Aussteuerungsgrenze gehoben
+        // haben.
         corrected.min(loudness::PEAK_CEILING / peak)
+    }
+
+    /// Schluessel einer Stimme fuer die pro-Stimme-Tabellen (`voice_gains`,
+    /// `voice_sounds`). „Die eingestellte Stimme" muss denselben Schluessel
+    /// ergeben wie ihr expliziter Name — sonst bekaeme dieselbe Stimme zwei
+    /// Eintraege.
+    fn voice_key(&self, voice: Option<&str>) -> String {
+        match voice {
+            Some(explicit) => explicit.to_string(),
+            None => self.voice.lock().unwrap().clone().unwrap_or_default(),
+        }
+    }
+
+    /// Dauerhafter Tempofaktor dieser Stimme (1,0 = unveraendert). Er tritt
+    /// NEBEN den Nutzerregler, nicht an seine Stelle: der Nutzerregler bleibt
+    /// im Player live wirksam (`PlaybackControls`), dieser Faktor steckt in
+    /// der Abtastrate des Satzes (siehe [`scale_wav_rate`]) — beides
+    /// zusammen ergibt das gehoerte Tempo, multiplikativ.
+    fn voice_speed(&self, voice: Option<&str>) -> f32 {
+        self.voice_sounds
+            .lock()
+            .unwrap()
+            .get(&self.voice_key(voice))
+            .map(registry::VoiceSound::speed_factor)
+            .unwrap_or(1.0)
     }
 
     /// Satz-Pipeline: Satz N wird abgespielt, während Satz N+1 bereits beim
@@ -727,6 +775,10 @@ impl TtsCore {
                     // Stimmen gleich laut: der Pegelausgleich dieses Satzes
                     // steht fest, der Nutzerregler skaliert ihn live.
                     let gain = self.playback_gain(voice.as_deref(), &bytes);
+                    // Dauerhaftes Tempo dieser Stimme. NACH der Pegelmessung,
+                    // damit die Lautheit bei der echten Abtastrate gemessen
+                    // wird; der Nutzerregler multipliziert im Player darauf.
+                    let bytes = scale_wav_rate(bytes, self.voice_speed(voice.as_deref()));
                     let controls = Arc::clone(&self.controls);
                     let cancel_flag = cancelled.clone();
                     previous_playback = Some((
@@ -963,6 +1015,50 @@ fn prepare_sentence_audio(bytes: Vec<u8>, strength: Option<enhance::Strength>) -
     write_wav_pcm16(&samples, spec).unwrap_or(bytes)
 }
 
+/// Tempo eines WAV-Blobs aendern, indem die ANGEGEBENE Abtastrate skaliert
+/// wird — dieselbe Mechanik, die auch der Nutzerregler benutzt (rodios
+/// `set_speed` resampelt ebenfalls und zieht die Tonhoehe mit).
+///
+/// Warum am Kopf und nicht ueber [`dsp::resample_stretch`]: hier geht kein
+/// einziges Sample durch eine Interpolation, das Ergebnis ist verlustfrei und
+/// exakt multiplikativ zum Nutzerregler. Beruehrt werden nur `sample_rate` und
+/// `byte_rate` des `fmt `-Chunks; alles andere bleibt Byte fuer Byte stehen.
+///
+/// Faktor 1,0, ein nicht endlicher Faktor oder ein Blob, der kein RIFF/WAVE
+/// mit lesbarem `fmt `-Chunk ist, geben den Blob unveraendert zurueck: eine
+/// nicht anwendbare Klangeinstellung darf nie Tonausfall bedeuten.
+fn scale_wav_rate(bytes: Vec<u8>, factor: f32) -> Vec<u8> {
+    if !factor.is_finite() || (factor - 1.0).abs() <= f32::EPSILON {
+        return bytes;
+    }
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return bytes;
+    }
+    let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    let mut pos = 12;
+    while pos + 8 <= bytes.len() {
+        let size = word(pos + 4) as usize;
+        let data = pos + 8;
+        if &bytes[pos..pos + 4] == b"fmt " && size >= 16 && data + 16 <= bytes.len() {
+            let scaled = |value: u32| {
+                let v = (value as f64 * factor as f64).round();
+                (v >= 1.0 && v <= u32::MAX as f64).then_some(v as u32)
+            };
+            let (Some(rate), Some(byte_rate)) = (scaled(word(data + 4)), scaled(word(data + 8)))
+            else {
+                return bytes;
+            };
+            let mut out = bytes;
+            out[data + 4..data + 8].copy_from_slice(&rate.to_le_bytes());
+            out[data + 8..data + 12].copy_from_slice(&byte_rate.to_le_bytes());
+            return out;
+        }
+        // Chunks sind auf gerade Laengen aufgefuellt (RIFF-Regel).
+        pos = data + size + (size & 1);
+    }
+    bytes
+}
+
 /// WAV-Blob als Interleave lesen, ohne Downmix.
 fn decode_interleaved(bytes: &[u8]) -> Option<Vec<f32>> {
     let mut reader = hound::WavReader::new(std::io::Cursor::new(bytes)).ok()?;
@@ -1082,6 +1178,72 @@ fn normalize_wav_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
         writer.finalize().ok()?;
     }
     Some(out.into_inner())
+}
+
+/// Mono-f32 zurueck in ein 16-Bit-PCM-WAV. Gegenstueck zu `decode_wav`.
+fn encode_wav_mono(samples: &[f32], rate: u32) -> Vec<u8> {
+    let data_len = samples.len() * 2;
+    let mut out = Vec::with_capacity(44 + data_len);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&((36 + data_len) as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data_len as u32).to_le_bytes());
+    for s in samples {
+        let v = (s.clamp(-1.0, 1.0) * 32_767.0) as i16;
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+/// Den Tiefe-Regler auf WAV-Bytes anwenden: dekodieren, strecken, wieder als
+/// WAV kodieren. `factor <= 1.0` gibt die Bytes unveraendert zurueck, damit
+/// der Normalfall keine Rechenzeit und keine Requantisierung kostet.
+fn apply_depth(wav: &[u8], factor: f32) -> Option<Vec<u8>> {
+    if !(factor > 1.0) {
+        return Some(wav.to_vec());
+    }
+    let (mono, rate, _peak) = decode_wav(wav)?;
+    let stretched = dsp::resample_stretch(&mono, factor);
+    Some(encode_wav_mono(&stretched, rate))
+}
+
+/// Obergrenze fuer eine Referenzaufnahme in Sekunden.
+///
+/// Zero-Shot-Klonen zieht seine Stimmidentitaet aus wenigen Sekunden; 10 bis
+/// 30 Sekunden sind der brauchbare Bereich. Laenger hilft nicht, sondern
+/// schadet: mehr Material heisst mehr Raumhall, mehr Atmer, mehr
+/// Pegelschwankung — und jede Sekunde davon geht in die Referenz ein.
+const MAX_REFERENCE_SEC: f32 = 30.0;
+
+/// Eine WAV auf `start_sec..end_sec` zuschneiden (Mono, 16 Bit).
+///
+/// `0.0/0.0` — allgemeiner: jedes Ende, das nicht hinter dem Start liegt —
+/// bedeutet "die ganze Datei". Der Zuschnitt wird in JEDEM Fall auf
+/// `MAX_REFERENCE_SEC` ab `start_sec` begrenzt, auch bei der ganzen Datei:
+/// eine Fuenf-Minuten-Aufnahme als Referenz waere sonst der stille Weg zu
+/// einer schlechteren Stimme.
+///
+/// `None`, wenn sich der Blob nicht lesen laesst.
+fn trim_wav_bytes(bytes: &[u8], start_sec: f32, end_sec: f32) -> Option<Vec<u8>> {
+    let (mono, rate, _peak) = decode_wav(bytes)?;
+    let rate_f = rate.max(1) as f32;
+    let start = ((start_sec.max(0.0) * rate_f) as usize).min(mono.len());
+    let end = if end_sec > start_sec {
+        ((end_sec * rate_f) as usize).clamp(start, mono.len())
+    } else {
+        mono.len()
+    };
+    let max_len = (MAX_REFERENCE_SEC * rate_f) as usize;
+    let end = end.min(start.saturating_add(max_len));
+    Some(encode_wav_mono(&mono[start..end], rate))
 }
 
 /// Marker, dass die Hörproben im Verzeichnis mit Pegelausgleich entstanden.
@@ -1278,6 +1440,22 @@ impl TtsManager {
         *self.core.export_format.lock().unwrap() = settings.tts_export_format;
         *self.core.output_device.lock().unwrap() = settings.selected_output_device;
         *self.core.voice.lock().unwrap() = settings.tts_voice;
+        // Dauerhafte Klangregler der Stimmen einmal je Auftrag von der Platte
+        // holen — nicht je Satz. Stimmen ohne `sound` stehen gar nicht erst
+        // in der Tabelle, der Normalfall kostet also nichts.
+        {
+            let fish_dir = std::path::PathBuf::from(&settings.tts_fish_dir);
+            let sounds: std::collections::HashMap<String, registry::VoiceSound> =
+                voices::list_voices(&fish_dir)
+                    .into_iter()
+                    .filter_map(|id| {
+                        registry::read_meta(&fish_dir, &id)
+                            .sound
+                            .map(|sound| (id, sound))
+                    })
+                    .collect();
+            *self.core.voice_sounds.lock().unwrap() = sounds;
+        }
         // Engine-Wahl in den Kern spiegeln; unbekannte Werte fallen auf
         // Fish zurück (from_setting). Für Piper werden Binary und Stimme
         // hier — also vor jedem Auftrag — neu aufgelöst: eben erst geladene
@@ -1664,6 +1842,13 @@ impl TtsManager {
 
     fn fish_dir(&self) -> std::path::PathBuf {
         std::path::PathBuf::from(crate::settings::get_settings(&self.app).tts_fish_dir)
+    }
+
+    /// `fish_dir` fuer die Command-Schicht: die Commands brauchen den Pfad,
+    /// der Manager haelt ihn aber bewusst privat, damit niemand am Manager
+    /// vorbei am Stimmenordner arbeitet.
+    pub fn fish_dir_public(&self) -> std::path::PathBuf {
+        self.fish_dir()
     }
 
     pub fn list_voice_ids(&self) -> Vec<String> {
@@ -3275,6 +3460,227 @@ impl TtsManager {
         log::info!("Seed {seed} als Stimme '{id}' (mit Metadaten) gespeichert");
         Ok(id)
     }
+
+    // ---- Stimmen-Baukasten (Etappe 1) --------------------------------------
+
+    /// Kandidaten fuer einen Entwurf erzeugen: je Kandidat ein zufaelliger
+    /// Seed, derselbe Probesatz. Nach JEDEM fertigen Kandidaten wird der
+    /// Entwurf geschrieben — bricht der Lauf ab (Abbruch, Absturz,
+    /// Serverfehler), bleibt alles bereits Gewuerfelte erhalten.
+    ///
+    /// Der Seed ist der einzige Regler fuer die Stimmidentitaet (Fish-Speech
+    /// kennt keine Konditionierung auf eine Beschreibung) — deshalb ist das
+    /// Wuerfeln hier der Kern und nicht ein Beiwerk.
+    pub async fn builder_generate(
+        &self,
+        draft_id: &str,
+        count: usize,
+        mut cancel: tokio::sync::watch::Receiver<bool>,
+        mut on_candidate: impl FnMut(usize, usize, &builder::Candidate),
+    ) -> Result<builder::BuilderDraft, String> {
+        let fish_dir = self.fish_dir();
+        let mut draft = builder::load_draft(&fish_dir, draft_id)?;
+        if draft.probe_text.trim().is_empty() {
+            return Err("Ohne Probesatz gibt es nichts zu sprechen".to_string());
+        }
+        self.refresh_from_settings();
+        self.ensure_server().await?;
+        let port = *self.core.port.lock().unwrap();
+        let dir = builder::draft_dir(&fish_dir, draft_id);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+
+        // Die Tags des Entwurfs gehoeren in den Probesatz: die Prosodie der
+        // Referenz uebertraegt sich beim Klonen, ein "[slow]" hier wirkt also
+        // auf die spaetere Stimme, nicht nur auf diese eine Aufnahme.
+        let mut text = String::new();
+        for tag in &draft.tags {
+            text.push('[');
+            text.push_str(tag);
+            text.push_str("] ");
+        }
+        text.push_str(&draft.probe_text);
+
+        for index in 0..count {
+            if *cancel.borrow_and_update() {
+                break;
+            }
+            // Zufall ohne `rand`: die unteren Bits einer ULID sind der
+            // Zufallsanteil, und `ulid` ist im Projekt bereits Abhaengigkeit.
+            let seed: i64 = (ulid::Ulid::new().0 as u32) as i64;
+            let body = protocol::tts_request_body_in_format(&text, seed, None, "wav");
+            let resp = self
+                .core
+                .http
+                .post(format!("{}/v1/tts", protocol::base_url(port)))
+                .json(&body)
+                .timeout(TTS_TIMEOUT)
+                .send()
+                .await
+                .map_err(|e| format!("Kandidat {} nicht erzeugt: {e}", index + 1))?;
+            if !resp.status().is_success() {
+                return Err(format!(
+                    "Kandidat {} nicht erzeugt: Server antwortete {}",
+                    index + 1,
+                    resp.status()
+                ));
+            }
+            let audio = resp
+                .bytes()
+                .await
+                .map_err(|e| format!("Kandidat {} unvollstaendig: {e}", index + 1))?
+                .to_vec();
+            if !protocol::looks_like_wav(&audio) {
+                return Err(format!("Kandidat {} war kein WAV", index + 1));
+            }
+            let audio = normalize_wav_bytes(&audio).unwrap_or(audio);
+            let file = format!("cand_{seed}.wav");
+            std::fs::write(dir.join(&file), &audio)
+                .map_err(|e| format!("Kandidat {} nicht gespeichert: {e}", index + 1))?;
+            let candidate = builder::Candidate {
+                seed,
+                file,
+                created_at: chrono::Utc::now().timestamp(),
+                source: builder::CandidateSource::Seed,
+            };
+            draft.candidates.push(candidate.clone());
+            draft.updated_at = chrono::Utc::now().timestamp();
+            // Erst die Datei, dann der Entwurf: ein Absturz dazwischen laesst
+            // eine verwaiste WAV zurueck (harmlos), nie einen Entwurf, der auf
+            // eine fehlende Datei zeigt.
+            builder::save_draft(&fish_dir, &draft)?;
+            on_candidate(index + 1, count, &candidate);
+        }
+        Ok(draft)
+    }
+
+    /// Einen Kandidaten zum Anhoeren liefern — mit dem aktuellen Tiefe-Regler
+    /// des Entwurfs. Die Original-WAV bleibt unveraendert liegen, damit der
+    /// Regler beliebig oft neu gestellt werden kann, ohne neu zu wuerfeln.
+    pub fn builder_candidate_wav(&self, draft_id: &str, seed: i64) -> Result<Vec<u8>, String> {
+        let fish_dir = self.fish_dir();
+        let draft = builder::load_draft(&fish_dir, draft_id)?;
+        let candidate = draft
+            .candidates
+            .iter()
+            .find(|c| c.seed == seed)
+            .ok_or_else(|| format!("Kandidat {seed} gehoert nicht zu diesem Entwurf"))?;
+        let path = builder::draft_dir(&fish_dir, draft_id).join(&candidate.file);
+        let raw =
+            std::fs::read(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+        apply_depth(&raw, draft.depth).ok_or_else(|| "Kandidat liess sich nicht lesen".to_string())
+    }
+
+    /// Eine WAV-Datei als Kandidat in einen Entwurf holen (Etappe 2).
+    ///
+    /// Derselbe Weg wie `builder_generate`, nur ohne Server: zuschneiden,
+    /// auf denselben Pegel bringen wie jede andere Referenz
+    /// (`ensure_seed_reference` tut nichts anderes), als `cand_<kennzahl>.wav`
+    /// in den Entwurfsordner schreiben, dann den Entwurf sichern — erst die
+    /// Datei, dann der Entwurf, damit nie ein Entwurf auf eine fehlende Datei
+    /// zeigt.
+    ///
+    /// `start_sec`/`end_sec` schneiden zu; `0.0/0.0` nimmt die ganze Datei.
+    /// Ueber `MAX_REFERENCE_SEC` wird gekappt (siehe dort).
+    pub fn builder_add_wav(
+        &self,
+        draft_id: &str,
+        wav_path: &str,
+        start_sec: f32,
+        end_sec: f32,
+    ) -> Result<builder::BuilderDraft, String> {
+        let fish_dir = self.fish_dir();
+        let mut draft = builder::load_draft(&fish_dir, draft_id)?;
+        let path = std::path::Path::new(wav_path);
+        let raw =
+            std::fs::read(path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+        if !protocol::looks_like_wav(&raw) {
+            return Err(format!("{} ist keine brauchbare WAV-Datei", path.display()));
+        }
+        let trimmed = trim_wav_bytes(&raw, start_sec, end_sec)
+            .ok_or_else(|| format!("{} liess sich nicht lesen", path.display()))?;
+        let audio = normalize_wav_bytes(&trimmed).unwrap_or(trimmed);
+
+        // Kennzahl statt Seed: dieser Kandidat ist nicht gewuerfelt und
+        // nicht reproduzierbar. Die Zahl adressiert ihn nur — gewonnen wie
+        // in `builder_generate` aus dem Zufallsanteil einer ULID.
+        let key: i64 = (ulid::Ulid::new().0 as u32) as i64;
+        // Was im eigenen Datenverzeichnis liegt, hat die App selbst
+        // aufgenommen; alles andere hat der Nutzer von aussen gewaehlt. Fuer
+        // die Verarbeitung macht es keinen Unterschied — beide tragen keinen
+        // Seed —, aber die Oberflaeche darf sagen, woher es kam.
+        let source = if path.starts_with(&fish_dir) {
+            builder::CandidateSource::Recording
+        } else {
+            builder::CandidateSource::Import
+        };
+        let dir = builder::draft_dir(&fish_dir, draft_id);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        let file = format!("cand_{key}.wav");
+        std::fs::write(dir.join(&file), &audio)
+            .map_err(|e| format!("Kandidat nicht gespeichert: {e}"))?;
+        draft.candidates.push(builder::Candidate {
+            seed: key,
+            file,
+            created_at: chrono::Utc::now().timestamp(),
+            source,
+        });
+        draft.updated_at = chrono::Utc::now().timestamp();
+        builder::save_draft(&fish_dir, &draft)?;
+        Ok(draft)
+    }
+
+    /// Den gewaehlten Kandidaten als Stimme speichern.
+    ///
+    /// Bewusst dieselbe Strecke wie `save_seed_voice_v2` — nur die Quelle der
+    /// WAV ist eine andere: Kandidat statt Seed-Referenz. Zwei Speicherwege
+    /// wuerden garantiert auseinanderlaufen.
+    pub async fn builder_commit(
+        &self,
+        draft_id: &str,
+        meta: registry::VoiceMeta,
+    ) -> Result<String, String> {
+        let fish_dir = self.fish_dir();
+        let draft = builder::load_draft(&fish_dir, draft_id)?;
+        let seed = draft
+            .selected
+            .ok_or_else(|| "Kein Kandidat gewaehlt".to_string())?;
+        let id = voices::sanitize_voice_id(&meta.display_name)
+            .ok_or_else(|| "Der Name ergibt keinen brauchbaren Stimmennamen".to_string())?;
+        if voices::voice_is_complete(&fish_dir, &id) {
+            return Err(format!("Die Stimme '{id}' existiert bereits"));
+        }
+        let others = registry::other_voice_names(&fish_dir, Some(&id));
+        registry::validate_meta(&meta, &others)?;
+
+        let audio = self.builder_candidate_wav(draft_id, seed)?;
+        let target = voices::voice_dir(&fish_dir, &id);
+        std::fs::create_dir_all(&target)
+            .map_err(|e| format!("could not create {}: {e}", target.display()))?;
+        // Vollstaendig oder gar nicht — die Regel aus `save_seed_voice_v2`:
+        // ein halbes Verzeichnis meldet beim naechsten Versuch faelschlich
+        // "existiert bereits".
+        if let Err(e) = std::fs::write(target.join("sample.wav"), &audio) {
+            let _ = std::fs::remove_dir_all(&target);
+            return Err(format!("could not write sample.wav: {e}"));
+        }
+        if let Err(e) = std::fs::write(target.join("sample.lab"), draft.probe_text.as_bytes()) {
+            let _ = std::fs::remove_dir_all(&target);
+            return Err(format!("could not write sample.lab: {e}"));
+        }
+        // Der Seed-Vermerk nur fuer einen gewuerfelten Kandidaten: bei einem
+        // eingespielten stuende in `seed.txt` eine Kennzahl, die nichts
+        // reproduziert — eine Zusage, die die Datei nicht halten kann.
+        if let Some(seed) = builder::seed_marker_for(&draft) {
+            voices::write_seed_marker(&fish_dir, &id, seed);
+        }
+        registry::write_meta(&fish_dir, &id, &meta)?;
+        voices::update_registry(&fish_dir);
+        builder::delete_draft(&fish_dir, draft_id)?;
+        log::info!("Baukasten: Entwurf {draft_id} als Stimme '{id}' gespeichert");
+        Ok(id)
+    }
 }
 
 /// PID des Prozesses, der auf `127.0.0.1:port` lauscht.
@@ -3342,6 +3748,34 @@ fn kill_pid(pid: u32) -> Result<(), String> {
         "Prozess {pid} liess sich nicht beenden: {}",
         String::from_utf8_lossy(&output.stderr).trim()
     ))
+}
+
+/// Winzige WAV-Erzeugung fuer Tests — echte Audiodateien im Repo waeren fuer
+/// diese Pruefungen unnoetiger Ballast.
+#[cfg(test)]
+mod test_support {
+    /// Mono, 16 Bit, `rate` Hz, `samples` Werte einer Sinusschwingung.
+    pub fn sine_wav(rate: u32, samples: usize) -> Vec<u8> {
+        let data_len = samples * 2;
+        let mut out = Vec::with_capacity(44 + data_len);
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&((36 + data_len) as u32).to_le_bytes());
+        out.extend_from_slice(b"WAVEfmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        out.extend_from_slice(&1u16.to_le_bytes()); // mono
+        out.extend_from_slice(&rate.to_le_bytes());
+        out.extend_from_slice(&(rate * 2).to_le_bytes());
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&(data_len as u32).to_le_bytes());
+        for i in 0..samples {
+            let v = ((i as f32 / 8.0).sin() * 12_000.0) as i16;
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -3872,5 +4306,182 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, piper::ERR_BINARY_MISSING);
+    }
+
+    #[test]
+    fn tiefe_streckt_die_kandidaten_wav_und_laesst_sie_eine_wav_bleiben() {
+        // Ein kleines, gueltiges WAV bauen und durch die Tiefe schicken.
+        // Ueber 1 KiB Nutzlast, weil `protocol::looks_like_wav` genau das
+        // als Untergrenze verlangt (RIFF-Magic allein reicht ihm nicht).
+        let wav = super::test_support::sine_wav(16_000, 2_000);
+        let tiefer = super::apply_depth(&wav, 1.15).expect("Tiefe muss rechnen");
+        assert!(protocol::looks_like_wav(&tiefer), "bleibt ein WAV");
+        assert!(
+            tiefer.len() > wav.len(),
+            "gestreckt heisst mehr Bytes: {} vs {}",
+            tiefer.len(),
+            wav.len()
+        );
+    }
+
+    #[test]
+    fn tiefe_eins_gibt_die_bytes_unveraendert_zurueck() {
+        let wav = super::test_support::sine_wav(16_000, 2_000);
+        assert_eq!(super::apply_depth(&wav, 1.0).unwrap(), wav);
+    }
+
+    // ---- Dauerhafte Klangregler je Stimme (`VoiceMeta::sound`) -----------
+
+    fn test_core() -> TtsCore {
+        TtsCore::new(Arc::new(player::CountingPlayer(std::sync::Mutex::new(0))))
+    }
+
+    fn sound_for(core: &TtsCore, voice: &str, speed: f32, gain_db: f32) {
+        core.voice_sounds
+            .lock()
+            .unwrap()
+            .insert(voice.to_string(), registry::VoiceSound { speed, gain_db });
+    }
+
+    /// Der Regler skaliert die angegebene Abtastrate — Daten bleiben Byte fuer
+    /// Byte stehen, damit nichts durch eine Interpolation muss.
+    #[test]
+    fn scale_wav_rate_skaliert_kopf_und_laesst_die_daten_in_ruhe() {
+        let wav = super::test_support::sine_wav(16_000, 500);
+        let schneller = super::scale_wav_rate(wav.clone(), 1.25);
+        assert_eq!(schneller.len(), wav.len());
+        let reader = hound::WavReader::new(std::io::Cursor::new(schneller.as_slice())).unwrap();
+        assert_eq!(reader.spec().sample_rate, 20_000);
+        // byte_rate zieht mit (16 Bit mono: 2 Bytes je Sample).
+        assert_eq!(
+            u32::from_le_bytes(schneller[28..32].try_into().unwrap()),
+            40_000
+        );
+        assert_eq!(&schneller[44..], &wav[44..], "Audiodaten veraendert");
+    }
+
+    #[test]
+    fn scale_wav_rate_laesst_unveraendert_was_es_nicht_anfassen_darf() {
+        let wav = super::test_support::sine_wav(24_000, 100);
+        assert_eq!(super::scale_wav_rate(wav.clone(), 1.0), wav);
+        assert_eq!(super::scale_wav_rate(wav.clone(), f32::NAN), wav);
+        // Kein RIFF/WAVE: unveraendert statt kaputt.
+        let kein_wav = b"nicht einmal ein header".to_vec();
+        assert_eq!(super::scale_wav_rate(kein_wav.clone(), 1.5), kein_wav);
+    }
+
+    /// Das gehoerte Tempo ist das Produkt aus Nutzerregler und Stimmenregler:
+    /// der Stimmenregler steckt in der Abtastrate, der Nutzerregler bleibt im
+    /// Player. Hier wird die eine Haelfte geprueft — dass sie den
+    /// Nutzerregler NICHT anfasst, ist die andere.
+    #[test]
+    fn stimmen_tempo_wirkt_neben_dem_nutzerregler_nicht_an_seiner_stelle() {
+        let core = test_core();
+        core.controls.set_speed(1.5);
+        sound_for(&core, "pyrion", 1.2, 0.0);
+        assert!((core.voice_speed(Some("pyrion")) - 1.2).abs() < 1e-6);
+        assert_eq!(core.voice_speed(Some("olga")), 1.0);
+        assert_eq!(
+            core.controls.speed(),
+            1.5,
+            "der Stimmenregler darf den Nutzerregler nicht ueberschreiben"
+        );
+    }
+
+    #[test]
+    fn stimmen_tempo_gilt_auch_fuer_die_eingestellte_stimme_ohne_expliziten_namen() {
+        let core = test_core();
+        *core.voice.lock().unwrap() = Some("pyrion".to_string());
+        sound_for(&core, "pyrion", 0.8, 0.0);
+        assert!((core.voice_speed(None) - 0.8).abs() < 1e-6);
+    }
+
+    /// 4 s bei 16 kHz; geschnitten auf 1 s bleibt ein Viertel uebrig.
+    #[test]
+    fn zuschnitt_kuerzt_wirklich_und_bleibt_ein_wav() {
+        let wav = super::test_support::sine_wav(16_000, 64_000);
+        let kurz = trim_wav_bytes(&wav, 1.0, 2.0).unwrap();
+        assert!(kurz.len() < wav.len(), "{} vs {}", kurz.len(), wav.len());
+        assert!(protocol::looks_like_wav(&kurz), "bleibt ein WAV");
+        let (mono, rate, _) = decode_wav(&kurz).unwrap();
+        assert_eq!(rate, 16_000);
+        assert_eq!(mono.len(), 16_000, "genau eine Sekunde");
+    }
+
+    #[test]
+    fn zuschnitt_ohne_grenzen_nimmt_die_ganze_datei() {
+        let wav = super::test_support::sine_wav(16_000, 32_000);
+        let ganz = trim_wav_bytes(&wav, 0.0, 0.0).unwrap();
+        assert_eq!(decode_wav(&ganz).unwrap().0.len(), 32_000);
+    }
+
+    /// 60 s Material, 40 s gewuenscht — beides ueber der Grenze fuer eine
+    /// Zero-Shot-Referenz, beides landet bei 30 s ab Startpunkt.
+    #[test]
+    fn zuschnitt_ueber_dreissig_sekunden_wird_gekappt() {
+        let wav = super::test_support::sine_wav(16_000, 60 * 16_000);
+        let gekappt = trim_wav_bytes(&wav, 5.0, 45.0).unwrap();
+        assert_eq!(decode_wav(&gekappt).unwrap().0.len(), 30 * 16_000);
+        let ganz = trim_wav_bytes(&wav, 0.0, 0.0).unwrap();
+        assert_eq!(
+            decode_wav(&ganz).unwrap().0.len(),
+            30 * 16_000,
+            "auch die ganze Datei wird gekappt"
+        );
+    }
+
+    /// Ein Ende hinter dem Dateiende darf nicht ueber den Rand greifen.
+    #[test]
+    fn zuschnitt_haelt_sich_an_die_dateilaenge() {
+        let wav = super::test_support::sine_wav(16_000, 16_000);
+        let kurz = trim_wav_bytes(&wav, 0.5, 99.0).unwrap();
+        assert_eq!(decode_wav(&kurz).unwrap().0.len(), 8_000);
+        let leer = trim_wav_bytes(&wav, 99.0, 100.0).unwrap();
+        assert_eq!(decode_wav(&leer).unwrap().0.len(), 0);
+    }
+
+    /// Ohne Normalisierung ist der Dauerregler der einzige Faktor — er ist
+    /// eine Eigenschaft der Stimme, keine Messung, und faellt deshalb nicht
+    /// mit der Normalisierung weg.
+    #[test]
+    fn gain_db_wirkt_auch_bei_abgeschalteter_normalisierung() {
+        let core = test_core();
+        core.normalize.store(false, Ordering::Release);
+        let wav = super::test_support::sine_wav(16_000, 4_000);
+        assert_eq!(core.playback_gain(Some("pyrion"), &wav), 1.0);
+        sound_for(&core, "pyrion", 1.0, 6.0);
+        let gain = core.playback_gain(Some("pyrion"), &wav);
+        assert!((gain - 1.995).abs() < 0.01, "Faktor {gain} statt ~2,0");
+        // Andere Stimmen bleiben unberuehrt.
+        assert_eq!(core.playback_gain(Some("olga"), &wav), 1.0);
+    }
+
+    /// Die Spitze hat das letzte Wort — auch gegen den Dauerregler.
+    #[test]
+    fn gain_db_wird_von_der_aussteuerungsgrenze_gedeckelt() {
+        let core = test_core();
+        core.normalize.store(false, Ordering::Release);
+        sound_for(&core, "pyrion", 1.0, 12.0);
+        let wav = super::test_support::sine_wav(16_000, 4_000);
+        let peak = decode_wav(&wav).unwrap().2;
+        let gain = core.playback_gain(Some("pyrion"), &wav);
+        assert!(
+            gain * peak <= loudness::PEAK_CEILING + 1e-6,
+            "Spitze {} ueber der Grenze",
+            gain * peak
+        );
+        assert!(gain < 3.981, "die Grenze haette greifen muessen: {gain}");
+    }
+
+    /// Mit Normalisierung liegt der Dauerregler OBEN DRAUF: derselbe Satz
+    /// wird um genau den eingestellten Faktor lauter.
+    #[test]
+    fn gain_db_multipliziert_den_gemessenen_ausgleich() {
+        let wav = super::test_support::sine_wav(16_000, 4_000);
+        let ohne = test_core().playback_gain(Some("pyrion"), &wav);
+        let core = test_core();
+        sound_for(&core, "pyrion", 1.0, -6.0);
+        let mit = core.playback_gain(Some("pyrion"), &wav);
+        assert!((mit / ohne - 0.501).abs() < 0.01, "{mit} vs {ohne}");
     }
 }

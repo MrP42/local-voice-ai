@@ -1,8 +1,9 @@
 //! Tauri-Commands des Vorlesen-Bereichs (TP1).
 
+use crate::managers::tts::builder;
 use crate::managers::tts::models::{TtsDownloadInfo, TtsModelManager};
 use crate::managers::tts::registry::{ReferenceAnalysis, VoiceInfo, VoiceMeta};
-use crate::managers::tts::{ReadingInfo, TtsManager, TtsStatus};
+use crate::managers::tts::{portable, registry, voices, ReadingInfo, TtsManager, TtsStatus};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -703,4 +704,256 @@ pub fn tts_auto_tag_cancel(app: AppHandle) -> Result<(), String> {
         let _ = tx.send(true);
     }
     Ok(())
+}
+
+// ---- Stimmen-Baukasten (Etappe 1) -----------------------------------------
+
+/// Zustand des laufenden Kandidaten-Laufs — wie `AutoTagRun`, damit
+/// `tts_builder_cancel` ihn abbrechen kann. `None` = kein Lauf aktiv.
+#[derive(Default)]
+pub struct BuilderRun(pub std::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>);
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_create_draft(
+    app: AppHandle,
+    display_name: String,
+    description: String,
+    probe_text: String,
+    tags: Vec<String>,
+) -> Result<builder::BuilderDraft, String> {
+    let tts = app.state::<Arc<TtsManager>>();
+    let now = chrono::Utc::now().timestamp();
+    let draft = builder::BuilderDraft {
+        id: ulid::Ulid::new().to_string(),
+        display_name,
+        description,
+        probe_text,
+        tags,
+        depth: 1.0,
+        candidates: Vec::new(),
+        selected: None,
+        created_at: now,
+        updated_at: now,
+    };
+    builder::save_draft(&tts.fish_dir_public(), &draft)?;
+    Ok(draft)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_list_drafts(app: AppHandle) -> Vec<builder::BuilderDraft> {
+    let tts = app.state::<Arc<TtsManager>>();
+    builder::list_drafts(&tts.fish_dir_public())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_update_draft(
+    app: AppHandle,
+    mut draft: builder::BuilderDraft,
+) -> Result<(), String> {
+    let tts = app.state::<Arc<TtsManager>>();
+    // Der Regler kommt aus der Oberflaeche und wird hier hart begrenzt:
+    // ueber 1,15 klingt es kuenstlich, unter 1,0 hebt es die Stimme an, was
+    // der Regler nicht anbietet.
+    draft.depth = draft.depth.clamp(1.0, 1.15);
+    draft.updated_at = chrono::Utc::now().timestamp();
+    builder::save_draft(&tts.fish_dir_public(), &draft)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_delete_draft(app: AppHandle, id: String) -> Result<(), String> {
+    let tts = app.state::<Arc<TtsManager>>();
+    builder::delete_draft(&tts.fish_dir_public(), &id)
+}
+
+/// Kandidaten erzeugen. Je fertigem Kandidaten geht ein
+/// `tts-builder-progress`-Event `{done, total, seed}` an die Oberflaeche —
+/// Kandidaten erscheinen damit einzeln statt alle am Ende.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_builder_generate(
+    app: AppHandle,
+    id: String,
+    count: usize,
+) -> Result<builder::BuilderDraft, String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    *app.state::<BuilderRun>().0.lock().unwrap() = Some(tx);
+    let progress_app = app.clone();
+    let result = tts
+        .builder_generate(&id, count.clamp(1, 12), rx, move |done, total, cand| {
+            let _ = progress_app.emit(
+                "tts-builder-progress",
+                serde_json::json!({ "done": done, "total": total, "seed": cand.seed }),
+            );
+        })
+        .await;
+    *app.state::<BuilderRun>().0.lock().unwrap() = None;
+    result
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_cancel(app: AppHandle) -> Result<(), String> {
+    if let Some(tx) = app.state::<BuilderRun>().0.lock().unwrap().as_ref() {
+        let _ = tx.send(true);
+    }
+    Ok(())
+}
+
+/// WAV-Bytes eines Kandidaten mit dem aktuellen Tiefe-Regler. Roh als
+/// `Vec<u8>` wie beim Avatar-Upload — das Projekt hat kein base64-Crate.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_candidate_wav(app: AppHandle, id: String, seed: i64) -> Result<Vec<u8>, String> {
+    app.state::<Arc<TtsManager>>()
+        .builder_candidate_wav(&id, seed)
+}
+
+/// Eine WAV-Datei als Kandidat aufnehmen (Etappe 2). Den Pfad waehlt die
+/// Oberflaeche ueber `tauri-plugin-dialog` oder legt eine eigene Aufnahme
+/// dorthin ab. `start_sec`/`end_sec` schneiden zu, `0.0/0.0` nimmt alles.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_add_wav(
+    app: AppHandle,
+    id: String,
+    wav_path: String,
+    start_sec: f32,
+    end_sec: f32,
+) -> Result<builder::BuilderDraft, String> {
+    app.state::<Arc<TtsManager>>()
+        .builder_add_wav(&id, &wav_path, start_sec, end_sec)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_builder_commit(
+    app: AppHandle,
+    id: String,
+    meta: VoiceMeta,
+) -> Result<String, String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tts.builder_commit(&id, meta).await
+}
+
+// ------------------------------------------------- Stimmen teilen (Etappe 5) --
+
+/// Eine Stimme als `.lvvoice`-Archiv schreiben. Den Zielpfad waehlt die
+/// Oberflaeche ueber `tauri-plugin-dialog` und reicht ihn als String durch.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_export_voice(app: AppHandle, id: String, out_path: String) -> Result<(), String> {
+    let tts = app.state::<Arc<TtsManager>>();
+    let fish_dir = tts.fish_dir_public();
+    let id = registry::require_known_voice(&fish_dir, &id)?;
+    portable::export_voice(&fish_dir, &id, std::path::Path::new(&out_path))
+}
+
+/// Was in einem Archiv steckt, ohne es auszupacken — fuer die Vorschau vor
+/// dem Import.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_inspect_voice_archive(
+    _app: AppHandle,
+    archive_path: String,
+) -> Result<VoiceMeta, String> {
+    portable::inspect_archive(std::path::Path::new(&archive_path))
+}
+
+/// Archiv als NEUE Stimme einspielen. `display_name_override` erlaubt der
+/// Oberflaeche, bei Namenskollision einen anderen Namen zu setzen.
+/// Rueckgabe: die vergebene `voice_id`.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_import_voice_archive(
+    app: AppHandle,
+    archive_path: String,
+    display_name_override: Option<String>,
+) -> Result<String, String> {
+    let tts = app.state::<Arc<TtsManager>>();
+    let fish_dir = tts.fish_dir_public();
+    portable::import_voice(
+        &fish_dir,
+        std::path::Path::new(&archive_path),
+        display_name_override.as_deref(),
+    )
+}
+
+/// Die `voice_id` einer Stimme aendern — ein Umzug, kein Feld: der Ordner
+/// wandert, die Metadaten bekommen den neuen Anzeigenamen, und die
+/// Einstellung `tts_voice` wird nachgezogen, wenn sie auf die alte id zeigte.
+/// Sonst spraeche die App danach mit einer Stimme, die es nicht mehr gibt.
+///
+/// Schlaegt das Schreiben der Metadaten fehl, wird der Ordner
+/// zurueckbenannt — ein halber Umzug waere schlimmer als ein Fehlschlag.
+///
+/// Rueckgabe: die neue `voice_id`.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_rename_voice_id(
+    app: AppHandle,
+    old_id: String,
+    new_display_name: String,
+) -> Result<String, String> {
+    let fish_dir = app.state::<Arc<TtsManager>>().fish_dir_public();
+    let old_id = registry::require_known_voice(&fish_dir, &old_id)?;
+    let new_name = new_display_name.trim().to_string();
+    let new_id = voices::sanitize_voice_id(&new_name)
+        .ok_or_else(|| "Der Name ergibt keinen brauchbaren Stimmennamen".to_string())?;
+
+    // Der neue Anzeigename muss durch dieselbe Pruefung wie beim Bearbeiten
+    // — und zwar BEVOR irgendetwas auf der Platte bewegt wird.
+    let mut meta = registry::read_meta(&fish_dir, &old_id);
+    meta.display_name = new_name;
+    let others = registry::other_voice_names(&fish_dir, Some(&old_id));
+    registry::validate_meta(&meta, &others)?;
+
+    // Ergibt der neue Name dieselbe id (etwa nur Gross-/Kleinschreibung),
+    // ist es kein Umzug, sondern eine Metadaten-Aenderung.
+    if new_id == old_id {
+        registry::write_meta(&fish_dir, &old_id, &meta)?;
+        voices::update_registry(&fish_dir);
+        return Ok(old_id);
+    }
+
+    if voices::voice_is_complete(&fish_dir, &new_id) {
+        return Err(format!(
+            "Die Stimme '{new_id}' existiert bereits — bitte einen anderen Namen waehlen"
+        ));
+    }
+    let from = voices::voice_dir(&fish_dir, &old_id);
+    let to = voices::voice_dir(&fish_dir, &new_id);
+    if to.exists() {
+        return Err(format!(
+            "Der Ordner '{}' ist belegt — bitte einen anderen Namen waehlen",
+            to.display()
+        ));
+    }
+    std::fs::rename(&from, &to).map_err(|e| {
+        format!(
+            "could not rename {} to {}: {e}",
+            from.display(),
+            to.display()
+        )
+    })?;
+
+    if let Err(e) = registry::write_meta(&fish_dir, &new_id, &meta) {
+        // Zuruecknehmen: der Ordner geht an seinen alten Platz zurueck.
+        let _ = std::fs::rename(&to, &from);
+        voices::update_registry(&fish_dir);
+        return Err(e);
+    }
+
+    let mut settings = crate::settings::get_settings(&app);
+    if settings.tts_voice.as_deref() == Some(old_id.as_str()) {
+        settings.tts_voice = Some(new_id.clone());
+        crate::settings::write_settings(&app, settings);
+    }
+    voices::update_registry(&fish_dir);
+    log::info!("Stimme '{old_id}' nach '{new_id}' umbenannt");
+    Ok(new_id)
 }
