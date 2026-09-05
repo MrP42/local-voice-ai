@@ -1,0 +1,110 @@
+[
+  {
+    "case": "de_test_01",
+    "inputSHA256": "4f5a4a1608a8f45e47a2485b54457a830511a44955deae0d7f6af185cec06d20",
+    "sourceText": "Guten Tag, dies ist ein Test der lokalen Spracherkennung. Der Termin ist am dritten Februar um vierzehn Uhr dreißig.",
+    "transcript": "Guten Tag! Dies ist ein Test der lokalen Spracherkennung, der Termin ist am 3. Februar um 14.30 Uhr.",
+    "reply": "Guten Tag! Die Testphase wird am 3. Februar um 14.30 Uhr begonnen.",
+    "keywordChecks": {
+      "lokalen": true,
+      "spracherkennung": true,
+      "februar": true
+    },
+    "phoneTimings": {
+      "stt_ms": 6172.855973243713,
+      "generation_ms": 4965.992093086243
+    },
+    "watchTimings": {
+      "tts_start_ms": 130.93996047973633,
+      "transfer_roundtrip_ms": 4739.719033241272
+    },
+    "elapsedSeconds": 18.732050476
+  },
+  {
+    "case": "de_umlaute",
+    "inputSHA256": "6c6e8f4ebb24a4e8a9f531065b71705912f780467aa7e140a78efded63c69cfc",
+    "sourceText": "Der ältere Herr aus der Straße hatte großen Ärger mit seinen Fußballschuhen und trank Glühwein in Köln.",
+    "transcript": "Der ältere Herr aus der Straße hatte großen Ärger mit seinen Fußballschulen und Trang Blüwein in Köln.",
+    "reply": "Der ältere Herr aus der Straße hatte großen Ärger mit seinen Fußballschulen und Trang Blüwein in Köln.",
+    "keywordChecks": {
+      "ältere": true,
+      "straße": true,
+      "ärger": true,
+      "fußballschuhen": false,
+      "glühwein": false,
+      "köln": true
+    },
+    "phoneTimings": {
+      "stt_ms": 7318.554997444153,
+      "generation_ms": 6009.904980659485
+    },
+    "watchTimings": {
+      "transfer_roundtrip_ms": 2983.9619398117065
+    },
+    "elapsedSeconds": 18.801029159
+  },
+  {
+    "case": "de_punkt",
+    "inputSHA256": "cd2ad52a83e7830bc7ce6d403a32b7ad0bf35759892de5eaff837bab6940f83a",
+    "sourceText": "Kommst du morgen mit? Das wäre wirklich großartig! Ich warte, bis du da bist.",
+    "transcript": "kommst du norgen mit, das wäre wirklich großartig. Ich warte, bis du da bist.",
+    "reply": "Ja, ich komme gerne mit. Ich warte, bis du da bist.",
+    "keywordChecks": {
+      "kommst": true,
+      "morgen": false,
+      "großartig": true,
+      "warte": true
+    },
+    "phoneTimings": {
+      "stt_ms": 7658.516049385071,
+      "generation_ms": 5069.595098495483
+    },
+    "watchTimings": {
+      "transfer_roundtrip_ms": 2656.3940048217773
+    },
+    "elapsedSeconds": 17.599077807
+  },
+  {
+    "case": "de_multiline",
+    "inputSHA256": "219c2d48af3fcd686ffd962a9914b620b61a862f8f211656f71a078705fe69b3",
+    "sourceText": "Erste Zeile des Textes. Neuer Absatz. Zweite Zeile des Textes. Neuer Absatz. Dritte Zeile des Textes.",
+    "transcript": "1. Ziele des Textes, Neuer Absatz, 2. Ziele des Textes, Neuer Absatz, 3. Ziele des Textes",
+    "reply": "Ziele des Textes, Neuer Absatz, 3. Ziele des Textes",
+    "keywordChecks": {
+      "erste": false,
+      "zweite": false,
+      "dritte": false,
+      "zeile": false
+    },
+    "phoneTimings": {
+      "generation_ms": 5719.915986061096,
+      "stt_ms": 7795.9489822387695
+    },
+    "watchTimings": {
+      "transfer_roundtrip_ms": 3489.235997200012,
+      "tts_start_ms": 138.7549638748169
+    },
+    "elapsedSeconds": 19.964652539
+  },
+  {
+    "case": "de_lang",
+    "inputSHA256": "f464a0d1cb2a679009d1452a1e4323634d08a21ac0cc3e7dd0227eea189fe3f7",
+    "sourceText": "Wir treffen uns am Montag um neun Uhr im Besprechungsraum drei, um die Ergebnisse der letzten Messreihe durchzugehen. Bitte bringen Sie die Auswertung mit, damit wir die Abweichungen bei den Temperaturwerten gemeinsam prüfen können.",
+    "transcript": "Wir treffen uns am Montag um 9 Uhr im Besprechungsraum 3, um die Ergebnisse der letzten Meßreihe durchzugehen. Bitte bringen Sie die Auswertung mit, damit wir die Abweichungen bei den Temperaturwerten gemeinsam prüfen können.",
+    "reply": "Am Montag um 9 Uhr im Besprechungsraum 3 prüfen wir die Ergebnisse der letzten Meßreihe.",
+    "keywordChecks": {
+      "montag": true,
+      "besprechungsraum": true,
+      "auswertung": true,
+      "temperaturwerten": true
+    },
+    "phoneTimings": {
+      "stt_ms": 8489.966034889221,
+      "generation_ms": 7534.651041030884
+    },
+    "watchTimings": {
+      "transfer_roundtrip_ms": 4142.53294467926
+    },
+    "elapsedSeconds": 22.507429462999994
+  }
+]

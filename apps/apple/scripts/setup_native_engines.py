@@ -26,6 +26,7 @@ def fetch(url, path, expected):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--models', action='store_true', help='Also download 640 MB of local model weights')
+    parser.add_argument('--small', action='store_true', help='Also download Whisper Small for the accuracy comparison')
     args = parser.parse_args()
     vendor = ROOT / 'Vendor'; vendor.mkdir(exist_ok=True)
     for name, url, expected in LIBRARIES:
@@ -40,6 +41,10 @@ def main():
                     zipped.extractall(temp)
                 shutil.move(str(pathlib.Path(temp) / 'build-apple' / (name + '.xcframework')), destination)
         print(name + ': pinned archive verified')
+    if args.small:
+        models = vendor / 'Models'; models.mkdir(exist_ok=True)
+        fetch('https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin', models / 'ggml-small.bin', '1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b')
+        print('ggml-small.bin: SHA-256 verified')
     if args.models:
         models = vendor / 'Models'; models.mkdir(exist_ok=True)
         for name, url, expected in MODELS:

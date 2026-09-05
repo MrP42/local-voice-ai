@@ -7,6 +7,7 @@ actor CPULocalProviders {
     static let shared = CPULocalProviders()
     private var verifiedModels = Set<String>()
     private let hashes = [
+        "ggml-small.bin": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
         "ggml-base.bin": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
         "qwen2.5-0.5b-instruct-q4_k_m.gguf": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
     ]
@@ -25,7 +26,10 @@ actor CPULocalProviders {
         return url
     }
     func transcribe(_ url: URL) throws -> String {
-        let model = try modelURL("ggml-base.bin")
+        let model: URL
+        let small = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Models/ggml-small.bin")
+        if FileManager.default.fileExists(atPath: small.path) { model = try modelURL("ggml-small.bin") }
+        else { model = try modelURL("ggml-base.bin") }
         let file = try AVAudioFile(forReading: url)
         guard file.length > 0, Double(file.length) / file.processingFormat.sampleRate <= 60,
               let input = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
