@@ -34,6 +34,17 @@ final class ReplyTests: XCTestCase {
         XCTAssertThrowsError(try store.acceptReply(conflict))
         XCTAssertEqual(try store.entries().first?.reply, "original")
     }
+    func testReceiptReplayPreservesReplyDestination() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root)
+        let local = Packet.capture(audio: Data([1])); _ = try store.accept(local)
+        XCTAssertEqual(try store.entries().first?.replyToWatch, false)
+        let remote = Packet.capture(audio: Data([2]))
+        let receipt = try store.accept(remote, replyToWatch: true)
+        XCTAssertEqual(try store.accept(remote), receipt)
+        XCTAssertEqual(try store.entries().first(where: { $0.id == remote.sessionId })?.replyToWatch, true)
+    }
     func testWrongReceiptCannotSilencePendingResponse() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

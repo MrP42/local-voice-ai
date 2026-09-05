@@ -34,6 +34,7 @@ public struct Entry: Codable, Identifiable, Sendable {
     public var replyMessageId: UUID?
     public var replyAcknowledged: Bool?
     public var replyReceipt: Receipt?
+    public var replyToWatch: Bool?
 }
 
 /// Access from one serial executor. A directory rename commits audio and metadata together.
@@ -57,20 +58,21 @@ public final class DurableStore {
     public func packet(for entry: Entry) throws -> Packet {
         Packet(sessionId: entry.id, messageId: entry.receipt.messageId, kind: "capture", createdAt: entry.createdAt, payload: Packet.Payload(audio: try audio(for: entry.id)))
     }
-    public func accept(_ packet: Packet) throws -> Receipt {
+    public func accept(_ packet: Packet, replyToWatch: Bool = false) throws -> Receipt {
         guard packet.schemaVersion == 1 else { throw VoiceError.version }
         guard packet.kind == "capture", !packet.audio.isEmpty, packet.audio.count <= 1024 * 1024 else { throw VoiceError.invalid }
         let digest = SHA256.hash(data: packet.audio).map { String(format: "%02x", $0) }.joined()
         let current = try entries()
-        if let existing = current.first(where: { $0.id == packet.sessionId || $0.receipt.messageId == packet.messageId }) {
+        if var existing = current.first(where: { $0.id == packet.sessionId || $0.receipt.messageId == packet.messageId }) {
             guard existing.id == packet.sessionId, existing.receipt.messageId == packet.messageId, existing.digest == digest else { throw VoiceError.conflict }
             guard try audio(for: existing.id) == packet.audio else { throw VoiceError.persistence }
+            if replyToWatch && existing.replyToWatch != true { existing.replyToWatch = true; try save(existing) }
             return existing.receipt
         }
         let used = try current.reduce(0) { try $0 + audio(for: $1.id).count }
         guard used + packet.audio.count <= limit else { throw VoiceError.full }
         let receipt = Receipt(sessionId: packet.sessionId, messageId: packet.messageId, receiptId: UUID())
-        let entry = Entry(receipt: receipt, createdAt: packet.createdAt, digest: digest, state: .saved)
+        let entry = Entry(receipt: receipt, createdAt: packet.createdAt, digest: digest, state: .saved, replyToWatch: replyToWatch)
         let staging = root.appendingPathComponent(".partial-" + UUID().uuidString)
         try fm.createDirectory(at: staging, withIntermediateDirectories: false)
         defer { try? fm.removeItem(at: staging) }

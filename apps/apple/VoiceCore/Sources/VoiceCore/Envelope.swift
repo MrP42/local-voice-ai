@@ -6,6 +6,7 @@ public struct VoiceEnvelope: Codable, Sendable {
         public var receipt: Receipt?
         public var transcript: String?
         public var reply: String?
+        public var chunk: CaptureChunk?
     }
     public var schemaVersion = 1
     public var messageId: UUID
@@ -22,5 +23,15 @@ public struct VoiceEnvelope: Codable, Sendable {
         self.kind = capture != nil ? "capture" : (receipt != nil ? "receipt" : "reply")
         self.sessionId = capture?.sessionId ?? receipt?.sessionId ?? sessionId
         self.payload = Payload(capture: capture, receipt: receipt, transcript: transcript, reply: reply)
+    }
+}
+
+extension VoiceEnvelope {
+    public init(chunk: CaptureChunk) {
+        self.init()
+        self.kind = "captureChunk"
+        self.sessionId = chunk.sessionId
+        self.messageId = chunk.messageId
+        self.payload.chunk = chunk
     }
 }
