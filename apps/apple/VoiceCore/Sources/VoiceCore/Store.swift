@@ -51,16 +51,14 @@ public struct Entry: Codable, Identifiable, Sendable {
 public final class DurableStore {
     public let root: URL
     private let limit: Int
-    private let fm = FileManager.default
-    public init(root: URL, limit: Int = 64 * 1024 * 1024) throws {
-        self.root = root; self.limit = limit
+    let fm = FileManager.default
+    let temporaryLimit: Int
+    public init(root: URL, limit: Int = 64 * 1024 * 1024, temporaryLimit: Int = 8 * 1024 * 1024) throws {
+        self.root = root; self.limit = limit; self.temporaryLimit = temporaryLimit
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
     }
     public func entries() throws -> [Entry] {
-        try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
-            .filter { UUID(uuidString: $0.lastPathComponent) != nil }
-            .map { try JSONDecoder().decode(Entry.self, from: Data(contentsOf: $0.appendingPathComponent("entry.json"))) }
-            .sorted { $0.createdAt > $1.createdAt }
+        try inventory(includeUsage: false).entries
     }
     public func audioURL(for id: UUID) -> URL { root.appendingPathComponent(id.uuidString).appendingPathComponent("audio.m4a") }
     public func audio(for id: UUID) throws -> Data { try Data(contentsOf: audioURL(for: id)) }
@@ -71,18 +69,22 @@ public final class DurableStore {
         guard packet.schemaVersion == 1 else { throw VoiceError.version }
         guard packet.kind == "capture", !packet.audio.isEmpty, packet.audio.count <= 1024 * 1024 else { throw VoiceError.invalid }
         let digest = SHA256.hash(data: packet.audio).map { String(format: "%02x", $0) }.joined()
-        let current = try entries()
+        let inventory = try inventory(includeUsage: false)
+        let current = inventory.entries
+        for issue in inventory.issues where issue.sessionId != nil {
+            guard issue.sessionId != packet.sessionId, let messageId = issue.messageId,
+                  messageId != packet.messageId else { throw VoiceError.persistence }
+        }
         if var existing = current.first(where: { $0.id == packet.sessionId || $0.receipt.messageId == packet.messageId }) {
             guard existing.id == packet.sessionId, existing.receipt.messageId == packet.messageId, existing.digest == digest else { throw VoiceError.conflict }
             guard try audio(for: existing.id) == packet.audio else { throw VoiceError.persistence }
             if replyToWatch && existing.replyToWatch != true { existing.replyToWatch = true; try save(existing) }
             return existing.receipt
         }
-        let used = try current.reduce(0) { total, entry in
-            let attributes = try fm.attributesOfItem(atPath: audioURL(for: entry.id).path)
-            guard let size = attributes[.size] as? NSNumber else { throw VoiceError.persistence }
-            return total + size.intValue
-        }
+        // Include damaged entries in quota; corruption must never create free space.
+        let used = try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .filter { UUID(uuidString: $0.lastPathComponent) != nil }
+            .reduce(0) { try $0 + diskBytes(at: $1.appendingPathComponent("audio.m4a")) }
         guard used + packet.audio.count <= limit else { throw VoiceError.full }
         let receipt = Receipt(sessionId: packet.sessionId, messageId: packet.messageId, receiptId: UUID())
         let entry = Entry(receipt: receipt, createdAt: packet.createdAt, digest: digest, state: .saved, replyToWatch: replyToWatch)
@@ -91,6 +93,7 @@ public final class DurableStore {
         defer { try? fm.removeItem(at: staging) }
         try write(packet.audio, to: staging.appendingPathComponent("audio.m4a"))
         try write(JSONEncoder().encode(entry), to: staging.appendingPathComponent("entry.json"))
+        try write(JSONEncoder().encode(receipt), to: staging.appendingPathComponent("identity.json"))
         try syncDirectory(staging)
         try fm.moveItem(at: staging, to: root.appendingPathComponent(packet.sessionId.uuidString))
         try syncDirectory(root)
@@ -124,7 +127,7 @@ public final class DurableStore {
         }
     }
     public func update(_ id: UUID, transcript: String? = nil, reply: String? = nil, state: CaptureState, timing: (String, Double)? = nil) throws {
-        guard var entry = try entries().first(where: { $0.id == id }) else { throw VoiceError.missing }
+        var entry = try loadEntry(for: id)
         if let transcript {
             guard transcript.count <= 16000 else { throw VoiceError.invalid }
             entry.transcript = transcript
@@ -143,7 +146,8 @@ public final class DurableStore {
     }
     /// Prepare and persist a stable response identity before handing it to transport.
     public func replyEnvelope(for id: UUID) throws -> VoiceEnvelope {
-        guard var entry = try entries().first(where: { $0.id == id }), let reply = entry.reply else { throw VoiceError.missing }
+        var entry = try loadEntry(for: id)
+        guard let reply = entry.reply else { throw VoiceError.missing }
         if entry.replyMessageId == nil {
             entry.replyMessageId = UUID()
             try save(entry)
@@ -154,7 +158,7 @@ public final class DurableStore {
         guard envelope.schemaVersion == 1 else { throw VoiceError.version }
         guard envelope.kind == "reply", let id = envelope.sessionId, let text = envelope.reply,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 500, (envelope.transcript?.count ?? 0) <= 16000 else { throw VoiceError.invalid }
-        guard var entry = try entries().first(where: { $0.id == id }) else { throw VoiceError.missing }
+        var entry = try loadEntry(for: id)
         if let previous = entry.reply {
             guard previous == text, entry.transcript == envelope.transcript else { throw VoiceError.conflict }
         }
@@ -170,8 +174,8 @@ public final class DurableStore {
         return (receipt, isNew)
     }
     public func acknowledgeReply(_ receipt: Receipt) throws {
-        guard var entry = try entries().first(where: { $0.id == receipt.sessionId }),
-              entry.replyMessageId == receipt.messageId else { throw VoiceError.invalid }
+        var entry = try loadEntry(for: receipt.sessionId)
+        guard entry.replyMessageId == receipt.messageId else { throw VoiceError.invalid }
         entry.replyAcknowledged = true
         try save(entry)
     }
@@ -180,13 +184,13 @@ public final class DurableStore {
         try write(JSONEncoder().encode(entry), to: folder.appendingPathComponent("entry.json"))
         try syncDirectory(folder)
     }
-    private func write(_ data: Data, to url: URL) throws {
+    func write(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: .atomic)
         let handle = try FileHandle(forWritingTo: url)
         defer { try? handle.close() }
         try handle.synchronize()
     }
-    private func syncDirectory(_ url: URL) throws {
+    func syncDirectory(_ url: URL) throws {
         let descriptor = open(url.path, O_RDONLY)
         guard descriptor >= 0 else { throw VoiceError.persistence }
         defer { close(descriptor) }

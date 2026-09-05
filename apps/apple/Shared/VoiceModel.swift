@@ -11,6 +11,7 @@ typealias Wire = VoiceEnvelope
 @MainActor
 final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRecorderDelegate, AVSpeechSynthesizerDelegate {
     @Published var entries: [Entry] = []
+    @Published var storageIssues: [StorageIssue] = []
     @Published var status = "Bereit"
     @Published var recording = false
     @Published var reachable = false
@@ -42,6 +43,8 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         do {
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VoiceOutbox")
             store = try DurableStore(root: root)
+            try store?.recoverStaging()
+            try store?.migrateIdentities()
             chunks = try ChunkInbox(root: root.appendingPathComponent(".incoming-parts"))
             recoverRecordings()
             refresh()
@@ -110,7 +113,11 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         #endif
     }
     func refresh() {
-        do { entries = try store?.entries() ?? [] }
+        do {
+            let inventory = try store?.inventory(includeUsage: false)
+            entries = inventory?.entries ?? []
+            storageIssues = inventory?.issues.filter { !(recording && $0.url.path == pendingURL?.path) } ?? []
+        }
         catch { status = "Verlauf konnte nicht gelesen werden" }
     }
     func start() {
@@ -200,6 +207,10 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
                 status = "Aufnahme wiederhergestellt – Verarbeitung folgt"
             } catch { status = "Ungesicherte Aufnahme bleibt zur Wiederherstellung erhalten" }
         }
+    }
+    func recoverStorage() {
+        do { try store?.recoverStaging(); try store?.migrateIdentities(); retry() }
+        catch { status = "Wiederherstellung nicht abgeschlossen – Originale bleiben erhalten"; refresh() }
     }
     func retry() {
         recoverRecordings()
@@ -305,8 +316,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         guard WCSession.default.activationState == .activated, let store else { return }
         guard !WCSession.default.outstandingFileTransfers.contains(where: { $0.file.metadata?["sessionId"] as? String == entry.id.uuidString }) else { return }
         do {
-            let url = store.root.appendingPathComponent(".transfer-" + entry.id.uuidString + ".json")
-            try data.write(to: url, options: .atomic)
+            let url = try store.prepareTransfer(for: entry.id, data: data)
             WCSession.default.transferFile(url, metadata: ["sessionId": entry.id.uuidString])
             status = "gespeichert – Verarbeitung folgt"
         } catch { status = "Gespeichert – Übertragung erneut versuchen" }

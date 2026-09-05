@@ -37,7 +37,23 @@ struct VoiceApp: App {
             #endif
         }.padding(8)
     }
+    @ViewBuilder
     private var history: some View {
+        if !model.storageIssues.isEmpty {
+            Section("Wiederherstellung erforderlich") {
+                Text("Diese Dateien sind erhalten und werden nicht automatisch gelöscht.").font(.caption)
+                ForEach(model.storageIssues) { issue in
+                    VStack(alignment: .leading) {
+                        Text(issue.reason)
+                        Text(issue.sessionId?.uuidString.prefix(8) ?? "Aufnahmeentwurf").font(.caption)
+                        #if os(iOS)
+                        ShareLink("Dateien sichern", item: issue.url)
+                        #endif
+                    }
+                }
+                Button("Wiederherstellung versuchen") { model.recoverStorage() }
+            }
+        }
         ForEach(model.entries) { entry in
             VStack(alignment: .leading, spacing: 6) {
                 Text(entry.createdAt, style: .time).font(.caption)
