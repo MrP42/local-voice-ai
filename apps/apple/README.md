@@ -11,6 +11,7 @@ simulators. No developer team is needed for simulator builds.
 
 ```sh
 # From repository root
+python3 apps/apple/scripts/setup_native_engines.py --models
 swift test --package-path apps/apple/VoiceCore
 python3 apps/apple/scripts/generate_project.py
 xcodebuild -project apps/apple/LocalVoice.xcodeproj -scheme VoicePhone \
@@ -85,3 +86,20 @@ saved response. These are diagnostic launch arguments, not production UI.
 IDs, states and timing summaries without transcript content. iPhone Debug also
 writes capabilities.json; permission/playback probes write last-event.txt.
 Core XCTest and simulator fixture results must be reported separately.
+
+## Native CPU fallback (added after initial simulator probe)
+
+When Apple SpeechTranscriber/assets or Foundation Models are unavailable, the
+iPhone can use Whisper Base multilingual and Qwen2.5-0.5B Q4_K_M locally. There
+is no host HTTP service. Two separate Objective-C++ translation units isolate
+the libraries; Swift calls a small C interface on a serial actor off the UI
+thread. CPU inference uses four threads, bounded input, a 90-second compute
+deadline, and at most 64 generated tokens. Models are loaded per job and freed.
+No idle inference loop. Original Apple APIs remain the preferred providers.
+
+Run setup_native_engines.py --models, then copy Vendor/Models into the iPhone
+app's Documents/Models directory for the spike. The model download is explicit
+and does not upload any audio or transcript. Model files are not bundled into
+the Watch. See THIRD_PARTY_NOTICES.md for sources and licenses. The initial
+report's unavailable Apple-model result still holds; separate CPU inference
+measurements are required before claiming the new path works.

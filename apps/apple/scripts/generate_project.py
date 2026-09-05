@@ -11,11 +11,11 @@ def configs(name, settings):
     return obj(name+'configs', isa='XCConfigurationList', buildConfigurations=ids, defaultConfigurationIsVisible=0, defaultConfigurationName='Debug')
 products=[]; files=[]; targets=[]
 for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype'),('VoiceWatch','watchos','de.localvoice.prototype.watchkitapp')]:
-    sources = ['Shared/VoiceApp.swift','Shared/VoiceModel.swift','VoiceCore/Sources/VoiceCore/Store.swift','VoiceCore/Sources/VoiceCore/Envelope.swift']
-    if platform == 'iphoneos': sources += ['iPhone/LocalProviders.swift']
+    sources = ['Shared/VoiceApp.swift','Shared/VoiceModel.swift','VoiceCore/Sources/VoiceCore/Store.swift','VoiceCore/Sources/VoiceCore/Envelope.swift','VoiceCore/Sources/VoiceCore/Chunks.swift']
+    if platform == 'iphoneos': sources += ['iPhone/LocalProviders.swift','iPhone/CPULocalProviders.swift','iPhone/Engines/WhisperBridge.mm','iPhone/Engines/LlamaBridge.mm']
     buildfiles=[]
     for path in sources:
-        ref=obj(path, isa='PBXFileReference', lastKnownFileType='sourcecode.swift', path=path, sourceTree='<group>')
+        ref=obj(path, isa='PBXFileReference', lastKnownFileType='sourcecode.cpp.objcpp' if path.endswith('.mm') else 'sourcecode.swift', path=path, sourceTree='<group>')
         if ref not in files: files.append(ref)
         buildfiles.append(obj(name+path, isa='PBXBuildFile', fileRef=ref))
     sourcephase=obj(name+'sources', isa='PBXSourcesBuildPhase', buildActionMask=2147483647, files=buildfiles, runOnlyForDeploymentPostprocessing=0)
@@ -26,7 +26,17 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
     else: info.update(UILaunchScreen={}, UISupportedInterfaceOrientations=['UIInterfaceOrientationPortrait'])
     (root/(name+'-Info.plist')).write_bytes(plistlib.dumps(info))
     settings={'PRODUCT_NAME':name,'PRODUCT_BUNDLE_IDENTIFIER':bundle,'INFOPLIST_FILE':name+'-Info.plist','SDKROOT':platform,'SWIFT_VERSION':'5.0','TARGETED_DEVICE_FAMILY':'1' if platform=='iphoneos' else '4','CODE_SIGN_STYLE':'Automatic','GENERATE_INFOPLIST_FILE':'NO','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator' if platform=='iphoneos' else 'watchos watchsimulator','IPHONEOS_DEPLOYMENT_TARGET':'26.0','WATCHOS_DEPLOYMENT_TARGET':'26.0','ENABLE_USER_SCRIPT_SANDBOXING':'YES'}
-    target=obj(name, isa='PBXNativeTarget', buildConfigurationList=configs(name,settings), buildPhases=[sourcephase, frameworks], buildRules=[], dependencies=[], name=name, productName=name, productReference=product, productType='com.apple.product-type.application'); targets.append(target)
+    extra_phases=[]
+    if platform == 'iphoneos':
+        settings.update({'SWIFT_OBJC_BRIDGING_HEADER':'iPhone/Engines/LVEngines.h','CLANG_CXX_LANGUAGE_STANDARD':'c++17','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks'})
+        embedded=[]
+        for library in ['whisper','llama']:
+            ref=obj(library+'frameworkRef',isa='PBXFileReference',lastKnownFileType='wrapper.xcframework',path='Vendor/'+library+'.xcframework',sourceTree='<group>'); files.append(ref)
+            link=obj(library+'frameworkLink',isa='PBXBuildFile',fileRef=ref)
+            objects[frameworks]['files'].append(link)
+            embedded.append(obj(library+'frameworkEmbed',isa='PBXBuildFile',fileRef=ref,settings={'ATTRIBUTES':['CodeSignOnCopy','RemoveHeadersOnCopy']}))
+        extra_phases.append(obj('nativeEnginesEmbed',isa='PBXCopyFilesBuildPhase',buildActionMask=2147483647,dstPath='',dstSubfolderSpec=10,files=embedded,name='Embed iPhone Engines',runOnlyForDeploymentPostprocessing=0))
+    target=obj(name, isa='PBXNativeTarget', buildConfigurationList=configs(name,settings), buildPhases=[sourcephase, frameworks]+extra_phases, buildRules=[], dependencies=[], name=name, productName=name, productReference=product, productType='com.apple.product-type.application'); targets.append(target)
 proxy=obj('watchProxy',isa='PBXContainerItemProxy',containerPortal=uid('project'),proxyType=1,remoteGlobalIDString=uid('VoiceWatch'),remoteInfo='VoiceWatch')
 dependency=obj('watchDependency',isa='PBXTargetDependency',target=uid('VoiceWatch'),targetProxy=proxy)
 embedfile=obj('watchEmbedFile',isa='PBXBuildFile',fileRef=uid('VoiceWatchproduct'),settings={'ATTRIBUTES':['RemoveHeadersOnCopy']})

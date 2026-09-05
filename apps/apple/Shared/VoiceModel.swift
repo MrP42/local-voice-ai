@@ -14,15 +14,20 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
     @Published var status = "Bereit"
     @Published var recording = false
     @Published var reachable = false
-    @Published var fixedAnswer = true
+    @Published var fixedAnswer = UserDefaults.standard.object(forKey: "fixedAnswer") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(fixedAnswer, forKey: "fixedAnswer") }
+    }
     @Published var processing = false
     private var store: DurableStore?
+    private var chunks: ChunkInbox?
     private var recorder: AVAudioRecorder?
     private let speaker = AVSpeechSynthesizer()
     private var captureStarted = Date()
     private var feedbackMilliseconds = 0.0
     private var speechStarted = Date()
     private var speakingId: UUID?
+    private var currentUtterance: AVSpeechUtterance?
+    private var speechAttempts: [ObjectIdentifier: (UUID, Date)] = [:]
     private var inFlight = Set<UUID>()
     private var inFlightReplies = Set<UUID>()
     private var active = false
@@ -37,6 +42,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         do {
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VoiceOutbox")
             store = try DurableStore(root: root)
+            chunks = try ChunkInbox(root: root.appendingPathComponent(".incoming-parts"))
             refresh()
         } catch { status = "Speicher nicht verfügbar – Aufnahme gesperrt" }
         #if DEBUG
@@ -61,7 +67,9 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         #endif
         speaker.delegate = self
         if WCSession.isSupported() { WCSession.default.delegate = self; WCSession.default.activate() }
-        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] _ in
+        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
+            guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
             Task { @MainActor in
                 guard let self else { return }
                 if self.recording { self.stop() }
@@ -188,7 +196,10 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
             do {
                 let packet = try store.packet(for: entry)
                 let data = try encoder.encode(Wire(capture: packet))
-                if reachable {
+                if reachable && data.count > 60000 {
+                    inFlight.insert(entry.id)
+                    sendChunks(try CaptureChunk.split(packet), position: 0, entry: entry, started: Date())
+                } else if reachable {
                     inFlight.insert(entry.id)
                     let start = Date()
                     WCSession.default.sendMessageData(data, replyHandler: { response in
@@ -211,6 +222,43 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         for entry in entries where entry.reply != nil && entry.replyAcknowledged != true { sendAnswer(entry) }
         #endif
     }
+    #if os(watchOS)
+    private func sendChunks(_ parts: [CaptureChunk], position: Int, entry: Entry, started: Date) {
+        let part = parts[position]
+        do {
+            let data = try encoder.encode(Wire(chunk: part))
+            WCSession.default.sendMessageData(data, replyHandler: { response in
+                Task { @MainActor in
+                    do {
+                        let wire = try JSONDecoder().decode(Wire.self, from: response)
+                        guard wire.schemaVersion == 1, wire.sessionId == entry.id else { throw VoiceError.invalid }
+                        if wire.kind == "chunkReceipt", wire.receipt?.messageId == part.messageId, position + 1 < parts.count {
+                            self.sendChunks(parts, position: position + 1, entry: entry, started: started)
+                        } else if wire.kind == "receipt", wire.receipt?.messageId == entry.receipt.messageId {
+                            self.inFlight.remove(entry.id)
+                            self.receive(response)
+                            let state = self.entries.first(where: { $0.id == entry.id })?.state ?? .saved
+                            try self.store?.update(entry.id, state: state, timing: ("transfer_roundtrip_ms", Date().timeIntervalSince(started) * 1000))
+                            self.refresh()
+                            if self.entries.contains(where: { $0.state == .saved }) { self.retry() }
+                        } else { throw VoiceError.invalid }
+                    } catch {
+                        self.inFlight.remove(entry.id)
+                        self.status = "gespeichert – Verarbeitung folgt"
+                    }
+                }
+            }, errorHandler: { error in
+                Task { @MainActor in
+                    self.inFlight.remove(entry.id)
+                    self.recordDiagnostic("chunk_transport_error_\((error as NSError).code)")
+                    if let packet = try? self.store?.packet(for: entry), let data = try? self.encoder.encode(Wire(capture: packet)) {
+                        self.queueFile(entry, data: data)
+                    }
+                }
+            })
+        } catch { inFlight.remove(entry.id); status = "Gespeichert – Übertragung erneut versuchen" }
+    }
+    #endif
     private func queueFile(_ entry: Entry, data: Data) {
         guard WCSession.default.activationState == .activated, let store else { return }
         guard !WCSession.default.outstandingFileTransfers.contains(where: { $0.file.metadata?["sessionId"] as? String == entry.id.uuidString }) else { return }
@@ -226,9 +274,24 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         do {
             let wire = try JSONDecoder().decode(Wire.self, from: data)
             guard wire.schemaVersion == 1 else { throw VoiceError.version }
-            guard ["capture", "receipt", "reply", "replyReceipt"].contains(wire.kind) else { throw VoiceError.invalid }
+            guard ["capture", "receipt", "reply", "replyReceipt", "captureChunk", "chunkReceipt"].contains(wire.kind) else { throw VoiceError.invalid }
             guard let store else { throw VoiceError.persistence }
             #if os(iOS)
+            if wire.kind == "captureChunk", let part = wire.payload.chunk, let chunks {
+                guard wire.sessionId == part.sessionId, wire.messageId == part.messageId else { throw VoiceError.invalid }
+                if let existing = entries.first(where: { $0.id == part.sessionId }) {
+                    guard existing.receipt.messageId == part.captureMessageId, existing.digest == part.digest else { throw VoiceError.conflict }
+                    return receive(try encoder.encode(Wire(capture: store.packet(for: existing))))
+                }
+                if let packet = try chunks.receive(part) {
+                    let acknowledgement = receive(try encoder.encode(Wire(capture: packet)))
+                    if !acknowledgement.isEmpty { try? chunks.removeCompleted(packet.sessionId) }
+                    return acknowledgement
+                }
+                var acknowledgement = Wire(receipt: Receipt(sessionId: part.sessionId, messageId: part.messageId, receiptId: part.messageId))
+                acknowledgement.kind = "chunkReceipt"
+                return try encoder.encode(acknowledgement)
+            }
             if wire.kind == "replyReceipt", let receipt = wire.receipt {
                 guard wire.sessionId == receipt.sessionId else { throw VoiceError.invalid }
                 try store.acknowledgeReply(receipt)
@@ -237,7 +300,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
             }
             if let packet = wire.capture {
                 guard wire.kind == "capture", wire.sessionId == packet.sessionId, wire.messageId == packet.messageId else { throw VoiceError.invalid }
-                let receipt = try store.accept(packet)
+                let receipt = try store.accept(packet, replyToWatch: true)
                 refresh()
                 if let existing = entries.first(where: { $0.id == packet.sessionId }), existing.reply != nil { sendAnswer(existing) }
                 if active { Task { await processPending() } }
@@ -277,14 +340,31 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
             let utterance = AVSpeechUtterance(string: text)
             utterance.voice = AVSpeechSynthesisVoice(language: "de-DE")
             speakingId = id; speechStarted = Date()
+            currentUtterance = utterance
+            speechAttempts[ObjectIdentifier(utterance)] = (id, speechStarted)
             speaker.speak(utterance); status = "Antwort wird gesprochen"
         } catch { status = "Audio nicht verfügbar – Antwort ist gespeichert" }
     }
     func stopPlayback() { speaker.stopSpeaking(at: .immediate); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
         Task { @MainActor in
-            if let id = self.speakingId { try? self.store?.update(id, state: .answered, timing: ("tts_start_ms", Date().timeIntervalSince(self.speechStarted) * 1000)); self.refresh() }
+            if let (id, started) = self.speechAttempts[ObjectIdentifier(utterance)] {
+                try? self.store?.update(id, state: .answered, timing: ("tts_start_ms", Date().timeIntervalSince(started) * 1000))
+                self.refresh()
+            }
         }
+    }
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in self.finishSpeech(utterance, cancelled: false) }
+    }
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor in self.finishSpeech(utterance, cancelled: true) }
+    }
+    private func finishSpeech(_ utterance: AVSpeechUtterance, cancelled: Bool) {
+        speechAttempts.removeValue(forKey: ObjectIdentifier(utterance))
+        guard currentUtterance === utterance else { return }
+        currentUtterance = nil; speakingId = nil
+        if !recording { status = cancelled ? "Wiedergabe gestoppt – Antwort bleibt gespeichert" : "Bereit" }
     }
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) { Task { @MainActor in self.retry() } }
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) { Task { @MainActor in self.retry() } }
@@ -316,7 +396,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
     nonisolated func sessionDidDeactivate(_ session: WCSession) { session.activate() }
     private func sendAnswer(_ entry: Entry) {
-        guard entry.reply != nil, entry.replyAcknowledged != true,
+        guard entry.replyToWatch == true, entry.reply != nil, entry.replyAcknowledged != true,
               !inFlightReplies.contains(entry.id), let store else { return }
         do {
             let data = try encoder.encode(store.replyEnvelope(for: entry.id))
@@ -367,7 +447,10 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
                     try store.update(entry.id, reply: reply, state: .answered, timing: ("generation_ms", Date().timeIntervalSince(modelStart) * 1000))
                 }
                 refresh()
-                if let answer = entries.first(where: { $0.id == entry.id }) { sendAnswer(answer) }
+                if let answer = entries.first(where: { $0.id == entry.id }) {
+                    if answer.replyToWatch == true { sendAnswer(answer) }
+                    else if let reply = answer.reply, active, !recording { speak(reply, id: answer.id) }
+                }
                 status = "Antwort gespeichert"
             } catch {
                 try? store.update(entry.id, state: .deferred)
