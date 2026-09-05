@@ -24,6 +24,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
     private var speechStarted = Date()
     private var speakingId: UUID?
     private var inFlight = Set<UUID>()
+    private var inFlightReplies = Set<UUID>()
     private var active = false
     private var debugActionsStarted = false
     private var debugReplaySent = false
@@ -207,7 +208,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         }
         #else
         if active { Task { await processPending() } }
-        for entry in entries where entry.reply != nil { sendAnswer(entry) }
+        for entry in entries where entry.reply != nil && entry.replyAcknowledged != true { sendAnswer(entry) }
         #endif
     }
     private func queueFile(_ entry: Entry, data: Data) {
@@ -225,9 +226,15 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         do {
             let wire = try JSONDecoder().decode(Wire.self, from: data)
             guard wire.schemaVersion == 1 else { throw VoiceError.version }
-            guard ["capture", "receipt", "reply"].contains(wire.kind) else { throw VoiceError.invalid }
+            guard ["capture", "receipt", "reply", "replyReceipt"].contains(wire.kind) else { throw VoiceError.invalid }
             guard let store else { throw VoiceError.persistence }
             #if os(iOS)
+            if wire.kind == "replyReceipt", let receipt = wire.receipt {
+                guard wire.sessionId == receipt.sessionId else { throw VoiceError.invalid }
+                try store.acknowledgeReply(receipt)
+                refresh()
+                return Data()
+            }
             if let packet = wire.capture {
                 guard wire.kind == "capture", wire.sessionId == packet.sessionId, wire.messageId == packet.messageId else { throw VoiceError.invalid }
                 let receipt = try store.accept(packet)
@@ -246,11 +253,13 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
                 } else { status = "Antwort gespeichert" }
             }
             if let id = wire.sessionId, let reply = wire.reply {
-                guard wire.kind == "reply", reply.count <= 500 else { throw VoiceError.invalid }
-                let alreadyAnswered = entries.first(where: { $0.id == id })?.reply == reply
-                try store.update(id, transcript: wire.transcript, reply: reply, state: .answered)
+                let acceptance = try store.acceptReply(wire)
                 refresh()
-                if !alreadyAnswered && active && !recording { speak(reply, id: id) }
+                status = "Antwort gespeichert"
+                if acceptance.isNew && active && !recording { speak(reply, id: id) }
+                var response = Wire(receipt: acceptance.receipt)
+                response.kind = "replyReceipt"
+                return try encoder.encode(response)
             }
             #endif
             refresh()
@@ -282,7 +291,12 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
     nonisolated func session(_ session: WCSession, didReceiveMessageData messageData: Data, replyHandler: @escaping (Data) -> Void) {
         Task { @MainActor in replyHandler(self.receive(messageData)) }
     }
-    nonisolated func session(_ session: WCSession, didReceiveMessageData messageData: Data) { Task { @MainActor in self.receive(messageData) } }
+    nonisolated func session(_ session: WCSession, didReceiveMessageData messageData: Data) {
+        Task { @MainActor in
+            let acknowledgement = self.receive(messageData)
+            if !acknowledgement.isEmpty { WCSession.default.transferUserInfo(["wire": acknowledgement]) }
+        }
+    }
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
         // WC removes its temporary file as soon as this delegate returns.
         guard let data = try? Data(contentsOf: file.fileURL) else { return }
@@ -293,19 +307,39 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
     }
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
         guard let data = userInfo["wire"] as? Data else { return }
-        Task { @MainActor in self.receive(data) }
+        Task { @MainActor in
+            let acknowledgement = self.receive(data)
+            if !acknowledgement.isEmpty { WCSession.default.transferUserInfo(["wire": acknowledgement]) }
+        }
     }
     #if os(iOS)
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
     nonisolated func sessionDidDeactivate(_ session: WCSession) { session.activate() }
     private func sendAnswer(_ entry: Entry) {
-        guard let reply = entry.reply, let data = try? encoder.encode(Wire(sessionId: entry.id, transcript: entry.transcript, reply: reply)) else { return }
-        if reachable { WCSession.default.sendMessageData(data, replyHandler: nil, errorHandler: nil) }
-        // The persisted entry is retried on activation/reachability; no polling.
-        else if WCSession.default.activationState == .activated,
-                !WCSession.default.outstandingUserInfoTransfers.contains(where: { $0.userInfo["id"] as? String == entry.id.uuidString }) {
-            WCSession.default.transferUserInfo(["id": entry.id.uuidString, "wire": data])
-        }
+        guard entry.reply != nil, entry.replyAcknowledged != true,
+              !inFlightReplies.contains(entry.id), let store else { return }
+        do {
+            let data = try encoder.encode(store.replyEnvelope(for: entry.id))
+            if WCSession.default.isReachable {
+                inFlightReplies.insert(entry.id)
+                WCSession.default.sendMessageData(data, replyHandler: { response in
+                    Task { @MainActor in
+                        self.inFlightReplies.remove(entry.id)
+                        self.receive(response)
+                    }
+                }, errorHandler: { _ in
+                    Task { @MainActor in
+                        self.inFlightReplies.remove(entry.id)
+                        self.queueAnswer(entry.id, data: data)
+                    }
+                })
+            } else { queueAnswer(entry.id, data: data) }
+        } catch { status = "Antwort gespeichert – Zustellung erneut versuchen" }
+    }
+    private func queueAnswer(_ id: UUID, data: Data) {
+        guard WCSession.default.activationState == .activated,
+              !WCSession.default.outstandingUserInfoTransfers.contains(where: { $0.userInfo["id"] as? String == id.uuidString }) else { return }
+        WCSession.default.transferUserInfo(["id": id.uuidString, "wire": data])
     }
     func prepareLocalSpeech() {
         Task {
@@ -316,7 +350,9 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
     private func processPending() async {
         guard !processing, active, let store else { return }
         processing = true; defer { processing = false; refresh() }
-        for entry in entries where entry.reply == nil {
+        var attempted = Set<UUID>()
+        while let entry = (try? store.entries())?.reversed().first(where: { $0.reply == nil && !attempted.contains($0.id) }) {
+            attempted.insert(entry.id)
             guard active else { return }
             do {
                 let started = Date()

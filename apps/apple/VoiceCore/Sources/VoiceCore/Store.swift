@@ -31,6 +31,9 @@ public struct Entry: Codable, Identifiable, Sendable {
     public var transcript: String?
     public var reply: String?
     public var timings: [String: Double] = [:]
+    public var replyMessageId: UUID?
+    public var replyAcknowledged: Bool?
+    public var replyReceipt: Receipt?
 }
 
 /// Access from one serial executor. A directory rename commits audio and metadata together.
@@ -81,10 +84,55 @@ public final class DurableStore {
     public func update(_ id: UUID, transcript: String? = nil, reply: String? = nil, state: CaptureState, timing: (String, Double)? = nil) throws {
         guard var entry = try entries().first(where: { $0.id == id }) else { throw VoiceError.missing }
         if let transcript { entry.transcript = transcript }
-        if let reply { entry.reply = reply }
+        if let reply {
+            if let previous = entry.reply, previous != reply { throw VoiceError.conflict }
+            entry.reply = reply
+            if entry.replyMessageId == nil { entry.replyMessageId = UUID() }
+        }
         if entry.state != .answered { entry.state = state }
         if let timing { entry.timings[timing.0] = timing.1 }
         let folder = root.appendingPathComponent(id.uuidString)
+        try write(JSONEncoder().encode(entry), to: folder.appendingPathComponent("entry.json"))
+        try syncDirectory(folder)
+    }
+    /// Prepare and persist a stable response identity before handing it to transport.
+    public func replyEnvelope(for id: UUID) throws -> VoiceEnvelope {
+        guard var entry = try entries().first(where: { $0.id == id }), let reply = entry.reply else { throw VoiceError.missing }
+        if entry.replyMessageId == nil {
+            entry.replyMessageId = UUID()
+            try save(entry)
+        }
+        var envelope = VoiceEnvelope(sessionId: id, transcript: entry.transcript, reply: reply)
+        envelope.messageId = entry.replyMessageId!
+        return envelope
+    }
+    public func acceptReply(_ envelope: VoiceEnvelope) throws -> (receipt: Receipt, isNew: Bool) {
+        guard envelope.schemaVersion == 1 else { throw VoiceError.version }
+        guard envelope.kind == "reply", let id = envelope.sessionId, let text = envelope.reply,
+              !text.isEmpty, text.count <= 500, (envelope.transcript?.count ?? 0) <= 16000 else { throw VoiceError.invalid }
+        guard var entry = try entries().first(where: { $0.id == id }) else { throw VoiceError.missing }
+        if let previous = entry.reply {
+            guard previous == text, entry.transcript == envelope.transcript else { throw VoiceError.conflict }
+        }
+        if let receipt = entry.replyReceipt {
+            guard receipt.messageId == envelope.messageId else { throw VoiceError.conflict }
+            return (receipt, false)
+        }
+        let isNew = entry.reply == nil
+        let receipt = Receipt(sessionId: id, messageId: envelope.messageId, receiptId: UUID())
+        entry.reply = text; entry.transcript = envelope.transcript
+        entry.replyMessageId = envelope.messageId; entry.replyReceipt = receipt; entry.state = .answered
+        try save(entry)
+        return (receipt, isNew)
+    }
+    public func acknowledgeReply(_ receipt: Receipt) throws {
+        guard var entry = try entries().first(where: { $0.id == receipt.sessionId }),
+              entry.replyMessageId == receipt.messageId else { throw VoiceError.invalid }
+        entry.replyAcknowledged = true
+        try save(entry)
+    }
+    private func save(_ entry: Entry) throws {
+        let folder = root.appendingPathComponent(entry.id.uuidString)
         try write(JSONEncoder().encode(entry), to: folder.appendingPathComponent("entry.json"))
         try syncDirectory(folder)
     }
