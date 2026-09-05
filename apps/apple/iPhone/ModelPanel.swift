@@ -17,6 +17,7 @@ struct ModelPanel: View {
                         }
                     }
                     Text("Vor der Nutzung wird die Integrität geprüft. Audio und Antworten werden lokal verarbeitet.").font(.caption)
+                    Text("Das kleine Antwortmodell machte in den Tests inhaltliche Fehler, etwa beim Rechnen.").font(.caption)
                 }
                 Section("Spracherkennung") {
                     Picker("CPU-Sprachmodell", selection: $model.sttModel) {

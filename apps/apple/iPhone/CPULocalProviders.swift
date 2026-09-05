@@ -49,7 +49,7 @@ actor CPULocalProviders {
         }
         guard error == nil, result != .error, let samples = converted.floatChannelData?[0] else { throw VoiceError.invalid }
         switch AudioSignal.assess(UnsafeBufferPointer(start: samples, count: Int(converted.frameLength))) {
-        case .empty, .silent: throw ProcessingFailure.noSpeech
+        case .empty, .silent, .stationaryNoise: throw ProcessingFailure.noSpeech
         case .invalid: throw VoiceError.invalid
         case .signal: break
         }

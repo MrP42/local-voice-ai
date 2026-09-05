@@ -66,6 +66,7 @@ struct VoiceApp: App {
                 Text(entry.transcript ?? "Gespeicherte Sprachnotiz")
                 Text(entry.reply ?? "gespeichert – Verarbeitung folgt").foregroundStyle(.secondary)
                 #if os(iOS)
+                if let url = model.recordingURL(entry.id) { ShareLink("Originalaufnahme sichern", item: url) }
                 if entry.reply == nil, let job = entry.job, !job.running {
                     Text(job.phase == .failed ? "Verarbeitung angehalten" : job.phase == .cancelled ? "Verarbeitung abgebrochen" : "Verarbeitung ausstehend").font(.caption)
                     if job.failure == .noSpeech { Text("Keine Sprache erkannt – Originalaufnahme erhalten").font(.caption) }

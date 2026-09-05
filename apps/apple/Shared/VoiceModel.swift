@@ -36,6 +36,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     private var capture: CaptureController?
     private let speaker = AVSpeechSynthesizer()
     private var speechStarted = Date()
+    private var lastSpeechStart = Date.distantPast
     private var speakingId: UUID?
     private var currentUtterance: AVSpeechUtterance?
     private var speechAttempts: [ObjectIdentifier: (UUID, Date)] = [:]
@@ -142,6 +143,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
                 if self.recording { self.stop() }
                 self.speaker.stopSpeaking(at: .immediate)
                 self.status = "Audio unterbrochen – gespeicherte Inhalte bleiben erhalten"
+                self.recordDiagnostic("audio_interrupted")
             }
         }
     }
@@ -160,13 +162,23 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
                 if arguments.contains("--record-probe") { start() }
                 #if os(iOS)
                 if arguments.contains("--cancel-inference-probe") { cancellationProbe(generation: arguments.contains("--cancel-generating")) }
-                if arguments.contains("--model-import-probe") { modelImportProbe() }
+                if arguments.contains("--model-import-probe") { modelImportProbe(invalid: arguments.contains("--invalid-model")) }
                 #endif
-                if arguments.contains("--interrupt-playback"), let entry = entries.first(where: { $0.reply != nil }), let reply = entry.reply {
+                if arguments.contains("--interrupt-playback") || arguments.contains("--interruption-notification"), let entry = entries.first(where: { $0.reply != nil }), let reply = entry.reply {
+                    let requested = Date()
                     speak(reply, id: entry.id)
                     Task {
-                        try? await Task.sleep(for: .milliseconds(200))
-                        self.stopPlayback()
+                        if arguments.contains("--interruption-notification") {
+                            for _ in 0..<100 {
+                                if self.lastSpeechStart > requested { break }
+                                try? await Task.sleep(for: .milliseconds(100))
+                            }
+                            guard self.lastSpeechStart > requested else { self.recordDiagnostic("interruption_probe_failed"); return }
+                            NotificationCenter.default.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(),
+                                userInfo: [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue])
+                        } else {
+                            try? await Task.sleep(for: .milliseconds(200)); self.stopPlayback()
+                        }
                     }
                 }
             }
@@ -187,6 +199,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         }
         catch { status = "Verlauf konnte nicht gelesen werden" }
     }
+    func recordingURL(_ id: UUID) -> URL? { store?.audioURL(for: id) }
     func start() { speaker.stopSpeaking(at: .immediate); capture?.start() }
     func stop() { capture?.stop() }
     private func recoverRecordings() { capture?.recoverRecordings() }
@@ -219,6 +232,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     func stopPlayback() { speaker.stopSpeaking(at: .immediate); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            if self.currentUtterance === utterance { self.lastSpeechStart = Date() }
             if let (id, started) = self.speechAttempts[ObjectIdentifier(utterance)] {
                 try? self.store?.update(id, state: .answered, timing: ("tts_start_ms", Date().timeIntervalSince(started) * 1000))
                 if let entry = self.entries.first(where: { $0.id == id }), entry.timings["tts_e2e_ms"] == nil,
@@ -283,9 +297,9 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
             recordDiagnostic("cancellation_probe_failed")
         }
     }
-    private func modelImportProbe() {
+    private func modelImportProbe(invalid: Bool) {
         Task {
-            let source = ModelLibrary.folder.appendingPathComponent("ggml-base.bin")
+            let source = invalid ? ModelLibrary.folder.deletingLastPathComponent().appendingPathComponent("invalid-model-probe.bin") : ModelLibrary.folder.appendingPathComponent("ggml-base.bin")
             do { _ = try await ModelLibrary.shared.install(from: source); recordDiagnostic("model_import_verified") }
             catch { recordDiagnostic("model_import_failed") }
         }

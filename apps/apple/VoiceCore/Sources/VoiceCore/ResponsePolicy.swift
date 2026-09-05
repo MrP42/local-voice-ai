@@ -25,16 +25,35 @@ public enum ResponsePolicy {
     }
 }
 
-public enum SignalAssessment: Sendable { case empty, silent, signal, invalid }
+public enum SignalAssessment: Sendable { case empty, silent, stationaryNoise, signal, invalid }
 public enum AudioSignal {
-    /// Rejects digital silence and non-finite PCM. Noise detection needs a separately evaluated VAD.
+    /// 16-kHz mono PCM: silence/non-finite values and stationary broadband noise only.
+    /// This conservative gate is not a general voice activity detector.
     public static func assess<S: Sequence>(_ samples: S) -> SignalAssessment where S.Element == Float {
-        var count = 0, signal = false
+        var count = 0, signal = false, inFrame = 0, crossings = 0
+        var previous: Float = 0, energy = 0.0
+        var levels: [Double] = [], crossingRates: [Double] = []
         for sample in samples {
             guard sample.isFinite else { return .invalid }
-            count += 1
+            count += 1; inFrame += 1
             if abs(sample) > 0.00001 { signal = true }
+            energy += Double(sample) * Double(sample)
+            if inFrame > 1 && (sample >= 0) != (previous >= 0) { crossings += 1 }
+            previous = sample
+            if inFrame == 320 {
+                levels.append(sqrt(energy / 320))
+                crossingRates.append(Double(crossings) / 319)
+                inFrame = 0; crossings = 0; energy = 0
+            }
         }
-        return count == 0 ? .empty : signal ? .signal : .silent
+        guard count > 0 else { return .empty }
+        guard signal else { return .silent }
+        if levels.count >= 50 {
+            let mean = levels.reduce(0, +) / Double(levels.count)
+            let deviation = sqrt(levels.reduce(0) { $0 + pow($1 - mean, 2) } / Double(levels.count))
+            let crossingRate = crossingRates.reduce(0, +) / Double(crossingRates.count)
+            if mean > 0 && deviation / mean < 0.12 && crossingRate > 0.35 { return .stationaryNoise }
+        }
+        return .signal
     }
 }
