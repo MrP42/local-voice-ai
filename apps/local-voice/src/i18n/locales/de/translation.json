@@ -207,6 +207,9 @@
       "speedDescription": "0,5×–2×. Das Resampling verändert auch die Tonhöhe leicht.",
       "exportFormat": "Audio-Exportformat",
       "exportFormatDescription": "Format für gespeicherte Audiodateien (Stimmwechsler, Zusammenfassungen). Der Server encodiert direkt.",
+      "exportBitrate": "MP3-Bitrate",
+      "exportBitrateDescription": "Klangqualität und Dateigröße des MP3-Exports. 192 kbit/s reichen für Sprache; höhere Stufen lohnen sich nur bei Musik.",
+      "exportBitrateOption": "{{rate}} kbit/s",
       "contextMenu": "Explorer-Kontextmenü",
       "contextMenuDescription": "Ergänzt „Mit Local Voice AI vorlesen“ im Rechtsklick-Menü von TXT/MD/PDF/DOCX-Dateien. Hinweis: Für markierten Text bietet Windows kein systemweites Menü — dafür gibt es den Zwischenablage-Hotkey.",
       "rollSeed": "Würfeln"
@@ -217,6 +220,9 @@
     "previousSentence": "Vorheriger Satz",
     "nextSentence": "Nächster Satz",
     "cancelExport": "Export abbrechen",
+    "exportEta": "noch etwa {{time}}",
+    "exportEtaComputing": "Restzeit wird berechnet",
+    "exportSaved": "Gespeichert: {{path}}",
     "pages": {
       "title": "Seiten",
       "create": "Neue Seite",

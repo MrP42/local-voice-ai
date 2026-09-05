@@ -136,6 +136,8 @@ const settingUpdaters: {
     ),
   tts_export_format: (value) =>
     commands.changeTtsExportFormatSetting(value as string),
+  tts_export_bitrate: (value) =>
+    commands.changeTtsExportBitrateSetting(value as number),
   tts_context_menu: (value) =>
     commands.changeTtsContextMenuSetting(value as boolean),
   tts_tag_favorites: (value) =>

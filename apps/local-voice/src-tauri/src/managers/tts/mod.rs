@@ -2696,23 +2696,9 @@ impl TtsManager {
         }
         self.refresh_from_settings();
         // Das Format entscheidet die Einstellung, nicht die vorgeschlagene
-        // Dateiendung — und bei MP3 wird die Endung entsprechend korrigiert.
-        let format = self
-            .core
-            .export_format
-            .lock()
-            .unwrap()
-            .trim()
-            .to_lowercase();
-        let as_mp3 = format == "mp3";
-        let out_path = if as_mp3 {
-            std::path::Path::new(out_path)
-                .with_extension("mp3")
-                .to_string_lossy()
-                .into_owned()
-        } else {
-            out_path.to_string()
-        };
+        // Dateiendung (siehe `export_target_path`).
+        let as_mp3 = self.export_writes_mp3();
+        let out_path = self.export_target_path(out_path);
         let out_path = out_path.as_str();
         let bitrate = crate::settings::get_settings(&self.app).tts_export_bitrate;
         // Die Bereitschaft durch die Naht, nicht Fish-hart: die Synthese
@@ -2903,6 +2889,39 @@ impl TtsManager {
     /// den Save-Dialog des Frontends.
     pub fn export_format(&self) -> String {
         crate::settings::get_settings(&self.app).tts_export_format
+    }
+
+    /// Schreibt der Export gerade MP3? Eine Stelle, an der das entschieden
+    /// wird — der Rest fragt hier nach.
+    pub fn export_writes_mp3(&self) -> bool {
+        self.core
+            .export_format
+            .lock()
+            .unwrap()
+            .trim()
+            .eq_ignore_ascii_case("mp3")
+    }
+
+    /// Der Pfad, unter dem der Export WIRKLICH landet.
+    ///
+    /// Das eingestellte Format bestimmt die Endung, nicht das, was im
+    /// Speichern-Dialog stand: eine Datei, die `.wav` heisst und MP3 enthaelt,
+    /// luegt ueber ihren Inhalt.
+    ///
+    /// Diese Regel stand kurzzeitig doppelt im Code — einmal hier und einmal
+    /// im Command, der den Pfad sofort zurueckgeben muss, weil der Lauf erst
+    /// im Hintergrund faellt. Zwei Kopien derselben Regel laufen irgendwann
+    /// auseinander, und dann zeigt die Oberflaeche auf eine Datei, die es
+    /// nicht gibt. Deshalb gibt es sie nur noch hier.
+    pub fn export_target_path(&self, out_path: &str) -> String {
+        if self.export_writes_mp3() {
+            std::path::Path::new(out_path)
+                .with_extension("mp3")
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            out_path.to_string()
+        }
     }
 
     // ------------------------------------------------------------------

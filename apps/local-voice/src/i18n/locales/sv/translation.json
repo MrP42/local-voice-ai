@@ -168,7 +168,15 @@
       "example1": "[whisper] Come closer…",
       "example2": "He opened the door. [short pause] Nothing.",
       "example3": "[laughing] You can't be serious!"
-    }
+    },
+    "settings": {
+      "exportBitrate": "MP3 bitrate",
+      "exportBitrateDescription": "Sound quality and file size of the MP3 export. 192 kbps is plenty for speech; higher settings only pay off for music.",
+      "exportBitrateOption": "{{rate}} kbps"
+    },
+    "exportEta": "about {{time}} left",
+    "exportEtaComputing": "estimating time left",
+    "exportSaved": "Saved: {{path}}"
   },
   "onboarding": {
     "subtitle": "För att komma igång, välj en transkriptionsmodell",

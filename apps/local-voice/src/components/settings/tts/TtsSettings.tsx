@@ -53,6 +53,29 @@ import {
 /// oder langsamer stellen, nicht justieren.
 const SPEEDS = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
+/// Erlaubte MP3-Bitraten (kbit/s) — dieselben vier Stufen wie in
+/// `settings.rs`; mehr Stufen muesste die Oberflaeche auch erklaeren.
+const EXPORT_BITRATES = [128, 192, 256, 320];
+
+/// Glaettung der Restzeit-Schaetzung: der neu gemessene Wert geht mit 30 %
+/// ein. Die ersten Saetze sind langsamer (das Modell laedt noch), eine rohe
+/// Hochrechnung springt deshalb von Satz zu Satz wild.
+const ETA_SMOOTHING = 0.3;
+
+/// Restdauer als "2:30", ab einer Stunde als "1:05:00". Auf 5 Sekunden
+/// gerundet: sekundengenau zappelt die Zahl bei jedem Satz, ohne mehr zu
+/// sagen als die gerundete.
+const formatEta = (seconds: number) => {
+  const total = Math.max(5, Math.round(seconds / 5) * 5);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = String(total % 60).padStart(2, "0");
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${secs}`;
+  }
+  return `${minutes}:${secs}`;
+};
+
 export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
@@ -181,6 +204,14 @@ export const TtsSettings = () => {
     position: number;
     total: number;
   } | null>(null);
+  /** Geschaetzte Restdauer des Exports in Sekunden; null = noch zu frueh. */
+  const [exportEta, setExportEta] = useState<number | null>(null);
+  /** Letzter Messpunkt (Zeit + Satzposition) der Restzeit-Schaetzung. */
+  const exportTick = useRef<{ time: number; position: number } | null>(null);
+  /** Geglaetteter Mittelwert der Zeit je Satz in Millisekunden. */
+  const exportPerSentence = useRef<number | null>(null);
+  /** Der Pfad, den der Lauf TATSAECHLICH schreibt (Endung nach Format). */
+  const exportPath = useRef<string | null>(null);
   const startingTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -207,17 +238,51 @@ export const TtsSettings = () => {
       if (cancelled || (total > 0 && position >= total)) {
         setSaving(false);
         setExportProgress(null);
+        setExportEta(null);
+        exportTick.current = null;
+        exportPerSentence.current = null;
         // Fertige Datei: die Dateileiste rechts soll sie sofort zeigen.
         window.dispatchEvent(new CustomEvent("lv-files-changed"));
+        // Der Pfad kommt vom Befehl, nicht aus dem Dialog: bei MP3 hat der
+        // Lauf die Endung korrigiert, und die Meldung soll die Datei nennen,
+        // die es wirklich gibt.
+        if (!cancelled && exportPath.current) {
+          toast.success(t("tts.exportSaved", { path: exportPath.current }));
+        }
+        exportPath.current = null;
         return;
       }
       setExportProgress({ position, total });
+      // Restzeit: Zeit je Satz messen, glaetten, hochrechnen. Der erste Satz
+      // traegt die Ladezeit des Modells — deshalb wird erst ab dem zweiten
+      // Satz ueberhaupt etwas angezeigt.
+      const now = performance.now();
+      const last = exportTick.current;
+      if (last && position > last.position) {
+        const perSentence = (now - last.time) / (position - last.position);
+        exportPerSentence.current =
+          exportPerSentence.current === null
+            ? perSentence
+            : exportPerSentence.current * (1 - ETA_SMOOTHING) +
+              perSentence * ETA_SMOOTHING;
+      }
+      exportTick.current = { time: now, position };
+      const remaining = total - position;
+      setExportEta(
+        position >= 2 && exportPerSentence.current !== null && remaining > 0
+          ? (exportPerSentence.current * remaining) / 1000
+          : null,
+      );
     });
     const unExportError = listen<{ message: string }>(
       "tts-export-error",
       (e) => {
         setSaving(false);
         setExportProgress(null);
+        setExportEta(null);
+        exportTick.current = null;
+        exportPerSentence.current = null;
+        exportPath.current = null;
         setLastError(e.payload.message);
       },
     );
@@ -504,25 +569,42 @@ export const TtsSettings = () => {
     // Der Speichern-Dialog schlaegt den Projektordner der Seite vor: dort
     // sammelt die Dateileiste rechts, was zu diesem Arbeitsblatt gehoert.
     // Ein anderer Ort bleibt jederzeit waehlbar.
-    let defaultPath = "vorlesen.wav";
+    // Das Format steht in den Einstellungen — der Dialog fragt es nicht noch
+    // einmal. Wer einmal MP3 gewaehlt hat, bekommt MP3 vorgeschlagen.
+    // "opus" schlaegt bewusst eine .wav vor: einen Opus-Kodierer gibt es
+    // nicht, der Export schreibt dafuer WAV-Daten — eine Datei namens .opus
+    // mit WAV-Inhalt waere eine Luege ueber ihren eigenen Inhalt.
+    const format = (getSetting("tts_export_format") ?? "wav").toLowerCase();
+    const ext = format === "mp3" ? "mp3" : "wav";
+    const filterName = ext === "mp3" ? "MP3" : "WAV";
+    let defaultPath = `vorlesen.${ext}`;
     if (activePage) {
       const dir = await commands.pageDir(activePage);
-      if (dir.status === "ok") defaultPath = `${dir.data}\\vorlesen.wav`;
+      if (dir.status === "ok") defaultPath = `${dir.data}\\vorlesen.${ext}`;
     }
     const target = await save({
-      filters: [{ name: "WAV", extensions: ["wav"] }],
+      filters: [{ name: filterName, extensions: [ext] }],
       defaultPath,
     });
     if (typeof target !== "string") return;
     setSaving(true);
     setExportProgress({ position: 0, total: 0 });
+    setExportEta(null);
+    exportPerSentence.current = null;
+    exportTick.current = { time: performance.now(), position: 0 };
     // Returns at once; the run reports itself through tts-export-progress.
     const result = await commands.ttsSpeakToFile(spokenText, target);
     if (result.status === "error") {
       setSaving(false);
       setExportProgress(null);
+      setExportEta(null);
+      exportTick.current = null;
       setLastError(result.error);
+      return;
     }
+    // Der Befehl liefert den Pfad, der wirklich entsteht — bei MP3 mit
+    // korrigierter Endung.
+    exportPath.current = result.data;
   };
 
   const cancelExport = () => {
@@ -1336,10 +1418,16 @@ export const TtsSettings = () => {
                   </div>
                   <span className="text-xs text-text/60 tabular-nums">
                     {exportProgress?.total
-                      ? t("tts.sentenceProgress", {
+                      ? `${t("tts.sentenceProgress", {
                           position: exportProgress.position,
                           total: exportProgress.total,
-                        })
+                        })} · ${
+                          exportEta === null
+                            ? t("tts.exportEtaComputing")
+                            : t("tts.exportEta", {
+                                time: formatEta(exportEta),
+                              })
+                        }`
                       : t("tts.savingAudio")}
                   </span>
                   <button
@@ -1506,6 +1594,33 @@ export const TtsSettings = () => {
               />
             </div>
           </SettingContainer>
+          {/* Nur bei MP3: WAV kennt keine Bitrate, und Opus wird derzeit als
+              WAV geschrieben. Eine sichtbare, aber wirkungslose Einstellung
+              waere ein Versprechen, das der Export nicht haelt. */}
+          {(getSetting("tts_export_format") ?? "wav") === "mp3" && (
+            <SettingContainer
+              title={t("tts.settings.exportBitrate")}
+              description={t("tts.settings.exportBitrateDescription")}
+              grouped={true}
+              layout="horizontal"
+            >
+              <div className="w-36">
+                <Select
+                  value={String(getSetting("tts_export_bitrate") ?? 192)}
+                  options={EXPORT_BITRATES.map((rate) => ({
+                    value: String(rate),
+                    label: t("tts.settings.exportBitrateOption", { rate }),
+                  }))}
+                  isClearable={false}
+                  onChange={(value) => {
+                    if (value) {
+                      updateSetting("tts_export_bitrate", Number(value));
+                    }
+                  }}
+                />
+              </div>
+            </SettingContainer>
+          )}
           <SettingContainer
             title={t("tts.settings.fishDir")}
             description={t("tts.settings.fishDirDescription")}

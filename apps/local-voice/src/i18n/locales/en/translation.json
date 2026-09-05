@@ -207,6 +207,9 @@
       "speedDescription": "0.5×–2×. Resampling slightly changes the pitch as well.",
       "exportFormat": "Audio export format",
       "exportFormatDescription": "Format for saved audio files (voice changer, summaries). The server encodes directly.",
+      "exportBitrate": "MP3 bitrate",
+      "exportBitrateDescription": "Sound quality and file size of the MP3 export. 192 kbps is plenty for speech; higher settings only pay off for music.",
+      "exportBitrateOption": "{{rate}} kbps",
       "contextMenu": "Explorer context menu",
       "contextMenuDescription": "Adds \"Read with Local Voice AI\" to the right-click menu of TXT/MD/PDF/DOCX files. Note: Windows offers no system-wide menu for selected text — use the clipboard hotkey for that.",
       "rollSeed": "Roll"
@@ -217,6 +220,9 @@
     "previousSentence": "Previous sentence",
     "nextSentence": "Next sentence",
     "cancelExport": "Cancel export",
+    "exportEta": "about {{time}} left",
+    "exportEtaComputing": "estimating time left",
+    "exportSaved": "Saved: {{path}}",
     "pages": {
       "title": "Pages",
       "create": "New page",

@@ -423,16 +423,23 @@ pub async fn tts_voicechange_file(app: AppHandle, wav_path: String) -> Result<St
     tts.respeak_file(&wav_path).await
 }
 
-/// Den Vorlesetext samt Sprecherwechseln in eine WAV-Datei schreiben.
+/// Den Vorlesetext samt Sprecherwechseln in eine Audiodatei schreiben.
 ///
 /// Kehrt SOFORT zurueck; der Lauf arbeitet im Hintergrund weiter und meldet
 /// sich ueber `tts-export-progress`. Ein langer Text braucht Minuten — die
 /// Oberflaeche darf solange nicht blockiert sein, und der Fortschritt gehoert
 /// sichtbar auf den Schirm statt in eine wartende Zusage.
+///
+/// Rueckgabe: der Pfad, der TATSAECHLICH entsteht. Das Format bestimmt die
+/// Einstellung `tts_export_format`, nicht die Endung des Zielpfads.
 #[tauri::command]
 #[specta::specta]
-pub fn tts_speak_to_file(app: AppHandle, text: String, out_path: String) -> Result<(), String> {
+pub fn tts_speak_to_file(app: AppHandle, text: String, out_path: String) -> Result<String, String> {
     let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    // Denselben Pfad, den `speak_to_file` gleich selbst berechnet — hier
+    // vorweg, weil der Lauf erst im Hintergrund faellt und die Oberflaeche
+    // den Pfad SOFORT braucht. Die Regel steht nur einmal, im Manager.
+    let written = tts.export_target_path(&out_path);
     tauri::async_runtime::spawn(async move {
         if let Err(e) = tts.speak_to_file(&text, &out_path).await {
             log::warn!("tts export failed: {e}");
@@ -443,7 +450,7 @@ pub fn tts_speak_to_file(app: AppHandle, text: String, out_path: String) -> Resu
             );
         }
     });
-    Ok(())
+    Ok(written)
 }
 
 /// Laufenden Datei-Export abbrechen.
