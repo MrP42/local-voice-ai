@@ -8,11 +8,11 @@ struct VoiceApp: App {
         WindowGroup {
             NavigationStack {
                 #if os(watchOS)
-                ScrollView { controls; history }
+                ScrollView { LazyVStack { controls; history } }
                     .navigationTitle("Local Voice")
                 #else
                 TabView {
-                    ScrollView { controls.padding(); history.padding() }
+                    ScrollView { LazyVStack { controls.padding(); history.padding() } }
                         .tabItem { Label("Sprechen", systemImage: "mic") }
                     List { history }.tabItem { Label("Tagebuch", systemImage: "book") }
                 }.navigationTitle("Local Voice")
