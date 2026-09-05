@@ -34,7 +34,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
     private var debugActionsStarted = false
     private var debugReplaySent = false
     private var pendingURL: URL?
-    private var requestingPermission = false
+    private var captureStartGate = CaptureStartGate()
     private let encoder = JSONEncoder()
 
     override init() {
@@ -97,7 +97,10 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
             }
             #endif
         }
-        else if recording { stop() }
+        else {
+            captureStartGate.sceneBecameInactive()
+            if recording { stop() }
+        }
     }
     private func recordDiagnostic(_ code: String) {
         #if DEBUG
@@ -110,14 +113,22 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         catch { status = "Verlauf konnte nicht gelesen werden" }
     }
     func start() {
-        guard !recording, !requestingPermission, store != nil else { return }
-        requestingPermission = true
+        guard !recording, store != nil, let intent = captureStartGate.begin(active: active) else { return }
         speaker.stopSpeaking(at: .immediate)
         let requested = Date()
         AVAudioApplication.requestRecordPermission { allowed in
             Task { @MainActor in
-                self.requestingPermission = false
-                guard allowed else { self.status = "Mikrofonzugriff verweigert – in Einstellungen erlauben"; self.recordDiagnostic("microphone_denied"); return }
+                switch self.captureStartGate.resolve(intent, allowed: allowed, active: self.active) {
+                case .start: break
+                case .denied:
+                    self.status = "Mikrofonzugriff verweigert – in Einstellungen erlauben"
+                    self.recordDiagnostic("microphone_denied")
+                    return
+                case .cancelled:
+                    self.status = "Aufnahme nicht gestartet – zum Sprechen erneut tippen"
+                    return
+                case .stale: return
+                }
                 do {
                     let audio = AVAudioSession.sharedInstance()
                     try audio.setCategory(.playAndRecord, mode: .default)
