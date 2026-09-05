@@ -46,7 +46,7 @@ Watch verwendet ausschließlich native Aufnahme, Transport und System-TTS.
 | iPhone Vordergrund | PASS: lokaler STT-/Antwortpfad, 100 geprüfte Turns | Simulator, synthetische Audiodateien |
 | iPhone gesperrt | PASS im Simulator: Aufnahme dauerhaft angenommen, 15,5 s ohne Antwort, nach Entsperren dieselbe Aufnahme lokal verarbeitet und quittiert | kein physischer Data-Protection-Nachweis |
 | iPhone Hintergrund | PASS: Jobs bleiben gespeichert, Verarbeitung nach Rückkehr | kein unbegrenzter Hintergrundbetrieb |
-| iPhone-App beendet | TEILWEISE: Prozessende/Neustart im 100er-Lauf ohne Verlust | kein Nachweis der Swipe-Force-Quit-Wake-up-Semantik |
+| iPhone-App beendet | PASS im Simulator: Local-Voice-Karte per UI weggewischt, Prozessabfrage und Screenshot geprüft; neue Aufnahme gespeichert, Antwort erst nach Wiederöffnung | keine Übertragung der Simulator-Wake-up-Beobachtung auf reale Geräte |
 | Handgelenk gesenkt | PASS im Simulator: Always On während Aufnahme, nach 16,572 s automatisch gesichert; nach Anheben lokal verarbeitet und quittiert | bei abgesenktem Zustand zunächst nur auf Watch gespeichert |
 | Verbindung unterbrochen/wiederhergestellt | PASS im Simulator: iPhone heruntergefahren, neu gestartet, alle 100 abgeschlossen | kein physischer Funknachweis |
 | Neustart während Übertragung | PASS: Watch nach erstem dauerhaftem 32-KiB-Teil beendet; 142099-Byte-Aufnahme nach Neustart vollständig angenommen | kein Stromausfalltest |
@@ -139,3 +139,23 @@ koordiniert ihn mit dem sichtbaren UI-Schalter. Diese Testwartezeit existiert nu
 im Prüfablauf und ist keine Verzögerung der App.
 Apple beschreibt den [Always-On-Simulatorschalter](https://developer.apple.com/documentation/watchos-apps/designing-your-app-for-the-always-on-state)
 und die [Simulation des Wrist-Down-Ereignisses](https://developer.apple.com/videos/play/wwdc2021/10002/).
+
+### Benutzerseitiges Beenden im App-Umschalter
+
+`results/force-quit.json`: Der echte Doppelklick auf Simulator-Home öffnete den
+App-Umschalter. Die sichtbare Local-Voice-Karte wurde per UI nach oben weggewischt;
+der folgende Screenshot zeigte nur noch Safari. `launchctl list` enthielt danach
+keinen Local-Voice-Prozess. Eine neue Watch-Fixture wurde dauerhaft angenommen,
+blieb aber 15,5 Sekunden ohne Antwort. Nach expliziter Wiederöffnung wurden dieselbe
+ID und derselbe Audio-Digest transkribiert, beantwortet und auf der Watch quittiert.
+Die Prozessabfrage wurde durch eine positive Kontrolle gegen die anschließend
+laufende App validiert. Abfragen sind Stichproben: kurzzeitige Hintergrundausführung
+zwischen ihnen ist nicht ausgeschlossen. Keine Aussage über identisches Verhalten
+auf einem physischen iPhone.
+
+Vorherige UI-Versuche mit getrennten Home-Aktionen bzw. einer Geste innerhalb des
+iPhone-Test-Runners öffneten den App-Umschalter nicht zuverlässig und zählen nicht
+als Erfolg. Die geprüfte Sequenz ist `testOpenPhoneSwitcher`, visuelle Kontrolle der
+Local-Voice-Karte, anschließend `testDismissVisiblePhoneCard` im macOS-Testziel.
+Die Koordinaten des zweiten Hilfstests gelten ausschließlich für den dokumentierten
+Simulatorfensterzustand; nicht blind auf einen anderen App-Umschalter anwenden.

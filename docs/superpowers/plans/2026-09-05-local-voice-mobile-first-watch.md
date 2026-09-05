@@ -158,8 +158,9 @@ Die Planung ist mit den bestätigten Geräten und macOS 15.7.9 vollständig als 
 P0/P1 werden im isolierten Branch `codex/apple-p0-p1` umgesetzt. Die vom Benutzer
 gewünschten Xcode-Simulatoren ersetzen für diese Runde echte Geräte. Native Apps,
 17 Kerntests, je ein iPhone-/Watch-UI-Test und 100 vollständig lokale Sprachturns
-sind nachgewiesen. Lock/Wrist Down sowie einige Audio-/Force-Quit-Fälle bleiben offen;
-P1 ist daher noch nicht vollständig abgenommen. Latenzziele sind nicht erreicht,
+sind nachgewiesen. Lock, Wrist Down und Beenden per App-Umschalter sind inzwischen
+als Deferred-Fälle geprüft. Externer Review und physische Audio-Routen bleiben offen;
+P1 ist noch nicht vollständig abgenommen. Latenzziele sind nicht erreicht,
 reale Akkuauswirkung ist nicht ermittelbar. Siehe
 [aktuellen Simulatorbericht](../../apple-evidence/2026-09-05-simulator-report.md)
 und [P2-Folgeplan](../../apple-evidence/P2-follow-up.md).

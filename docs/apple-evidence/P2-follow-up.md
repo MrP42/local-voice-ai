@@ -1,8 +1,9 @@
 # P2 nach dem nativen Simulator-Prototyp
 
 P0/P1 bleiben der aktuelle Implementierungsumfang. Vor vollständiger P1-Abnahme
-sind die verbleibenden Audio-/Force-Quit-Fälle im vereinbarten Simulatorumfang
-zu prüfen. Lock und Wrist Down sind inzwischen als Deferred-Fälle nachgewiesen. Physische Akku-/Funknachweise sind damit nicht ersetzbar.
+ist der angefragte externe Review noch offen. Lock, Wrist Down und benutzerseitiges
+Beenden sind inzwischen als Deferred-Fälle im Simulator nachgewiesen. Physische
+Audio-Routen und Anrufunterbrechungen sind nicht aus dem expliziten Stop-Test ableitbar. Physische Akku-/Funknachweise sind damit nicht ersetzbar.
 
 1. **Sprachqualität und Laufzeit:** Base-/Small-Vergleich aus den fünf deutschen
    Qualitätsfällen auswerten; eigene kurze Antwortfälle mit Kriterien für Texttreue

@@ -2,6 +2,23 @@ import XCTest
 
 @MainActor
 final class SimulatorControlsTests: XCTestCase {
+    func testDismissVisiblePhoneCard() {
+        let simulator = XCUIApplication(bundleIdentifier: "com.apple.iphonesimulator")
+        simulator.activate()
+        let phone = simulator.windows["Local Voice iPhone 15 Pro Max – iOS 26.3"]
+        XCTAssertTrue(phone.waitForExistence(timeout: 10))
+        // Coordinates refer to the visually verified Local Voice card on this fixed simulator pair.
+        let start = phone.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.65))
+        let end = phone.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.13))
+        start.click(forDuration: 0.1, thenDragTo: end)
+    }
+    func testOpenPhoneSwitcher() {
+        let simulator = XCUIApplication(bundleIdentifier: "com.apple.iphonesimulator")
+        simulator.activate()
+        let phone = simulator.windows["Local Voice iPhone 15 Pro Max – iOS 26.3"]
+        XCTAssertTrue(phone.waitForExistence(timeout: 10))
+        phone.toolbars.buttons["Home"].doubleClick()
+    }
     func testLockPhone() {
         let simulator = XCUIApplication(bundleIdentifier: "com.apple.iphonesimulator")
         simulator.activate()
