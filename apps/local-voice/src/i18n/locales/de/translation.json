@@ -290,6 +290,8 @@
     },
     "speakers": {
       "menuInsert": "Sprecher einfügen",
+      "searchPlaceholder": "Stimmen durchsuchen…",
+      "emptySearch": "Keine Stimmen gefunden.",
       "change": "Sprecher wechseln",
       "changeHint": "Ein gewählter Sprecher übernimmt ab dieser Stelle.",
       "chipTitle": "{{name}} spricht ab hier",
@@ -321,6 +323,8 @@
       "resume": "Entwurf fortsetzen",
       "drafts": "Unfertige Entwürfe",
       "recipes": "Mit einer Figur beginnen",
+      "searchPlaceholder": "Rezepte durchsuchen…",
+      "emptySearch": "Keine Rezepte gefunden.",
       "seedNote": "Fish-Speech kann eine Stimme nicht aus einer Beschreibung bauen — jeder Kandidat ist eine andere Zufallsstimme. Die Beschreibung prägt Probesatz, Tags und die gespeicherten Angaben.",
       "errorNoServer": "Der Sprachserver läuft nicht — starte ihn auf der Vorlesen-Seite.",
       "errorNoCandidate": "Wähle zuerst einen Kandidaten.",

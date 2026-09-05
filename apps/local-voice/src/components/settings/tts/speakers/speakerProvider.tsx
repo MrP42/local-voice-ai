@@ -1,7 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, Trash2, Users } from "lucide-react";
 import { commands } from "@/bindings";
+import { Input } from "@/components/ui/Input";
 import { voiceColor } from "@/lib/voices/palette";
 import {
   scanSpeakerMarkers,
@@ -50,6 +57,58 @@ export function useSpeakers(): SpeakerRef[] {
   return speakers;
 }
 
+/**
+ * Ab so vielen Einträgen bekommt eine selbstgebaute Liste ein Suchfeld. Bei
+ * drei Stimmen wäre es nur im Weg, bei dreißig ist Scrollen die Zumutung.
+ */
+const SEARCH_THRESHOLD = 8;
+
+/**
+ * Suchfeld und gefilterte Liste für die Sprecherlisten. Gefiltert wird über
+ * Teilzeichenketten mit `toLowerCase()` — nicht `localeCompare`, das kennt
+ * keine Teiltreffer; so gehen Umlaute mit.
+ */
+const useSpeakerSearch = (speakers: SpeakerRef[]) => {
+  const [query, setQuery] = useState("");
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (needle === "") return speakers;
+    return speakers.filter((speaker) =>
+      speaker.displayName.toLowerCase().includes(needle),
+    );
+  }, [query, speakers]);
+  return {
+    query,
+    setQuery,
+    filtered,
+    showSearch: speakers.length > SEARCH_THRESHOLD,
+  };
+};
+
+/** Das Suchfeld selbst — beim Öffnen der Liste bekommt es den Fokus. */
+const SpeakerSearchField: React.FC<{
+  value: string;
+  onChange: (value: string) => void;
+}> = ({ value, onChange }) => {
+  const { t } = useTranslation();
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+  return (
+    <Input
+      ref={inputRef}
+      type="text"
+      variant="compact"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={t("tts.speakers.searchPlaceholder")}
+      aria-label={t("tts.speakers.searchPlaceholder")}
+      className="w-full"
+    />
+  );
+};
+
 /** Ein Sprecher in einer Liste: Farbpunkt + Name, 44 px hoch (Touch). */
 const SpeakerRow: React.FC<{
   speaker: SpeakerRef;
@@ -88,6 +147,7 @@ const SpeakerChipPopover: React.FC<{
   speakers: SpeakerRef[];
 }> = ({ match, api, speakers }) => {
   const { t } = useTranslation();
+  const { query, setQuery, filtered, showSearch } = useSpeakerSearch(speakers);
   const marker = scanSpeakerMarkers(match.raw, speakers)[0];
   const current = marker?.speaker;
   const style = marker?.style;
@@ -128,15 +188,26 @@ const SpeakerChipPopover: React.FC<{
       <p className="px-3 pt-2 text-[11px] leading-4 text-text/45">
         {t("tts.speakers.changeHint")}
       </p>
+      {showSearch && (
+        <div className="px-3 pt-2">
+          <SpeakerSearchField value={query} onChange={setQuery} />
+        </div>
+      )}
       <div className="max-h-64 overflow-y-auto p-1">
-        {speakers.map((speaker) => (
-          <SpeakerRow
-            key={speaker.id}
-            speaker={speaker}
-            current={speaker.id === current?.id}
-            onPick={replaceWith}
-          />
-        ))}
+        {filtered.length === 0 ? (
+          <p className="px-2 py-3 text-xs text-text/50">
+            {t("tts.speakers.emptySearch")}
+          </p>
+        ) : (
+          filtered.map((speaker) => (
+            <SpeakerRow
+              key={speaker.id}
+              speaker={speaker}
+              current={speaker.id === current?.id}
+              onPick={replaceWith}
+            />
+          ))
+        )}
       </div>
     </div>
   );
@@ -149,6 +220,7 @@ const SpeakerMenuSection: React.FC<{
 }> = ({ api, speakers }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const { query, setQuery, filtered, showSearch } = useSpeakerSearch(speakers);
   return (
     <>
       <div className="my-1 border-t border-mid-gray/15" aria-hidden="true" />
@@ -174,17 +246,30 @@ const SpeakerMenuSection: React.FC<{
               {t("tts.speakers.empty")}
             </p>
           ) : (
-            <div className="max-h-64 overflow-y-auto">
-              {speakers.map((speaker) => (
-                <SpeakerRow
-                  key={speaker.id}
-                  speaker={speaker}
-                  onPick={(picked) =>
-                    api.insertAtSelection(`${speakerMarkerText(picked)} `)
-                  }
-                />
-              ))}
-            </div>
+            <>
+              {showSearch && (
+                <div className="px-1 pb-1">
+                  <SpeakerSearchField value={query} onChange={setQuery} />
+                </div>
+              )}
+              {filtered.length === 0 ? (
+                <p className="px-2 py-3 text-xs text-text/50">
+                  {t("tts.speakers.emptySearch")}
+                </p>
+              ) : (
+                <div className="max-h-64 overflow-y-auto">
+                  {filtered.map((speaker) => (
+                    <SpeakerRow
+                      key={speaker.id}
+                      speaker={speaker}
+                      onPick={(picked) =>
+                        api.insertAtSelection(`${speakerMarkerText(picked)} `)
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

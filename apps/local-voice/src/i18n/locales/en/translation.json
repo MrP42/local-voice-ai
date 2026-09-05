@@ -290,6 +290,8 @@
     },
     "speakers": {
       "menuInsert": "Insert speaker",
+      "searchPlaceholder": "Search voices…",
+      "emptySearch": "No voices match your search.",
       "change": "Change speaker",
       "changeHint": "A chosen speaker takes over this passage.",
       "chipTitle": "{{name}} speaks from here",
@@ -321,6 +323,8 @@
       "resume": "Resume draft",
       "drafts": "Unfinished drafts",
       "recipes": "Start from a character",
+      "searchPlaceholder": "Search recipes…",
+      "emptySearch": "No recipes match your search.",
       "seedNote": "Fish-Speech cannot build a voice from a description — each candidate is a different random voice. The description shapes the sample sentence, the tags and the saved metadata.",
       "errorNoServer": "The speech server is not running — start it on the Read aloud page.",
       "errorNoCandidate": "Pick a candidate first.",
