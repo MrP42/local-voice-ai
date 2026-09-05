@@ -1091,8 +1091,8 @@ export const TAG_REGISTRY: TagDef[] = [
     category: "pauses",
     label: { en: "Pause", de: "Pause" },
     description: {
-      en: "A natural pause in speech.",
-      de: "Eine natürliche Sprechpause.",
+      en: "A natural pause in speech — the app inserts these 0.5 s of silence itself, so it always works.",
+      de: "Eine natürliche Sprechpause — die App fügt diese 0,5 Sekunden Stille selbst ein, die Pause wirkt also immer.",
     },
     s1: null,
   },
@@ -1102,8 +1102,8 @@ export const TAG_REGISTRY: TagDef[] = [
     category: "pauses",
     label: { en: "Short pause", de: "Kurze Pause" },
     description: {
-      en: "A brief beat of silence.",
-      de: "Ein kurzer Moment Stille.",
+      en: "A brief beat of silence — the app inserts these 0.25 s itself, so it always works.",
+      de: "Ein kurzer Moment Stille — die App fügt diese 0,25 Sekunden selbst ein, die Pause wirkt also immer.",
     },
     aliases: ["kurze pause"],
     s1: null,
@@ -1114,8 +1114,8 @@ export const TAG_REGISTRY: TagDef[] = [
     category: "pauses",
     label: { en: "Long pause", de: "Lange Pause" },
     description: {
-      en: "An extended silence for emphasis.",
-      de: "Eine längere Stille zur Betonung.",
+      en: "An extended silence for emphasis — the app inserts this full second itself, so it works even though the model does not know this tag.",
+      de: "Eine längere Stille zur Betonung — die App fügt diese ganze Sekunde selbst ein, die Pause wirkt also auch ohne dass das Modell das Tag kennt.",
     },
     aliases: ["lange pause"],
     s1: null,
@@ -1126,8 +1126,8 @@ export const TAG_REGISTRY: TagDef[] = [
     category: "pauses",
     label: { en: "Break", de: "Sprechpause" },
     description: {
-      en: "A clean break between phrases.",
-      de: "Ein klarer Einschnitt zwischen Phrasen.",
+      en: "A clean break between phrases — the app inserts these 0.7 s of silence itself, so it works even though the model does not know this tag.",
+      de: "Ein klarer Einschnitt zwischen Phrasen — die App fügt diese 0,7 Sekunden Stille selbst ein, die Pause wirkt also auch ohne dass das Modell das Tag kennt.",
     },
     aliases: ["einschnitt"],
     s1: null,
