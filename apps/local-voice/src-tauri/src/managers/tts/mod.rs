@@ -8,6 +8,7 @@
 pub mod builder;
 pub mod compile_cache;
 pub mod dsp;
+pub mod encode;
 pub mod engine;
 pub mod enhance;
 pub mod loudness;
@@ -943,6 +944,60 @@ pub fn startup_error_summary(log: &str) -> Option<String> {
         summary.push('…');
     }
     Some(summary)
+}
+
+/// Ein `Write + Seek`-Ziel im Speicher, dessen Inhalt den WavWriter überlebt.
+///
+/// `hound::WavWriter::finalize()` verbraucht sich selbst und gibt seinen
+/// Writer nicht zurück — für den MP3-Export brauchen wir die fertigen
+/// WAV-Bytes aber danach noch. Daher die geteilte Hülle.
+#[derive(Clone, Default)]
+struct SharedWavBuffer(Arc<Mutex<std::io::Cursor<Vec<u8>>>>);
+
+impl SharedWavBuffer {
+    /// Die fertigen WAV-Bytes herausnehmen.
+    fn take(&self) -> Vec<u8> {
+        std::mem::take(self.0.lock().unwrap().get_mut())
+    }
+}
+
+impl std::io::Write for SharedWavBuffer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().unwrap().flush()
+    }
+}
+
+impl std::io::Seek for SharedWavBuffer {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.0.lock().unwrap().seek(pos)
+    }
+}
+
+/// Wohin der zusammengesetzte Ton läuft: direkt in die Datei (WAV) oder in
+/// den Speicher, um am Ende einmal kodiert zu werden (MP3).
+enum ExportSink {
+    File(hound::WavWriter<std::io::BufWriter<std::fs::File>>),
+    Memory(hound::WavWriter<SharedWavBuffer>),
+}
+
+impl ExportSink {
+    fn write_sample(&mut self, sample: i16) -> Result<(), hound::Error> {
+        match self {
+            ExportSink::File(w) => w.write_sample(sample),
+            ExportSink::Memory(w) => w.write_sample(sample),
+        }
+    }
+
+    fn finalize(self) -> Result<(), hound::Error> {
+        match self {
+            ExportSink::File(w) => w.finalize(),
+            ExportSink::Memory(w) => w.finalize(),
+        }
+    }
 }
 
 /// WAV-Blob zu Mono-Downmix, Abtastrate und Spitzenwert.
@@ -2600,8 +2655,19 @@ impl TtsManager {
         Ok(out)
     }
 
-    /// Den ganzen Vorlesetext — Dialog eingeschlossen — in EINE WAV-Datei
+    /// Den ganzen Vorlesetext — Dialog eingeschlossen — in EINE Datei
     /// schreiben, statt ihn nur zu hören.
+    ///
+    /// Das Format bestimmt die Einstellung `tts_export_format`, NICHT die
+    /// Endung des Zielpfads: wer MP3 eingestellt hat, bekommt MP3, auch wenn
+    /// der Dialog eine `.wav` vorgeschlagen hat. Deshalb kommt der
+    /// TATSÄCHLICH geschriebene Pfad zurück — die Oberfläche soll die Datei
+    /// anzeigen, die es wirklich gibt.
+    ///
+    /// `opus` wird vorerst wie `wav` behandelt: einen Opus-Kodierer haben wir
+    /// nicht, und der Server liefert Opus nur je SATZ — solche Stücke lassen
+    /// sich nicht sauber zu einer Datei zusammensetzen (jedes brächte eigene
+    /// Kopfdaten mit). Lieber eine brauchbare WAV als eine kaputte Opus.
     ///
     /// Geht bewusst durch dieselbe Zerlegung wie das Abspielen
     /// (`utterances`), damit die Datei Satz für Satz klingt wie das, was man
@@ -2612,7 +2678,7 @@ impl TtsManager {
         self: &Arc<Self>,
         raw: &str,
         out_path: &str,
-    ) -> Result<usize, String> {
+    ) -> Result<(usize, String), String> {
         let max_chars = *self.core.max_chars.lock().unwrap();
         // Der GANZE Text, nicht die ersten `tts_max_chars` Zeichen. Die
         // Grenze schuetzt das Vorlesen davor, sich an einem Monsterdokument
@@ -2629,6 +2695,26 @@ impl TtsManager {
             return Err("empty text".to_string());
         }
         self.refresh_from_settings();
+        // Das Format entscheidet die Einstellung, nicht die vorgeschlagene
+        // Dateiendung — und bei MP3 wird die Endung entsprechend korrigiert.
+        let format = self
+            .core
+            .export_format
+            .lock()
+            .unwrap()
+            .trim()
+            .to_lowercase();
+        let as_mp3 = format == "mp3";
+        let out_path = if as_mp3 {
+            std::path::Path::new(out_path)
+                .with_extension("mp3")
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            out_path.to_string()
+        };
+        let out_path = out_path.as_str();
+        let bitrate = crate::settings::get_settings(&self.app).tts_export_bitrate;
         // Die Bereitschaft durch die Naht, nicht Fish-hart: die Synthese
         // unten läuft ohnehin über `fetch_wav` durch die aktive Engine —
         // nur der Startpfad war bis Paket E2 auf den Fish-Server verdrahtet
@@ -2648,7 +2734,11 @@ impl TtsManager {
         let total = utterances.len() as u32;
         self.emit_export_progress(0, total, false);
 
-        let mut writer: Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>> = None;
+        // Bei MP3 entsteht die WAV im Speicher und wird am Ende EINMAL
+        // kodiert; bei WAV (und dem als WAV behandelten Opus) läuft der Ton
+        // wie bisher direkt in die Datei.
+        let buffer = as_mp3.then(SharedWavBuffer::default);
+        let mut writer: Option<ExportSink> = None;
         let mut written = 0usize;
         for (index, (sentence, voice)) in utterances.iter().enumerate() {
             if cancel.load(Ordering::Acquire) {
@@ -2676,10 +2766,16 @@ impl TtsManager {
                 .map_err(|e| format!("Teilstueck nicht lesbar: {e}"))?;
             let spec = reader.spec();
             if writer.is_none() {
-                writer = Some(
-                    hound::WavWriter::create(out_path, spec)
-                        .map_err(|e| format!("could not write {out_path}: {e}"))?,
-                );
+                writer = Some(match &buffer {
+                    Some(buffer) => ExportSink::Memory(
+                        hound::WavWriter::new(buffer.clone(), spec)
+                            .map_err(|e| format!("could not write {out_path}: {e}"))?,
+                    ),
+                    None => ExportSink::File(
+                        hound::WavWriter::create(out_path, spec)
+                            .map_err(|e| format!("could not write {out_path}: {e}"))?,
+                    ),
+                });
             }
             let sink = writer.as_mut().expect("writer exists");
             for sample in reader.samples::<i16>() {
@@ -2699,9 +2795,14 @@ impl TtsManager {
             .ok_or_else(|| "nichts zu schreiben".to_string())?
             .finalize()
             .map_err(|e| format!("could not finish {out_path}: {e}"))?;
+        if let Some(buffer) = buffer {
+            let mp3 = encode::wav_to_mp3(&buffer.take(), bitrate)?;
+            std::fs::write(out_path, mp3)
+                .map_err(|e| format!("could not write {out_path}: {e}"))?;
+        }
         *self.core.last_used.lock().unwrap() = Instant::now();
         self.emit_export_progress(total, total, false);
-        Ok(written)
+        Ok((written, out_path.to_string()))
     }
 
     /// Zugriff auf den AppHandle fuer Ereignisse aus Hintergrundlaeufen.

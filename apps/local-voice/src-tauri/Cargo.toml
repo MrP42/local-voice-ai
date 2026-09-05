@@ -88,6 +88,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 pdf-extract = "0.12.0"
 tempfile = "3"
 ulid = "1"
+# MP3-Export mit waehlbarer Bitrate. Bringt LAME als vendored C-Quellen mit
+# (cc-Build), baut daher auf Windows-MSVC ohne vorinstallierte Bibliothek.
+mp3lame-encoder = "0.2.5"
 
 [features]
 # GPU acceleration for the Whisper/GGUF backend on Windows x86_64. Opt-in because
