@@ -258,7 +258,7 @@ nicht verfügbar. Keine Akku-/Hardwarelatenzbehauptung. Details und Messgrenzen:
 Isolierter Branch `codex/apple-p0-p1`: SwiftUI-Watch/iPhone mit dauerhafter
 Übergabe, lokaler CPU-STT und kurzer Modellantwort. 17 Kerntests sowie nativer
 Watch-UI-Test bestanden; 100 lokale Turns mit Neustarts/Verbindungsunterbrechung
-dauerhaft beantwortet und quittiert. P1-Abnahme bleibt wegen offener Lock-/
-Wrist-Down-Fälle unvollständig. Latenzziele nicht erreicht, Akku unbekannt.
+dauerhaft beantwortet und quittiert. Lock/Wrist Down inzwischen als Deferred-Fälle im Simulator nachgewiesen.
+P1-Abnahme bleibt wegen restlicher Audio-/Force-Quit-Prüfungen unvollständig. Latenzziele nicht erreicht, Akku unbekannt.
 Details: [Simulatorbericht](apple-evidence/2026-09-05-simulator-report.md),
 [P2-Folgeplan](apple-evidence/P2-follow-up.md). Desktop-Bestand unverändert.

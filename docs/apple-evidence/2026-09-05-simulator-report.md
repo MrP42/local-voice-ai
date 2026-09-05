@@ -44,10 +44,10 @@ Watch verwendet ausschließlich native Aufnahme, Transport und System-TTS.
 | Fall | Ergebnis und Nachweis | Verbleibende Grenze |
 |---|---|---|
 | iPhone Vordergrund | PASS: lokaler STT-/Antwortpfad, 100 geprüfte Turns | Simulator, synthetische Audiodateien |
-| iPhone gesperrt | OFFEN | macOS-XCTest-Fensterautomation nicht freigegeben; kein Lock-Nachweis |
+| iPhone gesperrt | PASS im Simulator: Aufnahme dauerhaft angenommen, 15,5 s ohne Antwort, nach Entsperren dieselbe Aufnahme lokal verarbeitet und quittiert | kein physischer Data-Protection-Nachweis |
 | iPhone Hintergrund | PASS: Jobs bleiben gespeichert, Verarbeitung nach Rückkehr | kein unbegrenzter Hintergrundbetrieb |
 | iPhone-App beendet | TEILWEISE: Prozessende/Neustart im 100er-Lauf ohne Verlust | kein Nachweis der Swipe-Force-Quit-Wake-up-Semantik |
-| Handgelenk gesenkt | OFFEN | Simulator-Wrist-Down-Steuerung noch nicht geprüft |
+| Handgelenk gesenkt | PASS im Simulator: Always On während Aufnahme, nach 16,572 s automatisch gesichert; nach Anheben lokal verarbeitet und quittiert | bei abgesenktem Zustand zunächst nur auf Watch gespeichert |
 | Verbindung unterbrochen/wiederhergestellt | PASS im Simulator: iPhone heruntergefahren, neu gestartet, alle 100 abgeschlossen | kein physischer Funknachweis |
 | Neustart während Übertragung | PASS: Watch nach erstem dauerhaftem 32-KiB-Teil beendet; 142099-Byte-Aufnahme nach Neustart vollständig angenommen | kein Stromausfalltest |
 | Doppelte Nachrichten | PASS: frischer WCSession-Replay, nichtleere Antwort; alle 220 iPhone-IDs, Quittungen, Audio-Digests und Antwort-IDs unverändert | ein gezielter Live-Replay plus Kerntests |
@@ -100,8 +100,9 @@ Bestätigung einer vollständig gesicherten Aufnahme auf dem iPhone.
 8-Stunden-Vergleich wurde nicht ausgeführt. Keine Leerlauf-Mikrofon-/ML-Schleife,
 kein Heartbeat-Polling; daraus folgt keine bezifferte Akkuersparnis.
 
-macOS meldet `DevToolsSecurity: disabled`; der Simulator-Steuerungs-UI-Test scheiterte
-beim Initialisieren der Automation. Lock/Wrist-Down bleiben bis zur Freigabe offen.
+Der Benutzer hat die macOS-Entwicklerfreigabe aktiviert. Der frische macOS-UI-Test
+kann den Simulator steuern; Lock/Wrist-Down sind nun als Deferred-Fälle nachgewiesen.
+Frühere fehlgeschlagene Automationstests bleiben historische Fehlversuche.
 Der angefragte externe Claude-Code-Review wurde von der automatischen Freigabeprüfung
 wegen fehlender ausdrücklicher Zustimmung zur Übermittlung der vier konkreten privaten
 Quelldateien abgelehnt. Kein Claude-Review wurde durchgeführt.
@@ -116,3 +117,25 @@ Eintrags-IDs, Audio-Digests und Antworttexte erhalten. Kein simulierter Telefona
 nichtleere Transportantwort sowie unveränderte iPhone-IDs, persistente Quittungen,
 Audio-Digests und Antwort-IDs. Die 217/220 Gesamteinträge enthalten zusätzliche
 Einzelprüfungen und sind nicht die abgegrenzte 100-Turn-Stichprobe.
+
+### Sperren und Handgelenk – nach aktivierter Entwicklerfreigabe
+
+`results/locked-phone.json`: sichtbare Sleep/Wake-Taste per macOS XCTest betätigt,
+Sperrbildschirm per Simulator-Screenshot visuell überprüft. Neue Watch-Fixture wurde
+auf dem gesperrten iPhone dauerhaft angenommen, aber während 15,5 Sekunden nicht
+beantwortet. Nach Home/Aufwecken und Öffnen der iPhone-App wurde genau dieselbe ID
+mit unverändertem Audio-Digest transkribiert, beantwortet und auf der Watch quittiert.
+
+`results/wrist-down.json`: tatsächliche Recorderprobe, danach Always-On-Schalter
+im Watch-Simulator. Dauer 16,572 Sekunden per `afinfo`, also vor dem automatischen
+30-Sekunden-Limit gesichert. Im abgesenkten Zustand blieb die Aufnahme auf der Watch;
+nach Anheben erfolgten Übertragung, lokale Antwort und dauerhafte Quittung. Ein
+früherer fehlgeschlagener UI-Test produzierte separat 29,884 Sekunden Audio und wird
+nicht als Nachweis für automatisches Sichern bei Wrist Down gezählt.
+
+Die numerische Checkbox-Auswertung wurde im Test korrigiert. Der Recorderstart
+muss außerhalb der XCTest-App-Sandbox erfolgen; `scripts/test_wrist_simulator.py`
+koordiniert ihn mit dem sichtbaren UI-Schalter. Diese Testwartezeit existiert nur
+im Prüfablauf und ist keine Verzögerung der App.
+Apple beschreibt den [Always-On-Simulatorschalter](https://developer.apple.com/documentation/watchos-apps/designing-your-app-for-the-always-on-state)
+und die [Simulation des Wrist-Down-Ereignisses](https://developer.apple.com/videos/play/wwdc2021/10002/).
