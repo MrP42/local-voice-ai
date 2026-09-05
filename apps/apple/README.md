@@ -1,6 +1,6 @@
 # Local Voice — native Apple feasibility prototype
 
-Scope: P0/P1 only. SwiftUI iPhone + Watch; desktop Tauri code is unchanged.
+Scope: native P0/P1 prototype with P2 durability, job and model-management improvements. SwiftUI iPhone + Watch; desktop Tauri code is unchanged.
 The user changed acceptance to **virtual Xcode devices** on 2026-09-05.
 Simulator evidence is not physical-device, battery, radio or locked-device evidence.
 
@@ -33,8 +33,8 @@ an inactive scene also stops and attempts to save the current recording. This
 is a bounded start/stop PTT prototype. No continuous listener or background ML
 loop. Start stops current speech output. Permission refusal shows a clear error.
 
-The initial iPhone mode returns a **fixed test response without transcription**.
-Disable the fixed-response toggle for the real local pipeline. SpeechTranscriber
+The default iPhone mode uses the local transcription/response pipeline. A fixed
+response remains available explicitly in the model panel for diagnostics. SpeechTranscriber
 checks German locale and installed assets; the explicit download button can
 install supported speech assets. Missing Apple providers fall back to the explicitly installed local CPU models. There is
 no server-STT or cloud-model fallback. Missing models leave the capture queued.
@@ -61,7 +61,8 @@ for this spike. There is no automatic deletion in P1. Raw recordings awaiting a
 successful save stay in the outbox directory and are never labelled confirmed.
 On activation, readable nonempty drafts are recovered automatically using the stable
 UUID in their filename. Unreadable drafts remain on disk with a visible status.
-A recovery UI and retention policy belong to P2.
+P2 exposes damaged metadata and unconfirmed drafts with export/recovery controls.
+It retains originals and budgets temporary transfer/staging files separately.
 
 Both receivers use the same store. Replies update an existing session; a late
 receipt cannot regress answered state. Unknown reply sessions are rejected.
@@ -73,7 +74,9 @@ returns. File transport delivery alone never authorizes deleting source audio.
 Retries occur on activation, reachability change, explicit retry, and draining
 new captures after a receipt. No heartbeat polling. iPhone processing is begun
 only in an active scene; a foreground job can be suspended by the OS. Persisted
-captures resume on next activation. Response delivery remains best effort with
+captures resume on next activation within three attempts. Native inference is
+cooperatively cancelled when inactive; a saved transcript is reused. Explicit
+per-entry retry replenishes exhausted or manually cancelled jobs. Response delivery remains best effort with
 persisted replay. Force-quit and radio wake-up behavior require real hardware.
 
 ## Test hooks (Debug only)
@@ -106,8 +109,12 @@ and does not upload any audio or transcript. Model files are not bundled into
 the Watch. See THIRD_PARTY_NOTICES.md for sources and licenses. The initial
 report's unavailable Apple-model result still holds; CPU inference
 measurements and limits are recorded in docs/apple-evidence/2026-09-05-simulator-report.md.
-Optional `--small` also downloads Whisper Small (487.6 MB); its presence in
-Documents/Models selects it over Base. It uses more time and memory.
+Optional `--small` also downloads Whisper Small (487.6 MB). The model panel
+selects Base or Small explicitly and imports official files after SHA-256
+verification and atomic installation. Small uses more time and memory.
+Qwen can give incorrect answers, including basic arithmetic in the measured
+quality set. A conservative German capability guard blocks the tested external
+action requests; it is not a general semantic correctness guarantee.
 
 ## Recording permission lifecycle
 
