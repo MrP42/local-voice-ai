@@ -31,6 +31,7 @@ struct VoiceApp: App {
             Button("Erneut versuchen") { model.retry() }
             Button("Wiedergabe stoppen") { model.stopPlayback() }
             #if os(iOS)
+            if model.processing { Button("Verarbeitung abbrechen") { model.cancelProcessing() } }
             Toggle("Feste Testantwort (ohne STT/KI)", isOn: $model.fixedAnswer)
             Button("Deutsche Sprachdateien laden") { model.prepareLocalSpeech() }
             Text("Ohne Testantwort: ausschließlich lokale deutsche Spracherkennung und lokale KI. Fehlende Modelle führen zu späterer Verarbeitung.").font(.caption)
@@ -59,6 +60,12 @@ struct VoiceApp: App {
                 Text(entry.createdAt, style: .time).font(.caption)
                 Text(entry.transcript ?? "Gespeicherte Sprachnotiz")
                 Text(entry.reply ?? "gespeichert – Verarbeitung folgt").foregroundStyle(.secondary)
+                #if os(iOS)
+                if entry.reply == nil, let job = entry.job, !job.running {
+                    Text(job.phase == .failed ? "Verarbeitung angehalten" : job.phase == .cancelled ? "Verarbeitung abgebrochen" : "Verarbeitung ausstehend").font(.caption)
+                    Button("Verarbeitung erneut starten") { model.retryProcessing(entry.id) }
+                }
+                #endif
                 if let reply = entry.reply { Button("Antwort anhören") { model.speak(reply, id: entry.id) } }
             }.padding(.vertical, 6)
         }

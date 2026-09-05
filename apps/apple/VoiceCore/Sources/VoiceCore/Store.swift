@@ -35,6 +35,7 @@ public struct Entry: Codable, Identifiable, Sendable {
     public var replyAcknowledged: Bool?
     public var replyReceipt: Receipt?
     public var replyToWatch: Bool?
+    public var job: JobRecord?
     public static func pendingDelivery(in entries: [Entry]) -> [Entry] {
         entries.filter { $0.state != .answered }.sorted {
             let left = $0.state == .saved ? 0 : 1
@@ -139,6 +140,7 @@ public final class DurableStore {
             if entry.replyMessageId == nil { entry.replyMessageId = UUID() }
         }
         if entry.state != .answered { entry.state = state }
+        if entry.reply != nil, entry.state == .answered { entry.job?.phase = .completed }
         if let timing { entry.timings[timing.0] = timing.1 }
         let folder = root.appendingPathComponent(id.uuidString)
         try write(JSONEncoder().encode(entry), to: folder.appendingPathComponent("entry.json"))
@@ -179,7 +181,7 @@ public final class DurableStore {
         entry.replyAcknowledged = true
         try save(entry)
     }
-    private func save(_ entry: Entry) throws {
+    func save(_ entry: Entry) throws {
         let folder = root.appendingPathComponent(entry.id.uuidString)
         try write(JSONEncoder().encode(entry), to: folder.appendingPathComponent("entry.json"))
         try syncDirectory(folder)

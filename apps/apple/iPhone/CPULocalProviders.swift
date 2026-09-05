@@ -19,13 +19,16 @@ actor CPULocalProviders {
             let input = try FileHandle(forReadingFrom: url)
             defer { try? input.close() }
             var hash = SHA256()
-            while let data = try input.read(upToCount: 1024 * 1024), !data.isEmpty { hash.update(data: data) }
+            while let data = try input.read(upToCount: 1024 * 1024), !data.isEmpty {
+                try Task.checkCancellation(); hash.update(data: data)
+            }
             guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == hashes[name] else { throw VoiceError.invalid }
             verifiedModels.insert(name)
         }
         return url
     }
-    func transcribe(_ url: URL) throws -> String {
+    func transcribe(_ url: URL, cancellation: InferenceCancellation) throws -> String {
+        try Task.checkCancellation()
         let model: URL
         let small = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Models/ggml-small.bin")
         if FileManager.default.fileExists(atPath: small.path) { model = try modelURL("ggml-small.bin") }
@@ -46,17 +49,20 @@ actor CPULocalProviders {
         }
         guard error == nil, result != .error, let samples = converted.floatChannelData?[0] else { throw VoiceError.invalid }
         var output = [CChar](repeating: 0, count: 16384)
-        let code = lv_transcribe(model.path, samples, Int32(converted.frameLength), &output, Int32(output.count))
+        let code = lv_transcribe(model.path, samples, Int32(converted.frameLength), &output, Int32(output.count), cancellation.pointer)
+        try Task.checkCancellation()
         guard code == 0 else { throw VoiceError.invalid }
         return String(cString: output).trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    func reply(to transcript: String) throws -> String {
+    func reply(to transcript: String, cancellation: InferenceCancellation) throws -> String {
+        try Task.checkCancellation()
         let model = try modelURL("qwen2.5-0.5b-instruct-q4_k_m.gguf")
         // Qwen2.5's documented ChatML template; only the current turn is context.
         let text = String(transcript.prefix(1200)).replacingOccurrences(of: "<|", with: "< |")
         let prompt = "<|im_start|>system\nDu bist ein hilfreicher Sprachbegleiter. Antworte kurz auf Deutsch in einem Satz. Führe keine externen Aktionen aus.<|im_end|>\n<|im_start|>user\n\(text)<|im_end|>\n<|im_start|>assistant\n"
         var output = [CChar](repeating: 0, count: 4096)
-        let code = lv_generate(model.path, prompt, &output, Int32(output.count))
+        let code = lv_generate(model.path, prompt, &output, Int32(output.count), cancellation.pointer)
+        try Task.checkCancellation()
         guard code == 0 else { throw VoiceError.invalid }
         return String(String(cString: output).trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
     }

@@ -20,10 +20,10 @@ enum LocalProviders {
     }
     static func transcribe(_ url: URL) async throws -> String {
         guard SpeechTranscriber.isAvailable,
-              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "de-DE")) else { return try await CPULocalProviders.shared.transcribe(url) }
+              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "de-DE")) else { return try await cpuTranscribe(url) }
         let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
         // Never silently use server recognition or start an asset download.
-        guard await AssetInventory.status(forModules: [transcriber]) == .installed else { return try await CPULocalProviders.shared.transcribe(url) }
+        guard await AssetInventory.status(forModules: [transcriber]) == .installed else { return try await cpuTranscribe(url) }
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         let results = Task {
             var text = ""
@@ -37,16 +37,24 @@ enum LocalProviders {
             await analyzer.cancelAndFinishNow()
         }
         defer { deadline.cancel() }
-        do {
-            let file = try AVAudioFile(forReading: url)
-            try await analyzer.start(inputAudioFile: file, finishAfterFile: true)
-            let text = try await results.value
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw VoiceError.invalid }
-            return text
-        } catch { results.cancel(); await analyzer.cancelAndFinishNow(); throw error }
+        return try await withTaskCancellationHandler {
+            do {
+                try Task.checkCancellation()
+                let file = try AVAudioFile(forReading: url)
+                try await analyzer.start(inputAudioFile: file, finishAfterFile: true)
+                let text = try await results.value
+                try Task.checkCancellation()
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw VoiceError.invalid }
+                return text
+            } catch { results.cancel(); await analyzer.cancelAndFinishNow(); throw error }
+        } onCancel: {
+            results.cancel()
+            Task { await analyzer.cancelAndFinishNow() }
+        }
     }
+
     static func reply(to transcript: String) async throws -> String {
-        guard SystemLanguageModel.default.availability == .available else { return try await CPULocalProviders.shared.reply(to: transcript) }
+        guard SystemLanguageModel.default.availability == .available else { return try await cpuReply(transcript) }
         let session = LanguageModelSession(instructions: "Antworte kurz auf Deutsch, höchstens zwei Sätze. Führe keine externen Aktionen aus.")
         let generation = Task {
             let result = try await session.respond(to: String(transcript.prefix(2000)), options: GenerationOptions(maximumResponseTokens: 128))
@@ -62,4 +70,17 @@ enum LocalProviders {
             try await generation.value
         } onCancel: { generation.cancel() }
     }
+    private static func cpuTranscribe(_ url: URL) async throws -> String {
+        let cancellation = InferenceCancellation()
+        return try await withTaskCancellationHandler {
+            try await CPULocalProviders.shared.transcribe(url, cancellation: cancellation)
+        } onCancel: { cancellation.cancel() }
+    }
+    private static func cpuReply(_ text: String) async throws -> String {
+        let cancellation = InferenceCancellation()
+        return try await withTaskCancellationHandler {
+            try await CPULocalProviders.shared.reply(to: text, cancellation: cancellation)
+        } onCancel: { cancellation.cancel() }
+    }
+
 }

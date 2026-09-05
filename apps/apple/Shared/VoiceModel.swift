@@ -16,9 +16,17 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
     @Published var recording = false
     @Published var reachable = false
     @Published var fixedAnswer = UserDefaults.standard.object(forKey: "fixedAnswer") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(fixedAnswer, forKey: "fixedAnswer") }
+        didSet {
+            UserDefaults.standard.set(fixedAnswer, forKey: "fixedAnswer")
+            #if os(iOS)
+            jobs?.fixedAnswer = fixedAnswer
+            #endif
+        }
     }
     @Published var processing = false
+    #if os(iOS)
+    private var jobs: JobProcessor?
+    #endif
     private var store: DurableStore?
     private var chunks: ChunkInbox?
     private var recorder: AVAudioRecorder?
@@ -69,6 +77,23 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
             try? JSONEncoder().encode(capabilities).write(to: documents.appendingPathComponent("capabilities.json"), options: .atomic)
         }
         #endif
+        #if os(iOS)
+        if let store {
+            do { try store.recoverInterruptedJobs() } catch { status = "Auftragsstatus konnte nicht wiederhergestellt werden" }
+            jobs = JobProcessor(store: store, transcribe: { try await LocalProviders.transcribe($0) }, reply: { try await LocalProviders.reply(to: $0) })
+            jobs?.fixedAnswer = fixedAnswer
+            jobs?.onChange = { [weak self] id in
+                guard let self else { return }
+                self.processing = self.jobs?.isProcessing == true
+                self.status = self.jobs?.message ?? "Bereit"
+                self.refresh()
+                if let id, let entry = self.entries.first(where: { $0.id == id }), let reply = entry.reply {
+                    if entry.replyToWatch == true { self.sendAnswer(entry) }
+                    else if self.active && !self.recording { self.speak(reply, id: id) }
+                }
+            }
+        }
+        #endif
         speaker.delegate = self
         if WCSession.isSupported() { WCSession.default.delegate = self; WCSession.default.activate() }
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
@@ -84,6 +109,9 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
     }
     func scene(active: Bool) {
         self.active = active
+        #if os(iOS)
+        jobs?.setActive(active)
+        #endif
         if active {
             retry()
             #if DEBUG
@@ -263,7 +291,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
             } catch { status = "Gespeicherte Aufnahme konnte nicht übertragen werden" }
         }
         #else
-        if active { Task { await processPending() } }
+        if active { jobs?.start() }
         for entry in entries where entry.reply != nil && entry.replyAcknowledged != true { sendAnswer(entry) }
         #endif
     }
@@ -355,7 +383,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
                 let receipt = try store.accept(packet, replyToWatch: true)
                 refresh()
                 if let existing = entries.first(where: { $0.id == packet.sessionId }), existing.reply != nil { sendAnswer(existing) }
-                if active { Task { await processPending() } }
+                if active { jobs?.start() }
                 return try encoder.encode(Wire(receipt: receipt))
             }
             #else
@@ -487,36 +515,10 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
             catch { status = "Lokale Spracherkennung auf diesem Gerät nicht verfügbar" }
         }
     }
-    private func processPending() async {
-        guard !processing, active, let store else { return }
-        processing = true; defer { processing = false; refresh() }
-        var attempted = Set<UUID>()
-        while let entry = (try? store.entries())?.reversed().first(where: { $0.reply == nil && !attempted.contains($0.id) }) {
-            attempted.insert(entry.id)
-            guard active else { return }
-            do {
-                let started = Date()
-                if fixedAnswer {
-                    try store.update(entry.id, reply: "Deine Aufnahme ist sicher gespeichert.", state: .answered, timing: ("fixed_reply_ms", Date().timeIntervalSince(started) * 1000))
-                } else {
-                    let transcript = try await LocalProviders.transcribe(store.audioURL(for: entry.id))
-                    try store.update(entry.id, transcript: transcript, state: .deferred, timing: ("stt_ms", Date().timeIntervalSince(started) * 1000))
-                    guard active else { return }
-                    let modelStart = Date()
-                    let reply = try await LocalProviders.reply(to: transcript)
-                    try store.update(entry.id, reply: reply, state: .answered, timing: ("generation_ms", Date().timeIntervalSince(modelStart) * 1000))
-                }
-                refresh()
-                if let answer = entries.first(where: { $0.id == entry.id }) {
-                    if answer.replyToWatch == true { sendAnswer(answer) }
-                    else if let reply = answer.reply, active, !recording { speak(reply, id: answer.id) }
-                }
-                status = "Antwort gespeichert"
-            } catch {
-                try? store.update(entry.id, state: .deferred)
-                status = "gespeichert – Verarbeitung folgt (lokales Modell/Assets nicht verfügbar)"
-            }
-        }
+    func cancelProcessing() { jobs?.cancelCurrent() }
+    func retryProcessing(_ id: UUID) {
+        do { try store?.retryJob(id); jobs?.start(); refresh() }
+        catch { status = "Aufnahme bleibt gespeichert – Wiederholung nicht gestartet" }
     }
     #endif
 }

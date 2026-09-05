@@ -11,8 +11,8 @@ def configs(name, settings):
     return obj(name+'configs', isa='XCConfigurationList', buildConfigurations=ids, defaultConfigurationIsVisible=0, defaultConfigurationName='Debug')
 products=[]; files=[]; targets=[]
 for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype'),('VoiceWatch','watchos','de.localvoice.prototype.watchkitapp')]:
-    sources = ['Shared/VoiceApp.swift','Shared/VoiceModel.swift','VoiceCore/Sources/VoiceCore/Store.swift','VoiceCore/Sources/VoiceCore/Envelope.swift','VoiceCore/Sources/VoiceCore/Chunks.swift','VoiceCore/Sources/VoiceCore/CaptureStartGate.swift','VoiceCore/Sources/VoiceCore/StorageInventory.swift']
-    if platform == 'iphoneos': sources += ['iPhone/LocalProviders.swift','iPhone/CPULocalProviders.swift','iPhone/Engines/WhisperBridge.mm','iPhone/Engines/LlamaBridge.mm']
+    sources = ['Shared/VoiceApp.swift','Shared/VoiceModel.swift','VoiceCore/Sources/VoiceCore/Store.swift','VoiceCore/Sources/VoiceCore/Envelope.swift','VoiceCore/Sources/VoiceCore/Chunks.swift','VoiceCore/Sources/VoiceCore/CaptureStartGate.swift','VoiceCore/Sources/VoiceCore/StorageInventory.swift','VoiceCore/Sources/VoiceCore/Jobs.swift','VoiceCore/Sources/VoiceCore/JobProcessor.swift']
+    if platform == 'iphoneos': sources += ['iPhone/LocalProviders.swift','iPhone/CPULocalProviders.swift','iPhone/InferenceCancellation.swift','iPhone/Engines/Cancellation.mm','iPhone/Engines/WhisperBridge.mm','iPhone/Engines/LlamaBridge.mm']
     buildfiles=[]
     for path in sources:
         ref=obj(path, isa='PBXFileReference', lastKnownFileType='sourcecode.cpp.objcpp' if path.endswith('.mm') else 'sourcecode.swift', path=path, sourceTree='<group>')

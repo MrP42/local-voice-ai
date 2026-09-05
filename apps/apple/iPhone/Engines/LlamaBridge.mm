@@ -1,4 +1,4 @@
-#include "LVEngines.h"
+#include "Cancellation.hpp"
 #include <llama/llama.h>
 #include <chrono>
 #include <cstring>
@@ -8,10 +8,8 @@
 #include <mutex>
 
 static void quiet_llama(enum ggml_log_level, const char *, void *) {}
-static bool llama_deadline(void *value) {
-    return std::chrono::steady_clock::now() > *static_cast<std::chrono::steady_clock::time_point *>(value);
-}
-int lv_generate(const char *path, const char *prompt, char *output, int32_t capacity) {
+
+int lv_generate(const char *path, const char *prompt, char *output, int32_t capacity, LVCancellation *cancellation) {
     if (!path || !prompt || std::strlen(prompt) > 12000 || !output || capacity < 2) return 1;
     output[0] = 0;
     static std::once_flag initialized;
@@ -19,10 +17,11 @@ int lv_generate(const char *path, const char *prompt, char *output, int32_t capa
     auto mp = llama_model_default_params(); mp.n_gpu_layers = 0;
     std::unique_ptr<llama_model, decltype(&llama_model_free)> model(llama_model_load_from_file(path, mp), llama_model_free);
     if (!model) return 2;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+    LVDeadline deadline{cancellation, std::chrono::steady_clock::now() + std::chrono::seconds(90)};
+    if (lv_should_abort(&deadline)) return 11;
     auto cp = llama_context_default_params(); cp.n_ctx = 1024; cp.n_batch = 1024; cp.n_ubatch = 128;
     cp.n_threads = 4; cp.n_threads_batch = 4; cp.offload_kqv = false;
-    cp.abort_callback = llama_deadline; cp.abort_callback_data = &deadline;
+    cp.abort_callback = lv_should_abort; cp.abort_callback_data = &deadline;
     std::unique_ptr<llama_context, decltype(&llama_free)> context(llama_init_from_model(model.get(), cp), llama_free);
     if (!context) return 3;
     auto vocab = llama_model_get_vocab(model.get());
@@ -34,7 +33,7 @@ int lv_generate(const char *path, const char *prompt, char *output, int32_t capa
     if (!sampler) return 6;
     std::string result;
     for (int i = 0; i < 64; ++i) {
-        if (llama_deadline(&deadline)) return 7;
+        if (lv_should_abort(&deadline)) return 7;
         auto token = llama_sampler_sample(sampler.get(), context.get(), -1);
         if (llama_vocab_is_eog(vocab, token)) break;
         char piece[512];
