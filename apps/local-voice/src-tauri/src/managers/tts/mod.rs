@@ -111,6 +111,12 @@ pub struct TtsCore {
     /// wirklich stört, ist der Sprung ZWISCHEN Stimmen; genau den nimmt ein
     /// konstanter Faktor je Stimme heraus.
     voice_gains: Mutex<std::collections::HashMap<String, f32>>,
+    /// Dauerhafte Klangregler je Stimme, aus `meta.json` gespiegelt
+    /// (Schluessel wie bei `voice_gains`). Bewusst ein Spiegel und KEIN Cache
+    /// mit eigener Invalidierung: `TtsManager::refresh_from_settings` fuellt
+    /// ihn vor jedem Auftrag neu — ein geaenderter Regler wirkt damit ab dem
+    /// naechsten Vorlesen, und im laufenden Auftrag liest niemand die Platte.
+    voice_sounds: Mutex<std::collections::HashMap<String, registry::VoiceSound>>,
     on_phase_change: Mutex<Option<Box<dyn Fn(TtsStatus) + Send + Sync>>>,
 }
 
@@ -263,6 +269,7 @@ impl TtsCore {
             normalize: AtomicBool::new(true),
             enhance: Mutex::new(None),
             voice_gains: Mutex::new(std::collections::HashMap::new()),
+            voice_sounds: Mutex::new(std::collections::HashMap::new()),
             on_phase_change: Mutex::new(None),
         }
     }
@@ -604,43 +611,82 @@ impl TtsCore {
     /// Satz auf den Zielpegel gezogen, ohne dass Betonung glattgebügelt wird
     /// oder die Lautheit zwischen zwei Sätzen hörbar pumpt.
     fn playback_gain(&self, voice: Option<&str>, wav: &[u8]) -> f32 {
-        if !self.normalize.load(Ordering::Acquire) {
+        let normalize = self.normalize.load(Ordering::Acquire);
+        let key = self.voice_key(voice);
+        // Dritte Stufe, unabhaengig von den beiden anderen: der dauerhafte
+        // Regler dieser Stimme (`meta.json` → `sound.gain_db`). Er gilt auch
+        // OHNE Normalisierung — er ist eine Eigenschaft der Stimme, keine
+        // Messung.
+        let voice_gain = self
+            .voice_sounds
+            .lock()
+            .unwrap()
+            .get(&key)
+            .map(registry::VoiceSound::gain_factor)
+            .unwrap_or(1.0);
+        if !normalize && (voice_gain - 1.0).abs() <= f32::EPSILON {
             return 1.0;
         }
-        let key = match voice {
-            Some(explicit) => explicit.to_string(),
-            // "die eingestellte Stimme" muss denselben Schlüssel ergeben wie
-            // ihr expliziter Name — sonst bekäme dieselbe Stimme zwei Faktoren.
-            None => self.voice.lock().unwrap().clone().unwrap_or_default(),
-        };
         let Some((mono, rate, peak)) = decode_wav(wav) else {
             return 1.0;
         };
-        let sentence = loudness::gain_to_target(&mono, rate, peak);
+        let normalized = if normalize {
+            let sentence = loudness::gain_to_target(&mono, rate, peak);
 
-        // Gemittelt wird in dB, nicht im Faktor: Lautheit ist logarithmisch,
-        // der arithmetische Mittelwert zweier Faktoren träfe die Mitte nicht.
-        let base = {
-            let mut gains = self.voice_gains.lock().unwrap();
-            let mixed = match gains.get(&key) {
-                Some(&previous) => {
-                    let db = |g: f32| 20.0 * g.max(1e-6).log10();
-                    10f32.powf((db(previous) * 0.75 + db(sentence) * 0.25) / 20.0)
-                }
-                None => sentence,
+            // Gemittelt wird in dB, nicht im Faktor: Lautheit ist logarithmisch,
+            // der arithmetische Mittelwert zweier Faktoren träfe die Mitte nicht.
+            let base = {
+                let mut gains = self.voice_gains.lock().unwrap();
+                let mixed = match gains.get(&key) {
+                    Some(&previous) => {
+                        let db = |g: f32| 20.0 * g.max(1e-6).log10();
+                        10f32.powf((db(previous) * 0.75 + db(sentence) * 0.25) / 20.0)
+                    }
+                    None => sentence,
+                };
+                gains.insert(key, mixed);
+                mixed
             };
-            gains.insert(key, mixed);
-            mixed
-        };
 
-        let limit = 10f32.powf(SENTENCE_TRIM_DB / 20.0);
-        let corrected = sentence.clamp(base / limit, base * limit);
+            let limit = 10f32.powf(SENTENCE_TRIM_DB / 20.0);
+            sentence.clamp(base / limit, base * limit)
+        } else {
+            1.0
+        };
+        let corrected = normalized * voice_gain;
         if peak <= f32::EPSILON {
-            return 1.0;
+            // Stille: die Messung sagt nichts, der Dauerregler schon.
+            return voice_gain;
         }
-        // Die Spitze hat immer das letzte Wort: die Dämpfung oben darf den
-        // Faktor wieder über die Aussteuerungsgrenze gehoben haben.
+        // Die Spitze hat immer das letzte Wort: die Dämpfung oben und der
+        // Dauerregler duerfen den Faktor über die Aussteuerungsgrenze gehoben
+        // haben.
         corrected.min(loudness::PEAK_CEILING / peak)
+    }
+
+    /// Schluessel einer Stimme fuer die pro-Stimme-Tabellen (`voice_gains`,
+    /// `voice_sounds`). „Die eingestellte Stimme" muss denselben Schluessel
+    /// ergeben wie ihr expliziter Name — sonst bekaeme dieselbe Stimme zwei
+    /// Eintraege.
+    fn voice_key(&self, voice: Option<&str>) -> String {
+        match voice {
+            Some(explicit) => explicit.to_string(),
+            None => self.voice.lock().unwrap().clone().unwrap_or_default(),
+        }
+    }
+
+    /// Dauerhafter Tempofaktor dieser Stimme (1,0 = unveraendert). Er tritt
+    /// NEBEN den Nutzerregler, nicht an seine Stelle: der Nutzerregler bleibt
+    /// im Player live wirksam (`PlaybackControls`), dieser Faktor steckt in
+    /// der Abtastrate des Satzes (siehe [`scale_wav_rate`]) — beides
+    /// zusammen ergibt das gehoerte Tempo, multiplikativ.
+    fn voice_speed(&self, voice: Option<&str>) -> f32 {
+        self.voice_sounds
+            .lock()
+            .unwrap()
+            .get(&self.voice_key(voice))
+            .map(registry::VoiceSound::speed_factor)
+            .unwrap_or(1.0)
     }
 
     /// Satz-Pipeline: Satz N wird abgespielt, während Satz N+1 bereits beim
@@ -729,6 +775,10 @@ impl TtsCore {
                     // Stimmen gleich laut: der Pegelausgleich dieses Satzes
                     // steht fest, der Nutzerregler skaliert ihn live.
                     let gain = self.playback_gain(voice.as_deref(), &bytes);
+                    // Dauerhaftes Tempo dieser Stimme. NACH der Pegelmessung,
+                    // damit die Lautheit bei der echten Abtastrate gemessen
+                    // wird; der Nutzerregler multipliziert im Player darauf.
+                    let bytes = scale_wav_rate(bytes, self.voice_speed(voice.as_deref()));
                     let controls = Arc::clone(&self.controls);
                     let cancel_flag = cancelled.clone();
                     previous_playback = Some((
@@ -963,6 +1013,50 @@ fn prepare_sentence_audio(bytes: Vec<u8>, strength: Option<enhance::Strength>) -
     }
     enhance::soften_edges(&mut samples, 1, rate);
     write_wav_pcm16(&samples, spec).unwrap_or(bytes)
+}
+
+/// Tempo eines WAV-Blobs aendern, indem die ANGEGEBENE Abtastrate skaliert
+/// wird — dieselbe Mechanik, die auch der Nutzerregler benutzt (rodios
+/// `set_speed` resampelt ebenfalls und zieht die Tonhoehe mit).
+///
+/// Warum am Kopf und nicht ueber [`dsp::resample_stretch`]: hier geht kein
+/// einziges Sample durch eine Interpolation, das Ergebnis ist verlustfrei und
+/// exakt multiplikativ zum Nutzerregler. Beruehrt werden nur `sample_rate` und
+/// `byte_rate` des `fmt `-Chunks; alles andere bleibt Byte fuer Byte stehen.
+///
+/// Faktor 1,0, ein nicht endlicher Faktor oder ein Blob, der kein RIFF/WAVE
+/// mit lesbarem `fmt `-Chunk ist, geben den Blob unveraendert zurueck: eine
+/// nicht anwendbare Klangeinstellung darf nie Tonausfall bedeuten.
+fn scale_wav_rate(bytes: Vec<u8>, factor: f32) -> Vec<u8> {
+    if !factor.is_finite() || (factor - 1.0).abs() <= f32::EPSILON {
+        return bytes;
+    }
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return bytes;
+    }
+    let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    let mut pos = 12;
+    while pos + 8 <= bytes.len() {
+        let size = word(pos + 4) as usize;
+        let data = pos + 8;
+        if &bytes[pos..pos + 4] == b"fmt " && size >= 16 && data + 16 <= bytes.len() {
+            let scaled = |value: u32| {
+                let v = (value as f64 * factor as f64).round();
+                (v >= 1.0 && v <= u32::MAX as f64).then_some(v as u32)
+            };
+            let (Some(rate), Some(byte_rate)) = (scaled(word(data + 4)), scaled(word(data + 8)))
+            else {
+                return bytes;
+            };
+            let mut out = bytes;
+            out[data + 4..data + 8].copy_from_slice(&rate.to_le_bytes());
+            out[data + 8..data + 12].copy_from_slice(&byte_rate.to_le_bytes());
+            return out;
+        }
+        // Chunks sind auf gerade Laengen aufgefuellt (RIFF-Regel).
+        pos = data + size + (size & 1);
+    }
+    bytes
 }
 
 /// WAV-Blob als Interleave lesen, ohne Downmix.
@@ -1315,6 +1409,22 @@ impl TtsManager {
         *self.core.export_format.lock().unwrap() = settings.tts_export_format;
         *self.core.output_device.lock().unwrap() = settings.selected_output_device;
         *self.core.voice.lock().unwrap() = settings.tts_voice;
+        // Dauerhafte Klangregler der Stimmen einmal je Auftrag von der Platte
+        // holen — nicht je Satz. Stimmen ohne `sound` stehen gar nicht erst
+        // in der Tabelle, der Normalfall kostet also nichts.
+        {
+            let fish_dir = std::path::PathBuf::from(&settings.tts_fish_dir);
+            let sounds: std::collections::HashMap<String, registry::VoiceSound> =
+                voices::list_voices(&fish_dir)
+                    .into_iter()
+                    .filter_map(|id| {
+                        registry::read_meta(&fish_dir, &id)
+                            .sound
+                            .map(|sound| (id, sound))
+                    })
+                    .collect();
+            *self.core.voice_sounds.lock().unwrap() = sounds;
+        }
         // Engine-Wahl in den Kern spiegeln; unbekannte Werte fallen auf
         // Fish zurück (from_setting). Für Piper werden Binary und Stimme
         // hier — also vor jedem Auftrag — neu aufgelöst: eben erst geladene
@@ -4121,5 +4231,116 @@ mod tests {
     fn tiefe_eins_gibt_die_bytes_unveraendert_zurueck() {
         let wav = super::test_support::sine_wav(16_000, 2_000);
         assert_eq!(super::apply_depth(&wav, 1.0).unwrap(), wav);
+    }
+
+    // ---- Dauerhafte Klangregler je Stimme (`VoiceMeta::sound`) -----------
+
+    fn test_core() -> TtsCore {
+        TtsCore::new(Arc::new(player::CountingPlayer(std::sync::Mutex::new(0))))
+    }
+
+    fn sound_for(core: &TtsCore, voice: &str, speed: f32, gain_db: f32) {
+        core.voice_sounds
+            .lock()
+            .unwrap()
+            .insert(voice.to_string(), registry::VoiceSound { speed, gain_db });
+    }
+
+    /// Der Regler skaliert die angegebene Abtastrate — Daten bleiben Byte fuer
+    /// Byte stehen, damit nichts durch eine Interpolation muss.
+    #[test]
+    fn scale_wav_rate_skaliert_kopf_und_laesst_die_daten_in_ruhe() {
+        let wav = super::test_support::sine_wav(16_000, 500);
+        let schneller = super::scale_wav_rate(wav.clone(), 1.25);
+        assert_eq!(schneller.len(), wav.len());
+        let reader = hound::WavReader::new(std::io::Cursor::new(schneller.as_slice())).unwrap();
+        assert_eq!(reader.spec().sample_rate, 20_000);
+        // byte_rate zieht mit (16 Bit mono: 2 Bytes je Sample).
+        assert_eq!(
+            u32::from_le_bytes(schneller[28..32].try_into().unwrap()),
+            40_000
+        );
+        assert_eq!(&schneller[44..], &wav[44..], "Audiodaten veraendert");
+    }
+
+    #[test]
+    fn scale_wav_rate_laesst_unveraendert_was_es_nicht_anfassen_darf() {
+        let wav = super::test_support::sine_wav(24_000, 100);
+        assert_eq!(super::scale_wav_rate(wav.clone(), 1.0), wav);
+        assert_eq!(super::scale_wav_rate(wav.clone(), f32::NAN), wav);
+        // Kein RIFF/WAVE: unveraendert statt kaputt.
+        let kein_wav = b"nicht einmal ein header".to_vec();
+        assert_eq!(super::scale_wav_rate(kein_wav.clone(), 1.5), kein_wav);
+    }
+
+    /// Das gehoerte Tempo ist das Produkt aus Nutzerregler und Stimmenregler:
+    /// der Stimmenregler steckt in der Abtastrate, der Nutzerregler bleibt im
+    /// Player. Hier wird die eine Haelfte geprueft — dass sie den
+    /// Nutzerregler NICHT anfasst, ist die andere.
+    #[test]
+    fn stimmen_tempo_wirkt_neben_dem_nutzerregler_nicht_an_seiner_stelle() {
+        let core = test_core();
+        core.controls.set_speed(1.5);
+        sound_for(&core, "pyrion", 1.2, 0.0);
+        assert!((core.voice_speed(Some("pyrion")) - 1.2).abs() < 1e-6);
+        assert_eq!(core.voice_speed(Some("olga")), 1.0);
+        assert_eq!(
+            core.controls.speed(),
+            1.5,
+            "der Stimmenregler darf den Nutzerregler nicht ueberschreiben"
+        );
+    }
+
+    #[test]
+    fn stimmen_tempo_gilt_auch_fuer_die_eingestellte_stimme_ohne_expliziten_namen() {
+        let core = test_core();
+        *core.voice.lock().unwrap() = Some("pyrion".to_string());
+        sound_for(&core, "pyrion", 0.8, 0.0);
+        assert!((core.voice_speed(None) - 0.8).abs() < 1e-6);
+    }
+
+    /// Ohne Normalisierung ist der Dauerregler der einzige Faktor — er ist
+    /// eine Eigenschaft der Stimme, keine Messung, und faellt deshalb nicht
+    /// mit der Normalisierung weg.
+    #[test]
+    fn gain_db_wirkt_auch_bei_abgeschalteter_normalisierung() {
+        let core = test_core();
+        core.normalize.store(false, Ordering::Release);
+        let wav = super::test_support::sine_wav(16_000, 4_000);
+        assert_eq!(core.playback_gain(Some("pyrion"), &wav), 1.0);
+        sound_for(&core, "pyrion", 1.0, 6.0);
+        let gain = core.playback_gain(Some("pyrion"), &wav);
+        assert!((gain - 1.995).abs() < 0.01, "Faktor {gain} statt ~2,0");
+        // Andere Stimmen bleiben unberuehrt.
+        assert_eq!(core.playback_gain(Some("olga"), &wav), 1.0);
+    }
+
+    /// Die Spitze hat das letzte Wort — auch gegen den Dauerregler.
+    #[test]
+    fn gain_db_wird_von_der_aussteuerungsgrenze_gedeckelt() {
+        let core = test_core();
+        core.normalize.store(false, Ordering::Release);
+        sound_for(&core, "pyrion", 1.0, 12.0);
+        let wav = super::test_support::sine_wav(16_000, 4_000);
+        let peak = decode_wav(&wav).unwrap().2;
+        let gain = core.playback_gain(Some("pyrion"), &wav);
+        assert!(
+            gain * peak <= loudness::PEAK_CEILING + 1e-6,
+            "Spitze {} ueber der Grenze",
+            gain * peak
+        );
+        assert!(gain < 3.981, "die Grenze haette greifen muessen: {gain}");
+    }
+
+    /// Mit Normalisierung liegt der Dauerregler OBEN DRAUF: derselbe Satz
+    /// wird um genau den eingestellten Faktor lauter.
+    #[test]
+    fn gain_db_multipliziert_den_gemessenen_ausgleich() {
+        let wav = super::test_support::sine_wav(16_000, 4_000);
+        let ohne = test_core().playback_gain(Some("pyrion"), &wav);
+        let core = test_core();
+        sound_for(&core, "pyrion", 1.0, -6.0);
+        let mit = core.playback_gain(Some("pyrion"), &wav);
+        assert!((mit / ohne - 0.501).abs() < 0.01, "{mit} vs {ohne}");
     }
 }

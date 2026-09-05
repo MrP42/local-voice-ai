@@ -118,6 +118,10 @@ export const VoiceBuilder: React.FC<{ onSaved: (voiceId: string) => void }> = ({
       default_tags: draft.tags,
       default_style: null,
       styles: [],
+      // Der Tiefe-Regler des Baukastens steckt bereits in der Referenz —
+      // die dauerhaften Klangregler bleiben deshalb unbesetzt und werden
+      // erst in der Stimmenverwaltung gesetzt.
+      sound: null,
     };
     setBusy(true);
     setError(null);

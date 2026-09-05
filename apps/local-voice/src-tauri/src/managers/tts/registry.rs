@@ -50,6 +50,10 @@ pub struct VoiceMeta {
     pub default_style: Option<String>,
     #[serde(default)]
     pub styles: Vec<VoiceStyle>,
+    /// Dauerhafte Klangregler dieser Stimme — gelten bei JEDEM Vorlesen, nicht
+    /// nur im Baukasten.
+    #[serde(default)]
+    pub sound: Option<VoiceSound>,
     /// Catch-all fuer Felder, die diese Version nicht kennt. OHNE das
     /// waere `write_meta` verlustbehaftet: eine AELTERE App-Version wuerde
     /// beim naechsten Speichern jedes Feld einer NEUEREN stillschweigend
@@ -88,6 +92,53 @@ pub struct VoiceStyle {
     /// [`super::voices::style_dir`].
     #[serde(default)]
     pub reference: Option<String>,
+}
+
+/// Dauerhafte Klangregler einer Stimme. Beide Werte wirken beim Abspielen,
+/// nicht bei der Synthese: das Tempo ueber dieselbe Resampling-Stufe, die auch
+/// der Nutzerregler benutzt (multiplikativ zu ihm, siehe
+/// `TtsCore::voice_speed`), die Lautheit als zusaetzlicher Faktor NACH der
+/// Normalisierung (siehe `TtsCore::playback_gain`).
+///
+/// Grenzen wie beim Nutzerregler (`PlaybackControls::set_speed`): Tempo per
+/// Resampling zieht die Tonhoehe mit, ausserhalb 0,5..2,0 klingt es nicht mehr
+/// nach der Stimme. `gain_db` bleibt bei +-12 dB, weil die
+/// Aussteuerungsgrenze ohnehin das letzte Wort hat.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct VoiceSound {
+    /// Wiedergabetempo, 0,5 bis 2,0. 1,0 = unveraendert.
+    pub speed: f32,
+    /// Zusaetzliche Lautstaerke in Dezibel, -12 bis +12. 0 = unveraendert.
+    pub gain_db: f32,
+}
+
+/// Erlaubter Tempobereich (einschliesslich), identisch zum Nutzerregler.
+pub const SOUND_SPEED_RANGE: (f32, f32) = (0.5, 2.0);
+/// Erlaubte Lautheitskorrektur in dB (einschliesslich).
+pub const SOUND_GAIN_DB_RANGE: (f32, f32) = (-12.0, 12.0);
+
+impl VoiceSound {
+    /// Faktor aus `gain_db`: 0 dB = 1,0, +6 dB ~ 2,0. Nicht endliche Werte
+    /// ergeben 1,0 — eine kaputte `meta.json` darf die Wiedergabe nicht
+    /// stummschalten oder uebersteuern.
+    pub fn gain_factor(&self) -> f32 {
+        if self.gain_db.is_finite() {
+            10f32.powf(self.gain_db / 20.0)
+        } else {
+            1.0
+        }
+    }
+
+    /// Tempofaktor, auf den zulaessigen Bereich begrenzt. Aus demselben Grund
+    /// wehrhaft wie [`Self::gain_factor`]: gelesen wird, was auf der Platte
+    /// steht, nicht nur was `validate_meta` durchgelassen hat.
+    pub fn speed_factor(&self) -> f32 {
+        if self.speed.is_finite() {
+            self.speed.clamp(SOUND_SPEED_RANGE.0, SOUND_SPEED_RANGE.1)
+        } else {
+            1.0
+        }
+    }
 }
 
 /// Herkunft einer Stimme: aus einem Seed abgeleitet (Standardstimme
@@ -233,6 +284,7 @@ pub fn default_meta(id: &str, all_ids: &[String]) -> VoiceMeta {
         default_tags: Vec::new(),
         default_style: None,
         styles: Vec::new(),
+        sound: None,
         extra: serde_json::Map::new(),
     }
 }
@@ -265,6 +317,22 @@ pub fn validate_meta(meta: &VoiceMeta, others: &[(String, String)]) -> Result<()
         if other_id.to_lowercase() == lower || other_name.to_lowercase() == lower {
             return Err(format!(
                 "der Anzeigename '{name}' wird bereits von '{other_id}' verwendet"
+            ));
+        }
+    }
+    if let Some(sound) = &meta.sound {
+        let (speed_min, speed_max) = SOUND_SPEED_RANGE;
+        if !sound.speed.is_finite() || !(speed_min..=speed_max).contains(&sound.speed) {
+            return Err(format!(
+                "Tempo muss zwischen {speed_min} und {speed_max} liegen (war: {})",
+                sound.speed
+            ));
+        }
+        let (gain_min, gain_max) = SOUND_GAIN_DB_RANGE;
+        if !sound.gain_db.is_finite() || !(gain_min..=gain_max).contains(&sound.gain_db) {
+            return Err(format!(
+                "Lautstaerke muss zwischen {gain_min} und {gain_max} dB liegen (war: {})",
+                sound.gain_db
             ));
         }
     }
@@ -540,6 +608,10 @@ mod tests {
                 tags: vec!["whisper".to_string()],
                 reference: Some("__style_anna_fluesternd".to_string()),
             }],
+            sound: Some(VoiceSound {
+                speed: 1.1,
+                gain_db: -3.0,
+            }),
             extra: serde_json::Map::new(),
         };
         write_meta(fish, "anna", &meta).unwrap();
@@ -605,7 +677,15 @@ mod tests {
             default_tags: Vec::new(),
             default_style: None,
             styles: Vec::new(),
+            sound: None,
             extra: serde_json::Map::new(),
+        }
+    }
+
+    fn meta_with_sound(sound: VoiceSound) -> VoiceMeta {
+        VoiceMeta {
+            sound: Some(sound),
+            ..meta_named("Anna")
         }
     }
 
@@ -826,5 +906,117 @@ mod tests {
             resolve_style_target(fish, "anna", "fluesternd").unwrap(),
             ("anna".to_string(), "fluesternd".to_string())
         );
+    }
+
+    // ---- Klangregler (`sound`) -------------------------------------------
+
+    #[test]
+    fn alte_meta_json_ohne_sound_liest_weiter() {
+        // Bestandsdatei aus der Zeit vor den Klangreglern: `sound` fehlt
+        // ganz. Sie muss weiter lesbar sein UND das fehlende Feld darf NICHT
+        // im `extra`-Catch-all landen (sonst schriebe der naechste Speichern
+        // ein doppeltes `sound` in die Datei).
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        let voice_dir = fish.join("references").join("olga");
+        std::fs::create_dir_all(&voice_dir).unwrap();
+        std::fs::write(
+            voice_dir.join("meta.json"),
+            r#"{"version":1,"display_name":"Olga","color":"rose"}"#,
+        )
+        .unwrap();
+
+        let meta = read_meta(fish, "olga");
+        assert_eq!(meta.sound, None);
+        assert!(!meta.extra.contains_key("sound"));
+    }
+
+    #[test]
+    fn sound_landet_als_benanntes_feld_und_nicht_im_extra() {
+        // Gegenprobe zum Catch-all: `#[serde(flatten)] extra` darf ein
+        // BEKANNTES Feld nicht einsammeln — sonst stuende `sound` nach einem
+        // Read->Write zweimal in der Datei.
+        let meta = meta_with_sound(VoiceSound {
+            speed: 1.25,
+            gain_db: 4.0,
+        });
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["sound"]["speed"], serde_json::json!(1.25));
+        let back: VoiceMeta = serde_json::from_value(json).unwrap();
+        assert_eq!(back, meta);
+        assert!(back.extra.is_empty());
+    }
+
+    #[test]
+    fn sound_ueberlebt_schreiben_und_lesen() {
+        let dir = tempfile::tempdir().unwrap();
+        let fish = dir.path();
+        let meta = meta_with_sound(VoiceSound {
+            speed: 0.85,
+            gain_db: -2.5,
+        });
+        write_meta(fish, "anna", &meta).unwrap();
+        assert_eq!(read_meta(fish, "anna").sound, meta.sound);
+    }
+
+    #[test]
+    fn validate_meta_akzeptiert_die_reglergrenzen() {
+        for (speed, gain_db) in [(0.5, -12.0), (2.0, 12.0), (1.0, 0.0)] {
+            assert!(
+                validate_meta(&meta_with_sound(VoiceSound { speed, gain_db }), &[]).is_ok(),
+                "({speed}, {gain_db}) haette durchgehen muessen"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_meta_lehnt_tempo_und_lautstaerke_ausserhalb_der_grenzen_ab() {
+        for (speed, gain_db) in [
+            (0.1, 0.0),
+            (3.0, 0.0),
+            (1.0, 20.0),
+            (1.0, -20.0),
+            (f32::NAN, 0.0),
+            (1.0, f32::NAN),
+            (f32::INFINITY, 0.0),
+        ] {
+            assert!(
+                validate_meta(&meta_with_sound(VoiceSound { speed, gain_db }), &[]).is_err(),
+                "({speed}, {gain_db}) haette abgelehnt werden muessen"
+            );
+        }
+    }
+
+    #[test]
+    fn gain_db_wird_zum_richtigen_faktor() {
+        let factor = |gain_db| {
+            VoiceSound {
+                speed: 1.0,
+                gain_db,
+            }
+            .gain_factor()
+        };
+        assert!((factor(0.0) - 1.0).abs() < 1e-6);
+        // +6 dB ist knapp das Doppelte, -6 dB knapp die Haelfte.
+        assert!((factor(6.0) - 1.995).abs() < 0.01);
+        assert!((factor(-6.0) - 0.501).abs() < 0.01);
+        assert!((factor(12.0) - 3.981).abs() < 0.01);
+        // Kaputte Datei: kein Faktor statt eines unendlichen.
+        assert_eq!(factor(f32::NAN), 1.0);
+    }
+
+    #[test]
+    fn speed_factor_begrenzt_was_auf_der_platte_steht() {
+        let speed = |speed| {
+            VoiceSound {
+                speed,
+                gain_db: 0.0,
+            }
+            .speed_factor()
+        };
+        assert_eq!(speed(1.2), 1.2);
+        assert_eq!(speed(9.0), 2.0);
+        assert_eq!(speed(0.01), 0.5);
+        assert_eq!(speed(f32::NAN), 1.0);
     }
 }

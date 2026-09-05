@@ -1909,6 +1909,51 @@ async ttsBuilderCommit(id: string, meta: VoiceMeta) : Promise<Result<string, str
 }
 },
 /**
+ * Eine Stimme als .lvvoice-Archiv schreiben.
+ */
+async ttsExportVoice(id: string, outPath: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_export_voice", { id, outPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Was in einem Archiv steckt, ohne es auszupacken — fuer die Vorschau.
+ */
+async ttsInspectVoiceArchive(archivePath: string) : Promise<Result<VoiceMeta, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_inspect_voice_archive", { archivePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Archiv als neue Stimme einspielen; liefert die vergebene voice_id.
+ */
+async ttsImportVoiceArchive(archivePath: string, displayNameOverride: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_import_voice_archive", { archivePath, displayNameOverride }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die voice_id einer Stimme aendern — ein Umzug, kein Feld. Liefert die
+ * neue voice_id.
+ */
+async ttsRenameVoiceId(oldId: string, newDisplayName: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_rename_voice_id", { oldId, newDisplayName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stub implementation for non-macOS platforms
  * Always returns false since laptop detection is macOS-specific
  */
@@ -2427,8 +2472,24 @@ display_name: string;
 /**
  * Palette-Key (`"teal"`, `"rose"`, …), KEIN Hex-Wert.
  */
-color: string; avatar: Avatar | null; language: string | null; description: string | null; default_tags: string[]; default_style: string | null; styles: VoiceStyle[] }
+color: string; avatar: Avatar | null; language: string | null; description: string | null; default_tags: string[]; default_style: string | null; styles: VoiceStyle[]; 
+/**
+ * Dauerhafte Klangregler dieser Stimme — gelten bei JEDEM Vorlesen.
+ */
+sound: VoiceSound | null }
 export type VoiceOrigin = { kind: "seed"; value: number } | { kind: "recording" }
+/**
+ * Dauerhafte Klangregler einer Stimme.
+ */
+export type VoiceSound = { 
+/**
+ * Wiedergabetempo, 0,5 bis 2,0. 1,0 = unveraendert.
+ */
+speed: number; 
+/**
+ * Zusaetzliche Lautstaerke in Dezibel, -12 bis +12. 0 = unveraendert.
+ */
+gain_db: number }
 /**
  * Ein benannter Stil einer Stimme (z. B. „fluesternd").
  */
