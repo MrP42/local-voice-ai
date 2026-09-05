@@ -28,8 +28,15 @@ enum LocalProviders {
         let results = Task {
             var text = ""
             for try await result in transcriber.results { text += String(result.text.characters) }
+            try Task.checkCancellation()
             return text
         }
+        let deadline = Task {
+            do { try await Task.sleep(for: .seconds(60)) } catch { return }
+            results.cancel()
+            await analyzer.cancelAndFinishNow()
+        }
+        defer { deadline.cancel() }
         do {
             let file = try AVAudioFile(forReading: url)
             try await analyzer.start(inputAudioFile: file, finishAfterFile: true)
