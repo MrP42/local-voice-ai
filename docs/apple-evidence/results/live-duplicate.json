@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "test": "Watch replays oldest capture over WCSession and receives nonempty response",
+  "phoneEntries": 220,
+  "checks": [
+    "unchanged journal IDs",
+    "unchanged persisted capture receipts",
+    "unchanged audio digests",
+    "unchanged reply IDs"
+  ],
+  "elapsedSeconds": 3.5532944440000005
+}

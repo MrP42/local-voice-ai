@@ -50,10 +50,10 @@ Watch verwendet ausschließlich native Aufnahme, Transport und System-TTS.
 | Handgelenk gesenkt | OFFEN | Simulator-Wrist-Down-Steuerung noch nicht geprüft |
 | Verbindung unterbrochen/wiederhergestellt | PASS im Simulator: iPhone heruntergefahren, neu gestartet, alle 100 abgeschlossen | kein physischer Funknachweis |
 | Neustart während Übertragung | PASS: Watch nach erstem dauerhaftem 32-KiB-Teil beendet; 142099-Byte-Aufnahme nach Neustart vollständig angenommen | kein Stromausfalltest |
-| Doppelte Nachrichten | Kern-PASS: stabile IDs/Quittungen; Live-Replay ausgeführt | Kern-Aussagen nicht mit Netzwerkliefergarantie gleichsetzen |
+| Doppelte Nachrichten | PASS: frischer WCSession-Replay, nichtleere Antwort; alle 220 iPhone-IDs, Quittungen, Audio-Digests und Antwort-IDs unverändert | ein gezielter Live-Replay plus Kerntests |
 | Mikrofon verweigert | PASS: tatsächlicher Berechtigungspfad, Ereignis microphone_denied | simulatorgesteuerte Berechtigungsänderung |
 | Aufnahme starten/stoppen | PASS: nativer Watch-UI-Test und 30-Sekunden-Recorderprobe, dauerhaft gesichert | Mikrofonhardware der Watch nicht simuliert |
-| Audio unterbrochen | TEILWEISE: gezielter Synthesizer-Stop auf iPhone, Antworten bleiben erhalten | Watch-Anruf-/Routenunterbrechung offen |
+| Audio unterbrochen | PASS für gezielten Stop auf iPhone und Watch: frischer Watch-Startcallback, Stop, alle 217 bestehenden Antworten unverändert | Anruf-/Routenunterbrechung weiterhin offen |
 | Speicherlimit/Versionsfehler/korruptes Audio | PASS im Kern: keine Annahmequittung und keine Überschreibung | kein voller physischer Datenträger |
 | Modelle fehlen | PASS: Aufnahme bleibt deferred | explizite lokale Modellinstallation erforderlich |
 
@@ -106,3 +106,13 @@ Der angefragte externe Claude-Code-Review wurde von der automatischen Freigabepr
 wegen fehlender ausdrücklicher Zustimmung zur Übermittlung der vier konkreten privaten
 Quelldateien abgelehnt. Kein Claude-Review wurde durchgeführt.
 P2 wird in `P2-follow-up.md` geplant; spätere Produktstufen werden nicht umgesetzt.
+
+### Zusätzliche gezielte Simulatorprüfungen
+
+`results/watch-playback-stop.json`: Watch mit `--interrupt-playback` gestartet;
+frischer TTS-Startcallback und frisches `playback_stopped`-Ereignis, alle vorhandenen
+Eintrags-IDs, Audio-Digests und Antworttexte erhalten. Kein simulierter Telefonanruf.
+`results/live-duplicate.json`: aktive Phone-App und Watch mit `--replay-capture`;
+nichtleere Transportantwort sowie unveränderte iPhone-IDs, persistente Quittungen,
+Audio-Digests und Antwort-IDs. Die 217/220 Gesamteinträge enthalten zusätzliche
+Einzelprüfungen und sind nicht die abgegrenzte 100-Turn-Stichprobe.
