@@ -291,6 +291,7 @@
       "emptyFavorites": "Noch keine Favoriten — Stern auf einem Tag anklicken, um es hier anzuheften.",
       "emptyRecent": "Noch nichts benutzt.",
       "emptySearch": "Keine Tags gefunden.",
+      "freeText": "Freitext „{{tag}}“ — kein bekanntes Tag. Das Modell liest es womöglich vor, statt ihm zu folgen.",
       "favoriteAdd": "„{{tag}}“ zu Favoriten hinzufügen",
       "favoriteRemove": "„{{tag}}“ aus Favoriten entfernen"
     },

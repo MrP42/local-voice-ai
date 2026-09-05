@@ -291,6 +291,7 @@
       "emptyFavorites": "No favorites yet — click the star on a tag to pin it here.",
       "emptyRecent": "Nothing used yet.",
       "emptySearch": "No tags match your search.",
+      "freeText": "Free text “{{tag}}” — not a known tag. The model may read it aloud instead of following it.",
       "favoriteAdd": "Add \"{{tag}}\" to favorites",
       "favoriteRemove": "Remove \"{{tag}}\" from favorites"
     },
