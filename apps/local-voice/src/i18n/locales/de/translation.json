@@ -323,7 +323,15 @@
       "recipes": "Mit einer Figur beginnen",
       "seedNote": "Fish-Speech kann eine Stimme nicht aus einer Beschreibung bauen — jeder Kandidat ist eine andere Zufallsstimme. Die Beschreibung prägt Probesatz, Tags und die gespeicherten Angaben.",
       "errorNoServer": "Der Sprachserver läuft nicht — starte ihn auf der Vorlesen-Seite.",
-      "errorNoCandidate": "Wähle zuerst einen Kandidaten."
+      "errorNoCandidate": "Wähle zuerst einen Kandidaten.",
+      "addWav": "Eigene Aufnahme verwenden",
+      "addWavHint": "Der zuverlässige Weg, wenn die Lotterie den gewünschten Charakter nicht trifft: eine eigene WAV-Aufnahme wird direkt zum Kandidaten.",
+      "wavFilter": "WAV-Datei",
+      "trimStartLabel": "ab Sekunde",
+      "trimEndLabel": "bis Sekunde",
+      "trimHint": "Leer nimmt die ganze Datei. Ideal sind 10 bis 30 Sekunden; Längeres wird auf 30 Sekunden gekappt.",
+      "sourceRecording": "Aufnahme",
+      "sourceImport": "Datei"
     },
     "voiceEdit": {
       "open": "Bearbeiten",

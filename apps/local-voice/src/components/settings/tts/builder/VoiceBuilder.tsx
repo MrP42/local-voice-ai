@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Trash2, Wand2 } from "lucide-react";
+import { FileAudio, Loader2, Trash2, Wand2 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { commands, type VoiceMeta } from "@/bindings";
 import { VOICE_RECIPES } from "@/lib/voices/recipes";
 import { voiceColor } from "@/lib/voices/palette";
@@ -39,6 +40,16 @@ export const VoiceBuilder: React.FC<{ onSaved: (voiceId: string) => void }> = ({
   // scheitert ein Lauf, steht neben der technischen Meldung der Hinweis, wo
   // der Server gestartet wird — sonst sieht man nur eine leere Liste.
   const [serverHint, setServerHint] = useState(false);
+  // Der Zuschnitt bleibt als Text im Zustand: ein leeres Feld ist ein
+  // gueltiger Zwischenstand, `number | null` wuerde beim Tippen stolpern.
+  const [trimStart, setTrimStart] = useState("");
+  const [trimEnd, setTrimEnd] = useState("");
+
+  /** Leeres oder unsinniges Feld heisst 0 — und 0/0 nimmt die ganze Datei. */
+  const seconds = (value: string): number => {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
 
   const startFromRecipe = async (recipeId: string) => {
     const recipe = VOICE_RECIPES.find((r) => r.id === recipeId);
@@ -97,6 +108,44 @@ export const VoiceBuilder: React.FC<{ onSaved: (voiceId: string) => void }> = ({
     } finally {
       setBusy(false);
       setProgress(null);
+      reloadDrafts();
+    }
+  };
+
+  // Eine eigene Aufnahme einspielen. Anders als beim Wuerfeln ist kein
+  // Sprachserver beteiligt — deshalb hier auch kein Serverhinweis bei Fehlern.
+  const addWav = async () => {
+    if (!draft) return;
+    let picked: string | string[] | null = null;
+    try {
+      picked = await open({
+        multiple: false,
+        filters: [{ name: t("tts.builder.wavFilter"), extensions: ["wav"] }],
+      });
+    } catch (e) {
+      setError(asMessage(e));
+      return;
+    }
+    if (typeof picked !== "string") return;
+    setBusy(true);
+    setError(null);
+    setServerHint(false);
+    try {
+      const res = await commands.ttsBuilderAddWav(
+        draft.id,
+        picked,
+        seconds(trimStart),
+        seconds(trimEnd),
+      );
+      if (res.status === "ok") {
+        setDraft(res.data);
+      } else {
+        setError(res.error);
+      }
+    } catch (e) {
+      setError(asMessage(e));
+    } finally {
+      setBusy(false);
       reloadDrafts();
     }
   };
@@ -311,6 +360,14 @@ export const VoiceBuilder: React.FC<{ onSaved: (voiceId: string) => void }> = ({
                 })
               : t("tts.builder.generate")}
           </Button>
+          <Button
+            variant="secondary"
+            onClick={() => void addWav()}
+            disabled={busy}
+          >
+            <FileAudio width={15} height={15} aria-hidden="true" />
+            {t("tts.builder.addWav")}
+          </Button>
           {busy && (
             <Button
               variant="ghost"
@@ -320,6 +377,42 @@ export const VoiceBuilder: React.FC<{ onSaved: (voiceId: string) => void }> = ({
             </Button>
           )}
         </div>
+
+        <p className="text-[11px] leading-4 text-text/45">
+          {t("tts.builder.addWavHint")}
+        </p>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <label className="text-xs text-text/60" htmlFor="builder-trim-start">
+            {t("tts.builder.trimStartLabel")}
+          </label>
+          <Input
+            id="builder-trim-start"
+            type="number"
+            min={0}
+            step={1}
+            variant="compact"
+            value={trimStart}
+            onChange={(e) => setTrimStart(e.target.value)}
+            className="w-20"
+          />
+          <label className="text-xs text-text/60" htmlFor="builder-trim-end">
+            {t("tts.builder.trimEndLabel")}
+          </label>
+          <Input
+            id="builder-trim-end"
+            type="number"
+            min={0}
+            step={1}
+            variant="compact"
+            value={trimEnd}
+            onChange={(e) => setTrimEnd(e.target.value)}
+            className="w-20"
+          />
+        </div>
+        <p className="text-[11px] leading-4 text-text/45">
+          {t("tts.builder.trimHint")}
+        </p>
 
         <p className="text-xs font-semibold tracking-wide text-text/40 uppercase">
           {t("tts.builder.candidates")}

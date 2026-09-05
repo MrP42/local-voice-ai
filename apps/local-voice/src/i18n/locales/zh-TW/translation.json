@@ -81,7 +81,15 @@
       "recipes": "Start from a character",
       "seedNote": "Fish-Speech cannot build a voice from a description — each candidate is a different random voice. The description shapes the sample sentence, the tags and the saved metadata.",
       "errorNoServer": "The speech server is not running — start it on the Read aloud page.",
-      "errorNoCandidate": "Pick a candidate first."
+      "errorNoCandidate": "Pick a candidate first.",
+      "addWav": "Use your own recording",
+      "addWavHint": "The reliable route when the lottery never hits the character you want: your own WAV file becomes a candidate directly.",
+      "wavFilter": "WAV file",
+      "trimStartLabel": "from second",
+      "trimEndLabel": "to second",
+      "trimHint": "Leave empty to use the whole file. 10 to 30 seconds work best; anything longer is trimmed to 30 seconds.",
+      "sourceRecording": "Recording",
+      "sourceImport": "File"
     },
     "voiceEdit": {
       "open": "Edit",

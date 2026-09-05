@@ -13,8 +13,16 @@ export const CandidateCard: React.FC<{
 }> = ({ draftId, candidate, chosen, onChoose, onError }) => {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
+  // Nur ein gewuerfelter Kandidat traegt eine Seed-Nummer, die etwas bedeutet.
+  // Bei einer eingespielten Datei adressiert die Zahl den Kandidaten bloss
+  // intern — sie als "#123" zu zeigen, wuerde eine Wuerfelstimme vortaeuschen.
   // Kein JSX-Literal: die Raute ist Auszeichnung, kein uebersetzbarer Text.
-  const seedLabel = `#${candidate.seed}`;
+  const originLabel =
+    candidate.source === "Seed"
+      ? `#${candidate.seed}`
+      : candidate.source === "Recording"
+        ? t("tts.builder.sourceRecording")
+        : t("tts.builder.sourceImport");
 
   // Die Bytes kommen bei JEDEM Abspielen frisch: der Tiefe-Regler kann
   // sich zwischendurch geaendert haben, und ein zwischengespeicherter
@@ -62,7 +70,7 @@ export const CandidateCard: React.FC<{
         <Play width={16} height={16} aria-hidden="true" />
       </button>
       <span className="min-w-0 flex-1 truncate text-xs text-text/45">
-        {seedLabel}
+        {originLabel}
       </span>
       <Button
         size="sm"
