@@ -222,6 +222,46 @@ schlüsselt bereits je Stimme, der Player skaliert das Tempo live.
 Eigene Etappe, weil es als einziger Teil in die Vorlese-Pipeline eingreift und
 deshalb eigene Tests und eine eigene Hörprobe braucht.
 
+## 7b. Etappe 5 — Stimmen verwalten: umbenennen, bearbeiten, exportieren, importieren
+
+Nachgereicht von Patrick am 05.09.2026. Betrifft alle Stimmen, egal aus welcher
+Quelle.
+
+**Bearbeiten** heisst: Anzeigename, Farbe, Beschreibung, Sprache, Default-Tags
+und Stile aendern. Das ist reines Schreiben in die `meta.json`; Commands und
+Validierung existieren bereits (`tts_get_voice_meta`, `tts_set_voice_meta`,
+`registry::validate_meta`). Es fehlt nur die Oberflaeche — das ist das seit
+v0.14.0 offene Paket S2 (Stimmen-UI v2).
+
+**Umbenennen** hat zwei Ebenen, die auseinandergehalten werden muessen:
+
+- Der **Anzeigename** steht in der `meta.json` und ist frei aenderbar. Aber:
+  Sprecher-Marker in gespeicherten Texten (`<Anna>`, `Anna:`) loesen ueber
+  genau diesen Namen auf. Wer umbenennt, entwertet die Marker in seinen Texten
+  — die Oberflaeche muss davor warnen und den alten Namen als Alias anbieten,
+  statt es stillschweigend geschehen zu lassen.
+- Die **voice_id** ist der Ordnername und steckt zusaetzlich in der Einstellung
+  `tts_voice`, in `seed.txt`-Nachbarschaft und im WAV-Cache-Schluessel. Ein
+  Umbenennen der id ist deshalb ein Umzug: Ordner verschieben, Einstellung
+  nachziehen, Cache-Eintraege dieser Stimme verwerfen. Angeboten wird es nur
+  ausdruecklich, nicht als Nebenwirkung des Anzeigenamens.
+
+**Exportieren**: eine Stimme als ein einzelnes `.lvvoice`-Archiv (ZIP mit
+`meta.json`, `sample.wav`, `sample.lab`, Avatar und `seed.txt`, falls
+vorhanden). Das `zip`-Crate ist vorhanden und wird im Meeting-Export bereits
+so benutzt (`managers/meetings/export.rs`) — dasselbe Muster, kein neues
+Werkzeug. Dateidialog ueber `tauri-plugin-dialog`, das schon eingebunden ist.
+
+**Importieren**: dasselbe Archiv zurueck. Beim Import wird geprueft, ob der
+Anzeigename schon vergeben ist (`registry::other_voice_names` +
+`validate_meta`), und bei Kollision ein neuer Name vorgeschlagen statt die
+vorhandene Stimme zu ueberschreiben. Ein Archiv mit Pfaden ausserhalb des
+Zielordners wird abgelehnt (Zip-Slip); der Meeting-Export-Code hat dafuer
+bereits die Haltung, die uebernommen wird.
+
+Damit wird eine Stimme teilbar: erschaffen auf einem Rechner, benutzt auf
+einem anderen — und ein Backup der eigenen Stimmen ist eine Datei je Stimme.
+
 ## 8. Was NICHT gebaut wird
 
 - Keine Anbindung der Fish-Audio-Cloud (Voice Design, Discovery-TTS).
@@ -251,5 +291,6 @@ deshalb eigene Tests und eine eigene Hörprobe braucht.
 | 2 Referenz-Import | 60–80 kTok |
 | 3 Bibliothek | 80–110 kTok |
 | 4 Klangregler | 80–100 kTok |
+| 5 Verwalten (umbenennen, bearbeiten, exportieren, importieren) | 90–120 kTok |
 
 Meldung bei 50 % und 80 % des jeweiligen Etappenrahmens.
