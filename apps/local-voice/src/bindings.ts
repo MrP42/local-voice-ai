@@ -1523,6 +1523,13 @@ async ttsListVoices() : Promise<Result<string[], string>> {
 }
 },
 /**
+ * Alle Stimmen samt Metadaten (Anzeigename, Farbe, Stile) — Grundlage der
+ * Sprecher-Chips im Vorlese-Editor und der Stimmenuebersicht.
+ */
+async ttsListVoiceInfos() : Promise<VoiceInfo[]> {
+    return await TAURI_INVOKE("tts_list_voice_infos");
+},
+/**
  * Erzeugt die Hoerprobe beim ersten Aufruf (und erneut, wenn die Stimme
  * neu aufgenommen wurde); danach kommt sie aus dem Cache. Braucht den
  * Fish-Speech-Server, der bei Bedarf gestartet wird — der erste Aufruf kann
@@ -2310,6 +2317,33 @@ export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "x
 /**
  * Hoerprobe einer Stimme: derselbe Demotext, mit dieser Stimme erzeugt.
  */
+export type Avatar = { kind: "image"; file: string } | { kind: "icon"; name: string }
+/**
+ * Eine Stimme mit ihren Metadaten, fuer die Stimmenuebersicht und die
+ * Sprecher-Chips.
+ */
+export type VoiceInfo = { id: string; meta: VoiceMeta; origin: VoiceOrigin; 
+/**
+ * Absoluter Pfad zur Avatar-Datei, falls eine existiert.
+ */
+avatar_path: string | null }
+/**
+ * Metadaten einer Referenzstimme (`meta.json` im Stimmenordner).
+ */
+export type VoiceMeta = { version: number; 
+/**
+ * Freier Anzeigename (Umlaute erlaubt) — NICHT die voice_id.
+ */
+display_name: string; 
+/**
+ * Palette-Key (`"teal"`, `"rose"`, …), KEIN Hex-Wert.
+ */
+color: string; avatar: Avatar | null; language: string | null; description: string | null; default_tags: string[]; default_style: string | null; styles: VoiceStyle[] }
+export type VoiceOrigin = { kind: "seed"; value: number } | { kind: "recording" }
+/**
+ * Ein benannter Stil einer Stimme (z. B. „fluesternd").
+ */
+export type VoiceStyle = { id: string; name: string; tags: string[]; reference: string | null }
 export type VoiceSample = { 
 /**
  * Absoluter Pfad zur WAV — die Oberflaeche spielt sie ueber das

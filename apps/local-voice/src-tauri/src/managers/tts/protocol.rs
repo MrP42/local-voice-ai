@@ -206,15 +206,6 @@ pub fn looks_like_wav(bytes: &[u8]) -> bool {
 /// Ein Schnitt passiert nur an `.!?…` vor Whitespace UND wenn das bisherige
 /// Stück mindestens 15 Zeichen hat — das lässt deutsche Abkürzungen
 /// („z. B.", „Dr.") zusammen, statt sie als Mini-Sätze vorzulesen.
-/// Ein Stück Vorlesetext mit der Stimme, die es sprechen soll.
-/// `voice == None` heißt „die eingestellte Stimme" — so klingt ein Text ohne
-/// jede Sprechermarkierung genau wie vorher.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VoiceSegment {
-    pub voice: Option<String>,
-    pub text: String,
-}
-
 /// Eine bekannte Stimme: `id` ist der voice_id-Wert fürs Backend, `names`
 /// alle Anzeigenamen/Aliase, gegen die Sprecher-Marker im Text abgeglichen
 /// werden (z. B. Vorname und vollständiger Anzeigename).
@@ -408,26 +399,6 @@ pub fn split_speaker_segments(text: &str, speakers: &[KnownSpeaker]) -> Vec<Spea
     segments
 }
 
-/// Dünner Wrapper um [`split_speaker_segments`]: nackte Stimmen-Ids dienen
-/// zugleich als ihr einziger Name, damit alle bestehenden Aufrufer und Tests
-/// unverändert funktionieren.
-pub fn split_voice_segments(text: &str, known_voices: &[String]) -> Vec<VoiceSegment> {
-    let speakers: Vec<KnownSpeaker> = known_voices
-        .iter()
-        .map(|id| KnownSpeaker {
-            id: id.clone(),
-            names: vec![id.clone()],
-        })
-        .collect();
-    split_speaker_segments(text, &speakers)
-        .into_iter()
-        .map(|segment| VoiceSegment {
-            voice: segment.voice,
-            text: segment.text,
-        })
-        .collect()
-}
-
 /// Tag-bewusst: Satzzeichen INNERHALB eines Tag-Spans (`[…]`) beenden nie
 /// einen Satz, damit Freitext-Tags wie `[dead tired, end of a long shift.]`
 /// nicht mittendrin zerschnitten werden. Die Mindestchunk-Länge zählt über
@@ -543,12 +514,12 @@ mod tests {
 
     #[test]
     fn sprecherzeilen_schalten_die_stimme_um() {
-        let voices = vec!["olga".to_string(), "patrick".to_string()];
+        let voices = ids(&["olga", "patrick"]);
         let text = "Vorspann ohne Sprecher.
 olga: Guten Morgen.
 Wie geht es dir?
 patrick: Danke, gut.";
-        let segments = split_voice_segments(text, &voices);
+        let segments = split_speaker_segments(text, &voices);
         assert_eq!(segments.len(), 3);
         assert_eq!(segments[0].voice, None, "Text vor der ersten Markierung");
         assert_eq!(segments[0].text, "Vorspann ohne Sprecher.");
@@ -565,8 +536,8 @@ Wie geht es dir?",
 
     #[test]
     fn ein_gewoehnlicher_doppelpunkt_ist_keine_sprecherzeile() {
-        let voices = vec!["olga".to_string()];
-        let segments = split_voice_segments("Achtung: nicht vergessen.", &voices);
+        let voices = ids(&["olga"]);
+        let segments = split_speaker_segments("Achtung: nicht vergessen.", &voices);
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].voice, None);
         assert_eq!(
@@ -577,8 +548,8 @@ Wie geht es dir?",
 
     #[test]
     fn sprechernamen_sind_gross_klein_egal_und_duerfen_leer_ausgehen() {
-        let voices = vec!["Olga".to_string()];
-        let segments = split_voice_segments(
+        let voices = ids(&["Olga"]);
+        let segments = split_speaker_segments(
             "OLGA:
 Erste Zeile.",
             &voices,
@@ -594,7 +565,7 @@ Erste Zeile.",
 
     #[test]
     fn ohne_bekannte_stimmen_bleibt_alles_ein_stueck() {
-        let segments = split_voice_segments(
+        let segments = split_speaker_segments(
             "olga: Hallo.
 patrick: Hi.",
             &[],
@@ -758,6 +729,18 @@ patrick: Hi.",
 
     // ---- Teil 2: Sprecher-Parser ---------------------------------------
 
+    /// Bekannte Stimmen aus nackten Ids — die id ist dann zugleich ihr
+    /// einziger Name. Genau so sah der Abgleich vor der Sprecher-Registry
+    /// aus; die Tests, die das Verhalten festhalten, brauchen ihn weiter.
+    fn ids(ids: &[&str]) -> Vec<KnownSpeaker> {
+        ids.iter()
+            .map(|id| KnownSpeaker {
+                id: (*id).to_string(),
+                names: vec![(*id).to_string()],
+            })
+            .collect()
+    }
+
     fn anna() -> KnownSpeaker {
         KnownSpeaker {
             id: "anna-id".to_string(),
@@ -872,23 +855,20 @@ patrick: Hi.",
     }
 
     #[test]
-    fn split_voice_segments_wrapper_verhaelt_sich_wie_bisher() {
-        let voices = vec!["olga".to_string(), "patrick".to_string()];
-        let text = "Vorspann ohne Sprecher.
-olga: Guten Morgen.
-Wie geht es dir?
-patrick: Danke, gut.";
-        let segments = split_voice_segments(text, &voices);
-        assert_eq!(segments.len(), 3);
-        assert_eq!(segments[0].voice, None);
-        assert_eq!(segments[0].text, "Vorspann ohne Sprecher.");
-        assert_eq!(segments[1].voice.as_deref(), Some("olga"));
-        assert_eq!(
-            segments[1].text,
-            "Guten Morgen.
-Wie geht es dir?"
-        );
-        assert_eq!(segments[2].voice.as_deref(), Some("patrick"));
-        assert_eq!(segments[2].text, "Danke, gut.");
+    /// Der Bruch, den diese Etappe geschlossen hat: die Pipeline gab dem
+    /// Parser nur die nackten voice_ids. Ein Marker mit dem ANZEIGENAMEN
+    /// schaltete deshalb nicht — und wurde, weil er kein Marker war, sogar
+    /// mit vorgelesen. Beides prueft dieser Test in einem.
+    fn anzeigename_schaltet_und_verschwindet_aus_dem_gesprochenen_text() {
+        let speakers = vec![frau_mueller()];
+        for text in ["Frau Müller: Guten Tag.", "<Frau Müller> Guten Tag."] {
+            let segments = split_speaker_segments(text, &speakers);
+            assert_eq!(segments.len(), 1, "{text}");
+            assert_eq!(segments[0].voice.as_deref(), Some("mueller-id"), "{text}");
+            assert_eq!(
+                segments[0].text, "Guten Tag.",
+                "der Marker darf nicht im gesprochenen Text landen"
+            );
+        }
     }
 }

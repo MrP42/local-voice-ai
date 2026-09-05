@@ -23,6 +23,7 @@ import {
   type ChipEditorSuggestion,
 } from "./editor/TtsChipEditor";
 import { useTagProvider } from "./tags/tagProvider";
+import { useSpeakerProvider } from "./speakers";
 import { TagPalette } from "./tags";
 import { AutoTagBar, resolveSuggestion } from "./tags/AutoTagBar";
 import { usePersistentState } from "../../../hooks/usePersistentState";
@@ -56,10 +57,15 @@ export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
-  /** Tag-Chips in allen drei Text-Reitern; der Sprecher-Provider eines
-   *  späteren Pakets kommt einfach mit in dieses Array. */
+  /** Tag- und Sprecher-Chips in allen drei Text-Reitern. Reihenfolge zählt
+   *  nur bei gleichem Startoffset — Tags (`[…]`) und Sprecher (`<…>`,
+   *  `Name:`) können sich nicht überschneiden. */
   const tagProvider = useTagProvider();
-  const chipProviders = useMemo(() => [tagProvider], [tagProvider]);
+  const speakerProvider = useSpeakerProvider();
+  const chipProviders = useMemo(
+    () => [tagProvider, speakerProvider],
+    [tagProvider, speakerProvider],
+  );
   /** Einfüge-API des Editors im AKTIVEN Reiter (es ist immer nur einer
    *  gemountet) — Ziel für Palette-Klick und Palette-Drag. */
   const editorApiRef = useRef<ChipEditorInsertApi | null>(null);

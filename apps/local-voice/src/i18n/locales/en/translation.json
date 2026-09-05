@@ -288,6 +288,14 @@
       "favoriteAdd": "Add \"{{tag}}\" to favorites",
       "favoriteRemove": "Remove \"{{tag}}\" from favorites"
     },
+    "speakers": {
+      "menuInsert": "Insert speaker",
+      "change": "Change speaker",
+      "changeHint": "A chosen speaker takes over this passage.",
+      "chipTitle": "{{name}} speaks from here",
+      "remove": "Remove speaker marker",
+      "empty": "No voices yet - record or import a voice under Voices first."
+    },
     "editor": {
       "tagPopoverAria": "Edit tag",
       "deleteTag": "Delete tag",

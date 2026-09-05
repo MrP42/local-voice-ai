@@ -1338,17 +1338,25 @@ impl TtsManager {
 
     /// Vorlesetext in Saetze samt Stimme zerlegen.
     ///
-    /// Beginnt eine Zeile mit dem Namen einer vorhandenen Stimme und einem
-    /// Doppelpunkt (`olga:`), spricht diese Stimme bis zur naechsten solchen
-    /// Zeile — daraus entsteht ein Dialog. Ohne jede Markierung ist das
+    /// Erkannt wird `<Name>` bzw. `<Name:Stil>` (inline oder am Zeilenanfang)
+    /// und das alte Zeilenformat `Name:` — jeweils gegen die Sprecher-Registry
+    /// (`known_speakers`), also gegen voice_id UND Anzeigename aus der
+    /// `meta.json`. Genau das war vorher der Bruch: der Parser bekam nur die
+    /// nackten Ids, weshalb `Anna:` nichts schaltete, wenn die Stimme intern
+    /// anders hiess — der Marker wurde dann sogar mit vorgelesen.
+    ///
+    /// Ein Marker gilt bis zum naechsten; ohne jede Markierung ist das
     /// Ergebnis Satz fuer Satz dasselbe wie vorher, nur mit `None` als Stimme.
     ///
     /// Satztrennung passiert INNERHALB eines Sprecherabschnitts: ein Satz darf
     /// nie zwei Sprecher enthalten, und die Pipeline holt den naechsten Satz
     /// bereits waehrend der vorige spielt — deshalb klingt der Wechsel fluessig.
+    ///
+    /// Der Stil aus `<Name:Stil>` wird geparst (und damit aus dem gesprochenen
+    /// Text entfernt), aber noch nicht aufgeloest — das ist Paket S5.
     fn utterances(&self, text: &str) -> Vec<Utterance> {
-        let known = self.list_voice_ids();
-        protocol::split_voice_segments(text, &known)
+        let speakers = self.known_speakers();
+        protocol::split_speaker_segments(text, &speakers)
             .into_iter()
             .flat_map(|segment| {
                 protocol::split_sentences(&segment.text)

@@ -79,8 +79,21 @@ Default-Tags; security-gehärtet), TTS-Engine-Abstraktion mit cache-stabiler Nah
 Piper-CPU-Engine + Katalog-Downloads mit SHA-Pins („Vorlesestimmen" auf der
 Modelle-Seite), s1-mini-Probeskript.
 
+**Nachgeliefert (unreleased, kommt mit v0.15.0):** Sprecher-Chips im Editor
+(S3) — `<Name>`/`<Name:Stil>` und das alte `Name:` am Zeilenanfang werden als
+farbiger Chip gezeigt, der Text bis zum nächsten Wechsel blass in der Farbe der
+Stimme hinterlegt; Chip-Klick öffnet die Sprecherauswahl, das Kontextmenü fügt
+Sprecher ein. Zugleich der Bruch dahinter geschlossen: die Vorlese-Pipeline gab
+dem Parser nur die nackten voice_ids, weshalb ein Marker mit dem ANZEIGENAMEN
+nicht schaltete und sogar mitgelesen wurde (`utterances` → `split_speaker_segments`
+über `known_speakers`).
+
 **Offener Rest (nächste Etappe, Briefs liegen im SDD-Workspace des Plans):**
-1. Sprecher-Chips im Editor (`<Name>`-Syntax, Validierung, Popover) — S3.
+1. Sprecher NUR mit Fish-Speech: `known_speakers` listet die geklonten Stimmen,
+   und die Piper-Engine ignoriert die Stimme je Satz (sie ist beim Auflösen an
+   EIN Modell gebunden). Mit Piper werden Marker also korrekt entfernt, aber
+   alles in einer Stimme gelesen. Mehrsprecher-Piper hieße: je Marker eine
+   eigene `PiperEngine` auflösen — eigenes Paket.
 2. Stimmen-UI v2 (VoicesCard: Meta/Stile/Analyse) — S2; Baukasten (Seed→Probe→
    Speichern) — S4; Stil-Auflösung in der Pipeline — S5.
 3. Blitz-Vorschau-UX + Telemetrie + „Text speichern" — E4-Preview; Export-Pfad

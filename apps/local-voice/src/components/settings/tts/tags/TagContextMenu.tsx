@@ -36,6 +36,9 @@ interface TagContextMenuProps {
   onPaste: () => void;
   /** Bekommt den fertigen Klammertext, z. B. `[whisper]`. */
   onInsertTag: (tagText: string) => void;
+  /** Eigene Abschnitte der Chip-Provider (z. B. „Sprecher einfügen"),
+   *  unterhalb des Tag-Bereichs. */
+  extraSections?: React.ReactNode;
 }
 
 /** Höchstens so viele Suchtreffer zeigt die Tag-Zeile im Menü. */
@@ -92,6 +95,7 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
   onCopy,
   onPaste,
   onInsertTag,
+  extraSections,
 }) => {
   const { t, i18n } = useTranslation();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
@@ -137,6 +141,29 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
       prev && prev.left === left && prev.top === top ? prev : { left, top },
     );
   }, [x, y, subOpen, results.length, favorites.length]);
+
+  // Ein Provider-Abschnitt (z. B. die Sprecherliste) klappt auf und macht das
+  // Menü höher — ohne Neuklemmen ragte es aus dem Fenster.
+  useEffect(() => {
+    const el = menuRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const height = el.offsetHeight;
+      setPos((prev) =>
+        prev
+          ? {
+              left: prev.left,
+              top: Math.min(
+                prev.top,
+                Math.max(8, window.innerHeight - height - 8),
+              ),
+            }
+          : prev,
+      );
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Erstfokus auf den ersten Menüpunkt; beim Aufklappen auf die Suchzeile.
   useEffect(() => {
@@ -327,6 +354,8 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
             </div>
           </div>
         )}
+
+        {extraSections}
       </div>
     </>,
     document.body,

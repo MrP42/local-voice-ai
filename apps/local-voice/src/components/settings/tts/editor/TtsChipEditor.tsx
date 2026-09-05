@@ -35,10 +35,17 @@ export interface ChipMatch {
 
 export interface ChipRenderSpec {
   label: string;
-  /** CSS-Custom-Property-Name (ohne führendes `--`) einer Palettenfarbe —
-   *  für Sprecher-Chips eines späteren Pakets. Ohne Token gilt das dezente
-   *  Gelb der Tag-Chips. */
+  /** CSS-Custom-Property-Name (ohne führendes `--`) einer Palettenfarbe.
+   *  Ohne Token (und ohne `color`) gilt das dezente Gelb der Tag-Chips. */
   colorToken?: string;
+  /** Fertige CSS-Farbe (z. B. aus der Stimmen-Registry, die Palette-Keys
+   *  statt Theme-Variablen führt). Schlägt `colorToken`. */
+  color?: string;
+  /** Gesetzt heißt: dieser Chip eröffnet eine Strecke. Der Text AB dem Chip
+   *  bis zum nächsten Chip mit `rangeColor` bekommt diese Farbe als sehr
+   *  blassen Hintergrund — so ist auf einen Blick zu sehen, welcher Sprecher
+   *  welchen Text spricht. */
+  rangeColor?: string;
   state: "ok" | "invalid" | "suggestion";
   icon?: LucideIcon;
 }
@@ -48,8 +55,16 @@ export interface ChipPopoverApi {
   replaceRange(start: number, end: number, insert: string): void;
 }
 
+/** Was ein Provider-Abschnitt im Kontextmenü tun darf. */
+export interface ChipMenuApi {
+  /** Ersetzt die Selektion zum Zeitpunkt des Rechtsklicks (bzw. fügt am
+   *  Caret ein) — mit nativem Undo-Schritt. Schließt das Menü. */
+  insertAtSelection(text: string): void;
+  close(): void;
+}
+
 export interface ChipProvider {
-  /** "tag" hier; "speaker" kommt in einem späteren Paket. */
+  /** "tag" oder "speaker". */
   id: string;
   scan(text: string): ChipMatch[];
   render(m: ChipMatch): ChipRenderSpec;
@@ -57,6 +72,10 @@ export interface ChipProvider {
   /** Optionale Erweiterung: Meldungstext für `state:"invalid"`-Chips
    *  (landet in `onIssues`); ohne sie dient das Render-Label als Meldung. */
   issueMessage?(m: ChipMatch): string;
+  /** Optionaler eigener Abschnitt im Kontextmenü des Editors — so bringt
+   *  jeder Provider sein Einfügen selbst mit, ohne dass der Editor die
+   *  Domäne kennen muss. */
+  menuSection?(api: ChipMenuApi): React.ReactNode;
 }
 
 export interface ChipEditorIssue {
@@ -230,7 +249,7 @@ interface RenderedMatch {
 }
 
 type Segment =
-  | { kind: "text"; start: number; text: string }
+  | { kind: "text"; start: number; text: string; color?: string }
   | { kind: "chip"; rendered: RenderedMatch }
   | { kind: "suggestion"; suggestion: ChipEditorSuggestion; offset: number }
   | { kind: "caret"; offset: number };
@@ -252,13 +271,20 @@ const chipStateClasses = (state: ChipRenderSpec["state"]): string => {
 
 const chipColorStyle = (
   spec: ChipRenderSpec,
-): React.CSSProperties | undefined =>
-  spec.colorToken
-    ? {
-        backgroundColor: `color-mix(in srgb, var(--${spec.colorToken}) 18%, transparent)`,
-        outlineColor: `color-mix(in srgb, var(--${spec.colorToken}) 45%, transparent)`,
-      }
-    : undefined;
+): React.CSSProperties | undefined => {
+  const color = spec.color ?? (spec.colorToken && `var(--${spec.colorToken})`);
+  if (!color) return undefined;
+  return {
+    backgroundColor: `color-mix(in srgb, ${color} 18%, transparent)`,
+    outlineColor: `color-mix(in srgb, ${color} 45%, transparent)`,
+  };
+};
+
+/** Hintergrund einer Sprecherstrecke — deutlich blasser als ein Chip, damit
+ *  der Text lesbar bleibt und die Chips die Blickpunkte bleiben. */
+const rangeStyle = (color: string): React.CSSProperties => ({
+  backgroundColor: `color-mix(in srgb, ${color} 9%, transparent)`,
+});
 
 type PopoverState =
   | { kind: "chip"; rendered: RenderedMatch; anchor: AnchorRect }
@@ -587,6 +613,21 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
 
   const segments = useMemo<Segment[]>(() => {
     const clamp = (n: number) => Math.max(0, Math.min(n, value.length));
+    // Eine Strecke beginnt HINTER ihrem Chip und endet vor dem nächsten
+    // Strecken-Chip. Chips überlappen nicht und Textstücke liegen immer
+    // ZWISCHEN Chips — ein Textstück kann deshalb nie zwei Farben tragen,
+    // und ein Aufteilen erübrigt sich.
+    const rangeChips = rendered
+      .filter((r) => r.spec.rangeColor)
+      .map((r) => ({ end: r.match.end, color: r.spec.rangeColor as string }));
+    const colorAt = (offset: number): string | undefined => {
+      let color: string | undefined;
+      for (const chip of rangeChips) {
+        if (chip.end > offset) break;
+        color = chip.color;
+      }
+      return color;
+    };
     const anchors: Array<{ offset: number; seg: Segment }> = [];
     for (const s of suggestions ?? []) {
       let offset = clamp(s.offset);
@@ -618,6 +659,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
               kind: "text",
               start: cur,
               text: value.slice(cur, offset),
+              color: colorAt(cur),
             });
             cur = offset;
           }
@@ -626,7 +668,12 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
         ai++;
       }
       if (to > cur) {
-        out.push({ kind: "text", start: cur, text: value.slice(cur, to) });
+        out.push({
+          kind: "text",
+          start: cur,
+          text: value.slice(cur, to),
+          color: colorAt(cur),
+        });
       }
     };
     let pos = 0;
@@ -846,6 +893,13 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     if (ta) execInsert(ta, selStart, selEnd, tagText);
   };
 
+  /** An die Provider gereicht: ihr eigener Abschnitt im Kontextmenü fügt
+   *  über denselben Weg ein wie „Tag einfügen". */
+  const menuApi: ChipMenuApi = {
+    insertAtSelection: menuInsertTag,
+    close: closeMenu,
+  };
+
   // ---- Render -------------------------------------------------------------
 
   const provider =
@@ -888,7 +942,11 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
           switch (seg.kind) {
             case "text":
               return (
-                <span key={index} data-off={seg.start}>
+                <span
+                  key={index}
+                  data-off={seg.start}
+                  style={seg.color ? rangeStyle(seg.color) : undefined}
+                >
                   {seg.text}
                 </span>
               );
@@ -1042,6 +1100,13 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
           onCopy={menuCopy}
           onPaste={menuPaste}
           onInsertTag={menuInsertTag}
+          extraSections={providers.map((p) =>
+            p.menuSection ? (
+              <React.Fragment key={p.id}>
+                {p.menuSection(menuApi)}
+              </React.Fragment>
+            ) : null,
+          )}
         />
       )}
     </div>

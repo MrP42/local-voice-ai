@@ -288,6 +288,14 @@
       "favoriteAdd": "„{{tag}}“ zu Favoriten hinzufügen",
       "favoriteRemove": "„{{tag}}“ aus Favoriten entfernen"
     },
+    "speakers": {
+      "menuInsert": "Sprecher einfügen",
+      "change": "Sprecher wechseln",
+      "changeHint": "Ein gewählter Sprecher übernimmt ab dieser Stelle.",
+      "chipTitle": "{{name}} spricht ab hier",
+      "remove": "Sprecher-Markierung entfernen",
+      "empty": "Noch keine Stimmen — zuerst unter „Stimmen“ eine Stimme aufnehmen oder importieren."
+    },
     "editor": {
       "tagPopoverAria": "Tag bearbeiten",
       "deleteTag": "Tag löschen",
