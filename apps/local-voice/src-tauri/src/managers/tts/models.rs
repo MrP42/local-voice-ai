@@ -303,7 +303,8 @@ impl TtsModelManager {
         match outcome.map_err(|e| e.to_string())? {
             HttpDownloadOutcome::Cancelled => Ok(()),
             HttpDownloadOutcome::Completed => {
-                let extracted = Self::extract_runtime_archive(&archive_path, &dest_dir);
+                let is_zip = file.filename.to_ascii_lowercase().ends_with(".zip");
+                let extracted = Self::extract_runtime_archive(&archive_path, &dest_dir, is_zip);
                 let _ = fs::remove_file(&archive_path);
                 extracted.map_err(|e| e.to_string())?;
                 let _ = self.app_handle.emit("model-download-complete", RUNTIME_ID);
@@ -441,7 +442,12 @@ impl TtsModelManager {
     /// ends up being exactly the directory the binary lives in — the same
     /// "extract to temp, then flatten a lone subdirectory" shape
     /// `ModelManager::download_model` uses for its own directory-based models.
-    fn extract_runtime_archive(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+    ///
+    /// `is_zip` kommt vom KATALOG-Dateinamen, nicht von `archive_path`: das
+    /// Archiv liegt lokal als `<platform>.download`, dessen Endung sagt über
+    /// das Format nichts aus (der Endungs-Check hier ließ auf Windows jedes
+    /// ZIP in den tar.gz-Zweig laufen — „failed to iterate over archive").
+    fn extract_runtime_archive(archive_path: &Path, dest_dir: &Path, is_zip: bool) -> Result<()> {
         let temp_dir = dest_dir.with_file_name(format!(
             "{}.extracting",
             dest_dir
@@ -454,10 +460,6 @@ impl TtsModelManager {
         }
         fs::create_dir_all(&temp_dir)?;
 
-        let is_zip = archive_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
         let extraction = if is_zip {
             Self::extract_zip(archive_path, &temp_dir)
         } else {
@@ -685,6 +687,60 @@ mod tests {
         assert!(row.is_downloading);
         let other = downloads.iter().find(|d| d.id != voice_id).unwrap();
         assert!(!other.is_downloading);
+    }
+
+    // ── extract_runtime_archive: Format kommt vom Katalog, nicht vom Pfad ──
+
+    /// Regression für „failed to iterate over archive": das Archiv liegt
+    /// lokal als `<platform>.download` — ein ZIP darunter muss trotzdem als
+    /// ZIP entpackt werden (der alte Endungs-Check schickte es in den
+    /// tar.gz-Zweig, wo tar am ZIP-Header scheiterte).
+    #[test]
+    fn ein_zip_unter_download_endung_wird_als_zip_entpackt() {
+        use std::io::Write as _;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let archive_path = dir.path().join("windows-x64.download");
+        let file = File::create(&archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let opts: zip::write::SimpleFileOptions = Default::default();
+        writer.add_directory("piper/", opts).unwrap();
+        writer.start_file("piper/piper.exe", opts).unwrap();
+        writer.write_all(b"fake binary").unwrap();
+        writer.add_directory("piper/espeak-ng-data/", opts).unwrap();
+        writer.finish().unwrap();
+
+        let dest_dir = dir.path().join("windows-x64");
+        TtsModelManager::extract_runtime_archive(&archive_path, &dest_dir, true).unwrap();
+
+        assert!(
+            dest_dir.join("piper.exe").is_file(),
+            "das top-level piper/-Verzeichnis wird weggeflacht, das Binary liegt direkt in dest"
+        );
+        assert!(dest_dir.join("espeak-ng-data").is_dir());
+    }
+
+    /// Gegenprobe: dasselbe ZIP im tar.gz-Zweig ist genau der alte Fehler.
+    #[test]
+    fn dasselbe_zip_im_tar_zweig_scheitert_wie_vor_dem_fix() {
+        use std::io::Write as _;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let archive_path = dir.path().join("windows-x64.download");
+        let file = File::create(&archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let opts: zip::write::SimpleFileOptions = Default::default();
+        writer.start_file("piper/piper.exe", opts).unwrap();
+        writer.write_all(b"fake binary").unwrap();
+        writer.finish().unwrap();
+
+        let dest_dir = dir.path().join("windows-x64");
+        let err =
+            TtsModelManager::extract_runtime_archive(&archive_path, &dest_dir, false).unwrap_err();
+        assert!(
+            err.to_string().contains("archive") || err.to_string().contains("gzip"),
+            "war: {err}"
+        );
     }
 
     // ── SHA-mismatch on the REUSED downloader is still an error ─────────────
