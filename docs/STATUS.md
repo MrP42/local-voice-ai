@@ -240,3 +240,15 @@ Als Issues erfasst unter https://github.com/MrP42/local-voice-ai/issues
 | `origin` | `git@github.com:MrP42/local-voice-ai.git` — **privat** |
 | `upstream` | `https://github.com/cjpais/Handy.git` — fremdes Fork-Original, **niemals dorthin pushen** |
 | Arbeitsbranch | `feat/m3-stabilize-paste-path` |
+
+## Apple P0/P1 — Simulator-Spike 2026-09-05
+
+Isolierter Branch `codex/apple-p0-p1`, native SwiftUI-Targets unter `apps/apple`.
+Benutzer hat für diese Runde virtuelle Xcode-Geräte angefordert. Zehn Kerntests
+und Simulator-/unsignierte Geräte-Builds bestehen. Entwicklungs-Dauerlauf mit
+101 synthetischen Aufnahmen über WCSession ohne fehlende bestätigte Aufnahme;
+Hintergrund/Neustart geprüft. P0/P1 noch nicht vollständig abgenommen: Watch-
+Mikrofondialog wartet auf Benutzeraktion, finale Transportregression und mehrere
+Lifecycle-Fälle offen; SpeechTranscriber/Foundation Models im Intel-Simulator
+nicht verfügbar. Keine Akku-/Hardwarelatenzbehauptung. Details und Messgrenzen:
+`docs/apple-evidence/2026-09-05-simulator-report.md`; P2 nur als Folgeplan.
