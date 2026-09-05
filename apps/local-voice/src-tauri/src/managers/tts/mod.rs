@@ -5,6 +5,7 @@
 //! einen Mock-Server getestet; `TtsManager` ergänzt AppHandle-Belange:
 //! Settings, Events, Prozess-Spawn, Idle-Watchdog und Exit-Teardown.
 
+pub mod builder;
 pub mod compile_cache;
 pub mod dsp;
 pub mod engine;

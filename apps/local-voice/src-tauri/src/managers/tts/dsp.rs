@@ -62,6 +62,37 @@ impl Biquad {
     }
 }
 
+/// Streckt ein Signal per linearer Interpolation: `factor` 1,15 macht es 15 %
+/// laenger und damit hoerbar tiefer — Tonhoehe UND Formanten sinken zusammen,
+/// die klassische "tiefer und aelter"-Methode.
+///
+/// Bewusst linear und nicht bandbegrenzt: das Ergebnis ist die REFERENZ, aus
+/// der das Modell anschliessend neu synthetisiert. Was an Interpolationsrauschen
+/// entsteht, ueberlebt diesen Schritt nicht — ein teurerer Resampler brachte
+/// hier nichts ausser Rechenzeit.
+///
+/// `factor <= 1.0` gibt eine unveraenderte Kopie: der Regler senkt nur.
+pub fn resample_stretch(samples: &[f32], factor: f32) -> Vec<f32> {
+    if samples.is_empty() || !(factor > 1.0) || !factor.is_finite() {
+        return samples.to_vec();
+    }
+    let out_len = ((samples.len() as f32) * factor).round() as usize;
+    let mut out = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        // Position im Original: rueckwaerts gerechnet, damit der erste Wert
+        // exakt der erste bleibt.
+        let pos = (i as f32) / factor;
+        let left = pos.floor() as usize;
+        if left + 1 >= samples.len() {
+            out.push(samples[samples.len() - 1]);
+            continue;
+        }
+        let frac = pos - (left as f32);
+        out.push(samples[left] * (1.0 - frac) + samples[left + 1] * frac);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,5 +132,42 @@ mod tests {
         let hoch = attenuation_db(1000.0, 80.0, 48_000.0);
         assert!(tief < -20.0, "20 Hz nur {tief} dB gedaempft");
         assert!(hoch.abs() < 0.2, "1 kHz um {hoch} dB veraendert");
+    }
+
+    #[test]
+    fn strecken_verlaengert_um_den_faktor() {
+        let input: Vec<f32> = (0..100).map(|i| i as f32).collect();
+        let out = resample_stretch(&input, 1.15);
+        // 100 Eingabewerte, 15 Prozent laenger: 115 Ausgabewerte.
+        assert_eq!(out.len(), 115);
+    }
+
+    #[test]
+    fn faktor_eins_und_kleiner_laesst_das_signal_unveraendert() {
+        let input: Vec<f32> = vec![0.0, 0.5, -0.5, 1.0];
+        assert_eq!(resample_stretch(&input, 1.0), input);
+        assert_eq!(resample_stretch(&input, 0.5), input);
+    }
+
+    #[test]
+    fn gestreckte_rampe_bleibt_monoton_und_haelt_die_raender() {
+        // Eine Rampe ist der einfachste Fall mit pruefbarer Zwischenstufe:
+        // linear interpoliert bleibt sie eine Rampe.
+        let input: Vec<f32> = (0..50).map(|i| i as f32).collect();
+        let out = resample_stretch(&input, 1.2);
+        assert_eq!(out[0], 0.0, "der erste Wert bleibt der erste");
+        assert!(
+            out.windows(2).all(|w| w[1] >= w[0]),
+            "eine gestreckte Rampe darf nirgends fallen"
+        );
+        assert!(
+            *out.last().unwrap() <= 49.0,
+            "es wird interpoliert, nicht extrapoliert"
+        );
+    }
+
+    #[test]
+    fn leeres_signal_bleibt_leer() {
+        assert!(resample_stretch(&[], 1.15).is_empty());
     }
 }
