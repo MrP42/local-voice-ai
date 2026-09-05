@@ -18,8 +18,8 @@ public struct VoiceEnvelope: Codable, Sendable {
     public var receipt: Receipt? { payload.receipt }
     public var transcript: String? { payload.transcript }
     public var reply: String? { payload.reply }
-    public init(capture: Packet? = nil, receipt: Receipt? = nil, sessionId: UUID? = nil, transcript: String? = nil, reply: String? = nil) {
-        self.messageId = capture?.messageId ?? receipt?.receiptId ?? UUID()
+    public init(capture: Packet? = nil, receipt: Receipt? = nil, sessionId: UUID? = nil, transcript: String? = nil, reply: String? = nil, replyMessageId: UUID? = nil) {
+        self.messageId = capture?.messageId ?? receipt?.receiptId ?? replyMessageId ?? UUID()
         self.kind = capture != nil ? "capture" : (receipt != nil ? "receipt" : "reply")
         self.sessionId = capture?.sessionId ?? receipt?.sessionId ?? sessionId
         self.payload = Payload(capture: capture, receipt: receipt, transcript: transcript, reply: reply)

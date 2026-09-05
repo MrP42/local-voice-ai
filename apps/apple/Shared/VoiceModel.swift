@@ -43,6 +43,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VoiceOutbox")
             store = try DurableStore(root: root)
             chunks = try ChunkInbox(root: root.appendingPathComponent(".incoming-parts"))
+            recoverRecordings()
             refresh()
         } catch { status = "Speicher nicht verfügbar – Aufnahme gesperrt" }
         #if DEBUG
@@ -158,13 +159,13 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
     }
     private func saveRecording() {
         guard let url = pendingURL, let store else { return }
-        pendingURL = nil
         do {
-            let packet = Packet.capture(audio: try Data(contentsOf: url))
+            guard try AVAudioFile(forReading: url).length > 0 else { throw VoiceError.invalid }
             let start = Date()
-            _ = try store.accept(packet)
-            try store.update(packet.sessionId, state: .saved, timing: ("persistence_ms", Date().timeIntervalSince(start) * 1000))
-            try store.update(packet.sessionId, state: .saved, timing: ("record_feedback_ms", feedbackMilliseconds))
+            let receipt = try store.recoverRecording(at: url)
+            pendingURL = nil
+            try? store.update(receipt.sessionId, state: .saved, timing: ("persistence_ms", Date().timeIntervalSince(start) * 1000))
+            try? store.update(receipt.sessionId, state: .saved, timing: ("record_feedback_ms", feedbackMilliseconds))
             status = "gespeichert – Verarbeitung folgt"
             try? FileManager.default.removeItem(at: url)
             #if os(watchOS)
@@ -180,14 +181,30 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         Task { @MainActor in
             guard self.recorder === recorder else { return }
             self.recording = false
-            if flag { self.saveRecording() }
-            else { self.status = "Aufnahme unterbrochen – noch nicht bestätigt" }
+            // Even an interrupted recorder can leave a readable, finalized audio container.
+            self.saveRecording()
+        }
+    }
+    private func recoverRecordings() {
+        guard let store, let urls = try? FileManager.default.contentsOfDirectory(at: store.root, includingPropertiesForKeys: nil) else { return }
+        for url in urls where url.lastPathComponent.hasPrefix(".recording-") && url.pathExtension == "m4a" {
+            if recording && url == pendingURL { continue }
+            do {
+                guard try AVAudioFile(forReading: url).length > 0 else { continue }
+                _ = try store.recoverRecording(at: url)
+                if pendingURL == url { pendingURL = nil }
+                status = "Aufnahme wiederhergestellt – Verarbeitung folgt"
+            } catch { status = "Ungesicherte Aufnahme bleibt zur Wiederherstellung erhalten" }
         }
     }
     func retry() {
+        recoverRecordings()
         refresh()
         guard WCSession.isSupported() else { return }
         reachable = WCSession.default.isReachable
+        if WCSession.default.activationState == .activated {
+            try? store?.cleanupTransfers(keeping: Set(WCSession.default.outstandingFileTransfers.map { $0.file.fileURL }))
+        }
         #if os(watchOS)
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--replay-capture"), reachable, !debugReplaySent,
@@ -202,15 +219,15 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
             }, errorHandler: { _ in Task { @MainActor in self.recordDiagnostic("duplicate_transport_failed") } })
         }
         #endif
-        for entry in entries.sorted(by: { ($0.state == .saved ? 0 : 1) < ($1.state == .saved ? 0 : 1) }) where entry.state != .answered {
-            guard inFlight.isEmpty, let store else { continue }
+        for entry in Entry.pendingDelivery(in: entries) {
+            guard !inFlight.contains(entry.id), let store else { continue }
             do {
                 let packet = try store.packet(for: entry)
                 let data = try encoder.encode(Wire(capture: packet))
-                if reachable && data.count > 60000 {
+                if reachable && inFlight.isEmpty && data.count > 60000 {
                     inFlight.insert(entry.id)
                     sendChunks(try CaptureChunk.split(packet), position: 0, entry: entry, started: Date())
-                } else if reachable {
+                } else if reachable && inFlight.isEmpty {
                     inFlight.insert(entry.id)
                     let start = Date()
                     WCSession.default.sendMessageData(data, replyHandler: { response in
@@ -235,6 +252,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
     }
     #if os(watchOS)
     private func sendChunks(_ parts: [CaptureChunk], position: Int, entry: Entry, started: Date) {
+        guard parts.indices.contains(position) else { inFlight.remove(entry.id); return }
         let part = parts[position]
         do {
             let data = try encoder.encode(Wire(chunk: part))
@@ -255,6 +273,9 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
                         } else { throw VoiceError.invalid }
                     } catch {
                         self.inFlight.remove(entry.id)
+                        if let packet = try? self.store?.packet(for: entry), let data = try? self.encoder.encode(Wire(capture: packet)) {
+                            self.queueFile(entry, data: data)
+                        }
                         self.status = "gespeichert – Verarbeitung folgt"
                     }
                 }
@@ -386,6 +407,14 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         Task { @MainActor in
             let acknowledgement = self.receive(messageData)
             if !acknowledgement.isEmpty { WCSession.default.transferUserInfo(["wire": acknowledgement]) }
+        }
+    }
+    nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
+        Task { @MainActor in
+            // Transport completion only permits deleting the copy, never the confirmed original.
+            if WCSession.default.activationState == .activated {
+                try? self.store?.cleanupTransfers(keeping: Set(WCSession.default.outstandingFileTransfers.map { $0.file.fileURL }))
+            }
         }
     }
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {

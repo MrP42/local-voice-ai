@@ -35,6 +35,15 @@ public struct Entry: Codable, Identifiable, Sendable {
     public var replyAcknowledged: Bool?
     public var replyReceipt: Receipt?
     public var replyToWatch: Bool?
+    public static func pendingDelivery(in entries: [Entry]) -> [Entry] {
+        entries.filter { $0.state != .answered }.sorted {
+            let left = $0.state == .saved ? 0 : 1
+            let right = $1.state == .saved ? 0 : 1
+            if left != right { return left < right }
+            if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+    }
 }
 
 /// Access from one serial executor. A directory rename commits audio and metadata together.
@@ -69,7 +78,11 @@ public final class DurableStore {
             if replyToWatch && existing.replyToWatch != true { existing.replyToWatch = true; try save(existing) }
             return existing.receipt
         }
-        let used = try current.reduce(0) { try $0 + audio(for: $1.id).count }
+        let used = try current.reduce(0) { total, entry in
+            let attributes = try fm.attributesOfItem(atPath: audioURL(for: entry.id).path)
+            guard let size = attributes[.size] as? NSNumber else { throw VoiceError.persistence }
+            return total + size.intValue
+        }
         guard used + packet.audio.count <= limit else { throw VoiceError.full }
         let receipt = Receipt(sessionId: packet.sessionId, messageId: packet.messageId, receiptId: UUID())
         let entry = Entry(receipt: receipt, createdAt: packet.createdAt, digest: digest, state: .saved, replyToWatch: replyToWatch)
@@ -83,9 +96,39 @@ public final class DurableStore {
         try syncDirectory(root)
         return receipt
     }
+    /// Draft filenames provide stable identity even if the process exits before removing the source.
+    public func recoverRecording(at url: URL) throws -> Receipt {
+        let name = url.lastPathComponent
+        guard url.standardizedFileURL.deletingLastPathComponent() == root.standardizedFileURL,
+              name.hasPrefix(".recording-"), name.hasSuffix(".m4a"),
+              let id = UUID(uuidString: String(name.dropFirst(11).dropLast(4))) else { throw VoiceError.invalid }
+        let attributes = try fm.attributesOfItem(atPath: url.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular else { throw VoiceError.invalid }
+        let packet = Packet(sessionId: id, messageId: id, kind: "capture",
+                            createdAt: attributes[.creationDate] as? Date ?? Date(),
+                            payload: Packet.Payload(audio: try Data(contentsOf: url)))
+        let receipt = try accept(packet)
+        // Failure to remove a redundant draft cannot undo its durable acceptance.
+        try? fm.removeItem(at: url)
+        return receipt
+    }
+    /// Only redundant, completed transfer copies are removed. Original audio remains untouched.
+    public func cleanupTransfers(keeping active: Set<URL>) throws {
+        let retained = Set(active.map { $0.standardizedFileURL })
+        for url in try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) {
+            let name = url.lastPathComponent
+            guard name.hasPrefix(".transfer-"), name.hasSuffix(".json"),
+                  UUID(uuidString: String(name.dropFirst(10).dropLast(5))) != nil,
+                  !retained.contains(url.standardizedFileURL) else { continue }
+            try fm.removeItem(at: url)
+        }
+    }
     public func update(_ id: UUID, transcript: String? = nil, reply: String? = nil, state: CaptureState, timing: (String, Double)? = nil) throws {
         guard var entry = try entries().first(where: { $0.id == id }) else { throw VoiceError.missing }
-        if let transcript { entry.transcript = transcript }
+        if let transcript {
+            guard transcript.count <= 16000 else { throw VoiceError.invalid }
+            entry.transcript = transcript
+        }
         if let reply {
             guard !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, reply.count <= 500 else { throw VoiceError.invalid }
             if let previous = entry.reply, previous != reply { throw VoiceError.conflict }
@@ -105,9 +148,7 @@ public final class DurableStore {
             entry.replyMessageId = UUID()
             try save(entry)
         }
-        var envelope = VoiceEnvelope(sessionId: id, transcript: entry.transcript, reply: reply)
-        envelope.messageId = entry.replyMessageId!
-        return envelope
+        return VoiceEnvelope(sessionId: id, transcript: entry.transcript, reply: reply, replyMessageId: entry.replyMessageId!)
     }
     public func acceptReply(_ envelope: VoiceEnvelope) throws -> (receipt: Receipt, isNew: Bool) {
         guard envelope.schemaVersion == 1 else { throw VoiceError.version }

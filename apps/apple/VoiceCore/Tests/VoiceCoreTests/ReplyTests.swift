@@ -2,6 +2,16 @@ import XCTest
 @testable import VoiceCore
 
 final class ReplyTests: XCTestCase {
+    func testOversizedTranscriptCannotCreateUndeliverableAnswer() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root)
+        let capture = Packet.capture(audio: Data([1]))
+        _ = try store.accept(capture)
+        XCTAssertThrowsError(try store.update(capture.sessionId, transcript: String(repeating: "x", count: 16001), reply: "answer", state: .answered))
+        XCTAssertNil(try store.entries().first?.reply)
+        XCTAssertEqual(try store.entries().first?.state, .saved)
+    }
     func testUnsendableGeneratedReplyDoesNotCompleteCapture() throws {
         for reply in ["", "  \n", String(repeating: "x", count: 501)] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
