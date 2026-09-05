@@ -16,8 +16,22 @@ public struct StorageInventory: Sendable {
 }
 
 extension DurableStore {
+    public func invalidateInventory() { cachedInventory = nil }
+    func cacheEntry(_ entry: Entry) {
+        guard var cached = cachedInventory else { return }
+        if let index = cached.entries.firstIndex(where: { $0.id == entry.id }) { cached.entries[index] = entry }
+        else { cached.entries.append(entry) }
+        cached.entries.sort { $0.createdAt > $1.createdAt }
+        cached.issues.removeAll { $0.sessionId == entry.id }
+        cachedInventory = cached
+    }
+
     /// Isolation is in-place: damaged directories keep their names, identities and original bytes.
     public func inventory(includeUsage: Bool = true) throws -> StorageInventory {
+        if !includeUsage, var cached = cachedInventory {
+            cached.totalBytes = 0; cached.temporaryBytes = 0
+            return cached
+        }
         var result = StorageInventory()
         for url in try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) {
             let name = url.lastPathComponent
@@ -46,6 +60,7 @@ extension DurableStore {
         }
         result.entries.sort { $0.createdAt > $1.createdAt }
         result.issues.sort { $0.id < $1.id }
+        cachedInventory = result
         return result
     }
     func readEntry(at folder: URL) throws -> Entry {
@@ -56,10 +71,13 @@ extension DurableStore {
         let audio = folder.appendingPathComponent("audio.m4a")
         let attributes = try fm.attributesOfItem(atPath: audio.path)
         guard attributes[.type] as? FileAttributeType == .typeRegular,
-              let bytes = attributes[.size] as? NSNumber, bytes.intValue > 0 else { throw VoiceError.persistence }
+              let bytes = attributes[.size] as? NSNumber, bytes.intValue > 0, bytes.intValue <= 1024 * 1024 else { throw VoiceError.persistence }
+        let data = try Data(contentsOf: audio)
+        guard SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == entry.digest else { throw VoiceError.persistence }
         return entry
     }
     func loadEntry(for id: UUID) throws -> Entry {
+        do {
         let folder = root.appendingPathComponent(id.uuidString)
         guard fm.fileExists(atPath: folder.path) else { throw VoiceError.missing }
         let entry = try readEntry(at: folder)
@@ -68,6 +86,7 @@ extension DurableStore {
             guard try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: identity)) == entry.receipt else { throw VoiceError.conflict }
         }
         return entry
+        } catch { invalidateInventory(); throw error }
     }
     func diskBytes(at url: URL) throws -> Int {
         let attributes = try fm.attributesOfItem(atPath: url.path)
@@ -91,6 +110,7 @@ extension DurableStore {
     }
     /// A complete transaction can be committed after restart; unidentified bytes remain visible.
     public func recoverStaging() throws {
+        defer { invalidateInventory() }
         for stage in try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
             where stage.lastPathComponent.hasPrefix(".partial-") {
             guard UUID(uuidString: String(stage.lastPathComponent.dropFirst(9))) != nil,

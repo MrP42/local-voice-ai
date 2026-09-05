@@ -31,6 +31,8 @@ else if mode == "reply" {
     try faulty.update(packet.sessionId, reply: "Erhalten.", state: .answered)
 } else if mode == "inspect" { try plain.recoverStaging(); try plain.recoverInterruptedJobs() }
 else { fatalError("Unknown probe mode") }
+// The fault-injecting instance writes independently, like another process.
+plain.invalidateInventory()
 let entries = try plain.entries()
 let result: [String: Any] = [
     "entries": try JSONSerialization.jsonObject(with: JSONEncoder().encode(entries)),

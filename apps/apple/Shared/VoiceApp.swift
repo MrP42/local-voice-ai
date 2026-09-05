@@ -32,7 +32,7 @@ struct VoiceApp: App {
             Button(model.recording ? "Aufnahme sichern" : "Sprechen") { model.recording ? model.stop() : model.start() }
                 .buttonStyle(.borderedProminent).tint(model.recording ? .red : .accentColor)
                 .accessibilityIdentifier("record")
-            Button("Erneut versuchen") { model.retry() }
+            Button("Erneut versuchen") { model.retry(forceReload: true) }
             Button("Wiedergabe stoppen") { model.stopPlayback() }
             #if os(iOS)
             if model.processing { Button("Verarbeitung abbrechen") { model.cancelProcessing() } }

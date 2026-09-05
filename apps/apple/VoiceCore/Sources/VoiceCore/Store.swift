@@ -55,6 +55,7 @@ public final class DurableStore {
     public let root: URL
     private let limit: Int
     let fm = FileManager.default
+    var cachedInventory: StorageInventory?
     let temporaryLimit: Int
     let fault: ((StorageCheckpoint) throws -> Void)?
     public init(root: URL, limit: Int = 64 * 1024 * 1024, temporaryLimit: Int = 8 * 1024 * 1024, fault: ((StorageCheckpoint) throws -> Void)? = nil) throws {
@@ -70,9 +71,14 @@ public final class DurableStore {
     public func audioURL(for id: UUID) -> URL { root.appendingPathComponent(id.uuidString).appendingPathComponent("audio.m4a") }
     public func audio(for id: UUID) throws -> Data { try Data(contentsOf: audioURL(for: id)) }
     public func packet(for entry: Entry) throws -> Packet {
-        Packet(sessionId: entry.id, messageId: entry.receipt.messageId, kind: "capture", createdAt: entry.createdAt, payload: Packet.Payload(audio: try audio(for: entry.id)))
+        let data = try audio(for: entry.id)
+        guard SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == entry.digest else {
+            invalidateInventory(); throw VoiceError.persistence
+        }
+        return Packet(sessionId: entry.id, messageId: entry.receipt.messageId, kind: "capture", createdAt: entry.createdAt, payload: Packet.Payload(audio: data))
     }
     public func accept(_ packet: Packet, replyToWatch: Bool = false) throws -> Receipt {
+        do {
         guard packet.schemaVersion == 1 else { throw VoiceError.version }
         guard packet.kind == "capture", !packet.audio.isEmpty, packet.audio.count <= 1024 * 1024 else { throw VoiceError.invalid }
         let digest = SHA256.hash(data: packet.audio).map { String(format: "%02x", $0) }.joined()
@@ -109,8 +115,10 @@ public final class DurableStore {
         try fm.moveItem(at: staging, to: root.appendingPathComponent(packet.sessionId.uuidString))
         try fault?(.captureRenamed)
         try syncDirectory(root)
+        cacheEntry(entry)
         try fault?(.captureCommitted)
         return receipt
+        } catch { invalidateInventory(); throw error }
     }
     /// Draft filenames provide stable identity even if the process exits before removing the source.
     public func recoverRecording(at url: URL) throws -> Receipt {
@@ -126,6 +134,7 @@ public final class DurableStore {
         let receipt = try accept(packet)
         // Failure to remove a redundant draft cannot undo its durable acceptance.
         try? fm.removeItem(at: url)
+        cachedInventory?.issues.removeAll { $0.url.lastPathComponent == url.lastPathComponent }
         return receipt
     }
     /// Only redundant, completed transfer copies are removed. Original audio remains untouched.
@@ -154,9 +163,7 @@ public final class DurableStore {
         if entry.state != .answered { entry.state = state }
         if entry.reply != nil, entry.state == .answered { entry.job?.phase = .completed }
         if let timing { entry.timings[timing.0] = timing.1 }
-        let folder = root.appendingPathComponent(id.uuidString)
-        try write(JSONEncoder().encode(entry), to: folder.appendingPathComponent("entry.json"))
-        try syncDirectory(folder)
+        try save(entry)
         if transcript != nil { try fault?(.transcriptCommitted) }
         if reply != nil { try fault?(.generatedReplyCommitted) }
     }
@@ -206,19 +213,22 @@ public final class DurableStore {
         let folder = root.appendingPathComponent(entry.id.uuidString)
         try write(JSONEncoder().encode(entry), to: folder.appendingPathComponent("entry.json"))
         try syncDirectory(folder)
+        cacheEntry(entry)
     }
     func write(_ data: Data, to url: URL) throws {
+        do {
         try fault?(.beforeWrite)
         try data.write(to: url, options: .atomic)
         let handle = try FileHandle(forWritingTo: url)
         defer { try? handle.close() }
         try handle.synchronize()
         try fault?(.fileSynced)
+        } catch { invalidateInventory(); throw error }
     }
     func syncDirectory(_ url: URL) throws {
         let descriptor = open(url.path, O_RDONLY)
-        guard descriptor >= 0 else { throw VoiceError.persistence }
+        guard descriptor >= 0 else { invalidateInventory(); throw VoiceError.persistence }
         defer { close(descriptor) }
-        guard fsync(descriptor) == 0 else { throw VoiceError.persistence }
+        guard fsync(descriptor) == 0 else { invalidateInventory(); throw VoiceError.persistence }
     }
 }

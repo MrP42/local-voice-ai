@@ -77,6 +77,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
                     try FileManager.default.copyItem(at: folder.appendingPathComponent("entry.json"), to: folder.appendingPathComponent(".debug-entry-backup"))
                     try Data(receipt.sessionId.uuidString.utf8).write(to: marker, options: .atomic)
                     try Data("synthetic corrupted metadata".utf8).write(to: folder.appendingPathComponent("entry.json"), options: .atomic)
+                    store.invalidateInventory()
                 } catch { status = "Recovery-Testfixture konnte nicht angelegt werden" }
             }
             if ProcessInfo.processInfo.arguments.contains("--restore-history-probe"),
@@ -84,6 +85,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
                 let folder = store.root.appendingPathComponent(id.uuidString)
                 if let data = try? Data(contentsOf: folder.appendingPathComponent(".debug-entry-backup")) {
                     try? data.write(to: folder.appendingPathComponent("entry.json"), options: .atomic)
+                    store.invalidateInventory()
                 }
             }
             refresh()
@@ -149,6 +151,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     }
     func scene(active: Bool) {
         self.active = active
+        if active { store?.invalidateInventory() }
         capture?.setActive(active)
         #if os(iOS)
         jobs?.setActive(active)
@@ -201,13 +204,15 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     }
     func recordingURL(_ id: UUID) -> URL? { store?.audioURL(for: id) }
     func start() { speaker.stopSpeaking(at: .immediate); capture?.start() }
-    func stop() { capture?.stop() }
+    func stop() { capture?.stop(); refresh() }
     private func recoverRecordings() { capture?.recoverRecordings() }
     func recoverStorage() {
+        store?.invalidateInventory()
         do { try store?.recoverStaging(); try store?.migrateIdentities(); retry() }
         catch { status = "Wiederherstellung nicht abgeschlossen – Originale bleiben erhalten"; refresh() }
     }
-    func retry() {
+    func retry(forceReload: Bool = false) {
+        if forceReload { store?.invalidateInventory() }
         recoverRecordings(); refresh(); transport?.retry()
         #if os(iOS)
         if active { jobs?.start() }

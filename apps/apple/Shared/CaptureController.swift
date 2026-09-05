@@ -92,6 +92,7 @@ final class CaptureController: NSObject, AVAudioRecorderDelegate {
             #endif
             onSaved?()
         } catch {
+            store.invalidateInventory()
             status = "Nicht bestätigt – Audiodatei bleibt zur Wiederherstellung erhalten"
         }
         recorder = nil
