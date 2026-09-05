@@ -12,14 +12,40 @@
 
 use std::path::{Path, PathBuf};
 
+/// Woher ein Kandidat stammt.
+///
+/// `Seed` ist der Standard, damit eine `draft.json` aus Etappe 1 — die dieses
+/// Feld noch nicht kennt — weiter gelesen wird und ihre Kandidaten das
+/// bleiben, was sie waren: gewuerfelte.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, specta::Type,
+)]
+pub enum CandidateSource {
+    /// Aus der Seed-Lotterie gewuerfelt — `seed` reproduziert ihn.
+    #[default]
+    Seed,
+    /// Selbst eingesprochen.
+    Recording,
+    /// Aus einer vorhandenen WAV-Datei uebernommen.
+    Import,
+}
+
 /// Ein Kandidat: ein Wurf, der als Datei auf der Platte liegt.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct Candidate {
+    /// Kennzahl des Kandidaten — die Oberflaeche adressiert ihn darueber.
+    /// Bei einem gewuerfelten ist das der echte Seed, bei einem
+    /// eingespielten nur eine Nummer aus dem ULID-Zufallsanteil.
     pub seed: i64,
     /// Dateiname innerhalb des Entwurfsordners, NICHT der volle Pfad —
     /// damit ein verschobener Stimmenordner den Entwurf nicht entwertet.
     pub file: String,
     pub created_at: i64,
+    /// Woher der Kandidat stammt. Ein gewuerfelter traegt seinen Seed, ein
+    /// eingespielter nicht — beim Speichern darf dann kein Seed-Vermerk
+    /// entstehen, der eine Reproduzierbarkeit vortaeuscht, die es nicht gibt.
+    #[serde(default)]
+    pub source: CandidateSource,
 }
 
 /// Der Arbeitsstand einer noch nicht gespeicherten Stimme.
@@ -37,6 +63,21 @@ pub struct BuilderDraft {
     pub selected: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// Der Seed, der beim Speichern als `seed.txt` vermerkt werden darf.
+///
+/// `None`, sobald der gewaehlte Kandidat nicht aus der Lotterie stammt: seine
+/// Kennzahl reproduziert nichts, und ein Vermerk darueber waere eine Zusage,
+/// die die Datei nicht halten kann. Bewusst hier und nicht im Manager, damit
+/// die Entscheidung ohne laufende App pruefbar bleibt.
+pub fn seed_marker_for(draft: &BuilderDraft) -> Option<i64> {
+    let selected = draft.selected?;
+    draft
+        .candidates
+        .iter()
+        .find(|c| c.seed == selected && c.source == CandidateSource::Seed)
+        .map(|c| c.seed)
 }
 
 const DRAFT_FILE: &str = "draft.json";
@@ -149,6 +190,7 @@ mod tests {
                 seed: 4711,
                 file: "cand_4711.wav".to_string(),
                 created_at: 1_700_000_000,
+                source: CandidateSource::Seed,
             }],
             selected: Some(4711),
             created_at: 1_700_000_000,
@@ -167,6 +209,51 @@ mod tests {
         assert_eq!(back.depth, 1.08);
         assert_eq!(back.candidates.len(), 1);
         assert_eq!(back.selected, Some(4711));
+    }
+
+    #[test]
+    fn gewuerfelter_kandidat_bekommt_einen_seed_vermerk() {
+        assert_eq!(seed_marker_for(&draft("01ABC")), Some(4711));
+    }
+
+    #[test]
+    fn eingespielter_kandidat_bekommt_keinen_seed_vermerk() {
+        // 4711 waere hier eine Kennzahl, kein Seed — in `seed.txt` stuende
+        // damit eine Zahl, die keine Stimme zurueckholt.
+        let mut d = draft("01ABC");
+        d.candidates[0].source = CandidateSource::Recording;
+        assert_eq!(seed_marker_for(&d), None);
+        d.candidates[0].source = CandidateSource::Import;
+        assert_eq!(seed_marker_for(&d), None);
+    }
+
+    #[test]
+    fn alte_draft_json_ohne_herkunft_bleibt_lesbar() {
+        // Genau der Stand aus Etappe 1: kein `source` im Kandidaten. Ohne
+        // den Default waere jeder vor Etappe 2 begonnene Entwurf verloren.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = draft_dir(tmp.path(), "01ALT");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("draft.json"),
+            br#"{
+              "id": "01ALT",
+              "display_name": "Pyrion",
+              "description": "",
+              "probe_text": "Hallo.",
+              "tags": [],
+              "depth": 1.0,
+              "candidates": [
+                { "seed": 4711, "file": "cand_4711.wav", "created_at": 1700000000 }
+              ],
+              "selected": 4711,
+              "created_at": 1700000000,
+              "updated_at": 1700000000
+            }"#,
+        )
+        .unwrap();
+        let back = load_draft(tmp.path(), "01ALT").unwrap();
+        assert_eq!(back.candidates[0].source, CandidateSource::Seed);
     }
 
     #[test]

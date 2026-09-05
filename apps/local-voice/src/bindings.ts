@@ -1900,6 +1900,20 @@ async ttsBuilderCandidateWav(id: string, seed: number) : Promise<Result<number[]
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Eine eigene Aufnahme oder WAV-Datei als Kandidat in den Entwurf holen.
+ * `startSec`/`endSec` schneiden zu; 0/0 nimmt die ganze Datei. Laenger als
+ * 30 Sekunden wird immer gekappt — eine laengere Referenz macht die Stimme
+ * nicht besser.
+ */
+async ttsBuilderAddWav(id: string, wavPath: string, startSec: number, endSec: number) : Promise<Result<BuilderDraft, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_builder_add_wav", { id, wavPath, startSec, endSec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsBuilderCommit(id: string, meta: VoiceMeta) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_builder_commit", { id, meta }) };
@@ -2253,12 +2267,19 @@ selected: number | null; created_at: number; updated_at: number }
 /**
  * Ein Kandidat: ein Wurf, der als Datei auf der Platte liegt.
  */
+export type CandidateSource = "Seed" | "Recording" | "Import"
 export type Candidate = { seed: number; 
 /**
  * Dateiname innerhalb des Entwurfsordners, NICHT der volle Pfad —
  * damit ein verschobener Stimmenordner den Entwurf nicht entwertet.
  */
-file: string; created_at: number }
+file: string; created_at: number; 
+/**
+ * Woher der Kandidat stammt. Nur ein gewuerfelter traegt beim Speichern
+ * einen Seed-Vermerk — eine Zahl, die nichts reproduziert, waere eine
+ * vorgetaeuschte Nachvollziehbarkeit.
+ */
+source: CandidateSource }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
 export type EngineType = 

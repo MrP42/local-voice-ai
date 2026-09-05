@@ -813,6 +813,22 @@ pub fn tts_builder_candidate_wav(app: AppHandle, id: String, seed: i64) -> Resul
         .builder_candidate_wav(&id, seed)
 }
 
+/// Eine WAV-Datei als Kandidat aufnehmen (Etappe 2). Den Pfad waehlt die
+/// Oberflaeche ueber `tauri-plugin-dialog` oder legt eine eigene Aufnahme
+/// dorthin ab. `start_sec`/`end_sec` schneiden zu, `0.0/0.0` nimmt alles.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_builder_add_wav(
+    app: AppHandle,
+    id: String,
+    wav_path: String,
+    start_sec: f32,
+    end_sec: f32,
+) -> Result<builder::BuilderDraft, String> {
+    app.state::<Arc<TtsManager>>()
+        .builder_add_wav(&id, &wav_path, start_sec, end_sec)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_builder_commit(

@@ -1492,6 +1492,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_builder_generate,
             commands::tts::tts_builder_cancel,
             commands::tts::tts_builder_candidate_wav,
+            commands::tts::tts_builder_add_wav,
             commands::tts::tts_builder_commit,
             commands::tts::tts_export_voice,
             commands::tts::tts_inspect_voice_archive,

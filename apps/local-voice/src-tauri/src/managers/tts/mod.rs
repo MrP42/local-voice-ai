@@ -1215,6 +1215,37 @@ fn apply_depth(wav: &[u8], factor: f32) -> Option<Vec<u8>> {
     Some(encode_wav_mono(&stretched, rate))
 }
 
+/// Obergrenze fuer eine Referenzaufnahme in Sekunden.
+///
+/// Zero-Shot-Klonen zieht seine Stimmidentitaet aus wenigen Sekunden; 10 bis
+/// 30 Sekunden sind der brauchbare Bereich. Laenger hilft nicht, sondern
+/// schadet: mehr Material heisst mehr Raumhall, mehr Atmer, mehr
+/// Pegelschwankung — und jede Sekunde davon geht in die Referenz ein.
+const MAX_REFERENCE_SEC: f32 = 30.0;
+
+/// Eine WAV auf `start_sec..end_sec` zuschneiden (Mono, 16 Bit).
+///
+/// `0.0/0.0` — allgemeiner: jedes Ende, das nicht hinter dem Start liegt —
+/// bedeutet "die ganze Datei". Der Zuschnitt wird in JEDEM Fall auf
+/// `MAX_REFERENCE_SEC` ab `start_sec` begrenzt, auch bei der ganzen Datei:
+/// eine Fuenf-Minuten-Aufnahme als Referenz waere sonst der stille Weg zu
+/// einer schlechteren Stimme.
+///
+/// `None`, wenn sich der Blob nicht lesen laesst.
+fn trim_wav_bytes(bytes: &[u8], start_sec: f32, end_sec: f32) -> Option<Vec<u8>> {
+    let (mono, rate, _peak) = decode_wav(bytes)?;
+    let rate_f = rate.max(1) as f32;
+    let start = ((start_sec.max(0.0) * rate_f) as usize).min(mono.len());
+    let end = if end_sec > start_sec {
+        ((end_sec * rate_f) as usize).clamp(start, mono.len())
+    } else {
+        mono.len()
+    };
+    let max_len = (MAX_REFERENCE_SEC * rate_f) as usize;
+    let end = end.min(start.saturating_add(max_len));
+    Some(encode_wav_mono(&mono[start..end], rate))
+}
+
 /// Marker, dass die Hörproben im Verzeichnis mit Pegelausgleich entstanden.
 const DEMOS_NORMALIZED_MARKER: &str = ".loudness-v2";
 
@@ -3510,6 +3541,7 @@ impl TtsManager {
                 seed,
                 file,
                 created_at: chrono::Utc::now().timestamp(),
+                source: builder::CandidateSource::Seed,
             };
             draft.candidates.push(candidate.clone());
             draft.updated_at = chrono::Utc::now().timestamp();
@@ -3537,6 +3569,66 @@ impl TtsManager {
         let raw =
             std::fs::read(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
         apply_depth(&raw, draft.depth).ok_or_else(|| "Kandidat liess sich nicht lesen".to_string())
+    }
+
+    /// Eine WAV-Datei als Kandidat in einen Entwurf holen (Etappe 2).
+    ///
+    /// Derselbe Weg wie `builder_generate`, nur ohne Server: zuschneiden,
+    /// auf denselben Pegel bringen wie jede andere Referenz
+    /// (`ensure_seed_reference` tut nichts anderes), als `cand_<kennzahl>.wav`
+    /// in den Entwurfsordner schreiben, dann den Entwurf sichern — erst die
+    /// Datei, dann der Entwurf, damit nie ein Entwurf auf eine fehlende Datei
+    /// zeigt.
+    ///
+    /// `start_sec`/`end_sec` schneiden zu; `0.0/0.0` nimmt die ganze Datei.
+    /// Ueber `MAX_REFERENCE_SEC` wird gekappt (siehe dort).
+    pub fn builder_add_wav(
+        &self,
+        draft_id: &str,
+        wav_path: &str,
+        start_sec: f32,
+        end_sec: f32,
+    ) -> Result<builder::BuilderDraft, String> {
+        let fish_dir = self.fish_dir();
+        let mut draft = builder::load_draft(&fish_dir, draft_id)?;
+        let path = std::path::Path::new(wav_path);
+        let raw =
+            std::fs::read(path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+        if !protocol::looks_like_wav(&raw) {
+            return Err(format!("{} ist keine brauchbare WAV-Datei", path.display()));
+        }
+        let trimmed = trim_wav_bytes(&raw, start_sec, end_sec)
+            .ok_or_else(|| format!("{} liess sich nicht lesen", path.display()))?;
+        let audio = normalize_wav_bytes(&trimmed).unwrap_or(trimmed);
+
+        // Kennzahl statt Seed: dieser Kandidat ist nicht gewuerfelt und
+        // nicht reproduzierbar. Die Zahl adressiert ihn nur — gewonnen wie
+        // in `builder_generate` aus dem Zufallsanteil einer ULID.
+        let key: i64 = (ulid::Ulid::new().0 as u32) as i64;
+        // Was im eigenen Datenverzeichnis liegt, hat die App selbst
+        // aufgenommen; alles andere hat der Nutzer von aussen gewaehlt. Fuer
+        // die Verarbeitung macht es keinen Unterschied — beide tragen keinen
+        // Seed —, aber die Oberflaeche darf sagen, woher es kam.
+        let source = if path.starts_with(&fish_dir) {
+            builder::CandidateSource::Recording
+        } else {
+            builder::CandidateSource::Import
+        };
+        let dir = builder::draft_dir(&fish_dir, draft_id);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        let file = format!("cand_{key}.wav");
+        std::fs::write(dir.join(&file), &audio)
+            .map_err(|e| format!("Kandidat nicht gespeichert: {e}"))?;
+        draft.candidates.push(builder::Candidate {
+            seed: key,
+            file,
+            created_at: chrono::Utc::now().timestamp(),
+            source,
+        });
+        draft.updated_at = chrono::Utc::now().timestamp();
+        builder::save_draft(&fish_dir, &draft)?;
+        Ok(draft)
     }
 
     /// Den gewaehlten Kandidaten als Stimme speichern.
@@ -3577,7 +3669,12 @@ impl TtsManager {
             let _ = std::fs::remove_dir_all(&target);
             return Err(format!("could not write sample.lab: {e}"));
         }
-        voices::write_seed_marker(&fish_dir, &id, seed);
+        // Der Seed-Vermerk nur fuer einen gewuerfelten Kandidaten: bei einem
+        // eingespielten stuende in `seed.txt` eine Kennzahl, die nichts
+        // reproduziert — eine Zusage, die die Datei nicht halten kann.
+        if let Some(seed) = builder::seed_marker_for(&draft) {
+            voices::write_seed_marker(&fish_dir, &id, seed);
+        }
         registry::write_meta(&fish_dir, &id, &meta)?;
         voices::update_registry(&fish_dir);
         builder::delete_draft(&fish_dir, draft_id)?;
@@ -4297,6 +4394,50 @@ mod tests {
         *core.voice.lock().unwrap() = Some("pyrion".to_string());
         sound_for(&core, "pyrion", 0.8, 0.0);
         assert!((core.voice_speed(None) - 0.8).abs() < 1e-6);
+    }
+
+    /// 4 s bei 16 kHz; geschnitten auf 1 s bleibt ein Viertel uebrig.
+    #[test]
+    fn zuschnitt_kuerzt_wirklich_und_bleibt_ein_wav() {
+        let wav = super::test_support::sine_wav(16_000, 64_000);
+        let kurz = trim_wav_bytes(&wav, 1.0, 2.0).unwrap();
+        assert!(kurz.len() < wav.len(), "{} vs {}", kurz.len(), wav.len());
+        assert!(protocol::looks_like_wav(&kurz), "bleibt ein WAV");
+        let (mono, rate, _) = decode_wav(&kurz).unwrap();
+        assert_eq!(rate, 16_000);
+        assert_eq!(mono.len(), 16_000, "genau eine Sekunde");
+    }
+
+    #[test]
+    fn zuschnitt_ohne_grenzen_nimmt_die_ganze_datei() {
+        let wav = super::test_support::sine_wav(16_000, 32_000);
+        let ganz = trim_wav_bytes(&wav, 0.0, 0.0).unwrap();
+        assert_eq!(decode_wav(&ganz).unwrap().0.len(), 32_000);
+    }
+
+    /// 60 s Material, 40 s gewuenscht — beides ueber der Grenze fuer eine
+    /// Zero-Shot-Referenz, beides landet bei 30 s ab Startpunkt.
+    #[test]
+    fn zuschnitt_ueber_dreissig_sekunden_wird_gekappt() {
+        let wav = super::test_support::sine_wav(16_000, 60 * 16_000);
+        let gekappt = trim_wav_bytes(&wav, 5.0, 45.0).unwrap();
+        assert_eq!(decode_wav(&gekappt).unwrap().0.len(), 30 * 16_000);
+        let ganz = trim_wav_bytes(&wav, 0.0, 0.0).unwrap();
+        assert_eq!(
+            decode_wav(&ganz).unwrap().0.len(),
+            30 * 16_000,
+            "auch die ganze Datei wird gekappt"
+        );
+    }
+
+    /// Ein Ende hinter dem Dateiende darf nicht ueber den Rand greifen.
+    #[test]
+    fn zuschnitt_haelt_sich_an_die_dateilaenge() {
+        let wav = super::test_support::sine_wav(16_000, 16_000);
+        let kurz = trim_wav_bytes(&wav, 0.5, 99.0).unwrap();
+        assert_eq!(decode_wav(&kurz).unwrap().0.len(), 8_000);
+        let leer = trim_wav_bytes(&wav, 99.0, 100.0).unwrap();
+        assert_eq!(decode_wav(&leer).unwrap().0.len(), 0);
     }
 
     /// Ohne Normalisierung ist der Dauerregler der einzige Faktor — er ist
