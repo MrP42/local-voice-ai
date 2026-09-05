@@ -1085,6 +1085,41 @@ fn normalize_wav_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(out.into_inner())
 }
 
+/// Mono-f32 zurueck in ein 16-Bit-PCM-WAV. Gegenstueck zu `decode_wav`.
+fn encode_wav_mono(samples: &[f32], rate: u32) -> Vec<u8> {
+    let data_len = samples.len() * 2;
+    let mut out = Vec::with_capacity(44 + data_len);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&((36 + data_len) as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data_len as u32).to_le_bytes());
+    for s in samples {
+        let v = (s.clamp(-1.0, 1.0) * 32_767.0) as i16;
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+/// Den Tiefe-Regler auf WAV-Bytes anwenden: dekodieren, strecken, wieder als
+/// WAV kodieren. `factor <= 1.0` gibt die Bytes unveraendert zurueck, damit
+/// der Normalfall keine Rechenzeit und keine Requantisierung kostet.
+fn apply_depth(wav: &[u8], factor: f32) -> Option<Vec<u8>> {
+    if !(factor > 1.0) {
+        return Some(wav.to_vec());
+    }
+    let (mono, rate, _peak) = decode_wav(wav)?;
+    let stretched = dsp::resample_stretch(&mono, factor);
+    Some(encode_wav_mono(&stretched, rate))
+}
+
 /// Marker, dass die Hörproben im Verzeichnis mit Pegelausgleich entstanden.
 const DEMOS_NORMALIZED_MARKER: &str = ".loudness-v2";
 
@@ -3276,6 +3311,161 @@ impl TtsManager {
         log::info!("Seed {seed} als Stimme '{id}' (mit Metadaten) gespeichert");
         Ok(id)
     }
+
+    // ---- Stimmen-Baukasten (Etappe 1) --------------------------------------
+
+    /// Kandidaten fuer einen Entwurf erzeugen: je Kandidat ein zufaelliger
+    /// Seed, derselbe Probesatz. Nach JEDEM fertigen Kandidaten wird der
+    /// Entwurf geschrieben — bricht der Lauf ab (Abbruch, Absturz,
+    /// Serverfehler), bleibt alles bereits Gewuerfelte erhalten.
+    ///
+    /// Der Seed ist der einzige Regler fuer die Stimmidentitaet (Fish-Speech
+    /// kennt keine Konditionierung auf eine Beschreibung) — deshalb ist das
+    /// Wuerfeln hier der Kern und nicht ein Beiwerk.
+    pub async fn builder_generate(
+        &self,
+        draft_id: &str,
+        count: usize,
+        mut cancel: tokio::sync::watch::Receiver<bool>,
+        mut on_candidate: impl FnMut(usize, usize, &builder::Candidate),
+    ) -> Result<builder::BuilderDraft, String> {
+        let fish_dir = self.fish_dir();
+        let mut draft = builder::load_draft(&fish_dir, draft_id)?;
+        if draft.probe_text.trim().is_empty() {
+            return Err("Ohne Probesatz gibt es nichts zu sprechen".to_string());
+        }
+        self.refresh_from_settings();
+        self.ensure_server().await?;
+        let port = *self.core.port.lock().unwrap();
+        let dir = builder::draft_dir(&fish_dir, draft_id);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+
+        // Die Tags des Entwurfs gehoeren in den Probesatz: die Prosodie der
+        // Referenz uebertraegt sich beim Klonen, ein "[slow]" hier wirkt also
+        // auf die spaetere Stimme, nicht nur auf diese eine Aufnahme.
+        let mut text = String::new();
+        for tag in &draft.tags {
+            text.push('[');
+            text.push_str(tag);
+            text.push_str("] ");
+        }
+        text.push_str(&draft.probe_text);
+
+        for index in 0..count {
+            if *cancel.borrow_and_update() {
+                break;
+            }
+            // Zufall ohne `rand`: die unteren Bits einer ULID sind der
+            // Zufallsanteil, und `ulid` ist im Projekt bereits Abhaengigkeit.
+            let seed: i64 = (ulid::Ulid::new().0 as u32) as i64;
+            let body = protocol::tts_request_body_in_format(&text, seed, None, "wav");
+            let resp = self
+                .core
+                .http
+                .post(format!("{}/v1/tts", protocol::base_url(port)))
+                .json(&body)
+                .timeout(TTS_TIMEOUT)
+                .send()
+                .await
+                .map_err(|e| format!("Kandidat {} nicht erzeugt: {e}", index + 1))?;
+            if !resp.status().is_success() {
+                return Err(format!(
+                    "Kandidat {} nicht erzeugt: Server antwortete {}",
+                    index + 1,
+                    resp.status()
+                ));
+            }
+            let audio = resp
+                .bytes()
+                .await
+                .map_err(|e| format!("Kandidat {} unvollstaendig: {e}", index + 1))?
+                .to_vec();
+            if !protocol::looks_like_wav(&audio) {
+                return Err(format!("Kandidat {} war kein WAV", index + 1));
+            }
+            let audio = normalize_wav_bytes(&audio).unwrap_or(audio);
+            let file = format!("cand_{seed}.wav");
+            std::fs::write(dir.join(&file), &audio)
+                .map_err(|e| format!("Kandidat {} nicht gespeichert: {e}", index + 1))?;
+            let candidate = builder::Candidate {
+                seed,
+                file,
+                created_at: chrono::Utc::now().timestamp(),
+            };
+            draft.candidates.push(candidate.clone());
+            draft.updated_at = chrono::Utc::now().timestamp();
+            // Erst die Datei, dann der Entwurf: ein Absturz dazwischen laesst
+            // eine verwaiste WAV zurueck (harmlos), nie einen Entwurf, der auf
+            // eine fehlende Datei zeigt.
+            builder::save_draft(&fish_dir, &draft)?;
+            on_candidate(index + 1, count, &candidate);
+        }
+        Ok(draft)
+    }
+
+    /// Einen Kandidaten zum Anhoeren liefern — mit dem aktuellen Tiefe-Regler
+    /// des Entwurfs. Die Original-WAV bleibt unveraendert liegen, damit der
+    /// Regler beliebig oft neu gestellt werden kann, ohne neu zu wuerfeln.
+    pub fn builder_candidate_wav(&self, draft_id: &str, seed: i64) -> Result<Vec<u8>, String> {
+        let fish_dir = self.fish_dir();
+        let draft = builder::load_draft(&fish_dir, draft_id)?;
+        let candidate = draft
+            .candidates
+            .iter()
+            .find(|c| c.seed == seed)
+            .ok_or_else(|| format!("Kandidat {seed} gehoert nicht zu diesem Entwurf"))?;
+        let path = builder::draft_dir(&fish_dir, draft_id).join(&candidate.file);
+        let raw =
+            std::fs::read(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+        apply_depth(&raw, draft.depth).ok_or_else(|| "Kandidat liess sich nicht lesen".to_string())
+    }
+
+    /// Den gewaehlten Kandidaten als Stimme speichern.
+    ///
+    /// Bewusst dieselbe Strecke wie `save_seed_voice_v2` — nur die Quelle der
+    /// WAV ist eine andere: Kandidat statt Seed-Referenz. Zwei Speicherwege
+    /// wuerden garantiert auseinanderlaufen.
+    pub async fn builder_commit(
+        &self,
+        draft_id: &str,
+        meta: registry::VoiceMeta,
+    ) -> Result<String, String> {
+        let fish_dir = self.fish_dir();
+        let draft = builder::load_draft(&fish_dir, draft_id)?;
+        let seed = draft
+            .selected
+            .ok_or_else(|| "Kein Kandidat gewaehlt".to_string())?;
+        let id = voices::sanitize_voice_id(&meta.display_name)
+            .ok_or_else(|| "Der Name ergibt keinen brauchbaren Stimmennamen".to_string())?;
+        if voices::voice_is_complete(&fish_dir, &id) {
+            return Err(format!("Die Stimme '{id}' existiert bereits"));
+        }
+        let others = registry::other_voice_names(&fish_dir, Some(&id));
+        registry::validate_meta(&meta, &others)?;
+
+        let audio = self.builder_candidate_wav(draft_id, seed)?;
+        let target = voices::voice_dir(&fish_dir, &id);
+        std::fs::create_dir_all(&target)
+            .map_err(|e| format!("could not create {}: {e}", target.display()))?;
+        // Vollstaendig oder gar nicht — die Regel aus `save_seed_voice_v2`:
+        // ein halbes Verzeichnis meldet beim naechsten Versuch faelschlich
+        // "existiert bereits".
+        if let Err(e) = std::fs::write(target.join("sample.wav"), &audio) {
+            let _ = std::fs::remove_dir_all(&target);
+            return Err(format!("could not write sample.wav: {e}"));
+        }
+        if let Err(e) = std::fs::write(target.join("sample.lab"), draft.probe_text.as_bytes()) {
+            let _ = std::fs::remove_dir_all(&target);
+            return Err(format!("could not write sample.lab: {e}"));
+        }
+        voices::write_seed_marker(&fish_dir, &id, seed);
+        registry::write_meta(&fish_dir, &id, &meta)?;
+        voices::update_registry(&fish_dir);
+        builder::delete_draft(&fish_dir, draft_id)?;
+        log::info!("Baukasten: Entwurf {draft_id} als Stimme '{id}' gespeichert");
+        Ok(id)
+    }
 }
 
 /// PID des Prozesses, der auf `127.0.0.1:port` lauscht.
@@ -3343,6 +3533,34 @@ fn kill_pid(pid: u32) -> Result<(), String> {
         "Prozess {pid} liess sich nicht beenden: {}",
         String::from_utf8_lossy(&output.stderr).trim()
     ))
+}
+
+/// Winzige WAV-Erzeugung fuer Tests — echte Audiodateien im Repo waeren fuer
+/// diese Pruefungen unnoetiger Ballast.
+#[cfg(test)]
+mod test_support {
+    /// Mono, 16 Bit, `rate` Hz, `samples` Werte einer Sinusschwingung.
+    pub fn sine_wav(rate: u32, samples: usize) -> Vec<u8> {
+        let data_len = samples * 2;
+        let mut out = Vec::with_capacity(44 + data_len);
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&((36 + data_len) as u32).to_le_bytes());
+        out.extend_from_slice(b"WAVEfmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        out.extend_from_slice(&1u16.to_le_bytes()); // mono
+        out.extend_from_slice(&rate.to_le_bytes());
+        out.extend_from_slice(&(rate * 2).to_le_bytes());
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&(data_len as u32).to_le_bytes());
+        for i in 0..samples {
+            let v = ((i as f32 / 8.0).sin() * 12_000.0) as i16;
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -3873,5 +4091,27 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, piper::ERR_BINARY_MISSING);
+    }
+
+    #[test]
+    fn tiefe_streckt_die_kandidaten_wav_und_laesst_sie_eine_wav_bleiben() {
+        // Ein kleines, gueltiges WAV bauen und durch die Tiefe schicken.
+        // Ueber 1 KiB Nutzlast, weil `protocol::looks_like_wav` genau das
+        // als Untergrenze verlangt (RIFF-Magic allein reicht ihm nicht).
+        let wav = super::test_support::sine_wav(16_000, 2_000);
+        let tiefer = super::apply_depth(&wav, 1.15).expect("Tiefe muss rechnen");
+        assert!(protocol::looks_like_wav(&tiefer), "bleibt ein WAV");
+        assert!(
+            tiefer.len() > wav.len(),
+            "gestreckt heisst mehr Bytes: {} vs {}",
+            tiefer.len(),
+            wav.len()
+        );
+    }
+
+    #[test]
+    fn tiefe_eins_gibt_die_bytes_unveraendert_zurueck() {
+        let wav = super::test_support::sine_wav(16_000, 2_000);
+        assert_eq!(super::apply_depth(&wav, 1.0).unwrap(), wav);
     }
 }
