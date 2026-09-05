@@ -48,6 +48,18 @@ enum LocalProviders {
     static func reply(to transcript: String) async throws -> String {
         guard SystemLanguageModel.default.availability == .available else { return try await CPULocalProviders.shared.reply(to: transcript) }
         let session = LanguageModelSession(instructions: "Antworte kurz auf Deutsch, höchstens zwei Sätze. Führe keine externen Aktionen aus.")
-        return String(try await session.respond(to: String(transcript.prefix(2000))).content.prefix(500))
+        let generation = Task {
+            let result = try await session.respond(to: String(transcript.prefix(2000)), options: GenerationOptions(maximumResponseTokens: 128))
+            try Task.checkCancellation()
+            return String(result.content.prefix(500))
+        }
+        let deadline = Task {
+            do { try await Task.sleep(for: .seconds(60)) } catch { return }
+            generation.cancel()
+        }
+        defer { deadline.cancel() }
+        return try await withTaskCancellationHandler {
+            try await generation.value
+        } onCancel: { generation.cancel() }
     }
 }

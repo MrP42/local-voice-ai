@@ -190,7 +190,11 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         for url in urls where url.lastPathComponent.hasPrefix(".recording-") && url.pathExtension == "m4a" {
             if recording && url == pendingURL { continue }
             do {
-                guard try AVAudioFile(forReading: url).length > 0 else { continue }
+                guard try AVAudioFile(forReading: url).length > 0 else {
+                    status = "Ungesicherte Aufnahme ist nicht lesbar – Datei bleibt erhalten"
+                    recordDiagnostic("draft_unreadable")
+                    continue
+                }
                 _ = try store.recoverRecording(at: url)
                 if pendingURL == url { pendingURL = nil }
                 status = "Aufnahme wiederhergestellt – Verarbeitung folgt"
@@ -221,6 +225,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         #endif
         for entry in Entry.pendingDelivery(in: entries) {
             guard !inFlight.contains(entry.id), let store else { continue }
+            if reachable && !inFlight.isEmpty { break }
             do {
                 let packet = try store.packet(for: entry)
                 let data = try encoder.encode(Wire(capture: packet))
@@ -237,10 +242,11 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
                             let state = self.entries.first(where: { $0.id == entry.id })?.state ?? .saved
                             try? self.store?.update(entry.id, state: state, timing: ("transfer_roundtrip_ms", Date().timeIntervalSince(start) * 1000))
                             self.refresh()
-                            if !response.isEmpty && self.entries.contains(where: { $0.state == .saved }) { self.retry() }
+                            let advanced = self.entries.first(where: { $0.id == entry.id }).map { $0.state != .saved } ?? false
+                            if !response.isEmpty && advanced && self.entries.contains(where: { $0.state == .saved }) { self.retry() }
                         }
                     }, errorHandler: { _ in
-                        Task { @MainActor in self.inFlight.remove(entry.id); self.queueFile(entry, data: data) }
+                        Task { @MainActor in self.inFlight.remove(entry.id); self.queuePendingFiles() }
                     })
                 } else { queueFile(entry, data: data) }
             } catch { status = "Gespeicherte Aufnahme konnte nicht übertragen werden" }
@@ -251,6 +257,14 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
         #endif
     }
     #if os(watchOS)
+    private func queuePendingFiles() {
+        guard let store else { return }
+        for entry in Entry.pendingDelivery(in: entries) where !inFlight.contains(entry.id) {
+            if let packet = try? store.packet(for: entry), let data = try? encoder.encode(Wire(capture: packet)) {
+                queueFile(entry, data: data)
+            }
+        }
+    }
     private func sendChunks(_ parts: [CaptureChunk], position: Int, entry: Entry, started: Date) {
         guard parts.indices.contains(position) else { inFlight.remove(entry.id); return }
         let part = parts[position]
@@ -273,9 +287,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
                         } else { throw VoiceError.invalid }
                     } catch {
                         self.inFlight.remove(entry.id)
-                        if let packet = try? self.store?.packet(for: entry), let data = try? self.encoder.encode(Wire(capture: packet)) {
-                            self.queueFile(entry, data: data)
-                        }
+                        self.queuePendingFiles()
                         self.status = "gespeichert – Verarbeitung folgt"
                     }
                 }
@@ -283,9 +295,7 @@ final class VoiceModel: NSObject, ObservableObject, WCSessionDelegate, AVAudioRe
                 Task { @MainActor in
                     self.inFlight.remove(entry.id)
                     self.recordDiagnostic("chunk_transport_error_\((error as NSError).code)")
-                    if let packet = try? self.store?.packet(for: entry), let data = try? self.encoder.encode(Wire(capture: packet)) {
-                        self.queueFile(entry, data: data)
-                    }
+                    self.queuePendingFiles()
                 }
             })
         } catch { inFlight.remove(entry.id); status = "Gespeichert – Übertragung erneut versuchen" }
