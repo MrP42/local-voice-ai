@@ -14,6 +14,7 @@ pub mod loudness;
 pub mod models;
 pub mod piper;
 pub mod player;
+pub mod portable;
 pub mod protocol;
 pub mod registry;
 pub mod state;
