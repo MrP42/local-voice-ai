@@ -1,5 +1,9 @@
 # P2 nach dem nativen Simulator-Prototyp
 
+**Fortschreibung:** P2 wurde anschließend vom Benutzer beauftragt. Implementierung
+und noch offene Abnahme stehen im [aktuellen P2-Bericht](p2/README.md). Der folgende
+Text bewahrt den Ausgangsplan nach P1.
+
 P0/P1 bleiben der aktuelle Implementierungsumfang. Der abschließende Dauerlauf
 auf `aad2e0f` ist mit 100/100 lokal beantworteten und quittierten Aufträgen bestanden;
 31 Kerntests, beide nativen Bedienungstests und frischer Simulator-Build bestehen.

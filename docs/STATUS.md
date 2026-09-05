@@ -260,4 +260,23 @@ Bei inaktivem, gesperrtem oder beendetem iPhone bleibt die Aufnahme gespeichert;
 Verarbeitung wird nach Aktivierung fortgesetzt. Desktop-Bestand und lokale Änderungen
 im ursprünglichen Checkout erhalten; kein Push und keine Veröffentlichung.
 Details: [Simulatorbericht](apple-evidence/2026-09-05-simulator-report.md),
-[P2-Folgeplan](apple-evidence/P2-follow-up.md). P2 ist geplant, nicht implementiert.
+[P2-Folgeplan](apple-evidence/P2-follow-up.md). Der anschließende P2-Stand ist unten separat dokumentiert.
+
+## Native Apple P2 – implementiert, Abnahme läuft, 05.09.2026
+
+Programmstand `d414228`: getrennte Aufnahme-/Transport-/Jobsteuerung, persistente
+Versuchsbudgets und Abbruch, beschädigte Einträge mit Wiederherstellungsoberfläche,
+additive Identitäten, temporäre Speicherbudgets, verifizierter Modellimport und
+explizite Base-/Small-Auswahl. Desktop-Tauri wurde nicht verändert.
+
+54 Kerntests, 14 Prozessabbruchfälle, drei iPhone-UI-Tests und ein Watch-UI-Test
+bestehen frisch. Mikrofonverweigerung auf beiden Simulatoren, Duplikatbehandlung,
+Hintergrund-Wiederaufnahme und injizierte Audiounterbrechung bestehen. Zwölf
+Sprachfälle sind abgeschlossen; der Rechenfehler des kleinen Antwortmodells bleibt
+als Qualitätsgrenze offen. Stille/stationäres Rauschen erzeugen keine Antwort.
+
+20 Warm-/Kaltturns und der 100er-Abschlusslauf samt Audit aller 200 Originaldateien
+sind bestanden. Werte: [P2-Bericht](apple-evidence/p2/README.md). Frische
+Fensterbedienung für Lock/Wrist/Force-Quit benötigt einen entsperrten Mac.
+Der erneute externe Claude-Review benötigt die angefragte ausdrückliche
+Übermittlungsfreigabe. **P2 ist deshalb noch nicht vollständig abgenommen.**

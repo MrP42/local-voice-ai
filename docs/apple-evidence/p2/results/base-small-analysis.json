@@ -1,0 +1,21 @@
+{
+  "scope": "Analysis of existing P1 five-case measurements, identical synthetic input hashes; not a fresh P2 Small run",
+  "models": {
+    "base": {
+      "cases": 5,
+      "literalKeywordMatches": 14,
+      "literalKeywordTotal": 21,
+      "medianSTTms": 7658.516049385071,
+      "medianElapsedSeconds": 18.801029159
+    },
+    "small": {
+      "cases": 5,
+      "literalKeywordMatches": 16,
+      "literalKeywordTotal": 21,
+      "medianSTTms": 27164.276957511902,
+      "medianElapsedSeconds": 39.71351764400001
+    }
+  },
+  "identicalInputs": true,
+  "interpretation": "Small corrects the observed umlaut and tomorrow transcription errors but costs substantially more CPU time. Literal keyword scoring penalizes equivalent digits vs number words and is not WER. The response model is unchanged and still not reliable for factual/action correctness."
+}

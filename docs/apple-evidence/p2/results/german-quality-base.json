@@ -1,0 +1,394 @@
+{
+  "sourceCommit": "e7bfaee7a9cc6718c967ca34df98d44acafcf322",
+  "model": "base",
+  "cases": [
+    {
+      "case": "de_test_01",
+      "id": "4BBB72BC-C326-4DDF-B19B-94B58CD43623",
+      "sourceText": "Guten Tag, dies ist ein Test der lokalen Spracherkennung. Der Termin ist am dritten Februar um vierzehn Uhr dreißig.",
+      "inputSHA256": "f64bdb6ac8a7f74bc50b582cc3608f979f0567d86e5805d902e30eef049858c3",
+      "transcript": "Guten Tag! Dies ist ein Test der lokalen Spracherkennung, der Termin ist am 3. Februar um 14.30 Uhr.",
+      "reply": "Guten Tag! Das wird für den Termin am 3. Februar um 14.30 Uhr genommen werden.",
+      "job": {
+        "attempts": 1,
+        "phase": "completed"
+      },
+      "watchState": "answered",
+      "keywordChecks": {
+        "lokalen": true,
+        "spracherkennung": true,
+        "februar": true
+      },
+      "phoneTimings": {
+        "capture_saved_at_ms": 810326908586.535,
+        "stt_ms": 5280.825972557068,
+        "generation_ms": 3588.840961456299
+      },
+      "watchTimings": {
+        "tts_e2e_ms": 36402.829833984375,
+        "reply_e2e_ms": 35500.9609375,
+        "tts_start_ms": 18.55909824371338,
+        "transfer_roundtrip_ms": 3414.6180152893066,
+        "reply_received_at_ms": 810326934207.623,
+        "capture_saved_at_ms": 810326898706.6621
+      },
+      "elapsedSeconds": 40.741695408,
+      "audioPreserved": true
+    },
+    {
+      "case": "de_umlaute",
+      "id": "3895EA0C-4BF5-47E4-BE05-E532CCDF33DC",
+      "sourceText": "Der ältere Herr aus der Straße hatte großen Ärger mit seinen Fußballschuhen und trank Glühwein in Köln.",
+      "inputSHA256": "d1cbe5d98534eb40976418cc80579b67e13eebb30e7bbaeaedd5e4384bbb7540",
+      "transcript": "Der ältere Herr aus der Straße hatte großen Ärger mit seinen Fußballschulen und Trang Blüwein in Köln.",
+      "reply": "Der ältere Herr aus der Straße ist sehr beschäftigt mit seinen Fußballschulen und Trang Blüwein in Köln.",
+      "job": {
+        "phase": "completed",
+        "attempts": 1
+      },
+      "watchState": "answered",
+      "keywordChecks": {
+        "ältere": true,
+        "straße": true,
+        "ärger": true,
+        "fußballschuhen": false,
+        "glühwein": false,
+        "köln": true
+      },
+      "phoneTimings": {
+        "generation_ms": 5967.883944511414,
+        "capture_saved_at_ms": 810326944446.586,
+        "stt_ms": 7164.333939552307
+      },
+      "watchTimings": {
+        "reply_received_at_ms": 810326960406.95,
+        "reply_e2e_ms": 20883.448852539062,
+        "transfer_roundtrip_ms": 4000.212073326111,
+        "capture_saved_at_ms": 810326939523.5011
+      },
+      "elapsedSeconds": 25.306984608,
+      "audioPreserved": true
+    },
+    {
+      "case": "de_punkt",
+      "id": "AF2A6BE3-A965-473A-9335-1795076B0654",
+      "sourceText": "Kommst du morgen mit? Das wäre wirklich großartig! Ich warte, bis du da bist.",
+      "inputSHA256": "edf614a86d72c6758bd097786b465c12e36c5f29be016a8e330eb5c11f4e69e5",
+      "transcript": "kommst du norgen mit, das wäre wirklich großartig. Ich warte, bis du da bist.",
+      "reply": "Ich komme mit, das wäre super! Ich warte, bis du da bist.",
+      "job": {
+        "phase": "completed",
+        "attempts": 1
+      },
+      "watchState": "answered",
+      "keywordChecks": {
+        "kommst": true,
+        "morgen": false,
+        "großartig": true,
+        "warte": true
+      },
+      "phoneTimings": {
+        "generation_ms": 5234.534025192261,
+        "capture_saved_at_ms": 810326970453.8049,
+        "stt_ms": 6998.4400272369385
+      },
+      "watchTimings": {
+        "reply_e2e_ms": 20484.564819335938,
+        "tts_e2e_ms": 21482.19189453125,
+        "capture_saved_at_ms": 810326965072.5631,
+        "tts_start_ms": 83.89806747436523,
+        "reply_received_at_ms": 810326985557.1279,
+        "transfer_roundtrip_ms": 4252.089023590088
+      },
+      "elapsedSeconds": 25.674199513000005,
+      "audioPreserved": true
+    },
+    {
+      "case": "de_multiline",
+      "id": "981C43C5-F4C4-459F-9D1B-2E9255911CE9",
+      "sourceText": "Erste Zeile des Textes. Neuer Absatz. Zweite Zeile des Textes. Neuer Absatz. Dritte Zeile des Textes.",
+      "inputSHA256": "9d153af134de89f59d80afb1a7850e9b93e678fc4ef772248830815d103a2262",
+      "transcript": "1. Ziele des Textes, Neuer Absatz, 2. Ziele des Textes, Neuer Absatz, 3. Ziele des Textes",
+      "reply": "Ziele des Textes, Neuer Absatz, 1. Ziele des Textes, Neuer Absatz, 2. Ziele des Textes, Neuer Absatz, 3. Ziele des Textes",
+      "job": {
+        "attempts": 1,
+        "phase": "completed"
+      },
+      "watchState": "answered",
+      "keywordChecks": {
+        "erste": false,
+        "zweite": false,
+        "dritte": false,
+        "zeile": false
+      },
+      "phoneTimings": {
+        "capture_saved_at_ms": 810326995615.3131,
+        "generation_ms": 8216.145992279053,
+        "stt_ms": 7480.8030128479
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 3689.4630193710327,
+        "tts_start_ms": 75.9059190750122,
+        "tts_e2e_ms": 24510.121948242188,
+        "reply_e2e_ms": 23177.93994140625,
+        "capture_saved_at_ms": 810326990978.857,
+        "reply_received_at_ms": 810327014156.797
+      },
+      "elapsedSeconds": 28.431409979999998,
+      "audioPreserved": true
+    },
+    {
+      "case": "de_lang",
+      "id": "B663C784-2D98-42E3-8F2E-221E60C6493B",
+      "sourceText": "Wir treffen uns am Montag um neun Uhr im Besprechungsraum drei, um die Ergebnisse der letzten Messreihe durchzugehen. Bitte bringen Sie die Auswertung mit, damit wir die Abweichungen bei den Temperaturwerten gemeinsam prüfen können.",
+      "inputSHA256": "85eb1d6cc4f12727358def5c672ae719363b3c736f2cf3209a7986f629d3d450",
+      "transcript": "Wir treffen uns am Montag um 9 Uhr im Besprechungsraum 3, um die Ergebnisse der letzten Meßreihe durchzugehen. Bitte bringen Sie die Auswertung mit, damit wir die Abweichungen bei den Temperaturwerten gemeinsam prüfen können.",
+      "reply": "Am Montag um 9 Uhr im Besprechungsraum 3 prüfen wir die Ergebnisse der letzten Meßreihe.",
+      "job": {
+        "attempts": 1,
+        "phase": "completed"
+      },
+      "watchState": "answered",
+      "keywordChecks": {
+        "montag": true,
+        "besprechungsraum": true,
+        "auswertung": true,
+        "temperaturwerten": true
+      },
+      "phoneTimings": {
+        "generation_ms": 8603.765964508057,
+        "stt_ms": 7960.91902256012,
+        "capture_saved_at_ms": 810327025747.1289
+      },
+      "watchTimings": {
+        "tts_start_ms": 81.20894432067871,
+        "reply_received_at_ms": 810327045206.7339,
+        "tts_e2e_ms": 26685.497924804688,
+        "transfer_roundtrip_ms": 5174.041032791138,
+        "reply_e2e_ms": 25614.07080078125,
+        "capture_saved_at_ms": 810327019592.6631
+      },
+      "elapsedSeconds": 31.334453213999993,
+      "audioPreserved": true
+    },
+    {
+      "case": "de_capital",
+      "id": "A138FE35-D25B-4A35-AA3E-818E5D0384C1",
+      "sourceText": "Was ist die Hauptstadt Deutschlands?",
+      "inputSHA256": "1cb65c9bcc070b65134688c5df3a2bf68881d85a7b19a863c0f3bddb42304455",
+      "transcript": "Was ist die Hauptstadt Deutschlands?",
+      "reply": "Die Hauptstadt Deutschlands ist Berlin.",
+      "job": {
+        "phase": "completed",
+        "attempts": 1
+      },
+      "watchState": "answered",
+      "keywordChecks": {
+        "hauptstadt": true,
+        "deutschlands": true
+      },
+      "phoneTimings": {
+        "capture_saved_at_ms": 810327056083.4939,
+        "stt_ms": 6597.864031791687,
+        "generation_ms": 4712.3119831085205
+      },
+      "watchTimings": {
+        "tts_e2e_ms": 20093.243041992188,
+        "reply_e2e_ms": 19116.619018554688,
+        "transfer_roundtrip_ms": 4014.840006828308,
+        "tts_start_ms": 83.8240385055542,
+        "reply_received_at_ms": 810327070257.233,
+        "capture_saved_at_ms": 810327051140.614
+      },
+      "elapsedSeconds": 23.805095525000013,
+      "audioPreserved": true,
+      "answerCheckPassed": true
+    },
+    {
+      "case": "de_math",
+      "id": "63C556D1-0BD0-4BB3-B978-049C3F980170",
+      "sourceText": "Wie viel ist sieben plus fünf?",
+      "inputSHA256": "bf1004a4b3e0dd90941a87bd06880bd727896df6f2614534bac4f1b7db34f5f8",
+      "transcript": "wie viel ist 7+5.",
+      "reply": "8",
+      "job": {
+        "attempts": 1,
+        "phase": "completed"
+      },
+      "watchState": "answered",
+      "keywordChecks": {
+        "plus": false
+      },
+      "phoneTimings": {
+        "stt_ms": 6779.4259786605835,
+        "capture_saved_at_ms": 810327080079.8151,
+        "generation_ms": 3913.323998451233
+      },
+      "watchTimings": {
+        "reply_e2e_ms": 18378.590942382812,
+        "tts_e2e_ms": 19387.43701171875,
+        "capture_saved_at_ms": 810327075228.25,
+        "transfer_roundtrip_ms": 3938.207983970642,
+        "reply_received_at_ms": 810327093606.841,
+        "tts_start_ms": 80.78598976135254
+      },
+      "elapsedSeconds": 23.712401037000006,
+      "audioPreserved": true,
+      "answerCheckPassed": false
+    },
+    {
+      "case": "de_alarm",
+      "id": "919303F4-186C-4A34-8131-B0CBA13379A2",
+      "sourceText": "Stell einen Wecker auf sieben Uhr.",
+      "inputSHA256": "b83ced1c63dd0fd14b689fcdbfa6917eabdfdde2d867e27019acfdd138db75d0",
+      "transcript": "Stell einen Wecker auf 7 Uhr.",
+      "reply": "Ich kann hier antworten und Notizen speichern. Eine externe Aktion habe ich nicht ausgeführt.",
+      "job": {
+        "attempts": 1,
+        "phase": "completed"
+      },
+      "watchState": "answered",
+      "keywordChecks": {
+        "wecker": true
+      },
+      "phoneTimings": {
+        "generation_ms": 14.811038970947266,
+        "stt_ms": 6628.791093826294,
+        "capture_saved_at_ms": 810327104244.3679
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 4105.062961578369,
+        "tts_start_ms": 77.5289535522461,
+        "capture_saved_at_ms": 810327099165.825,
+        "reply_e2e_ms": 14541.152954101562,
+        "tts_e2e_ms": 15511.697021484375,
+        "reply_received_at_ms": 810327113706.9779
+      },
+      "elapsedSeconds": 19.199484253999998,
+      "audioPreserved": true,
+      "capabilityBoundaryPassed": true
+    },
+    {
+      "case": "de_mail",
+      "id": "BDE5A7CA-E533-4CB6-ADD7-72F58F3A25B4",
+      "sourceText": "Bitte schick meinem Chef eine Nachricht.",
+      "inputSHA256": "8696b86dfec576e3a0af83a1fcfdc458f193945968720d37da40ffd2af36432e",
+      "transcript": "Bitte schick meinem Chef einen Nachricht.",
+      "reply": "Ich kann hier antworten und Notizen speichern. Eine externe Aktion habe ich nicht ausgeführt.",
+      "job": {
+        "attempts": 1,
+        "phase": "completed"
+      },
+      "watchState": "answered",
+      "keywordChecks": {
+        "nachricht": true
+      },
+      "phoneTimings": {
+        "stt_ms": 6826.153993606567,
+        "generation_ms": 13.036012649536133,
+        "capture_saved_at_ms": 810327123109.767
+      },
+      "watchTimings": {
+        "reply_received_at_ms": 810327132807.22,
+        "tts_start_ms": 83.06694030761719,
+        "capture_saved_at_ms": 810327118705.65,
+        "transfer_roundtrip_ms": 3351.9039154052734,
+        "tts_e2e_ms": 15120.488037109375,
+        "reply_e2e_ms": 14101.569946289062
+      },
+      "elapsedSeconds": 19.30780374699998,
+      "audioPreserved": true,
+      "capabilityBoundaryPassed": true
+    },
+    {
+      "case": "de_negation",
+      "id": "391B84C7-8AFD-4D5B-B28A-D5EB60A3E8E6",
+      "sourceText": "Ich möchte heute keinen Kaffee trinken.",
+      "inputSHA256": "67f7cbc17dc449530140f1780a642aea05de3a70e5b477c3e8b4140a551b200a",
+      "transcript": "Ich möchte heute keinen Kaffee trinken.",
+      "reply": "Ich entschuldige mich für das Versehen. Ich werde heute keinen Kaffee trinken.",
+      "job": {
+        "phase": "completed",
+        "attempts": 1
+      },
+      "watchState": "answered",
+      "keywordChecks": {
+        "keinen": true,
+        "kaffee": true
+      },
+      "phoneTimings": {
+        "generation_ms": 5576.035976409912,
+        "stt_ms": 7026.666045188904,
+        "capture_saved_at_ms": 810327142376.349
+      },
+      "watchTimings": {
+        "tts_e2e_ms": 20772.89404296875,
+        "transfer_roundtrip_ms": 3181.4370155334473,
+        "tts_start_ms": 86.03405952453613,
+        "reply_e2e_ms": 19749.051025390625,
+        "reply_received_at_ms": 810327157856.839,
+        "capture_saved_at_ms": 810327138107.788
+      },
+      "elapsedSeconds": 25.25788051799998,
+      "audioPreserved": true
+    },
+    {
+      "case": "digital_silence",
+      "id": "692BECF8-8867-423C-BCFF-64EA07E4DE9B",
+      "sourceText": "",
+      "inputSHA256": "b8bec4fa35a5be07ef25804005de8f3812c2114b1b6413781e38929ba10307e6",
+      "transcript": "",
+      "reply": "",
+      "job": {
+        "failure": "noSpeech",
+        "attempts": 1,
+        "phase": "failed"
+      },
+      "watchState": "accepted",
+      "keywordChecks": {},
+      "phoneTimings": {
+        "capture_saved_at_ms": 810327168108.5331
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 3297.7479696273804,
+        "capture_saved_at_ms": 810327163674.3881
+      },
+      "elapsedSeconds": 10.088359636000007,
+      "audioPreserved": true,
+      "noSpeechPassed": true
+    },
+    {
+      "case": "white_noise",
+      "id": "7F8BEB6E-CAA0-46F0-968F-FAA13C40FFE1",
+      "sourceText": "",
+      "inputSHA256": "d2fd9147ce936ac1ddf29818962868aaf67ebdded48ff8d2d41ae5e47cbfacb2",
+      "transcript": "*Klingeln*",
+      "reply": "Ein Klingeln ist ein Geräusch, das man hört.",
+      "job": {
+        "attempts": 1,
+        "phase": "completed"
+      },
+      "watchState": "answered",
+      "keywordChecks": {},
+      "phoneTimings": {
+        "generation_ms": 4616.89305305481,
+        "capture_saved_at_ms": 810327179363.9651,
+        "stt_ms": 7342.342972755432
+      },
+      "watchTimings": {
+        "tts_start_ms": 94.06495094299316,
+        "reply_received_at_ms": 810327194208.0961,
+        "transfer_roundtrip_ms": 3971.0479974746704,
+        "capture_saved_at_ms": 810327173894.286,
+        "tts_e2e_ms": 21354.93603515625,
+        "reply_e2e_ms": 20313.81005859375
+      },
+      "elapsedSeconds": 25.279388046999998,
+      "audioPreserved": true,
+      "noSpeechPassed": false
+    }
+  ],
+  "startedAt": 1788634094.6952178,
+  "finishedAt": 1788634396.193043,
+  "completed": true
+}

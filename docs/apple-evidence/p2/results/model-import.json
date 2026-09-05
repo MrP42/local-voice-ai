@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "sourceCommit": "d4142287d198f07664611d82a727276d6221a672",
+  "cases": [
+    {
+      "invalidInput": true,
+      "outcome": "model_import_failed",
+      "originalHashPreserved": true,
+      "temporaryCopiesRemoved": true
+    },
+    {
+      "invalidInput": false,
+      "outcome": "model_import_verified",
+      "originalHashPreserved": true,
+      "temporaryCopiesRemoved": true
+    }
+  ]
+}
