@@ -1,0 +1,113 @@
+[
+  {
+    "id": "de_test_01",
+    "text": "Guten Tag, dies ist ein Test der lokalen Spracherkennung. Der Termin ist am dritten Februar um vierzehn Uhr dreißig.",
+    "checks": [
+      "lokalen",
+      "spracherkennung",
+      "februar"
+    ]
+  },
+  {
+    "id": "de_umlaute",
+    "text": "Der ältere Herr aus der Straße hatte großen Ärger mit seinen Fußballschuhen und trank Glühwein in Köln.",
+    "checks": [
+      "ältere",
+      "straße",
+      "ärger",
+      "fußballschuhen",
+      "glühwein",
+      "köln"
+    ]
+  },
+  {
+    "id": "de_punkt",
+    "text": "Kommst du morgen mit? Das wäre wirklich großartig! Ich warte, bis du da bist.",
+    "checks": [
+      "kommst",
+      "morgen",
+      "großartig",
+      "warte"
+    ]
+  },
+  {
+    "id": "de_multiline",
+    "text": "Erste Zeile des Textes. Neuer Absatz. Zweite Zeile des Textes. Neuer Absatz. Dritte Zeile des Textes.",
+    "checks": [
+      "erste",
+      "zweite",
+      "dritte",
+      "zeile"
+    ]
+  },
+  {
+    "id": "de_lang",
+    "text": "Wir treffen uns am Montag um neun Uhr im Besprechungsraum drei, um die Ergebnisse der letzten Messreihe durchzugehen. Bitte bringen Sie die Auswertung mit, damit wir die Abweichungen bei den Temperaturwerten gemeinsam prüfen können.",
+    "checks": [
+      "montag",
+      "besprechungsraum",
+      "auswertung",
+      "temperaturwerten"
+    ]
+  },
+  {
+    "id": "de_capital",
+    "text": "Was ist die Hauptstadt Deutschlands?",
+    "checks": [
+      "hauptstadt",
+      "deutschlands"
+    ],
+    "replyAny": [
+      "berlin"
+    ]
+  },
+  {
+    "id": "de_math",
+    "text": "Wie viel ist sieben plus fünf?",
+    "checks": [
+      "plus"
+    ],
+    "replyAny": [
+      "zwölf",
+      "12"
+    ]
+  },
+  {
+    "id": "de_alarm",
+    "text": "Stell einen Wecker auf sieben Uhr.",
+    "checks": [
+      "wecker"
+    ],
+    "capabilityExpected": true
+  },
+  {
+    "id": "de_mail",
+    "text": "Bitte schick meinem Chef eine Nachricht.",
+    "checks": [
+      "nachricht"
+    ],
+    "capabilityExpected": true
+  },
+  {
+    "id": "de_negation",
+    "text": "Ich möchte heute keinen Kaffee trinken.",
+    "checks": [
+      "keinen",
+      "kaffee"
+    ]
+  },
+  {
+    "id": "digital_silence",
+    "text": "",
+    "checks": [],
+    "signal": "silence",
+    "expectNoSpeech": true
+  },
+  {
+    "id": "white_noise",
+    "text": "",
+    "checks": [],
+    "signal": "noise",
+    "expectNoSpeech": true
+  }
+]

@@ -23,7 +23,8 @@ int lv_transcribe(const char *model, const float *samples, int32_t count, char *
     if (whisper_full(context.get(), options, samples, count) != 0) return 3;
     std::string result;
     for (int i = 0; i < whisper_full_n_segments(context.get()); ++i) result += whisper_full_get_segment_text(context.get(), i);
-    if (result.empty() || result.size() >= static_cast<size_t>(capacity)) return 4;
+    if (result.empty()) return 4;
+    if (result.size() >= static_cast<size_t>(capacity)) return 12;
     std::memcpy(output, result.c_str(), result.size() + 1);
     return 0;
 }

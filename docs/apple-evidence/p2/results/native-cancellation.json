@@ -1,0 +1,34 @@
+{
+  "passed": true,
+  "sourceCommit": "7429e82e841de17543d5e506d6b32d6012cf93d6",
+  "testedWorkingChanges": true,
+  "id": "8810F31D-1B9E-4B99-84D6-0663951ADACF",
+  "probes": [
+    {
+      "cancelRequestedAt": 1788633251.359896,
+      "phase": "transcribing",
+      "nativeStoppedAfterRequest": true,
+      "hasReply": false,
+      "hasTranscript": false,
+      "nativeStartedAt": 1788633251.093231,
+      "id": "8810F31D-1B9E-4B99-84D6-0663951ADACF",
+      "cancelled": true,
+      "nativeStoppedAt": 1788633255.643149,
+      "cancellationMilliseconds": 5120.256185531616
+    },
+    {
+      "phase": "generating",
+      "hasReply": false,
+      "cancelRequestedAt": 1788633271.4600039,
+      "cancelled": true,
+      "nativeStoppedAfterRequest": true,
+      "nativeStartedAt": 1788633271.1619291,
+      "cancellationMilliseconds": 1155.2963256835938,
+      "nativeStoppedAt": 1788633271.774185,
+      "id": "8810F31D-1B9E-4B99-84D6-0663951ADACF",
+      "hasTranscript": true
+    }
+  ],
+  "resumedWithoutRetranscription": true,
+  "audioPreserved": true
+}

@@ -71,16 +71,18 @@ final class CaptureController: NSObject, AVAudioRecorderDelegate {
     func stop() {
         guard recording else { return }
         recording = false
+        let finished = Date()
         recorder?.stop()
-        saveRecording()
+        saveRecording(finishedAt: finished)
     }
-    private func saveRecording() {
+    private func saveRecording(finishedAt: Date = Date()) {
         guard let url = pendingURL, let store else { return }
         do {
             guard try AVAudioFile(forReading: url).length > 0 else { throw VoiceError.invalid }
             let start = Date()
             let receipt = try store.recoverRecording(at: url)
             pendingURL = nil
+            try? store.update(receipt.sessionId, state: .saved, timing: ("capture_end_at_ms", finishedAt.timeIntervalSinceReferenceDate * 1000))
             try? store.update(receipt.sessionId, state: .saved, timing: ("persistence_ms", Date().timeIntervalSince(start) * 1000))
             try? store.update(receipt.sessionId, state: .saved, timing: ("record_feedback_ms", feedbackMilliseconds))
             status = "gespeichert – Verarbeitung folgt"

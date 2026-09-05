@@ -20,4 +20,15 @@ final class TemporaryBudgetTests: XCTestCase {
         XCTAssertThrowsError(try inbox.receive(part))
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
     }
+    func testRetainedUnconfirmedDraftsPreventUnboundedNewRecording() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root, limit: 2 * 1024 * 1024, temporaryLimit: 2 * 1024 * 1024)
+        XCTAssertTrue(try store.canStartRecording())
+        let draft = root.appendingPathComponent(".recording-" + UUID().uuidString + ".m4a")
+        try Data(repeating: 0, count: 4 * 1024 * 1024).write(to: draft)
+        XCTAssertFalse(try store.canStartRecording())
+        XCTAssertEqual(try Data(contentsOf: draft).count, 4 * 1024 * 1024)
+    }
+
 }

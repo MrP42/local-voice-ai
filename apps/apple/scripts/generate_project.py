@@ -11,8 +11,8 @@ def configs(name, settings):
     return obj(name+'configs', isa='XCConfigurationList', buildConfigurations=ids, defaultConfigurationIsVisible=0, defaultConfigurationName='Debug')
 products=[]; files=[]; targets=[]
 for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype'),('VoiceWatch','watchos','de.localvoice.prototype.watchkitapp')]:
-    sources = ['Shared/VoiceApp.swift','Shared/VoiceModel.swift','Shared/VoiceTransport.swift','Shared/CaptureController.swift','VoiceCore/Sources/VoiceCore/Store.swift','VoiceCore/Sources/VoiceCore/Envelope.swift','VoiceCore/Sources/VoiceCore/Chunks.swift','VoiceCore/Sources/VoiceCore/CaptureStartGate.swift','VoiceCore/Sources/VoiceCore/StorageInventory.swift','VoiceCore/Sources/VoiceCore/Jobs.swift','VoiceCore/Sources/VoiceCore/JobProcessor.swift']
-    if platform == 'iphoneos': sources += ['iPhone/LocalProviders.swift','iPhone/CPULocalProviders.swift','iPhone/InferenceCancellation.swift','iPhone/Engines/Cancellation.mm','iPhone/Engines/WhisperBridge.mm','iPhone/Engines/LlamaBridge.mm']
+    sources = ['Shared/VoiceApp.swift','Shared/VoiceModel.swift','Shared/VoiceTransport.swift','Shared/CaptureController.swift','VoiceCore/Sources/VoiceCore/Store.swift','VoiceCore/Sources/VoiceCore/Envelope.swift','VoiceCore/Sources/VoiceCore/Chunks.swift','VoiceCore/Sources/VoiceCore/CaptureStartGate.swift','VoiceCore/Sources/VoiceCore/StorageInventory.swift','VoiceCore/Sources/VoiceCore/Jobs.swift','VoiceCore/Sources/VoiceCore/JobProcessor.swift','VoiceCore/Sources/VoiceCore/ResponsePolicy.swift']
+    if platform == 'iphoneos': sources += ['iPhone/LocalProviders.swift','iPhone/CPULocalProviders.swift','iPhone/InferenceCancellation.swift','iPhone/ModelLibrary.swift','iPhone/ModelPanel.swift','iPhone/Engines/Cancellation.mm','iPhone/Engines/WhisperBridge.mm','iPhone/Engines/LlamaBridge.mm']
     buildfiles=[]
     for path in sources:
         ref=obj(path, isa='PBXFileReference', lastKnownFileType='sourcecode.cpp.objcpp' if path.endswith('.mm') else 'sourcecode.swift', path=path, sourceTree='<group>')
@@ -21,7 +21,7 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
     sourcephase=obj(name+'sources', isa='PBXSourcesBuildPhase', buildActionMask=2147483647, files=buildfiles, runOnlyForDeploymentPostprocessing=0)
     frameworks=obj(name+'frameworks', isa='PBXFrameworksBuildPhase', buildActionMask=2147483647, files=[], runOnlyForDeploymentPostprocessing=0)
     product=obj(name+'product', isa='PBXFileReference', explicitFileType='wrapper.application', includeInIndex=0, path=name+'.app', sourceTree='BUILT_PRODUCTS_DIR'); products.append(product)
-    info={'CFBundleDisplayName':'Local Voice', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'APPL', 'CFBundleShortVersionString':'0.1.0', 'CFBundleVersion':'1', 'NSMicrophoneUsageDescription':'Nimmt deine ausdrücklich gestarteten Sprachnotizen auf.', 'NSSpeechRecognitionUsageDescription':'Transkribiert deine Sprachnotizen lokal.'}
+    info={'CFBundleDisplayName':'Local Voice', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'APPL', 'CFBundleShortVersionString':'0.2.0', 'CFBundleVersion':'2', 'NSMicrophoneUsageDescription':'Nimmt deine ausdrücklich gestarteten Sprachnotizen auf.', 'NSSpeechRecognitionUsageDescription':'Transkribiert deine Sprachnotizen lokal.'}
     if platform=='watchos': info.update(WKApplication=True, WKCompanionAppBundleIdentifier='de.localvoice.prototype')
     else: info.update(UILaunchScreen={}, UISupportedInterfaceOrientations=['UIInterfaceOrientationPortrait'])
     (root/(name+'-Info.plist')).write_bytes(plistlib.dumps(info))

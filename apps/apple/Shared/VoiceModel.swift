@@ -12,7 +12,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     @Published var status = "Bereit"
     @Published var recording = false
     @Published var reachable = false
-    @Published var fixedAnswer = UserDefaults.standard.object(forKey: "fixedAnswer") as? Bool ?? true {
+    @Published var fixedAnswer = UserDefaults.standard.object(forKey: "fixedAnswer") as? Bool ?? false {
         didSet {
             UserDefaults.standard.set(fixedAnswer, forKey: "fixedAnswer")
             #if os(iOS)
@@ -23,6 +23,13 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     @Published var processing = false
     #if os(iOS)
     private var jobs: JobProcessor?
+    @Published var installedModels: [InstalledModel] = []
+    @Published var providerDescription = "Verfügbarkeit wird geprüft"
+    @Published var modelMessage = ""
+    @Published var installingModel = false
+    @Published var sttModel = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin" {
+        didSet { UserDefaults.standard.set(sttModel, forKey: "sttModel") }
+    }
     #endif
     private var store: DurableStore?
     private var transport: VoiceTransport?
@@ -58,7 +65,37 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
                 refresh()
             } catch { status = "Testfixture konnte nicht gespeichert werden" }
         }
+        #if os(iOS)
+        if let store {
+            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let marker = documents.appendingPathComponent("recovery-ui-probe.txt")
+            if ProcessInfo.processInfo.arguments.contains("--corrupt-history-probe") {
+                do {
+                    let receipt = try store.accept(.capture(audio: Data(contentsOf: documents.appendingPathComponent("fixture.m4a"))))
+                    let folder = store.root.appendingPathComponent(receipt.sessionId.uuidString)
+                    try FileManager.default.copyItem(at: folder.appendingPathComponent("entry.json"), to: folder.appendingPathComponent(".debug-entry-backup"))
+                    try Data(receipt.sessionId.uuidString.utf8).write(to: marker, options: .atomic)
+                    try Data("synthetic corrupted metadata".utf8).write(to: folder.appendingPathComponent("entry.json"), options: .atomic)
+                } catch { status = "Recovery-Testfixture konnte nicht angelegt werden" }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--restore-history-probe"),
+               let text = try? String(contentsOf: marker, encoding: .utf8), let id = UUID(uuidString: text) {
+                let folder = store.root.appendingPathComponent(id.uuidString)
+                if let data = try? Data(contentsOf: folder.appendingPathComponent(".debug-entry-backup")) {
+                    try? data.write(to: folder.appendingPathComponent("entry.json"), options: .atomic)
+                }
+            }
+            refresh()
+        }
+        #endif
         if ProcessInfo.processInfo.arguments.contains("--local-models") { fixedAnswer = false }
+        #if os(iOS)
+        if ProcessInfo.processInfo.arguments.contains("--stt-small") { sttModel = "ggml-small.bin" }
+        if ProcessInfo.processInfo.arguments.contains("--stt-base") { sttModel = "ggml-base.bin" }
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "--retry-job"), arguments.indices.contains(index + 1),
+           let id = UUID(uuidString: arguments[index + 1]) { try? store?.retryJob(id) }
+        #endif
         #endif
         #if os(iOS) && DEBUG
         Task {
@@ -121,6 +158,10 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
                 debugActionsStarted = true
                 let arguments = ProcessInfo.processInfo.arguments
                 if arguments.contains("--record-probe") { start() }
+                #if os(iOS)
+                if arguments.contains("--cancel-inference-probe") { cancellationProbe(generation: arguments.contains("--cancel-generating")) }
+                if arguments.contains("--model-import-probe") { modelImportProbe() }
+                #endif
                 if arguments.contains("--interrupt-playback"), let entry = entries.first(where: { $0.reply != nil }), let reply = entry.reply {
                     speak(reply, id: entry.id)
                     Task {
@@ -180,6 +221,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         Task { @MainActor in
             if let (id, started) = self.speechAttempts[ObjectIdentifier(utterance)] {
                 try? self.store?.update(id, state: .answered, timing: ("tts_start_ms", Date().timeIntervalSince(started) * 1000))
+                if let entry = self.entries.first(where: { $0.id == id }), entry.timings["tts_e2e_ms"] == nil,
+                   let origin = entry.timings["capture_end_at_ms"] ?? entry.timings["capture_saved_at_ms"] {
+                    let elapsed = Date().timeIntervalSinceReferenceDate * 1000 - origin
+                    if elapsed >= 0 { try? self.store?.update(id, state: .answered, timing: ("tts_e2e_ms", elapsed)) }
+                }
                 self.refresh()
             }
         }
@@ -197,6 +243,73 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         if !recording { status = cancelled ? "Wiedergabe gestoppt – Antwort bleibt gespeichert" : "Bereit" }
     }
     #if os(iOS)
+    #if DEBUG
+    private func cancellationProbe(generation: Bool) {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let started = Date().timeIntervalSince1970
+        let phase = generation ? "generating" : "transcribing"
+        Task {
+            func marker() -> [String: Any] {
+                guard let data = try? Data(contentsOf: documents.appendingPathComponent("native-phase.json")),
+                      let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+                return value
+            }
+            for _ in 0..<600 {
+                let value = marker()
+                if value["phase"] as? String == phase, let at = value["at"] as? Double, at > started {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    guard marker()["at"] as? Double == at, let id = jobs?.currentId else { continue }
+                    let requested = Date().timeIntervalSince1970
+                    jobs?.cancelCurrent()
+                    for _ in 0..<200 {
+                        try? await Task.sleep(for: .milliseconds(50))
+                        if let entry = entries.first(where: { $0.id == id }), entry.job?.phase == .cancelled {
+                            let stopped = marker()["at"] as? Double ?? 0
+                            let report: [String: Any] = ["id": id.uuidString, "phase": phase, "cancelled": true,
+                                "nativeStoppedAfterRequest": stopped >= requested && marker()["phase"] as? String == "idle",
+                                "nativeStartedAt": at, "nativeStoppedAt": stopped, "cancelRequestedAt": requested,
+                                "cancellationMilliseconds": (Date().timeIntervalSince1970 - requested) * 1000,
+                                "hasReply": entry.reply != nil, "hasTranscript": entry.transcript != nil]
+                            if let data = try? JSONSerialization.data(withJSONObject: report, options: .prettyPrinted) {
+                                try? data.write(to: documents.appendingPathComponent("cancellation-probe.json"), options: .atomic)
+                            }
+                            return
+                        }
+                    }
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            recordDiagnostic("cancellation_probe_failed")
+        }
+    }
+    private func modelImportProbe() {
+        Task {
+            let source = ModelLibrary.folder.appendingPathComponent("ggml-base.bin")
+            do { _ = try await ModelLibrary.shared.install(from: source); recordDiagnostic("model_import_verified") }
+            catch { recordDiagnostic("model_import_failed") }
+        }
+    }
+    #endif
+    func refreshModels() async {
+        installedModels = await ModelLibrary.shared.inventory()
+        let availability = await LocalProviders.capabilities()
+        let speech = availability["speechTranscriberAvailable"] == "true" ? "Apple-Spracherkennung verfügbar" : "Apple-Spracherkennung hier nicht verfügbar"
+        let ai = availability["foundationModels"] == "available" ? "Apple-Antwortmodell verfügbar" : "Apple-Antwortmodell hier nicht bereit"
+        providerDescription = speech + ". " + ai + ". Für den CPU-Pfad werden ein Whisper-Modell und Qwen benötigt."
+    }
+    func installModel(_ url: URL) {
+        guard !installingModel else { return }
+        installingModel = true
+        Task {
+            defer { installingModel = false }
+            do {
+                let label = try await ModelLibrary.shared.install(from: url)
+                modelMessage = label + " geprüft und installiert"
+                await refreshModels()
+            } catch { modelMessage = "Installation nicht bestätigt – Modellbestand bitte erneut prüfen" }
+        }
+    }
     func prepareLocalSpeech() {
         Task {
             do { try await LocalProviders.installSpeech(); status = "Deutsche Sprachdateien bereit"; retry() }

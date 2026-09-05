@@ -24,7 +24,12 @@ public final class JobProcessor {
         self.active = active
         if active { start() } else { task?.cancel() }
     }
-    public func cancelCurrent() { userCancelled = true; task?.cancel() }
+    public func cancelCurrent() {
+        userCancelled = true
+        message = "Verarbeitung wird abgebrochen – Aufnahme bleibt gespeichert"
+        onChange?(currentId)
+        task?.cancel()
+    }
     public func start() {
         guard active else { return }
         guard task == nil else { resumeRequested = true; return }

@@ -28,4 +28,29 @@ final class VoiceUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
+    #if os(iOS)
+    func testModelPanelShowsLocalModelChoices() throws {
+        let app = XCUIApplication(); app.launch()
+        let button = app.buttons["Lokale Sprachmodelle"]
+        XCTAssertTrue(button.waitForExistence(timeout: 15)); button.tap()
+        XCTAssertTrue(app.navigationBars["Lokale Sprachmodelle"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Whisper Base"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Whisper Small"].exists)
+        XCTAssertTrue(app.staticTexts["Qwen – kurze Antworten"].exists)
+    }
+    func testDamagedHistoryIsVisibleAndCanBeRecovered() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--corrupt-history-probe"]
+        app.launch()
+        defer { app.launchArguments = ["--restore-history-probe"]; app.launch() }
+        XCTAssertTrue(app.staticTexts["Verlauf beschädigt – Originaldateien erhalten"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["Audiodatei sichern"].exists)
+        XCTAssertTrue(app.buttons["Wiederherstellung versuchen"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.lifetime = .keepAlways; add(screenshot)
+        app.launchArguments = ["--restore-history-probe"]; app.launch()
+        XCTAssertTrue(app.buttons["record"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["Verlauf beschädigt – Originaldateien erhalten"].exists)
+    }
+    #endif
+
 }

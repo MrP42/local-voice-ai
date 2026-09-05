@@ -3,6 +3,9 @@ import SwiftUI
 @main
 struct VoiceApp: App {
     @StateObject private var model = VoiceModel()
+    #if os(iOS)
+    @State private var showModels = false
+    #endif
     @Environment(\.scenePhase) private var phase
     var body: some Scene {
         WindowGroup {
@@ -16,6 +19,7 @@ struct VoiceApp: App {
                         .tabItem { Label("Sprechen", systemImage: "mic") }
                     List { history }.tabItem { Label("Tagebuch", systemImage: "book") }
                 }.navigationTitle("Local Voice")
+                .sheet(isPresented: $showModels) { ModelPanel(model: model) }
                 #endif
             }
             .onChange(of: phase, initial: true) { _, value in model.scene(active: value == .active) }
@@ -32,9 +36,7 @@ struct VoiceApp: App {
             Button("Wiedergabe stoppen") { model.stopPlayback() }
             #if os(iOS)
             if model.processing { Button("Verarbeitung abbrechen") { model.cancelProcessing() } }
-            Toggle("Feste Testantwort (ohne STT/KI)", isOn: $model.fixedAnswer)
-            Button("Deutsche Sprachdateien laden") { model.prepareLocalSpeech() }
-            Text("Ohne Testantwort: ausschließlich lokale deutsche Spracherkennung und lokale KI. Fehlende Modelle führen zu späterer Verarbeitung.").font(.caption)
+            Button("Lokale Sprachmodelle") { showModels = true }
             #endif
         }.padding(8)
     }
@@ -48,7 +50,10 @@ struct VoiceApp: App {
                         Text(issue.reason)
                         Text(issue.sessionId?.uuidString.prefix(8) ?? "Aufnahmeentwurf").font(.caption)
                         #if os(iOS)
-                        ShareLink("Dateien sichern", item: issue.url)
+                        let audio = issue.url.lastPathComponent.hasPrefix(".recording-") ? issue.url : issue.url.appendingPathComponent("audio.m4a")
+                        if FileManager.default.fileExists(atPath: audio.path) { ShareLink("Audiodatei sichern", item: audio) }
+                        let metadata = issue.url.appendingPathComponent("entry.json")
+                        if FileManager.default.fileExists(atPath: metadata.path) { ShareLink("Metadaten sichern", item: metadata) }
                         #endif
                     }
                 }
@@ -63,6 +68,7 @@ struct VoiceApp: App {
                 #if os(iOS)
                 if entry.reply == nil, let job = entry.job, !job.running {
                     Text(job.phase == .failed ? "Verarbeitung angehalten" : job.phase == .cancelled ? "Verarbeitung abgebrochen" : "Verarbeitung ausstehend").font(.caption)
+                    if job.failure == .noSpeech { Text("Keine Sprache erkannt – Originalaufnahme erhalten").font(.caption) }
                     Button("Verarbeitung erneut starten") { model.retryProcessing(entry.id) }
                 }
                 #endif

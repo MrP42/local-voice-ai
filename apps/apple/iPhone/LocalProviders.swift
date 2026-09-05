@@ -54,8 +54,9 @@ enum LocalProviders {
     }
 
     static func reply(to transcript: String) async throws -> String {
-        guard SystemLanguageModel.default.availability == .available else { return try await cpuReply(transcript) }
-        let session = LanguageModelSession(instructions: "Antworte kurz auf Deutsch, höchstens zwei Sätze. Führe keine externen Aktionen aus.")
+        if ResponsePolicy.isActionRequest(transcript) { return ResponsePolicy.capabilityReply }
+        guard SystemLanguageModel.default.availability == .available else { return ResponsePolicy.safeAnswer(try await cpuReply(transcript)) }
+        let session = LanguageModelSession(instructions: "Antworte kurz auf Deutsch, höchstens zwei Sätze. Du kannst nur Text antworten und Notizen speichern. Behaupte niemals, externe Aktionen ausgeführt zu haben.")
         let generation = Task {
             let result = try await session.respond(to: String(transcript.prefix(2000)), options: GenerationOptions(maximumResponseTokens: 128))
             try Task.checkCancellation()
@@ -66,9 +67,10 @@ enum LocalProviders {
             generation.cancel()
         }
         defer { deadline.cancel() }
-        return try await withTaskCancellationHandler {
+        let answer = try await withTaskCancellationHandler {
             try await generation.value
         } onCancel: { generation.cancel() }
+        return ResponsePolicy.safeAnswer(answer)
     }
     private static func cpuTranscribe(_ url: URL) async throws -> String {
         let cancellation = InferenceCancellation()

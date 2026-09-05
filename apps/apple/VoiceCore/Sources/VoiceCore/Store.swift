@@ -94,7 +94,7 @@ public final class DurableStore {
             .reduce(0) { try $0 + diskBytes(at: $1.appendingPathComponent("audio.m4a")) }
         guard used + packet.audio.count <= limit else { throw VoiceError.full }
         let receipt = Receipt(sessionId: packet.sessionId, messageId: packet.messageId, receiptId: UUID())
-        let entry = Entry(receipt: receipt, createdAt: packet.createdAt, digest: digest, state: .saved, replyToWatch: replyToWatch)
+        let entry = Entry(receipt: receipt, createdAt: packet.createdAt, digest: digest, state: .saved, timings: ["capture_saved_at_ms": Date().timeIntervalSinceReferenceDate * 1000], replyToWatch: replyToWatch)
         let metadata = try JSONEncoder().encode(entry)
         let identity = try JSONEncoder().encode(receipt)
         guard try temporaryBytes() + packet.audio.count + metadata.count + identity.count <= temporaryLimit else { throw VoiceError.full }
@@ -184,6 +184,11 @@ public final class DurableStore {
         }
         let isNew = entry.reply == nil
         let receipt = Receipt(sessionId: id, messageId: envelope.messageId, receiptId: UUID())
+        let receivedAt = Date().timeIntervalSinceReferenceDate * 1000
+        entry.timings["reply_received_at_ms"] = receivedAt
+        if let start = entry.timings["capture_end_at_ms"] ?? entry.timings["capture_saved_at_ms"], receivedAt >= start {
+            entry.timings["reply_e2e_ms"] = receivedAt - start
+        }
         entry.reply = text; entry.transcript = envelope.transcript
         entry.replyMessageId = envelope.messageId; entry.replyReceipt = receipt; entry.state = .answered
         try save(entry)
