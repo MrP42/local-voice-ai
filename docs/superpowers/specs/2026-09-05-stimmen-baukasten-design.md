@@ -262,6 +262,13 @@ bereits die Haltung, die uebernommen wird.
 Damit wird eine Stimme teilbar: erschaffen auf einem Rechner, benutzt auf
 einem anderen — und ein Backup der eigenen Stimmen ist eine Datei je Stimme.
 
+**Bewusst offen gelassen:** Beim Umbenennen der voice_id werden die
+WAV-Cache-Eintraege der alten id NICHT verworfen. Der Schluessel enthaelt die
+id, die Eintraege werden nach dem Umzug also nie wieder getroffen und laufen
+ueber die normale Cache-Pflege heraus — der Effekt ist verlorener Plattenplatz
+auf Zeit, kein falscher Klang. Ein gezieltes Verwerfen waere ein Eingriff in
+`compile_cache.rs` und lohnt den Aufwand erst, wenn jemand haeufig umbenennt.
+
 ## 8. Was NICHT gebaut wird
 
 - Keine Anbindung der Fish-Audio-Cloud (Voice Design, Discovery-TTS).
