@@ -2,6 +2,11 @@
 
 This file provides guidance to AI coding assistants working with code in this repository.
 
+**Read [`../../AGENTS.md`](../../AGENTS.md) first.** It carries the rules for
+working alongside the other development accounts on this repo (branch + PR, never
+force-push, never `git stash` during a build). Since 2026-09-05 more than one
+account works here in parallel — assuming otherwise is how work gets destroyed.
+
 ## Development Commands
 
 **Prerequisites:**
