@@ -36,10 +36,11 @@ loop. Start stops current speech output. Permission refusal shows a clear error.
 The initial iPhone mode returns a **fixed test response without transcription**.
 Disable the fixed-response toggle for the real local pipeline. SpeechTranscriber
 checks German locale and installed assets; the explicit download button can
-install supported speech assets. Foundation Models must be available. There is
+install supported speech assets. Missing Apple providers fall back to the explicitly installed local CPU models. There is
 no server-STT or cloud-model fallback. Missing models leave the capture queued.
-These APIs compiled, but both model paths are unavailable on the tested Intel
-simulator. A fixed test response is not an AI-generated answer.
+These Apple APIs compiled but are unavailable on the tested Intel simulator.
+The CPU fallback completed 100 real local STT/response turns. A fixed test
+response is not an AI-generated answer.
 
 Watch speaks the short returned text using AVSpeechSynthesizer; the iPhone does
 not run a desktop TTS stack. Playback can be stopped and retried from history.
@@ -101,5 +102,7 @@ Run setup_native_engines.py --models, then copy Vendor/Models into the iPhone
 app's Documents/Models directory for the spike. The model download is explicit
 and does not upload any audio or transcript. Model files are not bundled into
 the Watch. See THIRD_PARTY_NOTICES.md for sources and licenses. The initial
-report's unavailable Apple-model result still holds; separate CPU inference
-measurements are required before claiming the new path works.
+report's unavailable Apple-model result still holds; CPU inference
+measurements and limits are recorded in docs/apple-evidence/2026-09-05-simulator-report.md.
+Optional `--small` also downloads Whisper Small (487.6 MB); its presence in
+Documents/Models selects it over Base. It uses more time and memory.

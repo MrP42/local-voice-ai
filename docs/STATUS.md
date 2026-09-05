@@ -252,3 +252,13 @@ Mikrofondialog wartet auf Benutzeraktion, finale Transportregression und mehrere
 Lifecycle-Fälle offen; SpeechTranscriber/Foundation Models im Intel-Simulator
 nicht verfügbar. Keine Akku-/Hardwarelatenzbehauptung. Details und Messgrenzen:
 `docs/apple-evidence/2026-09-05-simulator-report.md`; P2 nur als Folgeplan.
+
+## Native Apple P0/P1 – Simulatorstand 05.09.2026
+
+Isolierter Branch `codex/apple-p0-p1`: SwiftUI-Watch/iPhone mit dauerhafter
+Übergabe, lokaler CPU-STT und kurzer Modellantwort. 17 Kerntests sowie nativer
+Watch-UI-Test bestanden; 100 lokale Turns mit Neustarts/Verbindungsunterbrechung
+dauerhaft beantwortet und quittiert. P1-Abnahme bleibt wegen offener Lock-/
+Wrist-Down-Fälle unvollständig. Latenzziele nicht erreicht, Akku unbekannt.
+Details: [Simulatorbericht](apple-evidence/2026-09-05-simulator-report.md),
+[P2-Folgeplan](apple-evidence/P2-follow-up.md). Desktop-Bestand unverändert.

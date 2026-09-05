@@ -152,3 +152,14 @@ Das Entwicklungsmodell wird nicht automatisch das Laufzeitmodell der App. Für r
 ## 12. Noch zu ermittelnde Fakten
 
 Die Planung ist mit den bestätigten Geräten und macOS 15.7.9 vollständig als Vorschlag nutzbar. Vor Apple-Implementierung sind die installierten iOS-/watchOS-Versionen, der genaue Intel-Mac, Signing-Zugang und der Zugriff des ausführenden Agenten auf den Mac zu ermitteln. Vor optionalem Cloudbetrieb ist die Nutzerpräferenz für Datenübertragung einzuholen; Standard bleibt ohne Cloud. Ganztägiges Watch-Zuhören und latenzarme Verarbeitung bei jedem iOS-Lifecycle-Zustand sind ausdrücklich nicht verifiziert.
+
+## Umsetzungsstand 05.09.2026 – vereinbarter Simulatorumfang
+
+P0/P1 werden im isolierten Branch `codex/apple-p0-p1` umgesetzt. Die vom Benutzer
+gewünschten Xcode-Simulatoren ersetzen für diese Runde echte Geräte. Native Apps,
+17 Kerntests, je ein iPhone-/Watch-UI-Test und 100 vollständig lokale Sprachturns
+sind nachgewiesen. Lock/Wrist Down sowie einige Audio-/Force-Quit-Fälle bleiben offen;
+P1 ist daher noch nicht vollständig abgenommen. Latenzziele sind nicht erreicht,
+reale Akkuauswirkung ist nicht ermittelbar. Siehe
+[aktuellen Simulatorbericht](../../apple-evidence/2026-09-05-simulator-report.md)
+und [P2-Folgeplan](../../apple-evidence/P2-follow-up.md).

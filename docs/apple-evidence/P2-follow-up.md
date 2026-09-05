@@ -1,30 +1,30 @@
-# P2 follow-up after simulator spike
+# P2 nach dem nativen Simulator-Prototyp
 
-P2 implementation has not begun. Full P1 acceptance remains open when local
-STT/model execution or requested lifecycle behavior cannot be demonstrated in
-the Intel simulator. The user currently requests virtual devices.
+P0/P1 bleiben der aktuelle Implementierungsumfang. Vor vollständiger P1-Abnahme
+sind Lock, Wrist Down und die verbleibenden Audio-/Force-Quit-Fälle im vereinbarten
+Simulatorumfang zu prüfen. Physische Akku-/Funknachweise sind damit nicht ersetzbar.
 
-1. Decide the supported local-STT/model verification environment. Current Intel
-iPhone simulator reports SpeechTranscriber unavailable and Foundation Models
-modelNotReady. Do not disguise fixture transcripts or fixed responses as model
-results. Verify on supported physical iPhone or supported model-capable test host
-when authorized; keep capture/deferred mode usable meanwhile.
-2. Add deterministic interruption/fault injection around every durable commit,
-receipt and reply step, including disk-full mid-write and receipt-loss recovery.
-Extend the six initial core tests with actual process-kill tests for the store.
-3. Separate UI, transport and job orchestration into testable components. Persist
-job attempt state, receipt/reply outboxes, bounded backoff and response delivery
-acknowledgements. Add bounded model cancellation and foreground-expiry handling.
-4. Add recoverable-recording UI, explicit audio retention/deletion, storage-budget
-accounting for staging/transfer copies, data-protection verification, and metadata
-migration. Keep all confirmed audio until the new retention protocol is proven.
-5. Measure complete-turn interactive delivery against background file transfer;
-use this measurement before adding streaming. Add per-attempt metrics and
-monotonic end-to-end timing; do not mix simulator cold starts with device p95.
-6. Add automated UI permission/start/stop/interrupt tests and accessibility checks.
-Wrist-down, lock, user force-quit, radio reconnection and energy still require an
-explicitly agreed hardware acceptance round. No fake workout or unlimited runtime.
-7. Run the planned energy comparison on Watch and iPhone (three comparable runs,
-with/without app, 8 h/30 turns). Until then battery impact is unknown.
+1. **Sprachqualität und Laufzeit:** Base-/Small-Vergleich aus den fünf deutschen
+   Qualitätsfällen auswerten; eigene kurze Antwortfälle mit Kriterien für Texttreue
+   ergänzen. Antwortmodell darf keine ausgeführten externen Aktionen behaupten.
+   Getrennte Warm-/Kaltstartmessungen und Ende-zu-Ende-p95 statt Addition von Quantilen.
+2. **Jobsteuerung:** VoiceModel in Aufnahme, Transport und persistente Jobsteuerung
+   trennen. Prozessabbruch an jeder Commit-/Quittungsgrenze testen. Begrenzte Wiederholung,
+   Abbruch während Inferenz und Foreground-Ablauf explizit modellieren. Bestehende stabile
+   Antwortquittungen und dauerhafte Teiltransfer-Wiederaufnahme beibehalten.
+3. **Speicher:** volle Platte während Schreiben, beschädigte Metadaten und teilweise
+   Dateien gezielt prüfen. Wiederherstellungsoberfläche für unbestätigte Recorderdateien,
+   additive Migration und Budget für Transfer-/Staging-Kopien. Aufbewahrung und Löschen
+   erst nach nachgewiesenem Quittungsprotokoll ergänzen.
+4. **Lifecycle:** verbleibende virtuelle UI-Fälle automatisieren. Hardwareabnahme erst
+   als eigener beauftragter Schritt: Data Protection, Swipe-Force-Quit, reale Audioausgabe,
+   Funk und Wrist Down. Keine fingierte Workout-Sitzung für längere Laufzeit.
+5. **Provider:** Apple Speech/Foundation Models weiterhin zur Laufzeit prüfen. CPU-Fallback
+   auf iPhone belassen; Modellinstallation und Speicherbedarf sichtbar machen. Modellhashes
+   vor Verwendung prüfen. Keine Modellgewichte oder Desktop-Engines auf der Watch.
+6. **Energie:** bei späterer Hardwareabnahme drei vergleichbare Läufe mit/ohne App,
+   8 Stunden/30 Turns, Watch und iPhone getrennt. Bis dahin keine Akku-Prozentangaben.
 
-No desktop redesign, Android, App Store publication or push to main is included.
+Keine Desktop-Neugestaltung, Android-Portierung, App-Store-Veröffentlichung oder Push
+nach main innerhalb dieses Auftrags. Suche, Sammlung und weitere Produktfunktionen
+folgen erst nach belastbarer Machbarkeitsentscheidung.
