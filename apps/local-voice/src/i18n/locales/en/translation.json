@@ -292,6 +292,8 @@
       "emptyRecent": "Nothing used yet.",
       "emptySearch": "No tags match your search.",
       "freeText": "Free text “{{tag}}” — not a known tag. The model may read it aloud instead of following it.",
+      "undocumented": "{{tag}} — not in Fish Audio's official tag list. The model may read it aloud instead of following it.",
+      "undocumentedHint": "Not in Fish Audio's official tag list — the model may read it aloud instead of following it.",
       "favoriteAdd": "Add \"{{tag}}\" to favorites",
       "favoriteRemove": "Remove \"{{tag}}\" from favorites"
     },

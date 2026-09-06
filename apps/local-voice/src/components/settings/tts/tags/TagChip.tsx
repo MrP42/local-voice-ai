@@ -1,7 +1,7 @@
 import React from "react";
 import type { LucideIcon } from "lucide-react";
 
-export type TagChipState = "normal" | "active" | "suggestion";
+export type TagChipState = "normal" | "active" | "suggestion" | "unverified";
 
 interface TagChipProps {
   label: string;
@@ -17,6 +17,11 @@ interface TagChipProps {
  * Reines Render-Element für ein Tag — keine eigene Logik, kein State. Die
  * TagPalette benutzt es fürs Chip-Grid; ein späteres Paket (Editor-Mirror)
  * zeigt damit dieselben Chips für Tags, die schon im Text stehen.
+ *
+ * "unverified" ist bernstein statt gelb: das Tag steht nicht in der offiziellen
+ * Tag-Liste von Fish Audio. Kein Fehler — das Modell nimmt Freitext entgegen —
+ * aber auch keine Zusicherung, dass es ihm folgt statt ihn vorzulesen. Die
+ * Farbe unterscheidet die beiden Klassen, ohne eine davon zu verbieten.
  *
  * Gelb ist die einzige Akzentfarbe des Design-Systems, und Gelb auf Hell hat
  * zu wenig Kontrast für Schrift (~1,1:1) — deshalb bleibt die Textfarbe in
@@ -42,9 +47,11 @@ export const TagChip: React.FC<TagChipProps> = ({
   const pillClasses =
     state === "active"
       ? "bg-logo-primary text-on-accent border-logo-primary"
-      : state === "suggestion"
-        ? "bg-logo-primary/15 dark:bg-logo-primary/20 text-text border-logo-primary/40 border-dashed"
-        : "bg-logo-primary/15 dark:bg-logo-primary/20 text-text border-logo-primary/40";
+      : state === "unverified"
+        ? "bg-amber-500/15 dark:bg-amber-500/20 text-text border-amber-500/50"
+        : state === "suggestion"
+          ? "bg-logo-primary/15 dark:bg-logo-primary/20 text-text border-logo-primary/40 border-dashed"
+          : "bg-logo-primary/15 dark:bg-logo-primary/20 text-text border-logo-primary/40";
 
   return (
     <button

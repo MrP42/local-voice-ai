@@ -292,6 +292,8 @@
       "emptyRecent": "Noch nichts benutzt.",
       "emptySearch": "Keine Tags gefunden.",
       "freeText": "Freitext „{{tag}}“ — kein bekanntes Tag. Das Modell liest es womöglich vor, statt ihm zu folgen.",
+      "undocumented": "{{tag}} — nicht in der offiziellen Tag-Liste von Fish Audio. Das Modell liest es womöglich vor, statt ihm zu folgen.",
+      "undocumentedHint": "Nicht in der offiziellen Tag-Liste von Fish Audio — das Modell liest es womöglich vor, statt ihm zu folgen.",
       "favoriteAdd": "„{{tag}}“ zu Favoriten hinzufügen",
       "favoriteRemove": "„{{tag}}“ aus Favoriten entfernen"
     },
