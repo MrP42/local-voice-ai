@@ -138,8 +138,8 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
             setupFailureInjected = true; throw VoiceError.persistence
         }
         #endif
-        if capture == nil { capture = CaptureController(store: store) }
         if transport == nil { transport = try VoiceTransport(store: store) }
+        if capture == nil { capture = CaptureController(store: store) }
         #if os(iOS)
         if jobs == nil {
             jobs = JobProcessor(store: store, transcribe: { try await LocalProviders.transcribe($0) }, reply: { try await LocalProviders.reply(to: $0) })

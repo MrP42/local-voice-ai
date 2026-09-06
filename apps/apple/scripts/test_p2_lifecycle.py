@@ -56,10 +56,20 @@ elif a.case=='interruption':
  assert snapshot(wr)==before
  result.update(injection='AVAudioSession interruption began after actual AVSpeechSynthesizer didStart',historyPreserved=True,physicalPhoneCallTest=False)
 elif a.case=='duplicate':
+ # Drain unrelated recordings before comparing the complete history around one replay.
+ sim('launch',a.phone,PB,'--local-models');sim('launch','--terminate-running-process',a.watch,WB)
+ def drained():
+  return not any(e['state']=='saved' for e in rows(wr).values()) and not any(e.get('reply') is None and e.get('job',{}).get('phase') not in ('failed','cancelled') and e.get('job',{}).get('attempts',0)<3 for e in rows(pr).values())
+ wait(drained,180)
+ time.sleep(2)
  before=snapshot(pr);wbefore=snapshot(wr);event=wr/'Documents/last-event.txt'
  if event.exists():event.unlink()
  sim('launch',a.phone,PB,'--local-models');sim('launch','--terminate-running-process',a.watch,WB,'--replay-capture')
  wait(lambda:event.exists() and event.read_text()=='duplicate_replayed',30)
- assert snapshot(pr)==before and snapshot(wr)==wbefore
+ after=snapshot(pr);wafter=snapshot(wr)
+ if after!=before or wafter!=wbefore:
+  result['differences']={side:{i:{'before':old.get(i),'after':new.get(i)} for i in set(old)|set(new) if old.get(i)!=new.get(i)} for side,old,new in [('phone',before,after),('watch',wbefore,wafter)]}
+  result['passed']=False;a.report.parent.mkdir(parents=True,exist_ok=True);a.report.write_text(json.dumps(result,indent=2))
+  raise AssertionError('History changed around duplicate replay; evidence preserved')
  result.update(stableIdentities=True,noNewHistoryEntry=True)
 result['passed']=True;result['finishedAt']=time.time();a.report.parent.mkdir(parents=True,exist_ok=True);a.report.write_text(json.dumps(result,indent=2));print('PASS:',a.case,flush=True)
