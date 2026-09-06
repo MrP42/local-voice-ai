@@ -328,3 +328,7 @@ Vordergrundkopplung für kurze Sprachnotizen entfernt: UIKit-Laufzeitfenster, BG
 ### Lokaler Gesprächsmodus, 06.09.2026
 
 Auf `codex/watch-conversation-background`: getrenntes automatisches Vorlesen und Freisprechen, persistenter Gesprächskontext mit bis zu sechs Wortwechseln, sicheres Stoppen/Pausieren. 84 Kerntests und vier Bedienungsläufe bestanden; Gedächtnis mit Apple Foundation Models auf echtem iPhone bestätigt. Geräuschqualität und Akku bei längeren Gesprächen bleiben zu messen. Nachweis: `docs/apple-evidence/2026-09-06-conversation/README.md`. Parallele Arbeit erfolgt in eigenem Worktree; Integrationsregeln: `docs/apple-evidence/2026-09-06-background/parallel-development.md`.
+
+### Originalwiedergabe und Watch-Lautstärke, 06.09.2026
+
+Eigene Sprachnotizen auf iPhone und Watch mit Play/Pause/Fortsetzen/Stopp; native lokale Watch-Medienlautstärke direkt in der App erreichbar. 84 Core-Tests und fünf gezielte iPhone-/Watch-Bedienungstests bestanden. Akustische Prüfung an echter Hardware noch offen. Nachweis: `docs/apple-evidence/2026-09-06-playback/README.md`.

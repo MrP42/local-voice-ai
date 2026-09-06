@@ -1,0 +1,155 @@
+Test Suite 'Selected tests' started at 2026-09-06 15:22:36.751.
+Test Suite 'VoicePhoneUITests.xctest' started at 2026-09-06 15:22:36.752.
+Test Suite 'VoiceUITests' started at 2026-09-06 15:22:36.753.
+Test Case '-[VoicePhoneUITests.VoiceUITests testConversationRearmsAfterReplyAndPausesWhenLeavingApp]' started.
+    t =     0.00s Start Test at 2026-09-06 15:22:36.755
+    t =     0.08s Set Up
+    t =     0.08s Open de.localvoice.prototype
+    t =     0.09s     Launch de.localvoice.prototype
+    t =     3.34s         Setting up automation session
+    t =     4.57s         Wait for de.localvoice.prototype to idle
+    t =     6.71s Tap "Gespräch" Button
+    t =     6.71s     Wait for de.localvoice.prototype to idle
+    t =     6.72s     Find the "Gespräch" Button
+    t =     6.87s     Check for interrupting elements affecting "Gespräch" Button
+    t =     6.95s     Synthesize event
+    t =     7.26s     Wait for de.localvoice.prototype to idle
+    t =     7.27s Find the "handsFreeEnabled" Switch
+    t =     7.35s Find the "autoPlayReplies" Switch
+    t =     7.43s Tap "handsFreeEnabled" Switch
+    t =     7.43s     Wait for de.localvoice.prototype to idle
+    t =     7.43s     Find the "handsFreeEnabled" Switch
+    t =     7.51s     Check for interrupting elements affecting "handsFreeEnabled" Switch
+    t =     7.58s     Synthesize event
+    t =     7.89s     Wait for de.localvoice.prototype to idle
+    t =     9.19s Tap "record" Button
+    t =     9.19s     Wait for de.localvoice.prototype to idle
+    t =     9.21s     Find the "record" Button
+    t =     9.29s     Check for interrupting elements affecting "record" Button
+    t =     9.37s     Synthesize event
+    t =     9.68s     Wait for de.localvoice.prototype to idle
+    t =     9.87s Waiting 15.0s for "Testantwort." StaticText to exist
+    t =    10.89s     Checking `Expect predicate `existsNoRetry == 1` for object "Testantwort." StaticText`
+    t =    10.89s         Checking existence of `"Testantwort." StaticText`
+    t =    11.01s         Capturing element debug description
+    t =    11.91s     Checking `Expect predicate `existsNoRetry == 1` for object "Testantwort." StaticText`
+    t =    11.91s         Checking existence of `"Testantwort." StaticText`
+    t =    12.00s Waiting 10.0s for "Mikrofon aktiv" StaticText to exist
+    t =    13.03s     Checking `Expect predicate `existsNoRetry == 1` for object "Mikrofon aktiv" StaticText`
+    t =    13.03s         Checking existence of `"Mikrofon aktiv" StaticText`
+    t =    13.11s         Capturing element debug description
+    t =    14.03s     Checking `Expect predicate `existsNoRetry == 1` for object "Mikrofon aktiv" StaticText`
+    t =    14.03s         Checking existence of `"Mikrofon aktiv" StaticText`
+    t =    14.12s Find the Target Application 'de.localvoice.prototype'
+    t =    14.39s Added attachment named 'Gespraech-naechster-Beitrag'
+    t =    14.39s Pressing Home button
+    t =    14.87s Open de.localvoice.prototype
+    t =    14.87s     Activate de.localvoice.prototype
+    t =    15.67s         Wait for de.localvoice.prototype to idle
+    t =    15.68s Find the "record" Button
+    t =    15.81s Checking existence of `"Mikrofon aktiv" StaticText`
+    t =    16.07s Tap "handsFreeEnabled" Switch
+    t =    16.07s     Wait for de.localvoice.prototype to idle
+    t =    16.12s     Find the "handsFreeEnabled" Switch
+    t =    16.26s     Check for interrupting elements affecting "handsFreeEnabled" Switch
+    t =    16.37s     Synthesize event
+    t =    16.68s     Wait for de.localvoice.prototype to idle
+    t =    18.00s Tear Down
+Test Case '-[VoicePhoneUITests.VoiceUITests testConversationRearmsAfterReplyAndPausesWhenLeavingApp]' passed (18.322 seconds).
+Test Case '-[VoicePhoneUITests.VoiceUITests testOriginalAudioCanPlayPauseResumeAndStop]' started.
+    t =     0.00s Start Test at 2026-09-06 15:22:55.078
+    t =     0.07s Set Up
+    t =     0.08s Open de.localvoice.prototype
+    t =     0.08s     Launch de.localvoice.prototype
+    t =     0.08s         Terminate de.localvoice.prototype:19074
+    t =     1.33s         Setting up automation session
+    t =     2.68s         Wait for de.localvoice.prototype to idle
+    t =     4.93s Waiting 10.0s for "historyEntry" Button to exist
+    t =     5.95s     Checking `Expect predicate `existsNoRetry == 1` for object "historyEntry" Button`
+    t =     5.95s         Checking existence of `"historyEntry" Button`
+    t =     6.10s Tap "historyEntry" Button
+    t =     6.10s     Wait for de.localvoice.prototype to idle
+    t =     6.11s     Find the "historyEntry" Button
+    t =     6.21s     Check for interrupting elements affecting "historyEntry" Button
+    t =     6.29s     Synthesize event
+    t =     6.60s     Wait for de.localvoice.prototype to idle
+    t =     7.54s Waiting 5.0s for "originalPlayback" Button to exist
+    t =     8.57s     Checking `Expect predicate `existsNoRetry == 1` for object "originalPlayback" Button`
+    t =     8.57s         Checking existence of `"originalPlayback" Button`
+    t =     8.65s Tap "originalPlayback" Button
+    t =     8.65s     Wait for de.localvoice.prototype to idle
+    t =     8.66s     Find the "originalPlayback" Button
+    t =     8.72s     Check for interrupting elements affecting "originalPlayback" Button
+    t =     8.78s     Synthesize event
+    t =     9.09s     Wait for de.localvoice.prototype to idle
+    t =     9.09s Find the "originalPlayback" Button
+    t =     9.20s Tap "originalPlayback" Button
+    t =     9.20s     Wait for de.localvoice.prototype to idle
+    t =     9.21s     Find the "originalPlayback" Button
+    t =     9.27s     Check for interrupting elements affecting "originalPlayback" Button
+    t =     9.33s     Synthesize event
+    t =     9.69s     Wait for de.localvoice.prototype to idle
+    t =     9.69s Find the "originalPlayback" Button
+    t =     9.75s Find the Target Application 'de.localvoice.prototype'
+    t =    10.02s Added attachment named 'Originalaufnahme-pausiert'
+    t =    10.02s Tap "originalPlayback" Button
+    t =    10.02s     Wait for de.localvoice.prototype to idle
+    t =    10.03s     Find the "originalPlayback" Button
+    t =    10.09s     Check for interrupting elements affecting "originalPlayback" Button
+    t =    10.16s     Synthesize event
+    t =    10.47s     Wait for de.localvoice.prototype to idle
+    t =    10.47s Find the "originalPlayback" Button
+    t =    10.54s Tap "originalStop" Button
+    t =    10.54s     Wait for de.localvoice.prototype to idle
+    t =    10.54s     Find the "originalStop" Button
+    t =    10.65s     Check for interrupting elements affecting "originalStop" Button
+    t =    10.72s     Synthesize event
+    t =    11.03s     Wait for de.localvoice.prototype to idle
+    t =    11.04s Find the "originalPlayback" Button
+    t =    11.11s Find the "originalStop" Button
+    t =    11.17s Tap "originalPlayback" Button
+    t =    11.17s     Wait for de.localvoice.prototype to idle
+    t =    11.17s     Find the "originalPlayback" Button
+    t =    11.24s     Check for interrupting elements affecting "originalPlayback" Button
+    t =    11.30s     Synthesize event
+    t =    11.61s     Wait for de.localvoice.prototype to idle
+    t =    11.62s Pressing Home button
+    t =    12.09s Open de.localvoice.prototype
+    t =    12.09s     Activate de.localvoice.prototype
+    t =    12.86s         Wait for de.localvoice.prototype to idle
+    t =    12.86s Find the "originalPlayback" Button
+    t =    12.97s Tear Down
+Test Case '-[VoicePhoneUITests.VoiceUITests testOriginalAudioCanPlayPauseResumeAndStop]' passed (13.233 seconds).
+Test Case '-[VoicePhoneUITests.VoiceUITests testUnreadableOriginalShowsErrorWithoutLosingTranscript]' started.
+    t =     0.00s Start Test at 2026-09-06 15:23:08.312
+    t =     0.09s Set Up
+    t =     0.09s Open de.localvoice.prototype
+    t =     0.09s     Launch de.localvoice.prototype
+    t =     0.09s         Terminate de.localvoice.prototype:19090
+    t =     1.41s         Setting up automation session
+    t =     2.74s         Wait for de.localvoice.prototype to idle
+    t =     4.95s Tap "historyEntry" Button
+    t =     4.95s     Wait for de.localvoice.prototype to idle
+    t =     4.96s     Find the "historyEntry" Button
+    t =     5.12s     Check for interrupting elements affecting "historyEntry" Button
+    t =     5.20s     Synthesize event
+    t =     5.51s     Wait for de.localvoice.prototype to idle
+    t =     6.44s Tap "originalPlayback" Button
+    t =     6.44s     Wait for de.localvoice.prototype to idle
+    t =     6.45s     Find the "originalPlayback" Button
+    t =     6.55s     Check for interrupting elements affecting "originalPlayback" Button
+    t =     6.62s     Synthesize event
+    t =     6.93s     Wait for de.localvoice.prototype to idle
+    t =     6.94s Waiting 5.0s for "originalPlaybackError" StaticText to exist
+    t =     7.96s     Checking `Expect predicate `existsNoRetry == 1` for object "originalPlaybackError" StaticText`
+    t =     7.96s         Checking existence of `"originalPlaybackError" StaticText`
+    t =     8.03s Find the "originalPlayback" Button
+    t =     8.09s Checking existence of `"Darstellung prüfen" StaticText`
+    t =     8.15s Tear Down
+Test Case '-[VoicePhoneUITests.VoiceUITests testUnreadableOriginalShowsErrorWithoutLosingTranscript]' passed (8.413 seconds).
+Test Suite 'VoiceUITests' passed at 2026-09-06 15:23:16.725.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 39.968 (39.972) seconds
+Test Suite 'VoicePhoneUITests.xctest' passed at 2026-09-06 15:23:16.726.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 39.968 (39.974) seconds
+Test Suite 'Selected tests' passed at 2026-09-06 15:23:16.727.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 39.968 (39.976) seconds
