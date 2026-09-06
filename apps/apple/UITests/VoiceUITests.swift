@@ -36,6 +36,32 @@ final class VoiceUITests: XCTestCase {
     }
     #endif
 
+    func testVoiceCanBePreviewedSelectedAndRestoredAfterRelaunch() throws {
+        let app = XCUIApplication(); app.launch()
+        func openVoices() {
+            #if os(iOS)
+            app.buttons["settings"].tap()
+            #else
+            app.buttons["conversationControls"].tap()
+            #endif
+            app.buttons["voiceSettings"].tap()
+        }
+        openVoices()
+        let voice = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "voice-com.")).firstMatch
+        XCTAssertTrue(voice.waitForExistence(timeout: 10))
+        let voiceID = voice.identifier
+        voice.tap()
+        XCTAssertEqual(voice.value as? String, "Ausgewählt")
+        let preview = app.buttons["preview-" + voiceID]
+        preview.tap()
+        XCTAssertEqual(preview.label, "Hörprobe stoppen")
+        preview.tap()
+        XCTAssertEqual(preview.label, "Hörprobe anhören")
+        keepScreenshot(app, name: "Stimmenauswahl")
+        app.terminate(); app.launch(); openVoices()
+        XCTAssertEqual(app.buttons[voiceID].value as? String, "Ausgewählt")
+        app.buttons["voice-system"].tap()
+    }
     func testStartStopAndReturnFromHome() throws {
         let app = XCUIApplication()
         app.launch()
@@ -185,21 +211,73 @@ final class VoiceUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Dauer: 0.12 s"].exists)
         keepScreenshot(app, name: "Verarbeitungsdetails")
     }
+    private func allowDownloadNotificationsIfPrompted() {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let alert = springboard.alerts.firstMatch
+        if alert.waitForExistence(timeout: 3) {
+            let allow = alert.buttons.matching(NSPredicate(format: "label IN %@", ["Erlauben", "Allow"])).firstMatch
+            if allow.exists { allow.tap() }
+        }
+    }
     func testModelDownloadStartsFromModelCard() throws {
         let app = XCUIApplication(); app.launch()
-        app.buttons["Lokale Sprachmodelle"].tap()
+        app.buttons["settings"].tap()
         let download = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "download-")).firstMatch
         guard download.waitForExistence(timeout: 10) else { throw XCTSkip("All models already installed") }
-        defer { app.terminate() }
+        let modelID = String(download.identifier.dropFirst("download-".count))
         XCTAssertTrue(download.isEnabled); download.tap()
-        XCTAssertFalse(download.isEnabled)
-        let message = app.staticTexts["modelMessage"]
-        app.swipeUp()
-        XCTAssertTrue(message.waitForExistence(timeout: 5))
-        XCTAssertTrue(message.label.contains("heruntergeladen"))
-        keepScreenshot(app, name: "Modell-Download")
-        app.terminate()
+        allowDownloadNotificationsIfPrompted()
+        let status = app.staticTexts["download-status-" + modelID]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertTrue(status.isHittable)
+        XCTAssertFalse(app.staticTexts["Herunterladen"].exists)
+        keepScreenshot(app, name: "Modell-Status-direkt-am-Download")
+        app.buttons["cancel-download-" + modelID].tap()
+        XCTAssertTrue(app.buttons["download-" + modelID].waitForExistence(timeout: 5))
     }
+    func testModelDownloadCompletesAfterLeavingApp() throws {
+        let app = XCUIApplication()
+        let modelID = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        app.launchArguments = ["--download-model-probe", modelID]; app.launch()
+        allowDownloadNotificationsIfPrompted()
+        app.buttons["settings"].tap()
+        let status = app.staticTexts["download-status-" + modelID]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        keepScreenshot(app, name: "Modell-Hintergrundauftrag")
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        print("MODEL_DOWNLOAD_BACKGROUND_WINDOW_STARTED")
+        let window = expectation(description: "Allow actual OS download and model verification in background")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 100) { window.fulfill() }
+        wait(for: [window], timeout: 110)
+        print("MODEL_DOWNLOAD_BACKGROUND_WINDOW_FINISHED")
+        app.activate()
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertTrue(status.label.contains("bereit zur Verwendung"), status.label)
+        XCTAssertTrue(app.images["installed-" + modelID].exists)
+        keepScreenshot(app, name: "Modell-geprueft-und-bereit")
+    }
+    #if targetEnvironment(simulator)
+    func testModelDownloadIntentSurvivesProcessRestart() throws {
+        let app = XCUIApplication(), modelID = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        app.launchArguments = ["--download-model-probe", modelID]; app.launch()
+        allowDownloadNotificationsIfPrompted()
+        app.buttons["settings"].tap()
+        XCTAssertTrue(app.buttons["cancel-download-" + modelID].waitForExistence(timeout: 10))
+        app.terminate()
+        app.launchArguments = []; app.launch()
+        app.buttons["settings"].tap()
+        let status = app.staticTexts["download-status-" + modelID]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertFalse(status.label.contains("Abgebrochen"))
+        XCUIDevice.shared.press(.home)
+        let window = expectation(description: "Restored background transfer finishes")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 100) { window.fulfill() }
+        wait(for: [window], timeout: 110)
+        app.activate()
+        XCTAssertTrue(status.label.contains("bereit zur Verwendung"), status.label)
+    }
+    #endif
     func testMeetingResultsCopyAndExport() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--meeting-import-probe", "TEST-grounded.aiff"]
@@ -232,7 +310,7 @@ final class VoiceUITests: XCTestCase {
     }
     func testHistoryNavigationAndModelDismissal() throws {
         let app = XCUIApplication(); app.launch()
-        app.buttons["Lokale Sprachmodelle"].tap()
+        app.buttons["settings"].tap()
         XCTAssertTrue(app.buttons["Fertig"].waitForExistence(timeout: 10))
         app.buttons["Fertig"].tap()
         XCTAssertTrue(app.buttons["record"].waitForExistence(timeout: 10))
@@ -257,7 +335,7 @@ final class VoiceUITests: XCTestCase {
     }
     func testModelPanelShowsLocalModelChoices() throws {
         let app = XCUIApplication(); app.launch()
-        let button = app.buttons["Lokale Sprachmodelle"]
+        let button = app.buttons["settings"]
         XCTAssertTrue(button.waitForExistence(timeout: 15)); button.tap()
         XCTAssertTrue(app.navigationBars["Lokale Sprachmodelle"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Whisper Base"].waitForExistence(timeout: 10))

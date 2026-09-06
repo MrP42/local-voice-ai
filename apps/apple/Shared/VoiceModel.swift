@@ -33,6 +33,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published var status = "Bereit"
     @Published var recording = false
     @Published var reachable = false
+    @Published var availableVoices: [SpeechVoiceOption] = []
+    @Published var selectedVoiceID = UserDefaults.standard.string(forKey: "selectedVoiceID") ?? "" {
+        didSet { UserDefaults.standard.set(selectedVoiceID, forKey: "selectedVoiceID") }
+    }
+    @Published private(set) var previewingVoiceID: String?
     @Published private(set) var playingRecordingId: UUID?
     @Published private(set) var recordingPlaybackPaused = false
     @Published private(set) var recordingPlaybackTime: TimeInterval = 0
@@ -67,6 +72,8 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published var providerDescription = "Verfügbarkeit wird geprüft"
     @Published var modelMessage = ""
     @Published var installingModel = false
+    @Published var preparingSpeech = false
+    @Published var speechModelMessage = ""
     @Published var sttModel = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin" {
         didSet { UserDefaults.standard.set(sttModel, forKey: "sttModel") }
     }
@@ -203,6 +210,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         if transport == nil { transport = try VoiceTransport(store: store) }
         if capture == nil { capture = CaptureController(store: store) }
         #if os(iOS)
+        ModelDownloads.shared.onInstalled = { [weak self] in Task { await self?.refreshModels() } }
         if jobs == nil {
             jobs = JobProcessor(store: store, annotatedTranscribe: { try await LocalProviders.annotatedTranscribe($0) }, conversationalReply: { try await LocalProviders.annotatedReply(to: $0, history: $1) })
             #if DEBUG && targetEnvironment(simulator)
@@ -304,6 +312,10 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         #endif
         #endif
         if active {
+            refreshVoices()
+            #if os(iOS)
+            ModelDownloads.shared.resumeVerification()
+            #endif
             retry()
             #if DEBUG
             if !debugActionsStarted {
@@ -311,6 +323,8 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
                 let arguments = ProcessInfo.processInfo.arguments
                 if arguments.contains("--record-probe") { start() }
                 #if os(iOS)
+                if let index = arguments.firstIndex(of: "--download-model-probe"), arguments.indices.contains(index + 1),
+                   let descriptor = LocalModel.all.first(where: { $0.id == arguments[index + 1] }) { downloadModel(descriptor) }
                 if arguments.contains("--cancel-inference-probe") { cancellationProbe(generation: arguments.contains("--cancel-generating")) }
                 if arguments.contains("--model-import-probe") { modelImportProbe(invalid: arguments.contains("--invalid-model")) }
                 #endif
@@ -354,6 +368,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         return url
     }
     func toggleOriginalPlayback(_ id: UUID) {
+        previewingVoiceID = nil
         if playingRecordingId == id, let player = originalPlayer {
             if player.isPlaying {
                 player.pause(); originalProgressTask?.cancel()
@@ -417,6 +432,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         }
     }
     func start() {
+        previewingVoiceID = nil
         stopOriginalPlayback()
         currentUtterance = nil; speakingId = nil
         speaker.stopSpeaking(at: .immediate)
@@ -485,6 +501,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     }
     func speak(_ text: String, id: UUID) {
         guard !recording else { return }
+        previewingVoiceID = nil
         stopOriginalPlayback()
         speaker.stopSpeaking(at: .immediate)
         do {
@@ -494,14 +511,35 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
             #endif
             let spoken = (try? AttributedString(markdown: text)).map { String($0.characters) } ?? text
             let utterance = AVSpeechUtterance(string: spoken)
-            utterance.voice = AVSpeechSynthesisVoice(language: "de-DE")
+            utterance.voice = AVSpeechSynthesisVoice(identifier: selectedVoiceID) ?? AVSpeechSynthesisVoice(language: "de-DE")
             speakingId = id; speechStarted = Date()
             currentUtterance = utterance
             speechAttempts[ObjectIdentifier(utterance)] = (id, speechStarted, utterance)
             speaker.speak(utterance); status = "Antwort wird gesprochen"
         } catch { endConversation(); status = "Audio nicht verfügbar – Antwort ist gespeichert" }
     }
-    func stopPlayback() { endConversation(); stopOriginalPlayback(); speaker.stopSpeaking(at: .immediate); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
+    func stopPlayback() { endConversation(); stopOriginalPlayback(); previewingVoiceID = nil; speaker.stopSpeaking(at: .immediate); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
+    func refreshVoices() {
+        availableVoices = AVSpeechSynthesisVoice.speechVoices().map(SpeechVoiceOption.init).sorted {
+            if $0.language.hasPrefix("de") != $1.language.hasPrefix("de") { return $0.language.hasPrefix("de") }
+            return ($0.language, $0.name, $0.id) < ($1.language, $1.name, $1.id)
+        }
+    }
+    func previewVoice(_ id: String) {
+        if previewingVoiceID == id { stopPlayback(); return }
+        stopPlayback()
+        guard let voice = AVSpeechSynthesisVoice(identifier: id) else { status = "Stimme nicht mehr verfügbar"; refreshVoices(); return }
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+            #if os(iOS)
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
+            let utterance = AVSpeechUtterance(string: voice.language.hasPrefix("de") ? "Hallo, so klingt meine Stimme. Ich lese dir deine Antworten vor." : "Hello, this is a preview of my voice.")
+            utterance.voice = voice
+            currentUtterance = utterance; speakingId = nil; previewingVoiceID = id
+            speaker.speak(utterance)
+        } catch { previewingVoiceID = nil; status = "Hörprobe konnte nicht gestartet werden" }
+    }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
         Task { @MainActor in
             if self.currentUtterance === utterance { self.lastSpeechStart = Date() }
@@ -525,6 +563,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     private func finishSpeech(_ utterance: AVSpeechUtterance, cancelled: Bool) {
         speechAttempts.removeValue(forKey: ObjectIdentifier(utterance))
         guard currentUtterance === utterance else { return }
+        previewingVoiceID = nil
         let completedId = speakingId
         currentUtterance = nil; speakingId = nil
         if !recording { status = cancelled ? "Wiedergabe gestoppt – Antwort bleibt gespeichert" : "Bereit" }
@@ -585,20 +624,10 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         let availability = await LocalProviders.capabilities()
         let speech = availability["speechTranscriberAvailable"] == "true" ? "Apple-Spracherkennung verfügbar" : "Apple-Spracherkennung hier nicht verfügbar"
         let ai = availability["foundationModels"] == "available" ? "Apple-Antwortmodell verfügbar" : "Apple-Antwortmodell hier nicht bereit"
-        providerDescription = speech + ". " + ai + ". Für den CPU-Pfad werden ein Whisper-Modell und Qwen benötigt."
+        providerDescription = speech + ". " + ai + "."
     }
     func downloadModel(_ item: LocalModel) {
-        guard !installingModel else { return }
-        installingModel = true
-        modelMessage = item.label + " wird heruntergeladen … App bitte geöffnet lassen."
-        Task {
-            defer { installingModel = false }
-            do {
-                let label = try await ModelLibrary.shared.download(item)
-                modelMessage = label + " geprüft und installiert"
-                await refreshModels()
-            } catch { modelMessage = "Download nicht abgeschlossen. Bitte Verbindung und freien Speicher prüfen und erneut versuchen." }
-        }
+        ModelDownloads.shared.start(item)
     }
     func installModel(_ url: URL) {
         guard !installingModel else { return }
@@ -609,13 +638,16 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
                 let label = try await ModelLibrary.shared.install(from: url)
                 modelMessage = label + " geprüft und installiert"
                 await refreshModels()
-            } catch { modelMessage = "Installation nicht bestätigt – Modellbestand bitte erneut prüfen" }
+            } catch { modelMessage = ModelTransferError.message(error) }
         }
     }
     func prepareLocalSpeech() {
+        guard !preparingSpeech else { return }
+        preparingSpeech = true; speechModelMessage = "Apple-Sprachdateien werden vorbereitet …"
         Task {
-            do { try await LocalProviders.installSpeech(); status = "Deutsche Sprachdateien bereit"; retry() }
-            catch { status = "Lokale Spracherkennung auf diesem Gerät nicht verfügbar" }
+            defer { preparingSpeech = false }
+            do { try await LocalProviders.installSpeech(); speechModelMessage = "Deutsche Sprachdateien bereit"; retry() }
+            catch { speechModelMessage = "Apple-Sprachdateien konnten nicht vorbereitet werden: " + error.localizedDescription }
         }
     }
     func cancelProcessing() { jobs?.cancelCurrent() }

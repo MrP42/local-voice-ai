@@ -16,7 +16,7 @@ swift test --package-path apps/apple/VoiceCore
 python3 apps/apple/scripts/generate_project.py
 xcodebuild -project apps/apple/LocalVoice.xcodeproj -scheme VoicePhone \
   -destination 'generic/platform=iOS Simulator' -configuration Debug \
-  -derivedDataPath apps/apple/DerivedData CODE_SIGNING_ALLOWED=NO build
+  -derivedDataPath apps/apple/DerivedData CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build
 ```
 
 The VoicePhone build includes its companion Watch target. The project generator
@@ -87,7 +87,7 @@ allowing locked-phone work after the first unlock since reboot. This does not by
 the first unlock. Force-quitting the iPhone app can prevent background launches;
 no immediate response or scheduled wake-up is guaranteed in that state. Ordinary
 background processing does not require reopening the iPhone app. Long media-import
-jobs and model downloads retain their separately documented foreground behavior.
+jobs retain their separately documented foreground behavior. Model downloads use a background URLSession (see the current download evidence).
 
 ## Test hooks (Debug only)
 
@@ -210,4 +210,4 @@ and installed on the physical iPhone. First launch required explicit developer
 profile trust on the iPhone. The updated iPhone app subsequently installed and launched successfully. Watch Developer Mode is now verified enabled and the device-specific build passes, and physical installation succeeded after transient CoreDevice connection failures.
 See the device installation evidence rather than inferring success from a build.
 
-Model cards now download approved model files over HTTPS and verify size/SHA-256 before installation. Keep the app open during downloads. Processing provenance is persisted with results, shared with Watch replies and shown beside playback controls; unknown historical metadata is never inferred. See `docs/apple-evidence/2026-09-06-transparency`.
+Model cards now download approved model files over HTTPS and verify size/SHA-256 before installation. Model downloads now use a persistent background URLSession; progress stays on the model row. After a user force-quit, the outstanding intent is restarted on reopening. Processing provenance is persisted with results, shared with Watch replies and shown beside playback controls; unknown historical metadata is never inferred. See `docs/apple-evidence/2026-09-06-transparency`.

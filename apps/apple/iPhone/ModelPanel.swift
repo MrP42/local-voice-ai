@@ -3,50 +3,50 @@ import UniformTypeIdentifiers
 
 struct ModelPanel: View {
     @ObservedObject var model: VoiceModel
+    @ObservedObject private var downloads = ModelDownloads.shared
     @State private var importing = false
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             List {
-                Section("Auf diesem Gerät") {
-                    Label("Verarbeitung auf deinem iPhone", systemImage: "lock.shield")
-                        .font(.headline).foregroundStyle(VoicePalette.accent)
-                    Text(model.providerDescription).font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
-                    ForEach(model.installedModels) { item in
-                        VStack(alignment: .leading) {
-                            HStack {
-                                Text(item.model.label).font(.headline)
-                                Spacer()
-                                Image(systemName: item.installed ? "checkmark.circle.fill" : "arrow.down.circle")
-                                    .foregroundStyle(item.installed ? VoicePalette.accent : .secondary)
-                                    .accessibilityLabel(item.installed ? "Installiert" : "Nicht installiert")
-                            }
-                            if !item.installed {
-                                Button("Herunterladen") { model.downloadModel(item.model) }
-                                    .disabled(model.installingModel)
-                                    .accessibilityIdentifier("download-" + item.id)
-                            }
-                            Text(item.installed ? "Vorhanden · \(ByteCountFormatter.string(fromByteCount: item.installedBytes, countStyle: .file))" : "Fehlt · \(ByteCountFormatter.string(fromByteCount: item.model.bytes, countStyle: .file)) benötigt")
-                                .font(.caption)
-                        }
+                Section {
+                    NavigationLink { SpeechVoicePicker(model: model) } label: {
+                        Label("Stimme & Hörprobe", systemImage: "speaker.wave.2")
+                    }.accessibilityIdentifier("voiceSettings")
+                }
+                Section {
+                    Text(model.providerDescription).font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    ForEach(model.installedModels) { item in modelRow(item) }
+                } header: { Text("Lokale Sprachmodelle") } footer: {
+                    Text("Downloads laufen beim Verlassen der App weiter. Nach dem Wegwischen der App wird der Auftrag beim nächsten Öffnen wieder aufgenommen. Erst nach erfolgreicher Prüfung wird das Modell freigegeben.")
+                }
+                if !downloads.notificationHint.isEmpty {
+                    Section {
+                        Text(downloads.notificationHint).font(.caption)
+                        Link("Mitteilungen einstellen", destination: URL(string: UIApplication.openSettingsURLString)!)
                     }
-                    Text("Vor der Nutzung wird die Integrität geprüft. Audio und Antworten werden lokal verarbeitet.").font(.caption)
-                    Text("Das kleine Antwortmodell machte in den Tests inhaltliche Fehler, etwa beim Rechnen.").font(.caption)
                 }
                 Section("Spracherkennung") {
-                    Picker("Lokales Sprachmodell", selection: $model.sttModel) {
-                        Text("Base – schneller").tag("ggml-base.bin")
-                        Text("Small – Qualitätsvergleich").tag("ggml-small.bin")
+                    Picker("Sprachmodell", selection: $model.sttModel) {
+                        Text("Whisper Base").tag("ggml-base.bin")
+                        Text("Whisper Small").tag("ggml-small.bin")
                     }
-                    Text("Die Auswahl gilt für die nächste Verarbeitung. Small war im Simulator deutlich langsamer und nicht in allen Sprachfällen besser.").font(.caption)
-                    Button("Apple-Sprachdateien laden") { model.prepareLocalSpeech() }
+                    HStack {
+                        Text("Apple-Sprachdateien").font(.subheadline)
+                        Spacer()
+                        if model.preparingSpeech { ProgressView() }
+                        else {
+                            Button("Apple-Sprachdateien laden", systemImage: "arrow.down.circle") { model.prepareLocalSpeech() }
+                                .labelStyle(.iconOnly).buttonStyle(.borderless).frame(minWidth: 44, minHeight: 44)
+                        }
+                    }
+                    if !model.speechModelMessage.isEmpty { Text(model.speechModelMessage).font(.caption).accessibilityIdentifier("appleSpeechStatus") }
                 }
-                Section("Modell hinzufügen") {
-                    Button(model.installingModel ? "Modell wird geprüft …" : "Modelldatei auswählen") { importing = true }
+                Section("Modelldatei importieren") {
+                    Button(model.installingModel ? "Modell wird geprüft …" : "Datei auswählen") { importing = true }
                         .disabled(model.installingModel)
-                    Text("Unterstützt werden die dokumentierten Whisper-Base-/Small- und Qwen-Dateien. Unbekannte oder beschädigte Dateien ersetzen kein vorhandenes Modell.").font(.caption)
-                    if model.installingModel { ProgressView("Download / Prüfung läuft") }
-                    Text(model.modelMessage).font(.caption).accessibilityIdentifier("modelMessage")
+                    if model.installingModel { ProgressView() }
+                    if !model.modelMessage.isEmpty { Text(model.modelMessage).font(.caption).accessibilityIdentifier("modelMessage") }
                 }
                 #if DEBUG
                 Section("Prototyp-Test") { Toggle("Feste Antwort ohne Spracherkennung", isOn: $model.fixedAnswer) }
@@ -54,12 +54,51 @@ struct ModelPanel: View {
             }
             .scrollContentBackground(.hidden)
             .background(VoicePalette.background)
-            .navigationTitle("Lokale Sprachmodelle")
+            .navigationTitle("Einstellungen")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
             .task { await model.refreshModels() }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.data]) { result in
                 if case .success(let url) = result { model.installModel(url) }
+            }
+        }
+    }
+    private func modelRow(_ item: InstalledModel) -> some View {
+        let record = downloads.records[item.id]
+        let busy = record?.busy == true
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.model.label).font(.subheadline.weight(.medium))
+                    Text(ByteCountFormatter.string(fromByteCount: item.model.bytes, countStyle: .file) + (item.installed ? " · Installiert" : ""))
+                        .font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+                }
+                Spacer(minLength: 4)
+                if busy {
+                    Button("Download abbrechen", systemImage: "xmark.circle") { downloads.cancel(item.model) }
+                        .labelStyle(.iconOnly).buttonStyle(.borderless).frame(minWidth: 44, minHeight: 44)
+                        .accessibilityIdentifier("cancel-download-" + item.id)
+                } else if item.installed {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(VoicePalette.accent).frame(width: 44)
+                        .accessibilityIdentifier("installed-" + item.id).accessibilityLabel("Installiert")
+                } else {
+                    Button(item.model.label + " herunterladen", systemImage: "arrow.down.circle") { model.downloadModel(item.model) }
+                        .labelStyle(.iconOnly).buttonStyle(.borderless).frame(minWidth: 44, minHeight: 44)
+                        .disabled(model.installingModel).accessibilityIdentifier("download-" + item.id)
+                }
+            }
+            if let record {
+                if record.phase == .downloading {
+                    ProgressView(value: min(1, max(0, Double(record.bytes) / Double(item.model.bytes))))
+                    Text(record.message + " · " + ByteCountFormatter.string(fromByteCount: record.bytes, countStyle: .file) + " / " + ByteCountFormatter.string(fromByteCount: item.model.bytes, countStyle: .file))
+                        .font(.caption2).foregroundStyle(VoicePalette.secondaryText).accessibilityIdentifier("download-status-" + item.id)
+                } else {
+                    HStack(spacing: 6) {
+                        if record.phase == .verifying { ProgressView().controlSize(.small) }
+                        Text(record.message).font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+                            .accessibilityIdentifier("download-status-" + item.id)
+                    }
+                }
             }
         }
     }

@@ -150,7 +150,7 @@ private struct VoiceHome: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Lokale Sprachmodelle", systemImage: "slider.horizontal.3") { showModels = true }
+                        Button("Einstellungen", systemImage: "slider.horizontal.3") { showModels = true }.accessibilityIdentifier("settings")
                     }
                 }
             }
@@ -261,6 +261,9 @@ private struct VoiceHome: View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("Antwort vorlesen", isOn: $model.autoPlayReplies).accessibilityIdentifier("autoPlayReplies")
             Toggle("Freisprechen", isOn: $model.handsFreeEnabled).accessibilityIdentifier("handsFreeEnabled")
+            NavigationLink { SpeechVoicePicker(model: model) } label: {
+                Label("Stimme & Hörprobe", systemImage: "speaker.wave.2")
+            }.accessibilityIdentifier("voiceSettings")
             if model.handsFreeEnabled {
                 Text("Nach einer Sprechpause antworten. Danach wieder zuhören. Beim Vorlesen pausiert das Mikrofon.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
                 Text("Beim Verlassen dieser App pausiert das Freisprechen. Kontext: bis zu 6 vorherige Wortwechsel dieses Gesprächs, lokal gespeichert.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)

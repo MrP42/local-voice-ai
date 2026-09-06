@@ -1,5 +1,6 @@
 import UIKit
 import BackgroundTasks
+import UserNotifications
 
 /// Uses only system-granted runtime. Originals and STT checkpoints outlive each lease.
 @MainActor
@@ -129,9 +130,18 @@ final class PhoneProcessingRuntime {
 }
 
 @MainActor
-final class VoicePhoneDelegate: NSObject, UIApplicationDelegate {
+final class VoicePhoneDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         VoiceModel.shared.registerBackgroundProcessing()
+        _ = ModelDownloads.shared
+        UNUserNotificationCenter.current().delegate = self
         return true
+    }
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        guard identifier == ModelDownloads.sessionID else { completionHandler(); return }
+        ModelDownloads.shared.handleBackgroundEvents(completionHandler)
+    }
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([]) // Foreground progress and readiness are already visible beside the model.
     }
 }
