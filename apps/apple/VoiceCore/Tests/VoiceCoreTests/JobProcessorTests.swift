@@ -3,6 +3,20 @@ import XCTest
 
 final class JobProcessorTests: XCTestCase {
     @MainActor
+    func testActualProviderIdentityAndRuleAnswerArePersisted() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root); _ = try store.accept(.capture(audio: Data([1])))
+        let worker = JobProcessor(store: store, annotatedTranscribe: { _ in ProcessingOutput(text: "Text", model: "Whisper Test") }, annotatedReply: { _ in ProcessingOutput(text: "Feste Antwort", model: "Funktionsregel", isAI: false) })
+        worker.setActive(true)
+        try await waitUntil { !worker.isProcessing }
+        let events = try XCTUnwrap(DurableStore(root: root).entries().first?.processingEvents)
+        XCTAssertEqual(events.map(\.model), ["Whisper Test", "Funktionsregel"])
+        XCTAssertEqual(events.map(\.isAI), [true, false])
+        XCTAssertEqual(events.map(\.operation), ["Transkription", "Antwort"])
+        XCTAssertTrue(events.allSatisfy { $0.durationMS >= 0 && $0.completedAt <= Date() })
+    }
+    @MainActor
     func waitUntil(_ predicate: () throws -> Bool) async throws {
         for _ in 0..<200 {
             if try predicate() { return }

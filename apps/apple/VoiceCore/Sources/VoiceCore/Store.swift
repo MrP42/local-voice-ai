@@ -24,6 +24,18 @@ public struct Packet: Codable, Sendable {
         Packet(sessionId: UUID(), messageId: UUID(), kind: "capture", createdAt: Date(), payload: Payload(audio: audio))
     }
 }
+public struct ProcessingEvent: Codable, Equatable, Sendable {
+    public var operation: String
+    public var model: String
+    public var completedAt: Date
+    public var durationMS: Double
+    public var isAI: Bool
+}
+public struct ProcessingOutput: Sendable {
+    public var text: String
+    public var model: String
+    public var isAI = true
+}
 public struct Entry: Codable, Identifiable, Sendable {
     public var id: UUID { receipt.sessionId }
     public let receipt: Receipt
@@ -37,6 +49,7 @@ public struct Entry: Codable, Identifiable, Sendable {
     public var replyAcknowledged: Bool?
     public var replyReceipt: Receipt?
     public var replyToWatch: Bool?
+    public var processingEvents: [ProcessingEvent]?
     public var job: JobRecord?
     public static func pendingDelivery(in entries: [Entry]) -> [Entry] {
         entries.filter { $0.state != .answered }.sorted {
@@ -157,7 +170,7 @@ public final class DurableStore {
             try fm.removeItem(at: url)
         }
     }
-    public func update(_ id: UUID, transcript: String? = nil, reply: String? = nil, state: CaptureState, timing: (String, Double)? = nil) throws {
+    public func update(_ id: UUID, transcript: String? = nil, reply: String? = nil, state: CaptureState, timing: (String, Double)? = nil, event: ProcessingEvent? = nil) throws {
         var entry = try loadEntry(for: id)
         if let transcript {
             guard transcript.count <= 16000 else { throw VoiceError.invalid }
@@ -172,6 +185,7 @@ public final class DurableStore {
         if entry.state != .answered { entry.state = state }
         if entry.reply != nil, entry.state == .answered { entry.job?.phase = .completed }
         if let timing { entry.timings[timing.0] = timing.1 }
+        if let event { entry.processingEvents = (entry.processingEvents ?? []) + [event] }
         try save(entry)
         if transcript != nil { try fault?(.transcriptCommitted) }
         if reply != nil { try fault?(.generatedReplyCommitted) }
@@ -184,7 +198,7 @@ public final class DurableStore {
             entry.replyMessageId = UUID()
             try save(entry)
         }
-        return VoiceEnvelope(sessionId: id, transcript: entry.transcript, reply: reply, replyMessageId: entry.replyMessageId!)
+        return VoiceEnvelope(sessionId: id, transcript: entry.transcript, reply: reply, replyMessageId: entry.replyMessageId!, processingEvents: entry.processingEvents)
     }
     public func acceptReply(_ envelope: VoiceEnvelope) throws -> (receipt: Receipt, isNew: Bool) {
         guard envelope.schemaVersion == 1 else { throw VoiceError.version }
@@ -211,6 +225,7 @@ public final class DurableStore {
         if let start = entry.timings["capture_end_at_ms"] ?? entry.timings["capture_saved_at_ms"], receivedAt >= start {
             entry.timings["reply_e2e_ms"] = receivedAt - start
         }
+        entry.processingEvents = envelope.payload.processingEvents
         entry.reply = text; entry.transcript = envelope.transcript
         entry.replyMessageId = envelope.messageId; entry.replyReceipt = receipt; entry.state = .answered
         try save(entry)

@@ -2,6 +2,19 @@ import XCTest
 @testable import VoiceCore
 
 final class StoreTests: XCTestCase {
+    func testProcessingProvenanceSurvivesRestartAndWatchDelivery() throws {
+        let root = temporary(), watchRoot = temporary()
+        defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: watchRoot) }
+        let store = try DurableStore(root: root), watch = try DurableStore(root: watchRoot)
+        let packet = Packet.capture(audio: Data([1]))
+        _ = try store.accept(packet); _ = try watch.accept(packet)
+        let event = ProcessingEvent(operation: "Antwort", model: "Testmodell", completedAt: Date(), durationMS: 120, isAI: true)
+        try store.update(packet.sessionId, reply: "**Hallo**", state: .answered, event: event)
+        let restarted = try DurableStore(root: root)
+        XCTAssertEqual(try restarted.entries().first?.processingEvents?.first, event)
+        _ = try watch.acceptReply(restarted.replyEnvelope(for: packet.sessionId))
+        XCTAssertEqual(try DurableStore(root: watchRoot).entries().first?.processingEvents?.first, event)
+    }
     func temporary() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
     func testConfirmedCaptureSurvivesRestartAndDuplicateHasSameReceipt() throws {
         let root = temporary(); defer { try? FileManager.default.removeItem(at: root) }

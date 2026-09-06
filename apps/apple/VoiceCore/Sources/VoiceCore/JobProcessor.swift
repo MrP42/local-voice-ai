@@ -10,15 +10,21 @@ public final class JobProcessor {
     public var isProcessing: Bool { task != nil }
     public var onChange: ((UUID?) -> Void)?
     private let store: DurableStore
-    private let transcribe: @Sendable (URL) async throws -> String
-    private let reply: @Sendable (String) async throws -> String
+    private let transcribe: @Sendable (URL) async throws -> ProcessingOutput
+    private let reply: @Sendable (String) async throws -> ProcessingOutput
     private var task: Task<Void, Never>?
     private var resumeRequested = false
     private var userCancelled = false
 
     public init(store: DurableStore, transcribe: @escaping @Sendable (URL) async throws -> String,
                 reply: @escaping @Sendable (String) async throws -> String) {
-        self.store = store; self.transcribe = transcribe; self.reply = reply
+        self.store = store
+        self.transcribe = { ProcessingOutput(text: try await transcribe($0), model: "Nicht dokumentiert") }
+        self.reply = { ProcessingOutput(text: try await reply($0), model: "Nicht dokumentiert") }
+    }
+    public init(store: DurableStore, annotatedTranscribe: @escaping @Sendable (URL) async throws -> ProcessingOutput,
+                annotatedReply: @escaping @Sendable (String) async throws -> ProcessingOutput) {
+        self.store = store; self.transcribe = annotatedTranscribe; self.reply = annotatedReply
     }
     public func setActive(_ active: Bool) {
         self.active = active
@@ -60,25 +66,27 @@ public final class JobProcessor {
                 currentId = entry.id; message = "Aufnahme wird lokal verarbeitet"; onChange?(entry.id)
                 do {
                     if fixedAnswer {
-                        try store.update(entry.id, reply: "Deine Aufnahme ist sicher gespeichert.", state: .answered)
+                        try store.update(entry.id, reply: "Deine Aufnahme ist sicher gespeichert.", state: .answered, event: ProcessingEvent(operation: "Antwort", model: "Feste Testantwort", completedAt: Date(), durationMS: 0, isAI: false))
                     } else {
                         let text: String
                         if let previous = entry.transcript { text = previous }
                         else {
                             let start = Date()
-                            text = try await transcribe(store.audioURL(for: entry.id))
+                            let result = try await transcribe(store.audioURL(for: entry.id))
+                            text = result.text
                             try Task.checkCancellation()
                             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ProcessingFailure.noSpeech }
-                            try store.update(entry.id, transcript: text, state: .deferred, timing: ("stt_ms", Date().timeIntervalSince(start) * 1000))
+                            try store.update(entry.id, transcript: text, state: .deferred, timing: ("stt_ms", Date().timeIntervalSince(start) * 1000), event: ProcessingEvent(operation: "Transkription", model: result.model, completedAt: Date(), durationMS: Date().timeIntervalSince(start) * 1000, isAI: result.isAI))
                         }
                         try Task.checkCancellation()
                         try store.setJobPhase(entry.id, phase: .generating)
                         message = "Kurze Antwort wird lokal erzeugt"; onChange?(entry.id)
                         let start = Date()
-                        let answer = try await reply(text)
+                        let result = try await reply(text)
+                        let answer = result.text
                         try Task.checkCancellation()
                         guard !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, answer.count <= 500 else { throw ProcessingFailure.invalidOutput }
-                        try store.update(entry.id, reply: answer, state: .answered, timing: ("generation_ms", Date().timeIntervalSince(start) * 1000))
+                        try store.update(entry.id, reply: answer, state: .answered, timing: ("generation_ms", Date().timeIntervalSince(start) * 1000), event: ProcessingEvent(operation: "Antwort", model: result.model, completedAt: Date(), durationMS: Date().timeIntervalSince(start) * 1000, isAI: result.isAI))
                     }
                     message = "Antwort gespeichert"
                 } catch {

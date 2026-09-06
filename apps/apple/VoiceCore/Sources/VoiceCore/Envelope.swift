@@ -6,6 +6,7 @@ public struct VoiceEnvelope: Codable, Sendable {
         public var receipt: Receipt?
         public var transcript: String?
         public var reply: String?
+        public var processingEvents: [ProcessingEvent]?
         public var chunk: CaptureChunk?
     }
     public var schemaVersion = 1
@@ -18,11 +19,11 @@ public struct VoiceEnvelope: Codable, Sendable {
     public var receipt: Receipt? { payload.receipt }
     public var transcript: String? { payload.transcript }
     public var reply: String? { payload.reply }
-    public init(capture: Packet? = nil, receipt: Receipt? = nil, sessionId: UUID? = nil, transcript: String? = nil, reply: String? = nil, replyMessageId: UUID? = nil) {
+    public init(capture: Packet? = nil, receipt: Receipt? = nil, sessionId: UUID? = nil, transcript: String? = nil, reply: String? = nil, replyMessageId: UUID? = nil, processingEvents: [ProcessingEvent]? = nil) {
         self.messageId = capture?.messageId ?? receipt?.receiptId ?? replyMessageId ?? UUID()
         self.kind = capture != nil ? "capture" : (receipt != nil ? "receipt" : "reply")
         self.sessionId = capture?.sessionId ?? receipt?.sessionId ?? sessionId
-        self.payload = Payload(capture: capture, receipt: receipt, transcript: transcript, reply: reply)
+        self.payload = Payload(capture: capture, receipt: receipt, transcript: transcript, reply: reply, processingEvents: processingEvents)
     }
 }
 

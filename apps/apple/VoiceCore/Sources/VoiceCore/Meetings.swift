@@ -160,6 +160,7 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     public var minutes: MeetingMinutes?
     public var summaryParts: [MeetingMinutes]?
     public var summarizedSegments: Int?
+    public var processingEvents: [ProcessingEvent]?
     public var timings: [String: Double]?
 }
 
@@ -230,7 +231,7 @@ public actor MeetingArchive {
         try syncDirectory(root)
         return doc
     }
-    public func appendChunk(_ id: UUID, offset: Double, nextOffset: Double, segments: [MeetingSegment]) throws {
+    public func appendChunk(_ id: UUID, offset: Double, nextOffset: Double, segments: [MeetingSegment], event: ProcessingEvent? = nil) throws {
         var doc = try load(id)
         guard offset == doc.nextOffset else { throw VoiceError.conflict }
         guard offset.isFinite, nextOffset.isFinite, nextOffset > offset, nextOffset <= doc.duration,
@@ -239,15 +240,17 @@ public actor MeetingArchive {
             doc.segments.append(MeetingSegment(index: doc.segments.count, start: segment.start, end: segment.end, text: segment.text, speaker: segment.speaker))
         }
         doc.nextOffset = nextOffset
+        if let event { doc.processingEvents = (doc.processingEvents ?? []) + [event] }
         try save(doc)
     }
-    public func appendMinutes(_ id: UUID, from: Int, through: Int, minutes: MeetingMinutes) throws {
+    public func appendMinutes(_ id: UUID, from: Int, through: Int, minutes: MeetingMinutes, event: ProcessingEvent? = nil) throws {
         var doc = try load(id)
         guard doc.nextOffset == doc.duration, from == (doc.summarizedSegments ?? 0), through > from, through <= doc.segments.count else { throw VoiceError.conflict }
         let validated = try MeetingMinutes.decode(JSONEncoder().encode(minutes))
         try validated.validateEvidence(in: doc.segments[from..<through].map(\.text).joined(separator: "\n"))
         doc.summaryParts = (doc.summaryParts ?? []) + [validated]
         doc.summarizedSegments = through
+        if let event { doc.processingEvents = (doc.processingEvents ?? []) + [event] }
         try save(doc)
     }
     public func recordTiming(_ id: UUID, phase: String, milliseconds: Double) throws {
