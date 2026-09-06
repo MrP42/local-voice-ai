@@ -66,7 +66,16 @@ public final class DurableStore {
         try inventory(includeUsage: false).entries
     }
     public func canStartRecording() throws -> Bool {
-        try diskBytes(at: root) + 1024 * 1024 <= limit + temporaryLimit
+        try committedAudioBytes() + 1024 * 1024 <= limit && diskBytes(at: root) + 1024 * 1024 <= limit + temporaryLimit
+    }
+    private func committedAudioBytes() throws -> Int {
+        try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .filter { UUID(uuidString: $0.lastPathComponent) != nil }
+            .reduce(0) { total, folder in
+                let audio = folder.appendingPathComponent("audio.m4a")
+                // An absent damaged original reserves a full capture; it cannot create free quota.
+                return try total + (fm.fileExists(atPath: audio.path) ? diskBytes(at: audio) : 1024 * 1024)
+            }
     }
     public func audioURL(for id: UUID) -> URL { root.appendingPathComponent(id.uuidString).appendingPathComponent("audio.m4a") }
     public func audio(for id: UUID) throws -> Data { try Data(contentsOf: audioURL(for: id)) }
@@ -95,9 +104,7 @@ public final class DurableStore {
             return existing.receipt
         }
         // Include damaged entries in quota; corruption must never create free space.
-        let used = try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
-            .filter { UUID(uuidString: $0.lastPathComponent) != nil }
-            .reduce(0) { try $0 + diskBytes(at: $1.appendingPathComponent("audio.m4a")) }
+        let used = try committedAudioBytes()
         guard used + packet.audio.count <= limit else { throw VoiceError.full }
         let receipt = Receipt(sessionId: packet.sessionId, messageId: packet.messageId, receiptId: UUID())
         let entry = Entry(receipt: receipt, createdAt: packet.createdAt, digest: digest, state: .saved, timings: ["capture_saved_at_ms": Date().timeIntervalSinceReferenceDate * 1000], replyToWatch: replyToWatch)
@@ -134,7 +141,9 @@ public final class DurableStore {
         let receipt = try accept(packet)
         // Failure to remove a redundant draft cannot undo its durable acceptance.
         try? fm.removeItem(at: url)
-        cachedInventory?.issues.removeAll { $0.url.lastPathComponent == url.lastPathComponent }
+        if !fm.fileExists(atPath: url.path) {
+            cachedInventory?.issues.removeAll { $0.url.lastPathComponent == url.lastPathComponent }
+        }
         return receipt
     }
     /// Only redundant, completed transfer copies are removed. Original audio remains untouched.
@@ -188,6 +197,12 @@ public final class DurableStore {
         if let receipt = entry.replyReceipt {
             guard receipt.messageId == envelope.messageId else { throw VoiceError.conflict }
             return (receipt, false)
+        }
+        if let transcript = entry.transcript {
+            guard transcript == envelope.transcript else { throw VoiceError.conflict }
+        }
+        if let issued = entry.replyMessageId {
+            guard issued == envelope.messageId else { throw VoiceError.conflict }
         }
         let isNew = entry.reply == nil
         let receipt = Receipt(sessionId: id, messageId: envelope.messageId, receiptId: UUID())
