@@ -27,6 +27,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--models', action='store_true', help='Also download 640 MB of local model weights')
     parser.add_argument('--small', action='store_true', help='Also download Whisper Small for the accuracy comparison')
+    parser.add_argument('--meetings', action='store_true', help='Also download 1.12 GB Qwen weights for meeting analysis')
     args = parser.parse_args()
     vendor = ROOT / 'Vendor'; vendor.mkdir(exist_ok=True)
     for name, url, expected in LIBRARIES:
@@ -41,6 +42,10 @@ def main():
                     zipped.extractall(temp)
                 shutil.move(str(pathlib.Path(temp) / 'build-apple' / (name + '.xcframework')), destination)
         print(name + ': pinned archive verified')
+    if args.meetings:
+        models = vendor / 'Models'; models.mkdir(exist_ok=True)
+        fetch('https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf', models / 'qwen2.5-1.5b-instruct-q4_k_m.gguf', '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e')
+        print('qwen2.5-1.5b-instruct-q4_k_m.gguf: SHA-256 verified')
     if args.small:
         models = vendor / 'Models'; models.mkdir(exist_ok=True)
         fetch('https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin', models / 'ggml-small.bin', '1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b')

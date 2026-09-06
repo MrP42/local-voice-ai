@@ -11,7 +11,7 @@ struct ModelPanel: View {
                 Section("Auf diesem Gerät") {
                     Label("Verarbeitung auf deinem iPhone", systemImage: "lock.shield")
                         .font(.headline).foregroundStyle(VoicePalette.accent)
-                    Text(model.providerDescription).font(.subheadline).foregroundStyle(.secondary)
+                    Text(model.providerDescription).font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
                     ForEach(model.installedModels) { item in
                         VStack(alignment: .leading) {
                             HStack {

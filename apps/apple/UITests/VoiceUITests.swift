@@ -34,6 +34,24 @@ final class VoiceUITests: XCTestCase {
         add(screenshot)
     }
     #if os(iOS)
+    func testMeetingResultsCopyAndExport() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--meeting-import-probe", "TEST-grounded.aiff"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Aufzeichnungen"].waitForExistence(timeout: 15))
+        let ready = app.staticTexts["Transkript & Auswertung"].firstMatch
+        XCTAssertTrue(ready.waitForExistence(timeout: 180))
+        app.buttons.matching(identifier: "meetingEntry").firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Ergebnisse"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Zusammenfassung"].exists)
+        keepScreenshot(app, name: "Aufzeichnung-Ergebnis")
+        app.buttons["Kopieren"].tap()
+        XCTAssertTrue(app.buttons["Kopiert"].exists)
+        app.buttons["Exportieren"].tap()
+        XCTAssertTrue(app.buttons["JSON"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Originaldatei"].exists)
+        keepScreenshot(app, name: "Aufzeichnung-Export")
+    }
     func testRetryReconstructsComponentsAfterSetupFailure() throws {
         let app = XCUIApplication(); app.launchArguments = ["--setup-failure-probe"]; app.launch()
         let status = app.staticTexts["status"]

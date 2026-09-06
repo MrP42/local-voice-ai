@@ -18,6 +18,7 @@ enum VoicePalette {
     static var ink: Color { color(inkHex) }
     static var accent: Color { adaptive(light: inkHex, dark: signalYellow) }
     static var text: Color { adaptive(light: lightText, dark: darkText) }
+    static var secondaryText: Color { text.opacity(0.72) }
     static var background: Color { adaptive(light: lightBackground, dark: darkBackground) }
 
     private static func color(_ hex: Int) -> Color {
@@ -57,7 +58,12 @@ private struct VoiceHome: View {
     @State private var showModels = false
     @State private var query = ""
     @FocusState private var searchFocused: Bool
+    #if DEBUG
+    @State private var tab = ProcessInfo.processInfo.arguments.contains("--meeting-import-probe") ? 2 : 0
+    #else
     @State private var tab = 0
+    #endif
+
     #endif
 
     var body: some View {
@@ -66,15 +72,15 @@ private struct VoiceHome: View {
             ScrollView {
                 VStack(spacing: 10) {
                     Label(model.reachable ? "iPhone verbunden" : "Übergabe später", systemImage: model.reachable ? "iphone" : "clock")
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(.caption2).foregroundStyle(VoicePalette.secondaryText)
                     recordButton
                     Text(model.status).font(.caption).multilineTextAlignment(.center).accessibilityIdentifier("status")
-                    if !model.reachable { Text("Deine Aufnahme bleibt auf der Watch gespeichert.").font(.caption2).foregroundStyle(.secondary) }
+                    if !model.reachable { Text("Deine Aufnahme bleibt auf der Watch gespeichert.").font(.caption2).foregroundStyle(VoicePalette.secondaryText) }
                     if !model.storageIssues.isEmpty { recovery }
                     if let latest = model.entries.first {
                         NavigationLink { VoiceEntryDetail(model: model, original: latest) } label: {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Zuletzt gespeichert").font(.caption2).foregroundStyle(.secondary)
+                                Text("Zuletzt gespeichert").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
                                 Text(latest.reply ?? latest.transcript ?? "Sprachnotiz").font(.caption).lineLimit(2).foregroundStyle(.primary)
                             }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(VoicePalette.background, in: RoundedRectangle(cornerRadius: 8))
@@ -93,6 +99,7 @@ private struct VoiceHome: View {
         }
         #else
         TabView(selection: $tab) {
+
             NavigationStack {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
@@ -100,7 +107,7 @@ private struct VoiceHome: View {
                         if !model.storageIssues.isEmpty { recovery }
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                Text("ZULETZT GESPEICHERT").font(.caption.weight(.medium)).tracking(0.8).foregroundStyle(.secondary)
+                                Text("ZULETZT GESPEICHERT").font(.caption.weight(.medium)).tracking(0.8).foregroundStyle(VoicePalette.secondaryText)
                                 Spacer()
                                 Button("Alle anzeigen") { tab = 1 }.font(.subheadline).accessibilityIdentifier("allHistory")
                             }
@@ -122,18 +129,19 @@ private struct VoiceHome: View {
                 }
             }
             .tabItem { Label("Sprechen", systemImage: "waveform") }.tag(0)
+            MeetingLibraryView().tabItem { Label("Aufzeichnungen", systemImage: "doc.text") }.tag(2)
             NavigationStack {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 10) {
-                            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                            Image(systemName: "magnifyingglass").foregroundStyle(VoicePalette.secondaryText)
                             TextField("Aufnahmen und Antworten suchen", text: $query)
                                 .focused($searchFocused).submitLabel(.search)
                                 .onSubmit { searchFocused = false }
                                 .accessibilityIdentifier("historySearch")
                             if !query.isEmpty {
                                 Button("Suche leeren", systemImage: "xmark.circle.fill") { query = "" }
-                                    .labelStyle(.iconOnly).foregroundStyle(.secondary)
+                                    .labelStyle(.iconOnly).foregroundStyle(VoicePalette.secondaryText)
                             }
                             if searchFocused {
                                 Button("Fertig") { searchFocused = false }.accessibilityIdentifier("closeSearch")
@@ -179,7 +187,7 @@ private struct VoiceHome: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.recording ? "Aufnahme läuft" : "Deine Sprachnotiz").font(.headline)
                     Text(model.recording ? "Zum Beenden sichern · maximal 30 Sekunden" : "Lokal aufnehmen, verarbeiten und aufbewahren")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                 }
             }
             if !dynamicTypeSize.isAccessibilitySize { recordButton }
@@ -188,7 +196,7 @@ private struct VoiceHome: View {
                 Text(model.status).font(.subheadline.weight(.medium)).accessibilityIdentifier("status")
             }
             Label(model.reachable ? "Watch verbunden" : "Watch-Übergabe bei nächster Verbindung", systemImage: model.reachable ? "applewatch" : "clock")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(VoicePalette.secondaryText)
             ViewThatFits(in: .horizontal) {
                 HStack { recoveryButton; Spacer(); optionsMenu }
                 VStack(alignment: .leading, spacing: 8) { recoveryButton; optionsMenu }
@@ -230,7 +238,7 @@ private struct VoiceHome: View {
     private var recovery: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Wiederherstellung erforderlich", systemImage: "exclamationmark.shield").font(.headline)
-            Text("Deine Dateien bleiben erhalten. Sichere ein Original oder versuche die Wiederherstellung.").font(.caption).foregroundStyle(.secondary)
+            Text("Deine Dateien bleiben erhalten. Sichere ein Original oder versuche die Wiederherstellung.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
             ForEach(model.storageIssues) { issue in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(issue.reason).font(.subheadline)
@@ -256,9 +264,9 @@ private struct VoiceEntryRow: View {
                 Spacer(minLength: 4)
                 Image(systemName: entry.reply == nil ? "clock" : "checkmark.circle.fill")
                     .foregroundStyle(entry.reply == nil ? Color.secondary : VoicePalette.accent)
-            }.font(.caption).foregroundStyle(.secondary)
+            }.font(.caption).foregroundStyle(VoicePalette.secondaryText)
             Text(entry.transcript ?? "Gespeicherte Sprachnotiz").font(.headline).lineLimit(1)
-            Text(entry.reply ?? "gespeichert – Verarbeitung folgt").font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            Text(entry.reply ?? "gespeichert – Verarbeitung folgt").font(.subheadline).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
         }.frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
     }
@@ -273,7 +281,7 @@ private struct VoiceEntryDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text(entry.createdAt, format: .dateTime.day().month(.wide).year().hour().minute())
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                 VStack(alignment: .leading, spacing: 12) {
                     Label("Deine Aufnahme", systemImage: "waveform").font(.headline).foregroundStyle(VoicePalette.accent)
                     Text(entry.transcript ?? "Deine Sprachnotiz ist gespeichert. Das Transkript folgt nach der Verarbeitung.")
@@ -295,7 +303,7 @@ private struct VoiceEntryDetail: View {
                     }
                     #if os(iOS)
                     if entry.reply == nil, let job = entry.job {
-                        Text(job.running ? "Wird verarbeitet …" : job.phase == .failed ? "Verarbeitung angehalten" : job.phase == .cancelled ? "Verarbeitung abgebrochen" : "Verarbeitung ausstehend").font(.caption).foregroundStyle(.secondary)
+                        Text(job.running ? "Wird verarbeitet …" : job.phase == .failed ? "Verarbeitung angehalten" : job.phase == .cancelled ? "Verarbeitung abgebrochen" : "Verarbeitung ausstehend").font(.caption).foregroundStyle(VoicePalette.secondaryText)
                         if job.failure == .noSpeech { Text("Keine Sprache erkannt – Originalaufnahme erhalten").font(.caption) }
                         if !job.running { Button("Verarbeitung erneut starten") { model.retryProcessing(entry.id) } }
                     }
@@ -310,7 +318,7 @@ private struct VoiceEntryDetail: View {
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder func selectableOnPhone() -> some View {
         #if os(iOS)
         self.textSelection(.enabled)
@@ -345,7 +353,7 @@ struct VoiceBrandMark: View {
     }
 }
 
-private struct VoicePrimaryButtonStyle: ButtonStyle {
+struct VoicePrimaryButtonStyle: ButtonStyle {
     let recording: Bool
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.padding(.horizontal, 16).padding(.vertical, 4)

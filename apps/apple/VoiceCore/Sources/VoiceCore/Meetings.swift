@@ -45,6 +45,89 @@ public struct MeetingMinutes: Codable, Equatable, Sendable {
         self.summary = summary; self.scope = scope; self.decisions = decisions; self.tasks = tasks
         self.next_steps = next_steps; self.follow_ups = follow_ups; self.open_questions = open_questions
     }
+    /// Factual fields are extractive: unsupported names/dates cannot silently become minutes.
+    /// Recommendations remain proposals, with an exact source quote as their reason.
+    public func validateEvidence(in source: String) throws {
+        func normalized(_ value: String) -> String {
+            value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
+        }
+        let evidence = normalized(source)
+        func quoted(_ value: String) -> Bool { normalized(value).isEmpty || evidence.contains(normalized(value)) }
+        func attributed(_ name: String?, text: String) -> Bool { name.map { !normalized($0).isEmpty && Self.containsAttribution($0, in: text) } ?? true }
+        guard (evidence.isEmpty || !normalized(summary).isEmpty), summary.split(whereSeparator: { $0.isNewline }).allSatisfy({ quoted(String($0)) }), quoted(scope),
+              decisions.allSatisfy({ quoted($0.text) && quoted($0.context) }),
+              tasks.allSatisfy({ quoted($0.text) && attributed($0.assignee, text: $0.text) && attributed($0.due, text: $0.text) }),
+              next_steps.allSatisfy({ quoted($0.text) && attributed($0.owner, text: $0.text) }),
+              open_questions.allSatisfy({ quoted($0.text) }),
+              follow_ups.allSatisfy({ !$0.reason.isEmpty && quoted($0.reason) }) else { throw VoiceError.invalid }
+    }
+    private static func containsAttribution(_ value: String, in text: String) -> Bool {
+        let pattern = "(?<![\\p{L}\\p{N}_])" + NSRegularExpression.escapedPattern(for: value) + "(?![\\p{L}\\p{N}_])"
+        return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+    public static func fromSelection(_ data: Data, source: [String]) throws -> Self {
+        struct SelectedTask: Decodable { let index: Int; let assignee: String?; let due: String? }
+        struct SelectedStep: Decodable { let index: Int; let owner: String? }
+        struct SelectedRecommendation: Decodable { let index: Int; let text: String }
+        struct Selection: Decodable {
+            let summary: [Int]; let decisions: [Int]; let tasks: [SelectedTask]; let next_steps: [SelectedStep]; let follow_ups: [SelectedRecommendation]; let open_questions: [Int]
+        }
+        guard data.count <= 32768, source.count <= 1000 else { throw VoiceError.invalid }
+        let selected = try JSONDecoder().decode(Selection.self, from: data)
+        guard !selected.summary.isEmpty, selected.summary.count <= 2 else { throw VoiceError.invalid }
+        func quote(_ index: Int) throws -> String {
+            guard source.indices.contains(index) else { throw VoiceError.invalid }
+            return source[index].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        func attribution(_ value: String?, in text: String) -> String? {
+            guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  Self.containsAttribution(value, in: text) else { return nil }
+            return value
+        }
+        let summary = try Array(Set(selected.summary)).sorted().map(quote).joined(separator: "\n")
+        var report = Self(summary: summary, scope: try quote(selected.summary[0]),
+            decisions: try Array(Set(selected.decisions)).sorted().map { Decision(text: try quote($0), context: "") },
+            tasks: try selected.tasks.map { task in
+                let text = try quote(task.index)
+                return Task(text: text, assignee: attribution(task.assignee, in: text), due: attribution(task.due, in: text))
+            },
+            next_steps: try selected.next_steps.map { step in
+                let text = try quote(step.index)
+                return Step(text: text, owner: attribution(step.owner, in: text))
+            },
+            follow_ups: try selected.follow_ups.map {
+                guard !$0.text.isEmpty, $0.text.count <= 800 else { throw VoiceError.invalid }
+                return Recommendation(text: $0.text, reason: try quote($0.index))
+            },
+            open_questions: try Array(Set(selected.open_questions)).sorted().map { Question(text: try quote($0)) })
+        // Conservative repair of category mistakes seen in the German device fixture.
+        func unresolved(_ text: String) -> Bool {
+            text.contains("?") || text.range(of: "\\b(offen|unklar|ungeklärt|unbekannt)\\b", options: [.regularExpression, .caseInsensitive]) != nil
+        }
+        func collectiveFuture(_ text: String) -> Bool {
+            let value = text.lowercased()
+            return value.range(of: "\\b(wir|gemeinsam)\\b", options: .regularExpression) != nil &&
+                (value.contains("nächste") || value.contains("morgen") || value.contains("werden") || value.range(of: "\\b(montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)\\b", options: .regularExpression) != nil)
+        }
+        report.open_questions = report.open_questions.filter { unresolved($0.text) }
+        var tasks: [Task] = []
+        for task in report.tasks {
+            if report.decisions.contains(where: { $0.text == task.text }) { continue }
+            if unresolved(task.text) {
+                if !report.open_questions.contains(where: { $0.text == task.text }) { report.open_questions.append(Question(text: task.text)) }
+            } else if task.assignee == nil && collectiveFuture(task.text) {
+                if !report.next_steps.contains(where: { $0.text == task.text }) { report.next_steps.append(Step(text: task.text, owner: nil)) }
+            } else { tasks.append(task) }
+        }
+        report.tasks = tasks
+        let priorities = report.decisions.map(\.text) + report.tasks.map(\.text)
+        if !priorities.isEmpty && !selected.summary.contains(where: { index in priorities.contains((try? quote(index)) ?? "") }) {
+            report.summary = Array(priorities.prefix(2)).joined(separator: "\n")
+        }
+        if let topic = source.first(where: { $0.localizedCaseInsensitiveContains("besprechen") || $0.localizedCaseInsensitiveContains("geht es um") }) { report.scope = topic }
+        try report.validateEvidence(in: source.joined(separator: "\n"))
+        return report
+    }
     public static func decode(_ data: Data) throws -> Self {
         guard data.count <= 128 * 1024,
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -75,6 +158,9 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     public var nextOffset: Double = 0
     public var segments: [MeetingSegment] = []
     public var minutes: MeetingMinutes?
+    public var summaryParts: [MeetingMinutes]?
+    public var summarizedSegments: Int?
+    public var timings: [String: Double]?
 }
 
 /// Separate from short Watch captures. Commit the original before acknowledging import.
@@ -155,6 +241,35 @@ public actor MeetingArchive {
         doc.nextOffset = nextOffset
         try save(doc)
     }
+    public func appendMinutes(_ id: UUID, from: Int, through: Int, minutes: MeetingMinutes) throws {
+        var doc = try load(id)
+        guard doc.nextOffset == doc.duration, from == (doc.summarizedSegments ?? 0), through > from, through <= doc.segments.count else { throw VoiceError.conflict }
+        let validated = try MeetingMinutes.decode(JSONEncoder().encode(minutes))
+        try validated.validateEvidence(in: doc.segments[from..<through].map(\.text).joined(separator: "\n"))
+        doc.summaryParts = (doc.summaryParts ?? []) + [validated]
+        doc.summarizedSegments = through
+        try save(doc)
+    }
+    public func recordTiming(_ id: UUID, phase: String, milliseconds: Double) throws {
+        guard ["import", "audio", "stt", "minutes"].contains(phase), milliseconds.isFinite, milliseconds >= 0 else { throw VoiceError.invalid }
+        var doc = try load(id)
+        var timings = doc.timings ?? [:]; timings[phase, default: 0] += milliseconds; doc.timings = timings
+        try save(doc)
+    }
+    public func finishMinutes(_ id: UUID) throws {
+        var doc = try load(id)
+        guard doc.nextOffset == doc.duration, (doc.summarizedSegments ?? 0) == doc.segments.count else { throw VoiceError.conflict }
+        let parts = doc.summaryParts ?? []
+        func unique<T: Encodable>(_ values: [T]) throws -> [T] {
+            var seen = Set<Data>()
+            let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+            return try values.filter { seen.insert(try encoder.encode($0)).inserted }
+        }
+        doc.minutes = MeetingMinutes(summary: parts.map(\.summary).joined(separator: "\n\n"), scope: parts.map(\.scope).joined(separator: "\n"),
+            decisions: try unique(parts.flatMap(\.decisions)), tasks: try unique(parts.flatMap(\.tasks)), next_steps: try unique(parts.flatMap(\.next_steps)),
+            follow_ups: try unique(parts.flatMap(\.follow_ups)), open_questions: try unique(parts.flatMap(\.open_questions)))
+        try save(doc)
+    }
     public func saveMinutes(_ id: UUID, minutes: MeetingMinutes) throws {
         var doc = try load(id)
         guard doc.nextOffset == doc.duration else { throw VoiceError.conflict }
@@ -204,6 +319,29 @@ public enum MeetingExport {
             return String(format: "%02d:%02d:%02d,%03d", ms / 3600000, ms / 60000 % 60, ms / 1000 % 60, ms % 1000)
         }
         return segments.enumerated().map { index, item in "\(index + 1)\n\(stamp(item.start)) --> \(stamp(item.end))\n\(item.text)\n" }.joined(separator: "\n")
+    }
+    public static func text(_ doc: MeetingDocument) -> String {
+        var lines = [doc.originalName, "", "Transkript", ""]
+        lines += doc.segments.map { item in
+            let speaker = item.speaker.map { "[" + $0 + "] " } ?? ""
+            return speaker + item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let report = doc.minutes {
+            lines += ["", "Zusammenfassung", report.summary, "", "Kontext", report.scope, "", "Entscheidungen"]
+            lines += report.decisions.map { "• " + $0.text + " — " + $0.context }
+            lines += ["", "Aufgaben"]
+            lines += report.tasks.map { "• " + $0.text + " | Zuständig: " + ($0.assignee ?? "offen") + " | Termin: " + ($0.due ?? "offen") }
+            lines += ["", "Nächste Schritte"]
+            lines += report.next_steps.map { "• " + $0.text + " | " + ($0.owner ?? "offen") }
+            lines += ["", "Handlungsempfehlungen"]
+            lines += report.follow_ups.map { "• " + $0.text + " — " + $0.reason }
+            lines += ["", "Offene Fragen"]
+            lines += report.open_questions.map { "• " + $0.text }
+        }
+        let shares = speakerShares(doc.segments)
+        lines += ["", "Redeanteile"]
+        lines += shares.isEmpty ? ["Keine belegte Sprecherzuordnung vorhanden."] : shares.map { String(format: "%@: %.1f s (%.1f %%)", $0.name, $0.seconds, $0.percent) }
+        return lines.joined(separator: "\n")
     }
     public static func html(_ text: String) -> String {
         "<pre>" + text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;") + "</pre>"
