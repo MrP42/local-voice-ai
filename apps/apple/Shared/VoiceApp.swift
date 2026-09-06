@@ -38,7 +38,12 @@ enum VoicePalette {
 
 @main
 struct VoiceApp: App {
+    #if os(iOS)
+    @UIApplicationDelegateAdaptor(VoicePhoneDelegate.self) private var delegate
+    @StateObject private var model = VoiceModel.shared
+    #else
     @StateObject private var model = VoiceModel()
+    #endif
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {

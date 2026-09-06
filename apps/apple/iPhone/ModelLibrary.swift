@@ -54,7 +54,7 @@ actor ModelLibrary {
         let free = try fm.attributesOfFileSystem(forPath: Self.folder.path)[.systemFreeSize] as? NSNumber
         guard let free, free.int64Value > size.int64Value + 16 * 1024 * 1024 else { throw VoiceError.full }
         let temporary = Self.folder.appendingPathComponent(".install-" + UUID().uuidString)
-        guard fm.createFile(atPath: temporary.path, contents: nil) else { throw VoiceError.persistence }
+        guard fm.createFile(atPath: temporary.path, contents: nil, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]) else { throw VoiceError.persistence }
         defer { try? fm.removeItem(at: temporary) }
         let input = try FileHandle(forReadingFrom: source), output = try FileHandle(forWritingTo: temporary)
         defer { try? input.close(); try? output.close() }

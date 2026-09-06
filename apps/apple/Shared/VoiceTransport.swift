@@ -248,6 +248,9 @@ final class VoiceTransport: NSObject, WCSessionDelegate {
               !inFlightReplies.contains(entry.id), let store else { return }
         do {
             let data = try encoder.encode(store.replyEnvelope(for: entry.id))
+            // Queue a durable system-owned delivery before an interactive attempt. The
+            // phone can be suspended immediately after its processing lease finishes.
+            queueAnswer(entry.id, data: data)
             if WCSession.default.isReachable {
                 inFlightReplies.insert(entry.id)
                 WCSession.default.sendMessageData(data, replyHandler: { response in

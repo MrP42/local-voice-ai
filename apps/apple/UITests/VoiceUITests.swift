@@ -48,6 +48,39 @@ final class VoiceUITests: XCTestCase {
     }
     #endif
     #if os(iOS)
+    #if !targetEnvironment(simulator)
+    /// A coordinated device-test window; send the Watch fixture separately during this interval.
+    func testDeviceBackgroundWindowForWatchTransfer() throws {
+        let app = XCUIApplication(); app.launch()
+        XCTAssertTrue(app.buttons["record"].waitForExistence(timeout: 15))
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        print("PHONE_BACKGROUND_WINDOW_STARTED")
+        let window = expectation(description: "Paired Watch transfer window")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 90) { window.fulfill() }
+        wait(for: [window], timeout: 95)
+        XCTAssertEqual(app.state, .runningBackground)
+        print("PHONE_BACKGROUND_WINDOW_FINISHED")
+    }
+    #endif
+    #if targetEnvironment(simulator)
+    func testReplyCompletesWhilePhoneStaysInBackground() throws {
+        let app = XCUIApplication(); app.launchArguments = ["--background-processing-probe"]; app.launch()
+        XCTAssertTrue(app.buttons["record"].waitForExistence(timeout: 15))
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        let time = expectation(description: "Allow the actual background lease to process the fixture")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { time.fulfill() }
+        wait(for: [time], timeout: 10)
+        XCTAssertEqual(app.state, .runningBackground)
+        app.activate()
+        let entry = app.buttons["historyEntry"].firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 10)); entry.tap()
+        XCTAssertTrue(app.staticTexts["Im Hintergrund fertiggestellt"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Erst im Vordergrund fertiggestellt"].exists)
+        keepScreenshot(app, name: "Hintergrund-Antwort")
+    }
+    #endif
     func testTransparencyAndMarkdown() throws {
         let app = XCUIApplication(); app.launchArguments = ["--transparency-ui-probe"]; app.launch()
         let entry = app.buttons["historyEntry"].firstMatch

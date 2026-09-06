@@ -38,16 +38,16 @@ extension DurableStore {
         job.nextAttemptAt = job.phase == .waiting ? now.addingTimeInterval(5 * pow(2, Double(job.attempts - 1))) : nil
         entry.job = job; entry.state = .deferred; try save(entry)
     }
-    public func pauseJob(_ id: UUID, userInitiated: Bool = false) throws {
+    public func pauseJob(_ id: UUID, userInitiated: Bool = false, refundSystemInterruption: Bool = true) throws {
         var entry = try loadEntry(for: id)
         guard entry.reply == nil, var job = entry.job, job.running else { return }
-        if !userInitiated { job.attempts = max(0, job.attempts - 1) }
+        if !userInitiated && refundSystemInterruption { job.attempts = max(0, job.attempts - 1) }
         job.phase = userInitiated ? .cancelled : .paused
         job.failure = .interrupted; job.nextAttemptAt = nil
         entry.job = job; entry.state = .deferred; try save(entry)
     }
     public func recoverInterruptedJobs() throws {
-        for entry in try entries() where entry.job?.running == true { try pauseJob(entry.id) }
+        for entry in try entries() where entry.job?.running == true { try pauseJob(entry.id, refundSystemInterruption: false) }
     }
     /// Explicit user retry is the only operation which replenishes a failed job's attempt budget.
     public func retryJob(_ id: UUID) throws {

@@ -15,6 +15,18 @@ private final class AudioInterruptionObservation {
 
 @MainActor
 final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
+    #if os(iOS)
+    static let shared = VoiceModel()
+    private var backgroundRuntime: PhoneProcessingRuntime?
+    #if DEBUG && targetEnvironment(simulator)
+    private var backgroundProbeStarted = false
+    #endif
+    func registerBackgroundProcessing() {
+        do { try backgroundRuntime?.prepareProtectedFiles() }
+        catch { recordDiagnostic("background_file_protection_pending") }
+        backgroundRuntime?.register()
+    }
+    #endif
     @Published var entries: [Entry] = []
     @Published var storageIssues: [StorageIssue] = []
     @Published var status = "Bereit"
@@ -60,7 +72,9 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         do {
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VoiceOutbox")
             #if DEBUG && targetEnvironment(simulator)
-            if ProcessInfo.processInfo.arguments.contains("--transparency-ui-probe") {
+            if ProcessInfo.processInfo.arguments.contains("--background-processing-probe") {
+                store = try DurableStore(root: root.deletingLastPathComponent().appendingPathComponent("BackgroundUITest-" + UUID().uuidString))
+            } else if ProcessInfo.processInfo.arguments.contains("--transparency-ui-probe") {
                 store = try DurableStore(root: root.appendingPathComponent("UITest-Transparency"))
                 if try store?.entries().isEmpty == true, let store {
                     let receipt = try store.accept(.capture(audio: Data([1])))
@@ -153,6 +167,18 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         #if os(iOS)
         if jobs == nil {
             jobs = JobProcessor(store: store, annotatedTranscribe: { try await LocalProviders.annotatedTranscribe($0) }, annotatedReply: { try await LocalProviders.annotatedReply(to: $0) })
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.arguments.contains("--background-processing-probe") {
+                jobs = JobProcessor(store: store, annotatedTranscribe: { _ in
+                    try await Task.sleep(for: .seconds(2))
+                    return ProcessingOutput(text: "Hintergrund-Testaufnahme", model: "Test-STT")
+                }, annotatedReply: { _ in
+                    try await Task.sleep(for: .seconds(2))
+                    let background = await MainActor.run { UIApplication.shared.applicationState == .background }
+                    return ProcessingOutput(text: background ? "Im Hintergrund fertiggestellt" : "Erst im Vordergrund fertiggestellt", model: "Test-LLM")
+                })
+            }
+            #endif
             jobs?.fixedAnswer = fixedAnswer
             jobs?.onChange = { [weak self] id in
                 guard let self else { return }
@@ -160,9 +186,17 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
                 self.status = self.jobs?.message ?? "Bereit"
                 self.refresh()
                 if let id, let entry = self.entries.first(where: { $0.id == id }), let reply = entry.reply {
+                    if UIApplication.shared.applicationState == .background, entry.timings["background_reply_completed_at_ms"] == nil {
+                        try? self.store?.update(entry.id, state: .answered, timing: ("background_reply_completed_at_ms", Date().timeIntervalSince1970 * 1000))
+                    }
                     if entry.replyToWatch == true { self.transport?.sendAnswer(entry) }
                     else if self.active && !self.recording { self.speak(reply, id: id) }
                 }
+                self.backgroundRuntime?.processingChanged()
+            }
+            if let jobs {
+                backgroundRuntime = PhoneProcessingRuntime(worker: jobs, store: store)
+                backgroundRuntime?.onDiagnostic = { [weak self] in self?.recordDiagnostic($0) }
             }
         }
         #endif
@@ -177,7 +211,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
             self.speak(text, id: id)
         }
         #if os(iOS)
-        transport?.onCapture = { [weak self] in self?.jobs?.start() }
+        transport?.onCapture = { [weak self] in self?.backgroundRuntime?.receivedCapture() }
         #endif
     }
     private func recoverStorageState() throws {
@@ -193,7 +227,19 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         if active { store?.invalidateInventory() }
         capture?.setActive(active)
         #if os(iOS)
-        jobs?.setActive(active)
+        backgroundRuntime?.setForeground(active)
+        #if DEBUG && targetEnvironment(simulator)
+        if !active, debugActionsStarted, !backgroundProbeStarted, ProcessInfo.processInfo.arguments.contains("--background-processing-probe") {
+            backgroundProbeStarted = true
+            Task {
+                try? await Task.sleep(for: .seconds(1))
+                do {
+                    _ = try store?.accept(.capture(audio: Data([1, 2, 3])), replyToWatch: true)
+                    backgroundRuntime?.receivedCapture()
+                } catch { status = "Hintergrundprobe konnte nicht gespeichert werden" }
+            }
+        }
+        #endif
         #endif
         if active {
             retry()
@@ -251,7 +297,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
             try configureComponents(); try recoverStorageState()
             capture?.setActive(active)
             #if os(iOS)
-            jobs?.setActive(active)
+            backgroundRuntime?.setForeground(active)
             #endif
             retry()
         }

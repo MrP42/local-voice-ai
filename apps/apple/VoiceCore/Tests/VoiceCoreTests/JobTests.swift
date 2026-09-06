@@ -2,6 +2,18 @@ import XCTest
 @testable import VoiceCore
 
 final class JobTests: XCTestCase {
+    func testRepeatedProcessCrashesRemainBounded() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let packet = Packet.capture(audio: Data([1]))
+        _ = try DurableStore(root: root).accept(packet)
+        for _ in 0..<3 {
+            let store = try DurableStore(root: root)
+            XCTAssertTrue(try store.beginJob(packet.sessionId))
+            try DurableStore(root: root).recoverInterruptedJobs()
+        }
+        XCTAssertFalse(try DurableStore(root: root).beginJob(packet.sessionId))
+    }
     func testRepeatedSystemExpiryDoesNotExhaustFailureBudget() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
