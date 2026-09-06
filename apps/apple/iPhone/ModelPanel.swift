@@ -4,14 +4,23 @@ import UniformTypeIdentifiers
 struct ModelPanel: View {
     @ObservedObject var model: VoiceModel
     @State private var importing = false
+    @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             List {
                 Section("Auf diesem Gerät") {
-                    Text(model.providerDescription)
+                    Label("Verarbeitung auf deinem iPhone", systemImage: "lock.shield")
+                        .font(.headline).foregroundStyle(VoicePalette.accent)
+                    Text(model.providerDescription).font(.subheadline).foregroundStyle(.secondary)
                     ForEach(model.installedModels) { item in
                         VStack(alignment: .leading) {
-                            Text(item.model.label)
+                            HStack {
+                                Text(item.model.label).font(.headline)
+                                Spacer()
+                                Image(systemName: item.installed ? "checkmark.circle.fill" : "arrow.down.circle")
+                                    .foregroundStyle(item.installed ? VoicePalette.accent : .secondary)
+                                    .accessibilityLabel(item.installed ? "Installiert" : "Nicht installiert")
+                            }
                             Text(item.installed ? "Vorhanden · \(ByteCountFormatter.string(fromByteCount: item.installedBytes, countStyle: .file))" : "Fehlt · \(ByteCountFormatter.string(fromByteCount: item.model.bytes, countStyle: .file)) benötigt")
                                 .font(.caption)
                         }
@@ -20,7 +29,7 @@ struct ModelPanel: View {
                     Text("Das kleine Antwortmodell machte in den Tests inhaltliche Fehler, etwa beim Rechnen.").font(.caption)
                 }
                 Section("Spracherkennung") {
-                    Picker("CPU-Sprachmodell", selection: $model.sttModel) {
+                    Picker("Lokales Sprachmodell", selection: $model.sttModel) {
                         Text("Base – schneller").tag("ggml-base.bin")
                         Text("Small – Qualitätsvergleich").tag("ggml-small.bin")
                     }
@@ -38,6 +47,8 @@ struct ModelPanel: View {
                 #endif
             }
             .navigationTitle("Lokale Sprachmodelle")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
             .task { await model.refreshModels() }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.data]) { result in
                 if case .success(let url) = result { model.installModel(url) }
