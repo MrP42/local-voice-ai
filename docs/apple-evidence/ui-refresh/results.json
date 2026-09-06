@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "date": "2026-09-06",
+  "phoneUITests": 5,
+  "watchUITests": 1,
+  "freshBuilds": "Both simulator app targets built by Xcode UI test runs",
+  "sourceSHA256": {
+    "apps/apple/Shared/VoiceApp.swift": "765bb6b166974af62c1b53f7f840369a0c2c5d6ea10acd7f88210b7225de4179",
+    "apps/apple/iPhone/ModelPanel.swift": "47858a2fb0a2ce6aaf3c8c9023acff0b3965f31e2289a24f80d1800384e3909e",
+    "apps/apple/UITests/VoiceUITests.swift": "86da07abf5c3856e9a6ae3b06c7cb90ea3ed41cdb913f06101f1b55f2115e169"
+  },
+  "palette": "WAI repository tokens; six matched values",
+  "largeTextScope": "Prior accessibility-layout probe passed; final compact WAI version verified at normal system size. No complete accessibility audit claimed.",
+  "deviceState": "iPhone normal large system category and light appearance restored; both apps installed",
+  "productionLogicChanged": false,
+  "testedProgramCommit": "3aa853f84c277ccb94000c7eb178b1e9d14703ce"
+}

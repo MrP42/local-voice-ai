@@ -280,3 +280,12 @@ Hintergrund/Sperre/App-Ende verschieben Verarbeitung bis zur Aktivierung.
 Keine ausstehende Freigabe. Desktop unverändert, kein Push/Release.
 [P2-Bericht](apple-evidence/p2/README.md), [Lifecycle-Matrix](apple-evidence/p2/lifecycle-matrix.md),
 [Folgeprioritäten](apple-evidence/p2/next-priorities.md).
+
+## Native Apple UI – WAI und kompakte Ansichten, 06.09.2026
+
+Native Oberflächen überarbeitet: kleiner iPhone-Markentitel, kein großer Titel
+auf der Watch, kompakter Aufnahmebereich, fünf Vorschauen, durchsuchbarer Verlauf
+und separate Notizdetails. Farben gegen die vorhandenen WAI-Tokens abgeglichen.
+Fünf iPhone-UI-Tests und ein Watch-UI-Test auf der finalen Fassung bestanden.
+Normale Simulator-Schrift wiederhergestellt. Speicher-/Transport-/Provider-Code
+und Desktop unverändert. [UI-Nachweis](apple-evidence/ui-refresh/README.md).
