@@ -289,3 +289,11 @@ und separate Notizdetails. Farben gegen die vorhandenen WAI-Tokens abgeglichen.
 Fünf iPhone-UI-Tests und ein Watch-UI-Test auf der finalen Fassung bestanden.
 Normale Simulator-Schrift wiederhergestellt. Speicher-/Transport-/Provider-Code
 und Desktop unverändert. [UI-Nachweis](apple-evidence/ui-refresh/README.md).
+
+## Desktop-UX — 06.09.2026 (isolierter Apple-Worktree)
+
+Neue aufgabenorientierte Start-/Navigationsstruktur und kompakte WAI-Arbeitsflächen
+umgesetzt. Sechs Browser-Interaktionstests, TypeScript, ESLint und Frontend-Build
+bestanden. Native Audiofunktionen unverändert; Windows nur als gemockter UI-Pfad
+geprüft, kein nativer Windows-Build. Nachweise:
+[Desktop-UX](desktop-evidence/2026-09-06-workspace/README.md).

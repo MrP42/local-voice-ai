@@ -93,7 +93,7 @@ export const PagesSidebar: React.FC<{
   }
 
   return (
-    <div className="w-52 shrink-0 space-y-1">
+    <div className="tts-workspace__pages w-52 shrink-0 space-y-1">
       <div className="flex items-center justify-between pb-1">
         <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
           {t("tts.pages.title")}
@@ -154,7 +154,7 @@ export const PagesSidebar: React.FC<{
               <span className="flex-1 min-w-0 truncate text-sm">
                 {page.title}
               </span>
-              <span className="hidden group-hover:flex items-center shrink-0">
+              <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
                 <button
                   type="button"
                   onClick={(e) => {
@@ -337,7 +337,7 @@ export const FilesSidebar: React.FC<{
   }
 
   return (
-    <div className="w-60 shrink-0 space-y-1">
+    <div className="tts-workspace__files w-60 shrink-0 space-y-1">
       <div className="flex items-center justify-between pb-1">
         <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
           {t("tts.files.title")}
@@ -419,10 +419,10 @@ export const FilesSidebar: React.FC<{
               <span className="flex-1 min-w-0 truncate text-sm">
                 {file.name}
               </span>
-              <span className="text-[10px] text-text/35 shrink-0 group-hover:hidden">
+              <span className="text-[10px] text-text/35 shrink-0 group-hover:hidden group-focus-within:hidden">
                 {formatSize(file.size)}
               </span>
-              <span className="hidden group-hover:flex items-center shrink-0">
+              <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
                 <button
                   type="button"
                   onClick={(e) => {

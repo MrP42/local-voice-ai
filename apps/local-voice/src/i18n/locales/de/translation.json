@@ -25,7 +25,7 @@
   },
   "tts": {
     "title": "Vorlesen",
-    "serverTitle": "Fish-Speech-Server",
+    "serverTitle": "Stimme & Wiedergabe",
     "description": "Lokale Sprachausgabe über Fish Speech auf der eigenen GPU. Der Server startet bei Bedarf und wird nach Leerlauf wieder gestoppt, um VRAM freizugeben.",
     "inputPlaceholder": "Text zum Vorlesen eingeben oder einfügen…",
     "tabOriginal": "Original",
@@ -1193,5 +1193,28 @@
   "progress": {
     "downloading": "Wird geladen …",
     "downloadingCount": "{{count}} werden geladen"
+  },
+  "workspace": {
+    "home": "Start",
+    "more": "Mehr",
+    "title": "Was möchtest du tun?",
+    "intro": "Sprache aufnehmen, Inhalte bearbeiten und Ergebnisse weiterverwenden.",
+    "dictate": "In eine App diktieren",
+    "dictateHint": "Textfeld in der Ziel-App auswählen und das Diktierkürzel verwenden. Der fertige Text wird dort eingefügt.",
+    "shortcutMissing": "Richte dein Diktierkürzel in den Einstellungen ein.",
+    "setupDictation": "Diktat einrichten",
+    "history": "Diktate & Verlauf",
+    "historyHint": "Texte wiederfinden, kopieren und Aufnahmen anhören.",
+    "meetings": "Besprechung oder Aufnahme",
+    "meetingsHint": "Gespräche aufnehmen oder Dateien importieren, transkribieren und auswerten.",
+    "tts": "Text vorlesen",
+    "ttsHint": "Texte und Dokumente anhören und die Ausgabe speichern.",
+    "tools": "Deine Werkzeuge",
+    "settingsHint": "Tastenkürzel, Audio und App anpassen.",
+    "modelsHint": "Lokale Sprachmodelle verwalten.",
+    "skip": "Zum Inhalt",
+    "recordings": "Aufnahmen",
+    "voiceStyle": "Ausdruck & Sprechstil",
+    "voiceOptions": "Stimmen verwalten & weitere Optionen"
   }
 }

@@ -25,7 +25,7 @@
   },
   "tts": {
     "title": "Read Aloud",
-    "serverTitle": "Fish Speech server",
+    "serverTitle": "Voice & playback",
     "description": "Local text-to-speech via Fish Speech on your own GPU. The server starts on demand and is stopped again after idle time to free VRAM.",
     "inputPlaceholder": "Type or paste text to read aloud…",
     "tabOriginal": "Original",
@@ -1193,5 +1193,28 @@
   "progress": {
     "downloading": "Downloading…",
     "downloadingCount": "{{count}} downloading"
+  },
+  "workspace": {
+    "home": "Home",
+    "more": "More",
+    "title": "What would you like to do?",
+    "intro": "Capture speech, work with content and use your results.",
+    "dictate": "Dictate into an app",
+    "dictateHint": "Select a text field in your destination app and use the dictation shortcut. The finished text is inserted there.",
+    "shortcutMissing": "Set up your dictation shortcut in Settings.",
+    "setupDictation": "Set up dictation",
+    "history": "Dictations & history",
+    "historyHint": "Find and copy text, or listen to recordings.",
+    "meetings": "Meeting or recording",
+    "meetingsHint": "Record a conversation or import a file, transcribe it and create minutes.",
+    "tts": "Read text aloud",
+    "ttsHint": "Listen to text and documents, and save the output.",
+    "tools": "Your tools",
+    "settingsHint": "Adjust shortcuts, audio and app preferences.",
+    "modelsHint": "Manage local speech models.",
+    "skip": "Skip to content",
+    "recordings": "Recordings",
+    "voiceStyle": "Expression & speaking style",
+    "voiceOptions": "Manage voices & more options"
   }
 }

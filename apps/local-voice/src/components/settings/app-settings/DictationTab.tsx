@@ -1,4 +1,6 @@
 import React from "react";
+import { MeetingLanguageSetting } from "../meetings/MeetingLanguageSetting";
+import { MeetingModelSetting } from "../meetings/MeetingModelSetting";
 import { useTranslation } from "react-i18next";
 import { type } from "@tauri-apps/plugin-os";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -57,6 +59,10 @@ export const DictationTab: React.FC = () => {
         <AutoSubmit descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 
+      <SettingsGroup title={t("meetings.title")}>
+        <MeetingLanguageSetting />
+        <MeetingModelSetting />
+      </SettingsGroup>
       <DictationTest />
     </div>
   );
