@@ -1,6 +1,8 @@
 import SwiftUI
 #if os(iOS)
 import UIKit
+#else
+import WatchKit
 #endif
 
 // Native adaptation of apps/local-voice/src/styles/theme.css (WAI).
@@ -83,6 +85,7 @@ private struct VoiceHome: View {
                         .font(.caption2).foregroundStyle(VoicePalette.secondaryText)
                     recordButton
                     conversationControls
+                    WatchVolumeLink()
                     Text(model.status).font(.caption).multilineTextAlignment(.center).accessibilityIdentifier("status")
                     if !model.reachable { Text("Deine Aufnahme bleibt auf der Watch gespeichert.").font(.caption2).foregroundStyle(VoicePalette.secondaryText) }
                     if !model.storageIssues.isEmpty { recovery }
@@ -94,7 +97,7 @@ private struct VoiceHome: View {
                             }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(VoicePalette.background, in: RoundedRectangle(cornerRadius: 8))
                                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.border, lineWidth: 1))
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(.plain).accessibilityIdentifier("historyEntry")
                     }
                     NavigationLink(value: WatchDestination.history) { Label("Verlauf", systemImage: "clock.arrow.circlepath") }
                     Button("Erneut versuchen", systemImage: "arrow.clockwise") { model.retry(forceReload: true) }
@@ -331,6 +334,11 @@ private struct VoiceEntryDetail: View {
                     .font(.caption).foregroundStyle(VoicePalette.secondaryText)
                 VStack(alignment: .leading, spacing: 12) {
                     Label("Deine Aufnahme", systemImage: "waveform").font(.headline).foregroundStyle(VoicePalette.accent)
+                    if model.recordingURL(entry.id) != nil {
+                        OriginalRecordingControls(model: model, id: entry.id)
+                    } else {
+                        Text("Originalaufnahme auf diesem Gerät nicht verfügbar").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                    }
                     Text(entry.transcript ?? "Deine Sprachnotiz ist gespeichert. Das Transkript folgt nach der Verarbeitung.")
                         .selectableOnPhone()
                     if let event = entry.processingEvents?.last(where: { $0.operation == "Transkription" }) {
@@ -340,6 +348,9 @@ private struct VoiceEntryDetail: View {
                     if let url = model.recordingURL(entry.id) { ShareLink("Originalaufnahme sichern", item: url).font(.subheadline) }
                     #endif
                 }.voiceCard()
+                #if os(watchOS)
+                WatchVolumeLink()
+                #endif
                 VStack(alignment: .leading, spacing: 12) {
                     Label("Antwort", systemImage: "text.bubble").font(.headline).foregroundStyle(VoicePalette.accent)
                     VoiceMarkdown(text: entry.reply ?? "gespeichert – Verarbeitung folgt").selectableOnPhone()
@@ -368,6 +379,61 @@ private struct VoiceEntryDetail: View {
         #endif
     }
 }
+
+private struct OriginalRecordingControls: View {
+    @ObservedObject var model: VoiceModel
+    let id: UUID
+    private var selected: Bool { model.playingRecordingId == id }
+    private var playing: Bool { selected && !model.recordingPlaybackPaused }
+    private var title: String { playing ? "Aufnahme pausieren" : selected ? "Aufnahme fortsetzen" : "Aufnahme anhören" }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Button(title, systemImage: playing ? "pause.fill" : "play.fill") { model.toggleOriginalPlayback(id) }
+                    .buttonStyle(VoiceMediaButtonStyle(primary: true)).accessibilityIdentifier("originalPlayback")
+                Button("Aufnahme stoppen", systemImage: "stop.fill") { model.stopPlayback() }
+                    .buttonStyle(VoiceMediaButtonStyle(primary: false)).disabled(!selected).accessibilityIdentifier("originalStop")
+            }.labelStyle(.iconOnly)
+            if selected {
+                Text((model.recordingPlaybackPaused ? "Pausiert · " : "Original · ") + time(model.recordingPlaybackTime) + " / " + time(model.recordingPlaybackDuration))
+                    .font(.caption2).monospacedDigit().foregroundStyle(VoicePalette.secondaryText)
+                    .accessibilityIdentifier("originalProgress")
+            }
+            if model.originalPlaybackIssueId == id, let message = model.originalPlaybackError {
+                Text(message).font(.caption2).foregroundStyle(VoicePalette.secondaryText).accessibilityIdentifier("originalPlaybackError")
+            }
+        }
+    }
+    private func time(_ seconds: TimeInterval) -> String {
+        let value = max(0, Int(seconds))
+        return String(format: "%d:%02d", value / 60, value % 60)
+    }
+}
+
+#if os(watchOS)
+private struct WatchVolumeControl: WKInterfaceObjectRepresentable {
+    func makeWKInterfaceObject(context: Context) -> WKInterfaceVolumeControl {
+        let control = WKInterfaceVolumeControl(origin: .local)
+        control.setTintColor(UIColor(red: 1, green: 221.0 / 255, blue: 0, alpha: 1))
+        control.focus()
+        return control
+    }
+    func updateWKInterfaceObject(_ object: WKInterfaceVolumeControl, context: Context) {}
+    static func dismantleWKInterfaceObject(_ object: WKInterfaceVolumeControl, coordinator: ()) { object.resignFocus() }
+}
+private struct WatchVolumeLink: View {
+    var body: some View {
+        NavigationLink {
+            VStack(spacing: 12) {
+                WatchVolumeControl().frame(height: 55).accessibilityIdentifier("watchVolumeControl")
+                Text("Medienlautstärke der Watch. Mit der Digital Crown anpassen.")
+                    .font(.caption2).foregroundStyle(VoicePalette.secondaryText).multilineTextAlignment(.center)
+            }.padding().navigationTitle("Lautstärke")
+        } label: { Label("Lautstärke", systemImage: "speaker.wave.2") }
+            .accessibilityIdentifier("watchVolume")
+    }
+}
+#endif
 
 extension View {
     @ViewBuilder func selectableOnPhone() -> some View {

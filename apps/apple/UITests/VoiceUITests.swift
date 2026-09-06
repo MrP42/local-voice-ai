@@ -6,6 +6,35 @@ final class VoiceUITests: XCTestCase {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
+    #if targetEnvironment(simulator)
+    func testOriginalAudioCanPlayPauseResumeAndStop() throws {
+        let app = XCUIApplication(); app.launchArguments = ["--original-playback-probe"]; app.launch()
+        let entry = app.buttons["historyEntry"].firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 10)); entry.tap()
+        let play = app.buttons["originalPlayback"]
+        XCTAssertTrue(play.waitForExistence(timeout: 5)); play.tap()
+        XCTAssertEqual(play.label, "Aufnahme pausieren")
+        play.tap()
+        XCTAssertEqual(play.label, "Aufnahme fortsetzen")
+        keepScreenshot(app, name: "Originalaufnahme-pausiert")
+        play.tap()
+        XCTAssertEqual(play.label, "Aufnahme pausieren")
+        app.buttons["originalStop"].tap()
+        XCTAssertEqual(play.label, "Aufnahme anhören")
+        XCTAssertFalse(app.buttons["originalStop"].isEnabled)
+        play.tap()
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertEqual(play.label, "Aufnahme anhören")
+    }
+    func testUnreadableOriginalShowsErrorWithoutLosingTranscript() throws {
+        let app = XCUIApplication(); app.launchArguments = ["--transparency-ui-probe"]; app.launch()
+        app.buttons["historyEntry"].firstMatch.tap()
+        app.buttons["originalPlayback"].tap()
+        XCTAssertTrue(app.staticTexts["originalPlaybackError"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["originalPlayback"].label, "Aufnahme anhören")
+        XCTAssertTrue(app.staticTexts["Darstellung prüfen"].exists)
+    }
+    #endif
 
     func testStartStopAndReturnFromHome() throws {
         let app = XCUIApplication()
@@ -34,6 +63,15 @@ final class VoiceUITests: XCTestCase {
         add(screenshot)
     }
     #if os(watchOS)
+    func testWatchHasLocalMediaVolumeControl() throws {
+        let app = XCUIApplication(); app.launchArguments = ["--original-playback-probe"]; app.launch()
+        app.buttons["historyEntry"].firstMatch.tap()
+        app.buttons["originalPlayback"].tap()
+        app.buttons["watchVolume"].tap()
+        XCTAssertTrue(app.navigationBars["Lautstärke"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["watchVolumeControl"].firstMatch.exists)
+        keepScreenshot(app, name: "Watch-Lautstaerke")
+    }
     func testWatchConversationOptionsAreAvailableWithoutStartingRecording() throws {
         let app = XCUIApplication(); app.launch()
         XCTAssertEqual(app.buttons["record"].label, "Sprechen")

@@ -14,7 +14,7 @@ private final class AudioInterruptionObservation {
 }
 
 @MainActor
-final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
+final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     #if os(iOS)
     static let shared = VoiceModel()
     private var backgroundRuntime: PhoneProcessingRuntime?
@@ -33,6 +33,14 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     @Published var status = "Bereit"
     @Published var recording = false
     @Published var reachable = false
+    @Published private(set) var playingRecordingId: UUID?
+    @Published private(set) var recordingPlaybackPaused = false
+    @Published private(set) var recordingPlaybackTime: TimeInterval = 0
+    @Published private(set) var recordingPlaybackDuration: TimeInterval = 0
+    @Published private(set) var originalPlaybackIssueId: UUID?
+    @Published private(set) var originalPlaybackError: String?
+    private var originalPlayer: AVAudioPlayer?
+    private var originalProgressTask: Task<Void, Never>?
     @Published var autoPlayReplies = UserDefaults.standard.object(forKey: "autoPlayReplies") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoPlayReplies, forKey: "autoPlayReplies") }
     }
@@ -84,7 +92,21 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         do {
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VoiceOutbox")
             #if DEBUG && targetEnvironment(simulator)
-            if ProcessInfo.processInfo.arguments.contains("--conversation-cycle-probe") {
+            if ProcessInfo.processInfo.arguments.contains("--original-playback-probe") {
+                let testStore = try DurableStore(root: root.deletingLastPathComponent().appendingPathComponent("PlaybackUITest-" + UUID().uuidString))
+                let url = testStore.root.appendingPathComponent("fixture.m4a")
+                do {
+                    let format = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
+                    let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 320000)!
+                    buffer.frameLength = buffer.frameCapacity
+                    buffer.floatChannelData![0].initialize(repeating: 0, count: Int(buffer.frameLength))
+                    let file = try AVAudioFile(forWriting: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1])
+                    try file.write(from: buffer)
+                }
+                let receipt = try testStore.accept(.capture(audio: Data(contentsOf: url)))
+                try testStore.update(receipt.sessionId, transcript: "Synthetische Originalaufnahme", reply: "Testantwort.", state: .answered)
+                store = testStore
+            } else if ProcessInfo.processInfo.arguments.contains("--conversation-cycle-probe") {
                 store = try DurableStore(root: root.deletingLastPathComponent().appendingPathComponent("ConversationUITest-" + UUID().uuidString))
             } else if ProcessInfo.processInfo.arguments.contains("--background-processing-probe") {
                 store = try DurableStore(root: root.deletingLastPathComponent().appendingPathComponent("BackgroundUITest-" + UUID().uuidString))
@@ -159,6 +181,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
             Task { @MainActor in
                 guard let self else { return }
                 self.endConversation()
+                self.stopOriginalPlayback()
                 if self.recording { self.stop() }
                 self.speaker.stopSpeaking(at: .immediate)
                 self.status = "Audio unterbrochen – gespeicherte Inhalte bleiben erhalten"
@@ -262,7 +285,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     }
     func scene(active: Bool) {
         self.active = active
-        if !active { endConversation() }
+        if !active { endConversation(); stopOriginalPlayback() }
         if active { store?.invalidateInventory() }
         capture?.setActive(active)
         #if os(iOS)
@@ -326,8 +349,75 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         }
         catch { status = "Verlauf konnte nicht gelesen werden" }
     }
-    func recordingURL(_ id: UUID) -> URL? { store?.audioURL(for: id) }
+    func recordingURL(_ id: UUID) -> URL? {
+        guard let url = store?.audioURL(for: id), FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+    func toggleOriginalPlayback(_ id: UUID) {
+        if playingRecordingId == id, let player = originalPlayer {
+            if player.isPlaying {
+                player.pause(); originalProgressTask?.cancel()
+                recordingPlaybackTime = player.currentTime; recordingPlaybackPaused = true
+                status = "Originalaufnahme pausiert"
+            } else if player.play() {
+                recordingPlaybackPaused = false; monitorOriginalPlayback(player)
+                status = "Originalaufnahme wird abgespielt"
+            } else { originalPlaybackFailed(id, message: "Audio nicht verfügbar – Original bleibt gespeichert") }
+            return
+        }
+        endConversation()
+        currentUtterance = nil; speakingId = nil
+        speaker.stopSpeaking(at: .immediate)
+        stopOriginalPlayback()
+        guard let url = recordingURL(id) else { originalPlaybackFailed(id, message: "Originalaufnahme auf diesem Gerät nicht verfügbar"); return }
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+            #if os(iOS)
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.delegate = self
+            guard player.play() else { throw VoiceError.invalid }
+            originalPlayer = player; playingRecordingId = id
+            recordingPlaybackDuration = player.duration; recordingPlaybackTime = player.currentTime
+            recordingPlaybackPaused = false; monitorOriginalPlayback(player)
+            status = "Originalaufnahme wird abgespielt"
+        } catch { originalPlaybackFailed(id, message: "Audio nicht lesbar – Original bleibt gespeichert") }
+    }
+    private func monitorOriginalPlayback(_ player: AVAudioPlayer) {
+        originalProgressTask?.cancel()
+        originalProgressTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                guard let self, self.originalPlayer === player else { return }
+                self.recordingPlaybackTime = player.currentTime
+            }
+        }
+    }
+    private func stopOriginalPlayback() {
+        originalProgressTask?.cancel(); originalProgressTask = nil
+        originalPlayer?.stop(); originalPlayer = nil; playingRecordingId = nil
+        recordingPlaybackPaused = false; recordingPlaybackTime = 0; recordingPlaybackDuration = 0
+        originalPlaybackIssueId = nil; originalPlaybackError = nil
+    }
+    private func originalPlaybackFailed(_ id: UUID, message: String) {
+        stopOriginalPlayback(); originalPlaybackIssueId = id; originalPlaybackError = message; status = message
+    }
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in
+            guard self.originalPlayer === player else { return }
+            if !flag, let id = self.playingRecordingId { self.originalPlaybackFailed(id, message: "Wiedergabe unterbrochen – Original bleibt gespeichert") }
+            else { self.stopOriginalPlayback(); self.status = "Bereit" }
+        }
+    }
+    nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        Task { @MainActor in
+            guard self.originalPlayer === player else { return }
+            if let id = self.playingRecordingId { self.originalPlaybackFailed(id, message: "Audio nicht lesbar – Original bleibt gespeichert") }
+        }
+    }
     func start() {
+        stopOriginalPlayback()
         currentUtterance = nil; speakingId = nil
         speaker.stopSpeaking(at: .immediate)
         if handsFreeEnabled {
@@ -356,6 +446,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         status = "Gespräch beendet · Verlauf gespeichert"
     }
     private func handleAnswer(_ text: String, id: UUID) {
+        guard originalPlayer == nil else { return }
         if autoPlayReplies { speak(text, id: id) }
         else { continueConversation(after: id) }
     }
@@ -394,6 +485,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     }
     func speak(_ text: String, id: UUID) {
         guard !recording else { return }
+        stopOriginalPlayback()
         speaker.stopSpeaking(at: .immediate)
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
@@ -409,7 +501,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
             speaker.speak(utterance); status = "Antwort wird gesprochen"
         } catch { endConversation(); status = "Audio nicht verfügbar – Antwort ist gespeichert" }
     }
-    func stopPlayback() { endConversation(); speaker.stopSpeaking(at: .immediate); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
+    func stopPlayback() { endConversation(); stopOriginalPlayback(); speaker.stopSpeaking(at: .immediate); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
         Task { @MainActor in
             if self.currentUtterance === utterance { self.lastSpeechStart = Date() }
