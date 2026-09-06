@@ -72,12 +72,22 @@ transferUserInfo. Temporary incoming WC files are read before the delegate
 returns. File transport delivery alone never authorizes deleting source audio.
 
 Retries occur on activation, reachability change, explicit retry, and draining
-new captures after a receipt. No heartbeat polling. iPhone processing is begun
-only in an active scene; a foreground job can be suspended by the OS. Persisted
-captures resume on next activation within three attempts. Native inference is
-cooperatively cancelled when inactive; a saved transcript is reused. Explicit
-per-entry retry replenishes exhausted or manually cancelled jobs. Response delivery remains best effort with
-persisted replay. Force-quit and radio wake-up behavior require real hardware.
+new captures after a receipt. No heartbeat polling. iPhone execution is independent
+of a visible scene: a Watch capture requests a bounded UIKit background lease.
+Remaining work is submitted to BGProcessingTaskScheduler, registered during app
+launch before any UI is needed. iOS chooses the time and can deny or expire grants.
+Native inference is cooperatively cancelled on grant expiry; audio and STT checkpoints
+remain durable. System interruptions do not consume the three-provider-failure budget.
+Explicit per-entry retry replenishes exhausted or manually cancelled jobs. Replies
+are queued with WatchConnectivity before the lease ends, even when an interactive
+send is also attempted; duplicate deliveries remain idempotent.
+
+Stored recordings and models use file protection until first user authentication,
+allowing locked-phone work after the first unlock since reboot. This does not bypass
+the first unlock. Force-quitting the iPhone app can prevent background launches;
+no immediate response or scheduled wake-up is guaranteed in that state. Ordinary
+background processing does not require reopening the iPhone app. Long media-import
+jobs and model downloads retain their separately documented foreground behavior.
 
 ## Test hooks (Debug only)
 

@@ -320,3 +320,7 @@ und Aktivitätsrouting sind weiterhin offene Integrationsarbeit.
 ### Apple-Update 06.09.2026: Geräte und Transparenz
 
 iPhone-Update installiert und gestartet: echte Modell-Downloads, Transkripte-Menü, formatierte Antworten und persistierte Modell-/Zeitangaben. 73 Core-Tests und zwei gezielte Dark-Mode-Bedienungstests erfolgreich. Watch-Entwicklermodus aktiv, Geräte-Build erfolgreich, Installation und Start nach vorübergehenden Verbindungsabbrüchen erfolgreich. Komplikationen sind Navigationszugriffe; Hintergrundsteuerung bleibt offen. Nachweis: `docs/apple-evidence/2026-09-06-transparency/README.md`.
+
+### Watch-Hintergrundverarbeitung 06.09.2026
+
+Vordergrundkopplung für kurze Sprachnotizen entfernt: UIKit-Laufzeitfenster, BGProcessingTask-Fallback, Start ohne UI, dauerhafte Antwortzustellung und wiederaufnehmbare Zeitlimits. Auf echten Geräten im 90-Sekunden-Hintergrundfenster bestätigt: lokale STT 0,57 s, Antwort 2,63 s, Watch-Empfang quittiert. 77 Core-Tests, Simulator-Hintergrundtest und Geräte-Hintergrundfenster bestanden. Sperrbildschirmtest, natürliche Scheduler-Ausführung und Akku noch offen. Nachweis: `docs/apple-evidence/2026-09-06-background/README.md`.

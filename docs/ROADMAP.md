@@ -154,3 +154,7 @@ abgenommen. Messwerte und die verbleibenden Qualitäts-/Hardwaregrenzen stehen i
 Die [Folgeprioritäten](apple-evidence/p2/next-priorities.md) behandeln Antwortqualität,
 Zielgerät-Latenz und gesonderte Hardware-/Energieabnahme. Sie autorisieren weder
 weitere Produktfunktionen noch eine Veröffentlichung.
+
+### Apple: Hintergrundverarbeitung, Nachtrag 06.09.2026
+
+Kurze Watch-Sprachnotizen werden jetzt auch ohne sichtbare iPhone-App verarbeitet (auf echter Hardware nachgewiesen). Weiter offen: Sperrbildschirm-Abnahme, natürlich ausgelöste BGProcessingTask-Läufe, Akku/Langzeitmessung und interaktive Watch-Komplikationen. Force-Quit bleibt eine iOS-Ausführungsgrenze; bestätigte Aufnahmen bleiben erhalten. Siehe `docs/apple-evidence/2026-09-06-background/README.md`.

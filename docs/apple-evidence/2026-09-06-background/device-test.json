@@ -1,0 +1,39 @@
+{
+  "date": "2026-09-06",
+  "phone": "iPhone 15 Pro Max",
+  "watch": "Apple Watch Ultra 3",
+  "fixture_duration_seconds": 4.734422,
+  "microphone_bypassed": true,
+  "phone_background_window_seconds": 90,
+  "background_window_ui_test": "passed",
+  "reply_generated_in_background": true,
+  "watch_acknowledged": true,
+  "state": "answered",
+  "timings": {
+    "capture_saved_at_ms": 810390456883.9541,
+    "background_reply_completed_at_ms": 1788697660153.4329,
+    "stt_ms": 570.5139636993408,
+    "generation_ms": 2628.1559467315674
+  },
+  "providers": [
+    {
+      "operation": "Transkription",
+      "durationMS": 570.5150365829468,
+      "isAI": true,
+      "completedAt": 810390457.505609,
+      "model": "Apple SpeechTranscriber (de-DE)"
+    },
+    {
+      "operation": "Antwort",
+      "durationMS": 2628.1579732894897,
+      "isAI": true,
+      "completedAt": 810390460.143865,
+      "model": "Apple Foundation Models \u00b7 Systemmodell"
+    }
+  ],
+  "locked_phone": "pending_user_lock",
+  "system_scheduled_BGProcessingTask": "registered_and_submitted_not_observed",
+  "battery_impact": "not_measured",
+  "watch_reply_e2e_ms": 4743.048095703125,
+  "watch_tts_start": "not_observed"
+}

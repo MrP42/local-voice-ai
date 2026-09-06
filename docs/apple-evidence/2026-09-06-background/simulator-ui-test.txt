@@ -1,0 +1,51 @@
+Test Suite 'Selected tests' started at 2026-09-06 14:20:57.778.
+Test Suite 'VoicePhoneUITests.xctest' started at 2026-09-06 14:20:57.779.
+Test Suite 'VoiceUITests' started at 2026-09-06 14:20:57.779.
+Test Case '-[VoicePhoneUITests.VoiceUITests testReplyCompletesWhilePhoneStaysInBackground]' started.
+    t =     0.00s Start Test at 2026-09-06 14:20:57.782
+    t =     0.08s Set Up
+    t =     0.08s Open de.localvoice.prototype
+    t =     0.08s     Launch de.localvoice.prototype
+    t =     3.15s         Setting up automation session
+    t =     4.43s         Wait for de.localvoice.prototype to idle
+    t =     6.49s Waiting 15.0s for "record" Button to exist
+    t =     7.51s     Checking `Expect predicate `existsNoRetry == 1` for object "record" Button`
+    t =     7.51s         Checking existence of `"record" Button`
+    t =     7.65s Pressing Home button
+    t =     8.12s Wait for de.localvoice.prototype to become Running Background
+    t =    16.75s Open de.localvoice.prototype
+    t =    16.75s     Activate de.localvoice.prototype
+    t =    16.81s         Wait for de.localvoice.prototype to idle
+    t =    16.88s Waiting 10.0s for "historyEntry" Button to exist
+    t =    17.91s     Checking `Expect predicate `existsNoRetry == 1` for object "historyEntry" Button`
+    t =    17.91s         Checking existence of `"historyEntry" Button`
+    t =    18.02s Tap "historyEntry" Button
+    t =    18.02s     Wait for de.localvoice.prototype to idle
+    t =    18.02s     Find the "historyEntry" Button
+    t =    18.12s     Check for interrupting elements affecting "historyEntry" Button
+    t =    18.19s     Synthesize event
+    t =    18.50s     Wait for de.localvoice.prototype to idle
+    t =    19.45s Waiting 5.0s for "Im Hintergrund fertiggestellt" StaticText to exist
+    t =    20.48s     Checking `Expect predicate `existsNoRetry == 1` for object "Im Hintergrund fertiggestellt" StaticText`
+    t =    20.48s         Checking existence of `"Im Hintergrund fertiggestellt" StaticText`
+    t =    20.56s Checking existence of `"Erst im Vordergrund fertiggestellt" StaticText`
+    t =    20.62s Find the Target Application 'de.localvoice.prototype'
+    t =    20.85s Added attachment named 'Hintergrund-Antwort'
+    t =    20.85s Tear Down
+Test Case '-[VoicePhoneUITests.VoiceUITests testReplyCompletesWhilePhoneStaysInBackground]' passed (21.155 seconds).
+Test Suite 'VoiceUITests' passed at 2026-09-06 14:21:18.937.
+	 Executed 1 test, with 0 failures (0 unexpected) in 21.155 (21.157) seconds
+Test Suite 'VoicePhoneUITests.xctest' passed at 2026-09-06 14:21:18.938.
+	 Executed 1 test, with 0 failures (0 unexpected) in 21.155 (21.159) seconds
+Test Suite 'Selected tests' passed at 2026-09-06 14:21:18.939.
+	 Executed 1 test, with 0 failures (0 unexpected) in 21.155 (21.161) seconds
+2026-09-06 14:21:19.267 xcodebuild[12782:3389996] [MT] IDETestOperationsObserverDebug: 28.085 elapsed -- Testing started completed.
+2026-09-06 14:21:19.267 xcodebuild[12782:3389996] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-09-06 14:21:19.268 xcodebuild[12782:3389996] [MT] IDETestOperationsObserverDebug: 28.085 sec, +28.085 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/patrick/Library/Developer/Xcode/DerivedData/LocalVoice-gssphxflspugpehdpgpleyvccfkm/Logs/Test/Test-VoicePhoneUITests-2026.09.06_14-20-40-+0200.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started
