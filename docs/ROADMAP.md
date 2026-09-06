@@ -146,11 +146,11 @@ Job-/Speicherwartung; physische Abnahme wird gesondert beauftragt.
 [Messwerte und Lifecycle-Grenzen](apple-evidence/2026-09-05-simulator-report.md),
 [aktualisierter P2-Plan](apple-evidence/P2-follow-up.md).
 
-## Apple Mobile/Watch – P2-Umsetzung 05.09.2026
+## Apple Mobile/Watch – P2 abgeschlossen im Simulatorumfang, 06.09.2026
 
 Persistente Jobs, Speicherwiederherstellung, Modellverwaltung und überprüfbare
-Sprach-/Lifecycle-Proben sind implementiert. Die Abnahme ist noch offen; aktuelle
-Messwerte und echte Blockaden stehen im [P2-Bericht](apple-evidence/p2/README.md).
+Sprach-/Lifecycle-Proben sind implementiert und nach Claude-Review-Korrekturen
+abgenommen. Messwerte und die verbleibenden Qualitäts-/Hardwaregrenzen stehen im [P2-Bericht](apple-evidence/p2/README.md).
 Die [Folgeprioritäten](apple-evidence/p2/next-priorities.md) behandeln Antwortqualität,
 Zielgerät-Latenz und gesonderte Hardware-/Energieabnahme. Sie autorisieren weder
 weitere Produktfunktionen noch eine Veröffentlichung.

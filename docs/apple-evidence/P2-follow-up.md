@@ -1,3 +1,6 @@
+> Historischer P2-Auftrag; am 06.09.2026 im vereinbarten Simulatorumfang umgesetzt.
+> Abschluss: [P2-Bericht](p2/README.md), danach [Folgeprioritäten](p2/next-priorities.md).
+
 # P2 nach dem nativen Simulator-Prototyp
 
 **Fortschreibung:** P2 wurde anschließend vom Benutzer beauftragt. Implementierung

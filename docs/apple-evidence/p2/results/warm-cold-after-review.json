@@ -1,0 +1,454 @@
+{
+  "sourceCommit": "a9fbf6574c555002272b28ae72e455ff0333f128",
+  "definition": "Cold = restarted iPhone process; warm = following turn in same process. Watch restarts in both. OS caches are not flushed; native model contexts are still recreated per call.",
+  "pairs": 10,
+  "turns": [
+    {
+      "pair": 0,
+      "group": "process_cold",
+      "id": "9BC6902F-BA74-4723-A80E-98A35230C491",
+      "phoneTimings": {
+        "generation_ms": 9182.30402469635,
+        "stt_ms": 8124.377012252808,
+        "capture_saved_at_ms": 810371005537.39
+      },
+      "watchTimings": {
+        "tts_e2e_ms": 24905.884033203125,
+        "capture_saved_at_ms": 810370999027.141,
+        "reply_e2e_ms": 24690.91796875,
+        "tts_start_ms": 90.19303321838379,
+        "reply_received_at_ms": 810371023718.059,
+        "transfer_roundtrip_ms": 4975.321054458618
+      },
+      "audited": true
+    },
+    {
+      "pair": 0,
+      "group": "process_warm",
+      "id": "F328FDDB-BF0B-4D4B-9E65-B5F34D40E6F0",
+      "phoneTimings": {
+        "generation_ms": 6470.041990280151,
+        "stt_ms": 7438.4390115737915,
+        "capture_saved_at_ms": 810371033526.087
+      },
+      "watchTimings": {
+        "tts_e2e_ms": 21954.703002929688,
+        "capture_saved_at_ms": 810371026946.09,
+        "reply_e2e_ms": 21766.72900390625,
+        "transfer_roundtrip_ms": 5194.536924362183,
+        "reply_received_at_ms": 810371048712.819,
+        "tts_start_ms": 73.13299179077148
+      },
+      "audited": true
+    },
+    {
+      "pair": 1,
+      "group": "process_cold",
+      "id": "700BFA2F-99D2-4769-BD58-534B4644EC30",
+      "phoneTimings": {
+        "stt_ms": 8536.99803352356,
+        "generation_ms": 8841.578006744385,
+        "capture_saved_at_ms": 810371058528.102
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 4377.516984939575,
+        "capture_saved_at_ms": 810371052627.1991,
+        "tts_e2e_ms": 24281.893920898438,
+        "reply_e2e_ms": 24096.246948242188,
+        "tts_start_ms": 72.50094413757324,
+        "reply_received_at_ms": 810371076723.446
+      },
+      "audited": true
+    },
+    {
+      "pair": 1,
+      "group": "process_warm",
+      "id": "26C7613D-7F20-4F9F-ABAC-3B56418AB8E1",
+      "phoneTimings": {
+        "generation_ms": 6273.988962173462,
+        "stt_ms": 7415.279030799866,
+        "capture_saved_at_ms": 810371085524.563
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 4624.3919134140015,
+        "reply_received_at_ms": 810371099717.0809,
+        "capture_saved_at_ms": 810371079575.713,
+        "reply_e2e_ms": 20141.367919921875,
+        "tts_e2e_ms": 20336.449951171875,
+        "tts_start_ms": 78.47404479980469
+      },
+      "audited": true
+    },
+    {
+      "pair": 2,
+      "group": "process_cold",
+      "id": "C1252E1B-638D-403A-8CBD-6E6C15DC2F0B",
+      "phoneTimings": {
+        "stt_ms": 8092.865943908691,
+        "generation_ms": 9174.751996994019,
+        "capture_saved_at_ms": 810371110530.198
+      },
+      "watchTimings": {
+        "tts_start_ms": 76.70009136199951,
+        "reply_e2e_ms": 24840.821044921875,
+        "transfer_roundtrip_ms": 5116.07301235199,
+        "reply_received_at_ms": 810371128719.468,
+        "capture_saved_at_ms": 810371103878.647,
+        "tts_e2e_ms": 25047.22900390625
+      },
+      "audited": true
+    },
+    {
+      "pair": 2,
+      "group": "process_warm",
+      "id": "6DE91B4F-9BA5-4B3D-9612-ED4160B5A684",
+      "phoneTimings": {
+        "generation_ms": 6500.7829666137695,
+        "capture_saved_at_ms": 810371137521.1019,
+        "stt_ms": 7858.451008796692
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 4510.6440782547,
+        "tts_start_ms": 75.99198818206787,
+        "reply_e2e_ms": 20992.340087890625,
+        "tts_e2e_ms": 21187.77490234375,
+        "reply_received_at_ms": 810371152717.9131,
+        "capture_saved_at_ms": 810371131725.573
+      },
+      "audited": true
+    },
+    {
+      "pair": 3,
+      "group": "process_cold",
+      "id": "C533880F-83DD-4812-A14A-C1A90626216C",
+      "phoneTimings": {
+        "stt_ms": 7975.18002986908,
+        "capture_saved_at_ms": 810371162516.495,
+        "generation_ms": 8679.993033409119
+      },
+      "watchTimings": {
+        "tts_e2e_ms": 23311.85302734375,
+        "tts_start_ms": 75.41501522064209,
+        "reply_received_at_ms": 810371179713.903,
+        "reply_e2e_ms": 23118.6669921875,
+        "capture_saved_at_ms": 810371156595.236,
+        "transfer_roundtrip_ms": 4456.927061080933
+      },
+      "audited": true
+    },
+    {
+      "pair": 3,
+      "group": "process_warm",
+      "id": "E4B3BA0D-532C-4D50-9679-983A547D95B7",
+      "phoneTimings": {
+        "capture_saved_at_ms": 810371188540.8451,
+        "generation_ms": 6574.100017547607,
+        "stt_ms": 7248.871088027954
+      },
+      "watchTimings": {
+        "capture_saved_at_ms": 810371182168.295,
+        "reply_received_at_ms": 810371202715.291,
+        "tts_e2e_ms": 20742.758911132812,
+        "transfer_roundtrip_ms": 5008.849024772644,
+        "tts_start_ms": 78.87601852416992,
+        "reply_e2e_ms": 20546.995971679688
+      },
+      "audited": true
+    },
+    {
+      "pair": 4,
+      "group": "process_cold",
+      "id": "9E7305C0-4E82-4886-860C-E038BE1983D4",
+      "phoneTimings": {
+        "capture_saved_at_ms": 810371213519.18,
+        "generation_ms": 8481.435060501099,
+        "stt_ms": 8017.055034637451
+      },
+      "watchTimings": {
+        "tts_start_ms": 72.38602638244629,
+        "reply_e2e_ms": 23948.60400390625,
+        "reply_received_at_ms": 810371230719.769,
+        "capture_saved_at_ms": 810371206771.165,
+        "transfer_roundtrip_ms": 5948.338985443115,
+        "tts_e2e_ms": 24140.5400390625
+      },
+      "audited": true
+    },
+    {
+      "pair": 4,
+      "group": "process_warm",
+      "id": "AC713491-0003-4FEB-A921-B12E9107219B",
+      "phoneTimings": {
+        "capture_saved_at_ms": 810371239527.8651,
+        "stt_ms": 7172.34194278717,
+        "generation_ms": 5880.079030990601
+      },
+      "watchTimings": {
+        "reply_received_at_ms": 810371253719.226,
+        "tts_e2e_ms": 20212.85107421875,
+        "reply_e2e_ms": 20014.77001953125,
+        "tts_start_ms": 78.36306095123291,
+        "transfer_roundtrip_ms": 4517.99201965332,
+        "capture_saved_at_ms": 810371233704.4559
+      },
+      "audited": true
+    },
+    {
+      "pair": 5,
+      "group": "process_cold",
+      "id": "9CF85C70-D004-4660-B8EE-ECD199A52E1D",
+      "phoneTimings": {
+        "stt_ms": 8191.984057426453,
+        "generation_ms": 8539.799928665161,
+        "capture_saved_at_ms": 810371264538.942
+      },
+      "watchTimings": {
+        "tts_e2e_ms": 24149.868041992188,
+        "reply_e2e_ms": 23769.780029296875,
+        "capture_saved_at_ms": 810371257951.242,
+        "reply_received_at_ms": 810371281721.022,
+        "transfer_roundtrip_ms": 4951.511979103088,
+        "tts_start_ms": 73.36807250976562
+      },
+      "audited": true
+    },
+    {
+      "pair": 5,
+      "group": "process_warm",
+      "id": "0CF676C2-55EE-403A-BF24-F91E4D75CF2C",
+      "phoneTimings": {
+        "generation_ms": 6004.941940307617,
+        "stt_ms": 7235.218048095703,
+        "capture_saved_at_ms": 810371291546.2839
+      },
+      "watchTimings": {
+        "tts_start_ms": 81.61401748657227,
+        "tts_e2e_ms": 20925.652954101562,
+        "reply_e2e_ms": 20722.020874023438,
+        "capture_saved_at_ms": 810371285045.967,
+        "reply_received_at_ms": 810371305767.9879,
+        "transfer_roundtrip_ms": 5213.200926780701
+      },
+      "audited": true
+    },
+    {
+      "pair": 6,
+      "group": "process_cold",
+      "id": "6C05C628-F6E4-4BA0-A7E4-067207E8DDFB",
+      "phoneTimings": {
+        "generation_ms": 8781.69298171997,
+        "stt_ms": 7825.767993927002,
+        "capture_saved_at_ms": 810371315492.238
+      },
+      "watchTimings": {
+        "tts_e2e_ms": 23348.246948242188,
+        "reply_received_at_ms": 810371332729.609,
+        "transfer_roundtrip_ms": 4253.597021102905,
+        "tts_start_ms": 75.08599758148193,
+        "capture_saved_at_ms": 810371309594.729,
+        "reply_e2e_ms": 23134.880004882812
+      },
+      "audited": true
+    },
+    {
+      "pair": 6,
+      "group": "process_warm",
+      "id": "1E6E6299-4169-4476-AE60-E8DA0B8B1196",
+      "phoneTimings": {
+        "stt_ms": 6898.743987083435,
+        "capture_saved_at_ms": 810371341481.639,
+        "generation_ms": 6012.4499797821045
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 4843.981981277466,
+        "reply_e2e_ms": 20411.708984375,
+        "capture_saved_at_ms": 810371335260.777,
+        "tts_e2e_ms": 20630.572021484375,
+        "tts_start_ms": 87.27896213531494,
+        "reply_received_at_ms": 810371355672.486
+      },
+      "audited": true
+    },
+    {
+      "pair": 7,
+      "group": "process_cold",
+      "id": "324929AC-7445-4B03-B3A5-3E5A13C9F7FD",
+      "phoneTimings": {
+        "capture_saved_at_ms": 810371365505.142,
+        "stt_ms": 8166.596055030823,
+        "generation_ms": 8834.910035133362
+      },
+      "watchTimings": {
+        "capture_saved_at_ms": 810371359040.386,
+        "tts_e2e_ms": 24877.175048828125,
+        "transfer_roundtrip_ms": 5647.665023803711,
+        "reply_received_at_ms": 810371383671.0171,
+        "reply_e2e_ms": 24630.631103515625,
+        "tts_start_ms": 74.6389627456665
+      },
+      "audited": true
+    },
+    {
+      "pair": 7,
+      "group": "process_warm",
+      "id": "5D802769-701A-4C5C-B3F1-D1837491FD5E",
+      "phoneTimings": {
+        "stt_ms": 7390.26403427124,
+        "generation_ms": 6412.693977355957,
+        "capture_saved_at_ms": 810371392487.767
+      },
+      "watchTimings": {
+        "capture_saved_at_ms": 810371386173.723,
+        "reply_received_at_ms": 810371406668.102,
+        "tts_e2e_ms": 20693.611938476562,
+        "transfer_roundtrip_ms": 4982.11395740509,
+        "tts_start_ms": 78.70805263519287,
+        "reply_e2e_ms": 20494.379028320312
+      },
+      "audited": true
+    },
+    {
+      "pair": 8,
+      "group": "process_cold",
+      "id": "F32BDA04-BDE9-4171-93F7-C9474FEB2EBD",
+      "phoneTimings": {
+        "capture_saved_at_ms": 810371417495.4669,
+        "generation_ms": 8824.661016464233,
+        "stt_ms": 7848.697066307068
+      },
+      "watchTimings": {
+        "reply_received_at_ms": 810371434672.243,
+        "tts_e2e_ms": 23922.907958984375,
+        "tts_start_ms": 74.0278959274292,
+        "capture_saved_at_ms": 810371410950.869,
+        "reply_e2e_ms": 23721.3740234375,
+        "transfer_roundtrip_ms": 4966.197967529297
+      },
+      "audited": true
+    },
+    {
+      "pair": 8,
+      "group": "process_warm",
+      "id": "A2E982AB-E9BD-4F59-8DFB-2A40E8922C52",
+      "phoneTimings": {
+        "capture_saved_at_ms": 810371443474.6271,
+        "stt_ms": 7447.394967079163,
+        "generation_ms": 6523.262977600098
+      },
+      "watchTimings": {
+        "tts_start_ms": 75.18994808197021,
+        "reply_e2e_ms": 21005.514892578125,
+        "tts_e2e_ms": 21196.81494140625,
+        "capture_saved_at_ms": 810371437663.1951,
+        "reply_received_at_ms": 810371458668.71,
+        "transfer_roundtrip_ms": 5191.671013832092
+      },
+      "audited": true
+    },
+    {
+      "pair": 9,
+      "group": "process_cold",
+      "id": "425F1EFB-52ED-4923-96B3-0676E781823D",
+      "phoneTimings": {
+        "generation_ms": 8726.0080575943,
+        "stt_ms": 8271.049976348877,
+        "capture_saved_at_ms": 810371468481.1271
+      },
+      "watchTimings": {
+        "tts_e2e_ms": 24342.31494140625,
+        "reply_received_at_ms": 810371486669.41,
+        "capture_saved_at_ms": 810371462521.688,
+        "transfer_roundtrip_ms": 4304.397940635681,
+        "reply_e2e_ms": 24147.722045898438,
+        "tts_start_ms": 79.51700687408447
+      },
+      "audited": true
+    },
+    {
+      "pair": 9,
+      "group": "process_warm",
+      "id": "0D4C76BB-A712-47E4-BAC8-9A5ADC0073F2",
+      "phoneTimings": {
+        "generation_ms": 6190.7230615615845,
+        "capture_saved_at_ms": 810371495472.2429,
+        "stt_ms": 7212.424039840698
+      },
+      "watchTimings": {
+        "reply_received_at_ms": 810371509676.1349,
+        "tts_start_ms": 81.29501342773438,
+        "capture_saved_at_ms": 810371489325.9601,
+        "tts_e2e_ms": 20550.935913085938,
+        "transfer_roundtrip_ms": 4759.274959564209,
+        "reply_e2e_ms": 20350.1748046875
+      },
+      "audited": true
+    }
+  ],
+  "statistics": {
+    "process_cold": {
+      "stt_ms": {
+        "n": 10,
+        "median": 8108.6214780807495,
+        "p95": 8536.99803352356,
+        "max": 8536.99803352356
+      },
+      "generation_ms": {
+        "n": 10,
+        "median": 8803.176999092102,
+        "p95": 9182.30402469635,
+        "max": 9182.30402469635
+      },
+      "transfer_roundtrip_ms": {
+        "n": 10,
+        "median": 4958.854973316193,
+        "p95": 5948.338985443115,
+        "max": 5948.338985443115
+      },
+      "reply_e2e_ms": {
+        "n": 10,
+        "median": 24022.42547607422,
+        "p95": 24840.821044921875,
+        "max": 24840.821044921875
+      },
+      "tts_e2e_ms": {
+        "n": 10,
+        "median": 24215.880981445312,
+        "p95": 25047.22900390625,
+        "max": 25047.22900390625
+      }
+    },
+    "process_warm": {
+      "stt_ms": {
+        "n": 10,
+        "median": 7319.567561149597,
+        "p95": 7858.451008796692,
+        "max": 7858.451008796692
+      },
+      "generation_ms": {
+        "n": 10,
+        "median": 6343.3414697647095,
+        "p95": 6574.100017547607,
+        "max": 6574.100017547607
+      },
+      "transfer_roundtrip_ms": {
+        "n": 10,
+        "median": 4913.047969341278,
+        "p95": 5213.200926780701,
+        "max": 5213.200926780701
+      },
+      "reply_e2e_ms": {
+        "n": 10,
+        "median": 20520.6875,
+        "p95": 21766.72900390625,
+        "max": 21766.72900390625
+      },
+      "tts_e2e_ms": {
+        "n": 10,
+        "median": 20718.185424804688,
+        "p95": 21954.703002929688,
+        "max": 21954.703002929688
+      }
+    }
+  },
+  "passed": true
+}

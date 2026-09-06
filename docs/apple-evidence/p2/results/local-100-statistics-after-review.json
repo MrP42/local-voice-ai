@@ -1,0 +1,37 @@
+{
+  "programCommit": "a9fbf6574c555002272b28ae72e455ff0333f128",
+  "elapsedSeconds": 953.7680881023407,
+  "metrics": {
+    "stt_ms": {
+      "n": 100,
+      "median": 5100.858986377716,
+      "p95": 5302.973031997681,
+      "max": 6641.7258977890015
+    },
+    "generation_ms": {
+      "n": 100,
+      "median": 2824.456512928009,
+      "p95": 2996.6580867767334,
+      "max": 4889.765977859497
+    },
+    "transfer_roundtrip_ms": {
+      "n": 100,
+      "median": 1992.08003282547,
+      "p95": 4005.076050758362,
+      "max": 56003.41498851776
+    },
+    "reply_e2e_ms": {
+      "n": 100,
+      "median": 546997.5180053711,
+      "p95": 888550.6329345703,
+      "max": 927437.0439453125
+    },
+    "tts_e2e_ms": {
+      "n": 96,
+      "median": 562538.1339111328,
+      "p95": 897417.8800048828,
+      "max": 927452.791015625
+    }
+  },
+  "scope": "100 queued synthetic recordings with lifecycle faults; E2E includes the queue; actualAudioAudit verifies both devices"
+}

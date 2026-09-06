@@ -168,3 +168,11 @@ Vorläufige Latenzziele werden nicht erreicht. Der P2-Folgeplan priorisiert dies
 Grenzen; spätere Produktstufen wurden nicht umgesetzt. Siehe
 [Simulatorbericht](../../apple-evidence/2026-09-05-simulator-report.md)
 und [P2-Folgeplan](../../apple-evidence/P2-follow-up.md).
+
+
+## P2-Abschluss nach gesondertem Benutzerauftrag – 06.09.2026
+
+P2 ist auf `codex/apple-p0-p1` im ausdrücklich vereinbarten Simulatorumfang
+abgeschlossen. Programm `a9fbf65`, Review-Korrekturen und frische Abnahme siehe
+[Abschlussbericht](../../apple-evidence/p2/README.md). Echtzeit, Modellqualität und
+physische Akkuauswirkung behalten die dort dokumentierten Grenzen.

@@ -262,20 +262,21 @@ im ursprünglichen Checkout erhalten; kein Push und keine Veröffentlichung.
 Details: [Simulatorbericht](apple-evidence/2026-09-05-simulator-report.md),
 [P2-Folgeplan](apple-evidence/P2-follow-up.md). Der anschließende P2-Stand ist unten separat dokumentiert.
 
-## Native Apple P2 – implementiert, Abnahme läuft, 05.09.2026
+## Native Apple P2 – Simulatorabnahme abgeschlossen, 06.09.2026
 
-Programmstand `d414228`: getrennte Aufnahme-/Transport-/Jobsteuerung, persistente
-Versuchsbudgets und Abbruch, beschädigte Einträge mit Wiederherstellungsoberfläche,
-additive Identitäten, temporäre Speicherbudgets, verifizierter Modellimport und
-explizite Base-/Small-Auswahl. Desktop-Tauri wurde nicht verändert.
+Programmstand `a9fbf65`: persistente Aufträge, begrenzte Retries/Abbruch, getrennte
+Aufnahme-/Transport-/Jobsteuerung, sichere Wiederherstellung und Modellverwaltung.
+Claude-Review nach ausdrücklicher Freigabe abgeschlossen, Befunde bewertet und
+korrigiert. 59 Kerntests, 14 Prozessabbrüche, vier iPhone-UI-Tests, ein Watch-UI-Test
+und gezielter letzter Setup-Retry bestanden. Beide finalen Apps installiert.
 
-54 Kerntests, 14 Prozessabbruchfälle, drei iPhone-UI-Tests und ein Watch-UI-Test
-bestehen frisch. Mikrofonverweigerung auf beiden Simulatoren, Duplikatbehandlung,
-Hintergrund-Wiederaufnahme und injizierte Audiounterbrechung bestehen. Zwölf
-Sprachfälle sind abgeschlossen; der Rechenfehler des kleinen Antwortmodells bleibt
-als Qualitätsgrenze offen. Stille/stationäres Rauschen erzeugen keine Antwort.
+Frische 20 Warm-/Kaltturns, 100/100 beantwortete Aufträge und Audit aller 200
+Originaldateien bestanden. Alle vereinbarten Simulator-Lifecyclefälle erneut geprüft.
+96 TTS-Starts im absichtlich unterbrochenen 100er-Lauf; keine Behauptung 100 vollständig
+abgespielter Antworten. Einzelturn median 20,718 s warm / 24,216 s kalt bis TTS-Start.
+Echtzeitziel verfehlt, Modell-Rechenfehler bekannt, echte Akkuauswirkung unbekannt.
+Hintergrund/Sperre/App-Ende verschieben Verarbeitung bis zur Aktivierung.
 
-20 Warm-/Kaltturns und der 100er-Abschlusslauf samt Audit aller 200 Originaldateien
-sind bestanden. Werte: [P2-Bericht](apple-evidence/p2/README.md). Lock/Wrist/Force-Quit sind am 06.09.2026 auf dem entsperrten Mac frisch bestanden.
-Der erneute externe Claude-Review benötigt die angefragte ausdrückliche
-Übermittlungsfreigabe. **P2 ist deshalb noch nicht vollständig abgenommen.**
+Keine ausstehende Freigabe. Desktop unverändert, kein Push/Release.
+[P2-Bericht](apple-evidence/p2/README.md), [Lifecycle-Matrix](apple-evidence/p2/lifecycle-matrix.md),
+[Folgeprioritäten](apple-evidence/p2/next-priorities.md).

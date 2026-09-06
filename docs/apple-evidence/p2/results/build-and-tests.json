@@ -1,24 +1,12 @@
 {
-  "programCommit": "d414228",
-  "coreTests": 54,
-  "phoneUITests": 3,
+  "programCommit": "a9fbf65",
+  "coreTests": 59,
+  "phoneUITests": 4,
   "watchUITests": 1,
-  "checks": {
-    "core": {
-      "passed": true,
-      "log": "local-voice-p2-cache-green.log"
-    },
-    "build": {
-      "passed": true,
-      "log": "local-voice-p2-cache-build.log"
-    },
-    "phoneUI": {
-      "passed": true,
-      "log": "local-voice-p2-final-phone-ui.log"
-    },
-    "watchUI": {
-      "passed": true,
-      "log": "local-voice-p2-final-watch-ui.log"
-    }
-  }
+  "coreSuite": "review-core.log",
+  "phoneSuite": "review-phone-ui.log",
+  "watchSuite": "review-watch-ui.log",
+  "finalSetupRegression": "setup-retry-final.log",
+  "scope": "Full core suite and both UI suites after review changes; final one-line component creation ordering change additionally verified by targeted setup UI regression. All builds include both app targets.",
+  "passed": true
 }
