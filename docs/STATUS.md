@@ -276,7 +276,6 @@ Sprachfälle sind abgeschlossen; der Rechenfehler des kleinen Antwortmodells ble
 als Qualitätsgrenze offen. Stille/stationäres Rauschen erzeugen keine Antwort.
 
 20 Warm-/Kaltturns und der 100er-Abschlusslauf samt Audit aller 200 Originaldateien
-sind bestanden. Werte: [P2-Bericht](apple-evidence/p2/README.md). Frische
-Fensterbedienung für Lock/Wrist/Force-Quit benötigt einen entsperrten Mac.
+sind bestanden. Werte: [P2-Bericht](apple-evidence/p2/README.md). Lock/Wrist/Force-Quit sind am 06.09.2026 auf dem entsperrten Mac frisch bestanden.
 Der erneute externe Claude-Review benötigt die angefragte ausdrückliche
 Übermittlungsfreigabe. **P2 ist deshalb noch nicht vollständig abgenommen.**

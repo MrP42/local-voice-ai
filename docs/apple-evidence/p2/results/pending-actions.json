@@ -1,15 +1,10 @@
 {
   "programCommit": "d414228",
-  "lockTest": "failed to activate Simulator while host console locked",
-  "hostConsoleLocked": true,
-  "freshP2CasesPending": [
-    "locked iPhone",
-    "Wrist Down",
-    "user swipe force quit"
-  ],
+  "lockTest": "Passed on 2026-09-06 after unlocking",
+  "hostConsoleLocked": false,
+  "freshP2CasesPending": [],
   "claudeReview": "not transmitted; automatic approval review requires fresh explicit consent to four files",
   "userActions": [
-    "Keep Mac unlocked for native Simulator controls",
     "Answer the pending four-file Claude review authorization question"
   ]
 }

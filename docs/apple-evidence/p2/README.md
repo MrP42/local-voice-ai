@@ -57,7 +57,7 @@ Keine automatische Original-Löschung und keine Veröffentlichung.
 
 ## Noch laufend
 
-Frische Fensterbedienungsfälle und externer Claude-Review; Latenzläufe und 100er-Dateiaudit sind abgeschlossen.
+Nur der externe Claude-Review ist offen. Latenzläufe, 100er-Dateiaudit und die am 06.09.2026 nachgeholten Fensterbedienungsfälle sind abgeschlossen.
 Die automatische Freigabeprüfung hat die erneute Übermittlung privater Quelldateien
 an Claude blockiert. Eine konkrete Rückfrage für genau vier Dateien ist offen;
 bis zur Antwort wurde kein P2-Quelltext an Claude übermittelt.
@@ -111,12 +111,22 @@ Der frische native Abbruchtest auf `d414228` brach STT nach 4,198 s und Generier
 nach 0,414 s ab. Derselbe Auftrag wurde anschließend ohne erneutes STT abgeschlossen.
 Diese Zeiten enthalten Modellladen und Reaktion des Workers; Abbruch ist kooperativ.
 
-Die erneute native Fensteraktivierung scheiterte nach 60 s. Eine zwischenzeitliche
-eingeschränkte Systemabfrage meldete einen entsperrten Zustand, die anschließende
-Prüfung mit vollständigem Zugriff jedoch `IOConsoleLocked = Yes`. Deshalb sind
-Lock, Wrist Down und Wegwischen weiterhin **nicht frisch auf P2 bestätigt**.
-Der Wrist-Harness ist vorbereitet, wurde wegen des vorgeschalteten fehlgeschlagenen
-Sperrtests noch nicht ausgeführt. Zum Fortsetzen muss der Mac entsperrt bleiben.
+Am 06.09.2026 war der Mac entsperrt. Die drei zuvor blockierten Fälle wurden
+auf unverändertem Programmstand frisch bestanden:
+
+- **Gesperrtes iPhone:** zehn Sekunden ohne Antwort, anschließend derselbe Auftrag
+  beantwortet und quittiert; `results/locked.json`.
+- **Wrist Down:** tatsächlicher Simulator-Recorder vor dem Senken gestartet,
+  Aufnahme gespeichert, danach identisch auf dem iPhone angenommen. Beide
+  Originaldateien geprüft; `results/wrist.json`. Die Umgebungsaufnahme ist kein
+  kontrollierter Sprachqualitätstest. Aufnahmefeedback 983 ms, Persistenz 218 ms.
+- **Wegwischen:** Local-Voice-Karte visuell identifiziert und entfernt, Prozess
+  danach nicht gelistet. Neue Watch-Aufnahme blieb zehn Sekunden ohne Antwort
+  erhalten und wurde nach Öffnen beantwortet. Zwei Originaldateien mit SHA-256
+  geprüft; `results/force-quit.json`, Bilder unter `screenshots/`. Prozessbeobachtung
+  gilt nur für die Stichproben, nicht für sämtliche möglichen Hintergrundaufrufe.
+
+Die fehlgeschlagenen Versuche vom Vortag bleiben als Historie erhalten.
 
 Der externe P2-Review wurde zweimal durch die automatische Freigabeprüfung
 abgewiesen. Sie akzeptierte den Nachweis der früheren Freigabe aus dem alten
@@ -125,4 +135,4 @@ ausschließlich `Store.swift`, `Envelope.swift`, `VoiceModel.swift` und
 `LocalProviders.swift` an Claude/Anthropic. Kein P2-Quelltext wurde übermittelt.
 
 Die Implementierung und unabhängig ausführbare Abnahme sind abgeschlossen.
-**P2 bleibt bis zu den drei Fensterfällen und der Review-Entscheidung offen.**
+**P2 bleibt bis zur Review-Entscheidung und gegebenenfalls Bearbeitung des Reviews offen.**

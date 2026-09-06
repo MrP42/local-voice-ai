@@ -13,9 +13,10 @@ Kein neuer Implementierungsauftrag und keine Veröffentlichung durch dieses Doku
    bleibt im Intel-Simulator der schnellere getestete STT-Kandidat; Small ist kein
    Ersatz für das verfehlte Echtzeitziel. Neue Optimierungen anhand echter E2E-Zeiten
    bewerten, einschließlich Modellladen, Rücktransport und TTS-Start.
-3. **Offene native Simulator-Bedienungsfälle nach Entsperren abschließen.** Lock,
-   Wrist Down und benutzerseitiges Wegwischen frisch auf P2 durchführen. Alte
-   P1-Nachweise bleiben als Historie, nicht als neue P2-Ergebnisse.
+3. **Native Simulator-Bedienungsfälle beibehalten.** Lock, Wrist Down und
+   benutzerseitiges Wegwischen wurden am 06.09. frisch auf P2 bestanden. Künftige
+   Regressionen benötigen einen entsperrten Host und eine visuelle Prüfung der
+   richtigen App-Karte vor dem Wegwischen.
 4. **Hardwareabnahme separat beauftragen.** Watch Ultra 3 / iPhone 15 Pro Max:
    Audio-Routen und Anrufe, gesperrte Dateien, echte Funkunterbrechungen und
    Force-Quit-Zustellung testen. Keine Workout-Sitzung zur Laufzeitverlängerung.

@@ -21,11 +21,12 @@ Akku-, Funk- und Data-Protection-Prüfungen werden weiterhin nicht fingiert.
   Stille/Geräusche, Base-/Small-Auswertung und nachvollziehbare Grenzen.
 - [x] Modellverfügbarkeit, Installation und Speicherbedarf in der App sichtbar machen;
   Modellintegrität vor Verwendung prüfen.
-- [ ] Neue native Cancellation- und Recovery-UI-Fälle automatisieren; Lifecycle-
+- [x] Neue native Cancellation- und Recovery-UI-Fälle automatisieren; Lifecycle-
   Regressionen mit dem neuen Worker durchführen.
 - [x] Warm-/Kaltstart sowie tatsächliche Ende-zu-Ende-Zeiten messen; Wiederholung mit
   Quittungs-/Digest-Audit auf unverändertem finalem Programmstand.
-- [ ] Claude-Review, frischer Abschlussbuild/-tests, Ergebnisbericht und Folgeprioritäten.
+- [x] Frischer Abschlussbuild/-tests, Ergebnisbericht und Folgeprioritäten.
+- [ ] Claude-Review: konkrete Übermittlungsfreigabe noch offen.
 
 Erste Commits: `194bc2b` Speicherisolation, `21fbc8d` Jobs/Abbruch,
 `ebab6e2` getrennte Lifecycle-Komponenten. P2 ist noch nicht abgeschlossen.
@@ -37,3 +38,7 @@ und abschließender Dateiaudit sind mit 100/100 Antworten und 200 Originaldateie
 den aktuell gesperrten Mac entsperrt. Externer Claude-Review wartet auf die konkret
 angefragte neue Übermittlungsfreigabe; bisher keine P2-Übermittlung.
 Siehe `docs/apple-evidence/p2/README.md` für Werte und Grenzen.
+
+06.09.2026: Lock, Wrist Down und tatsächliches Wegwischen sind nach Entsperren
+frisch bestanden. Alle Simulator-Abnahmefälle sind damit belegt; nur die externe
+Review-Entscheidung und gegebenenfalls daraus folgende Bearbeitung bleiben offen.
