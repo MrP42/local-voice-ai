@@ -175,11 +175,17 @@
     "settings": {
       "exportBitrate": "MP3 bitrate",
       "exportBitrateDescription": "Sound quality and file size of the MP3 export. 192 kbps is plenty for speech; higher settings only pay off for music.",
-      "exportBitrateOption": "{{rate}} kbps"
+      "exportBitrateOption": "{{rate}} kbps",
+      "autoTranscribe": "Transcribe reference automatically",
+      "autoTranscribeDescription": "When you record or pick a reference, the app produces the transcript itself and fills it in; it stays editable. Switched off, the field stays empty and the text has to be typed — without a matching text Fish Speech learns the voice from the wrong words."
     },
     "exportEta": "about {{time}} left",
     "exportEtaComputing": "estimating time left",
-    "exportSaved": "Saved: {{path}}"
+    "exportSaved": "Saved: {{path}}",
+    "voices": {
+      "transcribing": "Transcribing …",
+      "transcriptManualPlaceholder": "Exact transcript of the recording (automatic transcription is off — enter the text here)"
+    }
   },
   "onboarding": {
     "subtitle": "Per cominciare, scegli un modello di riconoscimento vocale",

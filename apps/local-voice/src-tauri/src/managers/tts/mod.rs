@@ -2024,15 +2024,22 @@ impl TtsManager {
                 voices::MIN_REFERENCE_SECS
             ));
         }
-        let tm = self
-            .app
-            .state::<Arc<crate::managers::transcription::TranscriptionManager>>();
-        let transcript = match tm.transcribe(samples.clone()) {
-            Ok(text) => text,
-            Err(e) => {
-                log::warn!("reference transcription failed, keeping audio: {e}");
-                String::new()
+        // Wer den Schalter ausmacht, will das Transkript selbst schreiben —
+        // dann ist die Transkription nicht nur ueberfluessig, sondern haelt
+        // den Ablauf mehrere Sekunden lang auf.
+        let transcript = if crate::settings::get_settings(&self.app).tts_reference_auto_transcribe {
+            let tm = self
+                .app
+                .state::<Arc<crate::managers::transcription::TranscriptionManager>>();
+            match tm.transcribe(samples.clone()) {
+                Ok(text) => text,
+                Err(e) => {
+                    log::warn!("reference transcription failed, keeping audio: {e}");
+                    String::new()
+                }
             }
+        } else {
+            String::new()
         };
         *self.pending_reference.lock().unwrap() = Some(samples);
         Ok(transcript)
@@ -2067,6 +2074,30 @@ impl TtsManager {
     /// WAV-Datei als Stimme übernehmen. Ohne mitgeliefertes Transkript wird
     /// die Datei für die STT auf 16 kHz mono gewandelt und transkribiert; die
     /// Referenz selbst bleibt das unveränderte Original.
+    /// Eine Referenzdatei transkribieren, ohne sie als Stimme anzulegen.
+    /// Die Oberflaeche ruft das direkt nach der Dateiwahl auf, damit der
+    /// Text zum Nachbessern dasteht, BEVOR gespeichert wird — nicht erst
+    /// danach, wenn niemand ihn mehr sieht.
+    ///
+    /// Nimmt jede Quelle, die `media::ensure_wav` versteht (mp3, m4a, mp4,
+    /// …), nicht nur WAV.
+    pub fn transcribe_reference_path(&self, path: &str) -> Result<String, String> {
+        let (source, _tmp_guard) = crate::media::ensure_wav(std::path::Path::new(path), 44_100)?;
+        self.transcribe_reference(&source)
+    }
+
+    fn transcribe_reference(&self, wav: &std::path::Path) -> Result<String, String> {
+        use tauri::Manager;
+        let samples = voices::load_wav_mono_16k(wav)?;
+        let tm = self
+            .app
+            .state::<Arc<crate::managers::transcription::TranscriptionManager>>();
+        tm.initiate_model_load();
+        tm.transcribe(samples).map_err(|e| {
+            format!("Transkription fehlgeschlagen ({e}) — Transkript bitte manuell angeben")
+        })
+    }
+
     pub fn import_voice_file(
         &self,
         name: &str,
@@ -2082,15 +2113,19 @@ impl TtsManager {
             crate::media::ensure_wav(std::path::Path::new(wav_path), 44_100)?;
         let transcript = match transcript.filter(|t| !t.trim().is_empty()) {
             Some(t) => t,
+            // Normalerweise hat die Oberflaeche schon transkribiert, sobald
+            // die Datei gewaehlt war. Dieser Zweig faengt den Rest ab: einen
+            // direkten Aufruf, oder eine Oberflaeche, die es nicht tat.
+            None if crate::settings::get_settings(&self.app).tts_reference_auto_transcribe => {
+                self.transcribe_reference(&source)?
+            }
+            // Schalter aus heisst: der Text kommt vom Menschen. Eine leere
+            // sample.lab waere schlimmer als ein Fehler — Fish Speech wuerde
+            // die Stimme dann an gar keinem Text lernen.
             None => {
-                let samples = voices::load_wav_mono_16k(&source)?;
-                let tm = self
-                    .app
-                    .state::<Arc<crate::managers::transcription::TranscriptionManager>>();
-                tm.initiate_model_load();
-                tm.transcribe(samples).map_err(|e| {
-                    format!("Transkription fehlgeschlagen ({e}) — Transkript bitte manuell angeben")
-                })?
+                return Err(
+                    "Transkript fehlt — die automatische Transkription ist ausgeschaltet".into(),
+                )
             }
         };
         voices::import_voice(

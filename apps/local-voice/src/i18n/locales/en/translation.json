@@ -162,7 +162,9 @@
       "previewGenerating": "Generating…",
       "deleteConfirmTitle": "Delete voice?",
       "deleteConfirm": "\"{{voice}}\" and its reference recording are deleted for good. To get this voice back, someone has to record it again.",
-      "cancelDelete": "Keep"
+      "cancelDelete": "Keep",
+      "transcribing": "Transcribing …",
+      "transcriptManualPlaceholder": "Exact transcript of the recording (automatic transcription is off — enter the text here)"
     },
     "voiceChanger": {
       "title": "Voice Changer",
@@ -212,7 +214,9 @@
       "exportBitrateOption": "{{rate}} kbps",
       "contextMenu": "Explorer context menu",
       "contextMenuDescription": "Adds \"Read with Local Voice AI\" to the right-click menu of TXT/MD/PDF/DOCX files. Note: Windows offers no system-wide menu for selected text — use the clipboard hotkey for that.",
-      "rollSeed": "Roll"
+      "rollSeed": "Roll",
+      "autoTranscribe": "Transcribe reference automatically",
+      "autoTranscribeDescription": "When you record or pick a reference, the app produces the transcript itself and fills it in; it stays editable. Switched off, the field stays empty and the text has to be typed — without a matching text Fish Speech learns the voice from the wrong words."
     },
     "saveAudio": "Save as audio…",
     "savingAudio": "Generating…",

@@ -130,6 +130,8 @@ const settingUpdaters: {
     commands.changeTtsNormalizeSetting(value as boolean),
   tts_prewarm: (value) => commands.changeTtsPrewarmSetting(value as boolean),
   tts_enhance: (value) => commands.changeTtsEnhanceSetting(value as boolean),
+  tts_reference_auto_transcribe: (value) =>
+    commands.changeTtsReferenceAutoTranscribeSetting(value as boolean),
   tts_enhance_strength: (value) =>
     commands.changeTtsEnhanceStrengthSetting(
       value as "gentle" | "medium" | "strong",

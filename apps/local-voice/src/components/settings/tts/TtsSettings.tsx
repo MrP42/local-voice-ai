@@ -1518,6 +1518,16 @@ export const TtsSettings = () => {
             grouped={true}
           />
           <ToggleSwitch
+            checked={getSetting("tts_reference_auto_transcribe") ?? true}
+            onChange={(checked) =>
+              updateSetting("tts_reference_auto_transcribe", checked)
+            }
+            isUpdating={isUpdating("tts_reference_auto_transcribe")}
+            label={t("tts.settings.autoTranscribe")}
+            description={t("tts.settings.autoTranscribeDescription")}
+            grouped={true}
+          />
+          <ToggleSwitch
             checked={getSetting("tts_enhance") ?? true}
             onChange={(checked) => updateSetting("tts_enhance", checked)}
             isUpdating={isUpdating("tts_enhance")}

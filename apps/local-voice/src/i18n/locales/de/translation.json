@@ -162,7 +162,9 @@
       "previewGenerating": "Wird erzeugt…",
       "deleteConfirmTitle": "Stimme löschen?",
       "deleteConfirm": "„{{voice}}\" wird mitsamt ihrer Referenzaufnahme endgültig gelöscht. Um sie zurückzubekommen, muss sie jemand neu einsprechen.",
-      "cancelDelete": "Behalten"
+      "cancelDelete": "Behalten",
+      "transcribing": "Wird transkribiert …",
+      "transcriptManualPlaceholder": "Exaktes Transkript der Aufnahme (automatische Transkription ist ausgeschaltet — Text hier eintragen)"
     },
     "voiceChanger": {
       "title": "Stimmwechsler",
@@ -212,7 +214,9 @@
       "exportBitrateOption": "{{rate}} kbit/s",
       "contextMenu": "Explorer-Kontextmenü",
       "contextMenuDescription": "Ergänzt „Mit Local Voice AI vorlesen“ im Rechtsklick-Menü von TXT/MD/PDF/DOCX-Dateien. Hinweis: Für markierten Text bietet Windows kein systemweites Menü — dafür gibt es den Zwischenablage-Hotkey.",
-      "rollSeed": "Würfeln"
+      "rollSeed": "Würfeln",
+      "autoTranscribe": "Referenz automatisch transkribieren",
+      "autoTranscribeDescription": "Beim Aufnehmen oder Auswählen einer Referenz erzeugt die App das Transkript selbst und trägt es ein; es bleibt bearbeitbar. Ausgeschaltet bleibt das Feld leer und der Text muss von Hand eingegeben werden — ohne passenden Text lernt Fish Speech die Stimme am falschen Wortlaut."
     },
     "saveAudio": "Als Audio speichern…",
     "savingAudio": "Wird erzeugt…",

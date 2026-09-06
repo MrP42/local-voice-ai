@@ -37,6 +37,11 @@ export const VoicesCard = () => {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
+  // Laeuft gerade eine Transkription der gewaehlten Datei? Sie dauert je
+  // nach Modell und Laenge einige Sekunden — ohne sichtbaren Zustand
+  // sieht das Textfeld einfach nur leer aus, und niemand weiss, ob da
+  // noch etwas kommt.
+  const [transcribing, setTranscribing] = useState(false);
   const recordTimer = useRef<number | null>(null);
   // Which voice the user opened a preview for, and what it is. Loaded on
   // demand rather than for every voice up front: a preview is a file read, and
@@ -160,6 +165,19 @@ export const VoicesCard = () => {
     if (typeof picked !== "string") return;
     setTranscript("");
     setMode({ kind: "review", source: { wavPath: picked } });
+    // Transkribieren, sobald die Datei feststeht — nicht erst beim
+    // Speichern. Sonst steht der Text erst da, wenn die Stimme schon
+    // angelegt ist, und niemand kann ihn vorher noch berichtigen.
+    if (!(getSetting("tts_reference_auto_transcribe") ?? true)) return;
+    setTranscribing(true);
+    const spoken = await commands.ttsTranscribeReference(picked);
+    setTranscribing(false);
+    if (spoken.status === "ok") {
+      setTranscript(spoken.data);
+    } else {
+      // Kein Abbruch: die Aufnahme taugt weiter, nur der Text fehlt.
+      setError(spoken.error);
+    }
   };
 
   const save = async () => {
@@ -441,9 +459,13 @@ export const VoicesCard = () => {
               value={transcript}
               onChange={(e) => setTranscript(e.target.value)}
               placeholder={
-                mode.source === "recording"
-                  ? t("tts.voices.transcriptPlaceholder")
-                  : t("tts.voices.transcriptImportPlaceholder")
+                transcribing
+                  ? t("tts.voices.transcribing")
+                  : !(getSetting("tts_reference_auto_transcribe") ?? true)
+                    ? t("tts.voices.transcriptManualPlaceholder")
+                    : mode.source === "recording"
+                      ? t("tts.voices.transcriptPlaceholder")
+                      : t("tts.voices.transcriptImportPlaceholder")
               }
               rows={4}
               className="w-full"
@@ -451,7 +473,7 @@ export const VoicesCard = () => {
             <div className="flex gap-2">
               <Button
                 onClick={save}
-                disabled={busy || name.trim().length === 0}
+                disabled={busy || transcribing || name.trim().length === 0}
               >
                 {t("tts.voices.save")}
               </Button>

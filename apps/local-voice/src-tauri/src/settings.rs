@@ -564,6 +564,14 @@ pub struct AppSettings {
     /// Wie stark die Klangbearbeitung eingreift.
     #[serde(default)]
     pub tts_enhance_strength: crate::managers::tts::enhance::Strength,
+    /// Referenzaufnahmen fuers Klonen selbst transkribieren. Das
+    /// Transkript (`sample.lab`) muss zur Aufnahme passen, sonst lernt
+    /// Fish Speech die Stimme an falschem Text — von Hand abzutippen ist
+    /// aber die laestigste Stelle des ganzen Ablaufs. Deshalb an per
+    /// Vorgabe; aus geschaltet bleibt das Textfeld leer und wartet auf
+    /// Eingabe, wie vor diesem Schalter.
+    #[serde(default = "default_tts_reference_auto_transcribe")]
+    pub tts_reference_auto_transcribe: bool,
     /// Wiedergabegeschwindigkeit (0.5–2.0; verändert per Resampling auch die
     /// Tonhöhe leicht — kleiner Bereich um 1.0 klingt natürlich).
     #[serde(default = "default_tts_speed")]
@@ -655,6 +663,12 @@ fn default_tts_volume() -> f32 {
 /// Eine zu kräftige Kette klingt atemlos, und das fällt mehr auf als etwas
 /// Rauschen.
 fn default_tts_enhance() -> bool {
+    true
+}
+
+/// An per Vorgabe: die Transkription kostet ein paar Sekunden, das
+/// Abtippen einer halben Minute Sprache kostet Minuten.
+fn default_tts_reference_auto_transcribe() -> bool {
     true
 }
 
@@ -1309,6 +1323,7 @@ pub fn get_default_settings() -> AppSettings {
         tts_prewarm: false,
         tts_enhance: default_tts_enhance(),
         tts_enhance_strength: crate::managers::tts::enhance::Strength::default(),
+        tts_reference_auto_transcribe: default_tts_reference_auto_transcribe(),
         tts_speed: default_tts_speed(),
         tts_export_format: default_tts_export_format(),
         tts_export_bitrate: default_tts_export_bitrate(),
@@ -1994,6 +2009,24 @@ mod tests {
         let out = format!("{:?}", map);
         assert!(!out.contains("secret"));
         assert!(out.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn reference_auto_transcribe_is_on_by_default() {
+        // Der laestigste Schritt beim Klonen ist das Abtippen der
+        // Referenz. Die Vorgabe nimmt ihn ab; wer lieber selbst schreibt,
+        // schaltet ihn aus.
+        assert!(get_default_settings().tts_reference_auto_transcribe);
+    }
+
+    #[test]
+    fn reference_auto_transcribe_survives_an_old_settings_file() {
+        // Eine Datei aus einer aelteren Fassung kennt das Feld nicht. Ohne
+        // `serde(default)` waere es dann `false` — die Vorgabe waere fuer
+        // alle bestehenden Installationen genau verkehrt herum.
+        let json = r#"{"tts_voice": null}"#;
+        let parsed: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(parsed.tts_reference_auto_transcribe);
     }
 
     #[test]

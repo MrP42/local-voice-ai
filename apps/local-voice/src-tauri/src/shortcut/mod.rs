@@ -696,6 +696,18 @@ pub fn change_tts_enhance_setting(app: AppHandle, value: bool) -> Result<(), Str
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_tts_reference_auto_transcribe_setting(
+    app: AppHandle,
+    value: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_reference_auto_transcribe = value;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_tts_enhance_strength_setting(
     app: AppHandle,
     value: crate::managers::tts::enhance::Strength,
