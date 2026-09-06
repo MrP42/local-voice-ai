@@ -189,6 +189,14 @@ async changeTtsEnhanceSetting(value: boolean) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async changeTtsReferenceAutoTranscribeSetting(value: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_reference_auto_transcribe_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsEnhanceStrengthSetting(value: Strength) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_enhance_strength_setting", { value }) };
@@ -1567,6 +1575,14 @@ async ttsRecordReferenceStop() : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async ttsTranscribeReference(path: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_transcribe_reference", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsSaveVoice(name: string, transcript: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_save_voice", { name, transcript }) };
@@ -2183,6 +2199,10 @@ tts_enhance?: boolean;
  * Wie stark die Klangbearbeitung eingreift.
  */
 tts_enhance_strength?: Strength; 
+/**
+ * Referenzaufnahmen fuers Klonen selbst transkribieren.
+ */
+tts_reference_auto_transcribe?: boolean; 
 /**
  * Wiedergabegeschwindigkeit (0.5–2.0; verändert per Resampling auch die
  * Tonhöhe leicht — kleiner Bereich um 1.0 klingt natürlich).

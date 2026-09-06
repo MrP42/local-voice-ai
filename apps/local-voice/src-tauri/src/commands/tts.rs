@@ -104,6 +104,18 @@ pub fn tts_record_reference_stop(app: AppHandle) -> Result<String, String> {
     app.state::<Arc<TtsManager>>().record_reference_stop()
 }
 
+/// Eine gewaehlte Audiodatei transkribieren, ohne sie schon als Stimme
+/// anzulegen — fuer die Vorschau des Transkripts vor dem Speichern.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_transcribe_reference(app: AppHandle, path: String) -> Result<String, String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    // Transkription blockiert; ohne eigenen Thread stuende die Oberflaeche.
+    tauri::async_runtime::spawn_blocking(move || tts.transcribe_reference_path(&path))
+        .await
+        .map_err(|e| format!("Transkription abgebrochen: {e}"))?
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn tts_save_voice(app: AppHandle, name: String, transcript: String) -> Result<String, String> {
