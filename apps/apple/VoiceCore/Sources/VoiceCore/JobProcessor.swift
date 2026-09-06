@@ -1,6 +1,6 @@
 import Foundation
 
-/// One foreground worker, durable attempt budget and stage checkpoints; no background polling.
+/// One worker under an explicit execution grant, durable failure budget and stage checkpoints.
 @MainActor
 public final class JobProcessor {
     public var fixedAnswer = false

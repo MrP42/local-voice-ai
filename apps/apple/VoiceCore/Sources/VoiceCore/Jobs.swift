@@ -41,6 +41,7 @@ extension DurableStore {
     public func pauseJob(_ id: UUID, userInitiated: Bool = false) throws {
         var entry = try loadEntry(for: id)
         guard entry.reply == nil, var job = entry.job, job.running else { return }
+        if !userInitiated { job.attempts = max(0, job.attempts - 1) }
         job.phase = userInitiated ? .cancelled : .paused
         job.failure = .interrupted; job.nextAttemptAt = nil
         entry.job = job; entry.state = .deferred; try save(entry)

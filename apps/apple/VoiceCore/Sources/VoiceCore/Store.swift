@@ -248,7 +248,11 @@ public final class DurableStore {
     func write(_ data: Data, to url: URL) throws {
         do {
         try fault?(.beforeWrite)
+        #if os(iOS)
+        try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        #else
         try data.write(to: url, options: .atomic)
+        #endif
         let handle = try FileHandle(forWritingTo: url)
         defer { try? handle.close() }
         try handle.synchronize()
