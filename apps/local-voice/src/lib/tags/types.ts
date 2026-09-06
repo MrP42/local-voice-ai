@@ -36,6 +36,14 @@ export interface TagDef {
   /** Suchbegriffe de+en, die nicht schon Label/Insert sind. */
   aliases?: string[];
   /**
+   * Wahr, wenn das Tag wörtlich in der offiziellen „Rich Emotion Library"
+   * des S2-Pro-README steht (34 Einträge). Alles andere ist Freitext: S2
+   * nimmt es entgegen, versteht es aber vielleicht nicht — und was das
+   * Modell nicht versteht, LIEST es vor, statt ihm zu folgen. Die Oberfläche
+   * unterscheidet beide Klassen sichtbar, verbietet aber nichts.
+   */
+  verified?: boolean;
+  /**
    * S1-Pendant für die (…)-Klammer-Schreibweise, falls es eines gibt —
    * bei identischem Namen derselbe String, sonst `null`. Dient späteren
    * Paketen als Mapping-Grundlage; A2 selbst zeigt nur die S2-Klammerform.

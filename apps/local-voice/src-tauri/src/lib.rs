@@ -1291,6 +1291,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_tts_enhance_strength_setting,
             shortcut::change_tts_speed_setting,
             shortcut::change_tts_export_format_setting,
+            shortcut::change_tts_export_bitrate_setting,
             shortcut::change_tts_context_menu_setting,
             shortcut::change_tts_tag_favorites_setting,
             shortcut::change_tts_tag_provider_setting,

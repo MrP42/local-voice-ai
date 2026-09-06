@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileAudio, Loader2, Trash2, Wand2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -14,6 +14,9 @@ import { useBuilderDraft } from "./useBuilderDraft";
 /** So viele Kandidaten je Lauf: genug zum Aussuchen, wenig genug, dass der
  *  Lauf in einer Kaffeepause fertig ist. */
 const CANDIDATE_COUNT = 6;
+
+/** Ab so vielen Kacheln bekommt die Rezeptliste ein Suchfeld. */
+const RECIPE_SEARCH_THRESHOLD = 8;
 
 /** Ein geworfener Fehler (Tauri liefert bei harten Fehlern eine Exception)
  *  soll denselben Weg gehen wie ein `Result`-Fehler: als Text in die Karte. */
@@ -44,6 +47,19 @@ export const VoiceBuilder: React.FC<{ onSaved: (voiceId: string) => void }> = ({
   // gueltiger Zwischenstand, `number | null` wuerde beim Tippen stolpern.
   const [trimStart, setTrimStart] = useState("");
   const [trimEnd, setTrimEnd] = useState("");
+  // Gesucht wird ueber Name UND Beschreibung: wer „Drache" nicht im Kopf hat,
+  // tippt „gruselig" oder „tief". Teilzeichenkette ueber `toLowerCase()` —
+  // `localeCompare` kennt keine Teiltreffer, Umlaute gehen so mit.
+  const [recipeQuery, setRecipeQuery] = useState("");
+  const visibleRecipes = useMemo(() => {
+    const needle = recipeQuery.trim().toLowerCase();
+    if (needle === "") return VOICE_RECIPES;
+    return VOICE_RECIPES.filter(
+      (recipe) =>
+        recipe.name.toLowerCase().includes(needle) ||
+        recipe.description.toLowerCase().includes(needle),
+    );
+  }, [recipeQuery]);
 
   /** Leeres oder unsinniges Feld heisst 0 — und 0/0 nimmt die ganze Datei. */
   const seconds = (value: string): number => {
@@ -221,11 +237,25 @@ export const VoiceBuilder: React.FC<{ onSaved: (voiceId: string) => void }> = ({
         <p className="text-sm font-medium text-text">
           {t("tts.builder.recipes")}
         </p>
+        {VOICE_RECIPES.length > RECIPE_SEARCH_THRESHOLD && (
+          <Input
+            type="text"
+            variant="compact"
+            value={recipeQuery}
+            onChange={(e) => setRecipeQuery(e.target.value)}
+            placeholder={t("tts.builder.searchPlaceholder")}
+            aria-label={t("tts.builder.searchPlaceholder")}
+            className="w-full max-w-xs"
+          />
+        )}
+        {visibleRecipes.length === 0 && (
+          <p className="text-xs text-text/50">{t("tts.builder.emptySearch")}</p>
+        )}
         <div className="flex flex-wrap gap-2">
           {/* Rezeptkacheln tragen einen Farbpunkt neben dem Namen — dafuer
               gibt die Button-Komponente keine Form her, die A11y-Regeln der
               Vorlesen-Oberflaeche gelten hier trotzdem. */}
-          {VOICE_RECIPES.map((recipe) => (
+          {visibleRecipes.map((recipe) => (
             <button
               key={recipe.id}
               type="button"

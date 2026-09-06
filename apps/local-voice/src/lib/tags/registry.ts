@@ -34,6 +34,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "angry",
     insert: "angry",
+    verified: true,
     category: "emotionBasic",
     label: { en: "Angry", de: "Wütend" },
     description: {
@@ -46,6 +47,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "excited",
     insert: "excited",
+    verified: true,
     category: "emotionBasic",
     label: { en: "Excited", de: "Aufgeregt" },
     description: {
@@ -58,6 +60,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "surprised",
     insert: "surprised",
+    verified: true,
     category: "emotionBasic",
     label: { en: "Surprised", de: "Überrascht" },
     description: {
@@ -70,6 +73,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "delight",
     insert: "delight",
+    verified: true,
     category: "emotionBasic",
     label: { en: "Delight", de: "Freude" },
     description: {
@@ -82,6 +86,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "sad",
     insert: "sad",
+    verified: true,
     category: "emotionBasic",
     label: { en: "Sad", de: "Traurig" },
     description: {
@@ -94,6 +99,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "shocked",
     insert: "shocked",
+    verified: true,
     category: "emotionBasic",
     label: { en: "Shocked", de: "Schockiert" },
     description: {
@@ -674,6 +680,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "laughing-tone",
     insert: "laughing tone",
+    verified: true,
     category: "tone",
     label: { en: "Laughing tone", de: "Lachender Tonfall" },
     description: {
@@ -686,6 +693,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "excited-tone",
     insert: "excited tone",
+    verified: true,
     category: "tone",
     label: { en: "Excited tone", de: "Aufgeregter Tonfall" },
     description: {
@@ -698,6 +706,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "low-voice",
     insert: "low voice",
+    verified: true,
     category: "tone",
     label: { en: "Low voice", de: "Tiefe Stimme" },
     description: {
@@ -710,6 +719,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "whisper",
     insert: "whisper",
+    verified: true,
     category: "tone",
     label: { en: "Whisper", de: "Flüstern" },
     description: {
@@ -722,6 +732,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "screaming",
     insert: "screaming",
+    verified: true,
     category: "tone",
     label: { en: "Screaming", de: "Schreiend" },
     description: {
@@ -734,6 +745,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "shouting",
     insert: "shouting",
+    verified: true,
     category: "tone",
     label: { en: "Shouting", de: "Rufend" },
     description: {
@@ -784,6 +796,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "volume-up",
     insert: "volume up",
+    verified: true,
     category: "dynamics",
     label: { en: "Volume up", de: "Lauter werdend" },
     description: {
@@ -796,6 +809,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "low-volume",
     insert: "low volume",
+    verified: true,
     category: "dynamics",
     label: { en: "Low volume", de: "Leise" },
     description: {
@@ -808,6 +822,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "loud",
     insert: "loud",
+    verified: true,
     category: "dynamics",
     label: { en: "Loud", de: "Laut" },
     description: {
@@ -820,6 +835,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "volume-down",
     insert: "volume down",
+    verified: true,
     category: "dynamics",
     label: { en: "Volume down", de: "Leiser werdend" },
     description: {
@@ -858,6 +874,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "laughing",
     insert: "laughing",
+    verified: true,
     category: "effects",
     label: { en: "Laughing", de: "Lachen" },
     description: {
@@ -870,6 +887,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "inhale",
     insert: "inhale",
+    verified: true,
     category: "effects",
     label: { en: "Inhale", de: "Einatmen" },
     description: {
@@ -882,6 +900,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "chuckle",
     insert: "chuckle",
+    verified: true,
     category: "effects",
     label: { en: "Chuckle", de: "Kichern" },
     description: {
@@ -894,6 +913,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "tsk",
     insert: "tsk",
+    verified: true,
     category: "effects",
     label: { en: "Tsk", de: "Zungenschnalzen" },
     description: {
@@ -906,6 +926,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "interrupting",
     insert: "interrupting",
+    verified: true,
     category: "effects",
     label: { en: "Interrupting", de: "Unterbrechend" },
     description: {
@@ -918,6 +939,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "chuckling",
     insert: "chuckling",
+    verified: true,
     category: "effects",
     label: { en: "Chuckling", de: "Kichernd" },
     description: {
@@ -930,6 +952,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "sigh",
     insert: "sigh",
+    verified: true,
     category: "effects",
     label: { en: "Sigh", de: "Seufzer" },
     description: {
@@ -942,6 +965,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "exhale",
     insert: "exhale",
+    verified: true,
     category: "effects",
     label: { en: "Exhale", de: "Ausatmen" },
     description: {
@@ -954,6 +978,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "panting",
     insert: "panting",
+    verified: true,
     category: "effects",
     label: { en: "Panting", de: "Keuchen" },
     description: {
@@ -966,6 +991,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "audience-laughter",
     insert: "audience laughter",
+    verified: true,
     category: "effects",
     label: { en: "Audience laughter", de: "Publikumsgelächter" },
     description: {
@@ -978,6 +1004,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "clearing-throat",
     insert: "clearing throat",
+    verified: true,
     category: "effects",
     label: { en: "Clearing throat", de: "Räuspern" },
     description: {
@@ -990,6 +1017,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "moaning",
     insert: "moaning",
+    verified: true,
     category: "effects",
     label: { en: "Moaning", de: "Stöhnen" },
     description: {
@@ -1088,22 +1116,24 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "pause",
     insert: "pause",
+    verified: true,
     category: "pauses",
     label: { en: "Pause", de: "Pause" },
     description: {
-      en: "A natural pause in speech.",
-      de: "Eine natürliche Sprechpause.",
+      en: "A natural pause in speech — the app inserts these 0.5 s of silence itself, so it always works.",
+      de: "Eine natürliche Sprechpause — die App fügt diese 0,5 Sekunden Stille selbst ein, die Pause wirkt also immer.",
     },
     s1: null,
   },
   {
     id: "short-pause",
     insert: "short pause",
+    verified: true,
     category: "pauses",
     label: { en: "Short pause", de: "Kurze Pause" },
     description: {
-      en: "A brief beat of silence.",
-      de: "Ein kurzer Moment Stille.",
+      en: "A brief beat of silence — the app inserts these 0.25 s itself, so it always works.",
+      de: "Ein kurzer Moment Stille — die App fügt diese 0,25 Sekunden selbst ein, die Pause wirkt also immer.",
     },
     aliases: ["kurze pause"],
     s1: null,
@@ -1114,8 +1144,8 @@ export const TAG_REGISTRY: TagDef[] = [
     category: "pauses",
     label: { en: "Long pause", de: "Lange Pause" },
     description: {
-      en: "An extended silence for emphasis.",
-      de: "Eine längere Stille zur Betonung.",
+      en: "An extended silence for emphasis — the app inserts this full second itself, so it works even though the model does not know this tag.",
+      de: "Eine längere Stille zur Betonung — die App fügt diese ganze Sekunde selbst ein, die Pause wirkt also auch ohne dass das Modell das Tag kennt.",
     },
     aliases: ["lange pause"],
     s1: null,
@@ -1126,8 +1156,8 @@ export const TAG_REGISTRY: TagDef[] = [
     category: "pauses",
     label: { en: "Break", de: "Sprechpause" },
     description: {
-      en: "A clean break between phrases.",
-      de: "Ein klarer Einschnitt zwischen Phrasen.",
+      en: "A clean break between phrases — the app inserts these 0.7 s of silence itself, so it works even though the model does not know this tag.",
+      de: "Ein klarer Einschnitt zwischen Phrasen — die App fügt diese 0,7 Sekunden Stille selbst ein, die Pause wirkt also auch ohne dass das Modell das Tag kennt.",
     },
     aliases: ["einschnitt"],
     s1: null,
@@ -1137,6 +1167,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "emphasis",
     insert: "emphasis",
+    verified: true,
     category: "special",
     label: { en: "Emphasis", de: "Betonung" },
     description: {
@@ -1149,6 +1180,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "singing",
     insert: "singing",
+    verified: true,
     category: "special",
     label: { en: "Singing", de: "Singend" },
     description: {
@@ -1161,6 +1193,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "echo",
     insert: "echo",
+    verified: true,
     category: "special",
     label: { en: "Echo", de: "Echo" },
     description: {
@@ -1173,6 +1206,7 @@ export const TAG_REGISTRY: TagDef[] = [
   {
     id: "with-strong-accent",
     insert: "with strong accent",
+    verified: true,
     category: "special",
     label: { en: "With strong accent", de: "Mit starkem Akzent" },
     description: {

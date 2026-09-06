@@ -572,6 +572,11 @@ pub struct AppSettings {
     /// Fish-Server encodiert direkt.
     #[serde(default = "default_tts_export_format")]
     pub tts_export_format: String,
+    /// Bitrate des MP3-Exports in kbit/s. Nur 128, 192, 256 und 320 sind
+    /// erlaubt; gelesen wird immer über `clamp_tts_export_bitrate`, damit ein
+    /// von Hand verbogener Wert nichts kaputtmacht.
+    #[serde(default = "default_tts_export_bitrate")]
+    pub tts_export_bitrate: u32,
     /// Windows-Explorer-Kontextmenü „Mit Local Voice AI vorlesen" für
     /// Dokumente (txt/md/pdf/docx). Benutzer-Registry, kein Admin nötig.
     #[serde(default)]
@@ -664,6 +669,26 @@ fn default_tts_speed() -> f32 {
 
 fn default_tts_export_format() -> String {
     "wav".to_string()
+}
+
+fn default_tts_export_bitrate() -> u32 {
+    192
+}
+
+/// Erlaubte MP3-Bitraten in kbit/s — mehr Stufen braucht niemand, und jede
+/// zusätzliche Stufe müsste die Oberfläche auch erklären.
+pub const TTS_EXPORT_BITRATES: [u32; 4] = [128, 192, 256, 320];
+
+/// Einen beliebigen Wert auf die nächstliegende erlaubte Bitrate ziehen.
+///
+/// Die Einstellungen liegen als JSON auf der Platte und lassen sich von Hand
+/// ändern. Ein dort eingetragenes 999 soll den Export nicht scheitern lassen,
+/// sondern schlicht die höchste Stufe bedeuten.
+pub fn clamp_tts_export_bitrate(value: u32) -> u32 {
+    TTS_EXPORT_BITRATES
+        .into_iter()
+        .min_by_key(|allowed| allowed.abs_diff(value))
+        .unwrap_or(192)
 }
 
 fn default_tts_compile() -> bool {
@@ -1286,6 +1311,7 @@ pub fn get_default_settings() -> AppSettings {
         tts_enhance_strength: crate::managers::tts::enhance::Strength::default(),
         tts_speed: default_tts_speed(),
         tts_export_format: default_tts_export_format(),
+        tts_export_bitrate: default_tts_export_bitrate(),
         tts_context_menu: false,
         tts_engine: default_tts_engine(),
         tts_preview_engine: String::new(),

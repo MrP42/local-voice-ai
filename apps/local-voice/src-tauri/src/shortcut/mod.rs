@@ -734,6 +734,19 @@ pub fn change_tts_export_format_setting(app: AppHandle, value: String) -> Result
     Ok(())
 }
 
+/// Bitrate des MP3-Exports. Anders als beim Format wird ein unbekannter
+/// Wert hier NICHT abgewiesen, sondern auf die naechstliegende erlaubte
+/// Stufe gezogen: bei einem Format ist ein fremder Wert sinnlos, bei einer
+/// Bitrate ist 190 eine klare Absicht.
+#[tauri::command]
+#[specta::specta]
+pub fn change_tts_export_bitrate_setting(app: AppHandle, value: u32) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_export_bitrate = settings::clamp_tts_export_bitrate(value);
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_tts_context_menu_setting(app: AppHandle, value: bool) -> Result<(), String> {

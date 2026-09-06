@@ -43,11 +43,16 @@
       "emptyFavorites": "No favorites yet — click the star on a tag to pin it here.",
       "emptyRecent": "Nothing used yet.",
       "emptySearch": "No tags match your search.",
+      "freeText": "Free text “{{tag}}” — not a known tag. The model may read it aloud instead of following it.",
+      "undocumented": "{{tag}} — not in Fish Audio's official tag list. The model may read it aloud instead of following it.",
+      "undocumentedHint": "Not in Fish Audio's official tag list — the model may read it aloud instead of following it.",
       "favoriteAdd": "Add \"{{tag}}\" to favorites",
       "favoriteRemove": "Remove \"{{tag}}\" from favorites"
     },
     "speakers": {
       "menuInsert": "Insert speaker",
+      "searchPlaceholder": "Search voices…",
+      "emptySearch": "No voices match your search.",
       "change": "Change speaker",
       "changeHint": "A chosen speaker takes over this passage.",
       "chipTitle": "{{name}} speaks from here",
@@ -79,6 +84,8 @@
       "resume": "Resume draft",
       "drafts": "Unfinished drafts",
       "recipes": "Start from a character",
+      "searchPlaceholder": "Search recipes…",
+      "emptySearch": "No recipes match your search.",
       "seedNote": "Fish-Speech cannot build a voice from a description — each candidate is a different random voice. The description shapes the sample sentence, the tags and the saved metadata.",
       "errorNoServer": "The speech server is not running — start it on the Read aloud page.",
       "errorNoCandidate": "Pick a candidate first.",
@@ -164,7 +171,15 @@
       "example1": "[whisper] Come closer…",
       "example2": "He opened the door. [short pause] Nothing.",
       "example3": "[laughing] You can't be serious!"
-    }
+    },
+    "settings": {
+      "exportBitrate": "MP3 bitrate",
+      "exportBitrateDescription": "Sound quality and file size of the MP3 export. 192 kbps is plenty for speech; higher settings only pay off for music.",
+      "exportBitrateOption": "{{rate}} kbps"
+    },
+    "exportEta": "about {{time}} left",
+    "exportEtaComputing": "estimating time left",
+    "exportSaved": "Saved: {{path}}"
   },
   "onboarding": {
     "subtitle": "Para começar, escolha um modelo de transcrição",

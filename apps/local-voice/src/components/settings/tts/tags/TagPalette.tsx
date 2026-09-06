@@ -54,6 +54,9 @@ interface ChipItem {
   label: string;
   description?: string;
   registryId?: string;
+  /** Steht das Tag in der offiziellen Fish-Audio-Liste (oder ist es eine
+   *  Pause, die die App selbst erzeugt)? Sonst: bernstein statt gelb. */
+  reliable: boolean;
 }
 
 const toChipItem = (tag: TagDef, uiLang: string): ChipItem => ({
@@ -62,12 +65,14 @@ const toChipItem = (tag: TagDef, uiLang: string): ChipItem => ({
   label: localizedLabel(tag, uiLang),
   description: uiLang === "de" ? tag.description?.de : tag.description?.en,
   registryId: tag.id,
+  reliable: tag.verified === true || tag.category === "pauses",
 });
 
 const toCustomChipItem = (text: string): ChipItem => ({
   key: `custom:${text}`,
   insertText: text,
   label: text,
+  reliable: false,
 });
 
 const TabButton: React.FC<{
@@ -352,11 +357,18 @@ export const TagPalette: React.FC<{
                         Mindestvorgabe fuer Touch-Ziele. */}
                     <TagChip
                       label={item.label}
+                      state={item.reliable ? "normal" : "unverified"}
                       onClick={() => insertItem(item)}
                       onPointerDown={
                         onDragInsert ? handleChipPointerDown(item) : undefined
                       }
-                      title={item.description}
+                      title={
+                        item.reliable
+                          ? item.description
+                          : [item.description, t("tts.tags.undocumentedHint")]
+                              .filter(Boolean)
+                              .join(" — ")
+                      }
                       className="p-3"
                     />
                     {item.registryId && (

@@ -213,6 +213,14 @@ async changeTtsExportFormatSetting(value: string) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
+async changeTtsExportBitrateSetting(value: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_export_bitrate_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsContextMenuSetting(value: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_context_menu_setting", { value }) };
@@ -1728,14 +1736,17 @@ async ttsVoicechangeFile(wavPath: string) : Promise<Result<string, string>> {
 }
 },
 /**
- * Den Vorlesetext samt Sprecherwechseln in eine WAV-Datei schreiben.
+ * Den Vorlesetext samt Sprecherwechseln in eine Audiodatei schreiben.
  * 
  * Kehrt SOFORT zurueck; der Lauf arbeitet im Hintergrund weiter und meldet
  * sich ueber `tts-export-progress`. Ein langer Text braucht Minuten — die
  * Oberflaeche darf solange nicht blockiert sein, und der Fortschritt gehoert
  * sichtbar auf den Schirm statt in eine wartende Zusage.
+ * 
+ * Rueckgabe: der Pfad, der TATSAECHLICH entsteht. Das Format bestimmt die
+ * Einstellung `tts_export_format`, nicht die Endung des Zielpfads.
  */
-async ttsSpeakToFile(text: string, outPath: string) : Promise<Result<null, string>> {
+async ttsSpeakToFile(text: string, outPath: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_speak_to_file", { text, outPath }) };
 } catch (e) {
@@ -2182,6 +2193,11 @@ tts_speed?: number;
  * Fish-Server encodiert direkt.
  */
 tts_export_format?: string; 
+/**
+ * Bitrate des MP3-Exports in kbit/s. Nur 128, 192, 256 und 320 sind
+ * erlaubt; ein anderer Wert wird auf die naechstliegende Stufe gezogen.
+ */
+tts_export_bitrate?: number; 
 /**
  * Windows-Explorer-Kontextmenü „Mit Local Voice AI vorlesen" für
  * Dokumente (txt/md/pdf/docx). Benutzer-Registry, kein Admin nötig.

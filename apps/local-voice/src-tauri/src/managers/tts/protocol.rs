@@ -433,6 +433,65 @@ pub fn split_sentences(text: &str) -> Vec<String> {
     sentences
 }
 
+/// Ein Stueck Vorlesetext: entweder zu sprechen oder Stille (Millisekunden).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SpeechPart {
+    Speak(String),
+    Silence(u32),
+}
+
+/// Dauer eines Pausen-Tags, oder `None` für jedes andere Tag.
+///
+/// Nur diese vier Namen erzeugen Stille; alles andere (`[whisper]`,
+/// Freitext-Stimmungen) bleibt im gesprochenen Text stehen — das versteht das
+/// Modell selbst. Vergleich getrimmt und case-insensitiv, damit `[ Pause ]`
+/// genauso zählt wie `[pause]`.
+fn pause_millis(inner: &str) -> Option<u32> {
+    match inner.trim().to_lowercase().as_str() {
+        "pause" => Some(500),
+        "short pause" => Some(250),
+        "long pause" => Some(1000),
+        "break" => Some(700),
+        _ => None,
+    }
+}
+
+/// Zerlegt Vorlesetext an Pausen-Tags in Sprech- und Stille-Abschnitte.
+///
+/// Eine Pause ist Stille definierter Länge — dafür braucht es kein
+/// Sprachmodell. Die App erzeugt sie selbst, damit sie in jeder Sprache und
+/// mit jeder Engine wirkt; das Modell kennt `[long pause]`/`[break]` gar
+/// nicht und läse sie sonst wörtlich vor.
+///
+/// Die Klammer-Regeln kommen unverändert aus `tag_spans` (kein Zeilenumbruch
+/// im Tag, das erste `]` schließt). Leere Sprech-Stücke entstehen nicht:
+/// Pausen am Anfang, am Ende oder direkt hintereinander liefern nur Stille.
+pub fn split_pauses(text: &str) -> Vec<SpeechPart> {
+    let mut parts = Vec::new();
+    let mut buffer = String::new();
+    let mut last = 0usize;
+    for span in tag_spans(text) {
+        let inner = &text[span.start + 1..span.end - 1];
+        if let Some(ms) = pause_millis(inner) {
+            buffer.push_str(&text[last..span.start]);
+            flush_speak(&mut buffer, &mut parts);
+            parts.push(SpeechPart::Silence(ms));
+            last = span.end;
+        }
+    }
+    buffer.push_str(&text[last..]);
+    flush_speak(&mut buffer, &mut parts);
+    parts
+}
+
+fn flush_speak(buffer: &mut String, parts: &mut Vec<SpeechPart>) {
+    let trimmed = buffer.trim();
+    if !trimmed.is_empty() {
+        parts.push(SpeechPart::Speak(trimmed.to_string()));
+    }
+    buffer.clear();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -724,6 +783,114 @@ patrick: Hi.",
         assert_eq!(
             b["text"], "Hallo [whisper] Welt",
             "Square ist heute ein No-op, verankert nur die Aufrufstelle"
+        );
+    }
+
+    // ---- Pausen: Stille statt Bitte ans Modell --------------------------
+
+    #[test]
+    fn text_ohne_tags_bleibt_ein_einziges_sprechstueck() {
+        assert_eq!(
+            split_pauses("Guten Tag, alles klar."),
+            vec![SpeechPart::Speak("Guten Tag, alles klar.".to_string())]
+        );
+    }
+
+    #[test]
+    fn pausen_tag_zerlegt_in_sprechen_stille_sprechen() {
+        assert_eq!(
+            split_pauses("Guten Tag. [pause] Und weiter."),
+            vec![
+                SpeechPart::Speak("Guten Tag.".to_string()),
+                SpeechPart::Silence(500),
+                SpeechPart::Speak("Und weiter.".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn alle_vier_pausenlaengen_sind_verankert() {
+        for (tag, ms) in [
+            ("pause", 500u32),
+            ("short pause", 250),
+            ("long pause", 1000),
+            ("break", 700),
+        ] {
+            assert_eq!(
+                split_pauses(&format!("A [{tag}] B")),
+                vec![
+                    SpeechPart::Speak("A".to_string()),
+                    SpeechPart::Silence(ms),
+                    SpeechPart::Speak("B".to_string()),
+                ],
+                "Tag [{tag}]"
+            );
+        }
+    }
+
+    #[test]
+    fn unbekannte_tags_bleiben_im_gesprochenen_text() {
+        assert_eq!(
+            split_pauses("Ich [whisper] fluestere."),
+            vec![SpeechPart::Speak("Ich [whisper] fluestere.".to_string())],
+            "andere Tags versteht das Modell selbst"
+        );
+    }
+
+    #[test]
+    fn pausen_tag_ist_gross_klein_und_leerzeichen_egal() {
+        assert_eq!(
+            split_pauses("A [ SHORT Pause ] B"),
+            vec![
+                SpeechPart::Speak("A".to_string()),
+                SpeechPart::Silence(250),
+                SpeechPart::Speak("B".to_string()),
+            ],
+            "getrimmt und case-insensitiv"
+        );
+    }
+
+    #[test]
+    fn zwei_pausen_hintereinander_ergeben_zwei_stille_stuecke() {
+        assert_eq!(
+            split_pauses("A [pause] [break] B"),
+            vec![
+                SpeechPart::Speak("A".to_string()),
+                SpeechPart::Silence(500),
+                SpeechPart::Silence(700),
+                SpeechPart::Speak("B".to_string()),
+            ],
+            "kein leeres Sprechstueck dazwischen"
+        );
+    }
+
+    #[test]
+    fn pause_am_anfang_oder_ende_erzeugt_kein_leeres_sprechstueck() {
+        assert_eq!(
+            split_pauses("[long pause] Erst jetzt."),
+            vec![
+                SpeechPart::Silence(1000),
+                SpeechPart::Speak("Erst jetzt.".to_string()),
+            ]
+        );
+        assert_eq!(
+            split_pauses("Und Schluss. [pause]"),
+            vec![
+                SpeechPart::Speak("Und Schluss.".to_string()),
+                SpeechPart::Silence(500),
+            ]
+        );
+        assert!(split_pauses("  [pause]  ").len() == 1);
+    }
+
+    #[test]
+    fn ungeschlossene_klammer_ist_auch_hier_kein_pausen_tag() {
+        // Dieselben Klammer-Regeln wie `tag_spans`: ohne schliessende Klammer
+        // in derselben Zeile ist es kein Tag.
+        let text = "A [pause\nB";
+        assert_eq!(
+            split_pauses(text),
+            vec![SpeechPart::Speak(text.to_string())]
         );
     }
 

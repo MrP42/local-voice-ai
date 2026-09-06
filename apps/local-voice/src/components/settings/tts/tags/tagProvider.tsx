@@ -56,6 +56,14 @@ const findTagDef = (inner: string): TagDef | undefined => {
   return TAG_REGISTRY.find((tag) => tag.insert.toLowerCase() === key);
 };
 
+/**
+ * Wirkt das Tag verlässlich? Nur zwei Klassen tun das: die dokumentierten
+ * S2-Tags und die Pausen, die die App selbst als Stille einsetzt, statt sie
+ * ans Modell zu schicken. Alles andere ist Freitext mit offenem Ausgang.
+ */
+const isReliable = (def: TagDef | undefined): boolean =>
+  def !== undefined && (def.verified === true || def.category === "pauses");
+
 /** Höchstens so viele Zeilen zeigt die Ersetzen-Liste im Popover. */
 const MAX_POPOVER_RESULTS = 30;
 
@@ -242,11 +250,23 @@ const TagChipPopover: React.FC<{ match: ChipMatch; api: ChipPopoverApi }> = ({
 /**
  * Der Tag-Provider für den `TtsChipEditor` — erfüllt den bindenden
  * `ChipProvider`-Vertrag aus dem Editor. Alle Tags sind `state: "ok"`:
- * S2-Pro versteht auch Freitext in eckigen Klammern, es gibt hier also
- * keine „ungültigen" Tags.
+ * S2-Pro nimmt auch Freitext in eckigen Klammern entgegen — blockiert wird
+ * deshalb nichts. Aber „nimmt entgegen" heißt nicht „versteht": ein Tag, das
+ * das Modell nicht kennt, wird VORGELESEN statt befolgt, und auf Deutsch
+ * (bei S2 Pro nur Tier 2) passiert das häufiger als auf Englisch. Genau so
+ * landete ein erfundenes `[mysterious]` hörbar im Text eines Nutzers.
+ *
+ * Verlässlich sind genau zwei Klassen, und nur die bleiben unmarkiert:
+ * die 34 Tags der offiziellen „Rich Emotion Library" (`verified`) und die
+ * Pausen — Pausen erzeugt die App selbst als echte Stille, sie erreichen das
+ * Modell nie und wirken darum immer. Alles andere ist bernstein: die aus der
+ * S1-Wortliste übernommenen Emotionen genauso wie selbst getippter Freitext.
+ * Beide sind dasselbe Risiko, also sehen sie gleich aus. Sichtbar machen,
+ * nicht verbieten — Freitext funktioniert oft, und wer ihn bewusst setzt,
+ * soll ihn setzen dürfen.
  */
 export function useTagProvider(): ChipProvider {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
 
   return useMemo<ChipProvider>(
@@ -256,13 +276,22 @@ export function useTagProvider(): ChipProvider {
       render: (m) => {
         const inner = m.raw.slice(1, -1).trim();
         const def = findTagDef(inner);
+        const reliable = isReliable(def);
         return {
-          label: def ? localizedLabel(def, uiLang) : inner,
+          label: reliable
+            ? localizedLabel(def as TagDef, uiLang)
+            : def
+              ? t("tts.tags.undocumented", {
+                  tag: localizedLabel(def, uiLang),
+                })
+              : t("tts.tags.freeText", { tag: inner }),
+          // Bernstein: kein Fehler, aber auch keine Zusicherung.
+          color: reliable ? undefined : "#f59e0b",
           state: "ok",
         };
       },
       popover: (m, api) => <TagChipPopover match={m} api={api} />,
     }),
-    [uiLang],
+    [t, uiLang],
   );
 }

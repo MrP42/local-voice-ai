@@ -8,6 +8,7 @@
 pub mod builder;
 pub mod compile_cache;
 pub mod dsp;
+pub mod encode;
 pub mod engine;
 pub mod enhance;
 pub mod loudness;
@@ -706,8 +707,12 @@ impl TtsCore {
         on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
     ) -> Result<usize, String> {
         let max_chars = *self.max_chars.lock().unwrap();
+        // Der Index wird erst nach dem LETZTEN Stück eines Satzes gemeldet —
+        // ein Satz kann seit den mechanischen Pausen aus mehreren Stücken
+        // bestehen (Sprache, Stille, Sprache), gehört wurde er aber erst,
+        // wenn alle durch sind.
         let mut previous_playback: Option<(
-            usize,
+            Option<usize>,
             tauri::async_runtime::JoinHandle<Result<(), String>>,
         )> = None;
         let mut total_bytes = 0usize;
@@ -721,6 +726,11 @@ impl TtsCore {
                 cb(idx);
             }
         };
+        let notify_opt = |idx: Option<usize>, was_cancelled: bool| {
+            if let Some(idx) = idx {
+                notify(idx, was_cancelled);
+            }
+        };
 
         for (offset, (sentence, voice)) in sentences.iter().enumerate().skip(start_index) {
             if cancelled.load(Ordering::Acquire) {
@@ -731,73 +741,121 @@ impl TtsCore {
                 notify(offset, cancelled.load(Ordering::Acquire));
                 continue;
             };
-            // Der naechste Satz wird geholt, WAEHREND der vorige noch spielt
-            // (siehe `previous_playback` unten) — deshalb faellt ein
-            // Stimmwechsel nicht als Pause auf, solange der Server die
-            // Referenz im Speicher haelt (`use_memory_cache`).
-            match self
-                .fetch_wav(port, seed, &prepared.text, voice.as_deref())
-                .await
-            {
-                Ok(bytes) => {
-                    // Aufbereitung vor der Wiedergabe: Raender entschaerfen
-                    // (immer) und Klangbearbeitung (wenn eingeschaltet). Sie
-                    // laeuft, waehrend der vorige Satz noch spielt (siehe
-                    // Pipeline unten), faellt also nicht als Wartezeit auf.
-                    let strength = *self.enhance.lock().unwrap();
-                    let bytes = prepare_sentence_audio(bytes, strength);
-                    total_bytes += bytes.len();
-                    // Vorherigen Satz zu Ende spielen lassen (Reihenfolge!).
-                    if let Some((done_idx, handle)) = previous_playback.take() {
-                        match handle.await {
-                            Ok(Ok(())) => {
-                                notify(done_idx, cancelled.load(Ordering::Acquire));
-                            }
-                            Ok(Err(e)) => {
-                                failure = Some(e);
-                                break;
+            // Pausen-Tags werden HIER herausgeloest, vor `fetch_wav`: was der
+            // Server nie zu sehen bekommt, kann er auch nicht vorlesen.
+            // Stille erzeugen wir selbst — verlaesslich, in jeder Sprache.
+            let parts = protocol::split_pauses(&prepared.text);
+            // Abspielstuecke dieses Satzes: (Bytes, Pegelfaktor).
+            let mut blobs: Vec<(Vec<u8>, f32)> = Vec::new();
+            let mut pending_silence_ms = 0u32;
+            let mut last_rate: Option<u32> = None;
+            for part in &parts {
+                match part {
+                    protocol::SpeechPart::Silence(ms) => pending_silence_ms += ms,
+                    protocol::SpeechPart::Speak(text) => {
+                        // Der naechste Satz wird geholt, WAEHREND der vorige
+                        // noch spielt (siehe `previous_playback` unten) —
+                        // deshalb faellt ein Stimmwechsel nicht als Pause auf,
+                        // solange der Server die Referenz im Speicher haelt
+                        // (`use_memory_cache`).
+                        match self.fetch_wav(port, seed, text, voice.as_deref()).await {
+                            Ok(bytes) => {
+                                let rate = wav_sample_rate(&bytes).unwrap_or(44_100);
+                                last_rate = Some(rate);
+                                // Eine Pause VOR dem ersten gesprochenen
+                                // Stueck wartet, bis die Abtastrate des
+                                // Nachbarstuecks bekannt ist.
+                                if pending_silence_ms > 0 {
+                                    blobs.push((silence_wav(pending_silence_ms, rate), 1.0));
+                                    pending_silence_ms = 0;
+                                }
+                                // Aufbereitung vor der Wiedergabe: Raender
+                                // entschaerfen (immer) und Klangbearbeitung
+                                // (wenn eingeschaltet). Sie laeuft, waehrend
+                                // der vorige Satz noch spielt, faellt also
+                                // nicht als Wartezeit auf.
+                                let strength = *self.enhance.lock().unwrap();
+                                let bytes = prepare_sentence_audio(bytes, strength);
+                                // Stimmen gleich laut: der Pegelausgleich
+                                // dieses Satzes steht fest, der Nutzerregler
+                                // skaliert ihn live.
+                                let gain = self.playback_gain(voice.as_deref(), &bytes);
+                                // Dauerhaftes Tempo dieser Stimme. NACH der
+                                // Pegelmessung, damit die Lautheit bei der
+                                // echten Abtastrate gemessen wird.
+                                let bytes =
+                                    scale_wav_rate(bytes, self.voice_speed(voice.as_deref()));
+                                blobs.push((bytes, gain));
                             }
                             Err(e) => {
-                                failure = Some(e.to_string());
+                                failure = Some(e);
                                 break;
                             }
                         }
                     }
-                    if cancelled.load(Ordering::Acquire) {
-                        break;
+                }
+            }
+            if failure.is_some() {
+                break;
+            }
+            // Pause am Satzende: Rate des letzten Stuecks, sonst die uebliche.
+            if pending_silence_ms > 0 {
+                blobs.push((
+                    silence_wav(pending_silence_ms, last_rate.unwrap_or(44_100)),
+                    1.0,
+                ));
+            }
+            if blobs.is_empty() {
+                notify(offset, cancelled.load(Ordering::Acquire));
+                continue;
+            }
+            let last_blob = blobs.len() - 1;
+            for (blob_index, (bytes, gain)) in blobs.into_iter().enumerate() {
+                total_bytes += bytes.len();
+                // Vorheriges Stueck zu Ende spielen lassen (Reihenfolge!).
+                if let Some((done_idx, handle)) = previous_playback.take() {
+                    match handle.await {
+                        Ok(Ok(())) => {
+                            notify_opt(done_idx, cancelled.load(Ordering::Acquire));
+                        }
+                        Ok(Err(e)) => {
+                            failure = Some(e);
+                            break;
+                        }
+                        Err(e) => {
+                            failure = Some(e.to_string());
+                            break;
+                        }
                     }
-                    // Live-Anzeige: dieser Satz beginnt jetzt zu spielen.
+                }
+                if cancelled.load(Ordering::Acquire) {
+                    break;
+                }
+                // Live-Anzeige: dieser Satz beginnt jetzt zu spielen.
+                if blob_index == 0 {
                     if let Some(cb) = on_playing.as_ref() {
                         cb(offset);
                     }
-                    let player = self.player.clone();
-                    let device = self.output_device.lock().unwrap().clone();
-                    // Stimmen gleich laut: der Pegelausgleich dieses Satzes
-                    // steht fest, der Nutzerregler skaliert ihn live.
-                    let gain = self.playback_gain(voice.as_deref(), &bytes);
-                    // Dauerhaftes Tempo dieser Stimme. NACH der Pegelmessung,
-                    // damit die Lautheit bei der echten Abtastrate gemessen
-                    // wird; der Nutzerregler multipliziert im Player darauf.
-                    let bytes = scale_wav_rate(bytes, self.voice_speed(voice.as_deref()));
-                    let controls = Arc::clone(&self.controls);
-                    let cancel_flag = cancelled.clone();
-                    previous_playback = Some((
-                        offset,
-                        tauri::async_runtime::spawn_blocking(move || {
-                            player.play(bytes, device, gain, controls, cancel_flag)
-                        }),
-                    ));
                 }
-                Err(e) => {
-                    failure = Some(e);
-                    break;
-                }
+                let player = self.player.clone();
+                let device = self.output_device.lock().unwrap().clone();
+                let controls = Arc::clone(&self.controls);
+                let cancel_flag = cancelled.clone();
+                previous_playback = Some((
+                    (blob_index == last_blob).then_some(offset),
+                    tauri::async_runtime::spawn_blocking(move || {
+                        player.play(bytes, device, gain, controls, cancel_flag)
+                    }),
+                ));
+            }
+            if failure.is_some() {
+                break;
             }
         }
         if let Some((done_idx, handle)) = previous_playback {
             match handle.await {
                 Ok(Ok(())) => {
-                    notify(done_idx, cancelled.load(Ordering::Acquire));
+                    notify_opt(done_idx, cancelled.load(Ordering::Acquire));
                 }
                 Ok(Err(e)) => {
                     failure.get_or_insert(e);
@@ -943,6 +1001,60 @@ pub fn startup_error_summary(log: &str) -> Option<String> {
         summary.push('…');
     }
     Some(summary)
+}
+
+/// Ein `Write + Seek`-Ziel im Speicher, dessen Inhalt den WavWriter überlebt.
+///
+/// `hound::WavWriter::finalize()` verbraucht sich selbst und gibt seinen
+/// Writer nicht zurück — für den MP3-Export brauchen wir die fertigen
+/// WAV-Bytes aber danach noch. Daher die geteilte Hülle.
+#[derive(Clone, Default)]
+struct SharedWavBuffer(Arc<Mutex<std::io::Cursor<Vec<u8>>>>);
+
+impl SharedWavBuffer {
+    /// Die fertigen WAV-Bytes herausnehmen.
+    fn take(&self) -> Vec<u8> {
+        std::mem::take(self.0.lock().unwrap().get_mut())
+    }
+}
+
+impl std::io::Write for SharedWavBuffer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().unwrap().flush()
+    }
+}
+
+impl std::io::Seek for SharedWavBuffer {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.0.lock().unwrap().seek(pos)
+    }
+}
+
+/// Wohin der zusammengesetzte Ton läuft: direkt in die Datei (WAV) oder in
+/// den Speicher, um am Ende einmal kodiert zu werden (MP3).
+enum ExportSink {
+    File(hound::WavWriter<std::io::BufWriter<std::fs::File>>),
+    Memory(hound::WavWriter<SharedWavBuffer>),
+}
+
+impl ExportSink {
+    fn write_sample(&mut self, sample: i16) -> Result<(), hound::Error> {
+        match self {
+            ExportSink::File(w) => w.write_sample(sample),
+            ExportSink::Memory(w) => w.write_sample(sample),
+        }
+    }
+
+    fn finalize(self) -> Result<(), hound::Error> {
+        match self {
+            ExportSink::File(w) => w.finalize(),
+            ExportSink::Memory(w) => w.finalize(),
+        }
+    }
 }
 
 /// WAV-Blob zu Mono-Downmix, Abtastrate und Spitzenwert.
@@ -1201,6 +1313,29 @@ fn encode_wav_mono(samples: &[f32], rate: u32) -> Vec<u8> {
         out.extend_from_slice(&v.to_le_bytes());
     }
     out
+}
+
+/// Wie viele Samples `ms` Millisekunden Stille belegen — interleaved über
+/// alle Kanäle, also genau so viele Werte, wie in den Writer geschrieben
+/// werden müssen. Eigene Funktion, weil das die ganze Rechnung hinter einer
+/// Pause ist und sie ohne Soundkarte prüfbar bleiben soll.
+fn silence_sample_count(ms: u32, sample_rate: u32, channels: u16) -> usize {
+    let per_channel = sample_rate as u64 * ms as u64 / 1000;
+    per_channel as usize * channels.max(1) as usize
+}
+
+/// Ein Mono-WAV aus Stille — die Pause fürs Abspielen, mit der Abtastrate des
+/// Nachbarstücks, damit sie sich nahtlos einfügt.
+fn silence_wav(ms: u32, sample_rate: u32) -> Vec<u8> {
+    let samples = vec![0.0f32; silence_sample_count(ms, sample_rate, 1)];
+    encode_wav_mono(&samples, sample_rate)
+}
+
+/// Abtastrate eines WAV-Blobs, ohne ihn zu dekodieren.
+fn wav_sample_rate(bytes: &[u8]) -> Option<u32> {
+    hound::WavReader::new(std::io::Cursor::new(bytes))
+        .ok()
+        .map(|reader| reader.spec().sample_rate)
 }
 
 /// Den Tiefe-Regler auf WAV-Bytes anwenden: dekodieren, strecken, wieder als
@@ -2600,8 +2735,19 @@ impl TtsManager {
         Ok(out)
     }
 
-    /// Den ganzen Vorlesetext — Dialog eingeschlossen — in EINE WAV-Datei
+    /// Den ganzen Vorlesetext — Dialog eingeschlossen — in EINE Datei
     /// schreiben, statt ihn nur zu hören.
+    ///
+    /// Das Format bestimmt die Einstellung `tts_export_format`, NICHT die
+    /// Endung des Zielpfads: wer MP3 eingestellt hat, bekommt MP3, auch wenn
+    /// der Dialog eine `.wav` vorgeschlagen hat. Deshalb kommt der
+    /// TATSÄCHLICH geschriebene Pfad zurück — die Oberfläche soll die Datei
+    /// anzeigen, die es wirklich gibt.
+    ///
+    /// `opus` wird vorerst wie `wav` behandelt: einen Opus-Kodierer haben wir
+    /// nicht, und der Server liefert Opus nur je SATZ — solche Stücke lassen
+    /// sich nicht sauber zu einer Datei zusammensetzen (jedes brächte eigene
+    /// Kopfdaten mit). Lieber eine brauchbare WAV als eine kaputte Opus.
     ///
     /// Geht bewusst durch dieselbe Zerlegung wie das Abspielen
     /// (`utterances`), damit die Datei Satz für Satz klingt wie das, was man
@@ -2612,7 +2758,7 @@ impl TtsManager {
         self: &Arc<Self>,
         raw: &str,
         out_path: &str,
-    ) -> Result<usize, String> {
+    ) -> Result<(usize, String), String> {
         let max_chars = *self.core.max_chars.lock().unwrap();
         // Der GANZE Text, nicht die ersten `tts_max_chars` Zeichen. Die
         // Grenze schuetzt das Vorlesen davor, sich an einem Monsterdokument
@@ -2629,6 +2775,12 @@ impl TtsManager {
             return Err("empty text".to_string());
         }
         self.refresh_from_settings();
+        // Das Format entscheidet die Einstellung, nicht die vorgeschlagene
+        // Dateiendung (siehe `export_target_path`).
+        let as_mp3 = self.export_writes_mp3();
+        let out_path = self.export_target_path(out_path);
+        let out_path = out_path.as_str();
+        let bitrate = crate::settings::get_settings(&self.app).tts_export_bitrate;
         // Die Bereitschaft durch die Naht, nicht Fish-hart: die Synthese
         // unten läuft ohnehin über `fetch_wav` durch die aktive Engine —
         // nur der Startpfad war bis Paket E2 auf den Fish-Server verdrahtet
@@ -2648,8 +2800,16 @@ impl TtsManager {
         let total = utterances.len() as u32;
         self.emit_export_progress(0, total, false);
 
-        let mut writer: Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>> = None;
+        // Bei MP3 entsteht die WAV im Speicher und wird am Ende EINMAL
+        // kodiert; bei WAV (und dem als WAV behandelten Opus) läuft der Ton
+        // wie bisher direkt in die Datei.
+        let buffer = as_mp3.then(SharedWavBuffer::default);
+        let mut writer: Option<ExportSink> = None;
         let mut written = 0usize;
+        // Noch nicht geschriebene Stille und die `spec`, mit der sie
+        // geschrieben werden muss (steht erst mit dem ersten Teilstueck fest).
+        let mut pending_silence_ms = 0u32;
+        let mut last_spec: Option<hound::WavSpec> = None;
         for (index, (sentence, voice)) in utterances.iter().enumerate() {
             if cancel.load(Ordering::Acquire) {
                 // Halbe Datei ist schlimmer als keine: sie sieht fertig aus.
@@ -2661,47 +2821,96 @@ impl TtsManager {
             let Some(part) = protocol::prepare_text(sentence, max_chars) else {
                 continue;
             };
-            let bytes = self
-                .core
-                .fetch_wav(port, seed, &part.text, voice.as_deref())
-                .await?;
-            // Dieselbe Aufbereitung wie beim Hoeren — die Datei soll klingen
-            // wie das, was man vorher gehoert hat.
-            let strength = *self.core.enhance.lock().unwrap();
-            let bytes = prepare_sentence_audio(bytes, strength);
-            // Derselbe Ausgleich wie beim Hören: eine exportierte Datei mit
-            // wechselnden Stimmen soll nicht lauter und leiser werden.
-            let gain = self.core.playback_gain(voice.as_deref(), &bytes);
-            let mut reader = hound::WavReader::new(std::io::Cursor::new(bytes))
-                .map_err(|e| format!("Teilstueck nicht lesbar: {e}"))?;
-            let spec = reader.spec();
-            if writer.is_none() {
-                writer = Some(
-                    hound::WavWriter::create(out_path, spec)
-                        .map_err(|e| format!("could not write {out_path}: {e}"))?,
-                );
-            }
-            let sink = writer.as_mut().expect("writer exists");
-            for sample in reader.samples::<i16>() {
-                let sample = sample.map_err(|e| format!("Teilstueck beschaedigt: {e}"))?;
-                let sample = if gain == 1.0 {
-                    sample
-                } else {
-                    (sample as f32 * gain).clamp(i16::MIN as f32, i16::MAX as f32) as i16
+            // Pausen werden vor `fetch_wav` herausgeloest: der Server sieht
+            // sie nie und kann sie deshalb auch nicht vorlesen. Die Stille
+            // schreiben wir selbst als Nullsamples in den Writer.
+            for speech_part in protocol::split_pauses(&part.text) {
+                let text = match speech_part {
+                    protocol::SpeechPart::Silence(ms) => {
+                        // Der Writer entsteht erst mit der `spec` des ersten
+                        // gesprochenen Stuecks — eine Pause davor wird
+                        // aufgehoben und gleich nach dem Anlegen geschrieben.
+                        pending_silence_ms += ms;
+                        continue;
+                    }
+                    protocol::SpeechPart::Speak(text) => text,
                 };
-                sink.write_sample(sample)
-                    .map_err(|e| format!("could not write {out_path}: {e}"))?;
-                written += 1;
+                let bytes = self
+                    .core
+                    .fetch_wav(port, seed, &text, voice.as_deref())
+                    .await?;
+                // Dieselbe Aufbereitung wie beim Hoeren — die Datei soll
+                // klingen wie das, was man vorher gehoert hat.
+                let strength = *self.core.enhance.lock().unwrap();
+                let bytes = prepare_sentence_audio(bytes, strength);
+                // Derselbe Ausgleich wie beim Hören: eine exportierte Datei
+                // mit wechselnden Stimmen soll nicht lauter und leiser werden.
+                let gain = self.core.playback_gain(voice.as_deref(), &bytes);
+                let mut reader = hound::WavReader::new(std::io::Cursor::new(bytes))
+                    .map_err(|e| format!("Teilstueck nicht lesbar: {e}"))?;
+                let spec = reader.spec();
+                if writer.is_none() {
+                    writer = Some(match &buffer {
+                        Some(buffer) => ExportSink::Memory(
+                            hound::WavWriter::new(buffer.clone(), spec)
+                                .map_err(|e| format!("could not write {out_path}: {e}"))?,
+                        ),
+                        None => ExportSink::File(
+                            hound::WavWriter::create(out_path, spec)
+                                .map_err(|e| format!("could not write {out_path}: {e}"))?,
+                        ),
+                    });
+                }
+                let sink = writer.as_mut().expect("writer exists");
+                if pending_silence_ms > 0 {
+                    let count =
+                        silence_sample_count(pending_silence_ms, spec.sample_rate, spec.channels);
+                    for _ in 0..count {
+                        sink.write_sample(0i16)
+                            .map_err(|e| format!("could not write {out_path}: {e}"))?;
+                        written += 1;
+                    }
+                    pending_silence_ms = 0;
+                }
+                for sample in reader.samples::<i16>() {
+                    let sample = sample.map_err(|e| format!("Teilstueck beschaedigt: {e}"))?;
+                    let sample = if gain == 1.0 {
+                        sample
+                    } else {
+                        (sample as f32 * gain).clamp(i16::MIN as f32, i16::MAX as f32) as i16
+                    };
+                    sink.write_sample(sample)
+                        .map_err(|e| format!("could not write {out_path}: {e}"))?;
+                    written += 1;
+                }
+                last_spec = Some(spec);
             }
             self.emit_export_progress(index as u32 + 1, total, false);
+        }
+        // Pause am Textende: mit der `spec` des letzten Teilstuecks.
+        if pending_silence_ms > 0 {
+            if let (Some(sink), Some(spec)) = (writer.as_mut(), last_spec) {
+                let count =
+                    silence_sample_count(pending_silence_ms, spec.sample_rate, spec.channels);
+                for _ in 0..count {
+                    sink.write_sample(0i16)
+                        .map_err(|e| format!("could not write {out_path}: {e}"))?;
+                    written += 1;
+                }
+            }
         }
         writer
             .ok_or_else(|| "nichts zu schreiben".to_string())?
             .finalize()
             .map_err(|e| format!("could not finish {out_path}: {e}"))?;
+        if let Some(buffer) = buffer {
+            let mp3 = encode::wav_to_mp3(&buffer.take(), bitrate)?;
+            std::fs::write(out_path, mp3)
+                .map_err(|e| format!("could not write {out_path}: {e}"))?;
+        }
         *self.core.last_used.lock().unwrap() = Instant::now();
         self.emit_export_progress(total, total, false);
-        Ok(written)
+        Ok((written, out_path.to_string()))
     }
 
     /// Zugriff auf den AppHandle fuer Ereignisse aus Hintergrundlaeufen.
@@ -2802,6 +3011,39 @@ impl TtsManager {
     /// den Save-Dialog des Frontends.
     pub fn export_format(&self) -> String {
         crate::settings::get_settings(&self.app).tts_export_format
+    }
+
+    /// Schreibt der Export gerade MP3? Eine Stelle, an der das entschieden
+    /// wird — der Rest fragt hier nach.
+    pub fn export_writes_mp3(&self) -> bool {
+        self.core
+            .export_format
+            .lock()
+            .unwrap()
+            .trim()
+            .eq_ignore_ascii_case("mp3")
+    }
+
+    /// Der Pfad, unter dem der Export WIRKLICH landet.
+    ///
+    /// Das eingestellte Format bestimmt die Endung, nicht das, was im
+    /// Speichern-Dialog stand: eine Datei, die `.wav` heisst und MP3 enthaelt,
+    /// luegt ueber ihren Inhalt.
+    ///
+    /// Diese Regel stand kurzzeitig doppelt im Code — einmal hier und einmal
+    /// im Command, der den Pfad sofort zurueckgeben muss, weil der Lauf erst
+    /// im Hintergrund faellt. Zwei Kopien derselben Regel laufen irgendwann
+    /// auseinander, und dann zeigt die Oberflaeche auf eine Datei, die es
+    /// nicht gibt. Deshalb gibt es sie nur noch hier.
+    pub fn export_target_path(&self, out_path: &str) -> String {
+        if self.export_writes_mp3() {
+            std::path::Path::new(out_path)
+                .with_extension("mp3")
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            out_path.to_string()
+        }
     }
 
     // ------------------------------------------------------------------
@@ -3784,6 +4026,33 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn stille_rechnet_samples_aus_rate_und_kanalzahl() {
+        assert_eq!(silence_sample_count(500, 44_100, 1), 22_050);
+        assert_eq!(
+            silence_sample_count(500, 44_100, 2),
+            44_100,
+            "zwei Kanaele brauchen doppelt so viele Werte"
+        );
+        assert_eq!(silence_sample_count(1000, 22_050, 1), 22_050);
+        assert_eq!(silence_sample_count(250, 16_000, 1), 4_000);
+        assert_eq!(silence_sample_count(0, 44_100, 1), 0);
+        assert_eq!(
+            silence_sample_count(500, 44_100, 0),
+            22_050,
+            "eine gemeldete Kanalzahl 0 darf die Pause nicht verschlucken"
+        );
+    }
+
+    #[test]
+    fn stille_wav_ist_lesbar_und_hat_die_erwartete_laenge() {
+        let wav = silence_wav(700, 24_000);
+        assert_eq!(wav_sample_rate(&wav), Some(24_000));
+        let reader = hound::WavReader::new(std::io::Cursor::new(&wav)).expect("lesbar");
+        assert_eq!(reader.spec().channels, 1);
+        assert_eq!(reader.len() as usize, silence_sample_count(700, 24_000, 1));
+    }
 
     /// Der Statustext ist uebersetzt — die Erkennung darf nicht daran haengen.
     /// Beide Ausgaben stammen von echten Systemen (de-DE und en-US).
