@@ -26,7 +26,13 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
     else: info.update(UILaunchScreen={}, UISupportedInterfaceOrientations=['UIInterfaceOrientationPortrait'])
     (root/(name+'-Info.plist')).write_bytes(plistlib.dumps(info))
     settings={'PRODUCT_NAME':name,'PRODUCT_BUNDLE_IDENTIFIER':bundle,'INFOPLIST_FILE':name+'-Info.plist','SDKROOT':platform,'SWIFT_VERSION':'5.0','TARGETED_DEVICE_FAMILY':'1' if platform=='iphoneos' else '4','CODE_SIGN_STYLE':'Automatic','GENERATE_INFOPLIST_FILE':'NO','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator' if platform=='iphoneos' else 'watchos watchsimulator','IPHONEOS_DEPLOYMENT_TARGET':'26.0','WATCHOS_DEPLOYMENT_TARGET':'26.0','ENABLE_USER_SCRIPT_SANDBOXING':'YES'}
-    extra_phases=[]
+    settings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon'
+    asset_path = 'Shared/Assets.xcassets'
+    asset_ref = obj(asset_path, isa='PBXFileReference', lastKnownFileType='folder.assetcatalog', path=asset_path, sourceTree='<group>')
+    if asset_ref not in files: files.append(asset_ref)
+    asset_build = obj(name+'assets', isa='PBXBuildFile', fileRef=asset_ref)
+    resources = obj(name+'resources', isa='PBXResourcesBuildPhase', buildActionMask=2147483647, files=[asset_build], runOnlyForDeploymentPostprocessing=0)
+    extra_phases=[resources]
     if platform == 'iphoneos':
         settings.update({'SWIFT_OBJC_BRIDGING_HEADER':'iPhone/Engines/LVEngines.h','CLANG_CXX_LANGUAGE_STANDARD':'c++17','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks'})
         embedded=[]

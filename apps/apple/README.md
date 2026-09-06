@@ -163,3 +163,19 @@ segment indexes. It uses a DEBUG-only import entry point, not a hidden productio
 
 Desktop/mobile synchronization, remote microphones and attention routing remain a
 separate integration step; neither the import tab nor its export menu implements them.
+
+## App icon
+
+Both Apple app targets use the existing Local Voice AI waveform and AI dot from
+`apps/local-voice/scripts/make-icons.py`: signal yellow #FFDD00 on ink #111418.
+A shared AppIcon asset supplies iOS default/dark and watchOS; the operating system
+applies the outer shape. Regenerate the opaque 1024-pixel sRGB artwork with:
+
+```sh
+swift apps/apple/scripts/make_app_icon.swift apps/apple/Shared/Assets.xcassets/AppIcon.appiconset/LocalVoiceAI.png
+python3 apps/apple/scripts/generate_project.py
+```
+
+Reference: https://developer.apple.com/documentation/xcode/configuring-your-app-icon
+Fresh simulator build succeeded, both apps installed and launched, and launcher
+icons visually checked on iPhone and Watch (2026-09-06).
