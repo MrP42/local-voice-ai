@@ -2,6 +2,32 @@ import Foundation
 import CryptoKit
 import Darwin
 
+enum ModelTransferError: LocalizedError {
+    case server(Int), size, integrity, space, storage
+    var errorDescription: String? {
+        switch self {
+        case .server(let code): "Downloadserver meldet Fehler \(code). Erneut versuchen."
+        case .size: "Download unvollständig oder falsche Dateigröße. Erneut laden."
+        case .integrity: "Prüfsumme stimmt nicht. Das Modell wurde nicht freigegeben."
+        case .storage: "Modell konnte nicht sicher gespeichert werden."
+        case .space: "Zu wenig freier Speicher für Download und sichere Installation."
+        }
+    }
+    static func message(_ error: Error) -> String {
+        if let error = error as? ModelTransferError { return error.localizedDescription }
+        if let error = error as? URLError {
+            switch error.code {
+            case .cancelled: return "Download abgebrochen."
+            case .notConnectedToInternet, .networkConnectionLost: return "Internetverbindung unterbrochen. Erneut versuchen."
+            case .timedOut: return "Downloadserver antwortet nicht rechtzeitig. Erneut versuchen."
+            default: return "Netzwerkfehler (\(error.errorCode)). Erneut versuchen."
+            }
+        }
+        if (error as NSError).code == NSFileWriteOutOfSpaceError { return ModelTransferError.space.localizedDescription }
+        return "Modelldatei konnte nicht sicher installiert werden. Erneut versuchen."
+    }
+}
+
 struct LocalModel: Identifiable, Sendable {
     var id: String { name }
     let name: String
@@ -28,33 +54,36 @@ struct InstalledModel: Identifiable, Sendable {
 actor ModelLibrary {
     static let shared = ModelLibrary()
     static var folder: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Models") }
+    private let directory: URL
+    init(directory: URL = ModelLibrary.folder) { self.directory = directory }
     func download(_ model: LocalModel) async throws -> String {
         let (temporary, response) = try await URLSession.shared.download(from: model.downloadURL)
         defer { try? FileManager.default.removeItem(at: temporary) }
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw VoiceError.missing }
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw ModelTransferError.server((response as? HTTPURLResponse)?.statusCode ?? 0) }
         try Task.checkCancellation()
         return try install(from: temporary)
     }
     func inventory() -> [InstalledModel] {
         LocalModel.all.map { descriptor in
-            let size = (try? FileManager.default.attributesOfItem(atPath: Self.folder.appendingPathComponent(descriptor.name).path)[.size] as? NSNumber)?.int64Value ?? 0
+            let size = (try? FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent(descriptor.name).path)[.size] as? NSNumber)?.int64Value ?? 0
             return InstalledModel(model: descriptor, installedBytes: size)
         }
     }
     /// The destination changes only after size and SHA-256 identify an approved model.
-    func install(from source: URL) throws -> String {
+    func install(from source: URL, expected: LocalModel? = nil) throws -> String {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         let fm = FileManager.default
         let attributes = try fm.attributesOfItem(atPath: source.path)
         guard attributes[.type] as? FileAttributeType == .typeRegular,
               let size = attributes[.size] as? NSNumber,
-              LocalModel.all.contains(where: { $0.bytes == size.int64Value }) else { throw VoiceError.invalid }
-        try fm.createDirectory(at: Self.folder, withIntermediateDirectories: true)
-        let free = try fm.attributesOfFileSystem(forPath: Self.folder.path)[.systemFreeSize] as? NSNumber
-        guard let free, free.int64Value > size.int64Value + 16 * 1024 * 1024 else { throw VoiceError.full }
-        let temporary = Self.folder.appendingPathComponent(".install-" + UUID().uuidString)
-        guard fm.createFile(atPath: temporary.path, contents: nil, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]) else { throw VoiceError.persistence }
+              LocalModel.all.contains(where: { $0.bytes == size.int64Value }),
+              expected == nil || expected?.bytes == size.int64Value else { throw ModelTransferError.size }
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let free = try fm.attributesOfFileSystem(forPath: directory.path)[.systemFreeSize] as? NSNumber
+        guard let free, free.int64Value > size.int64Value + 16 * 1024 * 1024 else { throw ModelTransferError.space }
+        let temporary = directory.appendingPathComponent(".install-" + UUID().uuidString)
+        guard fm.createFile(atPath: temporary.path, contents: nil, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]) else { throw ModelTransferError.storage }
         defer { try? fm.removeItem(at: temporary) }
         let input = try FileHandle(forReadingFrom: source), output = try FileHandle(forWritingTo: temporary)
         defer { try? input.close(); try? output.close() }
@@ -62,17 +91,18 @@ actor ModelLibrary {
         while let data = try input.read(upToCount: 1024 * 1024), !data.isEmpty {
             try Task.checkCancellation()
             count += Int64(data.count)
-            guard count <= size.int64Value else { throw VoiceError.invalid }
+            guard count <= size.int64Value else { throw ModelTransferError.size }
             hash.update(data: data); try output.write(contentsOf: data)
         }
         let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
-        guard let model = LocalModel.all.first(where: { $0.bytes == count && $0.sha256 == digest }) else { throw VoiceError.invalid }
+        guard let model = LocalModel.all.first(where: { $0.bytes == count && $0.sha256 == digest }),
+              expected == nil || expected?.id == model.id else { throw ModelTransferError.integrity }
         try output.synchronize(); try output.close()
-        guard rename(temporary.path, Self.folder.appendingPathComponent(model.name).path) == 0 else { throw VoiceError.persistence }
-        let fd = open(Self.folder.path, O_RDONLY)
-        guard fd >= 0 else { throw VoiceError.persistence }
+        guard rename(temporary.path, directory.appendingPathComponent(model.name).path) == 0 else { throw ModelTransferError.storage }
+        let fd = open(directory.path, O_RDONLY)
+        guard fd >= 0 else { throw ModelTransferError.storage }
         defer { close(fd) }
-        guard fsync(fd) == 0 else { throw VoiceError.persistence }
+        guard fsync(fd) == 0 else { throw ModelTransferError.storage }
         return model.label
     }
 }
