@@ -81,6 +81,11 @@ export const LiveTranscript: React.FC = () => {
 
   if (!activeMeetingId && segments.length === 0) return null;
 
+  // Dieselbe Regel wie in der Detailansicht: Eine Quellenangabe, die auf
+  // jeder Zeile gleich lautet, unterscheidet nichts. Sichtbar wird sie
+  // erst, sobald Mikrofon und Gegenseite getrennt eintreffen.
+  const showChannels = new Set(segments.map((s) => s.channel)).size > 1;
+
   return (
     <SettingsGroup>
       <div
@@ -98,9 +103,11 @@ export const LiveTranscript: React.FC = () => {
               <span className="text-xs text-text/40 w-10 shrink-0 pt-0.5">
                 {formatMmSs(segment.start_ms)}
               </span>
-              <Badge variant="secondary" className="shrink-0">
-                {t(channelLabelKey(segment.channel))}
-              </Badge>
+              {showChannels && (
+                <Badge variant="secondary" className="shrink-0">
+                  {t(channelLabelKey(segment.channel))}
+                </Badge>
+              )}
               <p className="text-text/90 break-words">{segment.text}</p>
             </div>
           ))

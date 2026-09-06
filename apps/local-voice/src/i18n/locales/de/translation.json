@@ -1236,6 +1236,8 @@
       "shares": "Redeanteile",
       "back": "Zurück zur Liste",
       "copyTranscript": "Transkript kopieren",
+      "copyPlain": "Nur Text kopieren",
+      "copyPlainHint": "Kopiert das Transkript ohne Zeitstempel und Quellenangabe — nur den gesprochenen Text.",
       "copied": "Kopiert!",
       "exportTranscript": "Transkript exportieren — als Word (.docx), Text oder Markdown",
       "renameTitle": "Umbenennen",

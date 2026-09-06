@@ -917,6 +917,8 @@
       "shares": "Speaking shares",
       "back": "Back to list",
       "copyTranscript": "Copy transcript",
+      "copyPlain": "Copy text only",
+      "copyPlainHint": "Copies the transcript without timestamps or source labels — just the spoken text.",
       "copied": "Copied!",
       "exportTranscript": "Save as file…"
     },

@@ -60,7 +60,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const [segments, setSegments] = useState<StoredSegment[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"meta" | "plain" | null>(null);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [saving, setSaving] = useState(false);
@@ -103,19 +103,30 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     setTitleError(null);
   };
 
-  const transcriptText = () =>
-    segments
-      .map(
-        (s) =>
-          `${t(channelLabelKey(s.channel))} [${formatMmSs(s.start_ms)}]: ${s.text}`,
-      )
-      .join("\n");
+  /**
+   * Steht auf jeder Zeile dieselbe Quelle, unterscheidet die Spalte nichts
+   * und kostet nur Platz und Aufmerksamkeit. Erst wenn Mikrofon und
+   * Gegenseite getrennt vorliegen, traegt sie eine Information.
+   */
+  const showChannels = new Set(segments.map((s) => s.channel)).size > 1;
 
-  const copyTranscript = async () => {
+  /** `withMeta` false liefert den blanken Text — ohne Zeitstempel, ohne
+   *  Quelle, mit Leerzeile zwischen den Abschnitten, damit er sich als
+   *  Fliesstext weiterverwenden laesst. */
+  const transcriptText = (withMeta: boolean) =>
+    segments
+      .map((s) => {
+        if (!withMeta) return s.text;
+        const who = showChannels ? `${t(channelLabelKey(s.channel))} ` : ``;
+        return `${who}[${formatMmSs(s.start_ms)}]: ${s.text}`;
+      })
+      .join(withMeta ? "\n" : "\n\n");
+
+  const copyTranscript = async (withMeta: boolean) => {
     try {
-      await navigator.clipboard.writeText(transcriptText());
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      await navigator.clipboard.writeText(transcriptText(withMeta));
+      setCopied(withMeta ? "meta" : "plain");
+      setTimeout(() => setCopied(null), 2000);
     } catch (e) {
       setTranscriptError(String(e));
     }
@@ -366,10 +377,24 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
 
         {tab === "transcript" && segments.length > 0 && (
           <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={copyTranscript}>
-              {copied
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void copyTranscript(true)}
+            >
+              {copied === "meta"
                 ? t("meetings.detail.copied")
                 : t("meetings.detail.copyTranscript")}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void copyTranscript(false)}
+              title={t("meetings.detail.copyPlainHint")}
+            >
+              {copied === "plain"
+                ? t("meetings.detail.copied")
+                : t("meetings.detail.copyPlain")}
             </Button>
             <Button
               variant="secondary"
@@ -402,9 +427,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
                   <span className="text-xs text-text/40 w-10 shrink-0 pt-0.5">
                     {formatMmSs(segment.start_ms)}
                   </span>
-                  <span className="text-xs text-text/50 w-16 shrink-0 pt-0.5">
-                    {t(channelLabelKey(segment.channel))}
-                  </span>
+                  {showChannels && (
+                    <span className="text-xs text-text/50 w-16 shrink-0 pt-0.5">
+                      {t(channelLabelKey(segment.channel))}
+                    </span>
+                  )}
                   {editingIndex === segment.segment_index ? (
                     <div className="flex-1 space-y-1">
                       <Textarea
