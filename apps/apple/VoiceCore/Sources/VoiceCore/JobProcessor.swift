@@ -11,7 +11,7 @@ public final class JobProcessor {
     public var onChange: ((UUID?) -> Void)?
     private let store: DurableStore
     private let transcribe: @Sendable (URL) async throws -> ProcessingOutput
-    private let reply: @Sendable (String) async throws -> ProcessingOutput
+    private let reply: @Sendable (String, [ConversationTurn]) async throws -> ProcessingOutput
     private var task: Task<Void, Never>?
     private var resumeRequested = false
     private var userCancelled = false
@@ -20,11 +20,15 @@ public final class JobProcessor {
                 reply: @escaping @Sendable (String) async throws -> String) {
         self.store = store
         self.transcribe = { ProcessingOutput(text: try await transcribe($0), model: "Nicht dokumentiert") }
-        self.reply = { ProcessingOutput(text: try await reply($0), model: "Nicht dokumentiert") }
+        self.reply = { text, _ in ProcessingOutput(text: try await reply(text), model: "Nicht dokumentiert") }
     }
     public init(store: DurableStore, annotatedTranscribe: @escaping @Sendable (URL) async throws -> ProcessingOutput,
                 annotatedReply: @escaping @Sendable (String) async throws -> ProcessingOutput) {
-        self.store = store; self.transcribe = annotatedTranscribe; self.reply = annotatedReply
+        self.store = store; self.transcribe = annotatedTranscribe; self.reply = { text, _ in try await annotatedReply(text) }
+    }
+    public init(store: DurableStore, annotatedTranscribe: @escaping @Sendable (URL) async throws -> ProcessingOutput,
+                conversationalReply: @escaping @Sendable (String, [ConversationTurn]) async throws -> ProcessingOutput) {
+        self.store = store; self.transcribe = annotatedTranscribe; self.reply = conversationalReply
     }
     public func setActive(_ active: Bool) {
         self.active = active
@@ -82,7 +86,7 @@ public final class JobProcessor {
                         try store.setJobPhase(entry.id, phase: .generating)
                         message = "Kurze Antwort wird lokal erzeugt"; onChange?(entry.id)
                         let start = Date()
-                        let result = try await reply(text)
+                        let result = try await reply(text, ConversationContext.previousTurns(for: entry, in: store.entries()))
                         let answer = result.text
                         try Task.checkCancellation()
                         guard !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, answer.count <= 500 else { throw ProcessingFailure.invalidOutput }

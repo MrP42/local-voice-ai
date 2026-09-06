@@ -17,7 +17,7 @@ public struct Packet: Codable, Sendable {
     public var messageId: UUID
     public var kind: String
     public var createdAt: Date
-    public struct Payload: Codable, Sendable { public var audio: Data }
+    public struct Payload: Codable, Sendable { public var audio: Data; public var conversationId: UUID? }
     public var payload: Payload
     public var audio: Data { get { payload.audio } set { payload.audio = newValue } }
     public static func capture(audio: Data) -> Packet {
@@ -49,6 +49,7 @@ public struct Entry: Codable, Identifiable, Sendable {
     public var replyAcknowledged: Bool?
     public var replyReceipt: Receipt?
     public var replyToWatch: Bool?
+    public var conversationId: UUID?
     public var processingEvents: [ProcessingEvent]?
     public var job: JobRecord?
     public static func pendingDelivery(in entries: [Entry]) -> [Entry] {
@@ -97,7 +98,7 @@ public final class DurableStore {
         guard SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == entry.digest else {
             invalidateInventory(); throw VoiceError.persistence
         }
-        return Packet(sessionId: entry.id, messageId: entry.receipt.messageId, kind: "capture", createdAt: entry.createdAt, payload: Packet.Payload(audio: data))
+        return Packet(sessionId: entry.id, messageId: entry.receipt.messageId, kind: "capture", createdAt: entry.createdAt, payload: Packet.Payload(audio: data, conversationId: entry.conversationId))
     }
     public func accept(_ packet: Packet, replyToWatch: Bool = false) throws -> Receipt {
         do {
@@ -111,7 +112,7 @@ public final class DurableStore {
                   messageId != packet.messageId else { throw VoiceError.persistence }
         }
         if var existing = current.first(where: { $0.id == packet.sessionId || $0.receipt.messageId == packet.messageId }) {
-            guard existing.id == packet.sessionId, existing.receipt.messageId == packet.messageId, existing.digest == digest else { throw VoiceError.conflict }
+            guard existing.id == packet.sessionId, existing.receipt.messageId == packet.messageId, existing.digest == digest, existing.conversationId == packet.payload.conversationId else { throw VoiceError.conflict }
             guard try audio(for: existing.id) == packet.audio else { throw VoiceError.persistence }
             if replyToWatch && existing.replyToWatch != true { existing.replyToWatch = true; try save(existing) }
             return existing.receipt
@@ -120,7 +121,8 @@ public final class DurableStore {
         let used = try committedAudioBytes()
         guard used + packet.audio.count <= limit else { throw VoiceError.full }
         let receipt = Receipt(sessionId: packet.sessionId, messageId: packet.messageId, receiptId: UUID())
-        let entry = Entry(receipt: receipt, createdAt: packet.createdAt, digest: digest, state: .saved, timings: ["capture_saved_at_ms": Date().timeIntervalSinceReferenceDate * 1000], replyToWatch: replyToWatch)
+        var entry = Entry(receipt: receipt, createdAt: packet.createdAt, digest: digest, state: .saved, timings: ["capture_saved_at_ms": Date().timeIntervalSinceReferenceDate * 1000], replyToWatch: replyToWatch)
+        entry.conversationId = packet.payload.conversationId
         let metadata = try JSONEncoder().encode(entry)
         let identity = try JSONEncoder().encode(receipt)
         guard try temporaryBytes() + packet.audio.count + metadata.count + identity.count <= temporaryLimit else { throw VoiceError.full }
@@ -143,14 +145,17 @@ public final class DurableStore {
     /// Draft filenames provide stable identity even if the process exits before removing the source.
     public func recoverRecording(at url: URL) throws -> Receipt {
         let name = url.lastPathComponent
+        let identities = String(name.dropFirst(11).dropLast(4)).split(separator: "_", omittingEmptySubsequences: false)
         guard url.standardizedFileURL.deletingLastPathComponent() == root.standardizedFileURL,
-              name.hasPrefix(".recording-"), name.hasSuffix(".m4a"),
-              let id = UUID(uuidString: String(name.dropFirst(11).dropLast(4))) else { throw VoiceError.invalid }
+              name.hasPrefix(".recording-"), name.hasSuffix(".m4a"), (1...2).contains(identities.count),
+              let id = UUID(uuidString: String(identities[0])) else { throw VoiceError.invalid }
+        let conversationId = identities.count == 2 ? UUID(uuidString: String(identities[1])) : nil
+        guard identities.count == 1 || conversationId != nil else { throw VoiceError.invalid }
         let attributes = try fm.attributesOfItem(atPath: url.path)
         guard attributes[.type] as? FileAttributeType == .typeRegular else { throw VoiceError.invalid }
         let packet = Packet(sessionId: id, messageId: id, kind: "capture",
                             createdAt: attributes[.creationDate] as? Date ?? Date(),
-                            payload: Packet.Payload(audio: try Data(contentsOf: url)))
+                            payload: Packet.Payload(audio: try Data(contentsOf: url), conversationId: conversationId))
         let receipt = try accept(packet)
         // Failure to remove a redundant draft cannot undo its durable acceptance.
         try? fm.removeItem(at: url)

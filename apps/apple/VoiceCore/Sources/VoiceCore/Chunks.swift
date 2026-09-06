@@ -11,6 +11,7 @@ public struct CaptureChunk: Codable, Sendable {
     public let byteCount: Int
     public let index: Int
     public let count: Int
+    public var conversationId: UUID?
     public var data: Data
     public var messageId: UUID {
         let bytes = Array(SHA256.hash(data: Data("\(captureMessageId.uuidString):\(index)".utf8)))
@@ -24,7 +25,7 @@ public struct CaptureChunk: Codable, Sendable {
         return (0..<count).map { i in
             CaptureChunk(schemaVersion: 1, sessionId: packet.sessionId, captureMessageId: packet.messageId,
                          createdAt: packet.createdAt, digest: digest, byteCount: packet.audio.count,
-                         index: i, count: count, data: packet.audio.subdata(in: i * size..<min((i + 1) * size, packet.audio.count)))
+                         index: i, count: count, conversationId: packet.payload.conversationId, data: packet.audio.subdata(in: i * size..<min((i + 1) * size, packet.audio.count)))
         }
     }
 }
@@ -52,7 +53,7 @@ public final class ChunkInbox {
         if fm.fileExists(atPath: manifestURL.path) {
             let previous = try JSONDecoder().decode(CaptureChunk.self, from: Data(contentsOf: manifestURL))
             guard previous.captureMessageId == part.captureMessageId, previous.createdAt == part.createdAt,
-                  previous.digest == part.digest, previous.byteCount == part.byteCount, previous.count == part.count else { throw VoiceError.conflict }
+                  previous.conversationId == part.conversationId, previous.digest == part.digest, previous.byteCount == part.byteCount, previous.count == part.count else { throw VoiceError.conflict }
         } else {
             var manifest = part; manifest.data = Data()
             newManifest = try JSONEncoder().encode(manifest)
@@ -75,7 +76,7 @@ public final class ChunkInbox {
         }
         guard audio.count == part.byteCount,
               SHA256.hash(data: audio).map({ String(format: "%02x", $0) }).joined() == part.digest else { throw VoiceError.conflict }
-        return Packet(schemaVersion: 1, sessionId: part.sessionId, messageId: part.captureMessageId, kind: "capture", createdAt: part.createdAt, payload: Packet.Payload(audio: audio))
+        return Packet(schemaVersion: 1, sessionId: part.sessionId, messageId: part.captureMessageId, kind: "capture", createdAt: part.createdAt, payload: Packet.Payload(audio: audio, conversationId: part.conversationId))
     }
     public func removeCompleted(_ sessionId: UUID) throws {
         let directory = root.appendingPathComponent(sessionId.uuidString)
