@@ -1,0 +1,116 @@
+local-voice-models-final-core
+Test Case '-[VoiceCoreTests.CaptureStartGateTests testCurrentForegroundPermissionStartsRecordingOnce]' passed (0.001 seconds).
+Test Case '-[VoiceCoreTests.CaptureStartGateTests testDenialRemainsVisibleAfterPermissionDialogInactivatesScene]' passed (0.000 seconds).
+Test Case '-[VoiceCoreTests.CaptureStartGateTests testInactiveSceneCannotRequestRecording]' passed (0.000 seconds).
+Test Case '-[VoiceCoreTests.CaptureStartGateTests testLeavingAndReturningDoesNotRevivePendingRecording]' passed (0.000 seconds).
+Test Case '-[VoiceCoreTests.CaptureStartGateTests testOldCallbackCannotConsumeNewRequest]' passed (0.000 seconds).
+Test Case '-[VoiceCoreTests.CaptureStartGateTests testPermissionArrivingWhileInactiveCannotStart]' passed (0.000 seconds).
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Case '-[VoiceCoreTests.ChunkTests testChunkEnvelopeFitsInteractiveBudget]' passed (0.071 seconds).
+Test Case '-[VoiceCoreTests.ChunkTests testConflictingPartAndOversizeAreRejected]' passed (0.007 seconds).
+Test Case '-[VoiceCoreTests.ChunkTests testPartialTransferSurvivesRestartAndNeverAcknowledgesEarly]' passed (0.013 seconds).
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.092 (0.092) seconds
+Test Case '-[VoiceCoreTests.ConversationTests testBriefNoiseDoesNotLeaveConversationListeningUntilHardLimit]' passed (0.001 seconds).
+Test Case '-[VoiceCoreTests.ConversationTests testContextKeepsNewestSixTurnsWithinCharacterBudget]' passed (0.090 seconds).
+Test Case '-[VoiceCoreTests.ConversationTests testContextSurvivesRestartAndNeverIncludesAnotherConversation]' passed (0.014 seconds).
+Test Case '-[VoiceCoreTests.ConversationTests testConversationIdentitySurvivesChunkedTransport]' passed (0.006 seconds).
+Test Case '-[VoiceCoreTests.ConversationTests testDraftRecoveryPreservesConversationAfterRestart]' passed (0.004 seconds).
+Test Case '-[VoiceCoreTests.ConversationTests testJobProcessorUsesStoredConversationForItsReply]' passed (0.021 seconds).
+Test Case '-[VoiceCoreTests.ConversationTests testSilenceDetectorRequiresSpeechBeforeClosingATurn]' passed (0.000 seconds).
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.136 (0.137) seconds
+Test Case '-[VoiceCoreTests.DeliveryMaintenanceTests testSavedCapturesAreDeliveredOldestFirstBeforeAcceptedCaptures]' passed (0.015 seconds).
+Test Case '-[VoiceCoreTests.DeliveryMaintenanceTests testTransferCleanupPreservesActiveCopiesAndOriginalCapture]' passed (0.007 seconds).
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.021 (0.022) seconds
+Test Case '-[VoiceCoreTests.EndToEndTimingTests testPersistedClockOriginAndFirstReplyTimingSurviveDuplicatesAndRestart]' passed (0.006 seconds).
+Test Case '-[VoiceCoreTests.InventoryCacheTests testCommittedUpdatesAreImmediatelyVisibleInInventory]' passed (0.005 seconds).
+Test Case '-[VoiceCoreTests.InventoryCacheTests testReloadExposesCorruptAudioAndRetainsHealthyHistory]' passed (0.008 seconds).
+Test Case '-[VoiceCoreTests.InventoryCacheTests testUncertainWriteDoesNotLeaveAnOldCachedState]' passed (0.006 seconds).
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.018 (0.019) seconds
+Test Case '-[VoiceCoreTests.JobProcessorTests testActualProviderIdentityAndRuleAnswerArePersisted]' passed (0.014 seconds).
+Test Case '-[VoiceCoreTests.JobProcessorTests testCancelDuringGenerationPreservesSTTAndResumeDoesNotTranscribeAgain]' passed (0.035 seconds).
+Test Case '-[VoiceCoreTests.JobProcessorTests testNoSpeechIsNotSentToGeneratorOrRepeatedAutomatically]' passed (0.029 seconds).
+Test Case '-[VoiceCoreTests.JobProcessorTests testProviderDeadlineUsesBoundedRetryInsteadOfCancellation]' passed (0.027 seconds).
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.105 (0.106) seconds
+Test Case '-[VoiceCoreTests.JobTests testAnsweredJobCannotBeRetriedOrRewrittenByLateCancellation]' passed (0.008 seconds).
+Test Case '-[VoiceCoreTests.JobTests testInterruptedGenerationRetainsTranscriptAndCannotBeRunTwice]' passed (0.011 seconds).
+Test Case '-[VoiceCoreTests.JobTests testRepeatedProcessCrashesRemainBounded]' passed (0.014 seconds).
+Test Case '-[VoiceCoreTests.JobTests testRepeatedSystemExpiryDoesNotExhaustFailureBudget]' passed (0.019 seconds).
+Test Case '-[VoiceCoreTests.JobTests testRetriesPersistAcrossRestartAndStopAfterThreeFailures]' passed (0.018 seconds).
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.070 (0.071) seconds
+Test Case '-[VoiceCoreTests.MeetingTests testAssignedSharesUseTimedIntervalsAndKeepUnknownCoverage]' passed (0.001 seconds).
+Test Case '-[VoiceCoreTests.MeetingTests testGermanMinutesKeepQuestionsAndCollectiveNextStepsOutOfTasks]' passed (0.006 seconds).
+Test Case '-[VoiceCoreTests.MeetingTests testLocalSelectionUsesOriginalQuotesAndDiscardsUnsupportedAttribution]' passed (0.004 seconds).
+Test Case '-[VoiceCoreTests.MeetingTests testMinutesRejectInventedDatesAndUnquotedFacts]' passed (0.002 seconds).
+Test Case '-[VoiceCoreTests.MeetingTests testMinutesRequireCompleteSchemaAndRejectUnboundedText]' passed (0.001 seconds).
+Test Case '-[VoiceCoreTests.MeetingTests testMixedAudioNeverInventsSpeakerShares]' passed (0.000 seconds).
+Test Case '-[VoiceCoreTests.MeetingTests testOriginalAndProgressSurviveReopen]' passed (0.005 seconds).
+Test Case '-[VoiceCoreTests.MeetingTests testQuotaFailurePreservesExistingOriginal]' passed (0.004 seconds).
+Test Case '-[VoiceCoreTests.MeetingTests testRecommendationsKeepTheirSourceReason]' passed (0.001 seconds).
+Test Case '-[VoiceCoreTests.MeetingTests testSubtitleAndMarkupExportsPreserveTextWithoutExecutingMarkup]' passed (0.000 seconds).
+Test Case '-[VoiceCoreTests.MeetingTests testSummaryProgressIsDurableAndCannotSkipTranscription]' passed (0.007 seconds).
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.032 (0.034) seconds
+Test Case '-[VoiceCoreTests.ProcessingAccessTests testForegroundAndScheduledTaskHaveIndependentLifetimes]' passed (0.000 seconds).
+Test Case '-[VoiceCoreTests.ProcessingAccessTests testWatchWakeAllowsProcessingWithoutForegroundAndExpiryRevokesIt]' passed (0.000 seconds).
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Case '-[VoiceCoreTests.RecordingRecoveryTests testDraftRecoversWithStableIdentityAcrossRestartAndReplay]' passed (0.006 seconds).
+Test Case '-[VoiceCoreTests.RecordingRecoveryTests testEmptyDraftIsRetainedWithoutReceipt]' passed (0.001 seconds).
+Test Case '-[VoiceCoreTests.RecordingRecoveryTests testFullStoreKeepsDraftForLaterRecovery]' passed (0.004 seconds).
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.011 (0.012) seconds
+Test Case '-[VoiceCoreTests.ReplyTests testOversizedTranscriptCannotCreateUndeliverableAnswer]' passed (0.004 seconds).
+Test Case '-[VoiceCoreTests.ReplyTests testReceiptReplayPreservesReplyDestination]' passed (0.006 seconds).
+Test Case '-[VoiceCoreTests.ReplyTests testReplyAndReceiptSurviveRestartWithoutDuplicatePlayback]' passed (0.014 seconds).
+Test Case '-[VoiceCoreTests.ReplyTests testUnknownAndConflictingRepliesAreRejected]' passed (0.006 seconds).
+Test Case '-[VoiceCoreTests.ReplyTests testUnsendableGeneratedReplyDoesNotCompleteCapture]' passed (0.013 seconds).
+Test Case '-[VoiceCoreTests.ReplyTests testWhitespaceIncomingReplyIsNotAcknowledged]' passed (0.003 seconds).
+Test Case '-[VoiceCoreTests.ReplyTests testWrongReceiptCannotSilencePendingResponse]' passed (0.004 seconds).
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.049 (0.050) seconds
+Test Case '-[VoiceCoreTests.ResponsePolicyTests testActionRequestsGetAnHonestCapabilityBoundary]' passed (0.002 seconds).
+Test Case '-[VoiceCoreTests.ResponsePolicyTests testCompletionClaimsAreReplacedAndOrdinaryAnswersStayIntact]' passed (0.001 seconds).
+Test Case '-[VoiceCoreTests.ResponsePolicyTests testDigitalSilenceAndInvalidSamplesAreNotSpeechEvidence]' passed (0.004 seconds).
+Test Case '-[VoiceCoreTests.ResponsePolicyTests testStationaryBroadbandNoiseIsFlaggedButModulatedSignalIsRetained]' passed (0.063 seconds).
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.071 (0.072) seconds
+Test Case '-[VoiceCoreTests.ReviewRegressionTests testIncomingReplyCannotReplaceAnIssuedResponseIdentity]' passed (0.006 seconds).
+Test Case '-[VoiceCoreTests.ReviewRegressionTests testMissingAudioDoesNotBlockUnrelatedCaptureWithKnownIdentity]' passed (0.009 seconds).
+Test Case '-[VoiceCoreTests.ReviewRegressionTests testRecordingAdmissionReservesSpaceInConfirmedQuota]' passed (0.003 seconds).
+Test Case '-[VoiceCoreTests.ReviewRegressionTests testReplyCannotEraseOrReplacePersistedTranscript]' passed (0.005 seconds).
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.023 (0.024) seconds
+Test Case '-[VoiceCoreTests.StorageIsolationTests testCompleteOrphanStageRecoversButUnidentifiedAudioIsRetained]' passed (0.007 seconds).
+Test Case '-[VoiceCoreTests.StorageIsolationTests testCorruptIdentityCannotBeReusedUnderAnotherSession]' passed (0.004 seconds).
+Test Case '-[VoiceCoreTests.StorageIsolationTests testCorruptMetadataIsVisibleAndDoesNotBlockHealthyHistory]' passed (0.017 seconds).
+Test Case '-[VoiceCoreTests.StorageIsolationTests testLegacyEntryMigratesAdditivelyWithoutChangingReceipt]' passed (0.005 seconds).
+Test Case '-[VoiceCoreTests.StorageIsolationTests testTransferBudgetRejectsExtraCopiesWithoutAffectingOriginal]' passed (0.005 seconds).
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.038 (0.039) seconds
+Test Case '-[VoiceCoreTests.StoreTests testConfirmedCaptureSurvivesRestartAndDuplicateHasSameReceipt]' passed (0.006 seconds).
+Test Case '-[VoiceCoreTests.StoreTests testConflictingDuplicateDoesNotReplaceAudio]' passed (0.003 seconds).
+Test Case '-[VoiceCoreTests.StoreTests testCorruptedAudioIsNotAcknowledgedAgain]' passed (0.004 seconds).
+Test Case '-[VoiceCoreTests.StoreTests testHundredTurnsReplayedInReverseAfterRestart]' passed (0.947 seconds).
+Test Case '-[VoiceCoreTests.StoreTests testInterruptedStagingDoesNotHideConfirmedEntries]' passed (0.004 seconds).
+Test Case '-[VoiceCoreTests.StoreTests testLateReceiptCannotRegressAnsweredState]' passed (0.006 seconds).
+Test Case '-[VoiceCoreTests.StoreTests testProcessingProvenanceSurvivesRestartAndWatchDelivery]' passed (0.012 seconds).
+Test Case '-[VoiceCoreTests.StoreTests testReplyPersistsAndLateReplyCannotCreateUnknownEntry]' passed (0.006 seconds).
+Test Case '-[VoiceCoreTests.StoreTests testTransportEnvelopeRoundTripsCaptureAndReceipt]' passed (0.001 seconds).
+Test Case '-[VoiceCoreTests.StoreTests testWireHasVersionedPayload]' passed (0.000 seconds).
+Test Case '-[VoiceCoreTests.StoreTests testWrongVersionAndFullStorageAreNotAcknowledged]' passed (0.001 seconds).
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.990 (0.992) seconds
+Test Case '-[VoiceCoreTests.TemporaryBudgetTests testChunkMetadataCannotBypassBudgetAndExistingPartSurvivesFullBudget]' passed (0.004 seconds).
+Test Case '-[VoiceCoreTests.TemporaryBudgetTests testOtherTemporaryCopiesCountBeforeCreatingAManifest]' passed (0.001 seconds).
+Test Case '-[VoiceCoreTests.TemporaryBudgetTests testRetainedUnconfirmedDraftsPreventUnboundedNewRecording]' passed (0.009 seconds).
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.014 (0.015) seconds
+Test Case '-[VoiceCoreTests.WatchDestinationTests testComplicationLinksResolveOnlySupportedDestinations]' passed (0.000 seconds).
+Test Case '-[VoiceCoreTests.WriteFailureTests testFailedReplyWriteKeepsPendingCapture]' passed (0.005 seconds).
+Test Case '-[VoiceCoreTests.WriteFailureTests testFullDiskBeforeCaptureWriteDoesNotAcknowledgeOrModifyPreviousCapture]' passed (0.006 seconds).
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.011 (0.012) seconds
+	 Executed 84 tests, with 0 failures (0 unexpected) in 1.693 (1.708) seconds
+	 Executed 84 tests, with 0 failures (0 unexpected) in 1.693 (1.710) seconds
+local-voice-signed-background-model-ui
+Test Case '-[VoicePhoneUITests.VoiceUITests testModelDownloadCompletesAfterLeavingApp]' passed (122.892 seconds).
+local-voice-download-restart-ui
+Test Case '-[VoicePhoneUITests.VoiceUITests testModelDownloadIntentSurvivesProcessRestart]' passed (131.977 seconds).
+local-voice-model-voice-light-ui
+Test Case '-[VoicePhoneUITests.VoiceUITests testModelDownloadStartsFromModelCard]' passed (21.902 seconds).
+Test Case '-[VoicePhoneUITests.VoiceUITests testVoiceCanBePreviewedSelectedAndRestoredAfterRelaunch]' passed (29.854 seconds).
+	 Executed 2 tests, with 0 failures (0 unexpected) in 51.757 (51.760) seconds
+	 Executed 2 tests, with 0 failures (0 unexpected) in 51.757 (51.761) seconds
+	 Executed 2 tests, with 0 failures (0 unexpected) in 51.757 (51.763) seconds
+local-voice-voices-watch-ui
+Test Case '-[VoiceWatchUITests.VoiceUITests testVoiceCanBePreviewedSelectedAndRestoredAfterRelaunch]' passed (23.160 seconds).

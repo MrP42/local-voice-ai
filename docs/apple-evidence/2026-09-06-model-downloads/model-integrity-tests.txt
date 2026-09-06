@@ -1,0 +1,5 @@
+PASS approved model installs with expected SHA-256
+PASS wrong requested model is rejected
+PASS same-size corrupt model is rejected
+PASS cancellation stops installation
+PASS existing model survives failures and temporary files are cleaned

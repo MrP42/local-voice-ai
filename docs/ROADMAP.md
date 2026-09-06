@@ -162,3 +162,7 @@ Kurze Watch-Sprachnotizen werden jetzt auch ohne sichtbare iPhone-App verarbeite
 ### Lokaler Gesprächsmodus, 06.09.2026
 
 Auf `codex/watch-conversation-background`: getrenntes automatisches Vorlesen und Freisprechen, persistenter Gesprächskontext mit bis zu sechs Wortwechseln, sicheres Stoppen/Pausieren. 84 Kerntests und vier Bedienungsläufe bestanden; Gedächtnis mit Apple Foundation Models auf echtem iPhone bestätigt. Geräuschqualität und Akku bei längeren Gesprächen bleiben zu messen. Nachweis: `docs/apple-evidence/2026-09-06-conversation/README.md`. Parallele Arbeit erfolgt in eigenem Worktree; Integrationsregeln: `docs/apple-evidence/2026-09-06-background/parallel-development.md`.
+
+### Modelle und Stimmen, 06.09.2026
+
+Persistente Hintergrunddownloads mit kompaktem Symbolknopf, Fortschritt und Status direkt am Modell; lokale Bereitschaftsbenachrichtigung erst nach Integritätsprüfung. Echter iPhone-Download von Qwen 0.5B im Hintergrund bestätigt. Geräte-UI-Test beim Wiederöffnen durch Sperre blockiert. Stimmenauswahl mit Hörprobe auf iPhone und Watch; 84 Core-, fünf Integritäts- und fünf gezielte Simulator-Bedienungstests bestanden. iOS-Force-Quit erfordert erneutes Öffnen; Banner-Sichtprüfung und Energiebedarf noch offen. Nachweis: `docs/apple-evidence/2026-09-06-model-downloads/README.md`.

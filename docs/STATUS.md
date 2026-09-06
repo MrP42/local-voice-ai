@@ -332,3 +332,7 @@ Auf `codex/watch-conversation-background`: getrenntes automatisches Vorlesen und
 ### Originalwiedergabe und Watch-Lautstärke, 06.09.2026
 
 Eigene Sprachnotizen auf iPhone und Watch mit Play/Pause/Fortsetzen/Stopp; native lokale Watch-Medienlautstärke direkt in der App erreichbar. 84 Core-Tests und fünf gezielte iPhone-/Watch-Bedienungstests bestanden. Akustische Prüfung an echter Hardware noch offen. Nachweis: `docs/apple-evidence/2026-09-06-playback/README.md`.
+
+### Modelle und Stimmen, 06.09.2026
+
+Persistente Hintergrunddownloads mit kompaktem Symbolknopf, Fortschritt und Status direkt am Modell; lokale Bereitschaftsbenachrichtigung erst nach Integritätsprüfung. Echter iPhone-Download von Qwen 0.5B im Hintergrund bestätigt. Geräte-UI-Test beim Wiederöffnen durch Sperre blockiert. Stimmenauswahl mit Hörprobe auf iPhone und Watch; 84 Core-, fünf Integritäts- und fünf gezielte Simulator-Bedienungstests bestanden. iOS-Force-Quit erfordert erneutes Öffnen; Banner-Sichtprüfung und Energiebedarf noch offen. Nachweis: `docs/apple-evidence/2026-09-06-model-downloads/README.md`.
