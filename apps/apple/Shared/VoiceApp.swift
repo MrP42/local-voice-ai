@@ -67,6 +67,7 @@ private struct VoiceHome: View {
     #if os(iOS)
     @State private var showModels = false
     @State private var query = ""
+    @State private var selectedHistoryNote: Entry?
     @FocusState private var searchFocused: Bool
     #if DEBUG
     @State private var tab = ProcessInfo.processInfo.arguments.contains("--meeting-import-probe") ? 2 : 0
@@ -182,7 +183,7 @@ private struct VoiceHome: View {
                             ContentUnavailableView("Keine passende Aufnahme", systemImage: "magnifyingglass", description: Text("Versuche einen anderen Suchbegriff."))
                         }
                         ForEach(filteredEntries) { entry in
-                            NavigationLink { VoiceEntryDetail(model: model, original: entry) } label: { VoiceEntryRow(entry: entry).voiceCard() }
+                            Button { selectedHistoryNote = entry } label: { VoiceEntryRow(entry: entry).voiceCard() }
                                 .buttonStyle(.plain).accessibilityIdentifier("historyEntry")
                                 .modifier(NoteDeletion(model: model, entry: entry))
                         }
@@ -190,6 +191,9 @@ private struct VoiceHome: View {
                 }
                 .scrollContentBackground(.hidden)
                 .background(VoicePalette.background)
+                .navigationDestination(isPresented: Binding(get: { selectedHistoryNote != nil }, set: { if !$0 { selectedHistoryNote = nil } })) {
+                    if let entry = selectedHistoryNote { VoiceEntryDetail(model: model, original: entry) }
+                }
                 .navigationTitle("Verlauf")
                 .navigationBarTitleDisplayMode(.inline)
 
