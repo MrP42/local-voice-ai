@@ -12,6 +12,8 @@ enum VoicePalette {
     static let darkText = 0xEDEDE7
     static let lightBackground = 0xF8F9FB
     static let darkBackground = 0x0B0B0C
+    static let midGray = 0x808080
+    static var border: Color { color(midGray).opacity(0.2) }
     static var brand: Color { color(signalYellow) }
     static var ink: Color { color(inkHex) }
     static var accent: Color { adaptive(light: inkHex, dark: signalYellow) }
@@ -75,7 +77,8 @@ private struct VoiceHome: View {
                                 Text("Zuletzt gespeichert").font(.caption2).foregroundStyle(.secondary)
                                 Text(latest.reply ?? latest.transcript ?? "Sprachnotiz").font(.caption).lineLimit(2).foregroundStyle(.primary)
                             }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                                .background(VoicePalette.background, in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.border, lineWidth: 1))
                         }.buttonStyle(.plain)
                     }
                     NavigationLink {
@@ -97,7 +100,7 @@ private struct VoiceHome: View {
                         if !model.storageIssues.isEmpty { recovery }
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                Text("Zuletzt gespeichert").font(.title3.bold())
+                                Text("ZULETZT GESPEICHERT").font(.caption.weight(.medium)).tracking(0.8).foregroundStyle(.secondary)
                                 Spacer()
                                 Button("Alle anzeigen") { tab = 1 }.font(.subheadline).accessibilityIdentifier("allHistory")
                             }
@@ -136,7 +139,8 @@ private struct VoiceHome: View {
                                 Button("Fertig") { searchFocused = false }.accessibilityIdentifier("closeSearch")
                             }
                         }.padding(14)
-                            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+                            .background(VoicePalette.background, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.border, lineWidth: 1))
                         if !model.storageIssues.isEmpty { recovery }
                         if model.entries.isEmpty { emptyHistory }
                         else if filteredEntries.isEmpty {
@@ -170,12 +174,7 @@ private struct VoiceHome: View {
             if dynamicTypeSize.isAccessibilitySize { recordButton }
             HStack(alignment: .center, spacing: 12) {
                 if !dynamicTypeSize.isAccessibilitySize {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(VoicePalette.brand)
-                        .frame(width: 44, height: 44)
-                        .background(VoicePalette.ink, in: RoundedRectangle(cornerRadius: 12))
-                        .accessibilityHidden(true)
+                    VoiceBrandMark().frame(width: 36, height: 36).accessibilityHidden(true)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.recording ? "Aufnahme läuft" : "Deine Sprachnotiz").font(.headline)
@@ -195,7 +194,8 @@ private struct VoiceHome: View {
                 VStack(alignment: .leading, spacing: 8) { recoveryButton; optionsMenu }
             }.font(.footnote).buttonStyle(.borderless)
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+            .background(VoicePalette.background, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.border, lineWidth: 1))
     }
     private var recoveryButton: some View {
         Button { model.retry(forceReload: true) } label: {
@@ -221,8 +221,7 @@ private struct VoiceHome: View {
                 .foregroundStyle(model.recording ? Color.white : VoicePalette.ink)
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(model.recording ? .red : VoicePalette.brand)
+        .buttonStyle(VoicePrimaryButtonStyle(recording: model.recording))
         .accessibilityIdentifier("record")
         .accessibilityLabel(model.recording ? "Aufnahme sichern" : "Sprechen")
         .accessibilityHint(model.recording ? "Beendet die Aufnahme und speichert sie auf diesem Gerät." : "Startet eine Aufnahme von höchstens 30 Sekunden.")
@@ -287,8 +286,12 @@ private struct VoiceEntryDetail: View {
                     Label("Antwort", systemImage: "text.bubble").font(.headline).foregroundStyle(VoicePalette.accent)
                     Text(entry.reply ?? "gespeichert – Verarbeitung folgt").selectableOnPhone()
                     if let reply = entry.reply {
-                        Button("Antwort anhören", systemImage: "play.fill") { model.speak(reply, id: entry.id) }.buttonStyle(.bordered)
-                        Button("Wiedergabe stoppen", systemImage: "stop.circle") { model.stopPlayback() }.font(.subheadline)
+                        HStack(spacing: 8) {
+                            Button("Antwort anhören", systemImage: "play.fill") { model.speak(reply, id: entry.id) }
+                                .buttonStyle(VoiceMediaButtonStyle(primary: true))
+                            Button("Wiedergabe stoppen", systemImage: "stop.fill") { model.stopPlayback() }
+                                .buttonStyle(VoiceMediaButtonStyle(primary: false))
+                        }.labelStyle(.iconOnly)
                     }
                     #if os(iOS)
                     if entry.reply == nil, let job = entry.job {
@@ -317,10 +320,47 @@ private extension View {
     }
     func voiceCard() -> some View {
         self.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            #if os(iOS)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
-            #else
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
-            #endif
+            .background(VoicePalette.background, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.border, lineWidth: 1))
+    }
+}
+
+// Geometry mirrors LocalVoiceAiMark's 32-point SVG viewBox on desktop.
+struct VoiceBrandMark: View {
+    var body: some View {
+        GeometryReader { geometry in
+            let scale = min(geometry.size.width, geometry.size.height) / 32
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 7 * scale).fill(VoicePalette.ink)
+                Path { path in
+                    for (x, y, height) in [(7.0, 14.5, 5.0), (11.5, 11.5, 11.0), (16.0, 9.0, 16.0), (20.5, 11.5, 11.0), (25.0, 14.5, 5.0)] {
+                        path.move(to: CGPoint(x: x * scale, y: y * scale))
+                        path.addLine(to: CGPoint(x: x * scale, y: (y + height) * scale))
+                    }
+                }.stroke(VoicePalette.brand, style: StrokeStyle(lineWidth: 2.4 * scale, lineCap: .round))
+                Circle().fill(VoicePalette.brand).frame(width: 3.4 * scale, height: 3.4 * scale)
+                    .offset(x: 23.3 * scale, y: 6.5 * scale)
+            }
+        }
+    }
+}
+
+private struct VoicePrimaryButtonStyle: ButtonStyle {
+    let recording: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.padding(.horizontal, 16).padding(.vertical, 4)
+            .background(recording ? Color.red : VoicePalette.brand, in: RoundedRectangle(cornerRadius: 8))
+            .opacity(configuration.isPressed ? 0.8 : 1)
+    }
+}
+
+private struct VoiceMediaButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var scheme
+    let primary: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.system(size: 19, weight: .medium)).frame(width: 44, height: 44)
+            .foregroundStyle(primary ? (scheme == .light ? VoicePalette.brand : VoicePalette.ink) : VoicePalette.text)
+            .background(primary ? (scheme == .light ? VoicePalette.ink : VoicePalette.brand) : Color.clear, in: Circle())
+            .contentShape(Circle()).opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

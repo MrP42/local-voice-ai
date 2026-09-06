@@ -46,6 +46,8 @@ struct ModelPanel: View {
                 Section("Prototyp-Test") { Toggle("Feste Antwort ohne Spracherkennung", isOn: $model.fixedAnswer) }
                 #endif
             }
+            .scrollContentBackground(.hidden)
+            .background(VoicePalette.background)
             .navigationTitle("Lokale Sprachmodelle")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
