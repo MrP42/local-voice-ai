@@ -35,13 +35,13 @@ static int generate(const char *path, const char *prompt, char *output, int32_t 
     if (!model) return 2;
     LVDeadline deadline{cancellation, std::chrono::steady_clock::now() + std::chrono::seconds(minutes ? 180 : 90)};
     if (lv_should_abort(&deadline)) return 11;
-    auto cp = llama_context_default_params(); cp.n_ctx = minutes ? 4096 : 1024; cp.n_batch = minutes ? 3072 : 1024; cp.n_ubatch = 128;
+    auto cp = llama_context_default_params(); cp.n_ctx = 4096; cp.n_batch = 3072; cp.n_ubatch = 128;
     cp.n_threads = 4; cp.n_threads_batch = 4; cp.offload_kqv = false;
     cp.abort_callback = lv_should_abort; cp.abort_callback_data = &deadline;
     std::unique_ptr<llama_context, decltype(&llama_free)> context(llama_init_from_model(model.get(), cp), llama_free);
     if (!context) return 3;
     auto vocab = llama_model_get_vocab(model.get());
-    const int prompt_limit = minutes ? 3072 : 960;
+    const int prompt_limit = 3072;
     std::vector<llama_token> tokens(prompt_limit);
     int n = llama_tokenize(vocab, prompt, static_cast<int32_t>(std::strlen(prompt)), tokens.data(), static_cast<int32_t>(tokens.size()), true, true);
     if (n <= 0 || n > prompt_limit) return 4;

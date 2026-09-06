@@ -95,12 +95,14 @@ actor CPULocalProviders {
         guard code == 0 else { throw VoiceError.invalid }
         return String(cString: output).trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    func reply(to transcript: String, cancellation: InferenceCancellation) throws -> String {
+    func reply(to transcript: String, cancellation: InferenceCancellation, history: [ConversationTurn] = []) throws -> String {
         try Task.checkCancellation()
         let model = try modelURL("qwen2.5-0.5b-instruct-q4_k_m.gguf")
-        // Qwen2.5's documented ChatML template; only the current turn is context.
+        // Qwen2.5 ChatML: role-delimited prior turns from this conversation only.
         let text = String(transcript.prefix(1200)).replacingOccurrences(of: "<|", with: "< |")
-        let prompt = "<|im_start|>system\nDu bist ein hilfreicher Sprachbegleiter. Antworte kurz auf Deutsch in einem Satz. Du kannst nur Text antworten und Notizen speichern. Behaupte niemals, einen Wecker gestellt, Nachrichten gesendet oder andere externe Aktionen ausgeführt zu haben.<|im_end|>\n<|im_start|>user\n\(text)<|im_end|>\n<|im_start|>assistant\n"
+        func safe(_ text: String) -> String { text.replacingOccurrences(of: "<|", with: "< |") }
+        let previous = history.map { "<|im_start|>user\n" + safe($0.user) + "<|im_end|>\n<|im_start|>assistant\n" + safe($0.assistant) + "<|im_end|>\n" }.joined()
+        let prompt = "<|im_start|>system\nDu bist ein hilfreicher Sprachbegleiter. Antworte kurz auf Deutsch in einem Satz. Du kannst nur Text antworten und Notizen speichern. Behaupte niemals, einen Wecker gestellt, Nachrichten gesendet oder andere externe Aktionen ausgeführt zu haben.<|im_end|>\n\(previous)<|im_start|>user\n\(text)<|im_end|>\n<|im_start|>assistant\n"
         var output = [CChar](repeating: 0, count: 4096)
         inferenceMarker("generating")
         defer { inferenceMarker("idle") }

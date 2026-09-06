@@ -20,6 +20,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     private var backgroundRuntime: PhoneProcessingRuntime?
     #if DEBUG && targetEnvironment(simulator)
     private var backgroundProbeStarted = false
+    private var conversationProbeRecorded = false
     #endif
     func registerBackgroundProcessing() {
         do { try backgroundRuntime?.prepareProtectedFiles() }
@@ -32,6 +33,17 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     @Published var status = "Bereit"
     @Published var recording = false
     @Published var reachable = false
+    @Published var autoPlayReplies = UserDefaults.standard.object(forKey: "autoPlayReplies") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(autoPlayReplies, forKey: "autoPlayReplies") }
+    }
+    @Published var handsFreeEnabled = UserDefaults.standard.bool(forKey: "handsFreeEnabled") {
+        didSet { UserDefaults.standard.set(handsFreeEnabled, forKey: "handsFreeEnabled"); if !handsFreeEnabled { endConversation() } }
+    }
+    @Published private(set) var conversationRunning = false
+    @Published private(set) var conversationId = UserDefaults.standard.string(forKey: "conversationId").flatMap(UUID.init(uuidString:))
+    private var awaitingConversationReply: UUID?
+    private var resumeConversationTask: Task<Void, Never>?
+
     @Published var fixedAnswer = UserDefaults.standard.object(forKey: "fixedAnswer") as? Bool ?? false {
         didSet {
             UserDefaults.standard.set(fixedAnswer, forKey: "fixedAnswer")
@@ -72,7 +84,9 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         do {
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VoiceOutbox")
             #if DEBUG && targetEnvironment(simulator)
-            if ProcessInfo.processInfo.arguments.contains("--background-processing-probe") {
+            if ProcessInfo.processInfo.arguments.contains("--conversation-cycle-probe") {
+                store = try DurableStore(root: root.deletingLastPathComponent().appendingPathComponent("ConversationUITest-" + UUID().uuidString))
+            } else if ProcessInfo.processInfo.arguments.contains("--background-processing-probe") {
                 store = try DurableStore(root: root.deletingLastPathComponent().appendingPathComponent("BackgroundUITest-" + UUID().uuidString))
             } else if ProcessInfo.processInfo.arguments.contains("--transparency-ui-probe") {
                 store = try DurableStore(root: root.appendingPathComponent("UITest-Transparency"))
@@ -144,6 +158,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
                   AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
             Task { @MainActor in
                 guard let self else { return }
+                self.endConversation()
                 if self.recording { self.stop() }
                 self.speaker.stopSpeaking(at: .immediate)
                 self.status = "Audio unterbrochen – gespeicherte Inhalte bleiben erhalten"
@@ -166,8 +181,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         if capture == nil { capture = CaptureController(store: store) }
         #if os(iOS)
         if jobs == nil {
-            jobs = JobProcessor(store: store, annotatedTranscribe: { try await LocalProviders.annotatedTranscribe($0) }, annotatedReply: { try await LocalProviders.annotatedReply(to: $0) })
+            jobs = JobProcessor(store: store, annotatedTranscribe: { try await LocalProviders.annotatedTranscribe($0) }, conversationalReply: { try await LocalProviders.annotatedReply(to: $0, history: $1) })
             #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.arguments.contains("--conversation-cycle-probe") {
+                jobs = JobProcessor(store: store, annotatedTranscribe: { _ in ProcessingOutput(text: "Testfrage", model: "Test-STT") }, annotatedReply: { _ in ProcessingOutput(text: "Testantwort.", model: "Test-LLM") })
+            }
             if ProcessInfo.processInfo.arguments.contains("--background-processing-probe") {
                 jobs = JobProcessor(store: store, annotatedTranscribe: { _ in
                     try await Task.sleep(for: .seconds(2))
@@ -190,7 +208,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
                         try? self.store?.update(entry.id, state: .answered, timing: ("background_reply_completed_at_ms", Date().timeIntervalSince1970 * 1000))
                     }
                     if entry.replyToWatch == true { self.transport?.sendAnswer(entry) }
-                    else if self.active && !self.recording { self.speak(reply, id: id) }
+                    else if self.active && !self.recording { self.handleAnswer(reply, id: id) }
                 }
                 self.backgroundRuntime?.processingChanged()
             }
@@ -200,15 +218,35 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
             }
         }
         #endif
-        capture?.onChange = { [weak self] status, recording in self?.status = status; self?.recording = recording }
-        capture?.onSaved = { [weak self] in self?.retry() }
+        capture?.onChange = { [weak self] status, recording in
+            self?.status = status; self?.recording = recording
+            #if DEBUG && os(iOS) && targetEnvironment(simulator)
+            if let self, recording, !self.conversationProbeRecorded, ProcessInfo.processInfo.arguments.contains("--conversation-cycle-probe") {
+                self.conversationProbeRecorded = true
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(1))
+                    guard let self, self.active, self.conversationRunning, self.recording else { return }
+                    // Simulate the first speech-end event; real persistence, playback and rearming remain in use.
+                    self.capture?.stop()
+                }
+            }
+            #endif
+        }
+        capture?.onSaved = { [weak self] id in
+            guard let self else { return }
+            if self.conversationRunning { self.awaitingConversationReply = id }
+            self.retry()
+        }
+        capture?.onUnavailable = { [weak self] in
+            self?.conversationRunning = false; self?.resumeConversationTask?.cancel()
+        }
         speaker.delegate = self
         transport?.onChange = { [weak self] in self?.refresh() }
         transport?.onStatus = { [weak self] in self?.status = $0 }
         transport?.onReachability = { [weak self] in self?.reachable = $0 }
         transport?.onReply = { [weak self] text, id in
             guard let self, self.active, !self.recording else { return }
-            self.speak(text, id: id)
+            self.handleAnswer(text, id: id)
         }
         #if os(iOS)
         transport?.onCapture = { [weak self] in self?.backgroundRuntime?.receivedCapture() }
@@ -224,6 +262,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     }
     func scene(active: Bool) {
         self.active = active
+        if !active { endConversation() }
         if active { store?.invalidateInventory() }
         capture?.setActive(active)
         #if os(iOS)
@@ -288,7 +327,49 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         catch { status = "Verlauf konnte nicht gelesen werden" }
     }
     func recordingURL(_ id: UUID) -> URL? { store?.audioURL(for: id) }
-    func start() { speaker.stopSpeaking(at: .immediate); capture?.start() }
+    func start() {
+        currentUtterance = nil; speakingId = nil
+        speaker.stopSpeaking(at: .immediate)
+        if handsFreeEnabled {
+            if conversationId == nil { newConversation() }
+            conversationRunning = true
+        }
+        capture?.conversationId = handsFreeEnabled ? conversationId : nil
+        capture?.automaticTurns = handsFreeEnabled
+        capture?.start()
+    }
+    func newConversation() {
+        endConversation()
+        speaker.stopSpeaking(at: .immediate)
+        conversationId = UUID()
+        UserDefaults.standard.set(conversationId?.uuidString, forKey: "conversationId")
+    }
+    func endConversation() {
+        conversationRunning = false; awaitingConversationReply = nil
+        resumeConversationTask?.cancel(); resumeConversationTask = nil
+        capture?.cancelPendingStart()
+        if recording { capture?.stop() }
+    }
+    func stopConversation() {
+        endConversation()
+        speaker.stopSpeaking(at: .immediate)
+        status = "Gespräch beendet · Verlauf gespeichert"
+    }
+    private func handleAnswer(_ text: String, id: UUID) {
+        if autoPlayReplies { speak(text, id: id) }
+        else { continueConversation(after: id) }
+    }
+    private func continueConversation(after id: UUID) {
+        guard active, conversationRunning, handsFreeEnabled, awaitingConversationReply == id,
+              entries.first(where: { $0.id == id })?.conversationId == conversationId else { return }
+        awaitingConversationReply = nil
+        resumeConversationTask?.cancel()
+        resumeConversationTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+            guard let self, self.active, self.conversationRunning, !self.recording else { return }
+            self.capture?.start()
+        }
+    }
     func stop() { capture?.stop(); refresh() }
     private func recoverRecordings() { capture?.recoverRecordings() }
     func recoverStorage() {
@@ -326,9 +407,9 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
             currentUtterance = utterance
             speechAttempts[ObjectIdentifier(utterance)] = (id, speechStarted, utterance)
             speaker.speak(utterance); status = "Antwort wird gesprochen"
-        } catch { status = "Audio nicht verfügbar – Antwort ist gespeichert" }
+        } catch { endConversation(); status = "Audio nicht verfügbar – Antwort ist gespeichert" }
     }
-    func stopPlayback() { speaker.stopSpeaking(at: .immediate); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
+    func stopPlayback() { endConversation(); speaker.stopSpeaking(at: .immediate); status = "Wiedergabe gestoppt"; recordDiagnostic("playback_stopped") }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
         Task { @MainActor in
             if self.currentUtterance === utterance { self.lastSpeechStart = Date() }
@@ -352,8 +433,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     private func finishSpeech(_ utterance: AVSpeechUtterance, cancelled: Bool) {
         speechAttempts.removeValue(forKey: ObjectIdentifier(utterance))
         guard currentUtterance === utterance else { return }
+        let completedId = speakingId
         currentUtterance = nil; speakingId = nil
         if !recording { status = cancelled ? "Wiedergabe gestoppt – Antwort bleibt gespeichert" : "Bereit" }
+        if !cancelled, let completedId { continueConversation(after: completedId) }
+        else if cancelled { endConversation() }
     }
     #if os(iOS)
     #if DEBUG

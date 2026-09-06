@@ -8,7 +8,11 @@ import WatchKit
 @MainActor
 final class CaptureController: NSObject, AVAudioRecorderDelegate {
     var onChange: ((String, Bool) -> Void)?
-    var onSaved: (() -> Void)?
+    var onSaved: ((UUID) -> Void)?
+    var onUnavailable: (() -> Void)?
+    var automaticTurns = false
+    var conversationId: UUID?
+    private var meterTask: Task<Void, Never>?
     private var store: DurableStore?
     private var recorder: AVAudioRecorder?
     private var captureStartGate = CaptureStartGate()
@@ -29,6 +33,7 @@ final class CaptureController: NSObject, AVAudioRecorderDelegate {
         try? Data(code.utf8).write(to: documents.appendingPathComponent("last-event.txt"), options: .atomic)
         #endif
     }
+    func cancelPendingStart() { captureStartGate.sceneBecameInactive() }
     func start() {
         guard !recording, store != nil, let intent = captureStartGate.begin(active: active) else { return }
         let requested = Date()
@@ -38,10 +43,10 @@ final class CaptureController: NSObject, AVAudioRecorderDelegate {
                 case .start: break
                 case .denied:
                     self.status = "Mikrofonzugriff verweigert – in Einstellungen erlauben"
-                    self.recordDiagnostic("microphone_denied")
+                    self.recordDiagnostic("microphone_denied"); self.onUnavailable?()
                     return
                 case .cancelled:
-                    self.status = "Aufnahme nicht gestartet – zum Sprechen erneut tippen"
+                    self.status = "Aufnahme nicht gestartet – zum Sprechen erneut tippen"; self.onUnavailable?()
                     return
                 case .stale: return
                 }
@@ -52,24 +57,44 @@ final class CaptureController: NSObject, AVAudioRecorderDelegate {
                     #if os(iOS)
                     try audio.setActive(true)
                     #endif
-                    let url = self.store!.root.appendingPathComponent(".recording-" + UUID().uuidString + ".m4a")
+                    let url = self.store!.root.appendingPathComponent(".recording-" + UUID().uuidString + (self.conversationId.map { "_" + $0.uuidString } ?? "") + ".m4a")
                     let recorder = try AVAudioRecorder(url: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000])
                     recorder.delegate = self
+                    recorder.isMeteringEnabled = self.automaticTurns
                     guard recorder.record(forDuration: 30) else { throw VoiceError.invalid }
                     self.recorder = recorder; self.pendingURL = url
                     self.captureStarted = requested
                     self.feedbackMilliseconds = Date().timeIntervalSince(requested) * 1000
-                    self.recording = true; self.status = "Aufnahme läuft · maximal 30 Sekunden"
+                    self.recording = true; self.status = self.automaticTurns ? "Ich höre zu · Sprechpause beendet den Beitrag" : "Aufnahme läuft · maximal 30 Sekunden"
+                    if self.automaticTurns { self.monitorSpeech(recorder) }
                     #if os(watchOS)
                     WKInterfaceDevice.current().play(.start)
                     #endif
-                } catch VoiceError.full { self.status = "Speicherbudget voll – vorhandene Aufnahmen bleiben erhalten" }
-                catch { self.status = "Aufnahme konnte nicht starten" }
+                } catch VoiceError.full { self.status = "Speicherbudget voll – vorhandene Aufnahmen bleiben erhalten"; self.onUnavailable?() }
+                catch { self.status = "Aufnahme konnte nicht starten"; self.onUnavailable?() }
+            }
+        }
+    }
+    private func monitorSpeech(_ recorder: AVAudioRecorder) {
+        meterTask?.cancel()
+        meterTask = Task { [weak self] in
+            var detector = VoiceTurnDetector()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                guard let self, self.recording, self.recorder === recorder else { return }
+                recorder.updateMeters()
+                if let end = detector.observe(powerDB: recorder.averagePower(forChannel: 0), elapsed: recorder.currentTime) {
+                    if end == .noSpeech { self.onUnavailable?() }
+                    self.stop()
+                    if end == .noSpeech { self.status = "Keine Sprache erkannt · Gespräch pausiert" }
+                    return
+                }
             }
         }
     }
     func stop() {
         guard recording else { return }
+        meterTask?.cancel(); meterTask = nil
         recording = false
         let finished = Date()
         recorder?.stop()
@@ -90,9 +115,10 @@ final class CaptureController: NSObject, AVAudioRecorderDelegate {
             #if os(watchOS)
             WKInterfaceDevice.current().play(.success)
             #endif
-            onSaved?()
+            onSaved?(receipt.sessionId)
         } catch {
             store.invalidateInventory()
+            onUnavailable?()
             status = "Nicht bestätigt – Audiodatei bleibt zur Wiederherstellung erhalten"
         }
         recorder = nil
@@ -100,6 +126,7 @@ final class CaptureController: NSObject, AVAudioRecorderDelegate {
     nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
         Task { @MainActor in
             guard self.recorder === recorder else { return }
+            self.meterTask?.cancel(); self.meterTask = nil
             self.recording = false
             // Even an interrupted recorder can leave a readable, finalized audio container.
             self.saveRecording()

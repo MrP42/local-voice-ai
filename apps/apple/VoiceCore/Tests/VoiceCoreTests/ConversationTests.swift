@@ -72,4 +72,38 @@ final class ConversationTests: XCTestCase {
         var silence = VoiceTurnDetector()
         XCTAssertEqual(silence.observe(powerDB: -80, elapsed: 8), .noSpeech)
     }
+    func testBriefNoiseDoesNotLeaveConversationListeningUntilHardLimit() {
+        var detector = VoiceTurnDetector()
+        XCTAssertNil(detector.observe(powerDB: -20, elapsed: 1))
+        XCTAssertEqual(detector.observe(powerDB: -80, elapsed: 8), .noSpeech)
+    }
+    func testContextKeepsNewestSixTurnsWithinCharacterBudget() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root), group = UUID()
+        for index in 0..<8 {
+            var packet = Packet.capture(audio: Data([UInt8(index)])); packet.payload.conversationId = group
+            packet.createdAt = Date(timeIntervalSince1970: Double(index))
+            _ = try store.accept(packet)
+            try store.update(packet.sessionId, transcript: "Frage \(index)", reply: "Antwort \(index)", state: .answered)
+        }
+        var packet = Packet.capture(audio: Data([9])); packet.payload.conversationId = group
+        _ = try store.accept(packet)
+        let current = try XCTUnwrap(store.entries().first { $0.id == packet.sessionId })
+        let turns = ConversationContext.previousTurns(for: current, in: try store.entries())
+        XCTAssertEqual(turns.count, 6); XCTAssertEqual(turns.first?.user, "Frage 2")
+        let longGroup = UUID()
+        for index in 0..<8 {
+            var previous = Packet.capture(audio: Data([UInt8(index)])); previous.payload.conversationId = longGroup
+            previous.createdAt = Date(timeIntervalSince1970: Double(index))
+            _ = try store.accept(previous)
+            try store.update(previous.sessionId, transcript: String(repeating: "A", count: 2000), reply: String(repeating: "B", count: 500), state: .answered)
+        }
+        var next = Packet.capture(audio: Data([10])); next.payload.conversationId = longGroup
+        _ = try store.accept(next)
+        let longCurrent = try XCTUnwrap(store.entries().first { $0.id == next.sessionId })
+        let bounded = ConversationContext.previousTurns(for: longCurrent, in: try store.entries())
+        XCTAssertEqual(bounded.count, 2)
+        XCTAssertEqual(bounded.reduce(0) { $0 + $1.user.count + $1.assistant.count }, 3400)
+    }
 }

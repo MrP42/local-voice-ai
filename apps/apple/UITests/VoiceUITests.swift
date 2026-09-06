@@ -34,6 +34,14 @@ final class VoiceUITests: XCTestCase {
         add(screenshot)
     }
     #if os(watchOS)
+    func testWatchConversationOptionsAreAvailableWithoutStartingRecording() throws {
+        let app = XCUIApplication(); app.launch()
+        XCTAssertEqual(app.buttons["record"].label, "Sprechen")
+        app.buttons["conversationControls"].tap()
+        XCTAssertTrue(app.switches["autoPlayReplies"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.switches["handsFreeEnabled"].exists)
+        keepScreenshot(app, name: "Watch-Gespraech-Optionen")
+    }
     func testConfiguredHistoryComplicationOpensHistory() throws {
         let app = XCUIApplication()
         let spring = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
@@ -79,6 +87,49 @@ final class VoiceUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Im Hintergrund fertiggestellt"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Erst im Vordergrund fertiggestellt"].exists)
         keepScreenshot(app, name: "Hintergrund-Antwort")
+    }
+    #endif
+    func testConversationOptionsDoNotRecordUntilStartedAndCanStop() throws {
+        let app = XCUIApplication(); app.launch()
+        app.buttons["Gespräch"].firstMatch.tap()
+        let handsFree = app.switches["handsFreeEnabled"]
+        XCTAssertTrue(handsFree.waitForExistence(timeout: 5))
+        let original = handsFree.value as? String
+        if original != "1" { handsFree.tap() }
+        let record = app.buttons["record"]
+        XCTAssertEqual(record.label, "Sprechen")
+        XCTAssertTrue(app.switches["autoPlayReplies"].exists)
+        keepScreenshot(app, name: "Gespraech-Optionen")
+        record.tap()
+        XCTAssertTrue(app.buttons["Gespräch beenden"].waitForExistence(timeout: 5))
+        app.buttons["record"].tap()
+        XCTAssertEqual(record.label, "Sprechen")
+        // Delivery/processing may replace the status immediately. The recording intent must stay stopped.
+        let settled = expectation(description: "Stopped conversation must not restart the microphone")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { settled.fulfill() }
+        wait(for: [settled], timeout: 4)
+        XCTAssertEqual(record.label, "Sprechen")
+        XCTAssertFalse(app.staticTexts["Mikrofon aktiv"].exists)
+        if original != "1" { handsFree.tap() }
+    }
+    #if targetEnvironment(simulator)
+    func testConversationRearmsAfterReplyAndPausesWhenLeavingApp() throws {
+        let app = XCUIApplication(); app.launchArguments = ["--conversation-cycle-probe"]; app.launch()
+        app.buttons["Gespräch"].firstMatch.tap()
+        let handsFree = app.switches["handsFreeEnabled"], playback = app.switches["autoPlayReplies"]
+        let originalHandsFree = handsFree.value as? String, originalPlayback = playback.value as? String
+        if originalHandsFree != "1" { handsFree.tap() }
+        if originalPlayback != "1" { playback.tap() }
+        app.buttons["record"].tap()
+        XCTAssertTrue(app.staticTexts["Testantwort."].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Mikrofon aktiv"].waitForExistence(timeout: 10))
+        keepScreenshot(app, name: "Gespraech-naechster-Beitrag")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertEqual(app.buttons["record"].label, "Sprechen")
+        XCTAssertFalse(app.staticTexts["Mikrofon aktiv"].exists)
+        if originalHandsFree != "1" { handsFree.tap() }
+        if originalPlayback != "1" { playback.tap() }
     }
     #endif
     func testTransparencyAndMarkdown() throws {

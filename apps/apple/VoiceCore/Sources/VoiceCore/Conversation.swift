@@ -33,7 +33,7 @@ public struct VoiceTurnDetector: Sendable {
             lastSpeech = elapsed
         }
         if let firstSpeech, let lastSpeech, lastSpeech - firstSpeech >= 0.3, elapsed - lastSpeech >= 1.2 { return .finishedSpeaking }
-        if firstSpeech == nil && elapsed >= 8 { return .noSpeech }
+        if elapsed >= 8, firstSpeech == nil || (lastSpeech ?? 0) - (firstSpeech ?? 0) < 0.3 { return .noSpeech }
         return nil
     }
 }

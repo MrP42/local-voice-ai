@@ -60,16 +60,21 @@ final class VoiceTransport: NSObject, WCSessionDelegate {
             }, errorHandler: { _ in Task { @MainActor in self.recordDiagnostic("duplicate_transport_failed") } })
         }
         #endif
+        // A Watch message can wake the companion in the background. A stale
+        // reachability snapshot must not prevent that attempt; errors use the
+        // already queued durable transfer.
+        let canAttemptInteractive = WCSession.default.activationState == .activated
         for entry in Entry.pendingDelivery(in: entries) {
             guard !inFlight.contains(entry.id), let store else { continue }
-            if reachable && !inFlight.isEmpty { break }
+            if canAttemptInteractive && !inFlight.isEmpty { break }
             do {
                 let packet = try store.packet(for: entry)
                 let data = try encoder.encode(Wire(capture: packet))
-                if reachable && inFlight.isEmpty && data.count > 60000 {
+                queueFile(entry, data: data)
+                if canAttemptInteractive && inFlight.isEmpty && data.count > 60000 {
                     inFlight.insert(entry.id)
                     sendChunks(try CaptureChunk.split(packet), position: 0, entry: entry, started: Date())
-                } else if reachable && inFlight.isEmpty {
+                } else if canAttemptInteractive && inFlight.isEmpty {
                     inFlight.insert(entry.id)
                     let start = Date()
                     WCSession.default.sendMessageData(data, replyHandler: { response in
@@ -157,7 +162,7 @@ final class VoiceTransport: NSObject, WCSessionDelegate {
             if wire.kind == "captureChunk", let part = wire.payload.chunk, let chunks {
                 guard wire.sessionId == part.sessionId, wire.messageId == part.messageId else { throw VoiceError.invalid }
                 if let existing = entries.first(where: { $0.id == part.sessionId }) {
-                    guard existing.receipt.messageId == part.captureMessageId, existing.digest == part.digest else { throw VoiceError.conflict }
+                    guard existing.receipt.messageId == part.captureMessageId, existing.digest == part.digest, existing.conversationId == part.conversationId else { throw VoiceError.conflict }
                     return receive(try encoder.encode(Wire(capture: store.packet(for: existing))))
                 }
                 if let packet = try chunks.receive(part) {

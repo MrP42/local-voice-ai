@@ -82,6 +82,7 @@ private struct VoiceHome: View {
                     Label(model.reachable ? "iPhone verbunden" : "Übergabe später", systemImage: model.reachable ? "iphone" : "clock")
                         .font(.caption2).foregroundStyle(VoicePalette.secondaryText)
                     recordButton
+                    conversationControls
                     Text(model.status).font(.caption).multilineTextAlignment(.center).accessibilityIdentifier("status")
                     if !model.reachable { Text("Deine Aufnahme bleibt auf der Watch gespeichert.").font(.caption2).foregroundStyle(VoicePalette.secondaryText) }
                     if !model.storageIssues.isEmpty { recovery }
@@ -125,6 +126,7 @@ private struct VoiceHome: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         captureCard
+                        conversationControls.voiceCard()
                         if !model.storageIssues.isEmpty { recovery }
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -243,16 +245,37 @@ private struct VoiceHome: View {
     }
     #endif
 
+    @ViewBuilder private var conversationControls: some View {
+        #if os(watchOS)
+        NavigationLink { ScrollView { conversationOptions.padding() }.navigationTitle("Gespräch") } label: {
+            Label("Gespräch", systemImage: "bubble.left.and.bubble.right")
+        }.accessibilityIdentifier("conversationControls")
+        #else
+        DisclosureGroup("Gespräch") { conversationOptions }
+        #endif
+    }
+    private var conversationOptions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("Antwort vorlesen", isOn: $model.autoPlayReplies).accessibilityIdentifier("autoPlayReplies")
+            Toggle("Freisprechen", isOn: $model.handsFreeEnabled).accessibilityIdentifier("handsFreeEnabled")
+            if model.handsFreeEnabled {
+                Text("Nach einer Sprechpause antworten. Danach wieder zuhören. Beim Vorlesen pausiert das Mikrofon.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+                Text("Beim Verlassen dieser App pausiert das Freisprechen. Kontext: bis zu 6 vorherige Wortwechsel dieses Gesprächs, lokal gespeichert.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+                Button("Neues Gespräch", systemImage: "plus.bubble") { model.newConversation() }
+                if model.conversationRunning { Text(model.recording ? "Mikrofon aktiv" : "Warte auf Antwort").font(.caption).foregroundStyle(VoicePalette.accent) }
+            }
+        }
+    }
     private var recordButton: some View {
-        Button { model.recording ? model.stop() : model.start() } label: {
-            Label(model.recording ? "Aufnahme sichern" : "Sprechen", systemImage: model.recording ? "stop.fill" : "mic.fill")
+        Button { if model.conversationRunning { model.stopConversation() } else { model.recording ? model.stop() : model.start() } } label: {
+            Label(model.conversationRunning ? "Gespräch beenden" : model.recording ? "Aufnahme sichern" : "Sprechen", systemImage: model.recording || model.conversationRunning ? "stop.fill" : "mic.fill")
                 .font(.headline)
-                .foregroundStyle(model.recording ? Color.white : VoicePalette.ink)
+                .foregroundStyle(model.recording || model.conversationRunning ? Color.white : VoicePalette.ink)
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
-        .buttonStyle(VoicePrimaryButtonStyle(recording: model.recording))
+        .buttonStyle(VoicePrimaryButtonStyle(recording: model.recording || model.conversationRunning))
         .accessibilityIdentifier("record")
-        .accessibilityLabel(model.recording ? "Aufnahme sichern" : "Sprechen")
+        .accessibilityLabel(model.conversationRunning ? "Gespräch beenden" : model.recording ? "Aufnahme sichern" : "Sprechen")
         .accessibilityHint(model.recording ? "Beendet die Aufnahme und speichert sie auf diesem Gerät." : "Startet eine Aufnahme von höchstens 30 Sekunden.")
     }
 

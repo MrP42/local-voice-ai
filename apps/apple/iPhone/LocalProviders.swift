@@ -60,12 +60,14 @@ enum LocalProviders {
     }
 
     static func reply(to transcript: String) async throws -> String { try await annotatedReply(to: transcript).text }
-    static func annotatedReply(to transcript: String) async throws -> ProcessingOutput {
+    static func annotatedReply(to transcript: String, history: [ConversationTurn] = []) async throws -> ProcessingOutput {
         if ResponsePolicy.isActionRequest(transcript) { return ProcessingOutput(text: ResponsePolicy.capabilityReply, model: "Lokale Funktionsregel", isAI: false) }
-        guard SystemLanguageModel.default.availability == .available else { return ProcessingOutput(text: ResponsePolicy.safeAnswer(try await cpuReply(transcript)), model: "Qwen 2.5 0.5B Instruct · Q4_K_M") }
+        guard SystemLanguageModel.default.availability == .available else { return ProcessingOutput(text: ResponsePolicy.safeAnswer(try await cpuReply(transcript, history: history)), model: "Qwen 2.5 0.5B Instruct · Q4_K_M") }
         let session = LanguageModelSession(instructions: "Antworte kurz auf Deutsch, höchstens zwei Sätze. Du kannst nur Text antworten und Notizen speichern. Behaupte niemals, externe Aktionen ausgeführt zu haben.")
+        let previous = history.map { "Nutzer: " + $0.user + "\nAssistent: " + $0.assistant }.joined(separator: "\n")
+        let prompt = previous.isEmpty ? String(transcript.prefix(2000)) : "Bisheriges Gespräch (nur Kontext):\n" + previous + "\nAktuelle Nachricht:\n" + String(transcript.prefix(2000))
         let generation = Task {
-            let result = try await session.respond(to: String(transcript.prefix(2000)), options: GenerationOptions(maximumResponseTokens: 128))
+            let result = try await session.respond(to: prompt, options: GenerationOptions(maximumResponseTokens: 128))
             try Task.checkCancellation()
             return String(result.content.prefix(500))
         }
@@ -91,10 +93,10 @@ enum LocalProviders {
             try await CPULocalProviders.shared.annotatedTranscribe(url, cancellation: cancellation)
         } onCancel: { cancellation.cancel() }
     }
-    private static func cpuReply(_ text: String) async throws -> String {
+    private static func cpuReply(_ text: String, history: [ConversationTurn] = []) async throws -> String {
         let cancellation = InferenceCancellation()
         return try await withTaskCancellationHandler {
-            try await CPULocalProviders.shared.reply(to: text, cancellation: cancellation)
+            try await CPULocalProviders.shared.reply(to: text, cancellation: cancellation, history: history)
         } onCancel: { cancellation.cancel() }
     }
 
