@@ -323,4 +323,8 @@ iPhone-Update installiert und gestartet: echte Modell-Downloads, Transkripte-Men
 
 ### Watch-Hintergrundverarbeitung 06.09.2026
 
-Vordergrundkopplung für kurze Sprachnotizen entfernt: UIKit-Laufzeitfenster, BGProcessingTask-Fallback, Start ohne UI, dauerhafte Antwortzustellung und wiederaufnehmbare Zeitlimits. Auf echten Geräten im 90-Sekunden-Hintergrundfenster bestätigt: lokale STT 0,57 s, Antwort 2,63 s, Watch-Empfang quittiert. 77 Core-Tests, Simulator-Hintergrundtest und Geräte-Hintergrundfenster bestanden. Sperrbildschirmtest, natürliche Scheduler-Ausführung und Akku noch offen. Nachweis: `docs/apple-evidence/2026-09-06-background/README.md`.
+Vordergrundkopplung für kurze Sprachnotizen entfernt: UIKit-Laufzeitfenster, BGProcessingTask-Fallback, Start ohne UI, dauerhafte Antwortzustellung und wiederaufnehmbare Zeitlimits. Auf echten Geräten im 90-Sekunden-Hintergrundfenster bestätigt: lokale STT 0,57 s, Antwort 2,63 s, Watch-Empfang quittiert. 77 Core-Tests, Simulator-Hintergrundtest und Geräte-Hintergrundfenster bestanden. Sperrbildschirmtest ebenfalls bestätigt, mit etwa 85 Sekunden Zustellverzögerung und anschließend lokaler Verarbeitung. Natürliche Scheduler-Ausführung und Akku noch offen. Nachweis: `docs/apple-evidence/2026-09-06-background/README.md`.
+
+### Lokaler Gesprächsmodus, 06.09.2026
+
+Auf `codex/watch-conversation-background`: getrenntes automatisches Vorlesen und Freisprechen, persistenter Gesprächskontext mit bis zu sechs Wortwechseln, sicheres Stoppen/Pausieren. 84 Kerntests und vier Bedienungsläufe bestanden; Gedächtnis mit Apple Foundation Models auf echtem iPhone bestätigt. Geräuschqualität und Akku bei längeren Gesprächen bleiben zu messen. Nachweis: `docs/apple-evidence/2026-09-06-conversation/README.md`. Parallele Arbeit erfolgt in eigenem Worktree; Integrationsregeln: `docs/apple-evidence/2026-09-06-background/parallel-development.md`.

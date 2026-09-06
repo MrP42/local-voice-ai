@@ -1,0 +1,62 @@
+Test Suite 'Selected tests' started at 2026-09-06 15:01:15.648.
+Test Suite 'VoicePhoneUITests.xctest' started at 2026-09-06 15:01:15.649.
+Test Suite 'VoiceUITests' started at 2026-09-06 15:01:15.649.
+Test Case '-[VoicePhoneUITests.VoiceUITests testConversationOptionsDoNotRecordUntilStartedAndCanStop]' started.
+    t =     0.00s Start Test at 2026-09-06 15:01:15.651
+    t =     0.08s Set Up
+    t =     0.08s Open de.localvoice.prototype
+    t =     0.08s     Launch de.localvoice.prototype
+    t =     3.14s         Setting up automation session
+    t =     4.44s         Wait for de.localvoice.prototype to idle
+    t =    11.51s Tap "Gespräch" Button
+    t =    11.51s     Wait for de.localvoice.prototype to idle
+    t =    11.51s     Find the "Gespräch" Button
+    t =    11.67s     Check for interrupting elements affecting "Gespräch" Button
+    t =    11.78s     Synthesize event
+    t =    12.09s     Wait for de.localvoice.prototype to idle
+    t =    12.09s Waiting 5.0s for "handsFreeEnabled" Switch to exist
+    t =    13.12s     Checking `Expect predicate `existsNoRetry == 1` for object "handsFreeEnabled" Switch`
+    t =    13.12s         Checking existence of `"handsFreeEnabled" Switch`
+    t =    13.28s Find the "handsFreeEnabled" Switch
+    t =    14.44s Tap "handsFreeEnabled" Switch
+    t =    14.44s     Wait for de.localvoice.prototype to idle
+    t =    14.45s     Find the "handsFreeEnabled" Switch
+    t =    14.58s     Check for interrupting elements affecting "handsFreeEnabled" Switch
+    t =    14.68s     Synthesize event
+    t =    14.99s     Wait for de.localvoice.prototype to idle
+    t =    16.31s Find the "record" Button
+    t =    16.42s Checking existence of `"autoPlayReplies" Switch`
+    t =    16.52s Find the Target Application 'de.localvoice.prototype'
+    t =    16.80s Added attachment named 'Gespraech-Optionen'
+    t =    16.81s Tap "record" Button
+    t =    16.81s     Wait for de.localvoice.prototype to idle
+    t =    16.82s     Find the "record" Button
+    t =    16.93s     Check for interrupting elements affecting "record" Button
+    t =    17.03s     Synthesize event
+    t =    17.34s     Wait for de.localvoice.prototype to idle
+    t =    18.65s Waiting 5.0s for "Gespräch beenden" Button to exist
+    t =    19.67s     Checking `Expect predicate `existsNoRetry == 1` for object "Gespräch beenden" Button`
+    t =    19.68s         Checking existence of `"Gespräch beenden" Button`
+    t =    19.79s Tap "record" Button
+    t =    19.79s     Wait for de.localvoice.prototype to idle
+    t =    19.80s     Find the "record" Button
+    t =    19.91s     Check for interrupting elements affecting "record" Button
+    t =    20.01s     Synthesize event
+    t =    20.32s     Wait for de.localvoice.prototype to idle
+    t =    20.56s Find the "record" Button
+    t =    22.79s Find the "record" Button
+    t =    22.91s Checking existence of `"Mikrofon aktiv" StaticText`
+    t =    23.03s Tap "handsFreeEnabled" Switch
+    t =    23.03s     Wait for de.localvoice.prototype to idle
+    t =    23.03s     Find the "handsFreeEnabled" Switch
+    t =    23.15s     Check for interrupting elements affecting "handsFreeEnabled" Switch
+    t =    23.28s     Synthesize event
+    t =    23.60s     Wait for de.localvoice.prototype to idle
+    t =    24.91s Tear Down
+Test Case '-[VoicePhoneUITests.VoiceUITests testConversationOptionsDoNotRecordUntilStartedAndCanStop]' passed (25.259 seconds).
+Test Suite 'VoiceUITests' passed at 2026-09-06 15:01:40.911.
+	 Executed 1 test, with 0 failures (0 unexpected) in 25.259 (25.261) seconds
+Test Suite 'VoicePhoneUITests.xctest' passed at 2026-09-06 15:01:40.912.
+	 Executed 1 test, with 0 failures (0 unexpected) in 25.259 (25.263) seconds
+Test Suite 'Selected tests' passed at 2026-09-06 15:01:40.914.
+	 Executed 1 test, with 0 failures (0 unexpected) in 25.259 (25.265) seconds

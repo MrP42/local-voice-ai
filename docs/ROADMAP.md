@@ -157,4 +157,8 @@ weitere Produktfunktionen noch eine Veröffentlichung.
 
 ### Apple: Hintergrundverarbeitung, Nachtrag 06.09.2026
 
-Kurze Watch-Sprachnotizen werden jetzt auch ohne sichtbare iPhone-App verarbeitet (auf echter Hardware nachgewiesen). Weiter offen: Sperrbildschirm-Abnahme, natürlich ausgelöste BGProcessingTask-Läufe, Akku/Langzeitmessung und interaktive Watch-Komplikationen. Force-Quit bleibt eine iOS-Ausführungsgrenze; bestätigte Aufnahmen bleiben erhalten. Siehe `docs/apple-evidence/2026-09-06-background/README.md`.
+Kurze Watch-Sprachnotizen werden jetzt auch ohne sichtbare iPhone-App verarbeitet (auf echter Hardware nachgewiesen). Auch Verarbeitung bei gesperrtem iPhone bestätigt; Zustellung dabei verzögert. Weiter offen: natürlich ausgelöste BGProcessingTask-Läufe, Akku/Langzeitmessung und interaktive Watch-Komplikationen. Force-Quit bleibt eine iOS-Ausführungsgrenze; bestätigte Aufnahmen bleiben erhalten. Siehe `docs/apple-evidence/2026-09-06-background/README.md`.
+
+### Lokaler Gesprächsmodus, 06.09.2026
+
+Auf `codex/watch-conversation-background`: getrenntes automatisches Vorlesen und Freisprechen, persistenter Gesprächskontext mit bis zu sechs Wortwechseln, sicheres Stoppen/Pausieren. 84 Kerntests und vier Bedienungsläufe bestanden; Gedächtnis mit Apple Foundation Models auf echtem iPhone bestätigt. Geräuschqualität und Akku bei längeren Gesprächen bleiben zu messen. Nachweis: `docs/apple-evidence/2026-09-06-conversation/README.md`. Parallele Arbeit erfolgt in eigenem Worktree; Integrationsregeln: `docs/apple-evidence/2026-09-06-background/parallel-development.md`.

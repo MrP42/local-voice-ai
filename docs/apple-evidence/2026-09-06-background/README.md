@@ -20,7 +20,7 @@ iPhone 15 Pro Max und Apple Watch Ultra 3, 06.09.2026:
 
 Bei abgelaufener Laufzeit wird die lokale Inferenz abgebrochen; bestätigte Aufnahmen und bereits fertige Transkripte bleiben erhalten. Systemunterbrechungen verbrauchen nicht das Fehlerbudget für tatsächlich fehlgeschlagene Anbieteraufrufe. Antworten werden vor Ende des Laufzeitfensters an die dauerhafte WatchConnectivity-Zustellung übergeben; doppelte Zustellungen bleiben idempotent.
 
-Aufnahmen und Modelle bleiben verschlüsselt, sind aber nach dem ersten Entsperren seit dem Neustart auch bei gesperrtem Bildschirm zugänglich. Der zusätzliche Gerätetest mit tatsächlich gesperrtem iPhone wartet noch auf die Sperraktion des Nutzers.
+Aufnahmen und Modelle bleiben verschlüsselt, sind aber nach dem ersten Entsperren seit dem Neustart auch bei gesperrtem Bildschirm zugänglich. Auch am gesperrten iPhone wurde die Testaufnahme lokal verarbeitet und von der Watch quittiert: Sperre vor und nach dem Versuch per Geräteabfrage bestätigt, Abschluss im Hintergrund protokolliert. Die Zustellung benötigte in dieser Probe ungefähr 85 Sekunden; anschließend STT 3,46 Sekunden und Antworterzeugung 6,11 Sekunden. Das bestätigt aufgeschobene Verarbeitung ohne erneutes Öffnen, keine garantierte Sofortantwort.
 
 iOS kann zusätzliche Laufzeit verweigern oder geplante Aufträge verzögern. Ein BGProcessingTask ist registriert und wird bei Restarbeit angefordert; ein natürlich vom System ausgelöster geplanter Lauf ist hier noch nicht nachgewiesen. Nach ausdrücklichem Wegwischen der iPhone-App lässt sich ein erneuter Hintergrundstart nicht garantieren. Dann bleibt die Aufnahme gespeichert. Kein unbegrenzter Echtzeitbetrieb und keine neue Akkumessung zugesagt.
 

@@ -1,0 +1,22 @@
+{
+  "date": "2026-09-06",
+  "code_commit": "8289a90",
+  "phone": {
+    "device": "iPhone 15 Pro Max",
+    "signed_build": "passed",
+    "installation": "passed",
+    "normal_launch": "passed"
+  },
+  "watch": {
+    "device": "Apple Watch Ultra 3",
+    "signed_build": "passed",
+    "installation": "passed",
+    "normal_launch": "blocked_by_watch_passcode_lock"
+  },
+  "core_tests": 84,
+  "core_failures": 0,
+  "ui_runs_passed": 4,
+  "battery_impact": "not_measured",
+  "real_hands_free_acoustic_cycle": "not_measured",
+  "real_memory_probe": "passed_Apple_Foundation_Models"
+}
