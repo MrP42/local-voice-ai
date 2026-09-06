@@ -316,3 +316,7 @@ prüfbedürftig: STT-Fehler und unvollständige Kategorien im tatsächlichen Lau
 Keine physische Akkumessung, keine beliebige Live-Aufnahme fremder Telefon-Apps,
 keine automatische Sprecherdiarisierung. Synchronisierung, entfernte Mikrofone
 und Aktivitätsrouting sind weiterhin offene Integrationsarbeit.
+
+### Apple-Update 06.09.2026: Geräte und Transparenz
+
+iPhone-Update installiert und gestartet: echte Modell-Downloads, Transkripte-Menü, formatierte Antworten und persistierte Modell-/Zeitangaben. 73 Core-Tests und zwei gezielte Dark-Mode-Bedienungstests erfolgreich. Watch-Entwicklermodus aktiv, Geräte-Build erfolgreich, Installation und Start nach vorübergehenden Verbindungsabbrüchen erfolgreich. Komplikationen sind Navigationszugriffe; Hintergrundsteuerung bleibt offen. Nachweis: `docs/apple-evidence/2026-09-06-transparency/README.md`.

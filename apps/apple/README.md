@@ -129,7 +129,7 @@ is marked answered; the saved recording remains eligible for later processing.
 
 ## Local recordings and meeting results (2026-09-06)
 
-The iPhone **Aufzeichnungen** tab imports audio/video through the native file picker.
+The iPhone **Transkripte** tab imports audio/video through the native file picker.
 Originals are copied, hashed and durably committed before an import is acknowledged.
 A separate archive retains up to 4 GiB (individual inputs up to 2 GiB / 2 hours).
 Audio is decoded locally, then Whisper processes resumable 30-second chunks. Foreground
@@ -179,3 +179,25 @@ python3 apps/apple/scripts/generate_project.py
 Reference: https://developer.apple.com/documentation/xcode/configuring-your-app-icon
 Fresh simulator build succeeded, both apps installed and launched, and launcher
 icons visually checked on iPhone and Watch (2026-09-06).
+
+## Watch complications — navigation baseline
+
+The embedded `VoiceComplications` WidgetKit extension offers Sprechen, Verlauf and
+Letzte Notiz in circular, rectangular, inline and corner families. Foreground
+colors follow the widget rendering mode; full-color accents use WAI signal yellow.
+Each shortcut opens its app destination via `widgetURL`; no URL starts a recording.
+No live recording status or background controls are claimed by these static widgets.
+The requested background start/pause/resume/stop workflow is tracked separately in
+`docs/superpowers/plans/2026-09-06-watch-background-controls.md`.
+
+The Watch UI test `testConfiguredHistoryComplicationOpensHistory` requires a Modular
+simulator face with the Verlauf widget in its center slot. It checks the actual
+widget tap and destination, and skips if no watch face is visible. Other UI tests
+do not depend on placing a complication. Core routing has an independent test.
+
+On 2026-09-06 the native device build was signed through the user's Personal Team
+and installed on the physical iPhone. First launch required explicit developer
+profile trust on the iPhone. The updated iPhone app subsequently installed and launched successfully. Watch Developer Mode is now verified enabled and the device-specific build passes, and physical installation succeeded after transient CoreDevice connection failures.
+See the device installation evidence rather than inferring success from a build.
+
+Model cards now download approved model files over HTTPS and verify size/SHA-256 before installation. Keep the app open during downloads. Processing provenance is persisted with results, shared with Watch replies and shown beside playback controls; unknown historical metadata is never inferred. See `docs/apple-evidence/2026-09-06-transparency`.
