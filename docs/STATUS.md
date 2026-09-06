@@ -336,3 +336,7 @@ Eigene Sprachnotizen auf iPhone und Watch mit Play/Pause/Fortsetzen/Stopp; nativ
 ### Modelle und Stimmen, 06.09.2026
 
 Persistente Hintergrunddownloads mit kompaktem Symbolknopf, Fortschritt und Status direkt am Modell; lokale Bereitschaftsbenachrichtigung erst nach Integritätsprüfung. Echter iPhone-Download von Qwen 0.5B im Hintergrund bestätigt. Geräte-UI-Test beim Wiederöffnen durch Sperre blockiert. Stimmenauswahl mit Hörprobe auf iPhone und Watch; 84 Core-, fünf Integritäts- und fünf gezielte Simulator-Bedienungstests bestanden. iOS-Force-Quit erfordert erneutes Öffnen; Banner-Sichtprüfung und Energiebedarf noch offen. Nachweis: `docs/apple-evidence/2026-09-06-model-downloads/README.md`.
+
+### Gespräch nach Geräuschen, 06.09.2026
+
+Leere Transkriptionen beenden das Freisprechen nicht mehr. Nicht-KI-Systemergebnis mit dauerhafter Watch-Zustellung, Originalerhalt und automatischer Fortsetzung; Apple-Leerresultat korrekt als noSpeech eingeordnet. Drei Mikrofonempfindlichkeiten und automatische Umgebungspegelschwelle. 87 Core-Tests und zwei gezielte iPhone-UI-Tests bestanden. Reale akustische Abnahme bleibt offen. Nachweis: `docs/apple-evidence/2026-09-06-conversation-noise/README.md`.

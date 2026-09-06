@@ -67,9 +67,10 @@ struct MicrophoneSettings: View {
     @ObservedObject var model: VoiceModel
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Text("Mikrofonempfindlichkeit").font(.subheadline)
             Picker("Mikrofonempfindlichkeit", selection: $model.microphoneSensitivity) {
                 ForEach(MicrophoneSensitivity.allCases, id: \.self) { Text($0.label).tag($0) }
-            }.accessibilityIdentifier("microphoneSensitivity")
+            }.labelsHidden().accessibilityIdentifier("microphoneSensitivity")
             Toggle("Umgebungsgeräusche berücksichtigen", isOn: $model.automaticNoiseFloor)
                 .accessibilityIdentifier("automaticNoiseFloor")
             Text("Steuert, wann Freisprechen Sprache vermutet. Unempfindlich hilft bei Lärm, Empfindlich bei leiser Stimme. Automatisch wird der Umgebungspegel zu Beginn kurz eingemessen. Keine Änderung der Aufnahmelautstärke.")
