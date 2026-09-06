@@ -11,6 +11,8 @@ final class CaptureController: NSObject, AVAudioRecorderDelegate {
     var onSaved: ((UUID) -> Void)?
     var onUnavailable: (() -> Void)?
     var automaticTurns = false
+    var sensitivity: MicrophoneSensitivity = .balanced
+    var automaticNoiseFloor = true
     var conversationId: UUID?
     private var meterTask: Task<Void, Never>?
     private var store: DurableStore?
@@ -78,15 +80,14 @@ final class CaptureController: NSObject, AVAudioRecorderDelegate {
     private func monitorSpeech(_ recorder: AVAudioRecorder) {
         meterTask?.cancel()
         meterTask = Task { [weak self] in
-            var detector = VoiceTurnDetector()
+            var detector = VoiceTurnDetector(sensitivity: self?.sensitivity ?? .balanced, automaticNoiseFloor: self?.automaticNoiseFloor ?? true)
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
                 guard let self, self.recording, self.recorder === recorder else { return }
                 recorder.updateMeters()
                 if let end = detector.observe(powerDB: recorder.averagePower(forChannel: 0), elapsed: recorder.currentTime) {
-                    if end == .noSpeech { self.onUnavailable?() }
                     self.stop()
-                    if end == .noSpeech { self.status = "Keine Sprache erkannt · Gespräch pausiert" }
+                    if end == .noSpeech { self.status = "Keine Sprache erkannt · Aufnahme wird geprüft" }
                     return
                 }
             }

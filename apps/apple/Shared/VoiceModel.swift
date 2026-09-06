@@ -52,6 +52,12 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     @Published var handsFreeEnabled = UserDefaults.standard.bool(forKey: "handsFreeEnabled") {
         didSet { UserDefaults.standard.set(handsFreeEnabled, forKey: "handsFreeEnabled"); if !handsFreeEnabled { endConversation() } }
     }
+    @Published var microphoneSensitivity = MicrophoneSensitivity(rawValue: UserDefaults.standard.string(forKey: "microphoneSensitivity") ?? "") ?? .balanced {
+        didSet { UserDefaults.standard.set(microphoneSensitivity.rawValue, forKey: "microphoneSensitivity"); capture?.sensitivity = microphoneSensitivity }
+    }
+    @Published var automaticNoiseFloor = UserDefaults.standard.object(forKey: "automaticNoiseFloor") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(automaticNoiseFloor, forKey: "automaticNoiseFloor"); capture?.automaticNoiseFloor = automaticNoiseFloor }
+    }
     @Published private(set) var conversationRunning = false
     @Published private(set) var conversationId = UserDefaults.standard.string(forKey: "conversationId").flatMap(UUID.init(uuidString:))
     private var awaitingConversationReply: UUID?
@@ -113,7 +119,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
                 let receipt = try testStore.accept(.capture(audio: Data(contentsOf: url)))
                 try testStore.update(receipt.sessionId, transcript: "Synthetische Originalaufnahme", reply: "Testantwort.", state: .answered)
                 store = testStore
-            } else if ProcessInfo.processInfo.arguments.contains("--conversation-cycle-probe") {
+            } else if ProcessInfo.processInfo.arguments.contains("--conversation-no-speech-probe") || ProcessInfo.processInfo.arguments.contains("--conversation-cycle-probe") {
                 store = try DurableStore(root: root.deletingLastPathComponent().appendingPathComponent("ConversationUITest-" + UUID().uuidString))
             } else if ProcessInfo.processInfo.arguments.contains("--background-processing-probe") {
                 store = try DurableStore(root: root.deletingLastPathComponent().appendingPathComponent("BackgroundUITest-" + UUID().uuidString))
@@ -214,7 +220,9 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         if jobs == nil {
             jobs = JobProcessor(store: store, annotatedTranscribe: { try await LocalProviders.annotatedTranscribe($0) }, conversationalReply: { try await LocalProviders.annotatedReply(to: $0, history: $1) })
             #if DEBUG && targetEnvironment(simulator)
-            if ProcessInfo.processInfo.arguments.contains("--conversation-cycle-probe") {
+            if ProcessInfo.processInfo.arguments.contains("--conversation-no-speech-probe") {
+                jobs = JobProcessor(store: store, transcribe: { _ in " " }, reply: { _ in "Unexpected generation" })
+            } else if ProcessInfo.processInfo.arguments.contains("--conversation-cycle-probe") {
                 jobs = JobProcessor(store: store, annotatedTranscribe: { _ in ProcessingOutput(text: "Testfrage", model: "Test-STT") }, annotatedReply: { _ in ProcessingOutput(text: "Testantwort.", model: "Test-LLM") })
             }
             if ProcessInfo.processInfo.arguments.contains("--background-processing-probe") {
@@ -252,7 +260,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         capture?.onChange = { [weak self] status, recording in
             self?.status = status; self?.recording = recording
             #if DEBUG && os(iOS) && targetEnvironment(simulator)
-            if let self, recording, !self.conversationProbeRecorded, ProcessInfo.processInfo.arguments.contains("--conversation-cycle-probe") {
+            if let self, recording, !self.conversationProbeRecorded, (ProcessInfo.processInfo.arguments.contains("--conversation-cycle-probe") || ProcessInfo.processInfo.arguments.contains("--conversation-no-speech-probe")) {
                 self.conversationProbeRecorded = true
                 Task { [weak self] in
                     try? await Task.sleep(for: .seconds(1))
@@ -442,6 +450,8 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         }
         capture?.conversationId = handsFreeEnabled ? conversationId : nil
         capture?.automaticTurns = handsFreeEnabled
+        capture?.sensitivity = microphoneSensitivity
+        capture?.automaticNoiseFloor = automaticNoiseFloor
         capture?.start()
     }
     func newConversation() {
@@ -463,7 +473,11 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     }
     private func handleAnswer(_ text: String, id: UUID) {
         guard originalPlayer == nil else { return }
-        if autoPlayReplies { speak(text, id: id) }
+        if let entry = entries.first(where: { $0.id == id }), ConversationOutcome.isNoSpeech(entry) {
+            status = ConversationOutcome.noSpeechMessage
+            continueConversation(after: id)
+        }
+        else if autoPlayReplies { speak(text, id: id) }
         else { continueConversation(after: id) }
     }
     private func continueConversation(after id: UUID) {

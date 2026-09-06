@@ -77,6 +77,22 @@ final class ConversationTests: XCTestCase {
         XCTAssertNil(detector.observe(powerDB: -20, elapsed: 1))
         XCTAssertEqual(detector.observe(powerDB: -80, elapsed: 8), .noSpeech)
     }
+    func testAutomaticNoiseFloorRejectsSteadyRoomNoise() {
+        var detector = VoiceTurnDetector()
+        for tick in 1...79 { XCTAssertNil(detector.observe(powerDB: -32, elapsed: Double(tick) / 10)) }
+        XCTAssertEqual(detector.observe(powerDB: -32, elapsed: 8), .noSpeech)
+    }
+    func testSensitivityChangesQuietSpeechDetection() {
+        var sensitive = VoiceTurnDetector(sensitivity: .high, automaticNoiseFloor: false)
+        var resistant = VoiceTurnDetector(sensitivity: .low, automaticNoiseFloor: false)
+        for tick in 1...10 {
+            _ = sensitive.observe(powerDB: -39, elapsed: Double(tick) / 10)
+            _ = resistant.observe(powerDB: -39, elapsed: Double(tick) / 10)
+        }
+        XCTAssertEqual(sensitive.observe(powerDB: -80, elapsed: 3), .finishedSpeaking)
+        XCTAssertNil(resistant.observe(powerDB: -80, elapsed: 3))
+        XCTAssertEqual(resistant.observe(powerDB: -80, elapsed: 8), .noSpeech)
+    }
     func testContextKeepsNewestSixTurnsWithinCharacterBudget() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -14,6 +14,7 @@ struct ModelPanel: View {
                         Label("Stimme & Hörprobe", systemImage: "speaker.wave.2")
                     }.accessibilityIdentifier("voiceSettings")
                 }
+                Section("Mikrofon & Gespräch") { MicrophoneSettings(model: model) }
                 Section {
                     Text(model.providerDescription).font(.caption).foregroundStyle(VoicePalette.secondaryText)
                     ForEach(model.installedModels) { item in modelRow(item) }

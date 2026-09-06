@@ -101,6 +101,12 @@ public final class JobProcessor {
                     }
                     let reason: JobFailure = (error as? ProcessingFailure) == .noSpeech ? .noSpeech : (error as? ProcessingFailure) == .invalidOutput ? .invalidOutput : .unavailable
                     try store.failJob(entry.id, reason: reason)
+                    if reason == .noSpeech, entry.conversationId != nil {
+                        // A durable, non-AI outcome uses the existing acknowledged reply delivery,
+                        // including Watch retries. It is excluded from context because it has no transcript.
+                        try store.update(entry.id, reply: ConversationOutcome.noSpeechMessage, state: .answered,
+                                         event: ProcessingEvent(operation: "Keine Sprache", model: "Gesprächssteuerung", completedAt: Date(), durationMS: 0, isAI: false))
+                    }
                     message = reason == .noSpeech ? "Keine Sprache erkannt – Aufnahme bleibt gespeichert" : "gespeichert – Verarbeitung folgt"
                 }
                 onChange?(entry.id); currentId = nil

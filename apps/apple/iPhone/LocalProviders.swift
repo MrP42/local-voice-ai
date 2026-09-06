@@ -46,7 +46,7 @@ enum LocalProviders {
                 try await analyzer.start(inputAudioFile: file, finishAfterFile: true)
                 let text = try await results.value
                 try deadlineState.check(cancelled: Task.isCancelled)
-                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw VoiceError.invalid }
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ProcessingFailure.noSpeech }
                 return text
             } catch {
                 results.cancel(); await analyzer.cancelAndFinishNow()

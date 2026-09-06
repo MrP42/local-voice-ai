@@ -264,6 +264,7 @@ private struct VoiceHome: View {
             NavigationLink { SpeechVoicePicker(model: model) } label: {
                 Label("Stimme & Hörprobe", systemImage: "speaker.wave.2")
             }.accessibilityIdentifier("voiceSettings")
+            MicrophoneSettings(model: model)
             if model.handsFreeEnabled {
                 Text("Nach einer Sprechpause antworten. Danach wieder zuhören. Beim Vorlesen pausiert das Mikrofon.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)
                 Text("Beim Verlassen dieser App pausiert das Freisprechen. Kontext: bis zu 6 vorherige Wortwechsel dieses Gesprächs, lokal gespeichert.").font(.caption2).foregroundStyle(VoicePalette.secondaryText)

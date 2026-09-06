@@ -64,6 +64,30 @@ final class JobProcessorTests: XCTestCase {
         XCTAssertThrowsError(try deadline.check(cancelled: true)) { XCTAssertTrue($0 is CancellationError) }
     }
     @MainActor
+    func testEmptyConversationTurnDeliversSystemOutcomeWithoutGenerating() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root)
+        var packet = Packet.capture(audio: Data([1])); packet.payload.conversationId = UUID()
+        _ = try store.accept(packet, replyToWatch: true)
+        let worker = JobProcessor(store: store, transcribe: { _ in "  " }, reply: { _ in
+            XCTFail("Noise must never reach the LLM"); return "wrong"
+        })
+        worker.setActive(true)
+        try await waitUntil { !worker.isProcessing }
+        let entry = try XCTUnwrap(store.entries().first)
+        XCTAssertNotNil(entry.reply)
+        XCTAssertTrue(ConversationOutcome.isNoSpeech(entry))
+        XCTAssertEqual(entry.processingEvents?.last?.isAI, false)
+        XCTAssertEqual(try Data(contentsOf: store.audioURL(for: entry.id)), Data([1]))
+        let watch = try DurableStore(root: root.appendingPathComponent("watch"))
+        _ = try watch.accept(packet)
+        let wire = try store.replyEnvelope(for: entry.id)
+        XCTAssertTrue(try watch.acceptReply(wire).isNew)
+        XCTAssertFalse(try watch.acceptReply(wire).isNew)
+        XCTAssertTrue(ConversationOutcome.isNoSpeech(try XCTUnwrap(watch.entries().first)))
+    }
+    @MainActor
     func testNoSpeechIsNotSentToGeneratorOrRepeatedAutomatically() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

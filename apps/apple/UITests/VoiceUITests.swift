@@ -177,6 +177,20 @@ final class VoiceUITests: XCTestCase {
         if original != "1" { handsFree.tap() }
     }
     #if targetEnvironment(simulator)
+    func testConversationRearmsAfterEmptyTranscription() throws {
+        let app = XCUIApplication(); app.launchArguments = ["--conversation-no-speech-probe"]; app.launch()
+        app.buttons["Gespräch"].firstMatch.tap()
+        let handsFree = app.switches["handsFreeEnabled"]
+        if handsFree.value as? String != "1" { handsFree.tap() }
+        app.buttons["record"].tap()
+        XCTAssertTrue(app.staticTexts["Keine Sprache erkannt · Du kannst weitersprechen"].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Mikrofon aktiv"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Unexpected generation"].exists)
+        keepScreenshot(app, name: "Gespraech-nach-leerer-Transkription")
+        app.buttons["record"].tap()
+        XCTAssertEqual(app.buttons["record"].label, "Sprechen")
+        handsFree.tap()
+    }
     func testConversationRearmsAfterReplyAndPausesWhenLeavingApp() throws {
         let app = XCUIApplication(); app.launchArguments = ["--conversation-cycle-probe"]; app.launch()
         app.buttons["Gespräch"].firstMatch.tap()
