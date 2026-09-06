@@ -1,6 +1,6 @@
 [package]
 name = "local-voice-ai"
-version = "0.15.0"
+version = "0.16.0"
 description = "Local Voice AI - lokale Sprach-KI (Diktat, Vorlesen, Stimmen, Übersetzung)"
 authors = ["Patrick Wolff"]
 edition = "2021"
