@@ -6,13 +6,13 @@ ursprünglichen Checkout mit dessen lokalen Änderungen. Kein Push/Release.
 
 ## Beauftragter Umfang
 
-- [ ] Audio-/Videoimport auf iPhone, dauerhaftes Original und fortsetzbares lokales STT.
-- [ ] Strukturierte lokale Protokolle gemäß Desktop: Zusammenfassung, Kontext,
+- [x] Audio-/Videoimport auf iPhone, dauerhaftes Original und fortsetzbares lokales STT.
+- [x] Strukturierte lokale Protokolle gemäß Desktop: Zusammenfassung, Kontext,
   Entscheidungen, Aufgaben/Zuständige/Termine, nächste Schritte, Empfehlungen,
   offene Fragen. Originaltranskript bleibt daneben zugänglich.
 - [ ] Redeanteile aus belegten Segment-/Kanalzuordnungen; keine vom LLM erfundenen
   Prozentwerte. Gemischter Ton ist nicht automatisch ein einzelner Sprecher.
-- [ ] Kopieren, Teilen, Export von Transkript und Auswertung.
+- [x] Kopieren, Teilen, Export von Transkript und Auswertung.
 - [ ] Verschlüsselte Synchronisierung ausdrücklich gekoppelter Desktop-/Mobilgeräte
   im lokalen Netz, mit Offline-Erhalt, Idempotenz und Konflikterhalt.
 - [ ] Watch-/iPhone-Mikrofone als Desktop-Eingabe; vor Aufnahmebeginn gewähltes Ziel
@@ -50,7 +50,24 @@ https://support.apple.com/guide/iphone/record-and-transcribe-a-call-iph57c6590e9
 - [x] Sechs Browser-Tests, TypeScript, ESLint, Frontend-Build, Screenshots.
 - [ ] Native Windows-/Mac-Integrationstests nach Anschluss der Geräteverbindung.
 
-Mobile Kernbausteine bereits testgetrieben ergänzt: getrenntes Originalarchiv,
-fortsetzbare Segmentfortschritte, Desktop-Protokollschema, belegbare Redeanteile,
-SRT/HTML-Export. 65 Swift-Kerntests bestehen. Noch keine vollständige Import-UI,
-Medienpipeline oder Geräteverbindung daraus ableiten.
+Mobile Medienpipeline umgesetzt: getrenntes Originalarchiv, 30-Sekunden-STT-
+Fortschritte, fortsetzbare lokale Auswertung mit Qwen 2.5 1.5B, Importansicht,
+Ergebnisse mit Transkriptwechsel, Kopieren und TXT/HTML/SRT/JSON/Original-Teilen.
+70 Swift-Kerntests bestehen. Synthetisches 45-Sekunden-Video nach App-Beendigung
+bei Sekunde 30 ohne doppelte Segmente abgeschlossen; Original-Hash unverändert.
+Die Auswertung ist ein prüfbarer Entwurf: echte Modellläufe enthielten STT-Fehler
+und unvollständige Kategorien. Keine Behauptung fehlerfreier Protokolle.
+
+Redeanteile sind im Kern nur für belegte Sprecherzuordnungen verfügbar; der
+aktuelle Import liefert keine Diarisierung, daher zeigt die UI keine erfundenen
+Prozente. Geräteverbindung, Synchronisierung und entfernte Mikrofone bleiben offen.
+
+## Verbindliche UI-Prüfung: Hell und Dunkel
+
+Benutzerergänzung 06.09.2026: Jede neue oder geänderte Oberfläche in beiden
+Darstellungen prüfen; Watch zusätzlich in ihrer dunklen Systemdarstellung.
+WAI-Tokens beibehalten. Aktive/deaktivierte Bedienelemente, Eingabefelder,
+Menüs, Fehlermeldungen und gespeicherte Ergebnisse müssen lesbar bleiben.
+Desktop und Mobile-Aufzeichnungen in Hell/Dunkel nachgewiesen; iPhone jeweils
+sechs Oberflächentests erfolgreich, finale Kontraständerungen separat nachgeprüft.
+Neue Gerätekopplung benötigt vor Abschluss eigene Nachweise in beiden Modi.

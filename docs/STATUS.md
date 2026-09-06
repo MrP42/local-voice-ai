@@ -297,3 +297,22 @@ umgesetzt. Sechs Browser-Interaktionstests, TypeScript, ESLint und Frontend-Buil
 bestanden. Native Audiofunktionen unverändert; Windows nur als gemockter UI-Pfad
 geprüft, kein nativer Windows-Build. Nachweise:
 [Desktop-UX](desktop-evidence/2026-09-06-workspace/README.md).
+
+
+## 2026-09-06: iPhone-Medienauswertung und Dark Mode
+
+Im isolierten Apple-Worktree: Audio-/Videoimport mit dauerhaftem Original, lokalem
+Whisper und fortsetzbarer Qwen-1.5B-Auswertung; kompakte Ergebnisansicht mit
+Transkriptwechsel und Kopieren/Teilen (TXT, HTML, SRT, JSON, Original). 70 Kerntests
+bestanden. Synthetisches 45-Sekunden-Video nach App-Beendigung bei Sekunde 30
+fortgesetzt, Original-Hash erhalten, keine doppelten Segmente. Stufenmessungen:
+Import 1,14 s, Audiospur 0,14 s, STT 11,89 s, Auswertung 39,21 s (Intel-Simulator,
+nur erfolgreich gespeicherte Arbeit).
+
+Hell/Dunkel ist verbindliches UI-Abnahmekriterium für Desktop und Mobile. WAI-
+Hinweistexte verwenden expliziten Kontrast statt zu blasser Systemhierarchie.
+Nachweise: `docs/apple-evidence/2026-09-06-meetings/`. Modellqualität bleibt
+prüfbedürftig: STT-Fehler und unvollständige Kategorien im tatsächlichen Lauf.
+Keine physische Akkumessung, keine beliebige Live-Aufnahme fremder Telefon-Apps,
+keine automatische Sprecherdiarisierung. Synchronisierung, entfernte Mikrofone
+und Aktivitätsrouting sind weiterhin offene Integrationsarbeit.

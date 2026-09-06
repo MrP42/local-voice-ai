@@ -1,0 +1,13 @@
+[
+  {
+    "original": "TEST-video.mp4",
+    "formats": [
+      ".html",
+      ".json",
+      ".srt",
+      ".txt"
+    ],
+    "segments": 6,
+    "nonempty": true
+  }
+]

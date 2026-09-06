@@ -1,6 +1,6 @@
 # Local Voice — native Apple feasibility prototype
 
-Scope: native P0/P1 prototype with P2 durability, job and model-management improvements. SwiftUI iPhone + Watch; desktop Tauri code is unchanged.
+Scope: native P0/P1 prototype with P2 durability, job and model-management improvements. SwiftUI iPhone + Watch; the desktop audio backend is preserved; the shared Mac/Windows frontend now has a matching WAI workspace.
 The user changed acceptance to **virtual Xcode devices** on 2026-09-05.
 Simulator evidence is not physical-device, battery, radio or locked-device evidence.
 
@@ -125,3 +125,41 @@ remains visible. Duplicate or delayed callbacks cannot consume a newer intent.
 This behavior has six core regression tests and fresh iPhone/Watch UI coverage.
 Empty, whitespace-only, or oversized generated replies are rejected before a job
 is marked answered; the saved recording remains eligible for later processing.
+
+
+## Local recordings and meeting results (2026-09-06)
+
+The iPhone **Aufzeichnungen** tab imports audio/video through the native file picker.
+Originals are copied, hashed and durably committed before an import is acknowledged.
+A separate archive retains up to 4 GiB (individual inputs up to 2 GiB / 2 hours).
+Audio is decoded locally, then Whisper processes resumable 30-second chunks. Foreground
+processing pauses when the app becomes inactive and resumes from persisted progress.
+Failures keep the original/transcript and expose a retry action.
+
+Meeting analysis uses the explicitly installed **Qwen 2.5 1.5B Instruct Q4_K_M**,
+not the short-answer model. Install its approved file through the model panel, or
+prepare simulator weights with `python3 apps/apple/scripts/setup_native_engines.py --meetings`.
+The official weights are Apache-2.0: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF .
+The download is 1,117,320,736 bytes; size and SHA-256 are pinned in ModelLibrary.swift.
+
+The LLM selects transcript sentence references rather than freely inventing factual
+fields. Names and due phrases require a complete matching source phrase. Recommendations
+are explicitly proposals and include their source reason. Conservative German category
+checks repair observed task/question/collective-next-step confusion. This is a prototype:
+classification quality and STT mistakes still require review, and mixed audio has no
+automatic speaker diarization. Speaker percentages are never fabricated.
+
+Results support native copying, selectable text, TXT/HTML/JSON/SRT sharing and original
+file export. The compact WAI result view separates analysis and transcript and supports
+light/dark appearance. Timing totals reflect successfully persisted processing stages;
+failed/cancelled attempt time and time spent waiting are not included.
+
+Synthetic video fixture: compile `scripts/make_meeting_video.swift` with
+`swiftc -parse-as-library`, then pass a synthetic speech AIFF and output MP4 path.
+The resume test (`scripts/test_meeting_resume.py`) requires that MP4 as
+Documents/MeetingFixtures/TEST-video.mp4 in an installed simulator app. It terminates
+the app after a persisted chunk, restarts it and verifies original SHA-256 and unique
+segment indexes. It uses a DEBUG-only import entry point, not a hidden production feature.
+
+Desktop/mobile synchronization, remote microphones and attention routing remain a
+separate integration step; neither the import tab nor its export menu implements them.
