@@ -383,6 +383,9 @@ private struct VoiceEntryDetail: View {
                     }
                     #endif
                 }.voiceCard()
+                #if os(watchOS)
+                EmptyView().modifier(NoteDeletion(model: model, entry: entry, inlineAction: true, didDelete: { dismiss() }))
+                #endif
             }.padding()
         }.navigationTitle("Sprachnotiz")
         .modifier(NoteDeletion(model: model, entry: entry, toolbar: true, didDelete: { dismiss() }))
@@ -562,19 +565,19 @@ private struct NoteDeletion: ViewModifier {
     @ObservedObject var model: VoiceModel
     let entry: Entry
     var toolbar = false
+    var inlineAction = false
     var didDelete: () -> Void = {}
     @State private var confirming = false
     @State private var errorMessage: String?
     func body(content: Content) -> some View {
-        content
-            .safeAreaInset(edge: .top) {
-                #if os(watchOS)
-                if toolbar {
-                    Button("Sprachnotiz löschen", systemImage: "trash", role: .destructive) { confirming = true }
-                        .font(.caption).accessibilityIdentifier("deleteNote")
-                }
-                #endif
-            }
+        Group {
+            if inlineAction {
+                Button("Löschen", systemImage: "trash", role: .destructive) { confirming = true }
+                    .font(.caption).foregroundStyle(.red).buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .accessibilityLabel("Sprachnotiz löschen").accessibilityIdentifier("deleteNote")
+            } else { content }
+        }
             .toolbar {
                 #if os(iOS)
                 if toolbar {

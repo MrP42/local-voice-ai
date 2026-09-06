@@ -10,6 +10,15 @@ final class VoiceUITests: XCTestCase {
         let app = XCUIApplication(); app.launchArguments = ["--original-playback-probe"]; app.launch()
         let note = app.buttons["historyEntry"].firstMatch
         XCTAssertTrue(note.waitForExistence(timeout: 10)); note.tap()
+        #if os(watchOS)
+        keepScreenshot(app, name: "Watch-Notiz-Inhalt-zuerst")
+        XCTAssertFalse(app.buttons["deleteNote"].isHittable)
+        for _ in 0..<8 {
+            if app.buttons["deleteNote"].isHittable { break }
+            app.swipeUp()
+        }
+        keepScreenshot(app, name: "Watch-Loeschen-am-Ende")
+        #endif
         app.buttons["deleteNote"].tap()
         keepScreenshot(app, name: "Sprachnotiz-Loeschbestaetigung")
         app.buttons["Abbrechen"].tap()
