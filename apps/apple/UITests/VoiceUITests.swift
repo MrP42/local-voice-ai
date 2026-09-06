@@ -6,6 +6,18 @@ final class VoiceUITests: XCTestCase {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
+    func testDeleteNoteRequiresConfirmationAndCancelKeepsOriginal() throws {
+        let app = XCUIApplication(); app.launchArguments = ["--original-playback-probe"]; app.launch()
+        let note = app.buttons["historyEntry"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 10)); note.tap()
+        app.buttons["deleteNote"].tap()
+        keepScreenshot(app, name: "Sprachnotiz-Loeschbestaetigung")
+        app.buttons["Abbrechen"].tap()
+        XCTAssertTrue(app.buttons["originalPlayback"].exists)
+        app.buttons["deleteNote"].tap()
+        app.buttons["Endgültig löschen"].firstMatch.tap()
+        XCTAssertTrue(note.waitForNonExistence(timeout: 5))
+    }
     #if targetEnvironment(simulator)
     func testOriginalAudioCanPlayPauseResumeAndStop() throws {
         let app = XCUIApplication(); app.launchArguments = ["--original-playback-probe"]; app.launch()
@@ -208,6 +220,20 @@ final class VoiceUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Mikrofon aktiv"].exists)
         if originalHandsFree != "1" { handsFree.tap() }
         if originalPlayback != "1" { playback.tap() }
+    }
+    #endif
+    #if os(iOS)
+    func testSwipeDeleteWaitsForConfirmation() throws {
+        let app = XCUIApplication(); app.launchArguments = ["--original-playback-probe"]; app.launch()
+        app.tabBars.buttons["Verlauf"].tap()
+        let note = app.buttons["historyEntry"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 10)); note.swipeLeft()
+        app.buttons["swipeDeleteNote"].tap()
+        app.buttons["Abbrechen"].tap()
+        XCTAssertTrue(note.exists)
+        note.swipeLeft(); app.buttons["swipeDeleteNote"].tap()
+        app.buttons["Endgültig löschen"].firstMatch.tap()
+        XCTAssertTrue(note.waitForNonExistence(timeout: 5))
     }
     #endif
     func testTransparencyAndMarkdown() throws {

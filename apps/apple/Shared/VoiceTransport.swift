@@ -38,6 +38,13 @@ final class VoiceTransport: NSObject, WCSessionDelegate {
         try? Data(code.utf8).write(to: documents.appendingPathComponent("last-event.txt"), options: .atomic)
         #endif
     }
+    func cancelDelivery(for id: UUID) {
+        guard WCSession.isSupported() else { return }
+        for transfer in WCSession.default.outstandingFileTransfers where transfer.file.metadata?["sessionId"] as? String == id.uuidString { transfer.cancel() }
+        for transfer in WCSession.default.outstandingUserInfoTransfers where transfer.userInfo["id"] as? String == id.uuidString { transfer.cancel() }
+        inFlight.remove(id); inFlightReplies.remove(id)
+        refresh()
+    }
     func retry() {
         refresh()
         guard WCSession.isSupported() else { return }

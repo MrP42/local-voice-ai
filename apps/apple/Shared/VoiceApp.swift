@@ -113,6 +113,7 @@ private struct VoiceHome: View {
                             if model.entries.isEmpty { Text("Noch keine Sprachnotiz") }
                             ForEach(model.entries) { entry in
                                 NavigationLink { VoiceEntryDetail(model: model, original: entry) } label: { VoiceEntryRow(entry: entry) }
+                                    .modifier(NoteDeletion(model: model, entry: entry))
                             }
                         }.navigationTitle("Verlauf")
                     }
@@ -157,8 +158,8 @@ private struct VoiceHome: View {
             .tabItem { Label("Sprechen", systemImage: "waveform") }.tag(0)
             MeetingLibraryView().tabItem { Label("Transkripte", systemImage: "doc.text") }.tag(2)
             NavigationStack {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                List {
+                    Group {
                         HStack(spacing: 10) {
                             Image(systemName: "magnifyingglass").foregroundStyle(VoicePalette.secondaryText)
                             TextField("Aufnahmen und Antworten suchen", text: $query)
@@ -183,9 +184,11 @@ private struct VoiceHome: View {
                         ForEach(filteredEntries) { entry in
                             NavigationLink { VoiceEntryDetail(model: model, original: entry) } label: { VoiceEntryRow(entry: entry).voiceCard() }
                                 .buttonStyle(.plain).accessibilityIdentifier("historyEntry")
+                                .modifier(NoteDeletion(model: model, entry: entry))
                         }
-                    }.padding(16)
+                    }.listRowBackground(VoicePalette.background)
                 }
+                .scrollContentBackground(.hidden)
                 .background(VoicePalette.background)
                 .navigationTitle("Verlauf")
                 .navigationBarTitleDisplayMode(.inline)
@@ -329,6 +332,7 @@ private struct VoiceEntryRow: View {
 private struct VoiceEntryDetail: View {
     @ObservedObject var model: VoiceModel
     let original: Entry
+    @Environment(\.dismiss) private var dismiss
     private var entry: Entry { model.entries.first(where: { $0.id == original.id }) ?? original }
 
     var body: some View {
@@ -377,6 +381,7 @@ private struct VoiceEntryDetail: View {
                 }.voiceCard()
             }.padding()
         }.navigationTitle("Sprachnotiz")
+        .modifier(NoteDeletion(model: model, entry: entry, toolbar: true, didDelete: { dismiss() }))
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .background(VoicePalette.background)
@@ -546,5 +551,59 @@ struct ProcessingDisclosure: View {
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { showing = false } } }
             }
         }
+    }
+}
+
+private struct NoteDeletion: ViewModifier {
+    @ObservedObject var model: VoiceModel
+    let entry: Entry
+    var toolbar = false
+    var didDelete: () -> Void = {}
+    @State private var confirming = false
+    @State private var errorMessage: String?
+    func body(content: Content) -> some View {
+        content
+            .safeAreaInset(edge: .top) {
+                #if os(watchOS)
+                if toolbar {
+                    Button("Sprachnotiz löschen", systemImage: "trash", role: .destructive) { confirming = true }
+                        .font(.caption).accessibilityIdentifier("deleteNote")
+                }
+                #endif
+            }
+            .toolbar {
+                #if os(iOS)
+                if toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Sprachnotiz löschen", systemImage: "trash", role: .destructive) { confirming = true }
+                            .labelStyle(.iconOnly).accessibilityIdentifier("deleteNote")
+                    }
+                }
+                #endif
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                if !toolbar {
+                    Button("Löschen", systemImage: "trash") { confirming = true }
+                        .tint(.red)
+                        .accessibilityIdentifier("swipeDeleteNote")
+                }
+            }
+            .alert(errorMessage == nil ? "Sprachnotiz löschen?" : "Löschen fehlgeschlagen",
+                   isPresented: Binding(get: { confirming || errorMessage != nil }, set: { if !$0 { confirming = false; errorMessage = nil } })) {
+                if errorMessage == nil {
+                    Button("Endgültig löschen", role: .destructive) {
+                        do { try model.deleteNote(entry.id); didDelete() }
+                        catch {
+                            Task { @MainActor in
+                                model.refresh()
+                                errorMessage = "Löschen konnte nicht vollständig abgeschlossen werden. Bitte erneut versuchen."
+                            }
+                        }
+                    }.accessibilityIdentifier("confirmDeleteNote")
+                    Button("Abbrechen", role: .cancel) {}
+                } else { Button("OK") { errorMessage = nil } }
+            } message: {
+                Text(errorMessage ?? "Originalaufnahme, Transkript und Antwort werden auf diesem Gerät gelöscht. Kopien auf anderen Geräten bleiben erhalten.")
+            }
     }
 }

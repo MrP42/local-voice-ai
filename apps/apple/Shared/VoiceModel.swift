@@ -371,6 +371,18 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
         }
         catch { status = "Verlauf konnte nicht gelesen werden" }
     }
+    func deleteNote(_ id: UUID) throws {
+        guard let store else { throw VoiceError.persistence }
+        if awaitingConversationReply == id { endConversation() }
+        if playingRecordingId == id || speakingId == id { stopPlayback() }
+        #if os(iOS)
+        if jobs?.currentId == id { jobs?.cancelCurrent() }
+        #endif
+        try store.deleteEntry(id)
+        transport?.cancelDelivery(for: id)
+        refresh()
+        status = "Sprachnotiz gelöscht"
+    }
     func recordingURL(_ id: UUID) -> URL? {
         guard let url = store?.audioURL(for: id), FileManager.default.fileExists(atPath: url.path) else { return nil }
         return url

@@ -64,7 +64,7 @@ public struct Entry: Codable, Identifiable, Sendable {
 }
 
 /// Access from one serial executor. A directory rename commits audio and metadata together.
-/// The prototype retains every accepted audio file; reaching quota rejects new captures.
+/// Accepted audio is retained until explicit deletion; reaching quota rejects new captures.
 public final class DurableStore {
     public let root: URL
     private let limit: Int
@@ -75,6 +75,31 @@ public final class DurableStore {
     public init(root: URL, limit: Int = 64 * 1024 * 1024, temporaryLimit: Int = 8 * 1024 * 1024, fault: ((StorageCheckpoint) throws -> Void)? = nil) throws {
         self.root = root; self.limit = limit; self.temporaryLimit = temporaryLimit; self.fault = fault
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try cleanupDeletedEntries()
+    }
+    /// Called only after explicit user confirmation. Rename commits the deletion;
+    /// the empty tombstone prevents old transfers from resurrecting the session.
+    public func deleteEntry(_ id: UUID) throws {
+        let source = root.appendingPathComponent(id.uuidString)
+        let tombstone = root.appendingPathComponent(".deleted-" + id.uuidString)
+        if !fm.fileExists(atPath: tombstone.path) {
+            guard fm.fileExists(atPath: source.path) else { throw VoiceError.missing }
+            try fm.moveItem(at: source, to: tombstone)
+        }
+        invalidateInventory()
+        try syncDirectory(root)
+        try cleanupDeletedEntries()
+    }
+    private func cleanupDeletedEntries() throws {
+        for folder in try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            where folder.lastPathComponent.hasPrefix(".deleted-") && UUID(uuidString: String(folder.lastPathComponent.dropFirst(9))) != nil {
+            for file in try fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) { try fm.removeItem(at: file) }
+            try syncDirectory(folder)
+            let id = String(folder.lastPathComponent.dropFirst(9))
+            for leftover in [root.appendingPathComponent(".transfer-" + id + ".json"), root.appendingPathComponent(".incoming-parts").appendingPathComponent(id)] {
+                if fm.fileExists(atPath: leftover.path) { try fm.removeItem(at: leftover) }
+            }
+        }
     }
     public func entries() throws -> [Entry] {
         try inventory(includeUsage: false).entries
@@ -102,6 +127,7 @@ public final class DurableStore {
     }
     public func accept(_ packet: Packet, replyToWatch: Bool = false) throws -> Receipt {
         do {
+        guard !fm.fileExists(atPath: root.appendingPathComponent(".deleted-" + packet.sessionId.uuidString).path) else { throw VoiceError.missing }
         guard packet.schemaVersion == 1 else { throw VoiceError.version }
         guard packet.kind == "capture", !packet.audio.isEmpty, packet.audio.count <= 1024 * 1024 else { throw VoiceError.invalid }
         let digest = SHA256.hash(data: packet.audio).map { String(format: "%02x", $0) }.joined()

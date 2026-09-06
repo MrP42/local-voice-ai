@@ -93,6 +93,34 @@ final class ConversationTests: XCTestCase {
         XCTAssertNil(resistant.observe(powerDB: -80, elapsed: 3))
         XCTAssertEqual(resistant.observe(powerDB: -80, elapsed: 8), .noSpeech)
     }
+    func testExplicitDeletionPreservesOtherNotesAndRejectsReplayAfterRestart() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root)
+        let deleted = Packet.capture(audio: Data([1])), retained = Packet.capture(audio: Data([2]))
+        _ = try store.accept(deleted); _ = try store.accept(retained)
+        _ = try store.entries()
+        try store.deleteEntry(deleted.sessionId)
+        XCTAssertEqual(try store.entries().map(\.id), [retained.sessionId])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.audioURL(for: deleted.sessionId).path))
+        XCTAssertEqual(try store.audio(for: retained.sessionId), Data([2]))
+        let reopened = try DurableStore(root: root)
+        XCTAssertThrowsError(try reopened.accept(deleted))
+        XCTAssertThrowsError(try reopened.update(deleted.sessionId, reply: "Late", state: .answered))
+        XCTAssertEqual(try reopened.entries().count, 1)
+    }
+    func testInterruptedDeletionFinishesCleanupOnReopen() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root), packet = Packet.capture(audio: Data([9]))
+        _ = try store.accept(packet)
+        let tombstone = root.appendingPathComponent(".deleted-" + packet.sessionId.uuidString)
+        try FileManager.default.moveItem(at: root.appendingPathComponent(packet.sessionId.uuidString), to: tombstone)
+        let reopened = try DurableStore(root: root)
+        XCTAssertTrue(try reopened.entries().isEmpty)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: tombstone.path).isEmpty)
+        XCTAssertThrowsError(try reopened.accept(packet))
+    }
     func testContextKeepsNewestSixTurnsWithinCharacterBudget() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
