@@ -29,6 +29,18 @@ final class VoiceUITests: XCTestCase {
         add(screenshot)
     }
     #if os(iOS)
+    func testRetryReconstructsComponentsAfterSetupFailure() throws {
+        let app = XCUIApplication(); app.launchArguments = ["--setup-failure-probe"]; app.launch()
+        let status = app.staticTexts["status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 15))
+        XCTAssertTrue(status.label.contains("Speicherprüfung"))
+        app.buttons["Erneut versuchen"].tap()
+        let record = app.buttons["record"]; record.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Aufnahme sichern"), evaluatedWith: record)
+        waitForExpectations(timeout: 15)
+        record.tap()
+        XCTAssertEqual(record.label, "Sprechen")
+    }
     func testModelPanelShowsLocalModelChoices() throws {
         let app = XCUIApplication(); app.launch()
         let button = app.buttons["Lokale Sprachmodelle"]

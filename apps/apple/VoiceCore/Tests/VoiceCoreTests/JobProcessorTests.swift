@@ -33,6 +33,23 @@ final class JobProcessorTests: XCTestCase {
         try await waitUntil { !resumed.isProcessing }
     }
     @MainActor
+    func testProviderDeadlineUsesBoundedRetryInsteadOfCancellation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DurableStore(root: root); _ = try store.accept(.capture(audio: Data([1])))
+        let worker = JobProcessor(store: store, transcribe: { _ in
+            let deadline = ProcessingDeadline(); deadline.expire(); try deadline.check(); return "late"
+        }, reply: { _ in "Must not run" })
+        worker.setActive(true)
+        try await waitUntil { try store.entries().first?.job?.phase == .waiting }
+        let job = try XCTUnwrap(store.entries().first?.job)
+        XCTAssertEqual(job.attempts, 1); XCTAssertEqual(job.failure, .unavailable)
+        XCTAssertNotNil(job.nextAttemptAt)
+        worker.setActive(false); try await waitUntil { !worker.isProcessing }
+        let deadline = ProcessingDeadline(); deadline.expire()
+        XCTAssertThrowsError(try deadline.check(cancelled: true)) { XCTAssertTrue($0 is CancellationError) }
+    }
+    @MainActor
     func testNoSpeechIsNotSentToGeneratorOrRepeatedAutomatically() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

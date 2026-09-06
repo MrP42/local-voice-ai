@@ -31,9 +31,10 @@ enum LocalProviders {
             try Task.checkCancellation()
             return text
         }
+        let deadlineState = ProcessingDeadline()
         let deadline = Task {
             do { try await Task.sleep(for: .seconds(60)) } catch { return }
-            results.cancel()
+            deadlineState.expire(); results.cancel()
             await analyzer.cancelAndFinishNow()
         }
         defer { deadline.cancel() }
@@ -43,10 +44,13 @@ enum LocalProviders {
                 let file = try AVAudioFile(forReading: url)
                 try await analyzer.start(inputAudioFile: file, finishAfterFile: true)
                 let text = try await results.value
-                try Task.checkCancellation()
+                try deadlineState.check(cancelled: Task.isCancelled)
                 guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw VoiceError.invalid }
                 return text
-            } catch { results.cancel(); await analyzer.cancelAndFinishNow(); throw error }
+            } catch {
+                results.cancel(); await analyzer.cancelAndFinishNow()
+                try deadlineState.check(cancelled: Task.isCancelled); throw error
+            }
         } onCancel: {
             results.cancel()
             Task { await analyzer.cancelAndFinishNow() }
@@ -62,13 +66,19 @@ enum LocalProviders {
             try Task.checkCancellation()
             return String(result.content.prefix(500))
         }
+        let deadlineState = ProcessingDeadline()
         let deadline = Task {
             do { try await Task.sleep(for: .seconds(60)) } catch { return }
-            generation.cancel()
+            deadlineState.expire(); generation.cancel()
         }
         defer { deadline.cancel() }
         let answer = try await withTaskCancellationHandler {
-            try await generation.value
+            do {
+                let text = try await generation.value
+                try deadlineState.check(cancelled: Task.isCancelled); return text
+            } catch {
+                try deadlineState.check(cancelled: Task.isCancelled); throw error
+            }
         } onCancel: { generation.cancel() }
         return ResponsePolicy.safeAnswer(answer)
     }

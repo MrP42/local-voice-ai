@@ -100,4 +100,4 @@ public final class JobProcessor {
         }
     }
 }
-public enum ProcessingFailure: Error { case noSpeech, invalidOutput }
+public enum ProcessingFailure: Error { case noSpeech, invalidOutput, timedOut }

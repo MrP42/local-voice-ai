@@ -5,6 +5,14 @@ import AVFoundation
 import WatchKit
 #endif
 
+private final class AudioInterruptionObservation {
+    private let token: NSObjectProtocol
+    init(_ handler: @escaping @Sendable (Notification) -> Void) {
+        token = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main, using: handler)
+    }
+    deinit { NotificationCenter.default.removeObserver(token) }
+}
+
 @MainActor
 final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     @Published var entries: [Entry] = []
@@ -39,21 +47,19 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     private var lastSpeechStart = Date.distantPast
     private var speakingId: UUID?
     private var currentUtterance: AVSpeechUtterance?
-    private var speechAttempts: [ObjectIdentifier: (UUID, Date)] = [:]
+    private var speechAttempts: [ObjectIdentifier: (UUID, Date, AVSpeechUtterance)] = [:]
+    private var interruptionObservation: AudioInterruptionObservation?
     private var active = false
     private var debugActionsStarted = false
+    #if DEBUG
+    private var setupFailureInjected = false
+    #endif
 
     override init() {
         super.init()
         do {
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VoiceOutbox")
             store = try DurableStore(root: root)
-            try store?.recoverStaging()
-            try store?.migrateIdentities()
-            transport = try VoiceTransport(store: store!)
-            capture = CaptureController(store: store!)
-            recoverRecordings()
-            refresh()
         } catch { status = "Speicher nicht verfügbar – Aufnahme gesperrt" }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--fixture-capture"), let store {
@@ -107,9 +113,35 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
             try? JSONEncoder().encode(capabilities).write(to: documents.appendingPathComponent("capabilities.json"), options: .atomic)
         }
         #endif
+        do { try configureComponents(); try recoverStorageState() }
+        catch { status = "Speicherprüfung erforderlich – Wiederherstellung erneut versuchen"; refresh() }
+        interruptionObservation = AudioInterruptionObservation { [weak self] notification in
+            guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+            Task { @MainActor in
+                guard let self else { return }
+                if self.recording { self.stop() }
+                self.speaker.stopSpeaking(at: .immediate)
+                self.status = "Audio unterbrochen – gespeicherte Inhalte bleiben erhalten"
+                self.recordDiagnostic("audio_interrupted")
+            }
+        }
+    }
+    private func configureComponents() throws {
+        if store == nil {
+            let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VoiceOutbox")
+            store = try DurableStore(root: root)
+        }
+        guard let store else { throw VoiceError.persistence }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--setup-failure-probe"), !setupFailureInjected {
+            setupFailureInjected = true; throw VoiceError.persistence
+        }
+        #endif
+        if capture == nil { capture = CaptureController(store: store) }
+        if transport == nil { transport = try VoiceTransport(store: store) }
         #if os(iOS)
-        if let store {
-            do { try store.recoverInterruptedJobs() } catch { status = "Auftragsstatus konnte nicht wiederhergestellt werden" }
+        if jobs == nil {
             jobs = JobProcessor(store: store, transcribe: { try await LocalProviders.transcribe($0) }, reply: { try await LocalProviders.reply(to: $0) })
             jobs?.fixedAnswer = fixedAnswer
             jobs?.onChange = { [weak self] id in
@@ -137,17 +169,14 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         #if os(iOS)
         transport?.onCapture = { [weak self] in self?.jobs?.start() }
         #endif
-        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
-            guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
-            Task { @MainActor in
-                guard let self else { return }
-                if self.recording { self.stop() }
-                self.speaker.stopSpeaking(at: .immediate)
-                self.status = "Audio unterbrochen – gespeicherte Inhalte bleiben erhalten"
-                self.recordDiagnostic("audio_interrupted")
-            }
-        }
+    }
+    private func recoverStorageState() throws {
+        try store?.recoverStaging()
+        try store?.migrateIdentities()
+        #if os(iOS)
+        if jobs?.isProcessing != true { try store?.recoverInterruptedJobs() }
+        #endif
+        recoverRecordings(); refresh()
     }
     func scene(active: Bool) {
         self.active = active
@@ -208,10 +237,18 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     private func recoverRecordings() { capture?.recoverRecordings() }
     func recoverStorage() {
         store?.invalidateInventory()
-        do { try store?.recoverStaging(); try store?.migrateIdentities(); retry() }
+        do {
+            try configureComponents(); try recoverStorageState()
+            capture?.setActive(active)
+            #if os(iOS)
+            jobs?.setActive(active)
+            #endif
+            retry()
+        }
         catch { status = "Wiederherstellung nicht abgeschlossen – Originale bleiben erhalten"; refresh() }
     }
     func retry(forceReload: Bool = false) {
+        if forceReload && (capture == nil || transport == nil) { recoverStorage(); return }
         if forceReload { store?.invalidateInventory() }
         recoverRecordings(); refresh(); transport?.retry()
         #if os(iOS)
@@ -230,7 +267,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
             utterance.voice = AVSpeechSynthesisVoice(language: "de-DE")
             speakingId = id; speechStarted = Date()
             currentUtterance = utterance
-            speechAttempts[ObjectIdentifier(utterance)] = (id, speechStarted)
+            speechAttempts[ObjectIdentifier(utterance)] = (id, speechStarted, utterance)
             speaker.speak(utterance); status = "Antwort wird gesprochen"
         } catch { status = "Audio nicht verfügbar – Antwort ist gespeichert" }
     }
@@ -238,9 +275,9 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
         Task { @MainActor in
             if self.currentUtterance === utterance { self.lastSpeechStart = Date() }
-            if let (id, started) = self.speechAttempts[ObjectIdentifier(utterance)] {
+            if let (id, started, _) = self.speechAttempts[ObjectIdentifier(utterance)] {
                 try? self.store?.update(id, state: .answered, timing: ("tts_start_ms", Date().timeIntervalSince(started) * 1000))
-                if let entry = self.entries.first(where: { $0.id == id }), entry.timings["tts_e2e_ms"] == nil,
+                if let entry = try? self.store?.entries().first(where: { $0.id == id }), entry.timings["tts_e2e_ms"] == nil,
                    let origin = entry.timings["capture_end_at_ms"] ?? entry.timings["capture_saved_at_ms"] {
                     let elapsed = Date().timeIntervalSinceReferenceDate * 1000 - origin
                     if elapsed >= 0 { try? self.store?.update(id, state: .answered, timing: ("tts_e2e_ms", elapsed)) }
