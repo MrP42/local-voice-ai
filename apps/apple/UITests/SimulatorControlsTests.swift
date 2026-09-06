@@ -18,6 +18,7 @@ final class SimulatorControlsTests: XCTestCase {
         let phone = simulator.windows["Local Voice iPhone 15 Pro Max – iOS 26.3"]
         XCTAssertTrue(phone.waitForExistence(timeout: 10))
         phone.toolbars.buttons["Home"].doubleClick()
+        // The caller verifies the visible app card in a screenshot before dismissing it.
     }
     func testLockPhone() {
         let simulator = XCUIApplication(bundleIdentifier: "com.apple.iphonesimulator")

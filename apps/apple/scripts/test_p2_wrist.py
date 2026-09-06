@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Verify a real simulator recorder is saved across the native Wrist Down control."""
-import json,pathlib,subprocess,time,hashlib
+import argparse,json,pathlib,subprocess,time,hashlib
+parser=argparse.ArgumentParser();parser.add_argument("--report",type=pathlib.Path,default=pathlib.Path("docs/apple-evidence/p2/results/wrist.json"));args=parser.parse_args()
 P='E4D1D247-E548-4E89-83BA-A2B3FCB50853';W='41324A06-70C6-4C60-AE7F-B62EECB30F91';PB='de.localvoice.prototype';WB=PB+'.watchkitapp'
 def sim(*args):return subprocess.check_output(['xcrun','simctl',*args],text=True).strip()
 def root(d,b):return pathlib.Path(sim('get_app_container',d,b,'data'))/'Library/Application Support/VoiceOutbox'
 wr=root(W,WB);pr=root(P,PB)
 def rows(r):return {e['receipt']['sessionId']:e for f in r.glob('*/entry.json') for e in [json.loads(f.read_text())]}
-report=pathlib.Path('docs/apple-evidence/p2/results/wrist.json')
+report=args.report
 if report.exists():raise SystemExit('Preserve existing wrist evidence')
 before=set(rows(wr));sim('launch',P,PB,'--local-models')
 subprocess.run(['python3','apps/apple/scripts/test_wrist_simulator.py'],check=True)
