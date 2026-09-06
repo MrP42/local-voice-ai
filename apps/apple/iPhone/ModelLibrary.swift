@@ -8,6 +8,10 @@ struct LocalModel: Identifiable, Sendable {
     let label: String
     let bytes: Int64
     let sha256: String
+    var downloadURL: URL {
+        let repository = name.hasPrefix("ggml-") ? "ggerganov/whisper.cpp" : name.contains("1.5b") ? "Qwen/Qwen2.5-1.5B-Instruct-GGUF" : "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+        return URL(string: "https://huggingface.co/\(repository)/resolve/main/\(name)")!
+    }
     static let all = [
         LocalModel(name: "ggml-base.bin", label: "Whisper Base", bytes: 147951465, sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
         LocalModel(name: "ggml-small.bin", label: "Whisper Small", bytes: 487601967, sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"),
@@ -24,6 +28,13 @@ struct InstalledModel: Identifiable, Sendable {
 actor ModelLibrary {
     static let shared = ModelLibrary()
     static var folder: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Models") }
+    func download(_ model: LocalModel) async throws -> String {
+        let (temporary, response) = try await URLSession.shared.download(from: model.downloadURL)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw VoiceError.missing }
+        try Task.checkCancellation()
+        return try install(from: temporary)
+    }
     func inventory() -> [InstalledModel] {
         LocalModel.all.map { descriptor in
             let size = (try? FileManager.default.attributesOfItem(atPath: Self.folder.appendingPathComponent(descriptor.name).path)[.size] as? NSNumber)?.int64Value ?? 0

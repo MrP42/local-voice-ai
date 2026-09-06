@@ -18,12 +18,13 @@ enum LocalProviders {
         let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) { try await request.downloadAndInstall() }
     }
-    static func transcribe(_ url: URL) async throws -> String {
+    static func transcribe(_ url: URL) async throws -> String { try await annotatedTranscribe(url).text }
+    static func annotatedTranscribe(_ url: URL) async throws -> ProcessingOutput {
         guard SpeechTranscriber.isAvailable,
-              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "de-DE")) else { return try await cpuTranscribe(url) }
+              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "de-DE")) else { return try await cpuTranscribeOutput(url) }
         let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
         // Never silently use server recognition or start an asset download.
-        guard await AssetInventory.status(forModules: [transcriber]) == .installed else { return try await cpuTranscribe(url) }
+        guard await AssetInventory.status(forModules: [transcriber]) == .installed else { return try await cpuTranscribeOutput(url) }
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         let results = Task {
             var text = ""
@@ -38,7 +39,7 @@ enum LocalProviders {
             await analyzer.cancelAndFinishNow()
         }
         defer { deadline.cancel() }
-        return try await withTaskCancellationHandler {
+        let text = try await withTaskCancellationHandler {
             do {
                 try Task.checkCancellation()
                 let file = try AVAudioFile(forReading: url)
@@ -55,11 +56,13 @@ enum LocalProviders {
             results.cancel()
             Task { await analyzer.cancelAndFinishNow() }
         }
+        return ProcessingOutput(text: text, model: "Apple SpeechTranscriber (de-DE)")
     }
 
-    static func reply(to transcript: String) async throws -> String {
-        if ResponsePolicy.isActionRequest(transcript) { return ResponsePolicy.capabilityReply }
-        guard SystemLanguageModel.default.availability == .available else { return ResponsePolicy.safeAnswer(try await cpuReply(transcript)) }
+    static func reply(to transcript: String) async throws -> String { try await annotatedReply(to: transcript).text }
+    static func annotatedReply(to transcript: String) async throws -> ProcessingOutput {
+        if ResponsePolicy.isActionRequest(transcript) { return ProcessingOutput(text: ResponsePolicy.capabilityReply, model: "Lokale Funktionsregel", isAI: false) }
+        guard SystemLanguageModel.default.availability == .available else { return ProcessingOutput(text: ResponsePolicy.safeAnswer(try await cpuReply(transcript)), model: "Qwen 2.5 0.5B Instruct · Q4_K_M") }
         let session = LanguageModelSession(instructions: "Antworte kurz auf Deutsch, höchstens zwei Sätze. Du kannst nur Text antworten und Notizen speichern. Behaupte niemals, externe Aktionen ausgeführt zu haben.")
         let generation = Task {
             let result = try await session.respond(to: String(transcript.prefix(2000)), options: GenerationOptions(maximumResponseTokens: 128))
@@ -80,12 +83,12 @@ enum LocalProviders {
                 try deadlineState.check(cancelled: Task.isCancelled); throw error
             }
         } onCancel: { generation.cancel() }
-        return ResponsePolicy.safeAnswer(answer)
+        return ProcessingOutput(text: ResponsePolicy.safeAnswer(answer), model: "Apple Foundation Models · Systemmodell")
     }
-    private static func cpuTranscribe(_ url: URL) async throws -> String {
+    private static func cpuTranscribeOutput(_ url: URL) async throws -> ProcessingOutput {
         let cancellation = InferenceCancellation()
         return try await withTaskCancellationHandler {
-            try await CPULocalProviders.shared.transcribe(url, cancellation: cancellation)
+            try await CPULocalProviders.shared.annotatedTranscribe(url, cancellation: cancellation)
         } onCancel: { cancellation.cancel() }
     }
     private static func cpuReply(_ text: String) async throws -> String {

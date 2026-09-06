@@ -28,10 +28,14 @@ actor CPULocalProviders {
         }
         return url
     }
+    func annotatedTranscribe(_ url: URL, cancellation: InferenceCancellation) throws -> ProcessingOutput {
+        let selected = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin"
+        return ProcessingOutput(text: try transcription(url, cancellation: cancellation, segmented: false, selectedModel: selected), model: selected == "ggml-small.bin" ? "Whisper Small" : "Whisper Base")
+    }
     func transcribe(_ url: URL, cancellation: InferenceCancellation) throws -> String {
         try transcription(url, cancellation: cancellation, segmented: false)
     }
-    func transcribeSlice(_ url: URL, offset: Double, duration: Double, cancellation: InferenceCancellation) throws -> [MeetingSegment] {
+    func transcribeSlice(_ url: URL, offset: Double, duration: Double, cancellation: InferenceCancellation, selectedModel: String? = nil) throws -> [MeetingSegment] {
         try Task.checkCancellation()
         let file = try AVAudioFile(forReading: url)
         let rate = file.processingFormat.sampleRate
@@ -47,16 +51,16 @@ actor CPULocalProviders {
             let output = try AVAudioFile(forWriting: clip, settings: file.processingFormat.settings)
             try output.write(from: buffer)
         }
-        do { return try transcribeSegments(clip, cancellation: cancellation) }
+        do { return try transcribeSegments(clip, cancellation: cancellation, selectedModel: selectedModel) }
         catch ProcessingFailure.noSpeech { return [] }
     }
-    func transcribeSegments(_ url: URL, cancellation: InferenceCancellation) throws -> [MeetingSegment] {
-        let json = try transcription(url, cancellation: cancellation, segmented: true)
+    func transcribeSegments(_ url: URL, cancellation: InferenceCancellation, selectedModel: String? = nil) throws -> [MeetingSegment] {
+        let json = try transcription(url, cancellation: cancellation, segmented: true, selectedModel: selectedModel)
         return try JSONDecoder().decode([MeetingSegment].self, from: Data(json.utf8))
     }
-    private func transcription(_ url: URL, cancellation: InferenceCancellation, segmented: Bool) throws -> String {
+    private func transcription(_ url: URL, cancellation: InferenceCancellation, segmented: Bool, selectedModel: String? = nil) throws -> String {
         try Task.checkCancellation()
-        let selected = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin"
+        let selected = selectedModel ?? UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin"
         guard ["ggml-base.bin", "ggml-small.bin"].contains(selected) else { throw VoiceError.invalid }
         let modelName = selected
         let file = try AVAudioFile(forReading: url)

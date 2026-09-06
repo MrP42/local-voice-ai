@@ -54,6 +54,9 @@ struct VoiceApp: App {
 private struct VoiceHome: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject var model: VoiceModel
+    #if os(watchOS)
+    @State private var watchPath: [WatchDestination] = []
+    #endif
     #if os(iOS)
     @State private var showModels = false
     @State private var query = ""
@@ -68,7 +71,7 @@ private struct VoiceHome: View {
 
     var body: some View {
         #if os(watchOS)
-        NavigationStack {
+        NavigationStack(path: $watchPath) {
             ScrollView {
                 VStack(spacing: 10) {
                     Label(model.reachable ? "iPhone verbunden" : "Übergabe später", systemImage: model.reachable ? "iphone" : "clock")
@@ -87,15 +90,28 @@ private struct VoiceHome: View {
                                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.border, lineWidth: 1))
                         }.buttonStyle(.plain)
                     }
-                    NavigationLink {
-                        List { ForEach(model.entries) { entry in
-                            NavigationLink { VoiceEntryDetail(model: model, original: entry) } label: { VoiceEntryRow(entry: entry) }
-                        } }.navigationTitle("Verlauf")
-                    } label: { Label("Verlauf", systemImage: "clock.arrow.circlepath") }
+                    NavigationLink(value: WatchDestination.history) { Label("Verlauf", systemImage: "clock.arrow.circlepath") }
                     Button("Erneut versuchen", systemImage: "arrow.clockwise") { model.retry(forceReload: true) }
                     Button("Wiedergabe stoppen", systemImage: "stop.circle") { model.stopPlayback() }
                 }.padding(.horizontal, 4)
             }.navigationTitle("")
+                .navigationDestination(for: WatchDestination.self) { destination in
+                    if destination == .latest {
+                        if let latest = model.entries.first { VoiceEntryDetail(model: model, original: latest) }
+                        else { Text("Noch keine Sprachnotiz").navigationTitle("Letzte Notiz") }
+                    } else {
+                        List {
+                            if model.entries.isEmpty { Text("Noch keine Sprachnotiz") }
+                            ForEach(model.entries) { entry in
+                                NavigationLink { VoiceEntryDetail(model: model, original: entry) } label: { VoiceEntryRow(entry: entry) }
+                            }
+                        }.navigationTitle("Verlauf")
+                    }
+                }
+        }
+        .onOpenURL { url in
+            guard let destination = WatchDestination(url: url) else { return }
+            watchPath = destination == .speak ? [] : [destination]
         }
         #else
         TabView(selection: $tab) {
@@ -129,7 +145,7 @@ private struct VoiceHome: View {
                 }
             }
             .tabItem { Label("Sprechen", systemImage: "waveform") }.tag(0)
-            MeetingLibraryView().tabItem { Label("Aufzeichnungen", systemImage: "doc.text") }.tag(2)
+            MeetingLibraryView().tabItem { Label("Transkripte", systemImage: "doc.text") }.tag(2)
             NavigationStack {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
@@ -266,7 +282,10 @@ private struct VoiceEntryRow: View {
                     .foregroundStyle(entry.reply == nil ? Color.secondary : VoicePalette.accent)
             }.font(.caption).foregroundStyle(VoicePalette.secondaryText)
             Text(entry.transcript ?? "Gespeicherte Sprachnotiz").font(.headline).lineLimit(1)
-            Text(entry.reply ?? "gespeichert – Verarbeitung folgt").font(.subheadline).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
+            Text((try? AttributedString(markdown: entry.reply ?? "gespeichert – Verarbeitung folgt")) ?? AttributedString(entry.reply ?? "gespeichert – Verarbeitung folgt")).font(.subheadline).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
+            if let event = entry.processingEvents?.last(where: { $0.operation == "Antwort" }) {
+                Text((event.isAI ? "KI · " : "System · ") + event.model).font(.caption2).foregroundStyle(VoicePalette.secondaryText).lineLimit(1)
+            }
         }.frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
     }
@@ -286,19 +305,23 @@ private struct VoiceEntryDetail: View {
                     Label("Deine Aufnahme", systemImage: "waveform").font(.headline).foregroundStyle(VoicePalette.accent)
                     Text(entry.transcript ?? "Deine Sprachnotiz ist gespeichert. Das Transkript folgt nach der Verarbeitung.")
                         .selectableOnPhone()
+                    if let event = entry.processingEvents?.last(where: { $0.operation == "Transkription" }) {
+                        ProcessingDisclosure(events: [event])
+                    }
                     #if os(iOS)
                     if let url = model.recordingURL(entry.id) { ShareLink("Originalaufnahme sichern", item: url).font(.subheadline) }
                     #endif
                 }.voiceCard()
                 VStack(alignment: .leading, spacing: 12) {
                     Label("Antwort", systemImage: "text.bubble").font(.headline).foregroundStyle(VoicePalette.accent)
-                    Text(entry.reply ?? "gespeichert – Verarbeitung folgt").selectableOnPhone()
+                    VoiceMarkdown(text: entry.reply ?? "gespeichert – Verarbeitung folgt").selectableOnPhone()
                     if let reply = entry.reply {
                         HStack(spacing: 8) {
                             Button("Antwort anhören", systemImage: "play.fill") { model.speak(reply, id: entry.id) }
                                 .buttonStyle(VoiceMediaButtonStyle(primary: true))
                             Button("Wiedergabe stoppen", systemImage: "stop.fill") { model.stopPlayback() }
                                 .buttonStyle(VoiceMediaButtonStyle(primary: false))
+                            ProcessingDisclosure(events: entry.processingEvents ?? [])
                         }.labelStyle(.iconOnly)
                     }
                     #if os(iOS)
@@ -370,5 +393,60 @@ private struct VoiceMediaButtonStyle: ButtonStyle {
             .foregroundStyle(primary ? (scheme == .light ? VoicePalette.brand : VoicePalette.ink) : VoicePalette.text)
             .background(primary ? (scheme == .light ? VoicePalette.ink : VoicePalette.brand) : Color.clear, in: Circle())
             .contentShape(Circle()).opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
+/// Render inline Markdown while keeping paragraphs, headings and lists readable.
+struct VoiceMarkdown: View {
+    let text: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if !trimmed.hasPrefix("```") {
+                    let heading = trimmed.hasPrefix("#") && trimmed.contains(" ")
+                    let content = heading ? String(trimmed.drop(while: { $0 == "#" || $0 == " " })) : trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") ? "• " + trimmed.dropFirst(2) : line
+                    Text((try? AttributedString(markdown: content, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(content))
+                        .font(heading ? .headline : .body)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+}
+
+struct ProcessingDisclosure: View {
+    let events: [ProcessingEvent]
+    @State private var showing = false
+    private var latest: ProcessingEvent? { events.last(where: { $0.operation == "Antwort" }) ?? events.last }
+    var body: some View {
+        Button { showing = true } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(latest.map { ($0.isAI ? "KI · " : "System · ") + $0.model } ?? "KI-Info · nicht dokumentiert")
+                    .lineLimit(2)
+                if let event = latest { Text(event.completedAt, format: .dateTime.hour().minute()) }
+            }.font(.caption2).foregroundStyle(VoicePalette.secondaryText)
+        }
+        .buttonStyle(.plain).accessibilityIdentifier("processingDisclosure")
+        .sheet(isPresented: $showing) {
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if events.isEmpty { Text("Für diesen älteren Eintrag wurden Modell und Verarbeitungszeit nicht gespeichert.") }
+                        ForEach(Array(events.enumerated()), id: \.offset) { _, event in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(event.operation).font(.headline)
+                                Text(event.model)
+                                Text(event.isAI ? "Mit KI lokal verarbeitet" : "Lokale Systemverarbeitung · keine LLM-Antwort")
+                                Text(event.completedAt, format: .dateTime.day().month().year().hour().minute().second())
+                                Text(String(format: "Dauer: %.2f s", event.durationMS / 1000))
+                            }
+                        }
+                        Text("Apple stellt die genaue interne Version seiner Systemmodelle nicht bereit.").font(.caption)
+                    }.padding()
+                }.navigationTitle("Verarbeitung")
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { showing = false } } }
+            }
+        }
     }
 }

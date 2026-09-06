@@ -11,7 +11,7 @@ def configs(name, settings):
     return obj(name+'configs', isa='XCConfigurationList', buildConfigurations=ids, defaultConfigurationIsVisible=0, defaultConfigurationName='Debug')
 products=[]; files=[]; targets=[]
 for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype'),('VoiceWatch','watchos','de.localvoice.prototype.watchkitapp')]:
-    sources = ['Shared/VoiceApp.swift','Shared/VoiceModel.swift','Shared/VoiceTransport.swift','Shared/CaptureController.swift','VoiceCore/Sources/VoiceCore/Store.swift','VoiceCore/Sources/VoiceCore/Envelope.swift','VoiceCore/Sources/VoiceCore/Chunks.swift','VoiceCore/Sources/VoiceCore/CaptureStartGate.swift','VoiceCore/Sources/VoiceCore/StorageInventory.swift','VoiceCore/Sources/VoiceCore/Jobs.swift','VoiceCore/Sources/VoiceCore/JobProcessor.swift','VoiceCore/Sources/VoiceCore/ProcessingDeadline.swift','VoiceCore/Sources/VoiceCore/ResponsePolicy.swift']
+    sources = ['Shared/VoiceApp.swift','Shared/VoiceModel.swift','Shared/VoiceTransport.swift','Shared/CaptureController.swift','VoiceCore/Sources/VoiceCore/WatchDestination.swift','VoiceCore/Sources/VoiceCore/Store.swift','VoiceCore/Sources/VoiceCore/Envelope.swift','VoiceCore/Sources/VoiceCore/Chunks.swift','VoiceCore/Sources/VoiceCore/CaptureStartGate.swift','VoiceCore/Sources/VoiceCore/StorageInventory.swift','VoiceCore/Sources/VoiceCore/Jobs.swift','VoiceCore/Sources/VoiceCore/JobProcessor.swift','VoiceCore/Sources/VoiceCore/ProcessingDeadline.swift','VoiceCore/Sources/VoiceCore/ResponsePolicy.swift']
     if platform == 'iphoneos': sources += ['VoiceCore/Sources/VoiceCore/Meetings.swift','iPhone/LocalProviders.swift','iPhone/CPULocalProviders.swift','iPhone/InferenceCancellation.swift','iPhone/ModelLibrary.swift','iPhone/ModelPanel.swift','iPhone/MeetingLibrary.swift','iPhone/Engines/Cancellation.mm','iPhone/Engines/WhisperBridge.mm','iPhone/Engines/LlamaBridge.mm']
     buildfiles=[]
     for path in sources:
@@ -22,7 +22,7 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
     frameworks=obj(name+'frameworks', isa='PBXFrameworksBuildPhase', buildActionMask=2147483647, files=[], runOnlyForDeploymentPostprocessing=0)
     product=obj(name+'product', isa='PBXFileReference', explicitFileType='wrapper.application', includeInIndex=0, path=name+'.app', sourceTree='BUILT_PRODUCTS_DIR'); products.append(product)
     info={'CFBundleDisplayName':'Local Voice', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'APPL', 'CFBundleShortVersionString':'0.2.0', 'CFBundleVersion':'2', 'NSMicrophoneUsageDescription':'Nimmt deine ausdrücklich gestarteten Sprachnotizen auf.', 'NSSpeechRecognitionUsageDescription':'Transkribiert deine Sprachnotizen lokal.'}
-    if platform=='watchos': info.update(WKApplication=True, WKCompanionAppBundleIdentifier='de.localvoice.prototype')
+    if platform=='watchos': info.update(WKApplication=True, WKCompanionAppBundleIdentifier='de.localvoice.prototype', CFBundleURLTypes=[{'CFBundleURLName':'de.localvoice.watch.navigation', 'CFBundleURLSchemes':['localvoice-watch']}])
     else: info.update(UILaunchScreen={}, UISupportedInterfaceOrientations=['UIInterfaceOrientationPortrait'])
     (root/(name+'-Info.plist')).write_bytes(plistlib.dumps(info))
     settings={'PRODUCT_NAME':name,'PRODUCT_BUNDLE_IDENTIFIER':bundle,'INFOPLIST_FILE':name+'-Info.plist','SDKROOT':platform,'SWIFT_VERSION':'5.0','TARGETED_DEVICE_FAMILY':'1' if platform=='iphoneos' else '4','CODE_SIGN_STYLE':'Automatic','GENERATE_INFOPLIST_FILE':'NO','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator' if platform=='iphoneos' else 'watchos watchsimulator','IPHONEOS_DEPLOYMENT_TARGET':'26.0','WATCHOS_DEPLOYMENT_TARGET':'26.0','ENABLE_USER_SCRIPT_SANDBOXING':'YES'}
@@ -43,6 +43,24 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
             embedded.append(obj(library+'frameworkEmbed',isa='PBXBuildFile',fileRef=ref,settings={'ATTRIBUTES':['CodeSignOnCopy','RemoveHeadersOnCopy']}))
         extra_phases.append(obj('nativeEnginesEmbed',isa='PBXCopyFilesBuildPhase',buildActionMask=2147483647,dstPath='',dstSubfolderSpec=10,files=embedded,name='Embed iPhone Engines',runOnlyForDeploymentPostprocessing=0))
     target=obj(name, isa='PBXNativeTarget', buildConfigurationList=configs(name,settings), buildPhases=[sourcephase, frameworks]+extra_phases, buildRules=[], dependencies=[], name=name, productName=name, productReference=product, productType='com.apple.product-type.application'); targets.append(target)
+# WidgetKit complications are a separate, lightweight Watch extension.
+name = 'VoiceComplications'
+widget_files = []
+for path in ['WatchWidgets/VoiceComplications.swift', 'VoiceCore/Sources/VoiceCore/WatchDestination.swift']:
+    ref = obj(path, isa='PBXFileReference', lastKnownFileType='sourcecode.swift', path=path, sourceTree='<group>')
+    if ref not in files: files.append(ref)
+    widget_files.append(obj(name+path, isa='PBXBuildFile', fileRef=ref))
+phase = obj(name+'sources', isa='PBXSourcesBuildPhase', buildActionMask=2147483647, files=widget_files, runOnlyForDeploymentPostprocessing=0)
+product = obj(name+'product', isa='PBXFileReference', explicitFileType='wrapper.app-extension', includeInIndex=0, path=name+'.appex', sourceTree='BUILT_PRODUCTS_DIR'); products.append(product)
+(root/(name+'-Info.plist')).write_bytes(plistlib.dumps({'CFBundleDisplayName':'Local Voice AI', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'XPC!', 'CFBundleShortVersionString':'0.2.0', 'CFBundleVersion':'2', 'NSExtension':{'NSExtensionPointIdentifier':'com.apple.widgetkit-extension'}}))
+settings = {'PRODUCT_NAME':name, 'PRODUCT_BUNDLE_IDENTIFIER':'de.localvoice.prototype.watchkitapp.complications', 'INFOPLIST_FILE':name+'-Info.plist', 'SDKROOT':'watchos', 'SWIFT_VERSION':'5.0', 'TARGETED_DEVICE_FAMILY':'4', 'CODE_SIGN_STYLE':'Automatic', 'GENERATE_INFOPLIST_FILE':'NO', 'SUPPORTED_PLATFORMS':'watchos watchsimulator', 'WATCHOS_DEPLOYMENT_TARGET':'26.0', 'APPLICATION_EXTENSION_API_ONLY':'YES', 'SKIP_INSTALL':'YES', 'LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks'}
+target = obj(name, isa='PBXNativeTarget', buildConfigurationList=configs(name,settings), buildPhases=[phase], buildRules=[], dependencies=[], name=name, productName=name, productReference=product, productType='com.apple.product-type.app-extension'); targets.append(target)
+proxy = obj(name+'proxy', isa='PBXContainerItemProxy', containerPortal=uid('project'), proxyType=1, remoteGlobalIDString=target, remoteInfo=name)
+dependency = obj(name+'dependency', isa='PBXTargetDependency', target=target, targetProxy=proxy)
+objects[uid('VoiceWatch')]['dependencies'].append(dependency)
+embedfile = obj(name+'embedfile', isa='PBXBuildFile', fileRef=product, settings={'ATTRIBUTES':['RemoveHeadersOnCopy']})
+embed = obj(name+'embed', isa='PBXCopyFilesBuildPhase', buildActionMask=2147483647, dstPath='', dstSubfolderSpec=13, files=[embedfile], name='Embed Watch Complications', runOnlyForDeploymentPostprocessing=0)
+objects[uid('VoiceWatch')]['buildPhases'].append(embed)
 proxy=obj('watchProxy',isa='PBXContainerItemProxy',containerPortal=uid('project'),proxyType=1,remoteGlobalIDString=uid('VoiceWatch'),remoteInfo='VoiceWatch')
 dependency=obj('watchDependency',isa='PBXTargetDependency',target=uid('VoiceWatch'),targetProxy=proxy)
 embedfile=obj('watchEmbedFile',isa='PBXBuildFile',fileRef=uid('VoiceWatchproduct'),settings={'ATTRIBUTES':['RemoveHeadersOnCopy']})

@@ -33,12 +33,56 @@ final class VoiceUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
+    #if os(watchOS)
+    func testConfiguredHistoryComplicationOpensHistory() throws {
+        let app = XCUIApplication()
+        let spring = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        if spring.staticTexts["Switcher Face Title"].exists { XCUIDevice.shared.press(.home) }
+        let face = spring.otherElements["Watch Face"]
+        guard face.waitForExistence(timeout: 5) else { throw XCTSkip("Requires the configured Modular simulator face") }
+        keepScreenshot(spring, name: "Watch-Komplikation")
+        // The setup places the history widget in the Modular center slot.
+        face.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.navigationBars["Verlauf"].waitForExistence(timeout: 15))
+        keepScreenshot(app, name: "Watch-Komplikation-Verlauf")
+    }
+    #endif
     #if os(iOS)
+    func testTransparencyAndMarkdown() throws {
+        let app = XCUIApplication(); app.launchArguments = ["--transparency-ui-probe"]; app.launch()
+        let entry = app.buttons["historyEntry"].firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 15)); entry.tap()
+        XCTAssertTrue(app.staticTexts["Wichtig: Formatierter Text."].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Ergebnis"].exists)
+        XCTAssertFalse(app.staticTexts["**Wichtig:** Formatierter Text."].exists)
+        let info = app.buttons["processingDisclosure"].firstMatch
+        XCTAssertTrue(info.exists)
+        keepScreenshot(app, name: "Antwort-Transparenz")
+        info.tap()
+        XCTAssertTrue(app.staticTexts["UI-Testmodell"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Dauer: 0.12 s"].exists)
+        keepScreenshot(app, name: "Verarbeitungsdetails")
+    }
+    func testModelDownloadStartsFromModelCard() throws {
+        let app = XCUIApplication(); app.launch()
+        app.buttons["Lokale Sprachmodelle"].tap()
+        let download = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "download-")).firstMatch
+        guard download.waitForExistence(timeout: 10) else { throw XCTSkip("All models already installed") }
+        defer { app.terminate() }
+        XCTAssertTrue(download.isEnabled); download.tap()
+        XCTAssertFalse(download.isEnabled)
+        let message = app.staticTexts["modelMessage"]
+        app.swipeUp()
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertTrue(message.label.contains("heruntergeladen"))
+        keepScreenshot(app, name: "Modell-Download")
+        app.terminate()
+    }
     func testMeetingResultsCopyAndExport() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--meeting-import-probe", "TEST-grounded.aiff"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Aufzeichnungen"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["Transkripte"].waitForExistence(timeout: 15))
         let ready = app.staticTexts["Transkript & Auswertung"].firstMatch
         XCTAssertTrue(ready.waitForExistence(timeout: 180))
         app.buttons.matching(identifier: "meetingEntry").firstMatch.tap()

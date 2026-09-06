@@ -107,10 +107,11 @@ final class MeetingLibrary: ObservableObject {
                 let startTime = ContinuousClock.now
                 let end = min(doc.nextOffset + 30, doc.duration)
                 status = "Lokal transkribieren · \(Int(doc.nextOffset / doc.duration * 100)) %"
-                let segments = try await CPULocalProviders.shared.transcribeSlice(working, offset: doc.nextOffset, duration: end - doc.nextOffset, cancellation: cancellation)
+                let selected = UserDefaults.standard.string(forKey: "sttModel") ?? "ggml-base.bin"
+                let segments = try await CPULocalProviders.shared.transcribeSlice(working, offset: doc.nextOffset, duration: end - doc.nextOffset, cancellation: cancellation, selectedModel: selected)
                 try Task.checkCancellation()
                 let shifted = segments.map { MeetingSegment(index: $0.index, start: min(end, doc.nextOffset + $0.start), end: min(end, doc.nextOffset + $0.end), text: $0.text) }
-                try await archive.appendChunk(doc.id, offset: doc.nextOffset, nextOffset: end, segments: shifted)
+                try await archive.appendChunk(doc.id, offset: doc.nextOffset, nextOffset: end, segments: shifted, event: ProcessingEvent(operation: "Transkription · Abschnitt", model: selected == "ggml-small.bin" ? "Whisper Small" : "Whisper Base", completedAt: Date(), durationMS: elapsed(startTime), isAI: true))
                 try await archive.recordTiming(doc.id, phase: "stt", milliseconds: elapsed(startTime))
                 doc = try await archive.load(doc.id); await refresh()
             }
@@ -129,7 +130,7 @@ final class MeetingLibrary: ObservableObject {
             let startTime = ContinuousClock.now
             let minutes = try await CPULocalProviders.shared.minutes(for: text, cancellation: cancellation)
             try Task.checkCancellation()
-            try await archive.appendMinutes(doc.id, from: from, through: through, minutes: minutes)
+            try await archive.appendMinutes(doc.id, from: from, through: through, minutes: minutes, event: ProcessingEvent(operation: "Auswertung · Abschnitt", model: "Qwen 2.5 1.5B Instruct · Q4_K_M", completedAt: Date(), durationMS: elapsed(startTime), isAI: true))
             try await archive.recordTiming(doc.id, phase: "minutes", milliseconds: elapsed(startTime))
             doc = try await archive.load(doc.id); await refresh()
         }
@@ -178,7 +179,7 @@ struct MeetingLibraryView: View {
                     }.voiceCard()
                     Text("Anrufaufzeichnungen aus Dateien importieren. Kein Live-Zugriff auf Telefon-, Teams- oder WhatsApp-Anrufe.")
                         .font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                    Text("Gespeicherte Aufzeichnungen").font(.headline)
+                    Text("Gespeicherte Transkripte").font(.headline)
                     if library.documents.isEmpty { Text("Noch keine Aufzeichnung").foregroundStyle(VoicePalette.secondaryText) }
                     ForEach(library.documents) { doc in
                         NavigationLink { MeetingDetailView(library: library, original: doc) } label: {
@@ -196,7 +197,7 @@ struct MeetingLibraryView: View {
                 }.padding(16)
             }
             .background(VoicePalette.background)
-            .navigationTitle("Aufzeichnungen").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Transkripte").navigationBarTitleDisplayMode(.inline)
             .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: false) { result in
                 switch result {
                 case .success(let urls): if let first = urls.first { Task { await library.importMedia(first) } }
@@ -239,6 +240,7 @@ private struct MeetingDetailView: View {
                     }.buttonStyle(.borderless)
                     if exportError { Text("Export konnte nicht vorbereitet werden.").font(.caption).foregroundStyle(VoicePalette.secondaryText) }
                 }.voiceCard()
+                ProcessingDisclosure(events: doc.processingEvents ?? [])
                 Picker("Ergebnisansicht", selection: $tab) {
                     Text("Auswertung").tag(0)
                     Text("Transkript").tag(1)

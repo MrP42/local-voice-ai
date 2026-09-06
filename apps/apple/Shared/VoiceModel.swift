@@ -59,7 +59,17 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         super.init()
         do {
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VoiceOutbox")
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.arguments.contains("--transparency-ui-probe") {
+                store = try DurableStore(root: root.appendingPathComponent("UITest-Transparency"))
+                if try store?.entries().isEmpty == true, let store {
+                    let receipt = try store.accept(.capture(audio: Data([1])))
+                    try store.update(receipt.sessionId, transcript: "Darstellung prüfen", reply: "## Ergebnis\n**Wichtig:** Formatierter Text.\n- Ein nächster Schritt", state: .answered, event: ProcessingEvent(operation: "Antwort", model: "UI-Testmodell", completedAt: Date(), durationMS: 123, isAI: true))
+                }
+            } else { store = try DurableStore(root: root) }
+            #else
             store = try DurableStore(root: root)
+            #endif
         } catch { status = "Speicher nicht verfügbar – Aufnahme gesperrt" }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--fixture-capture"), let store {
@@ -142,7 +152,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         if capture == nil { capture = CaptureController(store: store) }
         #if os(iOS)
         if jobs == nil {
-            jobs = JobProcessor(store: store, transcribe: { try await LocalProviders.transcribe($0) }, reply: { try await LocalProviders.reply(to: $0) })
+            jobs = JobProcessor(store: store, annotatedTranscribe: { try await LocalProviders.annotatedTranscribe($0) }, annotatedReply: { try await LocalProviders.annotatedReply(to: $0) })
             jobs?.fixedAnswer = fixedAnswer
             jobs?.onChange = { [weak self] id in
                 guard let self else { return }
@@ -263,7 +273,8 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
             #if os(iOS)
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
-            let utterance = AVSpeechUtterance(string: text)
+            let spoken = (try? AttributedString(markdown: text)).map { String($0.characters) } ?? text
+            let utterance = AVSpeechUtterance(string: spoken)
             utterance.voice = AVSpeechSynthesisVoice(language: "de-DE")
             speakingId = id; speechStarted = Date()
             currentUtterance = utterance
@@ -276,7 +287,7 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         Task { @MainActor in
             if self.currentUtterance === utterance { self.lastSpeechStart = Date() }
             if let (id, started, _) = self.speechAttempts[ObjectIdentifier(utterance)] {
-                try? self.store?.update(id, state: .answered, timing: ("tts_start_ms", Date().timeIntervalSince(started) * 1000))
+                try? self.store?.update(id, state: .answered, timing: ("tts_start_ms", Date().timeIntervalSince(started) * 1000), event: ProcessingEvent(operation: "Sprachausgabe gestartet", model: "Apple AVSpeechSynthesizer · " + (utterance.voice?.identifier ?? "Systemstimme"), completedAt: Date(), durationMS: Date().timeIntervalSince(started) * 1000, isAI: false))
                 if let entry = try? self.store?.entries().first(where: { $0.id == id }), entry.timings["tts_e2e_ms"] == nil,
                    let origin = entry.timings["capture_end_at_ms"] ?? entry.timings["capture_saved_at_ms"] {
                     let elapsed = Date().timeIntervalSinceReferenceDate * 1000 - origin
@@ -353,6 +364,19 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate 
         let speech = availability["speechTranscriberAvailable"] == "true" ? "Apple-Spracherkennung verfügbar" : "Apple-Spracherkennung hier nicht verfügbar"
         let ai = availability["foundationModels"] == "available" ? "Apple-Antwortmodell verfügbar" : "Apple-Antwortmodell hier nicht bereit"
         providerDescription = speech + ". " + ai + ". Für den CPU-Pfad werden ein Whisper-Modell und Qwen benötigt."
+    }
+    func downloadModel(_ item: LocalModel) {
+        guard !installingModel else { return }
+        installingModel = true
+        modelMessage = item.label + " wird heruntergeladen … App bitte geöffnet lassen."
+        Task {
+            defer { installingModel = false }
+            do {
+                let label = try await ModelLibrary.shared.download(item)
+                modelMessage = label + " geprüft und installiert"
+                await refreshModels()
+            } catch { modelMessage = "Download nicht abgeschlossen. Bitte Verbindung und freien Speicher prüfen und erneut versuchen." }
+        }
     }
     func installModel(_ url: URL) {
         guard !installingModel else { return }

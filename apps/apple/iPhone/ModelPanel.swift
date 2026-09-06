@@ -21,6 +21,11 @@ struct ModelPanel: View {
                                     .foregroundStyle(item.installed ? VoicePalette.accent : .secondary)
                                     .accessibilityLabel(item.installed ? "Installiert" : "Nicht installiert")
                             }
+                            if !item.installed {
+                                Button("Herunterladen") { model.downloadModel(item.model) }
+                                    .disabled(model.installingModel)
+                                    .accessibilityIdentifier("download-" + item.id)
+                            }
                             Text(item.installed ? "Vorhanden · \(ByteCountFormatter.string(fromByteCount: item.installedBytes, countStyle: .file))" : "Fehlt · \(ByteCountFormatter.string(fromByteCount: item.model.bytes, countStyle: .file)) benötigt")
                                 .font(.caption)
                         }
@@ -40,7 +45,8 @@ struct ModelPanel: View {
                     Button(model.installingModel ? "Modell wird geprüft …" : "Modelldatei auswählen") { importing = true }
                         .disabled(model.installingModel)
                     Text("Unterstützt werden die dokumentierten Whisper-Base-/Small- und Qwen-Dateien. Unbekannte oder beschädigte Dateien ersetzen kein vorhandenes Modell.").font(.caption)
-                    Text(model.modelMessage).font(.caption)
+                    if model.installingModel { ProgressView("Download / Prüfung läuft") }
+                    Text(model.modelMessage).font(.caption).accessibilityIdentifier("modelMessage")
                 }
                 #if DEBUG
                 Section("Prototyp-Test") { Toggle("Feste Antwort ohne Spracherkennung", isOn: $model.fixedAnswer) }
