@@ -51,7 +51,10 @@ import {
 /// Abspieltempo der Transportleiste. Bewusst grob gestuft: feiner regelt der
 /// Schieber in den Einstellungen, hier will man im Hoeren einmal schneller
 /// oder langsamer stellen, nicht justieren.
-const SPEEDS = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+/// Tempostufen der Transportleiste. 0,5x ist dabei, seit der feinstufige
+/// Regler aus den Einstellungen entfallen ist: dieselbe Einstellung an zwei
+/// Orten war eine Dublette, aber der langsamste Wert soll bleiben.
+const SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
 /// Erlaubte MP3-Bitraten (kbit/s) — dieselben vier Stufen wie in
 /// `settings.rs`; mehr Stufen muesste die Oberflaeche auch erklaeren.
@@ -1323,9 +1326,9 @@ export const TtsSettings = () => {
                 <span className="mediabar__sep" />
                 {/* Tempo gehoert an die Transportleiste, nicht in die
                   Einstellungen: man merkt beim Hoeren, dass es zu langsam
-                  ist, nicht vorher. Dieselbe Einstellung wie unten, nur hier
-                  erreichbar. Bereich bewusst eng — Tempo entsteht per
-                  Resampling und zieht die Tonhoehe mit. */}
+                  ist, nicht vorher. Es steht nur noch hier. Bereich bewusst
+                  eng — Tempo entsteht per Resampling und zieht die Tonhoehe
+                  mit. */}
                 <div
                   className="w-28"
                   title={t("tts.settings.speedDescription")}
@@ -1579,17 +1582,6 @@ export const TtsSettings = () => {
                   </div>
                 </SettingContainer>
               )}
-              <Slider
-                value={getSetting("tts_speed") ?? 1.0}
-                onChange={(value) => updateSetting("tts_speed", value)}
-                min={0.5}
-                max={2}
-                step={0.05}
-                formatValue={(value) => `${value.toFixed(2)}×`}
-                label={t("tts.settings.speed")}
-                description={t("tts.settings.speedDescription")}
-                grouped={true}
-              />
               <SettingContainer
                 title={t("tts.settings.exportFormat")}
                 description={t("tts.settings.exportFormatDescription")}
@@ -1788,9 +1780,16 @@ export const TtsSettings = () => {
               </SettingContainer>
             </SettingsGroup>
 
-            {/* Verwaltung der Stimmen und der Stimmwechsler gehoeren zu den
-          Einstellungen ans Ende: ausgewaehlt wird oben am Dropdown, hierher
-          kommt man zum Aufnehmen, Importieren und Loeschen. */}
+          </div>
+        </details>
+
+        {/* Stimmen stehen in ihrer eigenen Klappe, nicht am Ende der
+            Einstellungen: wer eine Stimme sucht, sucht keine Einstellung.
+            Ausgewaehlt wird oben an der Transportleiste, hierher kommt man
+            zum Anhoeren, Aufnehmen, Importieren und Loeschen. */}
+        <details className="workspace-disclosure">
+          <summary>{t("workspace.voices")}</summary>
+          <div className="space-y-4 pt-3">
             <VoicesCard />
 
             <VoiceChangerCard />

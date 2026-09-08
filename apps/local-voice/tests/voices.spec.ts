@@ -121,7 +121,7 @@ async function openVoices(page: import("@playwright/test").Page) {
     .getByRole("button", { name: "Vorlesen", exact: true })
     .click();
   await page
-    .getByText("Stimmen verwalten & weitere Optionen")
+    .getByText("Stimmen anhören & verwalten")
     .click();
 }
 

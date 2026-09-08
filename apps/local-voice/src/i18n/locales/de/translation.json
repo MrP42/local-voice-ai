@@ -1328,6 +1328,7 @@
     "skip": "Zum Inhalt",
     "recordings": "Aufnahmen",
     "voiceStyle": "Ausdruck & Sprechstil",
-    "voiceOptions": "Stimmen verwalten & weitere Optionen"
+    "voiceOptions": "Weitere Einstellungen zum Vorlesen",
+    "voices": "Stimmen anhören & verwalten"
   }
 }
