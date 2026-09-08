@@ -286,10 +286,21 @@ impl TtsCore {
     /// Ist dieser Satz (mit aktueller Stimme/Seed/Engine) bereits
     /// synthetisiert — im RAM oder auf Platte?
     pub fn has_cached(&self, text: &str) -> bool {
-        let seed = *self.seed.lock().unwrap();
         let voice = self.voice.lock().unwrap().clone();
-        let engine_tag = self.engine_cache_tag(voice.as_deref());
-        let key = WavCache::key(&engine_tag, text, seed, voice.as_deref());
+        self.has_cached_for(text, voice.as_deref())
+    }
+
+    /// Wie [`Self::has_cached`], aber fuer eine bestimmte Stimme.
+    ///
+    /// Ein Hoerspiel wechselt die Sprecher je Satz. Wer nur gegen die aktive
+    /// Stimme prueft, bekommt fuer jeden fremden Sprecher die falsche
+    /// Antwort — deshalb nimmt der Aufrufer hier genau die Stimme, mit der er
+    /// gleich auch `fetch_wav` ruft. Nur dann bilden beide denselben
+    /// Schluessel.
+    pub fn has_cached_for(&self, text: &str, voice: Option<&str>) -> bool {
+        let seed = *self.seed.lock().unwrap();
+        let engine_tag = self.engine_cache_tag(voice);
+        let key = WavCache::key(&engine_tag, text, seed, voice);
         if self.wav_cache.lock().unwrap().get(key).is_some() {
             return true;
         }
@@ -2818,6 +2829,28 @@ impl TtsManager {
     /// vorher gehört hat. Zusammengefügt wird mit `hound`: die Teile kommen
     /// als eigenständige WAVs vom Server, und ein simples Aneinanderhängen der
     /// Bytes ergäbe eine Datei mit Kopfdaten mitten im Ton.
+    /// Steht jeder Satz des Exports schon im Cache?
+    ///
+    /// Geprueft wird mit genau den Texten und Stimmen, mit denen gleich auch
+    /// `fetch_wav` gerufen wird — Pausen herausgeloest, Text aufbereitet.
+    /// Alles andere waere geraten: ein anderer Schluessel ist ein anderer
+    /// Satz, und die Antwort waere wertlos.
+    fn export_fully_cached(&self, utterances: &[Utterance], max_chars: u32) -> bool {
+        utterances.iter().all(|(sentence, voice)| {
+            let Some(part) = protocol::prepare_text(sentence, max_chars) else {
+                return true;
+            };
+            protocol::split_pauses(&part.text)
+                .iter()
+                .all(|piece| match piece {
+                    protocol::SpeechPart::Silence(_) => true,
+                    protocol::SpeechPart::Speak(text) => {
+                        self.core.has_cached_for(text, voice.as_deref())
+                    }
+                })
+        })
+    }
+
     pub async fn speak_to_file(
         self: &Arc<Self>,
         raw: &str,
@@ -2849,9 +2882,19 @@ impl TtsManager {
         // unten läuft ohnehin über `fetch_wav` durch die aktive Engine —
         // nur der Startpfad war bis Paket E2 auf den Fish-Server verdrahtet
         // (und hätte bei Piper 180 s im Health-Timeout gehangen).
-        self.ensure_engine_ready().await?;
+        // Ein Hoerspiel, das man gerade gehoert hat, liegt Satz fuer Satz im
+        // Cache. Dann ist der Export reine Dateiarbeit, und die Engine bleibt
+        // aus — genau dafuer gibt es den Cache. Dieselbe Entscheidung trifft
+        // das Vorlesen seit jeher (`ensure_server_for`); nur der Export ging
+        // bisher jedes Mal ueber die Engine.
+        let mut engine_started = !self.export_fully_cached(&utterances, max_chars);
+        if engine_started {
+            self.ensure_engine_ready().await?;
+        } else {
+            log::info!("export served entirely from cache — no engine needed");
+        }
         self.bind_seed_voice().await;
-        let port = *self.core.port.lock().unwrap();
+        let mut port = *self.core.port.lock().unwrap();
         let seed = *self.core.seed.lock().unwrap();
 
         // Eigenes Abbruch-Flag je Lauf; ein neuer Export storniert den alten.
@@ -2899,10 +2942,26 @@ impl TtsManager {
                     }
                     protocol::SpeechPart::Speak(text) => text,
                 };
-                let bytes = self
-                    .core
-                    .fetch_wav(port, seed, &text, voice.as_deref())
-                    .await?;
+                let bytes = match self.core.fetch_wav(port, seed, &text, voice.as_deref()).await
+                {
+                    Ok(bytes) => bytes,
+                    // Die Vorpruefung sagte "alles im Cache", der Abruf sagt
+                    // etwas anderes — ein verdraengter Eintrag, ein geleerter
+                    // Ordner. Dann eben doch starten, statt den Export mit
+                    // einem Fehler abzubrechen.
+                    Err(error) if !engine_started => {
+                        log::warn!(
+                            "export: Cache-Fehlschlag trotz Vorpruefung ({error}) — Engine wird nachtraeglich gestartet"
+                        );
+                        self.ensure_engine_ready().await?;
+                        engine_started = true;
+                        port = *self.core.port.lock().unwrap();
+                        self.core
+                            .fetch_wav(port, seed, &text, voice.as_deref())
+                            .await?
+                    }
+                    Err(error) => return Err(error),
+                };
                 // Dieselbe Aufbereitung wie beim Hoeren — die Datei soll
                 // klingen wie das, was man vorher gehoert hat.
                 let strength = *self.core.enhance.lock().unwrap();
@@ -4423,6 +4482,40 @@ mod tests {
             calls.load(Ordering::SeqCst),
             1,
             "kein weiterer Server-Request"
+        );
+    }
+
+    /// Ein Hoerspiel wechselt die Sprecher je Satz. Wer nur gegen die aktive
+    /// Stimme prueft, haelt fremde Sprecher faelschlich fuer vorhanden — und
+    /// ein Export, der daraufhin die Engine ausliesse, braeche mitten im
+    /// Stueck ab.
+    #[tokio::test]
+    async fn jede_stimme_hat_ihren_eigenen_cache_eintrag() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let port = spawn_mock(calls.clone(), bodies).await;
+        let cache_dir = tempfile::tempdir().unwrap();
+
+        let text = "Derselbe Satz, gesprochen von verschiedenen Leuten.";
+        let core = TtsCore::for_test(port);
+        *core.cache_dir.lock().unwrap() = Some(cache_dir.path().to_path_buf());
+        core.ensure_server_core().await.unwrap();
+        let seed = *core.seed.lock().unwrap();
+        core.fetch_wav(port, seed, text, Some("erzaehlerin"))
+            .await
+            .unwrap();
+
+        assert!(
+            core.has_cached_for(text, Some("erzaehlerin")),
+            "die erzeugte Stimme muss als vorhanden gelten"
+        );
+        assert!(
+            !core.has_cached_for(text, Some("leo-lausemaus")),
+            "eine andere Stimme ist ein anderer Eintrag"
+        );
+        assert!(
+            !core.has_cached_for(text, None),
+            "die Standardstimme ist ebenfalls eine andere Stimme"
         );
     }
 
