@@ -1,6 +1,6 @@
 use super::injection_state::{ContextKey, PreparedSnapshot, ReplacementPlan, RunState};
 use crate::input::{self, EnigoState, ReplacementContext};
-use crate::settings::{get_settings, PasteMethod};
+use crate::settings::{get_settings, ClipboardHandling, PasteMethod};
 use enigo::{Direction, Key, Keyboard};
 use log::{debug, warn};
 use std::sync::{mpsc, Arc};
@@ -214,12 +214,87 @@ fn run_worker(app: AppHandle, rx: mpsc::Receiver<InjectionCommand>) {
     }
 }
 
+/// Gibt die Zwischenablage nach einer Injektion wieder her, solange die
+/// Einstellung sie unberuehrt lassen soll.
+///
+/// Beide Injektionswege legen den einzufuegenden Text in der Zwischenablage
+/// ab. Ohne diesen Waechter blieb er dort liegen -- bei laufendem Streaming
+/// nach jedem Fragment aufs Neue, und damit auch dann, wenn der Nutzer
+/// ausdruecklich eingestellt hat, dass die Ablage nicht veraendert werden
+/// soll. Wiederhergestellt wird beim Verlassen der Funktion, also nach der
+/// Wartezeit, in der die Zielanwendung den Einfuegevorgang verarbeitet, und
+/// auch dann, wenn die Injektion unterwegs abgebrochen ist.
+struct ClipboardGuard<'a> {
+    app: &'a AppHandle,
+    text: Option<String>,
+    image: Option<tauri::image::Image<'static>>,
+    restore: bool,
+}
+
+impl<'a> ClipboardGuard<'a> {
+    /// Sichert den aktuellen Inhalt. Wird vor jedem Fragment neu aufgerufen:
+    /// kopiert der Nutzer waehrend des Diktats etwas, gewinnt sein Inhalt.
+    fn capture(app: &'a AppHandle, restore: bool) -> Self {
+        if !restore {
+            return Self {
+                app,
+                text: None,
+                image: None,
+                restore,
+            };
+        }
+        let clipboard = app.clipboard();
+        let text = clipboard.read_text().ok().filter(|t| !t.is_empty());
+        // Ein Bild zu lesen dekodiert die volle Bitmap, deshalb nur dann,
+        // wenn nichts anderes zu retten ist -- wie im Einfuegepfad auch.
+        let image = if text.is_none() {
+            clipboard.read_image().ok().map(|image| image.to_owned())
+        } else {
+            None
+        };
+        Self {
+            app,
+            text,
+            image,
+            restore,
+        }
+    }
+}
+
+impl Drop for ClipboardGuard<'_> {
+    fn drop(&mut self) {
+        if !self.restore {
+            return;
+        }
+        let clipboard = self.app.clipboard();
+        if let Some(text) = self.text.take() {
+            let _ = clipboard.write_text(&text);
+        } else if let Some(image) = self.image.take() {
+            let _ = clipboard.write_image(&image);
+        } else {
+            let _ = clipboard.clear();
+        }
+    }
+}
+
+/// Ob die Zwischenablage nach der Injektion zurueckgesetzt wird. Bei
+/// "in die Zwischenablage kopieren" ist das Ueberschreiben gewollt.
+fn restores_clipboard(handling: ClipboardHandling) -> bool {
+    handling != ClipboardHandling::CopyToClipboard
+}
+
 fn paste_fragment(app: &AppHandle, fragment: &str) -> bool {
     // Stream injection fires every few hundred milliseconds while the user
     // keeps using the machine, so it must honour the configured paste method
     // instead of forcing Ctrl+V on everyone: a held Ctrl is held for the whole
     // desktop, and the user's scrolling then reads as zoom.
-    let direct = get_settings(app).paste_method == PasteMethod::Direct;
+    let settings = get_settings(app);
+    let direct = settings.paste_method == PasteMethod::Direct;
+
+    // Beim direkten Tippen wird die Ablage gar nicht erst angefasst; sonst
+    // haelt der Waechter den vorherigen Inhalt fest.
+    let _clipboard = (!direct)
+        .then(|| ClipboardGuard::capture(app, restores_clipboard(settings.clipboard_handling)));
 
     if !direct {
         if let Err(error) = app.clipboard().write_text(fragment) {
@@ -258,6 +333,10 @@ fn execute_replacement(
     plan: ReplacementPlan,
     expected_context: ContextKey,
 ) -> bool {
+    let _clipboard = ClipboardGuard::capture(
+        app,
+        restores_clipboard(get_settings(app).clipboard_handling),
+    );
     if let Err(error) = app.clipboard().write_text(&plan.replacement) {
         warn!("text refinement: clipboard write failed: {error}");
         run.invalidate();
@@ -312,5 +391,24 @@ fn context_key(context: ReplacementContext) -> ContextKey {
         foreground: context.foreground,
         focus: context.focus,
         physical_generation: context.physical_generation,
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::restores_clipboard;
+    use crate::settings::ClipboardHandling;
+
+    #[test]
+    fn clipboard_is_restored_unless_the_user_asked_for_a_copy() {
+        // Der Streaming-Pfad legte jedes Fragment in der Ablage ab und liess
+        // es dort liegen -- auch bei "nicht veraendern".
+        assert!(restores_clipboard(ClipboardHandling::DontModify));
+        assert!(!restores_clipboard(ClipboardHandling::CopyToClipboard));
+    }
+
+    #[test]
+    fn dont_modify_is_the_default() {
+        assert!(restores_clipboard(ClipboardHandling::default()));
     }
 }
