@@ -1290,6 +1290,8 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_tts_enhance_setting,
             shortcut::change_tts_reference_auto_transcribe_setting,
             shortcut::change_tts_enhance_strength_setting,
+            shortcut::change_tts_engine_setting,
+            shortcut::change_tts_piper_voice_setting,
             shortcut::change_tts_speed_setting,
             shortcut::change_tts_export_format_setting,
             shortcut::change_tts_export_bitrate_setting,

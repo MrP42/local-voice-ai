@@ -1,6 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { DictationTab } from "./DictationTab";
+import { ReadAloudTab } from "./ReadAloudTab";
 import { SoundTab } from "./SoundTab";
 import { AppTab } from "./AppTab";
 import { PostProcessingSettings } from "../post-processing/PostProcessingSettings";
@@ -33,6 +34,13 @@ const TABS = [
     enabled: () => true,
   },
   {
+    // Direkt hinter dem Diktat: die beiden Dinge, die die App tut.
+    id: "readaloud",
+    labelKey: "settings.app.tabs.readAloud",
+    Component: ReadAloudTab,
+    enabled: () => true,
+  },
+  {
     id: "sound",
     labelKey: "settings.app.tabs.sound",
     Component: SoundTab,
@@ -40,7 +48,7 @@ const TABS = [
   },
   {
     id: "postprocessing",
-    labelKey: "sidebar.postProcessing",
+    labelKey: "settings.app.tabs.postProcessing",
     Component: PostProcessingSettings,
     enabled: () => true,
   },
@@ -52,7 +60,7 @@ const TABS = [
   },
   {
     id: "about",
-    labelKey: "sidebar.about",
+    labelKey: "settings.app.tabs.about",
     Component: AboutSettings,
     enabled: () => true,
   },
@@ -123,7 +131,12 @@ export const AppSettings: React.FC = () => {
             }}
             aria-selected={entry.id === active.id}
             onClick={() => setTab(entry.id)}
-            className={`min-h-11 px-3 py-2 text-sm font-medium border-b-2 cursor-pointer whitespace-nowrap transition-colors ${
+            /* `first:pl-0`: der erste Reiter beginnt buendig mit den Karten
+               darunter. Mit Innenabstand sass seine Beschriftung elf Pixel
+               weiter rechts als jeder Inhalt der Seite — genug, dass die
+               Leiste verrutscht aussieht, zu wenig, um wie Absicht zu
+               wirken. */
+            className={`min-h-11 px-3 first:pl-0 py-2 text-sm font-medium border-b-2 cursor-pointer whitespace-nowrap transition-colors ${
               entry.id === active.id
                 ? "border-logo-primary text-text"
                 : "border-transparent text-text/60 hover:text-text"

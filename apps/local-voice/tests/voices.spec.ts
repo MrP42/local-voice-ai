@@ -34,6 +34,8 @@ test.beforeEach(async ({ page }) => {
       post_process_api_keys: {},
       push_to_talk: true,
       tts_voice: null,
+      tts_engine: "fish",
+      tts_piper_voice: null,
     };
     const voices = [
       {
@@ -48,6 +50,14 @@ test.beforeEach(async ({ page }) => {
         origin: "recorded",
         avatar_path: null,
       },
+      // Ein realistischer Bestand: Patrick hat zwanzig Stimmen. Mit zweien
+      // passt die Liste noch in jedes Fenster und beweist nichts.
+      ...Array.from({ length: 18 }, (_, index) => ({
+        id: `stimme-${index}`,
+        meta: { display_name: `Stimme ${index}`, tags: [] },
+        origin: "recorded",
+        avatar_path: null,
+      })),
     ];
     Object.assign(window, {
       __TAURI_OS_PLUGIN_INTERNALS__: {
@@ -140,6 +150,54 @@ test.beforeEach(async ({ page }) => {
             cmd === "meetings_list"
           )
             return [];
+          // Eine geladene Piper-Stimme und die Laufzeit; die zweite Stimme
+          // ist noch nicht geladen und darf nicht zur Auswahl stehen.
+          if (cmd === "tts_list_downloads")
+            return [
+              {
+                id: "piper-runtime",
+                kind: "runtime",
+                name: "Piper",
+                description: "",
+                language: null,
+                size_mb: 20,
+                is_downloaded: true,
+                is_downloading: false,
+              },
+              {
+                id: "de_DE-thorsten-medium",
+                kind: "voice",
+                name: "Thorsten (Deutsch)",
+                description: "",
+                language: "de",
+                size_mb: 60,
+                is_downloaded: true,
+                is_downloading: false,
+              },
+              {
+                id: "en_US-amy-medium",
+                kind: "voice",
+                name: "Amy (English)",
+                description: "",
+                language: "en",
+                size_mb: 60,
+                is_downloaded: false,
+                is_downloading: false,
+              },
+            ];
+          // Was die App wirklich speichern will — sonst prueft der Test nur,
+          // dass ein Auswahlfeld umspringt.
+          if (cmd === "change_tts_engine_setting") {
+            (window as unknown as { savedEngine?: unknown }).savedEngine =
+              args?.value;
+            settings.tts_engine = args?.value as string;
+            return null;
+          }
+          if (cmd === "change_tts_piper_voice_setting") {
+            (window as unknown as { savedPiperVoice?: unknown }).savedPiperVoice =
+              args?.value;
+            return null;
+          }
           if (cmd === "get_custom_sounds") return { start: false, stop: false };
           return null;
         },
@@ -263,4 +321,146 @@ test("the spoken line is highlighted while the recording plays", async ({
   });
   await expect(second).toHaveAttribute("aria-current", "true");
   await expect(first).not.toHaveAttribute("aria-current", "true");
+});
+
+test("the end of the read-aloud page can actually be reached", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 520 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await page.getByText("Stimmen anhören & verwalten").click();
+
+  // Ans Ende scrollen wie ein Mensch mit dem Mausrad: bis der Container
+  // nicht mehr weiter kann.
+  const main = page.getByRole("main");
+  await main.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+
+  // Der Stimmwechsler ist das letzte Element der Seite. Er muss danach
+  // vollstaendig sichtbar sein und darf nicht unter der Statusleiste liegen.
+  const last = page.getByText("Stimmwechsler", { exact: true });
+  await expect(last).toBeInViewport();
+  const box = (await last.boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+
+  // Und der Container ist wirklich am Ende — sonst haette das Scrollen
+  // vorzeitig gestoppt.
+  const rest = await main.evaluate(
+    (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+  );
+  expect(rest).toBeLessThanOrEqual(1);
+});
+
+test("the wheel scrolls the page even when it sits over a player", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 520 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await page.getByText("Stimmen anhören & verwalten").click();
+
+  const main = page.getByRole("main");
+  const slider = page.locator('input[type="range"]:visible').first();
+  await slider.scrollIntoViewIfNeeded();
+  const before = await main.evaluate((element) => element.scrollTop);
+  const value = await slider.inputValue();
+
+  await slider.hover();
+  await page.mouse.wheel(0, 400);
+  await page.waitForTimeout(200);
+
+  const after = await main.evaluate((element) => element.scrollTop);
+  expect(after, "Rad ueber dem Regler muss die Seite scrollen").toBeGreaterThan(
+    before,
+  );
+  expect(await slider.inputValue(), "und den Regler nicht verstellen").toBe(
+    value,
+  );
+});
+
+test("the read-aloud engine can be switched to Piper and the choice is saved", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "Einstellungen", exact: true })
+    .last()
+    .click();
+  await page.getByRole("tab", { name: "Vorlesen", exact: true }).click();
+
+  const engine = page.getByText("Engine fürs Vorlesen", { exact: true });
+  await engine.scrollIntoViewIfNeeded();
+  await expect(engine).toBeVisible();
+
+  // Solange Fish laeuft, ist die Piper-Stimme kein Thema.
+  await expect(page.getByText("Piper-Stimme", { exact: true })).toHaveCount(0);
+
+  const select = page.locator(".w-48").first();
+  await select.click();
+  await page.getByText("Piper (CPU, sofort bereit)").click();
+
+  // Gespeichert, nicht nur angezeigt.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { savedEngine?: string }).savedEngine,
+      ),
+    )
+    .toBe("piper");
+
+  // Und erst jetzt fragt die Oberflaeche nach der Stimme.
+  await expect(page.getByText("Piper-Stimme", { exact: true })).toBeVisible();
+
+  // Zur Auswahl steht genau die geladene Stimme — eine noch nicht geladene
+  // waere ein Versprechen, das die Wiedergabe nicht halten kann.
+  const voiceSelect = page.locator(".w-48").nth(1);
+  await voiceSelect.click();
+  await expect(page.getByText("Thorsten (Deutsch)")).toBeVisible();
+  await expect(page.getByText("Amy (English)")).toHaveCount(0);
+});
+
+test("the menu collapses to icons and stays that way", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+
+  const nav = page.locator(".workspace-nav");
+  const label = page.getByRole("button", { name: "Vorlesen", exact: true });
+
+  // Beim ersten Start offen: wer die App nicht kennt, soll lesen koennen.
+  await expect(label).toBeVisible();
+  const wide = (await nav.boundingBox())!.width;
+
+  await page.getByRole("button", { name: "Menü einklappen" }).click();
+  await expect(nav).toHaveAttribute("data-collapsed", "true");
+  const narrow = (await nav.boundingBox())!.width;
+  expect(narrow).toBeLessThan(wide);
+  // Sichtbar bleibt nur das Symbol — der Name aber erreichbar: als Tooltip
+  // und fuer Screenreader. Ein Menue aus stummen Bildchen waere kein
+  // Fortschritt.
+  await expect(label.locator("span")).toBeHidden();
+  await expect(label).toBeVisible();
+  await expect(label).toHaveAttribute("title", "Vorlesen");
+
+  // Und der Zustand ueberlebt den Neustart.
+  await page.reload();
+  await expect(page.locator(".workspace-nav")).toHaveAttribute(
+    "data-collapsed",
+    "true",
+  );
+
+  await page.getByRole("button", { name: "Menü ausklappen" }).click();
+  await expect(page.locator(".workspace-nav")).toHaveAttribute(
+    "data-collapsed",
+    "false",
+  );
+});
+
+test("the sidebar no longer repeats the logo", async ({ page }) => {
+  await page.goto("/");
+  // Die Kopfzeile des Fensters traegt das Logo bereits; ein zweites kostete
+  // nur die oberste Zeile des Menues.
+  await expect(page.locator(".workspace-nav__brand")).toHaveCount(0);
 });

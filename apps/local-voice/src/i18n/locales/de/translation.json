@@ -218,7 +218,14 @@
       "contextMenuDescription": "Ergänzt „Mit Local Voice AI vorlesen“ im Rechtsklick-Menü von TXT/MD/PDF/DOCX-Dateien. Hinweis: Für markierten Text bietet Windows kein systemweites Menü — dafür gibt es den Zwischenablage-Hotkey.",
       "rollSeed": "Würfeln",
       "autoTranscribe": "Referenz automatisch transkribieren",
-      "autoTranscribeDescription": "Beim Aufnehmen oder Auswählen einer Referenz erzeugt die App das Transkript selbst und trägt es ein; es bleibt bearbeitbar. Ausgeschaltet bleibt das Feld leer und der Text muss von Hand eingegeben werden — ohne passenden Text lernt Fish Speech die Stimme am falschen Wortlaut."
+      "autoTranscribeDescription": "Beim Aufnehmen oder Auswählen einer Referenz erzeugt die App das Transkript selbst und trägt es ein; es bleibt bearbeitbar. Ausgeschaltet bleibt das Feld leer und der Text muss von Hand eingegeben werden — ohne passenden Text lernt Fish Speech die Stimme am falschen Wortlaut.",
+      "engine": "Engine fürs Vorlesen",
+      "engineDescription": "Fish Speech klingt natürlicher und nutzt die Grafikkarte. Piper läuft auf der CPU, startet sofort und braucht keinen Server — dafür klingt es schlichter.",
+      "engineFish": "Fish Speech (Grafikkarte)",
+      "enginePiper": "Piper (CPU, sofort bereit)",
+      "piperVoice": "Piper-Stimme",
+      "piperVoiceDescription": "Welche der geladenen Piper-Stimmen vorliest.",
+      "piperVoiceMissing": "Noch keine Piper-Stimme geladen — unter Modelle herunterladen."
     },
     "saveAudio": "Als Audio speichern…",
     "savingAudio": "Wird erzeugt…",
@@ -1049,9 +1056,12 @@
     },
     "app": {
       "tabs": {
-        "app": "App",
+        "app": "Allgemein",
         "dictation": "Diktat",
-        "sound": "Ton"
+        "sound": "Mikrofon & Töne",
+        "readAloud": "Vorlesen",
+        "postProcessing": "KI-Textverbesserung",
+        "about": "Über"
       },
       "groups": {
         "shortcuts": "Tastenkürzel",
@@ -1335,6 +1345,8 @@
     "recordings": "Aufnahmen",
     "voiceStyle": "Ausdruck & Sprechstil",
     "voiceOptions": "Weitere Einstellungen zum Vorlesen",
-    "voices": "Stimmen anhören & verwalten"
+    "voices": "Stimmen anhören & verwalten",
+    "navCollapse": "Menü einklappen",
+    "navExpand": "Menü ausklappen"
   }
 }
