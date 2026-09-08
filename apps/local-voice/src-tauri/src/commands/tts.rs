@@ -92,6 +92,19 @@ pub async fn tts_voice_demo(app: AppHandle, voice_id: String) -> Result<VoiceSam
     })
 }
 
+/// Die Hoerprobe einer Stimme, sofern sie ohne laufende Engine abspielbar
+/// ist. `None` heisst: es gibt noch keine, der erste Klick kostet einen
+/// Serverstart. Startet selbst nichts.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_voice_demo_cached(app: AppHandle, voice_id: String) -> Option<VoiceSample> {
+    let tts = app.state::<Arc<TtsManager>>();
+    tts.cached_voice_demo(&voice_id).map(|wav| VoiceSample {
+        wav_path: wav.to_string_lossy().into_owned(),
+        transcript: TtsManager::DEMO_TEXT.to_string(),
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn tts_record_reference_start(app: AppHandle) -> Result<(), String> {

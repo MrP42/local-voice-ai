@@ -52,6 +52,11 @@ export const VoicesCard = () => {
     error?: string;
   } | null>(null);
   const [previewing, setPreviewing] = useState<string | null>(null);
+  // Welche Stimmen ohne laufende Engine hoerbar sind. Wird beim Laden der
+  // Liste einmal erfragt: die Antwort ist eine Dateipruefung, kein
+  // Serverstart, und erst sie erlaubt es, den Player gleich hinzustellen
+  // statt jede Stimme hinter demselben Knopf zu verstecken.
+  const [cached, setCached] = useState<Record<string, VoiceSample>>({});
   // Deleting a voice throws away a recording that cannot be reproduced — the
   // same person has to sit down and speak again. That deserves a question,
   // especially since the button sits right next to "Activate".
@@ -79,6 +84,32 @@ export const VoicesCard = () => {
     void refreshVoices();
   }, [refreshVoices]);
 
+  // Welche Stimmen schon eine Hoerprobe haben. Reine Dateipruefung je Stimme,
+  // kein Serverstart — deshalb darf sie fuer die ganze Liste auf einmal
+  // laufen, und der Player steht danach ohne Zutun da.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const ids = [SEED_VOICE, ...voices.map((voice) => voice.id)];
+      const found = await Promise.all(
+        ids.map(
+          async (id) => [id, await commands.ttsVoiceDemoCached(id)] as const,
+        ),
+      );
+      if (cancelled) return;
+      setCached(
+        Object.fromEntries(
+          found.filter((entry): entry is [string, VoiceSample] =>
+            Boolean(entry[1]),
+          ),
+        ),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [voices]);
+
   useEffect(() => {
     if (mode.kind === "recording") {
       setRecordSeconds(0);
@@ -98,21 +129,65 @@ export const VoicesCard = () => {
     };
   }, [mode.kind]);
 
-  const togglePreview = async (id: string) => {
-    if (sample?.id === id) {
-      setSample(null);
-      return;
-    }
+  /**
+   * Erzeugt die fehlende Hoerprobe einer Stimme. Nur dieser Weg braucht die
+   * Engine — einmal je Stimme; danach steht der Player von selbst da.
+   */
+  const createPreview = async (id: string) => {
     setSample(null);
     setPreviewing(id);
-    // Generated once per voice and cached; the first click for a voice has to
-    // wait for Fish Speech (and may have to start it), later ones are instant.
     const result = await commands.ttsVoiceDemo(id);
     setPreviewing(null);
-    setSample(
-      result.status === "ok"
-        ? { id, data: result.data }
-        : { id, data: null, error: result.error },
+    if (result.status === "ok") {
+      setCached((current) => ({ ...current, [id]: result.data }));
+      return;
+    }
+    setSample({ id, data: null, error: result.error });
+  };
+
+  /**
+   * Hoerprobe einer Stimme. Liegt sie vor, steht der Player sofort da — ohne
+   * Klick und ohne laufende Engine. Fehlt sie, sagt der Knopf, was der Klick
+   * kostet, statt beide Faelle gleich aussehen zu lassen.
+   */
+  const renderPreview = (id: string) => {
+    const ready = cached[id];
+    if (ready) {
+      return (
+        <div className="mt-2 space-y-1">
+          {/* Derselbe Satz fuer jede Stimme — sonst vergleicht man zwei
+              Aufnahmen und nicht zwei Stimmen. */}
+          <AudioPlayer
+            src={convertFileSrc(ready.wav_path, "asset")}
+            className="w-full"
+          />
+          <p className="text-xs text-text/60 italic">{ready.transcript}</p>
+        </div>
+      );
+    }
+    const failed = sample?.id === id && sample.data === null;
+    return (
+      <div className="mt-2 space-y-1">
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => void createPreview(id)}
+          disabled={previewing !== null}
+        >
+          <Play width={14} height={14} />
+          {previewing === id
+            ? t("tts.voices.previewGenerating")
+            : t("tts.voices.previewCreate")}
+        </Button>
+        <p className="text-xs text-text/60">
+          {t("tts.voices.previewNeedsEngine")}
+        </p>
+        {failed && (
+          <p className="text-xs text-red-400">
+            {sample?.error ?? t("tts.voices.previewMissing")}
+          </p>
+        )}
+      </div>
     );
   };
 
@@ -273,18 +348,6 @@ export const VoicesCard = () => {
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <span className="text-sm">{t("tts.voices.defaultVoice")}</span>
               <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => void togglePreview(SEED_VOICE)}
-                  aria-expanded={sample?.id === SEED_VOICE}
-                  disabled={previewing !== null}
-                >
-                  <Play width={14} height={14} />
-                  {previewing === SEED_VOICE
-                    ? t("tts.voices.previewGenerating")
-                    : t("tts.voices.preview")}
-                </Button>
                 {activeVoice === null ? (
                   <Badge variant="success">{t("tts.voices.active")}</Badge>
                 ) : (
@@ -298,22 +361,7 @@ export const VoicesCard = () => {
                 )}
               </div>
             </div>
-            {sample?.id === SEED_VOICE &&
-              (sample.data ? (
-                <div className="mt-2 space-y-1">
-                  <AudioPlayer
-                    src={convertFileSrc(sample.data.wav_path, "asset")}
-                    className="w-full"
-                  />
-                  <p className="text-xs text-text/60 italic">
-                    {sample.data.transcript}
-                  </p>
-                </div>
-              ) : (
-                <p className="mt-2 text-xs text-red-400">
-                  {sample.error ?? t("tts.voices.previewMissing")}
-                </p>
-              ))}
+            {renderPreview(SEED_VOICE)}
           </div>
           {voices.map(({ id, meta }) => (
             <div key={id} className="py-1">
@@ -322,18 +370,6 @@ export const VoicesCard = () => {
                   {meta.display_name || id}
                 </span>
                 <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void togglePreview(id)}
-                    aria-expanded={sample?.id === id}
-                    disabled={previewing !== null}
-                  >
-                    <Play width={14} height={14} />
-                    {previewing === id
-                      ? t("tts.voices.previewGenerating")
-                      : t("tts.voices.preview")}
-                  </Button>
                   {activeVoice === id ? (
                     <Badge variant="success">{t("tts.voices.active")}</Badge>
                   ) : (
@@ -374,24 +410,7 @@ export const VoicesCard = () => {
                   </Button>
                 </div>
               </div>
-              {sample?.id === id &&
-                (sample.data ? (
-                  <div className="mt-2 space-y-1">
-                    {/* The same sentence for every voice — otherwise you are
-                        comparing two recordings, not two voices. */}
-                    <AudioPlayer
-                      src={convertFileSrc(sample.data.wav_path, "asset")}
-                      className="w-full"
-                    />
-                    <p className="text-xs text-text/60 italic">
-                      {sample.data.transcript}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="mt-2 text-xs text-red-400">
-                    {sample.error ?? t("tts.voices.previewMissing")}
-                  </p>
-                ))}
+              {renderPreview(id)}
               {editTarget === id && (
                 <VoiceEditor
                   id={id}

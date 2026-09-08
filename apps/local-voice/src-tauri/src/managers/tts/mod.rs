@@ -2698,35 +2698,64 @@ impl TtsManager {
     ///
     /// Anders als `synthesize_to_file` hängt das NICHT an der aktiven Stimme —
     /// man will ja gerade die anderen hören, ohne umzuschalten.
+    /// Ablageort und Seed der Hoerprobe einer Stimme.
+    ///
+    /// Der Seed steckt im Dateinamen der Standardstimme: ein anderer Seed ist
+    /// eine andere Stimme, und die alte Probe waere die falsche Person.
+    fn demo_target(&self, voice_id: &str) -> Option<(std::path::PathBuf, i64)> {
+        let dir = self.demo_dir()?;
+        self.refresh_from_settings();
+        let seed = *self.core.seed.lock().unwrap();
+        let out = if voice_id.trim().is_empty() {
+            dir.join(format!("seed-{seed}.wav"))
+        } else {
+            dir.join(format!("{voice_id}.wav"))
+        };
+        Some((out, seed))
+    }
+
+    fn reference_mtime(&self, voice_id: &str) -> Option<std::time::SystemTime> {
+        voices::voice_sample(&self.fish_dir(), voice_id)
+            .and_then(|(wav, _)| std::fs::metadata(wav).ok())
+            .and_then(|meta| meta.modified().ok())
+    }
+
+    /// Ob die abgelegte Hoerprobe noch gilt: sie muss existieren und darf
+    /// nicht aelter sein als die Referenzaufnahme — wer eine Stimme unter
+    /// demselben Namen neu aufnimmt, soll nicht die alte hoeren.
+    fn demo_is_fresh(out: &std::path::Path, reference_mtime: &Option<std::time::SystemTime>) -> bool {
+        let Some(demo) = std::fs::metadata(out).ok().and_then(|m| m.modified().ok()) else {
+            return false;
+        };
+        match reference_mtime {
+            Some(reference) => demo >= *reference,
+            None => true,
+        }
+    }
+
+    /// Die Hoerprobe, wenn sie ohne laufende Engine abspielbar ist.
+    ///
+    /// Damit kann die Oberflaeche unterscheiden, was sofort klingt und was
+    /// erst einen Serverstart kostet — statt beide Faelle hinter demselben
+    /// Knopf zu verstecken. Startet nichts und erzeugt nichts.
+    pub fn cached_voice_demo(&self, voice_id: &str) -> Option<std::path::PathBuf> {
+        let (out, _) = self.demo_target(voice_id)?;
+        Self::demo_is_fresh(&out, &self.reference_mtime(voice_id)).then_some(out)
+    }
+
     pub async fn synthesize_voice_demo(
         &self,
         voice_id: &str,
     ) -> Result<std::path::PathBuf, String> {
-        let dir = self
-            .demo_dir()
+        let (out, seed) = self
+            .demo_target(voice_id)
             .ok_or_else(|| "Kein Ablageort für Hörproben".to_string())?;
-        // Vor der Ablagefrage, weil der Dateiname der Standardstimme ihren
-        // Seed trägt: ein anderer Seed ist eine andere Stimme.
-        self.refresh_from_settings();
-        let seed = *self.core.seed.lock().unwrap();
         // Leere Kennung = Standardstimme (Seed), die Stimme ohne Referenz.
         // Sie ist so anhörbar wie jede andere — man wählt sie ja gegen die
         // anderen aus, und das geht nur, wenn man sie auch hören kann.
         let reference = (!voice_id.trim().is_empty()).then_some(voice_id);
-        let out = match reference {
-            Some(id) => dir.join(format!("{id}.wav")),
-            None => dir.join(format!("seed-{seed}.wav")),
-        };
 
-        let reference_mtime = voices::voice_sample(&self.fish_dir(), voice_id)
-            .and_then(|(wav, _)| std::fs::metadata(wav).ok())
-            .and_then(|meta| meta.modified().ok());
-        let demo_mtime = std::fs::metadata(&out).ok().and_then(|m| m.modified().ok());
-        if let (Some(demo), Some(reference)) = (demo_mtime, reference_mtime) {
-            if demo >= reference {
-                return Ok(out);
-            }
-        } else if demo_mtime.is_some() && reference_mtime.is_none() {
+        if Self::demo_is_fresh(&out, &self.reference_mtime(voice_id)) {
             return Ok(out);
         }
 
