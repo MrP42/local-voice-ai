@@ -289,6 +289,9 @@ export const FilesSidebar: React.FC<{
   // Aufklappen geholt — fuer eine Liste mit dreissig Aufnahmen waeren
   // dreissig Dateizugriffe beim Oeffnen der Leiste zu viel.
   const [note, setNote] = useState<AudioNote | null>(null);
+  // Sekunde, an der die Wiedergabe gerade steht — daraus ergibt sich, welcher
+  // Satz klingt. Nur beim Abspielen gefuehrt.
+  const [atMs, setAtMs] = useState(0);
 
   useEffect(() => {
     if (!pageId) return;
@@ -466,6 +469,7 @@ export const FilesSidebar: React.FC<{
                       const next = playing === file.name ? null : file.name;
                       setPlaying(next);
                       setNote(null);
+                      setAtMs(0);
                       if (next) {
                         void commands
                           .pageAudioNote(pageId, next)
@@ -517,6 +521,9 @@ export const FilesSidebar: React.FC<{
             <audio
               controls
               preload="metadata"
+              onTimeUpdate={(event) =>
+                setAtMs(event.currentTarget.currentTime * 1000)
+              }
               className="w-full mt-1 mb-2"
               src={convertFileSrc(`${dir}\\${file.name}`, "asset")}
             />
@@ -527,11 +534,40 @@ export const FilesSidebar: React.FC<{
                 {note.voice ?? t("tts.files.defaultVoice")} ·{" "}
                 {new Date(note.created_ms).toLocaleString()}
               </p>
-              {/* Der Textanfang genuegt zum Wiedererkennen; der ganze
-                  Text gehoert in den Editor, nicht in diese Spalte. */}
-              <p className="text-[11px] text-text/60 line-clamp-3">
-                {note.text}
-              </p>
+              {note.segments.length > 0 ? (
+                /* Mit Zeitmarken laeuft der Text mit: der klingende Satz
+                   steht hervorgehoben da, mit seinem Sprecher davor. Ohne
+                   Zeitmarken (Aufnahmen aelterer Fassungen) bleibt der
+                   Textanfang. */
+                <ol className="space-y-0.5 max-h-40 overflow-y-auto">
+                  {note.segments.map((segment, index) => {
+                    const active =
+                      atMs >= segment.start_ms && atMs < segment.end_ms;
+                    return (
+                      <li
+                        key={`${segment.start_ms}-${index}`}
+                        aria-current={active ? "true" : undefined}
+                        className={
+                          active
+                            ? "text-[11px] text-text bg-logo-primary/25 rounded px-1"
+                            : "text-[11px] text-text/45 px-1"
+                        }
+                      >
+                        {segment.voice && (
+                          <span className="text-text/40">
+                            {segment.voice}:{" "}
+                          </span>
+                        )}
+                        {segment.text}
+                      </li>
+                    );
+                  })}
+                </ol>
+              ) : (
+                <p className="text-[11px] text-text/60 line-clamp-3">
+                  {note.text}
+                </p>
+              )}
               {onUseText && (
                 <button
                   type="button"

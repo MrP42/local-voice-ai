@@ -2431,7 +2431,8 @@ export type OverlayPosition = "top" | "bottom"
  * streaming mode (that is driven purely by model capability).
  */
 export type OverlayStyle = "none" | "minimal" | "live"
-export type AudioNote = { text: string; voice: string | null; seed: number; created_ms: number }
+export type AudioSegment = { text: string; voice: string | null; start_ms: number; end_ms: number }
+export type AudioNote = { text: string; voice: string | null; seed: number; created_ms: number; segments: AudioSegment[] }
 export type PageFile = { name: string; size: number; modified_ms: number }
 export type PageInfo = { id: string; title: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }

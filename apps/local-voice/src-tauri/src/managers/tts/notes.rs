@@ -21,6 +21,21 @@ use std::path::{Path, PathBuf};
 /// gegenseitig ueberschreiben.
 const NOTE_SUFFIX: &str = ".json";
 
+/// Ein Satz der Aufnahme mit seiner Lage in der Datei.
+///
+/// Damit kann die Wiedergabe mitlaufen: welcher Satz gerade klingt und wer
+/// ihn spricht. Ohne Zeitmarken bliebe nur der Fortschrittsbalken, und in
+/// einem Hoerspiel mit mehreren Sprechern sagt der nichts darueber, wo man
+/// gerade ist.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
+pub struct AudioSegment {
+    pub text: String,
+    /// Sprecher dieses Satzes; `None` ist die Stimme des Stuecks.
+    pub voice: Option<String>,
+    pub start_ms: u32,
+    pub end_ms: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
 pub struct AudioNote {
     /// Der Text, aus dem die Aufnahme entstand — vollstaendig, damit er
@@ -32,6 +47,23 @@ pub struct AudioNote {
     pub seed: i64,
     /// Zeitpunkt in Millisekunden seit dem 01.01.1970.
     pub created_ms: i64,
+    /// Die Saetze mit ihrer Lage in der Aufnahme. Leer bei Aufnahmen aus
+    /// aelteren Fassungen — die Oberflaeche zeigt dann nur den Text.
+    #[serde(default)]
+    pub segments: Vec<AudioSegment>,
+}
+
+/// Rechnet eine Position in Einzelwerten (ueber alle Kanaele) in
+/// Millisekunden um.
+///
+/// `written` zaehlt jeden geschriebenen Wert, bei Stereo also zwei je
+/// Zeitpunkt — wer das vergisst, halbiert die Spieldauer.
+pub fn samples_to_ms(samples: usize, sample_rate: u32, channels: u16) -> u32 {
+    let per_second = sample_rate as u64 * channels.max(1) as u64;
+    if per_second == 0 {
+        return 0;
+    }
+    ((samples as u64 * 1000) / per_second) as u32
 }
 
 /// Pfad des Beilegers zu einer Aufnahme.
@@ -115,9 +147,27 @@ mod tests {
             voice: Some("erzaehlerin".to_string()),
             seed: 42,
             created_ms: 1_757_000_000_000,
+            segments: vec![AudioSegment {
+                text: "Erste Zeile.".to_string(),
+                voice: None,
+                start_ms: 0,
+                end_ms: 1200,
+            }],
         };
         write(&audio, &note);
         assert_eq!(read(&audio), Some(note));
+    }
+
+    #[test]
+    fn stereo_halbiert_die_spieldauer_nicht() {
+        // 48000 Werte bei 48 kHz mono ist eine Sekunde; dieselbe Zahl bei
+        // Stereo ist eine halbe.
+        assert_eq!(samples_to_ms(48_000, 48_000, 1), 1000);
+        assert_eq!(samples_to_ms(48_000, 48_000, 2), 500);
+        assert_eq!(samples_to_ms(0, 48_000, 1), 0);
+        // Eine Datei ohne Abtastrate ergibt keine Zeit, aber auch keinen
+        // Absturz.
+        assert_eq!(samples_to_ms(48_000, 0, 1), 0);
     }
 
     #[test]
