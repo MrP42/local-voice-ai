@@ -126,17 +126,19 @@ export const TtsSettings = () => {
     "tts.activePage",
     "",
   );
-  // Beide Seitenspalten starten eingeklappt: der Lesetext ist die Arbeit,
-  // die Spalten sind Navigation. Wer sie aufklappt, behaelt das (persistent).
-  // ".v2"-Schluessel: der alte Schluessel hat bei jedem Bestandsnutzer "0"
-  // persistiert — ohne Umbenennung saehe niemand den neuen Default.
+  // Beide Seitenspalten starten offen. Eingeklappt zeigten sie nur ein
+  // 18-Pixel-Symbol, und wer sie nie aufklappte, hielt sie fuer Reiter ohne
+  // Funktion — obwohl darin die Arbeitsblaetter und die erzeugten Aufnahmen
+  // liegen. Wer sie zuklappt, behaelt das (persistent).
+  // ".v3"-Schluessel: die vorherigen Schluessel haben bei Bestandsnutzern den
+  // alten Wert persistiert — ohne Umbenennung saehe niemand den neuen Default.
   const [pagesCollapsed, setPagesCollapsed] = usePersistentState<string>(
-    "tts.pagesCollapsed.v2",
-    "1",
+    "tts.pagesCollapsed.v3",
+    "0",
   );
   const [filesCollapsed, setFilesCollapsed] = usePersistentState<string>(
-    "tts.filesCollapsed.v2",
-    "1",
+    "tts.filesCollapsed.v3",
+    "0",
   );
   /** Erst nach dem Laden einer Seite darf gespeichert werden — sonst
    *  ueberschriebe der leere Anfangszustand den echten. */

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { commands, type PageFile, type PageInfo } from "@/bindings";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import { Dialog } from "../../ui/Dialog";
@@ -10,6 +11,7 @@ import {
   ChevronDown,
   ChevronUp,
   FilePlus,
+  Play,
   FolderOpen,
   PanelLeftClose,
   PanelLeftOpen,
@@ -254,6 +256,12 @@ const formatSize = (bytes: number): string => {
  * Ordner vor); Dokumente kommen per „Hinzufügen" als Kopie dazu. Öffnen mit
  * der Standardanwendung, Umbenennen per Doppelklick, Löschen mit Rückfrage.
  */
+/// Welche Dateien die Leiste selbst abspielen kann. Alles andere oeffnet
+/// weiterhin das Programm des Systems.
+const AUDIO_EXTENSIONS = ["wav", "mp3", "opus", "flac", "ogg", "m4a"];
+const isAudio = (name: string) =>
+  AUDIO_EXTENSIONS.includes(name.split(".").pop()?.toLowerCase() ?? "");
+
 export const FilesSidebar: React.FC<{
   pageId: string;
   collapsed: boolean;
@@ -265,6 +273,19 @@ export const FilesSidebar: React.FC<{
   const [editValue, setEditValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Welche Audiodatei gerade angehoert wird, und wo der Ordner liegt. Ohne
+  // beides muesste man eine erzeugte Aufnahme erst im Dateimanager oeffnen,
+  // um zu hoeren, was man erzeugt hat.
+  const [playing, setPlaying] = useState<string | null>(null);
+  const [dir, setDir] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pageId) return;
+    void commands.pageDir(pageId).then((result) => {
+      setDir(result.status === "ok" ? result.data : null);
+    });
+    setPlaying(null);
+  }, [pageId]);
 
   const refresh = useCallback(async () => {
     if (!pageId) return;
@@ -388,68 +409,99 @@ export const FilesSidebar: React.FC<{
       )}
 
       {files.map((file) => (
-        <div
-          key={file.name}
-          className="group flex items-center gap-1 rounded-md px-2 py-1.5 text-text/70 hover:bg-mid-gray/15 hover:text-text cursor-pointer transition-colors"
-          onClick={() => void commands.pageFileOpen(pageId, file.name)}
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            setEditingName(file.name);
-            setEditValue(file.name);
-          }}
-          title={t("tts.files.openHint")}
-        >
-          {editingName === file.name ? (
-            <Input
-              type="text"
-              variant="compact"
-              value={editValue}
-              autoFocus
-              onChange={(e) => setEditValue(e.target.value)}
-              onBlur={() => void commitRename()}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void commitRename();
-                if (e.key === "Escape") setEditingName(null);
-              }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full"
+        <div key={file.name}>
+          <div
+            className="group flex items-center gap-1 rounded-md px-2 py-1.5 text-text/70 hover:bg-mid-gray/15 hover:text-text cursor-pointer transition-colors"
+            onClick={() => void commands.pageFileOpen(pageId, file.name)}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setEditingName(file.name);
+              setEditValue(file.name);
+            }}
+            title={t("tts.files.openHint")}
+          >
+            {editingName === file.name ? (
+              <Input
+                type="text"
+                variant="compact"
+                value={editValue}
+                autoFocus
+                onChange={(e) => setEditValue(e.target.value)}
+                onBlur={() => void commitRename()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void commitRename();
+                  if (e.key === "Escape") setEditingName(null);
+                }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full"
+              />
+            ) : (
+              <>
+                <span className="flex-1 min-w-0 truncate text-sm">
+                  {file.name}
+                </span>
+                <span className="text-[10px] text-text/35 shrink-0 group-hover:hidden group-focus-within:hidden">
+                  {formatSize(file.size)}
+                </span>
+                {isAudio(file.name) && (
+                  <button
+                    type="button"
+                    className="shrink-0 p-1 rounded hover:bg-mid-gray/25"
+                    title={t("tts.files.listen")}
+                    aria-label={t("tts.files.listen")}
+                    aria-pressed={playing === file.name}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPlaying((current) =>
+                        current === file.name ? null : file.name,
+                      );
+                    }}
+                  >
+                    <Play width={12} height={12} />
+                  </button>
+                )}
+                <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingName(file.name);
+                      setEditValue(file.name);
+                    }}
+                    title={t("tts.files.rename")}
+                    aria-label={t("tts.files.rename")}
+                    className="p-0.5 text-text/40 hover:text-text cursor-pointer"
+                  >
+                    <Pencil width={13} height={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget(file.name);
+                    }}
+                    title={t("tts.files.delete")}
+                    aria-label={t("tts.files.delete")}
+                    className="p-0.5 text-red-400/60 hover:text-red-400 cursor-pointer"
+                  >
+                    <Trash2 width={13} height={13} />
+                  </button>
+                </span>
+              </>
+            )}
+          </div>
+          {playing === file.name && dir && (
+            /* Bewusst die Steuerung des Systems statt des hauseigenen
+               AudioPlayer: der ist fuer breite Flaechen gebaut und
+               bricht in dieser schmalen Spalte in eine Saeule
+               auseinander. Eine funktionierende Leiste schlaegt eine
+               huebsche, die zerfaellt. */
+            <audio
+              controls
+              preload="metadata"
+              className="w-full mt-1 mb-2"
+              src={convertFileSrc(`${dir}\\${file.name}`, "asset")}
             />
-          ) : (
-            <>
-              <span className="flex-1 min-w-0 truncate text-sm">
-                {file.name}
-              </span>
-              <span className="text-[10px] text-text/35 shrink-0 group-hover:hidden group-focus-within:hidden">
-                {formatSize(file.size)}
-              </span>
-              <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setEditingName(file.name);
-                    setEditValue(file.name);
-                  }}
-                  title={t("tts.files.rename")}
-                  aria-label={t("tts.files.rename")}
-                  className="p-0.5 text-text/40 hover:text-text cursor-pointer"
-                >
-                  <Pencil width={13} height={13} />
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleteTarget(file.name);
-                  }}
-                  title={t("tts.files.delete")}
-                  aria-label={t("tts.files.delete")}
-                  className="p-0.5 text-red-400/60 hover:text-red-400 cursor-pointer"
-                >
-                  <Trash2 width={13} height={13} />
-                </button>
-              </span>
-            </>
           )}
         </div>
       ))}
