@@ -106,10 +106,24 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "page_audio_note")
             return args?.name === "Der-Sturm_2026-09-08_1405.wav"
               ? {
-                  text: "Es war eine dunkle Nacht.",
+                  text: "Es war eine dunkle Nacht. Niemand sprach.",
                   voice: "erzaehlerin",
                   seed: 42,
                   created_ms: 1757333100000,
+                  segments: [
+                    {
+                      text: "Es war eine dunkle Nacht.",
+                      voice: "erzaehlerin",
+                      start_ms: 0,
+                      end_ms: 2000,
+                    },
+                    {
+                      text: "Niemand sprach.",
+                      voice: "leo-lausemaus",
+                      start_ms: 2000,
+                      end_ms: 4000,
+                    },
+                  ],
                 }
               : null;
           if (
@@ -205,12 +219,48 @@ test("a recording carries its origin and hands the text back to the editor", asy
   await filesArea.getByRole("button", { name: "Anhören" }).click();
 
   // Wer sie gesprochen hat und woraus sie entstand.
-  await expect(filesArea.getByText("Es war eine dunkle Nacht.")).toBeVisible();
-  await expect(filesArea.getByText(/erzaehlerin/)).toBeVisible();
+  await expect(
+    filesArea.getByText("Es war eine dunkle Nacht.").first(),
+  ).toBeVisible();
+  await expect(filesArea.getByText(/erzaehlerin/).first()).toBeVisible();
 
   // Und der Text kommt zurueck in den Editor — Grundlage jeder Korrektur.
   const editor = page.getByPlaceholder("Text zum Vorlesen eingeben oder einfügen…");
   await expect(editor).toHaveValue("");
   await filesArea.getByRole("button", { name: "Text übernehmen" }).click();
-  await expect(editor).toHaveValue("Es war eine dunkle Nacht.");
+  await expect(editor).toHaveValue("Es war eine dunkle Nacht. Niemand sprach.");
+});
+
+test("the spoken line is highlighted while the recording plays", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+
+  const filesArea = page.locator(".tts-workspace__files");
+  await filesArea.getByRole("button", { name: "Anhören" }).click();
+
+  const first = filesArea.getByRole("listitem").filter({
+    hasText: "Es war eine dunkle Nacht.",
+  });
+  const second = filesArea.getByRole("listitem").filter({
+    hasText: "Niemand sprach.",
+  });
+
+  // Am Anfang steht der erste Satz — der zweite noch nicht.
+  await expect(first).toHaveAttribute("aria-current", "true");
+  await expect(second).not.toHaveAttribute("aria-current", "true");
+
+  // Der Sprecher steht bei seinem Satz: ein Hoerspiel wechselt sie.
+  await expect(second).toContainText("leo-lausemaus");
+
+  // Drei Sekunden hinein gehoert die Hervorhebung dem zweiten Satz. Die
+  // Audiodatei selbst gibt es im Test nicht, deshalb wird das Ereignis
+  // gesendet, das ihre Wiedergabe ausloesen wuerde.
+  await filesArea.locator("audio").evaluate((element) => {
+    Object.defineProperty(element, "currentTime", { value: 3, writable: true });
+    element.dispatchEvent(new Event("timeupdate", { bubbles: true }));
+  });
+  await expect(second).toHaveAttribute("aria-current", "true");
+  await expect(first).not.toHaveAttribute("aria-current", "true");
 });

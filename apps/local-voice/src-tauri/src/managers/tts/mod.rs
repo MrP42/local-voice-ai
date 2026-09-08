@@ -2918,6 +2918,9 @@ impl TtsManager {
         // geschrieben werden muss (steht erst mit dem ersten Teilstueck fest).
         let mut pending_silence_ms = 0u32;
         let mut last_spec: Option<hound::WavSpec> = None;
+        // Lage jedes Satzes in der Datei, zunaechst in geschriebenen Werten:
+        // die Abtastrate steht erst mit dem ersten Teilstueck fest.
+        let mut marks: Vec<(String, Option<String>, usize, usize)> = Vec::new();
         for (index, (sentence, voice)) in utterances.iter().enumerate() {
             if cancel.load(Ordering::Acquire) {
                 // Halbe Datei ist schlimmer als keine: sie sieht fertig aus.
@@ -2929,6 +2932,7 @@ impl TtsManager {
             let Some(part) = protocol::prepare_text(sentence, max_chars) else {
                 continue;
             };
+            let segment_start = written;
             // Pausen werden vor `fetch_wav` herausgeloest: der Server sieht
             // sie nie und kann sie deshalb auch nicht vorlesen. Die Stille
             // schreiben wir selbst als Nullsamples in den Writer.
@@ -3009,6 +3013,7 @@ impl TtsManager {
                 }
                 last_spec = Some(spec);
             }
+            marks.push((sentence.clone(), voice.clone(), segment_start, written));
             self.emit_export_progress(index as u32 + 1, total, false);
         }
         // Pause am Textende: mit der `spec` des letzten Teilstuecks.
@@ -3043,6 +3048,29 @@ impl TtsManager {
                 voice: self.core.voice.lock().unwrap().clone(),
                 seed,
                 created_ms: notes::now_ms(),
+                // Ohne Abtastrate gibt es keine Zeitmarken — dann bleibt die
+                // Liste leer, statt falsche Zeiten zu behaupten.
+                segments: last_spec
+                    .map(|spec| {
+                        marks
+                            .iter()
+                            .map(|(text, voice, start, end)| notes::AudioSegment {
+                                text: text.clone(),
+                                voice: voice.clone(),
+                                start_ms: notes::samples_to_ms(
+                                    *start,
+                                    spec.sample_rate,
+                                    spec.channels,
+                                ),
+                                end_ms: notes::samples_to_ms(
+                                    *end,
+                                    spec.sample_rate,
+                                    spec.channels,
+                                ),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             },
         );
         self.emit_export_progress(total, total, false);
