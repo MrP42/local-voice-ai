@@ -1,0 +1,24 @@
+{
+  "programCommit": "d414228",
+  "coreTests": 54,
+  "phoneUITests": 3,
+  "watchUITests": 1,
+  "checks": {
+    "core": {
+      "passed": true,
+      "log": "local-voice-p2-cache-green.log"
+    },
+    "build": {
+      "passed": true,
+      "log": "local-voice-p2-cache-build.log"
+    },
+    "phoneUI": {
+      "passed": true,
+      "log": "local-voice-p2-final-phone-ui.log"
+    },
+    "watchUI": {
+      "passed": true,
+      "log": "local-voice-p2-final-watch-ui.log"
+    }
+  }
+}

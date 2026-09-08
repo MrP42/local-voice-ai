@@ -1,0 +1,56 @@
+{
+  "date": "2026-09-06",
+  "phone": "iPhone 15 Pro Max",
+  "watch": "Apple Watch Ultra 3",
+  "fixture_duration_seconds": 4.734422,
+  "microphone_bypassed": true,
+  "phone_background_window_seconds": 90,
+  "background_window_ui_test": "passed",
+  "reply_generated_in_background": true,
+  "watch_acknowledged": true,
+  "state": "answered",
+  "timings": {
+    "capture_saved_at_ms": 810390456883.9541,
+    "background_reply_completed_at_ms": 1788697660153.4329,
+    "stt_ms": 570.5139636993408,
+    "generation_ms": 2628.1559467315674
+  },
+  "providers": [
+    {
+      "operation": "Transkription",
+      "durationMS": 570.5150365829468,
+      "isAI": true,
+      "completedAt": 810390457.505609,
+      "model": "Apple SpeechTranscriber (de-DE)"
+    },
+    {
+      "operation": "Antwort",
+      "durationMS": 2628.1579732894897,
+      "isAI": true,
+      "completedAt": 810390460.143865,
+      "model": "Apple Foundation Models · Systemmodell"
+    }
+  ],
+  "locked_phone": {
+    "result": "answered_and_watch_acknowledged",
+    "lock_verified_before": "2026-09-06 14:34:43 Europe/Berlin",
+    "lock_verified_after": "2026-09-06 14:51:41 Europe/Berlin",
+    "passcode_required": true,
+    "unlocked_since_boot": true,
+    "watch_launch": "2026-09-06 14:35:59 Europe/Berlin",
+    "reply_generated_in_background": true,
+    "timings": {
+      "background_reply_completed_at_ms": 1788698255558.092,
+      "stt_ms": 3462.3860120773315,
+      "generation_ms": 6107.710003852844,
+      "capture_saved_at_ms": 810391044505.329
+    },
+    "watch_acknowledged": true,
+    "delivery_delay_seconds_approx": 85,
+    "note": "Durable delivery was delayed; no immediate wake-up guarantee. Synthetic microphone-bypassed fixture."
+  },
+  "system_scheduled_BGProcessingTask": "registered_and_submitted_not_observed",
+  "battery_impact": "not_measured",
+  "watch_reply_e2e_ms": 4743.048095703125,
+  "watch_tts_start": "not_observed"
+}

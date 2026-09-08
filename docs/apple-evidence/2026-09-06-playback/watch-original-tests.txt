@@ -1,0 +1,98 @@
+Test Suite 'Selected tests' started at 2026-09-06 15:21:28.157.
+Test Suite 'VoiceWatchUITests.xctest' started at 2026-09-06 15:21:28.158.
+Test Suite 'VoiceUITests' started at 2026-09-06 15:21:28.158.
+Test Case '-[VoiceWatchUITests.VoiceUITests testOriginalAudioCanPlayPauseResumeAndStop]' started.
+    t =     0.00s Start Test at 2026-09-06 15:21:28.160
+    t =     0.06s Set Up
+    t =     0.07s Open de.localvoice.prototype.watchkitapp
+    t =     0.07s     Launch de.localvoice.prototype.watchkitapp
+    t =     0.07s         Waiting for system app quiescence
+    t =     1.93s         Setting up automation session
+    t =     3.17s         Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     4.61s Waiting 10.0s for "historyEntry" Button to exist
+    t =     5.64s     Checking `Expect predicate `existsNoRetry == 1` for object "historyEntry" Button`
+    t =     5.64s         Checking existence of `"historyEntry" Button`
+    t =     5.71s Tap "historyEntry" Button
+    t =     5.71s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     5.72s     Find the "historyEntry" Button
+    t =     5.76s     Check for interrupting elements affecting "historyEntry" Button
+    t =     5.79s     Synthesize event
+    t =     5.80s         Scroll element to visible
+    t =     5.80s         Find the "historyEntry" Button
+    t =     5.85s         Computed hit point {105.5, 135.25} after scrolling to visible
+    t =     6.25s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     6.66s Waiting 5.0s for "originalPlayback" Button to exist
+    t =     7.69s     Checking `Expect predicate `existsNoRetry == 1` for object "originalPlayback" Button`
+    t =     7.69s         Checking existence of `"originalPlayback" Button`
+    t =     7.73s Tap "originalPlayback" Button
+    t =     7.73s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     7.74s     Find the "originalPlayback" Button
+    t =     7.77s     Check for interrupting elements affecting "originalPlayback" Button
+    t =     7.81s     Synthesize event
+    t =     8.22s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     8.23s Find the "originalPlayback" Button
+    t =     8.26s Tap "originalPlayback" Button
+    t =     8.26s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     8.27s     Find the "originalPlayback" Button
+    t =     8.30s     Check for interrupting elements affecting "originalPlayback" Button
+    t =     8.33s     Synthesize event
+    t =     8.63s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     8.64s Find the "originalPlayback" Button
+    t =     8.66s Find the Target Application 'de.localvoice.prototype.watchkitapp'
+    t =     8.71s Added attachment named 'Originalaufnahme-pausiert'
+    t =     8.72s Tap "originalPlayback" Button
+    t =     8.72s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     8.72s     Find the "originalPlayback" Button
+    t =     8.75s     Check for interrupting elements affecting "originalPlayback" Button
+    t =     8.79s     Synthesize event
+    t =     9.09s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     9.10s Find the "originalPlayback" Button
+    t =     9.12s Tap "originalStop" Button
+    t =     9.12s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     9.13s     Find the "originalStop" Button
+    t =     9.17s     Check for interrupting elements affecting "originalStop" Button
+    t =     9.21s     Synthesize event
+    t =     9.51s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     9.52s Find the "originalPlayback" Button
+    t =     9.56s Find the "originalStop" Button
+    t =     9.59s Tap "originalPlayback" Button
+    t =     9.59s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     9.60s     Find the "originalPlayback" Button
+    t =     9.63s     Check for interrupting elements affecting "originalPlayback" Button
+    t =     9.66s     Synthesize event
+    t =     9.96s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     9.97s Pressing Home button
+    t =    10.43s Open de.localvoice.prototype.watchkitapp
+    t =    10.44s     Activate de.localvoice.prototype.watchkitapp
+    t =    10.46s         Wait for de.localvoice.prototype.watchkitapp to idle
+    t =    10.49s Find the "originalPlayback" Button
+    t =    10.53s Tear Down
+Test Case '-[VoiceWatchUITests.VoiceUITests testOriginalAudioCanPlayPauseResumeAndStop]' passed (10.765 seconds).
+Test Case '-[VoiceWatchUITests.VoiceUITests testWatchHasLocalMediaVolumeControl]' started.
+    t =     0.00s Start Test at 2026-09-06 15:21:38.927
+    t =     0.06s Set Up
+    t =     0.06s Open de.localvoice.prototype.watchkitapp
+    t =     0.06s     Launch de.localvoice.prototype.watchkitapp
+    t =     0.07s         Terminate de.localvoice.prototype.watchkitapp:18900
+    t =     1.34s         Setting up automation session
+    t =     2.50s         Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     8.07s Tap "watchVolume" Button
+    t =     8.07s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     8.08s     Find the "watchVolume" Button
+    t =     8.15s     Check for interrupting elements affecting "watchVolume" Button
+    t =     8.18s     Synthesize event
+    t =     8.49s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     8.51s Waiting 5.0s for "Lautstärke" NavigationBar to exist
+    t =     9.53s     Checking `Expect predicate `existsNoRetry == 1` for object "Lautstärke" NavigationBar`
+    t =     9.53s         Checking existence of `"Lautstärke" NavigationBar`
+    t =     9.57s Checking existence of `"watchVolumeControl" Any`
+    t =     9.62s Find the Target Application 'de.localvoice.prototype.watchkitapp'
+    t =     9.66s Added attachment named 'Watch-Lautstaerke'
+    t =     9.66s Tear Down
+Test Case '-[VoiceWatchUITests.VoiceUITests testWatchHasLocalMediaVolumeControl]' passed (9.897 seconds).
+Test Suite 'VoiceUITests' passed at 2026-09-06 15:21:48.823.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 20.662 (20.665) seconds
+Test Suite 'VoiceWatchUITests.xctest' passed at 2026-09-06 15:21:48.824.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 20.662 (20.667) seconds
+Test Suite 'Selected tests' passed at 2026-09-06 15:21:48.825.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 20.662 (20.669) seconds

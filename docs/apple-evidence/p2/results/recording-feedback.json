@@ -1,0 +1,44 @@
+{
+  "scope": "Actual simulator recorder paths during P2, not synthetic fixture injection",
+  "afterUnix": 1788630730,
+  "devices": {
+    "phone": {
+      "ids": [
+        "350401AA-5AF1-4056-9724-C9588CD4642B",
+        "0B14E23B-8D38-446D-A309-8D8109958B15",
+        "E61425D5-1792-47F7-8595-B9E2C80F6F0B"
+      ],
+      "metrics": {
+        "record_feedback_ms": {
+          "n": 3,
+          "median": 817.7679777145386,
+          "p95": 925.9539842605591
+        },
+        "persistence_ms": {
+          "n": 3,
+          "median": 553.8750886917114,
+          "p95": 554.8110008239746
+        }
+      }
+    },
+    "watch": {
+      "ids": [
+        "3D503584-5A66-44B2-8258-3EF527BE064C",
+        "2358ADEF-45F1-4372-8081-0A10EFC3AEDF",
+        "98B3E1C5-B260-4B20-8475-8550147016AB"
+      ],
+      "metrics": {
+        "record_feedback_ms": {
+          "n": 3,
+          "median": 769.1030502319336,
+          "p95": 936.2939596176147
+        },
+        "persistence_ms": {
+          "n": 3,
+          "median": 537.397027015686,
+          "p95": 549.3971109390259
+        }
+      }
+    }
+  }
+}

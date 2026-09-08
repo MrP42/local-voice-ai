@@ -1,0 +1,16 @@
+{
+  "sessionId": "836E42BF-5BAF-47C5-86FA-E76123B64975",
+  "kind": "valid audio draft left before app launch",
+  "passed": true,
+  "durableRecoveryPassed": true,
+  "draftRemoved": true,
+  "watchState": "answered",
+  "finalChecks": {
+    "digestMatches": true,
+    "transcriptMatches": true,
+    "replyMatches": true,
+    "acknowledged": true,
+    "stableReplyId": true,
+    "answered": true
+  }
+}

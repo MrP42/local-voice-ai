@@ -1,0 +1,60 @@
+Test Suite 'Selected tests' started at 2026-09-06 14:27:01.313.
+Test Suite 'VoicePhoneUITests.xctest' started at 2026-09-06 14:27:01.313.
+Test Suite 'VoiceUITests' started at 2026-09-06 14:27:01.314.
+Test Case '-[VoicePhoneUITests.VoiceUITests testDeviceBackgroundWindowForWatchTransfer]' started.
+    t =     0.00s Start Test at 2026-09-06 14:27:01.314
+    t =     0.05s Set Up
+    t =     0.06s Open de.localvoice.prototype
+    t =     0.06s     Launch de.localvoice.prototype
+    t =     0.06s         Terminate de.localvoice.prototype:1208
+    t =     3.44s         Setting up automation session
+    t =     3.46s         Wait for de.localvoice.prototype to idle
+    t =     4.58s Waiting 15.0s for "record" Button to exist
+    t =     5.62s     Checking `Expect predicate `existsNoRetry == 1` for object "record" Button`
+    t =     5.62s         Checking existence of `"record" Button`
+    t =     5.72s Pressing Home button
+    t =     6.30s Wait for de.localvoice.prototype to become Running Background
+PHONE_BACKGROUND_WINDOW_STARTED
+    t =    37.52s Device orientation changed to Face Up
+    t =    38.56s Device orientation changed to Portrait
+    t =    38.77s Device orientation changed to Face Up
+    t =    40.12s Device orientation changed to Portrait
+    t =    41.47s Device orientation changed to Face Up
+    t =    47.90s Device orientation changed to Portrait
+    t =    69.89s Device orientation changed to Face Up
+    t =    70.40s Device orientation changed to Portrait
+    t =    73.81s Device orientation changed to Face Down
+    t =    74.54s Device orientation changed to Portrait Upside Down
+    t =    75.47s Device orientation changed to Portrait
+    t =    77.75s Device orientation changed to Face Up
+    t =    78.06s Device orientation changed to Portrait
+    t =    78.17s Device orientation changed to Face Up
+    t =    78.79s Device orientation changed to Portrait
+    t =    79.21s Device orientation changed to Face Up
+    t =    79.83s Device orientation changed to Portrait
+    t =    79.83s Device orientation changed to Face Up
+    t =    80.98s Device orientation changed to Portrait
+    t =    82.65s Device orientation changed to Face Up
+    t =    82.85s Device orientation changed to Portrait
+    t =    83.16s Device orientation changed to Face Up
+    t =    83.68s Device orientation changed to Portrait
+    t =    84.20s Device orientation changed to Face Up
+PHONE_BACKGROUND_WINDOW_FINISHED
+    t =    96.32s Tear Down
+Test Case '-[VoicePhoneUITests.VoiceUITests testDeviceBackgroundWindowForWatchTransfer]' passed (96.678 seconds).
+Test Suite 'VoiceUITests' passed at 2026-09-06 14:28:37.993.
+	 Executed 1 test, with 0 failures (0 unexpected) in 96.678 (96.679) seconds
+Test Suite 'VoicePhoneUITests.xctest' passed at 2026-09-06 14:28:37.995.
+	 Executed 1 test, with 0 failures (0 unexpected) in 96.678 (96.681) seconds
+Test Suite 'Selected tests' passed at 2026-09-06 14:28:37.997.
+	 Executed 1 test, with 0 failures (0 unexpected) in 96.678 (96.683) seconds
+2026-09-06 14:28:38.391 xcodebuild[13397:3403528] [MT] IDETestOperationsObserverDebug: 104.628 elapsed -- Testing started completed.
+2026-09-06 14:28:38.391 xcodebuild[13397:3403528] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-09-06 14:28:38.391 xcodebuild[13397:3403528] [MT] IDETestOperationsObserverDebug: 104.628 sec, +104.628 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/patrick/Library/Developer/Xcode/DerivedData/LocalVoice-gssphxflspugpehdpgpleyvccfkm/Logs/Test/Test-VoicePhoneUITests-2026.09.06_14-26-44-+0200.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started

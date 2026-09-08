@@ -1,0 +1,12 @@
+{
+  "programCommit": "a9fbf65",
+  "coreTests": 59,
+  "phoneUITests": 4,
+  "watchUITests": 1,
+  "coreSuite": "review-core.log",
+  "phoneSuite": "review-phone-ui.log",
+  "watchSuite": "review-watch-ui.log",
+  "finalSetupRegression": "setup-retry-final.log",
+  "scope": "Full core suite and both UI suites after review changes; final one-line component creation ordering change additionally verified by targeted setup UI regression. All builds include both app targets.",
+  "passed": true
+}

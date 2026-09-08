@@ -1,0 +1,19 @@
+{
+  "sourceCommit": "7fb258f5edaddeb813d87ae768b22bbbeaa5d685",
+  "case": "locked",
+  "startedAt": 1788675416.480021,
+  "id": "3F5EC241-1F42-4C49-B8D3-57700D0B6CD9",
+  "deferred": true,
+  "watchState": "accepted",
+  "phoneState": "saved",
+  "observationSeconds": 10,
+  "resumedSameIdentity": true,
+  "audioPreserved": true,
+  "phoneTimings": {
+    "capture_saved_at_ms": 810368248946.692,
+    "stt_ms": 5519.212007522583,
+    "generation_ms": 4100.836992263794
+  },
+  "passed": true,
+  "finishedAt": 1788675476.268683
+}

@@ -1,0 +1,1895 @@
+{
+  "sourceCommit": "aad2e0fa868b47908d9a47dce4ed6ab8e393f936",
+  "startedAt": 1788624162.365115,
+  "initialIds": [
+    "00A18AC0-D184-46FD-AC76-ECE6567C04AD",
+    "00F82CDE-E57F-4C86-946B-939EDFEC9238",
+    "0119CA7A-650F-4B10-A2D9-A622B9B05EF3",
+    "01270FA3-4837-4FE1-9044-FF9314FEA3FA",
+    "01E70C6F-D44E-41AA-9254-BD27F12DCF75",
+    "02CC37D4-4D34-4367-93A8-D1555C4BAFC2",
+    "04687B25-F709-4FAF-94AA-0B01D2170D8B",
+    "048794CB-14D9-4E59-B0BF-84BC3777D24E",
+    "04CE18FA-A759-42B6-80B7-D4DC11268AA6",
+    "059B7BDD-FCC3-4BB9-99A3-4EC93B7AAB28",
+    "0618B72C-1851-4691-ABDB-3E16C5D592EE",
+    "07F56210-4263-4B37-848A-BC8DC690B146",
+    "088D6BB2-0FF4-46F7-B67E-F93CCC041878",
+    "08F301D1-10A9-44AB-9D8E-ED61DFEDD0C4",
+    "096FDE06-FA12-4192-912F-80F8B3F34819",
+    "0A0E3CA6-B449-42A8-AA4E-C5734E8C0070",
+    "0B0CD4B8-61B1-40B2-9749-7530FEB8B149",
+    "0B78CE88-5E78-41B6-91E1-91E43BFBD460",
+    "0BF5F26D-14DB-4A42-B03F-A22A98998EBA",
+    "0C06C87A-049E-4E9E-9EC4-332A9091F138",
+    "0D33DD12-645A-4369-AB03-7405EFB7E889",
+    "0D7C251E-0231-43AF-99D5-2594F501B935",
+    "0D820444-91B8-4B0C-84DE-F113AD61643C",
+    "0D832F7B-FA90-415F-81C6-E2AF34A03208",
+    "0DB9A10B-71B7-468B-BDB3-934B31C6EE54",
+    "0EC8CBEB-43E2-4996-BC3B-9147E3702431",
+    "0F39D5C5-DDB7-462C-A57B-2B0AF51F9419",
+    "0F797F11-DC49-4B16-A4D2-BC816B7EDE2B",
+    "10B137AC-6DAD-4FD8-9987-BC05CCE2607E",
+    "11688AF0-2332-4F8E-870F-813F7D89CDD8",
+    "1244EB16-1F07-4545-A48F-86BDD0862813",
+    "12C4DE1B-C93B-4035-B488-93F403467ADC",
+    "13487D56-296F-4087-8315-4DE69FA6A1C2",
+    "13C8EDD5-E6D8-46E4-8A67-55249D025650",
+    "141B83BF-C231-4725-BB16-F4F221A178D1",
+    "15FBB05E-5C30-4566-A66D-8FD61E17D5CC",
+    "1895011E-ADD6-4233-850C-639F823889C4",
+    "194E4AAF-FA3A-4306-BDF4-363B84C78C0C",
+    "19B552F3-8DC4-4895-AB6E-83DAA3CC2BD7",
+    "1A8EBBE8-8493-4CDC-A2F4-12D5E54D9351",
+    "1BF60852-22C1-4EE0-AAFB-0BE634B439A1",
+    "1D75058D-28FE-4DC3-B506-E60A674F2839",
+    "1D7995D6-953F-4AFF-8DA2-3FA0EA1CFE7B",
+    "1E8CEEEE-07A9-408B-89B3-2C607A3FD445",
+    "1EDCCD2A-C0EB-45D7-BD20-9F2482E6B6FD",
+    "1F18DCF6-B15A-4EE9-9884-86B964505B61",
+    "1F1F6DB4-8234-4619-9886-A6E8BC99FE99",
+    "20EDAAD5-DD89-4746-94E5-9F1A1847A8FB",
+    "20F10C08-EEFE-47FF-97F1-6438C828D6EE",
+    "20FB0F11-BE9D-4501-8BB2-695C89A8AA03",
+    "21C71BEF-42DD-49CE-BC5A-86F6E70F6FB0",
+    "225F5868-A5FD-4EBC-AB54-14A410B4C4E2",
+    "227568E8-642C-4F8A-9AD9-E68504128446",
+    "227844C7-B430-41F1-AC9A-44A80C567527",
+    "251A1C79-2673-4179-BA09-616534EE0AAA",
+    "272F8156-6092-4CC9-A2FB-9B63D219AFD5",
+    "274F0C0D-4337-406D-BC9B-63F45A7E3CD7",
+    "275564B1-6A06-4E7E-8019-47021342F82D",
+    "28A10274-14BC-4E0F-A509-753F9C96FACD",
+    "2B7A9939-1757-4CED-8FAB-552398216F3E",
+    "2BB06554-60B6-4A56-B424-AA99D91A28AA",
+    "2CC9A19A-C9D0-4FB8-A61F-15AE14E34A3E",
+    "2F1239D6-3A82-4028-8E27-8D7F17A7CB0D",
+    "2F3AC56E-EDAC-4E47-A3D0-BF1D6D68049B",
+    "2FA4E8F5-934B-4FB9-9C21-9CE3D4FCD028",
+    "303FCE24-D435-4E1C-B6E7-E4B0795784B4",
+    "3079DA99-7949-4D2C-B498-376424314484",
+    "308951B2-2056-4981-B668-265A9BFE60E5",
+    "312675FB-E275-445B-AD9E-D45A14076C85",
+    "329F8C63-ED58-452B-85A5-2A5733897CB7",
+    "3393924E-8D83-4E5E-B6F7-1AE67DA57B5D",
+    "35BAF65F-5670-4919-9239-AC0996261CBD",
+    "35CD0496-A5BF-4985-861D-2F5B54981DA4",
+    "363FF92E-E520-449D-9E56-EB91C52CFB62",
+    "36B794ED-718B-490F-B780-54A5095D6175",
+    "36D88326-FF4F-412E-BA32-20B6C45F5406",
+    "37366413-A2E8-4F0F-98DB-16E819B1D3E7",
+    "3847F24F-A981-4A95-81EB-EC5763D55485",
+    "3858A8D0-9EC2-4CE3-BFA0-0C401C5429D1",
+    "3936EDBD-3ED1-4648-8DE4-BF8BC5B2DC66",
+    "398ABA86-E739-4089-9644-C4AE252750A3",
+    "3AE31E20-7ED1-4913-B0A6-35400D7BD3D0",
+    "3B5D2983-16F6-444D-B6BF-185602A5BA5D",
+    "3B6AC576-E435-47B1-B5BA-3B171B7D48B1",
+    "3BD5DD10-7E22-4584-A0C8-F6E0EC2E3596",
+    "3C05966D-BA71-4B30-BF3D-3F0F6AD983A3",
+    "3C12F209-2979-466B-8515-38AEEACDF411",
+    "3C58AE42-3D89-4393-BB10-C85EC2248F2F",
+    "3D004313-A74A-4EE1-8F4F-88DA08977D74",
+    "3D06D9C7-80BA-46C7-AB3A-F01E06625832",
+    "3E30701F-FE5A-4D49-A266-AC7363D6D64E",
+    "3F1BF526-5F82-4D18-9E61-0788172A7670",
+    "3F9DEBB0-8636-4AA8-865E-73AEB43876E3",
+    "3FF4EAAE-C264-459C-A2C4-6255589840B4",
+    "40E01682-B79A-45C3-AC80-82B87659B728",
+    "411A35FC-381C-444B-8E7B-D3AAA0F0DD60",
+    "459EB274-7060-406F-A1D4-1A33989ECA2D",
+    "47368ECE-D5C4-4521-86DF-F1CDE6E74F4A",
+    "4755784D-9BCB-4197-8DFA-94A95F0C32E0",
+    "47A7BE52-4298-4F86-A8E4-98A10963F851",
+    "47C77C34-9A1F-41D6-B80B-E882D8FA3EC2",
+    "4841DC7C-9819-412E-B8F0-083CD066A3EE",
+    "485BC3B1-FF30-4E91-B4D3-083E263EE0E2",
+    "48DABE2A-D537-43E1-BC36-105A843DBBD8",
+    "49D62574-29E4-40C6-B053-7BE9D4C9299C",
+    "4A41298E-74F6-443F-81F3-F9BB5C71E69A",
+    "4A4140BA-BCAA-4151-941B-745333C9365F",
+    "4C9E6706-6492-433B-9BDC-53C51BCFDBB5",
+    "4D9F8CDF-C1C2-4892-87E8-CB84C8F7AD0E",
+    "4E28029F-8F1F-4CCA-AC49-52FD5F0936AF",
+    "4F2E865F-887C-4576-A50F-197593BA718E",
+    "50A7071C-D88D-4F1D-87E3-4868CBA767E8",
+    "50C5A2AE-1FB0-41AA-B11E-AA63BCF5844A",
+    "51960E4A-ECFA-4485-AF70-4435CCF9A975",
+    "52E63D98-F131-4A9E-B8C2-04D60F51485B",
+    "541CC7AB-AF43-45A5-969D-452D78070DB1",
+    "5465675C-3580-449E-B095-DBEBF51C2561",
+    "547E6580-04AF-442F-BC51-65B99B4B6EFE",
+    "54825CC9-5AD8-41D9-8B6A-A6BA72471FFB",
+    "548530E8-0A91-4630-BA77-DCD673AA83D6",
+    "5485D70B-F8DF-4E5A-AA3C-8A940636947C",
+    "5501A9B8-28A0-41A1-8001-DA37EB61236C",
+    "560E35A6-D304-4139-9B4A-BEF8B7DD7EBD",
+    "5846EBFC-BD2B-47FD-970A-3E3B301C9775",
+    "59AEAF3E-A7BA-40A4-85D8-4DD9A178ECF7",
+    "59B0F26E-DF56-4DC1-8A22-76B8CF508F91",
+    "5A5BFE2D-89C5-4447-9A2F-EE06167BA17B",
+    "5AAE3779-9ED8-4834-92EE-08765CDE013A",
+    "5C9B7759-7376-4C68-BCA6-439C00B52A0A",
+    "5C9F16DC-886E-4C10-8334-C4759F87E96B",
+    "5CD7D88A-A6CC-46BD-BA8B-F774E1C61229",
+    "5CE38E56-A2A3-4BB4-8339-C448B525A36B",
+    "5CFFC8C8-F0A0-4FEE-885D-3BA65CA5FB9C",
+    "5DC1DAB6-3462-4014-9B7E-FB057E1B0469",
+    "5FDBCD00-88D9-4F29-B0DD-523B2B67107F",
+    "5FEA2656-198C-4F45-9D39-541F1981FEC4",
+    "6121BD34-9C95-4DD9-A3EE-FFDB15A227FF",
+    "63046A96-C0AE-42D2-B092-23B1536ACB7D",
+    "6368B07D-B157-4451-BDC1-422D1C275E5F",
+    "644DE1E1-A14D-4C3D-ABE3-E55028BAFF84",
+    "6527C53E-F074-464C-B307-A0A3DB6CF15D",
+    "652AF26F-FC60-474B-AD70-5E9CCC5781B5",
+    "65C6BD6F-6FD3-4052-9016-6A7469997F2F",
+    "666BE5B6-8991-4FC9-AEA8-E01687F7D361",
+    "66A5AA73-7CFF-4837-8CCA-CB8E63625E97",
+    "689D8EE7-6588-44D9-B1F6-EE0FE0F67A83",
+    "68D93590-8976-4424-B253-4055846017D1",
+    "6AD5331B-F501-4372-9DA1-CC273BF25602",
+    "6AE3D073-DFFB-441C-952A-241EC24F12FF",
+    "6B8152BB-547F-43F9-A220-65A3E8F63863",
+    "6BA62495-5CE1-415B-99F9-4AD54D7C07DA",
+    "6CF92E5C-E718-498C-A484-3698F1196620",
+    "6D0939E6-A271-432E-B9F9-A0B69380E922",
+    "6D0E8B59-9EC7-4237-B98E-96EBBC193E06",
+    "6D583918-BCF1-4380-A146-389CA87424C6",
+    "6D6EE4BD-4C00-49B8-80C5-5ACCC0F2CE17",
+    "6DDFBC8A-68E5-43B5-B46D-E850BDCF5739",
+    "6F1FC851-A9E8-4D9D-94F2-F1A47DF52833",
+    "700862ED-2DD3-4F78-8E67-8C16A9DC94C0",
+    "7075579F-D508-4742-B530-D751FC003CAC",
+    "71F7E270-E631-48E9-8C92-DF77A539F2B8",
+    "72C64FE3-3168-4936-B60B-C05C7D568A86",
+    "73302056-6437-4BA1-82A1-93A889A21975",
+    "73D78B53-E722-4AF9-B11B-4396B7671B8F",
+    "74F366B9-ED44-4D90-8E71-AF585851AB74",
+    "7502875E-AE29-4897-9114-D815EB92B128",
+    "756EF4E6-2838-4E44-AE7F-CD7BE3618355",
+    "76645147-7CC6-43D1-8520-B8D7EFC99B75",
+    "77F339FD-D11A-485B-8DFE-7F0A21F3D6A4",
+    "7896F29B-3752-4F89-8E43-95247FC50F75",
+    "7975A587-C754-4AD2-8643-D749A470FCDA",
+    "7992BE48-C25B-426C-B2F3-72EE1B230549",
+    "79D091B3-E1ED-4B66-A06B-A8767666D0E2",
+    "7A9A614E-A236-4D02-90F8-577A83A4D810",
+    "7ACE1E88-194A-486C-85FA-BC884033422F",
+    "7B01FDD2-C0DB-4DAE-91B6-039945ED735A",
+    "7B71D9F5-8F99-4DF3-A7F7-3DF017E4E49F",
+    "7D5FB305-15BF-4B50-8F14-75375D91629E",
+    "7DF30DE7-2290-4422-871F-F1E42CE47C6D",
+    "7EC4DA2F-B099-4CCE-9F84-808CEC350DE2",
+    "7EFC59DB-29FF-4851-A84C-FC0057750E58",
+    "8105248A-5378-4E1A-89F8-5B8B72ABCCD8",
+    "816E971B-8109-4689-B9DE-95D89EAB3C3B",
+    "82DC5049-1D53-4040-A96D-94BD9D952195",
+    "836E42BF-5BAF-47C5-86FA-E76123B64975",
+    "8430C618-CB94-40F7-B091-A2A7E9978BDE",
+    "85377132-43C7-413D-870A-A29EEA25D067",
+    "86852767-EA82-4DA0-9E0C-F8E6DC8936A3",
+    "86CDF8FC-2473-4D10-A075-F28FD0862F06",
+    "87D738F9-8782-4304-9A0B-530F845F9DD4",
+    "88668CE7-DF0E-4121-B7F1-1B85159E2D0A",
+    "89573EF5-418C-4B2F-A924-4D9F025A3E53",
+    "8A764904-62E6-4072-8672-2951F1C7DFF6",
+    "8B5F8F4E-5F33-41C8-A975-AAB227858BA8",
+    "8BCE8D23-3D86-4030-9336-53254BDD8340",
+    "8C8E991B-7379-4F0B-8464-EB5968E3A664",
+    "8E3D4B58-8055-4E08-9BBD-9730B290CAE9",
+    "8F03471A-3CCD-4FB7-A28D-1249B3026114",
+    "90BEC77D-EED4-485B-99FD-33BD623F4E71",
+    "9101DFB8-717A-424C-96E2-9C1AC3EC4CE7",
+    "912EBC31-DB2B-4A7C-81E6-02B0E17DE877",
+    "91331551-F2F5-46FF-828B-A9126E94A9C0",
+    "91BB6DCF-EEBE-47E7-A677-CF6417D5C7AA",
+    "91D12FFA-A38D-423E-A994-7FFBF5A31F46",
+    "91DFDFFE-7948-4A09-A288-BFE2CF76ECF1",
+    "936FE5AA-7B28-4805-98CE-3B6632560547",
+    "9464187A-C82C-4164-8171-026281D1480F",
+    "94E94D3F-BFD8-4FE2-8F61-C974C519143F",
+    "9525EEA6-B4DD-4EC4-9247-CC3ABA087239",
+    "9554B91E-A663-4381-A89C-8AD678127197",
+    "95940F03-0854-4A05-9D13-F0BEF3AF7EC5",
+    "95E0DE71-075B-4966-9428-96F5A17ADC88",
+    "978F24E4-F99D-45A9-8F6C-43E2DC0A8D4D",
+    "97939BA0-5252-4D65-BC67-AD1566975678",
+    "9841C671-B74F-4B48-8390-69AF657ED172",
+    "996A05A5-E319-4E38-A2A7-54156C3E982A",
+    "9B1626C4-C1D7-45BD-AD7D-2892C2BDBBBF",
+    "9B38C6A4-36FC-4B9C-8CB9-C883F784A4D2",
+    "9C9F963A-AB0F-4C0E-8257-555C87217813",
+    "9F926CA2-B321-45A5-A31E-A66C7678F597",
+    "A00E3B46-DD96-41C8-B8EA-B4FB3F454AA3",
+    "A39363E4-D339-41BF-8283-8E89D8FE06DD",
+    "A3E11F9D-C317-4DE9-8772-B97F2E13C8A1",
+    "A3F29383-C6A5-4AE6-80F2-24BBAC83905E",
+    "A4F05A7E-DD10-4130-B095-826F6A496F7A",
+    "A5CDEA97-35D9-44A0-8A92-DD7AE48C98CA",
+    "A6EDA794-78BF-41B6-BDC2-97BE387EA02A",
+    "A8751254-A8C3-4A10-97BF-FA8C2C839F47",
+    "A89B44A5-340D-4A54-9B5A-2BE9189B5084",
+    "A8E5BF5D-B39D-4F0B-90DA-46C4B82FA65F",
+    "A9C5E056-5D0A-478B-B4AF-5B98B41F706E",
+    "AABB3777-370A-4311-A274-DD8660DEAB49",
+    "AB42A114-40B5-44F5-AD38-545F3BE1CFAF",
+    "AC33B91C-EBD0-4422-90A0-86261B46B9F4",
+    "AD68E461-9E5B-4A52-BDAB-FBE606FF3178",
+    "AEA97D7A-C876-48C3-9CDA-5906474B9BB8",
+    "AEEC2A8F-3529-46E7-9712-08AACB8D25C5",
+    "AF69AAEA-B02A-4727-A717-44F5C4EF10F4",
+    "B03640CF-083A-42BF-B9A8-6E983CF374C6",
+    "B045CE08-D648-4052-8824-2E9C164A9479",
+    "B123EBF9-0249-452C-9A38-C6A3189AFE11",
+    "B1FCF080-A62D-4BBC-807F-9343B98CBE01",
+    "B258165E-8D15-41F8-B71D-A29E55EB26C0",
+    "B25B04AD-C431-47EF-8E7A-A6C954C2D907",
+    "B2B2C286-43FC-4847-A7C9-5DFB92198C0B",
+    "B2D91533-AEAC-40D8-8141-E1C3A22C472B",
+    "B4F54876-B900-4128-BD56-24B313164031",
+    "B516B413-9F8E-4E42-87E7-561985147B01",
+    "B79D4A31-94C2-4479-B48B-EBB9FEC7D04F",
+    "B86E76F0-79EA-43F8-8544-A0382F97A856",
+    "B8B446DC-FD7E-4164-B24C-24F8E905AA5B",
+    "BA2F7D27-347B-43B3-88AC-8CC9A520B31D",
+    "BBA4C5A4-AC49-487B-A782-C5104B4175F5",
+    "BBEE1C05-B7A9-4C64-82CC-61570BD48E57",
+    "BC5E02AE-D1CC-405B-B57B-F0C1C4248A45",
+    "BC6BBC10-71AC-4C83-A1B4-9FB0D0828525",
+    "BE9EBA2C-C44F-4D0F-95AC-2AC59DEBA9B1",
+    "BF5F71CF-D284-4720-9820-43017F77670E",
+    "BF910B94-2115-4775-BD22-D0E1A16F5EDD",
+    "BFE02CF9-6A3E-4887-A252-D3189E1952EF",
+    "C07B1E5B-E41C-44EA-ADD6-AEF77AFA342E",
+    "C0D77642-4BEF-4C18-A34D-DC2444742F30",
+    "C1D59D82-CC51-4D1C-A08F-5EAC1F3D6CCE",
+    "C1FC3843-2540-435F-9BD9-27027673E1FB",
+    "C273B740-6F5F-4472-86E7-9A8350CB3D9E",
+    "C50F69EA-36CD-43AE-B615-A57B155B1D10",
+    "C522A57B-F6B3-41C9-B5E6-3CB24DF31907",
+    "C54BBF16-899A-44FD-B20E-E4B70415CAD4",
+    "C6950FE7-E890-48C3-B0FC-5A1BBB105CDA",
+    "C6DA05EB-D08E-4676-B3FA-FB4BC434FB89",
+    "C847F392-0784-46D2-9BBC-5FE7DDF9379F",
+    "C9CB5A7A-B5ED-47F9-BE50-C7ABF234DED0",
+    "CA4B7028-DA99-4589-9E62-3FABD5E6F27E",
+    "CAE52ED3-6524-4B7E-BA15-E8092F1522C3",
+    "CECD1636-C2A0-4DAF-B662-4FC6F56C410C",
+    "D0E1931F-E261-4727-AB3A-1F2AF0AC620C",
+    "D1B85034-CC46-4D55-8565-EAFD271F64A3",
+    "D2BE882D-9985-4B32-A9CC-D79414A08ACE",
+    "D44AAFCD-82A8-4B2E-8616-AE9B6410F918",
+    "D45C93AC-66E8-4D37-981D-FB21EE33D9E2",
+    "D52CAC12-D6B7-4D16-8B2A-3D72018CB901",
+    "D5B59B54-539C-4907-A2E9-FDD02C0A173E",
+    "D63EE0D9-2373-48B1-A3E5-3E5B19E23064",
+    "D736BB27-3513-4206-B060-D865AB35F0BC",
+    "DAD247AE-D1E8-442D-869C-43C89E7B39C4",
+    "DB366D0B-DFC2-4EE5-8351-BD89435486D1",
+    "DC8006EB-525F-4ACE-AF6C-8D1BAD14F3BC",
+    "DD404729-AF01-4566-83D7-4D700F12BA65",
+    "DD55336A-A475-471B-929D-03928BBFC9BA",
+    "DD919524-69F8-4B3A-8681-2473F9D7B57B",
+    "DEADC32E-BBD9-4FAC-AC50-5F824E7BE64A",
+    "DF6FF90B-4321-4EEA-9523-3BB2DAC4F9CB",
+    "DF72677D-DA4C-461C-BA06-72193ECD5487",
+    "E05766AF-5624-463E-880D-7045EEC03B95",
+    "E0E3D90D-3EDF-4E9A-854E-78712AB334F5",
+    "E1D7B9E2-2456-450D-AF75-759273622F9F",
+    "E29DDBA0-4974-4E1F-8A27-24EDF7145875",
+    "E438AEC9-D3A7-4380-9467-8E08556E1863",
+    "E4FC834A-A577-48D6-AC29-CD6203B2839B",
+    "E529FF61-F67A-4236-B070-3014045D5892",
+    "E6D51E1B-55FD-4796-8185-455C4684D524",
+    "E885C848-08E1-4A41-8549-4B49D6D02B65",
+    "E92AC1F8-BC9A-4597-BFA2-3AD1B07BB379",
+    "ED00D512-3D77-47B6-8507-B0000B6A4EDE",
+    "ED8742A8-7C04-4355-9D6A-05B584BA3715",
+    "EDCF27A7-1C46-418E-8871-52A94C7C0F92",
+    "EEB761D5-9FDD-4E79-ABA4-E55004F720CD",
+    "F05E3083-8F7A-4035-AF57-B6028EAF9A69",
+    "F0CB4109-0AF8-4BEA-85DC-7FBA08B5CEEB",
+    "F0DDB2CE-74F9-4BC5-BB6F-27E6FB48C3BD",
+    "F316AE62-965E-4165-B214-35440EF7EFAB",
+    "F3F208F9-9E01-49B8-92D6-0AFACC2A7EE2",
+    "F5C6A913-5F14-445C-B401-8B522A7DD738",
+    "F7E39112-A29E-4256-BEAD-2319A53D4CB6",
+    "F8538E6B-E752-4DD0-93F8-BE168F4F4FF2",
+    "F8E08E69-E112-459A-8769-1EB07076AF7A",
+    "F913D699-D236-4CC0-B60D-E4001B7B95E3",
+    "FA22918C-9631-4305-8B37-C5C7FE93E843",
+    "FA45F387-B71D-4ED2-ADC7-A6754757FB04",
+    "FBA075FA-86DE-4985-86F7-8BFC6801FBBF",
+    "FD9F195E-5412-4E63-A62B-6E7D28C9A856",
+    "FE235218-33C3-4E19-AEE4-FF80C7355B1D",
+    "FF1C9EC4-AC17-4C2D-AE55-DD8399B711DA",
+    "FFA353B2-0C3F-49BC-AAFA-C78F878E31AB"
+  ],
+  "ids": [
+    "01E64464-6BA5-414F-AEC8-FA756F5A18A3",
+    "0698991D-703E-4E06-9383-8D5E9DF80BF8",
+    "078D771B-6BFA-4DD9-8B95-2A5267167922",
+    "07C19358-B31B-4E4B-818E-56EE5211ED30",
+    "09434D0F-20B5-449A-8076-FCBCB8622BB5",
+    "0B2E6B24-0760-491B-989E-B3D61AEDC9F4",
+    "0E2DDCA1-65DB-4ABB-AACB-9C7B26FA5669",
+    "10C6D05B-C001-4A0B-9754-1C0228B4875A",
+    "14E412DA-DF74-44B8-AAFF-9DD41E6C3937",
+    "1967D1E8-59F5-4DEB-9C44-72D41B3FBB38",
+    "1B04E9A5-57F7-46FF-A5DB-430E5B22CB50",
+    "1C776023-DA3B-4CEB-995D-DE5CB6FC818A",
+    "1E325463-0D49-4F93-8340-4F6332CD658F",
+    "23044312-72A6-4F1D-86D6-71AF11511898",
+    "237B5207-3E75-4043-8A23-CEA40DBFD763",
+    "23F5C62C-B408-4673-994C-A0B553E9297D",
+    "25771596-1AF7-449B-B3C1-9A1F586095BC",
+    "261EA673-92F9-4062-B390-A3689F707FF9",
+    "27D24ABB-2351-4739-A3E9-0309C4673454",
+    "28D16EEE-8F81-45E8-BD78-B7F0F5D10EB2",
+    "2922182D-18C2-4D81-8742-0A15860E8427",
+    "30E57CF1-58C9-49AE-B25E-BA6D35CA89E6",
+    "343A1EA1-6565-4E29-B4A8-EEAB13A39A12",
+    "3DCF1216-5E61-442D-9C09-17C2A079D839",
+    "3E09586A-8A8F-4DD7-B26F-C6CB53EECE9D",
+    "3F682ACE-CDB1-4994-BD12-E496389998CD",
+    "41C8FA6F-CA98-47A6-B050-29F617CF44B8",
+    "45DEB08C-8C6B-4F5E-8AC0-C69D71A7A4FF",
+    "4C3B4F98-5C09-4DE7-B478-00575E515E56",
+    "4DC40EC1-87E2-4715-BAEF-5D0F65AF7008",
+    "520D0003-11BE-4847-A104-8916F66C62D8",
+    "52D70999-AA98-456B-A4C3-95DA7A384044",
+    "53177BDF-528A-403B-9F49-EE16328FD618",
+    "554FF8AD-4ED6-4808-8752-5C1D79476E9B",
+    "5821AC02-132C-4638-9B46-1225EB8B6DCB",
+    "5A99E14F-9B46-4A67-9814-2932A77311A7",
+    "5CB40806-0C78-4980-A3D2-96029E2A7590",
+    "5D987B81-8328-421E-B16A-31E6D87535D5",
+    "5F75CA78-AC31-4103-B910-B6DE74C2B34E",
+    "5F9BB78C-A480-4BC8-88EE-ABC18D97DBA9",
+    "62C976ED-28B7-4BFB-B9B7-F76B16C9A78B",
+    "679D797F-0A6D-45B3-B7AE-436A8046901D",
+    "698F9268-2EC4-42CC-8672-C83C5197F5E9",
+    "70389559-91A9-4ACC-8A7A-D0E4D8EA4926",
+    "70C7F28F-27F1-4EC4-A852-0AD8FEABD05B",
+    "7379E37B-95B3-4E3E-B841-14C2DA249786",
+    "86759010-89C8-4281-B6E6-3B78477B37C2",
+    "878E2633-9FA6-41C7-8F07-376B215A2751",
+    "8896B6FB-7F95-4BDA-B5CA-E874D1C319E5",
+    "8946232E-AF20-4874-84AC-238C3142AD4C",
+    "8F685622-B2E1-4558-866B-2B5E67FFE46B",
+    "9182050B-FD55-489F-A7BA-16F8F7586923",
+    "91B07BBA-AE44-45B3-9631-EA997DAF8296",
+    "9371A773-4405-459A-AD1B-C58B4D19A979",
+    "93C39E11-1BEB-4310-B2BD-A9376BFC44E9",
+    "962EA465-723D-401D-9942-A810F98A8056",
+    "96651197-EEB7-48F3-B6EF-D5F945A31DCA",
+    "97518E85-9DB6-47A2-A872-6492044EE78A",
+    "981B3A19-257F-4BFB-8B21-61CA74B5B3DA",
+    "9825C13D-A5EF-4D9F-9E96-34074A100EF0",
+    "9AA64CD1-A2C3-496A-B332-5A1224F64AE3",
+    "9CDE5A53-952F-405C-89EA-6CDDDE581DFC",
+    "A0FD7FC9-E06A-4F6C-A2A1-5B8372AEDEDB",
+    "A244B290-EB9F-4171-BA22-6E9CEB8A3CBA",
+    "A528F7E7-70CC-4A53-83EB-4E97913BDBC3",
+    "A9C66462-0623-4D3C-A447-3C0009C5AC89",
+    "AB6F4277-54CF-4F94-91CC-B934FB4F9AAB",
+    "AC1EFE9D-BC51-4FB2-94F3-96DF9561EC64",
+    "B2110F04-27D9-43CB-8789-44E3375487CA",
+    "B66632BD-65A0-44E5-921A-4C49B3F281D9",
+    "B877D8AE-6882-4CD6-BC02-9B4C75C71B98",
+    "BAB7F4DF-CD37-4105-AE1B-B95496A676E9",
+    "BABD43B7-690C-4FE6-97A7-8AAC9D075852",
+    "BC447230-93DC-4CD0-A5F9-F93ABD7C4AFF",
+    "BCCEEF4D-6F9A-4358-86A1-CC0B8D9FC61B",
+    "BE670AFE-68BD-4587-8A86-B45036757C85",
+    "C0054049-F84A-4CD8-B01C-848199FD0750",
+    "C59DD5DF-0C30-492A-A56A-26D2A3CF396B",
+    "CDCD1B1D-0813-4B97-80FA-C91E541E4010",
+    "D12305B2-9AE4-49D2-B30F-5E0201ABDAFA",
+    "D405446E-6160-4C26-9E58-C08127E8A801",
+    "D6BC0949-4E6B-468C-833A-4C96E1630D68",
+    "D8F1F335-725A-4662-AEF4-515D8ABEDABF",
+    "DC69DB2F-A7A4-4CFF-BCD3-E4B067DEAC50",
+    "DDBB0780-FD2B-4A8E-86B3-AC5F3AF0EB53",
+    "E0FA6D47-700E-4109-904F-546880A643CD",
+    "E5222DBD-4F22-4250-A947-50A5B8C73D9B",
+    "E630E7FE-9DD4-483A-BE4B-457CBEDA387B",
+    "E88F12B4-3595-4D6F-B3D1-8008F225B96F",
+    "E8A5D30A-4884-4161-95ED-8B6E47B9985D",
+    "EA70DA70-1923-4E64-ADC2-47DA78677DFA",
+    "EB85D622-3012-4C4E-B4BB-FBC82BE4C909",
+    "ED32482E-702B-4335-AEEE-28A826486090",
+    "EEF65236-A64B-4A02-98E8-9DA1D21B006D",
+    "F3A9ACD0-D30D-4011-B054-EF57D2A5E962",
+    "F74B2BDD-1BF9-47DB-B1AE-D7799F63E65E",
+    "F988B83D-6689-413F-A62A-7CF5B2813474",
+    "F9E9FD15-C2BB-4FD1-80A0-E49B854C6596",
+    "FC90C13F-B92A-4D2D-814E-2E94637FB28A",
+    "FE9E3510-88B9-4E94-A730-4D01156084EB"
+  ],
+  "milestones": [
+    "phone_background",
+    "watch_restart",
+    "phone_restart",
+    "phone_disconnect"
+  ],
+  "phase": "complete",
+  "counts": {
+    "watchRetained": 100,
+    "phoneAccepted": 100,
+    "phoneAnswered": 100,
+    "watchReplyReceipts": 100
+  },
+  "elapsedSeconds": 896.0179960727692,
+  "backgroundSnapshot": {
+    "accepted": 13
+  },
+  "finishedAt": 1788625058.383789,
+  "turns": [
+    {
+      "id": "01E64464-6BA5-414F-AEC8-FA756F5A18A3",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5105.109930038452,
+        "generation_ms": 1890.5260562896729
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1440.5570030212402,
+        "tts_start_ms": 6.8389177322387695
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "0698991D-703E-4E06-9383-8D5E9DF80BF8",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1939.0679597854614,
+        "stt_ms": 5348.719954490662
+      },
+      "watchTimings": {
+        "tts_start_ms": 5.555987358093262,
+        "transfer_roundtrip_ms": 1372.0680475234985
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "078D771B-6BFA-4DD9-8B95-2A5267167922",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5351.974010467529,
+        "generation_ms": 1948.7130641937256
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1260.2890729904175,
+        "tts_start_ms": 5.8040618896484375
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "07C19358-B31B-4E4B-818E-56EE5211ED30",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2263.738989830017,
+        "stt_ms": 7328.187942504883
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1381.127953529358,
+        "tts_start_ms": 6.9609880447387695
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "09434D0F-20B5-449A-8076-FCBCB8622BB5",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5152.854084968567,
+        "generation_ms": 1953.99010181427
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1682.0240020751953,
+        "tts_start_ms": 7.16710090637207
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "0B2E6B24-0760-491B-989E-B3D61AEDC9F4",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5522.750973701477,
+        "generation_ms": 1942.6209926605225
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1380.690097808838,
+        "tts_start_ms": 7.275938987731934
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "0E2DDCA1-65DB-4ABB-AACB-9C7B26FA5669",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 4973.272085189819,
+        "generation_ms": 1789.4599437713623
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1275.5149602890015,
+        "tts_start_ms": 6.9969892501831055
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "10C6D05B-C001-4A0B-9754-1C0228B4875A",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5046.922922134399,
+        "generation_ms": 1939.924955368042
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1365.414023399353,
+        "tts_start_ms": 6.585955619812012
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "14E412DA-DF74-44B8-AAFF-9DD41E6C3937",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5136.366009712219,
+        "generation_ms": 1981.2339544296265
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.325006484985352,
+        "transfer_roundtrip_ms": 1374.5429515838623
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "1967D1E8-59F5-4DEB-9C44-72D41B3FBB38",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5166.566967964172,
+        "generation_ms": 2019.9000835418701
+      },
+      "watchTimings": {
+        "tts_start_ms": 5.7059526443481445,
+        "transfer_roundtrip_ms": 1236.538052558899
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "1B04E9A5-57F7-46FF-A5DB-430E5B22CB50",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1928.9740324020386,
+        "stt_ms": 4953.728079795837
+      },
+      "watchTimings": {
+        "tts_start_ms": 5.710005760192871,
+        "transfer_roundtrip_ms": 1429.6579360961914
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "1C776023-DA3B-4CEB-995D-DE5CB6FC818A",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5385.545969009399,
+        "generation_ms": 1943.058967590332
+      },
+      "watchTimings": {
+        "tts_start_ms": 7.352948188781738,
+        "transfer_roundtrip_ms": 1390.995979309082
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "1E325463-0D49-4F93-8340-4F6332CD658F",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1945.227026939392,
+        "stt_ms": 5104.148030281067
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1964.7810459136963,
+        "tts_start_ms": 6.232023239135742
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "23044312-72A6-4F1D-86D6-71AF11511898",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5116.590976715088,
+        "generation_ms": 1936.2809658050537
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.976962089538574,
+        "transfer_roundtrip_ms": 1382.9079866409302
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "237B5207-3E75-4043-8A23-CEA40DBFD763",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5462.303996086121,
+        "generation_ms": 1944.2020654678345
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1373.9389181137085
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "23F5C62C-B408-4673-994C-A0B553E9297D",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1925.1149892807007,
+        "stt_ms": 5413.173079490662
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1481.6769361495972,
+        "tts_start_ms": 5.785942077636719
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "25771596-1AF7-449B-B3C1-9A1F586095BC",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5325.284004211426,
+        "generation_ms": 1929.8089742660522
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1372.8229999542236,
+        "tts_start_ms": 5.805015563964844
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "261EA673-92F9-4062-B390-A3689F707FF9",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 4990.113019943237,
+        "generation_ms": 1929.6929836273193
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1306.0760498046875,
+        "tts_start_ms": 6.654024124145508
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "27D24ABB-2351-4739-A3E9-0309C4673454",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5148.113965988159,
+        "generation_ms": 2002.120018005371
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1396.399974822998,
+        "tts_start_ms": 6.029009819030762
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "28D16EEE-8F81-45E8-BD78-B7F0F5D10EB2",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5436.650991439819,
+        "generation_ms": 1972.7718830108643
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1428.3169507980347,
+        "tts_start_ms": 6.999969482421875
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "2922182D-18C2-4D81-8742-0A15860E8427",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5193.964958190918,
+        "generation_ms": 1978.0080318450928
+      },
+      "watchTimings": {
+        "tts_start_ms": 15.135049819946289,
+        "transfer_roundtrip_ms": 1370.8990812301636
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "30E57CF1-58C9-49AE-B25E-BA6D35CA89E6",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5116.950988769531,
+        "generation_ms": 1949.9579668045044
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.420016288757324,
+        "transfer_roundtrip_ms": 1795.0280904769897
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "343A1EA1-6565-4E29-B4A8-EEAB13A39A12",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5370.50199508667,
+        "generation_ms": 1928.387999534607
+      },
+      "watchTimings": {
+        "tts_start_ms": 92.64898300170898,
+        "transfer_roundtrip_ms": 1407.7389240264893
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "3DCF1216-5E61-442D-9C09-17C2A079D839",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1995.108962059021,
+        "stt_ms": 5174.780964851379
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.047964096069336,
+        "transfer_roundtrip_ms": 1687.55304813385
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "3E09586A-8A8F-4DD7-B26F-C6CB53EECE9D",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5046.411037445068,
+        "generation_ms": 1990.0410175323486
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.971001625061035,
+        "transfer_roundtrip_ms": 1386.673092842102
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "3F682ACE-CDB1-4994-BD12-E496389998CD",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1999.2409944534302,
+        "stt_ms": 5169.554948806763
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1437.2659921646118,
+        "tts_start_ms": 5.9070587158203125
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "41C8FA6F-CA98-47A6-B050-29F617CF44B8",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5505.392074584961,
+        "generation_ms": 1980.125069618225
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1323.1979608535767,
+        "tts_start_ms": 7.551074028015137
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "45DEB08C-8C6B-4F5E-8AC0-C69D71A7A4FF",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5106.685042381287,
+        "generation_ms": 1934.2520236968994
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1282.0079326629639,
+        "tts_start_ms": 6.3620805740356445
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "4C3B4F98-5C09-4DE7-B478-00575E515E56",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5352.449059486389,
+        "generation_ms": 1939.1779899597168
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 2543.3640480041504,
+        "tts_start_ms": 5.861043930053711
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "4DC40EC1-87E2-4715-BAEF-5D0F65AF7008",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5349.537014961243,
+        "generation_ms": 2052.4009466171265
+      },
+      "watchTimings": {
+        "tts_start_ms": 152.4369716644287,
+        "transfer_roundtrip_ms": 1252.5790929794312
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "520D0003-11BE-4847-A104-8916F66C62D8",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1959.594964981079,
+        "stt_ms": 5120.934009552002
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.848931312561035,
+        "transfer_roundtrip_ms": 1453.7431001663208
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "52D70999-AA98-456B-A4C3-95DA7A384044",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1825.6019353866577,
+        "stt_ms": 5414.219975471497
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1478.7620306015015,
+        "tts_start_ms": 8.329987525939941
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "53177BDF-528A-403B-9F49-EE16328FD618",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5022.225975990295,
+        "generation_ms": 1982.6099872589111
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 57421.27192020416,
+        "tts_start_ms": 152.15802192687988
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "554FF8AD-4ED6-4808-8752-5C1D79476E9B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5111.49001121521,
+        "generation_ms": 2011.0039710998535
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 2208.7069749832153,
+        "tts_start_ms": 5.9299468994140625
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5821AC02-132C-4638-9B46-1225EB8B6DCB",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5089.57302570343,
+        "generation_ms": 1943.8369274139404
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1327.2639513015747,
+        "tts_start_ms": 7.3920488357543945
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5A99E14F-9B46-4A67-9814-2932A77311A7",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5330.858945846558,
+        "generation_ms": 1921.0519790649414
+      },
+      "watchTimings": {
+        "tts_start_ms": 5.599021911621094,
+        "transfer_roundtrip_ms": 1815.035104751587
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5CB40806-0C78-4980-A3D2-96029E2A7590",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2199.286937713623,
+        "stt_ms": 5165.091037750244
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1630.307912826538,
+        "tts_start_ms": 6.708979606628418
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5D987B81-8328-421E-B16A-31E6D87535D5",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 3325.572967529297,
+        "stt_ms": 5601.474046707153
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1309.1859817504883,
+        "tts_start_ms": 5.581021308898926
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5F75CA78-AC31-4103-B910-B6DE74C2B34E",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5172.945976257324,
+        "generation_ms": 1979.390025138855
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1375.810980796814,
+        "tts_start_ms": 6.422996520996094
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5F9BB78C-A480-4BC8-88EE-ABC18D97DBA9",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5346.5670347213745,
+        "generation_ms": 1958.0219984054565
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1428.1589984893799,
+        "tts_start_ms": 1.9650459289550781
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "62C976ED-28B7-4BFB-B9B7-F76B16C9A78B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5089.184999465942,
+        "generation_ms": 1932.2550296783447
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.700992584228516,
+        "transfer_roundtrip_ms": 15716.022968292236
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "679D797F-0A6D-45B3-B7AE-436A8046901D",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1952.059030532837,
+        "stt_ms": 5386.519908905029
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1571.3269710540771,
+        "tts_start_ms": 6.346940994262695
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "698F9268-2EC4-42CC-8672-C83C5197F5E9",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5474.943995475769,
+        "generation_ms": 1990.328073501587
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1998.4359741210938,
+        "tts_start_ms": 6.764054298400879
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "70389559-91A9-4ACC-8A7A-D0E4D8EA4926",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2234.1259717941284,
+        "stt_ms": 5136.108994483948
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1370.7020282745361,
+        "tts_start_ms": 1.8630027770996094
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "70C7F28F-27F1-4EC4-A852-0AD8FEABD05B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1945.2769756317139,
+        "stt_ms": 5375.676989555359
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1355.3789854049683,
+        "tts_start_ms": 6.888031959533691
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "7379E37B-95B3-4E3E-B841-14C2DA249786",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1777.198076248169,
+        "stt_ms": 5275.9939432144165
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1730.6419610977173,
+        "tts_start_ms": 8.984088897705078
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "86759010-89C8-4281-B6E6-3B78477B37C2",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5215.556025505066,
+        "generation_ms": 2093.603014945984
+      },
+      "watchTimings": {
+        "tts_start_ms": 7.5550079345703125,
+        "transfer_roundtrip_ms": 1824.8690366744995
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "878E2633-9FA6-41C7-8F07-376B215A2751",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5426.643013954163,
+        "generation_ms": 1941.8749809265137
+      },
+      "watchTimings": {
+        "tts_start_ms": 5.9059858322143555,
+        "transfer_roundtrip_ms": 1381.4300298690796
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "8896B6FB-7F95-4BDA-B5CA-E874D1C319E5",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5315.1819705963135,
+        "generation_ms": 1886.0210180282593
+      },
+      "watchTimings": {
+        "tts_start_ms": 7.603049278259277,
+        "transfer_roundtrip_ms": 1432.1060180664062
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "8946232E-AF20-4874-84AC-238C3142AD4C",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5193.153023719788,
+        "generation_ms": 2299.211025238037
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1308.12406539917,
+        "tts_start_ms": 379.01198863983154
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "8F685622-B2E1-4558-866B-2B5E67FFE46B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1968.6559438705444,
+        "stt_ms": 5328.644037246704
+      },
+      "watchTimings": {
+        "tts_start_ms": 7.277011871337891,
+        "transfer_roundtrip_ms": 1326.9329071044922
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "9182050B-FD55-489F-A7BA-16F8F7586923",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5576.871991157532,
+        "generation_ms": 2212.754011154175
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1493.947982788086,
+        "tts_start_ms": 7.866024971008301
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "91B07BBA-AE44-45B3-9631-EA997DAF8296",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1961.2460136413574,
+        "stt_ms": 5425.227999687195
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.829977035522461,
+        "transfer_roundtrip_ms": 1331.8499326705933
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "9371A773-4405-459A-AD1B-C58B4D19A979",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5130.424022674561,
+        "generation_ms": 1910.3610515594482
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.024003028869629,
+        "transfer_roundtrip_ms": 12734.562039375305
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "93C39E11-1BEB-4310-B2BD-A9376BFC44E9",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2016.24596118927,
+        "stt_ms": 5260.313034057617
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1329.596996307373,
+        "tts_start_ms": 5.617022514343262
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "962EA465-723D-401D-9942-A810F98A8056",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5033.470034599304,
+        "generation_ms": 1778.4160375595093
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1418.295979499817,
+        "tts_start_ms": 6.968975067138672
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "96651197-EEB7-48F3-B6EF-D5F945A31DCA",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5456.537961959839,
+        "generation_ms": 1959.941029548645
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1432.1889877319336,
+        "tts_start_ms": 7.153987884521484
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "97518E85-9DB6-47A2-A872-6492044EE78A",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2012.4739408493042,
+        "stt_ms": 5476.150989532471
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1887.5049352645874,
+        "tts_start_ms": 7.269024848937988
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "981B3A19-257F-4BFB-8B21-61CA74B5B3DA",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1972.7530479431152,
+        "stt_ms": 5135.684013366699
+      },
+      "watchTimings": {
+        "tts_start_ms": 5.771994590759277,
+        "transfer_roundtrip_ms": 1384.1619491577148
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "9825C13D-A5EF-4D9F-9E96-34074A100EF0",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1788.2800102233887,
+        "stt_ms": 5323.69601726532
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.381988525390625,
+        "transfer_roundtrip_ms": 1429.9039840698242
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "9AA64CD1-A2C3-496A-B332-5A1224F64AE3",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5058.964014053345,
+        "generation_ms": 1974.9079942703247
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1197.3289251327515,
+        "tts_start_ms": 6.123065948486328
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "9CDE5A53-952F-405C-89EA-6CDDDE581DFC",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1965.4489755630493,
+        "stt_ms": 5404.941082000732
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1429.7449588775635,
+        "tts_start_ms": 7.902979850769043
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "A0FD7FC9-E06A-4F6C-A2A1-5B8372AEDEDB",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5118.814945220947,
+        "generation_ms": 1966.7940139770508
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.690025329589844,
+        "transfer_roundtrip_ms": 1453.8860321044922
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "A244B290-EB9F-4171-BA22-6E9CEB8A3CBA",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5053.493022918701,
+        "generation_ms": 1973.4179973602295
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.316065788269043,
+        "transfer_roundtrip_ms": 2169.870972633362
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "A528F7E7-70CC-4A53-83EB-4E97913BDBC3",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5073.312044143677,
+        "generation_ms": 1973.2019901275635
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1369.5619106292725
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "A9C66462-0623-4D3C-A447-3C0009C5AC89",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1949.6220350265503,
+        "stt_ms": 5054.869890213013
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 2497.8339672088623,
+        "tts_start_ms": 7.07697868347168
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "AB6F4277-54CF-4F94-91CC-B934FB4F9AAB",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1986.2369298934937,
+        "stt_ms": 5110.700011253357
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1384.1710090637207,
+        "tts_start_ms": 5.89597225189209
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "AC1EFE9D-BC51-4FB2-94F3-96DF9561EC64",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 7800.641059875488,
+        "generation_ms": 4130.140066146851
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1403.6229848861694,
+        "tts_start_ms": 113.07799816131592
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "B2110F04-27D9-43CB-8789-44E3375487CA",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5377.733945846558,
+        "generation_ms": 1957.635998725891
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.186962127685547,
+        "transfer_roundtrip_ms": 1211.2120389938354
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "B66632BD-65A0-44E5-921A-4C49B3F281D9",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1956.2690258026123,
+        "stt_ms": 5293.503999710083
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1367.1510219573975,
+        "tts_start_ms": 5.713105201721191
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "B877D8AE-6882-4CD6-BC02-9B4C75C71B98",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1830.826997756958,
+        "stt_ms": 5375.396013259888
+      },
+      "watchTimings": {
+        "tts_start_ms": 7.214069366455078,
+        "transfer_roundtrip_ms": 1481.016993522644
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "BAB7F4DF-CD37-4105-AE1B-B95496A676E9",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2017.1610116958618,
+        "stt_ms": 5326.762914657593
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1307.237982749939,
+        "tts_start_ms": 6.36899471282959
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "BABD43B7-690C-4FE6-97A7-8AAC9D075852",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5243.340969085693,
+        "generation_ms": 1979.7630310058594
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1336.1890316009521,
+        "tts_start_ms": 1.6819238662719727
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "BC447230-93DC-4CD0-A5F9-F93ABD7C4AFF",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5359.458923339844,
+        "generation_ms": 1890.1140689849854
+      },
+      "watchTimings": {
+        "tts_start_ms": 7.343053817749023,
+        "transfer_roundtrip_ms": 1406.1000347137451
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "BCCEEF4D-6F9A-4358-86A1-CC0B8D9FC61B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1793.699026107788,
+        "stt_ms": 5015.594005584717
+      },
+      "watchTimings": {
+        "tts_start_ms": 10.33008098602295,
+        "transfer_roundtrip_ms": 1419.523000717163
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "BE670AFE-68BD-4587-8A86-B45036757C85",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 4987.061023712158,
+        "generation_ms": 1780.2120447158813
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1766.4719820022583,
+        "tts_start_ms": 5.904912948608398
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "C0054049-F84A-4CD8-B01C-848199FD0750",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1829.5480012893677,
+        "stt_ms": 5162.4720096588135
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1430.003046989441,
+        "tts_start_ms": 5.704998970031738
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "C59DD5DF-0C30-492A-A56A-26D2A3CF396B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2147.075057029724,
+        "stt_ms": 5090.692043304443
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1373.7469911575317,
+        "tts_start_ms": 7.257938385009766
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "CDCD1B1D-0813-4B97-80FA-C91E541E4010",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1831.1049938201904,
+        "stt_ms": 5042.15395450592
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1866.7529821395874,
+        "tts_start_ms": 7.444977760314941
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "D12305B2-9AE4-49D2-B30F-5E0201ABDAFA",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5115.365982055664,
+        "generation_ms": 1975.2310514450073
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1898.5339403152466,
+        "tts_start_ms": 5.954980850219727
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "D405446E-6160-4C26-9E58-C08127E8A801",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5345.384955406189,
+        "generation_ms": 1962.2869491577148
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1359.3660593032837,
+        "tts_start_ms": 7.641077041625977
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "D6BC0949-4E6B-468C-833A-4C96E1630D68",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1963.0500078201294,
+        "stt_ms": 5405.735015869141
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1428.494930267334,
+        "tts_start_ms": 1.9609928131103516
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "D8F1F335-725A-4662-AEF4-515D8ABEDABF",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5471.112012863159,
+        "generation_ms": 1984.7910404205322
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.641983985900879,
+        "transfer_roundtrip_ms": 2328.147053718567
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "DC69DB2F-A7A4-4CFF-BCD3-E4B067DEAC50",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5213.473081588745,
+        "generation_ms": 1810.752034187317
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.765961647033691,
+        "transfer_roundtrip_ms": 1445.2909231185913
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "DDBB0780-FD2B-4A8E-86B3-AC5F3AF0EB53",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5236.500024795532,
+        "generation_ms": 1927.6479482650757
+      },
+      "watchTimings": {
+        "tts_start_ms": 7.3490142822265625,
+        "transfer_roundtrip_ms": 1434.809923171997
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "E0FA6D47-700E-4109-904F-546880A643CD",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5268.146991729736,
+        "generation_ms": 1751.8949508666992
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1436.837077140808,
+        "tts_start_ms": 7.447004318237305
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "E5222DBD-4F22-4250-A947-50A5B8C73D9B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1946.1959600448608,
+        "stt_ms": 5356.863975524902
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1406.7260026931763,
+        "tts_start_ms": 6.433010101318359
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "E630E7FE-9DD4-483A-BE4B-457CBEDA387B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5197.690010070801,
+        "generation_ms": 2025.763988494873
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1349.9650955200195,
+        "tts_start_ms": 5.746006965637207
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "E88F12B4-3595-4D6F-B3D1-8008F225B96F",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5036.749958992004,
+        "generation_ms": 1977.07200050354
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1375.9009838104248
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "E8A5D30A-4884-4161-95ED-8B6E47B9985D",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1957.3639631271362,
+        "stt_ms": 5054.595947265625
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1312.9119873046875
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "EA70DA70-1923-4E64-ADC2-47DA78677DFA",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5314.747929573059,
+        "generation_ms": 1984.0190410614014
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1825.137972831726,
+        "tts_start_ms": 6.978034973144531
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "EB85D622-3012-4C4E-B4BB-FBC82BE4C909",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5352.66900062561,
+        "generation_ms": 1951.3360261917114
+      },
+      "watchTimings": {
+        "tts_start_ms": 6.582975387573242,
+        "transfer_roundtrip_ms": 1428.439974784851
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "ED32482E-702B-4335-AEEE-28A826486090",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5012.797951698303,
+        "generation_ms": 1806.7419528961182
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1471.958041191101,
+        "tts_start_ms": 7.316946983337402
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "EEF65236-A64B-4A02-98E8-9DA1D21B006D",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1978.7389039993286,
+        "stt_ms": 5431.6229820251465
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1434.8869323730469,
+        "tts_start_ms": 6.294965744018555
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "F3A9ACD0-D30D-4011-B054-EF57D2A5E962",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5091.728091239929,
+        "generation_ms": 1973.6219644546509
+      },
+      "watchTimings": {
+        "tts_start_ms": 7.884979248046875,
+        "transfer_roundtrip_ms": 1430.2200078964233
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "F74B2BDD-1BF9-47DB-B1AE-D7799F63E65E",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2418.9940690994263,
+        "stt_ms": 5955.271005630493
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 55975.46410560608,
+        "tts_start_ms": 7.3089599609375
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "F988B83D-6689-413F-A62A-7CF5B2813474",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5399.825930595398,
+        "generation_ms": 1963.8270139694214
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1339.4780158996582,
+        "tts_start_ms": 6.8939924240112305
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "F9E9FD15-C2BB-4FD1-80A0-E49B854C6596",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2051.8178939819336,
+        "stt_ms": 5128.256916999817
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1381.168007850647,
+        "tts_start_ms": 6.850957870483398
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "FC90C13F-B92A-4D2D-814E-2E94637FB28A",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1968.047022819519,
+        "stt_ms": 5076.368927955627
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1804.5600652694702,
+        "tts_start_ms": 6.013989448547363
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "FE9E3510-88B9-4E94-A730-4D01156084EB",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1750.4700422286987,
+        "stt_ms": 5435.276031494141
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1412.161946296692,
+        "tts_start_ms": 6.358027458190918
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    }
+  ],
+  "finalAudit": {
+    "passed": true,
+    "count": 100,
+    "checks": [
+      "original audio digest",
+      "transcript preserved on both sides",
+      "reply preserved on both sides",
+      "STT timing present",
+      "generation timing present",
+      "durable response acknowledgement",
+      "stable response identity",
+      "answered state"
+    ]
+  },
+  "stageStatisticsMilliseconds": {
+    "transfer_roundtrip_ms": {
+      "n": 100,
+      "median": 1418.90949010849,
+      "p95": 2497.8339672088623,
+      "max": 57421.27192020416
+    },
+    "stt_ms": {
+      "n": 100,
+      "median": 5226.028025150299,
+      "p95": 5522.750973701477,
+      "max": 7800.641059875488
+    },
+    "generation_ms": {
+      "n": 100,
+      "median": 1959.767997264862,
+      "p95": 2234.1259717941284,
+      "max": 4130.140066146851
+    },
+    "tts_start_ms": {
+      "n": 96,
+      "median": 6.704986095428467,
+      "p95": 92.64898300170898,
+      "max": 379.01198863983154
+    }
+  },
+  "measurementLimits": [
+    "Batch of 100 synthetic turns with deliberate lifecycle faults",
+    "No controlled warm/cold split",
+    "Transfer starts at send attempt, excluding prior outbox waiting",
+    "TTS start callback is not measured acoustic onset",
+    "No physical battery or radio measurement"
+  ]
+}

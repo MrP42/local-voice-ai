@@ -10,6 +10,15 @@ Windows-Desktop-Anwendung (Tauri 2 · Rust · React), entwickelt von
 
 ---
 
+## Plattformen im Hauptprojekt
+
+- `apps/local-voice/`: bestehende Windows-/macOS-Desktop-App (Tauri).
+- [`apps/apple/`](apps/apple/README.md): native iPhone-/Apple-Watch-App (SwiftUI),
+  inklusive lokaler Modelle, Sprachnotizen, Gesprächsmodus und Verlauf.
+- [Apple-Build und Release-Vorbereitung](apps/apple/RELEASING.md): automatische
+  Buildprüfung; öffentliche Verteilung über TestFlight/App Store ist noch nicht
+  eingerichtet. Die bisherige Geräteinstallation ist ein Entwicklungsbuild.
+
 ## Installieren
 
 1. Auf der [**Releases-Seite**](https://github.com/MrP42/local-voice-ai/releases/latest)

@@ -1,0 +1,16 @@
+{
+  "sourceCommit": "a9fbf6574c555002272b28ae72e455ff0333f128",
+  "id": "75DB63E0-751E-47DB-A8DD-A48F769FC924",
+  "stateWhileWristDown": "saved",
+  "recordingTimings": {
+    "persistence_ms": 274.44005012512207,
+    "capture_saved_at_ms": 810372623018.744,
+    "record_feedback_ms": 1384.132981300354,
+    "capture_end_at_ms": 810372622762.401
+  },
+  "nativeControlLog": "local-voice-wrist-down-final.log",
+  "passed": true,
+  "sameCaptureAcceptedByPhone": true,
+  "originalsVerified": true,
+  "scope": "Simulator Wrist Down and recorder persistence; no physical wrist or microphone quality claim"
+}

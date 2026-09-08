@@ -1,0 +1,10 @@
+{
+  "sourceCommit": "71a1d5a777423c1609450425c04e42d4c8c1826a",
+  "case": "interruption",
+  "startedAt": 1788677939.525473,
+  "injection": "AVAudioSession interruption began after actual AVSpeechSynthesizer didStart",
+  "historyPreserved": true,
+  "physicalPhoneCallTest": false,
+  "passed": true,
+  "finishedAt": 1788677943.977205
+}

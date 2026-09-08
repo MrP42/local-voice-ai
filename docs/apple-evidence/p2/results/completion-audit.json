@@ -1,0 +1,71 @@
+{
+  "programCommit": "a9fbf6574c555002272b28ae72e455ff0333f128",
+  "completed": "2026-09-06",
+  "scope": "Xcode simulator acceptance as requested; no physical battery/radio/data-protection claim",
+  "passed": true,
+  "evidence": {
+    "warm-cold-after-review": {
+      "passed": true,
+      "sha256": "f0d58653dcb4ca1e3f85da98a18a731896dc5c95ba4facfc8817b3dd0903950e"
+    },
+    "storage-crashes-after-review": {
+      "passed": true,
+      "sha256": "923537b31c85338c89f39e36894cded380bba957e4048efaeb929267d68f98de"
+    },
+    "background-after-review": {
+      "passed": true,
+      "sha256": "1d3791a42a74e2a629f79098802ee35d36c47b4e191fb7f3d74976f1866bc1b3"
+    },
+    "locked-after-review": {
+      "passed": true,
+      "sha256": "8207fe38d8e52342fe3974150bb94ff02a07b0fb0fc5b9cf201f3afe7178b831"
+    },
+    "force-quit-after-review": {
+      "passed": true,
+      "sha256": "64d335b389cff7421410f850fc07b33027b668f25081ef1470e5e3600da2c1a8"
+    },
+    "wrist-after-review": {
+      "passed": true,
+      "sha256": "5f13da9407414c1f8494dd5d6e76a009d0d0a45b822bfbbfa9685e814d0055e5"
+    },
+    "denied-after-review": {
+      "passed": true,
+      "sha256": "78274ec046b771a118224d05a056257ad18341e8caa2392c0e037e68c3f71c8a"
+    },
+    "duplicate-after-review": {
+      "passed": true,
+      "sha256": "254b3715732a551d13fc284ad0dce1be1e5eaa3d97e365e3519599071a0bc3dd"
+    },
+    "interruption-after-review": {
+      "passed": true,
+      "sha256": "5f969e77559e23aa561312dc1afea5daf37438ee66bf7d533082a9bd9cc20c33"
+    },
+    "native-cancellation-after-review": {
+      "passed": true,
+      "sha256": "1f98bf86841e7231a7d2846d9363256251fa5d6fb32dc9f27ccc1290dee5076d"
+    },
+    "build-and-tests": {
+      "passed": true,
+      "sha256": "124e8e63640216e092e4e6eb562e0ede49914e9f1f28c16a2df0263a677ee726"
+    },
+    "local-100-after-review": {
+      "passed": true,
+      "audioFilesVerified": 200,
+      "sha256": "bd79de40c6cc90a6a7bebbc89d75efbfa4b56c5c2317be1cc75eee29550fd91b"
+    }
+  },
+  "claudeReview": "Complete, findings triaged and fixes tested locally",
+  "requirements": {
+    "persistence": "storage-crashes-after-review + local-100-after-review",
+    "sessionRetryCancellation": "59 core tests + native-cancellation-after-review",
+    "providerFailure": "timeout versus cancellation regression + partial setup UI retry",
+    "lifecycle": "lifecycle-matrix.md and individual after-review JSON",
+    "modelAndQuality": "german-quality-final.json + model integrity/core/UI tests; known arithmetic error documented",
+    "latency": "warm-cold-after-review + local-100-statistics-after-review + wrist-after-review",
+    "battery": "Unknown; virtual device scope cannot measure physical drain"
+  },
+  "buildScope": "Full core/UI suites after review fixes, targeted setup UI test after final ordering change; no production source changes since a9fbf65",
+  "crashScope": "Crash run recorded parent HEAD 4d6449d with testedWorkingChanges=true; corrected Store then committed in 4c8ac04",
+  "desktopDiffEmpty": true,
+  "noPendingUserActions": true
+}

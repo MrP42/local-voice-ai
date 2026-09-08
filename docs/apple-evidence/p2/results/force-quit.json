@@ -1,0 +1,23 @@
+{
+  "sourceCommit": "7fb258f5edaddeb813d87ae768b22bbbeaa5d685",
+  "case": "force-quit-resume",
+  "startedAt": 1788675683.085438,
+  "id": "75EDFDAB-D80F-4179-98AD-88A9469A8C4F",
+  "deferred": true,
+  "watchState": "accepted",
+  "phoneState": "saved",
+  "observationSeconds": 10,
+  "resumedSameIdentity": true,
+  "audioPreserved": true,
+  "phoneTimings": {
+    "generation_ms": 4098.2348918914795,
+    "stt_ms": 5439.637064933777,
+    "capture_saved_at_ms": 810368493279.014
+  },
+  "passed": true,
+  "finishedAt": 1788675709.501104,
+  "actualOriginalFilesVerified": 2,
+  "dismissEvidence": "Local Voice card visually checked, swiped away through native Simulator UI, absent from subsequent screenshot",
+  "processEvidence": "No matching launchctl service immediately after dismissal; numeric PID 75883 after explicit reopen",
+  "processLimit": "Sampled process observations do not rule out short-lived background execution between samples"
+}

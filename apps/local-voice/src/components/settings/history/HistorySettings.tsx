@@ -25,7 +25,8 @@ const IconButton: React.FC<{
   <button
     onClick={onClick}
     disabled={disabled}
-    className={`p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-text/20 ${
+    aria-label={title}
+    className={`min-h-11 min-w-11 p-2 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-text/20 ${
       active
         ? "text-logo-primary hover:text-logo-primary/80"
         : "text-text/50 hover:text-logo-primary"
@@ -275,9 +276,9 @@ export const HistorySettings: React.FC = () => {
   return (
     <div className="w-full space-y-6">
       <div className="space-y-2">
-        <div className="px-4 flex items-center justify-between">
+        <div className="px-1 flex flex-wrap gap-2 items-center justify-between">
           <div>
-            <h2 className="text-xs font-medium text-mid-gray uppercase tracking-wide">
+            <h2 className="text-base font-semibold text-text">
               {t("settings.history.title")}
             </h2>
           </div>

@@ -240,3 +240,111 @@ Als Issues erfasst unter https://github.com/MrP42/local-voice-ai/issues
 | `origin` | `git@github.com:MrP42/local-voice-ai.git` — **privat** |
 | `upstream` | `https://github.com/cjpais/Handy.git` — fremdes Fork-Original, **niemals dorthin pushen** |
 | Arbeitsbranch | `feat/m3-stabilize-paste-path` |
+
+## Native Apple P0/P1 – abgeschlossener Simulatorumfang, 05.09.2026
+
+Isolierter Branch `codex/apple-p0-p1`: native SwiftUI-Apps für iPhone und Watch,
+dauerhafte Audioübergabe, lokale CPU-STT und kurze lokale Modellantwort, System-TTS
+auf der Watch und Verlauf auf dem iPhone. Der Benutzer hat virtuelle Xcode-Geräte
+anstelle physischer Geräte beauftragt. Finaler Programmstand `aad2e0f`:
+31 Kerntests, je ein frischer nativer iPhone-/Watch-Bedienungstest sowie Simulator-Build
+bestanden; 100/100 lokale Sprachaufträge mit Hintergrund, Neustarts und
+Verbindungsunterbrechung vollständig beantwortet und quittiert (896,018 s).
+Lock, Wrist Down, benutzerseitiges App-Ende, Duplikate, Mikrofonverweigerung und
+expliziter Wiedergabestop sind mit ihren Simulatorgrenzen dokumentiert.
+Zwei Claude-Reviews abgeschlossen, bestätigte Befunde bearbeitet.
+
+P0/P1 als Machbarkeitsprototyp abgeschlossen. Vorläufige Latenzziele nicht erreicht,
+Akkuauswirkung unbekannt; keine physische Audio-/Funk-/Data-Protection-Abnahme.
+Bei inaktivem, gesperrtem oder beendetem iPhone bleibt die Aufnahme gespeichert;
+Verarbeitung wird nach Aktivierung fortgesetzt. Desktop-Bestand und lokale Änderungen
+im ursprünglichen Checkout erhalten; kein Push und keine Veröffentlichung.
+Details: [Simulatorbericht](apple-evidence/2026-09-05-simulator-report.md),
+[P2-Folgeplan](apple-evidence/P2-follow-up.md). Der anschließende P2-Stand ist unten separat dokumentiert.
+
+## Native Apple P2 – Simulatorabnahme abgeschlossen, 06.09.2026
+
+Programmstand `a9fbf65`: persistente Aufträge, begrenzte Retries/Abbruch, getrennte
+Aufnahme-/Transport-/Jobsteuerung, sichere Wiederherstellung und Modellverwaltung.
+Claude-Review nach ausdrücklicher Freigabe abgeschlossen, Befunde bewertet und
+korrigiert. 59 Kerntests, 14 Prozessabbrüche, vier iPhone-UI-Tests, ein Watch-UI-Test
+und gezielter letzter Setup-Retry bestanden. Beide finalen Apps installiert.
+
+Frische 20 Warm-/Kaltturns, 100/100 beantwortete Aufträge und Audit aller 200
+Originaldateien bestanden. Alle vereinbarten Simulator-Lifecyclefälle erneut geprüft.
+96 TTS-Starts im absichtlich unterbrochenen 100er-Lauf; keine Behauptung 100 vollständig
+abgespielter Antworten. Einzelturn median 20,718 s warm / 24,216 s kalt bis TTS-Start.
+Echtzeitziel verfehlt, Modell-Rechenfehler bekannt, echte Akkuauswirkung unbekannt.
+Hintergrund/Sperre/App-Ende verschieben Verarbeitung bis zur Aktivierung.
+
+Keine ausstehende Freigabe. Desktop unverändert, kein Push/Release.
+[P2-Bericht](apple-evidence/p2/README.md), [Lifecycle-Matrix](apple-evidence/p2/lifecycle-matrix.md),
+[Folgeprioritäten](apple-evidence/p2/next-priorities.md).
+
+## Native Apple UI – WAI und kompakte Ansichten, 06.09.2026
+
+Native Oberflächen überarbeitet: kleiner iPhone-Markentitel, kein großer Titel
+auf der Watch, kompakter Aufnahmebereich, fünf Vorschauen, durchsuchbarer Verlauf
+und separate Notizdetails. Farben gegen die vorhandenen WAI-Tokens abgeglichen.
+Fünf iPhone-UI-Tests und ein Watch-UI-Test auf der finalen Fassung bestanden.
+Normale Simulator-Schrift wiederhergestellt. Speicher-/Transport-/Provider-Code
+und Desktop unverändert. [UI-Nachweis](apple-evidence/ui-refresh/README.md).
+
+## Desktop-UX — 06.09.2026 (isolierter Apple-Worktree)
+
+Neue aufgabenorientierte Start-/Navigationsstruktur und kompakte WAI-Arbeitsflächen
+umgesetzt. Sechs Browser-Interaktionstests, TypeScript, ESLint und Frontend-Build
+bestanden. Native Audiofunktionen unverändert; Windows nur als gemockter UI-Pfad
+geprüft, kein nativer Windows-Build. Nachweise:
+[Desktop-UX](desktop-evidence/2026-09-06-workspace/README.md).
+
+
+## 2026-09-06: iPhone-Medienauswertung und Dark Mode
+
+Im isolierten Apple-Worktree: Audio-/Videoimport mit dauerhaftem Original, lokalem
+Whisper und fortsetzbarer Qwen-1.5B-Auswertung; kompakte Ergebnisansicht mit
+Transkriptwechsel und Kopieren/Teilen (TXT, HTML, SRT, JSON, Original). 70 Kerntests
+bestanden. Synthetisches 45-Sekunden-Video nach App-Beendigung bei Sekunde 30
+fortgesetzt, Original-Hash erhalten, keine doppelten Segmente. Stufenmessungen:
+Import 1,14 s, Audiospur 0,14 s, STT 11,89 s, Auswertung 39,21 s (Intel-Simulator,
+nur erfolgreich gespeicherte Arbeit).
+
+Hell/Dunkel ist verbindliches UI-Abnahmekriterium für Desktop und Mobile. WAI-
+Hinweistexte verwenden expliziten Kontrast statt zu blasser Systemhierarchie.
+Nachweise: `docs/apple-evidence/2026-09-06-meetings/`. Modellqualität bleibt
+prüfbedürftig: STT-Fehler und unvollständige Kategorien im tatsächlichen Lauf.
+Keine physische Akkumessung, keine beliebige Live-Aufnahme fremder Telefon-Apps,
+keine automatische Sprecherdiarisierung. Synchronisierung, entfernte Mikrofone
+und Aktivitätsrouting sind weiterhin offene Integrationsarbeit.
+
+### Apple-Update 06.09.2026: Geräte und Transparenz
+
+iPhone-Update installiert und gestartet: echte Modell-Downloads, Transkripte-Menü, formatierte Antworten und persistierte Modell-/Zeitangaben. 73 Core-Tests und zwei gezielte Dark-Mode-Bedienungstests erfolgreich. Watch-Entwicklermodus aktiv, Geräte-Build erfolgreich, Installation und Start nach vorübergehenden Verbindungsabbrüchen erfolgreich. Komplikationen sind Navigationszugriffe; Hintergrundsteuerung bleibt offen. Nachweis: `docs/apple-evidence/2026-09-06-transparency/README.md`.
+
+### Watch-Hintergrundverarbeitung 06.09.2026
+
+Vordergrundkopplung für kurze Sprachnotizen entfernt: UIKit-Laufzeitfenster, BGProcessingTask-Fallback, Start ohne UI, dauerhafte Antwortzustellung und wiederaufnehmbare Zeitlimits. Auf echten Geräten im 90-Sekunden-Hintergrundfenster bestätigt: lokale STT 0,57 s, Antwort 2,63 s, Watch-Empfang quittiert. 77 Core-Tests, Simulator-Hintergrundtest und Geräte-Hintergrundfenster bestanden. Sperrbildschirmtest ebenfalls bestätigt, mit etwa 85 Sekunden Zustellverzögerung und anschließend lokaler Verarbeitung. Natürliche Scheduler-Ausführung und Akku noch offen. Nachweis: `docs/apple-evidence/2026-09-06-background/README.md`.
+
+### Lokaler Gesprächsmodus, 06.09.2026
+
+Auf `codex/watch-conversation-background`: getrenntes automatisches Vorlesen und Freisprechen, persistenter Gesprächskontext mit bis zu sechs Wortwechseln, sicheres Stoppen/Pausieren. 84 Kerntests und vier Bedienungsläufe bestanden; Gedächtnis mit Apple Foundation Models auf echtem iPhone bestätigt. Geräuschqualität und Akku bei längeren Gesprächen bleiben zu messen. Nachweis: `docs/apple-evidence/2026-09-06-conversation/README.md`. Parallele Arbeit erfolgt in eigenem Worktree; Integrationsregeln: `docs/apple-evidence/2026-09-06-background/parallel-development.md`.
+
+### Originalwiedergabe und Watch-Lautstärke, 06.09.2026
+
+Eigene Sprachnotizen auf iPhone und Watch mit Play/Pause/Fortsetzen/Stopp; native lokale Watch-Medienlautstärke direkt in der App erreichbar. 84 Core-Tests und fünf gezielte iPhone-/Watch-Bedienungstests bestanden. Akustische Prüfung an echter Hardware noch offen. Nachweis: `docs/apple-evidence/2026-09-06-playback/README.md`.
+
+### Modelle und Stimmen, 06.09.2026
+
+Persistente Hintergrunddownloads mit kompaktem Symbolknopf, Fortschritt und Status direkt am Modell; lokale Bereitschaftsbenachrichtigung erst nach Integritätsprüfung. Echter iPhone-Download von Qwen 0.5B im Hintergrund bestätigt. Geräte-UI-Test beim Wiederöffnen durch Sperre blockiert. Stimmenauswahl mit Hörprobe auf iPhone und Watch; 84 Core-, fünf Integritäts- und fünf gezielte Simulator-Bedienungstests bestanden. iOS-Force-Quit erfordert erneutes Öffnen; Banner-Sichtprüfung und Energiebedarf noch offen. Nachweis: `docs/apple-evidence/2026-09-06-model-downloads/README.md`.
+
+### Gespräch nach Geräuschen, 06.09.2026
+
+Leere Transkriptionen beenden das Freisprechen nicht mehr. Nicht-KI-Systemergebnis mit dauerhafter Watch-Zustellung, Originalerhalt und automatischer Fortsetzung; Apple-Leerresultat korrekt als noSpeech eingeordnet. Drei Mikrofonempfindlichkeiten und automatische Umgebungspegelschwelle. 87 Core-Tests und zwei gezielte iPhone-UI-Tests bestanden. Reale akustische Abnahme bleibt offen. Nachweis: `docs/apple-evidence/2026-09-06-conversation-noise/README.md`.
+
+### Sprachnotizen löschen, 06.09.2026
+
+Bestätigtes lokales Löschen über Detailansicht und Verlauf-Wischaktion auf iPhone/Watch. Abbrechen erhält die Notiz. Leere Löschmarkierung verhindert Wiederauftauchen durch alte Transfers; unterbrochene Bereinigung wird fortgesetzt. 89 Core-Tests und vier Bedienungsläufe bestanden. Kopien auf anderen Geräten bleiben erhalten. Nachweis: `docs/apple-evidence/2026-09-06-delete-notes/README.md`.
+
+### Apple-Integration, 08.09.2026
+
+Native iPhone-/Watch-App zur Integration in den aktuellen Hauptbranch vorbereitet, aktuelle Desktop-Funktionen erhalten. 89 Apple-Kerntests, sechs Desktop-UI-Tests, TypeScript, Vite und ESLint erfolgreich; Apple-Release-Archiv und Simulatorbuild bestanden. Automatische Apple-Buildprüfung und Release-Anleitung ergänzt. Öffentliche TestFlight-/App-Store-Verteilung noch nicht eingerichtet. Nachweis: `docs/apple-evidence/2026-09-08-main-integration.md`.

@@ -1,0 +1,48 @@
+name: Apple validation
+on:
+  pull_request:
+    branches: [main]
+    paths: ['apps/apple/**', '.github/workflows/apple.yml']
+  push:
+    branches: [main]
+    paths: ['apps/apple/**', '.github/workflows/apple.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify toolchain
+        run: xcodebuild -version
+      - name: Test durable Apple core
+        run: swift test --package-path apps/apple/VoiceCore
+      - name: Install hash-pinned native libraries (no model weights)
+        run: python3 apps/apple/scripts/setup_native_engines.py
+      - name: Verify reproducible Xcode project
+        run: |
+          python3 apps/apple/scripts/generate_project.py
+          git diff --exit-code -- apps/apple/LocalVoice.xcodeproj
+      - name: Build iPhone and companion Watch for simulator
+        run: >-
+          xcodebuild -project apps/apple/LocalVoice.xcodeproj -scheme VoicePhone
+          -configuration Release -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath "$RUNNER_TEMP/apple-simulator" CODE_SIGNING_ALLOWED=NO build
+      - name: Validate device release archive (unsigned, not installable)
+        run: >-
+          xcodebuild -project apps/apple/LocalVoice.xcodeproj -scheme VoicePhone
+          -configuration Release -destination 'generic/platform=iOS'
+          -archivePath "$RUNNER_TEMP/LocalVoice.xcarchive" CODE_SIGNING_ALLOWED=NO archive
+      - name: Save validation archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-unsigned-archive-${{ github.sha }}
+          path: ${{ runner.temp }}/LocalVoice.xcarchive
+          retention-days: 7

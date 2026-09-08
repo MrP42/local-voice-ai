@@ -1,0 +1,34 @@
+{
+  "date": "2026-09-06",
+  "device": "iPhone 15 Pro Max",
+  "fixture": "Synthetic seeded prior turn and follow-up transcript, STT bypassed",
+  "previous_user": "Mein Hund heißt Milo.",
+  "previous_assistant": "Dein Hund heißt Milo.",
+  "current_user": "Wie heißt mein Hund?",
+  "actual_answer": "Dein Hund heißt Milo.",
+  "same_persisted_conversation": true,
+  "providers": [
+    {
+      "durationMS": 1939.2139911651611,
+      "operation": "Antwort",
+      "model": "Apple Foundation Models · Systemmodell",
+      "completedAt": 810392663.126782,
+      "isAI": true
+    },
+    {
+      "durationMS": 14.333963394165039,
+      "operation": "Sprachausgabe gestartet",
+      "model": "Apple AVSpeechSynthesizer · com.apple.voice.premium.de-DE.Anna",
+      "completedAt": 810392663.187297,
+      "isAI": false
+    }
+  ],
+  "timings": {
+    "generation_ms": 1939.2040967941284,
+    "tts_e2e_ms": 2198.22705078125,
+    "capture_saved_at_ms": 810392660991.146,
+    "tts_start_ms": 14.333009719848633
+  },
+  "result": "passed",
+  "note": "Read from the persisted question entry; a separate delayed Watch fixture overwrote the generic temporary debug report. Diagnostic launch hook removed from final build."
+}
