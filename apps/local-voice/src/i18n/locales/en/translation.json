@@ -434,7 +434,10 @@
       "example3": "[laughing] You can't be serious!"
     },
     "serverStartTitle": "Start the Fish Speech server?",
-    "serverStartBody": "The server loads the speech model into graphics memory — roughly 17 GB — and takes up to two minutes depending on your settings. While it runs, translation computes on the CPU. Stop it via the same icon, or it stops itself after the configured idle time."
+    "serverStartBody": "The server loads the speech model into graphics memory — roughly 17 GB — and takes up to two minutes depending on your settings. While it runs, translation computes on the CPU. Stop it via the same icon, or it stops itself after the configured idle time.",
+    "export": {
+      "untitled": "Read-aloud"
+    }
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
