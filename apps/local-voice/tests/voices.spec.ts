@@ -92,9 +92,18 @@ test.beforeEach(async ({ page }) => {
                   transcript: "Probesatz.",
                 }
               : null;
+          // Ein Arbeitsblatt mit einer erzeugten Aufnahme und einer Datei,
+          // die keine ist — nur die eine darf einen Abspielknopf bekommen.
+          if (cmd === "pages_list")
+            return [{ id: "p1", title: "Der Sturm" }];
+          if (cmd === "page_files")
+            return [
+              { name: "Der-Sturm_2026-09-08_1405.wav", size: 120, modified_ms: 0 },
+              { name: "notizen.txt", size: 12, modified_ms: 0 },
+            ];
+          if (cmd === "page_dir") return "C:/projects/p1";
           if (
-            cmd === "pages_list" ||
-            cmd === "page_files" ||
+            cmd === "tts_list_voices" ||
             cmd === "tts_list_voices" ||
             cmd === "llm_ps" ||
             cmd === "tts_reading_list"
@@ -151,4 +160,27 @@ test("a voice without a sample says what the click will cost", async ({
     row.getByRole("button", { name: "Hörprobe erzeugen" }),
   ).toBeVisible();
   await expect(row.getByText(/startet einmalig die Sprach-Engine/)).toBeVisible();
+});
+
+test("a generated recording can be played from the file list", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+
+  const audioRow = page
+    .locator("div", { hasText: /^Der-Sturm_2026-09-08_1405\.wav/ })
+    .last();
+  const listen = audioRow.getByRole("button", { name: "Anhören" });
+  await expect(listen).toBeVisible();
+
+  // Der Player entsteht erst auf Wunsch — sonst laege unter jeder Datei einer.
+  const filesArea = page.locator(".tts-workspace__files");
+  await expect(filesArea.locator("audio")).toHaveCount(0);
+  await listen.click();
+  await expect(filesArea.locator("audio")).toHaveCount(1);
+
+  // Eine Textdatei bekommt keinen Abspielknopf.
+  const textRow = page.locator("div", { hasText: /^notizen\.txt/ }).last();
+  await expect(textRow.getByRole("button", { name: "Anhören" })).toHaveCount(0);
 });

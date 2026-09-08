@@ -253,7 +253,8 @@
       "rename": "Rename",
       "delete": "Delete file",
       "deleteConfirmTitle": "Delete this file?",
-      "deleteConfirm": "“{{name}}” will be deleted permanently — not moved to the recycle bin."
+      "deleteConfirm": "“{{name}}” will be deleted permanently — not moved to the recycle bin.",
+      "listen": "Listen"
     },
     "translateAction": "Translate — writes the translation into the second tab, plays nothing",
     "summarizeHint": "Summarize — writes the summary into the third tab, plays nothing",

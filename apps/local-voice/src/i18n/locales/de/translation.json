@@ -253,7 +253,8 @@
       "rename": "Umbenennen",
       "delete": "Datei löschen",
       "deleteConfirmTitle": "Datei löschen?",
-      "deleteConfirm": "„{{name}}“ wird endgültig gelöscht — nicht in den Papierkorb."
+      "deleteConfirm": "„{{name}}“ wird endgültig gelöscht — nicht in den Papierkorb.",
+      "listen": "Anhören"
     },
     "translateAction": "Übersetzen — erzeugt die Übersetzung im zweiten Reiter, spielt nichts ab",
     "summarizeHint": "Zusammenfassen — erzeugt die Zusammenfassung im dritten Reiter, spielt nichts ab",
