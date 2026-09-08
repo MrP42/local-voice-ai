@@ -228,7 +228,7 @@ test("read-aloud workspace preserves editor width in a narrow window", async ({
   await expect(
     page.getByText("Stimme & Wiedergabe", { exact: true }),
   ).toBeVisible();
-  const options = page.getByText("Stimmen verwalten & weitere Optionen", {
+  const options = page.getByText("Weitere Einstellungen zum Vorlesen", {
     exact: true,
   });
   await options.scrollIntoViewIfNeeded();

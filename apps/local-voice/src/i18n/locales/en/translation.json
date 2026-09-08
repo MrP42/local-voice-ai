@@ -1328,6 +1328,7 @@
     "skip": "Skip to content",
     "recordings": "Recordings",
     "voiceStyle": "Expression & speaking style",
-    "voiceOptions": "Manage voices & more options"
+    "voiceOptions": "More read-aloud settings",
+    "voices": "Listen to & manage voices"
   }
 }
