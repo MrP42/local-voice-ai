@@ -164,7 +164,9 @@
       "deleteConfirm": "„{{voice}}\" wird mitsamt ihrer Referenzaufnahme endgültig gelöscht. Um sie zurückzubekommen, muss sie jemand neu einsprechen.",
       "cancelDelete": "Behalten",
       "transcribing": "Wird transkribiert …",
-      "transcriptManualPlaceholder": "Exaktes Transkript der Aufnahme (automatische Transkription ist ausgeschaltet — Text hier eintragen)"
+      "transcriptManualPlaceholder": "Exaktes Transkript der Aufnahme (automatische Transkription ist ausgeschaltet — Text hier eintragen)",
+      "previewCreate": "Hörprobe erzeugen",
+      "previewNeedsEngine": "Noch keine Hörprobe — Erzeugen startet einmalig die Sprach-Engine."
     },
     "voiceChanger": {
       "title": "Stimmwechsler",

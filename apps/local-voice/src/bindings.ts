@@ -1559,6 +1559,9 @@ async ttsVoiceDemo(voiceId: string) : Promise<Result<VoiceSample, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async ttsVoiceDemoCached(voiceId: string) : Promise<VoiceSample | null> {
+    return await TAURI_INVOKE("tts_voice_demo_cached", { voiceId });
+},
 async ttsRecordReferenceStart() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_record_reference_start") };

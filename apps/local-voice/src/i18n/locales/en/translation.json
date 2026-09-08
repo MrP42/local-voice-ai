@@ -164,7 +164,9 @@
       "deleteConfirm": "\"{{voice}}\" and its reference recording are deleted for good. To get this voice back, someone has to record it again.",
       "cancelDelete": "Keep",
       "transcribing": "Transcribing …",
-      "transcriptManualPlaceholder": "Exact transcript of the recording (automatic transcription is off — enter the text here)"
+      "transcriptManualPlaceholder": "Exact transcript of the recording (automatic transcription is off — enter the text here)",
+      "previewCreate": "Create sample",
+      "previewNeedsEngine": "No sample yet — creating one starts the speech engine once."
     },
     "voiceChanger": {
       "title": "Voice Changer",

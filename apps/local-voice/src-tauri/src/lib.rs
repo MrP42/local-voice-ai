@@ -1443,6 +1443,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_server_status,
             commands::tts::tts_list_voices,
             commands::tts::tts_voice_demo,
+            commands::tts::tts_voice_demo_cached,
             commands::tts::tts_record_reference_start,
             commands::tts::tts_record_reference_stop,
             commands::tts::tts_transcribe_reference,
