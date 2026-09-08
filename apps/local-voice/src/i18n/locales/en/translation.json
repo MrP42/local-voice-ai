@@ -254,7 +254,9 @@
       "delete": "Delete file",
       "deleteConfirmTitle": "Delete this file?",
       "deleteConfirm": "“{{name}}” will be deleted permanently — not moved to the recycle bin.",
-      "listen": "Listen"
+      "listen": "Listen",
+      "useText": "Use this text",
+      "defaultVoice": "Default voice"
     },
     "translateAction": "Translate — writes the translation into the second tab, plays nothing",
     "summarizeHint": "Summarize — writes the summary into the third tab, plays nothing",

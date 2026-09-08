@@ -7,6 +7,7 @@
 
 pub mod builder;
 pub mod compile_cache;
+pub mod notes;
 pub mod dsp;
 pub mod encode;
 pub mod engine;
@@ -3032,6 +3033,18 @@ impl TtsManager {
                 .map_err(|e| format!("could not write {out_path}: {e}"))?;
         }
         *self.core.last_used.lock().unwrap() = Instant::now();
+        // Herkunft neben die Aufnahme legen: aus welchem Text sie entstand
+        // und wer sie gesprochen hat. Ohne das ist eine spaetere Korrektur
+        // eine Suche im Gedaechtnis.
+        notes::write(
+            std::path::Path::new(out_path),
+            &notes::AudioNote {
+                text: raw.trim().to_string(),
+                voice: self.core.voice.lock().unwrap().clone(),
+                seed,
+                created_ms: notes::now_ms(),
+            },
+        );
         self.emit_export_progress(total, total, false);
         Ok((written, out_path.to_string()))
     }

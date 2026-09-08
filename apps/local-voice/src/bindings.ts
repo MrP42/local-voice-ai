@@ -1559,6 +1559,14 @@ async ttsVoiceDemo(voiceId: string) : Promise<Result<VoiceSample, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async pageAudioNote(id: string, name: string) : Promise<Result<AudioNote | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("page_audio_note", { id, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsVoiceDemoCached(voiceId: string) : Promise<VoiceSample | null> {
     return await TAURI_INVOKE("tts_voice_demo_cached", { voiceId });
 },
@@ -2423,6 +2431,7 @@ export type OverlayPosition = "top" | "bottom"
  * streaming mode (that is driven purely by model capability).
  */
 export type OverlayStyle = "none" | "minimal" | "live"
+export type AudioNote = { text: string; voice: string | null; seed: number; created_ms: number }
 export type PageFile = { name: string; size: number; modified_ms: number }
 export type PageInfo = { id: string; title: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }

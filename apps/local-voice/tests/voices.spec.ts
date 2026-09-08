@@ -102,6 +102,16 @@ test.beforeEach(async ({ page }) => {
               { name: "notizen.txt", size: 12, modified_ms: 0 },
             ];
           if (cmd === "page_dir") return "C:/projects/p1";
+          // Die Herkunft der Aufnahme: Text, Stimme, Zeitpunkt.
+          if (cmd === "page_audio_note")
+            return args?.name === "Der-Sturm_2026-09-08_1405.wav"
+              ? {
+                  text: "Es war eine dunkle Nacht.",
+                  voice: "erzaehlerin",
+                  seed: 42,
+                  created_ms: 1757333100000,
+                }
+              : null;
           if (
             cmd === "tts_list_voices" ||
             cmd === "tts_list_voices" ||
@@ -183,4 +193,24 @@ test("a generated recording can be played from the file list", async ({
   // Eine Textdatei bekommt keinen Abspielknopf.
   const textRow = page.locator("div", { hasText: /^notizen\.txt/ }).last();
   await expect(textRow.getByRole("button", { name: "Anhören" })).toHaveCount(0);
+});
+
+test("a recording carries its origin and hands the text back to the editor", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+
+  const filesArea = page.locator(".tts-workspace__files");
+  await filesArea.getByRole("button", { name: "Anhören" }).click();
+
+  // Wer sie gesprochen hat und woraus sie entstand.
+  await expect(filesArea.getByText("Es war eine dunkle Nacht.")).toBeVisible();
+  await expect(filesArea.getByText(/erzaehlerin/)).toBeVisible();
+
+  // Und der Text kommt zurueck in den Editor — Grundlage jeder Korrektur.
+  const editor = page.getByPlaceholder("Text zum Vorlesen eingeben oder einfügen…");
+  await expect(editor).toHaveValue("");
+  await filesArea.getByRole("button", { name: "Text übernehmen" }).click();
+  await expect(editor).toHaveValue("Es war eine dunkle Nacht.");
 });

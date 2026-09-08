@@ -1995,6 +1995,14 @@ export const TtsSettings = () => {
         pageId={activePage}
         collapsed={filesCollapsed === "1"}
         onToggle={() => setFilesCollapsed(filesCollapsed === "1" ? "0" : "1")}
+        /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
+           falsche Zeile aendern und erneut erzeugen. Die unveraenderten
+           Saetze kommen dann aus dem Satz-Cache, nur die geaenderten gehen
+           durch die Engine — ein Hoerspiel muss dafuer nicht neu entstehen. */
+        onUseText={(value) => {
+          setTab("original");
+          setText(value);
+        }}
       />
     </div>
   );

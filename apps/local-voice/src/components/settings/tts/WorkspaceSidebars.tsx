@@ -2,7 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { commands, type PageFile, type PageInfo } from "@/bindings";
+import {
+  commands,
+  type AudioNote,
+  type PageFile,
+  type PageInfo,
+} from "@/bindings";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
@@ -266,7 +271,9 @@ export const FilesSidebar: React.FC<{
   pageId: string;
   collapsed: boolean;
   onToggle: () => void;
-}> = ({ pageId, collapsed, onToggle }) => {
+  /** Holt den Text einer erzeugten Aufnahme zurueck in den Editor. */
+  onUseText?: (text: string) => void;
+}> = ({ pageId, collapsed, onToggle, onUseText }) => {
   const { t } = useTranslation();
   const [files, setFiles] = useState<PageFile[]>([]);
   const [editingName, setEditingName] = useState<string | null>(null);
@@ -278,6 +285,10 @@ export const FilesSidebar: React.FC<{
   // um zu hoeren, was man erzeugt hat.
   const [playing, setPlaying] = useState<string | null>(null);
   const [dir, setDir] = useState<string | null>(null);
+  // Herkunft der aufgeklappten Aufnahme: Text, Stimme, Zeitpunkt. Erst beim
+  // Aufklappen geholt — fuer eine Liste mit dreissig Aufnahmen waeren
+  // dreissig Dateizugriffe beim Oeffnen der Leiste zu viel.
+  const [note, setNote] = useState<AudioNote | null>(null);
 
   useEffect(() => {
     if (!pageId) return;
@@ -452,9 +463,16 @@ export const FilesSidebar: React.FC<{
                     aria-pressed={playing === file.name}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setPlaying((current) =>
-                        current === file.name ? null : file.name,
-                      );
+                      const next = playing === file.name ? null : file.name;
+                      setPlaying(next);
+                      setNote(null);
+                      if (next) {
+                        void commands
+                          .pageAudioNote(pageId, next)
+                          .then((result) => {
+                            if (result.status === "ok") setNote(result.data);
+                          });
+                      }
                     }}
                   >
                     <Play width={12} height={12} />
@@ -502,6 +520,31 @@ export const FilesSidebar: React.FC<{
               className="w-full mt-1 mb-2"
               src={convertFileSrc(`${dir}\\${file.name}`, "asset")}
             />
+          )}
+          {playing === file.name && note && (
+            <div className="mb-2 space-y-1">
+              <p className="text-[10px] text-text/45">
+                {note.voice ?? t("tts.files.defaultVoice")} ·{" "}
+                {new Date(note.created_ms).toLocaleString()}
+              </p>
+              {/* Der Textanfang genuegt zum Wiedererkennen; der ganze
+                  Text gehoert in den Editor, nicht in diese Spalte. */}
+              <p className="text-[11px] text-text/60 line-clamp-3">
+                {note.text}
+              </p>
+              {onUseText && (
+                <button
+                  type="button"
+                  className="text-[11px] underline text-text/70 hover:text-text"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUseText(note.text);
+                  }}
+                >
+                  {t("tts.files.useText")}
+                </button>
+              )}
+            </div>
           )}
         </div>
       ))}
