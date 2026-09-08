@@ -238,6 +238,25 @@ pub fn page_dir(app: AppHandle, id: String) -> Result<String, String> {
 /// Die Dateien einer Seite, jüngste zuerst. `state.json` gehört der App und
 /// erscheint nicht — für den Nutzer ist sie kein Inhalt, und löschen soll er
 /// sie erst recht nicht.
+/// Herkunft einer erzeugten Aufnahme: aus welchem Text sie entstand und wer
+/// sie gesprochen hat. `None`, wenn die Datei vor dieser Fassung entstand
+/// oder von Hand hinzugefuegt wurde.
+#[tauri::command]
+#[specta::specta]
+pub fn page_audio_note(
+    app: AppHandle,
+    id: String,
+    name: String,
+) -> Result<Option<crate::managers::tts::notes::AudioNote>, String> {
+    let dir = page_path(&app, &id)?;
+    // Nur Dateien im Ordner dieses Arbeitsblatts, kein Weg nach draussen.
+    let file = dir.join(&name);
+    if file.parent() != Some(dir.as_path()) {
+        return Err("Datei liegt nicht in diesem Arbeitsblatt".to_string());
+    }
+    Ok(crate::managers::tts::notes::read(&file))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn page_files(app: AppHandle, id: String) -> Result<Vec<PageFile>, String> {
@@ -250,7 +269,10 @@ pub fn page_files(app: AppHandle, id: String) -> Result<Vec<PageFile>, String> {
         .filter(|e| e.path().is_file())
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name == "state.json" {
+            // `state.json` ist der Zustand des Arbeitsblatts, ein Beileger
+            // gehoert zu der Aufnahme daneben — beides ist keine Datei, die
+            // jemand in seiner Ablage sehen will.
+            if name == "state.json" || crate::managers::tts::notes::is_note(&name) {
                 return None;
             }
             let meta = e.metadata().ok()?;

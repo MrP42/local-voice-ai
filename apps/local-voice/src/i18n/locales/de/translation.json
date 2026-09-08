@@ -254,7 +254,9 @@
       "delete": "Datei löschen",
       "deleteConfirmTitle": "Datei löschen?",
       "deleteConfirm": "„{{name}}“ wird endgültig gelöscht — nicht in den Papierkorb.",
-      "listen": "Anhören"
+      "listen": "Anhören",
+      "useText": "Text übernehmen",
+      "defaultVoice": "Standardstimme"
     },
     "translateAction": "Übersetzen — erzeugt die Übersetzung im zweiten Reiter, spielt nichts ab",
     "summarizeHint": "Zusammenfassen — erzeugt die Zusammenfassung im dritten Reiter, spielt nichts ab",

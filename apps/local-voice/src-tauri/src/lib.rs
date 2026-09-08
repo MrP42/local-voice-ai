@@ -1432,6 +1432,7 @@ pub fn run(cli_args: CliArgs) {
             commands::pages::page_state_save,
             commands::pages::page_dir,
             commands::pages::page_files,
+            commands::pages::page_audio_note,
             commands::pages::page_file_delete,
             commands::pages::page_file_rename,
             commands::pages::page_file_add,
