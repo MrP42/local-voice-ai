@@ -1,5 +1,6 @@
 use super::injection_state::{ContextKey, PreparedSnapshot, ReplacementPlan, RunState};
 use crate::input::{self, EnigoState, ReplacementContext};
+use crate::settings::{get_settings, PasteMethod};
 use enigo::{Direction, Key, Keyboard};
 use log::{debug, warn};
 use std::sync::{mpsc, Arc};
@@ -214,9 +215,17 @@ fn run_worker(app: AppHandle, rx: mpsc::Receiver<InjectionCommand>) {
 }
 
 fn paste_fragment(app: &AppHandle, fragment: &str) -> bool {
-    if let Err(error) = app.clipboard().write_text(fragment) {
-        warn!("stream injection: clipboard write failed: {error}");
-        return false;
+    // Stream injection fires every few hundred milliseconds while the user
+    // keeps using the machine, so it must honour the configured paste method
+    // instead of forcing Ctrl+V on everyone: a held Ctrl is held for the whole
+    // desktop, and the user's scrolling then reads as zoom.
+    let direct = get_settings(app).paste_method == PasteMethod::Direct;
+
+    if !direct {
+        if let Err(error) = app.clipboard().write_text(fragment) {
+            warn!("stream injection: clipboard write failed: {error}");
+            return false;
+        }
     }
     let Some(state) = app.try_state::<EnigoState>() else {
         warn!("stream injection: Enigo not initialised");
@@ -229,7 +238,12 @@ fn paste_fragment(app: &AppHandle, fragment: &str) -> bool {
             poisoned.into_inner()
         }
     };
-    if let Err(error) = input::send_paste_ctrl_v(&mut enigo) {
+    let injected = if direct {
+        input::paste_text_direct(&mut enigo, fragment)
+    } else {
+        input::send_paste_ctrl_v(&mut enigo)
+    };
+    if let Err(error) = injected {
         warn!("stream injection failed: {error}");
         return false;
     }
