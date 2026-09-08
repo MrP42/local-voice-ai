@@ -392,8 +392,40 @@ textarea:focus::-webkit-resizer {
   overflow-y: auto;
   gap: 20px;
 }
-.workspace-nav__brand {
-  padding: 0 10px;
+.workspace-nav__head {
+  display: flex;
+  justify-content: flex-end;
+  padding-bottom: 4px;
+}
+.workspace-nav__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  cursor: pointer;
+}
+.workspace-nav__toggle:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 12%, transparent);
+  color: var(--color-text);
+}
+/* Eingeklappt bleiben die Symbole, die Namen gehen. Die Breite fasst ein
+   44-Pixel-Ziel plus die Innenabstaende der Leiste — enger waere schwerer
+   zu treffen, breiter braechte keinen Platzgewinn. */
+.workspace-nav[data-collapsed="true"] {
+  width: 64px;
+}
+.workspace-nav[data-collapsed="true"] .workspace-nav__head {
+  justify-content: center;
+}
+.workspace-nav[data-collapsed="true"] .workspace-nav__item {
+  justify-content: center;
+  gap: 0;
+}
+.workspace-nav[data-collapsed="true"] .workspace-nav__item span {
+  display: none;
 }
 .workspace-nav__primary,
 .workspace-nav__utilities {
@@ -518,8 +550,19 @@ textarea:focus::-webkit-resizer {
       color-mix(in srgb, var(--color-mid-gray) 20%, transparent);
     overflow: visible;
   }
-  .workspace-nav__brand {
+  .workspace-nav__head {
     display: none;
+  }
+  /* Unten als Tab-Leiste gibt es nichts einzuklappen — die Namen bleiben. */
+  .workspace-nav[data-collapsed="true"] {
+    width: 100%;
+  }
+  .workspace-nav[data-collapsed="true"] .workspace-nav__item {
+    justify-content: center;
+    gap: 2px;
+  }
+  .workspace-nav[data-collapsed="true"] .workspace-nav__item span {
+    display: block;
   }
   .workspace-nav__primary {
     flex: 4;

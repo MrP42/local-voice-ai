@@ -218,7 +218,14 @@
       "contextMenuDescription": "Adds \"Read with Local Voice AI\" to the right-click menu of TXT/MD/PDF/DOCX files. Note: Windows offers no system-wide menu for selected text — use the clipboard hotkey for that.",
       "rollSeed": "Roll",
       "autoTranscribe": "Transcribe reference automatically",
-      "autoTranscribeDescription": "When you record or pick a reference, the app produces the transcript itself and fills it in; it stays editable. Switched off, the field stays empty and the text has to be typed — without a matching text Fish Speech learns the voice from the wrong words."
+      "autoTranscribeDescription": "When you record or pick a reference, the app produces the transcript itself and fills it in; it stays editable. Switched off, the field stays empty and the text has to be typed — without a matching text Fish Speech learns the voice from the wrong words.",
+      "engine": "Read-aloud engine",
+      "engineDescription": "Fish Speech sounds more natural and uses the graphics card. Piper runs on the CPU, starts instantly and needs no server — at the cost of a plainer voice.",
+      "engineFish": "Fish Speech (graphics card)",
+      "enginePiper": "Piper (CPU, ready at once)",
+      "piperVoice": "Piper voice",
+      "piperVoiceDescription": "Which of the downloaded Piper voices reads aloud.",
+      "piperVoiceMissing": "No Piper voice downloaded yet — get one under Models."
     },
     "saveAudio": "Save as audio…",
     "savingAudio": "Generating…",
@@ -1049,9 +1056,12 @@
     },
     "app": {
       "tabs": {
-        "app": "App",
+        "app": "General",
         "dictation": "Dictation",
-        "sound": "Sound"
+        "sound": "Microphone & sounds",
+        "readAloud": "Read aloud",
+        "postProcessing": "AI text polish",
+        "about": "About"
       },
       "groups": {
         "shortcuts": "Shortcuts",
@@ -1335,6 +1345,8 @@
     "recordings": "Recordings",
     "voiceStyle": "Expression & speaking style",
     "voiceOptions": "More read-aloud settings",
-    "voices": "Listen to & manage voices"
+    "voices": "Listen to & manage voices",
+    "navCollapse": "Collapse menu",
+    "navExpand": "Expand menu"
   }
 }
