@@ -152,8 +152,6 @@ Das Entwicklungsmodell wird nicht automatisch das Laufzeitmodell der App. Für r
 ## 12. Noch zu ermittelnde Fakten
 
 Die Planung ist mit den bestätigten Geräten und macOS 15.7.9 vollständig als Vorschlag nutzbar. Vor Apple-Implementierung sind die installierten iOS-/watchOS-Versionen, der genaue Intel-Mac, Signing-Zugang und der Zugriff des ausführenden Agenten auf den Mac zu ermitteln. Vor optionalem Cloudbetrieb ist die Nutzerpräferenz für Datenübertragung einzuholen; Standard bleibt ohne Cloud. Ganztägiges Watch-Zuhören und latenzarme Verarbeitung bei jedem iOS-Lifecycle-Zustand sind ausdrücklich nicht verifiziert.
-<<<<<<< HEAD
-=======
 
 ## Umsetzungsstand 05.09.2026 – vereinbarter Simulatorumfang abgeschlossen
 
@@ -178,4 +176,3 @@ P2 ist auf `codex/apple-p0-p1` im ausdrücklich vereinbarten Simulatorumfang
 abgeschlossen. Programm `a9fbf65`, Review-Korrekturen und frische Abnahme siehe
 [Abschlussbericht](../../apple-evidence/p2/README.md). Echtzeit, Modellqualität und
 physische Akkuauswirkung behalten die dort dokumentierten Grenzen.
->>>>>>> codex/watch-conversation-background
