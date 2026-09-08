@@ -89,6 +89,7 @@ export const AppSettings: React.FC = () => {
           the content down by a whole row for no gain. */}
       <div
         role="tablist"
+        aria-label={t("sidebar.settings")}
         className="flex gap-1 border-b border-mid-gray/20 overflow-x-auto"
       >
         {available.map((entry) => (
@@ -96,9 +97,33 @@ export const AppSettings: React.FC = () => {
             key={entry.id}
             type="button"
             role="tab"
+            id={`settings-tab-${entry.id}`}
+            aria-controls="settings-panel"
+            tabIndex={entry.id === active.id ? 0 : -1}
+            onKeyDown={(event) => {
+              const keys = ["ArrowRight", "ArrowLeft", "Home", "End"];
+              if (!keys.includes(event.key)) return;
+              event.preventDefault();
+              const index = available.findIndex((item) => item.id === entry.id);
+              const rtl =
+                event.currentTarget.closest("[dir]")?.getAttribute("dir") ===
+                "rtl";
+              const step =
+                (event.key === "ArrowRight" ? 1 : -1) * (rtl ? -1 : 1);
+              const next =
+                event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? available.length - 1
+                    : (index + step + available.length) % available.length;
+              setTab(available[next].id);
+              document
+                .getElementById(`settings-tab-${available[next].id}`)
+                ?.focus();
+            }}
             aria-selected={entry.id === active.id}
             onClick={() => setTab(entry.id)}
-            className={`px-3 py-1.5 text-sm font-medium border-b-2 cursor-pointer whitespace-nowrap transition-colors ${
+            className={`min-h-11 px-3 py-2 text-sm font-medium border-b-2 cursor-pointer whitespace-nowrap transition-colors ${
               entry.id === active.id
                 ? "border-logo-primary text-text"
                 : "border-transparent text-text/60 hover:text-text"
@@ -108,7 +133,13 @@ export const AppSettings: React.FC = () => {
           </button>
         ))}
       </div>
-      <ActiveComponent />
+      <div
+        role="tabpanel"
+        id="settings-panel"
+        aria-labelledby={`settings-tab-${active.id}`}
+      >
+        <ActiveComponent />
+      </div>
     </div>
   );
 };

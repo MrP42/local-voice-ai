@@ -1,0 +1,15 @@
+{
+  "sessionId": "C54BBF16-899A-44FD-B20E-E4B70415CAD4",
+  "watchStateWhileLocked": "accepted",
+  "phoneStateWhileLocked": "saved",
+  "replyWhileLocked": false,
+  "watchDigest": "a81c3e1275648e3c0b0ef6b6d335a1b15031121640c4c294246a908cd45bee23",
+  "observedSeconds": 15.519223301,
+  "lockEvidence": "Simulator Sleep/Wake XCTest passed; lock screen screenshot visually checked",
+  "passed": true,
+  "afterUnlock": "answered and durably acknowledged on both sides",
+  "phoneTimings": {
+    "generation_ms": 3170.6050634384155,
+    "stt_ms": 5307.134985923767
+  }
+}

@@ -11,6 +11,7 @@ import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import Footer from "./components/footer";
+import { WorkspaceHome } from "./components/workspace/WorkspaceHome";
 import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import {
   Sidebar,
@@ -41,13 +42,8 @@ function App() {
   // Track if this is a returning user who just needs to grant permissions
   // (vs a new user who needs full onboarding including model selection)
   const [isReturningUser, setIsReturningUser] = useState(false);
-  // Which page you were on survives a restart — the app is opened dozens of
-  // times a day and landing on "Allgemein" every time is a tax. `isSidebarSection`
-  // guards against a stored id that a later version renamed away.
   const [currentSection, setCurrentSection] =
-    // Settings opens on its "Allgemein" tab, which is where the app landed
-    // before General became a tab there.
-    usePersistentState<SidebarSection>("section", "settings", isSidebarSection);
+    usePersistentState<SidebarSection>("section", "home", isSidebarSection);
   const { settings, updateSetting } = useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
@@ -327,14 +323,18 @@ function App() {
       >
         <WhatsNewGate />
         {/* Main content area that takes remaining space */}
-        <div className="flex-1 flex overflow-hidden">
+        <div className="workspace-shell flex-1 flex overflow-hidden">
           <Sidebar
             activeSection={currentSection}
             onSectionChange={setCurrentSection}
           />
           {/* Scrollable content area */}
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-            <div className="flex-1 overflow-y-auto">
+            <main
+              id="workspace-content"
+              className="flex-1 overflow-y-auto"
+              aria-label={t(SECTIONS_CONFIG[currentSection].labelKey)}
+            >
               {/* Fluid: the content uses whatever width the window offers, up
                   to a readable ceiling, and never forces the page to scroll
                   sideways (`min-w-0` on the flex child above does the same for
@@ -353,13 +353,16 @@ function App() {
                 }`}
               >
                 <AccessibilityPermissions />
-                {renderSettingsContent(currentSection)}
+                {currentSection === "home" ? (
+                  <WorkspaceHome onNavigate={setCurrentSection} />
+                ) : (
+                  renderSettingsContent(currentSection)
+                )}
               </div>
-            </div>
+            </main>
+            <Footer />
           </div>
         </div>
-        {/* Fixed footer at bottom */}
-        <Footer />
       </div>
     );
   }

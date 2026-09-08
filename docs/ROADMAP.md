@@ -148,3 +148,42 @@ sichtbar und tragen jede Demo; E2/E3 bauen auf stabilem Fundament.
    Windows-Update von 0.12.x prüfen.
 2. Entscheidung Apple-Developer-Account (blockiert E1.2).
 3. `theme.css` in den Token-Drift-Check aufnehmen (E5.1, 30 Minuten, sofort möglich).
+
+
+## Apple Mobile/Watch – P0/P1-Ergebnis 05.09.2026
+
+Der native iPhone-/Watch-Machbarkeitsprototyp ist im vom Benutzer angeforderten
+Simulatorumfang abgeschlossen, isoliert in `codex/apple-p0-p1`. Der bestehende
+Desktop-Plan bleibt unverändert. P2 beginnt mit Qualität, Laufzeit und sicherer
+Job-/Speicherwartung; physische Abnahme wird gesondert beauftragt.
+[Messwerte und Lifecycle-Grenzen](apple-evidence/2026-09-05-simulator-report.md),
+[aktualisierter P2-Plan](apple-evidence/P2-follow-up.md).
+
+## Apple Mobile/Watch – P2 abgeschlossen im Simulatorumfang, 06.09.2026
+
+Persistente Jobs, Speicherwiederherstellung, Modellverwaltung und überprüfbare
+Sprach-/Lifecycle-Proben sind implementiert und nach Claude-Review-Korrekturen
+abgenommen. Messwerte und die verbleibenden Qualitäts-/Hardwaregrenzen stehen im [P2-Bericht](apple-evidence/p2/README.md).
+Die [Folgeprioritäten](apple-evidence/p2/next-priorities.md) behandeln Antwortqualität,
+Zielgerät-Latenz und gesonderte Hardware-/Energieabnahme. Sie autorisieren weder
+weitere Produktfunktionen noch eine Veröffentlichung.
+
+### Apple: Hintergrundverarbeitung, Nachtrag 06.09.2026
+
+Kurze Watch-Sprachnotizen werden jetzt auch ohne sichtbare iPhone-App verarbeitet (auf echter Hardware nachgewiesen). Auch Verarbeitung bei gesperrtem iPhone bestätigt; Zustellung dabei verzögert. Weiter offen: natürlich ausgelöste BGProcessingTask-Läufe, Akku/Langzeitmessung und interaktive Watch-Komplikationen. Force-Quit bleibt eine iOS-Ausführungsgrenze; bestätigte Aufnahmen bleiben erhalten. Siehe `docs/apple-evidence/2026-09-06-background/README.md`.
+
+### Lokaler Gesprächsmodus, 06.09.2026
+
+Auf `codex/watch-conversation-background`: getrenntes automatisches Vorlesen und Freisprechen, persistenter Gesprächskontext mit bis zu sechs Wortwechseln, sicheres Stoppen/Pausieren. 84 Kerntests und vier Bedienungsläufe bestanden; Gedächtnis mit Apple Foundation Models auf echtem iPhone bestätigt. Geräuschqualität und Akku bei längeren Gesprächen bleiben zu messen. Nachweis: `docs/apple-evidence/2026-09-06-conversation/README.md`. Parallele Arbeit erfolgt in eigenem Worktree; Integrationsregeln: `docs/apple-evidence/2026-09-06-background/parallel-development.md`.
+
+### Modelle und Stimmen, 06.09.2026
+
+Persistente Hintergrunddownloads mit kompaktem Symbolknopf, Fortschritt und Status direkt am Modell; lokale Bereitschaftsbenachrichtigung erst nach Integritätsprüfung. Echter iPhone-Download von Qwen 0.5B im Hintergrund bestätigt. Geräte-UI-Test beim Wiederöffnen durch Sperre blockiert. Stimmenauswahl mit Hörprobe auf iPhone und Watch; 84 Core-, fünf Integritäts- und fünf gezielte Simulator-Bedienungstests bestanden. iOS-Force-Quit erfordert erneutes Öffnen; Banner-Sichtprüfung und Energiebedarf noch offen. Nachweis: `docs/apple-evidence/2026-09-06-model-downloads/README.md`.
+
+### Gespräch nach Geräuschen, 06.09.2026
+
+Leere Transkriptionen beenden das Freisprechen nicht mehr. Nicht-KI-Systemergebnis mit dauerhafter Watch-Zustellung, Originalerhalt und automatischer Fortsetzung; Apple-Leerresultat korrekt als noSpeech eingeordnet. Drei Mikrofonempfindlichkeiten und automatische Umgebungspegelschwelle. 87 Core-Tests und zwei gezielte iPhone-UI-Tests bestanden. Reale akustische Abnahme bleibt offen. Nachweis: `docs/apple-evidence/2026-09-06-conversation-noise/README.md`.
+
+### Sprachnotizen löschen, 06.09.2026
+
+Bestätigtes lokales Löschen über Detailansicht und Verlauf-Wischaktion auf iPhone/Watch. Abbrechen erhält die Notiz. Leere Löschmarkierung verhindert Wiederauftauchen durch alte Transfers; unterbrochene Bereinigung wird fortgesetzt. 89 Core-Tests und vier Bedienungsläufe bestanden. Kopien auf anderen Geräten bleiben erhalten. Nachweis: `docs/apple-evidence/2026-09-06-delete-notes/README.md`.

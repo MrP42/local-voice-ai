@@ -1,0 +1,64 @@
+Test Suite 'Selected tests' started at 2026-09-06 15:07:31.804.
+Test Suite 'VoicePhoneUITests.xctest' started at 2026-09-06 15:07:31.805.
+Test Suite 'VoiceUITests' started at 2026-09-06 15:07:31.806.
+Test Case '-[VoicePhoneUITests.VoiceUITests testConversationRearmsAfterReplyAndPausesWhenLeavingApp]' started.
+    t =     0.00s Start Test at 2026-09-06 15:07:31.807
+    t =     0.08s Set Up
+    t =     0.08s Open de.localvoice.prototype
+    t =     0.08s     Launch de.localvoice.prototype
+    t =     3.15s         Setting up automation session
+    t =     4.49s         Wait for de.localvoice.prototype to idle
+    t =     6.51s Tap "Gespräch" Button
+    t =     6.51s     Wait for de.localvoice.prototype to idle
+    t =     6.52s     Find the "Gespräch" Button
+    t =     6.67s     Check for interrupting elements affecting "Gespräch" Button
+    t =     6.75s     Synthesize event
+    t =     7.06s     Wait for de.localvoice.prototype to idle
+    t =     7.07s Find the "handsFreeEnabled" Switch
+    t =     7.15s Find the "autoPlayReplies" Switch
+    t =     7.23s Tap "handsFreeEnabled" Switch
+    t =     7.23s     Wait for de.localvoice.prototype to idle
+    t =     7.24s     Find the "handsFreeEnabled" Switch
+    t =     7.31s     Check for interrupting elements affecting "handsFreeEnabled" Switch
+    t =     7.39s     Synthesize event
+    t =     7.69s     Wait for de.localvoice.prototype to idle
+    t =     9.02s Tap "record" Button
+    t =     9.02s     Wait for de.localvoice.prototype to idle
+    t =     9.03s     Find the "record" Button
+    t =     9.12s     Check for interrupting elements affecting "record" Button
+    t =     9.19s     Synthesize event
+    t =     9.50s     Wait for de.localvoice.prototype to idle
+    t =     9.68s Waiting 15.0s for "Testantwort." StaticText to exist
+    t =    10.69s     Checking `Expect predicate `existsNoRetry == 1` for object "Testantwort." StaticText`
+    t =    10.69s         Checking existence of `"Testantwort." StaticText`
+    t =    10.94s         Capturing element debug description
+    t =    11.73s     Checking `Expect predicate `existsNoRetry == 1` for object "Testantwort." StaticText`
+    t =    11.73s         Checking existence of `"Testantwort." StaticText`
+    t =    11.84s Waiting 10.0s for "Mikrofon aktiv" StaticText to exist
+    t =    12.88s     Checking `Expect predicate `existsNoRetry == 1` for object "Mikrofon aktiv" StaticText`
+    t =    12.88s         Checking existence of `"Mikrofon aktiv" StaticText`
+    t =    12.97s         Capturing element debug description
+    t =    13.87s     Checking `Expect predicate `existsNoRetry == 1` for object "Mikrofon aktiv" StaticText`
+    t =    13.88s         Checking existence of `"Mikrofon aktiv" StaticText`
+    t =    13.96s Find the Target Application 'de.localvoice.prototype'
+    t =    14.22s Added attachment named 'Gespraech-naechster-Beitrag'
+    t =    14.22s Pressing Home button
+    t =    14.69s Open de.localvoice.prototype
+    t =    14.69s     Activate de.localvoice.prototype
+    t =    15.51s         Wait for de.localvoice.prototype to idle
+    t =    15.51s Find the "record" Button
+    t =    15.66s Checking existence of `"Mikrofon aktiv" StaticText`
+    t =    15.92s Tap "handsFreeEnabled" Switch
+    t =    15.92s     Wait for de.localvoice.prototype to idle
+    t =    15.97s     Find the "handsFreeEnabled" Switch
+    t =    16.13s     Check for interrupting elements affecting "handsFreeEnabled" Switch
+    t =    16.22s     Synthesize event
+    t =    16.53s     Wait for de.localvoice.prototype to idle
+    t =    17.84s Tear Down
+Test Case '-[VoicePhoneUITests.VoiceUITests testConversationRearmsAfterReplyAndPausesWhenLeavingApp]' passed (18.148 seconds).
+Test Suite 'VoiceUITests' passed at 2026-09-06 15:07:49.956.
+	 Executed 1 test, with 0 failures (0 unexpected) in 18.148 (18.150) seconds
+Test Suite 'VoicePhoneUITests.xctest' passed at 2026-09-06 15:07:49.957.
+	 Executed 1 test, with 0 failures (0 unexpected) in 18.148 (18.152) seconds
+Test Suite 'Selected tests' passed at 2026-09-06 15:07:49.958.
+	 Executed 1 test, with 0 failures (0 unexpected) in 18.148 (18.154) seconds

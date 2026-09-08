@@ -1,4 +1,5 @@
 import React from "react";
+import { MeetingRetentionSetting } from "../meetings/MeetingRetentionSetting";
 import { useTranslation } from "react-i18next";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { AppLanguageSelector } from "../AppLanguageSelector";
@@ -51,6 +52,7 @@ export const AppTab: React.FC = () => {
           descriptionMode="tooltip"
           grouped={true}
         />
+        <MeetingRetentionSetting />
         <AppDataDirectory descriptionMode="tooltip" grouped={true} />
         <LogDirectory grouped={true} />
       </SettingsGroup>

@@ -1,0 +1,27 @@
+{
+  "date": "2026-09-06",
+  "iphone": {
+    "model": "iPhone 15 Pro Max",
+    "os": "26.6.1",
+    "developer_mode": "enabled",
+    "signed_build": "passed",
+    "provisioning_device_match": true,
+    "installation": "succeeded",
+    "first_launch": "succeeded_after_update",
+    "profile_expires_utc": "2026-09-13 10:47:54",
+    "updated_features": "downloads, transcripts label, markdown, processing provenance"
+  },
+  "watch": {
+    "model": "Apple Watch Ultra 3",
+    "os": "26.6",
+    "installation": "succeeded_after_connection_retries",
+    "last_device_report": "developer_mode_enabled",
+    "signed_generic_build": "passed",
+    "device_specific_build": "passed",
+    "first_launch": "succeeded"
+  },
+  "complications": {
+    "implemented": "three navigation shortcuts, four families",
+    "background_recording_controls": "not_implemented"
+  }
+}

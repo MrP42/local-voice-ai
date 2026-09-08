@@ -1,0 +1,10 @@
+{
+  "device": "Watch Ultra 3 simulator",
+  "test": "real synthesizer start followed by explicit stop",
+  "passed": true,
+  "existingEntriesPreserved": 217,
+  "freshTTSCallbacks": 1,
+  "stopEvent": "playback_stopped",
+  "elapsedSeconds": 2.667755882,
+  "limits": "Explicit stop only; not an incoming call or physical audio-route interruption."
+}

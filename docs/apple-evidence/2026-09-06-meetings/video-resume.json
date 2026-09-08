@@ -1,0 +1,36 @@
+{
+  "fixture": "TEST-video.mp4",
+  "original_sha256": "2846d12e0da7126ebfc72a52b86c5997eb99101773a053d3f6b7d7b0ee00a461",
+  "checkpoint_seconds": 30,
+  "completed_seconds": 45,
+  "segments": 6,
+  "timings_ms": {
+    "minutes": 39212.439791,
+    "audio": 144.759354,
+    "stt": 11894.904012,
+    "import": 1141.3149779999999
+  },
+  "minutes": {
+    "next_steps": [],
+    "summary": "Wir besprechen heute die neue Wettseite. Wir entscheiden uns für einen Start im Oktober.\nAnna erstellt bis Freitag den Entwurf, wenn prüft die Texte.",
+    "scope": "Wir besprechen heute die neue Wettseite. Wir entscheiden uns für einen Start im Oktober.",
+    "follow_ups": [],
+    "tasks": [],
+    "decisions": [
+      {
+        "context": "",
+        "text": "Wir besprechen heute die neue Wettseite. Wir entscheiden uns für einen Start im Oktober."
+      }
+    ],
+    "open_questions": [
+      {
+        "text": "die Ergebnisse. Die Kosten sind noch offen."
+      },
+      {
+        "text": "Nächste Woche vergleichen wir die Ergebnisse, die Kosten sind noch offen."
+      }
+    ]
+  },
+  "original_preserved": true,
+  "resumed_without_duplicate_segments": true
+}

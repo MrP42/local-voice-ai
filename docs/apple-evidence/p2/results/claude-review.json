@@ -1,0 +1,24 @@
+{
+  "status": "complete",
+  "sourceCommit": "4d6449d9f0745b014a9d1ee82573c553d108a716",
+  "authorization": "Explicit user ja, weiter after the question naming these four files and Claude/Anthropic",
+  "files": {
+    "apps/apple/VoiceCore/Sources/VoiceCore/Store.swift": "7c3efb5d6564d6f96c1c4d94140c8e988db5b9b2c13b46500a0aed7990016566",
+    "apps/apple/VoiceCore/Sources/VoiceCore/Envelope.swift": "03380599f065b34ef3a268ad10546e85a52d7496217b3d8352a391d272a846a1",
+    "apps/apple/Shared/VoiceModel.swift": "c05e7314e8dda56f4df8ae6b4cb7ed5b98af6cca8af6bcd16ec837de07bae06d",
+    "apps/apple/iPhone/LocalProviders.swift": "bb431be2fd942ab53b523a04d497e5a9691332f2a4167e0fe90e9bc064eae7c0"
+  },
+  "inputSHA256": "553ee6746d7a8d0d4437e05c2b667d8a88d282f2da602a74916c7ea2e4dd23bb",
+  "toolsEnabled": false,
+  "safeMode": true,
+  "processId": 76777,
+  "reviewScope": "Four files only; referenced components are reviewed locally when assessing findings",
+  "exitCode": 0,
+  "outputSHA256": "97ac761aa3c0e4d546f31cebc9cdcd1ce59f686de25c04a02d69be32aeab768e",
+  "triageFile": "claude-triage.md",
+  "fixCommits": [
+    "4c8ac04",
+    "71a1d5a",
+    "a9fbf65"
+  ]
+}

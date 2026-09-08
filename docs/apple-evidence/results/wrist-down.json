@@ -1,0 +1,17 @@
+{
+  "sessionId": "08F301D1-10A9-44AB-9D8E-ED61DFEDD0C4",
+  "passedControlTest": true,
+  "recordingDurationSeconds": 16.572,
+  "recordingSavedBefore30SecondLimit": true,
+  "watchStateWhileWristDown": "saved",
+  "phoneStateWhileWristDown": "not received",
+  "replyPersistedWhileWristDown": false,
+  "digest": "4840fa5b9c6f28a8ea3496b037b7d0ebb57887dcfe0f2a763a440d6b43e409e9",
+  "notes": "Actual recorder started, then Simulator Always On selected. Earlier failed test created a separate 29.884-second recording; not counted as successful Wrist-Down stop evidence.",
+  "passed": true,
+  "afterWristRaise": "same capture answered and durably acknowledged",
+  "phoneTimings": {
+    "stt_ms": 7536.251902580261,
+    "generation_ms": 4433.230996131897
+  }
+}

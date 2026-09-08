@@ -1,0 +1,18 @@
+{
+  "date": "2026-09-06",
+  "code_commit": "c715ad6",
+  "branch": "codex/watch-conversation-background",
+  "core_tests": 84,
+  "core_failures": 0,
+  "phone_ui_tests": 3,
+  "watch_ui_tests": 2,
+  "ui_failures": 0,
+  "signed_phone_build": "passed",
+  "signed_watch_build": "passed",
+  "physical_phone_install": "passed",
+  "physical_watch_install": "passed",
+  "phone_launch": "blocked_device_locked",
+  "watch_launch": "blocked_device_locked",
+  "physical_acoustic_volume_test": "not_performed",
+  "synthetic_aac_fixture_seconds": 20
+}

@@ -1,0 +1,44 @@
+{
+  "source": "apps/local-voice/src/styles/theme.css",
+  "checks": [
+    {
+      "swift": "signalYellow",
+      "waiToken": "color-background-ui",
+      "hex": "#FFDD00",
+      "matches": true
+    },
+    {
+      "swift": "inkHex",
+      "waiToken": "color-on-accent",
+      "hex": "#111418",
+      "matches": true
+    },
+    {
+      "swift": "lightText",
+      "waiToken": "light-color-text",
+      "hex": "#1F2937",
+      "matches": true
+    },
+    {
+      "swift": "darkText",
+      "waiToken": "dark-color-text",
+      "hex": "#EDEDE7",
+      "matches": true
+    },
+    {
+      "swift": "lightBackground",
+      "waiToken": "light-color-background",
+      "hex": "#F8F9FB",
+      "matches": true
+    },
+    {
+      "swift": "darkBackground",
+      "waiToken": "dark-color-background",
+      "hex": "#0B0B0C",
+      "matches": true
+    }
+  ],
+  "inkOnYellowContrast": 13.714512212372105,
+  "passed": true,
+  "scope": "Matches existing repository WAI palette; native Apple surfaces/typography retained per mobile plan"
+}

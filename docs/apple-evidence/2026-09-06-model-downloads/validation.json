@@ -1,0 +1,24 @@
+{
+  "date": "2026-09-06",
+  "implementation_commit": "0b986fd",
+  "branch": "codex/watch-conversation-background",
+  "core_tests": 84,
+  "model_integrity_tests": 5,
+  "targeted_simulator_ui_tests": 5,
+  "physical_background_download": {
+    "model": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    "bytes": 491400032,
+    "integrity_verified": true,
+    "completed_in_background": true,
+    "notification_accepted": true,
+    "banner_observed": false
+  },
+  "physical_ui_test": "reopening blocked by locked phone; whole test not passed",
+  "iphone_build": "succeeded",
+  "watch_build": "succeeded",
+  "iphone_install": "succeeded",
+  "watch_install": "succeeded",
+  "device_launches": "blocked by device locks",
+  "battery_measured": false,
+  "physical_swipe_quit_tested": false
+}

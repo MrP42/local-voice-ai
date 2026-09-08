@@ -1,0 +1,28 @@
+{
+  "sourceCommit": "a9fbf6574c555002272b28ae72e455ff0333f128",
+  "case": "force-quit-resume",
+  "startedAt": 1788680242.8385768,
+  "id": "E76BCD6C-09C8-48E8-A866-CFC092A9BE9E",
+  "deferred": true,
+  "watchState": "saved",
+  "phoneState": null,
+  "observationSeconds": 10,
+  "resumedSameIdentity": true,
+  "audioPreserved": true,
+  "phoneTimings": {
+    "capture_saved_at_ms": 810373057431.318,
+    "generation_ms": 4070.680022239685,
+    "stt_ms": 5508.983016014099
+  },
+  "passed": true,
+  "finishedAt": 1788680270.6527,
+  "actualOriginalFilesVerified": 2,
+  "dismissEvidence": "Local Voice card visually verified before native swipe; afterward only Safari card remains",
+  "processEvidence": {
+    "afterDismissal": "No matching launchctl service",
+    "afterExplicitReopen": [
+      "86157\t0\tUIKitApplication:de.localvoice.prototype[3d95][rb-legacy]"
+    ]
+  },
+  "processLimit": "Sampled observations do not exclude short-lived background execution between samples"
+}

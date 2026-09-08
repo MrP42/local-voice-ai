@@ -1,0 +1,37 @@
+{
+  "sourceCommit": "d4142287d198f07664611d82a727276d6221a672",
+  "elapsedSeconds": 944.263334274292,
+  "metrics": {
+    "stt_ms": {
+      "n": 100,
+      "median": 5102.122485637665,
+      "p95": 5326.112985610962,
+      "max": 6883.993029594421
+    },
+    "generation_ms": {
+      "n": 100,
+      "median": 2796.8714833259583,
+      "p95": 3001.9060373306274,
+      "max": 4902.791976928711
+    },
+    "transfer_roundtrip_ms": {
+      "n": 100,
+      "median": 1191.3555264472961,
+      "p95": 1891.6120529174805,
+      "max": 53253.5799741745
+    },
+    "reply_e2e_ms": {
+      "n": 100,
+      "median": 540468.23046875,
+      "p95": 882270.9989013672,
+      "max": 921040.1580810547
+    },
+    "tts_e2e_ms": {
+      "n": 100,
+      "median": 540479.4125366211,
+      "p95": 882282.3039550781,
+      "max": 921055.4339599609
+    }
+  },
+  "scope": "Batch of 100 with faults and queueing; E2E includes waiting behind earlier captures. TTS is best effort when active; n is explicit."
+}

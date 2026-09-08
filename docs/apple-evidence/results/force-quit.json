@@ -1,0 +1,18 @@
+{
+  "sessionId": "3B6AC576-E435-47B1-B5BA-3B171B7D48B1",
+  "watchStateWhileForceQuit": "accepted",
+  "phoneStateWhileForceQuit": "saved",
+  "replyWhileForceQuit": false,
+  "watchDigest": "a81c3e1275648e3c0b0ef6b6d335a1b15031121640c4c294246a908cd45bee23",
+  "observedSeconds": 15.532859002999999,
+  "forceQuitEvidence": "Local Voice card visibly dismissed through Simulator UI; launchctl has no matching running service",
+  "runningAfterWatchDelivery": false,
+  "passed": true,
+  "afterReopen": "same capture answered and durably acknowledged",
+  "phoneTimings": {
+    "stt_ms": 5362.458109855652,
+    "generation_ms": 3141.0510540008545
+  },
+  "processQueryPositiveControl": "After explicit reopening, launchctl listed running UIKitApplication:de.localvoice.prototype with numeric PID",
+  "processObservationLimit": "No matching process at sampled times; this does not rule out short-lived background execution between samples."
+}

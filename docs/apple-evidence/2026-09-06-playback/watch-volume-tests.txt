@@ -1,0 +1,49 @@
+Test Suite 'Selected tests' started at 2026-09-06 15:24:05.437.
+Test Suite 'VoiceWatchUITests.xctest' started at 2026-09-06 15:24:05.438.
+Test Suite 'VoiceUITests' started at 2026-09-06 15:24:05.438.
+Test Case '-[VoiceWatchUITests.VoiceUITests testWatchHasLocalMediaVolumeControl]' started.
+    t =     0.00s Start Test at 2026-09-06 15:24:05.440
+    t =     0.07s Set Up
+    t =     0.08s Open de.localvoice.prototype.watchkitapp
+    t =     0.08s     Launch de.localvoice.prototype.watchkitapp
+    t =     0.08s         Waiting for system app quiescence
+    t =     2.14s         Setting up automation session
+    t =     3.24s         Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     4.68s Tap "historyEntry" Button
+    t =     4.68s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     4.69s     Find the "historyEntry" Button
+    t =     4.76s     Check for interrupting elements affecting "historyEntry" Button
+    t =     4.80s     Synthesize event
+    t =     4.81s         Scroll element to visible
+    t =     4.82s         Find the "historyEntry" Button
+    t =     4.89s         Computed hit point {105.5, 135.25} after scrolling to visible
+    t =     5.19s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     5.58s Tap "originalPlayback" Button
+    t =     5.58s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     5.59s     Find the "originalPlayback" Button
+    t =     5.64s     Check for interrupting elements affecting "originalPlayback" Button
+    t =     5.68s     Synthesize event
+    t =     5.98s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     5.98s Tap "watchVolume" Button
+    t =     5.98s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     5.99s     Find the "watchVolume" Button
+    t =     6.03s     Check for interrupting elements affecting "watchVolume" Button
+    t =     6.07s     Synthesize event
+    t =     6.08s         Scroll element to visible
+    t =     6.08s         Find the "watchVolume" Button
+    t =     6.12s         Computed hit point {99, 133.75} after scrolling to visible
+    t =     6.41s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     6.84s Waiting 5.0s for "Lautstärke" NavigationBar to exist
+    t =     7.86s     Checking `Expect predicate `existsNoRetry == 1` for object "Lautstärke" NavigationBar`
+    t =     7.86s         Checking existence of `"Lautstärke" NavigationBar`
+    t =     7.89s Checking existence of `"watchVolumeControl" Any`
+    t =     7.94s Find the Target Application 'de.localvoice.prototype.watchkitapp'
+    t =     7.98s Added attachment named 'Watch-Lautstaerke'
+    t =     7.98s Tear Down
+Test Case '-[VoiceWatchUITests.VoiceUITests testWatchHasLocalMediaVolumeControl]' passed (8.238 seconds).
+Test Suite 'VoiceUITests' passed at 2026-09-06 15:24:13.678.
+	 Executed 1 test, with 0 failures (0 unexpected) in 8.238 (8.240) seconds
+Test Suite 'VoiceWatchUITests.xctest' passed at 2026-09-06 15:24:13.680.
+	 Executed 1 test, with 0 failures (0 unexpected) in 8.238 (8.242) seconds
+Test Suite 'Selected tests' passed at 2026-09-06 15:24:13.682.
+	 Executed 1 test, with 0 failures (0 unexpected) in 8.238 (8.244) seconds

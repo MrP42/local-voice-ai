@@ -1,0 +1,1644 @@
+{
+  "sourceCommit": "a907d58f29fd9db5e5a7cc44aa968cca13a4a10e",
+  "startedAt": 1788610963.567641,
+  "initialIds": [
+    "00A18AC0-D184-46FD-AC76-ECE6567C04AD",
+    "00F82CDE-E57F-4C86-946B-939EDFEC9238",
+    "02CC37D4-4D34-4367-93A8-D1555C4BAFC2",
+    "04CE18FA-A759-42B6-80B7-D4DC11268AA6",
+    "059B7BDD-FCC3-4BB9-99A3-4EC93B7AAB28",
+    "0618B72C-1851-4691-ABDB-3E16C5D592EE",
+    "0B0CD4B8-61B1-40B2-9749-7530FEB8B149",
+    "0BF5F26D-14DB-4A42-B03F-A22A98998EBA",
+    "0D820444-91B8-4B0C-84DE-F113AD61643C",
+    "0EC8CBEB-43E2-4996-BC3B-9147E3702431",
+    "13C8EDD5-E6D8-46E4-8A67-55249D025650",
+    "141B83BF-C231-4725-BB16-F4F221A178D1",
+    "1895011E-ADD6-4233-850C-639F823889C4",
+    "19B552F3-8DC4-4895-AB6E-83DAA3CC2BD7",
+    "1F18DCF6-B15A-4EE9-9884-86B964505B61",
+    "21C71BEF-42DD-49CE-BC5A-86F6E70F6FB0",
+    "225F5868-A5FD-4EBC-AB54-14A410B4C4E2",
+    "251A1C79-2673-4179-BA09-616534EE0AAA",
+    "274F0C0D-4337-406D-BC9B-63F45A7E3CD7",
+    "28A10274-14BC-4E0F-A509-753F9C96FACD",
+    "2BB06554-60B6-4A56-B424-AA99D91A28AA",
+    "2CC9A19A-C9D0-4FB8-A61F-15AE14E34A3E",
+    "2F3AC56E-EDAC-4E47-A3D0-BF1D6D68049B",
+    "3393924E-8D83-4E5E-B6F7-1AE67DA57B5D",
+    "363FF92E-E520-449D-9E56-EB91C52CFB62",
+    "3847F24F-A981-4A95-81EB-EC5763D55485",
+    "3936EDBD-3ED1-4648-8DE4-BF8BC5B2DC66",
+    "398ABA86-E739-4089-9644-C4AE252750A3",
+    "3AE31E20-7ED1-4913-B0A6-35400D7BD3D0",
+    "3C05966D-BA71-4B30-BF3D-3F0F6AD983A3",
+    "3D06D9C7-80BA-46C7-AB3A-F01E06625832",
+    "3E30701F-FE5A-4D49-A266-AC7363D6D64E",
+    "3F1BF526-5F82-4D18-9E61-0788172A7670",
+    "3F9DEBB0-8636-4AA8-865E-73AEB43876E3",
+    "411A35FC-381C-444B-8E7B-D3AAA0F0DD60",
+    "47A7BE52-4298-4F86-A8E4-98A10963F851",
+    "47C77C34-9A1F-41D6-B80B-E882D8FA3EC2",
+    "4841DC7C-9819-412E-B8F0-083CD066A3EE",
+    "485BC3B1-FF30-4E91-B4D3-083E263EE0E2",
+    "4E28029F-8F1F-4CCA-AC49-52FD5F0936AF",
+    "4F2E865F-887C-4576-A50F-197593BA718E",
+    "52E63D98-F131-4A9E-B8C2-04D60F51485B",
+    "54825CC9-5AD8-41D9-8B6A-A6BA72471FFB",
+    "548530E8-0A91-4630-BA77-DCD673AA83D6",
+    "5C9F16DC-886E-4C10-8334-C4759F87E96B",
+    "5CD7D88A-A6CC-46BD-BA8B-F774E1C61229",
+    "5CE38E56-A2A3-4BB4-8339-C448B525A36B",
+    "6368B07D-B157-4451-BDC1-422D1C275E5F",
+    "644DE1E1-A14D-4C3D-ABE3-E55028BAFF84",
+    "6527C53E-F074-464C-B307-A0A3DB6CF15D",
+    "65C6BD6F-6FD3-4052-9016-6A7469997F2F",
+    "66A5AA73-7CFF-4837-8CCA-CB8E63625E97",
+    "689D8EE7-6588-44D9-B1F6-EE0FE0F67A83",
+    "6AE3D073-DFFB-441C-952A-241EC24F12FF",
+    "6B8152BB-547F-43F9-A220-65A3E8F63863",
+    "6BA62495-5CE1-415B-99F9-4AD54D7C07DA",
+    "700862ED-2DD3-4F78-8E67-8C16A9DC94C0",
+    "73302056-6437-4BA1-82A1-93A889A21975",
+    "7992BE48-C25B-426C-B2F3-72EE1B230549",
+    "7B71D9F5-8F99-4DF3-A7F7-3DF017E4E49F",
+    "7D5FB305-15BF-4B50-8F14-75375D91629E",
+    "7DF30DE7-2290-4422-871F-F1E42CE47C6D",
+    "8430C618-CB94-40F7-B091-A2A7E9978BDE",
+    "86852767-EA82-4DA0-9E0C-F8E6DC8936A3",
+    "86CDF8FC-2473-4D10-A075-F28FD0862F06",
+    "8C8E991B-7379-4F0B-8464-EB5968E3A664",
+    "8E3D4B58-8055-4E08-9BBD-9730B290CAE9",
+    "90BEC77D-EED4-485B-99FD-33BD623F4E71",
+    "912EBC31-DB2B-4A7C-81E6-02B0E17DE877",
+    "9464187A-C82C-4164-8171-026281D1480F",
+    "9841C671-B74F-4B48-8390-69AF657ED172",
+    "9B1626C4-C1D7-45BD-AD7D-2892C2BDBBBF",
+    "9B38C6A4-36FC-4B9C-8CB9-C883F784A4D2",
+    "9C9F963A-AB0F-4C0E-8257-555C87217813",
+    "A00E3B46-DD96-41C8-B8EA-B4FB3F454AA3",
+    "A39363E4-D339-41BF-8283-8E89D8FE06DD",
+    "A3E11F9D-C317-4DE9-8772-B97F2E13C8A1",
+    "A8E5BF5D-B39D-4F0B-90DA-46C4B82FA65F",
+    "A9C5E056-5D0A-478B-B4AF-5B98B41F706E",
+    "AABB3777-370A-4311-A274-DD8660DEAB49",
+    "AEA97D7A-C876-48C3-9CDA-5906474B9BB8",
+    "B2B2C286-43FC-4847-A7C9-5DFB92198C0B",
+    "B79D4A31-94C2-4479-B48B-EBB9FEC7D04F",
+    "BC5E02AE-D1CC-405B-B57B-F0C1C4248A45",
+    "C07B1E5B-E41C-44EA-ADD6-AEF77AFA342E",
+    "C1D59D82-CC51-4D1C-A08F-5EAC1F3D6CCE",
+    "C1FC3843-2540-435F-9BD9-27027673E1FB",
+    "C6DA05EB-D08E-4676-B3FA-FB4BC434FB89",
+    "C847F392-0784-46D2-9BBC-5FE7DDF9379F",
+    "CA4B7028-DA99-4589-9E62-3FABD5E6F27E",
+    "D45C93AC-66E8-4D37-981D-FB21EE33D9E2",
+    "DB366D0B-DFC2-4EE5-8351-BD89435486D1",
+    "DC8006EB-525F-4ACE-AF6C-8D1BAD14F3BC",
+    "DD55336A-A475-471B-929D-03928BBFC9BA",
+    "DF6FF90B-4321-4EEA-9523-3BB2DAC4F9CB",
+    "DF72677D-DA4C-461C-BA06-72193ECD5487",
+    "E0E3D90D-3EDF-4E9A-854E-78712AB334F5",
+    "E4FC834A-A577-48D6-AC29-CD6203B2839B",
+    "ED00D512-3D77-47B6-8507-B0000B6A4EDE",
+    "F0CB4109-0AF8-4BEA-85DC-7FBA08B5CEEB",
+    "F5C6A913-5F14-445C-B401-8B522A7DD738",
+    "F7E39112-A29E-4256-BEAD-2319A53D4CB6",
+    "F8E08E69-E112-459A-8769-1EB07076AF7A",
+    "F913D699-D236-4CC0-B60D-E4001B7B95E3",
+    "FD9F195E-5412-4E63-A62B-6E7D28C9A856",
+    "FFA353B2-0C3F-49BC-AAFA-C78F878E31AB"
+  ],
+  "ids": [
+    "01270FA3-4837-4FE1-9044-FF9314FEA3FA",
+    "048794CB-14D9-4E59-B0BF-84BC3777D24E",
+    "0A0E3CA6-B449-42A8-AA4E-C5734E8C0070",
+    "0F797F11-DC49-4B16-A4D2-BC816B7EDE2B",
+    "10B137AC-6DAD-4FD8-9987-BC05CCE2607E",
+    "1244EB16-1F07-4545-A48F-86BDD0862813",
+    "12C4DE1B-C93B-4035-B488-93F403467ADC",
+    "15FBB05E-5C30-4566-A66D-8FD61E17D5CC",
+    "194E4AAF-FA3A-4306-BDF4-363B84C78C0C",
+    "1A8EBBE8-8493-4CDC-A2F4-12D5E54D9351",
+    "1BF60852-22C1-4EE0-AAFB-0BE634B439A1",
+    "1E8CEEEE-07A9-408B-89B3-2C607A3FD445",
+    "1EDCCD2A-C0EB-45D7-BD20-9F2482E6B6FD",
+    "1F1F6DB4-8234-4619-9886-A6E8BC99FE99",
+    "20EDAAD5-DD89-4746-94E5-9F1A1847A8FB",
+    "20FB0F11-BE9D-4501-8BB2-695C89A8AA03",
+    "227568E8-642C-4F8A-9AD9-E68504128446",
+    "227844C7-B430-41F1-AC9A-44A80C567527",
+    "3079DA99-7949-4D2C-B498-376424314484",
+    "329F8C63-ED58-452B-85A5-2A5733897CB7",
+    "35BAF65F-5670-4919-9239-AC0996261CBD",
+    "36D88326-FF4F-412E-BA32-20B6C45F5406",
+    "37366413-A2E8-4F0F-98DB-16E819B1D3E7",
+    "3C12F209-2979-466B-8515-38AEEACDF411",
+    "3C58AE42-3D89-4393-BB10-C85EC2248F2F",
+    "3D004313-A74A-4EE1-8F4F-88DA08977D74",
+    "3FF4EAAE-C264-459C-A2C4-6255589840B4",
+    "459EB274-7060-406F-A1D4-1A33989ECA2D",
+    "47368ECE-D5C4-4521-86DF-F1CDE6E74F4A",
+    "4A41298E-74F6-443F-81F3-F9BB5C71E69A",
+    "4A4140BA-BCAA-4151-941B-745333C9365F",
+    "4C9E6706-6492-433B-9BDC-53C51BCFDBB5",
+    "4D9F8CDF-C1C2-4892-87E8-CB84C8F7AD0E",
+    "51960E4A-ECFA-4485-AF70-4435CCF9A975",
+    "5485D70B-F8DF-4E5A-AA3C-8A940636947C",
+    "5846EBFC-BD2B-47FD-970A-3E3B301C9775",
+    "5A5BFE2D-89C5-4447-9A2F-EE06167BA17B",
+    "5AAE3779-9ED8-4834-92EE-08765CDE013A",
+    "5CFFC8C8-F0A0-4FEE-885D-3BA65CA5FB9C",
+    "5DC1DAB6-3462-4014-9B7E-FB057E1B0469",
+    "6121BD34-9C95-4DD9-A3EE-FFDB15A227FF",
+    "652AF26F-FC60-474B-AD70-5E9CCC5781B5",
+    "6CF92E5C-E718-498C-A484-3698F1196620",
+    "6D6EE4BD-4C00-49B8-80C5-5ACCC0F2CE17",
+    "6F1FC851-A9E8-4D9D-94F2-F1A47DF52833",
+    "7502875E-AE29-4897-9114-D815EB92B128",
+    "756EF4E6-2838-4E44-AE7F-CD7BE3618355",
+    "76645147-7CC6-43D1-8520-B8D7EFC99B75",
+    "7896F29B-3752-4F89-8E43-95247FC50F75",
+    "79D091B3-E1ED-4B66-A06B-A8767666D0E2",
+    "7ACE1E88-194A-486C-85FA-BC884033422F",
+    "7EC4DA2F-B099-4CCE-9F84-808CEC350DE2",
+    "7EFC59DB-29FF-4851-A84C-FC0057750E58",
+    "82DC5049-1D53-4040-A96D-94BD9D952195",
+    "85377132-43C7-413D-870A-A29EEA25D067",
+    "87D738F9-8782-4304-9A0B-530F845F9DD4",
+    "89573EF5-418C-4B2F-A924-4D9F025A3E53",
+    "8F03471A-3CCD-4FB7-A28D-1249B3026114",
+    "91BB6DCF-EEBE-47E7-A677-CF6417D5C7AA",
+    "91D12FFA-A38D-423E-A994-7FFBF5A31F46",
+    "91DFDFFE-7948-4A09-A288-BFE2CF76ECF1",
+    "936FE5AA-7B28-4805-98CE-3B6632560547",
+    "9525EEA6-B4DD-4EC4-9247-CC3ABA087239",
+    "95940F03-0854-4A05-9D13-F0BEF3AF7EC5",
+    "978F24E4-F99D-45A9-8F6C-43E2DC0A8D4D",
+    "97939BA0-5252-4D65-BC67-AD1566975678",
+    "996A05A5-E319-4E38-A2A7-54156C3E982A",
+    "A5CDEA97-35D9-44A0-8A92-DD7AE48C98CA",
+    "AD68E461-9E5B-4A52-BDAB-FBE606FF3178",
+    "AEEC2A8F-3529-46E7-9712-08AACB8D25C5",
+    "AF69AAEA-B02A-4727-A717-44F5C4EF10F4",
+    "B045CE08-D648-4052-8824-2E9C164A9479",
+    "B1FCF080-A62D-4BBC-807F-9343B98CBE01",
+    "B258165E-8D15-41F8-B71D-A29E55EB26C0",
+    "B2D91533-AEAC-40D8-8141-E1C3A22C472B",
+    "B86E76F0-79EA-43F8-8544-A0382F97A856",
+    "B8B446DC-FD7E-4164-B24C-24F8E905AA5B",
+    "BA2F7D27-347B-43B3-88AC-8CC9A520B31D",
+    "BBEE1C05-B7A9-4C64-82CC-61570BD48E57",
+    "BC6BBC10-71AC-4C83-A1B4-9FB0D0828525",
+    "BE9EBA2C-C44F-4D0F-95AC-2AC59DEBA9B1",
+    "BF5F71CF-D284-4720-9820-43017F77670E",
+    "C0D77642-4BEF-4C18-A34D-DC2444742F30",
+    "C522A57B-F6B3-41C9-B5E6-3CB24DF31907",
+    "C6950FE7-E890-48C3-B0FC-5A1BBB105CDA",
+    "C9CB5A7A-B5ED-47F9-BE50-C7ABF234DED0",
+    "CECD1636-C2A0-4DAF-B662-4FC6F56C410C",
+    "D2BE882D-9985-4B32-A9CC-D79414A08ACE",
+    "D44AAFCD-82A8-4B2E-8616-AE9B6410F918",
+    "D52CAC12-D6B7-4D16-8B2A-3D72018CB901",
+    "D5B59B54-539C-4907-A2E9-FDD02C0A173E",
+    "DD404729-AF01-4566-83D7-4D700F12BA65",
+    "DD919524-69F8-4B3A-8681-2473F9D7B57B",
+    "E29DDBA0-4974-4E1F-8A27-24EDF7145875",
+    "E438AEC9-D3A7-4380-9467-8E08556E1863",
+    "E6D51E1B-55FD-4796-8185-455C4684D524",
+    "F0DDB2CE-74F9-4BC5-BB6F-27E6FB48C3BD",
+    "F316AE62-965E-4165-B214-35440EF7EFAB",
+    "FA45F387-B71D-4ED2-ADC7-A6754757FB04",
+    "FF1C9EC4-AC17-4C2D-AE55-DD8399B711DA"
+  ],
+  "milestones": [
+    "phone_background",
+    "watch_restart",
+    "phone_restart",
+    "phone_disconnect"
+  ],
+  "phase": "complete",
+  "counts": {
+    "watchRetained": 100,
+    "phoneAccepted": 100,
+    "phoneAnswered": 100,
+    "watchReplyReceipts": 100
+  },
+  "elapsedSeconds": 820.7944419384003,
+  "backgroundSnapshot": {
+    "accepted": 14
+  },
+  "finishedAt": 1788611784.3627021,
+  "turns": [
+    {
+      "id": "01270FA3-4837-4FE1-9044-FF9314FEA3FA",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1814.2369985580444,
+        "stt_ms": 5070.112943649292
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1298.811912536621,
+        "tts_start_ms": 93.330979347229
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "048794CB-14D9-4E59-B0BF-84BC3777D24E",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1754.7589540481567,
+        "stt_ms": 5380.400061607361
+      },
+      "watchTimings": {
+        "tts_start_ms": 93.63400936126709,
+        "transfer_roundtrip_ms": 1909.2750549316406
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "0A0E3CA6-B449-42A8-AA4E-C5734E8C0070",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1871.453046798706,
+        "stt_ms": 5153.200030326843
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1292.523980140686,
+        "tts_start_ms": 88.84596824645996
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "0F797F11-DC49-4B16-A4D2-BC816B7EDE2B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5185.350060462952,
+        "generation_ms": 1855.646014213562
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1286.9579792022705,
+        "tts_start_ms": 1.605987548828125
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "10B137AC-6DAD-4FD8-9987-BC05CCE2607E",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1831.5750360488892,
+        "stt_ms": 5179.159998893738
+      },
+      "watchTimings": {
+        "tts_start_ms": 89.20502662658691,
+        "transfer_roundtrip_ms": 1344.9230194091797
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "1244EB16-1F07-4545-A48F-86BDD0862813",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5321.218967437744,
+        "generation_ms": 1783.9360237121582
+      },
+      "watchTimings": {
+        "tts_start_ms": 97.33498096466064,
+        "transfer_roundtrip_ms": 1298.6940145492554
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "12C4DE1B-C93B-4035-B488-93F403467ADC",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5314.726948738098,
+        "generation_ms": 1811.9279146194458
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1302.685022354126,
+        "tts_start_ms": 105.49294948577881
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "15FBB05E-5C30-4566-A66D-8FD61E17D5CC",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5055.560946464539,
+        "generation_ms": 1829.1410207748413
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1288.017988204956,
+        "tts_start_ms": 98.71304035186768
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "194E4AAF-FA3A-4306-BDF4-363B84C78C0C",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2020.801067352295,
+        "stt_ms": 5380.218982696533
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1282.148003578186,
+        "tts_start_ms": 1.5670061111450195
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "1A8EBBE8-8493-4CDC-A2F4-12D5E54D9351",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5091.32194519043,
+        "generation_ms": 1792.8400039672852
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1332.7730894088745,
+        "tts_start_ms": 92.71693229675293
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "1BF60852-22C1-4EE0-AAFB-0BE634B439A1",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5406.743049621582,
+        "generation_ms": 1796.3180541992188
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1291.4459705352783,
+        "tts_start_ms": 84.83302593231201
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "1E8CEEEE-07A9-408B-89B3-2C607A3FD445",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1791.3960218429565,
+        "stt_ms": 5344.130992889404
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1342.0209884643555,
+        "tts_start_ms": 87.6389741897583
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "1EDCCD2A-C0EB-45D7-BD20-9F2482E6B6FD",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5418.343067169189,
+        "generation_ms": 1810.7939958572388
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1394.703984260559,
+        "tts_start_ms": 86.50803565979004
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "1F1F6DB4-8234-4619-9886-A6E8BC99FE99",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5136.049032211304,
+        "generation_ms": 1972.1709489822388
+      },
+      "watchTimings": {
+        "tts_start_ms": 229.40599918365479,
+        "transfer_roundtrip_ms": 58413.33198547363
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "20EDAAD5-DD89-4746-94E5-9F1A1847A8FB",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1910.0699424743652,
+        "stt_ms": 5168.089985847473
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1286.628007888794,
+        "tts_start_ms": 78.57394218444824
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "20FB0F11-BE9D-4501-8BB2-695C89A8AA03",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5348.788022994995,
+        "generation_ms": 1863.4129762649536
+      },
+      "watchTimings": {
+        "tts_start_ms": 1.600027084350586,
+        "transfer_roundtrip_ms": 1526.986002922058
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "227568E8-642C-4F8A-9AD9-E68504128446",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5071.3210105896,
+        "generation_ms": 1772.2688913345337
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 2052.1020889282227,
+        "tts_start_ms": 88.50109577178955
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "227844C7-B430-41F1-AC9A-44A80C567527",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1842.8879976272583,
+        "stt_ms": 5138.810038566589
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1245.9079027175903,
+        "tts_start_ms": 96.71103954315186
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "3079DA99-7949-4D2C-B498-376424314484",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5351.978063583374,
+        "generation_ms": 1820.281982421875
+      },
+      "watchTimings": {
+        "tts_start_ms": 82.26907253265381,
+        "transfer_roundtrip_ms": 1143.3370113372803
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "329F8C63-ED58-452B-85A5-2A5733897CB7",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1981.558084487915,
+        "stt_ms": 6008.96692276001
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1930.7059049606323,
+        "tts_start_ms": 150.24101734161377
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "35BAF65F-5670-4919-9239-AC0996261CBD",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5059.715986251831,
+        "generation_ms": 1832.7100276947021
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1341.8920040130615,
+        "tts_start_ms": 83.15300941467285
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "36D88326-FF4F-412E-BA32-20B6C45F5406",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5096.933960914612,
+        "generation_ms": 1816.7189359664917
+      },
+      "watchTimings": {
+        "tts_start_ms": 92.70000457763672,
+        "transfer_roundtrip_ms": 1096.8259572982788
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "37366413-A2E8-4F0F-98DB-16E819B1D3E7",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5347.416996955872,
+        "generation_ms": 1801.4010190963745
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1295.0670719146729,
+        "tts_start_ms": 1.7470121383666992
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "3C12F209-2979-466B-8515-38AEEACDF411",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5226.944923400879,
+        "generation_ms": 2021.6189622879028
+      },
+      "watchTimings": {
+        "tts_start_ms": 102.64706611633301,
+        "transfer_roundtrip_ms": 1358.9260578155518
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "3C58AE42-3D89-4393-BB10-C85EC2248F2F",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 9829.365015029907,
+        "stt_ms": 8460.747957229614
+      },
+      "watchTimings": {
+        "tts_start_ms": 121.87492847442627,
+        "transfer_roundtrip_ms": 1740.5459880828857
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "3D004313-A74A-4EE1-8F4F-88DA08977D74",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5143.412947654724,
+        "generation_ms": 1808.5529804229736
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1293.2430505752563,
+        "tts_start_ms": 86.42101287841797
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "3FF4EAAE-C264-459C-A2C4-6255589840B4",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5022.4848985672,
+        "generation_ms": 1860.3579998016357
+      },
+      "watchTimings": {
+        "tts_start_ms": 98.67703914642334,
+        "transfer_roundtrip_ms": 1305.521011352539
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "459EB274-7060-406F-A1D4-1A33989ECA2D",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5109.740972518921,
+        "generation_ms": 1844.7319269180298
+      },
+      "watchTimings": {
+        "tts_start_ms": 88.45603466033936,
+        "transfer_roundtrip_ms": 1292.7460670471191
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "47368ECE-D5C4-4521-86DF-F1CDE6E74F4A",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5016.1319971084595,
+        "generation_ms": 1799.239993095398
+      },
+      "watchTimings": {
+        "tts_start_ms": 92.8260087966919,
+        "transfer_roundtrip_ms": 1294.471025466919
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "4A41298E-74F6-443F-81F3-F9BB5C71E69A",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5299.787998199463,
+        "generation_ms": 1762.4599933624268
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1342.028021812439,
+        "tts_start_ms": 103.3620834350586
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "4A4140BA-BCAA-4151-941B-745333C9365F",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 4709.582090377808,
+        "stt_ms": 13225.432991981506
+      },
+      "watchTimings": {
+        "tts_start_ms": 99.80297088623047,
+        "transfer_roundtrip_ms": 1817.6350593566895
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "4C9E6706-6492-433B-9BDC-53C51BCFDBB5",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5056.234002113342,
+        "generation_ms": 1809.6849918365479
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 2025.7070064544678,
+        "tts_start_ms": 99.31695461273193
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "4D9F8CDF-C1C2-4892-87E8-CB84C8F7AD0E",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5458.775997161865,
+        "generation_ms": 1908.2410335540771
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1293.186902999878,
+        "tts_start_ms": 83.78207683563232
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "51960E4A-ECFA-4485-AF70-4435CCF9A975",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1888.1620168685913,
+        "stt_ms": 5127.2159814834595
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 2602.3110151290894,
+        "tts_start_ms": 98.84893894195557
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5485D70B-F8DF-4E5A-AA3C-8A940636947C",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2204.759955406189,
+        "stt_ms": 5549.164056777954
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1304.779052734375
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5846EBFC-BD2B-47FD-970A-3E3B301C9775",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1817.3240423202515,
+        "stt_ms": 5073.860049247742
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1284.0970754623413,
+        "tts_start_ms": 93.25194358825684
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5A5BFE2D-89C5-4447-9A2F-EE06167BA17B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5330.788969993591,
+        "generation_ms": 1833.1060409545898
+      },
+      "watchTimings": {
+        "tts_start_ms": 103.09398174285889,
+        "transfer_roundtrip_ms": 1279.1659832000732
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5AAE3779-9ED8-4834-92EE-08765CDE013A",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1889.3970251083374,
+        "stt_ms": 5202.497959136963
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1287.8860235214233,
+        "tts_start_ms": 80.93500137329102
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5CFFC8C8-F0A0-4FEE-885D-3BA65CA5FB9C",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1858.801007270813,
+        "stt_ms": 5172.980070114136
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 15586.181998252869,
+        "tts_start_ms": 290.03405570983887
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "5DC1DAB6-3462-4014-9B7E-FB057E1B0469",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1854.2759418487549,
+        "stt_ms": 5201.3139724731445
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1292.7310466766357,
+        "tts_start_ms": 87.01395988464355
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "6121BD34-9C95-4DD9-A3EE-FFDB15A227FF",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1940.872073173523,
+        "stt_ms": 5224.365949630737
+      },
+      "watchTimings": {
+        "tts_start_ms": 85.83700656890869,
+        "transfer_roundtrip_ms": 1307.7889680862427
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "652AF26F-FC60-474B-AD70-5E9CCC5781B5",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1765.0790214538574,
+        "stt_ms": 5306.921005249023
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1451.8980979919434,
+        "tts_start_ms": 100.24905204772949
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "6CF92E5C-E718-498C-A484-3698F1196620",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1980.9130430221558,
+        "stt_ms": 5433.397889137268
+      },
+      "watchTimings": {
+        "tts_start_ms": 87.31794357299805,
+        "transfer_roundtrip_ms": 1294.4060564041138
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "6D6EE4BD-4C00-49B8-80C5-5ACCC0F2CE17",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5206.341981887817,
+        "generation_ms": 1958.6830139160156
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 2918.681025505066,
+        "tts_start_ms": 79.11801338195801
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "6F1FC851-A9E8-4D9D-94F2-F1A47DF52833",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1948.3059644699097,
+        "stt_ms": 5620.772957801819
+      },
+      "watchTimings": {
+        "tts_start_ms": 90.92402458190918,
+        "transfer_roundtrip_ms": 1142.2069072723389
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "7502875E-AE29-4897-9114-D815EB92B128",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1837.0249271392822,
+        "stt_ms": 5112.957000732422
+      },
+      "watchTimings": {
+        "tts_start_ms": 109.58802700042725,
+        "transfer_roundtrip_ms": 1349.6119976043701
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "756EF4E6-2838-4E44-AE7F-CD7BE3618355",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5339.452028274536,
+        "generation_ms": 1823.9169120788574
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1328.1220197677612,
+        "tts_start_ms": 100.5030870437622
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "76645147-7CC6-43D1-8520-B8D7EFC99B75",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1785.9230041503906,
+        "stt_ms": 5126.501083374023
+      },
+      "watchTimings": {
+        "tts_start_ms": 91.32206439971924,
+        "transfer_roundtrip_ms": 2136.0570192337036
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "7896F29B-3752-4F89-8E43-95247FC50F75",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1793.1679487228394,
+        "stt_ms": 5098.980069160461
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1371.914029121399,
+        "tts_start_ms": 104.44307327270508
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "79D091B3-E1ED-4B66-A06B-A8767666D0E2",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5469.931960105896,
+        "generation_ms": 2208.985924720764
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1293.025016784668,
+        "tts_start_ms": 81.10904693603516
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "7ACE1E88-194A-486C-85FA-BC884033422F",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1835.9709978103638,
+        "stt_ms": 5305.442929267883
+      },
+      "watchTimings": {
+        "tts_start_ms": 94.22802925109863,
+        "transfer_roundtrip_ms": 1293.5460805892944
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "7EC4DA2F-B099-4CCE-9F84-808CEC350DE2",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5153.8790464401245,
+        "generation_ms": 1886.314034461975
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1302.2100925445557,
+        "tts_start_ms": 101.59897804260254
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "7EFC59DB-29FF-4851-A84C-FC0057750E58",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5420.236945152283,
+        "generation_ms": 1819.8169469833374
+      },
+      "watchTimings": {
+        "tts_start_ms": 1.5859603881835938,
+        "transfer_roundtrip_ms": 1352.1250486373901
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "82DC5049-1D53-4040-A96D-94BD9D952195",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1814.3889904022217,
+        "stt_ms": 5122.858047485352
+      },
+      "watchTimings": {
+        "tts_start_ms": 89.1869068145752,
+        "transfer_roundtrip_ms": 1785.0559949874878
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "85377132-43C7-413D-870A-A29EEA25D067",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5307.368993759155,
+        "generation_ms": 2011.2240314483643
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1302.6180267333984
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "87D738F9-8782-4304-9A0B-530F845F9DD4",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5282.917022705078,
+        "generation_ms": 1790.8340692520142
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1293.7699556350708,
+        "tts_start_ms": 97.5339412689209
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "89573EF5-418C-4B2F-A924-4D9F025A3E53",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5304.98194694519,
+        "generation_ms": 1976.391077041626
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1305.3630590438843,
+        "tts_start_ms": 91.24302864074707
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "8F03471A-3CCD-4FB7-A28D-1249B3026114",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1799.1039752960205,
+        "stt_ms": 5332.374930381775
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1294.119954109192,
+        "tts_start_ms": 95.30091285705566
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "91BB6DCF-EEBE-47E7-A677-CF6417D5C7AA",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5170.6990003585815,
+        "generation_ms": 1912.4250411987305
+      },
+      "watchTimings": {
+        "tts_start_ms": 82.74698257446289,
+        "transfer_roundtrip_ms": 1294.137954711914
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "91D12FFA-A38D-423E-A994-7FFBF5A31F46",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1786.5769863128662,
+        "stt_ms": 5347.365975379944
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1331.1350345611572,
+        "tts_start_ms": 99.83408451080322
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "91DFDFFE-7948-4A09-A288-BFE2CF76ECF1",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5066.23899936676,
+        "generation_ms": 1884.242057800293
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 3757.4199438095093,
+        "tts_start_ms": 113.15405368804932
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "936FE5AA-7B28-4805-98CE-3B6632560547",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1778.6740064620972,
+        "stt_ms": 5135.151982307434
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1292.6700115203857,
+        "tts_start_ms": 96.16100788116455
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "9525EEA6-B4DD-4EC4-9247-CC3ABA087239",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5077.781915664673,
+        "generation_ms": 1824.5099782943726
+      },
+      "watchTimings": {
+        "tts_start_ms": 100.96895694732666,
+        "transfer_roundtrip_ms": 1890.2919292449951
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "95940F03-0854-4A05-9D13-F0BEF3AF7EC5",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1792.490005493164,
+        "stt_ms": 5362.082004547119
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1292.1820878982544,
+        "tts_start_ms": 84.82396602630615
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "978F24E4-F99D-45A9-8F6C-43E2DC0A8D4D",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5392.233967781067,
+        "generation_ms": 1955.694079399109
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1331.9679498672485
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "97939BA0-5252-4D65-BC67-AD1566975678",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5255.867958068848,
+        "generation_ms": 1934.5650672912598
+      },
+      "watchTimings": {
+        "tts_start_ms": 78.50790023803711,
+        "transfer_roundtrip_ms": 1143.376111984253
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "996A05A5-E319-4E38-A2A7-54156C3E982A",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 7963.653922080994,
+        "generation_ms": 2351.6730070114136
+      },
+      "watchTimings": {
+        "tts_start_ms": 97.5029468536377,
+        "transfer_roundtrip_ms": 1734.4590425491333
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "A5CDEA97-35D9-44A0-8A92-DD7AE48C98CA",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5236.984014511108,
+        "generation_ms": 1785.7869863510132
+      },
+      "watchTimings": {
+        "tts_start_ms": 104.58004474639893,
+        "transfer_roundtrip_ms": 1300.3950119018555
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "AD68E461-9E5B-4A52-BDAB-FBE606FF3178",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5523.056983947754,
+        "generation_ms": 2213.544011116028
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1352.705955505371,
+        "tts_start_ms": 124.55201148986816
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "AEEC2A8F-3529-46E7-9712-08AACB8D25C5",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5155.400037765503,
+        "generation_ms": 1787.4690294265747
+      },
+      "watchTimings": {
+        "tts_start_ms": 1.9550323486328125,
+        "transfer_roundtrip_ms": 1289.4619703292847
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "AF69AAEA-B02A-4727-A717-44F5C4EF10F4",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5373.697996139526,
+        "generation_ms": 1769.5690393447876
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1237.3019456863403,
+        "tts_start_ms": 98.56295585632324
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "B045CE08-D648-4052-8824-2E9C164A9479",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5215.044021606445,
+        "generation_ms": 1932.1479797363281
+      },
+      "watchTimings": {
+        "tts_start_ms": 86.54403686523438,
+        "transfer_roundtrip_ms": 1290.4289960861206
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "B1FCF080-A62D-4BBC-807F-9343B98CBE01",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1864.7980690002441,
+        "stt_ms": 5060.042023658752
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 2568.603992462158,
+        "tts_start_ms": 153.51402759552002
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "B258165E-8D15-41F8-B71D-A29E55EB26C0",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5194.577097892761,
+        "generation_ms": 1822.2509622573853
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1328.3729553222656,
+        "tts_start_ms": 102.20599174499512
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "B2D91533-AEAC-40D8-8141-E1C3A22C472B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 2203.442096710205,
+        "stt_ms": 5490.9199476242065
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1292.222023010254,
+        "tts_start_ms": 88.26196193695068
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "B86E76F0-79EA-43F8-8544-A0382F97A856",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1840.246081352234,
+        "stt_ms": 5034.479975700378
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1284.1190099716187,
+        "tts_start_ms": 89.68007564544678
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "B8B446DC-FD7E-4164-B24C-24F8E905AA5B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5321.758985519409,
+        "generation_ms": 1850.4509925842285
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1395.2029943466187,
+        "tts_start_ms": 85.57796478271484
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "BA2F7D27-347B-43B3-88AC-8CC9A520B31D",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1894.3169116973877,
+        "stt_ms": 5323.117017745972
+      },
+      "watchTimings": {
+        "tts_start_ms": 96.4289903640747,
+        "transfer_roundtrip_ms": 1942.8941011428833
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "BBEE1C05-B7A9-4C64-82CC-61570BD48E57",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5392.263054847717,
+        "generation_ms": 1779.0859937667847
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1942.3409700393677,
+        "tts_start_ms": 101.47404670715332
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "BC6BBC10-71AC-4C83-A1B4-9FB0D0828525",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5112.941026687622,
+        "generation_ms": 1929.123044013977
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1293.0320501327515,
+        "tts_start_ms": 87.05902099609375
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "BE9EBA2C-C44F-4D0F-95AC-2AC59DEBA9B1",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5192.622065544128,
+        "generation_ms": 1867.5949573516846
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1188.7129545211792,
+        "tts_start_ms": 81.2540054321289
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "BF5F71CF-D284-4720-9820-43017F77670E",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 3597.2009897232056,
+        "stt_ms": 5918.363094329834
+      },
+      "watchTimings": {
+        "tts_start_ms": 79.41997051239014,
+        "transfer_roundtrip_ms": 2034.7349643707275
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "C0D77642-4BEF-4C18-A34D-DC2444742F30",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5338.90700340271,
+        "generation_ms": 1831.4170837402344
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1277.405023574829,
+        "tts_start_ms": 96.5350866317749
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "C522A57B-F6B3-41C9-B5E6-3CB24DF31907",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5110.124945640564,
+        "generation_ms": 1836.9969129562378
+      },
+      "watchTimings": {
+        "tts_start_ms": 84.03706550598145,
+        "transfer_roundtrip_ms": 1282.075047492981
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "C6950FE7-E890-48C3-B0FC-5A1BBB105CDA",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1787.8750562667847,
+        "stt_ms": 5104.0109395980835
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1283.8109731674194,
+        "tts_start_ms": 98.00493717193604
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "C9CB5A7A-B5ED-47F9-BE50-C7ABF234DED0",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1798.8779544830322,
+        "stt_ms": 5248.404026031494
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1292.3729419708252,
+        "tts_start_ms": 92.29898452758789
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "CECD1636-C2A0-4DAF-B662-4FC6F56C410C",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1779.6729803085327,
+        "stt_ms": 5067.651987075806
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1291.8330430984497,
+        "tts_start_ms": 83.41491222381592
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "D2BE882D-9985-4B32-A9CC-D79414A08ACE",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1802.3730516433716,
+        "stt_ms": 5035.500049591064
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 2070.3439712524414,
+        "tts_start_ms": 97.68593311309814
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "D44AAFCD-82A8-4B2E-8616-AE9B6410F918",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5375.229001045227,
+        "generation_ms": 1977.370023727417
+      },
+      "watchTimings": {
+        "tts_start_ms": 78.65393161773682,
+        "transfer_roundtrip_ms": 1897.0249891281128
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "D52CAC12-D6B7-4D16-8B2A-3D72018CB901",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1777.9070138931274,
+        "stt_ms": 5130.183100700378
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1093.925952911377,
+        "tts_start_ms": 89.78903293609619
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "D5B59B54-539C-4907-A2E9-FDD02C0A173E",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 6601.096987724304,
+        "generation_ms": 2281.8039655685425
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 29378.165006637573,
+        "tts_start_ms": 86.29894256591797
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "DD404729-AF01-4566-83D7-4D700F12BA65",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5372.621059417725,
+        "generation_ms": 1807.5910806655884
+      },
+      "watchTimings": {
+        "tts_start_ms": 1.7260313034057617,
+        "transfer_roundtrip_ms": 1298.5410690307617
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "DD919524-69F8-4B3A-8681-2473F9D7B57B",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1783.6509943008423,
+        "stt_ms": 5081.614971160889
+      },
+      "watchTimings": {
+        "tts_start_ms": 1.817941665649414,
+        "transfer_roundtrip_ms": 1296.949028968811
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "E29DDBA0-4974-4E1F-8A27-24EDF7145875",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 6380.151033401489,
+        "generation_ms": 2024.0089893341064
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1294.7670221328735,
+        "tts_start_ms": 99.4119644165039
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "E438AEC9-D3A7-4380-9467-8E08556E1863",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5377.901077270508,
+        "generation_ms": 2027.522087097168
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1311.0580444335938
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "E6D51E1B-55FD-4796-8185-455C4684D524",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5304.255962371826,
+        "generation_ms": 1776.610016822815
+      },
+      "watchTimings": {
+        "tts_start_ms": 92.20099449157715,
+        "transfer_roundtrip_ms": 1659.1930389404297
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "F0DDB2CE-74F9-4BC5-BB6F-27E6FB48C3BD",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5191.536068916321,
+        "generation_ms": 2045.9860563278198
+      },
+      "watchTimings": {
+        "tts_start_ms": 1.6649961471557617,
+        "transfer_roundtrip_ms": 1285.6789827346802
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "F316AE62-965E-4165-B214-35440EF7EFAB",
+      "digestMatches": true,
+      "phoneTimings": {
+        "stt_ms": 5084.855914115906,
+        "generation_ms": 1783.17391872406
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1297.5269556045532,
+        "tts_start_ms": 101.15993022918701
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "FA45F387-B71D-4ED2-ADC7-A6754757FB04",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1794.8540449142456,
+        "stt_ms": 5351.423025131226
+      },
+      "watchTimings": {
+        "tts_start_ms": 107.26189613342285,
+        "transfer_roundtrip_ms": 1315.7680034637451
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    },
+    {
+      "id": "FF1C9EC4-AC17-4C2D-AE55-DD8399B711DA",
+      "digestMatches": true,
+      "phoneTimings": {
+        "generation_ms": 1818.445086479187,
+        "stt_ms": 5338.533997535706
+      },
+      "watchTimings": {
+        "transfer_roundtrip_ms": 1083.2070112228394,
+        "tts_start_ms": 101.27890110015869
+      },
+      "hasTranscript": true,
+      "replyAcknowledged": true
+    }
+  ],
+  "finalAudit": {
+    "passed": true,
+    "count": 100,
+    "checks": [
+      "original audio digest",
+      "transcript preserved on both sides",
+      "reply preserved on both sides",
+      "STT timing present",
+      "generation timing present",
+      "durable response acknowledgement",
+      "stable response identity",
+      "answered state"
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+Test Suite 'Selected tests' started at 2026-09-06 15:10:40.541.
+Test Suite 'VoiceWatchUITests.xctest' started at 2026-09-06 15:10:40.541.
+Test Suite 'VoiceUITests' started at 2026-09-06 15:10:40.542.
+Test Case '-[VoiceWatchUITests.VoiceUITests testWatchConversationOptionsAreAvailableWithoutStartingRecording]' started.
+    t =     0.00s Start Test at 2026-09-06 15:10:40.544
+    t =     0.06s Set Up
+    t =     0.07s Open de.localvoice.prototype.watchkitapp
+    t =     0.07s     Launch de.localvoice.prototype.watchkitapp
+    t =     0.07s         Waiting for system app quiescence
+    t =     1.92s         Setting up automation session
+    t =     3.14s         Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     8.89s Find the "record" Button
+    t =     8.95s Tap "conversationControls" Button
+    t =     8.95s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     8.95s     Find the "conversationControls" Button
+    t =     8.99s     Check for interrupting elements affecting "conversationControls" Button
+    t =     9.02s     Synthesize event
+    t =     9.33s     Wait for de.localvoice.prototype.watchkitapp to idle
+    t =     9.67s Waiting 5.0s for "autoPlayReplies" Switch to exist
+    t =    10.69s     Checking `Expect predicate `existsNoRetry == 1` for object "autoPlayReplies" Switch`
+    t =    10.69s         Checking existence of `"autoPlayReplies" Switch`
+    t =    10.73s Checking existence of `"handsFreeEnabled" Switch`
+    t =    10.75s Find the Target Application 'de.localvoice.prototype.watchkitapp'
+    t =    10.79s Added attachment named 'Watch-Gespraech-Optionen'
+    t =    10.80s Tear Down
+Test Case '-[VoiceWatchUITests.VoiceUITests testWatchConversationOptionsAreAvailableWithoutStartingRecording]' passed (11.018 seconds).
+Test Suite 'VoiceUITests' passed at 2026-09-06 15:10:51.562.
+	 Executed 1 test, with 0 failures (0 unexpected) in 11.018 (11.020) seconds
+Test Suite 'VoiceWatchUITests.xctest' passed at 2026-09-06 15:10:51.563.
+	 Executed 1 test, with 0 failures (0 unexpected) in 11.018 (11.022) seconds
+Test Suite 'Selected tests' passed at 2026-09-06 15:10:51.564.
+	 Executed 1 test, with 0 failures (0 unexpected) in 11.018 (11.023) seconds

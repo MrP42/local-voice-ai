@@ -1,0 +1,19 @@
+{
+  "sourceCommit": "a9fbf6574c555002272b28ae72e455ff0333f128",
+  "case": "denied",
+  "startedAt": 1788679711.6288269,
+  "devices": [
+    {
+      "bundle": "de.localvoice.prototype",
+      "denialShown": true,
+      "noCaptureFalselyConfirmed": true
+    },
+    {
+      "bundle": "de.localvoice.prototype.watchkitapp",
+      "denialShown": true,
+      "noCaptureFalselyConfirmed": true
+    }
+  ],
+  "passed": true,
+  "finishedAt": 1788679722.819915
+}
