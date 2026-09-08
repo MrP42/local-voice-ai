@@ -67,7 +67,9 @@ export const VoicesCard = () => {
   const activeVoice = getSetting("tts_voice") ?? null;
 
   const refreshVoices = useCallback(async () => {
-    setVoices(await commands.ttsListVoiceInfos());
+    // Faellt die Abfrage aus, bleibt die Liste leer statt undefiniert: ein
+    // fehlender Rueckgabewert riss sonst die ganze Vorlesen-Seite mit.
+    setVoices((await commands.ttsListVoiceInfos()) ?? []);
     // Das Dropdown an der Transportleiste haelt seine eigene Liste — dieses
     // Ereignis haelt beide zusammen, ohne dass sie sich kennen muessen.
     window.dispatchEvent(new CustomEvent("lv-voices-changed"));

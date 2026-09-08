@@ -240,3 +240,11 @@ Als Issues erfasst unter https://github.com/MrP42/local-voice-ai/issues
 | `origin` | `git@github.com:MrP42/local-voice-ai.git` — **privat** |
 | `upstream` | `https://github.com/cjpais/Handy.git` — fremdes Fork-Original, **niemals dorthin pushen** |
 | Arbeitsbranch | `feat/m3-stabilize-paste-path` |
+## Desktop-UX — 06.09.2026, uebernommen am 08.09.2026
+
+Neue aufgabenorientierte Start-/Navigationsstruktur und kompakte WAI-Arbeitsflaechen.
+Urspruenglich im Apple-Worktree entstanden (`8f06b6d`), hier auf aktuellen `main`
+uebernommen: der Einstellungsblock des Vorlesen-Bereichs behaelt dabei die seither
+ergaenzten Schalter (Auto-Transkript der Referenz, MP3-Bitrate) und wandert nur in
+die aufklappbare Huelle. Nachweise:
+[Desktop-UX](desktop-evidence/2026-09-06-workspace/README.md).

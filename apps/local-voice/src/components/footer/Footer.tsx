@@ -23,17 +23,17 @@ const Footer: React.FC = () => {
   }, []);
 
   return (
-    <div className="w-full border-t border-mid-gray/20 pt-3">
-      <div className="flex justify-between items-center text-xs px-4 pb-3 text-text/60">
+    <div className="workspace-status w-full border-t border-mid-gray/20 py-2">
+      <div className="flex flex-wrap justify-between items-center gap-2 text-xs px-3 text-text/70">
         {/* Model and microphone side by side: together they answer "will a
             dictation work right now?" without leaving the page. */}
-        <div className="flex items-center gap-4 min-w-0">
+        <div className="flex flex-wrap items-center gap-3 min-w-0">
           <ModelSelector />
           <MicSelector />
         </div>
 
         {/* Update Status */}
-        <div className="flex items-center gap-1">
+        <div className="hidden sm:flex items-center gap-1">
           <UpdateChecker />
           <span>•</span>
           {/* eslint-disable-next-line i18next/no-literal-string */}

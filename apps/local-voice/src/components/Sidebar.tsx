@@ -1,7 +1,15 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Cog, History, Cpu, Users, Volume2 } from "lucide-react";
-import LocalVoiceAiLogo from "./icons/LocalVoiceAiLogo";
+import {
+  Cog,
+  History,
+  Cpu,
+  Users,
+  Volume2,
+  House,
+  MoreHorizontal,
+} from "lucide-react";
+import { LocalVoiceAiMark } from "./icons/LocalVoiceAiLogo";
 import {
   AppSettings,
   HistorySettings,
@@ -31,13 +39,14 @@ interface SectionConfig {
 // General, Advanced, the dictation test and the about page were four separate
 // rows before — four rows of navigation for one activity.
 export const SECTIONS_CONFIG = {
+  home: { labelKey: "workspace.home", icon: House, component: () => null },
   history: {
     labelKey: "sidebar.history",
     icon: History,
     component: HistorySettings,
   },
   meetings: {
-    labelKey: "sidebar.meetings",
+    labelKey: "workspace.recordings",
     icon: Users,
     component: MeetingsSettings,
   },
@@ -72,55 +81,77 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { t } = useTranslation();
 
-  const sections = Object.entries(SECTIONS_CONFIG).map(([id, config]) => ({
-    id: id as SidebarSection,
-    ...config,
-  }));
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const close = (event: PointerEvent) => {
+      if (!moreRef.current?.contains(event.target as Node)) setMoreOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMoreOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [moreOpen]);
 
+  const item = (id: SidebarSection) => {
+    const { icon: Icon, labelKey } = SECTIONS_CONFIG[id];
+    return (
+      <button
+        key={id}
+        type="button"
+        className="workspace-nav__item"
+        aria-current={activeSection === id ? "page" : undefined}
+        onClick={() => {
+          onSectionChange(id);
+          setMoreOpen(false);
+        }}
+      >
+        <Icon size={20} aria-hidden="true" />
+        <span>{t(labelKey)}</span>
+      </button>
+    );
+  };
   return (
-    // Two widths, one breakpoint: below `sm` the rail is icons only (a label
-    // column would eat half a narrow window), from `sm` up it is wide enough
-    // that the longest label — "Besprechungen" — fits without truncation.
-    // That is a change of the interaction model, not cosmetics, which is why
-    // it earns a media query (design system, references/responsive.md).
-    <nav
-      className="flex flex-col w-14 sm:w-52 h-full shrink-0 border-e border-mid-gray/20 px-2 overflow-y-auto"
-      aria-label={t("sidebar.ariaLabel")}
-    >
-      {/* Word mark only — the pictorial mark repeats what the taskbar icon
-          already says and cost the labels their width. */}
-      <div className="hidden sm:block px-1 py-4">
-        <LocalVoiceAiLogo height={22} showMark={false} />
+    <nav className="workspace-nav" aria-label={t("sidebar.ariaLabel")}>
+      <div className="workspace-nav__brand">
+        <LocalVoiceAiMark size={28} />
       </div>
-      <div className="sm:hidden h-4" />
-      <div className="flex flex-col w-full items-center gap-1 pt-2 border-t border-mid-gray/20">
-        {sections.map((section) => {
-          const Icon = section.icon;
-          const isActive = activeSection === section.id;
-          const label = t(section.labelKey);
-
-          return (
-            <button
-              key={section.id}
-              type="button"
-              aria-current={isActive ? "page" : undefined}
-              className={`flex gap-2 items-center p-2 w-full rounded-lg cursor-pointer transition-colors justify-center sm:justify-start ${
-                isActive
-                  ? // Ink auf Gelb (Design-System) — sonst stünde im Dark-Theme
-                    // weiße Schrift auf dem gelben Aktiv-Balken.
-                    "bg-logo-primary/80 text-on-accent"
-                  : "hover:bg-mid-gray/20 hover:opacity-100 opacity-85"
-              }`}
-              onClick={() => onSectionChange(section.id)}
-              title={label}
-            >
-              <Icon width={22} height={22} className="shrink-0" />
-              <span className="hidden sm:block text-sm font-medium text-start min-w-0">
-                {label}
-              </span>
-            </button>
-          );
-        })}
+      <div className="workspace-nav__primary">
+        {(["home", "history", "meetings", "tts"] as const).map(item)}
+      </div>
+      <div className="workspace-nav__secondary" ref={moreRef}>
+        <button
+          ref={triggerRef}
+          type="button"
+          className="workspace-nav__item workspace-nav__more"
+          aria-label={t("workspace.more")}
+          aria-expanded={moreOpen}
+          aria-controls="workspace-more"
+          data-active={
+            activeSection === "models" || activeSection === "settings"
+          }
+          onClick={() => setMoreOpen(!moreOpen)}
+        >
+          <MoreHorizontal size={20} aria-hidden="true" />
+          <span>{t("workspace.more")}</span>
+        </button>
+        <div
+          id="workspace-more"
+          className="workspace-nav__utilities"
+          data-open={moreOpen}
+        >
+          {(["models", "settings"] as const).map(item)}
+        </div>
       </div>
     </nav>
   );

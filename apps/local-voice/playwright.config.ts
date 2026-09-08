@@ -18,7 +18,10 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "bunx vite dev",
+    // Ueber den Paketmanager des Projekts, nicht ueber bunx: bun ist auf den
+    // Windows-Arbeitsplaetzen nicht installiert, und der Testlauf scheiterte
+    // dort schon beim Start des Servers statt an einem echten Befund.
+    command: "pnpm exec vite dev",
     url: "http://localhost:1420",
     reuseExistingServer: !process.env.CI,
     timeout: 30000,

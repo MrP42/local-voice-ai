@@ -917,7 +917,7 @@ export const TtsSettings = () => {
     starting && (startingSeconds >= 120 || status?.message === "vram");
 
   return (
-    <div className="w-full flex gap-4 items-start">
+    <div className="tts-workspace w-full flex gap-4 items-start">
       <PagesSidebar
         pages={pages}
         activeId={activePage}
@@ -1070,28 +1070,6 @@ export const TtsSettings = () => {
                 placeholder={t("tts.summaryPlaceholder")}
                 rows={5}
                 className="w-full"
-              />
-            )}
-
-            <TagPalette
-              uiLang={uiLang}
-              onInsert={(tagText) =>
-                editorApiRef.current?.insertAtCursor(tagText)
-              }
-              onDragInsert={(x, y, tagText) =>
-                editorApiRef.current?.insertAtPoint?.(x, y, tagText) ?? false
-              }
-            />
-
-            {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
-                Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
-            {tab === "original" && (
-              <AutoTagBar
-                text={text}
-                suggestions={tagSuggestions}
-                sourceText={tagSuggestionsSourceText}
-                onSuggestionsChange={changeTagSuggestions}
-                onApplyText={applyAutoTagText}
               />
             )}
 
@@ -1449,6 +1427,33 @@ export const TtsSettings = () => {
                 </span>
               )}
             </div>
+            <details className="workspace-disclosure">
+              <summary>{t("workspace.voiceStyle")}</summary>
+              <div className="space-y-3 pt-2">
+                <TagPalette
+                  uiLang={uiLang}
+                  onInsert={(tagText) =>
+                    editorApiRef.current?.insertAtCursor(tagText)
+                  }
+                  onDragInsert={(x, y, tagText) =>
+                    editorApiRef.current?.insertAtPoint?.(x, y, tagText) ??
+                    false
+                  }
+                />
+
+                {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
+                Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
+                {tab === "original" && (
+                  <AutoTagBar
+                    text={text}
+                    suggestions={tagSuggestions}
+                    sourceText={tagSuggestionsSourceText}
+                    onSuggestionsChange={changeTagSuggestions}
+                    onApplyText={applyAutoTagText}
+                  />
+                )}
+              </div>
+            </details>
             {/* Sprecherwechsel und Tags sind Schreibregeln, keine
               Einstellungen — der aufklappbare Block steht deshalb bei dem
               Feld, in das man sie tippt. */}
@@ -1488,302 +1493,309 @@ export const TtsSettings = () => {
 
         <ReadingCard />
 
-        <SettingsGroup title={t("tts.settingsTitle")}>
-          <ShortcutInput shortcutId="speak_clipboard" grouped={true} />
-          <Slider
-            value={getSetting("tts_volume") ?? 1.0}
-            onChange={(value) => updateSetting("tts_volume", value)}
-            min={0}
-            max={1}
-            step={0.05}
-            formatValue={(value) => `${Math.round(value * 100)}%`}
-            label={t("tts.settings.volume")}
-            description={t("tts.settings.volumeDescription")}
-            grouped={true}
-          />
-          <ToggleSwitch
-            checked={getSetting("tts_normalize") ?? true}
-            onChange={(checked) => updateSetting("tts_normalize", checked)}
-            isUpdating={isUpdating("tts_normalize")}
-            label={t("tts.settings.normalize")}
-            description={t("tts.settings.normalizeDescription")}
-            grouped={true}
-          />
-          <ToggleSwitch
-            checked={getSetting("tts_prewarm") ?? false}
-            onChange={(checked) => updateSetting("tts_prewarm", checked)}
-            isUpdating={isUpdating("tts_prewarm")}
-            label={t("tts.settings.prewarm")}
-            description={t("tts.settings.prewarmDescription")}
-            grouped={true}
-          />
-          <ToggleSwitch
-            checked={getSetting("tts_reference_auto_transcribe") ?? true}
-            onChange={(checked) =>
-              updateSetting("tts_reference_auto_transcribe", checked)
-            }
-            isUpdating={isUpdating("tts_reference_auto_transcribe")}
-            label={t("tts.settings.autoTranscribe")}
-            description={t("tts.settings.autoTranscribeDescription")}
-            grouped={true}
-          />
-          <ToggleSwitch
-            checked={getSetting("tts_enhance") ?? true}
-            onChange={(checked) => updateSetting("tts_enhance", checked)}
-            isUpdating={isUpdating("tts_enhance")}
-            label={t("tts.settings.enhance")}
-            description={t("tts.settings.enhanceDescription")}
-            grouped={true}
-          />
-          {(getSetting("tts_enhance") ?? true) && (
-            <SettingContainer
-              title={t("tts.settings.enhanceStrength")}
-              description={t("tts.settings.enhanceStrengthDescription")}
-              grouped={true}
-              layout="horizontal"
-            >
-              <div className="w-40">
-                <Select
-                  value={getSetting("tts_enhance_strength") ?? "gentle"}
-                  options={[
-                    {
-                      value: "gentle",
-                      label: t("tts.settings.strengthGentle"),
-                    },
-                    {
-                      value: "medium",
-                      label: t("tts.settings.strengthMedium"),
-                    },
-                    {
-                      value: "strong",
-                      label: t("tts.settings.strengthStrong"),
-                    },
-                  ]}
-                  onChange={(value) =>
-                    value &&
-                    updateSetting(
-                      "tts_enhance_strength",
-                      value as "gentle" | "medium" | "strong",
-                    )
-                  }
-                  isClearable={false}
-                />
-              </div>
-            </SettingContainer>
-          )}
-          <Slider
-            value={getSetting("tts_speed") ?? 1.0}
-            onChange={(value) => updateSetting("tts_speed", value)}
-            min={0.5}
-            max={2}
-            step={0.05}
-            formatValue={(value) => `${value.toFixed(2)}×`}
-            label={t("tts.settings.speed")}
-            description={t("tts.settings.speedDescription")}
-            grouped={true}
-          />
-          <SettingContainer
-            title={t("tts.settings.exportFormat")}
-            description={t("tts.settings.exportFormatDescription")}
-            grouped={true}
-            layout="horizontal"
-          >
-            <div className="w-36">
-              {/* Formatnamen sind Eigennamen — bewusst nicht übersetzt. */}
-              <Select
-                value={getSetting("tts_export_format") ?? "wav"}
-                options={[
-                  { value: "wav", label: "WAV" },
-                  { value: "mp3", label: "MP3" },
-                  { value: "opus", label: "Opus" },
-                ]}
-                isClearable={false}
-                onChange={(value) => {
-                  if (value) updateSetting("tts_export_format", value);
-                }}
+        <details className="workspace-disclosure">
+          <summary>{t("workspace.voiceOptions")}</summary>
+          <div className="space-y-4 pt-3">
+            <SettingsGroup title={t("tts.settingsTitle")}>
+              <ShortcutInput shortcutId="speak_clipboard" grouped={true} />
+              <Slider
+                value={getSetting("tts_volume") ?? 1.0}
+                onChange={(value) => updateSetting("tts_volume", value)}
+                min={0}
+                max={1}
+                step={0.05}
+                formatValue={(value) => `${Math.round(value * 100)}%`}
+                label={t("tts.settings.volume")}
+                description={t("tts.settings.volumeDescription")}
+                grouped={true}
               />
-            </div>
-          </SettingContainer>
-          {/* Nur bei MP3: WAV kennt keine Bitrate, und Opus wird derzeit als
-              WAV geschrieben. Eine sichtbare, aber wirkungslose Einstellung
-              waere ein Versprechen, das der Export nicht haelt. */}
-          {(getSetting("tts_export_format") ?? "wav") === "mp3" && (
-            <SettingContainer
-              title={t("tts.settings.exportBitrate")}
-              description={t("tts.settings.exportBitrateDescription")}
-              grouped={true}
-              layout="horizontal"
-            >
-              <div className="w-36">
-                <Select
-                  value={String(getSetting("tts_export_bitrate") ?? 192)}
-                  options={EXPORT_BITRATES.map((rate) => ({
-                    value: String(rate),
-                    label: t("tts.settings.exportBitrateOption", { rate }),
-                  }))}
-                  isClearable={false}
-                  onChange={(value) => {
-                    if (value) {
-                      updateSetting("tts_export_bitrate", Number(value));
+              <ToggleSwitch
+                checked={getSetting("tts_normalize") ?? true}
+                onChange={(checked) => updateSetting("tts_normalize", checked)}
+                isUpdating={isUpdating("tts_normalize")}
+                label={t("tts.settings.normalize")}
+                description={t("tts.settings.normalizeDescription")}
+                grouped={true}
+              />
+              <ToggleSwitch
+                checked={getSetting("tts_prewarm") ?? false}
+                onChange={(checked) => updateSetting("tts_prewarm", checked)}
+                isUpdating={isUpdating("tts_prewarm")}
+                label={t("tts.settings.prewarm")}
+                description={t("tts.settings.prewarmDescription")}
+                grouped={true}
+              />
+              <ToggleSwitch
+                checked={getSetting("tts_reference_auto_transcribe") ?? true}
+                onChange={(checked) =>
+                  updateSetting("tts_reference_auto_transcribe", checked)
+                }
+                isUpdating={isUpdating("tts_reference_auto_transcribe")}
+                label={t("tts.settings.autoTranscribe")}
+                description={t("tts.settings.autoTranscribeDescription")}
+                grouped={true}
+              />
+              <ToggleSwitch
+                checked={getSetting("tts_enhance") ?? true}
+                onChange={(checked) => updateSetting("tts_enhance", checked)}
+                isUpdating={isUpdating("tts_enhance")}
+                label={t("tts.settings.enhance")}
+                description={t("tts.settings.enhanceDescription")}
+                grouped={true}
+              />
+              {(getSetting("tts_enhance") ?? true) && (
+                <SettingContainer
+                  title={t("tts.settings.enhanceStrength")}
+                  description={t("tts.settings.enhanceStrengthDescription")}
+                  grouped={true}
+                  layout="horizontal"
+                >
+                  <div className="w-40">
+                    <Select
+                      value={getSetting("tts_enhance_strength") ?? "gentle"}
+                      options={[
+                        {
+                          value: "gentle",
+                          label: t("tts.settings.strengthGentle"),
+                        },
+                        {
+                          value: "medium",
+                          label: t("tts.settings.strengthMedium"),
+                        },
+                        {
+                          value: "strong",
+                          label: t("tts.settings.strengthStrong"),
+                        },
+                      ]}
+                      onChange={(value) =>
+                        value &&
+                        updateSetting(
+                          "tts_enhance_strength",
+                          value as "gentle" | "medium" | "strong",
+                        )
+                      }
+                      isClearable={false}
+                    />
+                  </div>
+                </SettingContainer>
+              )}
+              <Slider
+                value={getSetting("tts_speed") ?? 1.0}
+                onChange={(value) => updateSetting("tts_speed", value)}
+                min={0.5}
+                max={2}
+                step={0.05}
+                formatValue={(value) => `${value.toFixed(2)}×`}
+                label={t("tts.settings.speed")}
+                description={t("tts.settings.speedDescription")}
+                grouped={true}
+              />
+              <SettingContainer
+                title={t("tts.settings.exportFormat")}
+                description={t("tts.settings.exportFormatDescription")}
+                grouped={true}
+                layout="horizontal"
+              >
+                <div className="w-36">
+                  {/* Formatnamen sind Eigennamen — bewusst nicht übersetzt. */}
+                  <Select
+                    value={getSetting("tts_export_format") ?? "wav"}
+                    options={[
+                      { value: "wav", label: "WAV" },
+                      { value: "mp3", label: "MP3" },
+                      { value: "opus", label: "Opus" },
+                    ]}
+                    isClearable={false}
+                    onChange={(value) => {
+                      if (value) updateSetting("tts_export_format", value);
+                    }}
+                  />
+                </div>
+              </SettingContainer>
+              {/* Nur bei MP3: WAV kennt keine Bitrate, und Opus wird derzeit als
+                  WAV geschrieben. Eine sichtbare, aber wirkungslose Einstellung
+                  waere ein Versprechen, das der Export nicht haelt. */}
+              {(getSetting("tts_export_format") ?? "wav") === "mp3" && (
+                <SettingContainer
+                  title={t("tts.settings.exportBitrate")}
+                  description={t("tts.settings.exportBitrateDescription")}
+                  grouped={true}
+                  layout="horizontal"
+                >
+                  <div className="w-36">
+                    <Select
+                      value={String(getSetting("tts_export_bitrate") ?? 192)}
+                      options={EXPORT_BITRATES.map((rate) => ({
+                        value: String(rate),
+                        label: t("tts.settings.exportBitrateOption", { rate }),
+                      }))}
+                      isClearable={false}
+                      onChange={(value) => {
+                        if (value) {
+                          updateSetting("tts_export_bitrate", Number(value));
+                        }
+                      }}
+                    />
+                  </div>
+                </SettingContainer>
+              )}
+              <SettingContainer
+                title={t("tts.settings.fishDir")}
+                description={t("tts.settings.fishDirDescription")}
+                grouped={true}
+                layout="stacked"
+              >
+                <Input
+                  type="text"
+                  value={getSetting("tts_fish_dir") ?? ""}
+                  onChange={(e) => updateSetting("tts_fish_dir", e.target.value)}
+                  disabled={isUpdating("tts_fish_dir")}
+                  className="w-full"
+                />
+              </SettingContainer>
+              <SettingContainer
+                title={t("tts.settings.port")}
+                description={t("tts.settings.portDescription")}
+                grouped={true}
+                layout="horizontal"
+              >
+                <Input
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value={getSetting("tts_port") ?? 8080}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value, 10);
+                    if (!isNaN(value) && value > 0 && value <= 65535) {
+                      updateSetting("tts_port", value);
                     }
                   }}
+                  disabled={isUpdating("tts_port")}
+                  className="w-24"
                 />
-              </div>
-            </SettingContainer>
-          )}
-          <SettingContainer
-            title={t("tts.settings.fishDir")}
-            description={t("tts.settings.fishDirDescription")}
-            grouped={true}
-            layout="stacked"
-          >
-            <Input
-              type="text"
-              value={getSetting("tts_fish_dir") ?? ""}
-              onChange={(e) => updateSetting("tts_fish_dir", e.target.value)}
-              disabled={isUpdating("tts_fish_dir")}
-              className="w-full"
-            />
-          </SettingContainer>
-          <SettingContainer
-            title={t("tts.settings.port")}
-            description={t("tts.settings.portDescription")}
-            grouped={true}
-            layout="horizontal"
-          >
-            <Input
-              type="number"
-              min="1"
-              max="65535"
-              value={getSetting("tts_port") ?? 8080}
-              onChange={(e) => {
-                const value = parseInt(e.target.value, 10);
-                if (!isNaN(value) && value > 0 && value <= 65535) {
-                  updateSetting("tts_port", value);
-                }
-              }}
-              disabled={isUpdating("tts_port")}
-              className="w-24"
-            />
-          </SettingContainer>
-          <SettingContainer
-            title={t("tts.settings.seed")}
-            description={t("tts.settings.seedDescription")}
-            grouped={true}
-            layout="horizontal"
-          >
-            {/* Der Seed bestimmt, wie die Standardstimme klingt. Er ist fest
+              </SettingContainer>
+              <SettingContainer
+                title={t("tts.settings.seed")}
+                description={t("tts.settings.seedDescription")}
+                grouped={true}
+                layout="horizontal"
+              >
+                {/* Der Seed bestimmt, wie die Standardstimme klingt. Er ist fest
               einstellbar, damit eine gefundene Stimme wiederholbar bleibt —
               und wuerfelbar, weil man sie nur durch Ausprobieren findet. Der
               gewuerfelte Wert landet sichtbar im Feld; genau der ist die
               Notiz, mit der man spaeter zurueckkommt. */}
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                value={getSetting("tts_seed") ?? 42}
-                onChange={(e) => {
-                  const value = parseInt(e.target.value, 10);
-                  if (!isNaN(value)) updateSetting("tts_seed", value);
-                }}
-                disabled={isUpdating("tts_seed")}
-                className="w-28"
-              />
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() =>
-                  updateSetting(
-                    "tts_seed",
-                    Math.floor(Math.random() * 2_147_483_647) + 1,
-                  )
-                }
-                disabled={isUpdating("tts_seed")}
-              >
-                <Dices width={14} height={14} />
-                {t("tts.settings.rollSeed")}
-              </Button>
-              {/* Ein Seed ist fluechtig: wer weiterwuerfelt, verliert die
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    value={getSetting("tts_seed") ?? 42}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value, 10);
+                      if (!isNaN(value)) updateSetting("tts_seed", value);
+                    }}
+                    disabled={isUpdating("tts_seed")}
+                    className="w-28"
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() =>
+                      updateSetting(
+                        "tts_seed",
+                        Math.floor(Math.random() * 2_147_483_647) + 1,
+                      )
+                    }
+                    disabled={isUpdating("tts_seed")}
+                  >
+                    <Dices width={14} height={14} />
+                    {t("tts.settings.rollSeed")}
+                  </Button>
+                  {/* Ein Seed ist fluechtig: wer weiterwuerfelt, verliert die
                 Stimme, die ihm eben gefiel — und denselben Zahlenwert
                 wiederzufinden ist aussichtslos. Speichern macht daraus eine
                 benannte Stimme in der Auswahl. */}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setSaveSeedOpen(true)}
-                disabled={savingSeed}
-                title={t("tts.saveSeedHint")}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setSaveSeedOpen(true)}
+                    disabled={savingSeed}
+                    title={t("tts.saveSeedHint")}
+                  >
+                    <Save width={14} height={14} />
+                    {t("tts.saveSeed")}
+                  </Button>
+                </div>
+              </SettingContainer>
+              <SettingContainer
+                title={t("tts.settings.idleMinutes")}
+                description={t("tts.settings.idleMinutesDescription")}
+                grouped={true}
+                layout="horizontal"
               >
-                <Save width={14} height={14} />
-                {t("tts.saveSeed")}
-              </Button>
-            </div>
-          </SettingContainer>
-          <SettingContainer
-            title={t("tts.settings.idleMinutes")}
-            description={t("tts.settings.idleMinutesDescription")}
-            grouped={true}
-            layout="horizontal"
-          >
-            <Input
-              type="number"
-              min="0"
-              max="1440"
-              value={getSetting("tts_idle_minutes") ?? 15}
-              onChange={(e) => {
-                const value = parseInt(e.target.value, 10);
-                if (!isNaN(value) && value >= 0) {
-                  updateSetting("tts_idle_minutes", value);
+                <Input
+                  type="number"
+                  min="0"
+                  max="1440"
+                  value={getSetting("tts_idle_minutes") ?? 15}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value, 10);
+                    if (!isNaN(value) && value >= 0) {
+                      updateSetting("tts_idle_minutes", value);
+                    }
+                  }}
+                  disabled={isUpdating("tts_idle_minutes")}
+                  className="w-24"
+                />
+              </SettingContainer>
+              <ToggleSwitch
+                checked={getSetting("tts_compile") ?? true}
+                onChange={(checked) => updateSetting("tts_compile", checked)}
+                isUpdating={isUpdating("tts_compile")}
+                label={t("tts.settings.compile")}
+                description={t("tts.settings.compileDescription")}
+                grouped={true}
+              />
+              <ToggleSwitch
+                checked={getSetting("tts_context_menu") ?? false}
+                onChange={(checked) =>
+                  updateSetting("tts_context_menu", checked)
                 }
-              }}
-              disabled={isUpdating("tts_idle_minutes")}
-              className="w-24"
-            />
-          </SettingContainer>
-          <ToggleSwitch
-            checked={getSetting("tts_compile") ?? true}
-            onChange={(checked) => updateSetting("tts_compile", checked)}
-            isUpdating={isUpdating("tts_compile")}
-            label={t("tts.settings.compile")}
-            description={t("tts.settings.compileDescription")}
-            grouped={true}
-          />
-          <ToggleSwitch
-            checked={getSetting("tts_context_menu") ?? false}
-            onChange={(checked) => updateSetting("tts_context_menu", checked)}
-            isUpdating={isUpdating("tts_context_menu")}
-            label={t("tts.settings.contextMenu")}
-            description={t("tts.settings.contextMenuDescription")}
-            grouped={true}
-          />
-          <SettingContainer
-            title={t("tts.settings.maxChars")}
-            description={t("tts.settings.maxCharsDescription")}
-            grouped={true}
-            layout="horizontal"
-          >
-            <Input
-              type="number"
-              min="100"
-              max="100000"
-              value={getSetting("tts_max_chars") ?? 5000}
-              onChange={(e) => {
-                const value = parseInt(e.target.value, 10);
-                if (!isNaN(value) && value >= 100) {
-                  updateSetting("tts_max_chars", value);
-                }
-              }}
-              disabled={isUpdating("tts_max_chars")}
-              className="w-24"
-            />
-          </SettingContainer>
-        </SettingsGroup>
+                isUpdating={isUpdating("tts_context_menu")}
+                label={t("tts.settings.contextMenu")}
+                description={t("tts.settings.contextMenuDescription")}
+                grouped={true}
+              />
+              <SettingContainer
+                title={t("tts.settings.maxChars")}
+                description={t("tts.settings.maxCharsDescription")}
+                grouped={true}
+                layout="horizontal"
+              >
+                <Input
+                  type="number"
+                  min="100"
+                  max="100000"
+                  value={getSetting("tts_max_chars") ?? 5000}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value, 10);
+                    if (!isNaN(value) && value >= 100) {
+                      updateSetting("tts_max_chars", value);
+                    }
+                  }}
+                  disabled={isUpdating("tts_max_chars")}
+                  className="w-24"
+                />
+              </SettingContainer>
+            </SettingsGroup>
 
-        {/* Verwaltung der Stimmen und der Stimmwechsler gehoeren zu den
+            {/* Verwaltung der Stimmen und der Stimmwechsler gehoeren zu den
           Einstellungen ans Ende: ausgewaehlt wird oben am Dropdown, hierher
           kommt man zum Aufnehmen, Importieren und Loeschen. */}
-        <VoicesCard />
+            <VoicesCard />
 
-        <VoiceChangerCard />
+            <VoiceChangerCard />
+          </div>
+        </details>
 
         <Dialog
           open={saveSeedOpen}
