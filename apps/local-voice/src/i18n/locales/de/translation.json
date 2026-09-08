@@ -434,7 +434,10 @@
       "example3": "[laughing] Das darf doch nicht wahr sein!"
     },
     "serverStartTitle": "Fish-Speech-Server starten?",
-    "serverStartBody": "Der Server lädt das Sprachmodell in den Grafikspeicher — rund 17 GB — und braucht dafür je nach Einstellung bis zu zwei Minuten. Solange er läuft, rechnet die Übersetzung auf der CPU. Beendet wird er über dasselbe Symbol oder von selbst nach der eingestellten Leerlaufzeit."
+    "serverStartBody": "Der Server lädt das Sprachmodell in den Grafikspeicher — rund 17 GB — und braucht dafür je nach Einstellung bis zu zwei Minuten. Solange er läuft, rechnet die Übersetzung auf der CPU. Beendet wird er über dasselbe Symbol oder von selbst nach der eingestellten Leerlaufzeit.",
+    "export": {
+      "untitled": "Vorlesen"
+    }
   },
   "onboarding": {
     "subtitle": "Wähle ein Transkriptionsmodell, um loszulegen",

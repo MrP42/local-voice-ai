@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { commands, type PageInfo, type TtsStatus } from "@/bindings";
+import { exportFileName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
 import { VoicesCard } from "./VoicesCard";
@@ -567,6 +568,18 @@ export const TtsSettings = () => {
    * only played. Goes through the same segmentation as playback, so the file
    * sounds like what you heard.
    */
+  /**
+   * Dateiname des naechsten Exports, aus Titel des Arbeitsblatts und
+   * Zeitpunkt. Die Namensbildung selbst steht in `exportName.ts` — dort ist
+   * sie ohne Oberflaeche pruefbar.
+   */
+  const nextExportName = (ext: string) =>
+    exportFileName(
+      pages.find((page) => page.id === activePage)?.title,
+      t("tts.export.untitled"),
+      ext,
+    );
+
   const saveSpokenAudio = async () => {
     setLastError(null);
     // Der Speichern-Dialog schlaegt den Projektordner der Seite vor: dort
@@ -580,10 +593,12 @@ export const TtsSettings = () => {
     const format = (getSetting("tts_export_format") ?? "wav").toLowerCase();
     const ext = format === "mp3" ? "mp3" : "wav";
     const filterName = ext === "mp3" ? "MP3" : "WAV";
-    let defaultPath = `vorlesen.${ext}`;
+    let defaultPath = nextExportName(ext);
     if (activePage) {
       const dir = await commands.pageDir(activePage);
-      if (dir.status === "ok") defaultPath = `${dir.data}\\vorlesen.${ext}`;
+      if (dir.status === "ok") {
+        defaultPath = `${dir.data}\\${nextExportName(ext)}`;
+      }
     }
     const target = await save({
       filters: [{ name: filterName, extensions: [ext] }],
