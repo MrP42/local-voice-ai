@@ -299,3 +299,13 @@ pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String
     settings::write_settings(&app, s);
     Ok(())
 }
+
+/// RAM und GPU-Speicherbudget fuer die Fussleiste. Auf einem
+/// Blocking-Thread: DXGI ist schnell, aber nicht async.
+#[tauri::command]
+#[specta::specta]
+pub async fn system_memory(_app: AppHandle) -> Result<crate::managers::llm::SystemMemory, String> {
+    tokio::task::spawn_blocking(crate::managers::llm::resources::system_memory)
+        .await
+        .map_err(|e| e.to_string())
+}

@@ -1422,5 +1422,19 @@
     "voices": "Stimmen anhören & verwalten",
     "navCollapse": "Menü einklappen",
     "navExpand": "Menü ausklappen"
+  },
+  "llmSelector": {
+    "title": "Sprachmodell",
+    "none": "Kein Sprachmodell",
+    "loading": "{{name}} lädt …",
+    "error": "{{name}}: Fehler",
+    "empty": "Kein Modell freigegeben — unter Modelle ein Sprachmodell laden und „Verwenden“, oder in den Einstellungen einen Anbieter verbinden.",
+    "unload": "Aus dem Speicher entladen"
+  },
+  "resourceMeter": {
+    "ram": "RAM {{used}} / {{total}} GB",
+    "gpu": "GPU {{used}} / {{total}} GB",
+    "gpuShared": "GPU (gemeinsam) {{used}} / {{total}} GB",
+    "hint": "RAM: verwendet / gesamt. GPU: belegt / Budget des Treibers — kein „freier VRAM“."
   }
 }

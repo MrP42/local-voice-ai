@@ -1422,5 +1422,19 @@
     "voices": "Listen to & manage voices",
     "navCollapse": "Collapse menu",
     "navExpand": "Expand menu"
+  },
+  "llmSelector": {
+    "title": "Language model",
+    "none": "No language model",
+    "loading": "{{name}} loading …",
+    "error": "{{name}}: error",
+    "empty": "No model released — download one under Models and press “Use”, or connect a provider in Settings.",
+    "unload": "Unload from memory"
+  },
+  "resourceMeter": {
+    "ram": "RAM {{used}} / {{total}} GB",
+    "gpu": "GPU {{used}} / {{total}} GB",
+    "gpuShared": "GPU (shared) {{used}} / {{total}} GB",
+    "hint": "RAM: used / total. GPU: in use / driver budget — not “free VRAM”."
   }
 }

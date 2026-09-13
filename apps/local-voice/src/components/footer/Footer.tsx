@@ -3,6 +3,8 @@ import { getVersion } from "@tauri-apps/api/app";
 
 import ModelSelector from "../model-selector";
 import { MicSelector } from "./MicSelector";
+import { LlmSelector } from "./LlmSelector";
+import { ResourceMeter } from "./ResourceMeter";
 import UpdateChecker from "../update-checker";
 
 const Footer: React.FC = () => {
@@ -30,6 +32,10 @@ const Footer: React.FC = () => {
         <div className="flex flex-wrap items-center gap-3 min-w-0">
           <ModelSelector />
           <MicSelector />
+          {/* Das Sprachmodell gehoert in dieselbe Reihe: es beantwortet, ob
+              Zusammenfassung und Nachbearbeitung gerade funktionieren. */}
+          <LlmSelector />
+          <ResourceMeter />
         </div>
 
         {/* Update Status */}

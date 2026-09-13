@@ -6,11 +6,13 @@
 //! (`managers::tts::models`): Katalogeintrag je Plattform, Download mit
 //! Pruefsumme, entpacken, aufloesen.
 
+pub mod resources;
 pub mod runtime;
 pub mod server;
 
 use std::sync::{Arc, OnceLock};
 
+pub use resources::SystemMemory;
 pub use runtime::{LlmDownloadInfo, LlmDownloadKind, LlmRuntimeManager};
 pub use server::{LocalLlmServer, LocalLlmStatus, StartOptions};
 

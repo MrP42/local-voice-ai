@@ -323,6 +323,14 @@ async llmLocalActivate(modelId: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async systemMemory() : Promise<Result<SystemMemory, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("system_memory") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsEngineSetting(value: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_engine_setting", { value }) };
@@ -2488,6 +2496,8 @@ export type LlmDownloadKind = "runtime" | "model"
 /** Ein Eintrag der Modellseite fuer das lokale Sprachmodell: Laufzeitpaket oder Modell. */
 export type LlmDownloadInfo = { id: string; kind: LlmDownloadKind; name: string; description: string; size_mb: number; is_downloaded: boolean; is_downloading: boolean; tags: string[]; backend: string | null; for_this_platform: boolean }
 export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
+export type GpuMemory = { name: string; budget_mb: number; used_mb: number; dedicated_mb: number; shared: boolean }
+export type SystemMemory = { ram_total_mb: number; ram_used_mb: number; gpus: GpuMemory[] }
 export type LocalLlmStatus = { phase: LocalLlmPhase; model_id: string | null; backend: string | null; port: number | null; message: string | null }
 /**
  * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter. `kind` ist die

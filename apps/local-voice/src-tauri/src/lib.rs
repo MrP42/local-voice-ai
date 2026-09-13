@@ -1317,6 +1317,7 @@ pub fn run(cli_args: CliArgs) {
             commands::llm::llm_local_stop,
             commands::llm::llm_local_backend,
             commands::llm::llm_local_activate,
+            commands::llm::system_memory,
             shortcut::change_tts_engine_setting,
             shortcut::change_tts_piper_voice_setting,
             shortcut::change_tts_speed_setting,
