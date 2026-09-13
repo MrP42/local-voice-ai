@@ -392,23 +392,13 @@ textarea:focus::-webkit-resizer {
   overflow-y: auto;
   gap: 20px;
 }
-.workspace-nav__head {
-  display: flex;
-  justify-content: flex-end;
-  padding-bottom: 4px;
-}
+/* Der Einklapp-Schalter ist ein Eintrag wie die anderen, nur leiser:
+   er gehoert zur Leiste, nicht zu den Bereichen. */
 .workspace-nav__toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
-  cursor: pointer;
+  margin-top: 4px;
 }
 .workspace-nav__toggle:hover {
-  background: color-mix(in srgb, var(--color-mid-gray) 12%, transparent);
   color: var(--color-text);
 }
 /* Eingeklappt bleiben die Symbole, die Namen gehen. Die Breite fasst ein
@@ -416,9 +406,6 @@ textarea:focus::-webkit-resizer {
    zu treffen, breiter braechte keinen Platzgewinn. */
 .workspace-nav[data-collapsed="true"] {
   width: 64px;
-}
-.workspace-nav[data-collapsed="true"] .workspace-nav__head {
-  justify-content: center;
 }
 .workspace-nav[data-collapsed="true"] .workspace-nav__item {
   justify-content: center;
@@ -550,7 +537,7 @@ textarea:focus::-webkit-resizer {
       color-mix(in srgb, var(--color-mid-gray) 20%, transparent);
     overflow: visible;
   }
-  .workspace-nav__head {
+  .workspace-nav__toggle {
     display: none;
   }
   /* Unten als Tab-Leiste gibt es nichts einzuklappen — die Namen bleiben. */

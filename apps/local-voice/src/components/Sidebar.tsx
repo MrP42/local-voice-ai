@@ -143,29 +143,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       aria-label={t("sidebar.ariaLabel")}
       data-collapsed={collapsed}
     >
-      {/* Kein Logo mehr: die Kopfzeile des Fensters traegt es bereits samt
-          Titel, und ein zweites Mal kostete nur Platz. An seiner Stelle
-          steht, was hier gebraucht wird — der Schalter, der die Leiste auf
-          ihre Symbole eindampft. */}
-      <div className="workspace-nav__head">
-        <button
-          type="button"
-          className="workspace-nav__toggle"
-          onClick={() => setCollapsed(!collapsed)}
-          aria-expanded={!collapsed}
-          aria-controls="workspace-nav-items"
-          title={collapsed ? t("workspace.navExpand") : t("workspace.navCollapse")}
-          aria-label={
-            collapsed ? t("workspace.navExpand") : t("workspace.navCollapse")
-          }
-        >
-          {collapsed ? (
-            <PanelLeftOpen size={18} aria-hidden="true" />
-          ) : (
-            <PanelLeftClose size={18} aria-hidden="true" />
-          )}
-        </button>
-      </div>
       <div className="workspace-nav__primary" id="workspace-nav-items">
         {(["home", "history", "meetings", "tts"] as const).map(item)}
       </div>
@@ -192,6 +169,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           {(["models", "settings"] as const).map(item)}
         </div>
+        {/* Der Schalter sitzt ganz unten, als letzter Eintrag: oben wuerde er
+            die Bereiche eine Zeile nach unten druecken, und genau dort soll
+            "Start" stehen. Kein Logo mehr darueber — die Kopfzeile des
+            Fensters traegt es bereits. */}
+        <button
+          type="button"
+          className="workspace-nav__item workspace-nav__toggle"
+          onClick={() => setCollapsed(!collapsed)}
+          aria-expanded={!collapsed}
+          aria-controls="workspace-nav-items"
+          title={collapsed ? t("workspace.navExpand") : t("workspace.navCollapse")}
+          aria-label={
+            collapsed ? t("workspace.navExpand") : t("workspace.navCollapse")
+          }
+        >
+          {collapsed ? (
+            <PanelLeftOpen size={20} aria-hidden="true" />
+          ) : (
+            <PanelLeftClose size={20} aria-hidden="true" />
+          )}
+          <span>{t("workspace.navCollapse")}</span>
+        </button>
       </div>
     </nav>
   );
