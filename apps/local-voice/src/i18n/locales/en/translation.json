@@ -1072,6 +1072,43 @@
         "input": "Microphone",
         "feedback": "Audible feedback"
       }
+    },
+    "llm": {
+      "active": {
+        "title": "Language model",
+        "model": "Active model",
+        "description": "Used for polishing, summaries, translation, minutes and tagging. You can also switch it in the footer.",
+        "placeholder": "Choose a model…",
+        "none": "No model released yet — add a connection below and release models."
+      },
+      "connections": {
+        "title": "Connections",
+        "empty": "No connection yet. Pick a provider below — local or cloud.",
+        "add": "Add provider…",
+        "enabled": "Connection enabled",
+        "remove": "Remove connection",
+        "removeConfirm": "Really remove",
+        "baseUrl": "Address",
+        "apiKey": "API key",
+        "loadModels": "Load models",
+        "loading": "Loading…",
+        "remoteEmpty": "The provider reported no models.",
+        "released": "Released models",
+        "releaseHint": "Only released models appear in the app's selection.",
+        "releasedCount_one": "{{count}} released",
+        "releasedCount_other": "{{count}} released",
+        "off": "off",
+        "enabledDescription": "Disabled connections keep their releases; their models just aren't offered."
+      },
+      "model": {
+        "active": "active",
+        "details": "Limits & prices",
+        "remove": "Withdraw release",
+        "context": "Context (tokens)",
+        "maxOutput": "Max. output (tokens)",
+        "priceIn": "Price input / M",
+        "priceOut": "Price output / M"
+      }
     }
   },
   "footer": {
@@ -1097,7 +1134,8 @@
     "open": "Open",
     "copy": "Copy",
     "clear": "Clear",
-    "noOptionsFound": "No options found"
+    "noOptionsFound": "No options found",
+    "cancel": "Cancel"
   },
   "accessibility": {
     "permissionsDescription": "Local Voice AI needs accessibility permissions to type transcribed text.",

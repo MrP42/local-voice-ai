@@ -1072,6 +1072,43 @@
         "input": "Mikrofon",
         "feedback": "Hörbare Rückmeldung"
       }
+    },
+    "llm": {
+      "active": {
+        "title": "Sprachmodell",
+        "model": "Aktives Modell",
+        "description": "Wird für Nachbearbeitung, Zusammenfassung, Übersetzung, Protokoll und Tagging verwendet. Wechseln geht auch unten in der Fußleiste.",
+        "placeholder": "Modell wählen…",
+        "none": "Noch kein Modell freigegeben — unten eine Verbindung anlegen und Modelle freigeben."
+      },
+      "connections": {
+        "title": "Verbindungen",
+        "empty": "Noch keine Verbindung. Wähle unten einen Anbieter — lokal oder in der Cloud.",
+        "add": "Anbieter hinzufügen…",
+        "enabled": "Verbindung aktiv",
+        "remove": "Verbindung entfernen",
+        "removeConfirm": "Wirklich entfernen",
+        "baseUrl": "Adresse",
+        "apiKey": "API-Schlüssel",
+        "loadModels": "Modelle laden",
+        "loading": "Lädt…",
+        "remoteEmpty": "Der Anbieter hat keine Modelle gemeldet.",
+        "released": "Freigegebene Modelle",
+        "releaseHint": "Nur freigegebene Modelle erscheinen in der Auswahl der App.",
+        "releasedCount_one": "{{count}} freigegeben",
+        "releasedCount_other": "{{count}} freigegeben",
+        "off": "aus",
+        "enabledDescription": "Abgeschaltet bleibt die Verbindung samt Freigaben erhalten, ihre Modelle stehen nur nicht zur Wahl."
+      },
+      "model": {
+        "active": "aktiv",
+        "details": "Limits & Preise",
+        "remove": "Freigabe zurücknehmen",
+        "context": "Kontext (Token)",
+        "maxOutput": "Max. Ausgabe (Token)",
+        "priceIn": "Preis Eingabe / Mio.",
+        "priceOut": "Preis Ausgabe / Mio."
+      }
     }
   },
   "footer": {
@@ -1094,7 +1131,8 @@
     "open": "Öffnen",
     "copy": "Kopieren",
     "clear": "Leeren",
-    "noOptionsFound": "Keine Optionen gefunden"
+    "noOptionsFound": "Keine Optionen gefunden",
+    "cancel": "Abbrechen"
   },
   "accessibility": {
     "permissionsDescription": "Local Voice AI benötigt Bedienungshilfen-Berechtigungen, um transkribierten Text einzugeben.",

@@ -144,6 +144,62 @@ pub enum ModelUnloadTimeout {
     Sec15, // Debug mode only
 }
 
+/// Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter.
+///
+/// `kind` ist die Vorlage aus `post_process_providers` (z. B. "openai",
+/// "ollama", "local"); Verbindung und Vorlage sind getrennt, damit zwei
+/// OpenAI-kompatible Konten nebeneinander bestehen koennen. Der Schluessel
+/// liegt unter der Verbindungs-`id` in `post_process_api_keys`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
+pub struct LlmConnection {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub base_url: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// Ein freigegebenes Modell einer Verbindung. Nur freigegebene Modelle
+/// erscheinen in der Auswahl der App -- ein Anbieter listet Dutzende, von
+/// denen der Nutzer zwei braucht. Limits sind getrennt, weil "Tokenlimit"
+/// allein mehrdeutig ist: Kontext, Eingabe und Ausgabe sind drei Zahlen.
+/// Preise je Million Token; `None` heisst unbekannt, nie null.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
+pub struct LlmModelConfig {
+    pub id: String,
+    pub connection_id: String,
+    pub remote_id: String,
+    pub label: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub context_limit: Option<u32>,
+    #[serde(default)]
+    pub max_input_tokens: Option<u32>,
+    #[serde(default)]
+    pub max_output_tokens: Option<u32>,
+    #[serde(default)]
+    pub price_input_per_mtok: Option<f64>,
+    #[serde(default)]
+    pub price_output_per_mtok: Option<f64>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl LlmModelConfig {
+    /// Stabile Kennung aus Verbindung und Modellname -- lesbar in der
+    /// Einstellungsdatei und eindeutig, solange ein Modell je Verbindung nur
+    /// einmal freigegeben ist.
+    pub fn make_id(connection_id: &str, remote_id: &str) -> String {
+        format!("{connection_id}:{remote_id}")
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum PasteMethod {
@@ -423,6 +479,16 @@ pub struct AppSettings {
     pub post_process_prompts: Vec<LLMPrompt>,
     #[serde(default)]
     pub post_process_selected_prompt_id: Option<String>,
+    /// Sprachmodell-Verbindungen und freigegebene Modelle (Schema 2). Die
+    /// aelteren Felder `post_process_provider_id` / `post_process_models`
+    /// bleiben als Spiegel des aktiven Modells bestehen, bis alle Verbraucher
+    /// auf `active_llm_model` umgestellt sind (siehe `sync_legacy_from_llm`).
+    #[serde(default)]
+    pub llm_connections: Vec<LlmConnection>,
+    #[serde(default)]
+    pub llm_models: Vec<LlmModelConfig>,
+    #[serde(default)]
+    pub llm_active_model_id: Option<String>,
     #[serde(default)]
     pub mute_while_recording: bool,
     #[serde(default)]
@@ -727,7 +793,7 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 1;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -930,8 +996,11 @@ fn default_theme() -> Theme {
     Theme::System
 }
 
+/// Die KI-Textverbesserung ist Kernfunktion, kein Zusatz: ohne sie gibt es
+/// weder Zusammenfassung noch Uebersetzung noch Protokoll. Das Feld bleibt
+/// fuer aeltere Speicher lesbar, wird aber nirgends mehr abgefragt.
 fn default_post_process_enabled() -> bool {
-    false
+    true
 }
 
 fn default_app_language() -> String {
@@ -1281,6 +1350,9 @@ pub fn get_default_settings() -> AppSettings {
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: None,
+        llm_connections: Vec::new(),
+        llm_models: Vec::new(),
+        llm_active_model_id: None,
         mute_while_recording: false,
         append_trailing_space: false,
         app_language: default_app_language(),
@@ -1348,6 +1420,45 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// Das aktive Sprachmodell samt seiner Verbindung -- oder nichts, wenn
+    /// keines gewaehlt, das gewaehlte nicht mehr freigegeben oder seine
+    /// Verbindung abgeschaltet ist. Ein Verweis auf etwas Verschwundenes
+    /// zaehlt als "nichts", nicht als Fehler.
+    pub fn active_llm_model(&self) -> Option<(&LlmConnection, &LlmModelConfig)> {
+        let id = self.llm_active_model_id.as_deref()?;
+        let model = self.llm_models.iter().find(|m| m.id == id && m.enabled)?;
+        let connection = self
+            .llm_connections
+            .iter()
+            .find(|c| c.id == model.connection_id && c.enabled)?;
+        Some((connection, model))
+    }
+
+    /// Die Anbieter-Vorlage einer Verbindung (Endpunkte, strukturierte
+    /// Antworten). Verbindung `kind` = Vorlagen-`id`.
+    pub fn llm_template(&self, connection: &LlmConnection) -> Option<&PostProcessProvider> {
+        self.post_process_provider(&connection.kind)
+    }
+
+    /// Spiegelt das aktive Sprachmodell in die aelteren Felder, von denen
+    /// die heutigen Verbraucher (Nachbearbeitung, Zusammenfassung, Protokoll,
+    /// Tagging) noch lesen: aktiver Anbieter, dessen Adresse, dessen Modell.
+    /// Damit wechseln alle Funktionen gemeinsam, sobald der Nutzer in der
+    /// neuen Oberflaeche ein Modell waehlt -- und nichts liest Altes.
+    pub fn sync_legacy_from_llm(&mut self) {
+        let Some((connection, model)) = self.active_llm_model() else {
+            return;
+        };
+        let kind = connection.kind.clone();
+        let base_url = connection.base_url.clone();
+        let remote = model.remote_id.clone();
+        self.post_process_provider_id = kind.clone();
+        if let Some(template) = self.post_process_provider_mut(&kind) {
+            template.base_url = base_url;
+        }
+        self.post_process_models.insert(kind, remote);
+    }
+
     pub fn active_post_process_provider(&self) -> Option<&PostProcessProvider> {
         self.post_process_providers
             .iter()
@@ -1481,6 +1592,61 @@ fn salvage_settings(stored: &serde_json::Value) -> AppSettings {
     })
 }
 
+/// Baut aus `post_process_providers` + `post_process_provider_id` +
+/// `post_process_models` + Schluesseln die Verbindungen und Modelle von
+/// Schema 2. Reine Funktion ueber den Einstellungen, damit sie testbar ist.
+fn migrate_legacy_providers_to_connections(settings: &mut AppSettings) {
+    let active = settings.post_process_provider_id.clone();
+    let mut connections = Vec::new();
+    let mut models = Vec::new();
+    for template in &settings.post_process_providers {
+        let has_key = settings
+            .post_process_api_keys
+            .get(&template.id)
+            .is_some_and(|k| !k.is_empty());
+        let chosen = settings.post_process_models.get(&template.id).cloned();
+        // Jede Vorlage bringt ein Standardmodell mit -- das allein ist keine
+        // Einrichtung. Erst ein geaendertes Modell, ein Schluessel oder die
+        // aktive Wahl zeigen, dass der Nutzer diesen Anbieter benutzt.
+        let changed_model = chosen
+            .as_deref()
+            .is_some_and(|m| !m.is_empty() && m != default_model_for_provider(&template.id));
+        let is_active = template.id == active;
+        if !(has_key || changed_model || is_active) {
+            continue;
+        }
+        connections.push(LlmConnection {
+            id: template.id.clone(),
+            kind: template.id.clone(),
+            label: template.label.clone(),
+            base_url: template.base_url.clone(),
+            enabled: true,
+        });
+        if let Some(remote) = chosen.filter(|m| !m.is_empty()) {
+            models.push(LlmModelConfig {
+                id: LlmModelConfig::make_id(&template.id, &remote),
+                connection_id: template.id.clone(),
+                remote_id: remote.clone(),
+                label: remote,
+                enabled: true,
+                context_limit: None,
+                max_input_tokens: None,
+                max_output_tokens: None,
+                price_input_per_mtok: None,
+                price_output_per_mtok: None,
+                tags: Vec::new(),
+            });
+        }
+    }
+    settings.llm_active_model_id = settings
+        .post_process_models
+        .get(&active)
+        .filter(|m| !m.is_empty())
+        .map(|m| LlmModelConfig::make_id(&active, m));
+    settings.llm_connections = connections;
+    settings.llm_models = models;
+}
+
 fn apply_settings_migrations(
     settings: &mut AppSettings,
     settings_value: &serde_json::Value,
@@ -1518,6 +1684,23 @@ fn apply_settings_migrations(
             settings.transcribe_accelerator = TranscribeAcceleratorSetting::Auto;
             settings.transcribe_gpu_device = default_transcribe_gpu_device();
         }
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
+    // Schema 2: Sprachmodell-Verbindungen. Aus den alten Feldern wird je
+    // Anbieter, den der Nutzer tatsaechlich eingerichtet hatte (Schluessel,
+    // Modell oder aktiv), eine Verbindung -- nicht aus allen zwoelf Vorlagen,
+    // sonst begruesste die neue Liste jeden mit zwoelf leeren Eintraegen.
+    // Das gewaehlte Modell je Anbieter wird freigegeben, das des aktiven
+    // Anbieters wird das aktive Modell. Laeuft nur, solange der neue
+    // Schluessel fehlt: wer schon Verbindungen hat, behaelt sie.
+    if stored_schema_version < 2 && settings_value.get("llm_connections").is_none() {
+        migrate_legacy_providers_to_connections(settings);
+        // Wer die Nachbearbeitung einst abgeschaltet hatte, verlor damit
+        // Zusammenfassung, Uebersetzung und Protokoll. Ab hier ist sie immer
+        // an; was sie tut, entscheidet allein das aktive Modell.
+        settings.post_process_enabled = true;
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }
@@ -1775,8 +1958,14 @@ mod tests {
         assert_eq!(settings.log_level, LogLevel::Debug);
         assert_eq!(settings.sound_theme, SoundTheme::Pop);
 
-        // A current-format store must not be rewritten on every read.
-        assert!(!apply_settings_migrations(&mut settings, &stored));
+        // Der v0.9-Speicher ist einmal zu migrieren (Schema 2: Sprachmodell-
+        // Verbindungen). Danach darf ein Speicher im aktuellen Format nicht
+        // bei jedem Lesen erneut umgeschrieben werden.
+        assert!(apply_settings_migrations(&mut settings, &stored));
+        let current = serde_json::to_value(&settings).expect("serialisierbar");
+        let mut reread: AppSettings =
+            serde_json::from_value(current.clone()).expect("aktuelles Format parst");
+        assert!(!apply_settings_migrations(&mut reread, &current));
     }
 
     #[test]
@@ -1931,6 +2120,159 @@ mod tests {
         assert!(apply_settings_migrations(&mut settings, &raw));
         assert_eq!(settings.overlay_style, OverlayStyle::Live);
         assert_eq!(settings.overlay_position, OverlayPosition::Top);
+    }
+
+    fn llm_model(id: &str, connection: &str, remote: &str, enabled: bool) -> LlmModelConfig {
+        LlmModelConfig {
+            id: id.into(),
+            connection_id: connection.into(),
+            remote_id: remote.into(),
+            label: remote.into(),
+            enabled,
+            context_limit: None,
+            max_input_tokens: None,
+            max_output_tokens: None,
+            price_input_per_mtok: None,
+            price_output_per_mtok: None,
+            tags: Vec::new(),
+        }
+    }
+
+    /// Ein Nutzer mit OpenAI-Schluessel und gewaehltem Modell, Ollama nur
+    /// mit Modell, und zehn unberuehrten Vorlagen: zwei Verbindungen, zwei
+    /// freigegebene Modelle, das aktive ist das von OpenAI.
+    #[test]
+    fn schema_2_builds_connections_only_for_configured_providers() {
+        let mut settings = get_default_settings();
+        settings.post_process_provider_id = "openai".into();
+        settings
+            .post_process_api_keys
+            .insert("openai".into(), "sk-test".into());
+        settings
+            .post_process_models
+            .insert("openai".into(), "gpt-4.1-mini".into());
+        settings
+            .post_process_models
+            .insert("ollama".into(), "qwen3:4b".into());
+        settings.settings_schema_version = 1;
+
+        let raw = serde_json::json!({
+            "settings_schema_version": 1,
+            "post_process_provider_id": "openai"
+        });
+        assert!(apply_settings_migrations(&mut settings, &raw));
+
+        let ids: Vec<&str> = settings
+            .llm_connections
+            .iter()
+            .map(|c| c.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["openai", "ollama"], "nur eingerichtete Anbieter");
+        assert_eq!(settings.llm_models.len(), 2);
+        assert_eq!(
+            settings.llm_active_model_id.as_deref(),
+            Some("openai:gpt-4.1-mini")
+        );
+        let (conn, model) = settings.active_llm_model().expect("aktives Modell");
+        assert_eq!(conn.kind, "openai");
+        assert_eq!(model.remote_id, "gpt-4.1-mini");
+        assert_eq!(settings.settings_schema_version, 2);
+    }
+
+    /// Ohne jede Einrichtung entsteht genau eine Verbindung: die aktive
+    /// Vorlage, damit die Liste nie leer beginnt. Ein Modell gibt es nicht --
+    /// die Vorlagen (ausser Apple Intelligence) haben kein Standardmodell,
+    /// und ein erfundenes waere eine Freigabe, die niemand erteilt hat.
+    #[test]
+    fn schema_2_keeps_the_active_template_even_without_setup() {
+        let mut settings = get_default_settings();
+        settings.settings_schema_version = 1;
+        let raw = serde_json::json!({ "settings_schema_version": 1 });
+        assert!(apply_settings_migrations(&mut settings, &raw));
+        assert_eq!(settings.llm_connections.len(), 1);
+        assert_eq!(
+            settings.llm_connections[0].id,
+            settings.post_process_provider_id
+        );
+        assert!(settings.llm_models.is_empty());
+        assert!(settings.llm_active_model_id.is_none());
+        assert!(settings.active_llm_model().is_none());
+    }
+
+    /// Wer schon Verbindungen hat, wird nicht erneut migriert -- sonst
+    /// ueberschriebe jeder Start die eigene Einrichtung mit dem Altbestand.
+    #[test]
+    fn schema_2_migration_runs_only_once() {
+        let mut settings = get_default_settings();
+        settings.llm_connections.push(LlmConnection {
+            id: "mein-konto".into(),
+            kind: "openai".into(),
+            label: "Firma".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            enabled: true,
+        });
+        settings.settings_schema_version = 1;
+        let raw = serde_json::json!({
+            "settings_schema_version": 1,
+            "llm_connections": [{ "id": "mein-konto", "kind": "openai", "label": "Firma", "base_url": "https://api.openai.com/v1" }]
+        });
+        apply_settings_migrations(&mut settings, &raw);
+        assert_eq!(settings.llm_connections.len(), 1);
+        assert_eq!(settings.llm_connections[0].id, "mein-konto");
+    }
+
+    /// Der Spiegel: waehlt der Nutzer in der neuen Oberflaeche ein Modell,
+    /// lesen die heutigen Verbraucher ueber die alten Felder dasselbe.
+    #[test]
+    fn sync_legacy_mirrors_the_active_model_into_old_fields() {
+        let mut settings = get_default_settings();
+        settings.llm_connections.push(LlmConnection {
+            id: "zweitkonto".into(),
+            kind: "openai".into(),
+            label: "Zweitkonto".into(),
+            base_url: "https://proxy.example/v1".into(),
+            enabled: true,
+        });
+        settings
+            .llm_models
+            .push(llm_model("zweitkonto:gpt-4.1", "zweitkonto", "gpt-4.1", true));
+        settings.llm_active_model_id = Some("zweitkonto:gpt-4.1".into());
+
+        settings.sync_legacy_from_llm();
+
+        assert_eq!(settings.post_process_provider_id, "openai");
+        assert_eq!(
+            settings.post_process_models.get("openai").map(String::as_str),
+            Some("gpt-4.1")
+        );
+        assert_eq!(
+            settings
+                .post_process_provider("openai")
+                .map(|p| p.base_url.as_str()),
+            Some("https://proxy.example/v1")
+        );
+    }
+
+    /// Ein abgeschaltetes oder nicht mehr freigegebenes Modell ist kein
+    /// aktives Modell -- und der Spiegel laesst die alten Felder in Ruhe.
+    #[test]
+    fn disabled_model_or_connection_is_not_active() {
+        let mut settings = get_default_settings();
+        let before = settings.post_process_provider_id.clone();
+        settings.llm_connections.push(LlmConnection {
+            id: "c".into(),
+            kind: "ollama".into(),
+            label: "Ollama".into(),
+            base_url: "http://127.0.0.1:11434/v1".into(),
+            enabled: false,
+        });
+        settings
+            .llm_models
+            .push(llm_model("c:qwen3:4b", "c", "qwen3:4b", true));
+        settings.llm_active_model_id = Some("c:qwen3:4b".into());
+        assert!(settings.active_llm_model().is_none());
+        settings.sync_legacy_from_llm();
+        assert_eq!(settings.post_process_provider_id, before);
     }
 
     #[test]
