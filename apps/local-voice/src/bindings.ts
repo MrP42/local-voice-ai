@@ -261,6 +261,68 @@ async llmSetApiKey(connectionId: string, apiKey: string) : Promise<Result<null, 
     else return { status: "error", error: e  as any };
 }
 },
+async llmLocalList() : Promise<LlmDownloadInfo[]> {
+    return await TAURI_INVOKE("llm_local_list", {  });
+},
+async llmLocalDownload(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_download", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalCancel(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_cancel", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalStatus() : Promise<LocalLlmStatus> {
+    return await TAURI_INVOKE("llm_local_status", {  });
+},
+async llmLocalStart(modelId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_start", { modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalStop() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_stop", {  }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalBackend() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_backend", {  }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalActivate(modelId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_activate", { modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsEngineSetting(value: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_engine_setting", { value }) };
@@ -2422,6 +2484,11 @@ reset_bindings: string[] }
 export type ImportedVoice = { id: string; transcript: string }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+export type LlmDownloadKind = "runtime" | "model"
+/** Ein Eintrag der Modellseite fuer das lokale Sprachmodell: Laufzeitpaket oder Modell. */
+export type LlmDownloadInfo = { id: string; kind: LlmDownloadKind; name: string; description: string; size_mb: number; is_downloaded: boolean; is_downloading: boolean; tags: string[]; backend: string | null; for_this_platform: boolean }
+export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
+export type LocalLlmStatus = { phase: LocalLlmPhase; model_id: string | null; backend: string | null; port: number | null; message: string | null }
 /**
  * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter. `kind` ist die
  * Vorlage aus `post_process_providers`; mehrere Verbindungen derselben Art sind erlaubt.

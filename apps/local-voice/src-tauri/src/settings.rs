@@ -1116,6 +1116,17 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
         supports_structured_output: true,
     });
 
+    // Der lokale Server der App. Die Adresse ist ein Platzhalter: den Port
+    // waehlt der Server bei jedem Start, `llm_client` fragt ihn dann ab.
+    providers.push(PostProcessProvider {
+        id: "local".to_string(),
+        label: "In der App (lokales Modell)".to_string(),
+        base_url: "http://127.0.0.1:0/v1".to_string(),
+        allow_base_url_edit: false,
+        models_endpoint: Some("/models".to_string()),
+        supports_structured_output: true,
+    });
+
     // Custom provider always comes last
     providers.push(PostProcessProvider {
         id: "custom".to_string(),

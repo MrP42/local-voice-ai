@@ -698,6 +698,42 @@
         },
         "deleteConfirm": "Delete {{name}}? You will need to download it again to use it.",
         "deleteTitle": "Delete"
+      },
+      "llm": {
+        "title": "Language models in the app",
+        "description": "Run inside Local Voice AI without extra software. Activate a model with “Use” — it loads on the first request.",
+        "descriptionNoRuntime": "Install the runtime for this machine first, then download a model and activate it with “Use”.",
+        "status": {
+          "installed": "Installed",
+          "active": "Active",
+          "loaded": "In memory",
+          "downloading": "Downloading … {{percentage}} %"
+        },
+        "actions": {
+          "download": "Download",
+          "use": "Use",
+          "delete": "Remove",
+          "cancel": "Cancel"
+        },
+        "runtime": {
+          "forThisMachine": "For this machine",
+          "otherPlatform": "For another system"
+        },
+        "backend": {
+          "vulkan": "Vulkan – any GPU",
+          "cuda": "CUDA – NVIDIA only, fastest",
+          "cpu": "CPU only",
+          "metal": "Metal"
+        },
+        "tags": {
+          "schnell": "fast",
+          "klein": "small",
+          "empfohlen": "recommended",
+          "qualitaet": "high quality",
+          "zusammenfassung": "strong at summaries",
+          "mehrsprachig": "multilingual",
+          "alternative": "alternative"
+        }
       }
     },
     "sound": {

@@ -46,6 +46,10 @@ pub enum Purpose {
     Asr,
     TtsVoice,
     TtsRuntime,
+    /// `llama-server`-Paket je Plattform und Backend (`managers::llm`).
+    LlmRuntime,
+    /// GGUF-Sprachmodell fuer den lokalen Server.
+    LlmModel,
 }
 
 /// One model as written in `catalog.json`. Only the fields the descriptor needs
@@ -81,6 +85,11 @@ struct CatalogModel {
     /// See [`Purpose`].
     #[serde(default)]
     purpose: Purpose,
+    /// Kuratierte Merkmale ("schnell", "zusammenfassung", "mehrsprachig") --
+    /// fuer Sprachmodelle, damit die Oberflaeche sagen kann, wofuer eines
+    /// taugt, ohne Zahlen zu erfinden.
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -178,6 +187,7 @@ pub struct TtsCatalogEntry {
     pub name: String,
     pub description: String,
     pub files: Vec<TtsCatalogFile>,
+    pub tags: Vec<String>,
 }
 
 /// All bundled catalog entries of the given TTS `purpose`, in catalog order.
@@ -191,6 +201,7 @@ pub fn tts_entries(purpose: Purpose) -> Vec<TtsCatalogEntry> {
             id: m.id.clone(),
             name: m.name.clone(),
             description: m.description.clone(),
+            tags: m.tags.clone(),
             files: m
                 .files
                 .iter()
@@ -365,6 +376,36 @@ mod tests {
         }"#;
         let m: CatalogModel = serde_json::from_str(json).unwrap();
         assert_eq!(m.purpose, Purpose::Asr);
+    }
+
+    /// Die Sprachmodell-Eintraege: je Plattform eine Laufzeit, vier Modelle.
+    /// Sie duerfen nie im ASR-Katalog auftauchen, und jede Datei traegt eine
+    /// Pruefsumme -- ohne sie waere der Download nicht verifizierbar.
+    #[test]
+    fn llm_entries_are_complete_and_stay_out_of_the_asr_catalog() {
+        let runtimes = tts_entries(Purpose::LlmRuntime);
+        assert!(
+            runtimes.iter().any(|e| e.id == "llm-runtime-windows-x64-vulkan"),
+            "Windows-Vulkan-Laufzeit fehlt"
+        );
+        assert!(runtimes.iter().any(|e| e.id == "llm-runtime-macos-aarch64"));
+        let models = tts_entries(Purpose::LlmModel);
+        assert!(models.len() >= 4, "vier Modelle erwartet, {}", models.len());
+        for entry in runtimes.iter().chain(models.iter()) {
+            assert!(!entry.files.is_empty(), "{}: keine Datei", entry.id);
+            for f in &entry.files {
+                assert!(f.sha256.is_some(), "{}: {} ohne Pruefsumme", entry.id, f.filename);
+                assert!(f.size_bytes > 0, "{}: {} ohne Groesse", entry.id, f.filename);
+            }
+        }
+        assert!(
+            models.iter().all(|m| !m.tags.is_empty()),
+            "jedes Sprachmodell traegt Merkmale"
+        );
+        assert!(
+            CATALOG.iter().all(|d| !d.id.starts_with("llm-")),
+            "Sprachmodell-Eintraege gehoeren nicht in den ASR-Katalog"
+        );
     }
 
     #[test]

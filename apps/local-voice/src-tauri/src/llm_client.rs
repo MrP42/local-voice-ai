@@ -145,7 +145,10 @@ pub async fn send_chat_completion_with_schema(
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
 ) -> Result<Option<String>, String> {
-    let base_url = provider.base_url.trim_end_matches('/');
+    // Fuer den lokalen Anbieter ist die Adresse erst bekannt, wenn der
+    // Server laeuft -- und der wird hier bei Bedarf gestartet.
+    let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;
+    let base_url = resolved.trim_end_matches('/');
     let url = format!("{}/chat/completions", base_url);
 
     debug!("Sending chat completion request to: {}", url);
@@ -223,6 +226,11 @@ pub async fn fetch_models(
     provider: &PostProcessProvider,
     api_key: String,
 ) -> Result<Vec<String>, String> {
+    // Der lokale Anbieter listet, was auf der Platte liegt -- dafuer muss
+    // kein Server laufen, und einer ohne Modell koennte es auch nicht.
+    if crate::managers::llm::is_local(provider) {
+        return Ok(crate::managers::llm::downloaded_model_ids());
+    }
     let base_url = provider.base_url.trim_end_matches('/');
     let url = format!("{}/models", base_url);
 

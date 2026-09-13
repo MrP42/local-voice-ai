@@ -657,6 +657,42 @@
         },
         "deleteConfirm": "{{name}} löschen? Du musst sie erneut herunterladen, um sie wieder zu nutzen.",
         "deleteTitle": "Löschen"
+      },
+      "llm": {
+        "title": "Sprachmodelle in der App",
+        "description": "Laufen ohne Fremdsoftware direkt in Local Voice AI. Ein Modell mit „Verwenden“ aktivieren — es wird beim ersten Auftrag geladen.",
+        "descriptionNoRuntime": "Zuerst die Laufzeit für diesen Rechner installieren, dann ein Modell laden und mit „Verwenden“ aktivieren.",
+        "status": {
+          "installed": "Installiert",
+          "active": "Aktiv",
+          "loaded": "Im Speicher",
+          "downloading": "Lädt … {{percentage}} %"
+        },
+        "actions": {
+          "download": "Laden",
+          "use": "Verwenden",
+          "delete": "Entfernen",
+          "cancel": "Abbrechen"
+        },
+        "runtime": {
+          "forThisMachine": "Für diesen Rechner",
+          "otherPlatform": "Für ein anderes System"
+        },
+        "backend": {
+          "vulkan": "Vulkan – jede Grafikkarte",
+          "cuda": "CUDA – nur NVIDIA, am schnellsten",
+          "cpu": "Nur Prozessor",
+          "metal": "Metal"
+        },
+        "tags": {
+          "schnell": "schnell",
+          "klein": "klein",
+          "empfohlen": "empfohlen",
+          "qualitaet": "hohe Qualität",
+          "zusammenfassung": "stark bei Zusammenfassungen",
+          "mehrsprachig": "mehrsprachig",
+          "alternative": "Alternative"
+        }
       }
     },
     "general": {

@@ -219,6 +219,15 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         managers::tts::models::TtsModelManager::new(app_handle)
             .expect("Failed to initialize Piper model manager"),
     );
+    // Lokales Sprachmodell: Laufzeit-Downloads + Serverprozess. Als globale
+    // Zugriffe hinterlegt, weil `llm_client` keinen AppHandle hat, den
+    // Server aber vor der ersten Anfrage starten koennen muss.
+    let llm_runtime = Arc::new(
+        managers::llm::LlmRuntimeManager::new(app_handle)
+            .expect("Failed to initialize LLM runtime manager"),
+    );
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
     // Meetings (M8): the store is shared by recorder and commands. A store
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.
@@ -244,6 +253,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tts_manager);
     app_handle.manage(tts_model_manager);
+    app_handle.manage(llm_runtime);
+    app_handle.manage(llm_server);
     app_handle.manage(commands::tts::AutoTagRun::default());
     app_handle.manage(commands::tts::BuilderRun::default());
     app_handle.manage(tray::CurrentTrayIconState::new());
@@ -1297,6 +1308,15 @@ pub fn run(cli_args: CliArgs) {
             commands::llm::llm_set_active_model,
             commands::llm::llm_list_remote_models,
             commands::llm::llm_set_api_key,
+            commands::llm::llm_local_list,
+            commands::llm::llm_local_download,
+            commands::llm::llm_local_cancel,
+            commands::llm::llm_local_delete,
+            commands::llm::llm_local_status,
+            commands::llm::llm_local_start,
+            commands::llm::llm_local_stop,
+            commands::llm::llm_local_backend,
+            commands::llm::llm_local_activate,
             shortcut::change_tts_engine_setting,
             shortcut::change_tts_piper_voice_setting,
             shortcut::change_tts_speed_setting,
@@ -1949,6 +1969,11 @@ pub fn run(cli_args: CliArgs) {
             tauri::RunEvent::Exit => {
                 if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                     let _ = tm.unload_model();
+                }
+                // Der lokale Sprachmodell-Server ist unser Kind: er stirbt mit
+                // der App, ueber seine PID, nie ueber den Prozessnamen.
+                if let Some(llm) = app.try_state::<Arc<managers::llm::LocalLlmServer>>() {
+                    llm.stop();
                 }
                 // Kein Serverprozess ueberlebt die Anwendung — auch keiner,
                 // den wir nur adoptiert haben. Er haelt rund 17 GB VRAM, und

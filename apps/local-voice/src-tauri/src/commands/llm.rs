@@ -163,3 +163,139 @@ pub fn llm_set_api_key(app: AppHandle, connection_id: String, api_key: String) -
     settings::write_settings(&app, s);
     Ok(())
 }
+
+// ---- Lokales Sprachmodell: Laufzeit, Modelle, Server ----------------------
+
+use std::sync::Arc;
+
+use tauri::Manager;
+
+use crate::managers::llm::{LlmDownloadInfo, LlmRuntimeManager, LocalLlmServer, LocalLlmStatus};
+
+#[tauri::command]
+#[specta::specta]
+pub fn llm_local_list(app: AppHandle) -> Vec<LlmDownloadInfo> {
+    app.state::<Arc<LlmRuntimeManager>>().list_downloads()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_local_download(app: AppHandle, id: String) -> Result<(), String> {
+    let manager = app.state::<Arc<LlmRuntimeManager>>().inner().clone();
+    manager.download(&id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn llm_local_cancel(app: AppHandle, id: String) -> Result<(), String> {
+    app.state::<Arc<LlmRuntimeManager>>().cancel(&id);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn llm_local_delete(app: AppHandle, id: String) -> Result<(), String> {
+    // Ein Modell, das gerade bedient wird, zuerst freigeben -- sonst haelt
+    // der Server die Datei offen, und das Loeschen scheitert leise.
+    let server = app.state::<Arc<LocalLlmServer>>();
+    if server.is_serving(&id) {
+        server.stop();
+    }
+    app.state::<Arc<LlmRuntimeManager>>().delete(&id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn llm_local_status(app: AppHandle) -> LocalLlmStatus {
+    app.state::<Arc<LocalLlmServer>>().status()
+}
+
+/// Startet den Server fuer ein geladenes Modell (oder wechselt darauf).
+/// Liefert die Adresse -- die Oberflaeche braucht sie nicht, der Test schon.
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_local_start(_app: AppHandle, model_id: String) -> Result<String, String> {
+    crate::managers::llm::ensure_local(&model_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn llm_local_stop(app: AppHandle) -> Result<(), String> {
+    app.state::<Arc<LocalLlmServer>>().stop();
+    Ok(())
+}
+
+/// Welches Backend der Selbsttest gewaehlt hat (oder waehlen wuerde).
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_local_backend(app: AppHandle) -> Result<String, String> {
+    let manager = app.state::<Arc<LlmRuntimeManager>>().inner().clone();
+    manager.resolve_runtime().await.map(|(_, backend, _)| backend)
+}
+
+/// Ein geladenes lokales Modell zum aktiven Modell machen -- in einem Zug:
+/// die Verbindung "In der App" anlegen, falls sie fehlt, das Modell dort
+/// freigeben, aktiv setzen, Spiegel nachziehen. Drei Klicks in der Oberflaeche
+/// waeren drei Gelegenheiten, auf halbem Weg stehenzubleiben.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String> {
+    use crate::managers::llm::{LOCAL_PLACEHOLDER_URL, LOCAL_PROVIDER_ID};
+    let runtime = app.state::<Arc<LlmRuntimeManager>>();
+    let info = runtime
+        .list_downloads()
+        .into_iter()
+        .find(|d| d.id == model_id)
+        .ok_or_else(|| format!("Unbekanntes Modell: {model_id}"))?;
+    if !info.is_downloaded {
+        return Err(format!("{} ist noch nicht geladen", info.name));
+    }
+    let mut s = settings::get_settings(&app);
+    let connection_id = match s
+        .llm_connections
+        .iter()
+        .find(|c| c.kind == LOCAL_PROVIDER_ID)
+        .map(|c| c.id.clone())
+    {
+        Some(id) => id,
+        None => {
+            let label = s
+                .post_process_provider(LOCAL_PROVIDER_ID)
+                .map(|p| p.label.clone())
+                .unwrap_or_else(|| "In der App".to_string());
+            s.llm_connections.push(LlmConnection {
+                id: LOCAL_PROVIDER_ID.to_string(),
+                kind: LOCAL_PROVIDER_ID.to_string(),
+                label,
+                base_url: LOCAL_PLACEHOLDER_URL.to_string(),
+                enabled: true,
+            });
+            LOCAL_PROVIDER_ID.to_string()
+        }
+    };
+    if let Some(c) = s.llm_connections.iter_mut().find(|c| c.id == connection_id) {
+        c.enabled = true;
+    }
+    let id = LlmModelConfig::make_id(&connection_id, &model_id);
+    if !s.llm_models.iter().any(|m| m.id == id) {
+        s.llm_models.push(LlmModelConfig {
+            id: id.clone(),
+            connection_id,
+            remote_id: model_id.clone(),
+            label: info.name.clone(),
+            enabled: true,
+            context_limit: Some(crate::managers::llm::DEFAULT_CONTEXT_TOKENS),
+            max_input_tokens: None,
+            max_output_tokens: None,
+            price_input_per_mtok: Some(0.0),
+            price_output_per_mtok: Some(0.0),
+            tags: info.tags.clone(),
+        });
+    } else if let Some(m) = s.llm_models.iter_mut().find(|m| m.id == id) {
+        m.enabled = true;
+    }
+    s.llm_active_model_id = Some(id);
+    s.sync_legacy_from_llm();
+    settings::write_settings(&app, s);
+    Ok(())
+}
