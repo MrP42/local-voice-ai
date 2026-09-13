@@ -58,6 +58,11 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "tts_server_status") return { phase: "stopped", message: null };
           if (cmd === "llm_local_list") return downloads;
           if (cmd === "llm_local_status") return { phase: "stopped", model_id: null, backend: null, port: null, message: null };
+          // Prognose: das 4B passt, das 8B ist knapp -- Zahlen aus dem Backend.
+          if (cmd === "llm_local_fit")
+            return args?.modelId === "llm-qwen3-8b-q4"
+              ? { estimate: { weights_mb: 5514, kv_mb: 1152, overhead_mb: 512, total_mb: 7178, context_tokens: 8192, from_metadata: true }, free_mb: 7900, on_gpu: true, verdict: "tight" }
+              : { estimate: { weights_mb: 2739, kv_mb: 1152, overhead_mb: 512, total_mb: 4403, context_tokens: 8192, from_metadata: true }, free_mb: 18920, on_gpu: true, verdict: "fits" };
           if (cmd === "llm_local_activate") {
             saved.activated = args?.modelId;
             settings.llm_connections = [{ id: "local", kind: "local", label: "In der App", base_url: "http://127.0.0.1:0/v1", enabled: true }];
@@ -114,4 +119,12 @@ test("using a model reaches the backend and marks it active", async ({ page }) =
     .toBe("llm-qwen3-4b-q4");
   await expect(qwen4.getByText("Aktiv", { exact: true })).toBeVisible();
   await expect(qwen4.getByRole("button", { name: "Verwenden" })).toHaveCount(0);
+});
+
+test("each model says whether it fits, with the numbers behind it", async ({ page }) => {
+  await openModels(page);
+  const qwen4 = page.locator('[data-llm-card="llm-qwen3-4b-q4"]');
+  await expect(qwen4.locator("[data-fit=fits]")).toContainText("braucht ≈ 4,3 GB, frei 18,5 GB");
+  const qwen8 = page.locator('[data-llm-card="llm-qwen3-8b-q4"]');
+  await expect(qwen8.locator("[data-fit=tight]")).toContainText("Knapp");
 });

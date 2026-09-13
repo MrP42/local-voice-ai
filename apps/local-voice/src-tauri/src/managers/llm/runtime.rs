@@ -156,6 +156,16 @@ impl LlmRuntimeManager {
         Some(self.models_dir().join(&file.filename))
     }
 
+    /// Dateigroesse und Quelle eines Modells laut Katalog (fuer die
+    /// Speicherprognose, auch vor dem Download).
+    pub fn model_source(&self, model_id: &str) -> Option<(u64, String)> {
+        let entry = catalog::tts_entries(Purpose::LlmModel)
+            .into_iter()
+            .find(|e| e.id == model_id)?;
+        let file = entry.files.first()?;
+        Some((file.size_bytes, file.url.clone()))
+    }
+
     /// Ausfuehrbare Datei eines installierten Laufzeitpakets.
     pub fn binary_for(&self, runtime_id: &str) -> Option<PathBuf> {
         let dir = self.runtime_dir(runtime_id);

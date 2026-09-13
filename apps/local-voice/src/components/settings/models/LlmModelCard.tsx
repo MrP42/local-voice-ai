@@ -1,7 +1,7 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Cpu, Download, HardDrive, Loader2, Trash2 } from "lucide-react";
-import type { LlmDownloadInfo } from "@/bindings";
+import { commands, type FitReport, type LlmDownloadInfo } from "@/bindings";
 import { Button } from "../../ui/Button";
 import Badge from "../../ui/Badge";
 import { formatModelSize } from "@/lib/utils/format";
@@ -44,6 +44,25 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
   const { t } = useTranslation();
   const isRuntime = info.kind === "runtime";
   const tags: string[] = isRuntime ? [] : info.tags;
+
+  // Passt es rein? Einmal je Karte, gegen das aktuell freie Budget. Ohne
+  // Backend (Browser-Test) bleibt das Feld leer -- lieber nichts als Zahlen,
+  // die niemand gemessen hat.
+  const [fit, setFit] = useState<FitReport | null>(null);
+  useEffect(() => {
+    if (isRuntime) return;
+    let cancelled = false;
+    void commands
+      .llmLocalFit(info.id, null)
+      .then((result) => {
+        if (!cancelled && result.status === "ok") setFit(result.data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [info.id, isRuntime]);
+  const gb = (mb: number) => (mb / 1024).toFixed(1).replace(".", ",");
 
   return (
     <div
@@ -110,6 +129,26 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
         </div>
       </div>
       <p className="text-text/60 text-sm leading-relaxed">{info.description}</p>
+      {fit && (
+        <p
+          className={`text-xs ${
+            fit.verdict === "fits"
+              ? "text-green-600"
+              : fit.verdict === "tight"
+                ? "text-yellow-600"
+                : fit.verdict === "unlikely"
+                  ? "text-red-500"
+                  : "text-text/50"
+          }`}
+          data-fit={fit.verdict}
+        >
+          {t(`settings.models.llm.fit.${fit.verdict}`, {
+            need: gb(fit.estimate.total_mb),
+            free: gb(fit.free_mb),
+          })}
+          {!fit.estimate.from_metadata && ` ${t("settings.models.llm.fit.rough")}`}
+        </p>
+      )}
       <div className="flex items-center gap-3 text-xs text-text/50">
         {isRuntime && (
           <span className="flex items-center gap-1">

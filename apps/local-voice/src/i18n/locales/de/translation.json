@@ -692,6 +692,13 @@
           "zusammenfassung": "stark bei Zusammenfassungen",
           "mehrsprachig": "mehrsprachig",
           "alternative": "Alternative"
+        },
+        "fit": {
+          "fits": "Passt voraussichtlich: braucht ≈ {{need}} GB, frei {{free}} GB",
+          "tight": "Knapp: braucht ≈ {{need}} GB bei {{free}} GB frei",
+          "unlikely": "Passt wahrscheinlich nicht: braucht ≈ {{need}} GB, frei nur {{free}} GB",
+          "unknown": "Braucht ≈ {{need}} GB — GPU-Speicher hier nicht messbar",
+          "rough": "(grob geschätzt)"
         }
       }
     },

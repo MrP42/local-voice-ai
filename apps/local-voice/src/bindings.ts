@@ -331,6 +331,14 @@ async systemMemory() : Promise<Result<SystemMemory, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async llmLocalFit(modelId: string, contextTokens: number | null) : Promise<Result<FitReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_fit", { modelId, contextTokens }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsEngineSetting(value: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_engine_setting", { value }) };
@@ -2498,6 +2506,9 @@ export type LlmDownloadInfo = { id: string; kind: LlmDownloadKind; name: string;
 export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
 export type GpuMemory = { name: string; budget_mb: number; used_mb: number; dedicated_mb: number; shared: boolean }
 export type SystemMemory = { ram_total_mb: number; ram_used_mb: number; gpus: GpuMemory[] }
+export type FitVerdict = "fits" | "tight" | "unlikely" | "unknown"
+export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: number; total_mb: number; context_tokens: number; from_metadata: boolean }
+export type FitReport = { estimate: MemoryEstimate; free_mb: number; on_gpu: boolean; verdict: FitVerdict }
 export type LocalLlmStatus = { phase: LocalLlmPhase; model_id: string | null; backend: string | null; port: number | null; message: string | null }
 /**
  * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter. `kind` ist die

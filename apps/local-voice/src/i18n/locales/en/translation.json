@@ -733,6 +733,13 @@
           "zusammenfassung": "strong at summaries",
           "mehrsprachig": "multilingual",
           "alternative": "alternative"
+        },
+        "fit": {
+          "fits": "Should fit: needs ≈ {{need}} GB, {{free}} GB free",
+          "tight": "Tight: needs ≈ {{need}} GB with {{free}} GB free",
+          "unlikely": "Unlikely to fit: needs ≈ {{need}} GB, only {{free}} GB free",
+          "unknown": "Needs ≈ {{need}} GB — GPU memory not measurable here",
+          "rough": "(rough estimate)"
         }
       }
     },

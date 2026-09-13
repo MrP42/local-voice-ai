@@ -309,3 +309,47 @@ pub async fn system_memory(_app: AppHandle) -> Result<crate::managers::llm::Syst
         .await
         .map_err(|e| e.to_string())
 }
+
+/// Passt das Modell in den Speicher? Prognose gegen das freie Budget der
+/// dedizierten Grafikkarte -- oder gegen den RAM, wenn keine messbar ist;
+/// dann ist das Urteil "unbekannt", nicht "passt".
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_local_fit(
+    app: AppHandle,
+    model_id: String,
+    context_tokens: Option<u32>,
+) -> Result<crate::managers::llm::FitReport, String> {
+    use crate::managers::llm::estimate;
+    let runtime = app.state::<Arc<LlmRuntimeManager>>().inner().clone();
+    let (size, url) = runtime
+        .model_source(&model_id)
+        .ok_or_else(|| format!("Unbekanntes Modell: {model_id}"))?;
+    let context = context_tokens.unwrap_or(crate::managers::llm::DEFAULT_CONTEXT_TOKENS);
+    // Metadaten: aus der Datei, wenn sie da ist; sonst aus dem Kopf der
+    // entfernten Datei; sonst Daumenregel (und so ausgewiesen).
+    let local = runtime.model_path(&model_id).filter(|p| p.is_file());
+    let shape = match local {
+        Some(path) => tokio::task::spawn_blocking(move || estimate::shape_from_file(&path))
+            .await
+            .ok()
+            .flatten(),
+        None => estimate::shape_from_url(&url).await,
+    };
+    let memory = tokio::task::spawn_blocking(crate::managers::llm::resources::system_memory)
+        .await
+        .map_err(|e| e.to_string())?;
+    let gpu = memory.gpus.iter().find(|g| !g.shared);
+    let (free_mb, on_gpu) = match gpu {
+        Some(g) => (g.budget_mb.saturating_sub(g.used_mb), true),
+        None => (memory.ram_total_mb.saturating_sub(memory.ram_used_mb), false),
+    };
+    let est = estimate::estimate(size, shape, context);
+    let verdict = estimate::verdict(est.total_mb, free_mb, on_gpu);
+    Ok(crate::managers::llm::FitReport {
+        estimate: est,
+        free_mb,
+        on_gpu,
+        verdict,
+    })
+}
