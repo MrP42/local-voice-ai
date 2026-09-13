@@ -1141,7 +1141,11 @@
         "releasedCount_one": "{{count}} released",
         "releasedCount_other": "{{count}} released",
         "off": "off",
-        "enabledDescription": "Disabled connections keep their releases; their models just aren't offered."
+        "enabledDescription": "Disabled connections keep their releases; their models just aren't offered.",
+        "budget": "Monthly budget (USD)",
+        "budgetNone": "no limit",
+        "budgetEnforced": "Hard budget",
+        "budgetEnforcedDescription": "At 100 % calls are refused instead of just warned about. Off: the footer warns from 80 %, everything keeps running."
       },
       "model": {
         "active": "active",
@@ -1151,6 +1155,40 @@
         "maxOutput": "Max. output (tokens)",
         "priceIn": "Price input / M",
         "priceOut": "Price output / M"
+      },
+      "usage": {
+        "title": "Usage",
+        "range": "Range",
+        "ranges": {
+          "today": "Today",
+          "week": "7 days",
+          "month": "This month",
+          "all": "All time"
+        },
+        "empty": "No calls in this range yet. Every language-model call — dictation, summary, translation, minutes, tags — is recorded here.",
+        "calls": "Calls",
+        "failed_one": "{{count}} failed",
+        "failed_other": "{{count}} failed",
+        "promptTokens": "Input tokens",
+        "completionTokens": "Output tokens",
+        "cost": "Cost",
+        "byDay": "Tokens per day",
+        "byModel": "By model",
+        "byPurpose": "By purpose",
+        "colName": "",
+        "colCalls": "Calls",
+        "colTokens": "Tokens",
+        "colCost": "USD",
+        "hint": "Costs use the prices set on the model at the time of the call. Without a price: 0 — local models cost nothing, unknown prices neither.",
+        "clear": "Clear history",
+        "clearConfirm": "Really clear",
+        "purpose": {
+          "post_process": "Polish dictation",
+          "minutes": "Minutes",
+          "summary": "Summary",
+          "tagging": "Tags",
+          "translation": "Translation"
+        }
       }
     }
   },
@@ -1436,7 +1474,9 @@
     "loading": "{{name}} loading …",
     "error": "{{name}}: error",
     "empty": "No model released — download one under Models and press “Use”, or connect a provider in Settings.",
-    "unload": "Unload from memory"
+    "unload": "Unload from memory",
+    "budget": "Budget: {{spent}} of {{limit}} USD ({{percent}} %) this month",
+    "budgetExceeded": "Monthly budget exhausted: {{spent}} of {{limit}} USD ({{percent}} %)"
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",

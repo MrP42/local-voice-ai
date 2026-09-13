@@ -158,6 +158,15 @@ pub struct LlmConnection {
     pub base_url: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Monatsbudget in USD; `None` heisst kein Limit. Ab 80 % warnt die
+    /// Fussleiste.
+    #[serde(default)]
+    pub monthly_budget_usd: Option<f64>,
+    /// Hartes Budget: bei 100 % werden Aufrufe verweigert statt nur gewarnt.
+    /// Standard aus -- eine Warnung ist selten falsch, eine Sperre mitten
+    /// im Protokoll schon.
+    #[serde(default)]
+    pub budget_enforced: bool,
 }
 
 /// Ein freigegebenes Modell einer Verbindung. Nur freigegebene Modelle
@@ -1632,6 +1641,8 @@ fn migrate_legacy_providers_to_connections(settings: &mut AppSettings) {
             label: template.label.clone(),
             base_url: template.base_url.clone(),
             enabled: true,
+            monthly_budget_usd: None,
+            budget_enforced: false,
         });
         if let Some(remote) = chosen.filter(|m| !m.is_empty()) {
             models.push(LlmModelConfig {
@@ -2221,6 +2232,8 @@ mod tests {
             label: "Firma".into(),
             base_url: "https://api.openai.com/v1".into(),
             enabled: true,
+            monthly_budget_usd: None,
+            budget_enforced: false,
         });
         settings.settings_schema_version = 1;
         let raw = serde_json::json!({
@@ -2243,6 +2256,8 @@ mod tests {
             label: "Zweitkonto".into(),
             base_url: "https://proxy.example/v1".into(),
             enabled: true,
+            monthly_budget_usd: None,
+            budget_enforced: false,
         });
         settings
             .llm_models
@@ -2276,6 +2291,8 @@ mod tests {
             label: "Ollama".into(),
             base_url: "http://127.0.0.1:11434/v1".into(),
             enabled: false,
+            monthly_budget_usd: None,
+            budget_enforced: false,
         });
         settings
             .llm_models

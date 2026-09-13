@@ -269,6 +269,8 @@ pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String
                 label,
                 base_url: LOCAL_PLACEHOLDER_URL.to_string(),
                 enabled: true,
+                monthly_budget_usd: None,
+                budget_enforced: false,
             });
             LOCAL_PROVIDER_ID.to_string()
         }

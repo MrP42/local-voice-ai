@@ -22,6 +22,7 @@ import { usePostProcessProviderState } from "../PostProcessingSettingsApi/usePos
 import { ShortcutInput } from "../ShortcutInput";
 import { useSettings } from "../../../hooks/useSettings";
 import { LlmConnectionsSettings } from "./LlmConnectionsSettings";
+import { UsageOverview } from "./UsageOverview";
 
 const PostProcessingSettingsApiComponent: React.FC = () => {
   const { t } = useTranslation();
@@ -435,6 +436,8 @@ export const PostProcessingSettings: React.FC = () => {
   return (
     <div className="w-full space-y-6">
       <LlmConnectionsSettings />
+
+      <UsageOverview />
 
       <SettingsGroup title={t("settings.postProcessing.hotkey.title")}>
         <ShortcutInput

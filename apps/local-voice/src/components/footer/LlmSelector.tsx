@@ -4,6 +4,7 @@ import {
   commands,
   type LlmConnection,
   type LlmModelConfig,
+  type BudgetState,
   type LocalLlmStatus,
 } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
@@ -20,6 +21,7 @@ export const LlmSelector: React.FC = () => {
   const { getSetting, refreshSettings } = useSettings();
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<LocalLlmStatus | null>(null);
+  const [budget, setBudget] = useState<BudgetState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -38,6 +40,39 @@ export const LlmSelector: React.FC = () => {
 
   const active = selectable.find((s) => s.model.id === activeId) ?? null;
   const activeIsLocal = active?.connection.kind === "local";
+  const activeConnectionId = active?.connection.id ?? null;
+
+  // Budgetstand der aktiven Verbindung — alle 30 Sekunden, das reicht: ein
+  // Aufruf kostet Cent, kein Budget kippt binnen Sekunden.
+  useEffect(() => {
+    if (!activeConnectionId) {
+      setBudget(null);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const result = await commands.usageBudgetStates();
+        if (cancelled || result.status !== "ok") return;
+        setBudget(
+          result.data.find((b) => b.connection_id === activeConnectionId) ??
+            null,
+        );
+      } catch {
+        // Ohne Backend bleibt das Budget unbekannt.
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeConnectionId]);
+
+  const budgetRatio = budget?.ratio ?? null;
+  const budgetWarning = budgetRatio !== null && budgetRatio >= 0.8;
+  const budgetExceeded = budgetRatio !== null && budgetRatio >= 1;
 
   // Status des lokalen Servers alle drei Sekunden — nur wenn das aktive
   // Modell lokal ist; sonst gibt es nichts zu beobachten.
@@ -74,6 +109,9 @@ export const LlmSelector: React.FC = () => {
 
   const light = (): string => {
     if (!active) return "bg-red-400";
+    // Budget schlaegt Ladezustand: ein gesperrtes Modell ist nicht "gruen".
+    if (budgetExceeded && budget?.enforced) return "bg-red-400";
+    if (budgetWarning) return "bg-yellow-400";
     if (!activeIsLocal) return "bg-green-400";
     switch (status?.phase) {
       case "ready":
@@ -124,7 +162,22 @@ export const LlmSelector: React.FC = () => {
     });
   };
 
-  const title = error ?? (status?.message ?? undefined);
+  const budgetTitle =
+    budget && budget.limit_micro !== null
+      ? t(
+          budgetExceeded ? "llmSelector.budgetExceeded" : "llmSelector.budget",
+          {
+            spent: (budget.spent_micro / 1_000_000)
+              .toFixed(2)
+              .replace(".", ","),
+            limit: (budget.limit_micro / 1_000_000)
+              .toFixed(2)
+              .replace(".", ","),
+            percent: Math.round(budgetRatio! * 100),
+          },
+        )
+      : undefined;
+  const title = error ?? status?.message ?? budgetTitle ?? undefined;
 
   return (
     <div className="relative" ref={ref}>
@@ -139,6 +192,14 @@ export const LlmSelector: React.FC = () => {
       >
         <div className={`w-2 h-2 rounded-full ${light()}`} />
         <span className="max-w-32 truncate">{label()}</span>
+        {budgetWarning && (
+          <span
+            className={`text-xs tabular-nums ${budgetExceeded ? "text-red-400" : "text-yellow-500"}`}
+            data-llm-budget
+          >
+            {Math.round(budgetRatio! * 100)}%
+          </span>
+        )}
         <svg
           className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`}
           fill="none"
@@ -146,7 +207,12 @@ export const LlmSelector: React.FC = () => {
           viewBox="0 0 24 24"
           aria-hidden="true"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M19 9l-7 7-7-7"
+          />
         </svg>
       </button>
       {open && (
@@ -172,7 +238,9 @@ export const LlmSelector: React.FC = () => {
                   }
                 }}
                 className={`w-full px-3 py-2 text-start hover:bg-mid-gray/10 transition-colors cursor-pointer focus:outline-none ${
-                  model.id === activeId ? "bg-logo-primary/10 text-logo-primary" : ""
+                  model.id === activeId
+                    ? "bg-logo-primary/10 text-logo-primary"
+                    : ""
                 }`}
               >
                 <div className="text-sm text-text/80">{model.label}</div>

@@ -339,6 +339,38 @@ async llmLocalFit(modelId: string, contextTokens: number | null) : Promise<Resul
     else return { status: "error", error: e  as any };
 }
 },
+async usageSummary(range: UsageRange) : Promise<Result<UsageSummary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_summary", { range }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async usageEvents(limit: number | null, offset: number | null) : Promise<Result<UsageEvent[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_events", { limit, offset }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async usageClear() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async usageBudgetStates() : Promise<Result<BudgetState[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_budget_states") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsEngineSetting(value: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_engine_setting", { value }) };
@@ -2514,7 +2546,12 @@ export type LocalLlmStatus = { phase: LocalLlmPhase; model_id: string | null; ba
  * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter. `kind` ist die
  * Vorlage aus `post_process_providers`; mehrere Verbindungen derselben Art sind erlaubt.
  */
-export type LlmConnection = { id: string; kind: string; label: string; base_url: string; enabled?: boolean }
+export type LlmConnection = { id: string; kind: string; label: string; base_url: string; enabled?: boolean; monthly_budget_usd?: number | null; budget_enforced?: boolean }
+export type UsageRange = "today" | "week" | "month" | "all"
+export type UsageEvent = { id: number; ts: number; purpose: string; connection_id: string; connection_kind: string; connection_label: string; model_id: string; model_label: string; prompt_tokens: number; completion_tokens: number; price_input_per_mtok: number | null; price_output_per_mtok: number | null; cost_micro: number; duration_ms: number; ok: boolean; error: string | null }
+export type UsageBucket = { key: string; label: string; calls: number; prompt_tokens: number; completion_tokens: number; cost_micro: number }
+export type UsageSummary = { range: UsageRange; calls: number; failed: number; prompt_tokens: number; completion_tokens: number; cost_micro: number; by_model: UsageBucket[]; by_purpose: UsageBucket[]; by_day: UsageBucket[] }
+export type BudgetState = { connection_id: string; spent_micro: number; limit_micro: number | null; ratio: number | null; enforced: boolean }
 /**
  * Ein freigegebenes Modell einer Verbindung. Nur freigegebene Modelle erscheinen in der
  * Auswahl der App. Limits getrennt (Kontext, Eingabe, Ausgabe); Preise je Million Token.

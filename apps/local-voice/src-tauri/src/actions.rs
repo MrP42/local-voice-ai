@@ -297,6 +297,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         });
 
         match crate::llm_client::send_chat_completion_with_schema(
+            crate::managers::usage::Purpose::PostProcess,
             &provider,
             api_key.clone(),
             &model,
@@ -355,6 +356,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     debug!("Processed prompt length: {} chars", processed_prompt.len());
 
     match crate::llm_client::send_chat_completion(
+        crate::managers::usage::Purpose::PostProcess,
         &provider,
         api_key,
         &model,

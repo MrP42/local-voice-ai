@@ -18,7 +18,12 @@ import Badge from "../../ui/Badge";
 import { ApiKeyField } from "../PostProcessingSettingsApi/ApiKeyField";
 
 /// Vorlagen, bei denen ein Schluessel nichts zu suchen hat: lokal, ohne Konto.
-const KEYLESS_KINDS = new Set(["ollama", "vllm", "local", "apple_intelligence"]);
+const KEYLESS_KINDS = new Set([
+  "ollama",
+  "vllm",
+  "local",
+  "apple_intelligence",
+]);
 
 /**
  * Verbindungen zu Sprachmodell-Anbietern und die Freigabe ihrer Modelle.
@@ -241,7 +246,9 @@ const ConnectionRow: React.FC<RowProps> = ({
             <ChevronRight width={16} height={16} />
           )}
         </button>
-        <span className={`text-sm font-medium ${enabled ? "" : "text-text/50"}`}>
+        <span
+          className={`text-sm font-medium ${enabled ? "" : "text-text/50"}`}
+        >
           {connection.label}
         </span>
         <Badge variant="secondary">{template?.label ?? connection.kind}</Badge>
@@ -261,11 +268,17 @@ const ConnectionRow: React.FC<RowProps> = ({
             <Button
               size="sm"
               variant="danger-ghost"
-              onClick={() => void run(() => commands.llmRemoveConnection(connection.id))}
+              onClick={() =>
+                void run(() => commands.llmRemoveConnection(connection.id))
+              }
             >
               {t("settings.llm.connections.removeConfirm")}
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => setConfirmRemove(false)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setConfirmRemove(false)}
+            >
               {t("common.cancel")}
             </Button>
           </>
@@ -324,8 +337,52 @@ const ConnectionRow: React.FC<RowProps> = ({
             </label>
           )}
 
+          {/* Monatsbudget: leer heisst keins. Ab 80 % warnt die Fussleiste;
+              nur mit "hart" werden Aufrufe bei 100 % verweigert. */}
+          <div className="flex flex-wrap items-end gap-3" data-budget-row>
+            <label className="block text-sm">
+              <span className="text-text/70">
+                {t("settings.llm.connections.budget")}
+              </span>
+              <Input
+                type="text"
+                variant="compact"
+                defaultValue={
+                  connection.monthly_budget_usd == null
+                    ? ""
+                    : String(connection.monthly_budget_usd)
+                }
+                placeholder={t("settings.llm.connections.budgetNone")}
+                onBlur={(e) => {
+                  const raw = e.target.value.trim().replace(",", ".");
+                  const next = raw === "" ? null : Number(raw);
+                  if (next !== null && (Number.isNaN(next) || next < 0)) return;
+                  if (next !== (connection.monthly_budget_usd ?? null))
+                    void upsert({ monthly_budget_usd: next });
+                }}
+                className="w-32 mt-1"
+                aria-label={t("settings.llm.connections.budget")}
+              />
+            </label>
+            <ToggleSwitch
+              checked={connection.budget_enforced === true}
+              onChange={(checked) => void upsert({ budget_enforced: checked })}
+              label={t("settings.llm.connections.budgetEnforced")}
+              description={t(
+                "settings.llm.connections.budgetEnforcedDescription",
+              )}
+              descriptionMode="tooltip"
+              disabled={connection.monthly_budget_usd == null}
+            />
+          </div>
+
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="secondary" onClick={() => void loadModels()} disabled={loading}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void loadModels()}
+              disabled={loading}
+            >
               <RefreshCw width={14} height={14} />
               {loading
                 ? t("settings.llm.connections.loading")
@@ -400,7 +457,11 @@ const ModelRow: React.FC<{
     run(() => commands.llmUpsertModel({ ...model, ...patch }));
 
   const field = (
-    key: "context_limit" | "max_output_tokens" | "price_input_per_mtok" | "price_output_per_mtok",
+    key:
+      | "context_limit"
+      | "max_output_tokens"
+      | "price_input_per_mtok"
+      | "price_output_per_mtok",
     label: string,
   ) => (
     <label className="block text-xs">
@@ -422,9 +483,16 @@ const ModelRow: React.FC<{
     <div className="rounded border border-mid-gray/15 px-2 py-1.5">
       <div className="flex items-center gap-2 text-sm">
         <span className="font-medium truncate">{model.label}</span>
-        {isActive && <Badge variant="success">{t("settings.llm.model.active")}</Badge>}
+        {isActive && (
+          <Badge variant="success">{t("settings.llm.model.active")}</Badge>
+        )}
         <span className="flex-1" />
-        <Button size="sm" variant="secondary" onClick={() => setDetails(!details)} aria-expanded={details}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => setDetails(!details)}
+          aria-expanded={details}
+        >
           {t("settings.llm.model.details")}
         </Button>
         <Button

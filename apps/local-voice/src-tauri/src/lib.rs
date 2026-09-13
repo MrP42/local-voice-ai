@@ -228,6 +228,16 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     );
     let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
     managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
+    // Verbrauchs-Ledger: jeder Sprachmodell-Aufruf wird gebucht. Global aus
+    // demselben Grund wie der Server: `llm_client` bucht ohne AppHandle.
+    let usage_ledger = Arc::new(
+        managers::usage::UsageLedger::new(app_handle).expect("Failed to initialize usage ledger"),
+    );
+    let settings_handle = app_handle.clone();
+    managers::usage::install_globals(
+        usage_ledger.clone(),
+        Arc::new(move || settings::get_settings(&settings_handle)),
+    );
     // Meetings (M8): the store is shared by recorder and commands. A store
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.
@@ -255,6 +265,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(tts_model_manager);
     app_handle.manage(llm_runtime);
     app_handle.manage(llm_server);
+    app_handle.manage(usage_ledger);
     app_handle.manage(commands::tts::AutoTagRun::default());
     app_handle.manage(commands::tts::BuilderRun::default());
     app_handle.manage(tray::CurrentTrayIconState::new());
@@ -1319,6 +1330,10 @@ pub fn run(cli_args: CliArgs) {
             commands::llm::llm_local_activate,
             commands::llm::system_memory,
             commands::llm::llm_local_fit,
+            commands::usage::usage_summary,
+            commands::usage::usage_events,
+            commands::usage::usage_clear,
+            commands::usage::usage_budget_states,
             shortcut::change_tts_engine_setting,
             shortcut::change_tts_piper_voice_setting,
             shortcut::change_tts_speed_setting,

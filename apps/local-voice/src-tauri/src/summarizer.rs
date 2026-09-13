@@ -138,7 +138,15 @@ async fn ask_llm(settings: &AppSettings, prompt: String) -> Result<String, Strin
         .get(&provider.id)
         .cloned()
         .unwrap_or_default();
-    match crate::llm_client::send_chat_completion(&provider, api_key, &model, prompt, None, None)
+    match crate::llm_client::send_chat_completion(
+        crate::managers::usage::Purpose::Summary,
+        &provider,
+        api_key,
+        &model,
+        prompt,
+        None,
+        None,
+    )
         .await
     {
         Ok(Some(content)) => {

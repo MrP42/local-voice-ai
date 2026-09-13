@@ -87,7 +87,16 @@ pub async fn translate_on(
         .then(|| crate::llm_client::ollama_native_url(&provider.base_url))
         .flatten();
     if let Some(url) = native {
-        match crate::llm_client::send_ollama_native(&url, &model, prompt.clone(), true).await {
+        match crate::llm_client::send_ollama_native(
+            crate::managers::usage::Purpose::Translation,
+            &provider,
+            &url,
+            &model,
+            prompt.clone(),
+            true,
+        )
+        .await
+        {
             Ok(Some(content)) => {
                 let trimmed = content.trim().to_string();
                 if !trimmed.is_empty() {
@@ -103,6 +112,7 @@ pub async fn translate_on(
     }
 
     let outcome = match crate::llm_client::send_chat_completion(
+        crate::managers::usage::Purpose::Translation,
         &provider,
         api_key,
         &model,

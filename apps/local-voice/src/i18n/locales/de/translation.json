@@ -1141,7 +1141,11 @@
         "releasedCount_one": "{{count}} freigegeben",
         "releasedCount_other": "{{count}} freigegeben",
         "off": "aus",
-        "enabledDescription": "Abgeschaltet bleibt die Verbindung samt Freigaben erhalten, ihre Modelle stehen nur nicht zur Wahl."
+        "enabledDescription": "Abgeschaltet bleibt die Verbindung samt Freigaben erhalten, ihre Modelle stehen nur nicht zur Wahl.",
+        "budget": "Monatsbudget (USD)",
+        "budgetNone": "kein Limit",
+        "budgetEnforced": "Hartes Budget",
+        "budgetEnforcedDescription": "Bei 100 % werden Aufrufe verweigert statt nur gewarnt. Aus: die Fußleiste warnt ab 80 %, alles läuft weiter."
       },
       "model": {
         "active": "aktiv",
@@ -1151,6 +1155,40 @@
         "maxOutput": "Max. Ausgabe (Token)",
         "priceIn": "Preis Eingabe / Mio.",
         "priceOut": "Preis Ausgabe / Mio."
+      },
+      "usage": {
+        "title": "Verbrauch",
+        "range": "Zeitraum",
+        "ranges": {
+          "today": "Heute",
+          "week": "7 Tage",
+          "month": "Dieser Monat",
+          "all": "Gesamt"
+        },
+        "empty": "Noch kein Aufruf im Zeitraum. Jeder Aufruf eines Sprachmodells — Diktat, Zusammenfassung, Übersetzung, Protokoll, Tags — wird hier gebucht.",
+        "calls": "Aufrufe",
+        "failed_one": "{{count}} fehlgeschlagen",
+        "failed_other": "{{count}} fehlgeschlagen",
+        "promptTokens": "Eingabe-Token",
+        "completionTokens": "Ausgabe-Token",
+        "cost": "Kosten",
+        "byDay": "Token je Tag",
+        "byModel": "Je Modell",
+        "byPurpose": "Je Zweck",
+        "colName": "",
+        "colCalls": "Aufrufe",
+        "colTokens": "Token",
+        "colCost": "USD",
+        "hint": "Kosten nach den Preisen, die zum Zeitpunkt des Aufrufs am Modell hinterlegt waren. Ohne Preis: 0 — lokale Modelle kosten nichts, unbekannte Preise auch nicht.",
+        "clear": "Verlauf löschen",
+        "clearConfirm": "Wirklich löschen",
+        "purpose": {
+          "post_process": "Diktat verbessern",
+          "minutes": "Protokoll",
+          "summary": "Zusammenfassung",
+          "tagging": "Tags",
+          "translation": "Übersetzung"
+        }
       }
     }
   },
@@ -1436,7 +1474,9 @@
     "loading": "{{name}} lädt …",
     "error": "{{name}}: Fehler",
     "empty": "Kein Modell freigegeben — unter Modelle ein Sprachmodell laden und „Verwenden“, oder in den Einstellungen einen Anbieter verbinden.",
-    "unload": "Aus dem Speicher entladen"
+    "unload": "Aus dem Speicher entladen",
+    "budget": "Budget: {{spent}} von {{limit}} USD ({{percent}} %) in diesem Monat",
+    "budgetExceeded": "Monatsbudget ausgeschöpft: {{spent}} von {{limit}} USD ({{percent}} %)"
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",
