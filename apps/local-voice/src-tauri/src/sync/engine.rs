@@ -15,6 +15,12 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
 const PUSH_BATCH: usize = 100;
+/// Der Hub nimmt 512 KiB je Anfrage; darunter bleiben, sonst blockieren zwei
+/// grosse Seiten den ganzen Abgleich.
+const PUSH_BATCH_BYTES: usize = 400 * 1024;
+/// Obergrenze fuer Pull-Seiten je Lauf: ein Server, der bei `more=true` den
+/// Cursor nicht bewegt, darf keinen Endloslauf ausloesen.
+const PULL_MAX_PAGES: usize = 500;
 const PULL_LIMIT: u32 = 100;
 const TICK: Duration = Duration::from_secs(60);
 const DEBOUNCE: Duration = Duration::from_secs(2);
@@ -67,6 +73,12 @@ impl SyncEngine {
         if let Ok(mut s) = self.status.lock() {
             f(&mut s);
         }
+    }
+
+    /// Konto-Datei und Ledger nur wechseln, wenn kein Lauf mehr schreibt:
+    /// Login/Logout halten diese Sperre, solange sie Dateien ersetzen.
+    pub async fn account_guard(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.run_lock.lock().await
     }
 
     /// Anstoß aus der Oberfläche oder nach einem lokalen Schreiben.
@@ -231,7 +243,22 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     }
 
     let mut pending: u32 = 0;
-    for chunk in to_push.chunks(PUSH_BATCH) {
+    let mut chunks: Vec<&[(PushObject, String, Option<&LocalObject>)]> = Vec::new();
+    let mut start = 0;
+    let mut bytes = 0;
+    for (i, (o, _, _)) in to_push.iter().enumerate() {
+        let size = o.payload.len() + 200;
+        if i > start && (i - start >= PUSH_BATCH || bytes + size > PUSH_BATCH_BYTES) {
+            chunks.push(&to_push[start..i]);
+            start = i;
+            bytes = 0;
+        }
+        bytes += size;
+    }
+    if start < to_push.len() {
+        chunks.push(&to_push[start..]);
+    }
+    for chunk in chunks {
         let objs: Vec<PushObject> = chunk.iter().map(|(o, _, _)| o.clone()).collect();
         let results = client.push(&cfg.device_id, &objs).await?;
         for r in results {
@@ -250,7 +277,9 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                             if remote.key_id != my_key_id {
                                 return Ok(finish(app, led, changed, pending + 1, true));
                             }
-                            let applied = apply_remote(app, cfg, &key, &remote, local.map(|l| &l.value))
+                            let synced = led.get(&remote.collection, &remote.object_id).map(|e| e.hash.clone());
+                            let _ = local;
+                            let applied = apply_remote(app, cfg, &key, &remote, synced.as_deref())
                                 .map_err(HubError::Other)?;
                             if applied {
                                 changed = true;
@@ -279,15 +308,25 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     // ---- Pull -----------------------------------------------------------
     let mut since = led.cursor;
     let mut key_mismatch = false;
+    let mut reset_done = false;
+    let mut pages_seen = 0usize;
     'pull: loop {
+        pages_seen += 1;
+        if pages_seen > PULL_MAX_PAGES {
+            return Err(HubError::Other("Pull ohne Ende: zu viele Seiten in einem Lauf".into()));
+        }
         let page = match client.pull(since, PULL_LIMIT).await {
             Ok(p) => p,
-            Err(HubError::CursorExpired) if since > 0 => {
+            Err(HubError::CursorExpired) if since > 0 && !reset_done => {
+                reset_done = true;
                 since = 0;
                 continue;
             }
             Err(e) => return Err(e),
         };
+        if page.more && page.cursor <= since {
+            return Err(HubError::Other("Pull ohne Fortschritt: Cursor bewegt sich nicht".into()));
+        }
         for remote in &page.objects {
             if remote.device_id == cfg.device_id && led.get(&remote.collection, &remote.object_id).is_some_and(|e| e.revision == remote.revision) {
                 continue; // eigene, schon bestätigte Änderung
@@ -296,18 +335,12 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                 key_mismatch = true;
                 break 'pull; // Cursor bleibt stehen, bis der Schlüssel passt
             }
-            let local = by_key.get(&ledger::key(&remote.collection, &remote.object_id)).map(|o| &o.value);
-            if let Some(l) = local {
-                let h = collect::hash(l);
-                if led.is_dirty(&remote.collection, &remote.object_id, &h)
-                    && led.get(&remote.collection, &remote.object_id).is_some()
-                {
-                    // Lokal ungesichert geändert: nicht überschreiben — der
-                    // nächste Push holt sich den Konflikt und die Kopie.
-                    continue;
-                }
-            }
-            if apply_remote(app, cfg, &key, remote, None).map_err(HubError::Other)? {
+            // Lokal ungesichert geaendert? Das entscheidet apply_page am
+            // frischen Stand unter der Seiten-Sperre und sichert vorher die
+            // Konfliktkopie -- ein Schnappschuss vom Zyklusanfang reicht
+            // dafuer nicht (Review-Befund 14.09.).
+            let synced = led.get(&remote.collection, &remote.object_id).map(|e| e.hash.clone());
+            if apply_remote(app, cfg, &key, remote, synced.as_deref()).map_err(HubError::Other)? {
                 changed = true;
             }
             led.set(&remote.collection, &remote.object_id, Entry { revision: remote.revision, hash: remote_hash(&key, cfg, remote), deleted: remote.deleted });
@@ -345,15 +378,16 @@ fn decrypt(key: &[u8; crypto::KEY_LEN], cfg: &SyncConfig, remote: &RemoteObject)
     serde_json::from_slice(&plain).map_err(|e| format!("Objekt unlesbar: {e}"))
 }
 
-/// Ein Server-Objekt lokal anwenden. `local` ist der aktuelle lokale Stand,
-/// falls der Aufrufer ihn kennt (Push-Konflikt): weicht er inhaltlich ab,
-/// entsteht vorher die Konfliktkopie. Liefert, ob sich lokal etwas geändert hat.
+/// Ein Server-Objekt lokal anwenden. `synced_hash` ist der zuletzt
+/// bestätigte Hash des Objekts; `apply_page` vergleicht damit den FRISCHEN
+/// lokalen Stand und sichert ihn bei Abweichung als Konfliktkopie. Liefert,
+/// ob sich lokal etwas geändert hat.
 fn apply_remote(
     app: &AppHandle,
     cfg: &SyncConfig,
     key: &[u8; crypto::KEY_LEN],
     remote: &RemoteObject,
-    local: Option<&serde_json::Value>,
+    synced_hash: Option<&str>,
 ) -> Result<bool, String> {
     match remote.collection.as_str() {
         collect::COLLECTION_PAGE => {
@@ -362,13 +396,7 @@ fn apply_remote(
                 return Ok(true);
             }
             let value = decrypt(key, cfg, remote)?;
-            if let Some(l) = local {
-                if collect::pages_differ(l, &value) {
-                    let copy = collect::conflict_copy(app, l, &cfg.device_name)?;
-                    log::info!("Sync-Konflikt bei {}: lokale Fassung als {copy} gesichert", remote.object_id);
-                }
-            }
-            collect::apply_page(app, &remote.object_id, &value)?;
+            collect::apply_page(app, &remote.object_id, &value, synced_hash, &cfg.device_name)?;
             Ok(true)
         }
         collect::COLLECTION_SETTINGS => {

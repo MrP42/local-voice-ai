@@ -79,6 +79,7 @@ hkdf = "0.12"
 zeroize = "1"
 base64 = "0.22"
 rand = "0.8"
+url = "2"
 # Whisper-family models run through transcribe-cpp (GGUF/ggml, native backends);
 # transcribe-rs is now ONNX-only (Parakeet, Moonshine, SenseVoice, GigaAM,
 # Canary, Cohere). Per-platform backend features are added in the target tables.

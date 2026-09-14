@@ -58,9 +58,54 @@ pub fn save(app: &AppHandle, cfg: &SyncConfig) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("Datenverzeichnis: {e}"))?;
     }
     let raw = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
-    std::fs::write(&path, raw).map_err(|e| format!("sync.json schreiben: {e}"))?;
-    restrict_permissions(&path);
+    write_private(&path, raw.as_bytes())?;
     Ok(())
+}
+
+/// Unix: Datei von Anfang an mit 0600 anlegen. Windows: nach dem Schreiben
+/// die Vererbung kappen und nur den aktuellen Benutzer eintragen (icacls);
+/// schlaegt das fehl, ist das ein Speicherfehler, kein Hinweis.
+#[cfg(unix)]
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write as _;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| format!("sync.json anlegen: {e}"))?;
+    f.write_all(bytes).map_err(|e| format!("sync.json schreiben: {e}"))?;
+    // Bestehende Datei: Rechte nachziehen (mode gilt nur beim Anlegen).
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("sync.json Rechte: {e}"))
+}
+
+#[cfg(windows)]
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    std::fs::write(path, bytes).map_err(|e| format!("sync.json schreiben: {e}"))?;
+    let user = std::env::var("USERNAME").unwrap_or_default();
+    if user.is_empty() {
+        return Err("sync.json Rechte: Benutzername unbekannt".into());
+    }
+    let status = std::process::Command::new("icacls")
+        .arg(path)
+        .args(["/inheritance:r", "/grant:r", &format!("{user}:(R,W)")])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("sync.json Rechte (icacls): {e}"))?;
+    if !status.success() {
+        let _ = std::fs::remove_file(path);
+        return Err("sync.json Rechte konnten nicht gesetzt werden".into());
+    }
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    std::fs::write(path, bytes).map_err(|e| format!("sync.json schreiben: {e}"))
 }
 
 pub fn remove(app: &AppHandle) {
@@ -69,17 +114,6 @@ pub fn remove(app: &AppHandle) {
     }
 }
 
-/// Unix: nur der Besitzer liest die Datei. Windows: das Datenverzeichnis liegt
-/// ohnehin im Benutzerprofil (%LOCALAPPDATA%), eine eigene ACL setzt die App
-/// nicht (Spec Abschnitt 3).
-#[cfg(unix)]
-fn restrict_permissions(path: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(not(unix))]
-fn restrict_permissions(_path: &std::path::Path) {}
 
 pub fn new_device_id() -> String {
     let mut bytes = [0u8; 16];

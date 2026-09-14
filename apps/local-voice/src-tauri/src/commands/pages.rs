@@ -13,8 +13,30 @@
 //! Migration an, wenn die Oberfläche ein Feld dazuerfindet.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use tauri::AppHandle;
+
+/// Eine Sperre fuer alle Lese-Aendern-Schreib-Zyklen an Index und
+/// Seitenstand: die Oberflaeche (Befehle unten) und der Geraete-Sync
+/// schreiben dieselben Dateien. Ohne Sperre ueberschreibt der eine still,
+/// was der andere gerade gelesen hat (Review-Befund 14.09.).
+static PAGES_LOCK: Mutex<()> = Mutex::new(());
+
+pub(crate) fn lock() -> MutexGuard<'static, ()> {
+    PAGES_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Schreiben ueber eine Temp-Datei plus Umbenennen: ein Absturz mittendrin
+/// hinterlaesst die alte Datei, nie eine halbe.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::write(&tmp, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("could not replace {}: {e}", path.display())
+    })
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, specta::Type)]
 pub struct PageInfo {
@@ -126,8 +148,13 @@ pub(crate) fn page_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
 
 pub(crate) fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
     let path = projects_root(app)?.join("index.json");
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return Ok(PagesIndex::default());
+    // Nur "gibt es nicht" heisst "leer". Jeder andere Lesefehler (Rechte,
+    // Platte) waere sonst ein leerer Index -- und der Sync wuerde alle
+    // Seiten fuer geloescht halten.
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(PagesIndex::default()),
+        Err(e) => return Err(format!("could not read pages index: {e}")),
     };
     // Ein zerstörter Index (Absturz beim Schreiben) darf die Seiten nicht
     // verstecken: dann wird er aus den vorhandenen Ordnern neu aufgebaut.
@@ -156,10 +183,10 @@ pub(crate) fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
 pub(crate) fn store_index(app: &AppHandle, index: &PagesIndex) -> Result<(), String> {
     let path = projects_root(app)?.join("index.json");
     let raw = serde_json::to_string_pretty(index).map_err(|e| e.to_string())?;
-    std::fs::write(&path, raw).map_err(|e| format!("could not write pages index: {e}"))
+    write_atomic(&path, raw.as_bytes())
 }
 
-fn fresh_id() -> String {
+pub(crate) fn fresh_id() -> String {
     format!(
         "page_{}",
         std::time::SystemTime::now()
@@ -175,6 +202,7 @@ fn fresh_id() -> String {
 #[tauri::command]
 #[specta::specta]
 pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
+    let _guard = lock();
     let mut index = load_index(&app)?;
     if index.pages.is_empty() {
         let page = PageInfo {
@@ -196,6 +224,7 @@ pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn pages_create(app: AppHandle, title: String) -> Result<PageInfo, String> {
+    let _guard = lock();
     let title = title.trim();
     let page = PageInfo {
         id: fresh_id(),
@@ -217,6 +246,7 @@ pub fn pages_create(app: AppHandle, title: String) -> Result<PageInfo, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn pages_rename(app: AppHandle, id: String, title: String) -> Result<(), String> {
+    let _guard = lock();
     checked_id(&id)?;
     let title = title.trim();
     if title.is_empty() {
@@ -237,6 +267,7 @@ pub fn pages_rename(app: AppHandle, id: String, title: String) -> Result<(), Str
 #[tauri::command]
 #[specta::specta]
 pub fn pages_delete(app: AppHandle, id: String) -> Result<(), String> {
+    let _guard = lock();
     let dir = page_path(&app, &id)?;
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("could not delete page: {e}"))?;
@@ -252,6 +283,7 @@ pub fn pages_delete(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn pages_reorder(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    let _guard = lock();
     let mut index = load_index(&app)?;
     let mut reordered: Vec<PageInfo> = Vec::with_capacity(index.pages.len());
     for id in &ids {
@@ -273,10 +305,10 @@ pub fn page_state_load(app: AppHandle, id: String) -> Result<String, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn page_state_save(app: AppHandle, id: String, state: String) -> Result<(), String> {
+    let _guard = lock();
     let dir = page_path(&app, &id)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("could not create page dir: {e}"))?;
-    std::fs::write(dir.join("state.json"), state)
-        .map_err(|e| format!("could not save page state: {e}"))
+    write_atomic(&dir.join("state.json"), state.as_bytes())
 }
 
 #[tauri::command]

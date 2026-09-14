@@ -24,10 +24,18 @@ pub struct Ledger {
     pub cursor: i64,
     #[serde(default)]
     pub objects: BTreeMap<String, Entry>,
-    /// Vom Hub abgewiesene Objekte: Schlüssel → Grund. Werden nicht erneut
-    /// gesendet, bis sich ihr Inhalt ändert.
+    /// Vom Hub abgewiesene Objekte: Schlüssel → Grund und der abgewiesene
+    /// Hash. Werden nicht erneut gesendet, bis sich ihr Inhalt ändert. Der
+    /// bestätigte Hash in `objects` bleibt davon unberührt — eine abgewiesene
+    /// Seite gilt weiter als ungesichert (Review-Befund 14.09.).
     #[serde(default)]
-    pub dead: BTreeMap<String, String>,
+    pub dead: BTreeMap<String, DeadEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct DeadEntry {
+    pub reason: String,
+    pub hash: String,
 }
 
 pub fn key(collection: &str, object_id: &str) -> String {
@@ -55,18 +63,15 @@ impl Ledger {
     }
 
     pub fn is_dead(&self, collection: &str, object_id: &str, hash: &str) -> bool {
-        let k = key(collection, object_id);
         // Ein geänderter Inhalt bekommt eine neue Chance.
-        self.dead.contains_key(&k) && self.objects.get(&k).is_some_and(|e| e.hash == hash)
+        self.dead.get(&key(collection, object_id)).is_some_and(|d| d.hash == hash)
     }
 
     pub fn mark_dead(&mut self, collection: &str, object_id: &str, hash: &str, reason: &str) {
-        let k = key(collection, object_id);
-        self.objects
-            .entry(k.clone())
-            .or_default()
-            .hash = hash.to_string();
-        self.dead.insert(k, reason.to_string());
+        self.dead.insert(
+            key(collection, object_id),
+            DeadEntry { reason: reason.to_string(), hash: hash.to_string() },
+        );
     }
 }
 
@@ -89,7 +94,7 @@ pub fn load(app: &AppHandle) -> Ledger {
 pub fn save(app: &AppHandle, ledger: &Ledger) -> Result<(), String> {
     let p = path(app)?;
     let raw = serde_json::to_string(ledger).map_err(|e| e.to_string())?;
-    std::fs::write(p, raw).map_err(|e| format!("Ledger schreiben: {e}"))
+    crate::commands::pages::write_atomic(&p, raw.as_bytes())
 }
 
 pub fn remove(app: &AppHandle) {
@@ -119,6 +124,7 @@ mod tests {
         l.mark_dead("page", "p1", "h1", "payload_size");
         assert!(l.is_dead("page", "p1", "h1"));
         assert!(!l.is_dead("page", "p1", "h2"), "geänderter Inhalt wird erneut versucht");
+        assert!(l.is_dirty("page", "p1", "h1"), "abgewiesen bleibt ungesichert");
         l.set("page", "p1", Entry { revision: 1, hash: "h2".into(), deleted: false });
         assert!(l.dead.is_empty(), "Bestätigung löscht den Dead-Letter");
     }

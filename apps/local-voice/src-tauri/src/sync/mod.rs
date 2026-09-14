@@ -33,16 +33,16 @@ pub async fn sync_login(
         .map(|u| u.trim().to_string())
         .filter(|u| !u.is_empty())
         .unwrap_or_else(|| account::DEFAULT_HUB_URL.to_string());
-    if !url.starts_with("https://") && !url.starts_with("http://localhost") && !url.starts_with("http://127.0.0.1") {
-        return Err("Der Hub muss über https erreichbar sein.".into());
-    }
+    check_hub_url(&url)?;
     let device_name = {
         let d = device_name.trim();
         if d.is_empty() { account::default_device_name() } else { d.chars().take(60).collect() }
     };
 
+    // Passwort nur in Puffern, die beim Freigeben ueberschrieben werden.
+    let password = zeroize::Zeroizing::new(password);
     // Argon2 (64 MiB) gehört nicht auf den Async-Executor.
-    let (pw, em) = (password.clone(), email.clone());
+    let (pw, em) = (zeroize::Zeroizing::new(password.to_string()), email.clone());
     let key = tauri::async_runtime::spawn_blocking(move || crypto::derive_key(&pw, &em))
         .await
         .map_err(|e| e.to_string())??;
@@ -64,10 +64,30 @@ pub async fn sync_login(
         user_email: login.user.email,
         enc_key_b64: B64.encode(key),
     };
-    account::save(&app, &cfg)?;
-    ledger::remove(&app);
-    engine.refresh_from_config(&app);
+    {
+        // Kein laufender Zyklus darf das neue Konto oder das frische Ledger
+        // mit seinem alten Stand ueberschreiben.
+        let _guard = engine.account_guard().await;
+        account::save(&app, &cfg)?;
+        ledger::remove(&app);
+        engine.refresh_from_config(&app);
+    }
     Ok(engine.run_once(&app).await)
+}
+
+/// Erlaubt: https zu einem Host ohne Zugangsdaten in der URL, oder http nur
+/// zu localhost/127.0.0.1. `http://localhost@evil.example` faellt durch.
+fn check_hub_url(url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|_| "Hub-Adresse ist keine gueltige URL.".to_string())?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("Hub-Adresse darf keine Zugangsdaten enthalten.".into());
+    }
+    let host = parsed.host_str().unwrap_or("");
+    match parsed.scheme() {
+        "https" if !host.is_empty() => Ok(()),
+        "http" if host == "localhost" || host == "127.0.0.1" => Ok(()),
+        _ => Err("Der Hub muss über https erreichbar sein.".into()),
+    }
 }
 
 /// Abmelden: Token im Hub widerrufen (best effort), Konto und Ledger löschen.
@@ -81,10 +101,27 @@ pub async fn sync_logout(app: AppHandle, engine: State<'_, SyncEngine>) -> Resul
             log::warn!("Sync-Logout am Hub fehlgeschlagen: {e} — lokal trotzdem abgemeldet");
         }
     }
+    let _guard = engine.account_guard().await;
     account::remove(&app);
     ledger::remove(&app);
     engine.refresh_from_config(&app);
     Ok(engine.status())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_hub_url;
+
+    #[test]
+    fn hub_url_nur_https_oder_loopback_ohne_zugangsdaten() {
+        assert!(check_hub_url("https://portal.wolffappliedai.de").is_ok());
+        assert!(check_hub_url("http://localhost:8000").is_ok());
+        assert!(check_hub_url("http://127.0.0.1:8000/").is_ok());
+        assert!(check_hub_url("http://localhost@evil.example").is_err());
+        assert!(check_hub_url("http://evil.example").is_err());
+        assert!(check_hub_url("https://user:pw@portal.wolffappliedai.de").is_err());
+        assert!(check_hub_url("portal.wolffappliedai.de").is_err());
+    }
 }
 
 #[tauri::command]

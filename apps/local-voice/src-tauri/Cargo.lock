@@ -3466,6 +3466,7 @@ dependencies = [
  "transcribe-cpp",
  "transcribe-rs",
  "ulid",
+ "url",
  "vad-rs",
  "wasapi",
  "windows 0.61.3",

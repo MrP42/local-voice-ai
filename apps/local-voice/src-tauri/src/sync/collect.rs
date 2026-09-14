@@ -70,7 +70,10 @@ pub fn hash(value: &Value) -> String {
 }
 
 /// Alle lokalen Objekte: eine je Seite, eines für die Einstellungen.
+/// Unter der Seiten-Sperre: eine halb geschriebene Seite darf nicht als
+/// Stand gelten.
 pub fn collect(app: &AppHandle) -> Result<Vec<LocalObject>, String> {
+    let _guard = pages::lock();
     let mut out = Vec::new();
     let index = pages::load_index(app)?;
     for page in &index.pages {
@@ -104,29 +107,65 @@ pub fn settings_subset(all: &Value) -> Value {
     Value::Object(m)
 }
 
+/// Frischer Stand EINER Seite (Titel + Arbeitsstand), oder None, wenn sie
+/// nicht (mehr) im Index steht. Für den Konfliktvergleich unmittelbar vor dem
+/// Anwenden — ein Schnappschuss vom Zyklusanfang kann veraltet sein.
+pub fn read_page(app: &AppHandle, id: &str) -> Result<Option<Value>, String> {
+    let index = pages::load_index(app)?;
+    let Some(page) = index.pages.iter().find(|p| p.id == id) else {
+        return Ok(None);
+    };
+    let state = std::fs::read_to_string(pages::page_path(app, id)?.join("state.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .unwrap_or(Value::Null);
+    Ok(Some(json!({ "title": page.title, "state": state })))
+}
+
 /// Eine empfangene Seite anwenden: fehlt sie, entsteht sie am Ende der Liste;
 /// sonst werden Titel und Arbeitsstand ersetzt. Die Reihenfolge bleibt
-/// gerätelokal.
-pub fn apply_page(app: &AppHandle, id: &str, value: &Value) -> Result<(), String> {
+/// gerätelokal. `synced_hash` ist der zuletzt bestätigte Hash dieser Seite:
+/// weicht der frische lokale Stand davon UND vom Server-Stand ab, wird er
+/// vorher als Konfliktkopie gesichert — unter der Sperre, damit zwischen
+/// Vergleich und Schreiben niemand dazwischenkommt.
+pub fn apply_page(
+    app: &AppHandle,
+    id: &str,
+    value: &Value,
+    synced_hash: Option<&str>,
+    device_name: &str,
+) -> Result<bool, String> {
+    let _guard = pages::lock();
+    let mut conflict = false;
+    if let Some(fresh) = read_page(app, id)? {
+        let unsynced = synced_hash.is_none_or(|h| h != hash(&fresh));
+        if unsynced && pages_differ(&fresh, value) {
+            let copy = conflict_copy(app, &fresh, device_name)?;
+            log::info!("Sync-Konflikt bei {id}: lokale Fassung als {copy} gesichert");
+            conflict = true;
+        }
+    }
     let title = value.get("title").and_then(Value::as_str).unwrap_or("Seite").to_string();
     let state = value.get("state").cloned().unwrap_or(Value::Null);
     let dir = pages::page_path(app, id)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Seitenordner: {e}"))?;
     if !state.is_null() {
         let raw = serde_json::to_string(&state).map_err(|e| e.to_string())?;
-        std::fs::write(dir.join("state.json"), raw).map_err(|e| format!("state.json: {e}"))?;
+        pages::write_atomic(&dir.join("state.json"), raw.as_bytes())?;
     }
     let mut index = pages::load_index(app)?;
     match index.pages.iter_mut().find(|p| p.id == id) {
         Some(p) => p.title = title,
         None => index.pages.push(pages::PageInfo { id: id.to_string(), title, ..Default::default() }),
     }
-    pages::store_index(app, &index)
+    pages::store_index(app, &index)?;
+    Ok(conflict)
 }
 
 /// Tombstone: Seite aus dem Index nehmen, Ordner nach `projects/_geloescht/`
 /// schieben — Dateien bleiben, der Nutzer räumt selbst auf.
 pub fn tombstone_page(app: &AppHandle, id: &str) -> Result<(), String> {
+    let _guard = pages::lock();
     let mut index = pages::load_index(app)?;
     let before = index.pages.len();
     index.pages.retain(|p| p.id != id);
@@ -148,15 +187,26 @@ pub fn tombstone_page(app: &AppHandle, id: &str) -> Result<(), String> {
 
 /// Konfliktkopie: der lokale Stand wird eine neue Seite, damit die
 /// Server-Fassung das Original übernehmen kann, ohne dass etwas verloren geht.
+/// Der Aufrufer hält die Seiten-Sperre (apply_page); deshalb wird der Index
+/// hier direkt fortgeschrieben statt über den Befehl `pages_create`, der
+/// die Sperre selbst nähme.
 pub fn conflict_copy(app: &AppHandle, local: &Value, device_name: &str) -> Result<String, String> {
     let title = local.get("title").and_then(Value::as_str).unwrap_or("Seite");
-    let copy = pages::pages_create(app.clone(), format!("{title} (Konflikt von {device_name})"))?;
+    let page = pages::PageInfo {
+        id: pages::fresh_id(),
+        title: format!("{title} (Konflikt von {device_name})"),
+        ..Default::default()
+    };
+    let dir = pages::page_path(app, &page.id)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Seitenordner: {e}"))?;
     if let Some(state) = local.get("state").filter(|s| !s.is_null()) {
         let raw = serde_json::to_string(state).map_err(|e| e.to_string())?;
-        std::fs::write(pages::page_path(app, &copy.id)?.join("state.json"), raw)
-            .map_err(|e| format!("state.json: {e}"))?;
+        pages::write_atomic(&dir.join("state.json"), raw.as_bytes())?;
     }
-    Ok(copy.id)
+    let mut index = pages::load_index(app)?;
+    index.pages.push(page.clone());
+    pages::store_index(app, &index)?;
+    Ok(page.id)
 }
 
 /// Empfangene Einstellungen anwenden: nur die Allowlist, alles andere bleibt.
