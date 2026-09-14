@@ -196,7 +196,9 @@
       "enginePiper": "Piper (CPU, sofort bereit)",
       "piperVoice": "Piper-Stimme",
       "piperVoiceDescription": "Welche der geladenen Piper-Stimmen vorliest.",
-      "piperVoiceMissing": "Noch keine Piper-Stimme geladen — unter Modelle herunterladen."
+      "piperVoiceMissing": "Noch keine Piper-Stimme geladen — unter Modelle herunterladen.",
+      "piperAutoLanguage": "Sprache automatisch erkennen",
+      "piperAutoLanguageDescription": "Je Satz wird die Sprache erkannt und die passende geladene Piper-Stimme genommen (z. B. Englisch mit einer englischen Stimme). Ohne passende Stimme liest die gewählte."
     },
     "saveAudio": "Als Audio speichern…",
     "savingAudio": "Wird erzeugt…",

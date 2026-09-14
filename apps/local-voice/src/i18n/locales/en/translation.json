@@ -196,7 +196,9 @@
       "enginePiper": "Piper (CPU, ready at once)",
       "piperVoice": "Piper voice",
       "piperVoiceDescription": "Which of the downloaded Piper voices reads aloud.",
-      "piperVoiceMissing": "No Piper voice downloaded yet — get one under Models."
+      "piperVoiceMissing": "No Piper voice downloaded yet — get one under Models.",
+      "piperAutoLanguage": "Detect language automatically",
+      "piperAutoLanguageDescription": "Each sentence is checked for its language and read by a matching downloaded Piper voice. Without a match the selected voice reads."
     },
     "saveAudio": "Save as audio…",
     "savingAudio": "Generating…",

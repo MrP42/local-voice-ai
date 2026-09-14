@@ -1348,6 +1348,7 @@ pub fn run(cli_args: CliArgs) {
             sync::sync_hub_status,
             shortcut::change_tts_engine_setting,
             shortcut::change_tts_piper_voice_setting,
+            shortcut::change_tts_piper_auto_language_setting,
             shortcut::change_tts_speed_setting,
             shortcut::change_tts_export_format_setting,
             shortcut::change_tts_export_bitrate_setting,

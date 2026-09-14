@@ -128,6 +128,8 @@ const settingUpdaters: {
   tts_engine: (value) => commands.changeTtsEngineSetting(value as string),
   tts_piper_voice: (value) =>
     commands.changeTtsPiperVoiceSetting(value as string | null),
+  tts_piper_auto_language: (value) =>
+    commands.changeTtsPiperAutoLanguageSetting(value as boolean),
   tts_speed: (value) => commands.changeTtsSpeedSetting(value as number),
   tts_normalize: (value) =>
     commands.changeTtsNormalizeSetting(value as boolean),

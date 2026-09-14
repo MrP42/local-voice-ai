@@ -675,6 +675,9 @@ pub struct AppSettings {
     /// Gewählte Piper-Stimme (Modellkennung) oder None = keine gewählt.
     #[serde(default)]
     pub tts_piper_voice: Option<String>,
+    /// Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
+    #[serde(default = "default_tts_piper_auto_language")]
+    pub tts_piper_auto_language: bool,
     /// T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
     /// Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die
     /// Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
@@ -786,6 +789,12 @@ fn default_tts_compile() -> bool {
 
 fn default_tts_engine() -> String {
     "fish".to_string()
+}
+
+/// Standardmäßig an: eine deutsche Piper-Stimme liest englischen Text sonst
+/// mit deutscher Aussprache.
+fn default_tts_piper_auto_language() -> bool {
+    true
 }
 
 /// T4 Auto-Tagging: Standard-Claude-Modell, wenn "Claude Haiku" gewählt ist.
@@ -1423,6 +1432,7 @@ pub fn get_default_settings() -> AppSettings {
         tts_engine: default_tts_engine(),
         tts_preview_engine: String::new(),
         tts_piper_voice: None,
+        tts_piper_auto_language: default_tts_piper_auto_language(),
         tts_tag_favorites: Vec::new(),
         tts_tag_provider: String::new(),
         tts_tag_model: default_tts_tag_model(),

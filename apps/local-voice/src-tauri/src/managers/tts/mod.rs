@@ -15,6 +15,7 @@ pub mod enhance;
 pub mod loudness;
 pub mod models;
 pub mod piper;
+pub mod lang;
 pub mod player;
 pub mod portable;
 pub mod protocol;
@@ -1618,9 +1619,10 @@ impl TtsManager {
         // Dateien (Paket E3) wirken damit ohne App-Neustart.
         let kind = TtsEngineKind::from_setting(&settings.tts_engine);
         let piper_engine = (kind == TtsEngineKind::Piper).then(|| {
-            piper::PiperEngine::resolve(
+            piper::PiperEngine::resolve_auto(
                 self.data_base_dir().as_deref(),
                 settings.tts_piper_voice.as_deref(),
+                settings.tts_piper_auto_language,
             )
         });
         self.core.set_engine(kind, piper_engine);

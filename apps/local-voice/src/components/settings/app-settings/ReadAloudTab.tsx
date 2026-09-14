@@ -105,6 +105,18 @@ export const ReadAloudTab = () => {
             <span />
           </SettingContainer>
         ))}
+      {(getSetting("tts_engine") ?? "fish") === "piper" && (
+        <ToggleSwitch
+          checked={getSetting("tts_piper_auto_language") ?? true}
+          onChange={(checked) =>
+            updateSetting("tts_piper_auto_language", checked)
+          }
+          isUpdating={isUpdating("tts_piper_auto_language")}
+          label={t("tts.settings.piperAutoLanguage")}
+          description={t("tts.settings.piperAutoLanguageDescription")}
+          grouped={true}
+        />
+      )}
       <ShortcutInput shortcutId="speak_clipboard" grouped={true} />
       <Slider
         value={getSetting("tts_volume") ?? 1.0}

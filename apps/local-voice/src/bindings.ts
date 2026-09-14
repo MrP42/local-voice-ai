@@ -445,6 +445,17 @@ async changeTtsPiperVoiceSetting(value: string | null) : Promise<Result<null, st
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
+ */
+async changeTtsPiperAutoLanguageSetting(value: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_piper_auto_language_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsSpeedSetting(value: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_speed_setting", { value }) };
@@ -2488,6 +2499,10 @@ tts_preview_engine?: string;
  * Gewählte Piper-Stimme (Modellkennung) oder None = keine gewählt.
  */
 tts_piper_voice?: string | null; 
+/**
+ * Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
+ */
+tts_piper_auto_language?: boolean;
 /**
  * T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
  * Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die

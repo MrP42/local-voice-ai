@@ -683,6 +683,16 @@ pub fn change_tts_piper_voice_setting(
     Ok(())
 }
 
+/// Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
+#[tauri::command]
+#[specta::specta]
+pub fn change_tts_piper_auto_language_setting(app: AppHandle, value: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_piper_auto_language = value;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_tts_speed_setting(app: AppHandle, value: f32) -> Result<(), String> {
