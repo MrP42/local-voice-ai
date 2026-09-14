@@ -13,6 +13,7 @@ import type { LlmModelConfig } from "@/bindings";
 import { useLlmLocalStore } from "@/stores/llmLocalStore";
 import { useSettings } from "@/hooks/useSettings";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
+import { PageShell } from "@/components/ui/PageShell";
 import {
   getLanguageLabel,
   MODEL_CAPABILITY_LANGUAGES,
@@ -290,15 +291,10 @@ export const ModelsSettings: React.FC = () => {
   }
 
   return (
-    <div className="w-full space-y-4">
-      <div className="mb-4">
-        <h1 className="text-xl font-semibold mb-2">
-          {t("settings.models.title")}
-        </h1>
-        <p className="text-sm text-text/60">
-          {t("settings.models.description")}
-        </p>
-      </div>
+    <PageShell
+      title={t("settings.models.title")}
+      description={t("settings.models.description")}
+    >
 
       {/* Search bar — filter the catalog by name or description.
           The magnifier sits in the flow as a flex sibling rather than being
@@ -564,6 +560,6 @@ export const ModelsSettings: React.FC = () => {
           {t("settings.models.noModelsMatch")}
         </div>
       )}
-    </div>
+    </PageShell>
   );
 };

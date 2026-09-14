@@ -226,7 +226,7 @@ test("read-aloud workspace preserves editor width in a narrow window", async ({
     ),
   ).toBeTruthy();
   await expect(
-    page.getByText("Stimme & Wiedergabe", { exact: true }),
+    page.getByRole("heading", { name: "Vorlesen", exact: true }),
   ).toBeVisible();
   // Keine Klappen mehr unter dem Editor: Stimmen wohnen auf der Modelle-Seite.
   await expect(page.getByText("Stimmen anhören & verwalten")).toHaveCount(0);

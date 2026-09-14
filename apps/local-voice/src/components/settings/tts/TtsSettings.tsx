@@ -8,6 +8,7 @@ import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
 import { FilesSidebar, PagesSidebar } from "./WorkspaceSidebars";
 import { SettingsGroup } from "../../ui/SettingsGroup";
+import { PageShell } from "../../ui/PageShell";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
@@ -933,6 +934,51 @@ export const TtsSettings = () => {
     starting && (startingSeconds >= 120 || status?.message === "vram");
 
   return (
+    <PageShell
+      title={t("tts.title")}
+      description={t("workspace.ttsHint")}
+      actions={
+        <>
+        {/* Das Sprachmodell der Nachbearbeitung (Uebersetzen,
+            Zusammenfassen), in derselben Farbsprache wie der Server
+            daneben. Klick: entladen oder vorwaermen. */}
+        <button
+          type="button"
+          onClick={() => setLlmDialog(true)}
+          title={llmTitle}
+          aria-label={llmTitle}
+          className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
+        >
+          <BrainCircuit
+            width={20}
+            height={20}
+            className={llmIconClass}
+            aria-hidden="true"
+          />
+        </button>
+        {/* Ein einziges Element traegt Zustand UND Bedienung. Die Farbe
+          sagt, woran man ist — grau (aus), gelb (faehrt hoch), gruen
+          (laeuft), orange blinkend (Fehler) —, der Klick tut, was in
+          diesem Zustand ansteht. Das Wort daneben war eine zweite
+          Anzeige derselben Sache; es steht jetzt im Tooltip, wo es nur
+          stoert, wenn man es sucht. */}
+        <button
+          type="button"
+          onClick={onServerIconClick}
+          title={serverTitle}
+          aria-label={serverTitle}
+          className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
+        >
+          <Server
+            width={20}
+            height={20}
+            className={serverIconClass}
+            aria-hidden="true"
+          />
+        </button>
+        </>
+      }
+    >
     <div className="tts-workspace w-full flex gap-4 items-start">
       <PagesSidebar
         pages={pages}
@@ -943,53 +989,7 @@ export const TtsSettings = () => {
         onChanged={() => void reloadPages()}
       />
       <div className="flex-1 min-w-0 space-y-6">
-        <SettingsGroup title={t("tts.title")}>
-          <SettingContainer
-            title={t("tts.serverTitle")}
-            description={t("tts.description")}
-            grouped={true}
-            layout="horizontal"
-          >
-            <div className="flex items-center">
-              {/* Das Sprachmodell der Nachbearbeitung (Uebersetzen,
-                  Zusammenfassen), in derselben Farbsprache wie der Server
-                  daneben. Klick: entladen oder vorwaermen. */}
-              <button
-                type="button"
-                onClick={() => setLlmDialog(true)}
-                title={llmTitle}
-                aria-label={llmTitle}
-                className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
-              >
-                <BrainCircuit
-                  width={20}
-                  height={20}
-                  className={llmIconClass}
-                  aria-hidden="true"
-                />
-              </button>
-              {/* Ein einziges Element traegt Zustand UND Bedienung. Die Farbe
-                sagt, woran man ist — grau (aus), gelb (faehrt hoch), gruen
-                (laeuft), orange blinkend (Fehler) —, der Klick tut, was in
-                diesem Zustand ansteht. Das Wort daneben war eine zweite
-                Anzeige derselben Sache; es steht jetzt im Tooltip, wo es nur
-                stoert, wenn man es sucht. */}
-              <button
-                type="button"
-                onClick={onServerIconClick}
-                title={serverTitle}
-                aria-label={serverTitle}
-                className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
-              >
-                <Server
-                  width={20}
-                  height={20}
-                  className={serverIconClass}
-                  aria-hidden="true"
-                />
-              </button>
-            </div>
-          </SettingContainer>
+        <SettingsGroup>
           {truncated && (
             <p className="px-4 pb-2 text-sm text-orange-400">
               {t("tts.truncatedWarning", {
@@ -1666,5 +1666,6 @@ export const TtsSettings = () => {
         }}
       />
     </div>
+    </PageShell>
   );
 };

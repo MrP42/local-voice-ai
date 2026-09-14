@@ -1,5 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
+import { PageShell } from "../../ui/PageShell";
 import { DictationTab } from "./DictationTab";
 import { ReadAloudTab } from "./ReadAloudTab";
 import { SoundTab } from "./SoundTab";
@@ -92,7 +93,10 @@ export const AppSettings: React.FC = () => {
   const ActiveComponent = active.Component;
 
   return (
-    <div className="w-full space-y-4">
+    <PageShell
+      title={t("sidebar.settings")}
+      description={t("workspace.settingsHint")}
+    >
       {/* Scrolls rather than wraps: on a narrow window a wrapped strip pushes
           the content down by a whole row for no gain. */}
       <div
@@ -153,6 +157,6 @@ export const AppSettings: React.FC = () => {
       >
         <ActiveComponent />
       </div>
-    </div>
+    </PageShell>
   );
 };
