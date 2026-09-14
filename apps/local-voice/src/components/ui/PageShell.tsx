@@ -15,6 +15,10 @@ interface PageShellProps {
       Vorlesen bringt seine Hilfe in der eigenen rechten Leiste mit und
       setzt das nicht. */
   help?: string;
+  /** Arbeitsflaeche: nimmt die volle Hoehe, der Inhalt scrollt in seinen
+      Spalten, der Kopf steht. Listen und Einstellungen lassen das aus und
+      scrollen als Ganzes. */
+  fill?: boolean;
   children: React.ReactNode;
 }
 
@@ -29,12 +33,16 @@ export const PageShell: React.FC<PageShellProps> = ({
   description,
   actions,
   help,
+  fill = false,
   children,
 }) => {
   const { t } = useTranslation();
   const [helpOpen, setHelpOpen] = useState(false);
   return (
-    <section className="page-shell w-full space-y-4" aria-labelledby="page-title">
+    <section
+      className={`page-shell w-full ${fill ? "page-shell--fill flex flex-col gap-4" : "space-y-4"}`}
+      aria-labelledby="page-title"
+    >
       <header className="page-shell__head flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 id="page-title" className="text-xl font-semibold text-text">
@@ -65,7 +73,7 @@ export const PageShell: React.FC<PageShellProps> = ({
         )}
       </header>
       {help && helpOpen ? (
-        <div className="flex gap-4 items-start">
+        <div className={`flex gap-4 items-start ${fill ? "flex-1 min-h-0" : ""}`}>
           <div className="flex-1 min-w-0 space-y-4">{children}</div>
           <aside
             className="w-72 shrink-0 space-y-2 border-s border-mid-gray/20 ps-4"
@@ -88,6 +96,8 @@ export const PageShell: React.FC<PageShellProps> = ({
             <HelpPanel section={help} />
           </aside>
         </div>
+      ) : fill ? (
+        <div className="flex-1 min-h-0">{children}</div>
       ) : (
         children
       )}

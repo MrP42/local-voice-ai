@@ -667,3 +667,61 @@ textarea:focus::-webkit-resizer {
   outline: 2px solid var(--color-text);
   outline-offset: 2px;
 }
+
+/* Arbeitsflaechen mit fester Hoehe (Vorlesen): der Hauptbereich scrollt
+   nicht, die Spalten scrollen fuer sich, Kopf und Rahmen stehen. */
+.workspace-main {
+  overflow-y: auto;
+}
+.workspace-main--fill {
+  overflow: hidden;
+}
+.workspace-content--fill,
+.page-shell--fill,
+.tts-workspace--fill {
+  height: 100%;
+  min-height: 0;
+}
+.page-shell--fill > .flex-1 {
+  min-height: 0;
+}
+
+/* Vorlesen: der Editor fuellt seine Spalte; nur die textarea scrollt. Der
+   Mirror mit den Chips liegt absolut darueber und folgt der Hoehe. */
+.tts-editor__fill > .relative {
+  height: 100%;
+}
+.tts-editor__fill textarea {
+  height: 100%;
+  min-height: 160px;
+  resize: none;
+}
+
+/* Schmale Fenster und Mobilgeraete: Spalten uebereinander, die Seite
+   scrollt wieder als Ganzes, der Editor waechst mit dem Text. Dieselbe
+   Schwelle wie fuer die Seiten-/Dateileisten oben. */
+@media (max-width: 1100px) {
+  .workspace-main--fill {
+    overflow-y: auto;
+  }
+  .workspace-content--fill,
+  .page-shell--fill,
+  .tts-workspace--fill {
+    height: auto;
+  }
+  .tts-workspace > .min-w-0 {
+    flex-direction: column;
+  }
+  .tts-controls {
+    width: 100%;
+    overflow: visible;
+  }
+  .tts-editor__fill > .relative {
+    height: auto;
+  }
+  .tts-editor__fill textarea {
+    height: auto;
+    min-height: 220px;
+    resize: vertical;
+  }
+}

@@ -123,7 +123,7 @@ export const PagesSidebar: React.FC<{
   }
 
   return (
-    <div className="tts-workspace__pages w-52 shrink-0 space-y-1">
+    <div className="tts-workspace__pages w-52 shrink-0 space-y-1 min-h-0 overflow-y-auto">
       <div className="flex items-center justify-between pb-1">
         <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
           {t("tts.pages.title")}
@@ -422,7 +422,7 @@ export const FilesSidebar: React.FC<{
   }
 
   return (
-    <div className="tts-workspace__files w-60 shrink-0 space-y-1">
+    <div className="tts-workspace__files w-60 shrink-0 space-y-1 min-h-0 overflow-y-auto">
       <div className="flex items-center justify-between pb-1">
         {onTabChange ? (
           <div className="flex items-center gap-1" role="tablist">

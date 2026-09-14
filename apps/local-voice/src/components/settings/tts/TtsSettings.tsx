@@ -1073,6 +1073,7 @@ export const TtsSettings = () => {
     <PageShell
       title={t("tts.title")}
       description={t("workspace.ttsHint")}
+      fill
       actions={
         <>
           <button
@@ -1127,7 +1128,10 @@ export const TtsSettings = () => {
         </>
       }
     >
-    <div className="tts-workspace w-full flex gap-4 items-start">
+    {/* Volle Hoehe: Seiten links, Text in der Mitte, Bedienung rechts vom
+        Text, Dateien/Hilfe ganz rechts. Nur die Spalten scrollen, der Kopf
+        und der Rahmen stehen (Entscheidung Patrick 14.09. abends). */}
+    <div className="tts-workspace tts-workspace--fill w-full flex gap-4 items-stretch">
       <PagesSidebar
         pages={pages}
         activeId={activePage}
@@ -1136,8 +1140,8 @@ export const TtsSettings = () => {
         onSelect={setActivePage}
         onChanged={() => void reloadPages()}
       />
-      <div className="flex-1 min-w-0 space-y-6">
-        <SettingsGroup>
+      <div className="flex-1 min-w-0 min-h-0 flex gap-4">
+        <div className="tts-editor flex-1 min-w-0 min-h-0 flex flex-col rounded-lg border border-mid-gray/20 bg-background overflow-hidden">
           {truncated && (
             <p className="px-4 pb-2 text-sm text-orange-400">
               {t("tts.truncatedWarning", {
@@ -1159,7 +1163,7 @@ export const TtsSettings = () => {
               {lastError}
             </p>
           )}
-          <div className="px-4 pb-4 space-y-2">
+          <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2">
             {/* Zwei Reiter, ein Feld. Das Original wird nie ueberschrieben —
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
@@ -1202,6 +1206,7 @@ export const TtsSettings = () => {
             {/* Der Chip-Editor ist Drop-in für die frühere Textarea: die
                 native textarea darin bleibt die einzige Wahrheit, Tags
                 (`[…]`) erscheinen als Chips im Mirror-Overlay. */}
+            <div className="tts-editor__fill flex-1 min-h-0">
             {tab === "original" ? (
               <TtsChipEditor
                 value={text}
@@ -1209,7 +1214,6 @@ export const TtsSettings = () => {
                 providers={chipProviders}
                 insertApiRef={editorApiRef}
                 placeholder={t("tts.inputPlaceholder")}
-                rows={14}
                 className="w-full"
                 suggestions={tagSuggestions}
                 onResolveSuggestion={resolveTagSuggestion}
@@ -1221,7 +1225,6 @@ export const TtsSettings = () => {
                 providers={chipProviders}
                 insertApiRef={editorApiRef}
                 placeholder={t("tts.translationPlaceholder")}
-                rows={14}
                 className="w-full"
                 lang={targetLangCode(targetLang)}
               />
@@ -1232,10 +1235,10 @@ export const TtsSettings = () => {
                 providers={chipProviders}
                 insertApiRef={editorApiRef}
                 placeholder={t("tts.summaryPlaceholder")}
-                rows={14}
                 className="w-full"
               />
             )}
+            </div>
 
             {/* Je Reiter nur die Aktionen, die er braucht — und die Quellen
                 gebuendelt hinter EINEM Plus (Dokument, Webseite,
@@ -1451,6 +1454,15 @@ export const TtsSettings = () => {
                 </label>
               </div>
             )}
+          </div>
+        </div>
+        {/* Bedienung rechts vom Text: Transport, Tempo, Stimme, Speichern,
+            aktueller Satz, Ausdruck & Sprechstil, Schreibregeln. Scrollt fuer
+            sich, wenn die Klappen offen sind. */}
+        <aside
+          className="tts-controls w-72 shrink-0 min-h-0 overflow-y-auto space-y-3 pe-1"
+          aria-label={t("tts.controls")}
+        >
             <div className="flex gap-2 items-center flex-wrap">
               {/* Transport per design system: round glyph buttons, exactly one
                 primary. Reading aloud is playback, so it gets the same family
@@ -1693,8 +1705,7 @@ export const TtsSettings = () => {
                 {currentSentence}
               </p>
             )}
-          </div>
-        </SettingsGroup>
+        </aside>
 
 
 

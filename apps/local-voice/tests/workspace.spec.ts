@@ -289,6 +289,18 @@ test("all five content pages share one head", async ({ page }) => {
       animations: "disabled",
     });
   }
+  // Vorlesen schmal: Spalten uebereinander, Seite scrollt als Ganzes.
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await page.setViewportSize({ width: 900, height: 700 });
+  await page.screenshot({
+    path: "test-results/page-tts-narrow.png",
+    animations: "disabled",
+  });
+  const controls = page.locator(".tts-controls");
+  const editor = page.locator(".tts-editor");
+  const c = (await controls.boundingBox())!;
+  const e = (await editor.boundingBox())!;
+  expect(c.y).toBeGreaterThanOrEqual(e.y + e.height - 1);
 });
 
 test("account & devices: sign in from the general tab, then sign out", async ({ page }) => {

@@ -427,7 +427,8 @@
     "tidyHint": "Text fürs Vorlesen aufbereiten – Seitenzahlen, Kopfzeilen, Trennungen und Umbrüche raus, nichts wird gekürzt",
     "tidying": "Bereite auf …",
     "tidyDone": "Text aufbereitet.",
-    "tidyUndo": "Rückgängig"
+    "tidyUndo": "Rückgängig",
+    "controls": "Wiedergabe und Stimme"
   },
   "onboarding": {
     "subtitle": "Wähle ein Transkriptionsmodell, um loszulegen",

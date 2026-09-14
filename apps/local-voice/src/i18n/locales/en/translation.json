@@ -427,7 +427,8 @@
     "tidyHint": "Clean up the text for reading – removes page numbers, headers, hyphenation and line breaks, nothing is shortened",
     "tidying": "Cleaning up …",
     "tidyDone": "Text cleaned up.",
-    "tidyUndo": "Undo"
+    "tidyUndo": "Undo",
+    "controls": "Playback and voice"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
