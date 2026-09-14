@@ -41,6 +41,69 @@ pub fn tag_spans(text: &str) -> Vec<std::ops::Range<usize>> {
     spans
 }
 
+/// Entfernt alle `[…]`-Tag-Spans aus dem Text — für Engines ohne Stil-Tags
+/// (Piper): was die Engine nicht versteht, würde sie sonst wörtlich vorlesen
+/// („calm", „laughing"). Doppelte Leerzeichen werden zusammengezogen, ein
+/// Leerzeichen vor Satzzeichen verschwindet.
+pub fn strip_tag_spans(text: &str) -> String {
+    let spans = tag_spans(text);
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for span in spans {
+        out.push_str(&text[last..span.start]);
+        last = span.end;
+    }
+    out.push_str(&text[last..]);
+    tidy_spaces(&out)
+}
+
+/// Entfernt alle `<Name>`/`<Name:Stil>`-Kandidaten — für Engines ohne
+/// Stimmwechsel (Piper): dort kann kein Marker schalten, also darf auch
+/// keiner gesprochen werden, bekannt oder nicht.
+pub fn strip_speaker_markers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for c in scan_marker_candidates(text) {
+        // "a < b und b > c" ist ein Vergleich, kein Marker: ein Marker beginnt
+        // direkt nach "<" und endet direkt vor ">".
+        let inner = &text[c.start + 1..c.end - 1];
+        if inner.starts_with(char::is_whitespace) || inner.ends_with(char::is_whitespace) {
+            continue;
+        }
+        out.push_str(&text[last..c.start]);
+        last = c.end;
+    }
+    out.push_str(&text[last..]);
+    tidy_spaces(&out)
+}
+
+/// Mehrfache Leerzeichen innerhalb einer Zeile zusammenziehen, Leerzeichen
+/// vor `.,;:!?` entfernen, Zeilenanfänge trimmen. Zeilenumbrüche bleiben.
+fn tidy_spaces(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let mut s = String::with_capacity(line.len());
+            let mut prev_space = true; // Zeilenanfang: führende Leerzeichen weg
+            for ch in line.chars() {
+                if ch == ' ' || ch == '\t' {
+                    if !prev_space {
+                        s.push(' ');
+                        prev_space = true;
+                    }
+                } else {
+                    if prev_space && matches!(ch, '.' | ',' | ';' | ':' | '!' | '?') {
+                        s.pop();
+                    }
+                    s.push(ch);
+                    prev_space = false;
+                }
+            }
+            s.trim_end().to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Zahl der Zeichen außerhalb aller Tag-Spans — die Länge, die für den
 /// Hörer tatsächlich vorgelesen wird.
 fn visible_char_count(s: &str) -> usize {
@@ -1003,6 +1066,21 @@ patrick: Hi.",
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].voice.as_deref(), Some("anna-id"));
         assert_eq!(segments[0].text, "[whisper] Ganz leise.");
+    }
+
+    #[test]
+    fn strip_tag_spans_entfernt_tags_und_glaettet_leerzeichen() {
+        assert_eq!(strip_tag_spans("[calm] Es war ruhig [laughing] , sagte er."), "Es war ruhig, sagte er.");
+        assert_eq!(strip_tag_spans("Ohne Tag."), "Ohne Tag.");
+        assert_eq!(strip_tag_spans("Zeile eins [x]\n[y] Zeile zwei"), "Zeile eins\nZeile zwei");
+        assert_eq!(strip_tag_spans("[offen bleibt stehen"), "[offen bleibt stehen");
+    }
+
+    #[test]
+    fn strip_speaker_markers_entfernt_bekannte_und_unbekannte_marker() {
+        assert_eq!(strip_speaker_markers("<German Father> Die drei Feen.[break]"), "Die drei Feen.[break]");
+        assert_eq!(strip_speaker_markers("<Mara:neugierig> Glaubst du das?"), "Glaubst du das?");
+        assert_eq!(strip_speaker_markers("a < b und b > c"), "a < b und b > c");
     }
 
     #[test]

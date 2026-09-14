@@ -577,6 +577,15 @@ impl TtsCore {
         // Settings-Wechsel währenddessen kann keine Bytes mehr unter
         // fremdem Tag ablegen (TOCTOU-Befund aus dem A3/E1-Review).
         let engine = self.engine_snapshot();
+        // Ohne Stil-Tags (Piper) fliegen die `[…]`-Tags raus, BEVOR der
+        // Cache-Schluessel entsteht — sonst laese die Engine „calm" vor.
+        let stripped;
+        let text = if engine.caps().style_tags {
+            text
+        } else {
+            stripped = protocol::strip_tag_spans(text);
+            stripped.as_str()
+        };
         // Unveränderter Satz + gleiche Stimme/Seed/Engine → aus dem Cache,
         // ohne Server. Der Cache-Lookup bleibt VOR der Engine: was schon
         // synthetisiert ist, braucht keine Engine — egal welche.
@@ -1680,6 +1689,16 @@ impl TtsManager {
     /// Der Stil aus `<Name:Stil>` wird geparst (und damit aus dem gesprochenen
     /// Text entfernt), aber noch nicht aufgeloest — das ist Paket S5.
     fn utterances(&self, text: &str) -> Vec<Utterance> {
+        // Eine Engine ohne Stimmwechsel (Piper) darf keinen Marker sprechen,
+        // auch keinen unbekannten: alle `<…>`-Kandidaten fallen weg, der
+        // Text laeuft in der einen eingestellten Stimme.
+        let stripped;
+        let text = if self.core.engine_caps().voice_switching {
+            text
+        } else {
+            stripped = protocol::strip_speaker_markers(text);
+            stripped.as_str()
+        };
         let speakers = self.known_speakers();
         protocol::split_speaker_segments(text, &speakers)
             .into_iter()
