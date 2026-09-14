@@ -241,7 +241,7 @@
       "defaultVoice": "Standardstimme"
     },
     "translateAction": "Übersetzen — erzeugt die Übersetzung im zweiten Reiter, spielt nichts ab",
-    "summarizeHint": "Zusammenfassen — erzeugt die Zusammenfassung im dritten Reiter, spielt nichts ab",
+    "summarizeHint": "Zusammenfassen – fasst immer das Original zusammen und legt das Ergebnis in den dritten Reiter, spielt nichts ab",
     "llm": {
       "busy": "Sprachmodell arbeitet — übersetzt oder fasst gerade zusammen",
       "idle": "Kein Sprachmodell geladen. Klicken zum Vorwärmen — sonst lädt es beim ersten Auftrag von selbst.",
@@ -422,7 +422,12 @@
     "serverStartBody": "Der Server lädt das Sprachmodell in den Grafikspeicher — rund 17 GB — und braucht dafür je nach Einstellung bis zu zwei Minuten. Solange er läuft, rechnet die Übersetzung auf der CPU. Beendet wird er über dasselbe Symbol oder von selbst nach der eingestellten Leerlaufzeit.",
     "export": {
       "untitled": "Vorlesen"
-    }
+    },
+    "tidy": "Text aufbereiten",
+    "tidyHint": "Text fürs Vorlesen aufbereiten – Seitenzahlen, Kopfzeilen, Trennungen und Umbrüche raus, nichts wird gekürzt",
+    "tidying": "Bereite auf …",
+    "tidyDone": "Text aufbereitet.",
+    "tidyUndo": "Rückgängig"
   },
   "onboarding": {
     "subtitle": "Wähle ein Transkriptionsmodell, um loszulegen",

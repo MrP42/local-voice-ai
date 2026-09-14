@@ -1973,6 +1973,19 @@ async ttsSummarizeText(text: string, options: SummaryOptions) : Promise<Result<s
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Text fürs Vorlesen aufbereiten (Seitenzahlen, Kopfzeilen, Trennungen
+ * raus; nichts kürzen). Läuft über denselben LLM-Anbieter wie das
+ * Zusammenfassen.
+ */
+async ttsTidyText(text: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_tidy_text", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsExtractDocument(path: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_extract_document", { path }) };

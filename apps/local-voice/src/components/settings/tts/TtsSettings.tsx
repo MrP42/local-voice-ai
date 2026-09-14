@@ -46,6 +46,7 @@ import {
   Languages,
   Link,
   Mic,
+  Sparkles,
   Plus,
   Server,
   Upload,
@@ -164,6 +165,7 @@ export const TtsSettings = () => {
   /** Zusammenfassung des Originals — dritter Reiter. */
   const [summary, setSummary] = useState<string>("");
   const [summarizing, setSummarizing] = useState(false);
+  const [tidying, setTidying] = useState(false);
   const [sumLength, setSumLength] = usePersistentState<string>(
     "tts.summary.length",
     "mittel",
@@ -984,8 +986,36 @@ export const TtsSettings = () => {
   };
 
   /**
-   * Zusammenfassen — nur zusammenfassen. Das Ergebnis liegt im dritten
-   * Reiter; das Original bleibt unangetastet, abspielen kann man beides.
+   * Text aufbereiten: Seitenzahlen, Kopf-/Fusszeilen, Trennungen und harte
+   * Umbrueche raus, Absaetze zusammensetzen -- ohne Inhalt zu verlieren. Fuer
+   * Dokumente und Zwischenablage, die nie fuers Vorlesen gedacht waren. Der
+   * alte Text bleibt hinter "Rueckgaengig" im Toast.
+   */
+  const tidyText = async () => {
+    if (!text.trim() || tidying) return;
+    setLastError(null);
+    setTidying(true);
+    const previousText = text;
+    const result = await commands.ttsTidyText(text);
+    setTidying(false);
+    if (result.status === "error") {
+      setLastError(result.error);
+      return;
+    }
+    setTab("original");
+    setText(result.data);
+    toast(t("tts.tidyDone"), {
+      action: {
+        label: t("tts.tidyUndo"),
+        onClick: () => setText(previousText),
+      },
+    });
+  };
+
+  /**
+   * Zusammenfassen — immer das ORIGINAL, nie die Uebersetzung. Das Ergebnis
+   * liegt im dritten Reiter; das Original bleibt unangetastet, abspielen
+   * kann man beides.
    */
   const summarize = async () => {
     if (!text.trim()) return;
@@ -1286,6 +1316,19 @@ export const TtsSettings = () => {
                       className={
                         dictating ? "text-red-400 animate-pulse" : undefined
                       }
+                    />
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => void tidyText()}
+                    disabled={tidying || !text.trim()}
+                    title={tidying ? t("tts.tidying") : t("tts.tidyHint")}
+                    aria-label={tidying ? t("tts.tidying") : t("tts.tidy")}
+                  >
+                    <Sparkles
+                      width={16}
+                      height={16}
+                      className={tidying ? "animate-pulse" : undefined}
                     />
                   </Button>
                 </>

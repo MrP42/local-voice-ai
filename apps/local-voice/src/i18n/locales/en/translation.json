@@ -241,7 +241,7 @@
       "defaultVoice": "Default voice"
     },
     "translateAction": "Translate — writes the translation into the second tab, plays nothing",
-    "summarizeHint": "Summarize — writes the summary into the third tab, plays nothing",
+    "summarizeHint": "Summarize — always summarizes the original and writes the summary into the third tab, plays nothing",
     "llm": {
       "busy": "Language model is working — translating or summarizing",
       "idle": "No language model loaded. Click to warm it up — otherwise it loads on the first job by itself.",
@@ -422,7 +422,12 @@
     "serverStartBody": "The server loads the speech model into graphics memory — roughly 17 GB — and takes up to two minutes depending on your settings. While it runs, translation computes on the CPU. Stop it via the same icon, or it stops itself after the configured idle time.",
     "export": {
       "untitled": "Read-aloud"
-    }
+    },
+    "tidy": "Clean up text",
+    "tidyHint": "Clean up the text for reading – removes page numbers, headers, hyphenation and line breaks, nothing is shortened",
+    "tidying": "Cleaning up …",
+    "tidyDone": "Text cleaned up.",
+    "tidyUndo": "Undo"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",

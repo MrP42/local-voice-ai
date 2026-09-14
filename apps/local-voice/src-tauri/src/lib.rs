@@ -1523,6 +1523,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_speak_resume,
             commands::tts::tts_export_format,
             commands::tts::tts_summarize_text,
+            commands::tts::tts_tidy_text,
             commands::tts::tts_extract_document,
             commands::tts::tts_extract_url,
             commands::tts::tts_voicechange_record_start,

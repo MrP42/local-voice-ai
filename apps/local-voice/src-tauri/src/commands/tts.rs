@@ -408,6 +408,16 @@ pub async fn tts_summarize_text(
     crate::summarizer::summarize(&settings, &text, &options).await
 }
 
+/// Text fürs Vorlesen aufbereiten (Seitenzahlen, Kopfzeilen, Trennungen
+/// raus; nichts kürzen). Läuft über denselben LLM-Anbieter wie das
+/// Zusammenfassen.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_tidy_text(app: AppHandle, text: String) -> Result<String, String> {
+    let settings = crate::settings::get_settings(&app);
+    crate::summarizer::tidy(&settings, &text).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn tts_extract_document(path: String) -> Result<String, String> {

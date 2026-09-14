@@ -158,6 +158,7 @@ test.beforeEach(async ({ page }) => {
               args?.state;
             return null;
           }
+          if (cmd === "tts_tidy_text") return "Sauberer Text ohne Seitenzahlen.";
           if (cmd === "tts_list_downloads")
             return [
               {
@@ -508,4 +509,15 @@ test("the voice list links to voice management under settings", async ({ page })
   await page.getByText("Stimmen verwalten …").click();
   await expect(page.getByRole("tab", { name: "Vorlesen", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("voice-library")).toBeVisible();
+});
+
+test("clean up rewrites the original text and offers undo", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  const editor = page.locator("textarea").first();
+  await editor.fill("Seite 3\nText mit Sil-\nbentrennung.");
+  await page.getByRole("button", { name: "Text aufbereiten" }).click();
+  await expect(editor).toHaveValue("Sauberer Text ohne Seitenzahlen.");
+  await page.getByRole("button", { name: "Rückgängig" }).click();
+  await expect(editor).toHaveValue("Seite 3\nText mit Sil-\nbentrennung.");
 });
