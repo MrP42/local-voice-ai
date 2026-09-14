@@ -1454,5 +1454,10 @@
     "gpu": "GPU {{used}} / {{total}} GB",
     "gpuShared": "GPU (gemeinsam) {{used}} / {{total}} GB",
     "hint": "RAM: verwendet / gesamt. GPU: belegt / Budget des Treibers — kein „freier VRAM“."
+  },
+  "help": {
+    "title": "Hilfe",
+    "open": "Hilfe zu dieser Seite",
+    "empty": "Für diesen Bereich gibt es noch keine Hilfe."
   }
 }

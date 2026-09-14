@@ -6,7 +6,12 @@ import { commands, type PageInfo, type TtsStatus } from "@/bindings";
 import { exportFileName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
-import { FilesSidebar, PagesSidebar } from "./WorkspaceSidebars";
+import {
+  FilesSidebar,
+  PagesSidebar,
+  isRightTab,
+  type RightTab,
+} from "./WorkspaceSidebars";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { PageShell } from "../../ui/PageShell";
 import { SettingContainer } from "../../ui/SettingContainer";
@@ -34,6 +39,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import {
   BrainCircuit,
+  HelpCircle,
   Download,
   FilePlus2,
   FileText,
@@ -135,6 +141,13 @@ export const TtsSettings = () => {
   const [filesCollapsed, setFilesCollapsed] = usePersistentState<string>(
     "tts.filesCollapsed.v3",
     "0",
+  );
+  // Rechte Leiste: Dateien oder Hilfe. Die Hilfe ist ein Reiter derselben
+  // Leiste, kein Fenster — sie soll neben dem Text stehen, nicht davor.
+  const [rightTab, setRightTab] = usePersistentState<RightTab>(
+    "tts.rightTab",
+    "files",
+    isRightTab,
   );
   /** Erst nach dem Laden einer Seite darf gespeichert werden — sonst
    *  ueberschriebe der leere Anfangszustand den echten. */
@@ -939,6 +952,18 @@ export const TtsSettings = () => {
       description={t("workspace.ttsHint")}
       actions={
         <>
+          <button
+            type="button"
+            onClick={() => {
+              setRightTab("help");
+              setFilesCollapsed("0");
+            }}
+            title={t("help.open")}
+            aria-label={t("help.open")}
+            className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer text-text/60 hover:text-text"
+          >
+            <HelpCircle width={20} height={20} aria-hidden="true" />
+          </button>
         {/* Das Sprachmodell der Nachbearbeitung (Uebersetzen,
             Zusammenfassen), in derselben Farbsprache wie der Server
             daneben. Klick: entladen oder vorwaermen. */}
@@ -1656,6 +1681,9 @@ export const TtsSettings = () => {
         pageId={activePage}
         collapsed={filesCollapsed === "1"}
         onToggle={() => setFilesCollapsed(filesCollapsed === "1" ? "0" : "1")}
+        tab={rightTab}
+        onTabChange={setRightTab}
+        helpSection="vorlesen"
         /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
            falsche Zeile aendern und erneut erzeugen. Die unveraenderten
            Saetze kommen dann aus dem Satz-Cache, nur die geaenderten gehen

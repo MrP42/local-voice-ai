@@ -12,6 +12,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import { Dialog } from "../../ui/Dialog";
+import { HelpPanel } from "../../help/HelpPanel";
 import {
   ChevronDown,
   ChevronUp,
@@ -296,6 +297,10 @@ const formatSize = (bytes: number): string => {
 /// Welche Dateien die Leiste selbst abspielen kann. Alles andere oeffnet
 /// weiterhin das Programm des Systems.
 const AUDIO_EXTENSIONS = ["wav", "mp3", "opus", "flac", "ogg", "m4a"];
+
+export type RightTab = "files" | "help";
+export const isRightTab = (value: string): value is RightTab =>
+  value === "files" || value === "help";
 const isAudio = (name: string) =>
   AUDIO_EXTENSIONS.includes(name.split(".").pop()?.toLowerCase() ?? "");
 
@@ -305,7 +310,20 @@ export const FilesSidebar: React.FC<{
   onToggle: () => void;
   /** Holt den Text einer erzeugten Aufnahme zurueck in den Editor. */
   onUseText?: (text: string) => void;
-}> = ({ pageId, collapsed, onToggle, onUseText }) => {
+  /** Zweiter Reiter der Leiste: Hilfe zu diesem Bereich, an Ort und Stelle.
+      Ohne `onTabChange` gibt es nur die Dateien. */
+  tab?: RightTab;
+  onTabChange?: (tab: RightTab) => void;
+  helpSection?: string;
+}> = ({
+  pageId,
+  collapsed,
+  onToggle,
+  onUseText,
+  tab = "files",
+  onTabChange,
+  helpSection = "vorlesen",
+}) => {
   const { t } = useTranslation();
   const [files, setFiles] = useState<PageFile[]>([]);
   const [editingName, setEditingName] = useState<string | null>(null);
@@ -406,10 +424,33 @@ export const FilesSidebar: React.FC<{
   return (
     <div className="tts-workspace__files w-60 shrink-0 space-y-1">
       <div className="flex items-center justify-between pb-1">
-        <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
-          {t("tts.files.title")}
-        </span>
+        {onTabChange ? (
+          <div className="flex items-center gap-1" role="tablist">
+            {(["files", "help"] as const).map((id) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={tab === id}
+                onClick={() => onTabChange(id)}
+                className={`px-1.5 py-0.5 rounded text-xs font-semibold uppercase tracking-wide cursor-pointer transition-colors ${
+                  tab === id
+                    ? "text-text bg-mid-gray/20"
+                    : "text-text/50 hover:text-text"
+                }`}
+              >
+                {id === "files" ? t("tts.files.title") : t("help.title")}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
+            {t("tts.files.title")}
+          </span>
+        )}
         <div className="flex items-center">
+          {tab === "files" && (
+          <>
           <button
             type="button"
             onClick={addFile}
@@ -437,6 +478,8 @@ export const FilesSidebar: React.FC<{
           >
             <RefreshCw width={14} height={14} />
           </button>
+          </>
+          )}
           <button
             type="button"
             onClick={onToggle}
@@ -449,6 +492,9 @@ export const FilesSidebar: React.FC<{
         </div>
       </div>
 
+      {tab === "help" && <HelpPanel section={helpSection} />}
+      {tab === "files" && (
+      <>
       {error && <p className="text-xs text-red-400 break-words">{error}</p>}
       {files.length === 0 && (
         <p className="text-xs text-text/40">{t("tts.files.empty")}</p>
@@ -617,6 +663,8 @@ export const FilesSidebar: React.FC<{
         </div>
       ))}
 
+      </>
+      )}
       <Dialog
         open={deleteTarget !== null}
         onOpenChange={(isOpen) => {

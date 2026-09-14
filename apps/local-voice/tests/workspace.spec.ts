@@ -230,6 +230,13 @@ test("read-aloud workspace preserves editor width in a narrow window", async ({
   ).toBeVisible();
   // Keine Klappen mehr unter dem Editor: Stimmen wohnen auf der Modelle-Seite.
   await expect(page.getByText("Stimmen anhören & verwalten")).toHaveCount(0);
+  // Hilfe an Ort und Stelle: der Knopf im Kopf schaltet die rechte Leiste um.
+  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  await expect(page.getByTestId("help-panel")).toContainText(
+    "Sprecher und Betonung im Text",
+  );
+  await page.getByRole("tab", { name: "Dateien" }).click();
+  await expect(page.getByTestId("help-panel")).toHaveCount(0);
   const editor = page.locator(".tts-workspace > .min-w-0");
   expect((await editor.boundingBox())!.width).toBeGreaterThan(600);
   await page.screenshot({
