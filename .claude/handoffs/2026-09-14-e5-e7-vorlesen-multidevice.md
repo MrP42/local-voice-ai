@@ -47,6 +47,9 @@ Alba GB; Katalog-Test zählt jetzt 10). Dropdown-Label „Name · Sprache · HQ/
 (`piperVoiceLabel` in TtsSettings, Sprache über `Intl.DisplayNames`). Unbekannte
 `<Marker>` werden bei JEDER Engine gestrichen (`process_speaker_chunk`) — die Frage von
 0.17.5 ist damit entschieden.
+`…0.17.8…`: Stimme je Reiter (Original/Übersetzung/Zusammenfassung) im Seitenstand
+(`state.json.voices`, Werte wie im Dropdown); `applyVoiceValue`/`voiceValue` in TtsSettings,
+Effekt beim Reiterwechsel. 0.17.7 wurde gebaut, während dieser Commit entstand — deshalb 0.17.8.
 
 ## Was gebaut wurde (Kurz, Details in den Commits)
 
