@@ -8,6 +8,7 @@ mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod sync;
 #[cfg(windows)]
 mod context_menu;
 mod helpers;
@@ -268,6 +269,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(usage_ledger);
     app_handle.manage(commands::tts::AutoTagRun::default());
     app_handle.manage(commands::tts::BuilderRun::default());
+    // Geraete-Sync: Status-Objekt fuer die Oberflaeche; die Schleife startet
+    // nach dem Setup und laeuft nur, wenn sync.json existiert.
+    app_handle.manage(sync::SyncEngine::default());
+    sync::start(app_handle.clone());
     app_handle.manage(tray::CurrentTrayIconState::new());
 
     // Entwuerfe des Stimmen-Baukastens aelter als 30 Tage entfernen:
@@ -1334,6 +1339,13 @@ pub fn run(cli_args: CliArgs) {
             commands::usage::usage_events,
             commands::usage::usage_clear,
             commands::usage::usage_budget_states,
+            sync::sync_login,
+            sync::sync_logout,
+            sync::sync_status,
+            sync::sync_now,
+            sync::sync_touch,
+            sync::sync_default_device_name,
+            sync::sync_hub_status,
             shortcut::change_tts_engine_setting,
             shortcut::change_tts_piper_voice_setting,
             shortcut::change_tts_speed_setting,

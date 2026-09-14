@@ -1459,5 +1459,33 @@
     "title": "Help",
     "open": "Help for this page",
     "empty": "There is no help for this area yet."
+  },
+  "sync": {
+    "groupTitle": "Account & devices",
+    "groupDescription": "Keep pages and settings in sync across your devices. End-to-end encrypted: the server cannot read your texts.",
+    "loggedOutHint": "Sign in with your portal.wolffappliedai.de account. The key is derived from your password on this device and never leaves it.",
+    "email": "Email",
+    "password": "Password",
+    "deviceName": "Device name",
+    "hubUrl": "Hub address",
+    "hubUrlPlaceholder": "https://portal.wolffappliedai.de",
+    "hubUrlToggle": "Use a different hub …",
+    "login": "Sign in",
+    "loggingIn": "Signing in …",
+    "loginFailed": "Sign-in failed",
+    "loggedIn": "Signed in – first sync is running.",
+    "loggedOut": "Signed out. Pages stay on this device.",
+    "accountDescription": "This device: {{device}} · Hub: {{hub}}",
+    "syncNow": "Sync now",
+    "logout": "Sign out",
+    "done": "Sync finished.",
+    "failed": "Sync failed",
+    "lastSuccess": "Last synced {{when}}",
+    "neverSynced": "Not synced yet",
+    "pages": "{{count}} pages",
+    "pending": "{{count}} pending",
+    "keyMismatch": "The hub holds objects sealed with a different key – was the password changed? Please sign in again on all devices.",
+    "deadLetters": "{{count}} objects rejected (too large or invalid)",
+    "devices": "Devices"
   }
 }

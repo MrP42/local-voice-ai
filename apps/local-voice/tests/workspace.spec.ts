@@ -83,6 +83,28 @@ test.beforeEach(async ({ page }) => {
           )
             return [];
           if (cmd === "get_custom_sounds") return { start: false, stop: false };
+          // Geraete-Sync: abgemeldet, bis der Test sich anmeldet.
+          const syncState = {
+            connected: false, user_email: null, device_name: null, hub_url: null,
+            running: false, last_success_ms: null, last_error: null,
+            pending: 0, dead_letters: 0, key_mismatch: false, pages: 0,
+          };
+          if (cmd === "sync_status") return (window as any).__syncState ?? syncState;
+          if (cmd === "sync_default_device_name") return "Test-PC";
+          if (cmd === "sync_login") {
+            (window as any).__syncState = {
+              ...syncState, connected: true, user_email: "p@wai.test",
+              device_name: "Test-PC", hub_url: "https://portal.wolffappliedai.de",
+              last_success_ms: Date.now(), pages: 2,
+            };
+            return (window as any).__syncState;
+          }
+          if (cmd === "sync_hub_status")
+            return { hub_seq: 3, objects: { page: 2 }, devices: [{ device: "abcdef123456", last_push: "2026-09-14 12:00:00" }] };
+          if (cmd === "sync_logout") {
+            (window as any).__syncState = syncState;
+            return syncState;
+          }
           return null;
         },
       },
@@ -267,4 +289,23 @@ test("all five content pages share one head", async ({ page }) => {
       animations: "disabled",
     });
   }
+});
+
+test("account & devices: sign in from the general tab, then sign out", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Einstellungen", exact: true }).click();
+  await page.getByRole("tab", { name: "Allgemein" }).click();
+  await expect(page.getByText("Konto & Geräte")).toBeVisible();
+  const login = page.getByTestId("sync-login");
+  await expect(login).toBeVisible();
+  await expect(login.getByLabel("Gerätename")).toHaveValue("Test-PC");
+  await login.getByLabel("E-Mail").fill("p@wai.test");
+  await login.getByLabel("Passwort").fill("geheim");
+  await login.getByRole("button", { name: "Anmelden" }).click();
+  const state = page.getByTestId("sync-state");
+  await expect(state).toBeVisible();
+  await expect(state).toContainText("2 Seiten");
+  await expect(page.getByText("p@wai.test")).toBeVisible();
+  await page.getByRole("button", { name: "Abmelden" }).click();
+  await expect(page.getByTestId("sync-login")).toBeVisible();
 });

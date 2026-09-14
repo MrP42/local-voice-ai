@@ -130,6 +130,18 @@ function App() {
     };
   }, [t]);
 
+  // Der Geraete-Sync hat Einstellungen von einem anderen Geraet uebernommen:
+  // den Store neu lesen, sonst zeigt die Oberflaeche den alten Stand.
+  const refreshSettings = useSettingsStore((state) => state.refreshSettings);
+  useEffect(() => {
+    const unlisten = listen("sync-changed", () => {
+      void refreshSettings();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [refreshSettings]);
+
   // Listen for paste failures and show a toast.
   // The technical error detail is logged to the app log on the Rust side
   // (see actions.rs `error!("Failed to paste transcription: ...")`),

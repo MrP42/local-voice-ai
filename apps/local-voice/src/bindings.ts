@@ -371,6 +371,64 @@ async usageBudgetStates() : Promise<Result<BudgetState[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Anmelden: Schlüssel ableiten (nur lokal), Token holen, Konto speichern,
+ * Ledger leeren, ersten Lauf anstoßen.
+ */
+async syncLogin(email: string, password: string, deviceName: string, url: string | null) : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_login", { email, password, deviceName, url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Abmelden: Token im Hub widerrufen (best effort), Konto und Ledger löschen.
+ * Die Seiten bleiben auf diesem Gerät.
+ */
+async syncLogout() : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_logout") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async syncStatus() : Promise<SyncStatus> {
+    return await TAURI_INVOKE("sync_status");
+},
+/**
+ * Sofort abgleichen (Knopf „Jetzt abgleichen").
+ */
+async syncNow() : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_now") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anstoß nach einem lokalen Schreiben (entprellt im Engine-Takt).
+ */
+async syncTouch() : Promise<void> {
+    await TAURI_INVOKE("sync_touch");
+},
+async syncDefaultDeviceName() : Promise<string> {
+    return await TAURI_INVOKE("sync_default_device_name");
+},
+/**
+ * Geräteliste und Zähler vom Hub (für die Konto-Gruppe).
+ */
+async syncHubStatus() : Promise<Result<HubStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_hub_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsEngineSetting(value: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_engine_setting", { value }) };
@@ -2653,6 +2711,21 @@ modified_ms: number;
  */
 preview: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
+export type HubDevice = { device: string; last_push: string | null }
+export type HubStatus = { hub_seq: number; objects: { [key in string]: number }; devices: HubDevice[] }
+export type SyncStatus = { connected: boolean; user_email: string | null; device_name: string | null; hub_url: string | null; running: boolean; last_success_ms: number | null; last_error: string | null;
+/**
+ * Objekte, die lokal geändert und noch nicht bestätigt sind.
+ */
+pending: number; dead_letters: number;
+/**
+ * Der Hub trägt Objekte mit einem anderen Schlüssel (Passwort geändert?).
+ */
+key_mismatch: boolean;
+/**
+ * Anzahl synchronisierter Seiten laut Ledger.
+ */
+pages: number }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }

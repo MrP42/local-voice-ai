@@ -19,6 +19,7 @@ import { ExperimentalToggle } from "../ExperimentalToggle";
 import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationSelector";
 import { AccelerationSelector } from "../AccelerationSelector";
 import { LazyStreamClose } from "../LazyStreamClose";
+import { SyncAccountCard } from "../SyncAccountCard";
 import { useSettings } from "../../../hooks/useSettings";
 
 /**
@@ -33,6 +34,9 @@ export const AppTab: React.FC = () => {
 
   return (
     <div className="w-full space-y-6">
+      {/* Konto & Geraete zuerst: das ist die Einstellung, die andere Geraete betrifft. */}
+      <SyncAccountCard />
+
       <SettingsGroup title={t("settings.app.groups.appearance")}>
         <AppLanguageSelector descriptionMode="tooltip" grouped={true} />
         <ThemeSelector descriptionMode="tooltip" grouped={true} />

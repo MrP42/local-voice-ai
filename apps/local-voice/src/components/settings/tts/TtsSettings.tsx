@@ -403,6 +403,16 @@ export const TtsSettings = () => {
     });
   }, [activePage]);
 
+  // Ein anderes Geraet hat Seiten geschickt: Liste neu laden.
+  useEffect(() => {
+    const unlisten = listen("sync-changed", () => {
+      void reloadPages();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [reloadPages]);
+
   // Arbeitsstand sichern — gebuendelt, eine halbe Sekunde nach der letzten
   // Aenderung. Jeder Tastendruck einzeln waere ein Schreibzugriff zu viel.
   useEffect(() => {
@@ -415,8 +425,11 @@ export const TtsSettings = () => {
         )
         // Die Seitenliste zeigt Vorschau und Zeitpunkt — die stammen aus
         // genau dieser Datei und sollen nicht erst beim naechsten Start
-        // stimmen.
-        .then(() => void reloadPages());
+        // stimmen. Und der Geraete-Sync soll die Aenderung zeitnah sehen.
+        .then(() => {
+          void reloadPages();
+          void commands.syncTouch();
+        });
     }, 500);
     return () => window.clearTimeout(handle);
   }, [activePage, text, summary, sourceUrl, tab]);

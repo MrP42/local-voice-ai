@@ -1459,5 +1459,33 @@
     "title": "Hilfe",
     "open": "Hilfe zu dieser Seite",
     "empty": "Für diesen Bereich gibt es noch keine Hilfe."
+  },
+  "sync": {
+    "groupTitle": "Konto & Geräte",
+    "groupDescription": "Seiten und Einstellungen zwischen Ihren Geräten abgleichen. Ende-zu-Ende verschlüsselt: der Server kann Ihre Texte nicht lesen.",
+    "loggedOutHint": "Mit dem Konto von portal.wolffappliedai.de anmelden. Der Schlüssel entsteht aus Ihrem Passwort auf diesem Gerät und verlässt es nicht.",
+    "email": "E-Mail",
+    "password": "Passwort",
+    "deviceName": "Gerätename",
+    "hubUrl": "Hub-Adresse",
+    "hubUrlPlaceholder": "https://portal.wolffappliedai.de",
+    "hubUrlToggle": "Anderen Hub verwenden …",
+    "login": "Anmelden",
+    "loggingIn": "Anmelden …",
+    "loginFailed": "Anmeldung fehlgeschlagen",
+    "loggedIn": "Angemeldet – der erste Abgleich läuft.",
+    "loggedOut": "Abgemeldet. Die Seiten bleiben auf diesem Gerät.",
+    "accountDescription": "Dieses Gerät: {{device}} · Hub: {{hub}}",
+    "syncNow": "Jetzt abgleichen",
+    "logout": "Abmelden",
+    "done": "Abgleich fertig.",
+    "failed": "Abgleich fehlgeschlagen",
+    "lastSuccess": "Zuletzt abgeglichen {{when}}",
+    "neverSynced": "Noch nicht abgeglichen",
+    "pages": "{{count}} Seiten",
+    "pending": "{{count}} ausstehend",
+    "keyMismatch": "Der Hub trägt Objekte mit einem anderen Schlüssel – wurde das Passwort geändert? Bitte auf allen Geräten neu anmelden.",
+    "deadLetters": "{{count}} Objekte abgewiesen (zu groß oder ungültig)",
+    "devices": "Geräte"
   }
 }

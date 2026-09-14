@@ -69,8 +69,8 @@ fn enrich(app: &AppHandle, page: &mut PageInfo) {
 }
 
 #[derive(Serialize, Deserialize, Default)]
-struct PagesIndex {
-    pages: Vec<PageInfo>,
+pub(crate) struct PagesIndex {
+    pub(crate) pages: Vec<PageInfo>,
 }
 
 #[derive(Serialize, Clone, Debug, specta::Type)]
@@ -80,7 +80,7 @@ pub struct PageFile {
     pub modified_ms: f64,
 }
 
-fn projects_root(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn projects_root(app: &AppHandle) -> Result<PathBuf, String> {
     use tauri::Manager;
     let base = crate::portable::data_dir()
         .cloned()
@@ -120,11 +120,11 @@ fn checked_name(name: &str) -> Result<&str, String> {
     }
 }
 
-fn page_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+pub(crate) fn page_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     Ok(projects_root(app)?.join(checked_id(id)?))
 }
 
-fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
+pub(crate) fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
     let path = projects_root(app)?.join("index.json");
     let Ok(raw) = std::fs::read_to_string(&path) else {
         return Ok(PagesIndex::default());
@@ -153,7 +153,7 @@ fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
     }
 }
 
-fn store_index(app: &AppHandle, index: &PagesIndex) -> Result<(), String> {
+pub(crate) fn store_index(app: &AppHandle, index: &PagesIndex) -> Result<(), String> {
     let path = projects_root(app)?.join("index.json");
     let raw = serde_json::to_string_pretty(index).map_err(|e| e.to_string())?;
     std::fs::write(&path, raw).map_err(|e| format!("could not write pages index: {e}"))

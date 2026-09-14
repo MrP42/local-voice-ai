@@ -71,6 +71,14 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"
+# Geraete-Sync (Ende-zu-Ende verschluesselt): Schluessel aus dem Passwort,
+# Objekte einzeln versiegelt. RustCrypto, MIT/Apache-2.0.
+chacha20poly1305 = "0.10"
+argon2 = "0.5"
+hkdf = "0.12"
+zeroize = "1"
+base64 = "0.22"
+rand = "0.8"
 # Whisper-family models run through transcribe-cpp (GGUF/ggml, native backends);
 # transcribe-rs is now ONNX-only (Parakeet, Moonshine, SenseVoice, GigaAM,
 # Canary, Cohere). Per-platform backend features are added in the target tables.
