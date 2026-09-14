@@ -671,7 +671,7 @@ export const TtsSettings = () => {
   // Heruntergeladene Piper-Stimmen. Nur sie kann Piper vorlesen; die Liste
   // kommt aus demselben Download-Verzeichnis, das die Modellseite fuellt.
   const [piperVoices, setPiperVoices] = useState<
-    { id: string; name: string }[]
+    { id: string; name: string; language: string | null }[]
   >([]);
   useEffect(() => {
     void commands.ttsListDownloads().then((result) => {
@@ -681,10 +681,48 @@ export const TtsSettings = () => {
       setPiperVoices(
         (result.data ?? [])
           .filter((entry) => entry.kind === "voice" && entry.is_downloaded)
-          .map((entry) => ({ id: entry.id, name: entry.name })),
+          .map((entry) => ({
+            id: entry.id,
+            name: entry.name,
+            language: entry.language,
+          })),
       );
     });
   }, []);
+
+  /* Beschriftung einer Piper-Stimme in der Auswahl: Name, Sprache, Qualitaet
+     kurz -- "Thorsten · Deutsch · HQ". Die Sprache steht IMMER dabei: am Namen
+     allein erkennt niemand, ob eine Stimme Deutsch oder Englisch spricht, und
+     genau davon haengt ab, ob sie brauchbar klingt. */
+  const piperVoiceLabel = useCallback(
+    (voice: { id: string; name: string; language: string | null }) => {
+      const localized = t(`settings.models.ttsVoices.voices.${voice.id}.name`, {
+        defaultValue: voice.name,
+      });
+      const base = localized.replace(/\s*\(.*\)\s*$/, "").trim() || voice.id;
+      let language = voice.language ?? "";
+      try {
+        if (language) {
+          language =
+            new Intl.DisplayNames([uiLang], { type: "language" }).of(language) ??
+            language;
+        }
+      } catch {
+        /* unbekanntes Kuerzel: roh anzeigen */
+      }
+      const quality = voice.id.endsWith("-high")
+        ? "HQ"
+        : voice.id.endsWith("-medium")
+          ? "MQ"
+          : voice.id.endsWith("-x_low")
+            ? "LQ-"
+            : voice.id.endsWith("-low")
+              ? "LQ"
+              : "";
+      return [base, language, quality].filter(Boolean).join(" \u00b7 ");
+    },
+    [t, uiLang],
+  );
 
   const startServer = async () => {
     setLastError(null);
@@ -1402,7 +1440,7 @@ export const TtsSettings = () => {
                   (aufnehmen, importieren, loeschen) unten bei den
                   Einstellungen. */}
                 <div
-                  className="w-44"
+                  className="w-56"
                   title={t("tts.voices.title")}
                   data-testid="voice-select"
                 >
@@ -1427,7 +1465,9 @@ export const TtsSettings = () => {
                       ...voices.map((id) => ({ value: id, label: id })),
                       ...piperVoices.map((voice) => ({
                         value: `piper:${voice.id}`,
-                        label: t("tts.voices.piperOption", { name: voice.name }),
+                        label: t("tts.voices.piperOption", {
+                          name: piperVoiceLabel(voice),
+                        }),
                       })),
                     ]}
                     onChange={(value) => {

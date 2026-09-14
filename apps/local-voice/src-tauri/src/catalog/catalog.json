@@ -5310,6 +5310,116 @@
       ]
     },
     {
+      "id": "en_US-lessac-high",
+      "name": "Lessac (High Quality)",
+      "description": "English (US). Best quality, largest download. Piper voice from rhasspy/piper-voices.",
+      "purpose": "tts-voice",
+      "files": [
+        {
+          "filename": "en_US-lessac-high.onnx",
+          "quant": "onnx",
+          "size_bytes": 113895201,
+          "sha256": "4cabf7c3a638017137f34a1516522032d4fe3f38228a843cc9b764ddcbcd9e09",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx"
+        },
+        {
+          "filename": "en_US-lessac-high.onnx.json",
+          "quant": "onnx-config",
+          "size_bytes": 4883,
+          "sha256": "db42b97d9859f257bc1561b8ed980e7fb2398402050a74ddd6cbec931a92412f",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx.json"
+        }
+      ]
+    },
+    {
+      "id": "en_US-ryan-high",
+      "name": "Ryan (High Quality)",
+      "description": "English (US). Male voice, best quality. Piper voice from rhasspy/piper-voices.",
+      "purpose": "tts-voice",
+      "files": [
+        {
+          "filename": "en_US-ryan-high.onnx",
+          "quant": "onnx",
+          "size_bytes": 120786792,
+          "sha256": "b3990d7606e183ec8dbfba70a4607074f162de1a0c412e0180d1ff60bb154eca",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high/en_US-ryan-high.onnx"
+        },
+        {
+          "filename": "en_US-ryan-high.onnx.json",
+          "quant": "onnx-config",
+          "size_bytes": 4166,
+          "sha256": "c6d3b98f08315cb4bebf0d49d50fc4ff491b503c64b940cd3d5ca28543b48011",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high/en_US-ryan-high.onnx.json"
+        }
+      ]
+    },
+    {
+      "id": "en_US-amy-medium",
+      "name": "Amy (Medium Quality)",
+      "description": "English (US). Female voice, good quality. Piper voice from rhasspy/piper-voices.",
+      "purpose": "tts-voice",
+      "files": [
+        {
+          "filename": "en_US-amy-medium.onnx",
+          "quant": "onnx",
+          "size_bytes": 63201294,
+          "sha256": "b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx"
+        },
+        {
+          "filename": "en_US-amy-medium.onnx.json",
+          "quant": "onnx-config",
+          "size_bytes": 4882,
+          "sha256": "95a23eb4d42909d38df73bb9ac7f45f597dbfcde2d1bf9526fdeaf5466977d77",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json"
+        }
+      ]
+    },
+    {
+      "id": "en_GB-alan-medium",
+      "name": "Alan (Medium Quality)",
+      "description": "English (UK). Male voice, good quality. Piper voice from rhasspy/piper-voices.",
+      "purpose": "tts-voice",
+      "files": [
+        {
+          "filename": "en_GB-alan-medium.onnx",
+          "quant": "onnx",
+          "size_bytes": 63201294,
+          "sha256": "0a309668932205e762801f1efc2736cd4b0120329622adf62be09e56339d3330",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx"
+        },
+        {
+          "filename": "en_GB-alan-medium.onnx.json",
+          "quant": "onnx-config",
+          "size_bytes": 4888,
+          "sha256": "c0f0d124e5895c00e7c03b35dcc8287f319a6998a365b182deb5c8e752ee8c1e",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json"
+        }
+      ]
+    },
+    {
+      "id": "en_GB-alba-medium",
+      "name": "Alba (Medium Quality)",
+      "description": "English (UK, Scottish). Female voice, good quality. Piper voice from rhasspy/piper-voices.",
+      "purpose": "tts-voice",
+      "files": [
+        {
+          "filename": "en_GB-alba-medium.onnx",
+          "quant": "onnx",
+          "size_bytes": 63201294,
+          "sha256": "401369c4a81d09fdd86c32c5c864440811dbdcc66466cde2d64f7133a66ad03b",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alba/medium/en_GB-alba-medium.onnx"
+        },
+        {
+          "filename": "en_GB-alba-medium.onnx.json",
+          "quant": "onnx-config",
+          "size_bytes": 4888,
+          "sha256": "aa965a2f02ecced632c2694e1fc72bbff6d65f265fab567ca945918c73dd89f4",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alba/medium/en_GB-alba-medium.onnx.json"
+        }
+      ]
+    },
+    {
       "id": "llm-runtime-windows-x64-vulkan",
       "name": "Sprachmodell-Laufzeit (Windows, Vulkan)",
       "description": "llama.cpp b10938 llama-server fuer Windows x64 mit Vulkan-Backend: laeuft auf jeder Grafikkarte (NVIDIA, AMD, Intel).",

@@ -469,9 +469,10 @@ test("a downloaded Piper voice can be picked right in the read-aloud voice list"
   const voiceSelect = page.getByTestId("voice-select");
   await voiceSelect.click();
   // Nur die geladene Piper-Stimme steht zur Wahl, deutlich als Piper markiert.
-  await expect(page.getByText("Thorsten (Deutsch) · Piper")).toBeVisible();
-  await expect(page.getByText("Amy (English) · Piper")).toHaveCount(0);
-  await page.getByText("Thorsten (Deutsch) · Piper").click();
+  // Name, Sprache und Qualitaet kurz -- die Sprache steht immer dabei.
+  await expect(page.getByText("Thorsten · Deutsch · MQ · Piper")).toBeVisible();
+  await expect(page.getByText(/Amy/)).toHaveCount(0);
+  await page.getByText("Thorsten · Deutsch · MQ · Piper").click();
   // Die Wahl schaltet die Engine um und merkt sich die Stimme.
   await expect
     .poll(() =>

@@ -391,13 +391,21 @@ fn process_speaker_chunk(
 ) {
     let mut last = 0usize;
     for candidate in scan_marker_candidates(chunk) {
+        // Ein Marker, dessen Name keiner Stimme gehoert, schaltet nichts --
+        // gesprochen wird er trotzdem nicht: "<German Father>" vorzulesen
+        // ist in jedem Fall falsch. Vergleiche ("a < b und b > c") haben
+        // Leerzeichen an den Klammern und bleiben Text.
+        let inner = &chunk[candidate.start + 1..candidate.end - 1];
+        if inner.starts_with(char::is_whitespace) || inner.ends_with(char::is_whitespace) {
+            continue;
+        }
+        buffer.push_str(&chunk[last..candidate.start]);
         if let Some(speaker) = resolve_speaker(&candidate.name, speakers) {
-            buffer.push_str(&chunk[last..candidate.start]);
             flush_speaker_segment(segments, current_voice, current_style, buffer);
             *current_voice = Some(speaker.id.clone());
             *current_style = candidate.style.clone();
-            last = candidate.end;
         }
+        last = candidate.end;
     }
     buffer.push_str(&chunk[last..]);
 }
@@ -1008,13 +1016,18 @@ patrick: Hi.",
     }
 
     #[test]
-    fn unbekannte_spitzklammer_bleibt_literal_und_schaltet_nichts() {
+    fn unbekannte_spitzklammer_wird_nicht_gesprochen_und_schaltet_nichts() {
+        // Ein Marker ohne passende Stimme schaltet nichts, wird aber auch
+        // nicht vorgelesen -- "<German Father>" oder "<div>" zu hoeren ist
+        // in jedem Fall falsch. Vergleiche mit Leerzeichen bleiben Text.
         let speakers = vec![anna()];
         let text = "<div>Eingefuegtes HTML</div> <Anna> Text.";
         let segments = split_speaker_segments(text, &speakers);
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].voice, None);
-        assert_eq!(segments[0].text, "<div>Eingefuegtes HTML</div>");
+        assert_eq!(segments[0].text, "Eingefuegtes HTML");
+        let vergleich = split_speaker_segments("a < b und b > c", &speakers);
+        assert_eq!(vergleich[0].text, "a < b und b > c");
         assert_eq!(segments[1].voice.as_deref(), Some("anna-id"));
         assert_eq!(segments[1].text, "Text.");
     }

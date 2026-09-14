@@ -659,6 +659,26 @@
           "en_US-lessac-medium": {
             "name": "Lessac (Medium Quality)",
             "description": "English (US). Good quality."
+          },
+          "en_US-lessac-high": {
+            "name": "Lessac (High Quality)",
+            "description": "English (US). Best quality, largest download."
+          },
+          "en_US-ryan-high": {
+            "name": "Ryan (High Quality)",
+            "description": "English (US). Male voice, best quality."
+          },
+          "en_US-amy-medium": {
+            "name": "Amy (Medium Quality)",
+            "description": "English (US). Female voice, good quality."
+          },
+          "en_GB-alan-medium": {
+            "name": "Alan (Medium Quality)",
+            "description": "English (UK). Male voice, good quality."
+          },
+          "en_GB-alba-medium": {
+            "name": "Alba (Medium Quality)",
+            "description": "English (UK, Scottish). Female voice, good quality."
           }
         },
         "status": {

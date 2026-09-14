@@ -618,6 +618,26 @@
           "en_US-lessac-medium": {
             "name": "Lessac (mittlere Qualität)",
             "description": "Englisch (USA). Gute Qualität."
+          },
+          "en_US-lessac-high": {
+            "name": "Lessac (hohe Qualität)",
+            "description": "Englisch (USA). Beste Qualität, größter Download."
+          },
+          "en_US-ryan-high": {
+            "name": "Ryan (hohe Qualität)",
+            "description": "Englisch (USA). Männliche Stimme, beste Qualität."
+          },
+          "en_US-amy-medium": {
+            "name": "Amy (mittlere Qualität)",
+            "description": "Englisch (USA). Weibliche Stimme, gute Qualität."
+          },
+          "en_GB-alan-medium": {
+            "name": "Alan (mittlere Qualität)",
+            "description": "Englisch (GB). Männliche Stimme, gute Qualität."
+          },
+          "en_GB-alba-medium": {
+            "name": "Alba (mittlere Qualität)",
+            "description": "Englisch (GB, schottisch). Weibliche Stimme, gute Qualität."
           }
         },
         "status": {

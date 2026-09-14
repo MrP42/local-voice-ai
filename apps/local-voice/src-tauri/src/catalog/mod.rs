@@ -449,7 +449,7 @@ mod tests {
         }
 
         let voices = tts_entries(Purpose::TtsVoice);
-        assert_eq!(voices.len(), 5, "expected the 5 curated Piper voices");
+        assert_eq!(voices.len(), 10, "expected the 10 curated Piper voices");
         for entry in &voices {
             assert_eq!(
                 entry.files.len(),
