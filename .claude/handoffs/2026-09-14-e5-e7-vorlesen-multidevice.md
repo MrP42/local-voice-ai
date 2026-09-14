@@ -92,12 +92,20 @@ Kontexthilfe entsprechend angepasst.
 4. PR #24 mergen, Tag `app-v0.17.0`; dann PR #25 auf main umstellen, mergen, Tag `app-v0.18.0`
    (Releases bündeln).
 
+`…0.17.10…` (abends): **Codex-Review der Sync-Logik eingearbeitet** (12 Befunde, 7 hoch;
+Ausgabe: Scratchpad `codex_review_sync.out` der Session, Kern im Commit `fix(sync): Haertung`):
+Konfliktkopie am frischen Stand unter `pages::lock()`, `write_atomic` für Index/Seitenstand/
+Ledger, `DeadEntry{reason,hash}`, Index-Lesefehler ≠ leer, `sync.json` 0600/icacls,
+`check_hub_url`, `account_guard` bei Login/Logout, Push-Batches ≤ 400 KiB, Pull mit
+Fortschrittszwang. NICHT umgesetzt (Stufe 2): Umschlüsselung bei Passwortwechsel (Befund 8),
+`superseded` ohne `current` bleibt „Basis 0, neu senden" (Befund 11). Internes Review der
+Vorlesen-/Piper-Änderungen: keine Befunde. Kontexthilfe jetzt auf allen fünf Seiten
+(`PageShell help=…`, Texte `src/content/help/{verlauf,aufnahmen,modelle,einstellungen}`).
+
 ## Offen / nächste Schritte (Code)
 
 - Fußleisten-Symbol für den Sync-Zustand (Spec Abschnitt 7) — noch nicht gebaut.
-- Codex-Review der Schlüssel-, Konto- und Konfliktlogik (Spec Abschnitt 10, Schritt 5).
-- Hilfetexte für Diktat/Verlauf/Aufnahmen/Modelle/Einstellungen (Rahmen steht, nur Vorlesen
-  hat Inhalt).
+- Sync Stufe 2: Umschlüsselung bei Passwortwechsel, Auth-Geheimnis statt Klartext-Passwort.
 - `TtsSettings.tsx` weiter zerlegen (1700 Zeilen; Editor/Player/Server-Dialoge).
 - Stufe 2 Sync: Sprecher-Registry + Klonstimmen, Umschlüsselung bei Passwortwechsel,
   Auth-Geheimnis statt Klartext-Passwort, 2FA, Registrierung.
