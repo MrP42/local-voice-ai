@@ -740,3 +740,16 @@ textarea:focus::-webkit-resizer {
 .mbtn--text:hover {
   color: var(--color-text);
 }
+
+/* In der Bedienspalte bleibt die Transportzeile einzeilig: Tempo hinter dem
+   letzten Trenner, nicht in einer zweiten Zeile. */
+.tts-controls .mediabar {
+  flex-wrap: nowrap;
+  gap: 0.3rem;
+}
+.tts-controls .mediabar__sep {
+  margin: 0 0.1rem;
+}
+.tts-controls .mbtn {
+  --_mb-size: 2.25rem;
+}

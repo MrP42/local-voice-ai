@@ -1374,7 +1374,7 @@ export const TtsSettings = () => {
                   (aufnehmen, importieren, loeschen) unten bei den
                   Einstellungen. */}
                 <div
-                  className="w-full"
+                  className="w-full basis-full shrink-0"
                   title={t("tts.voices.title")}
                   data-testid="voice-select"
                 >
