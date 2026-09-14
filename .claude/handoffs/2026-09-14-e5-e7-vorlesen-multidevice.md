@@ -30,6 +30,8 @@ bis auf die Punkte unter „Bei Patrick".
 `qwen35`/`gemma4`). Updater-Signatur fehlt lokal wie immer (kein privater Schlüssel) — normal.
 Warum die beiden vorher fehlten: der Katalog war am 12.09. von Hand mit vier Einträgen
 befüllt; GGUFs (unsloth) und llama.cpp b10938 (13.09.) tragen beide Familien längst.
+`…0.17.4…`: Piper-Stimmen direkt im Stimmen-Dropdown der Vorlesen-Seite („Name · Piper",
+Wert `piper:<id>`, schaltet `tts_engine`/`tts_piper_voice`; Fish-Stimme schaltet zurück).
 
 ## Was gebaut wurde (Kurz, Details in den Commits)
 
