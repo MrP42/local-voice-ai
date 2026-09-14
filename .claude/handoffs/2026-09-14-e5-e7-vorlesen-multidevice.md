@@ -109,6 +109,13 @@ Prompt („write in German") — Ursache für „er fasst die Übersetzung zusam
 kleines Modell, das auf den englischen Prompt englisch antwortete; die Quelle war immer
 das Original (`summarize` nutzt `text`). Tooltip sagt das jetzt.
 
+`…0.17.12…`: **Vorlesen zweispaltig** (Entscheidung Patrick 14.09. abends): `PageShell fill`,
+`.workspace-main--fill` (kein Gesamtscroll), Editor-Spalte `.tts-editor` mit
+`.tts-editor__fill` (textarea 100 %), Bedienspalte `.tts-controls` (w-72, scrollt selbst) mit
+Transport, Tempo, Stimme, Speichern, aktueller Satz, Ausdruck & Sprechstil, Schreibregeln.
+Unter 1100 px (`@media` in App.css): Spalten übereinander, Seite scrollt als Ganzes, textarea
+`height:auto`. Screenshots: `test-results/page-tts.png`, `page-tts-narrow.png`.
+
 ## Offen / nächste Schritte (Code)
 
 - Fußleisten-Symbol für den Sync-Zustand (Spec Abschnitt 7) — noch nicht gebaut.
