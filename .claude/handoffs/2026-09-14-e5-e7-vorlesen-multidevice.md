@@ -37,6 +37,11 @@ alle Marker, wenn `caps.voice_switching` fehlt; `fetch_wav` streicht alle Tag-Sp
 `caps.style_tags` fehlt (`protocol::strip_speaker_markers` / `strip_tag_spans`). Offen
 bleibt: mit Fish werden UNBEKANNTE `<Name>`-Marker weiterhin vorgelesen (nur bekannte
 Stimmen schalten) — Entscheidung, ob unbekannte Marker auch dort verschwinden sollen.
+`…0.17.6…`: Piper wählt die Stimme nach der Sprache des Satzes (`managers/tts/lang.rs`,
+Stoppwörter de/en/fr/es/it; `PiperEngine::resolve_auto` + `paths_for`; Setting
+`tts_piper_auto_language`, Standard an, Schalter im Reiter Vorlesen bei Engine Piper).
+Grenze: nur Sprachen mit geladener Piper-Stimme; unklare Sätze (Eigennamen, Zahlen) nimmt
+die gewählte Stimme.
 
 ## Was gebaut wurde (Kurz, Details in den Commits)
 
