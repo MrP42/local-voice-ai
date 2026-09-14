@@ -50,6 +50,12 @@ Alba GB; Katalog-Test zählt jetzt 10). Dropdown-Label „Name · Sprache · HQ/
 `…0.17.8…`: Stimme je Reiter (Original/Übersetzung/Zusammenfassung) im Seitenstand
 (`state.json.voices`, Werte wie im Dropdown); `applyVoiceValue`/`voiceValue` in TtsSettings,
 Effekt beim Reiterwechsel. 0.17.7 wurde gebaut, während dieser Commit entstand — deshalb 0.17.8.
+`…0.17.9…`: Stimmenverwaltung (`VoiceLibrary`) jetzt unter **Einstellungen → Vorlesen**
+statt Modelle-Seite (Entscheidung Patrick 14.09. abends, revidiert gegenüber Mittag).
+Dropdown endet mit „Stimmen verwalten …" → `lv-navigate`-Ereignis (App.tsx) + localStorage
+`lva.ui.settings.tab = readaloud`. Engine- und Piper-Stimmen-Auswahl im Reiter entfernt
+(Dropdown übernimmt), Schalter „Sprache automatisch erkennen" bleibt, jetzt immer sichtbar.
+Kontexthilfe entsprechend angepasst.
 
 ## Was gebaut wurde (Kurz, Details in den Commits)
 
