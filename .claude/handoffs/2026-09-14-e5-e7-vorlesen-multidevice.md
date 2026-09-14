@@ -1,6 +1,25 @@
 # Handoff — Local Voice AI: Vorlesen als eine Seite, Kontexthilfe, Multi-Device-Sync (E5–E7)
 
-Datum: 2026-09-14 · Session: Claude Code (VS Code, Auto-Mode) · Projekt: `C:\Users\wolff\local-voice-project`
+Datum: 2026-09-14 (fortgeschrieben bis abends, Stand 0.17.15) · Session: Claude Code (VS Code,
+Auto-Mode) · Projekt: `C:\Users\wolff\local-voice-project`
+
+## Stand beim Handoff (Kurzfassung für den Einstieg)
+
+- Zweig `feat/vorlesen-eine-seite` (Basis: PR-24-Zweig), alles gepusht, PR #25 mit
+  Nachträgen je Version als Kommentare. Letzter Commit: „fix(tts): Stimme unter der
+  Transportzeile statt darin". Installer **0.17.15 war beim Handoff im Bau**
+  (`apps/local-voice/scripts/dev.ps1 bundle`); 0.17.14 liegt fertig. Signatur-Fehler am
+  Build-Ende ist normal (kein privater Updater-Schlüssel lokal).
+- Versionskette heute: 0.17.0 (PR 24) → 0.17.1 … 0.17.15, je Abnahmestand ein Installer unter
+  `apps/local-voice/src-tauri/target/release/bundle/nsis/`. Details je Version weiter unten.
+- Patricks letzte Richtung: Vorlesen-UI feinschleifen (zweispaltig, Bedienspalte rechts,
+  Tempo als Wert in der Transportzeile). Screenshot-Prüfung über den Playwright-Test „all five
+  content pages share one head" → `apps/local-voice/test-results/page-tts.png` und
+  `page-tts-narrow.png`; nach jeder UI-Änderung anschauen (Read-Tool), das hat zwei
+  Layoutfehler sofort gezeigt.
+- Arbeitsregel, die sich bewährt hat: Patch-Skripte mit Nicht-ASCII als Datei in den
+  Scratchpad schreiben und per `python <datei>` ausführen (Bash-Heredoc bricht sonst);
+  während `tauri build` keine App-Quellen anfassen (Vite bündelt am Anfang, Rust danach).
 
 ## Laufender Faden
 
