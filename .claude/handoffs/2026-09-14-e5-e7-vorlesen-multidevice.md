@@ -120,6 +120,8 @@ Unter 1100 px (`@media` in App.css): Spalten übereinander, Seite scrollt als Ga
 Editor-Spalte; Aktionen (+ Hinzufügen, Diktieren, Text aufbereiten / Übersetzen / Zusammenfassen
 mit Optionen) und „Audio speichern" als beschriftete, volle Knöpfe in `.tts-controls`.
 Neue Kurz-Labels `tts.add.short`, `tts.translateShort`.
+`…0.17.14…`: AutoTagBar (Knopf, Anbieter, Gerät) in `.tts-controls__autotag` unter „Text
+aufbereiten", per CSS gestapelt; die Klappe unter dem Text trägt nur noch die Palette.
 
 ## Offen / nächste Schritte (Code)
 
