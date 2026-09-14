@@ -257,7 +257,8 @@
       "document": "Load document (TXT, MD, PDF, DOCX)",
       "url": "Load web page (URL)…",
       "projectFile": "Copy a file into the project files",
-      "urlDialogTitle": "Load a web page as text"
+      "urlDialogTitle": "Load a web page as text",
+      "short": "Add"
     },
     "tags": {
       "title": "Tags",
@@ -428,7 +429,8 @@
     "tidying": "Cleaning up …",
     "tidyDone": "Text cleaned up.",
     "tidyUndo": "Undo",
-    "controls": "Playback and voice"
+    "controls": "Playback and voice",
+    "translateShort": "Translate"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",

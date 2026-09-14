@@ -1240,220 +1240,36 @@ export const TtsSettings = () => {
             )}
             </div>
 
-            {/* Je Reiter nur die Aktionen, die er braucht — und die Quellen
-                gebuendelt hinter EINEM Plus (Dokument, Webseite,
-                Projektdatei), wie man es aus KI-Apps kennt. Kein Knopf tut
-                zwei Dinge; es steht nur nichts mehr da, was der offene
-                Reiter nicht braucht. */}
-            <div className="flex items-center gap-2 flex-wrap">
-              {tab === "original" && (
-                <>
-                  <div className="relative">
-                    <Button
-                      variant="secondary"
-                      onClick={() => setAddMenuOpen((o) => !o)}
-                      title={t("tts.add.title")}
-                      aria-label={t("tts.add.title")}
-                      aria-expanded={addMenuOpen}
-                    >
-                      <Plus width={16} height={16} />
-                    </Button>
-                    {addMenuOpen && (
-                      <>
-                        {/* Unsichtbarer Fang fuer den Klick daneben. */}
-                        <div
-                          className="fixed inset-0 z-30"
-                          onClick={() => setAddMenuOpen(false)}
-                        />
-                        <div className="absolute left-0 top-full mt-1 w-64 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1">
-                          <button
-                            type="button"
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text cursor-pointer text-start"
-                            onClick={() => {
-                              setAddMenuOpen(false);
-                              void loadDocument();
-                            }}
-                          >
-                            <Upload width={15} height={15} />
-                            {t("tts.add.document")}
-                          </button>
-                          <button
-                            type="button"
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text cursor-pointer text-start"
-                            onClick={() => {
-                              setAddMenuOpen(false);
-                              setUrlDialogOpen(true);
-                            }}
-                          >
-                            <Link width={15} height={15} />
-                            {t("tts.add.url")}
-                          </button>
-                          <button
-                            type="button"
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text cursor-pointer text-start"
-                            onClick={() => {
-                              setAddMenuOpen(false);
-                              void addFileToProject();
-                            }}
-                          >
-                            <FilePlus2 width={15} height={15} />
-                            {t("tts.add.projectFile")}
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                  <Button
-                    variant="secondary"
-                    onClick={toggleDictation}
-                    title={
-                      dictating ? t("tts.dictateStop") : t("tts.dictateHint")
-                    }
-                    aria-label={
-                      dictating ? t("tts.dictateStop") : t("tts.dictate")
-                    }
-                  >
-                    <Mic
-                      width={16}
-                      height={16}
-                      className={
-                        dictating ? "text-red-400 animate-pulse" : undefined
-                      }
-                    />
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => void tidyText()}
-                    disabled={tidying || !text.trim()}
-                    title={tidying ? t("tts.tidying") : t("tts.tidyHint")}
-                    aria-label={tidying ? t("tts.tidying") : t("tts.tidy")}
-                  >
-                    <Sparkles
-                      width={16}
-                      height={16}
-                      className={tidying ? "animate-pulse" : undefined}
-                    />
-                  </Button>
-                </>
-              )}
-              {tab === "translation" && (
-                <>
-                  <div className="w-36">
-                    <Select
-                      value={targetLang}
-                      options={TTS_TARGET_LANGS}
-                      onChange={(value) =>
-                        value && updateSetting("tts_translate_lang", value)
-                      }
-                      isClearable={false}
-                    />
-                  </div>
-                  <Button
-                    variant="secondary"
-                    onClick={translateText}
-                    disabled={translating || !text.trim()}
-                    title={
-                      translating
-                        ? t("tts.translating")
-                        : t("tts.translateAction")
-                    }
-                    aria-label={t("tts.translateAction")}
-                  >
-                    <Languages width={16} height={16} />
-                  </Button>
-                </>
-              )}
-              {tab === "summary" && (
-                <Button
-                  variant="secondary"
-                  onClick={summarize}
-                  disabled={summarizing || !text.trim()}
-                  title={
-                    summarizing ? t("tts.summarizing") : t("tts.summarizeHint")
+            {/* Ausdruck & Sprechstil direkt unter dem Text: die Palette fuegt
+                an der Cursorposition ein, deshalb gehoert sie zum Feld, nicht
+                in die Bedienspalte (Entscheidung Patrick 14.09. abends). */}
+            <details className="workspace-disclosure">
+              <summary>{t("workspace.voiceStyle")}</summary>
+              <div className="space-y-3 pt-2">
+                <TagPalette
+                  uiLang={uiLang}
+                  onInsert={(tagText) =>
+                    editorApiRef.current?.insertAtCursor(tagText)
                   }
-                  aria-label={t("tts.summarize")}
-                >
-                  <FileText width={16} height={16} />
-                </Button>
-              )}
-            </div>
+                  onDragInsert={(x, y, tagText) =>
+                    editorApiRef.current?.insertAtPoint?.(x, y, tagText) ??
+                    false
+                  }
+                />
 
-            {/* Wie zusammengefasst wird — wirkt beim naechsten Klick auf
-              "Zusammenfassen". Nur im Zusammenfassungs-Reiter sichtbar, wo
-              die Frage sich stellt. */}
-            {tab === "summary" && (
-              <div className="flex gap-3 items-center flex-wrap">
-                <label className="flex items-center gap-1 text-sm">
-                  {t("tts.summary.length")}
-                  <div className="w-40">
-                    <Select
-                      value={sumLength}
-                      isClearable={false}
-                      options={[
-                        {
-                          value: "kurz",
-                          label: t("tts.summary.lengths.short"),
-                        },
-                        {
-                          value: "mittel",
-                          label: t("tts.summary.lengths.medium"),
-                        },
-                        { value: "lang", label: t("tts.summary.lengths.long") },
-                      ]}
-                      onChange={(value) => value && setSumLength(value)}
-                    />
-                  </div>
-                </label>
-                <label className="flex items-center gap-1 text-sm">
-                  {t("tts.summary.detail")}
-                  <div className="w-40">
-                    <Select
-                      value={sumDetail}
-                      isClearable={false}
-                      options={[
-                        {
-                          value: "ueberblick",
-                          label: t("tts.summary.details.overview"),
-                        },
-                        {
-                          value: "ausgewogen",
-                          label: t("tts.summary.details.balanced"),
-                        },
-                        {
-                          value: "detailliert",
-                          label: t("tts.summary.details.deep"),
-                        },
-                      ]}
-                      onChange={(value) => value && setSumDetail(value)}
-                    />
-                  </div>
-                </label>
-                <label className="flex items-center gap-1 text-sm">
-                  {t("tts.summary.audience")}
-                  <div className="w-44">
-                    <Select
-                      value={sumAudience}
-                      isClearable={false}
-                      options={[
-                        {
-                          value: "allgemein",
-                          label: t("tts.summary.audiences.general"),
-                        },
-                        {
-                          value: "fachpublikum",
-                          label: t("tts.summary.audiences.expert"),
-                        },
-                        {
-                          value: "management",
-                          label: t("tts.summary.audiences.management"),
-                        },
-                      ]}
-                      onChange={(value) => value && setSumAudience(value)}
-                    />
-                  </div>
-                </label>
+                {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
+                Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
+                {tab === "original" && (
+                  <AutoTagBar
+                    text={text}
+                    suggestions={tagSuggestions}
+                    sourceText={tagSuggestionsSourceText}
+                    onSuggestionsChange={changeTagSuggestions}
+                    onApplyText={applyAutoTagText}
+                  />
+                )}
               </div>
-            )}
+            </details>
           </div>
         </div>
         {/* Bedienung rechts vom Text: Transport, Tempo, Stimme, Speichern,
@@ -1592,12 +1408,14 @@ export const TtsSettings = () => {
                 Schaltflaeche. Beschriftung wandert in title + aria-label. */}
               <Button
                 variant="secondary"
+                className="w-full justify-start"
                 onClick={saveSpokenAudio}
                 disabled={saving || spokenText.trim().length === 0}
                 title={saving ? t("tts.savingAudio") : t("tts.saveAudio")}
                 aria-label={saving ? t("tts.savingAudio") : t("tts.saveAudio")}
               >
                 <Download width={16} height={16} />
+                {saving ? t("tts.savingAudio") : t("tts.saveAudio")}
               </Button>
               {saving && (
                 <div className="flex items-center gap-2">
@@ -1644,33 +1462,228 @@ export const TtsSettings = () => {
                 </span>
               )}
             </div>
-            <details className="workspace-disclosure">
-              <summary>{t("workspace.voiceStyle")}</summary>
-              <div className="space-y-3 pt-2">
-                <TagPalette
-                  uiLang={uiLang}
-                  onInsert={(tagText) =>
-                    editorApiRef.current?.insertAtCursor(tagText)
+            {/* Je Reiter nur die Aktionen, die er braucht — und die Quellen
+                gebuendelt hinter EINEM Plus (Dokument, Webseite,
+                Projektdatei), wie man es aus KI-Apps kennt. Kein Knopf tut
+                zwei Dinge; es steht nur nichts mehr da, was der offene
+                Reiter nicht braucht. */}
+            <div className="flex flex-col gap-2 items-stretch border-t border-mid-gray/20 pt-3">
+              {tab === "original" && (
+                <>
+                  <div className="relative">
+                    <Button
+                      variant="secondary"
+                      onClick={() => setAddMenuOpen((o) => !o)}
+                      title={t("tts.add.title")}
+                      aria-label={t("tts.add.title")}
+                      aria-expanded={addMenuOpen}
+                      className="w-full justify-start"
+                    >
+                      <Plus width={16} height={16} />
+                      {t("tts.add.short")}
+                    </Button>
+                    {addMenuOpen && (
+                      <>
+                        {/* Unsichtbarer Fang fuer den Klick daneben. */}
+                        <div
+                          className="fixed inset-0 z-30"
+                          onClick={() => setAddMenuOpen(false)}
+                        />
+                        <div className="absolute left-0 top-full mt-1 w-64 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1">
+                          <button
+                            type="button"
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text cursor-pointer text-start"
+                            onClick={() => {
+                              setAddMenuOpen(false);
+                              void loadDocument();
+                            }}
+                          >
+                            <Upload width={15} height={15} />
+                            {t("tts.add.document")}
+                          </button>
+                          <button
+                            type="button"
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text cursor-pointer text-start"
+                            onClick={() => {
+                              setAddMenuOpen(false);
+                              setUrlDialogOpen(true);
+                            }}
+                          >
+                            <Link width={15} height={15} />
+                            {t("tts.add.url")}
+                          </button>
+                          <button
+                            type="button"
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text cursor-pointer text-start"
+                            onClick={() => {
+                              setAddMenuOpen(false);
+                              void addFileToProject();
+                            }}
+                          >
+                            <FilePlus2 width={15} height={15} />
+                            {t("tts.add.projectFile")}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <Button
+                    variant="secondary"
+                    className="w-full justify-start"
+                    onClick={toggleDictation}
+                    title={
+                      dictating ? t("tts.dictateStop") : t("tts.dictateHint")
+                    }
+                    aria-label={
+                      dictating ? t("tts.dictateStop") : t("tts.dictate")
+                    }
+                  >
+                    <Mic
+                      width={16}
+                      height={16}
+                      className={
+                        dictating ? "text-red-400 animate-pulse" : undefined
+                      }
+                    />
+                    {dictating ? t("tts.dictateStop") : t("tts.dictate")}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    className="w-full justify-start"
+                    onClick={() => void tidyText()}
+                    disabled={tidying || !text.trim()}
+                    title={tidying ? t("tts.tidying") : t("tts.tidyHint")}
+                    aria-label={tidying ? t("tts.tidying") : t("tts.tidy")}
+                  >
+                    <Sparkles
+                      width={16}
+                      height={16}
+                      className={tidying ? "animate-pulse" : undefined}
+                    />
+                    {t("tts.tidy")}
+                  </Button>
+                </>
+              )}
+              {tab === "translation" && (
+                <>
+                  <div className="w-full">
+                    <Select
+                      value={targetLang}
+                      options={TTS_TARGET_LANGS}
+                      onChange={(value) =>
+                        value && updateSetting("tts_translate_lang", value)
+                      }
+                      isClearable={false}
+                    />
+                  </div>
+                  <Button
+                    variant="secondary"
+                    onClick={translateText}
+                    disabled={translating || !text.trim()}
+                    title={
+                      translating
+                        ? t("tts.translating")
+                        : t("tts.translateAction")
+                    }
+                    aria-label={t("tts.translateAction")}
+                  >
+                    <Languages width={16} height={16} />
+                    {t("tts.translateShort")}
+                  </Button>
+                </>
+              )}
+              {tab === "summary" && (
+                <Button
+                  variant="secondary"
+                  onClick={summarize}
+                  disabled={summarizing || !text.trim()}
+                  title={
+                    summarizing ? t("tts.summarizing") : t("tts.summarizeHint")
                   }
-                  onDragInsert={(x, y, tagText) =>
-                    editorApiRef.current?.insertAtPoint?.(x, y, tagText) ??
-                    false
-                  }
-                />
+                  aria-label={t("tts.summarize")}
+                >
+                  <FileText width={16} height={16} />
+                  {t("tts.summarize")}
+                </Button>
+              )}
+            </div>
 
-                {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
-                Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
-                {tab === "original" && (
-                  <AutoTagBar
-                    text={text}
-                    suggestions={tagSuggestions}
-                    sourceText={tagSuggestionsSourceText}
-                    onSuggestionsChange={changeTagSuggestions}
-                    onApplyText={applyAutoTagText}
-                  />
-                )}
+            {/* Wie zusammengefasst wird — wirkt beim naechsten Klick auf
+              "Zusammenfassen". Nur im Zusammenfassungs-Reiter sichtbar, wo
+              die Frage sich stellt. */}
+            {tab === "summary" && (
+              <div className="flex flex-col gap-2 items-stretch">
+                <label className="flex items-center gap-1 text-sm">
+                  {t("tts.summary.length")}
+                  <div className="w-40">
+                    <Select
+                      value={sumLength}
+                      isClearable={false}
+                      options={[
+                        {
+                          value: "kurz",
+                          label: t("tts.summary.lengths.short"),
+                        },
+                        {
+                          value: "mittel",
+                          label: t("tts.summary.lengths.medium"),
+                        },
+                        { value: "lang", label: t("tts.summary.lengths.long") },
+                      ]}
+                      onChange={(value) => value && setSumLength(value)}
+                    />
+                  </div>
+                </label>
+                <label className="flex items-center gap-1 text-sm">
+                  {t("tts.summary.detail")}
+                  <div className="w-40">
+                    <Select
+                      value={sumDetail}
+                      isClearable={false}
+                      options={[
+                        {
+                          value: "ueberblick",
+                          label: t("tts.summary.details.overview"),
+                        },
+                        {
+                          value: "ausgewogen",
+                          label: t("tts.summary.details.balanced"),
+                        },
+                        {
+                          value: "detailliert",
+                          label: t("tts.summary.details.deep"),
+                        },
+                      ]}
+                      onChange={(value) => value && setSumDetail(value)}
+                    />
+                  </div>
+                </label>
+                <label className="flex items-center gap-1 text-sm">
+                  {t("tts.summary.audience")}
+                  <div className="w-44">
+                    <Select
+                      value={sumAudience}
+                      isClearable={false}
+                      options={[
+                        {
+                          value: "allgemein",
+                          label: t("tts.summary.audiences.general"),
+                        },
+                        {
+                          value: "fachpublikum",
+                          label: t("tts.summary.audiences.expert"),
+                        },
+                        {
+                          value: "management",
+                          label: t("tts.summary.audiences.management"),
+                        },
+                      ]}
+                      onChange={(value) => value && setSumAudience(value)}
+                    />
+                  </div>
+                </label>
               </div>
-            </details>
+            )}
             {/* Sprecherwechsel und Tags sind Schreibregeln, keine
               Einstellungen — der aufklappbare Block steht deshalb bei dem
               Feld, in das man sie tippt. */}
