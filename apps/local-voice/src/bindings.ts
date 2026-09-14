@@ -2641,7 +2641,17 @@ export type OverlayStyle = "none" | "minimal" | "live"
 export type AudioSegment = { text: string; voice: string | null; start_ms: number; end_ms: number }
 export type AudioNote = { text: string; voice: string | null; seed: number; created_ms: number; segments: AudioSegment[] }
 export type PageFile = { name: string; size: number; modified_ms: number }
-export type PageInfo = { id: string; title: string }
+export type PageInfo = { id: string; title: string;
+/**
+ * Wann der Arbeitsstand zuletzt gespeichert wurde (Unix-Millisekunden,
+ * 0 = nie). Wird bei jeder Auflistung aus `state.json` frisch gelesen.
+ */
+modified_ms: number;
+/**
+ * Anfang des Originaltexts, damit die Seitenliste als Verlauf taugt.
+ * Best-effort aus `state.json` gelesen; fehlt das Feld, bleibt sie leer.
+ */
+preview: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"

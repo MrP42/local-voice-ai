@@ -29,6 +29,28 @@ import {
 } from "lucide-react";
 
 /**
+ * „vor 3 Min.", „gestern", „vor 2 Wochen" — in der Sprache der Oberflaeche,
+ * ohne eigene Uebersetzungsschluessel: das kann der Browser.
+ */
+export const relativeTime = (ms: number, locale: string): string => {
+  const diff = ms - Date.now();
+  const abs = Math.abs(diff);
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["year", 365 * 86_400_000],
+    ["month", 30 * 86_400_000],
+    ["week", 7 * 86_400_000],
+    ["day", 86_400_000],
+    ["hour", 3_600_000],
+    ["minute", 60_000],
+  ];
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  for (const [unit, size] of units) {
+    if (abs >= size) return rtf.format(Math.round(diff / size), unit);
+  }
+  return rtf.format(0, "second");
+};
+
+/**
  * Die Seitenliste links: welches Arbeitsblatt gerade offen ist, wie bei den
  * Unterhaltungen einer KI-App. Anlegen, umbenennen (Doppelklick), nach oben
  * und unten schieben, löschen — Löschen fragt nach, denn es nimmt den
@@ -42,7 +64,7 @@ export const PagesSidebar: React.FC<{
   onSelect: (id: string) => void;
   onChanged: () => void;
 }> = ({ pages, activeId, collapsed, onToggle, onSelect, onChanged }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<PageInfo | null>(null);
@@ -158,8 +180,18 @@ export const PagesSidebar: React.FC<{
             />
           ) : (
             <>
-              <span className="flex-1 min-w-0 truncate text-sm">
-                {page.title}
+              <span className="flex-1 min-w-0">
+                <span className="block truncate text-sm">{page.title}</span>
+                {/* Verlauf statt blosser Titel: was drinsteht und wann es
+                    zuletzt angefasst wurde, ohne die Seite zu oeffnen. */}
+                <span className="block truncate text-xs text-text/45">
+                  {page.preview || t("tts.pages.emptyPreview")}
+                </span>
+                {page.modified_ms > 0 && (
+                  <span className="block text-[11px] text-text/40">
+                    {relativeTime(page.modified_ms, i18n.language)}
+                  </span>
+                )}
               </span>
               <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
                 <button

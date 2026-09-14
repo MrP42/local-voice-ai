@@ -216,7 +216,8 @@
       "collapse": "Collapse page list",
       "expand": "Expand page list",
       "deleteConfirmTitle": "Delete this page?",
-      "deleteConfirm": "“{{title}}” will be deleted with everything that belongs to it: text, translations, summary and the project folder with its files. This cannot be undone."
+      "deleteConfirm": "“{{title}}” will be deleted with everything that belongs to it: text, translations, summary and the project folder with its files. This cannot be undone.",
+      "emptyPreview": "No text yet"
     },
     "files": {
       "title": "Files",

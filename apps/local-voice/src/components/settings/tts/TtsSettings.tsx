@@ -394,10 +394,15 @@ export const TtsSettings = () => {
   useEffect(() => {
     if (!activePage || !pageLoaded.current) return;
     const handle = window.setTimeout(() => {
-      void commands.pageStateSave(
-        activePage,
-        JSON.stringify({ text, summary, sourceUrl, tab }),
-      );
+      void commands
+        .pageStateSave(
+          activePage,
+          JSON.stringify({ text, summary, sourceUrl, tab }),
+        )
+        // Die Seitenliste zeigt Vorschau und Zeitpunkt — die stammen aus
+        // genau dieser Datei und sollen nicht erst beim naechsten Start
+        // stimmen.
+        .then(() => void reloadPages());
     }, 500);
     return () => window.clearTimeout(handle);
   }, [activePage, text, summary, sourceUrl, tab]);

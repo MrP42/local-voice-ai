@@ -16,10 +16,56 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::AppHandle;
 
-#[derive(Serialize, Deserialize, Clone, Debug, specta::Type)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, specta::Type)]
 pub struct PageInfo {
     pub id: String,
     pub title: String,
+    /// Wann der Arbeitsstand zuletzt gespeichert wurde (Unix-Millisekunden,
+    /// 0 = nie). Wird bei jeder Auflistung aus `state.json` frisch gelesen;
+    /// der Wert im Index ist nur ein Abdruck und zählt nicht.
+    #[serde(default)]
+    pub modified_ms: f64,
+    /// Anfang des Originaltexts, damit die Seitenliste als Verlauf taugt:
+    /// man erkennt eine Seite am Inhalt, nicht nur am Titel. Best-effort aus
+    /// `state.json` gelesen — das Schema gehört der Oberfläche, fehlt das
+    /// Feld, bleibt die Vorschau leer.
+    #[serde(default)]
+    pub preview: String,
+}
+
+/// Wie viele Zeichen der Vorschau die Seitenliste höchstens zeigt.
+const PREVIEW_CHARS: usize = 120;
+
+/// Vorschau aus dem Arbeitsstand: Whitespace zusammenziehen, hart kappen.
+fn preview_from_state(raw: &str) -> String {
+    let text = serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|v| v.get("text").and_then(|t| t.as_str().map(str::to_owned)))
+        .unwrap_or_default();
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() > PREVIEW_CHARS {
+        let cut: String = collapsed.chars().take(PREVIEW_CHARS).collect();
+        format!("{}…", cut.trim_end())
+    } else {
+        collapsed
+    }
+}
+
+/// Zeitstempel und Vorschau einer Seite aus ihrem `state.json` nachtragen.
+fn enrich(app: &AppHandle, page: &mut PageInfo) {
+    let Ok(dir) = page_path(app, &page.id) else {
+        return;
+    };
+    let state = dir.join("state.json");
+    page.modified_ms = std::fs::metadata(&state)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0);
+    page.preview = std::fs::read_to_string(&state)
+        .map(|raw| preview_from_state(&raw))
+        .unwrap_or_default();
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -97,6 +143,7 @@ fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
                         pages.push(PageInfo {
                             id: name.clone(),
                             title: name,
+                            ..Default::default()
                         });
                     }
                 }
@@ -133,11 +180,15 @@ pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
         let page = PageInfo {
             id: fresh_id(),
             title: "Erste Seite".to_string(),
+            ..Default::default()
         };
         std::fs::create_dir_all(page_path(&app, &page.id)?)
             .map_err(|e| format!("could not create page dir: {e}"))?;
         index.pages.push(page);
         store_index(&app, &index)?;
+    }
+    for page in &mut index.pages {
+        enrich(&app, page);
     }
     Ok(index.pages)
 }
@@ -153,6 +204,7 @@ pub fn pages_create(app: AppHandle, title: String) -> Result<PageInfo, String> {
         } else {
             title.to_string()
         },
+        ..Default::default()
     };
     std::fs::create_dir_all(page_path(&app, &page.id)?)
         .map_err(|e| format!("could not create page dir: {e}"))?;
@@ -378,5 +430,19 @@ mod tests {
         assert!(checked_name("C:whatever").is_err());
         assert!(checked_name("state.json").is_err(), "state.json ist tabu");
         assert!(checked_name("").is_err());
+    }
+
+    #[test]
+    fn vorschau_zieht_whitespace_zusammen_und_kappt() {
+        assert_eq!(
+            preview_from_state(r#"{"text":"  Guten\n  Tag  "}"#),
+            "Guten Tag"
+        );
+        assert_eq!(preview_from_state(r#"{"summary":"x"}"#), "");
+        assert_eq!(preview_from_state("kein json"), "");
+        let long = format!(r#"{{"text":"{}"}}"#, "a".repeat(300));
+        let p = preview_from_state(&long);
+        assert_eq!(p.chars().count(), PREVIEW_CHARS + 1);
+        assert!(p.ends_with('…'));
     }
 }

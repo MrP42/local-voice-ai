@@ -216,7 +216,8 @@
       "collapse": "Seitenliste einklappen",
       "expand": "Seitenliste ausklappen",
       "deleteConfirmTitle": "Seite löschen?",
-      "deleteConfirm": "„{{title}}“ wird mit allem gelöscht, was dazugehört: Text, Übersetzungen, Zusammenfassung und der Projektordner samt seiner Dateien. Das lässt sich nicht rückgängig machen."
+      "deleteConfirm": "„{{title}}“ wird mit allem gelöscht, was dazugehört: Text, Übersetzungen, Zusammenfassung und der Projektordner samt seiner Dateien. Das lässt sich nicht rückgängig machen.",
+      "emptyPreview": "Noch kein Text"
     },
     "files": {
       "title": "Dateien",
