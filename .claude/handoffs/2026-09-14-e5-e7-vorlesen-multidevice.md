@@ -42,6 +42,11 @@ Stoppwörter de/en/fr/es/it; `PiperEngine::resolve_auto` + `paths_for`; Setting
 `tts_piper_auto_language`, Standard an, Schalter im Reiter Vorlesen bei Engine Piper).
 Grenze: nur Sprachen mit geladener Piper-Stimme; unklare Sätze (Eigennamen, Zahlen) nimmt
 die gewählte Stimme.
+`…0.17.7…`: fünf englische Piper-Stimmen im Katalog (Lessac HQ, Ryan HQ, Amy MQ, Alan GB,
+Alba GB; Katalog-Test zählt jetzt 10). Dropdown-Label „Name · Sprache · HQ/MQ/LQ · Piper"
+(`piperVoiceLabel` in TtsSettings, Sprache über `Intl.DisplayNames`). Unbekannte
+`<Marker>` werden bei JEDER Engine gestrichen (`process_speaker_chunk`) — die Frage von
+0.17.5 ist damit entschieden.
 
 ## Was gebaut wurde (Kurz, Details in den Commits)
 
