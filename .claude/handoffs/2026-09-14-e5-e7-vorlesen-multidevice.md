@@ -32,6 +32,11 @@ Warum die beiden vorher fehlten: der Katalog war am 12.09. von Hand mit vier Ein
 befüllt; GGUFs (unsloth) und llama.cpp b10938 (13.09.) tragen beide Familien längst.
 `…0.17.4…`: Piper-Stimmen direkt im Stimmen-Dropdown der Vorlesen-Seite („Name · Piper",
 Wert `piper:<id>`, schaltet `tts_engine`/`tts_piper_voice`; Fish-Stimme schaltet zurück).
+`…0.17.5…`: Piper spricht keine `<Marker>` und keine `[Tags]` mehr — `utterances()` streicht
+alle Marker, wenn `caps.voice_switching` fehlt; `fetch_wav` streicht alle Tag-Spans, wenn
+`caps.style_tags` fehlt (`protocol::strip_speaker_markers` / `strip_tag_spans`). Offen
+bleibt: mit Fish werden UNBEKANNTE `<Name>`-Marker weiterhin vorgelesen (nur bekannte
+Stimmen schalten) — Entscheidung, ob unbekannte Marker auch dort verschwinden sollen.
 
 ## Was gebaut wurde (Kurz, Details in den Commits)
 
