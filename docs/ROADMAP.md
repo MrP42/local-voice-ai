@@ -280,6 +280,16 @@ Kann nach E5 Punkt 3 (PageShell) unabhängig laufen. Schätzung ~80 kTok.
 - **Bewerbungsplattform** veröffentlichbar machen: persönliche Daten trennen,
   Beispieldaten, Lizenz. Eigenes Projekt, niedrige Priorität.
 
+## Stand 14.09.2026, Abend
+
+| Etappe | Stand | Beleg |
+|---|---|---|
+| v0.17.0 | PR #24 offen (Merge bei Patrick), Tag folgt nach Merge | github PR 24 |
+| E5 | umgesetzt auf `feat/vorlesen-eine-seite`, PR #25 (Basis: PR-24-Zweig) | Installer 0.17.1, `test-results/page-*.png` |
+| E7 | umgesetzt (Vorlesen; andere Bereiche ohne Hilfetext, Rahmen steht) | Reiter Hilfe, `src/content/help/` |
+| E6 | Stufe 1 code-fertig: Portal-Zweig `feat/voice-sync` (uncommitted, 697/697 Tests), App-Modul `sync/` (11 Tests) | Installer 0.17.2 |
+| E6 offen | Portal deployen + Migration 0024 (Patrick, Klassifikator blockiert Deploy), echter Login PC/Mac, Fussleisten-Symbol, Codex-Review der Schluessel-/Konfliktlogik | Spec Abschnitt 9/10 |
+
 ## Reihenfolge
 
 1. v0.17.0 aus dem Sprachmodell-Zweig (PR, Merge, Tag).
