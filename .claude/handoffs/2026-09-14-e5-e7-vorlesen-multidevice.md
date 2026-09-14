@@ -146,6 +146,41 @@ aufbereiten", per CSS gestapelt; die Klappe unter dem Text trägt nur noch die P
 nach den Optionen; `AutoTagBar showSettings={false}` in der Spalte, Anbieter/Gerät als
 `SettingContainer` im Reiter Vorlesen (`DEFAULT_TAG_PROVIDER_UI_VALUE` exportiert).
 
+## Release 0.18.0 — Stand 14.09. abends (bei Patrick)
+
+Patrick hat entschieden: der aktuelle Stand geht als Release raus. Version ist auf 0.18.0
+gesetzt (`43e6af2` auf `feat/vorlesen-eine-seite`, gepusht). Ein Tag `app-v0.17.0` entfällt,
+alles wird in `app-v0.18.0` gebündelt. Der Klassifikator blockiert `gh pr merge` UND
+`gh pr edit --base` — deshalb bleiben diese Schritte bei Patrick. Stand HEAD ist gegen
+`origin/main` konfliktfrei (`git merge-tree` geprüft), `main` hat keinen Branch-Schutz.
+
+Release-Notes: `.claude/handoffs/2026-09-14-release-notes-0.18.0.md`.
+
+Ablauf (in dieser Reihenfolge, aus dem Repo-Wurzelverzeichnis):
+
+```
+gh pr edit 25 --base main
+gh pr merge 25 --merge
+git checkout main && git pull --ff-only
+git tag app-v0.18.0 && git push origin app-v0.18.0
+```
+
+PR #24 und #23 gelten nach dem Merge von #25 als enthalten (GitHub markiert sie als
+gemergt oder sie lassen sich schließen). PR #21 (Strg-Fix) ist NICHT enthalten und
+bleibt offen.
+
+Wenn der Workflow `release-windows.yml` am Release-Erstellen scheitert (Actions-Token darf
+keine Releases anlegen, siehe Memory):
+
+```
+gh release create app-v0.18.0 --title "Local Voice AI 0.18.0" --notes-file .claude/handoffs/2026-09-14-release-notes-0.18.0.md
+gh run list --workflow release-windows.yml -L 1
+gh run rerun <run-id>
+```
+
+Danach wie gehabt: Portal `feat/voice-sync` committen, deployen, Migration 0024, erster
+Login PC↔Mac.
+
 ## Offen / nächste Schritte (Code)
 
 - Fußleisten-Symbol für den Sync-Zustand (Spec Abschnitt 7) — noch nicht gebaut.
