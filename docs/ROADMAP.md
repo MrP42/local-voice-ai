@@ -187,3 +187,115 @@ Leere Transkriptionen beenden das Freisprechen nicht mehr. Nicht-KI-Systemergebn
 ### Sprachnotizen löschen, 06.09.2026
 
 Bestätigtes lokales Löschen über Detailansicht und Verlauf-Wischaktion auf iPhone/Watch. Abbrechen erhält die Notiz. Leere Löschmarkierung verhindert Wiederauftauchen durch alte Transfers; unterbrochene Bereinigung wird fortgesetzt. 89 Core-Tests und vier Bedienungsläufe bestanden. Kopien auf anderen Geräten bleiben erhalten. Nachweis: `docs/apple-evidence/2026-09-06-delete-notes/README.md`.
+
+---
+
+# Nachtrag 2026-09-14 — Reife, Vorlesen-Neuschnitt, Multi-Device
+
+Brief von Patrick (mündlich, 14.09.2026), zerlegt in Etappen. Reihenfolge ist
+Vorschlag, offene Fragen stehen am Ende. Nichts davon ist begonnen.
+
+## 0. Standort
+
+- `feat/sprachmodelle-l1-anbieter` (0.16.7, L1–L4 + Ledger) ist unreleased.
+  **Erst mergen und als v0.17.0 taggen**, bevor der Vorlesen-Neuschnitt beginnt —
+  beide fassen `TtsSettings.tsx` und die Fußleiste an, parallel gäbe das Konflikte.
+- `TtsSettings.tsx` = 1802 Zeilen, dazu `VoicesCard`, `VoiceChangerCard`,
+  `ReadingCard`, `WorkspaceSidebars`. Der Neuschnitt ist auch eine Zerlegung
+  dieser Datei.
+- Login/Sync: kein Bestand, keine Vorarbeit im Repo. Vergleichbares Muster
+  existiert im Bewerbungs-Dashboard (Sync-Hub auf IONOS, OwnerGuard, 2FA).
+
+## E5 — Vorlesen als eine Seite (Reife der Kernfunktion) · Priorität 1
+
+**Ziel:** Die Vorlesen-Seite ist EINE Vollbild-Arbeitsfläche: Inhalt links
+(Text/Übersetzung/Zusammenfassung), Player unten, Verlauf links, Dateien und
+Kontexthilfe rechts. Nichts mehr „unten drunter".
+
+1. **Feature-Audit** (Tabelle: Feature · Use-Case · bleibt/raus/verschieben):
+   - Stimmwechsler → **raus** (Entscheidung Patrick). `VoiceChangerCard.tsx`,
+     Rust-Pfad aus M7 und i18n-Schlüssel entfernen; Übersetzung bleibt.
+   - Bücher & Dokumente (`ReadingCard`) → **raus von der Seite**; Import wird
+     eine Quelle im „+“-Menü des Editors (Dokument/URL/Projektdatei gibt es
+     dort schon). Offene Frage, ob ein eigener Ort für Bibliothek bleibt.
+   - Stimmen anhören/verwalten (`VoicesCard`) → **raus von der Seite**; Ort
+     zu entscheiden (siehe Fragen).
+   - KI-Funktionen im Editor (Auto-Tagging, Übersetzen, Zusammenfassen):
+     bleiben, aber jede einzeln gegen den Installer abnehmen — Verdacht
+     „hat nicht richtig funktioniert" ist offen.
+2. **Seitenleisten mit Funktion füllen:**
+   - Links „Verlauf": zuletzt vorgelesene Texte/Seiten mit Stimme, Dauer,
+     Datum; Klick lädt Text und Stimme zurück in den Editor.
+   - Rechts „Dateien": erzeugte Audios der aktuellen Seite (existiert), plus
+     **Kontexthilfe** als zweiter Reiter (siehe E7).
+3. **Einheitlicher Seitenaufbau** für alle Inhaltsseiten (Diktat, Besprechungen,
+   Modelle, Vorlesen, Einstellungen): ein Layout-Baustein
+   `PageShell` (Titelzeile · optionale Seitenleisten · Inhalt · Fußleiste),
+   damit Positionierung und Stil nicht mehr je Seite abweichen. Bestehende
+   Menü- und Fußleiste bleiben, die sind abgenommen.
+4. **Zerlegung** von `TtsSettings.tsx` in Editor, Quellen-Menü, Player,
+   Server-Status, KI-Aktionen — je Datei eine Aufgabe, keine Verhaltensänderung
+   außer den Punkten oben.
+5. **Robustheit:** Abnahme-Checkliste je Funktion gegen den Installer
+   (Regel „Installer je Abnahmestand"), nicht gegen Vite.
+
+**Artefakt:** Installer v0.18.x mit der neuen Vorlesen-Seite + Screenshot-Reihe
+(alle fünf Inhaltsseiten im gleichen Aufbau). Schätzung ~250 kTok inkl. Audit.
+
+## E6 — Multi-Device mit Login und Sync · Priorität 1 (architektonisch)
+
+Braucht ein Design-Dokument vor dem ersten Commit. Drei Ansätze, mit Empfehlung:
+
+| Ansatz | Was | Für | Gegen |
+|---|---|---|---|
+| **A. Eigener Hub, Ende-zu-Ende verschlüsselt** (Empfehlung) | Kleiner Sync-Dienst auf IONOS (Muster Bewerbungs-Hub): Konto = E-Mail + Passwort, daraus per Argon2 ein Schlüssel; Client verschlüsselt jedes Objekt (XChaCha20-Poly1305) vor dem Upload; Server sieht nur Blobs + Versionen | volle Kontrolle, Server kann nichts lesen, Muster ist im Haus schon gebaut | Server betreiben, Konto-Recovery ist bei E2E ein Design-Thema (Recovery-Code) |
+| B. Gerätekopplung ohne Konto | Geräte tauschen per QR-Code Schlüssel, Sync über den Hub nur als Relais | kein Passwort, keine Konten | „Login" fällt weg, was Patrick ausdrücklich will; Neugerät braucht ein altes Gerät |
+| C. Fremdspeicher als Transport (OneDrive/Drive) | verschlüsselte Blobs im Nutzer-Cloudspeicher | kein eigener Server | Konflikte/Versionen schlecht beherrschbar, OAuth je Anbieter, Datei-Sync ist kein Objekt-Sync |
+
+**Was synchronisiert wird (Vorschlag, klein anfangen):** Vorlese-Seiten (Texte,
+Tags, Sprecherzuordnung), Verlauf, Einstellungen (ohne Pfade/Hotkeys), Sprecher-
+Registry (`meta.json`). **Nicht** in Stufe 1: Klon-Referenzaudios, Modelle,
+Meeting-Aufnahmen (groß, teils sensibel) — als Stufe 2 mit eigener Freigabe.
+
+**Konfliktregel:** letzte Änderung gewinnt je Objekt, mit Versionsverlauf im Hub,
+sodass nichts still verloren geht.
+
+**Artefakt Stufe 1:** Text auf Gerät A anlegen, auf Gerät B (Mac) vorlesen.
+Schätzung ~300 kTok (Hub ~100, Client Rust+UI ~150, Design/Review ~50).
+Externer Review (Codex) hier ja: Schlüssel-, Konto- und Konfliktlogik.
+
+## E7 — Kontexthilfe an Ort und Stelle · Priorität 2, parallel per Subagent
+
+Rechter Seitenbereich bekommt einen Reiter „Hilfe", der je aktivem Bereich
+ohne Klick eine kompakte Einführung zeigt: welche Funktionen es gibt, wie Tags
+und Sprecher im Text funktionieren, Stimm-Einstellungen, Hardware-Voraussetzung
+(VRAM-Hinweis, Fish-Speech vs. Piper). Inhalte als Markdown je Bereich und
+Sprache (`content/help/<bereich>.<lang>.md`), die `(i)`-Symbole springen dorthin.
+Kann nach E5 Punkt 3 (PageShell) unabhängig laufen. Schätzung ~80 kTok.
+
+## Außerhalb dieses Repos (nur notiert)
+
+- **Lesefuchs** (Vorleser-App für die Kinder) fertigstellen — eigenes Projekt,
+  eigener Brief.
+- **Bewerbungsplattform** veröffentlichbar machen: persönliche Daten trennen,
+  Beispieldaten, Lizenz. Eigenes Projekt, niedrige Priorität.
+
+## Reihenfolge
+
+1. v0.17.0 aus dem Sprachmodell-Zweig (PR, Merge, Tag).
+2. E5 Feature-Audit → Entscheidungstabelle abnehmen → Neuschnitt.
+3. E6 Design-Dokument (Spec) → Review → Hub → Client.
+4. E7 parallel zu E6, sobald PageShell steht.
+
+## Offene Fragen an Patrick
+
+1. Wohin mit **Stimmen anhören/verwalten**: eigener Menüpunkt „Stimmen",
+   oder Bereich auf der Modelle-Seite neben „Vorlesestimmen"? (Regel „kein
+   neuer Menüpunkt für eine Einstellung" — Stimmen sind aber Inhalte.)
+2. Bleibt eine **Bibliothek** für Bücher/Dokumente irgendwo, oder ist Import
+   ins Editor-Menü genug?
+3. **Sync-Ansatz A** bestätigt? Und welcher Kontoserver: IONOS neben dem
+   Bewerbungs-Hub, oder getrennt?
+4. **Sync-Umfang Stufe 1** wie oben, oder sollen Klonstimmen von Anfang an mit?
+5. Darf der **Stimmwechsler auch im Rust-Backend** entfernt werden, oder nur
+   aus der Oberfläche (Wiederbelebung später einfacher)?
