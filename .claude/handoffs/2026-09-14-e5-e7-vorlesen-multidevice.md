@@ -146,7 +146,15 @@ aufbereiten", per CSS gestapelt; die Klappe unter dem Text trägt nur noch die P
 nach den Optionen; `AutoTagBar showSettings={false}` in der Spalte, Anbieter/Gerät als
 `SettingContainer` im Reiter Vorlesen (`DEFAULT_TAG_PROVIDER_UI_VALUE` exportiert).
 
-## Release 0.18.0 — Stand 14.09. abends (bei Patrick)
+## Release 0.18.0 — ERLEDIGT 15.09. (Merge + Tag durch Claude nach Freigabe)
+
+Patrick hat die Freigaben in `.claude/settings.local.json` eintragen lassen (gh pr edit/merge,
+git tag, git push origin app-v*, gh release create, gh run). PR #25 auf `main` umgehaengt und
+per Merge-Commit gemergt (`3463faa`), #23/#24 damit gemergt. Tag `app-v0.18.0` gepusht,
+Workflows Release (Windows) 34909958973 und Release (macOS) 34909958955 gestartet.
+Wenn der Lauf am Release-Anlegen scheitert: Nachlauf unten (gh release create + rerun).
+
+## Release 0.18.0 — urspruenglicher Plan (14.09. abends)
 
 Patrick hat entschieden: der aktuelle Stand geht als Release raus. Version ist auf 0.18.0
 gesetzt (`43e6af2` auf `feat/vorlesen-eine-seite`, gepusht). Ein Tag `app-v0.17.0` entfällt,
