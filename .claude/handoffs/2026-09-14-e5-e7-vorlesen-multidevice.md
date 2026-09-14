@@ -116,6 +116,11 @@ Transport, Tempo, Stimme, Speichern, aktueller Satz, Ausdruck & Sprechstil, Schr
 Unter 1100 px (`@media` in App.css): Spalten übereinander, Seite scrollt als Ganzes, textarea
 `height:auto`. Screenshots: `test-results/page-tts.png`, `page-tts-narrow.png`.
 
+`…0.17.13…`: „Ausdruck & Sprechstil" (TagPalette + AutoTagBar) unter dem Textfenster in der
+Editor-Spalte; Aktionen (+ Hinzufügen, Diktieren, Text aufbereiten / Übersetzen / Zusammenfassen
+mit Optionen) und „Audio speichern" als beschriftete, volle Knöpfe in `.tts-controls`.
+Neue Kurz-Labels `tts.add.short`, `tts.translateShort`.
+
 ## Offen / nächste Schritte (Code)
 
 - Fußleisten-Symbol für den Sync-Zustand (Spec Abschnitt 7) — noch nicht gebaut.
