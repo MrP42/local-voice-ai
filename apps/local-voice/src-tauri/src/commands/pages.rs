@@ -13,18 +13,86 @@
 //! Migration an, wenn die Oberfläche ein Feld dazuerfindet.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use tauri::AppHandle;
 
-#[derive(Serialize, Deserialize, Clone, Debug, specta::Type)]
+/// Eine Sperre fuer alle Lese-Aendern-Schreib-Zyklen an Index und
+/// Seitenstand: die Oberflaeche (Befehle unten) und der Geraete-Sync
+/// schreiben dieselben Dateien. Ohne Sperre ueberschreibt der eine still,
+/// was der andere gerade gelesen hat (Review-Befund 14.09.).
+static PAGES_LOCK: Mutex<()> = Mutex::new(());
+
+pub(crate) fn lock() -> MutexGuard<'static, ()> {
+    PAGES_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Schreiben ueber eine Temp-Datei plus Umbenennen: ein Absturz mittendrin
+/// hinterlaesst die alte Datei, nie eine halbe.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::write(&tmp, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("could not replace {}: {e}", path.display())
+    })
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, specta::Type)]
 pub struct PageInfo {
     pub id: String,
     pub title: String,
+    /// Wann der Arbeitsstand zuletzt gespeichert wurde (Unix-Millisekunden,
+    /// 0 = nie). Wird bei jeder Auflistung aus `state.json` frisch gelesen;
+    /// der Wert im Index ist nur ein Abdruck und zählt nicht.
+    #[serde(default)]
+    pub modified_ms: f64,
+    /// Anfang des Originaltexts, damit die Seitenliste als Verlauf taugt:
+    /// man erkennt eine Seite am Inhalt, nicht nur am Titel. Best-effort aus
+    /// `state.json` gelesen — das Schema gehört der Oberfläche, fehlt das
+    /// Feld, bleibt die Vorschau leer.
+    #[serde(default)]
+    pub preview: String,
+}
+
+/// Wie viele Zeichen der Vorschau die Seitenliste höchstens zeigt.
+const PREVIEW_CHARS: usize = 120;
+
+/// Vorschau aus dem Arbeitsstand: Whitespace zusammenziehen, hart kappen.
+fn preview_from_state(raw: &str) -> String {
+    let text = serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|v| v.get("text").and_then(|t| t.as_str().map(str::to_owned)))
+        .unwrap_or_default();
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() > PREVIEW_CHARS {
+        let cut: String = collapsed.chars().take(PREVIEW_CHARS).collect();
+        format!("{}…", cut.trim_end())
+    } else {
+        collapsed
+    }
+}
+
+/// Zeitstempel und Vorschau einer Seite aus ihrem `state.json` nachtragen.
+fn enrich(app: &AppHandle, page: &mut PageInfo) {
+    let Ok(dir) = page_path(app, &page.id) else {
+        return;
+    };
+    let state = dir.join("state.json");
+    page.modified_ms = std::fs::metadata(&state)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0);
+    page.preview = std::fs::read_to_string(&state)
+        .map(|raw| preview_from_state(&raw))
+        .unwrap_or_default();
 }
 
 #[derive(Serialize, Deserialize, Default)]
-struct PagesIndex {
-    pages: Vec<PageInfo>,
+pub(crate) struct PagesIndex {
+    pub(crate) pages: Vec<PageInfo>,
 }
 
 #[derive(Serialize, Clone, Debug, specta::Type)]
@@ -34,7 +102,7 @@ pub struct PageFile {
     pub modified_ms: f64,
 }
 
-fn projects_root(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn projects_root(app: &AppHandle) -> Result<PathBuf, String> {
     use tauri::Manager;
     let base = crate::portable::data_dir()
         .cloned()
@@ -74,14 +142,19 @@ fn checked_name(name: &str) -> Result<&str, String> {
     }
 }
 
-fn page_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+pub(crate) fn page_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     Ok(projects_root(app)?.join(checked_id(id)?))
 }
 
-fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
+pub(crate) fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
     let path = projects_root(app)?.join("index.json");
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return Ok(PagesIndex::default());
+    // Nur "gibt es nicht" heisst "leer". Jeder andere Lesefehler (Rechte,
+    // Platte) waere sonst ein leerer Index -- und der Sync wuerde alle
+    // Seiten fuer geloescht halten.
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(PagesIndex::default()),
+        Err(e) => return Err(format!("could not read pages index: {e}")),
     };
     // Ein zerstörter Index (Absturz beim Schreiben) darf die Seiten nicht
     // verstecken: dann wird er aus den vorhandenen Ordnern neu aufgebaut.
@@ -97,6 +170,7 @@ fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
                         pages.push(PageInfo {
                             id: name.clone(),
                             title: name,
+                            ..Default::default()
                         });
                     }
                 }
@@ -106,13 +180,13 @@ fn load_index(app: &AppHandle) -> Result<PagesIndex, String> {
     }
 }
 
-fn store_index(app: &AppHandle, index: &PagesIndex) -> Result<(), String> {
+pub(crate) fn store_index(app: &AppHandle, index: &PagesIndex) -> Result<(), String> {
     let path = projects_root(app)?.join("index.json");
     let raw = serde_json::to_string_pretty(index).map_err(|e| e.to_string())?;
-    std::fs::write(&path, raw).map_err(|e| format!("could not write pages index: {e}"))
+    write_atomic(&path, raw.as_bytes())
 }
 
-fn fresh_id() -> String {
+pub(crate) fn fresh_id() -> String {
     format!(
         "page_{}",
         std::time::SystemTime::now()
@@ -128,16 +202,21 @@ fn fresh_id() -> String {
 #[tauri::command]
 #[specta::specta]
 pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
+    let _guard = lock();
     let mut index = load_index(&app)?;
     if index.pages.is_empty() {
         let page = PageInfo {
             id: fresh_id(),
             title: "Erste Seite".to_string(),
+            ..Default::default()
         };
         std::fs::create_dir_all(page_path(&app, &page.id)?)
             .map_err(|e| format!("could not create page dir: {e}"))?;
         index.pages.push(page);
         store_index(&app, &index)?;
+    }
+    for page in &mut index.pages {
+        enrich(&app, page);
     }
     Ok(index.pages)
 }
@@ -145,6 +224,7 @@ pub fn pages_list(app: AppHandle) -> Result<Vec<PageInfo>, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn pages_create(app: AppHandle, title: String) -> Result<PageInfo, String> {
+    let _guard = lock();
     let title = title.trim();
     let page = PageInfo {
         id: fresh_id(),
@@ -153,6 +233,7 @@ pub fn pages_create(app: AppHandle, title: String) -> Result<PageInfo, String> {
         } else {
             title.to_string()
         },
+        ..Default::default()
     };
     std::fs::create_dir_all(page_path(&app, &page.id)?)
         .map_err(|e| format!("could not create page dir: {e}"))?;
@@ -165,6 +246,7 @@ pub fn pages_create(app: AppHandle, title: String) -> Result<PageInfo, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn pages_rename(app: AppHandle, id: String, title: String) -> Result<(), String> {
+    let _guard = lock();
     checked_id(&id)?;
     let title = title.trim();
     if title.is_empty() {
@@ -185,6 +267,7 @@ pub fn pages_rename(app: AppHandle, id: String, title: String) -> Result<(), Str
 #[tauri::command]
 #[specta::specta]
 pub fn pages_delete(app: AppHandle, id: String) -> Result<(), String> {
+    let _guard = lock();
     let dir = page_path(&app, &id)?;
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("could not delete page: {e}"))?;
@@ -200,6 +283,7 @@ pub fn pages_delete(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn pages_reorder(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    let _guard = lock();
     let mut index = load_index(&app)?;
     let mut reordered: Vec<PageInfo> = Vec::with_capacity(index.pages.len());
     for id in &ids {
@@ -221,10 +305,10 @@ pub fn page_state_load(app: AppHandle, id: String) -> Result<String, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn page_state_save(app: AppHandle, id: String, state: String) -> Result<(), String> {
+    let _guard = lock();
     let dir = page_path(&app, &id)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("could not create page dir: {e}"))?;
-    std::fs::write(dir.join("state.json"), state)
-        .map_err(|e| format!("could not save page state: {e}"))
+    write_atomic(&dir.join("state.json"), state.as_bytes())
 }
 
 #[tauri::command]
@@ -238,6 +322,25 @@ pub fn page_dir(app: AppHandle, id: String) -> Result<String, String> {
 /// Die Dateien einer Seite, jüngste zuerst. `state.json` gehört der App und
 /// erscheint nicht — für den Nutzer ist sie kein Inhalt, und löschen soll er
 /// sie erst recht nicht.
+/// Herkunft einer erzeugten Aufnahme: aus welchem Text sie entstand und wer
+/// sie gesprochen hat. `None`, wenn die Datei vor dieser Fassung entstand
+/// oder von Hand hinzugefuegt wurde.
+#[tauri::command]
+#[specta::specta]
+pub fn page_audio_note(
+    app: AppHandle,
+    id: String,
+    name: String,
+) -> Result<Option<crate::managers::tts::notes::AudioNote>, String> {
+    let dir = page_path(&app, &id)?;
+    // Nur Dateien im Ordner dieses Arbeitsblatts, kein Weg nach draussen.
+    let file = dir.join(&name);
+    if file.parent() != Some(dir.as_path()) {
+        return Err("Datei liegt nicht in diesem Arbeitsblatt".to_string());
+    }
+    Ok(crate::managers::tts::notes::read(&file))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn page_files(app: AppHandle, id: String) -> Result<Vec<PageFile>, String> {
@@ -250,7 +353,10 @@ pub fn page_files(app: AppHandle, id: String) -> Result<Vec<PageFile>, String> {
         .filter(|e| e.path().is_file())
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name == "state.json" {
+            // `state.json` ist der Zustand des Arbeitsblatts, ein Beileger
+            // gehoert zu der Aufnahme daneben — beides ist keine Datei, die
+            // jemand in seiner Ablage sehen will.
+            if name == "state.json" || crate::managers::tts::notes::is_note(&name) {
                 return None;
             }
             let meta = e.metadata().ok()?;
@@ -356,5 +462,19 @@ mod tests {
         assert!(checked_name("C:whatever").is_err());
         assert!(checked_name("state.json").is_err(), "state.json ist tabu");
         assert!(checked_name("").is_err());
+    }
+
+    #[test]
+    fn vorschau_zieht_whitespace_zusammen_und_kappt() {
+        assert_eq!(
+            preview_from_state(r#"{"text":"  Guten\n  Tag  "}"#),
+            "Guten Tag"
+        );
+        assert_eq!(preview_from_state(r#"{"summary":"x"}"#), "");
+        assert_eq!(preview_from_state("kein json"), "");
+        let long = format!(r#"{{"text":"{}"}}"#, "a".repeat(300));
+        let p = preview_from_state(&long);
+        assert_eq!(p.chars().count(), PREVIEW_CHARS + 1);
+        assert!(p.ends_with('…'));
     }
 }

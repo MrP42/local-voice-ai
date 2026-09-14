@@ -7,7 +7,12 @@ import { ModelCard } from "@/components/onboarding";
 import { useModelStore } from "@/stores/modelStore";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { TtsVoiceCard } from "./TtsVoiceCard";
+import { LlmModelCard } from "./LlmModelCard";
+import type { LlmModelConfig } from "@/bindings";
+import { useLlmLocalStore } from "@/stores/llmLocalStore";
+import { useSettings } from "@/hooks/useSettings";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
+import { PageShell } from "@/components/ui/PageShell";
 import {
   getLanguageLabel,
   MODEL_CAPABILITY_LANGUAGES,
@@ -60,6 +65,25 @@ export const ModelsSettings: React.FC = () => {
     cancelDownload: cancelTtsDownload,
     deleteModel: deleteTtsModel,
   } = useTtsModelStore();
+
+  // Lokales Sprachmodell: eigene Laufzeit, eigene Modelle, eigener Store.
+  const { getSetting, refreshSettings } = useSettings();
+  const llm = useLlmLocalStore();
+  const { initialize: initializeLlm } = llm;
+  useEffect(() => {
+    void initializeLlm();
+  }, [initializeLlm]);
+  const activeLlmModelId = getSetting("llm_active_model_id") ?? null;
+  const activeLocalModelId =
+    (getSetting("llm_models") ?? []).find(
+      (m: LlmModelConfig) =>
+        m.id === activeLlmModelId && m.connection_id === "local",
+    )?.remote_id ?? null;
+  const llmRuntimes = llm.downloads.filter(
+    (d) => d.kind === "runtime" && d.for_this_platform,
+  );
+  const llmModels = llm.downloads.filter((d) => d.kind === "model");
+  const llmRuntimeInstalled = llmRuntimes.some((d) => d.is_downloaded);
 
   // click outside handler for language dropdown
   useEffect(() => {
@@ -266,15 +290,11 @@ export const ModelsSettings: React.FC = () => {
   }
 
   return (
-    <div className="w-full space-y-4">
-      <div className="mb-4">
-        <h1 className="text-xl font-semibold mb-2">
-          {t("settings.models.title")}
-        </h1>
-        <p className="text-sm text-text/60">
-          {t("settings.models.description")}
-        </p>
-      </div>
+    <PageShell
+      title={t("sidebar.models")}
+      description={t("workspace.modelsHint")}
+      help="modelle"
+    >
 
       {/* Search bar — filter the catalog by name or description.
           The magnifier sits in the flow as a flex sibling rather than being
@@ -291,6 +311,63 @@ export const ModelsSettings: React.FC = () => {
           className="flex-1 min-w-0 bg-transparent text-sm focus:outline-none placeholder:text-text/40"
         />
       </label>
+
+      {/* Sprachmodelle in der App: die Laufzeit (llama-server) und die
+          GGUF-Modelle, die sie bedient. Getrennt von den Diktatmodellen oben,
+          weil es eine andere Engine ist -- und vom Anbieter-Reiter in den
+          Einstellungen, weil hier geladen wird und dort verbunden. */}
+      {llm.downloads.length > 0 && (
+        <SettingsGroup
+          title={t("settings.models.llm.title")}
+          description={
+            llmRuntimeInstalled
+              ? t("settings.models.llm.description")
+              : t("settings.models.llm.descriptionNoRuntime")
+          }
+        >
+          {llm.error && (
+            <p className="px-4 pt-3 text-sm text-red-500 break-words" role="alert">
+              {llm.error}
+            </p>
+          )}
+          {llmRuntimes.map((info) => (
+            <LlmModelCard
+              key={info.id}
+              info={info}
+              onDownload={(id) => void llm.downloadModel(id)}
+              onCancel={(id) => void llm.cancelDownload(id)}
+              onDelete={(id) => void llm.deleteModel(id)}
+              isDownloading={info.id in llm.downloadingIds}
+              isVerifying={info.id in llm.verifyingIds}
+              downloadProgress={llm.downloadProgress[info.id]?.percentage}
+            />
+          ))}
+          {llmModels.map((info) => (
+            <LlmModelCard
+              key={info.id}
+              info={info}
+              isActive={activeLocalModelId === info.id}
+              isServing={
+                llm.status?.phase === "ready" && llm.status.model_id === info.id
+              }
+              onDownload={(id) => void llm.downloadModel(id)}
+              onCancel={(id) => void llm.cancelDownload(id)}
+              onDelete={(id) => void llm.deleteModel(id)}
+              onActivate={
+                llmRuntimeInstalled
+                  ? (id) =>
+                      void llm.activate(id).then((ok) => {
+                        if (ok) void refreshSettings();
+                      })
+                  : undefined
+              }
+              isDownloading={info.id in llm.downloadingIds}
+              isVerifying={info.id in llm.verifyingIds}
+              downloadProgress={llm.downloadProgress[info.id]?.percentage}
+            />
+          ))}
+        </SettingsGroup>
+      )}
 
       {/* Piper reading voices (Paket B-E3) — a separate download family (CPU,
           offline, no GPU) from the ASR transcription models above, so it gets
@@ -314,6 +391,10 @@ export const ModelsSettings: React.FC = () => {
           ))}
         </SettingsGroup>
       )}
+
+      {/* Geklonte und gespeicherte Stimmen gehoeren zu den Vorlesestimmen,
+          nicht unter den Vorlesen-Editor: hier wird angehoert, aufgenommen,
+          importiert und geloescht — ausgewaehlt wird beim Vorlesen. */}
 
       {filteredModels.length > 0 ? (
         <div className="space-y-6">
@@ -478,6 +559,6 @@ export const ModelsSettings: React.FC = () => {
           {t("settings.models.noModelsMatch")}
         </div>
       )}
-    </div>
+    </PageShell>
   );
 };

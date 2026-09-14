@@ -64,24 +64,6 @@
     "pause": "Pause",
     "resume": "Resume",
     "sentenceProgress": "Sentence {{position}}/{{total}}",
-    "reading": {
-      "title": "Books & Documents",
-      "description": "Read entire documents aloud (TXT, MD, PDF, DOCX). Progress is saved per document — resume any time, even after listening to something else.",
-      "open": "Open document…",
-      "dropHint": "Tip: drag a file into the window to add it.",
-      "openEntry": "Open",
-      "play": "Play",
-      "resume": "Resume",
-      "pause": "Pause",
-      "back": "Previous sentence",
-      "forward": "Next sentence",
-      "working": "Working…",
-      "progress": "Sentence {{position}} of {{total}} ({{percent}} %)",
-      "library": "Library",
-      "finished": "Finished",
-      "reset": "Reset",
-      "remove": "Remove"
-    },
     "summary": {
       "title": "AI Summary",
       "description": "Summarize a text or document with an LLM before listening — provider is selectable (local Ollama, subscription or API via Post Process settings).",
@@ -164,19 +146,11 @@
       "deleteConfirm": "\"{{voice}}\" and its reference recording are deleted for good. To get this voice back, someone has to record it again.",
       "cancelDelete": "Keep",
       "transcribing": "Transcribing …",
-      "transcriptManualPlaceholder": "Exact transcript of the recording (automatic transcription is off — enter the text here)"
-    },
-    "voiceChanger": {
-      "title": "Voice Changer",
-      "description": "Re-speak a recording or WAV file in the selected voice (offline cascade: transcribe, then synthesize — not a live effect).",
-      "record": "Record",
-      "stopRecording": "Stop & re-speak",
-      "pickFile": "WAV file…",
-      "recording": "Recording…",
-      "working": "Working…",
-      "heard": "Heard:",
-      "export": "Export as WAV…",
-      "savedTo": "Saved: {{path}}"
+      "transcriptManualPlaceholder": "Exact transcript of the recording (automatic transcription is off — enter the text here)",
+      "previewCreate": "Create sample",
+      "previewNeedsEngine": "No sample yet — creating one starts the speech engine once.",
+      "piperOption": "{{name}} · Piper",
+      "manage": "Manage voices …"
     },
     "settingsTitle": "Read Aloud settings",
     "settings": {
@@ -216,7 +190,19 @@
       "contextMenuDescription": "Adds \"Read with Local Voice AI\" to the right-click menu of TXT/MD/PDF/DOCX files. Note: Windows offers no system-wide menu for selected text — use the clipboard hotkey for that.",
       "rollSeed": "Roll",
       "autoTranscribe": "Transcribe reference automatically",
-      "autoTranscribeDescription": "When you record or pick a reference, the app produces the transcript itself and fills it in; it stays editable. Switched off, the field stays empty and the text has to be typed — without a matching text Fish Speech learns the voice from the wrong words."
+      "autoTranscribeDescription": "When you record or pick a reference, the app produces the transcript itself and fills it in; it stays editable. Switched off, the field stays empty and the text has to be typed — without a matching text Fish Speech learns the voice from the wrong words.",
+      "engine": "Read-aloud engine",
+      "engineDescription": "Fish Speech sounds more natural and uses the graphics card. Piper runs on the CPU, starts instantly and needs no server — at the cost of a plainer voice.",
+      "engineFish": "Fish Speech (graphics card)",
+      "enginePiper": "Piper (CPU, ready at once)",
+      "piperVoice": "Piper voice",
+      "piperVoiceDescription": "Which of the downloaded Piper voices reads aloud.",
+      "piperVoiceMissing": "No Piper voice downloaded yet — get one under Models.",
+      "piperAutoLanguage": "Detect language automatically",
+      "piperAutoLanguageDescription": "Each sentence is checked for its language and read by a matching downloaded Piper voice. Without a match the selected voice reads.",
+      "autotagProvider": "Auto-tagging: provider",
+      "autotagProviderDescription": "Which language model suggests the emphasis tags: the app's default model or Claude Haiku (API key required).",
+      "autotagDevice": "Auto-tagging: device"
     },
     "saveAudio": "Save as audio…",
     "savingAudio": "Generating…",
@@ -237,7 +223,8 @@
       "collapse": "Collapse page list",
       "expand": "Expand page list",
       "deleteConfirmTitle": "Delete this page?",
-      "deleteConfirm": "“{{title}}” will be deleted with everything that belongs to it: text, translations, summary and the project folder with its files. This cannot be undone."
+      "deleteConfirm": "“{{title}}” will be deleted with everything that belongs to it: text, translations, summary and the project folder with its files. This cannot be undone.",
+      "emptyPreview": "No text yet"
     },
     "files": {
       "title": "Files",
@@ -251,10 +238,13 @@
       "rename": "Rename",
       "delete": "Delete file",
       "deleteConfirmTitle": "Delete this file?",
-      "deleteConfirm": "“{{name}}” will be deleted permanently — not moved to the recycle bin."
+      "deleteConfirm": "“{{name}}” will be deleted permanently — not moved to the recycle bin.",
+      "listen": "Listen",
+      "useText": "Use this text",
+      "defaultVoice": "Default voice"
     },
     "translateAction": "Translate — writes the translation into the second tab, plays nothing",
-    "summarizeHint": "Summarize — writes the summary into the third tab, plays nothing",
+    "summarizeHint": "Summarize — always summarizes the original and writes the summary into the third tab, plays nothing",
     "llm": {
       "busy": "Language model is working — translating or summarizing",
       "idle": "No language model loaded. Click to warm it up — otherwise it loads on the first job by itself.",
@@ -270,7 +260,8 @@
       "document": "Load document (TXT, MD, PDF, DOCX)",
       "url": "Load web page (URL)…",
       "projectFile": "Copy a file into the project files",
-      "urlDialogTitle": "Load a web page as text"
+      "urlDialogTitle": "Load a web page as text",
+      "short": "Add"
     },
     "tags": {
       "title": "Tags",
@@ -432,7 +423,17 @@
       "example3": "[laughing] You can't be serious!"
     },
     "serverStartTitle": "Start the Fish Speech server?",
-    "serverStartBody": "The server loads the speech model into graphics memory — roughly 17 GB — and takes up to two minutes depending on your settings. While it runs, translation computes on the CPU. Stop it via the same icon, or it stops itself after the configured idle time."
+    "serverStartBody": "The server loads the speech model into graphics memory — roughly 17 GB — and takes up to two minutes depending on your settings. While it runs, translation computes on the CPU. Stop it via the same icon, or it stops itself after the configured idle time.",
+    "export": {
+      "untitled": "Read-aloud"
+    },
+    "tidy": "Clean up text",
+    "tidyHint": "Clean up the text for reading – removes page numbers, headers, hyphenation and line breaks, nothing is shortened",
+    "tidying": "Cleaning up …",
+    "tidyDone": "Text cleaned up.",
+    "tidyUndo": "Undo",
+    "controls": "Playback and voice",
+    "translateShort": "Translate"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -670,6 +671,26 @@
           "en_US-lessac-medium": {
             "name": "Lessac (Medium Quality)",
             "description": "English (US). Good quality."
+          },
+          "en_US-lessac-high": {
+            "name": "Lessac (High Quality)",
+            "description": "English (US). Best quality, largest download."
+          },
+          "en_US-ryan-high": {
+            "name": "Ryan (High Quality)",
+            "description": "English (US). Male voice, best quality."
+          },
+          "en_US-amy-medium": {
+            "name": "Amy (Medium Quality)",
+            "description": "English (US). Female voice, good quality."
+          },
+          "en_GB-alan-medium": {
+            "name": "Alan (Medium Quality)",
+            "description": "English (UK). Male voice, good quality."
+          },
+          "en_GB-alba-medium": {
+            "name": "Alba (Medium Quality)",
+            "description": "English (UK, Scottish). Female voice, good quality."
           }
         },
         "status": {
@@ -683,6 +704,49 @@
         },
         "deleteConfirm": "Delete {{name}}? You will need to download it again to use it.",
         "deleteTitle": "Delete"
+      },
+      "llm": {
+        "title": "Language models in the app",
+        "description": "Run inside Local Voice AI without extra software. Activate a model with “Use” — it loads on the first request.",
+        "descriptionNoRuntime": "Install the runtime for this machine first, then download a model and activate it with “Use”.",
+        "status": {
+          "installed": "Installed",
+          "active": "Active",
+          "loaded": "In memory",
+          "downloading": "Downloading … {{percentage}} %"
+        },
+        "actions": {
+          "download": "Download",
+          "use": "Use",
+          "delete": "Remove",
+          "cancel": "Cancel"
+        },
+        "runtime": {
+          "forThisMachine": "For this machine",
+          "otherPlatform": "For another system"
+        },
+        "backend": {
+          "vulkan": "Vulkan – any GPU",
+          "cuda": "CUDA – NVIDIA only, fastest",
+          "cpu": "CPU only",
+          "metal": "Metal"
+        },
+        "tags": {
+          "schnell": "fast",
+          "klein": "small",
+          "empfohlen": "recommended",
+          "qualitaet": "high quality",
+          "zusammenfassung": "strong at summaries",
+          "mehrsprachig": "multilingual",
+          "alternative": "alternative"
+        },
+        "fit": {
+          "fits": "Should fit: needs ≈ {{need}} GB, {{free}} GB free",
+          "tight": "Tight: needs ≈ {{need}} GB with {{free}} GB free",
+          "unlikely": "Unlikely to fit: needs ≈ {{need}} GB, only {{free}} GB free",
+          "unknown": "Needs ≈ {{need}} GB — GPU memory not measurable here",
+          "rough": "(rough estimate)"
+        }
       }
     },
     "sound": {
@@ -1041,9 +1105,12 @@
     },
     "app": {
       "tabs": {
-        "app": "App",
+        "app": "General",
         "dictation": "Dictation",
-        "sound": "Sound"
+        "sound": "Microphone & sounds",
+        "readAloud": "Read aloud",
+        "postProcessing": "AI text polish",
+        "about": "About"
       },
       "groups": {
         "shortcuts": "Shortcuts",
@@ -1053,6 +1120,81 @@
         "updates": "Updates",
         "input": "Microphone",
         "feedback": "Audible feedback"
+      }
+    },
+    "llm": {
+      "active": {
+        "title": "Language model",
+        "model": "Active model",
+        "description": "Used for polishing, summaries, translation, minutes and tagging. You can also switch it in the footer.",
+        "placeholder": "Choose a model…",
+        "none": "No model released yet — add a connection below and release models."
+      },
+      "connections": {
+        "title": "Connections",
+        "empty": "No connection yet. Pick a provider below — local or cloud.",
+        "add": "Add provider…",
+        "enabled": "Connection enabled",
+        "remove": "Remove connection",
+        "removeConfirm": "Really remove",
+        "baseUrl": "Address",
+        "apiKey": "API key",
+        "loadModels": "Load models",
+        "loading": "Loading…",
+        "remoteEmpty": "The provider reported no models.",
+        "released": "Released models",
+        "releaseHint": "Only released models appear in the app's selection.",
+        "releasedCount_one": "{{count}} released",
+        "releasedCount_other": "{{count}} released",
+        "off": "off",
+        "enabledDescription": "Disabled connections keep their releases; their models just aren't offered.",
+        "budget": "Monthly budget (USD)",
+        "budgetNone": "no limit",
+        "budgetEnforced": "Hard budget",
+        "budgetEnforcedDescription": "At 100 % calls are refused instead of just warned about. Off: the footer warns from 80 %, everything keeps running."
+      },
+      "model": {
+        "active": "active",
+        "details": "Limits & prices",
+        "remove": "Withdraw release",
+        "context": "Context (tokens)",
+        "maxOutput": "Max. output (tokens)",
+        "priceIn": "Price input / M",
+        "priceOut": "Price output / M"
+      },
+      "usage": {
+        "title": "Usage",
+        "range": "Range",
+        "ranges": {
+          "today": "Today",
+          "week": "7 days",
+          "month": "This month",
+          "all": "All time"
+        },
+        "empty": "No calls in this range yet. Every language-model call — dictation, summary, translation, minutes, tags — is recorded here.",
+        "calls": "Calls",
+        "failed_one": "{{count}} failed",
+        "failed_other": "{{count}} failed",
+        "promptTokens": "Input tokens",
+        "completionTokens": "Output tokens",
+        "cost": "Cost",
+        "byDay": "Tokens per day",
+        "byModel": "By model",
+        "byPurpose": "By purpose",
+        "colName": "",
+        "colCalls": "Calls",
+        "colTokens": "Tokens",
+        "colCost": "USD",
+        "hint": "Costs use the prices set on the model at the time of the call. Without a price: 0 — local models cost nothing, unknown prices neither.",
+        "clear": "Clear history",
+        "clearConfirm": "Really clear",
+        "purpose": {
+          "post_process": "Polish dictation",
+          "minutes": "Minutes",
+          "summary": "Summary",
+          "tagging": "Tags",
+          "translation": "Translation"
+        }
       }
     }
   },
@@ -1079,7 +1221,8 @@
     "open": "Open",
     "copy": "Copy",
     "clear": "Clear",
-    "noOptionsFound": "No options found"
+    "noOptionsFound": "No options found",
+    "cancel": "Cancel"
   },
   "accessibility": {
     "permissionsDescription": "Local Voice AI needs accessibility permissions to type transcribed text.",
@@ -1326,6 +1469,59 @@
     "skip": "Skip to content",
     "recordings": "Recordings",
     "voiceStyle": "Expression & speaking style",
-    "voiceOptions": "Manage voices & more options"
+    "voiceOptions": "More read-aloud settings",
+    "voices": "Listen to & manage voices",
+    "navCollapse": "Collapse menu",
+    "navExpand": "Expand menu"
+  },
+  "llmSelector": {
+    "title": "Language model",
+    "none": "No language model",
+    "loading": "{{name}} loading …",
+    "error": "{{name}}: error",
+    "empty": "No model released — download one under Models and press “Use”, or connect a provider in Settings.",
+    "unload": "Unload from memory",
+    "budget": "Budget: {{spent}} of {{limit}} USD ({{percent}} %) this month",
+    "budgetExceeded": "Monthly budget exhausted: {{spent}} of {{limit}} USD ({{percent}} %)"
+  },
+  "resourceMeter": {
+    "ram": "RAM {{used}} / {{total}} GB",
+    "gpu": "GPU {{used}} / {{total}} GB",
+    "gpuShared": "GPU (shared) {{used}} / {{total}} GB",
+    "hint": "RAM: used / total. GPU: in use / driver budget — not “free VRAM”."
+  },
+  "help": {
+    "title": "Help",
+    "open": "Help for this page",
+    "empty": "There is no help for this area yet.",
+    "close": "Close help"
+  },
+  "sync": {
+    "groupTitle": "Account & devices",
+    "groupDescription": "Keep pages and settings in sync across your devices. End-to-end encrypted: the server cannot read your texts.",
+    "loggedOutHint": "Sign in with your portal.wolffappliedai.de account. The key is derived from your password on this device and never leaves it.",
+    "email": "Email",
+    "password": "Password",
+    "deviceName": "Device name",
+    "hubUrl": "Hub address",
+    "hubUrlPlaceholder": "https://portal.wolffappliedai.de",
+    "hubUrlToggle": "Use a different hub …",
+    "login": "Sign in",
+    "loggingIn": "Signing in …",
+    "loginFailed": "Sign-in failed",
+    "loggedIn": "Signed in – first sync is running.",
+    "loggedOut": "Signed out. Pages stay on this device.",
+    "accountDescription": "This device: {{device}} · Hub: {{hub}}",
+    "syncNow": "Sync now",
+    "logout": "Sign out",
+    "done": "Sync finished.",
+    "failed": "Sync failed",
+    "lastSuccess": "Last synced {{when}}",
+    "neverSynced": "Not synced yet",
+    "pages": "{{count}} pages",
+    "pending": "{{count}} pending",
+    "keyMismatch": "The hub holds objects sealed with a different key – was the password changed? Please sign in again on all devices.",
+    "deadLetters": "{{count}} objects rejected (too large or invalid)",
+    "devices": "Devices"
   }
 }

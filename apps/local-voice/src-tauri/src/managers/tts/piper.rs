@@ -267,6 +267,40 @@ pub struct PiperEngine {
     voice_id: Option<String>,
     /// Ok: startklar. Err: konstante Fehler-ID, was fehlt.
     resolved: Result<PiperPaths, &'static str>,
+    /// Sprache je Satz erkennen und die passende geladene Stimme nehmen
+    /// (`tts_piper_auto_language`). Eine deutsche Stimme liest englischen
+    /// Text sonst mit deutscher Aussprache — unbrauchbar.
+    auto_language: bool,
+    /// Alle geladenen Stimmen mit ihrer Sprache (`de_DE-thorsten-high` → `de`),
+    /// sortiert: die gewählte zuerst, dann nach Kennung.
+    alternatives: Vec<(String, String, PiperPaths)>,
+}
+
+/// Sprachkürzel aus der Stimmen-Kennung (`de_DE-thorsten-high` → `de`).
+pub fn language_of_voice_id(voice_id: &str) -> Option<String> {
+    let locale = voice_id.split('-').next()?;
+    let lang = locale.split('_').next()?;
+    (!lang.is_empty()).then(|| lang.to_lowercase())
+}
+
+/// Alle vollständigen Stimmen (`.onnx` + `.onnx.json`) im Stimmenordner.
+pub fn installed_voices(app_data: &Path) -> Vec<(String, String, PiperPaths)> {
+    let dir = app_data.join("tts").join("piper").join("voices");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String, PiperPaths)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let id = name.strip_suffix(".onnx")?.to_string();
+            let lang = language_of_voice_id(&id)?;
+            let paths = piper_paths(app_data, &id).ok()?;
+            Some((id, lang, paths))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
 }
 
 impl PiperEngine {
@@ -289,7 +323,54 @@ impl PiperEngine {
         Self {
             voice_id: voice_id.map(str::to_string),
             resolved,
+            auto_language: false,
+            alternatives: Vec::new(),
         }
+    }
+
+    /// Wie `resolve`, zusätzlich mit allen geladenen Stimmen als Kandidaten
+    /// für die automatische Sprachwahl.
+    pub fn resolve_auto(app_data: Option<&Path>, voice_id: Option<&str>, auto_language: bool) -> Self {
+        let mut engine = Self::resolve(app_data, voice_id);
+        engine.auto_language = auto_language;
+        if let Some(data) = app_data {
+            let mut all = installed_voices(data);
+            if let Some(chosen) = voice_id {
+                all.sort_by_key(|(id, _, _)| id != chosen);
+            }
+            engine.alternatives = all;
+        }
+        // Ohne gewählte Stimme, aber mit geladenen: die erste ist gut genug —
+        // besser als „Stimme fehlt", wenn eine im Ordner liegt.
+        if engine.resolved.is_err() && app_data.is_some_and(|d| piper_binary_path(d).is_file()) {
+            if let Some((id, _, paths)) = engine.alternatives.first().cloned() {
+                engine.voice_id = Some(id);
+                engine.resolved = Ok(paths);
+            }
+        }
+        engine
+    }
+
+    /// Die Pfade für diesen Satz: bei Auto-Sprache die geladene Stimme, deren
+    /// Sprache zum Text passt; sonst (oder ohne Treffer) die gewählte.
+    pub fn paths_for(&self, text: &str) -> Result<PiperPaths, &'static str> {
+        let chosen = self.resolved.clone()?;
+        if !self.auto_language {
+            return Ok(chosen);
+        }
+        let Some(lang) = super::lang::detect_language(text) else {
+            return Ok(chosen);
+        };
+        let chosen_lang = self.voice_id.as_deref().and_then(language_of_voice_id);
+        if chosen_lang.as_deref() == Some(lang) {
+            return Ok(chosen);
+        }
+        Ok(self
+            .alternatives
+            .iter()
+            .find(|(_, l, _)| l == lang)
+            .map(|(_, _, p)| p.clone())
+            .unwrap_or(chosen))
     }
 
     /// Warum die Engine nicht einsatzbereit ist (None = bereit) — Grundlage
@@ -311,7 +392,13 @@ impl TtsEngine for PiperEngine {
     /// `"piper/<voice_id>"` — der Parameter (die Fish-Referenzstimme) ist
     /// für Piper bedeutungslos; was den Klang bestimmt, ist das Modell.
     fn cache_tag(&self, _voice: Option<&str>) -> String {
-        format!("piper/{}", self.voice_id.as_deref().unwrap_or(""))
+        if !self.auto_language {
+            return format!("piper/{}", self.voice_id.as_deref().unwrap_or(""));
+        }
+        // Mit Auto-Sprache haengt die Stimme eines Satzes von den geladenen
+        // Stimmen ab: kommt eine dazu, muss derselbe Satz neu entstehen.
+        let langs: Vec<&str> = self.alternatives.iter().map(|(id, _, _)| id.as_str()).collect();
+        format!("piper/{}/auto:{}", self.voice_id.as_deref().unwrap_or(""), langs.join(","))
     }
 
     async fn ensure_ready(&self) -> Result<(), String> {
@@ -324,7 +411,7 @@ impl TtsEngine for PiperEngine {
     /// Ein Satz = ein Subprozess, ausgelagert auf einen Blocking-Thread —
     /// der try_wait-Timeout darf keinen Async-Worker blockieren.
     async fn synthesize(&self, req: SynthesisRequest<'_>) -> Result<Vec<u8>, String> {
-        let paths = self.resolved.clone().map_err(str::to_string)?;
+        let paths = self.paths_for(req.text).map_err(str::to_string)?;
         let text = req.text.to_string();
         let speed = req.speed;
         tokio::task::spawn_blocking(move || run_piper_blocking(&paths, &text, speed, PIPER_TIMEOUT))
@@ -403,6 +490,31 @@ mod tests {
         assert_eq!(paths.binary, piper_binary_path(dir.path()));
         assert!(paths.model.ends_with("eva.onnx"));
         assert!(paths.config.ends_with("eva.onnx.json"));
+    }
+
+    #[test]
+    fn auto_sprache_nimmt_die_stimme_der_erkannten_sprache() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = piper_binary_path(dir.path());
+        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        std::fs::write(&bin, b"exe").unwrap();
+        for id in ["de_DE-thorsten-high", "en_US-lessac-medium"] {
+            let (m, c) = piper_voice_paths(dir.path(), id);
+            std::fs::create_dir_all(m.parent().unwrap()).unwrap();
+            std::fs::write(&m, b"onnx").unwrap();
+            std::fs::write(&c, b"{}").unwrap();
+        }
+        let e = PiperEngine::resolve_auto(Some(dir.path()), Some("de_DE-thorsten-high"), true);
+        assert!(e.paths_for("It was a quiet evening in the hills.").unwrap().model.ends_with("en_US-lessac-medium.onnx"));
+        assert!(e.paths_for("Es war ein ruhiger Abend über den Hügeln.").unwrap().model.ends_with("de_DE-thorsten-high.onnx"));
+        assert!(e.paths_for("Luminara").unwrap().model.ends_with("de_DE-thorsten-high.onnx"), "unklar = gewaehlte Stimme");
+        // Ohne Auto-Sprache bleibt es bei der Wahl, egal was der Text sagt.
+        let fest = PiperEngine::resolve_auto(Some(dir.path()), Some("de_DE-thorsten-high"), false);
+        assert!(fest.paths_for("It was a quiet evening in the hills.").unwrap().model.ends_with("de_DE-thorsten-high.onnx"));
+        assert_ne!(e.cache_tag(None), fest.cache_tag(None));
+        // Keine Stimme gewaehlt, aber geladen: die erste springt ein.
+        let ohne = PiperEngine::resolve_auto(Some(dir.path()), None, true);
+        assert!(ohne.unavailable_reason().is_none());
     }
 
     #[test]
@@ -617,6 +729,8 @@ mod tests {
         let ready = PiperEngine {
             voice_id: Some("eva".into()),
             resolved: Ok(fake_paths(dir.path(), Fake::Ok)),
+            auto_language: false,
+            alternatives: Vec::new(),
         };
         ready.ensure_ready().await.unwrap();
         let req = SynthesisRequest {

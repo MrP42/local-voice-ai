@@ -392,8 +392,27 @@ textarea:focus::-webkit-resizer {
   overflow-y: auto;
   gap: 20px;
 }
-.workspace-nav__brand {
-  padding: 0 10px;
+/* Der Einklapp-Schalter ist ein Eintrag wie die anderen, nur leiser:
+   er gehoert zur Leiste, nicht zu den Bereichen. */
+.workspace-nav__toggle {
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  margin-top: 4px;
+}
+.workspace-nav__toggle:hover {
+  color: var(--color-text);
+}
+/* Eingeklappt bleiben die Symbole, die Namen gehen. Die Breite fasst ein
+   44-Pixel-Ziel plus die Innenabstaende der Leiste — enger waere schwerer
+   zu treffen, breiter braechte keinen Platzgewinn. */
+.workspace-nav[data-collapsed="true"] {
+  width: 64px;
+}
+.workspace-nav[data-collapsed="true"] .workspace-nav__item {
+  justify-content: center;
+  gap: 0;
+}
+.workspace-nav[data-collapsed="true"] .workspace-nav__item span {
+  display: none;
 }
 .workspace-nav__primary,
 .workspace-nav__utilities {
@@ -518,8 +537,19 @@ textarea:focus::-webkit-resizer {
       color-mix(in srgb, var(--color-mid-gray) 20%, transparent);
     overflow: visible;
   }
-  .workspace-nav__brand {
+  .workspace-nav__toggle {
     display: none;
+  }
+  /* Unten als Tab-Leiste gibt es nichts einzuklappen — die Namen bleiben. */
+  .workspace-nav[data-collapsed="true"] {
+    width: 100%;
+  }
+  .workspace-nav[data-collapsed="true"] .workspace-nav__item {
+    justify-content: center;
+    gap: 2px;
+  }
+  .workspace-nav[data-collapsed="true"] .workspace-nav__item span {
+    display: block;
   }
   .workspace-nav__primary {
     flex: 4;
@@ -636,4 +666,90 @@ textarea:focus::-webkit-resizer {
 .workspace-disclosure > summary:focus-visible {
   outline: 2px solid var(--color-text);
   outline-offset: 2px;
+}
+
+/* Arbeitsflaechen mit fester Hoehe (Vorlesen): der Hauptbereich scrollt
+   nicht, die Spalten scrollen fuer sich, Kopf und Rahmen stehen. */
+.workspace-main {
+  overflow-y: auto;
+}
+.workspace-main--fill {
+  overflow: hidden;
+}
+.workspace-content--fill,
+.page-shell--fill,
+.tts-workspace--fill {
+  height: 100%;
+  min-height: 0;
+}
+.page-shell--fill > .flex-1 {
+  min-height: 0;
+}
+
+/* Vorlesen: der Editor fuellt seine Spalte; nur die textarea scrollt. Der
+   Mirror mit den Chips liegt absolut darueber und folgt der Hoehe. */
+.tts-editor__fill > .relative {
+  height: 100%;
+}
+.tts-editor__fill textarea {
+  height: 100%;
+  min-height: 160px;
+  resize: none;
+}
+
+/* Schmale Fenster und Mobilgeraete: Spalten uebereinander, die Seite
+   scrollt wieder als Ganzes, der Editor waechst mit dem Text. Dieselbe
+   Schwelle wie fuer die Seiten-/Dateileisten oben. */
+@media (max-width: 1100px) {
+  .workspace-main--fill {
+    overflow-y: auto;
+  }
+  .workspace-content--fill,
+  .page-shell--fill,
+  .tts-workspace--fill {
+    height: auto;
+  }
+  .tts-workspace > .min-w-0 {
+    flex-direction: column;
+  }
+  .tts-controls {
+    width: 100%;
+    overflow: visible;
+  }
+  .tts-editor__fill > .relative {
+    height: auto;
+  }
+  .tts-editor__fill textarea {
+    height: auto;
+    min-height: 220px;
+    resize: vertical;
+  }
+}
+
+/* Tempo als Text-Glyph in der Transportzeile: dieselbe Familie wie .mbtn,
+   nur mit Wert statt Symbol -- kein Dropdown-Rahmen. */
+.mbtn--text {
+  width: auto;
+  min-width: 2.5rem;
+  padding: 0 0.6rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 80%, transparent);
+}
+.mbtn--text:hover {
+  color: var(--color-text);
+}
+
+/* In der Bedienspalte bleibt die Transportzeile einzeilig: Tempo hinter dem
+   letzten Trenner, nicht in einer zweiten Zeile. */
+.tts-controls .mediabar {
+  flex-wrap: nowrap;
+  gap: 0.3rem;
+}
+.tts-controls .mediabar__sep {
+  margin: 0 0.1rem;
+}
+.tts-controls .mbtn {
+  --_mb-size: 2.25rem;
 }

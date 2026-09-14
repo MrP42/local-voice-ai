@@ -7,6 +7,7 @@
 
 pub mod builder;
 pub mod compile_cache;
+pub mod notes;
 pub mod dsp;
 pub mod encode;
 pub mod engine;
@@ -14,6 +15,7 @@ pub mod enhance;
 pub mod loudness;
 pub mod models;
 pub mod piper;
+pub mod lang;
 pub mod player;
 pub mod portable;
 pub mod protocol;
@@ -286,10 +288,21 @@ impl TtsCore {
     /// Ist dieser Satz (mit aktueller Stimme/Seed/Engine) bereits
     /// synthetisiert — im RAM oder auf Platte?
     pub fn has_cached(&self, text: &str) -> bool {
-        let seed = *self.seed.lock().unwrap();
         let voice = self.voice.lock().unwrap().clone();
-        let engine_tag = self.engine_cache_tag(voice.as_deref());
-        let key = WavCache::key(&engine_tag, text, seed, voice.as_deref());
+        self.has_cached_for(text, voice.as_deref())
+    }
+
+    /// Wie [`Self::has_cached`], aber fuer eine bestimmte Stimme.
+    ///
+    /// Ein Hoerspiel wechselt die Sprecher je Satz. Wer nur gegen die aktive
+    /// Stimme prueft, bekommt fuer jeden fremden Sprecher die falsche
+    /// Antwort — deshalb nimmt der Aufrufer hier genau die Stimme, mit der er
+    /// gleich auch `fetch_wav` ruft. Nur dann bilden beide denselben
+    /// Schluessel.
+    pub fn has_cached_for(&self, text: &str, voice: Option<&str>) -> bool {
+        let seed = *self.seed.lock().unwrap();
+        let engine_tag = self.engine_cache_tag(voice);
+        let key = WavCache::key(&engine_tag, text, seed, voice);
         if self.wav_cache.lock().unwrap().get(key).is_some() {
             return true;
         }
@@ -565,6 +578,15 @@ impl TtsCore {
         // Settings-Wechsel währenddessen kann keine Bytes mehr unter
         // fremdem Tag ablegen (TOCTOU-Befund aus dem A3/E1-Review).
         let engine = self.engine_snapshot();
+        // Ohne Stil-Tags (Piper) fliegen die `[…]`-Tags raus, BEVOR der
+        // Cache-Schluessel entsteht — sonst laese die Engine „calm" vor.
+        let stripped;
+        let text = if engine.caps().style_tags {
+            text
+        } else {
+            stripped = protocol::strip_tag_spans(text);
+            stripped.as_str()
+        };
         // Unveränderter Satz + gleiche Stimme/Seed/Engine → aus dem Cache,
         // ohne Server. Der Cache-Lookup bleibt VOR der Engine: was schon
         // synthetisiert ist, braucht keine Engine — egal welche.
@@ -1597,9 +1619,10 @@ impl TtsManager {
         // Dateien (Paket E3) wirken damit ohne App-Neustart.
         let kind = TtsEngineKind::from_setting(&settings.tts_engine);
         let piper_engine = (kind == TtsEngineKind::Piper).then(|| {
-            piper::PiperEngine::resolve(
+            piper::PiperEngine::resolve_auto(
                 self.data_base_dir().as_deref(),
                 settings.tts_piper_voice.as_deref(),
+                settings.tts_piper_auto_language,
             )
         });
         self.core.set_engine(kind, piper_engine);
@@ -1668,6 +1691,16 @@ impl TtsManager {
     /// Der Stil aus `<Name:Stil>` wird geparst (und damit aus dem gesprochenen
     /// Text entfernt), aber noch nicht aufgeloest — das ist Paket S5.
     fn utterances(&self, text: &str) -> Vec<Utterance> {
+        // Eine Engine ohne Stimmwechsel (Piper) darf keinen Marker sprechen,
+        // auch keinen unbekannten: alle `<…>`-Kandidaten fallen weg, der
+        // Text laeuft in der einen eingestellten Stimme.
+        let stripped;
+        let text = if self.core.engine_caps().voice_switching {
+            text
+        } else {
+            stripped = protocol::strip_speaker_markers(text);
+            stripped.as_str()
+        };
         let speakers = self.known_speakers();
         protocol::split_speaker_segments(text, &speakers)
             .into_iter()
@@ -2698,35 +2731,64 @@ impl TtsManager {
     ///
     /// Anders als `synthesize_to_file` hängt das NICHT an der aktiven Stimme —
     /// man will ja gerade die anderen hören, ohne umzuschalten.
+    /// Ablageort und Seed der Hoerprobe einer Stimme.
+    ///
+    /// Der Seed steckt im Dateinamen der Standardstimme: ein anderer Seed ist
+    /// eine andere Stimme, und die alte Probe waere die falsche Person.
+    fn demo_target(&self, voice_id: &str) -> Option<(std::path::PathBuf, i64)> {
+        let dir = self.demo_dir()?;
+        self.refresh_from_settings();
+        let seed = *self.core.seed.lock().unwrap();
+        let out = if voice_id.trim().is_empty() {
+            dir.join(format!("seed-{seed}.wav"))
+        } else {
+            dir.join(format!("{voice_id}.wav"))
+        };
+        Some((out, seed))
+    }
+
+    fn reference_mtime(&self, voice_id: &str) -> Option<std::time::SystemTime> {
+        voices::voice_sample(&self.fish_dir(), voice_id)
+            .and_then(|(wav, _)| std::fs::metadata(wav).ok())
+            .and_then(|meta| meta.modified().ok())
+    }
+
+    /// Ob die abgelegte Hoerprobe noch gilt: sie muss existieren und darf
+    /// nicht aelter sein als die Referenzaufnahme — wer eine Stimme unter
+    /// demselben Namen neu aufnimmt, soll nicht die alte hoeren.
+    fn demo_is_fresh(out: &std::path::Path, reference_mtime: &Option<std::time::SystemTime>) -> bool {
+        let Some(demo) = std::fs::metadata(out).ok().and_then(|m| m.modified().ok()) else {
+            return false;
+        };
+        match reference_mtime {
+            Some(reference) => demo >= *reference,
+            None => true,
+        }
+    }
+
+    /// Die Hoerprobe, wenn sie ohne laufende Engine abspielbar ist.
+    ///
+    /// Damit kann die Oberflaeche unterscheiden, was sofort klingt und was
+    /// erst einen Serverstart kostet — statt beide Faelle hinter demselben
+    /// Knopf zu verstecken. Startet nichts und erzeugt nichts.
+    pub fn cached_voice_demo(&self, voice_id: &str) -> Option<std::path::PathBuf> {
+        let (out, _) = self.demo_target(voice_id)?;
+        Self::demo_is_fresh(&out, &self.reference_mtime(voice_id)).then_some(out)
+    }
+
     pub async fn synthesize_voice_demo(
         &self,
         voice_id: &str,
     ) -> Result<std::path::PathBuf, String> {
-        let dir = self
-            .demo_dir()
+        let (out, seed) = self
+            .demo_target(voice_id)
             .ok_or_else(|| "Kein Ablageort für Hörproben".to_string())?;
-        // Vor der Ablagefrage, weil der Dateiname der Standardstimme ihren
-        // Seed trägt: ein anderer Seed ist eine andere Stimme.
-        self.refresh_from_settings();
-        let seed = *self.core.seed.lock().unwrap();
         // Leere Kennung = Standardstimme (Seed), die Stimme ohne Referenz.
         // Sie ist so anhörbar wie jede andere — man wählt sie ja gegen die
         // anderen aus, und das geht nur, wenn man sie auch hören kann.
         let reference = (!voice_id.trim().is_empty()).then_some(voice_id);
-        let out = match reference {
-            Some(id) => dir.join(format!("{id}.wav")),
-            None => dir.join(format!("seed-{seed}.wav")),
-        };
 
-        let reference_mtime = voices::voice_sample(&self.fish_dir(), voice_id)
-            .and_then(|(wav, _)| std::fs::metadata(wav).ok())
-            .and_then(|meta| meta.modified().ok());
-        let demo_mtime = std::fs::metadata(&out).ok().and_then(|m| m.modified().ok());
-        if let (Some(demo), Some(reference)) = (demo_mtime, reference_mtime) {
-            if demo >= reference {
-                return Ok(out);
-            }
-        } else if demo_mtime.is_some() && reference_mtime.is_none() {
+        if Self::demo_is_fresh(&out, &self.reference_mtime(voice_id)) {
             return Ok(out);
         }
 
@@ -2789,6 +2851,28 @@ impl TtsManager {
     /// vorher gehört hat. Zusammengefügt wird mit `hound`: die Teile kommen
     /// als eigenständige WAVs vom Server, und ein simples Aneinanderhängen der
     /// Bytes ergäbe eine Datei mit Kopfdaten mitten im Ton.
+    /// Steht jeder Satz des Exports schon im Cache?
+    ///
+    /// Geprueft wird mit genau den Texten und Stimmen, mit denen gleich auch
+    /// `fetch_wav` gerufen wird — Pausen herausgeloest, Text aufbereitet.
+    /// Alles andere waere geraten: ein anderer Schluessel ist ein anderer
+    /// Satz, und die Antwort waere wertlos.
+    fn export_fully_cached(&self, utterances: &[Utterance], max_chars: u32) -> bool {
+        utterances.iter().all(|(sentence, voice)| {
+            let Some(part) = protocol::prepare_text(sentence, max_chars) else {
+                return true;
+            };
+            protocol::split_pauses(&part.text)
+                .iter()
+                .all(|piece| match piece {
+                    protocol::SpeechPart::Silence(_) => true,
+                    protocol::SpeechPart::Speak(text) => {
+                        self.core.has_cached_for(text, voice.as_deref())
+                    }
+                })
+        })
+    }
+
     pub async fn speak_to_file(
         self: &Arc<Self>,
         raw: &str,
@@ -2820,9 +2904,19 @@ impl TtsManager {
         // unten läuft ohnehin über `fetch_wav` durch die aktive Engine —
         // nur der Startpfad war bis Paket E2 auf den Fish-Server verdrahtet
         // (und hätte bei Piper 180 s im Health-Timeout gehangen).
-        self.ensure_engine_ready().await?;
+        // Ein Hoerspiel, das man gerade gehoert hat, liegt Satz fuer Satz im
+        // Cache. Dann ist der Export reine Dateiarbeit, und die Engine bleibt
+        // aus — genau dafuer gibt es den Cache. Dieselbe Entscheidung trifft
+        // das Vorlesen seit jeher (`ensure_server_for`); nur der Export ging
+        // bisher jedes Mal ueber die Engine.
+        let mut engine_started = !self.export_fully_cached(&utterances, max_chars);
+        if engine_started {
+            self.ensure_engine_ready().await?;
+        } else {
+            log::info!("export served entirely from cache — no engine needed");
+        }
         self.bind_seed_voice().await;
-        let port = *self.core.port.lock().unwrap();
+        let mut port = *self.core.port.lock().unwrap();
         let seed = *self.core.seed.lock().unwrap();
 
         // Eigenes Abbruch-Flag je Lauf; ein neuer Export storniert den alten.
@@ -2845,6 +2939,9 @@ impl TtsManager {
         // geschrieben werden muss (steht erst mit dem ersten Teilstueck fest).
         let mut pending_silence_ms = 0u32;
         let mut last_spec: Option<hound::WavSpec> = None;
+        // Lage jedes Satzes in der Datei, zunaechst in geschriebenen Werten:
+        // die Abtastrate steht erst mit dem ersten Teilstueck fest.
+        let mut marks: Vec<(String, Option<String>, usize, usize)> = Vec::new();
         for (index, (sentence, voice)) in utterances.iter().enumerate() {
             if cancel.load(Ordering::Acquire) {
                 // Halbe Datei ist schlimmer als keine: sie sieht fertig aus.
@@ -2856,6 +2953,7 @@ impl TtsManager {
             let Some(part) = protocol::prepare_text(sentence, max_chars) else {
                 continue;
             };
+            let segment_start = written;
             // Pausen werden vor `fetch_wav` herausgeloest: der Server sieht
             // sie nie und kann sie deshalb auch nicht vorlesen. Die Stille
             // schreiben wir selbst als Nullsamples in den Writer.
@@ -2870,10 +2968,26 @@ impl TtsManager {
                     }
                     protocol::SpeechPart::Speak(text) => text,
                 };
-                let bytes = self
-                    .core
-                    .fetch_wav(port, seed, &text, voice.as_deref())
-                    .await?;
+                let bytes = match self.core.fetch_wav(port, seed, &text, voice.as_deref()).await
+                {
+                    Ok(bytes) => bytes,
+                    // Die Vorpruefung sagte "alles im Cache", der Abruf sagt
+                    // etwas anderes — ein verdraengter Eintrag, ein geleerter
+                    // Ordner. Dann eben doch starten, statt den Export mit
+                    // einem Fehler abzubrechen.
+                    Err(error) if !engine_started => {
+                        log::warn!(
+                            "export: Cache-Fehlschlag trotz Vorpruefung ({error}) — Engine wird nachtraeglich gestartet"
+                        );
+                        self.ensure_engine_ready().await?;
+                        engine_started = true;
+                        port = *self.core.port.lock().unwrap();
+                        self.core
+                            .fetch_wav(port, seed, &text, voice.as_deref())
+                            .await?
+                    }
+                    Err(error) => return Err(error),
+                };
                 // Dieselbe Aufbereitung wie beim Hoeren — die Datei soll
                 // klingen wie das, was man vorher gehoert hat.
                 let strength = *self.core.enhance.lock().unwrap();
@@ -2920,6 +3034,7 @@ impl TtsManager {
                 }
                 last_spec = Some(spec);
             }
+            marks.push((sentence.clone(), voice.clone(), segment_start, written));
             self.emit_export_progress(index as u32 + 1, total, false);
         }
         // Pause am Textende: mit der `spec` des letzten Teilstuecks.
@@ -2944,6 +3059,41 @@ impl TtsManager {
                 .map_err(|e| format!("could not write {out_path}: {e}"))?;
         }
         *self.core.last_used.lock().unwrap() = Instant::now();
+        // Herkunft neben die Aufnahme legen: aus welchem Text sie entstand
+        // und wer sie gesprochen hat. Ohne das ist eine spaetere Korrektur
+        // eine Suche im Gedaechtnis.
+        notes::write(
+            std::path::Path::new(out_path),
+            &notes::AudioNote {
+                text: raw.trim().to_string(),
+                voice: self.core.voice.lock().unwrap().clone(),
+                seed,
+                created_ms: notes::now_ms(),
+                // Ohne Abtastrate gibt es keine Zeitmarken — dann bleibt die
+                // Liste leer, statt falsche Zeiten zu behaupten.
+                segments: last_spec
+                    .map(|spec| {
+                        marks
+                            .iter()
+                            .map(|(text, voice, start, end)| notes::AudioSegment {
+                                text: text.clone(),
+                                voice: voice.clone(),
+                                start_ms: notes::samples_to_ms(
+                                    *start,
+                                    spec.sample_rate,
+                                    spec.channels,
+                                ),
+                                end_ms: notes::samples_to_ms(
+                                    *end,
+                                    spec.sample_rate,
+                                    spec.channels,
+                                ),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            },
+        );
         self.emit_export_progress(total, total, false);
         Ok((written, out_path.to_string()))
     }
@@ -4394,6 +4544,40 @@ mod tests {
             calls.load(Ordering::SeqCst),
             1,
             "kein weiterer Server-Request"
+        );
+    }
+
+    /// Ein Hoerspiel wechselt die Sprecher je Satz. Wer nur gegen die aktive
+    /// Stimme prueft, haelt fremde Sprecher faelschlich fuer vorhanden — und
+    /// ein Export, der daraufhin die Engine ausliesse, braeche mitten im
+    /// Stueck ab.
+    #[tokio::test]
+    async fn jede_stimme_hat_ihren_eigenen_cache_eintrag() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let port = spawn_mock(calls.clone(), bodies).await;
+        let cache_dir = tempfile::tempdir().unwrap();
+
+        let text = "Derselbe Satz, gesprochen von verschiedenen Leuten.";
+        let core = TtsCore::for_test(port);
+        *core.cache_dir.lock().unwrap() = Some(cache_dir.path().to_path_buf());
+        core.ensure_server_core().await.unwrap();
+        let seed = *core.seed.lock().unwrap();
+        core.fetch_wav(port, seed, text, Some("erzaehlerin"))
+            .await
+            .unwrap();
+
+        assert!(
+            core.has_cached_for(text, Some("erzaehlerin")),
+            "die erzeugte Stimme muss als vorhanden gelten"
+        );
+        assert!(
+            !core.has_cached_for(text, Some("leo-lausemaus")),
+            "eine andere Stimme ist ein anderer Eintrag"
+        );
+        assert!(
+            !core.has_cached_for(text, None),
+            "die Standardstimme ist ebenfalls eine andere Stimme"
         );
     }
 

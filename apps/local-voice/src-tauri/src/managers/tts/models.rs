@@ -447,7 +447,7 @@ impl TtsModelManager {
     /// Archiv liegt lokal als `<platform>.download`, dessen Endung sagt über
     /// das Format nichts aus (der Endungs-Check hier ließ auf Windows jedes
     /// ZIP in den tar.gz-Zweig laufen — „failed to iterate over archive").
-    fn extract_runtime_archive(archive_path: &Path, dest_dir: &Path, is_zip: bool) -> Result<()> {
+    pub(crate) fn extract_runtime_archive(archive_path: &Path, dest_dir: &Path, is_zip: bool) -> Result<()> {
         let temp_dir = dest_dir.with_file_name(format!(
             "{}.extracting",
             dest_dir

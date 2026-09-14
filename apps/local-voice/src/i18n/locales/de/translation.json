@@ -64,24 +64,6 @@
     "pause": "Pause",
     "resume": "Weiter",
     "sentenceProgress": "Satz {{position}}/{{total}}",
-    "reading": {
-      "title": "Bücher & Dokumente",
-      "description": "Ganze Dokumente vorlesen lassen (TXT, MD, PDF, DOCX). Der Fortschritt wird je Dokument gespeichert — jederzeit fortsetzen, auch wenn zwischendurch etwas anderes lief.",
-      "open": "Dokument öffnen…",
-      "dropHint": "Tipp: Datei einfach ins Fenster ziehen.",
-      "openEntry": "Öffnen",
-      "play": "Abspielen",
-      "resume": "Fortsetzen",
-      "pause": "Pause",
-      "back": "Satz zurück",
-      "forward": "Satz vor",
-      "working": "Arbeitet…",
-      "progress": "Satz {{position}} von {{total}} ({{percent}} %)",
-      "library": "Bibliothek",
-      "finished": "Fertig gehört",
-      "reset": "Zurücksetzen",
-      "remove": "Entfernen"
-    },
     "summary": {
       "title": "KI-Zusammenfassung",
       "description": "Text oder Dokument vor dem Anhören per LLM zusammenfassen — Provider wählbar (lokales Ollama, Subscription oder API über die Nachbearbeitungs-Einstellungen).",
@@ -164,19 +146,11 @@
       "deleteConfirm": "„{{voice}}\" wird mitsamt ihrer Referenzaufnahme endgültig gelöscht. Um sie zurückzubekommen, muss sie jemand neu einsprechen.",
       "cancelDelete": "Behalten",
       "transcribing": "Wird transkribiert …",
-      "transcriptManualPlaceholder": "Exaktes Transkript der Aufnahme (automatische Transkription ist ausgeschaltet — Text hier eintragen)"
-    },
-    "voiceChanger": {
-      "title": "Stimmwechsler",
-      "description": "Aufnahme oder WAV-Datei in der gewählten Stimme nachsprechen (Offline-Kaskade: transkribieren, dann synthetisieren — kein Live-Effekt).",
-      "record": "Aufnehmen",
-      "stopRecording": "Stopp & nachsprechen",
-      "pickFile": "WAV-Datei…",
-      "recording": "Aufnahme läuft…",
-      "working": "Arbeitet…",
-      "heard": "Verstanden:",
-      "export": "Als WAV exportieren…",
-      "savedTo": "Gespeichert: {{path}}"
+      "transcriptManualPlaceholder": "Exaktes Transkript der Aufnahme (automatische Transkription ist ausgeschaltet — Text hier eintragen)",
+      "previewCreate": "Hörprobe erzeugen",
+      "previewNeedsEngine": "Noch keine Hörprobe — Erzeugen startet einmalig die Sprach-Engine.",
+      "piperOption": "{{name}} · Piper",
+      "manage": "Stimmen verwalten …"
     },
     "settingsTitle": "Vorlesen-Einstellungen",
     "settings": {
@@ -216,7 +190,19 @@
       "contextMenuDescription": "Ergänzt „Mit Local Voice AI vorlesen“ im Rechtsklick-Menü von TXT/MD/PDF/DOCX-Dateien. Hinweis: Für markierten Text bietet Windows kein systemweites Menü — dafür gibt es den Zwischenablage-Hotkey.",
       "rollSeed": "Würfeln",
       "autoTranscribe": "Referenz automatisch transkribieren",
-      "autoTranscribeDescription": "Beim Aufnehmen oder Auswählen einer Referenz erzeugt die App das Transkript selbst und trägt es ein; es bleibt bearbeitbar. Ausgeschaltet bleibt das Feld leer und der Text muss von Hand eingegeben werden — ohne passenden Text lernt Fish Speech die Stimme am falschen Wortlaut."
+      "autoTranscribeDescription": "Beim Aufnehmen oder Auswählen einer Referenz erzeugt die App das Transkript selbst und trägt es ein; es bleibt bearbeitbar. Ausgeschaltet bleibt das Feld leer und der Text muss von Hand eingegeben werden — ohne passenden Text lernt Fish Speech die Stimme am falschen Wortlaut.",
+      "engine": "Engine fürs Vorlesen",
+      "engineDescription": "Fish Speech klingt natürlicher und nutzt die Grafikkarte. Piper läuft auf der CPU, startet sofort und braucht keinen Server — dafür klingt es schlichter.",
+      "engineFish": "Fish Speech (Grafikkarte)",
+      "enginePiper": "Piper (CPU, sofort bereit)",
+      "piperVoice": "Piper-Stimme",
+      "piperVoiceDescription": "Welche der geladenen Piper-Stimmen vorliest.",
+      "piperVoiceMissing": "Noch keine Piper-Stimme geladen — unter Modelle herunterladen.",
+      "piperAutoLanguage": "Sprache automatisch erkennen",
+      "piperAutoLanguageDescription": "Je Satz wird die Sprache erkannt und die passende geladene Piper-Stimme genommen (z. B. Englisch mit einer englischen Stimme). Ohne passende Stimme liest die gewählte.",
+      "autotagProvider": "Auto-Tagging: Anbieter",
+      "autotagProviderDescription": "Welches Sprachmodell die Betonungs-Tags vorschlägt: das Standardmodell der App oder Claude Haiku (API-Schlüssel nötig).",
+      "autotagDevice": "Auto-Tagging: Gerät"
     },
     "saveAudio": "Als Audio speichern…",
     "savingAudio": "Wird erzeugt…",
@@ -237,7 +223,8 @@
       "collapse": "Seitenliste einklappen",
       "expand": "Seitenliste ausklappen",
       "deleteConfirmTitle": "Seite löschen?",
-      "deleteConfirm": "„{{title}}“ wird mit allem gelöscht, was dazugehört: Text, Übersetzungen, Zusammenfassung und der Projektordner samt seiner Dateien. Das lässt sich nicht rückgängig machen."
+      "deleteConfirm": "„{{title}}“ wird mit allem gelöscht, was dazugehört: Text, Übersetzungen, Zusammenfassung und der Projektordner samt seiner Dateien. Das lässt sich nicht rückgängig machen.",
+      "emptyPreview": "Noch kein Text"
     },
     "files": {
       "title": "Dateien",
@@ -251,10 +238,13 @@
       "rename": "Umbenennen",
       "delete": "Datei löschen",
       "deleteConfirmTitle": "Datei löschen?",
-      "deleteConfirm": "„{{name}}“ wird endgültig gelöscht — nicht in den Papierkorb."
+      "deleteConfirm": "„{{name}}“ wird endgültig gelöscht — nicht in den Papierkorb.",
+      "listen": "Anhören",
+      "useText": "Text übernehmen",
+      "defaultVoice": "Standardstimme"
     },
     "translateAction": "Übersetzen — erzeugt die Übersetzung im zweiten Reiter, spielt nichts ab",
-    "summarizeHint": "Zusammenfassen — erzeugt die Zusammenfassung im dritten Reiter, spielt nichts ab",
+    "summarizeHint": "Zusammenfassen – fasst immer das Original zusammen und legt das Ergebnis in den dritten Reiter, spielt nichts ab",
     "llm": {
       "busy": "Sprachmodell arbeitet — übersetzt oder fasst gerade zusammen",
       "idle": "Kein Sprachmodell geladen. Klicken zum Vorwärmen — sonst lädt es beim ersten Auftrag von selbst.",
@@ -270,7 +260,8 @@
       "document": "Dokument laden (TXT, MD, PDF, DOCX)",
       "url": "Webseite laden (URL) …",
       "projectFile": "Datei zu den Projekt-Dateien kopieren",
-      "urlDialogTitle": "Webseite als Text laden"
+      "urlDialogTitle": "Webseite als Text laden",
+      "short": "Hinzufügen"
     },
     "tags": {
       "title": "Tags",
@@ -432,7 +423,17 @@
       "example3": "[laughing] Das darf doch nicht wahr sein!"
     },
     "serverStartTitle": "Fish-Speech-Server starten?",
-    "serverStartBody": "Der Server lädt das Sprachmodell in den Grafikspeicher — rund 17 GB — und braucht dafür je nach Einstellung bis zu zwei Minuten. Solange er läuft, rechnet die Übersetzung auf der CPU. Beendet wird er über dasselbe Symbol oder von selbst nach der eingestellten Leerlaufzeit."
+    "serverStartBody": "Der Server lädt das Sprachmodell in den Grafikspeicher — rund 17 GB — und braucht dafür je nach Einstellung bis zu zwei Minuten. Solange er läuft, rechnet die Übersetzung auf der CPU. Beendet wird er über dasselbe Symbol oder von selbst nach der eingestellten Leerlaufzeit.",
+    "export": {
+      "untitled": "Vorlesen"
+    },
+    "tidy": "Text aufbereiten",
+    "tidyHint": "Text fürs Vorlesen aufbereiten – Seitenzahlen, Kopfzeilen, Trennungen und Umbrüche raus, nichts wird gekürzt",
+    "tidying": "Bereite auf …",
+    "tidyDone": "Text aufbereitet.",
+    "tidyUndo": "Rückgängig",
+    "controls": "Wiedergabe und Stimme",
+    "translateShort": "Übersetzen"
   },
   "onboarding": {
     "subtitle": "Wähle ein Transkriptionsmodell, um loszulegen",
@@ -629,6 +630,26 @@
           "en_US-lessac-medium": {
             "name": "Lessac (mittlere Qualität)",
             "description": "Englisch (USA). Gute Qualität."
+          },
+          "en_US-lessac-high": {
+            "name": "Lessac (hohe Qualität)",
+            "description": "Englisch (USA). Beste Qualität, größter Download."
+          },
+          "en_US-ryan-high": {
+            "name": "Ryan (hohe Qualität)",
+            "description": "Englisch (USA). Männliche Stimme, beste Qualität."
+          },
+          "en_US-amy-medium": {
+            "name": "Amy (mittlere Qualität)",
+            "description": "Englisch (USA). Weibliche Stimme, gute Qualität."
+          },
+          "en_GB-alan-medium": {
+            "name": "Alan (mittlere Qualität)",
+            "description": "Englisch (GB). Männliche Stimme, gute Qualität."
+          },
+          "en_GB-alba-medium": {
+            "name": "Alba (mittlere Qualität)",
+            "description": "Englisch (GB, schottisch). Weibliche Stimme, gute Qualität."
           }
         },
         "status": {
@@ -642,6 +663,49 @@
         },
         "deleteConfirm": "{{name}} löschen? Du musst sie erneut herunterladen, um sie wieder zu nutzen.",
         "deleteTitle": "Löschen"
+      },
+      "llm": {
+        "title": "Sprachmodelle in der App",
+        "description": "Laufen ohne Fremdsoftware direkt in Local Voice AI. Ein Modell mit „Verwenden“ aktivieren — es wird beim ersten Auftrag geladen.",
+        "descriptionNoRuntime": "Zuerst die Laufzeit für diesen Rechner installieren, dann ein Modell laden und mit „Verwenden“ aktivieren.",
+        "status": {
+          "installed": "Installiert",
+          "active": "Aktiv",
+          "loaded": "Im Speicher",
+          "downloading": "Lädt … {{percentage}} %"
+        },
+        "actions": {
+          "download": "Laden",
+          "use": "Verwenden",
+          "delete": "Entfernen",
+          "cancel": "Abbrechen"
+        },
+        "runtime": {
+          "forThisMachine": "Für diesen Rechner",
+          "otherPlatform": "Für ein anderes System"
+        },
+        "backend": {
+          "vulkan": "Vulkan – jede Grafikkarte",
+          "cuda": "CUDA – nur NVIDIA, am schnellsten",
+          "cpu": "Nur Prozessor",
+          "metal": "Metal"
+        },
+        "tags": {
+          "schnell": "schnell",
+          "klein": "klein",
+          "empfohlen": "empfohlen",
+          "qualitaet": "hohe Qualität",
+          "zusammenfassung": "stark bei Zusammenfassungen",
+          "mehrsprachig": "mehrsprachig",
+          "alternative": "Alternative"
+        },
+        "fit": {
+          "fits": "Passt voraussichtlich: braucht ≈ {{need}} GB, frei {{free}} GB",
+          "tight": "Knapp: braucht ≈ {{need}} GB bei {{free}} GB frei",
+          "unlikely": "Passt wahrscheinlich nicht: braucht ≈ {{need}} GB, frei nur {{free}} GB",
+          "unknown": "Braucht ≈ {{need}} GB — GPU-Speicher hier nicht messbar",
+          "rough": "(grob geschätzt)"
+        }
       }
     },
     "general": {
@@ -1041,9 +1105,12 @@
     },
     "app": {
       "tabs": {
-        "app": "App",
+        "app": "Allgemein",
         "dictation": "Diktat",
-        "sound": "Ton"
+        "sound": "Mikrofon & Töne",
+        "readAloud": "Vorlesen",
+        "postProcessing": "KI-Textverbesserung",
+        "about": "Über"
       },
       "groups": {
         "shortcuts": "Tastenkürzel",
@@ -1053,6 +1120,81 @@
         "updates": "Updates",
         "input": "Mikrofon",
         "feedback": "Hörbare Rückmeldung"
+      }
+    },
+    "llm": {
+      "active": {
+        "title": "Sprachmodell",
+        "model": "Aktives Modell",
+        "description": "Wird für Nachbearbeitung, Zusammenfassung, Übersetzung, Protokoll und Tagging verwendet. Wechseln geht auch unten in der Fußleiste.",
+        "placeholder": "Modell wählen…",
+        "none": "Noch kein Modell freigegeben — unten eine Verbindung anlegen und Modelle freigeben."
+      },
+      "connections": {
+        "title": "Verbindungen",
+        "empty": "Noch keine Verbindung. Wähle unten einen Anbieter — lokal oder in der Cloud.",
+        "add": "Anbieter hinzufügen…",
+        "enabled": "Verbindung aktiv",
+        "remove": "Verbindung entfernen",
+        "removeConfirm": "Wirklich entfernen",
+        "baseUrl": "Adresse",
+        "apiKey": "API-Schlüssel",
+        "loadModels": "Modelle laden",
+        "loading": "Lädt…",
+        "remoteEmpty": "Der Anbieter hat keine Modelle gemeldet.",
+        "released": "Freigegebene Modelle",
+        "releaseHint": "Nur freigegebene Modelle erscheinen in der Auswahl der App.",
+        "releasedCount_one": "{{count}} freigegeben",
+        "releasedCount_other": "{{count}} freigegeben",
+        "off": "aus",
+        "enabledDescription": "Abgeschaltet bleibt die Verbindung samt Freigaben erhalten, ihre Modelle stehen nur nicht zur Wahl.",
+        "budget": "Monatsbudget (USD)",
+        "budgetNone": "kein Limit",
+        "budgetEnforced": "Hartes Budget",
+        "budgetEnforcedDescription": "Bei 100 % werden Aufrufe verweigert statt nur gewarnt. Aus: die Fußleiste warnt ab 80 %, alles läuft weiter."
+      },
+      "model": {
+        "active": "aktiv",
+        "details": "Limits & Preise",
+        "remove": "Freigabe zurücknehmen",
+        "context": "Kontext (Token)",
+        "maxOutput": "Max. Ausgabe (Token)",
+        "priceIn": "Preis Eingabe / Mio.",
+        "priceOut": "Preis Ausgabe / Mio."
+      },
+      "usage": {
+        "title": "Verbrauch",
+        "range": "Zeitraum",
+        "ranges": {
+          "today": "Heute",
+          "week": "7 Tage",
+          "month": "Dieser Monat",
+          "all": "Gesamt"
+        },
+        "empty": "Noch kein Aufruf im Zeitraum. Jeder Aufruf eines Sprachmodells — Diktat, Zusammenfassung, Übersetzung, Protokoll, Tags — wird hier gebucht.",
+        "calls": "Aufrufe",
+        "failed_one": "{{count}} fehlgeschlagen",
+        "failed_other": "{{count}} fehlgeschlagen",
+        "promptTokens": "Eingabe-Token",
+        "completionTokens": "Ausgabe-Token",
+        "cost": "Kosten",
+        "byDay": "Token je Tag",
+        "byModel": "Je Modell",
+        "byPurpose": "Je Zweck",
+        "colName": "",
+        "colCalls": "Aufrufe",
+        "colTokens": "Token",
+        "colCost": "USD",
+        "hint": "Kosten nach den Preisen, die zum Zeitpunkt des Aufrufs am Modell hinterlegt waren. Ohne Preis: 0 — lokale Modelle kosten nichts, unbekannte Preise auch nicht.",
+        "clear": "Verlauf löschen",
+        "clearConfirm": "Wirklich löschen",
+        "purpose": {
+          "post_process": "Diktat verbessern",
+          "minutes": "Protokoll",
+          "summary": "Zusammenfassung",
+          "tagging": "Tags",
+          "translation": "Übersetzung"
+        }
       }
     }
   },
@@ -1076,7 +1218,8 @@
     "open": "Öffnen",
     "copy": "Kopieren",
     "clear": "Leeren",
-    "noOptionsFound": "Keine Optionen gefunden"
+    "noOptionsFound": "Keine Optionen gefunden",
+    "cancel": "Abbrechen"
   },
   "accessibility": {
     "permissionsDescription": "Local Voice AI benötigt Bedienungshilfen-Berechtigungen, um transkribierten Text einzugeben.",
@@ -1326,6 +1469,59 @@
     "skip": "Zum Inhalt",
     "recordings": "Aufnahmen",
     "voiceStyle": "Ausdruck & Sprechstil",
-    "voiceOptions": "Stimmen verwalten & weitere Optionen"
+    "voiceOptions": "Weitere Einstellungen zum Vorlesen",
+    "voices": "Stimmen anhören & verwalten",
+    "navCollapse": "Menü einklappen",
+    "navExpand": "Menü ausklappen"
+  },
+  "llmSelector": {
+    "title": "Sprachmodell",
+    "none": "Kein Sprachmodell",
+    "loading": "{{name}} lädt …",
+    "error": "{{name}}: Fehler",
+    "empty": "Kein Modell freigegeben — unter Modelle ein Sprachmodell laden und „Verwenden“, oder in den Einstellungen einen Anbieter verbinden.",
+    "unload": "Aus dem Speicher entladen",
+    "budget": "Budget: {{spent}} von {{limit}} USD ({{percent}} %) in diesem Monat",
+    "budgetExceeded": "Monatsbudget ausgeschöpft: {{spent}} von {{limit}} USD ({{percent}} %)"
+  },
+  "resourceMeter": {
+    "ram": "RAM {{used}} / {{total}} GB",
+    "gpu": "GPU {{used}} / {{total}} GB",
+    "gpuShared": "GPU (gemeinsam) {{used}} / {{total}} GB",
+    "hint": "RAM: verwendet / gesamt. GPU: belegt / Budget des Treibers — kein „freier VRAM“."
+  },
+  "help": {
+    "title": "Hilfe",
+    "open": "Hilfe zu dieser Seite",
+    "empty": "Für diesen Bereich gibt es noch keine Hilfe.",
+    "close": "Hilfe schließen"
+  },
+  "sync": {
+    "groupTitle": "Konto & Geräte",
+    "groupDescription": "Seiten und Einstellungen zwischen Ihren Geräten abgleichen. Ende-zu-Ende verschlüsselt: der Server kann Ihre Texte nicht lesen.",
+    "loggedOutHint": "Mit dem Konto von portal.wolffappliedai.de anmelden. Der Schlüssel entsteht aus Ihrem Passwort auf diesem Gerät und verlässt es nicht.",
+    "email": "E-Mail",
+    "password": "Passwort",
+    "deviceName": "Gerätename",
+    "hubUrl": "Hub-Adresse",
+    "hubUrlPlaceholder": "https://portal.wolffappliedai.de",
+    "hubUrlToggle": "Anderen Hub verwenden …",
+    "login": "Anmelden",
+    "loggingIn": "Anmelden …",
+    "loginFailed": "Anmeldung fehlgeschlagen",
+    "loggedIn": "Angemeldet – der erste Abgleich läuft.",
+    "loggedOut": "Abgemeldet. Die Seiten bleiben auf diesem Gerät.",
+    "accountDescription": "Dieses Gerät: {{device}} · Hub: {{hub}}",
+    "syncNow": "Jetzt abgleichen",
+    "logout": "Abmelden",
+    "done": "Abgleich fertig.",
+    "failed": "Abgleich fehlgeschlagen",
+    "lastSuccess": "Zuletzt abgeglichen {{when}}",
+    "neverSynced": "Noch nicht abgeglichen",
+    "pages": "{{count}} Seiten",
+    "pending": "{{count}} ausstehend",
+    "keyMismatch": "Der Hub trägt Objekte mit einem anderen Schlüssel – wurde das Passwort geändert? Bitte auf allen Geräten neu anmelden.",
+    "deadLetters": "{{count}} Objekte abgewiesen (zu groß oder ungültig)",
+    "devices": "Geräte"
   }
 }

@@ -3,12 +3,17 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { commands, type PageInfo, type TtsStatus } from "@/bindings";
+import { exportFileName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
-import { VoicesCard } from "./VoicesCard";
-import { FilesSidebar, PagesSidebar } from "./WorkspaceSidebars";
-import { VoiceChangerCard } from "./VoiceChangerCard";
+import {
+  FilesSidebar,
+  PagesSidebar,
+  isRightTab,
+  type RightTab,
+} from "./WorkspaceSidebars";
 import { SettingsGroup } from "../../ui/SettingsGroup";
+import { PageShell } from "../../ui/PageShell";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
@@ -16,7 +21,6 @@ import { Dialog } from "../../ui/Dialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
-import { ReadingCard } from "./ReadingCard";
 import {
   TtsChipEditor,
   type ChipEditorInsertApi,
@@ -35,15 +39,15 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import {
   BrainCircuit,
-  Dices,
+  HelpCircle,
   Download,
   FilePlus2,
   FileText,
   Languages,
   Link,
   Mic,
+  Sparkles,
   Plus,
-  Save,
   Server,
   Upload,
 } from "lucide-react";
@@ -51,7 +55,11 @@ import {
 /// Abspieltempo der Transportleiste. Bewusst grob gestuft: feiner regelt der
 /// Schieber in den Einstellungen, hier will man im Hoeren einmal schneller
 /// oder langsamer stellen, nicht justieren.
-const SPEEDS = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+/// Tempostufen der Transportleiste. 0,5x ist dabei, seit der feinstufige
+/// Regler aus den Einstellungen entfallen ist: dieselbe Einstellung an zwei
+/// Orten war eine Dublette, aber der langsamste Wert soll bleiben.
+const SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+const speedLabel = (value: number) => `${value.toFixed(2).replace(".", ",")}\u00d7`;
 
 /// Erlaubte MP3-Bitraten (kbit/s) — dieselben vier Stufen wie in
 /// `settings.rs`; mehr Stufen muesste die Oberflaeche auch erklaeren.
@@ -122,17 +130,26 @@ export const TtsSettings = () => {
     "tts.activePage",
     "",
   );
-  // Beide Seitenspalten starten eingeklappt: der Lesetext ist die Arbeit,
-  // die Spalten sind Navigation. Wer sie aufklappt, behaelt das (persistent).
-  // ".v2"-Schluessel: der alte Schluessel hat bei jedem Bestandsnutzer "0"
-  // persistiert — ohne Umbenennung saehe niemand den neuen Default.
+  // Beide Seitenspalten starten offen. Eingeklappt zeigten sie nur ein
+  // 18-Pixel-Symbol, und wer sie nie aufklappte, hielt sie fuer Reiter ohne
+  // Funktion — obwohl darin die Arbeitsblaetter und die erzeugten Aufnahmen
+  // liegen. Wer sie zuklappt, behaelt das (persistent).
+  // ".v3"-Schluessel: die vorherigen Schluessel haben bei Bestandsnutzern den
+  // alten Wert persistiert — ohne Umbenennung saehe niemand den neuen Default.
   const [pagesCollapsed, setPagesCollapsed] = usePersistentState<string>(
-    "tts.pagesCollapsed.v2",
-    "1",
+    "tts.pagesCollapsed.v3",
+    "0",
   );
   const [filesCollapsed, setFilesCollapsed] = usePersistentState<string>(
-    "tts.filesCollapsed.v2",
-    "1",
+    "tts.filesCollapsed.v3",
+    "0",
+  );
+  // Rechte Leiste: Dateien oder Hilfe. Die Hilfe ist ein Reiter derselben
+  // Leiste, kein Fenster — sie soll neben dem Text stehen, nicht davor.
+  const [rightTab, setRightTab] = usePersistentState<RightTab>(
+    "tts.rightTab",
+    "files",
+    isRightTab,
   );
   /** Erst nach dem Laden einer Seite darf gespeichert werden — sonst
    *  ueberschriebe der leere Anfangszustand den echten. */
@@ -146,12 +163,11 @@ export const TtsSettings = () => {
   /** Alle Referenzstimmen — fuer das Dropdown an der Transportleiste. */
   const [voices, setVoices] = useState<string[]>([]);
   /** Dialog: die aktuelle Seed-Stimme unter einem Namen sichern. */
-  const [saveSeedOpen, setSaveSeedOpen] = useState(false);
-  const [seedName, setSeedName] = useState("");
-  const [savingSeed, setSavingSeed] = useState(false);
   /** Zusammenfassung des Originals — dritter Reiter. */
   const [summary, setSummary] = useState<string>("");
   const [summarizing, setSummarizing] = useState(false);
+  const [tidying, setTidying] = useState(false);
+  const [speedOpen, setSpeedOpen] = useState(false);
   const [sumLength, setSumLength] = usePersistentState<string>(
     "tts.summary.length",
     "mittel",
@@ -173,6 +189,11 @@ export const TtsSettings = () => {
   const [tab, setTab] = useState<"original" | "translation" | "summary">(
     "original",
   );
+  // Stimme je Reiter, gespeichert mit der Seite (state.json): das Original
+  // liest Thorsten, die Uebersetzung Lessac -- ohne dass man beim Umschalten
+  // jedes Mal neu waehlt. Werte wie im Dropdown: "@default", "<fish-id>",
+  // "piper:<id>". Fehlt ein Eintrag, bleibt die zuletzt gewaehlte Stimme.
+  const [tabVoices, setTabVoices] = useState<Record<string, string>>({});
   const [translation, setTranslation] = useState<string | null>(null);
   const [translating, setTranslating] = useState(false);
   const [dictating, setDictating] = useState(false);
@@ -358,10 +379,14 @@ export const TtsSettings = () => {
             summary?: string;
             sourceUrl?: string;
             tab?: string;
+            voices?: Record<string, string>;
           };
           setText(state.text ?? "");
           setSummary(state.summary ?? "");
           setSourceUrl(state.sourceUrl ?? "");
+          setTabVoices(
+            state.voices && typeof state.voices === "object" ? state.voices : {},
+          );
           setTab(
             state.tab === "translation" || state.tab === "summary"
               ? state.tab
@@ -384,6 +409,7 @@ export const TtsSettings = () => {
         setText(legacy("tts.text"));
         setSummary(legacy("tts.summary"));
         setSourceUrl(legacy("tts.summary.url"));
+        setTabVoices({});
         setTab("original");
       }
       setTranslation(null);
@@ -391,18 +417,36 @@ export const TtsSettings = () => {
     });
   }, [activePage]);
 
+  // Ein anderes Geraet hat Seiten geschickt: Liste neu laden.
+  useEffect(() => {
+    const unlisten = listen("sync-changed", () => {
+      void reloadPages();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [reloadPages]);
+
   // Arbeitsstand sichern — gebuendelt, eine halbe Sekunde nach der letzten
   // Aenderung. Jeder Tastendruck einzeln waere ein Schreibzugriff zu viel.
   useEffect(() => {
     if (!activePage || !pageLoaded.current) return;
     const handle = window.setTimeout(() => {
-      void commands.pageStateSave(
-        activePage,
-        JSON.stringify({ text, summary, sourceUrl, tab }),
-      );
+      void commands
+        .pageStateSave(
+          activePage,
+          JSON.stringify({ text, summary, sourceUrl, tab, voices: tabVoices }),
+        )
+        // Die Seitenliste zeigt Vorschau und Zeitpunkt — die stammen aus
+        // genau dieser Datei und sollen nicht erst beim naechsten Start
+        // stimmen. Und der Geraete-Sync soll die Aenderung zeitnah sehen.
+        .then(() => {
+          void reloadPages();
+          void commands.syncTouch();
+        });
     }, 500);
     return () => window.clearTimeout(handle);
-  }, [activePage, text, summary, sourceUrl, tab]);
+  }, [activePage, text, summary, sourceUrl, tab, tabVoices]);
 
   // Sprachmodell-Anzeige: Ereignis waehrend der Uebersetzung, dazu eine
   // Abfrage alle zehn Sekunden — billig (lokaler Aufruf mit kurzem Timeout)
@@ -564,6 +608,18 @@ export const TtsSettings = () => {
    * only played. Goes through the same segmentation as playback, so the file
    * sounds like what you heard.
    */
+  /**
+   * Dateiname des naechsten Exports, aus Titel des Arbeitsblatts und
+   * Zeitpunkt. Die Namensbildung selbst steht in `exportName.ts` — dort ist
+   * sie ohne Oberflaeche pruefbar.
+   */
+  const nextExportName = (ext: string) =>
+    exportFileName(
+      pages.find((page) => page.id === activePage)?.title,
+      t("tts.export.untitled"),
+      ext,
+    );
+
   const saveSpokenAudio = async () => {
     setLastError(null);
     // Der Speichern-Dialog schlaegt den Projektordner der Seite vor: dort
@@ -577,10 +633,12 @@ export const TtsSettings = () => {
     const format = (getSetting("tts_export_format") ?? "wav").toLowerCase();
     const ext = format === "mp3" ? "mp3" : "wav";
     const filterName = ext === "mp3" ? "MP3" : "WAV";
-    let defaultPath = `vorlesen.${ext}`;
+    let defaultPath = nextExportName(ext);
     if (activePage) {
       const dir = await commands.pageDir(activePage);
-      if (dir.status === "ok") defaultPath = `${dir.data}\\vorlesen.${ext}`;
+      if (dir.status === "ok") {
+        defaultPath = `${dir.data}\\${nextExportName(ext)}`;
+      }
     }
     const target = await save({
       filters: [{ name: filterName, extensions: [ext] }],
@@ -623,6 +681,94 @@ export const TtsSettings = () => {
     !speaking &&
     speakProgress !== null &&
     speakProgress.position < speakProgress.total;
+
+  // Heruntergeladene Piper-Stimmen. Nur sie kann Piper vorlesen; die Liste
+  // kommt aus demselben Download-Verzeichnis, das die Modellseite fuellt.
+  const [piperVoices, setPiperVoices] = useState<
+    { id: string; name: string; language: string | null }[]
+  >([]);
+  useEffect(() => {
+    void commands.ttsListDownloads().then((result) => {
+      if (result.status !== "ok") return;
+      // Faellt die Abfrage aus, bleibt die Liste leer statt undefiniert —
+      // ein fehlender Rueckgabewert riss sonst die ganze Vorlesen-Seite mit.
+      setPiperVoices(
+        (result.data ?? [])
+          .filter((entry) => entry.kind === "voice" && entry.is_downloaded)
+          .map((entry) => ({
+            id: entry.id,
+            name: entry.name,
+            language: entry.language,
+          })),
+      );
+    });
+  }, []);
+
+  /* Der Wert des Stimmen-Dropdowns aus den Einstellungen: Piper-Stimme als
+     "piper:<id>", sonst Fish-Stimme oder Standard. */
+  const voiceValue =
+    (getSetting("tts_engine") ?? "fish") === "piper"
+      ? `piper:${getSetting("tts_piper_voice") ?? ""}`
+      : (getSetting("tts_voice") ?? "@default");
+
+  /* Eine Dropdown-Wahl in die Einstellungen schreiben: Piper-Stimme schaltet
+     die Engine um, eine Fish-Stimme schaltet zurueck. */
+  const applyVoiceValue = useCallback(
+    (value: string) => {
+      if (value.startsWith("piper:")) {
+        void updateSetting("tts_piper_voice", value.slice(6));
+        void updateSetting("tts_engine", "piper");
+        return;
+      }
+      if ((getSetting("tts_engine") ?? "fish") === "piper") {
+        void updateSetting("tts_engine", "fish");
+      }
+      void updateSetting("tts_voice", value === "@default" ? null : value);
+    },
+    [getSetting, updateSetting],
+  );
+
+  // Reiterwechsel: die fuer diesen Reiter gemerkte Stimme wird aktiv.
+  useEffect(() => {
+    const wanted = tabVoices[tab];
+    if (wanted && wanted !== voiceValue) applyVoiceValue(wanted);
+    // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
+    // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
+  }, [tab, tabVoices, applyVoiceValue]);
+
+  /* Beschriftung einer Piper-Stimme in der Auswahl: Name, Sprache, Qualitaet
+     kurz -- "Thorsten · Deutsch · HQ". Die Sprache steht IMMER dabei: am Namen
+     allein erkennt niemand, ob eine Stimme Deutsch oder Englisch spricht, und
+     genau davon haengt ab, ob sie brauchbar klingt. */
+  const piperVoiceLabel = useCallback(
+    (voice: { id: string; name: string; language: string | null }) => {
+      const localized = t(`settings.models.ttsVoices.voices.${voice.id}.name`, {
+        defaultValue: voice.name,
+      });
+      const base = localized.replace(/\s*\(.*\)\s*$/, "").trim() || voice.id;
+      let language = voice.language ?? "";
+      try {
+        if (language) {
+          language =
+            new Intl.DisplayNames([uiLang], { type: "language" }).of(language) ??
+            language;
+        }
+      } catch {
+        /* unbekanntes Kuerzel: roh anzeigen */
+      }
+      const quality = voice.id.endsWith("-high")
+        ? "HQ"
+        : voice.id.endsWith("-medium")
+          ? "MQ"
+          : voice.id.endsWith("-x_low")
+            ? "LQ-"
+            : voice.id.endsWith("-low")
+              ? "LQ"
+              : "";
+      return [base, language, quality].filter(Boolean).join(" \u00b7 ");
+    },
+    [t, uiLang],
+  );
 
   const startServer = async () => {
     setLastError(null);
@@ -842,8 +988,36 @@ export const TtsSettings = () => {
   };
 
   /**
-   * Zusammenfassen — nur zusammenfassen. Das Ergebnis liegt im dritten
-   * Reiter; das Original bleibt unangetastet, abspielen kann man beides.
+   * Text aufbereiten: Seitenzahlen, Kopf-/Fusszeilen, Trennungen und harte
+   * Umbrueche raus, Absaetze zusammensetzen -- ohne Inhalt zu verlieren. Fuer
+   * Dokumente und Zwischenablage, die nie fuers Vorlesen gedacht waren. Der
+   * alte Text bleibt hinter "Rueckgaengig" im Toast.
+   */
+  const tidyText = async () => {
+    if (!text.trim() || tidying) return;
+    setLastError(null);
+    setTidying(true);
+    const previousText = text;
+    const result = await commands.ttsTidyText(text);
+    setTidying(false);
+    if (result.status === "error") {
+      setLastError(result.error);
+      return;
+    }
+    setTab("original");
+    setText(result.data);
+    toast(t("tts.tidyDone"), {
+      action: {
+        label: t("tts.tidyUndo"),
+        onClick: () => setText(previousText),
+      },
+    });
+  };
+
+  /**
+   * Zusammenfassen — immer das ORIGINAL, nie die Uebersetzung. Das Ergebnis
+   * liegt im dritten Reiter; das Original bleibt unangetastet, abspielen
+   * kann man beides.
    */
   const summarize = async () => {
     if (!text.trim()) return;
@@ -863,25 +1037,6 @@ export const TtsSettings = () => {
     setTab("summary");
   };
 
-  /**
-   * Den aktuellen Seed als benannte Stimme sichern. Ein Seed ist fluechtig —
-   * wer weiterwuerfelt, verliert die Stimme, die ihm eben gefiel.
-   */
-  const saveSeedVoice = async () => {
-    if (!seedName.trim()) return;
-    setSavingSeed(true);
-    setLastError(null);
-    const result = await commands.ttsSaveSeedVoice(seedName.trim());
-    setSavingSeed(false);
-    if (result.status === "error") {
-      setLastError(result.error);
-      return;
-    }
-    setSaveSeedOpen(false);
-    setSeedName("");
-    window.dispatchEvent(new CustomEvent("lv-voices-changed"));
-    void updateSetting("tts_voice", result.data);
-  };
 
   /**
    * Ein Klick tut, was im jeweiligen Zustand ansteht. Beim laufenden Server
@@ -917,7 +1072,68 @@ export const TtsSettings = () => {
     starting && (startingSeconds >= 120 || status?.message === "vram");
 
   return (
-    <div className="tts-workspace w-full flex gap-4 items-start">
+    <PageShell
+      title={t("tts.title")}
+      description={t("workspace.ttsHint")}
+      fill
+      actions={
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setRightTab("help");
+              setFilesCollapsed("0");
+            }}
+            title={t("help.open")}
+            aria-label={t("help.open")}
+            className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer text-text/60 hover:text-text"
+          >
+            <HelpCircle width={20} height={20} aria-hidden="true" />
+          </button>
+        {/* Das Sprachmodell der Nachbearbeitung (Uebersetzen,
+            Zusammenfassen), in derselben Farbsprache wie der Server
+            daneben. Klick: entladen oder vorwaermen. */}
+        <button
+          type="button"
+          onClick={() => setLlmDialog(true)}
+          title={llmTitle}
+          aria-label={llmTitle}
+          className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
+        >
+          <BrainCircuit
+            width={20}
+            height={20}
+            className={llmIconClass}
+            aria-hidden="true"
+          />
+        </button>
+        {/* Ein einziges Element traegt Zustand UND Bedienung. Die Farbe
+          sagt, woran man ist — grau (aus), gelb (faehrt hoch), gruen
+          (laeuft), orange blinkend (Fehler) —, der Klick tut, was in
+          diesem Zustand ansteht. Das Wort daneben war eine zweite
+          Anzeige derselben Sache; es steht jetzt im Tooltip, wo es nur
+          stoert, wenn man es sucht. */}
+        <button
+          type="button"
+          onClick={onServerIconClick}
+          title={serverTitle}
+          aria-label={serverTitle}
+          className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
+        >
+          <Server
+            width={20}
+            height={20}
+            className={serverIconClass}
+            aria-hidden="true"
+          />
+        </button>
+        </>
+      }
+    >
+    {/* Volle Hoehe: Seiten links, Text in der Mitte, Bedienung rechts vom
+        Text, Dateien/Hilfe ganz rechts. Nur die Spalten scrollen, der Kopf
+        und der Rahmen stehen (Entscheidung Patrick 14.09. abends). */}
+    <div className="tts-workspace tts-workspace--fill w-full flex gap-4 items-stretch">
       <PagesSidebar
         pages={pages}
         activeId={activePage}
@@ -926,54 +1142,8 @@ export const TtsSettings = () => {
         onSelect={setActivePage}
         onChanged={() => void reloadPages()}
       />
-      <div className="flex-1 min-w-0 space-y-6">
-        <SettingsGroup title={t("tts.title")}>
-          <SettingContainer
-            title={t("tts.serverTitle")}
-            description={t("tts.description")}
-            grouped={true}
-            layout="horizontal"
-          >
-            <div className="flex items-center">
-              {/* Das Sprachmodell der Nachbearbeitung (Uebersetzen,
-                  Zusammenfassen), in derselben Farbsprache wie der Server
-                  daneben. Klick: entladen oder vorwaermen. */}
-              <button
-                type="button"
-                onClick={() => setLlmDialog(true)}
-                title={llmTitle}
-                aria-label={llmTitle}
-                className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
-              >
-                <BrainCircuit
-                  width={20}
-                  height={20}
-                  className={llmIconClass}
-                  aria-hidden="true"
-                />
-              </button>
-              {/* Ein einziges Element traegt Zustand UND Bedienung. Die Farbe
-                sagt, woran man ist — grau (aus), gelb (faehrt hoch), gruen
-                (laeuft), orange blinkend (Fehler) —, der Klick tut, was in
-                diesem Zustand ansteht. Das Wort daneben war eine zweite
-                Anzeige derselben Sache; es steht jetzt im Tooltip, wo es nur
-                stoert, wenn man es sucht. */}
-              <button
-                type="button"
-                onClick={onServerIconClick}
-                title={serverTitle}
-                aria-label={serverTitle}
-                className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
-              >
-                <Server
-                  width={20}
-                  height={20}
-                  className={serverIconClass}
-                  aria-hidden="true"
-                />
-              </button>
-            </div>
-          </SettingContainer>
+      <div className="flex-1 min-w-0 min-h-0 flex gap-4">
+        <div className="tts-editor flex-1 min-w-0 min-h-0 flex flex-col rounded-lg border border-mid-gray/20 bg-background overflow-hidden">
           {truncated && (
             <p className="px-4 pb-2 text-sm text-orange-400">
               {t("tts.truncatedWarning", {
@@ -995,7 +1165,7 @@ export const TtsSettings = () => {
               {lastError}
             </p>
           )}
-          <div className="px-4 pb-4 space-y-2">
+          <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2">
             {/* Zwei Reiter, ein Feld. Das Original wird nie ueberschrieben —
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
@@ -1038,6 +1208,7 @@ export const TtsSettings = () => {
             {/* Der Chip-Editor ist Drop-in für die frühere Textarea: die
                 native textarea darin bleibt die einzige Wahrheit, Tags
                 (`[…]`) erscheinen als Chips im Mirror-Overlay. */}
+            <div className="tts-editor__fill flex-1 min-h-0">
             {tab === "original" ? (
               <TtsChipEditor
                 value={text}
@@ -1045,7 +1216,6 @@ export const TtsSettings = () => {
                 providers={chipProviders}
                 insertApiRef={editorApiRef}
                 placeholder={t("tts.inputPlaceholder")}
-                rows={5}
                 className="w-full"
                 suggestions={tagSuggestions}
                 onResolveSuggestion={resolveTagSuggestion}
@@ -1057,7 +1227,6 @@ export const TtsSettings = () => {
                 providers={chipProviders}
                 insertApiRef={editorApiRef}
                 placeholder={t("tts.translationPlaceholder")}
-                rows={5}
                 className="w-full"
                 lang={targetLangCode(targetLang)}
               />
@@ -1068,17 +1237,258 @@ export const TtsSettings = () => {
                 providers={chipProviders}
                 insertApiRef={editorApiRef}
                 placeholder={t("tts.summaryPlaceholder")}
-                rows={5}
                 className="w-full"
               />
             )}
+            </div>
 
+            {/* Ausdruck & Sprechstil direkt unter dem Text: die Palette fuegt
+                an der Cursorposition ein, deshalb gehoert sie zum Feld, nicht
+                in die Bedienspalte (Entscheidung Patrick 14.09. abends). */}
+            <details className="workspace-disclosure">
+              <summary>{t("workspace.voiceStyle")}</summary>
+              <div className="space-y-3 pt-2">
+                <TagPalette
+                  uiLang={uiLang}
+                  onInsert={(tagText) =>
+                    editorApiRef.current?.insertAtCursor(tagText)
+                  }
+                  onDragInsert={(x, y, tagText) =>
+                    editorApiRef.current?.insertAtPoint?.(x, y, tagText) ??
+                    false
+                  }
+                />
+
+              </div>
+            </details>
+          </div>
+        </div>
+        {/* Bedienung rechts vom Text: Transport, Tempo, Stimme, Speichern,
+            aktueller Satz, Ausdruck & Sprechstil, Schreibregeln. Scrollt fuer
+            sich, wenn die Klappen offen sind. */}
+        <aside
+          className="tts-controls w-72 shrink-0 min-h-0 overflow-y-auto space-y-3 pe-1"
+          aria-label={t("tts.controls")}
+        >
+            <div className="flex gap-2 items-center flex-wrap">
+              {/* Transport per design system: round glyph buttons, exactly one
+                primary. Reading aloud is playback, so it gets the same family
+                as every audio player in the app — not text buttons. */}
+              {/* Vollstaendige Transportzeile nach Katalog: von der Mitte nach
+                aussen — Hauptschalter, daneben die Satzspruenge; hinter dem
+                Trenner die Aktionen, die die Wiedergabe nicht fortbewegen.
+                Statt ±15 s stehen hier Saetze: vorgelesener Text ist satzweise
+                aufgebaut, eine Sekundenmarke gibt es darin nicht. */}
+              <div className="mediabar mediabar--start">
+                <button
+                  type="button"
+                  className="mbtn"
+                  onClick={() => seekSentence(-1)}
+                  disabled={!canResume && !speaking}
+                  aria-label={t("tts.previousSentence")}
+                >
+                  <Glyph name="prev" />
+                </button>
+                <button
+                  type="button"
+                  className="mbtn mbtn--primary mbtn--lg"
+                  onClick={speaking ? pauseSpeaking : speak}
+                  disabled={!speaking && spokenText.trim().length === 0}
+                  aria-label={speaking ? t("tts.pause") : t("tts.speak")}
+                >
+                  <Glyph name={speaking ? "pause" : "play"} />
+                </button>
+                <button
+                  type="button"
+                  className="mbtn"
+                  onClick={() => seekSentence(1)}
+                  disabled={!canResume && !speaking}
+                  aria-label={t("tts.nextSentence")}
+                >
+                  <Glyph name="next" />
+                </button>
+                <span className="mediabar__sep" />
+                <button
+                  type="button"
+                  className="mbtn"
+                  onClick={stopSpeaking}
+                  aria-label={t("tts.stop")}
+                >
+                  <Glyph name="stop" />
+                </button>
+                <span className="mediabar__sep" />
+                {/* Tempo als schlanker Wert hinter dem letzten Trenner: immer
+                    sichtbar, ein Klick oeffnet die Stufen. Tempo entsteht per
+                    Resampling und zieht die Tonhoehe mit -- Bereich bewusst eng. */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    className="mbtn mbtn--text"
+                    onClick={() => setSpeedOpen((o) => !o)}
+                    title={t("tts.settings.speedDescription")}
+                    aria-label={t("tts.settings.speed")}
+                    aria-haspopup="listbox"
+                    aria-expanded={speedOpen}
+                  >
+                    {speedLabel(getSetting("tts_speed") ?? 1.0)}
+                  </button>
+                  {speedOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-30"
+                        onClick={() => setSpeedOpen(false)}
+                      />
+                      <div
+                        role="listbox"
+                        aria-label={t("tts.settings.speed")}
+                        className="absolute left-0 top-full mt-1 w-24 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
+                      >
+                        {SPEEDS.map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            role="option"
+                            aria-selected={
+                              (getSetting("tts_speed") ?? 1.0) === value
+                            }
+                            onClick={() => {
+                              void updateSetting("tts_speed", value);
+                              setSpeedOpen(false);
+                            }}
+                            className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
+                              (getSetting("tts_speed") ?? 1.0) === value
+                                ? "text-text font-medium"
+                                : "text-text/80"
+                            }`}
+                          >
+                            {speedLabel(value)}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+                {/* Die Stimme dort, wo man sie wechselt: beim Hoeren. Wechsel
+                  wirkt sofort — eine laufende Wiedergabe stellt am aktuellen
+                  Satz um. Leerer Wert = Standardstimme (Seed). Verwaltung
+                  (aufnehmen, importieren, loeschen) unten bei den
+                  Einstellungen. */}
+                <div
+                  className="w-full"
+                  title={t("tts.voices.title")}
+                  data-testid="voice-select"
+                >
+                  {/* Kennwert statt leerem Text fuer die Standardstimme:
+                      "" gilt der Select-Komponente als "nichts gewaehlt" und
+                      zeigte den Platzhalter "Select…" statt des Namens.
+                      Piper-Stimmen stehen in derselben Liste (Wert
+                      "piper:<id>"): wer eine waehlt, schaltet damit die
+                      Engine um — die Engine-Einstellung im Reiter Vorlesen
+                      bleibt als zweiter Weg bestehen. */}
+                  <Select
+                    value={voiceValue}
+                    options={[
+                      {
+                        value: "@default",
+                        label: t("tts.voices.defaultVoice"),
+                      },
+                      ...voices.map((id) => ({ value: id, label: id })),
+                      ...piperVoices.map((voice) => ({
+                        value: `piper:${voice.id}`,
+                        label: t("tts.voices.piperOption", {
+                          name: piperVoiceLabel(voice),
+                        }),
+                      })),
+                      // Kein Wert, ein Sprung: zur Stimmenverwaltung unter
+                      // Einstellungen -> Vorlesen.
+                      { value: "@manage", label: t("tts.voices.manage") },
+                    ]}
+                    onChange={(value) => {
+                      if (!value) return;
+                      if (value === "@manage") {
+                        window.localStorage.setItem(
+                          "lva.ui.settings.tab",
+                          "readaloud",
+                        );
+                        window.dispatchEvent(
+                          new CustomEvent("lv-navigate", {
+                            detail: { section: "settings" },
+                          }),
+                        );
+                        return;
+                      }
+                      applyVoiceValue(value);
+                      setTabVoices((current) => ({ ...current, [tab]: value }));
+                    }}
+                    isClearable={false}
+                  />
+                </div>
+              {/* Nur das Symbol: die Zeile ist eine Transportleiste, und ein
+                Wort neben lauter Glyphen zieht das Auge auf die unwichtigste
+                Schaltflaeche. Beschriftung wandert in title + aria-label. */}
+              <Button
+                variant="secondary"
+                className="w-full justify-start"
+                onClick={saveSpokenAudio}
+                disabled={saving || spokenText.trim().length === 0}
+                title={saving ? t("tts.savingAudio") : t("tts.saveAudio")}
+                aria-label={saving ? t("tts.savingAudio") : t("tts.saveAudio")}
+              >
+                <Download width={16} height={16} />
+                {saving ? t("tts.savingAudio") : t("tts.saveAudio")}
+              </Button>
+              {saving && (
+                <div className="flex items-center gap-2">
+                  <div className="w-32 h-1.5 rounded-full bg-mid-gray/20 overflow-hidden">
+                    <div
+                      className="h-full bg-logo-primary transition-[width] duration-200"
+                      style={{
+                        width: exportProgress?.total
+                          ? `${(exportProgress.position / exportProgress.total) * 100}%`
+                          : "0%",
+                      }}
+                    />
+                  </div>
+                  <span className="text-xs text-text/60 tabular-nums">
+                    {exportProgress?.total
+                      ? `${t("tts.sentenceProgress", {
+                          position: exportProgress.position,
+                          total: exportProgress.total,
+                        })} · ${
+                          exportEta === null
+                            ? t("tts.exportEtaComputing")
+                            : t("tts.exportEta", {
+                                time: formatEta(exportEta),
+                              })
+                        }`
+                      : t("tts.savingAudio")}
+                  </span>
+                  <button
+                    type="button"
+                    className="mbtn mbtn--sm"
+                    onClick={cancelExport}
+                    aria-label={t("tts.cancelExport")}
+                  >
+                    <Glyph name="stop" />
+                  </button>
+                </div>
+              )}
+              {speakProgress && (
+                <span className="text-xs text-text/60">
+                  {t("tts.sentenceProgress", {
+                    position: speakProgress.position,
+                    total: speakProgress.total,
+                  })}
+                </span>
+              )}
+            </div>
             {/* Je Reiter nur die Aktionen, die er braucht — und die Quellen
                 gebuendelt hinter EINEM Plus (Dokument, Webseite,
                 Projektdatei), wie man es aus KI-Apps kennt. Kein Knopf tut
                 zwei Dinge; es steht nur nichts mehr da, was der offene
                 Reiter nicht braucht. */}
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex flex-col gap-2 items-stretch border-t border-mid-gray/20 pt-3">
               {tab === "original" && (
                 <>
                   <div className="relative">
@@ -1088,8 +1498,10 @@ export const TtsSettings = () => {
                       title={t("tts.add.title")}
                       aria-label={t("tts.add.title")}
                       aria-expanded={addMenuOpen}
+                      className="w-full justify-start"
                     >
                       <Plus width={16} height={16} />
+                      {t("tts.add.short")}
                     </Button>
                     {addMenuOpen && (
                       <>
@@ -1138,6 +1550,7 @@ export const TtsSettings = () => {
                   </div>
                   <Button
                     variant="secondary"
+                    className="w-full justify-start"
                     onClick={toggleDictation}
                     title={
                       dictating ? t("tts.dictateStop") : t("tts.dictateHint")
@@ -1153,12 +1566,44 @@ export const TtsSettings = () => {
                         dictating ? "text-red-400 animate-pulse" : undefined
                       }
                     />
+                    {dictating ? t("tts.dictateStop") : t("tts.dictate")}
                   </Button>
+                  <Button
+                    variant="secondary"
+                    className="w-full justify-start"
+                    onClick={() => void tidyText()}
+                    disabled={tidying || !text.trim()}
+                    title={tidying ? t("tts.tidying") : t("tts.tidyHint")}
+                    aria-label={tidying ? t("tts.tidying") : t("tts.tidy")}
+                  >
+                    <Sparkles
+                      width={16}
+                      height={16}
+                      className={tidying ? "animate-pulse" : undefined}
+                    />
+                    {t("tts.tidy")}
+                  </Button>
+                  {/* Auto-Tagging gehoert zu den Textwerkzeugen: hier in der
+                      Bedienspalte, gestapelt (Knopf, Anbieter, Geraet). */}
+                  <div className="tts-controls__autotag">
+                {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
+                Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
+                {tab === "original" && (
+                  <AutoTagBar
+                    showSettings={false}
+                    text={text}
+                    suggestions={tagSuggestions}
+                    sourceText={tagSuggestionsSourceText}
+                    onSuggestionsChange={changeTagSuggestions}
+                    onApplyText={applyAutoTagText}
+                  />
+                )}
+                  </div>
                 </>
               )}
               {tab === "translation" && (
                 <>
-                  <div className="w-36">
+                  <div className="w-full">
                     <Select
                       value={targetLang}
                       options={TTS_TARGET_LANGS}
@@ -1170,6 +1615,7 @@ export const TtsSettings = () => {
                   </div>
                   <Button
                     variant="secondary"
+                    className="w-full justify-start"
                     onClick={translateText}
                     disabled={translating || !text.trim()}
                     title={
@@ -1180,21 +1626,9 @@ export const TtsSettings = () => {
                     aria-label={t("tts.translateAction")}
                   >
                     <Languages width={16} height={16} />
+                    {t("tts.translateShort")}
                   </Button>
                 </>
-              )}
-              {tab === "summary" && (
-                <Button
-                  variant="secondary"
-                  onClick={summarize}
-                  disabled={summarizing || !text.trim()}
-                  title={
-                    summarizing ? t("tts.summarizing") : t("tts.summarizeHint")
-                  }
-                  aria-label={t("tts.summarize")}
-                >
-                  <FileText width={16} height={16} />
-                </Button>
               )}
             </div>
 
@@ -1202,10 +1636,10 @@ export const TtsSettings = () => {
               "Zusammenfassen". Nur im Zusammenfassungs-Reiter sichtbar, wo
               die Frage sich stellt. */}
             {tab === "summary" && (
-              <div className="flex gap-3 items-center flex-wrap">
-                <label className="flex items-center gap-1 text-sm">
+              <div className="flex flex-col gap-2 items-stretch">
+                <label className="flex flex-col gap-1 text-sm">
                   {t("tts.summary.length")}
-                  <div className="w-40">
+                  <div className="w-full">
                     <Select
                       value={sumLength}
                       isClearable={false}
@@ -1224,9 +1658,9 @@ export const TtsSettings = () => {
                     />
                   </div>
                 </label>
-                <label className="flex items-center gap-1 text-sm">
+                <label className="flex flex-col gap-1 text-sm">
                   {t("tts.summary.detail")}
-                  <div className="w-40">
+                  <div className="w-full">
                     <Select
                       value={sumDetail}
                       isClearable={false}
@@ -1248,9 +1682,9 @@ export const TtsSettings = () => {
                     />
                   </div>
                 </label>
-                <label className="flex items-center gap-1 text-sm">
+                <label className="flex flex-col gap-1 text-sm">
                   {t("tts.summary.audience")}
-                  <div className="w-44">
+                  <div className="w-full">
                     <Select
                       value={sumAudience}
                       isClearable={false}
@@ -1272,188 +1706,21 @@ export const TtsSettings = () => {
                     />
                   </div>
                 </label>
+                <Button
+                  variant="secondary"
+                  className="w-full justify-start"
+                  onClick={summarize}
+                  disabled={summarizing || !text.trim()}
+                  title={
+                    summarizing ? t("tts.summarizing") : t("tts.summarizeHint")
+                  }
+                  aria-label={t("tts.summarize")}
+                >
+                  <FileText width={16} height={16} />
+                  {t("tts.summarize")}
+                </Button>
               </div>
             )}
-            <div className="flex gap-2 items-center flex-wrap">
-              {/* Transport per design system: round glyph buttons, exactly one
-                primary. Reading aloud is playback, so it gets the same family
-                as every audio player in the app — not text buttons. */}
-              {/* Vollstaendige Transportzeile nach Katalog: von der Mitte nach
-                aussen — Hauptschalter, daneben die Satzspruenge; hinter dem
-                Trenner die Aktionen, die die Wiedergabe nicht fortbewegen.
-                Statt ±15 s stehen hier Saetze: vorgelesener Text ist satzweise
-                aufgebaut, eine Sekundenmarke gibt es darin nicht. */}
-              <div className="mediabar mediabar--start">
-                <button
-                  type="button"
-                  className="mbtn"
-                  onClick={() => seekSentence(-1)}
-                  disabled={!canResume && !speaking}
-                  aria-label={t("tts.previousSentence")}
-                >
-                  <Glyph name="prev" />
-                </button>
-                <button
-                  type="button"
-                  className="mbtn mbtn--primary mbtn--lg"
-                  onClick={speaking ? pauseSpeaking : speak}
-                  disabled={!speaking && spokenText.trim().length === 0}
-                  aria-label={speaking ? t("tts.pause") : t("tts.speak")}
-                >
-                  <Glyph name={speaking ? "pause" : "play"} />
-                </button>
-                <button
-                  type="button"
-                  className="mbtn"
-                  onClick={() => seekSentence(1)}
-                  disabled={!canResume && !speaking}
-                  aria-label={t("tts.nextSentence")}
-                >
-                  <Glyph name="next" />
-                </button>
-                <span className="mediabar__sep" />
-                <button
-                  type="button"
-                  className="mbtn"
-                  onClick={stopSpeaking}
-                  aria-label={t("tts.stop")}
-                >
-                  <Glyph name="stop" />
-                </button>
-                <span className="mediabar__sep" />
-                {/* Tempo gehoert an die Transportleiste, nicht in die
-                  Einstellungen: man merkt beim Hoeren, dass es zu langsam
-                  ist, nicht vorher. Dieselbe Einstellung wie unten, nur hier
-                  erreichbar. Bereich bewusst eng — Tempo entsteht per
-                  Resampling und zieht die Tonhoehe mit. */}
-                <div
-                  className="w-28"
-                  title={t("tts.settings.speedDescription")}
-                >
-                  <Select
-                    value={String(getSetting("tts_speed") ?? 1.0)}
-                    options={SPEEDS.map((value) => ({
-                      value: String(value),
-                      label: `${value.toFixed(2).replace(".", ",")}×`,
-                    }))}
-                    onChange={(value) =>
-                      value && updateSetting("tts_speed", Number(value))
-                    }
-                    isClearable={false}
-                  />
-                </div>
-                {/* Die Stimme dort, wo man sie wechselt: beim Hoeren. Wechsel
-                  wirkt sofort — eine laufende Wiedergabe stellt am aktuellen
-                  Satz um. Leerer Wert = Standardstimme (Seed). Verwaltung
-                  (aufnehmen, importieren, loeschen) unten bei den
-                  Einstellungen. */}
-                <div className="w-40" title={t("tts.voices.title")}>
-                  {/* Kennwert statt leerem Text fuer die Standardstimme:
-                      "" gilt der Select-Komponente als "nichts gewaehlt" und
-                      zeigte den Platzhalter "Select…" statt des Namens. */}
-                  <Select
-                    value={getSetting("tts_voice") ?? "@default"}
-                    options={[
-                      {
-                        value: "@default",
-                        label: t("tts.voices.defaultVoice"),
-                      },
-                      ...voices.map((id) => ({ value: id, label: id })),
-                    ]}
-                    onChange={(value) =>
-                      updateSetting(
-                        "tts_voice",
-                        value === "@default" ? null : value,
-                      )
-                    }
-                    isClearable={false}
-                  />
-                </div>
-              </div>
-              {/* Nur das Symbol: die Zeile ist eine Transportleiste, und ein
-                Wort neben lauter Glyphen zieht das Auge auf die unwichtigste
-                Schaltflaeche. Beschriftung wandert in title + aria-label. */}
-              <Button
-                variant="secondary"
-                onClick={saveSpokenAudio}
-                disabled={saving || spokenText.trim().length === 0}
-                title={saving ? t("tts.savingAudio") : t("tts.saveAudio")}
-                aria-label={saving ? t("tts.savingAudio") : t("tts.saveAudio")}
-              >
-                <Download width={16} height={16} />
-              </Button>
-              {saving && (
-                <div className="flex items-center gap-2">
-                  <div className="w-32 h-1.5 rounded-full bg-mid-gray/20 overflow-hidden">
-                    <div
-                      className="h-full bg-logo-primary transition-[width] duration-200"
-                      style={{
-                        width: exportProgress?.total
-                          ? `${(exportProgress.position / exportProgress.total) * 100}%`
-                          : "0%",
-                      }}
-                    />
-                  </div>
-                  <span className="text-xs text-text/60 tabular-nums">
-                    {exportProgress?.total
-                      ? `${t("tts.sentenceProgress", {
-                          position: exportProgress.position,
-                          total: exportProgress.total,
-                        })} · ${
-                          exportEta === null
-                            ? t("tts.exportEtaComputing")
-                            : t("tts.exportEta", {
-                                time: formatEta(exportEta),
-                              })
-                        }`
-                      : t("tts.savingAudio")}
-                  </span>
-                  <button
-                    type="button"
-                    className="mbtn mbtn--sm"
-                    onClick={cancelExport}
-                    aria-label={t("tts.cancelExport")}
-                  >
-                    <Glyph name="stop" />
-                  </button>
-                </div>
-              )}
-              {speakProgress && (
-                <span className="text-xs text-text/60">
-                  {t("tts.sentenceProgress", {
-                    position: speakProgress.position,
-                    total: speakProgress.total,
-                  })}
-                </span>
-              )}
-            </div>
-            <details className="workspace-disclosure">
-              <summary>{t("workspace.voiceStyle")}</summary>
-              <div className="space-y-3 pt-2">
-                <TagPalette
-                  uiLang={uiLang}
-                  onInsert={(tagText) =>
-                    editorApiRef.current?.insertAtCursor(tagText)
-                  }
-                  onDragInsert={(x, y, tagText) =>
-                    editorApiRef.current?.insertAtPoint?.(x, y, tagText) ??
-                    false
-                  }
-                />
-
-                {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
-                Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
-                {tab === "original" && (
-                  <AutoTagBar
-                    text={text}
-                    suggestions={tagSuggestions}
-                    sourceText={tagSuggestionsSourceText}
-                    onSuggestionsChange={changeTagSuggestions}
-                    onApplyText={applyAutoTagText}
-                  />
-                )}
-              </div>
-            </details>
             {/* Sprecherwechsel und Tags sind Schreibregeln, keine
               Einstellungen — der aufklappbare Block steht deshalb bei dem
               Feld, in das man sie tippt. */}
@@ -1488,353 +1755,11 @@ export const TtsSettings = () => {
                 {currentSentence}
               </p>
             )}
-          </div>
-        </SettingsGroup>
+        </aside>
 
-        <ReadingCard />
 
-        <details className="workspace-disclosure">
-          <summary>{t("workspace.voiceOptions")}</summary>
-          <div className="space-y-4 pt-3">
-            <SettingsGroup title={t("tts.settingsTitle")}>
-              <ShortcutInput shortcutId="speak_clipboard" grouped={true} />
-              <Slider
-                value={getSetting("tts_volume") ?? 1.0}
-                onChange={(value) => updateSetting("tts_volume", value)}
-                min={0}
-                max={1}
-                step={0.05}
-                formatValue={(value) => `${Math.round(value * 100)}%`}
-                label={t("tts.settings.volume")}
-                description={t("tts.settings.volumeDescription")}
-                grouped={true}
-              />
-              <ToggleSwitch
-                checked={getSetting("tts_normalize") ?? true}
-                onChange={(checked) => updateSetting("tts_normalize", checked)}
-                isUpdating={isUpdating("tts_normalize")}
-                label={t("tts.settings.normalize")}
-                description={t("tts.settings.normalizeDescription")}
-                grouped={true}
-              />
-              <ToggleSwitch
-                checked={getSetting("tts_prewarm") ?? false}
-                onChange={(checked) => updateSetting("tts_prewarm", checked)}
-                isUpdating={isUpdating("tts_prewarm")}
-                label={t("tts.settings.prewarm")}
-                description={t("tts.settings.prewarmDescription")}
-                grouped={true}
-              />
-              <ToggleSwitch
-                checked={getSetting("tts_reference_auto_transcribe") ?? true}
-                onChange={(checked) =>
-                  updateSetting("tts_reference_auto_transcribe", checked)
-                }
-                isUpdating={isUpdating("tts_reference_auto_transcribe")}
-                label={t("tts.settings.autoTranscribe")}
-                description={t("tts.settings.autoTranscribeDescription")}
-                grouped={true}
-              />
-              <ToggleSwitch
-                checked={getSetting("tts_enhance") ?? true}
-                onChange={(checked) => updateSetting("tts_enhance", checked)}
-                isUpdating={isUpdating("tts_enhance")}
-                label={t("tts.settings.enhance")}
-                description={t("tts.settings.enhanceDescription")}
-                grouped={true}
-              />
-              {(getSetting("tts_enhance") ?? true) && (
-                <SettingContainer
-                  title={t("tts.settings.enhanceStrength")}
-                  description={t("tts.settings.enhanceStrengthDescription")}
-                  grouped={true}
-                  layout="horizontal"
-                >
-                  <div className="w-40">
-                    <Select
-                      value={getSetting("tts_enhance_strength") ?? "gentle"}
-                      options={[
-                        {
-                          value: "gentle",
-                          label: t("tts.settings.strengthGentle"),
-                        },
-                        {
-                          value: "medium",
-                          label: t("tts.settings.strengthMedium"),
-                        },
-                        {
-                          value: "strong",
-                          label: t("tts.settings.strengthStrong"),
-                        },
-                      ]}
-                      onChange={(value) =>
-                        value &&
-                        updateSetting(
-                          "tts_enhance_strength",
-                          value as "gentle" | "medium" | "strong",
-                        )
-                      }
-                      isClearable={false}
-                    />
-                  </div>
-                </SettingContainer>
-              )}
-              <Slider
-                value={getSetting("tts_speed") ?? 1.0}
-                onChange={(value) => updateSetting("tts_speed", value)}
-                min={0.5}
-                max={2}
-                step={0.05}
-                formatValue={(value) => `${value.toFixed(2)}×`}
-                label={t("tts.settings.speed")}
-                description={t("tts.settings.speedDescription")}
-                grouped={true}
-              />
-              <SettingContainer
-                title={t("tts.settings.exportFormat")}
-                description={t("tts.settings.exportFormatDescription")}
-                grouped={true}
-                layout="horizontal"
-              >
-                <div className="w-36">
-                  {/* Formatnamen sind Eigennamen — bewusst nicht übersetzt. */}
-                  <Select
-                    value={getSetting("tts_export_format") ?? "wav"}
-                    options={[
-                      { value: "wav", label: "WAV" },
-                      { value: "mp3", label: "MP3" },
-                      { value: "opus", label: "Opus" },
-                    ]}
-                    isClearable={false}
-                    onChange={(value) => {
-                      if (value) updateSetting("tts_export_format", value);
-                    }}
-                  />
-                </div>
-              </SettingContainer>
-              {/* Nur bei MP3: WAV kennt keine Bitrate, und Opus wird derzeit als
-              WAV geschrieben. Eine sichtbare, aber wirkungslose Einstellung
-              waere ein Versprechen, das der Export nicht haelt. */}
-              {(getSetting("tts_export_format") ?? "wav") === "mp3" && (
-                <SettingContainer
-                  title={t("tts.settings.exportBitrate")}
-                  description={t("tts.settings.exportBitrateDescription")}
-                  grouped={true}
-                  layout="horizontal"
-                >
-                  <div className="w-36">
-                    <Select
-                      value={String(getSetting("tts_export_bitrate") ?? 192)}
-                      options={EXPORT_BITRATES.map((rate) => ({
-                        value: String(rate),
-                        label: t("tts.settings.exportBitrateOption", { rate }),
-                      }))}
-                      isClearable={false}
-                      onChange={(value) => {
-                        if (value) {
-                          updateSetting("tts_export_bitrate", Number(value));
-                        }
-                      }}
-                    />
-                  </div>
-                </SettingContainer>
-              )}
-              <SettingContainer
-                title={t("tts.settings.fishDir")}
-                description={t("tts.settings.fishDirDescription")}
-                grouped={true}
-                layout="stacked"
-              >
-                <Input
-                  type="text"
-                  value={getSetting("tts_fish_dir") ?? ""}
-                  onChange={(e) =>
-                    updateSetting("tts_fish_dir", e.target.value)
-                  }
-                  disabled={isUpdating("tts_fish_dir")}
-                  className="w-full"
-                />
-              </SettingContainer>
-              <SettingContainer
-                title={t("tts.settings.port")}
-                description={t("tts.settings.portDescription")}
-                grouped={true}
-                layout="horizontal"
-              >
-                <Input
-                  type="number"
-                  min="1"
-                  max="65535"
-                  value={getSetting("tts_port") ?? 8080}
-                  onChange={(e) => {
-                    const value = parseInt(e.target.value, 10);
-                    if (!isNaN(value) && value > 0 && value <= 65535) {
-                      updateSetting("tts_port", value);
-                    }
-                  }}
-                  disabled={isUpdating("tts_port")}
-                  className="w-24"
-                />
-              </SettingContainer>
-              <SettingContainer
-                title={t("tts.settings.seed")}
-                description={t("tts.settings.seedDescription")}
-                grouped={true}
-                layout="horizontal"
-              >
-                {/* Der Seed bestimmt, wie die Standardstimme klingt. Er ist fest
-              einstellbar, damit eine gefundene Stimme wiederholbar bleibt —
-              und wuerfelbar, weil man sie nur durch Ausprobieren findet. Der
-              gewuerfelte Wert landet sichtbar im Feld; genau der ist die
-              Notiz, mit der man spaeter zurueckkommt. */}
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    value={getSetting("tts_seed") ?? 42}
-                    onChange={(e) => {
-                      const value = parseInt(e.target.value, 10);
-                      if (!isNaN(value)) updateSetting("tts_seed", value);
-                    }}
-                    disabled={isUpdating("tts_seed")}
-                    className="w-28"
-                  />
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() =>
-                      updateSetting(
-                        "tts_seed",
-                        Math.floor(Math.random() * 2_147_483_647) + 1,
-                      )
-                    }
-                    disabled={isUpdating("tts_seed")}
-                  >
-                    <Dices width={14} height={14} />
-                    {t("tts.settings.rollSeed")}
-                  </Button>
-                  {/* Ein Seed ist fluechtig: wer weiterwuerfelt, verliert die
-                Stimme, die ihm eben gefiel — und denselben Zahlenwert
-                wiederzufinden ist aussichtslos. Speichern macht daraus eine
-                benannte Stimme in der Auswahl. */}
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setSaveSeedOpen(true)}
-                    disabled={savingSeed}
-                    title={t("tts.saveSeedHint")}
-                  >
-                    <Save width={14} height={14} />
-                    {t("tts.saveSeed")}
-                  </Button>
-                </div>
-              </SettingContainer>
-              <SettingContainer
-                title={t("tts.settings.idleMinutes")}
-                description={t("tts.settings.idleMinutesDescription")}
-                grouped={true}
-                layout="horizontal"
-              >
-                <Input
-                  type="number"
-                  min="0"
-                  max="1440"
-                  value={getSetting("tts_idle_minutes") ?? 15}
-                  onChange={(e) => {
-                    const value = parseInt(e.target.value, 10);
-                    if (!isNaN(value) && value >= 0) {
-                      updateSetting("tts_idle_minutes", value);
-                    }
-                  }}
-                  disabled={isUpdating("tts_idle_minutes")}
-                  className="w-24"
-                />
-              </SettingContainer>
-              <ToggleSwitch
-                checked={getSetting("tts_compile") ?? true}
-                onChange={(checked) => updateSetting("tts_compile", checked)}
-                isUpdating={isUpdating("tts_compile")}
-                label={t("tts.settings.compile")}
-                description={t("tts.settings.compileDescription")}
-                grouped={true}
-              />
-              <ToggleSwitch
-                checked={getSetting("tts_context_menu") ?? false}
-                onChange={(checked) =>
-                  updateSetting("tts_context_menu", checked)
-                }
-                isUpdating={isUpdating("tts_context_menu")}
-                label={t("tts.settings.contextMenu")}
-                description={t("tts.settings.contextMenuDescription")}
-                grouped={true}
-              />
-              <SettingContainer
-                title={t("tts.settings.maxChars")}
-                description={t("tts.settings.maxCharsDescription")}
-                grouped={true}
-                layout="horizontal"
-              >
-                <Input
-                  type="number"
-                  min="100"
-                  max="100000"
-                  value={getSetting("tts_max_chars") ?? 5000}
-                  onChange={(e) => {
-                    const value = parseInt(e.target.value, 10);
-                    if (!isNaN(value) && value >= 100) {
-                      updateSetting("tts_max_chars", value);
-                    }
-                  }}
-                  disabled={isUpdating("tts_max_chars")}
-                  className="w-24"
-                />
-              </SettingContainer>
-            </SettingsGroup>
 
-            {/* Verwaltung der Stimmen und der Stimmwechsler gehoeren zu den
-          Einstellungen ans Ende: ausgewaehlt wird oben am Dropdown, hierher
-          kommt man zum Aufnehmen, Importieren und Loeschen. */}
-            <VoicesCard />
 
-            <VoiceChangerCard />
-          </div>
-        </details>
-
-        <Dialog
-          open={saveSeedOpen}
-          onOpenChange={(open) => {
-            setSaveSeedOpen(open);
-            if (!open) setSeedName("");
-          }}
-          title={t("tts.saveSeedTitle")}
-          closeLabel={t("tts.stopConfirmCancel")}
-          footer={
-            <>
-              <Button
-                variant="secondary"
-                onClick={() => setSaveSeedOpen(false)}
-              >
-                {t("tts.stopConfirmCancel")}
-              </Button>
-              <Button
-                onClick={saveSeedVoice}
-                disabled={savingSeed || !seedName.trim()}
-              >
-                {savingSeed ? t("tts.saveSeedBusy") : t("tts.saveSeed")}
-              </Button>
-            </>
-          }
-        >
-          <div className="space-y-2">
-            <p className="text-sm text-text/80">{t("tts.saveSeedBody")}</p>
-            <Input
-              type="text"
-              value={seedName}
-              onChange={(e) => setSeedName(e.target.value)}
-              placeholder={t("tts.saveSeedPlaceholder")}
-              className="w-full"
-            />
-          </div>
-        </Dialog>
 
         <Dialog
           open={llmDialog}
@@ -1981,7 +1906,19 @@ export const TtsSettings = () => {
         pageId={activePage}
         collapsed={filesCollapsed === "1"}
         onToggle={() => setFilesCollapsed(filesCollapsed === "1" ? "0" : "1")}
+        tab={rightTab}
+        onTabChange={setRightTab}
+        helpSection="vorlesen"
+        /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
+           falsche Zeile aendern und erneut erzeugen. Die unveraenderten
+           Saetze kommen dann aus dem Satz-Cache, nur die geaenderten gehen
+           durch die Engine — ein Hoerspiel muss dafuer nicht neu entstehen. */
+        onUseText={(value) => {
+          setTab("original");
+          setText(value);
+        }}
       />
     </div>
+    </PageShell>
   );
 };

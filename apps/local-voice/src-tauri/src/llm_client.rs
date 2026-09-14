@@ -1,3 +1,4 @@
+use crate::managers::usage::{self, Purpose, TokenUsage};
 use crate::settings::PostProcessProvider;
 use log::debug;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
@@ -47,6 +48,28 @@ struct ChatCompletionRequest {
 #[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
     choices: Vec<ChatChoice>,
+    /// Token-Zaehler, wie OpenAI, llama-server, Ollama und OpenRouter sie
+    /// liefern. Fehlt bei manchen Anbietern -- dann wird mit null gebucht.
+    #[serde(default)]
+    usage: Option<UsageBlock>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct UsageBlock {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
+}
+
+impl From<Option<UsageBlock>> for TokenUsage {
+    fn from(block: Option<UsageBlock>) -> Self {
+        let b = block.unwrap_or_default();
+        TokenUsage {
+            prompt_tokens: b.prompt_tokens,
+            completion_tokens: b.completion_tokens,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,6 +132,7 @@ fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwes
 /// Returns Ok(Some(content)) on success, Ok(None) if response has no content,
 /// or Err on actual errors (HTTP, parsing, etc.)
 pub async fn send_chat_completion(
+    purpose: Purpose,
     provider: &PostProcessProvider,
     api_key: String,
     model: &str,
@@ -117,6 +141,7 @@ pub async fn send_chat_completion(
     reasoning: Option<ReasoningConfig>,
 ) -> Result<Option<String>, String> {
     send_chat_completion_with_schema(
+        purpose,
         provider,
         api_key,
         model,
@@ -134,8 +159,12 @@ pub async fn send_chat_completion(
 /// system_prompt is used as the system message when provided
 /// reasoning_effort sets the OpenAI-style top-level field (e.g., "none", "low", "medium", "high")
 /// reasoning sets the OpenRouter-style nested object (effort + exclude)
+///
+/// `purpose` sagt dem Verbrauchs-Ledger, wofuer der Aufruf war. Jeder
+/// Aufruf wird gebucht -- auch ein gescheiterter, dann mit null Token.
 #[allow(clippy::too_many_arguments)]
 pub async fn send_chat_completion_with_schema(
+    purpose: Purpose,
     provider: &PostProcessProvider,
     api_key: String,
     model: &str,
@@ -145,7 +174,54 @@ pub async fn send_chat_completion_with_schema(
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
 ) -> Result<Option<String>, String> {
-    let base_url = provider.base_url.trim_end_matches('/');
+    // Hartes Budget: die Verweigerung ist bewusst ungebucht -- es wurde ja
+    // nichts verbraucht.
+    usage::check_budget(provider, model)?;
+    let started = std::time::Instant::now();
+    let (result, tokens) = match send_inner(
+        provider,
+        api_key,
+        model,
+        user_content,
+        system_prompt,
+        json_schema,
+        reasoning_effort,
+        reasoning,
+    )
+    .await
+    {
+        Ok((content, tokens)) => (Ok(content), tokens),
+        Err(e) => (Err(e), TokenUsage::default()),
+    };
+    let elapsed = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
+    usage::record_call(
+        purpose,
+        provider,
+        model,
+        tokens,
+        elapsed,
+        result.as_ref().map(|_| ()).map_err(|e| e.clone()),
+    );
+    result
+}
+
+/// Der eigentliche Aufruf; liefert Antwort und Token-Zaehler getrennt, damit
+/// der Aufrufer oben beides buchen kann.
+#[allow(clippy::too_many_arguments)]
+async fn send_inner(
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    user_content: String,
+    system_prompt: Option<String>,
+    json_schema: Option<Value>,
+    reasoning_effort: Option<String>,
+    reasoning: Option<ReasoningConfig>,
+) -> Result<(Option<String>, TokenUsage), String> {
+    // Fuer den lokalen Anbieter ist die Adresse erst bekannt, wenn der
+    // Server laeuft -- und der wird hier bei Bedarf gestartet.
+    let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;
+    let base_url = resolved.trim_end_matches('/');
     let url = format!("{}/chat/completions", base_url);
 
     debug!("Sending chat completion request to: {}", url);
@@ -211,10 +287,14 @@ pub async fn send_chat_completion_with_schema(
         .await
         .map_err(|e| format!("Failed to parse API response: {}", e))?;
 
-    Ok(completion
-        .choices
-        .first()
-        .and_then(|choice| choice.message.content.clone()))
+    let tokens = TokenUsage::from(completion.usage);
+    Ok((
+        completion
+            .choices
+            .first()
+            .and_then(|choice| choice.message.content.clone()),
+        tokens,
+    ))
 }
 
 /// Fetch available models from an OpenAI-compatible API
@@ -223,6 +303,11 @@ pub async fn fetch_models(
     provider: &PostProcessProvider,
     api_key: String,
 ) -> Result<Vec<String>, String> {
+    // Der lokale Anbieter listet, was auf der Platte liegt -- dafuer muss
+    // kein Server laufen, und einer ohne Modell koennte es auch nicht.
+    if crate::managers::llm::is_local(provider) {
+        return Ok(crate::managers::llm::downloaded_model_ids());
+    }
     let base_url = provider.base_url.trim_end_matches('/');
     let url = format!("{}/models", base_url);
 
@@ -310,11 +395,37 @@ pub fn ollama_native_url(base_url: &str) -> Option<String> {
 /// ohnehin je Text und Sprache auf Platte: ein Sprachwechsel zurück kostet
 /// keinen zweiten Modelllauf.
 pub async fn send_ollama_native(
+    purpose: Purpose,
+    provider: &PostProcessProvider,
     url: &str,
     model: &str,
     prompt: String,
     cpu_only: bool,
 ) -> Result<Option<String>, String> {
+    usage::check_budget(provider, model)?;
+    let started = std::time::Instant::now();
+    let (result, tokens) = match ollama_native_inner(url, model, prompt, cpu_only).await {
+        Ok((content, tokens)) => (Ok(content), tokens),
+        Err(e) => (Err(e), TokenUsage::default()),
+    };
+    let elapsed = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
+    usage::record_call(
+        purpose,
+        provider,
+        model,
+        tokens,
+        elapsed,
+        result.as_ref().map(|_| ()).map_err(|e| e.clone()),
+    );
+    result
+}
+
+async fn ollama_native_inner(
+    url: &str,
+    model: &str,
+    prompt: String,
+    cpu_only: bool,
+) -> Result<(Option<String>, TokenUsage), String> {
     let mut options = serde_json::json!({});
     if cpu_only {
         options["num_gpu"] = serde_json::json!(0);
@@ -340,11 +451,20 @@ pub async fn send_ollama_native(
         .json()
         .await
         .map_err(|e| format!("Ollama response not JSON: {e}"))?;
-    Ok(value
-        .get("message")
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .map(|s| s.to_string()))
+    // Ollamas eigene Zaehler: `prompt_eval_count` und `eval_count`.
+    let count = |key: &str| value.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+    let tokens = TokenUsage {
+        prompt_tokens: count("prompt_eval_count"),
+        completion_tokens: count("eval_count"),
+    };
+    Ok((
+        value
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .map(|s| s.to_string()),
+        tokens,
+    ))
 }
 
 /// Ein bei Ollama geladenes Modell sofort entladen (best effort).

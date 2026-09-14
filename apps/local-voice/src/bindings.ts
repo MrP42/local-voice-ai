@@ -205,6 +205,257 @@ async changeTtsEnhanceStrengthSetting(value: Strength) : Promise<Result<null, st
     else return { status: "error", error: e  as any };
 }
 },
+async llmUpsertConnection(connection: LlmConnection) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_upsert_connection", { connection }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmRemoveConnection(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_remove_connection", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmUpsertModel(model: LlmModelConfig) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_upsert_model", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmRemoveModel(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_remove_model", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmSetActiveModel(id: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_active_model", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmListRemoteModels(connectionId: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_list_remote_models", { connectionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmSetApiKey(connectionId: string, apiKey: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_api_key", { connectionId, apiKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalList() : Promise<LlmDownloadInfo[]> {
+    return await TAURI_INVOKE("llm_local_list", {  });
+},
+async llmLocalDownload(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_download", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalCancel(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_cancel", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalStatus() : Promise<LocalLlmStatus> {
+    return await TAURI_INVOKE("llm_local_status", {  });
+},
+async llmLocalStart(modelId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_start", { modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalStop() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_stop", {  }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalBackend() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_backend", {  }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalActivate(modelId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_activate", { modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async systemMemory() : Promise<Result<SystemMemory, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("system_memory") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmLocalFit(modelId: string, contextTokens: number | null) : Promise<Result<FitReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_fit", { modelId, contextTokens }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async usageSummary(range: UsageRange) : Promise<Result<UsageSummary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_summary", { range }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async usageEvents(limit: number | null, offset: number | null) : Promise<Result<UsageEvent[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_events", { limit, offset }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async usageClear() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async usageBudgetStates() : Promise<Result<BudgetState[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_budget_states") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anmelden: Schlüssel ableiten (nur lokal), Token holen, Konto speichern,
+ * Ledger leeren, ersten Lauf anstoßen.
+ */
+async syncLogin(email: string, password: string, deviceName: string, url: string | null) : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_login", { email, password, deviceName, url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Abmelden: Token im Hub widerrufen (best effort), Konto und Ledger löschen.
+ * Die Seiten bleiben auf diesem Gerät.
+ */
+async syncLogout() : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_logout") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async syncStatus() : Promise<SyncStatus> {
+    return await TAURI_INVOKE("sync_status");
+},
+/**
+ * Sofort abgleichen (Knopf „Jetzt abgleichen").
+ */
+async syncNow() : Promise<Result<SyncStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_now") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anstoß nach einem lokalen Schreiben (entprellt im Engine-Takt).
+ */
+async syncTouch() : Promise<void> {
+    await TAURI_INVOKE("sync_touch");
+},
+async syncDefaultDeviceName() : Promise<string> {
+    return await TAURI_INVOKE("sync_default_device_name");
+},
+/**
+ * Geräteliste und Zähler vom Hub (für die Konto-Gruppe).
+ */
+async syncHubStatus() : Promise<Result<HubStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_hub_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeTtsEngineSetting(value: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_engine_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeTtsPiperVoiceSetting(value: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_piper_voice_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
+ */
+async changeTtsPiperAutoLanguageSetting(value: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_piper_auto_language_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsSpeedSetting(value: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_speed_setting", { value }) };
@@ -1559,6 +1810,17 @@ async ttsVoiceDemo(voiceId: string) : Promise<Result<VoiceSample, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async pageAudioNote(id: string, name: string) : Promise<Result<AudioNote | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("page_audio_note", { id, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsVoiceDemoCached(voiceId: string) : Promise<VoiceSample | null> {
+    return await TAURI_INVOKE("tts_voice_demo_cached", { voiceId });
+},
 async ttsRecordReferenceStart() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_record_reference_start") };
@@ -1706,6 +1968,19 @@ async ttsExportFormat() : Promise<Result<string, string>> {
 async ttsSummarizeText(text: string, options: SummaryOptions) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_summarize_text", { text, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Text fürs Vorlesen aufbereiten (Seitenzahlen, Kopfzeilen, Trennungen
+ * raus; nichts kürzen). Läuft über denselben LLM-Anbieter wie das
+ * Zusammenfassen.
+ */
+async ttsTidyText(text: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_tidy_text", { text }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2078,7 +2353,7 @@ bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean
  * upgrading from before this key existed are blanked by the migration so they
  * see the current release's notes — see `apply_settings_migrations`.
  */
-whats_new_last_seen_version?: string; selected_model?: string; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
+whats_new_last_seen_version?: string; selected_model?: string; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; llm_connections?: LlmConnection[]; llm_models?: LlmModelConfig[]; llm_active_model_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
 /**
  * Emit each spoken sentence as soon as the speaker pauses, instead of
  * pasting the whole dictation in one block when recording stops.
@@ -2238,6 +2513,10 @@ tts_preview_engine?: string;
  */
 tts_piper_voice?: string | null; 
 /**
+ * Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
+ */
+tts_piper_auto_language?: boolean;
+/**
  * T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
  * Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die
  * Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
@@ -2339,6 +2618,31 @@ reset_bindings: string[] }
 export type ImportedVoice = { id: string; transcript: string }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+export type LlmDownloadKind = "runtime" | "model"
+/** Ein Eintrag der Modellseite fuer das lokale Sprachmodell: Laufzeitpaket oder Modell. */
+export type LlmDownloadInfo = { id: string; kind: LlmDownloadKind; name: string; description: string; size_mb: number; is_downloaded: boolean; is_downloading: boolean; tags: string[]; backend: string | null; for_this_platform: boolean }
+export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
+export type GpuMemory = { name: string; budget_mb: number; used_mb: number; dedicated_mb: number; shared: boolean }
+export type SystemMemory = { ram_total_mb: number; ram_used_mb: number; gpus: GpuMemory[] }
+export type FitVerdict = "fits" | "tight" | "unlikely" | "unknown"
+export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: number; total_mb: number; context_tokens: number; from_metadata: boolean }
+export type FitReport = { estimate: MemoryEstimate; free_mb: number; on_gpu: boolean; verdict: FitVerdict }
+export type LocalLlmStatus = { phase: LocalLlmPhase; model_id: string | null; backend: string | null; port: number | null; message: string | null }
+/**
+ * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter. `kind` ist die
+ * Vorlage aus `post_process_providers`; mehrere Verbindungen derselben Art sind erlaubt.
+ */
+export type LlmConnection = { id: string; kind: string; label: string; base_url: string; enabled?: boolean; monthly_budget_usd?: number | null; budget_enforced?: boolean }
+export type UsageRange = "today" | "week" | "month" | "all"
+export type UsageEvent = { id: number; ts: number; purpose: string; connection_id: string; connection_kind: string; connection_label: string; model_id: string; model_label: string; prompt_tokens: number; completion_tokens: number; price_input_per_mtok: number | null; price_output_per_mtok: number | null; cost_micro: number; duration_ms: number; ok: boolean; error: string | null }
+export type UsageBucket = { key: string; label: string; calls: number; prompt_tokens: number; completion_tokens: number; cost_micro: number }
+export type UsageSummary = { range: UsageRange; calls: number; failed: number; prompt_tokens: number; completion_tokens: number; cost_micro: number; by_model: UsageBucket[]; by_purpose: UsageBucket[]; by_day: UsageBucket[] }
+export type BudgetState = { connection_id: string; spent_micro: number; limit_micro: number | null; ratio: number | null; enforced: boolean }
+/**
+ * Ein freigegebenes Modell einer Verbindung. Nur freigegebene Modelle erscheinen in der
+ * Auswahl der App. Limits getrennt (Kontext, Eingabe, Ausgabe); Preise je Million Token.
+ */
+export type LlmModelConfig = { id: string; connection_id: string; remote_id: string; label: string; enabled?: boolean; context_limit?: number | null; max_input_tokens?: number | null; max_output_tokens?: number | null; price_input_per_mtok?: number | null; price_output_per_mtok?: number | null; tags?: string[] }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 export type Meeting = { id: string; title: string; status: string; source: string; started_at: number | null; ended_at: number | null; language: string | null; mic_audio_path: string | null; system_audio_path: string | null; duration_ms: number | null; consent_confirmed_at: number | null; audio_retention_until: number | null; 
 /**
@@ -2420,9 +2724,36 @@ export type OverlayPosition = "top" | "bottom"
  * streaming mode (that is driven purely by model capability).
  */
 export type OverlayStyle = "none" | "minimal" | "live"
+export type AudioSegment = { text: string; voice: string | null; start_ms: number; end_ms: number }
+export type AudioNote = { text: string; voice: string | null; seed: number; created_ms: number; segments: AudioSegment[] }
 export type PageFile = { name: string; size: number; modified_ms: number }
-export type PageInfo = { id: string; title: string }
+export type PageInfo = { id: string; title: string;
+/**
+ * Wann der Arbeitsstand zuletzt gespeichert wurde (Unix-Millisekunden,
+ * 0 = nie). Wird bei jeder Auflistung aus `state.json` frisch gelesen.
+ */
+modified_ms: number;
+/**
+ * Anfang des Originaltexts, damit die Seitenliste als Verlauf taugt.
+ * Best-effort aus `state.json` gelesen; fehlt das Feld, bleibt sie leer.
+ */
+preview: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
+export type HubDevice = { device: string; last_push: string | null }
+export type HubStatus = { hub_seq: number; objects: { [key in string]: number }; devices: HubDevice[] }
+export type SyncStatus = { connected: boolean; user_email: string | null; device_name: string | null; hub_url: string | null; running: boolean; last_success_ms: number | null; last_error: string | null;
+/**
+ * Objekte, die lokal geändert und noch nicht bestätigt sind.
+ */
+pending: number; dead_letters: number;
+/**
+ * Der Hub trägt Objekte mit einem anderen Schlüssel (Passwort geändert?).
+ */
+key_mismatch: boolean;
+/**
+ * Anzahl synchronisierter Seiten laut Ledger.
+ */
+pages: number }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }

@@ -130,6 +130,31 @@ function App() {
     };
   }, [t]);
 
+  // Sprung aus einer Inhaltsseite in einen anderen Bereich (z. B. "Stimmen
+  // verwalten" im Stimmen-Dropdown -> Einstellungen). Den Reiter setzt der
+  // Absender vorher in localStorage, wie es der Start-Bereich schon tut.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const section = (event as CustomEvent<{ section?: string }>).detail
+        ?.section;
+      if (section && isSidebarSection(section)) setCurrentSection(section);
+    };
+    window.addEventListener("lv-navigate", handler);
+    return () => window.removeEventListener("lv-navigate", handler);
+  }, [setCurrentSection]);
+
+  // Der Geraete-Sync hat Einstellungen von einem anderen Geraet uebernommen:
+  // den Store neu lesen, sonst zeigt die Oberflaeche den alten Stand.
+  const refreshSettings = useSettingsStore((state) => state.refreshSettings);
+  useEffect(() => {
+    const unlisten = listen("sync-changed", () => {
+      void refreshSettings();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [refreshSettings]);
+
   // Listen for paste failures and show a toast.
   // The technical error detail is logged to the app log on the Rust side
   // (see actions.rs `error!("Failed to paste transcription: ...")`),
@@ -332,7 +357,7 @@ function App() {
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             <main
               id="workspace-content"
-              className="flex-1 overflow-y-auto"
+              className={`flex-1 workspace-main ${currentSection === "tts" ? "workspace-main--fill" : ""}`}
               aria-label={t(SECTIONS_CONFIG[currentSection].labelKey)}
             >
               {/* Fluid: the content uses whatever width the window offers, up
@@ -341,6 +366,8 @@ function App() {
                   the column itself). */}
               <div
                 className={`flex flex-col w-full mx-auto p-3 sm:p-4 gap-4 min-w-0 ${
+                  currentSection === "tts" ? "workspace-content--fill" : ""
+                } ${
                   // Vorlesen ist eine dreispaltige Arbeitsflaeche (Seiten,
                   // Inhalt, Dateien) — der Lese-Deckel wuerde dort die MITTE
                   // verjuengen, denn die Leisten haben feste Breiten.

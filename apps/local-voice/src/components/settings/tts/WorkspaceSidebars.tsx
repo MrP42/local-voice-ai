@@ -2,14 +2,22 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { commands, type PageFile, type PageInfo } from "@/bindings";
+import {
+  commands,
+  type AudioNote,
+  type PageFile,
+  type PageInfo,
+} from "@/bindings";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import { Dialog } from "../../ui/Dialog";
+import { HelpPanel } from "../../help/HelpPanel";
 import {
   ChevronDown,
   ChevronUp,
   FilePlus,
+  Play,
   FolderOpen,
   PanelLeftClose,
   PanelLeftOpen,
@@ -20,6 +28,28 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
+
+/**
+ * „vor 3 Min.", „gestern", „vor 2 Wochen" — in der Sprache der Oberflaeche,
+ * ohne eigene Uebersetzungsschluessel: das kann der Browser.
+ */
+export const relativeTime = (ms: number, locale: string): string => {
+  const diff = ms - Date.now();
+  const abs = Math.abs(diff);
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["year", 365 * 86_400_000],
+    ["month", 30 * 86_400_000],
+    ["week", 7 * 86_400_000],
+    ["day", 86_400_000],
+    ["hour", 3_600_000],
+    ["minute", 60_000],
+  ];
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  for (const [unit, size] of units) {
+    if (abs >= size) return rtf.format(Math.round(diff / size), unit);
+  }
+  return rtf.format(0, "second");
+};
 
 /**
  * Die Seitenliste links: welches Arbeitsblatt gerade offen ist, wie bei den
@@ -35,7 +65,7 @@ export const PagesSidebar: React.FC<{
   onSelect: (id: string) => void;
   onChanged: () => void;
 }> = ({ pages, activeId, collapsed, onToggle, onSelect, onChanged }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<PageInfo | null>(null);
@@ -93,7 +123,7 @@ export const PagesSidebar: React.FC<{
   }
 
   return (
-    <div className="tts-workspace__pages w-52 shrink-0 space-y-1">
+    <div className="tts-workspace__pages w-52 shrink-0 space-y-1 min-h-0 overflow-y-auto">
       <div className="flex items-center justify-between pb-1">
         <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
           {t("tts.pages.title")}
@@ -151,8 +181,18 @@ export const PagesSidebar: React.FC<{
             />
           ) : (
             <>
-              <span className="flex-1 min-w-0 truncate text-sm">
-                {page.title}
+              <span className="flex-1 min-w-0">
+                <span className="block truncate text-sm">{page.title}</span>
+                {/* Verlauf statt blosser Titel: was drinsteht und wann es
+                    zuletzt angefasst wurde, ohne die Seite zu oeffnen. */}
+                <span className="block truncate text-xs text-text/45">
+                  {page.preview || t("tts.pages.emptyPreview")}
+                </span>
+                {page.modified_ms > 0 && (
+                  <span className="block text-[11px] text-text/40">
+                    {relativeTime(page.modified_ms, i18n.language)}
+                  </span>
+                )}
               </span>
               <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
                 <button
@@ -254,17 +294,62 @@ const formatSize = (bytes: number): string => {
  * Ordner vor); Dokumente kommen per „Hinzufügen" als Kopie dazu. Öffnen mit
  * der Standardanwendung, Umbenennen per Doppelklick, Löschen mit Rückfrage.
  */
+/// Welche Dateien die Leiste selbst abspielen kann. Alles andere oeffnet
+/// weiterhin das Programm des Systems.
+const AUDIO_EXTENSIONS = ["wav", "mp3", "opus", "flac", "ogg", "m4a"];
+
+export type RightTab = "files" | "help";
+export const isRightTab = (value: string): value is RightTab =>
+  value === "files" || value === "help";
+const isAudio = (name: string) =>
+  AUDIO_EXTENSIONS.includes(name.split(".").pop()?.toLowerCase() ?? "");
+
 export const FilesSidebar: React.FC<{
   pageId: string;
   collapsed: boolean;
   onToggle: () => void;
-}> = ({ pageId, collapsed, onToggle }) => {
+  /** Holt den Text einer erzeugten Aufnahme zurueck in den Editor. */
+  onUseText?: (text: string) => void;
+  /** Zweiter Reiter der Leiste: Hilfe zu diesem Bereich, an Ort und Stelle.
+      Ohne `onTabChange` gibt es nur die Dateien. */
+  tab?: RightTab;
+  onTabChange?: (tab: RightTab) => void;
+  helpSection?: string;
+}> = ({
+  pageId,
+  collapsed,
+  onToggle,
+  onUseText,
+  tab = "files",
+  onTabChange,
+  helpSection = "vorlesen",
+}) => {
   const { t } = useTranslation();
   const [files, setFiles] = useState<PageFile[]>([]);
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Welche Audiodatei gerade angehoert wird, und wo der Ordner liegt. Ohne
+  // beides muesste man eine erzeugte Aufnahme erst im Dateimanager oeffnen,
+  // um zu hoeren, was man erzeugt hat.
+  const [playing, setPlaying] = useState<string | null>(null);
+  const [dir, setDir] = useState<string | null>(null);
+  // Herkunft der aufgeklappten Aufnahme: Text, Stimme, Zeitpunkt. Erst beim
+  // Aufklappen geholt — fuer eine Liste mit dreissig Aufnahmen waeren
+  // dreissig Dateizugriffe beim Oeffnen der Leiste zu viel.
+  const [note, setNote] = useState<AudioNote | null>(null);
+  // Sekunde, an der die Wiedergabe gerade steht — daraus ergibt sich, welcher
+  // Satz klingt. Nur beim Abspielen gefuehrt.
+  const [atMs, setAtMs] = useState(0);
+
+  useEffect(() => {
+    if (!pageId) return;
+    void commands.pageDir(pageId).then((result) => {
+      setDir(result.status === "ok" ? result.data : null);
+    });
+    setPlaying(null);
+  }, [pageId]);
 
   const refresh = useCallback(async () => {
     if (!pageId) return;
@@ -337,12 +422,35 @@ export const FilesSidebar: React.FC<{
   }
 
   return (
-    <div className="tts-workspace__files w-60 shrink-0 space-y-1">
+    <div className="tts-workspace__files w-60 shrink-0 space-y-1 min-h-0 overflow-y-auto">
       <div className="flex items-center justify-between pb-1">
-        <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
-          {t("tts.files.title")}
-        </span>
+        {onTabChange ? (
+          <div className="flex items-center gap-1" role="tablist">
+            {(["files", "help"] as const).map((id) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={tab === id}
+                onClick={() => onTabChange(id)}
+                className={`px-1.5 py-0.5 rounded text-xs font-semibold uppercase tracking-wide cursor-pointer transition-colors ${
+                  tab === id
+                    ? "text-text bg-mid-gray/20"
+                    : "text-text/50 hover:text-text"
+                }`}
+              >
+                {id === "files" ? t("tts.files.title") : t("help.title")}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
+            {t("tts.files.title")}
+          </span>
+        )}
         <div className="flex items-center">
+          {tab === "files" && (
+          <>
           <button
             type="button"
             onClick={addFile}
@@ -370,6 +478,8 @@ export const FilesSidebar: React.FC<{
           >
             <RefreshCw width={14} height={14} />
           </button>
+          </>
+          )}
           <button
             type="button"
             onClick={onToggle}
@@ -382,78 +492,179 @@ export const FilesSidebar: React.FC<{
         </div>
       </div>
 
+      {tab === "help" && <HelpPanel section={helpSection} />}
+      {tab === "files" && (
+      <>
       {error && <p className="text-xs text-red-400 break-words">{error}</p>}
       {files.length === 0 && (
         <p className="text-xs text-text/40">{t("tts.files.empty")}</p>
       )}
 
       {files.map((file) => (
-        <div
-          key={file.name}
-          className="group flex items-center gap-1 rounded-md px-2 py-1.5 text-text/70 hover:bg-mid-gray/15 hover:text-text cursor-pointer transition-colors"
-          onClick={() => void commands.pageFileOpen(pageId, file.name)}
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            setEditingName(file.name);
-            setEditValue(file.name);
-          }}
-          title={t("tts.files.openHint")}
-        >
-          {editingName === file.name ? (
-            <Input
-              type="text"
-              variant="compact"
-              value={editValue}
-              autoFocus
-              onChange={(e) => setEditValue(e.target.value)}
-              onBlur={() => void commitRename()}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void commitRename();
-                if (e.key === "Escape") setEditingName(null);
-              }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full"
+        <div key={file.name}>
+          <div
+            className="group flex items-center gap-1 rounded-md px-2 py-1.5 text-text/70 hover:bg-mid-gray/15 hover:text-text cursor-pointer transition-colors"
+            onClick={() => void commands.pageFileOpen(pageId, file.name)}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setEditingName(file.name);
+              setEditValue(file.name);
+            }}
+            title={t("tts.files.openHint")}
+          >
+            {editingName === file.name ? (
+              <Input
+                type="text"
+                variant="compact"
+                value={editValue}
+                autoFocus
+                onChange={(e) => setEditValue(e.target.value)}
+                onBlur={() => void commitRename()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void commitRename();
+                  if (e.key === "Escape") setEditingName(null);
+                }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full"
+              />
+            ) : (
+              <>
+                <span className="flex-1 min-w-0 truncate text-sm">
+                  {file.name}
+                </span>
+                <span className="text-[10px] text-text/35 shrink-0 group-hover:hidden group-focus-within:hidden">
+                  {formatSize(file.size)}
+                </span>
+                {isAudio(file.name) && (
+                  <button
+                    type="button"
+                    className="shrink-0 p-1 rounded hover:bg-mid-gray/25"
+                    title={t("tts.files.listen")}
+                    aria-label={t("tts.files.listen")}
+                    aria-pressed={playing === file.name}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const next = playing === file.name ? null : file.name;
+                      setPlaying(next);
+                      setNote(null);
+                      setAtMs(0);
+                      if (next) {
+                        void commands
+                          .pageAudioNote(pageId, next)
+                          .then((result) => {
+                            if (result.status === "ok") setNote(result.data);
+                          });
+                      }
+                    }}
+                  >
+                    <Play width={12} height={12} />
+                  </button>
+                )}
+                <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingName(file.name);
+                      setEditValue(file.name);
+                    }}
+                    title={t("tts.files.rename")}
+                    aria-label={t("tts.files.rename")}
+                    className="p-0.5 text-text/40 hover:text-text cursor-pointer"
+                  >
+                    <Pencil width={13} height={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget(file.name);
+                    }}
+                    title={t("tts.files.delete")}
+                    aria-label={t("tts.files.delete")}
+                    className="p-0.5 text-red-400/60 hover:text-red-400 cursor-pointer"
+                  >
+                    <Trash2 width={13} height={13} />
+                  </button>
+                </span>
+              </>
+            )}
+          </div>
+          {playing === file.name && dir && (
+            /* Bewusst die Steuerung des Systems statt des hauseigenen
+               AudioPlayer: der ist fuer breite Flaechen gebaut und
+               bricht in dieser schmalen Spalte in eine Saeule
+               auseinander. Eine funktionierende Leiste schlaegt eine
+               huebsche, die zerfaellt. */
+            <audio
+              controls
+              preload="metadata"
+              onTimeUpdate={(event) =>
+                setAtMs(event.currentTarget.currentTime * 1000)
+              }
+              className="w-full mt-1 mb-2"
+              src={convertFileSrc(`${dir}\\${file.name}`, "asset")}
             />
-          ) : (
-            <>
-              <span className="flex-1 min-w-0 truncate text-sm">
-                {file.name}
-              </span>
-              <span className="text-[10px] text-text/35 shrink-0 group-hover:hidden group-focus-within:hidden">
-                {formatSize(file.size)}
-              </span>
-              <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
+          )}
+          {playing === file.name && note && (
+            <div className="mb-2 space-y-1">
+              <p className="text-[10px] text-text/45">
+                {note.voice ?? t("tts.files.defaultVoice")} ·{" "}
+                {new Date(note.created_ms).toLocaleString()}
+              </p>
+              {note.segments.length > 0 ? (
+                /* Mit Zeitmarken laeuft der Text mit: der klingende Satz
+                   steht hervorgehoben da, mit seinem Sprecher davor. Ohne
+                   Zeitmarken (Aufnahmen aelterer Fassungen) bleibt der
+                   Textanfang. */
+                <ol className="space-y-0.5 max-h-40 overflow-y-auto">
+                  {note.segments.map((segment, index) => {
+                    const active =
+                      atMs >= segment.start_ms && atMs < segment.end_ms;
+                    return (
+                      <li
+                        key={`${segment.start_ms}-${index}`}
+                        aria-current={active ? "true" : undefined}
+                        className={
+                          active
+                            ? "text-[11px] text-text bg-logo-primary/25 rounded px-1"
+                            : "text-[11px] text-text/45 px-1"
+                        }
+                      >
+                        {segment.voice && (
+                          <span className="text-text/40">
+                            {segment.voice}:{" "}
+                          </span>
+                        )}
+                        {segment.text}
+                      </li>
+                    );
+                  })}
+                </ol>
+              ) : (
+                <p className="text-[11px] text-text/60 line-clamp-3">
+                  {note.text}
+                </p>
+              )}
+              {onUseText && (
                 <button
                   type="button"
+                  className="text-[11px] underline text-text/70 hover:text-text"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setEditingName(file.name);
-                    setEditValue(file.name);
+                    onUseText(note.text);
                   }}
-                  title={t("tts.files.rename")}
-                  aria-label={t("tts.files.rename")}
-                  className="p-0.5 text-text/40 hover:text-text cursor-pointer"
                 >
-                  <Pencil width={13} height={13} />
+                  {t("tts.files.useText")}
                 </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleteTarget(file.name);
-                  }}
-                  title={t("tts.files.delete")}
-                  aria-label={t("tts.files.delete")}
-                  className="p-0.5 text-red-400/60 hover:text-red-400 cursor-pointer"
-                >
-                  <Trash2 width={13} height={13} />
-                </button>
-              </span>
-            </>
+              )}
+            </div>
           )}
         </div>
       ))}
 
+      </>
+      )}
       <Dialog
         open={deleteTarget !== null}
         onOpenChange={(isOpen) => {

@@ -8,8 +8,10 @@ import {
   Volume2,
   House,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
-import { LocalVoiceAiMark } from "./icons/LocalVoiceAiLogo";
+import { usePersistentState } from "../hooks/usePersistentState";
 import {
   AppSettings,
   HistorySettings,
@@ -81,6 +83,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { t } = useTranslation();
 
+  // Eingeklappt bleibt eingeklappt — auch nach einem Neustart. Beim ersten
+  // Start ist die Leiste offen: wer die App noch nicht kennt, soll die
+  // Bereiche lesen koennen, nicht Symbole raten.
+  const [collapsedValue, setCollapsedValue] = usePersistentState<string>(
+    "sidebar.collapsed",
+    "0",
+  );
+  const collapsed = collapsedValue === "1";
+  const setCollapsed = (next: boolean) => setCollapsedValue(next ? "1" : "0");
+
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -111,6 +123,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         type="button"
         className="workspace-nav__item"
         aria-current={activeSection === id ? "page" : undefined}
+        // Eingeklappt bleibt nur das Symbol; der Name muss dann wenigstens
+        // im Tooltip und fuer Screenreader dastehen.
+        title={collapsed ? t(labelKey) : undefined}
+        aria-label={collapsed ? t(labelKey) : undefined}
         onClick={() => {
           onSectionChange(id);
           setMoreOpen(false);
@@ -122,11 +138,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     );
   };
   return (
-    <nav className="workspace-nav" aria-label={t("sidebar.ariaLabel")}>
-      <div className="workspace-nav__brand">
-        <LocalVoiceAiMark size={28} />
-      </div>
-      <div className="workspace-nav__primary">
+    <nav
+      className="workspace-nav"
+      aria-label={t("sidebar.ariaLabel")}
+      data-collapsed={collapsed}
+    >
+      <div className="workspace-nav__primary" id="workspace-nav-items">
         {(["home", "history", "meetings", "tts"] as const).map(item)}
       </div>
       <div className="workspace-nav__secondary" ref={moreRef}>
@@ -152,6 +169,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           {(["models", "settings"] as const).map(item)}
         </div>
+        {/* Der Schalter sitzt ganz unten, als letzter Eintrag: oben wuerde er
+            die Bereiche eine Zeile nach unten druecken, und genau dort soll
+            "Start" stehen. Kein Logo mehr darueber — die Kopfzeile des
+            Fensters traegt es bereits. */}
+        <button
+          type="button"
+          className="workspace-nav__item workspace-nav__toggle"
+          onClick={() => setCollapsed(!collapsed)}
+          aria-expanded={!collapsed}
+          aria-controls="workspace-nav-items"
+          title={collapsed ? t("workspace.navExpand") : t("workspace.navCollapse")}
+          aria-label={
+            collapsed ? t("workspace.navExpand") : t("workspace.navCollapse")
+          }
+        >
+          {collapsed ? (
+            <PanelLeftOpen size={20} aria-hidden="true" />
+          ) : (
+            <PanelLeftClose size={20} aria-hidden="true" />
+          )}
+          <span>{t("workspace.navCollapse")}</span>
+        </button>
       </div>
     </nav>
   );

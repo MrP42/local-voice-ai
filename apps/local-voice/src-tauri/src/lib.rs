@@ -8,6 +8,7 @@ mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod sync;
 #[cfg(windows)]
 mod context_menu;
 mod helpers;
@@ -219,6 +220,25 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         managers::tts::models::TtsModelManager::new(app_handle)
             .expect("Failed to initialize Piper model manager"),
     );
+    // Lokales Sprachmodell: Laufzeit-Downloads + Serverprozess. Als globale
+    // Zugriffe hinterlegt, weil `llm_client` keinen AppHandle hat, den
+    // Server aber vor der ersten Anfrage starten koennen muss.
+    let llm_runtime = Arc::new(
+        managers::llm::LlmRuntimeManager::new(app_handle)
+            .expect("Failed to initialize LLM runtime manager"),
+    );
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
+    // Verbrauchs-Ledger: jeder Sprachmodell-Aufruf wird gebucht. Global aus
+    // demselben Grund wie der Server: `llm_client` bucht ohne AppHandle.
+    let usage_ledger = Arc::new(
+        managers::usage::UsageLedger::new(app_handle).expect("Failed to initialize usage ledger"),
+    );
+    let settings_handle = app_handle.clone();
+    managers::usage::install_globals(
+        usage_ledger.clone(),
+        Arc::new(move || settings::get_settings(&settings_handle)),
+    );
     // Meetings (M8): the store is shared by recorder and commands. A store
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.
@@ -244,8 +264,15 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tts_manager);
     app_handle.manage(tts_model_manager);
+    app_handle.manage(llm_runtime);
+    app_handle.manage(llm_server);
+    app_handle.manage(usage_ledger);
     app_handle.manage(commands::tts::AutoTagRun::default());
     app_handle.manage(commands::tts::BuilderRun::default());
+    // Geraete-Sync: Status-Objekt fuer die Oberflaeche; die Schleife startet
+    // nach dem Setup und laeuft nur, wenn sync.json existiert.
+    app_handle.manage(sync::SyncEngine::default());
+    sync::start(app_handle.clone());
     app_handle.manage(tray::CurrentTrayIconState::new());
 
     // Entwuerfe des Stimmen-Baukastens aelter als 30 Tage entfernen:
@@ -1290,6 +1317,38 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_tts_enhance_setting,
             shortcut::change_tts_reference_auto_transcribe_setting,
             shortcut::change_tts_enhance_strength_setting,
+            commands::llm::llm_upsert_connection,
+            commands::llm::llm_remove_connection,
+            commands::llm::llm_upsert_model,
+            commands::llm::llm_remove_model,
+            commands::llm::llm_set_active_model,
+            commands::llm::llm_list_remote_models,
+            commands::llm::llm_set_api_key,
+            commands::llm::llm_local_list,
+            commands::llm::llm_local_download,
+            commands::llm::llm_local_cancel,
+            commands::llm::llm_local_delete,
+            commands::llm::llm_local_status,
+            commands::llm::llm_local_start,
+            commands::llm::llm_local_stop,
+            commands::llm::llm_local_backend,
+            commands::llm::llm_local_activate,
+            commands::llm::system_memory,
+            commands::llm::llm_local_fit,
+            commands::usage::usage_summary,
+            commands::usage::usage_events,
+            commands::usage::usage_clear,
+            commands::usage::usage_budget_states,
+            sync::sync_login,
+            sync::sync_logout,
+            sync::sync_status,
+            sync::sync_now,
+            sync::sync_touch,
+            sync::sync_default_device_name,
+            sync::sync_hub_status,
+            shortcut::change_tts_engine_setting,
+            shortcut::change_tts_piper_voice_setting,
+            shortcut::change_tts_piper_auto_language_setting,
             shortcut::change_tts_speed_setting,
             shortcut::change_tts_export_format_setting,
             shortcut::change_tts_export_bitrate_setting,
@@ -1432,6 +1491,7 @@ pub fn run(cli_args: CliArgs) {
             commands::pages::page_state_save,
             commands::pages::page_dir,
             commands::pages::page_files,
+            commands::pages::page_audio_note,
             commands::pages::page_file_delete,
             commands::pages::page_file_rename,
             commands::pages::page_file_add,
@@ -1443,6 +1503,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_server_status,
             commands::tts::tts_list_voices,
             commands::tts::tts_voice_demo,
+            commands::tts::tts_voice_demo_cached,
             commands::tts::tts_record_reference_start,
             commands::tts::tts_record_reference_stop,
             commands::tts::tts_transcribe_reference,
@@ -1462,6 +1523,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_speak_resume,
             commands::tts::tts_export_format,
             commands::tts::tts_summarize_text,
+            commands::tts::tts_tidy_text,
             commands::tts::tts_extract_document,
             commands::tts::tts_extract_url,
             commands::tts::tts_voicechange_record_start,
@@ -1938,6 +2000,11 @@ pub fn run(cli_args: CliArgs) {
             tauri::RunEvent::Exit => {
                 if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                     let _ = tm.unload_model();
+                }
+                // Der lokale Sprachmodell-Server ist unser Kind: er stirbt mit
+                // der App, ueber seine PID, nie ueber den Prozessnamen.
+                if let Some(llm) = app.try_state::<Arc<managers::llm::LocalLlmServer>>() {
+                    llm.stop();
                 }
                 // Kein Serverprozess ueberlebt die Anwendung — auch keiner,
                 // den wir nur adoptiert haben. Er haelt rund 17 GB VRAM, und

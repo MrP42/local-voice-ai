@@ -37,6 +37,86 @@ pub fn get_cursor_position(app_handle: &AppHandle) -> Option<(i32, i32)> {
     enigo.location().ok()
 }
 
+/// How long the paste modifier stays held after the V keystroke.
+///
+/// Windows delivers injected events in order, but applications that read the
+/// modifier state asynchronously (Chromium among them) still need it down
+/// when they get around to the V. That is the only reason to hold it at all,
+/// so the window is kept as short as that requires: while the modifier is
+/// down it is down for the whole desktop, and the user's own scrolling then
+/// reads as Ctrl+scroll (= zoom) everywhere. Stream injection pastes a
+/// fragment every few hundred milliseconds while the user keeps working, so
+/// a generous hold made the machine behave as if Ctrl were stuck for most of
+/// a dictation.
+const PASTE_MODIFIER_HOLD: std::time::Duration = std::time::Duration::from_millis(15);
+
+/// The rest of the settle time the paste used to spend with the modifier
+/// held down. The target still gets it - only now with the keyboard free.
+const PASTE_SETTLE_AFTER_RELEASE: std::time::Duration = std::time::Duration::from_millis(85);
+
+/// Keyboard sink behind the paste sequences, so the ordering below can be
+/// tested without injecting real keystrokes into the developer's desktop.
+pub(crate) trait KeySink {
+    fn send_key(&mut self, key: Key, direction: enigo::Direction) -> Result<(), String>;
+    fn hold(&mut self, duration: std::time::Duration);
+}
+
+impl KeySink for Enigo {
+    fn send_key(&mut self, key: Key, direction: enigo::Direction) -> Result<(), String> {
+        Keyboard::key(self, key, direction).map_err(|e| e.to_string())
+    }
+
+    fn hold(&mut self, duration: std::time::Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
+/// Press modifier, tap `key`, release the modifier - and release it even when
+/// the tap failed. An early return between press and release would leave the
+/// modifier down for every application on the machine with nothing to undo
+/// it (the stuck-Ctrl report of 08.09.2026).
+pub(crate) fn send_modified_key<K: KeySink>(
+    sink: &mut K,
+    modifiers: &[Key],
+    key: Key,
+) -> Result<(), String> {
+    let mut pressed: Vec<Key> = Vec::with_capacity(modifiers.len());
+    let mut result = Ok(());
+
+    for modifier in modifiers {
+        match sink.send_key(*modifier, enigo::Direction::Press) {
+            Ok(()) => pressed.push(*modifier),
+            Err(e) => {
+                result = Err(format!("Failed to press modifier key: {}", e));
+                break;
+            }
+        }
+    }
+
+    if result.is_ok() {
+        if let Err(e) = sink.send_key(key, enigo::Direction::Click) {
+            result = Err(format!("Failed to click key: {}", e));
+        }
+        sink.hold(PASTE_MODIFIER_HOLD);
+    }
+
+    // Release in reverse order, and report a release failure only when the
+    // sequence was otherwise fine - the first error is the interesting one.
+    for modifier in pressed.iter().rev() {
+        if let Err(e) = sink.send_key(*modifier, enigo::Direction::Release) {
+            let message = format!("Failed to release modifier key: {}", e);
+            if result.is_ok() {
+                result = Err(message);
+            }
+        }
+    }
+
+    if result.is_ok() {
+        sink.hold(PASTE_SETTLE_AFTER_RELEASE);
+    }
+    result
+}
+
 /// Sends a Ctrl+V or Cmd+V paste command using platform-specific virtual key codes.
 /// This ensures the paste works regardless of keyboard layout (e.g., Russian, AZERTY, DVORAK).
 /// Note: On Wayland, this may not work - callers should check for Wayland and use alternative methods.
@@ -49,21 +129,7 @@ pub fn send_paste_ctrl_v(enigo: &mut Enigo) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let (modifier_key, v_key_code) = (Key::Control, Key::Unicode('v'));
 
-    // Press modifier + V
-    enigo
-        .key(modifier_key, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press modifier key: {}", e))?;
-    enigo
-        .key(v_key_code, enigo::Direction::Click)
-        .map_err(|e| format!("Failed to click V key: {}", e))?;
-
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    enigo
-        .key(modifier_key, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release modifier key: {}", e))?;
-
-    Ok(())
+    send_modified_key(enigo, &[modifier_key], v_key_code)
 }
 
 /// Sends a Ctrl+Shift+V paste command.
@@ -78,27 +144,7 @@ pub fn send_paste_ctrl_shift_v(enigo: &mut Enigo) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let (modifier_key, v_key_code) = (Key::Control, Key::Unicode('v'));
 
-    // Press Ctrl/Cmd + Shift + V
-    enigo
-        .key(modifier_key, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press modifier key: {}", e))?;
-    enigo
-        .key(Key::Shift, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press Shift key: {}", e))?;
-    enigo
-        .key(v_key_code, enigo::Direction::Click)
-        .map_err(|e| format!("Failed to click V key: {}", e))?;
-
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    enigo
-        .key(Key::Shift, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release Shift key: {}", e))?;
-    enigo
-        .key(modifier_key, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release modifier key: {}", e))?;
-
-    Ok(())
+    send_modified_key(enigo, &[modifier_key, Key::Shift], v_key_code)
 }
 
 /// Sends a Shift+Insert paste command (Windows and Linux only).
@@ -110,21 +156,7 @@ pub fn send_paste_shift_insert(enigo: &mut Enigo) -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     let insert_key_code = Key::Other(0x76); // XK_Insert (keycode 118 / 0x76, also used as fallback)
 
-    // Press Shift + Insert
-    enigo
-        .key(Key::Shift, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press Shift key: {}", e))?;
-    enigo
-        .key(insert_key_code, enigo::Direction::Click)
-        .map_err(|e| format!("Failed to click Insert key: {}", e))?;
-
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    enigo
-        .key(Key::Shift, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release Shift key: {}", e))?;
-
-    Ok(())
+    send_modified_key(enigo, &[Key::Shift], insert_key_code)
 }
 
 /// Pastes text directly using the enigo text method.
@@ -288,7 +320,100 @@ mod windows_input_monitor {
 
 #[cfg(test)]
 mod tests {
-    use super::{replacement_context_matches, ReplacementContext};
+    use super::{
+        replacement_context_matches, send_modified_key, KeySink, ReplacementContext,
+        PASTE_MODIFIER_HOLD, PASTE_SETTLE_AFTER_RELEASE,
+    };
+    use enigo::{Direction, Key};
+    use std::time::Duration;
+
+    /// Records the keystroke sequence instead of injecting it, and can be
+    /// told to fail on one specific step.
+    struct FakeSink {
+        events: Vec<String>,
+        fail_on: Option<(Key, Direction)>,
+    }
+
+    impl FakeSink {
+        fn new() -> Self {
+            Self {
+                events: Vec::new(),
+                fail_on: None,
+            }
+        }
+
+        fn failing_on(key: Key, direction: Direction) -> Self {
+            Self {
+                events: Vec::new(),
+                fail_on: Some((key, direction)),
+            }
+        }
+    }
+
+    impl KeySink for FakeSink {
+        fn send_key(&mut self, key: Key, direction: Direction) -> Result<(), String> {
+            if self.fail_on == Some((key, direction)) {
+                self.events.push(format!("{:?} {:?} FAILED", direction, key));
+                return Err("injection refused".to_string());
+            }
+            self.events.push(format!("{:?} {:?}", direction, key));
+            Ok(())
+        }
+
+        fn hold(&mut self, duration: Duration) {
+            self.events.push(format!("hold {}ms", duration.as_millis()));
+        }
+    }
+
+    #[test]
+    fn paste_releases_the_modifier_before_the_settle_wait() {
+        // The whole point: the desktop must not sit with Ctrl held down while
+        // we wait for the target to catch up, or the user's scrolling zooms.
+        let mut sink = FakeSink::new();
+        send_modified_key(&mut sink, &[Key::Control], Key::Other(0x56)).unwrap();
+
+        assert_eq!(
+            sink.events,
+            vec![
+                "Press Control".to_string(),
+                "Click Other(86)".to_string(),
+                format!("hold {}ms", PASTE_MODIFIER_HOLD.as_millis()),
+                "Release Control".to_string(),
+                format!("hold {}ms", PASTE_SETTLE_AFTER_RELEASE.as_millis()),
+            ]
+        );
+        assert!(
+            PASTE_MODIFIER_HOLD <= Duration::from_millis(20),
+            "the modifier is held desktop-wide; keep the window short"
+        );
+    }
+
+    #[test]
+    fn paste_releases_the_modifier_even_when_the_keystroke_fails() {
+        let mut sink = FakeSink::failing_on(Key::Other(0x56), Direction::Click);
+        let result = send_modified_key(&mut sink, &[Key::Control], Key::Other(0x56));
+
+        assert!(result.is_err());
+        assert!(
+            sink.events.contains(&"Release Control".to_string()),
+            "a failed paste must not leave Ctrl down for the whole machine: {:?}",
+            sink.events
+        );
+    }
+
+    #[test]
+    fn paste_releases_modifiers_in_reverse_order() {
+        let mut sink = FakeSink::new();
+        send_modified_key(&mut sink, &[Key::Control, Key::Shift], Key::Other(0x56)).unwrap();
+
+        let releases: Vec<&String> = sink
+            .events
+            .iter()
+            .filter(|e| e.starts_with("Release"))
+            .collect();
+        assert_eq!(releases, vec!["Release Shift", "Release Control"]);
+    }
+
 
     #[test]
     fn replacement_context_requires_same_window_focus_and_input_generation() {

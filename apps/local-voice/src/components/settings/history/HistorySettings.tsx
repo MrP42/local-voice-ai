@@ -3,6 +3,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { Check, Copy, FolderOpen, RotateCcw, Star, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { PageShell } from "../../ui/PageShell";
 import { toast } from "sonner";
 import {
   commands,
@@ -274,24 +275,23 @@ export const HistorySettings: React.FC = () => {
   }
 
   return (
-    <div className="w-full space-y-6">
+    <PageShell
+      title={t("settings.history.title")}
+      description={t("workspace.historyHint")}
+      help="verlauf"
+      actions={
+        <OpenRecordingsButton
+          onClick={openRecordingsFolder}
+          label={t("settings.history.openFolder")}
+        />
+      }
+    >
       <div className="space-y-2">
-        <div className="px-1 flex flex-wrap gap-2 items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-text">
-              {t("settings.history.title")}
-            </h2>
-          </div>
-          <OpenRecordingsButton
-            onClick={openRecordingsFolder}
-            label={t("settings.history.openFolder")}
-          />
-        </div>
         <div className="bg-background border border-mid-gray/20 rounded-lg overflow-visible">
           {content}
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 };
 

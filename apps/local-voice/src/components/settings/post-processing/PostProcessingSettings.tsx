@@ -20,8 +20,9 @@ import { ApiKeyField } from "../PostProcessingSettingsApi/ApiKeyField";
 import { ModelSelect } from "../PostProcessingSettingsApi/ModelSelect";
 import { usePostProcessProviderState } from "../PostProcessingSettingsApi/usePostProcessProviderState";
 import { ShortcutInput } from "../ShortcutInput";
-import { PostProcessingToggle } from "../PostProcessingToggle";
 import { useSettings } from "../../../hooks/useSettings";
+import { LlmConnectionsSettings } from "./LlmConnectionsSettings";
+import { UsageOverview } from "./UsageOverview";
 
 const PostProcessingSettingsApiComponent: React.FC = () => {
   const { t } = useTranslation();
@@ -427,42 +428,28 @@ PostProcessingSettingsPrompts.displayName = "PostProcessingSettingsPrompts";
 
 export const PostProcessingSettings: React.FC = () => {
   const { t } = useTranslation();
-  const { getSetting } = useSettings();
-  const enabled = getSetting("post_process_enabled") ?? false;
 
+  // Kein Aus-Schalter mehr: die KI-Textverbesserung ist Kernfunktion. Ohne
+  // sie gab es weder Zusammenfassung noch Uebersetzung noch Protokoll, und
+  // der Schalter versteckte obendrein die ganze Anbieter-Einrichtung. Was
+  // die Funktion tut, entscheidet allein das aktive Modell.
   return (
     <div className="w-full space-y-6">
-      {/* The switch used to sit two levels away, under Advanced → Experimental,
-          while the settings it unlocks lived on a page of their own that only
-          appeared once it was on. One switch, at the top of the thing it
-          governs. */}
-      <SettingsGroup title={t("sidebar.postProcessing")}>
-        <PostProcessingToggle descriptionMode="tooltip" grouped={true} />
+      <LlmConnectionsSettings />
+
+      <UsageOverview />
+
+      <SettingsGroup title={t("settings.postProcessing.hotkey.title")}>
+        <ShortcutInput
+          shortcutId="transcribe_with_post_process"
+          descriptionMode="tooltip"
+          grouped={true}
+        />
       </SettingsGroup>
 
-      {!enabled ? (
-        <p className="text-sm text-text/60">
-          {t("settings.postProcessing.disabledHint")}
-        </p>
-      ) : (
-        <>
-          <SettingsGroup title={t("settings.postProcessing.hotkey.title")}>
-            <ShortcutInput
-              shortcutId="transcribe_with_post_process"
-              descriptionMode="tooltip"
-              grouped={true}
-            />
-          </SettingsGroup>
-
-          <SettingsGroup title={t("settings.postProcessing.api.title")}>
-            <PostProcessingSettingsApi />
-          </SettingsGroup>
-
-          <SettingsGroup title={t("settings.postProcessing.prompts.title")}>
-            <PostProcessingSettingsPrompts />
-          </SettingsGroup>
-        </>
-      )}
+      <SettingsGroup title={t("settings.postProcessing.prompts.title")}>
+        <PostProcessingSettingsPrompts />
+      </SettingsGroup>
     </div>
   );
 };

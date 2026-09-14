@@ -391,7 +391,16 @@ async fn ask_llm_for_tags(
 ) -> Result<String, String> {
     if let Some(url) = llm_client::ollama_native_url(&provider.base_url) {
         let combined = format!("{system_prompt}\n\n{user_text}");
-        match llm_client::send_ollama_native(&url, model, combined, cpu_only).await {
+        match llm_client::send_ollama_native(
+            crate::managers::usage::Purpose::Tagging,
+            provider,
+            &url,
+            model,
+            combined,
+            cpu_only,
+        )
+        .await
+        {
             Ok(Some(content)) if !content.trim().is_empty() => {
                 return Ok(content.trim().to_string());
             }
@@ -405,6 +414,7 @@ async fn ask_llm_for_tags(
     }
 
     match llm_client::send_chat_completion_with_schema(
+        crate::managers::usage::Purpose::Tagging,
         provider,
         api_key,
         model,

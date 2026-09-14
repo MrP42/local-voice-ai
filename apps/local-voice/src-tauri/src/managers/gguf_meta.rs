@@ -83,6 +83,22 @@ impl GgufValue {
 
     /// Interpret the value as an array of strings (e.g. `general.languages`).
     /// Returns `None` if it isn't an array, or if any element isn't a string.
+    /// Ganzzahl in beliebiger Breite -- GGUF schreibt `block_count` mal als
+    /// u32, mal als u64, je nach Konverter. Fuer die Speicherprognose ist
+    /// das egal, fuer den Aufrufer auch.
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            GgufValue::U8(v) => Some(u64::from(*v)),
+            GgufValue::U16(v) => Some(u64::from(*v)),
+            GgufValue::U32(v) => Some(u64::from(*v)),
+            GgufValue::U64(v) => Some(*v),
+            GgufValue::I8(v) if *v >= 0 => Some(*v as u64),
+            GgufValue::I16(v) if *v >= 0 => Some(*v as u64),
+            GgufValue::I32(v) if *v >= 0 => Some(*v as u64),
+            GgufValue::I64(v) if *v >= 0 => Some(*v as u64),
+            _ => None,
+        }
+    }
     pub fn as_string_array(&self) -> Option<Vec<String>> {
         match self {
             GgufValue::Array(items) => items
@@ -112,6 +128,9 @@ impl GgufMetadata {
     }
     pub fn get_string_array(&self, key: &str) -> Option<Vec<String>> {
         self.kv.get(key).and_then(GgufValue::as_string_array)
+    }
+    pub fn get_u64(&self, key: &str) -> Option<u64> {
+        self.kv.get(key).and_then(GgufValue::as_u64)
     }
 }
 

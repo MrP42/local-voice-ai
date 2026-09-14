@@ -154,9 +154,15 @@ interface AutoTagBarProps {
   /** Text wirklich ändern (Annehmen) — bekommt den vorherigen Text mit, damit
    *  der Aufrufer einen Undo-Toast anbieten kann. */
   onApplyText: (nextText: string, previousText: string, count: number) => void;
+  /** Anbieter- und Geraetewahl mit anzeigen. Aus, wenn sie woanders stehen
+   *  (Einstellungen -> Vorlesen), damit die Leiste nur noch der Knopf ist. */
+  showSettings?: boolean;
 }
 
+export const DEFAULT_TAG_PROVIDER_UI_VALUE = DEFAULT_PROVIDER_UI_VALUE;
+
 export const AutoTagBar: React.FC<AutoTagBarProps> = ({
+  showSettings = true,
   text,
   suggestions,
   sourceText,
@@ -300,10 +306,17 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-mid-gray/20 px-2 py-1.5">
+    <div
+      className={
+        showSettings
+          ? "flex flex-wrap items-center gap-2 rounded-lg border border-mid-gray/20 px-2 py-1.5"
+          : "flex flex-col items-stretch gap-2"
+      }
+    >
       <Button
         variant="secondary"
         size="sm"
+        className={showSettings ? undefined : "w-full justify-start"}
         onClick={() => void runAutoTag()}
         disabled={loading || !text.trim()}
         title={t("tts.autotag.button")}
@@ -316,6 +329,8 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
         />
         {t("tts.autotag.button")}
       </Button>
+      {showSettings && (
+      <>
       <div className="w-40">
         <Select
           value={
@@ -341,6 +356,8 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
           }}
         />
       </div>
+      </>
+      )}
       {loading && (
         <>
           <span className="text-xs text-text/60" aria-live="polite">

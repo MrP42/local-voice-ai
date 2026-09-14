@@ -392,11 +392,6 @@ fn register_all_shortcuts_for_implementation(
             continue;
         }
 
-        // Skip post-processing shortcut when the feature is disabled
-        if id == "transcribe_with_post_process" && !current_settings.post_process_enabled {
-            continue;
-        }
-
         let mut binding = current_settings
             .bindings
             .get(id)
@@ -654,6 +649,47 @@ pub fn change_tts_volume_setting(app: AppHandle, value: f32) -> Result<(), Strin
     settings.tts_volume = value.clamp(0.0, 1.0);
     settings::write_settings(&app, settings);
     apply_playback_control(&app, |c| c.set_volume(value));
+    Ok(())
+}
+
+/// Engine des Vorlesens: "fish" (Grafikkarte) oder "piper" (CPU).
+///
+/// Unbekannte Werte werden abgewiesen, statt still auf Fish zurueckzufallen:
+/// ein Schalter, der etwas anderes tut als er sagt, ist schlimmer als ein
+/// Fehler. Angewendet wird die Wahl beim naechsten Auftrag
+/// (`TtsManager::refresh_from_settings`), ohne Neustart.
+#[tauri::command]
+#[specta::specta]
+pub fn change_tts_engine_setting(app: AppHandle, value: String) -> Result<(), String> {
+    if value != "fish" && value != "piper" {
+        return Err(format!("Unbekannte Vorlese-Engine: {value}"));
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.tts_engine = value;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Welche geladene Piper-Stimme vorliest. `None` heisst: keine gewaehlt.
+#[tauri::command]
+#[specta::specta]
+pub fn change_tts_piper_voice_setting(
+    app: AppHandle,
+    value: Option<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_piper_voice = value.filter(|id| !id.trim().is_empty());
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
+#[tauri::command]
+#[specta::specta]
+pub fn change_tts_piper_auto_language_setting(app: AppHandle, value: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_piper_auto_language = value;
+    settings::write_settings(&app, settings);
     Ok(())
 }
 

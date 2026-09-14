@@ -541,6 +541,7 @@ async fn ask_for_minutes_json(
     // Versuch mit dem Fehlertext repariert sie — mehr wäre nur Wartezeit.
     for attempt in 0..2 {
         let response = crate::llm_client::send_chat_completion_with_schema(
+            crate::managers::usage::Purpose::Minutes,
             &provider,
             api_key.clone(),
             &model,
