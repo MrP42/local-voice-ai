@@ -1086,7 +1086,7 @@ export const TtsSettings = () => {
                 providers={chipProviders}
                 insertApiRef={editorApiRef}
                 placeholder={t("tts.inputPlaceholder")}
-                rows={5}
+                rows={14}
                 className="w-full"
                 suggestions={tagSuggestions}
                 onResolveSuggestion={resolveTagSuggestion}
@@ -1098,7 +1098,7 @@ export const TtsSettings = () => {
                 providers={chipProviders}
                 insertApiRef={editorApiRef}
                 placeholder={t("tts.translationPlaceholder")}
-                rows={5}
+                rows={14}
                 className="w-full"
                 lang={targetLangCode(targetLang)}
               />
@@ -1109,7 +1109,7 @@ export const TtsSettings = () => {
                 providers={chipProviders}
                 insertApiRef={editorApiRef}
                 placeholder={t("tts.summaryPlaceholder")}
-                rows={5}
+                rows={14}
                 className="w-full"
               />
             )}

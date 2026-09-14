@@ -292,8 +292,8 @@ export const ModelsSettings: React.FC = () => {
 
   return (
     <PageShell
-      title={t("settings.models.title")}
-      description={t("settings.models.description")}
+      title={t("sidebar.models")}
+      description={t("workspace.modelsHint")}
     >
 
       {/* Search bar — filter the catalog by name or description.
@@ -395,7 +395,6 @@ export const ModelsSettings: React.FC = () => {
       {/* Geklonte und gespeicherte Stimmen gehoeren zu den Vorlesestimmen,
           nicht unter den Vorlesen-Editor: hier wird angehoert, aufgenommen,
           importiert und geloescht — ausgewaehlt wird beim Vorlesen. */}
-      <VoiceLibrary />
 
       {filteredModels.length > 0 ? (
         <div className="space-y-6">
@@ -560,6 +559,11 @@ export const ModelsSettings: React.FC = () => {
           {t("settings.models.noModelsMatch")}
         </div>
       )}
+
+      {/* Geklonte und gespeicherte Stimmen gehoeren zu den Modellen, nicht
+          unter den Vorlesen-Editor: hier wird angehoert, aufgenommen,
+          importiert und geloescht -- ausgewaehlt wird beim Vorlesen. */}
+      <VoiceLibrary />
     </PageShell>
   );
 };

@@ -70,7 +70,9 @@ test.beforeEach(async ({ page }) => {
             cmd === "tts_list_voices" ||
             cmd === "tts_list_voice_infos" ||
             cmd === "llm_ps" ||
-            cmd === "tts_reading_list"
+            cmd === "tts_reading_list" ||
+            cmd === "tts_list_downloads" ||
+            cmd === "llm_local_list"
           )
             return [];
           if (
@@ -243,4 +245,26 @@ test("read-aloud workspace preserves editor width in a narrow window", async ({
     path: "test-results/workspace-reading.png",
     animations: "disabled",
   });
+});
+
+test("all five content pages share one head", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  const pages: [string, string][] = [
+    ["Verlauf", "history"],
+    ["Aufnahmen", "meetings"],
+    ["Modelle", "models"],
+    ["Vorlesen", "tts"],
+    ["Einstellungen", "settings"],
+  ];
+  for (const [label, id] of pages) {
+    await page.getByRole("button", { name: label, exact: true }).click();
+    // Ein Kopf je Seite, immer gleich gebaut: h1 im PageShell.
+    const head = page.locator(".page-shell__head h1");
+    await expect(head).toHaveCount(1);
+    await page.screenshot({
+      path: `test-results/page-${id}.png`,
+      animations: "disabled",
+    });
+  }
 });
