@@ -460,3 +460,31 @@ test("the sidebar no longer repeats the logo", async ({ page }) => {
   // nur die oberste Zeile des Menues.
   await expect(page.locator(".workspace-nav__brand")).toHaveCount(0);
 });
+
+test("a downloaded Piper voice can be picked right in the read-aloud voice list", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  const voiceSelect = page.getByTestId("voice-select");
+  await voiceSelect.click();
+  // Nur die geladene Piper-Stimme steht zur Wahl, deutlich als Piper markiert.
+  await expect(page.getByText("Thorsten (Deutsch) · Piper")).toBeVisible();
+  await expect(page.getByText("Amy (English) · Piper")).toHaveCount(0);
+  await page.getByText("Thorsten (Deutsch) · Piper").click();
+  // Die Wahl schaltet die Engine um und merkt sich die Stimme.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { savedEngine?: string }).savedEngine,
+      ),
+    )
+    .toBe("piper");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { savedPiperVoice?: string }).savedPiperVoice,
+      ),
+    )
+    .toBe("de_DE-thorsten-medium");
+});

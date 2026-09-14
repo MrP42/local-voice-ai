@@ -1401,25 +1401,50 @@ export const TtsSettings = () => {
                   Satz um. Leerer Wert = Standardstimme (Seed). Verwaltung
                   (aufnehmen, importieren, loeschen) unten bei den
                   Einstellungen. */}
-                <div className="w-40" title={t("tts.voices.title")}>
+                <div
+                  className="w-44"
+                  title={t("tts.voices.title")}
+                  data-testid="voice-select"
+                >
                   {/* Kennwert statt leerem Text fuer die Standardstimme:
                       "" gilt der Select-Komponente als "nichts gewaehlt" und
-                      zeigte den Platzhalter "Select…" statt des Namens. */}
+                      zeigte den Platzhalter "Select…" statt des Namens.
+                      Piper-Stimmen stehen in derselben Liste (Wert
+                      "piper:<id>"): wer eine waehlt, schaltet damit die
+                      Engine um — die Engine-Einstellung im Reiter Vorlesen
+                      bleibt als zweiter Weg bestehen. */}
                   <Select
-                    value={getSetting("tts_voice") ?? "@default"}
+                    value={
+                      (getSetting("tts_engine") ?? "fish") === "piper"
+                        ? `piper:${getSetting("tts_piper_voice") ?? ""}`
+                        : (getSetting("tts_voice") ?? "@default")
+                    }
                     options={[
                       {
                         value: "@default",
                         label: t("tts.voices.defaultVoice"),
                       },
                       ...voices.map((id) => ({ value: id, label: id })),
+                      ...piperVoices.map((voice) => ({
+                        value: `piper:${voice.id}`,
+                        label: t("tts.voices.piperOption", { name: voice.name }),
+                      })),
                     ]}
-                    onChange={(value) =>
-                      updateSetting(
+                    onChange={(value) => {
+                      if (!value) return;
+                      if (value.startsWith("piper:")) {
+                        void updateSetting("tts_piper_voice", value.slice(6));
+                        void updateSetting("tts_engine", "piper");
+                        return;
+                      }
+                      if ((getSetting("tts_engine") ?? "fish") === "piper") {
+                        void updateSetting("tts_engine", "fish");
+                      }
+                      void updateSetting(
                         "tts_voice",
                         value === "@default" ? null : value,
-                      )
-                    }
+                      );
+                    }}
                     isClearable={false}
                   />
                 </div>
