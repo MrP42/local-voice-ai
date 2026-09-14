@@ -1368,13 +1368,14 @@ export const TtsSettings = () => {
                     </>
                   )}
                 </div>
+              </div>
                 {/* Die Stimme dort, wo man sie wechselt: beim Hoeren. Wechsel
                   wirkt sofort — eine laufende Wiedergabe stellt am aktuellen
                   Satz um. Leerer Wert = Standardstimme (Seed). Verwaltung
                   (aufnehmen, importieren, loeschen) unten bei den
                   Einstellungen. */}
                 <div
-                  className="w-full basis-full shrink-0"
+                  className="w-full"
                   title={t("tts.voices.title")}
                   data-testid="voice-select"
                 >
@@ -1423,7 +1424,6 @@ export const TtsSettings = () => {
                     isClearable={false}
                   />
                 </div>
-              </div>
               {/* Nur das Symbol: die Zeile ist eine Transportleiste, und ein
                 Wort neben lauter Glyphen zieht das Auge auf die unwichtigste
                 Schaltflaeche. Beschriftung wandert in title + aria-label. */}
