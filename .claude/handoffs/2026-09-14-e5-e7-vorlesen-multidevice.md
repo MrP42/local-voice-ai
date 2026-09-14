@@ -102,6 +102,13 @@ Fortschrittszwang. NICHT umgesetzt (Stufe 2): Umschlüsselung bei Passwortwechse
 Vorlesen-/Piper-Änderungen: keine Befunde. Kontexthilfe jetzt auf allen fünf Seiten
 (`PageShell help=…`, Texte `src/content/help/{verlauf,aufnahmen,modelle,einstellungen}`).
 
+`…0.17.11…`: Knopf „Text aufbereiten" (Sparkles, Original-Reiter neben dem Mikrofon) →
+`tts_tidy_text` → `summarizer::tidy` (blockweise, kein Reduce, < 60 % Restlänge = Fehler),
+Rückgängig im Toast. Zusammenfassung: `language_clause` nennt die erkannte Sprache im
+Prompt („write in German") — Ursache für „er fasst die Übersetzung zusammen" war ein
+kleines Modell, das auf den englischen Prompt englisch antwortete; die Quelle war immer
+das Original (`summarize` nutzt `text`). Tooltip sagt das jetzt.
+
 ## Offen / nächste Schritte (Code)
 
 - Fußleisten-Symbol für den Sync-Zustand (Spec Abschnitt 7) — noch nicht gebaut.
