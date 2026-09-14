@@ -59,6 +59,7 @@ import {
 /// Regler aus den Einstellungen entfallen ist: dieselbe Einstellung an zwei
 /// Orten war eine Dublette, aber der langsamste Wert soll bleiben.
 const SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+const speedLabel = (value: number) => `${value.toFixed(2).replace(".", ",")}\u00d7`;
 
 /// Erlaubte MP3-Bitraten (kbit/s) — dieselben vier Stufen wie in
 /// `settings.rs`; mehr Stufen muesste die Oberflaeche auch erklaeren.
@@ -166,6 +167,7 @@ export const TtsSettings = () => {
   const [summary, setSummary] = useState<string>("");
   const [summarizing, setSummarizing] = useState(false);
   const [tidying, setTidying] = useState(false);
+  const [speedOpen, setSpeedOpen] = useState(false);
   const [sumLength, setSumLength] = usePersistentState<string>(
     "tts.summary.length",
     "mittel",
@@ -1315,26 +1317,56 @@ export const TtsSettings = () => {
                   <Glyph name="stop" />
                 </button>
                 <span className="mediabar__sep" />
-                {/* Tempo gehoert an die Transportleiste, nicht in die
-                  Einstellungen: man merkt beim Hoeren, dass es zu langsam
-                  ist, nicht vorher. Es steht nur noch hier. Bereich bewusst
-                  eng — Tempo entsteht per Resampling und zieht die Tonhoehe
-                  mit. */}
-                <div
-                  className="w-28"
-                  title={t("tts.settings.speedDescription")}
-                >
-                  <Select
-                    value={String(getSetting("tts_speed") ?? 1.0)}
-                    options={SPEEDS.map((value) => ({
-                      value: String(value),
-                      label: `${value.toFixed(2).replace(".", ",")}×`,
-                    }))}
-                    onChange={(value) =>
-                      value && updateSetting("tts_speed", Number(value))
-                    }
-                    isClearable={false}
-                  />
+                {/* Tempo als schlanker Wert hinter dem letzten Trenner: immer
+                    sichtbar, ein Klick oeffnet die Stufen. Tempo entsteht per
+                    Resampling und zieht die Tonhoehe mit -- Bereich bewusst eng. */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    className="mbtn mbtn--text"
+                    onClick={() => setSpeedOpen((o) => !o)}
+                    title={t("tts.settings.speedDescription")}
+                    aria-label={t("tts.settings.speed")}
+                    aria-haspopup="listbox"
+                    aria-expanded={speedOpen}
+                  >
+                    {speedLabel(getSetting("tts_speed") ?? 1.0)}
+                  </button>
+                  {speedOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-30"
+                        onClick={() => setSpeedOpen(false)}
+                      />
+                      <div
+                        role="listbox"
+                        aria-label={t("tts.settings.speed")}
+                        className="absolute left-0 top-full mt-1 w-24 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
+                      >
+                        {SPEEDS.map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            role="option"
+                            aria-selected={
+                              (getSetting("tts_speed") ?? 1.0) === value
+                            }
+                            onClick={() => {
+                              void updateSetting("tts_speed", value);
+                              setSpeedOpen(false);
+                            }}
+                            className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
+                              (getSetting("tts_speed") ?? 1.0) === value
+                                ? "text-text font-medium"
+                                : "text-text/80"
+                            }`}
+                          >
+                            {speedLabel(value)}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
                 {/* Die Stimme dort, wo man sie wechselt: beim Hoeren. Wechsel
                   wirkt sofort — eine laufende Wiedergabe stellt am aktuellen
@@ -1342,7 +1374,7 @@ export const TtsSettings = () => {
                   (aufnehmen, importieren, loeschen) unten bei den
                   Einstellungen. */}
                 <div
-                  className="w-56"
+                  className="w-full"
                   title={t("tts.voices.title")}
                   data-testid="voice-select"
                 >
@@ -1558,6 +1590,7 @@ export const TtsSettings = () => {
                 Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
                 {tab === "original" && (
                   <AutoTagBar
+                    showSettings={false}
                     text={text}
                     suggestions={tagSuggestions}
                     sourceText={tagSuggestionsSourceText}
@@ -1582,6 +1615,7 @@ export const TtsSettings = () => {
                   </div>
                   <Button
                     variant="secondary"
+                    className="w-full justify-start"
                     onClick={translateText}
                     disabled={translating || !text.trim()}
                     title={
@@ -1596,20 +1630,6 @@ export const TtsSettings = () => {
                   </Button>
                 </>
               )}
-              {tab === "summary" && (
-                <Button
-                  variant="secondary"
-                  onClick={summarize}
-                  disabled={summarizing || !text.trim()}
-                  title={
-                    summarizing ? t("tts.summarizing") : t("tts.summarizeHint")
-                  }
-                  aria-label={t("tts.summarize")}
-                >
-                  <FileText width={16} height={16} />
-                  {t("tts.summarize")}
-                </Button>
-              )}
             </div>
 
             {/* Wie zusammengefasst wird — wirkt beim naechsten Klick auf
@@ -1617,9 +1637,9 @@ export const TtsSettings = () => {
               die Frage sich stellt. */}
             {tab === "summary" && (
               <div className="flex flex-col gap-2 items-stretch">
-                <label className="flex items-center gap-1 text-sm">
+                <label className="flex flex-col gap-1 text-sm">
                   {t("tts.summary.length")}
-                  <div className="w-40">
+                  <div className="w-full">
                     <Select
                       value={sumLength}
                       isClearable={false}
@@ -1638,9 +1658,9 @@ export const TtsSettings = () => {
                     />
                   </div>
                 </label>
-                <label className="flex items-center gap-1 text-sm">
+                <label className="flex flex-col gap-1 text-sm">
                   {t("tts.summary.detail")}
-                  <div className="w-40">
+                  <div className="w-full">
                     <Select
                       value={sumDetail}
                       isClearable={false}
@@ -1662,9 +1682,9 @@ export const TtsSettings = () => {
                     />
                   </div>
                 </label>
-                <label className="flex items-center gap-1 text-sm">
+                <label className="flex flex-col gap-1 text-sm">
                   {t("tts.summary.audience")}
-                  <div className="w-44">
+                  <div className="w-full">
                     <Select
                       value={sumAudience}
                       isClearable={false}
@@ -1686,6 +1706,19 @@ export const TtsSettings = () => {
                     />
                   </div>
                 </label>
+                <Button
+                  variant="secondary"
+                  className="w-full justify-start"
+                  onClick={summarize}
+                  disabled={summarizing || !text.trim()}
+                  title={
+                    summarizing ? t("tts.summarizing") : t("tts.summarizeHint")
+                  }
+                  aria-label={t("tts.summarize")}
+                >
+                  <FileText width={16} height={16} />
+                  {t("tts.summarize")}
+                </Button>
               </div>
             )}
             {/* Sprecherwechsel und Tags sind Schreibregeln, keine

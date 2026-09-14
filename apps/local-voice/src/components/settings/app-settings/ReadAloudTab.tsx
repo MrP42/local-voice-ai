@@ -9,6 +9,7 @@ import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Input } from "../../ui/Input";
 import { ShortcutInput } from "../ShortcutInput";
 import { VoiceLibrary } from "../tts/voices/VoiceLibrary";
+import { DEFAULT_TAG_PROVIDER_UI_VALUE } from "../tts/tags/AutoTagBar";
 
 /// Erlaubte MP3-Bitraten (kbit/s) — dieselben vier Stufen wie in
 /// `settings.rs`; mehr Stufen muesste die Oberflaeche auch erklaeren.
@@ -43,6 +44,54 @@ export const ReadAloudTab = () => {
         description={t("tts.settings.piperAutoLanguageDescription")}
         grouped={true}
       />
+      {/* Auto-Tagging: Anbieter und Geraet sind Einstellungen, kein
+          Arbeitsschritt -- auf der Vorlesen-Seite bleibt nur der Knopf. */}
+      <SettingContainer
+        title={t("tts.settings.autotagProvider")}
+        description={t("tts.settings.autotagProviderDescription")}
+        grouped={true}
+        layout="horizontal"
+      >
+        <div className="w-48">
+          <Select
+            value={
+              (getSetting("tts_tag_provider") ?? "") === ""
+                ? DEFAULT_TAG_PROVIDER_UI_VALUE
+                : (getSetting("tts_tag_provider") ?? "")
+            }
+            options={[
+              { value: DEFAULT_TAG_PROVIDER_UI_VALUE, label: t("tts.autotag.providerDefault") },
+              { value: "anthropic", label: t("tts.autotag.providerClaude") },
+            ]}
+            isClearable={false}
+            onChange={(value) =>
+              updateSetting(
+                "tts_tag_provider",
+                value === DEFAULT_TAG_PROVIDER_UI_VALUE ? "" : (value ?? ""),
+              )
+            }
+          />
+        </div>
+      </SettingContainer>
+      <SettingContainer
+        title={t("tts.settings.autotagDevice")}
+        description={t("tts.autotag.deviceHint")}
+        grouped={true}
+        layout="horizontal"
+      >
+        <div className="w-48">
+          <Select
+            value={getSetting("tts_tag_device") ?? "auto"}
+            options={[
+              { value: "auto", label: t("tts.autotag.deviceAuto") },
+              { value: "cpu", label: t("tts.autotag.deviceCpu") },
+              { value: "gpu", label: t("tts.autotag.deviceGpu") },
+            ]}
+            isClearable={false}
+            onChange={(value) => updateSetting("tts_tag_device", value ?? "auto")}
+          />
+        </div>
+      </SettingContainer>
       <ShortcutInput shortcutId="speak_clipboard" grouped={true} />
       <Slider
         value={getSetting("tts_volume") ?? 1.0}

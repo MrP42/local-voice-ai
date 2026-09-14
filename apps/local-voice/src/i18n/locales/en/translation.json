@@ -199,7 +199,10 @@
       "piperVoiceDescription": "Which of the downloaded Piper voices reads aloud.",
       "piperVoiceMissing": "No Piper voice downloaded yet — get one under Models.",
       "piperAutoLanguage": "Detect language automatically",
-      "piperAutoLanguageDescription": "Each sentence is checked for its language and read by a matching downloaded Piper voice. Without a match the selected voice reads."
+      "piperAutoLanguageDescription": "Each sentence is checked for its language and read by a matching downloaded Piper voice. Without a match the selected voice reads.",
+      "autotagProvider": "Auto-tagging: provider",
+      "autotagProviderDescription": "Which language model suggests the emphasis tags: the app's default model or Claude Haiku (API key required).",
+      "autotagDevice": "Auto-tagging: device"
     },
     "saveAudio": "Save as audio…",
     "savingAudio": "Generating…",

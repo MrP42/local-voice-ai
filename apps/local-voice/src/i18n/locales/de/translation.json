@@ -199,7 +199,10 @@
       "piperVoiceDescription": "Welche der geladenen Piper-Stimmen vorliest.",
       "piperVoiceMissing": "Noch keine Piper-Stimme geladen — unter Modelle herunterladen.",
       "piperAutoLanguage": "Sprache automatisch erkennen",
-      "piperAutoLanguageDescription": "Je Satz wird die Sprache erkannt und die passende geladene Piper-Stimme genommen (z. B. Englisch mit einer englischen Stimme). Ohne passende Stimme liest die gewählte."
+      "piperAutoLanguageDescription": "Je Satz wird die Sprache erkannt und die passende geladene Piper-Stimme genommen (z. B. Englisch mit einer englischen Stimme). Ohne passende Stimme liest die gewählte.",
+      "autotagProvider": "Auto-Tagging: Anbieter",
+      "autotagProviderDescription": "Welches Sprachmodell die Betonungs-Tags vorschlägt: das Standardmodell der App oder Claude Haiku (API-Schlüssel nötig).",
+      "autotagDevice": "Auto-Tagging: Gerät"
     },
     "saveAudio": "Als Audio speichern…",
     "savingAudio": "Wird erzeugt…",
