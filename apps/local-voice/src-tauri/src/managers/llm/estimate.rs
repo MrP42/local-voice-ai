@@ -52,6 +52,21 @@ pub const PROBE_KEYS: &[&str] = &[
     "qwen2.embedding_length",
     "qwen2.attention.key_length",
     "qwen2.context_length",
+    // Qwen 3.5: hybride Bauart, nur jede n-te Schicht traegt einen KV-Cache
+    // (full_attention_interval); die uebrigen sind Gated-DeltaNet-Schichten.
+    "qwen35.block_count",
+    "qwen35.attention.head_count",
+    "qwen35.attention.head_count_kv",
+    "qwen35.embedding_length",
+    "qwen35.attention.key_length",
+    "qwen35.context_length",
+    "qwen35.full_attention_interval",
+    "gemma4.block_count",
+    "gemma4.attention.head_count",
+    "gemma4.attention.head_count_kv",
+    "gemma4.embedding_length",
+    "gemma4.attention.key_length",
+    "gemma4.context_length",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
@@ -101,7 +116,13 @@ impl KvShape {
     pub fn from_metadata(meta: &GgufMetadata) -> Option<Self> {
         let arch = meta.get_str("general.architecture")?;
         let get = |suffix: &str| meta.get_u64(&format!("{arch}.{suffix}"));
-        let layers = get("block_count")?;
+        let mut layers = get("block_count")?;
+        // Hybride Modelle (Qwen 3.5): nur jede n-te Schicht hat Aufmerksamkeit
+        // mit KV-Cache. Der Zustand der uebrigen Schichten ist klein und
+        // steckt in der Reserve.
+        if let Some(interval) = get("full_attention_interval").filter(|i| *i > 1) {
+            layers = layers.div_ceil(interval);
+        }
         let heads = get("attention.head_count")?;
         let kv_heads = get("attention.head_count_kv").unwrap_or(heads);
         let head_dim = get("attention.key_length")
@@ -253,6 +274,19 @@ mod tests {
         assert_eq!(e.kv_mb, 448, "KV: 4096*28*8*128*4 Byte");
         assert!(e.total_mb >= 867, "Prognose {} MiB unter der Messung", e.total_mb);
         assert!(e.total_mb <= 1400, "Prognose {} MiB unplausibel hoch", e.total_mb);
+    }
+
+    #[test]
+    fn hybrid_models_count_only_attention_layers() {
+        let mut kv = std::collections::HashMap::new();
+        kv.insert("general.architecture".to_string(), GgufValue::String("qwen35".into()));
+        kv.insert("qwen35.block_count".to_string(), GgufValue::U32(32));
+        kv.insert("qwen35.attention.head_count".to_string(), GgufValue::U32(16));
+        kv.insert("qwen35.attention.head_count_kv".to_string(), GgufValue::U32(4));
+        kv.insert("qwen35.attention.key_length".to_string(), GgufValue::U32(256));
+        kv.insert("qwen35.full_attention_interval".to_string(), GgufValue::U32(4));
+        let shape = KvShape::from_metadata(&GgufMetadata { kv }).expect("Form");
+        assert_eq!(shape, KvShape { layers: 8, kv_heads: 4, head_dim: 256 });
     }
 
     #[test]
