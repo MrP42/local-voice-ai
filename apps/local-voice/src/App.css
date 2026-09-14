@@ -725,3 +725,17 @@ textarea:focus::-webkit-resizer {
     resize: vertical;
   }
 }
+
+/* Auto-Tagging in der Bedienspalte: Knopf, Anbieter und Geraet untereinander,
+   volle Breite -- die Leiste war fuer eine Zeile unter dem Text gebaut. */
+.tts-controls__autotag > div {
+  flex-direction: column;
+  align-items: stretch;
+}
+.tts-controls__autotag > div > .w-40 {
+  width: 100%;
+}
+.tts-controls__autotag > div > button {
+  width: 100%;
+  justify-content: flex-start;
+}

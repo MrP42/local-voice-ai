@@ -1257,17 +1257,6 @@ export const TtsSettings = () => {
                   }
                 />
 
-                {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
-                Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
-                {tab === "original" && (
-                  <AutoTagBar
-                    text={text}
-                    suggestions={tagSuggestions}
-                    sourceText={tagSuggestionsSourceText}
-                    onSuggestionsChange={changeTagSuggestions}
-                    onApplyText={applyAutoTagText}
-                  />
-                )}
               </div>
             </details>
           </div>
@@ -1562,6 +1551,21 @@ export const TtsSettings = () => {
                     />
                     {t("tts.tidy")}
                   </Button>
+                  {/* Auto-Tagging gehoert zu den Textwerkzeugen: hier in der
+                      Bedienspalte, gestapelt (Knopf, Anbieter, Geraet). */}
+                  <div className="tts-controls__autotag">
+                {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
+                Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
+                {tab === "original" && (
+                  <AutoTagBar
+                    text={text}
+                    suggestions={tagSuggestions}
+                    sourceText={tagSuggestionsSourceText}
+                    onSuggestionsChange={changeTagSuggestions}
+                    onApplyText={applyAutoTagText}
+                  />
+                )}
+                  </div>
                 </>
               )}
               {tab === "translation" && (
