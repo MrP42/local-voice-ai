@@ -27,6 +27,7 @@ export const MeetingsSettings: React.FC = () => {
     <PageShell
       title={t("workspace.recordings")}
       description={t("workspace.meetingsHint")}
+      help="aufnahmen"
     >
       <RecorderCard />
       <LiveTranscript />

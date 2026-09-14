@@ -96,6 +96,7 @@ export const AppSettings: React.FC = () => {
     <PageShell
       title={t("sidebar.settings")}
       description={t("workspace.settingsHint")}
+      help="einstellungen"
     >
       {/* Scrolls rather than wraps: on a narrow window a wrapped strip pushes
           the content down by a whole row for no gain. */}

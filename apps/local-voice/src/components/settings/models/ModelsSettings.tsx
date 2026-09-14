@@ -293,6 +293,7 @@ export const ModelsSettings: React.FC = () => {
     <PageShell
       title={t("sidebar.models")}
       description={t("workspace.modelsHint")}
+      help="modelle"
     >
 
       {/* Search bar — filter the catalog by name or description.

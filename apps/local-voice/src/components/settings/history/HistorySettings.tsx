@@ -278,6 +278,7 @@ export const HistorySettings: React.FC = () => {
     <PageShell
       title={t("settings.history.title")}
       description={t("workspace.historyHint")}
+      help="verlauf"
       actions={
         <OpenRecordingsButton
           onClick={openRecordingsFolder}

@@ -1482,7 +1482,8 @@
   "help": {
     "title": "Help",
     "open": "Help for this page",
-    "empty": "There is no help for this area yet."
+    "empty": "There is no help for this area yet.",
+    "close": "Close help"
   },
   "sync": {
     "groupTitle": "Account & devices",

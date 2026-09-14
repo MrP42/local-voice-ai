@@ -1482,7 +1482,8 @@
   "help": {
     "title": "Hilfe",
     "open": "Hilfe zu dieser Seite",
-    "empty": "Für diesen Bereich gibt es noch keine Hilfe."
+    "empty": "Für diesen Bereich gibt es noch keine Hilfe.",
+    "close": "Hilfe schließen"
   },
   "sync": {
     "groupTitle": "Konto & Geräte",

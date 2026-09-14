@@ -309,3 +309,21 @@ test("account & devices: sign in from the general tab, then sign out", async ({ 
   await page.getByRole("button", { name: "Abmelden" }).click();
   await expect(page.getByTestId("sync-login")).toBeVisible();
 });
+
+test("every content page opens its context help from the head", async ({ page }) => {
+  await page.goto("/");
+  for (const [label, heading] of [
+    ["Verlauf", "Verlauf"],
+    ["Aufnahmen", "Aufnahmen"],
+    ["Modelle", "Modelle"],
+    ["Einstellungen", "Einstellungen"],
+  ] as const) {
+    await page.getByRole("button", { name: label, exact: true }).last().click();
+    await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+    const panel = page.getByTestId("help-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole("heading", { level: 3, name: heading }).first()).toBeVisible();
+    await page.getByRole("button", { name: "Hilfe schließen" }).click();
+    await expect(panel).toHaveCount(0);
+  }
+});
