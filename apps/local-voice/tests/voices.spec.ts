@@ -152,6 +152,12 @@ test.beforeEach(async ({ page }) => {
             return [];
           // Eine geladene Piper-Stimme und die Laufzeit; die zweite Stimme
           // ist noch nicht geladen und darf nicht zur Auswahl stehen.
+          // Der Seitenstand traegt die Stimme je Reiter -- was gespeichert wird, zaehlt.
+          if (cmd === "page_state_save") {
+            (window as unknown as { savedPageState?: unknown }).savedPageState =
+              args?.state;
+            return null;
+          }
           if (cmd === "tts_list_downloads")
             return [
               {
@@ -488,4 +494,47 @@ test("a downloaded Piper voice can be picked right in the read-aloud voice list"
       ),
     )
     .toBe("de_DE-thorsten-medium");
+});
+
+test("each tab remembers its own voice with the page", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  // Uebersetzung bekommt die Piper-Stimme ...
+  await page.getByRole("button", { name: "Übersetzung", exact: true }).click();
+  await page.getByTestId("voice-select").click();
+  await page.getByText("Thorsten · Deutsch · MQ · Piper").click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { savedEngine?: string }).savedEngine,
+      ),
+    )
+    .toBe("piper");
+  // ... das Original bleibt bei der Standardstimme: Umschalten schaltet die Engine zurueck.
+  await page.getByRole("button", { name: "Original", exact: true }).click();
+  await page.getByTestId("voice-select").click();
+  await page.getByText("Standardstimme (Seed)").click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { savedEngine?: string }).savedEngine,
+      ),
+    )
+    .toBe("fish");
+  await page.getByRole("button", { name: "Übersetzung", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { savedEngine?: string }).savedEngine,
+      ),
+    )
+    .toBe("piper");
+  // Und die Zuordnung steht im Seitenstand.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { savedPageState?: string }).savedPageState,
+      ),
+    )
+    .toContain('"translation":"piper:de_DE-thorsten-medium"');
 });

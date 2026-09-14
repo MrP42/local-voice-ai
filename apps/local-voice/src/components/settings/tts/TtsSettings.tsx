@@ -185,6 +185,11 @@ export const TtsSettings = () => {
   const [tab, setTab] = useState<"original" | "translation" | "summary">(
     "original",
   );
+  // Stimme je Reiter, gespeichert mit der Seite (state.json): das Original
+  // liest Thorsten, die Uebersetzung Lessac -- ohne dass man beim Umschalten
+  // jedes Mal neu waehlt. Werte wie im Dropdown: "@default", "<fish-id>",
+  // "piper:<id>". Fehlt ein Eintrag, bleibt die zuletzt gewaehlte Stimme.
+  const [tabVoices, setTabVoices] = useState<Record<string, string>>({});
   const [translation, setTranslation] = useState<string | null>(null);
   const [translating, setTranslating] = useState(false);
   const [dictating, setDictating] = useState(false);
@@ -370,10 +375,14 @@ export const TtsSettings = () => {
             summary?: string;
             sourceUrl?: string;
             tab?: string;
+            voices?: Record<string, string>;
           };
           setText(state.text ?? "");
           setSummary(state.summary ?? "");
           setSourceUrl(state.sourceUrl ?? "");
+          setTabVoices(
+            state.voices && typeof state.voices === "object" ? state.voices : {},
+          );
           setTab(
             state.tab === "translation" || state.tab === "summary"
               ? state.tab
@@ -396,6 +405,7 @@ export const TtsSettings = () => {
         setText(legacy("tts.text"));
         setSummary(legacy("tts.summary"));
         setSourceUrl(legacy("tts.summary.url"));
+        setTabVoices({});
         setTab("original");
       }
       setTranslation(null);
@@ -421,7 +431,7 @@ export const TtsSettings = () => {
       void commands
         .pageStateSave(
           activePage,
-          JSON.stringify({ text, summary, sourceUrl, tab }),
+          JSON.stringify({ text, summary, sourceUrl, tab, voices: tabVoices }),
         )
         // Die Seitenliste zeigt Vorschau und Zeitpunkt — die stammen aus
         // genau dieser Datei und sollen nicht erst beim naechsten Start
@@ -432,7 +442,7 @@ export const TtsSettings = () => {
         });
     }, 500);
     return () => window.clearTimeout(handle);
-  }, [activePage, text, summary, sourceUrl, tab]);
+  }, [activePage, text, summary, sourceUrl, tab, tabVoices]);
 
   // Sprachmodell-Anzeige: Ereignis waehrend der Uebersetzung, dazu eine
   // Abfrage alle zehn Sekunden — billig (lokaler Aufruf mit kurzem Timeout)
@@ -689,6 +699,38 @@ export const TtsSettings = () => {
       );
     });
   }, []);
+
+  /* Der Wert des Stimmen-Dropdowns aus den Einstellungen: Piper-Stimme als
+     "piper:<id>", sonst Fish-Stimme oder Standard. */
+  const voiceValue =
+    (getSetting("tts_engine") ?? "fish") === "piper"
+      ? `piper:${getSetting("tts_piper_voice") ?? ""}`
+      : (getSetting("tts_voice") ?? "@default");
+
+  /* Eine Dropdown-Wahl in die Einstellungen schreiben: Piper-Stimme schaltet
+     die Engine um, eine Fish-Stimme schaltet zurueck. */
+  const applyVoiceValue = useCallback(
+    (value: string) => {
+      if (value.startsWith("piper:")) {
+        void updateSetting("tts_piper_voice", value.slice(6));
+        void updateSetting("tts_engine", "piper");
+        return;
+      }
+      if ((getSetting("tts_engine") ?? "fish") === "piper") {
+        void updateSetting("tts_engine", "fish");
+      }
+      void updateSetting("tts_voice", value === "@default" ? null : value);
+    },
+    [getSetting, updateSetting],
+  );
+
+  // Reiterwechsel: die fuer diesen Reiter gemerkte Stimme wird aktiv.
+  useEffect(() => {
+    const wanted = tabVoices[tab];
+    if (wanted && wanted !== voiceValue) applyVoiceValue(wanted);
+    // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
+    // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
+  }, [tab, tabVoices, applyVoiceValue]);
 
   /* Beschriftung einer Piper-Stimme in der Auswahl: Name, Sprache, Qualitaet
      kurz -- "Thorsten · Deutsch · HQ". Die Sprache steht IMMER dabei: am Namen
@@ -1452,11 +1494,7 @@ export const TtsSettings = () => {
                       Engine um — die Engine-Einstellung im Reiter Vorlesen
                       bleibt als zweiter Weg bestehen. */}
                   <Select
-                    value={
-                      (getSetting("tts_engine") ?? "fish") === "piper"
-                        ? `piper:${getSetting("tts_piper_voice") ?? ""}`
-                        : (getSetting("tts_voice") ?? "@default")
-                    }
+                    value={voiceValue}
                     options={[
                       {
                         value: "@default",
@@ -1472,18 +1510,8 @@ export const TtsSettings = () => {
                     ]}
                     onChange={(value) => {
                       if (!value) return;
-                      if (value.startsWith("piper:")) {
-                        void updateSetting("tts_piper_voice", value.slice(6));
-                        void updateSetting("tts_engine", "piper");
-                        return;
-                      }
-                      if ((getSetting("tts_engine") ?? "fish") === "piper") {
-                        void updateSetting("tts_engine", "fish");
-                      }
-                      void updateSetting(
-                        "tts_voice",
-                        value === "@default" ? null : value,
-                      );
+                      applyVoiceValue(value);
+                      setTabVoices((current) => ({ ...current, [tab]: value }));
                     }}
                     isClearable={false}
                   />
