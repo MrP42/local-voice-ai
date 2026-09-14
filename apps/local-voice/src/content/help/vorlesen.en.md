@@ -24,8 +24,8 @@ Each page is a worksheet with its own text and folder. The list shows the start 
 
 ## Voices
 
-- Select in the bar above the player.
-- Listen, clone, import and delete: **Models → Listen to & manage voices**.
+- Select in the bar above the player. Piper voices show language and quality there, for example "Thorsten · German · HQ · Piper". Each tab remembers its voice.
+- Listen, clone, import and delete: **Settings → Read aloud**, or via "Manage voices …" at the end of the voice list.
 - **Cloning** needs a 10 to 30 second reference. The transcript is generated and can be corrected.
 - The **seed** shapes the default voice. A seed you like can be saved as a named voice.
 - Speaker changes in the text work with Fish Speech voices. Piper reads everything in the selected voice.

@@ -24,8 +24,8 @@ Jede Seite ist ein Arbeitsblatt mit eigenem Text und eigenem Ordner. Die Liste z
 
 ## Stimmen
 
-- Ausgewählt wird in der Leiste über dem Player.
-- Anhören, klonen, importieren und löschen: **Modelle → Stimmen anhören & verwalten**.
+- Ausgewählt wird in der Leiste über dem Player. Piper-Stimmen stehen dort mit Sprache und Qualität, etwa „Thorsten · Deutsch · HQ · Piper". Jeder Reiter merkt sich seine Stimme.
+- Anhören, klonen, importieren und löschen: **Einstellungen → Vorlesen**, oder direkt über „Stimmen verwalten …" am Ende der Stimmenliste.
 - **Klonen** braucht eine Referenz von 10 bis 30 Sekunden. Das Transkript entsteht automatisch und lässt sich korrigieren.
 - Der **Seed** bestimmt, wie die Standardstimme klingt. Ein gefundener Seed lässt sich als benannte Stimme sichern.
 - Sprecherwechsel im Text funktionieren mit Fish-Speech-Stimmen. Piper liest alles in der gewählten Stimme.

@@ -130,6 +130,19 @@ function App() {
     };
   }, [t]);
 
+  // Sprung aus einer Inhaltsseite in einen anderen Bereich (z. B. "Stimmen
+  // verwalten" im Stimmen-Dropdown -> Einstellungen). Den Reiter setzt der
+  // Absender vorher in localStorage, wie es der Start-Bereich schon tut.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const section = (event as CustomEvent<{ section?: string }>).detail
+        ?.section;
+      if (section && isSidebarSection(section)) setCurrentSection(section);
+    };
+    window.addEventListener("lv-navigate", handler);
+    return () => window.removeEventListener("lv-navigate", handler);
+  }, [setCurrentSection]);
+
   // Der Geraete-Sync hat Einstellungen von einem anderen Geraet uebernommen:
   // den Store neu lesen, sonst zeigt die Oberflaeche den alten Stand.
   const refreshSettings = useSettingsStore((state) => state.refreshSettings);

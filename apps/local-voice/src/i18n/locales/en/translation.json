@@ -149,7 +149,8 @@
       "transcriptManualPlaceholder": "Exact transcript of the recording (automatic transcription is off — enter the text here)",
       "previewCreate": "Create sample",
       "previewNeedsEngine": "No sample yet — creating one starts the speech engine once.",
-      "piperOption": "{{name}} · Piper"
+      "piperOption": "{{name}} · Piper",
+      "manage": "Manage voices …"
     },
     "settingsTitle": "Read Aloud settings",
     "settings": {

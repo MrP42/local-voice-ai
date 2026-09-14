@@ -1507,9 +1507,24 @@ export const TtsSettings = () => {
                           name: piperVoiceLabel(voice),
                         }),
                       })),
+                      // Kein Wert, ein Sprung: zur Stimmenverwaltung unter
+                      // Einstellungen -> Vorlesen.
+                      { value: "@manage", label: t("tts.voices.manage") },
                     ]}
                     onChange={(value) => {
                       if (!value) return;
+                      if (value === "@manage") {
+                        window.localStorage.setItem(
+                          "lva.ui.settings.tab",
+                          "readaloud",
+                        );
+                        window.dispatchEvent(
+                          new CustomEvent("lv-navigate", {
+                            detail: { section: "settings" },
+                          }),
+                        );
+                        return;
+                      }
                       applyVoiceValue(value);
                       setTabVoices((current) => ({ ...current, [tab]: value }));
                     }}

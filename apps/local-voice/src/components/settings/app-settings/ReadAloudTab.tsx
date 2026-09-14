@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import React from "react";
 import { useTranslation } from "react-i18next";
-import { commands } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
@@ -9,6 +8,7 @@ import { Slider } from "../../ui/Slider";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Input } from "../../ui/Input";
 import { ShortcutInput } from "../ShortcutInput";
+import { VoiceLibrary } from "../tts/voices/VoiceLibrary";
 
 /// Erlaubte MP3-Bitraten (kbit/s) — dieselben vier Stufen wie in
 /// `settings.rs`; mehr Stufen muesste die Oberflaeche auch erklaeren.
@@ -27,96 +27,22 @@ export const ReadAloudTab = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
 
-  // Heruntergeladene Piper-Stimmen. Nur sie kann Piper vorlesen; die Liste
-  // kommt aus demselben Download-Verzeichnis, das die Modellseite fuellt.
-  const [piperVoices, setPiperVoices] = useState<
-    { id: string; name: string }[]
-  >([]);
-  useEffect(() => {
-    void commands.ttsListDownloads().then((result) => {
-      if (result.status !== "ok") return;
-      // Faellt die Abfrage aus, bleibt die Liste leer statt undefiniert.
-      setPiperVoices(
-        (result.data ?? [])
-          .filter((entry) => entry.kind === "voice" && entry.is_downloaded)
-          .map((entry) => ({ id: entry.id, name: entry.name })),
-      );
-    });
-  }, []);
-
   return (
     <div className="w-full space-y-6">
     <SettingsGroup title={t("tts.settingsTitle")}>
-      {/* Die Wahl der Engine stand bisher nur in den Einstellungen
-          auf der Platte, nicht in der Oberflaeche: Piper liess sich
-          herunterladen, aber nicht einschalten. Sie gehoert an den
-          Anfang — sie entscheidet, was alle Regler darunter tun. */}
-      <SettingContainer
-        title={t("tts.settings.engine")}
-        description={t("tts.settings.engineDescription")}
+      {/* Engine und Stimme werden auf der Vorlesen-Seite gewaehlt (Stimmen-
+          Dropdown: Fish-Stimme oder "Name · Sprache · HQ · Piper"). Hier
+          bleibt nur, was das Vorlesen dauerhaft einstellt. */}
+      <ToggleSwitch
+        checked={getSetting("tts_piper_auto_language") ?? true}
+        onChange={(checked) =>
+          updateSetting("tts_piper_auto_language", checked)
+        }
+        isUpdating={isUpdating("tts_piper_auto_language")}
+        label={t("tts.settings.piperAutoLanguage")}
+        description={t("tts.settings.piperAutoLanguageDescription")}
         grouped={true}
-        layout="horizontal"
-      >
-        <div className="w-48">
-          <Select
-            value={getSetting("tts_engine") ?? "fish"}
-            options={[
-              { value: "fish", label: t("tts.settings.engineFish") },
-              { value: "piper", label: t("tts.settings.enginePiper") },
-            ]}
-            isClearable={false}
-            onChange={(value) => {
-              if (value) updateSetting("tts_engine", value);
-            }}
-          />
-        </div>
-      </SettingContainer>
-      {(getSetting("tts_engine") ?? "fish") === "piper" &&
-        (piperVoices.length > 0 ? (
-          <SettingContainer
-            title={t("tts.settings.piperVoice")}
-            description={t("tts.settings.piperVoiceDescription")}
-            grouped={true}
-            layout="horizontal"
-          >
-            <div className="w-48">
-              <Select
-                value={getSetting("tts_piper_voice") ?? ""}
-                options={piperVoices.map((voice) => ({
-                  value: voice.id,
-                  label: voice.name,
-                }))}
-                isClearable={false}
-                onChange={(value) => {
-                  if (value) updateSetting("tts_piper_voice", value);
-                }}
-              />
-            </div>
-          </SettingContainer>
-        ) : (
-          /* Piper ohne Stimme kann nichts vorlesen. Der Hinweis sagt,
-             wo sie herkommt, statt die Auswahl leer zu zeigen. */
-          <SettingContainer
-            title={t("tts.settings.piperVoice")}
-            description={t("tts.settings.piperVoiceMissing")}
-            grouped={true}
-            layout="horizontal"
-          >
-            <span />
-          </SettingContainer>
-        ))}
-      {(getSetting("tts_engine") ?? "fish") === "piper" && (
-        <ToggleSwitch
-          checked={getSetting("tts_piper_auto_language") ?? true}
-          onChange={(checked) =>
-            updateSetting("tts_piper_auto_language", checked)
-          }
-          isUpdating={isUpdating("tts_piper_auto_language")}
-          label={t("tts.settings.piperAutoLanguage")}
-          description={t("tts.settings.piperAutoLanguageDescription")}
-          grouped={true}
-        />
-      )}
+      />
       <ShortcutInput shortcutId="speak_clipboard" grouped={true} />
       <Slider
         value={getSetting("tts_volume") ?? 1.0}
@@ -344,6 +270,11 @@ export const ReadAloudTab = () => {
         />
       </SettingContainer>
     </SettingsGroup>
+    {/* Stimmen anhoeren, aufnehmen, klonen, importieren, loeschen: eine
+        Einstellung des Vorlesens, deshalb hier -- nicht auf der Modelle-Seite
+        (Entscheidung Patrick 14.09.). Die Vorlesen-Seite verweist ueber den
+        Eintrag "Stimmen verwalten" im Stimmen-Dropdown hierher. */}
+    <VoiceLibrary />
     </div>
   );
 };

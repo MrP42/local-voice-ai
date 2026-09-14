@@ -214,8 +214,12 @@ test.beforeEach(async ({ page }) => {
 
 async function openVoices(page: import("@playwright/test").Page) {
   await page.goto("/");
-  // Stimmen wohnen seit dem Vorlesen-Neuschnitt auf der Modelle-Seite.
-  await page.getByRole("button", { name: "Modelle", exact: true }).click();
+  // Stimmen wohnen unter Einstellungen -> Vorlesen (Entscheidung 14.09.).
+  await page
+    .getByRole("button", { name: "Einstellungen", exact: true })
+    .last()
+    .click();
+  await page.getByRole("tab", { name: "Vorlesen", exact: true }).click();
   await expect(page.getByTestId("voice-library")).toBeVisible();
 }
 
@@ -361,8 +365,7 @@ test("the wheel scrolls the page even when it sits over a player", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 520 });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Modelle", exact: true }).click();
+  await openVoices(page);
 
   const main = page.getByRole("main");
   const slider = page.locator('input[type="range"]:visible').first();
@@ -381,47 +384,6 @@ test("the wheel scrolls the page even when it sits over a player", async ({
   expect(await slider.inputValue(), "und den Regler nicht verstellen").toBe(
     value,
   );
-});
-
-test("the read-aloud engine can be switched to Piper and the choice is saved", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .last()
-    .click();
-  await page.getByRole("tab", { name: "Vorlesen", exact: true }).click();
-
-  const engine = page.getByText("Engine fürs Vorlesen", { exact: true });
-  await engine.scrollIntoViewIfNeeded();
-  await expect(engine).toBeVisible();
-
-  // Solange Fish laeuft, ist die Piper-Stimme kein Thema.
-  await expect(page.getByText("Piper-Stimme", { exact: true })).toHaveCount(0);
-
-  const select = page.locator(".w-48").first();
-  await select.click();
-  await page.getByText("Piper (CPU, sofort bereit)").click();
-
-  // Gespeichert, nicht nur angezeigt.
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () => (window as unknown as { savedEngine?: string }).savedEngine,
-      ),
-    )
-    .toBe("piper");
-
-  // Und erst jetzt fragt die Oberflaeche nach der Stimme.
-  await expect(page.getByText("Piper-Stimme", { exact: true })).toBeVisible();
-
-  // Zur Auswahl steht genau die geladene Stimme — eine noch nicht geladene
-  // waere ein Versprechen, das die Wiedergabe nicht halten kann.
-  const voiceSelect = page.locator(".w-48").nth(1);
-  await voiceSelect.click();
-  await expect(page.getByText("Thorsten (Deutsch)")).toBeVisible();
-  await expect(page.getByText("Amy (English)")).toHaveCount(0);
 });
 
 test("the menu collapses to icons and stays that way", async ({ page }) => {
@@ -537,4 +499,13 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
       ),
     )
     .toContain('"translation":"piper:de_DE-thorsten-medium"');
+});
+
+test("the voice list links to voice management under settings", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await page.getByTestId("voice-select").click();
+  await page.getByText("Stimmen verwalten …").click();
+  await expect(page.getByRole("tab", { name: "Vorlesen", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("voice-library")).toBeVisible();
 });

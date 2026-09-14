@@ -8,7 +8,6 @@ import { useModelStore } from "@/stores/modelStore";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { TtsVoiceCard } from "./TtsVoiceCard";
 import { LlmModelCard } from "./LlmModelCard";
-import { VoiceLibrary } from "@/components/settings/tts/voices/VoiceLibrary";
 import type { LlmModelConfig } from "@/bindings";
 import { useLlmLocalStore } from "@/stores/llmLocalStore";
 import { useSettings } from "@/hooks/useSettings";
@@ -559,11 +558,6 @@ export const ModelsSettings: React.FC = () => {
           {t("settings.models.noModelsMatch")}
         </div>
       )}
-
-      {/* Geklonte und gespeicherte Stimmen gehoeren zu den Modellen, nicht
-          unter den Vorlesen-Editor: hier wird angehoert, aufgenommen,
-          importiert und geloescht -- ausgewaehlt wird beim Vorlesen. */}
-      <VoiceLibrary />
     </PageShell>
   );
 };

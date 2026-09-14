@@ -149,7 +149,8 @@
       "transcriptManualPlaceholder": "Exaktes Transkript der Aufnahme (automatische Transkription ist ausgeschaltet — Text hier eintragen)",
       "previewCreate": "Hörprobe erzeugen",
       "previewNeedsEngine": "Noch keine Hörprobe — Erzeugen startet einmalig die Sprach-Engine.",
-      "piperOption": "{{name}} · Piper"
+      "piperOption": "{{name}} · Piper",
+      "manage": "Stimmen verwalten …"
     },
     "settingsTitle": "Vorlesen-Einstellungen",
     "settings": {
