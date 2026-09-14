@@ -87,8 +87,9 @@ Ein **Objekt** = `(collection, object_id)` je Benutzer.
 Ausgeschlossen bleiben Pfade, Ports, Hotkeys, Geräte-Auswahl (gerätespezifisch), Tokens.
 
 **Verschlüsselung je Objekt:** `XChaCha20-Poly1305(enc_key, nonce = 24 B zufällig,
-aad = user_id ‖ collection ‖ object_id ‖ revision_base)`; Chiffrat + Nonce base64 im Feld
-`payload`. `aad` bindet ein Chiffrat an seinen Ort — ein serverseitig verschobenes Blob
+aad = user_id ‖ collection ‖ object_id)`; Chiffrat + Nonce base64 im Feld
+`payload`. Die Revision ist bewusst NICHT Teil der AAD (Umsetzung 14.09.: einfacher, und der
+Server ist ohnehin honest-but-curious, nicht boesartig). `aad` bindet ein Chiffrat an seinen Ort — ein serverseitig verschobenes Blob
 entschlüsselt nicht. Zusätzlich ein `key_id = erste 8 Hex-Zeichen von SHA-256(enc_key)` im
 Klartext, damit ein Gerät mit altem Schlüssel „falscher Schlüssel" von „kaputtes Blob"
 unterscheiden kann. Max. Klartext 256 KB je Objekt (Seiten mit längerem Text werden mit
