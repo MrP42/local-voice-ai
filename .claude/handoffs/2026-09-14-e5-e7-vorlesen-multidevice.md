@@ -25,8 +25,11 @@ bis auf die Punkte unter „Bei Patrick".
   Training-Studio-Scopes — beim Commit nur die eigenen Hunks nehmen (`git add -p`).
 
 **Installer (Abnahmestände):** `apps/local-voice/src-tauri/target/release/bundle/nsis/`
-`Local Voice AI_0.17.1_x64-setup.exe` (E5/E7) und `…0.17.2…` (mit Sync; Build lief beim
-Handoff). Updater-Signatur fehlt lokal wie immer (kein privater Schlüssel) — normal.
+`Local Voice AI_0.17.1_x64-setup.exe` (E5/E7), `…0.17.2…` (mit Sync) und `…0.17.3…`
+(dazu Qwen 3.5 4B/9B und Gemma 4 E4B/12B im Sprachmodell-Katalog, Speicherprognose kennt
+`qwen35`/`gemma4`). Updater-Signatur fehlt lokal wie immer (kein privater Schlüssel) — normal.
+Warum die beiden vorher fehlten: der Katalog war am 12.09. von Hand mit vier Einträgen
+befüllt; GGUFs (unsloth) und llama.cpp b10938 (13.09.) tragen beide Familien längst.
 
 ## Was gebaut wurde (Kurz, Details in den Commits)
 
