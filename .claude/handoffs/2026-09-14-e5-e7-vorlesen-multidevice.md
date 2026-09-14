@@ -122,6 +122,10 @@ mit Optionen) und „Audio speichern" als beschriftete, volle Knöpfe in `.tts-c
 Neue Kurz-Labels `tts.add.short`, `tts.translateShort`.
 `…0.17.14…`: AutoTagBar (Knopf, Anbieter, Gerät) in `.tts-controls__autotag` unter „Text
 aufbereiten", per CSS gestapelt; die Klappe unter dem Text trägt nur noch die Palette.
+`…0.17.15…`: Tempo als `.mbtn--text`-Chip hinter dem letzten Trenner der Transportzeile
+(`speedOpen`, Listbox mit `SPEEDS`); Stimme/Optionsfelder `w-full`; Zusammenfassen-Knopf
+nach den Optionen; `AutoTagBar showSettings={false}` in der Spalte, Anbieter/Gerät als
+`SettingContainer` im Reiter Vorlesen (`DEFAULT_TAG_PROVIDER_UI_VALUE` exportiert).
 
 ## Offen / nächste Schritte (Code)
 
