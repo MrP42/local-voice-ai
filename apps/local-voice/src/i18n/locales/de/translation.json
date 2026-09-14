@@ -64,24 +64,6 @@
     "pause": "Pause",
     "resume": "Weiter",
     "sentenceProgress": "Satz {{position}}/{{total}}",
-    "reading": {
-      "title": "Bücher & Dokumente",
-      "description": "Ganze Dokumente vorlesen lassen (TXT, MD, PDF, DOCX). Der Fortschritt wird je Dokument gespeichert — jederzeit fortsetzen, auch wenn zwischendurch etwas anderes lief.",
-      "open": "Dokument öffnen…",
-      "dropHint": "Tipp: Datei einfach ins Fenster ziehen.",
-      "openEntry": "Öffnen",
-      "play": "Abspielen",
-      "resume": "Fortsetzen",
-      "pause": "Pause",
-      "back": "Satz zurück",
-      "forward": "Satz vor",
-      "working": "Arbeitet…",
-      "progress": "Satz {{position}} von {{total}} ({{percent}} %)",
-      "library": "Bibliothek",
-      "finished": "Fertig gehört",
-      "reset": "Zurücksetzen",
-      "remove": "Entfernen"
-    },
     "summary": {
       "title": "KI-Zusammenfassung",
       "description": "Text oder Dokument vor dem Anhören per LLM zusammenfassen — Provider wählbar (lokales Ollama, Subscription oder API über die Nachbearbeitungs-Einstellungen).",
@@ -167,18 +149,6 @@
       "transcriptManualPlaceholder": "Exaktes Transkript der Aufnahme (automatische Transkription ist ausgeschaltet — Text hier eintragen)",
       "previewCreate": "Hörprobe erzeugen",
       "previewNeedsEngine": "Noch keine Hörprobe — Erzeugen startet einmalig die Sprach-Engine."
-    },
-    "voiceChanger": {
-      "title": "Stimmwechsler",
-      "description": "Aufnahme oder WAV-Datei in der gewählten Stimme nachsprechen (Offline-Kaskade: transkribieren, dann synthetisieren — kein Live-Effekt).",
-      "record": "Aufnehmen",
-      "stopRecording": "Stopp & nachsprechen",
-      "pickFile": "WAV-Datei…",
-      "recording": "Aufnahme läuft…",
-      "working": "Arbeitet…",
-      "heard": "Verstanden:",
-      "export": "Als WAV exportieren…",
-      "savedTo": "Gespeichert: {{path}}"
     },
     "settingsTitle": "Vorlesen-Einstellungen",
     "settings": {

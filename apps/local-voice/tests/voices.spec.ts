@@ -208,12 +208,9 @@ test.beforeEach(async ({ page }) => {
 
 async function openVoices(page: import("@playwright/test").Page) {
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Vorlesen", exact: true })
-    .click();
-  await page
-    .getByText("Stimmen anhören & verwalten")
-    .click();
+  // Stimmen wohnen seit dem Vorlesen-Neuschnitt auf der Modelle-Seite.
+  await page.getByRole("button", { name: "Modelle", exact: true }).click();
+  await expect(page.getByTestId("voice-library")).toBeVisible();
 }
 
 test("a voice with a stored sample plays without starting the engine", async ({
@@ -329,7 +326,6 @@ test("the end of the read-aloud page can actually be reached", async ({
   await page.setViewportSize({ width: 1280, height: 520 });
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
-  await page.getByText("Stimmen anhören & verwalten").click();
 
   // Ans Ende scrollen wie ein Mensch mit dem Mausrad: bis der Container
   // nicht mehr weiter kann.
@@ -338,9 +334,10 @@ test("the end of the read-aloud page can actually be reached", async ({
     element.scrollTop = element.scrollHeight;
   });
 
-  // Der Stimmwechsler ist das letzte Element der Seite. Er muss danach
-  // vollstaendig sichtbar sein und darf nicht unter der Statusleiste liegen.
-  const last = page.getByText("Stimmwechsler", { exact: true });
+  // Die Stil-Klappe ist das letzte Element der Vorlesen-Seite. Sie muss
+  // danach vollstaendig sichtbar sein und darf nicht unter der Statusleiste
+  // liegen.
+  const last = page.getByText("Ausdruck & Sprechstil", { exact: true });
   await expect(last).toBeInViewport();
   const box = (await last.boundingBox())!;
   const viewport = page.viewportSize()!;
@@ -359,8 +356,7 @@ test("the wheel scrolls the page even when it sits over a player", async ({
 }) => {
   await page.setViewportSize({ width: 1280, height: 520 });
   await page.goto("/");
-  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
-  await page.getByText("Stimmen anhören & verwalten").click();
+  await page.getByRole("button", { name: "Modelle", exact: true }).click();
 
   const main = page.getByRole("main");
   const slider = page.locator('input[type="range"]:visible').first();

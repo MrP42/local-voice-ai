@@ -64,24 +64,6 @@
     "pause": "Pause",
     "resume": "Resume",
     "sentenceProgress": "Sentence {{position}}/{{total}}",
-    "reading": {
-      "title": "Books & Documents",
-      "description": "Read entire documents aloud (TXT, MD, PDF, DOCX). Progress is saved per document — resume any time, even after listening to something else.",
-      "open": "Open document…",
-      "dropHint": "Tip: drag a file into the window to add it.",
-      "openEntry": "Open",
-      "play": "Play",
-      "resume": "Resume",
-      "pause": "Pause",
-      "back": "Previous sentence",
-      "forward": "Next sentence",
-      "working": "Working…",
-      "progress": "Sentence {{position}} of {{total}} ({{percent}} %)",
-      "library": "Library",
-      "finished": "Finished",
-      "reset": "Reset",
-      "remove": "Remove"
-    },
     "summary": {
       "title": "AI Summary",
       "description": "Summarize a text or document with an LLM before listening — provider is selectable (local Ollama, subscription or API via Post Process settings).",
@@ -167,18 +149,6 @@
       "transcriptManualPlaceholder": "Exact transcript of the recording (automatic transcription is off — enter the text here)",
       "previewCreate": "Create sample",
       "previewNeedsEngine": "No sample yet — creating one starts the speech engine once."
-    },
-    "voiceChanger": {
-      "title": "Voice Changer",
-      "description": "Re-speak a recording or WAV file in the selected voice (offline cascade: transcribe, then synthesize — not a live effect).",
-      "record": "Record",
-      "stopRecording": "Stop & re-speak",
-      "pickFile": "WAV file…",
-      "recording": "Recording…",
-      "working": "Working…",
-      "heard": "Heard:",
-      "export": "Export as WAV…",
-      "savedTo": "Saved: {{path}}"
     },
     "settingsTitle": "Read Aloud settings",
     "settings": {

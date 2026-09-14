@@ -6,9 +6,7 @@ import { commands, type PageInfo, type TtsStatus } from "@/bindings";
 import { exportFileName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
-import { VoicesCard } from "./VoicesCard";
 import { FilesSidebar, PagesSidebar } from "./WorkspaceSidebars";
-import { VoiceChangerCard } from "./VoiceChangerCard";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
@@ -17,7 +15,6 @@ import { Dialog } from "../../ui/Dialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
-import { ReadingCard } from "./ReadingCard";
 import {
   TtsChipEditor,
   type ChipEditorInsertApi,
@@ -36,7 +33,6 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import {
   BrainCircuit,
-  Dices,
   Download,
   FilePlus2,
   FileText,
@@ -44,7 +40,6 @@ import {
   Link,
   Mic,
   Plus,
-  Save,
   Server,
   Upload,
 } from "lucide-react";
@@ -152,9 +147,6 @@ export const TtsSettings = () => {
   /** Alle Referenzstimmen — fuer das Dropdown an der Transportleiste. */
   const [voices, setVoices] = useState<string[]>([]);
   /** Dialog: die aktuelle Seed-Stimme unter einem Namen sichern. */
-  const [saveSeedOpen, setSaveSeedOpen] = useState(false);
-  const [seedName, setSeedName] = useState("");
-  const [savingSeed, setSavingSeed] = useState(false);
   /** Zusammenfassung des Originals — dritter Reiter. */
   const [summary, setSummary] = useState<string>("");
   const [summarizing, setSummarizing] = useState(false);
@@ -901,25 +893,6 @@ export const TtsSettings = () => {
     setTab("summary");
   };
 
-  /**
-   * Den aktuellen Seed als benannte Stimme sichern. Ein Seed ist fluechtig —
-   * wer weiterwuerfelt, verliert die Stimme, die ihm eben gefiel.
-   */
-  const saveSeedVoice = async () => {
-    if (!seedName.trim()) return;
-    setSavingSeed(true);
-    setLastError(null);
-    const result = await commands.ttsSaveSeedVoice(seedName.trim());
-    setSavingSeed(false);
-    if (result.status === "error") {
-      setLastError(result.error);
-      return;
-    }
-    setSaveSeedOpen(false);
-    setSeedName("");
-    window.dispatchEvent(new CustomEvent("lv-voices-changed"));
-    void updateSetting("tts_voice", result.data);
-  };
 
   /**
    * Ein Klick tut, was im jeweiligen Zustand ansteht. Beim laufenden Server
@@ -1529,119 +1502,9 @@ export const TtsSettings = () => {
           </div>
         </SettingsGroup>
 
-        <ReadingCard />
 
 
-        {/* Stimmen stehen in ihrer eigenen Klappe, nicht am Ende der
-            Einstellungen: wer eine Stimme sucht, sucht keine Einstellung.
-            Ausgewaehlt wird oben an der Transportleiste, hierher kommt man
-            zum Anhoeren, Aufnehmen, Importieren und Loeschen. */}
-        <details className="workspace-disclosure">
-          <summary>{t("workspace.voices")}</summary>
-          <div className="space-y-4 pt-3">
-            {/* Der Seed ist die Standardstimme, keine Einstellung des
-                Vorlesens: er entscheidet, WER spricht, und laesst sich von
-                hier aus als benannte Stimme sichern. */}
-            <SettingsGroup title={t("tts.settings.seed")}>
-            <SettingContainer
-              title={t("tts.settings.seed")}
-              description={t("tts.settings.seedDescription")}
-              grouped={true}
-              layout="horizontal"
-            >
-              {/* Der Seed bestimmt, wie die Standardstimme klingt. Er ist fest
-            einstellbar, damit eine gefundene Stimme wiederholbar bleibt —
-            und wuerfelbar, weil man sie nur durch Ausprobieren findet. Der
-            gewuerfelte Wert landet sichtbar im Feld; genau der ist die
-            Notiz, mit der man spaeter zurueckkommt. */}
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  value={getSetting("tts_seed") ?? 42}
-                  onChange={(e) => {
-                    const value = parseInt(e.target.value, 10);
-                    if (!isNaN(value)) updateSetting("tts_seed", value);
-                  }}
-                  disabled={isUpdating("tts_seed")}
-                  className="w-28"
-                />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() =>
-                    updateSetting(
-                      "tts_seed",
-                      Math.floor(Math.random() * 2_147_483_647) + 1,
-                    )
-                  }
-                  disabled={isUpdating("tts_seed")}
-                >
-                  <Dices width={14} height={14} />
-                  {t("tts.settings.rollSeed")}
-                </Button>
-                {/* Ein Seed ist fluechtig: wer weiterwuerfelt, verliert die
-              Stimme, die ihm eben gefiel — und denselben Zahlenwert
-              wiederzufinden ist aussichtslos. Speichern macht daraus eine
-              benannte Stimme in der Auswahl. */}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setSaveSeedOpen(true)}
-                  disabled={savingSeed}
-                  title={t("tts.saveSeedHint")}
-                >
-                  <Save width={14} height={14} />
-                  {t("tts.saveSeed")}
-                </Button>
-              </div>
-            </SettingContainer>
-            </SettingsGroup>
 
-            <VoicesCard />
-          </div>
-        </details>
-
-        {/* Der Stimmwechsler spricht eine Aufnahme in einer anderen Stimme
-            nach — eine eigene Aufgabe, kein Teil der Stimmenverwaltung. In
-            deren Klappe verschwand er mit ihr. */}
-        <VoiceChangerCard />
-
-        <Dialog
-          open={saveSeedOpen}
-          onOpenChange={(open) => {
-            setSaveSeedOpen(open);
-            if (!open) setSeedName("");
-          }}
-          title={t("tts.saveSeedTitle")}
-          closeLabel={t("tts.stopConfirmCancel")}
-          footer={
-            <>
-              <Button
-                variant="secondary"
-                onClick={() => setSaveSeedOpen(false)}
-              >
-                {t("tts.stopConfirmCancel")}
-              </Button>
-              <Button
-                onClick={saveSeedVoice}
-                disabled={savingSeed || !seedName.trim()}
-              >
-                {savingSeed ? t("tts.saveSeedBusy") : t("tts.saveSeed")}
-              </Button>
-            </>
-          }
-        >
-          <div className="space-y-2">
-            <p className="text-sm text-text/80">{t("tts.saveSeedBody")}</p>
-            <Input
-              type="text"
-              value={seedName}
-              onChange={(e) => setSeedName(e.target.value)}
-              placeholder={t("tts.saveSeedPlaceholder")}
-              className="w-full"
-            />
-          </div>
-        </Dialog>
 
         <Dialog
           open={llmDialog}
