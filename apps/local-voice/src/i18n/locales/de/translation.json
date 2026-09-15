@@ -1546,5 +1546,8 @@
     "keyMismatch": "Der Hub trägt Objekte mit einem anderen Schlüssel – wurde das Passwort geändert? Bitte auf allen Geräten neu anmelden.",
     "deadLetters": "{{count}} Objekte abgewiesen (zu groß oder ungültig)",
     "devices": "Geräte"
+  },
+  "guard": {
+    "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
   }
 }
