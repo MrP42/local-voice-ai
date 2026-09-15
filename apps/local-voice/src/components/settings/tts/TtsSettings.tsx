@@ -3,6 +3,9 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { commands, type PageInfo, type TtsStatus } from "@/bindings";
+import { useTtsAvailability } from "@/hooks/useTtsAvailability";
+import { voiceIsAvailable } from "@/lib/tts/availability";
+import { TtsModulesHint } from "./TtsModulesHint";
 import { exportFileName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
@@ -87,6 +90,7 @@ const formatEta = (seconds: number) => {
 export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
+  const { fishInstalled, piperVoices, systemVoices, systemDefaultVoice, loading: modulesLoading } = useTtsAvailability();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
   /** Tag- und Sprecher-Chips in allen drei Text-Reitern. Reihenfolge zählt
    *  nur bei gleichem Startoffset — Tags (`[…]`) und Sprecher (`<…>`,
@@ -682,59 +686,46 @@ export const TtsSettings = () => {
     speakProgress !== null &&
     speakProgress.position < speakProgress.total;
 
-  // Heruntergeladene Piper-Stimmen. Nur sie kann Piper vorlesen; die Liste
-  // kommt aus demselben Download-Verzeichnis, das die Modellseite fuellt.
-  const [piperVoices, setPiperVoices] = useState<
-    { id: string; name: string; language: string | null }[]
-  >([]);
-  useEffect(() => {
-    void commands.ttsListDownloads().then((result) => {
-      if (result.status !== "ok") return;
-      // Faellt die Abfrage aus, bleibt die Liste leer statt undefiniert —
-      // ein fehlender Rueckgabewert riss sonst die ganze Vorlesen-Seite mit.
-      setPiperVoices(
-        (result.data ?? [])
-          .filter((entry) => entry.kind === "voice" && entry.is_downloaded)
-          .map((entry) => ({
-            id: entry.id,
-            name: entry.name,
-            language: entry.language,
-          })),
-      );
-    });
-  }, []);
-
   /* Der Wert des Stimmen-Dropdowns aus den Einstellungen: Piper-Stimme als
      "piper:<id>", sonst Fish-Stimme oder Standard. */
   const voiceValue =
     (getSetting("tts_engine") ?? "fish") === "piper"
       ? `piper:${getSetting("tts_piper_voice") ?? ""}`
-      : (getSetting("tts_voice") ?? "@default");
+      : getSetting("tts_engine") === "system"
+        ? "system:" + (getSetting("tts_voice") ?? "@default")
+        : (getSetting("tts_voice") ?? "@default");
+
+  const voiceAvailable = voiceIsAvailable(voiceValue, fishInstalled, voices, piperVoices, systemVoices);
 
   /* Eine Dropdown-Wahl in die Einstellungen schreiben: Piper-Stimme schaltet
      die Engine um, eine Fish-Stimme schaltet zurueck. */
   const applyVoiceValue = useCallback(
-    (value: string) => {
-      if (value.startsWith("piper:")) {
-        void updateSetting("tts_piper_voice", value.slice(6));
-        void updateSetting("tts_engine", "piper");
+    async (value: string) => {
+      if (value.startsWith("system:")) {
+        await updateSetting("tts_voice", value === "system:@default" ? null : value.slice(7));
+        await updateSetting("tts_engine", "system");
         return;
       }
-      if ((getSetting("tts_engine") ?? "fish") === "piper") {
-        void updateSetting("tts_engine", "fish");
+      if (value.startsWith("piper:")) {
+        await updateSetting("tts_piper_voice", value.slice(6));
+        await updateSetting("tts_engine", "piper");
+        return;
       }
-      void updateSetting("tts_voice", value === "@default" ? null : value);
+      await updateSetting("tts_voice", value === "@default" ? null : value);
+      await updateSetting("tts_engine", "fish");
     },
-    [getSetting, updateSetting],
+    [updateSetting],
   );
 
   // Reiterwechsel: die fuer diesen Reiter gemerkte Stimme wird aktiv.
   useEffect(() => {
     const wanted = tabVoices[tab];
-    if (wanted && wanted !== voiceValue) applyVoiceValue(wanted);
+    if (wanted && wanted !== voiceValue && voiceIsAvailable(wanted, fishInstalled, voices, piperVoices, systemVoices)) {
+      void applyVoiceValue(wanted);
+    }
     // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
     // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
-  }, [tab, tabVoices, applyVoiceValue]);
+  }, [tab, tabVoices, applyVoiceValue, fishInstalled, voices, piperVoices, systemVoices]);
 
   /* Beschriftung einer Piper-Stimme in der Auswahl: Name, Sprache, Qualitaet
      kurz -- "Thorsten · Deutsch · HQ". Die Sprache steht IMMER dabei: am Namen
@@ -1113,7 +1104,7 @@ export const TtsSettings = () => {
           diesem Zustand ansteht. Das Wort daneben war eine zweite
           Anzeige derselben Sache; es steht jetzt im Tooltip, wo es nur
           stoert, wenn man es sucht. */}
-        <button
+        {fishInstalled && <button
           type="button"
           onClick={onServerIconClick}
           title={serverTitle}
@@ -1126,7 +1117,7 @@ export const TtsSettings = () => {
             className={serverIconClass}
             aria-hidden="true"
           />
-        </button>
+        </button>}
         </>
       }
     >
@@ -1245,7 +1236,7 @@ export const TtsSettings = () => {
             {/* Ausdruck & Sprechstil direkt unter dem Text: die Palette fuegt
                 an der Cursorposition ein, deshalb gehoert sie zum Feld, nicht
                 in die Bedienspalte (Entscheidung Patrick 14.09. abends). */}
-            <details className="workspace-disclosure">
+            {fishInstalled && <details className="workspace-disclosure">
               <summary>{t("workspace.voiceStyle")}</summary>
               <div className="space-y-3 pt-2">
                 <TagPalette
@@ -1260,7 +1251,7 @@ export const TtsSettings = () => {
                 />
 
               </div>
-            </details>
+            </details>}
           </div>
         </div>
         {/* Bedienung rechts vom Text: Transport, Tempo, Stimme, Speichern,
@@ -1293,7 +1284,7 @@ export const TtsSettings = () => {
                   type="button"
                   className="mbtn mbtn--primary mbtn--lg"
                   onClick={speaking ? pauseSpeaking : speak}
-                  disabled={!speaking && spokenText.trim().length === 0}
+                  disabled={!speaking && (!voiceAvailable || spokenText.trim().length === 0)}
                   aria-label={speaking ? t("tts.pause") : t("tts.speak")}
                 >
                   <Glyph name={speaking ? "pause" : "play"} />
@@ -1387,13 +1378,17 @@ export const TtsSettings = () => {
                       Engine um — die Engine-Einstellung im Reiter Vorlesen
                       bleibt als zweiter Weg bestehen. */}
                   <Select
-                    value={voiceValue}
+                    value={voiceAvailable ? voiceValue : null}
+                    placeholder={t("tts.modules.chooseVoice")}
                     options={[
-                      {
-                        value: "@default",
-                        label: t("tts.voices.defaultVoice"),
-                      },
-                      ...voices.map((id) => ({ value: id, label: id })),
+                      ...(systemVoices.length > 0 ? [
+                        { value: "system:@default", label: t("tts.modules.systemDefault", { name: systemDefaultVoice ?? t("tts.modules.system") }) },
+                        ...systemVoices.map((voice) => ({ value: "system:" + voice.name, label: voice.name + " · " + voice.language + " · macOS" })),
+                      ] : []),
+                      ...(fishInstalled ? [
+                        { value: "@default", label: t("tts.voices.defaultVoice") },
+                        ...voices.map((id) => ({ value: id, label: id })),
+                      ] : []),
                       ...piperVoices.map((voice) => ({
                         value: `piper:${voice.id}`,
                         label: t("tts.voices.piperOption", {
@@ -1424,6 +1419,12 @@ export const TtsSettings = () => {
                     isClearable={false}
                   />
                 </div>
+              {!modulesLoading && !voiceAvailable && (
+                <div className="space-y-2" role="status">
+                  <p className="text-xs text-text/70">{t("tts.modules.unavailable")}</p>
+                  <TtsModulesHint />
+                </div>
+              )}
               {/* Nur das Symbol: die Zeile ist eine Transportleiste, und ein
                 Wort neben lauter Glyphen zieht das Auge auf die unwichtigste
                 Schaltflaeche. Beschriftung wandert in title + aria-label. */}
@@ -1431,7 +1432,7 @@ export const TtsSettings = () => {
                 variant="secondary"
                 className="w-full justify-start"
                 onClick={saveSpokenAudio}
-                disabled={saving || spokenText.trim().length === 0}
+                disabled={saving || !voiceAvailable || spokenText.trim().length === 0}
                 title={saving ? t("tts.savingAudio") : t("tts.saveAudio")}
                 aria-label={saving ? t("tts.savingAudio") : t("tts.saveAudio")}
               >
@@ -1588,7 +1589,7 @@ export const TtsSettings = () => {
                   <div className="tts-controls__autotag">
                 {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
                 Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
-                {tab === "original" && (
+                {fishInstalled && tab === "original" && (
                   <AutoTagBar
                     showSettings={false}
                     text={text}
@@ -1724,7 +1725,7 @@ export const TtsSettings = () => {
             {/* Sprecherwechsel und Tags sind Schreibregeln, keine
               Einstellungen — der aufklappbare Block steht deshalb bei dem
               Feld, in das man sie tippt. */}
-            <details className="text-xs text-text/50">
+            {fishInstalled && <details className="text-xs text-text/50">
               <summary className="cursor-pointer select-none transition-colors hover:text-text/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary rounded-sm">
                 {t("tts.writingRules.title")}
               </summary>
@@ -1749,7 +1750,7 @@ export const TtsSettings = () => {
                   </li>
                 </ul>
               </div>
-            </details>
+            </details>}
             {speaking && currentSentence && (
               <p className="text-sm italic text-text/70 border-s-2 border-logo-primary ps-2">
                 {currentSentence}

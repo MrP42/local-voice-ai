@@ -661,7 +661,7 @@ pub fn change_tts_volume_setting(app: AppHandle, value: f32) -> Result<(), Strin
 #[tauri::command]
 #[specta::specta]
 pub fn change_tts_engine_setting(app: AppHandle, value: String) -> Result<(), String> {
-    if value != "fish" && value != "piper" {
+    if value != "fish" && value != "piper" && !(cfg!(target_os = "macos") && value == "system") {
         return Err(format!("Unbekannte Vorlese-Engine: {value}"));
     }
     let mut settings = settings::get_settings(&app);
@@ -1439,7 +1439,7 @@ pub async fn fetch_post_process_models(
 
         #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
         {
-            return Err("Apple Intelligence is only available on Apple silicon Macs running macOS 15 or later.".to_string());
+            return Err("Apple Intelligence is only available on Apple silicon Macs running macOS 26 or later.".to_string());
         }
     }
 

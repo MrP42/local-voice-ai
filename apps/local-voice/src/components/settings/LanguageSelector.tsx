@@ -17,6 +17,8 @@ interface LanguageSelectorProps {
   // Whether the model can auto-detect language. Gates the "Auto" option:
   // must-pick models (no detection) omit it and force a concrete choice.
   supportsLanguageDetection?: boolean;
+  /** Apple Speech uses the system language instead of detecting it. */
+  usesSystemLanguage?: boolean;
 }
 
 // Mirrors the matching logic of `effective_language` in
@@ -43,6 +45,7 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   grouped = false,
   supportedLanguages,
   supportsLanguageDetection = true,
+  usesSystemLanguage = false,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, resetSetting, isUpdating } = useSettings();
@@ -54,11 +57,14 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   // The persisted *intent* (auto | code). What's actually used/shown is the
   // effective value resolved against the current model's capabilities.
   const intent = getSetting("selected_language") || "auto";
-  const selectedLanguage = effectiveLanguage(
-    intent,
-    supportedLanguages ?? [],
-    supportsLanguageDetection,
-  );
+  const selectedLanguage =
+    usesSystemLanguage && intent === "auto"
+      ? "auto"
+      : effectiveLanguage(
+          intent,
+          supportedLanguages ?? [],
+          supportsLanguageDetection,
+        );
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -88,10 +94,10 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
       return SELECTABLE_LANGUAGES;
     return SELECTABLE_LANGUAGES.filter((lang) =>
       lang.value === "auto"
-        ? supportsLanguageDetection
+        ? supportsLanguageDetection || usesSystemLanguage
         : supportsLanguageCode(supportedLanguages, lang.value),
     );
-  }, [supportedLanguages, supportsLanguageDetection]);
+  }, [supportedLanguages, supportsLanguageDetection, usesSystemLanguage]);
 
   const filteredLanguages = useMemo(
     () =>
@@ -102,7 +108,10 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   );
 
   const selectedLanguageName =
-    getLanguageLabel(selectedLanguage) || t("settings.general.language.auto");
+    usesSystemLanguage && selectedLanguage === "auto"
+      ? t("appleSystem.systemLanguage")
+      : getLanguageLabel(selectedLanguage) ||
+        t("settings.general.language.auto");
 
   const handleLanguageSelect = async (languageCode: string) => {
     await updateSetting("selected_language", languageCode);
@@ -203,7 +212,11 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
                       onClick={() => handleLanguageSelect(language.value)}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="truncate">{language.label}</span>
+                        <span className="truncate">
+                          {usesSystemLanguage && language.value === "auto"
+                            ? t("appleSystem.systemLanguage")
+                            : language.label}
+                        </span>
                       </div>
                     </button>
                   ))

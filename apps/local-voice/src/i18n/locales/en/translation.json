@@ -1,4 +1,17 @@
 {
+  "appleSystem": {
+    "systemLanguage": "macOS system language",
+    "title": "macOS system models",
+    "voices": "The macOS system voice is ready to use. Additional speech modules are optional.",
+    "speechReady": "Apple Speech is available for local dictation without an in-app model download. macOS asks for permission on first use.",
+    "speechUnavailable": "Apple Speech is not available locally for the current system language. Server recognition is never used.",
+    "llmReady": "Apple Intelligence is available locally for translations, summaries and reports.",
+    "llmUnavailable": "Apple Intelligence requires an Apple silicon Mac, macOS 26 or later, and an enabled, available system model. It is currently unavailable on this Mac.",
+    "useLLM": "Use Apple Intelligence by default",
+    "active": "Apple Intelligence is the default",
+    "included": "Included in macOS",
+    "speechDescription": "Local macOS speech recognition. No in-app model download; permission is required on first dictation."
+  },
   "tray": {
     "meetingRecording": "Meeting recording is running",
     "settings": "Settings...",
@@ -24,6 +37,14 @@
     "ariaLabel": "Main navigation"
   },
   "tts": {
+    "modules": {
+      "systemDefault": "{{name}} · macOS default",
+      "system": "System voice",
+      "optional": "Read aloud is optional. Download only the voices and their module that you want to use. You can also remove them there.",
+      "manage": "Manage read-aloud modules",
+      "chooseVoice": "Choose an available voice",
+      "unavailable": "The saved voice is not ready. Set up its module or choose an available voice."
+    },
     "title": "Read Aloud",
     "serverTitle": "Voice & playback",
     "description": "Local text-to-speech via Fish Speech on your own GPU. The server starts on demand and is stopped again after idle time to free VRAM.",

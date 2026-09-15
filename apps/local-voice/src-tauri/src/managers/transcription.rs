@@ -223,6 +223,7 @@ impl StreamRouter {
 }
 
 enum LoadedEngine {
+    AppleSpeech,
     /// Whisper-family models (whisper, breeze-asr, custom .bin/.gguf) via
     /// transcribe-cpp. Holds the live `Session`, which keeps its `Model` alive
     /// internally, so repeated dictation reuses the session without reloading.
@@ -612,7 +613,9 @@ impl TranscriptionManager {
             return Err(anyhow::anyhow!(error_msg));
         }
 
-        let model_path = self.model_manager.get_model_path(model_id)?;
+        let model_path = if matches!(model_info.engine_type, EngineType::AppleSpeech) {
+            std::path::PathBuf::new()
+        } else { self.model_manager.get_model_path(model_id)? };
 
         // Drop the current engine BEFORE building the new one so transcribe-cpp
         // frees the previous native context first — avoids holding two models at
@@ -641,6 +644,14 @@ impl TranscriptionManager {
         };
 
         let loaded_engine = match model_info.engine_type {
+            EngineType::AppleSpeech => {
+                if !crate::apple_speech::available("auto") {
+                    let error = "Apple offline speech recognition is unavailable";
+                    emit_loading_failed(error);
+                    return Err(anyhow::anyhow!(error));
+                }
+                LoadedEngine::AppleSpeech
+            }
             EngineType::TranscribeCpp => {
                 // The whisper backend is chosen at load time (transcribe-cpp has
                 // no runtime global). With an explicit `device_index` (the
@@ -1712,6 +1723,7 @@ impl TranscriptionManager {
 
             let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
                 match &mut engine {
+                    LoadedEngine::AppleSpeech => crate::apple_speech::transcribe(&audio, &settings.selected_language),
                     LoadedEngine::TranscribeCpp(session) => {
                         // Custom words become the initial prompt ONLY for models
                         // that accept one (whisper family). Attaching the
@@ -2021,6 +2033,7 @@ impl TranscriptionManager {
             let transcribe_result =
                 catch_unwind(AssertUnwindSafe(|| -> Result<Vec<TimedSegment>> {
                     match &mut engine {
+                        LoadedEngine::AppleSpeech => crate::apple_speech::transcribe_segments(&audio, &meeting_language),
                         LoadedEngine::TranscribeCpp(session) => {
                             // Custom words become the initial prompt ONLY for models
                             // that accept one (whisper family), exactly like transcribe().

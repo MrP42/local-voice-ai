@@ -9,6 +9,12 @@ test.beforeEach(async ({ page }) => {
     throw error;
   });
   await page.addInitScript(() => {
+    const modules = {
+      fish: !location.search.includes("fish=0"),
+      runtime: !location.search.includes("piper=0"),
+      system: location.search.includes("system=1"),
+    };
+    Object.assign(window, { ttsTestModules: modules });
     const callbacks = new Map<number, unknown>();
     let callback = 0;
     const settings = {
@@ -17,7 +23,7 @@ test.beforeEach(async ({ page }) => {
       theme: "light",
       show_whats_new_on_update: false,
       debug_mode: false,
-      selected_model: "",
+      selected_model: modules.system ? "apple-speech" : "",
       bindings: {
         transcribe: {
           id: "transcribe",
@@ -61,7 +67,7 @@ test.beforeEach(async ({ page }) => {
     ];
     Object.assign(window, {
       __TAURI_OS_PLUGIN_INTERNALS__: {
-        platform: "windows",
+        platform: modules.system ? "macos" : "windows",
         os_type: "windows",
         family: "windows",
         arch: "x86_64",
@@ -87,10 +93,18 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "plugin:app|version") return "0.16.0";
           if (cmd.includes("permission")) return true;
           if (cmd === "plugin:event|listen") return ++callback;
-          if (cmd === "get_selected_model") return "";
+          if (cmd === "get_selected_model" || cmd === "get_current_model") return settings.selected_model;
+          if (cmd === "apple_system_status" || cmd === "apple_system_initialize")
+            return { speech_available: true, speech_authorized: false, llm_available: false };
+          if (cmd === "get_available_models" && modules.system)
+            return [{id:"apple-speech", name:"Apple Speech", description:"", filename:"", source:"Local", size_mb:0, is_downloaded:true, is_downloading:false, partial_size:0, is_directory:false, engine_type:"AppleSpeech", accuracy_score:0, speed_score:0, supports_translation:false, is_recommended:true, supported_languages:["de-DE","en-US"], supports_language_selection:true, supports_streaming:false, supports_language_detection:false, supports_stream_lookahead:false, is_custom:false}];
           if (cmd === "meetings_is_recording") return false;
           if (cmd === "tts_server_status")
             return { phase: "stopped", message: null };
+          if (cmd === "tts_module_availability")
+            return { fish_installed: modules.fish, fish_supported: true,
+              system_voices: modules.system ? [{ name: "Anna", language: "de-DE" }] : [],
+              system_default_voice: modules.system ? "Anna" : null };
           if (cmd === "tts_list_voice_infos") return voices;
           // Nur die eine Stimme hat eine Hoerprobe auf der Platte. Die andere
           // liefert null — genau wie das Backend, wenn noch nichts erzeugt
@@ -168,7 +182,7 @@ test.beforeEach(async ({ page }) => {
                 description: "",
                 language: null,
                 size_mb: 20,
-                is_downloaded: true,
+                is_downloaded: modules.runtime,
                 is_downloading: false,
               },
               {
@@ -520,4 +534,60 @@ test("clean up rewrites the original text and offers undo", async ({ page }) => 
   await expect(editor).toHaveValue("Sauberer Text ohne Seitenzahlen.");
   await page.getByRole("button", { name: "Rückgängig" }).click();
   await expect(editor).toHaveValue("Seite 3\nText mit Sil-\nbentrennung.");
+});
+
+test("uninstalled modules have no voices, controls or detailed settings", async ({ page }) => {
+  await page.goto("/?fish=0&piper=0");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await expect(page.getByTestId("tts-modules-hint")).toBeVisible();
+  await page.getByTestId("voice-select").click();
+  await expect(page.getByText("Standardstimme (Seed)", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/Thorsten.*Piper/)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("Ausdruck & Sprechstil", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Einstellungen", exact: true }).last().click();
+  await page.getByRole("tab", { name: "Vorlesen", exact: true }).click();
+  await expect(page.getByTestId("voice-library")).toHaveCount(0);
+  await expect(page.getByTestId("tts-modules-hint")).toBeVisible();
+  await expect(page.getByText("Fish-Speech-Ordner", { exact: true })).toHaveCount(0);
+});
+
+test("runtime removal invalidates a selected voice after returning to the app", async ({ page }) => {
+  await page.goto("/?fish=0");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await page.getByTestId("voice-select").click();
+  await page.getByText("Thorsten · Deutsch · MQ · Piper").click();
+  await page.locator("textarea").first().fill("Guten Tag.");
+  await expect(page.getByRole("button", { name: "Vorlesen", exact: true }).last()).toBeEnabled();
+  await page.evaluate(() => {
+    (window as unknown as { ttsTestModules: { runtime: boolean } }).ttsTestModules.runtime = false;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(page.getByText("Die gespeicherte Stimme ist nicht einsatzbereit.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Vorlesen", exact: true }).last()).toBeDisabled();
+  await expect(page.getByTestId("voice-select")).not.toContainText("Thorsten");
+});
+
+test("macOS system voice is usable without Fish or Piper", async ({ page }) => {
+  await page.goto("/?fish=0&piper=0&system=1");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await page.getByTestId("voice-select").click();
+  await page.getByText("Anna · macOS-Standard", { exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { savedEngine?: string }).savedEngine)).toBe("system");
+  await page.locator("textarea").first().fill("Guten Tag.");
+  await expect(page.getByRole("button", { name: "Vorlesen", exact: true }).last()).toBeEnabled();
+  await expect(page.getByTestId("tts-modules-hint")).toHaveCount(0);
+});
+
+
+test("Apple system models need no download and distinguish the system language from detection", async ({page}) => {
+  await page.goto("/?fish=0&piper=0&system=1");
+  await page.getByRole("button", {name:"Modelle",exact:true}).last().click();
+  await expect(page.getByTestId("apple-system-models")).toContainText("Apple Intelligence benötigt");
+  await expect(page.getByRole("heading",{name:"Apple Speech",exact:true})).toBeVisible();
+  await expect(page.getByText("In macOS enthalten",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"macOS-Systemsprache",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:/Apple Speech.*löschen|löschen.*Apple Speech/i})).toHaveCount(0);
+  await page.getByRole("button",{name:"macOS-Systemsprache",exact:true}).click();
+  await expect(page.getByRole("button",{name:"German",exact:true})).toBeVisible();
 });

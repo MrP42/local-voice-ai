@@ -1,4 +1,17 @@
 {
+  "appleSystem": {
+    "systemLanguage": "macOS-Systemsprache",
+    "title": "macOS-Systemmodelle",
+    "voices": "Die macOS-Systemstimme ist sofort verfügbar. Weitere Vorlesemodule sind optional.",
+    "speechReady": "Apple Speech ist für lokale Diktate verfügbar – ohne Modelldownload in der App. Beim ersten Mal fragt macOS nach der Freigabe.",
+    "speechUnavailable": "Apple Speech ist für die aktuelle Systemsprache nicht lokal verfügbar. Es wird keine Server-Erkennung verwendet.",
+    "llmReady": "Apple Intelligence ist lokal verfügbar. Es kann Übersetzungen, Zusammenfassungen und Protokolle erstellen.",
+    "llmUnavailable": "Apple Intelligence benötigt einen Mac mit Apple-Chip, macOS 26 oder neuer sowie ein aktiviertes, verfügbares Systemmodell. Auf diesem Mac ist es derzeit nicht nutzbar.",
+    "useLLM": "Apple Intelligence als Standard verwenden",
+    "active": "Apple Intelligence ist Standard",
+    "included": "In macOS enthalten",
+    "speechDescription": "Lokale macOS-Spracherkennung. Kein Modelldownload in der App; Freigabe beim ersten Diktat erforderlich."
+  },
   "tray": {
     "meetingRecording": "Meeting-Aufnahme läuft",
     "settings": "Einstellungen...",
@@ -24,6 +37,14 @@
     "ariaLabel": "Hauptnavigation"
   },
   "tts": {
+    "modules": {
+      "systemDefault": "{{name}} · macOS-Standard",
+      "system": "Systemstimme",
+      "optional": "Vorlesen ist optional. Lade nur die Stimmen und das zugehörige Modul, die du verwenden möchtest. Entfernen ist dort ebenfalls möglich.",
+      "manage": "Vorlesemodule verwalten",
+      "chooseVoice": "Verfügbare Stimme auswählen",
+      "unavailable": "Die gespeicherte Stimme ist nicht einsatzbereit. Bitte richte das Modul ein oder wähle eine verfügbare Stimme."
+    },
     "title": "Vorlesen",
     "serverTitle": "Stimme & Wiedergabe",
     "description": "Lokale Sprachausgabe über Fish Speech auf der eigenen GPU. Der Server startet bei Bedarf und wird nach Leerlauf wieder gestoppt, um VRAM freizugeben.",

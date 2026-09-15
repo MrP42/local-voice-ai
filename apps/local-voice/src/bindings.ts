@@ -2076,6 +2076,15 @@ async ttsSynthesizeToFile(text: string, outPath: string) : Promise<Result<null, 
     else return { status: "error", error: e  as any };
 }
 },
+async appleSystemStatus(): Promise<{ speech_available: boolean; speech_authorized: boolean; llm_available: boolean }> {
+    return await TAURI_INVOKE("apple_system_status");
+},
+async appleSystemInitialize(): Promise<{ speech_available: boolean; speech_authorized: boolean; llm_available: boolean }> {
+    return await TAURI_INVOKE("apple_system_initialize");
+},
+async ttsModuleAvailability(): Promise<{ fish_installed: boolean; fish_supported: boolean; system_voices: { name: string; language: string }[]; system_default_voice: string | null }> {
+    return await TAURI_INVOKE("tts_module_availability");
+},
 async ttsListDownloads() : Promise<Result<TtsDownloadInfo[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_list_downloads") };
@@ -2597,7 +2606,7 @@ file: string; created_at: number;
 source: CandidateSource }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
-export type EngineType = 
+export type EngineType = "AppleSpeech" |
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
  * Voxtral, Qwen3-ASR, Nemotron, …). The architecture is auto-detected from

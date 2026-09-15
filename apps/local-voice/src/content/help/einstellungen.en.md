@@ -8,7 +8,11 @@ Shortcuts, push-to-talk or toggle, voice activity detection, custom words, paste
 
 ## Read aloud
 
-Fish Speech folder and port, idle stop, maximum characters, turbo mode, volume, speed, export format. At the bottom: **listen to, record, clone and import voices**. Engine and voice are chosen on the Read aloud page in the voice list.
+Volume, export format and options for installed read-aloud modules. Manage additional Piper voices and their runtime under **Models → Reading voices**. Choose the voice while reading aloud.
+
+<!-- module:fish -->
+The installed Fish module also provides folder, port, idle stop, prewarming and voice management.
+<!-- /module:fish -->
 
 ## Microphone & sounds
 

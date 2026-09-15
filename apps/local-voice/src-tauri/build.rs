@@ -1,4 +1,5 @@
 fn main() {
+    build_system_speech_bridge();
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     build_apple_intelligence_bridge();
 
@@ -35,6 +36,25 @@ fn main() {
     stage_vc_runtime_dlls();
 
     tauri_build::build()
+}
+
+fn build_system_speech_bridge() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") { return; }
+    use std::process::Command;
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    let arch = if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64") { "arm64" } else { "x86_64" };
+    let object = out.join("apple_speech.o");
+    let library = out.join("libapple_speech.a");
+    println!("cargo:rerun-if-changed=native/apple_speech.m");
+    assert!(Command::new("xcrun").args(["clang", "-arch", arch, "-fobjc-arc", "-fblocks", "-mmacosx-version-min=10.15", "-c", "native/apple_speech.m", "-o"])
+        .arg(&object).status().expect("Apple speech compiler").success(), "Apple speech bridge compilation failed");
+    assert!(Command::new("xcrun").args(["libtool", "-static", "-o"]).arg(&library).arg(&object)
+        .status().expect("Apple speech archiver").success(), "Apple speech archive failed");
+    println!("cargo:rustc-link-search=native={}", out.display());
+    println!("cargo:rustc-link-lib=static=apple_speech");
+    for framework in ["Foundation", "Speech", "AppKit"] {
+        println!("cargo:rustc-link-lib=framework={framework}");
+    }
 }
 
 /// Stage the MSVC runtime DLLs into `transcribe-libs/` for app-local deployment.

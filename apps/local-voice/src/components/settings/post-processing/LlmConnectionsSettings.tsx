@@ -15,6 +15,7 @@ import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import Badge from "../../ui/Badge";
+import { AppleSystemModels } from "../models/AppleSystemModels";
 import { ApiKeyField } from "../PostProcessingSettingsApi/ApiKeyField";
 
 /// Vorlagen, bei denen ein Schluessel nichts zu suchen hat: lokal, ohne Konto.
@@ -101,6 +102,7 @@ export const LlmConnectionsSettings: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <AppleSystemModels />
       <SettingsGroup title={t("settings.llm.active.title")}>
         <SettingContainer
           title={t("settings.llm.active.model")}

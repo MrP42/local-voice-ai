@@ -6,6 +6,7 @@ import type { ModelCardStatus } from "@/components/onboarding";
 import { ModelCard } from "@/components/onboarding";
 import { useModelStore } from "@/stores/modelStore";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
+import { AppleSystemModels } from "./AppleSystemModels";
 import { TtsVoiceCard } from "./TtsVoiceCard";
 import { LlmModelCard } from "./LlmModelCard";
 import type { LlmModelConfig } from "@/bindings";
@@ -295,6 +296,7 @@ export const ModelsSettings: React.FC = () => {
       description={t("workspace.modelsHint")}
       help="modelle"
     >
+      <AppleSystemModels />
 
       {/* Search bar — filter the catalog by name or description.
           The magnifier sits in the flow as a flex sibling rather than being

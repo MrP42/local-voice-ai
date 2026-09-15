@@ -1,4 +1,6 @@
 import React from "react";
+import { useTtsAvailability } from "@/hooks/useTtsAvailability";
+import { TtsModulesHint } from "../tts/TtsModulesHint";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -28,12 +30,16 @@ export const ReadAloudTab = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
 
+  const { fishInstalled, piperInstalled, systemVoices } = useTtsAvailability();
+
   return (
     <div className="w-full space-y-6">
-    <SettingsGroup title={t("tts.settingsTitle")}>
+    <TtsModulesHint />
+    {(fishInstalled || piperInstalled || systemVoices.length > 0) && <SettingsGroup title={t("tts.settingsTitle")}>
       {/* Engine und Stimme werden auf der Vorlesen-Seite gewaehlt (Stimmen-
           Dropdown: Fish-Stimme oder "Name · Sprache · HQ · Piper"). Hier
           bleibt nur, was das Vorlesen dauerhaft einstellt. */}
+{piperInstalled && <>
       <ToggleSwitch
         checked={getSetting("tts_piper_auto_language") ?? true}
         onChange={(checked) =>
@@ -44,8 +50,10 @@ export const ReadAloudTab = () => {
         description={t("tts.settings.piperAutoLanguageDescription")}
         grouped={true}
       />
+</>}
       {/* Auto-Tagging: Anbieter und Geraet sind Einstellungen, kein
           Arbeitsschritt -- auf der Vorlesen-Seite bleibt nur der Knopf. */}
+{fishInstalled && <>
       <SettingContainer
         title={t("tts.settings.autotagProvider")}
         description={t("tts.settings.autotagProviderDescription")}
@@ -92,6 +100,7 @@ export const ReadAloudTab = () => {
           />
         </div>
       </SettingContainer>
+</>}
       <ShortcutInput shortcutId="speak_clipboard" grouped={true} />
       <Slider
         value={getSetting("tts_volume") ?? 1.0}
@@ -112,6 +121,7 @@ export const ReadAloudTab = () => {
         description={t("tts.settings.normalizeDescription")}
         grouped={true}
       />
+{fishInstalled && <>
       <ToggleSwitch
         checked={getSetting("tts_prewarm") ?? false}
         onChange={(checked) => updateSetting("tts_prewarm", checked)}
@@ -174,6 +184,7 @@ export const ReadAloudTab = () => {
           </div>
         </SettingContainer>
       )}
+</>}
       <SettingContainer
         title={t("tts.settings.exportFormat")}
         description={t("tts.settings.exportFormatDescription")}
@@ -223,6 +234,7 @@ export const ReadAloudTab = () => {
           </div>
         </SettingContainer>
       )}
+{fishInstalled && <>
       <SettingContainer
         title={t("tts.settings.fishDir")}
         description={t("tts.settings.fishDirDescription")}
@@ -287,6 +299,7 @@ export const ReadAloudTab = () => {
         description={t("tts.settings.compileDescription")}
         grouped={true}
       />
+</>}
       <ToggleSwitch
         checked={getSetting("tts_context_menu") ?? false}
         onChange={(checked) =>
@@ -318,12 +331,12 @@ export const ReadAloudTab = () => {
           className="w-24"
         />
       </SettingContainer>
-    </SettingsGroup>
+    </SettingsGroup>}
     {/* Stimmen anhoeren, aufnehmen, klonen, importieren, loeschen: eine
         Einstellung des Vorlesens, deshalb hier -- nicht auf der Modelle-Seite
         (Entscheidung Patrick 14.09.). Die Vorlesen-Seite verweist ueber den
         Eintrag "Stimmen verwalten" im Stimmen-Dropdown hierher. */}
-    <VoiceLibrary />
+    {fishInstalled && <VoiceLibrary />}
     </div>
   );
 };

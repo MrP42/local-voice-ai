@@ -30,6 +30,7 @@
 pub enum TtsEngineKind {
     Fish,
     Piper,
+    System,
 }
 
 impl TtsEngineKind {
@@ -38,6 +39,7 @@ impl TtsEngineKind {
     pub fn from_setting(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
             "piper" => Self::Piper,
+            "system" => Self::System,
             _ => Self::Fish,
         }
     }
