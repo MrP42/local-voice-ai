@@ -181,6 +181,20 @@ gh run rerun <run-id>
 Danach wie gehabt: Portal `feat/voice-sync` committen, deployen, Migration 0024, erster
 Login PC↔Mac.
 
+## Diktat-Startlatenz — PR #27 (15.09., Zweig `fix/diktat-startlatenz`, Version 0.18.1)
+
+Patricks Auftrag (Video Everlast AI: 600 ms durch PowerShell-Berechtigungsprüfung): hier gibt
+es keine PowerShell-Prüfung. Belegte Ursache: On-Demand + `lazy_stream_close=false` → jedes
+Diktat Kaltstart; WASAPI/USB-Mikro liefert erst 190–630 ms nach play() das erste Sample;
+Overlay/Ton kamen vorher. Fix: lazy_stream_close Standard an (Schema 3, einmalig), Idle 5 min,
+Bereit-Signal (`with_capture_ready_callback`) → Overlay/Ton erst bei Audio, Log
+`capture ready N after request`. Messung (Hardware-Test `capture_latency_cold_vs_warm`,
+`cargo test capture_latency -- --ignored --nocapture`): kalt 428–580 ms → warm 9–10 ms.
+Bericht: `docs/latenz-diktatstart-2026-09-15.md` (inkl. Codex-Zweitanalyse, gleicher Befund).
+Nebenbei: Piper-Katalogtest 5 → 10 Stimmen repariert (`a48eba4`). PR #27 offen, Merge bei
+Patrick (Freigabe für `gh pr merge` liegt in settings.local.json — nur auf Zuruf nutzen).
+Installer 0.18.1 lokal unter `apps/local-voice/src-tauri/target/release/bundle/nsis/`.
+
 ## Offen / nächste Schritte (Code)
 
 - Fußleisten-Symbol für den Sync-Zustand (Spec Abschnitt 7) — noch nicht gebaut.
