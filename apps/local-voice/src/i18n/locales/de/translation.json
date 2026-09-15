@@ -770,6 +770,20 @@
       "volume": {
         "title": "Lautstärke",
         "description": "Lautstärke der Audio-Feedback-Töne anpassen"
+      },
+      "dictationAudio": {
+        "title": "Audioausgabe beim Diktat",
+        "description": "Was mit laufender Musik oder einem Video passiert, sobald ein Diktat startet. Wird nach dem Diktat wieder zurückgesetzt.",
+        "options": {
+          "off": "Nicht verändern",
+          "mute": "Stummschalten",
+          "duck": "Leiser stellen",
+          "pause": "Wiedergabe pausieren"
+        },
+        "duck": {
+          "title": "Pegel während des Diktats",
+          "description": "Lautstärke, auf die die Ausgabe während des Diktats abgesenkt wird."
+        }
       }
     },
     "advanced": {

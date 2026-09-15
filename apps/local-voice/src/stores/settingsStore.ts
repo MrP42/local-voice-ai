@@ -7,6 +7,7 @@ import type {
   TranscribeAcceleratorSetting,
   OrtAcceleratorSetting,
   MeetingAudioRetention,
+  DictationAudio,
 } from "@/bindings";
 import { commands } from "@/bindings";
 
@@ -182,6 +183,10 @@ const settingUpdaters: {
     commands.setPostProcessSelectedPrompt(value as string),
   mute_while_recording: (value) =>
     commands.changeMuteWhileRecordingSetting(value as boolean),
+  dictation_audio: (value) =>
+    commands.changeDictationAudioSetting(value as DictationAudio),
+  dictation_audio_duck_percent: (value) =>
+    commands.changeDictationAudioDuckPercentSetting(value as number),
   append_trailing_space: (value) =>
     commands.changeAppendTrailingSpaceSetting(value as boolean),
   log_level: (value) => commands.setLogLevel(value as any),

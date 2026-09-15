@@ -1487,6 +1487,30 @@ pub fn change_mute_while_recording_setting(app: AppHandle, enabled: bool) -> Res
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_dictation_audio_setting(
+    app: AppHandle,
+    mode: settings::DictationAudio,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.dictation_audio = mode;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_dictation_audio_duck_percent_setting(
+    app: AppHandle,
+    percent: u8,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.dictation_audio_duck_percent = percent.min(100);
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_append_trailing_space_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.append_trailing_space = enabled;
