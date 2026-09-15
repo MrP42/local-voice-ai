@@ -967,6 +967,7 @@ impl TranscriptionManager {
             Some(LoadedEngine::TranscribeCpp(session)) => {
                 Some(session.model().backend().to_string())
             }
+            Some(LoadedEngine::AppleSpeech) => Some("apple-speech".to_string()),
             Some(_) => Some("onnx".to_string()),
             None => None,
         }
