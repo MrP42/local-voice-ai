@@ -200,12 +200,16 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   const missingAnthropicKey =
     effectiveProviderId === "anthropic" && anthropicKey.trim() === "";
 
+  // Claude erscheint nur, wenn ein Anthropic-Schluessel hinterlegt ist. Ohne
+  // Schluessel waere der Eintrag ein Versprechen, das beim ersten Klick bricht.
   const providerOptions = [
     {
       value: DEFAULT_PROVIDER_UI_VALUE,
       label: t("tts.autotag.providerDefault"),
     },
-    { value: "anthropic", label: t("tts.autotag.providerClaude") },
+    ...(anthropicKey.trim() !== ""
+      ? [{ value: "anthropic", label: t("tts.autotag.providerClaude") }]
+      : []),
   ];
 
   // Geraetewahl fuers LOKALE Ollama (bei entfernten Anbietern wirkungslos):

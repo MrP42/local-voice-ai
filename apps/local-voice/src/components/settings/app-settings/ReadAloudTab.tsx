@@ -27,6 +27,10 @@ const EXPORT_BITRATES = [128, 192, 256, 320];
 export const ReadAloudTab = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
+  const hasAnthropicKey =
+    ((getSetting("post_process_api_keys") as Record<string, string> | undefined)?.[
+      "anthropic"
+    ] ?? "").trim() !== "";
 
   return (
     <div className="w-full space-y-6">
@@ -55,13 +59,16 @@ export const ReadAloudTab = () => {
         <div className="w-48">
           <Select
             value={
-              (getSetting("tts_tag_provider") ?? "") === ""
+              (getSetting("tts_tag_provider") ?? "") === "" || !hasAnthropicKey
                 ? DEFAULT_TAG_PROVIDER_UI_VALUE
                 : (getSetting("tts_tag_provider") ?? "")
             }
             options={[
               { value: DEFAULT_TAG_PROVIDER_UI_VALUE, label: t("tts.autotag.providerDefault") },
-              { value: "anthropic", label: t("tts.autotag.providerClaude") },
+              // Claude nur mit hinterlegtem Anthropic-Schluessel (Reiter KI-Textverbesserung).
+              ...(hasAnthropicKey
+                ? [{ value: "anthropic", label: t("tts.autotag.providerClaude") }]
+                : []),
             ]}
             isClearable={false}
             onChange={(value) =>

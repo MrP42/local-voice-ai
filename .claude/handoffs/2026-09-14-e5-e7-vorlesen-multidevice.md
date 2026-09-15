@@ -214,6 +214,27 @@ Berührt Stopp-Pfad (`actions.rs::stop`), History je Lauf, Overlay-Zustand „pa
 Satzbruch bei Denkpause INNERHALB eines Diktats ist Modellverhalten (Nemotron setzt
 Interpunktion nach Pause); Hebel wäre die Satz-Verfeinerung (`refine_enabled`, aktuell aus).
 
+## Nachmittag 15.09.: Diktat-Audio (PR #30), lokale Updates (PR #31), Sync-Konzept
+
+PR-Kette (in dieser Reihenfolge mergen): #27 Startlatenz → #28 Endtext → #30 Diktat-Audio →
+#31 lokale Updates. Jeder Stand hat einen Installer: 0.18.1 … 0.18.4 unter
+`apps/local-voice/src-tauri/target/release/bundle/nsis/`.
+
+- **Diktat-Audio (0.18.3):** Setting `dictation_audio` off|mute|duck|pause, Standard duck 10 %
+  (`dictation_audio_duck_percent`), Schema 4 migriert `mute_while_recording`. Windows: Endpunkt-
+  lautstärke + WinRT Media.Control (Pause/Fortsetzen aller spielenden Sitzungen); macOS/Linux
+  Lautstärke per osascript/wpctl/pactl, Pause → Mute. Reiter Mikrofon & Töne, Komponente
+  `DictationAudio.tsx`. Cargo-Features Media_Control/Foundation/Foundation_Collections.
+- **Lokale Updates (0.18.4):** `local_update.rs` + Setting `local_update_dir`; Fußleiste zeigt
+  „Update X.Y.Z lokal verfügbar", Klick startet Installer `/P` und beendet die App. Hintergrund:
+  GitHub-Updater ohne Signaturschlüssel liefert nie etwas. Patrick: Ordner in Einstellungen →
+  Allgemein → Updates auf `…\target\release\bundle\nsis` setzen.
+- **Sync ohne Portal:** Konzept `docs/superpowers/specs/2026-09-15-sync-ohne-portal-konzept.md`
+  (Speicher-Trait; Ordner-Backend zuerst, dann GitHub-Repo per Device Flow, Google Drive später;
+  Sync-Passphrase statt Portal-Passwort). Entscheidung bei Patrick, nichts gebaut.
+- **Offen, Entscheidung Patrick:** Fortsetzungsfenster (Stream ~8 s offen halten, Neustart setzt
+  Satz nahtlos fort), siehe Abschnitt Endtext.
+
 ## Offen / nächste Schritte (Code)
 
 - Fußleisten-Symbol für den Sync-Zustand (Spec Abschnitt 7) — noch nicht gebaut.

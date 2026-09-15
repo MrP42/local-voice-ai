@@ -1511,6 +1511,15 @@ pub fn change_dictation_audio_duck_percent_setting(
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_local_update_dir_setting(app: AppHandle, dir: Option<String>) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.local_update_dir = dir.map(|d| d.trim().to_string()).filter(|d| !d.is_empty());
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_append_trailing_space_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.append_trailing_space = enabled;

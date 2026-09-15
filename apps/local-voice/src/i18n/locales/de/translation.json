@@ -1134,6 +1134,13 @@
         "updates": "Updates",
         "input": "Mikrofon",
         "feedback": "Hörbare Rückmeldung"
+      },
+      "localUpdateDir": {
+        "title": "Lokaler Update-Ordner",
+        "description": "Ordner, in dem die App nach neueren Installern sucht, zum Beispiel für Abnahmestände, die nicht auf GitHub liegen. Ein gefundenes Update erscheint in der Fußleiste.",
+        "choose": "Ordner wählen…",
+        "clear": "Entfernen",
+        "none": "Kein Ordner gesetzt"
       }
     },
     "llm": {
@@ -1223,7 +1230,9 @@
     "checkForUpdates": "Nach Updates suchen",
     "portableUpdateTitle": "Manuelles Update erforderlich",
     "portableUpdateMessage": "Portable Installationen können nicht automatisch aktualisiert werden. Zum Aktualisieren: Lade den neuesten NSIS-Installer von GitHub Releases herunter, installiere ihn im selben Ordner und kopiere dann deinen Data/-Ordner (Einstellungen, Modelle, Aufnahmen) von der alten Version in die neue.",
-    "portableUpdateButton": "GitHub Releases öffnen"
+    "portableUpdateButton": "GitHub Releases öffnen",
+    "localUpdateAvailable": "Update {{version}} lokal verfügbar",
+    "localInstalling": "Installer wird gestartet…"
   },
   "common": {
     "loading": "Wird geladen...",
