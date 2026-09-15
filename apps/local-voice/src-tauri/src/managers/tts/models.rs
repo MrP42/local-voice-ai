@@ -66,13 +66,7 @@ fn runtime_dir(piper_dir: &Path, platform: &str) -> PathBuf {
 /// "installed" — this is the one place that decides "installed", used by
 /// every caller instead of each re-deriving its own (looser) check.
 fn runtime_is_installed(piper_dir: &Path, platform: &str) -> bool {
-    let dir = runtime_dir(piper_dir, platform);
-    let binary_name = if platform.starts_with("windows") {
-        "piper.exe"
-    } else {
-        "piper"
-    };
-    dir.join(binary_name).is_file() && dir.join("espeak-ng-data").is_dir()
+    super::availability::piper_ready(&runtime_dir(piper_dir, platform), platform)
 }
 
 /// `(<piper_dir>/voices/<voice_id>.onnx, <piper_dir>/voices/<voice_id>.onnx.json)`
@@ -270,47 +264,171 @@ impl TtsModelManager {
     async fn download_runtime(&self) -> Result<(), String> {
         let platform = current_platform()
             .ok_or_else(|| "No Piper runtime is available for this platform".to_string())?;
-        let dest_dir = runtime_dir(&self.piper_dir, platform);
         if runtime_is_installed(&self.piper_dir, platform) {
             return Ok(());
         }
+        // A shared runtime is never installed twice by parallel voice downloads.
+        let cancel_token = {
+            let mut claims = self.cancel_flags.lock().unwrap();
+            if claims.contains_key(RUNTIME_ID) {
+                return Err("Piper installation is already running".to_string());
+            }
+            let token = CancellationToken::new();
+            claims.insert(RUNTIME_ID.to_string(), token.clone());
+            token
+        };
+        let result = self.install_runtime(platform, &cancel_token).await;
+        self.release(RUNTIME_ID);
+        result
+    }
+
+    async fn install_runtime(
+        &self,
+        platform: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), String> {
         let catalog_id = format!("piper-runtime-{platform}");
         let entry = catalog::tts_entries(Purpose::TtsRuntime)
             .into_iter()
             .find(|e| e.id == catalog_id)
             .ok_or_else(|| format!("No catalog entry for {catalog_id}"))?;
-        let file = entry
-            .files
-            .first()
-            .ok_or_else(|| format!("{catalog_id}: catalog entry has no file"))?;
-
+        if entry.files.is_empty() {
+            return Err(format!("{catalog_id}: catalog entry has no files"));
+        }
         fs::create_dir_all(&self.piper_dir).map_err(|e| e.to_string())?;
-        let archive_path = self.piper_dir.join(format!("{platform}.download"));
-
-        let cancel_token = self.claim(RUNTIME_ID);
-        let outcome = self
-            .run_download(
-                RUNTIME_ID,
-                &file.url,
-                &archive_path,
-                file.size_bytes,
-                file.sha256.as_deref(),
-                &cancel_token,
-            )
-            .await;
-        self.release(RUNTIME_ID);
-
-        match outcome.map_err(|e| e.to_string())? {
-            HttpDownloadOutcome::Cancelled => Ok(()),
-            HttpDownloadOutcome::Completed => {
-                let is_zip = file.filename.to_ascii_lowercase().ends_with(".zip");
-                let extracted = Self::extract_runtime_archive(&archive_path, &dest_dir, is_zip);
-                let _ = fs::remove_file(&archive_path);
-                extracted.map_err(|e| e.to_string())?;
-                let _ = self.app_handle.emit("model-download-complete", RUNTIME_ID);
-                Ok(())
+        let staging = tempfile::Builder::new()
+            .prefix(".install-")
+            .tempdir_in(&self.piper_dir)
+            .map_err(|e| e.to_string())?;
+        let candidate = staging.path().join("runtime");
+        for (index, file) in entry.files.iter().enumerate() {
+            let archive = self.piper_dir.join(format!("{platform}-{index}.download"));
+            match self
+                .run_download(
+                    RUNTIME_ID,
+                    &file.url,
+                    &archive,
+                    file.size_bytes,
+                    file.sha256.as_deref(),
+                    cancel,
+                )
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                HttpDownloadOutcome::Cancelled => return Ok(()),
+                HttpDownloadOutcome::Completed => {}
+            }
+            if cancel.is_cancelled() {
+                return Ok(());
+            }
+            let extracted = if index == 0 {
+                candidate.clone()
+            } else {
+                staging.path().join(format!("part-{index}"))
+            };
+            Self::extract_runtime_archive(&archive, &extracted, file.filename.ends_with(".zip"))
+                .map_err(|e| e.to_string())?;
+            if index > 0 {
+                // Official macOS Piper archives omit their dynamic libraries.
+                // The pinned companion package contains them under lib/.
+                Self::copy_runtime_libraries(&extracted.join("lib"), &candidate, platform)?;
             }
         }
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
+        if !super::availability::piper_ready(&candidate, platform) {
+            return Err(
+                "Piper package is incomplete; the previous installation was preserved".to_string(),
+            );
+        }
+        // Actual loader check before publishing the module as installed.
+        let probe_dir = candidate.clone();
+        tauri::async_runtime::spawn_blocking(move || Self::probe_runtime(&probe_dir))
+            .await
+            .map_err(|e| e.to_string())??;
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
+        if let Err(error) =
+            Self::promote_runtime(&candidate, &runtime_dir(&self.piper_dir, platform))
+        {
+            let retained = staging.keep();
+            return Err(format!(
+                "{error}; installation files preserved at {}",
+                retained.display()
+            ));
+        }
+        for index in 0..entry.files.len() {
+            let _ = fs::remove_file(self.piper_dir.join(format!("{platform}-{index}.download")));
+        }
+        let _ = self.app_handle.emit("model-download-complete", RUNTIME_ID);
+        Ok(())
+    }
+
+    fn copy_runtime_libraries(source: &Path, dest: &Path, platform: &str) -> Result<(), String> {
+        for name in super::availability::piper_libraries(platform) {
+            // Copy resolves the companion package's internal symlinks: each
+            // required install-name gets its own real, portable library file.
+            fs::copy(source.join(name), dest.join(name)).map_err(|e| format!("{name}: {e}"))?;
+        }
+        Ok(())
+    }
+
+    fn probe_runtime(dir: &Path) -> Result<(), String> {
+        let mut command =
+            std::process::Command::new(dir.join(if cfg!(windows) { "piper.exe" } else { "piper" }));
+        command
+            .arg("--help")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(target_os = "macos")]
+        command.env("DYLD_LIBRARY_PATH", dir);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("Piper cannot start: {e}"))?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    return if status.success() {
+                        Ok(())
+                    } else {
+                        Err(format!("Piper runtime check failed: {status}"))
+                    }
+                }
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(25))
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("Piper runtime check failed or timed out".to_string());
+                }
+            }
+        }
+    }
+
+    fn promote_runtime(candidate: &Path, dest: &Path) -> Result<(), String> {
+        let previous = candidate.with_file_name("previous");
+        let had_previous = dest.exists();
+        if had_previous {
+            fs::rename(dest, &previous).map_err(|e| e.to_string())?;
+        }
+        if let Err(error) = fs::rename(candidate, dest) {
+            if had_previous {
+                fs::rename(&previous, dest).map_err(|e| {
+                    format!("Installation failed ({error}); restoring previous runtime failed: {e}")
+                })?;
+            }
+            return Err(error.to_string());
+        }
+        Ok(())
     }
 
     async fn download_voice(&self, voice_id: &str) -> Result<(), String> {
@@ -335,6 +453,9 @@ impl TtsModelManager {
                     .any(|e| e.id == catalog_id);
                 if has_runtime_entry {
                     self.download_runtime().await?;
+                    if !runtime_is_installed(&self.piper_dir, platform) {
+                        return Err("Piper installation was cancelled".to_string());
+                    }
                 } else {
                     log::warn!(
                         "No Piper runtime catalog entry for platform {platform}; \
@@ -447,7 +568,11 @@ impl TtsModelManager {
     /// Archiv liegt lokal als `<platform>.download`, dessen Endung sagt über
     /// das Format nichts aus (der Endungs-Check hier ließ auf Windows jedes
     /// ZIP in den tar.gz-Zweig laufen — „failed to iterate over archive").
-    pub(crate) fn extract_runtime_archive(archive_path: &Path, dest_dir: &Path, is_zip: bool) -> Result<()> {
+    pub(crate) fn extract_runtime_archive(
+        archive_path: &Path,
+        dest_dir: &Path,
+        is_zip: bool,
+    ) -> Result<()> {
         let temp_dir = dest_dir.with_file_name(format!(
             "{}.extracting",
             dest_dir
@@ -520,6 +645,38 @@ impl TtsModelManager {
 mod tests {
     use super::*;
 
+    #[test]
+    fn failed_promotion_restores_previous_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("installed");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("keep"), b"previous").unwrap();
+        let missing = dir.path().join("missing-candidate");
+        assert!(TtsModelManager::promote_runtime(&missing, &dest).is_err());
+        assert_eq!(fs::read(dest.join("keep")).unwrap(), b"previous");
+    }
+
+    #[test]
+    fn macos_companion_libraries_complete_the_main_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("lib");
+        let target = dir.path().join("runtime");
+        fs::create_dir_all(&source).unwrap();
+        super::super::availability::write_piper_fixture(&target, "macos-x64");
+        for name in super::super::availability::piper_libraries("macos-x64") {
+            fs::rename(target.join(name), source.join(name)).unwrap();
+        }
+        assert!(!super::super::availability::piper_ready(
+            &target,
+            "macos-x64"
+        ));
+        TtsModelManager::copy_runtime_libraries(&source, &target, "macos-x64").unwrap();
+        assert!(super::super::availability::piper_ready(
+            &target,
+            "macos-x64"
+        ));
+    }
+
     // ── pure target-path derivation ────────────────────────────────────────
 
     #[test]
@@ -579,7 +736,7 @@ mod tests {
     // downloading-flag lookup is injected as a plain closure.
 
     #[test]
-    fn build_downloads_orders_runtime_first_and_lists_all_five_voices() {
+    fn build_downloads_orders_runtime_first_and_lists_all_ten_voices() {
         let dir = tempfile::TempDir::new().unwrap();
         let piper_dir = dir.path().join("piper");
 
@@ -589,7 +746,7 @@ mod tests {
             .iter()
             .filter(|d| d.kind == TtsDownloadKind::Voice)
             .collect();
-        assert_eq!(voice_rows.len(), 5, "expected the 5 curated Piper voices");
+        assert_eq!(voice_rows.len(), 10, "expected the 10 curated Piper voices");
         assert!(
             voice_rows.iter().all(|d| !d.is_downloaded),
             "nothing on disk yet — no voice may read as downloaded"
@@ -606,7 +763,7 @@ mod tests {
         } else {
             assert_eq!(
                 downloads.len(),
-                5,
+                10,
                 "no runtime row at all on a platform current_platform() doesn't recognise"
             );
         }
@@ -667,8 +824,10 @@ mod tests {
             "the binary alone, without espeak-ng-data, must not read as installed"
         );
 
-        // Both present: now it's complete.
+        // Binary and data alone still miss the shared libraries.
         fs::create_dir_all(rt_dir.join("espeak-ng-data")).unwrap();
+        assert!(!runtime_is_installed(&piper_dir, platform));
+        super::super::availability::write_piper_fixture(&rt_dir, platform);
         let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
         assert!(
             downloads[0].is_downloaded,

@@ -102,7 +102,7 @@ pub fn piper_voice_paths(app_data: &Path, voice_id: &str) -> (PathBuf, PathBuf) 
 /// — der Katalog (E3) ist der einzige Weg, Dateien hierher zu bekommen.
 pub fn piper_paths(app_data: &Path, voice_id: &str) -> Result<PiperPaths, &'static str> {
     let binary = piper_binary_path(app_data);
-    if !binary.is_file() {
+    if !super::availability::piper_ready(binary.parent().unwrap_or(app_data), platform_subdir()) {
         return Err(ERR_BINARY_MISSING);
     }
     let (model, config) = piper_voice_paths(app_data, voice_id);
@@ -187,6 +187,15 @@ pub fn run_piper_blocking(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
+    // The upstream macOS executable has no executable-relative rpath.
+    // Scope library lookup to this child; never alter the app/global loader.
+    #[cfg(target_os = "macos")]
+    if let Some(dir) = paths.binary.parent() {
+        cmd.env("DYLD_LIBRARY_PATH", dir);
+    }
+    if let Some(dir) = paths.binary.parent() {
+        cmd.arg("--espeak_data").arg(dir.join("espeak-ng-data"));
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -312,7 +321,10 @@ impl PiperEngine {
         let resolved = match (app_data, voice_id) {
             (None, _) => Err(ERR_BINARY_MISSING),
             (Some(data), None) => {
-                if piper_binary_path(data).is_file() {
+                if super::availability::piper_ready(
+                    piper_binary_path(data).parent().unwrap_or(data),
+                    platform_subdir(),
+                ) {
                     Err(ERR_VOICE_MISSING)
                 } else {
                     Err(ERR_BINARY_MISSING)
@@ -330,7 +342,11 @@ impl PiperEngine {
 
     /// Wie `resolve`, zusätzlich mit allen geladenen Stimmen als Kandidaten
     /// für die automatische Sprachwahl.
-    pub fn resolve_auto(app_data: Option<&Path>, voice_id: Option<&str>, auto_language: bool) -> Self {
+    pub fn resolve_auto(
+        app_data: Option<&Path>,
+        voice_id: Option<&str>,
+        auto_language: bool,
+    ) -> Self {
         let mut engine = Self::resolve(app_data, voice_id);
         engine.auto_language = auto_language;
         if let Some(data) = app_data {
@@ -342,7 +358,7 @@ impl PiperEngine {
         }
         // Ohne gewählte Stimme, aber mit geladenen: die erste ist gut genug —
         // besser als „Stimme fehlt", wenn eine im Ordner liegt.
-        if engine.resolved.is_err() && app_data.is_some_and(|d| piper_binary_path(d).is_file()) {
+        if voice_id.is_none() && engine.resolved.is_err() {
             if let Some((id, _, paths)) = engine.alternatives.first().cloned() {
                 engine.voice_id = Some(id);
                 engine.resolved = Ok(paths);
@@ -397,8 +413,16 @@ impl TtsEngine for PiperEngine {
         }
         // Mit Auto-Sprache haengt die Stimme eines Satzes von den geladenen
         // Stimmen ab: kommt eine dazu, muss derselbe Satz neu entstehen.
-        let langs: Vec<&str> = self.alternatives.iter().map(|(id, _, _)| id.as_str()).collect();
-        format!("piper/{}/auto:{}", self.voice_id.as_deref().unwrap_or(""), langs.join(","))
+        let langs: Vec<&str> = self
+            .alternatives
+            .iter()
+            .map(|(id, _, _)| id.as_str())
+            .collect();
+        format!(
+            "piper/{}/auto:{}",
+            self.voice_id.as_deref().unwrap_or(""),
+            langs.join(",")
+        )
     }
 
     async fn ensure_ready(&self) -> Result<(), String> {
@@ -453,8 +477,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         if binary {
             let bin = piper_binary_path(dir.path());
-            std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
-            std::fs::write(&bin, b"fake").unwrap();
+            super::super::availability::write_piper_fixture(
+                bin.parent().unwrap(),
+                platform_subdir(),
+            );
         }
         if let Some(id) = voice {
             let (model, config) = piper_voice_paths(dir.path(), id);
@@ -493,11 +519,27 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_selected_voice_never_silently_falls_back() {
+        let dir = data_dir(true, Some("eva"));
+        let engine = PiperEngine::resolve_auto(Some(dir.path()), Some("removed"), true);
+        assert_eq!(engine.unavailable_reason(), Some(ERR_VOICE_MISSING));
+    }
+
+    #[test]
+    fn missing_runtime_library_rejects_installed_voice_before_synthesis() {
+        let dir = data_dir(true, Some("eva"));
+        let binary = piper_binary_path(dir.path());
+        let library = super::super::availability::piper_libraries(platform_subdir())[0];
+        std::fs::remove_file(binary.parent().unwrap().join(library)).unwrap();
+        assert_eq!(piper_paths(dir.path(), "eva"), Err(ERR_BINARY_MISSING));
+        assert!(installed_voices(dir.path()).is_empty());
+    }
+
+    #[test]
     fn auto_sprache_nimmt_die_stimme_der_erkannten_sprache() {
         let dir = tempfile::tempdir().unwrap();
         let bin = piper_binary_path(dir.path());
-        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
-        std::fs::write(&bin, b"exe").unwrap();
+        super::super::availability::write_piper_fixture(bin.parent().unwrap(), platform_subdir());
         for id in ["de_DE-thorsten-high", "en_US-lessac-medium"] {
             let (m, c) = piper_voice_paths(dir.path(), id);
             std::fs::create_dir_all(m.parent().unwrap()).unwrap();
@@ -505,12 +547,30 @@ mod tests {
             std::fs::write(&c, b"{}").unwrap();
         }
         let e = PiperEngine::resolve_auto(Some(dir.path()), Some("de_DE-thorsten-high"), true);
-        assert!(e.paths_for("It was a quiet evening in the hills.").unwrap().model.ends_with("en_US-lessac-medium.onnx"));
-        assert!(e.paths_for("Es war ein ruhiger Abend über den Hügeln.").unwrap().model.ends_with("de_DE-thorsten-high.onnx"));
-        assert!(e.paths_for("Luminara").unwrap().model.ends_with("de_DE-thorsten-high.onnx"), "unklar = gewaehlte Stimme");
+        assert!(e
+            .paths_for("It was a quiet evening in the hills.")
+            .unwrap()
+            .model
+            .ends_with("en_US-lessac-medium.onnx"));
+        assert!(e
+            .paths_for("Es war ein ruhiger Abend über den Hügeln.")
+            .unwrap()
+            .model
+            .ends_with("de_DE-thorsten-high.onnx"));
+        assert!(
+            e.paths_for("Luminara")
+                .unwrap()
+                .model
+                .ends_with("de_DE-thorsten-high.onnx"),
+            "unklar = gewaehlte Stimme"
+        );
         // Ohne Auto-Sprache bleibt es bei der Wahl, egal was der Text sagt.
         let fest = PiperEngine::resolve_auto(Some(dir.path()), Some("de_DE-thorsten-high"), false);
-        assert!(fest.paths_for("It was a quiet evening in the hills.").unwrap().model.ends_with("de_DE-thorsten-high.onnx"));
+        assert!(fest
+            .paths_for("It was a quiet evening in the hills.")
+            .unwrap()
+            .model
+            .ends_with("de_DE-thorsten-high.onnx"));
         assert_ne!(e.cache_tag(None), fest.cache_tag(None));
         // Keine Stimme gewaehlt, aber geladen: die erste springt ein.
         let ohne = PiperEngine::resolve_auto(Some(dir.path()), None, true);
