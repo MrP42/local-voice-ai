@@ -20,7 +20,7 @@ Eingabegerät, Ausgabegerät, Pegel, Start- und Stopp-Töne, Stummschalten währ
 
 ## KI-Textverbesserung
 
-Nachbearbeitung des Diktats per Sprachmodell: Anbieter (lokal, Ollama, Cloud), Modelle je Anbieter, Prompts und Budgets. Der Verbrauch je Modell steht in der Übersicht.
+KI-Textverbesserung nutzt das ausgewählte Sprachmodell. Unter Modelle kannst du lokale Modelle direkt installieren oder ein verfügbares Systemmodell wählen. Externe Anbieter sind optional; hier verwaltest du ihre Verbindungen, Prompts und Budgets. Der Verbrauch je Modell steht in der Übersicht.
 
 ## Allgemein
 

@@ -15,6 +15,7 @@ import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import Badge from "../../ui/Badge";
+import { LanguageModelSetupHint } from "@/components/shared/LanguageModelSetupHint";
 import { AppleSystemModels } from "../models/AppleSystemModels";
 import { ApiKeyField } from "../PostProcessingSettingsApi/ApiKeyField";
 
@@ -126,9 +127,7 @@ export const LlmConnectionsSettings: React.FC = () => {
                 }}
               />
             ) : (
-              <span className="text-sm text-text/60">
-                {t("settings.llm.active.none")}
-              </span>
+              <LanguageModelSetupHint connections={false} />
             )}
           </div>
         </SettingContainer>

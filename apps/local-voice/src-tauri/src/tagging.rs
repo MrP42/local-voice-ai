@@ -230,20 +230,14 @@ pub fn resolve_provider(
             let provider = settings
                 .active_post_process_provider()
                 .cloned()
-                .ok_or_else(|| {
-                    "Kein Post-Processing-Provider konfiguriert (Einstellungen → Post Process)"
-                        .to_string()
-                })?;
+                .ok_or_else(|| crate::llm_client::MODEL_SETUP_REQUIRED.to_string())?;
             let model = settings
                 .post_process_models
                 .get(&provider.id)
                 .cloned()
                 .unwrap_or_default();
             if model.trim().is_empty() {
-                return Err(format!(
-                    "Für '{}' ist kein Modell eingetragen (Einstellungen → Nachbearbeitung → Modell).",
-                    provider.label
-                ));
+                return Err(crate::llm_client::MODEL_SETUP_REQUIRED.to_string());
             }
             Ok(ResolvedProvider { provider, model })
         }
@@ -788,8 +782,7 @@ mod tests {
         // Modell eingetragen — derselbe Fehlerpfad wie translator::translate_on.
         let settings = get_default_settings();
         let err = resolve_provider(&settings, None).unwrap_err();
-        assert!(err.contains("kein Modell eingetragen"), "war: {err}");
-        assert!(err.contains("'OpenAI'"), "war: {err}");
+        assert_eq!(err, crate::llm_client::MODEL_SETUP_REQUIRED);
     }
 
     #[test]

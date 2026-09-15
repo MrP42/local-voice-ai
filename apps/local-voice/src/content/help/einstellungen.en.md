@@ -20,7 +20,7 @@ Input device, output device, level, start and stop sounds, mute while recording.
 
 ## AI text improvement
 
-Post-processing of dictation via a language model: providers (local, Ollama, cloud), models per provider, prompts and budgets. Usage per model is shown in the overview.
+AI text improvement uses your selected language model. Under Models, install a local model directly or choose an available system model. External providers are optional; manage their connections, prompts and budgets here. Usage per model is shown in the overview.
 
 ## General
 

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LanguageModelSetupHint } from "@/components/shared/LanguageModelSetupHint";
+import { hasLanguageModel, isLanguageModelSetupError } from "@/lib/llmSetup";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
@@ -89,7 +91,11 @@ const formatEta = (seconds: number) => {
 
 export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
-  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const { settings, getSetting, updateSetting, isUpdating } = useSettings();
+  const modelReady = hasLanguageModel(settings);
+  const provider = settings?.post_process_providers?.find((p) => p.id === settings.post_process_provider_id);
+  const canWarmModel = modelReady && /localhost|127\.0\.0\.1/.test(provider?.base_url ?? "") &&
+    (provider?.id === "ollama" || (provider?.id === "custom" && /:11434(?:\/|$)/.test(provider.base_url)));
   const { fishInstalled, piperVoices, systemVoices, systemDefaultVoice, loading: modulesLoading } = useTtsAvailability();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
   /** Tag- und Sprecher-Chips in allen drei Text-Reitern. Reihenfolge zählt
@@ -431,6 +437,24 @@ export const TtsSettings = () => {
     };
   }, [reloadPages]);
 
+  // A setup link must not leave the page before its latest text is durable.
+  const saveBeforeModelSetup = async () => {
+    if (!activePage || !pageLoaded.current) return false;
+    try {
+      const result = await commands.pageStateSave(activePage,
+        JSON.stringify({ text, summary, sourceUrl, tab, voices: tabVoices }));
+      if (result.status === "error") {
+        setLastError(result.error);
+        return false;
+      }
+      void commands.syncTouch();
+      return true;
+    } catch (error) {
+      setLastError(String(error));
+      return false;
+    }
+  };
+
   // Arbeitsstand sichern — gebuendelt, eine halbe Sekunde nach der letzten
   // Aenderung. Jeder Tastendruck einzeln waere ein Schreibzugriff zu viel.
   useEffect(() => {
@@ -482,19 +506,21 @@ export const TtsSettings = () => {
    *  grau aus, gelb pulsierend arbeitet, gruen geladen, orange Fehler. */
   const llmIconClass = llmBusy
     ? "text-yellow-400 animate-pulse"
-    : llmError
+    : llmError && !isLanguageModelSetupError(llmError)
       ? "text-orange-500 animate-pulse"
       : llmLoaded.length > 0
         ? "text-green-500"
         : "text-text/40";
 
-  const llmTitle = llmBusy
+  const llmTitle = !modelReady
+    ? t("modelSetup.choose")
+    : llmBusy
     ? t("tts.llm.busy")
-    : llmError
+    : llmError && !isLanguageModelSetupError(llmError)
       ? llmError
       : llmLoaded.length > 0
         ? t("tts.llm.loaded", { models: llmLoaded.join(", ") })
-        : t("tts.llm.idle");
+        : t(canWarmModel ? "tts.llm.idle" : "tts.llm.onDemand");
 
   const llmUnloadNow = async () => {
     setLlmWorking(true);
@@ -830,6 +856,7 @@ export const TtsSettings = () => {
    * ersten Mal nichts mehr, auch nach einem Neustart nicht.
    */
   const translateText = async () => {
+    if (!modelReady) return;
     if (!text.trim()) return;
     setLastError(null);
     setTranslating(true);
@@ -985,6 +1012,7 @@ export const TtsSettings = () => {
    * alte Text bleibt hinter "Rueckgaengig" im Toast.
    */
   const tidyText = async () => {
+    if (!modelReady) return;
     if (!text.trim() || tidying) return;
     setLastError(null);
     setTidying(true);
@@ -1011,6 +1039,7 @@ export const TtsSettings = () => {
    * kann man beides.
    */
   const summarize = async () => {
+    if (!modelReady) return;
     if (!text.trim()) return;
     setLastError(null);
     setSummarizing(true);
@@ -1151,7 +1180,7 @@ export const TtsSettings = () => {
               {t("tts.vramHint")}
             </p>
           )}
-          {lastError && (
+          {lastError && !isLanguageModelSetupError(lastError) && (
             <p className="px-4 pb-2 text-sm text-red-500 break-words">
               {lastError}
             </p>
@@ -1573,7 +1602,7 @@ export const TtsSettings = () => {
                     variant="secondary"
                     className="w-full justify-start"
                     onClick={() => void tidyText()}
-                    disabled={tidying || !text.trim()}
+                    disabled={!modelReady || tidying || !text.trim()}
                     title={tidying ? t("tts.tidying") : t("tts.tidyHint")}
                     aria-label={tidying ? t("tts.tidying") : t("tts.tidy")}
                   >
@@ -1618,7 +1647,7 @@ export const TtsSettings = () => {
                     variant="secondary"
                     className="w-full justify-start"
                     onClick={translateText}
-                    disabled={translating || !text.trim()}
+                    disabled={!modelReady || translating || !text.trim()}
                     title={
                       translating
                         ? t("tts.translating")
@@ -1636,6 +1665,7 @@ export const TtsSettings = () => {
             {/* Wie zusammengefasst wird — wirkt beim naechsten Klick auf
               "Zusammenfassen". Nur im Zusammenfassungs-Reiter sichtbar, wo
               die Frage sich stellt. */}
+            {((settings && !modelReady) || isLanguageModelSetupError(lastError)) && <LanguageModelSetupHint beforeNavigate={saveBeforeModelSetup} />}
             {tab === "summary" && (
               <div className="flex flex-col gap-2 items-stretch">
                 <label className="flex flex-col gap-1 text-sm">
@@ -1711,7 +1741,7 @@ export const TtsSettings = () => {
                   variant="secondary"
                   className="w-full justify-start"
                   onClick={summarize}
-                  disabled={summarizing || !text.trim()}
+                  disabled={!modelReady || summarizing || !text.trim()}
                   title={
                     summarizing ? t("tts.summarizing") : t("tts.summarizeHint")
                   }
@@ -1772,28 +1802,28 @@ export const TtsSettings = () => {
               <Button variant="secondary" onClick={() => setLlmDialog(false)}>
                 {t("tts.stopConfirmCancel")}
               </Button>
-              <Button
+              {canWarmModel && <><Button
                 variant="secondary"
                 onClick={llmWarmNow}
-                disabled={llmWorking}
+                disabled={llmWorking || !canWarmModel}
               >
                 {t("tts.llm.warm")}
               </Button>
               <Button
                 variant="danger"
                 onClick={llmUnloadNow}
-                disabled={llmWorking || llmLoaded.length === 0}
+                disabled={llmWorking || !canWarmModel || llmLoaded.length === 0}
               >
                 {t("tts.llm.unload")}
-              </Button>
+              </Button></>}
             </>
           }
         >
-          <p className="text-sm text-text/80">
+          {!modelReady ? <LanguageModelSetupHint beforeNavigate={saveBeforeModelSetup} /> : <p className="text-sm text-text/80">
             {llmLoaded.length > 0
               ? t("tts.llm.dialogLoaded", { models: llmLoaded.join(", ") })
-              : t("tts.llm.dialogEmpty")}
-          </p>
+              : t(canWarmModel ? "tts.llm.dialogEmpty" : "tts.llm.onDemand")}
+          </p>}
         </Dialog>
 
         <Dialog

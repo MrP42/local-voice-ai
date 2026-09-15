@@ -19,8 +19,8 @@ test.beforeEach(async ({ page }) => {
     let callback = 0;
     const settings = {
       onboarding_completed: true,
-      app_language: "de",
-      theme: "light",
+      app_language: location.search.includes("lang=en") ? "en" : "de",
+      theme: location.search.includes("theme=dark") ? "dark" : "light",
       show_whats_new_on_update: false,
       debug_mode: false,
       selected_model: modules.system ? "apple-speech" : "",
@@ -33,10 +33,11 @@ test.beforeEach(async ({ page }) => {
           default_binding: "Ctrl+Space",
         },
       },
-      post_process_providers: [],
+      post_process_provider_id: "local",
+      post_process_providers: [{ id: "local", label: "In der App", base_url: "http://127.0.0.1:0/v1", allow_base_url_edit: false, models_endpoint: null, supports_structured_output: true }],
       post_process_prompts: [],
       custom_words: [],
-      post_process_models: {},
+      post_process_models: location.search.includes("llm=none") ? {} : { local: "test-model" },
       post_process_api_keys: {},
       push_to_talk: true,
       tts_voice: null,
@@ -99,6 +100,10 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "get_available_models" && modules.system)
             return [{id:"apple-speech", name:"Apple Speech", description:"", filename:"", source:"Local", size_mb:0, is_downloaded:true, is_downloading:false, partial_size:0, is_directory:false, engine_type:"AppleSpeech", accuracy_score:0, speed_score:0, supports_translation:false, is_recommended:true, supported_languages:["de-DE","en-US"], supports_language_selection:true, supports_streaming:false, supports_language_detection:false, supports_stream_lookahead:false, is_custom:false}];
           if (cmd === "meetings_is_recording") return false;
+          if (cmd === "meetings_list" && location.search.includes("meeting=1")) return [{ id: "meeting1", title: "Projektbesprechung", status: "ready", source: "import", created_at: 1757333100, started_at: null, ended_at: null, duration_ms: 30000, consent_confirmed_at: null, audio_retention_until: null, source_path: null, mic_audio_path: null, system_audio_path: null }];
+          if (cmd === "meetings_get_segments") return [{ segment_index: 0, start_ms: 0, end_ms: 10000, channel: 0, text: "Anna liefert den Bericht am Freitag." }];
+          if (cmd === "meetings_get_documents") return [];
+          if (cmd === "meetings_minutes_file") return null;
           if (cmd === "tts_server_status")
             return { phase: "stopped", message: null };
           if (cmd === "tts_module_availability")
@@ -167,10 +172,17 @@ test.beforeEach(async ({ page }) => {
           // Eine geladene Piper-Stimme und die Laufzeit; die zweite Stimme
           // ist noch nicht geladen und darf nicht zur Auswahl stehen.
           // Der Seitenstand traegt die Stimme je Reiter -- was gespeichert wird, zaehlt.
+          if (cmd === "page_state_load") return (window as unknown as { savedPageState?: string }).savedPageState ?? "";
           if (cmd === "page_state_save") {
+            if (location.search.includes("save=error")) throw "Test save failure";
             (window as unknown as { savedPageState?: unknown }).savedPageState =
               args?.state;
             return null;
+          }
+          if (cmd === "tts_summarize_text") {
+            if (location.search.includes("llm=error")) throw "Test inference failure";
+            if (location.search.includes("llm=race")) throw "language_model_setup_required";
+            return "Anna liefert den Bericht am Freitag.";
           }
           if (cmd === "tts_tidy_text") return "Sauberer Text ohne Seitenzahlen.";
           if (cmd === "tts_list_downloads")
@@ -590,4 +602,77 @@ test("Apple system models need no download and distinguish the system language f
   await expect(page.getByRole("button",{name:/Apple Speech.*löschen|löschen.*Apple Speech/i})).toHaveCount(0);
   await page.getByRole("button",{name:"macOS-Systemsprache",exact:true}).click();
   await expect(page.getByRole("button",{name:"German",exact:true})).toBeVisible();
+});
+
+for (const theme of ["light", "dark"]) {
+  test(`missing model offers neutral setup and preserves source (${theme})`, async ({ page }) => {
+    await page.goto(`/?fish=0&system=1&llm=none&theme=${theme}`);
+    await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+    await page.locator("textarea").first().fill("Anna liefert den Bericht am Freitag.");
+    await page.getByRole("button", { name: "Zusammenfassung", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Zusammenfassen", exact: true })).toBeDisabled();
+    const hint = page.getByTestId("language-model-setup");
+    await expect(hint).toBeVisible();
+    await expect(hint).not.toContainText(/Ollama|vLLM/);
+    await expect(hint.locator('[role="alert"]')).toHaveCount(0);
+    await hint.getByRole("button", { name: "Modell auswählen oder installieren" }).click();
+    await expect(page.getByTestId("apple-system-models")).toBeVisible();
+    await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+    await page.getByRole("button", { name: "Original", exact: true }).click();
+    await expect(page.locator("textarea").first()).toHaveValue("Anna liefert den Bericht am Freitag.");
+  });
+}
+
+test("configured model summarizes and actual failures remain visible", async ({ page }) => {
+  for (const mode of ["ready", "error", "race"]) {
+    await page.goto(`/?fish=0&system=1&llm=${mode}`);
+    await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+    await page.getByRole("button", { name: "Original", exact: true }).click();
+    await page.locator("textarea").first().fill("Anna liefert den Bericht am Freitag.");
+    await page.getByRole("button", { name: "Zusammenfassung", exact: true }).click();
+    await expect(page.getByTestId("language-model-setup")).toHaveCount(0);
+    await page.getByRole("button", { name: "Zusammenfassen", exact: true }).click();
+    if (mode === "ready") await expect(page.locator("textarea").first()).toHaveValue("Anna liefert den Bericht am Freitag.");
+    if (mode === "error") await expect(page.getByText("Test inference failure", { exact: true })).toBeVisible();
+    if (mode === "race") {
+      await expect(page.getByTestId("language-model-setup")).toBeVisible();
+      await expect(page.getByText("language_model_setup_required", { exact: true })).toHaveCount(0);
+    }
+  }
+});
+
+test("empty footer is neutral and links directly to model setup in English", async ({ page }) => {
+  await page.goto("/?fish=0&system=1&llm=none&lang=en");
+  const selector = page.locator("[data-llm-selector]");
+  await expect(selector.locator("div.rounded-full")).not.toHaveClass(/bg-red/);
+  await selector.click();
+  await page.getByRole("menu").getByRole("button", { name: "Choose or install a model" }).click();
+  await expect(page.getByTestId("apple-system-models")).toBeVisible();
+});
+
+test("provider setup link opens the existing AI settings tab", async ({ page }) => {
+  await page.goto("/?fish=0&system=1&llm=none");
+  await page.locator("[data-llm-selector]").click();
+  await page.getByRole("menu").getByRole("button", { name: "Anbieter verbinden" }).click();
+  await expect(page.getByRole("tab", { name: "KI-Textverbesserung" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("minutes offer model setup before generating", async ({ page }) => {
+  await page.goto("/?fish=0&system=1&llm=none&meeting=1");
+  await page.getByRole("navigation").getByRole("button", { name: "Aufnahmen", exact: true }).click();
+  await page.getByText("Projektbesprechung", { exact: true }).click();
+  await page.getByRole("button", { name: "Protokoll", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Erzeugen", exact: true })).toBeDisabled();
+  await page.getByTestId("language-model-setup").getByRole("button", { name: "Modell auswählen oder installieren" }).click();
+  await expect(page.getByTestId("apple-system-models")).toBeVisible();
+});
+
+test("setup navigation stays with the source when saving fails", async ({ page }) => {
+  await page.goto("/?fish=0&system=1&llm=none&save=error");
+  await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await page.locator("textarea").first().fill("Meine ungesicherte Notiz.");
+  await page.getByTestId("language-model-setup").getByRole("button", { name: "Modell auswählen oder installieren" }).click();
+  await expect(page.getByText("Test save failure", { exact: true })).toBeVisible();
+  await expect(page.locator("textarea").first()).toHaveValue("Meine ungesicherte Notiz.");
+  await expect(page.getByTestId("apple-system-models")).toHaveCount(0);
 });

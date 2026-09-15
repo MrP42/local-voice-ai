@@ -1,3 +1,6 @@
+/// Missing configuration is an actionable setup state, not an inference failure.
+pub const MODEL_SETUP_REQUIRED: &str = "language_model_setup_required: Choose or install a language model under Models, or connect a provider in Settings.";
+
 use crate::managers::usage::{self, Purpose, TokenUsage};
 use crate::settings::PostProcessProvider;
 use log::debug;

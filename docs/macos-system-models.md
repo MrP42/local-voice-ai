@@ -33,3 +33,22 @@ Die Windows-Abnahme soll insbesondere Erstinstallation ohne Module, fehlende
 DLLs, alte Teilinstallationen, Abbruch/Neustart und parallele Downloads sowie
 Entfernen einer ausgewählten Stimme prüfen. Die macOS-System-APIs bleiben
 plattformabhängig; der Windows-Sprachpfad wird dadurch nicht ersetzt.
+
+## Einrichtung von KI-Textfunktionen
+
+Übersetzen, Zusammenfassen, Textaufbereitung und Protokoll unterscheiden zwischen
+fehlender Einrichtung und einem Fehler während der Verarbeitung. Ohne gewähltes
+Sprachmodell zeigen sie einen neutralen Hinweis mit „Modell auswählen oder
+installieren“ und einer optionalen Anbieter-Verknüpfung. Installierbare Modelle
+und verfügbare Systemmodelle stehen unter Modelle; externe Verbindungen bleiben
+in den bestehenden KI-Einstellungen.
+
+Eine Auswahl benötigt keinen bereits gestarteten Modellprozess. Leerlauf und
+fehlender Download sind verschiedene Zustände. Die Fußleiste verwendet für eine
+noch ausstehende Modellauswahl eine neutrale Anzeige. Vorwärmen ist nur bei einer
+passenden Ollama-Verbindung verfügbar. Fehler während einer tatsächlichen
+Verarbeitung oder beim Speichern bleiben sichtbar.
+
+Der Einrichtungssprung aus dem Vorlesen sichert den aktuellen Text vor dem
+Seitenwechsel. Scheitert diese Speicherung, bleibt der Text zur Bearbeitung offen.
+Deutsch und Englisch sowie Hell- und Dunkelmodus sind abgedeckt.
