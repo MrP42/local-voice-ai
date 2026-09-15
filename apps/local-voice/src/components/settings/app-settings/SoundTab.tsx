@@ -4,7 +4,7 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 import { MicrophoneSelector } from "../MicrophoneSelector";
 import { MicLevelMeter } from "../MicLevelMeter";
 import { MicSensitivity } from "../MicSensitivity";
-import { MuteWhileRecording } from "../MuteWhileRecording";
+import { DictationAudio } from "../DictationAudio";
 import { AudioFeedback } from "../AudioFeedback";
 import { OutputDeviceSelector } from "../OutputDeviceSelector";
 import { VolumeSlider } from "../VolumeSlider";
@@ -25,7 +25,7 @@ export const SoundTab: React.FC = () => {
           <MicLevelMeter compact />
         </div>
         <MicSensitivity />
-        <MuteWhileRecording descriptionMode="tooltip" grouped={true} />
+        <DictationAudio descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.app.groups.feedback")}>
