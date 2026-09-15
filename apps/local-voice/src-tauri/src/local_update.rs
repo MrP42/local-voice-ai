@@ -32,26 +32,32 @@ pub(crate) fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
     Some((major, minor, patch))
 }
 
-/// Version aus einem Tauri-NSIS-Dateinamen `<Name>_<X.Y.Z>_<arch>-setup.exe`.
-/// Andere Dateien (DMG, Portable-ZIP, fremde EXE) ergeben `None`.
-pub(crate) fn version_from_file_name(name: &str) -> Option<String> {
+/// Version aus einem Tauri-NSIS-Dateinamen `<Name>_<X.Y.Z>_<arch>-setup.exe`,
+/// aber NUR fuer diese App: der Name vor der Version muss `app_name` sein.
+/// Am 15.09.2026 startete die App sonst `Anarlog_1.4.10_x64-setup.exe` aus
+/// dem Downloads-Ordner — ein fremdes Programm, weil nur das Muster geprueft
+/// wurde. Andere Dateien (DMG, Portable-ZIP, fremde EXE) ergeben `None`.
+pub(crate) fn version_from_file_name(name: &str, app_name: &str) -> Option<String> {
     if !name.to_ascii_lowercase().ends_with("-setup.exe") {
         return None;
     }
     let mut parts = name.rsplitn(3, '_');
     let _arch_and_suffix = parts.next()?;
     let version = parts.next()?;
-    let _app_name = parts.next()?;
+    let file_app_name = parts.next()?;
+    if !file_app_name.eq_ignore_ascii_case(app_name) {
+        return None;
+    }
     parse_version(version).map(|_| version.to_string())
 }
 
 /// Der neueste Installer im Ordner, der neuer ist als `current`.
-pub(crate) fn find_local_update(dir: &Path, current: &str) -> Option<LocalUpdate> {
+pub(crate) fn find_local_update(dir: &Path, current: &str, app_name: &str) -> Option<LocalUpdate> {
     let current = parse_version(current)?;
     let mut best: Option<((u64, u64, u64), LocalUpdate)> = None;
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let file_name = entry.file_name().to_string_lossy().to_string();
-        let Some(version) = version_from_file_name(&file_name) else {
+        let Some(version) = version_from_file_name(&file_name, app_name) else {
             continue;
         };
         let Some(parsed) = parse_version(&version) else {
@@ -92,7 +98,6 @@ fn candidate_dirs(app: &AppHandle) -> Vec<PathBuf> {
             home.join("local-voice-project")
                 .join("apps/local-voice/src-tauri/target/release/bundle/nsis"),
         );
-        dirs.push(home.join("Downloads"));
     }
     dirs.into_iter().filter(|d| d.is_dir()).collect()
 }
@@ -101,6 +106,7 @@ fn candidate_dirs(app: &AppHandle) -> Vec<PathBuf> {
 #[specta::specta]
 pub fn local_update_check(app: AppHandle) -> Result<Option<LocalUpdate>, String> {
     let current = app.package_info().version.to_string();
+    let app_name = app.package_info().name.clone();
     let dirs = candidate_dirs(&app);
     log::info!(
         "local update: checking {} folder(s) for a version above {current}",
@@ -109,7 +115,7 @@ pub fn local_update_check(app: AppHandle) -> Result<Option<LocalUpdate>, String>
     // Der neueste Fund ueber alle Ordner gewinnt.
     let found = dirs
         .iter()
-        .filter_map(|dir| find_local_update(dir, &current))
+        .filter_map(|dir| find_local_update(dir, &current, &app_name))
         .max_by_key(|u| parse_version(&u.version));
     match &found {
         Some(u) => log::info!("local update: {} at {}", u.version, u.path),
@@ -129,7 +135,8 @@ pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> 
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .ok_or("Ungueltiger Pfad")?;
-    if version_from_file_name(&file_name).is_none() {
+    let app_name = app.package_info().name.clone();
+    if version_from_file_name(&file_name, &app_name).is_none() {
         return Err(format!("{file_name} ist kein Installer dieser App"));
     }
     // Nur Dateien direkt in einem der erlaubten Ordner werden gestartet.
@@ -180,13 +187,16 @@ mod tests {
 
     #[test]
     fn reads_version_from_nsis_file_name() {
+        let app = "Local Voice AI";
         assert_eq!(
-            version_from_file_name("Local Voice AI_0.18.3_x64-setup.exe").as_deref(),
+            version_from_file_name("Local Voice AI_0.18.3_x64-setup.exe", app).as_deref(),
             Some("0.18.3")
         );
-        assert_eq!(version_from_file_name("Local Voice AI_0.18.3_aarch64.dmg"), None);
-        assert_eq!(version_from_file_name("setup.exe"), None);
-        assert_eq!(version_from_file_name("Other_App_x64-setup.exe"), None);
+        assert_eq!(version_from_file_name("Local Voice AI_0.18.3_aarch64.dmg", app), None);
+        assert_eq!(version_from_file_name("setup.exe", app), None);
+        assert_eq!(version_from_file_name("Other_App_x64-setup.exe", app), None);
+        // Der Vorfall vom 15.09.: fremdes Programm, passendes Muster.
+        assert_eq!(version_from_file_name("Anarlog_1.4.10_x64-setup.exe", app), None);
     }
 
     #[test]
@@ -197,19 +207,21 @@ mod tests {
             "Local Voice AI_0.18.3_x64-setup.exe",
             "Local Voice AI_0.18.10_x64-setup.exe",
             "Local Voice AI_0.18.10_aarch64.dmg",
+            "Anarlog_1.4.10_x64-setup.exe",
             "notes.txt",
         ] {
             std::fs::write(dir.path().join(name), b"x").unwrap();
         }
-        let found = find_local_update(dir.path(), "0.18.3").expect("neuer Installer");
-        assert_eq!(found.version, "0.18.10", "10 > 3 numerisch, nicht lexikalisch");
+        let app = "Local Voice AI";
+        let found = find_local_update(dir.path(), "0.18.3", app).expect("neuer Installer");
+        assert_eq!(found.version, "0.18.10", "10 > 3 numerisch, nicht lexikalisch; Anarlog 1.4.10 zaehlt nicht");
         assert!(found.path.ends_with("Local Voice AI_0.18.10_x64-setup.exe"));
-        assert!(find_local_update(dir.path(), "0.18.10").is_none());
-        assert!(find_local_update(dir.path(), "1.0.0").is_none());
+        assert!(find_local_update(dir.path(), "0.18.10", app).is_none());
+        assert!(find_local_update(dir.path(), "1.0.0", app).is_none());
     }
 
     #[test]
     fn missing_folder_is_not_an_error() {
-        assert!(find_local_update(Path::new("Z:/gibt/es/nicht"), "0.1.0").is_none());
+        assert!(find_local_update(Path::new("Z:/gibt/es/nicht"), "0.1.0", "Local Voice AI").is_none());
     }
 }
