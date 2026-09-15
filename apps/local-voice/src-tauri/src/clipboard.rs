@@ -928,6 +928,20 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
         );
     }
 
+    // A batch transcription of a short dictation is ready ~80 ms after the
+    // stop press — before the hotkey chord is released. Typing or Ctrl+V
+    // into a target while Ctrl/Win are physically held loses the text (see
+    // input::wait_for_modifiers_released). Applies to every method that
+    // sends keystrokes; None and ExternalScript return before this matters.
+    if !matches!(paste_method, PasteMethod::None | PasteMethod::ExternalScript) {
+        let waited = crate::input::wait_for_modifiers_released(
+            crate::input::MODIFIER_RELEASE_TIMEOUT,
+        );
+        if waited > std::time::Duration::from_millis(20) {
+            info!("paste: waited {waited:?} for modifier keys to be released");
+        }
+    }
+
     // Perform the paste operation
     match paste_method {
         PasteMethod::None => {

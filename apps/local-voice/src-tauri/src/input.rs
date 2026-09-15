@@ -17,6 +17,49 @@ pub(crate) fn replacement_context_matches(
     captured == current
 }
 
+/// How long an injection waits, at most, for the user to let go of the
+/// hotkey before it types. Longer than any normal key release; short enough
+/// that a genuinely held key (a game, a stuck switch) does not stall dictation.
+pub(crate) const MODIFIER_RELEASE_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_millis(1500);
+
+/// Whether any modifier key is physically held right now (Ctrl, Shift, Alt,
+/// Win). Only Windows can ask cheaply; elsewhere this reports `false`.
+#[cfg(target_os = "windows")]
+pub(crate) fn modifiers_physically_held() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    };
+    [VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN]
+        .into_iter()
+        // High bit set = key is down at the time of the call.
+        .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk.0)) } as u16 & 0x8000 != 0)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn modifiers_physically_held() -> bool {
+    false
+}
+
+/// Block until no modifier key is physically held, or `max` has passed.
+/// Returns how long it waited.
+///
+/// Why: the dictation hotkey is a modifier chord (Ctrl+Win by default). The
+/// text that finishes a dictation is typed within ~100 ms of the stop press,
+/// which is before the user has let go of the keys. Chromium-based targets
+/// (VS Code, browsers, Electron apps) treat a character arriving with Ctrl
+/// held as a shortcut, not as text, and drop it — the last words of a
+/// dictation vanished exactly this way (log 15.09.2026: tail typed, key
+/// release logged only afterwards). Waiting for the release costs at most
+/// the time the user needs to lift a finger.
+pub(crate) fn wait_for_modifiers_released(max: std::time::Duration) -> std::time::Duration {
+    let started = std::time::Instant::now();
+    while modifiers_physically_held() && started.elapsed() < max {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    started.elapsed()
+}
+
 /// Wrapper for Enigo to store in Tauri's managed state.
 /// Enigo is wrapped in a Mutex since it requires mutable access.
 pub struct EnigoState(pub Mutex<Enigo>);
@@ -445,5 +488,23 @@ mod tests {
                 ..captured
             }
         ));
+    }
+}
+
+#[cfg(test)]
+mod modifier_release_tests {
+    use super::*;
+
+    /// Ohne gedrueckte Taste darf das Warten nichts kosten — sonst wuerde
+    /// jede Injektion um die Wartezeit spaeter landen.
+    #[test]
+    fn returns_immediately_when_no_modifier_is_held() {
+        // Auf einem Rechner, an dem gerade jemand Strg haelt, ist der Test
+        // nicht aussagekraeftig; dann ueberspringen statt falsch rot werden.
+        if modifiers_physically_held() {
+            return;
+        }
+        let waited = wait_for_modifiers_released(MODIFIER_RELEASE_TIMEOUT);
+        assert!(waited < std::time::Duration::from_millis(50), "waited {waited:?}");
     }
 }
