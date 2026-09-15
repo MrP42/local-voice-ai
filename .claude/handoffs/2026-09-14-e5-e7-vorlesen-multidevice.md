@@ -195,6 +195,25 @@ Nebenbei: Piper-Katalogtest 5 → 10 Stimmen repariert (`a48eba4`). PR #27 offen
 Patrick (Freigabe für `gh pr merge` liegt in settings.local.json — nur auf Zuruf nutzen).
 Installer 0.18.1 lokal unter `apps/local-voice/src-tauri/target/release/bundle/nsis/`.
 
+## Endtext verschluckt — PR #28 (15.09., Zweig `fix/diktat-endtext` auf #27, Version 0.18.2)
+
+Patricks Frage: „Warum wird der Text manchmal am Ende abgeschnitten?" Belegt im Log: der
+Abschluss-Textrest wird 80–130 ms nach dem Stopp-Druck getippt, das Release von Strg+Win
+kommt erst danach; Chromium-Ziele (VS Code) verwerfen Zeichen mit gehaltenem Strg.
+Fix: `input::wait_for_modifiers_released` (GetAsyncKeyState, max 1,5 s) vor jedem Fragment
+(`refinement/injection.rs::paste_fragment`) und vor `clipboard::paste`. Zweiter Befund:
+`start_stream` setzte den Einfügezeiger vor der Worker-Prüfung zurück → Schnell-Neustart
+während der Finalisierung hätte das vorige Diktat doppelt getippt; Reihenfolge getauscht.
+Hypothese-Status: Timing belegt, das Verschlucken selbst nicht am Zielprogramm reproduziert —
+Patrick prüft mit 0.18.2 (Log-Zeile `waited … for modifier keys`).
+
+Offen (Design vorgeschlagen, Entscheidung Patrick): **Fortsetzungsfenster** — Stopp finalisiert
+den Stream nicht sofort, sondern hält ihn ~8 s offen; ein Neustart im Fenster füttert denselben
+Stream weiter, das Modell setzt den Satz nahtlos fort (keine Großschreibung/Punkt-Bruch).
+Berührt Stopp-Pfad (`actions.rs::stop`), History je Lauf, Overlay-Zustand „pausiert".
+Satzbruch bei Denkpause INNERHALB eines Diktats ist Modellverhalten (Nemotron setzt
+Interpunktion nach Pause); Hebel wäre die Satz-Verfeinerung (`refine_enabled`, aktuell aus).
+
 ## Offen / nächste Schritte (Code)
 
 - Fußleisten-Symbol für den Sync-Zustand (Spec Abschnitt 7) — noch nicht gebaut.
