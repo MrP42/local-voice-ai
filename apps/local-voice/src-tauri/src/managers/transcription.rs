@@ -983,11 +983,16 @@ impl TranscriptionManager {
     /// `None` so the caller falls back to batch transcription. Frames sent
     /// before the stream begins queue on the channel and are not lost.
     pub fn start_stream(&self) {
-        self.reset_stream_injection();
+        // Check for a live worker BEFORE resetting the injection cursor. A
+        // restart that lands while the previous run is still finalizing used
+        // to reset `stream_injected_len` to 0 first; the old worker's final
+        // emit then saw its whole committed text as "new" and typed the entire
+        // previous dictation a second time into the target.
         if self.router.is_open() || self.active_stream_worker.load(Ordering::Acquire) != 0 {
             warn!("start_stream called while a stream worker is already active");
             return;
         }
+        self.reset_stream_injection();
         let worker_id = self.next_stream_worker_id.fetch_add(1, Ordering::Relaxed);
         if self
             .active_stream_worker

@@ -284,6 +284,14 @@ fn restores_clipboard(handling: ClipboardHandling) -> bool {
 }
 
 fn paste_fragment(app: &AppHandle, fragment: &str) -> bool {
+    // The fragment that closes a dictation arrives while the stop hotkey is
+    // still physically down; typed into a Chromium-based target it is
+    // swallowed as a Ctrl-shortcut. Let the user lift the keys first.
+    let waited = input::wait_for_modifiers_released(input::MODIFIER_RELEASE_TIMEOUT);
+    if waited > Duration::from_millis(20) {
+        debug!("injection: waited {waited:?} for modifier keys to be released");
+    }
+
     // Stream injection fires every few hundred milliseconds while the user
     // keeps using the machine, so it must honour the configured paste method
     // instead of forcing Ctrl+V on everyone: a held Ctrl is held for the whole
