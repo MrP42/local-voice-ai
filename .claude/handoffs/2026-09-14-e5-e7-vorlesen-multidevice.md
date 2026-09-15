@@ -235,6 +235,18 @@ PR-Kette (in dieser Reihenfolge mergen): #27 Startlatenz → #28 Endtext → #30
 - **Offen, Entscheidung Patrick:** Fortsetzungsfenster (Stream ~8 s offen halten, Neustart setzt
   Satz nahtlos fort), siehe Abschnitt Endtext.
 
+## Systemausfall 15.09. 19:52 → Systemschutz (PR #33, Zweig `fix/systemschutz`, 0.18.6)
+
+Rechner fror komplett ein (Kernel-Power 41). Ursache belegt: Fish Speech `--compile`, Torch
+Inductor mit 32 Compile-Prozessen (ein Prozess je Kern) bei 44 GB belegtem RAM → Auslagerung.
+Fix `process_guard.rs`: Job-Objekt je Kindprozess (RAM-Deckel frei−6 GB, CPU 75 %, below-normal,
+KILL_ON_JOB_CLOSE), Start-Gate `check_ram_for_start`, Speicherwächter (<2 GB → Server stoppen,
+Overlay-Hinweis `guard.memoryLow`), `TORCHINDUCTOR_COMPILE_THREADS` 2–4, OMP/MKL halbe Kerne,
+llama-server `-t`. Praxistest `job_limit_stops_a_runaway_child` (ignored, Windows): 3 GB unter
+1-GB-Deckel → MemoryError. Patricks Regel dazu im Memory `systemschutz-ram-cpu`.
+Fish-Speech-Start selbst („kann nicht gestartet werden") war Folge desselben Ereignisses:
+19:47 Start, 19:52 Freeze; nach dem Neustart noch nicht erneut getestet — mit 0.18.6 prüfen.
+
 ## Offen / nächste Schritte (Code)
 
 - Fußleisten-Symbol für den Sync-Zustand (Spec Abschnitt 7) — noch nicht gebaut.
