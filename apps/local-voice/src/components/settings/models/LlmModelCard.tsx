@@ -87,6 +87,7 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
               })}
             </Badge>
           )}
+          {!isRuntime && <Badge variant="secondary">{t(info.for_this_platform ? "localModels.compatible" : "localModels.unsupported")}</Badge>}
           {tags.map((tag) => (
             <Badge key={tag} variant="secondary">
               {t(`settings.models.llm.tags.${tag}`, { defaultValue: tag })}
@@ -105,7 +106,7 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
               <span>{t("settings.models.llm.actions.download")}</span>
             </Button>
           )}
-          {info.is_downloaded && !isRuntime && !isActive && onActivate && (
+          {info.is_downloaded && !isRuntime && info.for_this_platform && !isActive && onActivate && (
             <Button
               variant="primary"
               size="sm"
@@ -142,7 +143,7 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
           }`}
           data-fit={fit.verdict}
         >
-          {t(`settings.models.llm.fit.${fit.verdict}`, {
+          {t(fit.on_gpu ? `settings.models.llm.fit.${fit.verdict}` : "localModels.ramEstimate", {
             need: gb(fit.estimate.total_mb),
             free: gb(fit.free_mb),
           })}

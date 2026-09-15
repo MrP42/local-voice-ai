@@ -8,6 +8,7 @@ import { useModelStore } from "@/stores/modelStore";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { AppleSystemModels } from "./AppleSystemModels";
 import { TtsVoiceCard } from "./TtsVoiceCard";
+import { LocalModelsStatus } from "./LocalModelsStatus";
 import { LlmModelCard } from "./LlmModelCard";
 import type { LlmModelConfig } from "@/bindings";
 import { useLlmLocalStore } from "@/stores/llmLocalStore";
@@ -70,7 +71,18 @@ export const ModelsSettings: React.FC = () => {
   // Lokales Sprachmodell: eigene Laufzeit, eigene Modelle, eigener Store.
   const { getSetting, refreshSettings } = useSettings();
   const llm = useLlmLocalStore();
-  const { initialize: initializeLlm } = llm;
+  const { initialize: initializeLlm, refreshStatus: refreshLlmStatus } = llm;
+  useEffect(() => {
+    const refresh = () => { if (!document.hidden) void refreshLlmStatus(); };
+    const timer = window.setInterval(refresh, 3000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [refreshLlmStatus]);
   useEffect(() => {
     void initializeLlm();
   }, [initializeLlm]);
@@ -84,6 +96,9 @@ export const ModelsSettings: React.FC = () => {
     (d) => d.kind === "runtime" && d.for_this_platform,
   );
   const llmModels = llm.downloads.filter((d) => d.kind === "model");
+  const visibleLlmModels = llmModels.filter((m) =>
+    `${m.name} ${m.id} ${m.description}`.toLowerCase().includes(searchQuery.trim().toLowerCase()),
+  );
   const llmRuntimeInstalled = llmRuntimes.some((d) => d.is_downloaded);
 
   // click outside handler for language dropdown
@@ -297,6 +312,7 @@ export const ModelsSettings: React.FC = () => {
       help="modelle"
     >
       <AppleSystemModels />
+      <LocalModelsStatus models={llmModels} runtimes={llmRuntimes} activeId={activeLocalModelId} status={llm.status} />
 
       {/* Search bar — filter the catalog by name or description.
           The magnifier sits in the flow as a flex sibling rather than being
@@ -344,7 +360,7 @@ export const ModelsSettings: React.FC = () => {
               downloadProgress={llm.downloadProgress[info.id]?.percentage}
             />
           ))}
-          {llmModels.map((info) => (
+          {visibleLlmModels.map((info) => (
             <LlmModelCard
               key={info.id}
               info={info}
@@ -556,11 +572,11 @@ export const ModelsSettings: React.FC = () => {
             </div>
           )}
         </div>
-      ) : (
+      ) : visibleLlmModels.length === 0 ? (
         <div className="text-center py-8 text-text/50">
           {t("settings.models.noModelsMatch")}
         </div>
-      )}
+      ) : null}
     </PageShell>
   );
 };

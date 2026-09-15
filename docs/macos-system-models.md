@@ -52,3 +52,25 @@ Verarbeitung oder beim Speichern bleiben sichtbar.
 Der Einrichtungssprung aus dem Vorlesen sichert den aktuellen Text vor dem
 Seitenwechsel. Scheitert diese Speicherung, bleibt der Text zur Bearbeitung offen.
 Deutsch und Englisch sowie Hell- und Dunkelmodus sind abgedeckt.
+
+
+## Lokale Sprachmodelle auf dem Mac (0.18.2)
+
+Der Katalog bietet jetzt Google Gemma 4 E2B in der offiziellen QAT-Q4_0-Fassung
+an. Quelle, Revision und SHA-256 sind fest hinterlegt. Die Textdatei benötigt
+3.35 GB Download; multimodale Zusatzdateien werden für die Textfunktionen nicht
+installiert. Die Suche berücksichtigt auch die Sprachmodelle.
+
+Die Modellseite trennt passende Modellformate, heruntergeladene Modelle,
+die aktuelle Auswahl und das tatsächlich vom lokalen Dienst geladene Modell.
+Solange die Seite sichtbar ist, wird der Laufzeitstatus regelmäßig aktualisiert.
+Das Intel-Paket nutzt CPU/Accelerate und wird entsprechend ausgewiesen; das
+Apple-Silicon-Paket verwendet Metal. Eine RAM-Schätzung ist keine Garantie,
+dass jede Modellgröße unter jeder Speicherauslastung ausführbar ist.
+
+Gemma 4 E2B wurde mit der im Katalog angebotenen Intel-Laufzeit b10938 und
+8192 Kontexttokens durch eine echte lokale Textgenerierung geprüft. Der kurze
+synthetische Test bestätigte die korrekte deutsche Antwort. Dies ist ein
+Funktionstest, kein Langzeitbenchmark für umfangreiche Protokolle. Die neuen
+Oberflächentests prüfen Intel-Anzeige, Gemma-Suche in Hell/Dunkel und den
+Wechsel zwischen geladenem Modell und Leerlauf ohne Seitenwechsel.

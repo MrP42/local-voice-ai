@@ -1,4 +1,22 @@
 {
+  "localModels": {
+    "macIntel": "This Mac · Intel",
+    "macApple": "This Mac · Apple Silicon",
+    "computer": "This computer",
+    "installed": "{{count}} of {{total}} language models installed locally",
+    "runtimeReady": "Runtime installed · {{backends}}",
+    "runtimeNeeded": "Install the runtime for your computer below to use these local models.",
+    "selected": "Selected locally: {{name}}",
+    "notSelected": "No local language model selected yet",
+    "loaded": "In memory: {{name}} · {{backend}}",
+    "stopped": "No language model in memory · Starts on the next task",
+    "starting": "Loading language model …",
+    "checking": "Checking model status …",
+    "error": "Language model could not start",
+    "compatible": "Compatible model format",
+    "unsupported": "No runtime for this device",
+    "ramEstimate": "Memory estimate: about {{need}} GB required · {{free}} GB RAM free"
+  },
   "modelSetup": {
     "description": "Choose a language model for AI text features: install one directly in Local Voice AI or use an available system model.",
     "choose": "Choose or install a model",
