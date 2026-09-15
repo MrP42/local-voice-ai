@@ -1546,5 +1546,8 @@
     "keyMismatch": "The hub holds objects sealed with a different key – was the password changed? Please sign in again on all devices.",
     "deadLetters": "{{count}} objects rejected (too large or invalid)",
     "devices": "Devices"
+  },
+  "guard": {
+    "memoryLow": "Memory almost full: the read-aloud and language-model servers were stopped to keep the computer responsive."
   }
 }

@@ -20,6 +20,7 @@ mod media;
 mod overlay;
 mod paste_guard;
 pub mod portable;
+mod process_guard;
 mod refinement;
 pub mod segmenter;
 pub mod selftest;
@@ -230,6 +231,20 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     );
     let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
     managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
+    // Speicherwächter: faellt der freie RAM unter die Notgrenze, stoppt die
+    // App ihre eigenen Server (fish-speech, llama-server), bevor Windows in
+    // die Auslagerung kippt und unbedienbar wird (Ausfall 15.09.2026).
+    {
+        let tts = tts_manager.clone();
+        let llm = llm_server.clone();
+        let notify = app_handle.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            tts.stop_server();
+            llm.stop();
+            log::error!("memory watchdog stopped TTS and LLM servers at {free_mb} MB free");
+            crate::utils::show_transient_notice(&notify, "guard.memoryLow");
+        });
+    }
     // Verbrauchs-Ledger: jeder Sprachmodell-Aufruf wird gebucht. Global aus
     // demselben Grund wie der Server: `llm_client` bucht ohne AppHandle.
     let usage_ledger = Arc::new(
