@@ -1,6 +1,6 @@
 # Modelle
 
-Drei Familien, alle lokal: Transkriptionsmodelle fürs Diktat, Sprachmodelle für Übersetzen, Zusammenfassen und Protokolle, Vorlesestimmen für Piper.
+Drei Aufgaben: Sprache erkennen, Texte verarbeiten und Texte vorlesen. Modelle kannst du direkt in Local Voice AI installieren. Auf unterstützten Macs stehen zusätzlich Systemmodelle und Systemstimmen bereit.
 
 ## Transkriptionsmodelle
 
@@ -11,12 +11,16 @@ Drei Familien, alle lokal: Transkriptionsmodelle fürs Diktat, Sprachmodelle fü
 
 ## Sprachmodelle
 
-- Laufen über eine eingebaute Laufzeit auf CPU oder GPU. Beim ersten Modell wird die Laufzeit mitgeladen.
+- Direkt unter **Modelle → Sprachmodelle in der App** die passende Laufzeit und ein Modell laden, danach **Verwenden** wählen. Dafür brauchst du keinen externen Anbieter.
+- **Apple Intelligence** steht auf unterstützten Macs als Systemmodell zur Wahl. Die App zeigt, ob es auf deinem Mac verfügbar ist.
+- Die Fußleiste zeigt das ausgewählte Sprachmodell. Es arbeitet erst bei einer Textaufgabe; ein nicht geladenes Modell ist kein Fehler.
 - **Passt es rein?** schätzt vor dem Download den Speicherbedarf gegen den freien Grafikspeicher. „Knapp" heißt: läuft, aber ohne Reserve.
 - Qwen 3.5 4B ist ein guter Standard. Gemma 4 klingt anders und ist eine Alternative. Größere Modelle brauchen entsprechend Speicher.
-- Anbieter wie Ollama oder ein Cloud-Dienst lassen sich unter Einstellungen, KI-Textverbesserung anbinden.
+- Optional: Anbieter wie Ollama oder ein Cloud-Dienst lassen sich unter Einstellungen, KI-Textverbesserung anbinden.
 
 ## Vorlesestimmen
+
+- Auf macOS ist die **Systemstimme** der Standard. Installierte Systemstimmen lassen sich in den Vorlese-Einstellungen auswählen und anhören. Ein zusätzliches Sprachmodell ist dafür nicht nötig.
 
 - Piper-Stimmen sind kleine, sprachgebundene Stimmen für die CPU. Lade die Sprachen, die du vorliest. Die App wählt beim Vorlesen die Stimme nach der Sprache des Satzes.
 - HQ ist die beste Qualität mit dem größten Download.

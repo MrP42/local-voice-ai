@@ -391,6 +391,12 @@ mod tests {
         assert!(runtimes.iter().any(|e| e.id == "llm-runtime-macos-aarch64"));
         let models = tts_entries(Purpose::LlmModel);
         assert!(models.len() >= 4, "vier Modelle erwartet, {}", models.len());
+        let gemma = models.iter().find(|m| m.id == "llm-gemma4-e2b-qat-q4")
+            .expect("official Gemma 4 E2B must be offered");
+        assert_eq!(gemma.files.len(), 1, "text inference needs no multimodal projector");
+        assert!(gemma.files[0].url.starts_with("https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/675cff42a74c774d6cb76f76d8eacb49b48c9b93/"));
+        assert_eq!(gemma.files[0].size_bytes, 3_349_516_256);
+        assert_eq!(gemma.files[0].sha256.as_deref(), Some("fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634"));
         for entry in runtimes.iter().chain(models.iter()) {
             assert!(!entry.files.is_empty(), "{}: keine Datei", entry.id);
             for f in &entry.files {

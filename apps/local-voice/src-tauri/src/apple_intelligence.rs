@@ -22,6 +22,7 @@ pub fn check_apple_intelligence_availability() -> bool {
 
 // Link to the Swift function for system prompt support
 extern "C" {
+    pub fn generate_text_apple(system_prompt: *const c_char, user_content: *const c_char) -> *mut AppleLLMResponse;
     pub fn process_text_with_system_prompt_apple(
         system_prompt: *const c_char,
         user_content: *const c_char,
@@ -35,11 +36,20 @@ pub fn process_text_with_system_prompt(
     user_content: &str,
     max_tokens: i32,
 ) -> Result<String, String> {
+    call_apple(system_prompt, user_content, max_tokens, false)
+}
+
+pub fn generate_text(system_prompt: &str, user_content: &str) -> Result<String, String> {
+    call_apple(system_prompt, user_content, 0, true)
+}
+
+fn call_apple(system_prompt: &str, user_content: &str, max_tokens: i32, general: bool) -> Result<String, String> {
     let system_cstr = CString::new(system_prompt).map_err(|e| e.to_string())?;
     let user_cstr = CString::new(user_content).map_err(|e| e.to_string())?;
 
     let response_ptr = unsafe {
-        process_text_with_system_prompt_apple(system_cstr.as_ptr(), user_cstr.as_ptr(), max_tokens)
+        if general { generate_text_apple(system_cstr.as_ptr(), user_cstr.as_ptr()) }
+        else { process_text_with_system_prompt_apple(system_cstr.as_ptr(), user_cstr.as_ptr(), max_tokens) }
     };
 
     if response_ptr.is_null() {

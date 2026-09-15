@@ -13,6 +13,8 @@ typedef struct {
     char* error_message; // Only valid when success = 0
 } AppleLLMResponse;
 
+AppleLLMResponse* generate_text_apple(const char* system_prompt, const char* user_content);
+
 // Check if Apple Intelligence is available on the device
 int is_apple_intelligence_available(void);
 

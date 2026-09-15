@@ -29,6 +29,7 @@ use download::{HttpDownloadOutcome, DOWNLOAD_STALL_TIMEOUT};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub enum EngineType {
+    AppleSpeech,
     /// Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
     /// Voxtral, Qwen3-ASR, Nemotron, …). The architecture is auto-detected from
     /// the file, so this one variant covers the whole transcribe-cpp family.
@@ -1161,6 +1162,10 @@ impl ModelManager {
         // only insert ids not already present) instead of showing as a bare cache
         // find. Additive — see `seed_catalog_models`.
         Self::seed_catalog_models(&mut available_models);
+        if crate::apple_speech::available("auto") {
+            let model = crate::apple_speech::model_info();
+            available_models.insert(model.id.clone(), model);
+        }
 
         // Auto-discover custom transcribe-cpp models (.bin / .gguf) in the models directory
         if let Err(e) = Self::discover_custom_transcribe_models(&models_dir, &mut available_models)
@@ -1205,8 +1210,8 @@ impl ModelManager {
         // and name. `ModelInfo` doesn't carry rank, so resolve it by id from the
         // catalog here.
         list.sort_by(|a, b| {
-            crate::catalog::rank_of(&a.id)
-                .cmp(&crate::catalog::rank_of(&b.id))
+            (a.id != crate::apple_speech::MODEL_ID).cmp(&(b.id != crate::apple_speech::MODEL_ID))
+                .then(crate::catalog::rank_of(&a.id).cmp(&crate::catalog::rank_of(&b.id)))
                 .then((!a.is_recommended).cmp(&(!b.is_recommended)))
                 .then(b.accuracy_score.total_cmp(&a.accuracy_score))
                 .then(b.speed_score.total_cmp(&a.speed_score))
@@ -1421,6 +1426,10 @@ impl ModelManager {
         let mut vanished_alternates: Vec<String> = Vec::new();
 
         for model in models.values_mut() {
+            if matches!(model.engine_type, EngineType::AppleSpeech) {
+                model.is_downloaded = crate::apple_speech::available("auto");
+                continue;
+            }
             if let ModelSource::HuggingFace { repo_id, revision } = &model.source {
                 // A models-dir copy counts too: mirror-fallback downloads land
                 // there, and it makes manual drop-ins of catalog files work.
@@ -1550,7 +1559,7 @@ impl ModelManager {
         // If onboarding is still pending, do not auto-select just because a
         // compatible model exists on disk or in the shared HF cache. The
         // onboarding model step should present that choice explicitly.
-        if !settings.onboarding_completed {
+        if !settings.onboarding_completed && !crate::apple_speech::available("auto") {
             debug!("Skipping model auto-selection until onboarding is complete");
             return Ok(());
         }
@@ -2402,6 +2411,9 @@ impl ModelManager {
     }
 
     pub fn delete_model(&self, model_id: &str) -> Result<()> {
+        if model_id == crate::apple_speech::MODEL_ID {
+            return Err(anyhow::anyhow!("The system speech model is managed by macOS"));
+        }
         debug!("ModelManager: delete_model called for: {}", model_id);
 
         let model_info = {

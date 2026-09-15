@@ -62,6 +62,7 @@ export const ModelOptions: React.FC<{ model: ModelInfo }> = ({ model }) => {
           grouped={true}
           supportedLanguages={model.supported_languages}
           supportsLanguageDetection={model.supports_language_detection}
+          usesSystemLanguage={model.engine_type === "AppleSpeech"}
         />
       )}
       {model.supports_translation && (

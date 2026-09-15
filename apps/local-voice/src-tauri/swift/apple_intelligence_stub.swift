@@ -43,3 +43,12 @@ public func freeAppleLLMResponse(_ response: UnsafeMutablePointer<AppleLLMRespon
     
     response.deallocate()
 }
+
+
+@_cdecl("generate_text_apple")
+public func generateAppleTextStub(
+    _ systemPrompt: UnsafePointer<CChar>,
+    _ userContent: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<AppleLLMResponse> {
+    processTextWithSystemPrompt(systemPrompt, userContent, maxTokens: 0)
+}

@@ -14,7 +14,9 @@ pub mod engine;
 pub mod enhance;
 pub mod loudness;
 pub mod models;
+pub mod availability;
 pub mod piper;
+pub mod system;
 pub mod lang;
 pub mod player;
 pub mod portable;
@@ -141,6 +143,7 @@ enum EngineImpl {
     Fish,
     /// Piper als CPU-Subprozess; trägt seine aufgelösten Pfade selbst.
     Piper(piper::PiperEngine),
+    System(system::SystemSpeech),
     /// Austauschbare Engine für Tests: beweist, dass die Naht trägt.
     #[cfg(test)]
     Mock(Arc<tests::MockEngine>),
@@ -151,6 +154,7 @@ impl EngineImpl {
         match self {
             Self::Fish => TtsEngineKind::Fish,
             Self::Piper(p) => p.kind(),
+            Self::System(s) => s.kind(),
             #[cfg(test)]
             Self::Mock(mock) => mock.kind(),
         }
@@ -160,6 +164,7 @@ impl EngineImpl {
         match self {
             Self::Fish => engine::FISH_CAPS,
             Self::Piper(p) => p.caps(),
+            Self::System(s) => s.caps(),
             #[cfg(test)]
             Self::Mock(mock) => mock.caps(),
         }
@@ -169,6 +174,7 @@ impl EngineImpl {
         match self {
             Self::Fish => engine::fish_cache_tag(voice),
             Self::Piper(p) => p.cache_tag(voice),
+            Self::System(s) => s.cache_tag(voice),
             #[cfg(test)]
             Self::Mock(mock) => mock.cache_tag(voice),
         }
@@ -331,6 +337,7 @@ impl TtsCore {
     pub fn set_engine(&self, kind: TtsEngineKind, piper: Option<piper::PiperEngine>) {
         let chosen = match kind {
             TtsEngineKind::Fish => EngineImpl::Fish,
+            TtsEngineKind::System => EngineImpl::System(system::SystemSpeech),
             TtsEngineKind::Piper => EngineImpl::Piper(
                 // Ohne mitgelieferte Auflösung (kein Datenverzeichnis):
                 // eine Engine, die ihren Fehlgrund kennt.
@@ -380,6 +387,7 @@ impl TtsCore {
         match engine {
             EngineImpl::Fish => self.fish_synthesize(port, req).await,
             EngineImpl::Piper(p) => p.synthesize(req).await,
+            EngineImpl::System(s) => s.synthesize(req).await,
             #[cfg(test)]
             EngineImpl::Mock(mock) => mock.synthesize(req).await,
         }
@@ -1601,7 +1609,7 @@ impl TtsManager {
         // holen — nicht je Satz. Stimmen ohne `sound` stehen gar nicht erst
         // in der Tabelle, der Normalfall kostet also nichts.
         {
-            let fish_dir = std::path::PathBuf::from(&settings.tts_fish_dir);
+            let fish_dir = self.fish_dir();
             let sounds: std::collections::HashMap<String, registry::VoiceSound> =
                 voices::list_voices(&fish_dir)
                     .into_iter()
@@ -1747,6 +1755,7 @@ impl TtsManager {
         match self.core.engine_snapshot() {
             EngineImpl::Fish => self.ensure_server().await,
             EngineImpl::Piper(p) => p.ensure_ready().await,
+            EngineImpl::System(s) => s.ensure_ready().await,
             #[cfg(test)]
             EngineImpl::Mock(mock) => mock.ensure_ready().await,
         }
@@ -1880,13 +1889,13 @@ impl TtsManager {
         }
 
         let settings = crate::settings::get_settings(&self.app);
-        let fish_dir = std::path::PathBuf::from(&settings.tts_fish_dir);
+        let fish_dir = self.fish_dir();
         let port = settings.tts_port;
-        let python = fish_dir.join(r".venv\Scripts\python.exe");
+        let python = availability::fish_python(&fish_dir, piper::platform_subdir());
         let api_script = fish_dir.join("tools").join("api_server.py");
         if !python.exists() || !api_script.exists() {
             let msg = format!(
-                "Fish Speech nicht gefunden unter '{}'. Erwartet: .venv\\Scripts\\python.exe und tools\\api_server.py — siehe C:\\AI\\fish-speech\\INSTALL-REPORT.md",
+                "Fish Speech ist unter '{}' nicht eingerichtet. Bitte ein vollständiges, zur Plattform passendes Vorlesemodul verwenden.",
                 fish_dir.display()
             );
             self.core.set_phase(TtsPhase::Error, Some(msg.clone()));
@@ -2009,7 +2018,16 @@ impl TtsManager {
     }
 
     fn fish_dir(&self) -> std::path::PathBuf {
-        std::path::PathBuf::from(crate::settings::get_settings(&self.app).tts_fish_dir)
+        let configured = crate::settings::get_settings(&self.app).tts_fish_dir;
+        availability::fish_dir(
+            &self.data_base_dir().unwrap_or_default(),
+            &configured,
+            piper::platform_subdir(),
+        )
+    }
+
+    pub fn fish_is_installed(&self) -> bool {
+        availability::fish_ready(&self.fish_dir(), piper::platform_subdir())
     }
 
     /// `fish_dir` fuer die Command-Schicht: die Commands brauchen den Pfad,
@@ -2444,7 +2462,7 @@ impl TtsManager {
     /// komplett an der Engine vorbei und hätte den GPU-Server gestartet.
     pub async fn synthesize_to_file(&self, text: &str, out_path: &str) -> Result<usize, String> {
         self.refresh_from_settings();
-        if self.core.engine_kind() == TtsEngineKind::Piper {
+        if self.core.engine_kind() != TtsEngineKind::Fish {
             return self.piper_synthesize_to_file(text, out_path).await;
         }
         self.ensure_server().await?;
@@ -2490,7 +2508,7 @@ impl TtsManager {
         let format = self.core.export_format.lock().unwrap().clone();
         if format != "wav" {
             return Err(format!(
-                "Die Piper-Engine exportiert nur WAV — eingestellt ist {format}"
+                "Diese Vorlese-Engine exportiert hier nur WAV — eingestellt ist {format}"
             ));
         }
         let prepared = {

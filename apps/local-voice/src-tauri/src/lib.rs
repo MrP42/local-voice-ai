@@ -2,6 +2,7 @@ mod actions;
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
+pub mod apple_speech;
 mod audio_feedback;
 pub mod audio_toolkit;
 mod catalog;
@@ -1419,6 +1420,8 @@ pub fn run(cli_args: CliArgs) {
             commands::open_log_dir,
             commands::open_app_data_dir,
             commands::check_apple_intelligence_available,
+            commands::apple_system::apple_system_status,
+            commands::apple_system::apple_system_initialize,
             commands::initialize_enigo,
             commands::initialize_shortcuts,
             commands::models::get_available_models,
@@ -1534,6 +1537,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_speak_seek,
             commands::tts::tts_synthesize_to_file,
             commands::tts::tts_list_downloads,
+            commands::tts::tts_module_availability,
             commands::tts::tts_download_model,
             commands::tts::tts_cancel_download,
             commands::tts::tts_delete_model,

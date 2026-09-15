@@ -1,53 +1,31 @@
 # Vorlesen
 
-Text in die Mitte, Stimme wählen, Vorlesen drücken. Alles läuft auf diesem Rechner, nichts verlässt ihn.
+Text einfügen, eine verfügbare Stimme wählen und Wiedergabe starten. Die Sprachausgabe läuft lokal.
 
-## Was diese Seite kann
+## Nur das einrichten, was du brauchst
 
-- **Text** tippen, einfügen oder diktieren (Mikrofon-Knopf).
-- **Hinzufügen (+)**: ein Dokument (TXT, MD, PDF, DOCX), eine Web-Adresse oder eine Datei ins Projekt holen.
-- **Übersetzen** und **Zusammenfassen** legen das Ergebnis in einen eigenen Reiter. Das Original bleibt unverändert.
-- **Vorlesen** liest Satz für Satz. Die Pfeile springen zum vorigen oder nächsten Satz, Pause hält an.
-- **Audio speichern** schreibt die Aufnahme in den Projektordner der Seite. Sie erscheint rechts unter Dateien.
+Auf macOS ist die installierte Systemstimme direkt verfügbar und bei einer neuen Einrichtung vorausgewählt. Zusätzliche Vorlesemodule sind optional. Unter **Modelle → Vorlesestimmen** lädst oder entfernst du Piper und einzelne Stimmen. Mit der ersten Stimme wird das passende Modul eingerichtet. Stimmen erscheinen erst in der Auswahl, wenn das Modul vollständig ist. Nach dem Entfernen einer gewählten Stimme wählst du eine andere; die App wechselt nicht ungefragt.
 
-## Seiten (links)
+## Text und Wiedergabe
 
-Jede Seite ist ein Arbeitsblatt mit eigenem Text und eigenem Ordner. Die Liste zeigt den Anfang des Texts und wann er zuletzt geändert wurde. Doppelklick benennt um.
+- Text schreiben, einfügen oder diktieren.
+- Über **Hinzufügen (+)** Dokumente, Internetadressen oder Projektdateien öffnen.
+- **Übersetzen** und **Zusammenfassen** behalten das Original und zeigen Ergebnisse in eigenen Reitern.
+- Wiedergabe starten, pausieren und satzweise springen.
+- **Audio speichern** legt das Ergebnis im Projektordner ab.
 
-## Sprecher und Betonung im Text
+Jede Seite hat einen eigenen Text und Ordner. Doppelklick benennt sie um. Jeder Textreiter merkt sich seine Stimme. Bei Piper stehen Sprache und Qualität direkt in der Auswahl.
 
-- **Sprecherwechsel**: eine Zeile mit dem Namen einer Stimme und Doppelpunkt beginnen, zum Beispiel `Olga:`. Alles bis zum nächsten Wechsel spricht diese Stimme.
-- **Stil**: `<Olga:flüsternd>` wählt einen gespeicherten Stil dieser Stimme.
-- **Tags** stehen in eckigen Klammern genau dort, wo sie wirken sollen: `[whisper] Komm näher.` oder `Er öffnete die Tür. [short pause] Nichts.`
-- **Auto-Tagging** schlägt Tags per Sprachmodell vor. Es fügt nur ein, es löscht nichts. Vorschläge lassen sich einzeln übernehmen oder mit Rückgängig verwerfen.
-- Die Palette unter dem Text listet alle Tags nach Gruppen. Klick fügt an der Cursorposition ein.
+<!-- module:fish -->
+## Fish Speech
 
-## Stimmen
+Eigene Stimmen anhören, aufnehmen, klonen und importieren: **Einstellungen → Vorlesen**. Für das Klonen wird eine kurze Referenzaufnahme mit passendem Text benötigt.
 
-- Ausgewählt wird in der Leiste über dem Player. Piper-Stimmen stehen dort mit Sprache und Qualität, etwa „Thorsten · Deutsch · HQ · Piper". Jeder Reiter merkt sich seine Stimme.
-- Anhören, klonen, importieren und löschen: **Einstellungen → Vorlesen**, oder direkt über „Stimmen verwalten …" am Ende der Stimmenliste.
-- **Klonen** braucht eine Referenz von 10 bis 30 Sekunden. Das Transkript entsteht automatisch und lässt sich korrigieren.
-- Der **Seed** bestimmt, wie die Standardstimme klingt. Ein gefundener Seed lässt sich als benannte Stimme sichern.
-- Sprecherwechsel im Text funktionieren mit Fish-Speech-Stimmen. Piper liest alles in der gewählten Stimme.
+Sprecherwechsel wie **Olga:**, gespeicherte Stile und Ausdruckstags sind mit Fish möglich. Die Stilpalette und automatische Tag-Vorschläge helfen beim Einfügen.
 
-## Zwei Engines
+Das Serversymbol zeigt den Zustand der installierten Fish-Laufzeit und bietet Start und Stopp. Dauert ein Start lange, prüfe die freie GPU-Kapazität und das Startprotokoll.
+<!-- /module:fish -->
 
-| | Fish Speech | Piper |
-|---|---|---|
-| Läuft auf | GPU (NVIDIA, ab 6 GB VRAM) | CPU |
-| Stimmen | geklont, Seed, Stile, Tags | feste Katalogstimmen |
-| Start | Server, 20 bis 90 s | sofort |
-| Qualität | natürlich, betont | klar, gleichmäßig |
+## Einstellungen und Hilfe
 
-Die Engine steht unter **Einstellungen → Vorlesen**. Piper-Stimmen lädt die Modelle-Seite unter Vorlesestimmen.
-
-## Symbole im Seitenkopf
-
-- **Gehirn**: das Sprachmodell für Übersetzen, Zusammenfassen und Auto-Tagging. Klick lädt es vor oder entlädt es.
-- **Server**: der Fish-Speech-Server. Grau aus, gelb startet, grün läuft, orange Fehler. Klick tut, was in diesem Zustand ansteht.
-
-## Wenn etwas hakt
-
-- **Start dauert lange**: andere GPU-Programme schließen, der Server braucht freien Videospeicher.
-- **Text wird gekürzt**: die Grenze steht unter Einstellungen → Vorlesen, maximale Zeichen pro Auftrag.
-- **Weiße Seite oder Fehlermeldung im Kopf**: Server stoppen und neu starten. Bleibt es, den Fish-Speech-Ordner in den Einstellungen prüfen.
+Unter **Einstellungen → Vorlesen** stehen Lautstärke, Export und Optionen der installierten Module. Das Gehirnsymbol verwaltet das Sprachmodell für Übersetzung und Zusammenfassung. Eine fehlende Stimme lässt sich über **Vorlesemodule verwalten** wieder einrichten.

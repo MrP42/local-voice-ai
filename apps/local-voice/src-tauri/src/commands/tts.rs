@@ -529,6 +529,31 @@ pub fn tts_list_downloads(app: AppHandle) -> Result<Vec<TtsDownloadInfo>, String
     Ok(app.state::<Arc<TtsModelManager>>().list_downloads())
 }
 
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct TtsModuleAvailability {
+    pub fish_installed: bool,
+    pub fish_supported: bool,
+    pub system_voices: Vec<crate::managers::tts::system::SystemVoice>,
+    pub system_default_voice: Option<String>,
+}
+
+/// A stopped server may still be installed. Checking readiness must not start
+/// it, download models, or allocate GPU memory just to render the voice menu.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_module_availability(app: AppHandle) -> TtsModuleAvailability {
+    let system_voices = tauri::async_runtime::spawn_blocking(crate::managers::tts::system::voices)
+        .await.unwrap_or_default();
+    TtsModuleAvailability {
+        system_voices,
+        system_default_voice: crate::apple_speech::system_default_voice(),
+        fish_installed: app.state::<Arc<TtsManager>>().fish_is_installed(),
+        fish_supported: crate::managers::tts::availability::fish_supported(
+            crate::managers::tts::piper::platform_subdir(),
+        ),
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_download_model(app: AppHandle, id: String) -> Result<(), String> {

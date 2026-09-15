@@ -107,10 +107,11 @@ const ModelCard: React.FC<ModelCardProps> = ({
 
   // Get translated model name and description
   const displayName = getTranslatedModelName(model, t);
-  const displayDescription = getTranslatedModelDescription(model, t);
+  const builtin = model.engine_type === "AppleSpeech";
+  const displayDescription = builtin ? t("appleSystem.speechDescription") : getTranslatedModelDescription(model, t);
   const showModelSize =
     status === "downloadable" || status === "available" || status === "active";
-  const formattedModelSize = formatModelSize(Number(model.size_mb));
+  const formattedModelSize = builtin ? t("appleSystem.included") : formatModelSize(Number(model.size_mb));
   const quantLabel = getQuantLabel(model.filename);
   const capabilityLanguages = getUniqueCapabilityLanguages(
     model.supported_languages,
@@ -279,7 +280,7 @@ const ModelCard: React.FC<ModelCardProps> = ({
             )}
           </span>
         )}
-        {onDelete && (status === "available" || status === "active") && (
+        {!builtin && onDelete && (status === "available" || status === "active") && (
           <Button
             variant="ghost"
             size="sm"

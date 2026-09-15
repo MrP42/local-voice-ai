@@ -3,7 +3,7 @@ import { Trans, useTranslation } from "react-i18next";
 import { RefreshCcw } from "lucide-react";
 import { commands } from "@/bindings";
 
-import { Alert } from "../../ui/Alert";
+import { LanguageModelSetupHint } from "@/components/shared/LanguageModelSetupHint";
 import {
   Dropdown,
   SettingContainer,
@@ -48,9 +48,10 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
 
       {state.isAppleProvider ? (
         state.appleIntelligenceUnavailable ? (
-          <Alert variant="error" contained>
-            {t("settings.postProcessing.api.appleIntelligence.unavailable")}
-          </Alert>
+          <div className="p-4 space-y-2 text-sm text-text/70">
+            <p>{t("settings.postProcessing.api.appleIntelligence.unavailable")}</p>
+            <LanguageModelSetupHint connections={false} />
+          </div>
         ) : null
       ) : (
         <>
