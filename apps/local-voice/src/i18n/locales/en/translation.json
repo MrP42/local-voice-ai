@@ -1134,6 +1134,13 @@
         "updates": "Updates",
         "input": "Microphone",
         "feedback": "Audible feedback"
+      },
+      "localUpdateDir": {
+        "title": "Local update folder",
+        "description": "Folder the app scans for newer installers, e.g. acceptance builds that are not on GitHub. A found update shows up in the footer.",
+        "choose": "Choose folder…",
+        "clear": "Remove",
+        "none": "No folder set"
       }
     },
     "llm": {
@@ -1223,7 +1230,9 @@
     "checkForUpdates": "Check for updates",
     "portableUpdateTitle": "Manual update required",
     "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
-    "portableUpdateButton": "Open GitHub Releases"
+    "portableUpdateButton": "Open GitHub Releases",
+    "localUpdateAvailable": "Update {{version}} available locally",
+    "localInstalling": "Starting installer…"
   },
   "whatsNew": {
     "title": "New in Local Voice AI v{{version}}"
