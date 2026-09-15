@@ -227,19 +227,20 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
 
   const getUpdateStatusAction = () => {
     if (localUpdate && !isInstalling) return installLocalUpdate;
-    if (!updateChecksEnabled) return undefined;
+    // Online-Suche aus: ein Klick prueft trotzdem den lokalen Ordner.
+    if (!updateChecksEnabled) return () => void checkLocalUpdate();
     if (updateAvailable && !isInstalling) return installUpdate;
     if (!isChecking && !isInstalling && !updateAvailable)
       return handleManualUpdateCheck;
     return undefined;
   };
 
-  const isUpdateDisabled =
-    (!updateChecksEnabled && !localUpdate) || isChecking || isInstalling;
+  const isUpdateDisabled = isChecking || isInstalling;
   const isUpdateClickable =
     !isUpdateDisabled &&
     (localUpdate !== null ||
       updateAvailable ||
+      !updateChecksEnabled ||
       (!isChecking && !showUpToDate));
 
   return (

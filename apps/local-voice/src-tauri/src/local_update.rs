@@ -74,28 +74,46 @@ pub(crate) fn find_local_update(dir: &Path, current: &str) -> Option<LocalUpdate
     best.map(|(_, update)| update)
 }
 
-fn configured_dir(app: &AppHandle) -> Option<PathBuf> {
-    crate::settings::get_settings(app)
+/// Ordner fuer lokale Updates: die Einstellung, sonst Fallbacks, die auf
+/// einem Entwicklungsrechner ohnehin existieren — der Bundle-Ordner des
+/// Repos und der Download-Ordner des Nutzers. So funktioniert der Knopf
+/// auch, bevor jemand die Einstellung entdeckt hat.
+fn candidate_dirs(app: &AppHandle) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(d) = crate::settings::get_settings(app)
         .local_update_dir
         .filter(|d| !d.trim().is_empty())
-        .map(PathBuf::from)
+    {
+        dirs.push(PathBuf::from(d));
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let home = PathBuf::from(home);
+        dirs.push(
+            home.join("local-voice-project")
+                .join("apps/local-voice/src-tauri/target/release/bundle/nsis"),
+        );
+        dirs.push(home.join("Downloads"));
+    }
+    dirs.into_iter().filter(|d| d.is_dir()).collect()
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn local_update_check(app: AppHandle) -> Result<Option<LocalUpdate>, String> {
-    let Some(dir) = configured_dir(&app) else {
-        return Ok(None);
-    };
     let current = app.package_info().version.to_string();
-    let found = find_local_update(&dir, &current);
-    if let Some(u) = &found {
-        log::info!(
-            "local update: {} in {} (running {})",
-            u.version,
-            dir.display(),
-            current
-        );
+    let dirs = candidate_dirs(&app);
+    log::info!(
+        "local update: checking {} folder(s) for a version above {current}",
+        dirs.len()
+    );
+    // Der neueste Fund ueber alle Ordner gewinnt.
+    let found = dirs
+        .iter()
+        .filter_map(|dir| find_local_update(dir, &current))
+        .max_by_key(|u| parse_version(&u.version));
+    match &found {
+        Some(u) => log::info!("local update: {} at {}", u.version, u.path),
+        None => log::info!("local update: none found"),
     }
     Ok(found)
 }
@@ -106,7 +124,6 @@ pub fn local_update_check(app: AppHandle) -> Result<Option<LocalUpdate>, String>
 #[tauri::command]
 #[specta::specta]
 pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> {
-    let dir = configured_dir(&app).ok_or("Kein Ordner fuer lokale Updates eingestellt")?;
     let candidate = PathBuf::from(&path);
     let file_name = candidate
         .file_name()
@@ -115,10 +132,14 @@ pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> 
     if version_from_file_name(&file_name).is_none() {
         return Err(format!("{file_name} ist kein Installer dieser App"));
     }
-    let canon_dir = std::fs::canonicalize(&dir).map_err(|e| format!("Ordner: {e}"))?;
+    // Nur Dateien direkt in einem der erlaubten Ordner werden gestartet.
     let canon_file = std::fs::canonicalize(&candidate).map_err(|e| format!("Datei: {e}"))?;
-    if canon_file.parent() != Some(canon_dir.as_path()) {
-        return Err("Der Installer liegt nicht im eingestellten Ordner".into());
+    let allowed = candidate_dirs(&app)
+        .iter()
+        .filter_map(|d| std::fs::canonicalize(d).ok())
+        .any(|d| canon_file.parent() == Some(d.as_path()));
+    if !allowed {
+        return Err("Der Installer liegt in keinem erlaubten Update-Ordner".into());
     }
 
     #[cfg(target_os = "windows")]

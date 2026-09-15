@@ -400,11 +400,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                 show_main_window(app);
             }
             "check_updates" => {
-                let settings = settings::get_settings(app);
-                if settings.update_checks_enabled {
-                    show_main_window(app);
-                    let _ = app.emit("check-for-updates", ());
-                }
+                // Auch ohne Online-Suche: der lokale Update-Ordner braucht
+                // kein Netz, der Prüfer entscheidet selbst, was er abfragt.
+                show_main_window(app);
+                let _ = app.emit("check-for-updates", ());
             }
             "copy_last_transcript" => {
                 tray::copy_last_transcript(app);
@@ -488,10 +487,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 #[tauri::command]
 #[specta::specta]
 fn trigger_update_check(app: AppHandle) -> Result<(), String> {
-    let settings = settings::get_settings(&app);
-    if !settings.update_checks_enabled {
-        return Ok(());
-    }
     app.emit("check-for-updates", ())
         .map_err(|e| e.to_string())?;
     Ok(())
