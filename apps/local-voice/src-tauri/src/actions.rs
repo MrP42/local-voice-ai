@@ -3,7 +3,7 @@ use crate::apple_intelligence;
 use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
 use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error, VadPolicy};
 use crate::clipboard::GuardedPasteOutcome;
-use crate::managers::audio::AudioRecordingManager;
+use crate::managers::audio::{AudioRecordingManager, CAPTURE_READY_TIMEOUT};
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
@@ -511,6 +511,17 @@ pub(crate) async fn process_transcription_output(
     }
 }
 
+/// Shows the overlay for a starting recording. Sizing follows the advertised
+/// model capability: a model that doesn't stream (or whose capability is not
+/// known yet) gets the compact pill instead of an oversized live window.
+fn show_start_overlay(app: &AppHandle, style: OverlayStyle, model_supports_streaming: bool) {
+    match style {
+        OverlayStyle::Live if model_supports_streaming => utils::show_streaming_overlay(app),
+        OverlayStyle::Live | OverlayStyle::Minimal => show_recording_overlay(app),
+        OverlayStyle::None => {} // show_overlay_state no-ops on None anyway
+    }
+}
+
 impl ShortcutAction for TranscribeAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         let start_time = Instant::now();
@@ -577,28 +588,21 @@ impl ShortcutAction for TranscribeAction {
         }
         let plan_elapsed = plan_started.elapsed();
 
-        // Sizing the overlay follows the same advertised capability. A model that
-        // doesn't stream (or whose capability is not known yet) gets the compact
-        // pill instead of an oversized transparent live window.
-        let overlay_started = Instant::now();
-        match settings.overlay_style {
-            OverlayStyle::Live if model_supports_streaming => utils::show_streaming_overlay(app),
-            OverlayStyle::Live | OverlayStyle::Minimal => show_recording_overlay(app),
-            OverlayStyle::None => {} // show_overlay_state no-ops on None anyway
-        }
         // Everything above runs before capture can begin, so each span here is
-        // added keypress->capture latency.
+        // added keypress->capture latency. The overlay is no longer part of it:
+        // in on-demand mode it appears once audio really flows (see below), in
+        // always-on mode right away.
         debug!(
-            "start-path pre-recording steps: model_kickoff={:?} tray={:?} settings+stream_plan={:?} overlay={:?}",
+            "start-path pre-recording steps: model_kickoff={:?} tray={:?} settings+stream_plan={:?}",
             kickoff_elapsed,
             tray_elapsed,
             plan_elapsed,
-            overlay_started.elapsed()
         );
         debug!("Microphone mode - always_on: {}", is_always_on);
 
         let mut recording_error: Option<String> = None;
         if is_always_on {
+            show_start_overlay(app, settings.overlay_style, model_supports_streaming);
             // Always-on mode: Play audio feedback immediately, then apply mute after sound finishes
             debug!("Always-on mode: Playing audio feedback immediately");
             let rm_clone = Arc::clone(&rm);
@@ -610,16 +614,21 @@ impl ShortcutAction for TranscribeAction {
                 rm_clone.apply_mute();
             });
 
-            if let Err(e) = rm.try_start_recording(&binding_id, vad_policy) {
+            if let Err(e) = rm.try_start_recording_at(&binding_id, vad_policy, start_time) {
                 debug!("Recording failed: {}", e);
                 recording_error = Some(e);
             }
         } else {
-            // On-demand mode: Start recording first, then play audio feedback, then apply mute
-            // This allows the microphone to be activated before playing the sound
+            // On-demand mode: start capture first; overlay, start sound and mute
+            // follow once the first audio chunk has actually been captured. A
+            // freshly opened WASAPI stream delivers nothing for 200-600 ms, and
+            // signalling "recording" before that invited the user to speak into
+            // a gap. `ready_seq` is taken before the start so a chunk that
+            // lands immediately is not missed.
             debug!("On-demand mode: Starting recording first, then audio feedback");
             let recording_start_time = Instant::now();
-            match rm.try_start_recording(&binding_id, vad_policy) {
+            let ready_seq = rm.capture_ready_seq();
+            match rm.try_start_recording_at(&binding_id, vad_policy, start_time) {
                 Ok(()) => {
                     debug!("Recording started in {:?}", recording_start_time.elapsed());
                     // Sentence mode: emit each sentence as the speaker pauses rather
@@ -629,12 +638,22 @@ impl ShortcutAction for TranscribeAction {
                     {
                         rm.segmenter.start(app.clone(), Arc::clone(&tm));
                     }
-                    // Small delay to ensure microphone stream is active
                     let app_clone = app.clone();
                     let rm_clone = Arc::clone(&rm);
+                    let overlay_style = settings.overlay_style;
                     std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        debug!("Handling delayed audio feedback/mute sequence");
+                        let ready = rm_clone.wait_capture_ready(ready_seq, CAPTURE_READY_TIMEOUT);
+                        debug!(
+                            "capture ready={} {:?} after hotkey; showing overlay and start sound now",
+                            ready,
+                            start_time.elapsed()
+                        );
+                        // A very short press may already have stopped the
+                        // recording; then neither overlay nor sound belong here.
+                        if !rm_clone.is_recording() {
+                            return;
+                        }
+                        show_start_overlay(&app_clone, overlay_style, model_supports_streaming);
                         // Helper handles disabled audio feedback by returning early, so we reuse it
                         // to keep mute sequencing consistent in every mode.
                         play_feedback_sound_blocking(&app_clone, SoundType::Start);

@@ -13,11 +13,22 @@ use crate::utils;
 use log::{debug, error, info, warn};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
-const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long an on-demand microphone stream stays open after a recording ends
+/// (when `lazy_stream_close` is on). Every start inside this window is a warm
+/// start: capture begins with the next buffer (~10-30 ms). A cold start costs
+/// the WASAPI/USB warm-up instead — 190-630 ms measured on 2026-09-15 with an
+/// Insta360 Link 2 — during which the first words are simply not captured.
+/// 30 s was too short for the pauses between two dictations; 5 min covers a
+/// working session while still releasing the device when the user is gone.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Upper bound the start path waits for the first captured audio before it
+/// shows the recording overlay / plays the start sound anyway.
+pub const CAPTURE_READY_TIMEOUT: Duration = Duration::from_millis(1500);
 
 fn set_mute(mute: bool) {
     // Expected behavior:
@@ -263,6 +274,7 @@ fn create_audio_recorder(
     app_handle: &tauri::AppHandle,
     stream_router: Arc<StreamRouter>,
     segmenter: Arc<crate::segmenter::SentenceSegmenter>,
+    capture_ready: Arc<(Mutex<u64>, Condvar)>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     // A single Silero engine covers both the offline and streaming policies (never
     // active at once within a recording), so the recorder reconfigures its
@@ -309,6 +321,11 @@ fn create_audio_recorder(
                 // real speech pause. The segmenter uses that as a sentence boundary.
                 segmenter.feed(frame);
             }
+        })
+        .with_capture_ready_callback(move || {
+            let (seq, cv) = &*capture_ready;
+            *seq.lock().unwrap() += 1;
+            cv.notify_all();
         });
 
     Ok(recorder)
@@ -338,6 +355,10 @@ pub struct AudioRecordingManager {
     /// so the retry re-enumerates. The system-default case is never cached —
     /// the recorder resolves the current default itself, cheaply.
     cached_device: Arc<Mutex<Option<(String, cpal::Device)>>>,
+    /// Counts recordings whose first audio chunk has been captured; bumped by
+    /// the recorder's ready callback. `wait_capture_ready` blocks on it so the
+    /// start path can show "recording" only once audio really flows.
+    capture_ready: Arc<(Mutex<u64>, Condvar)>,
 }
 
 impl AudioRecordingManager {
@@ -370,6 +391,7 @@ impl AudioRecordingManager {
                 settings.segment_pause_ms,
             )),
             cached_device: Arc::new(Mutex::new(None)),
+            capture_ready: Arc::new((Mutex::new(0), Condvar::new())),
         };
 
         // Always-on?  Open immediately.
@@ -528,6 +550,7 @@ impl AudioRecordingManager {
                 &self.app_handle,
                 Arc::clone(&self.stream_router),
                 Arc::clone(&self.segmenter),
+                Arc::clone(&self.capture_ready),
             )?);
         }
         Ok(())
@@ -655,10 +678,39 @@ impl AudioRecordingManager {
 
     /* ---------- recording --------------------------------------------------- */
 
+    /// Sequence number of captured-audio events so far; pass it to
+    /// `wait_capture_ready` to wait for the NEXT one.
+    pub fn capture_ready_seq(&self) -> u64 {
+        *self.capture_ready.0.lock().unwrap()
+    }
+
+    /// Block until the recorder has captured its first audio chunk since
+    /// `seen` (a value from `capture_ready_seq`), or `timeout` passes.
+    /// Returns whether audio actually arrived.
+    pub fn wait_capture_ready(&self, seen: u64, timeout: Duration) -> bool {
+        let (seq, cv) = &*self.capture_ready;
+        let guard = seq.lock().unwrap();
+        let (guard, _) = cv
+            .wait_timeout_while(guard, timeout, |s| *s == seen)
+            .unwrap();
+        *guard != seen
+    }
+
     pub fn try_start_recording(
         &self,
         binding_id: &str,
         vad_policy: VadPolicy,
+    ) -> Result<(), String> {
+        self.try_start_recording_at(binding_id, vad_policy, Instant::now())
+    }
+
+    /// `requested_at` is the moment the user asked for capture (hotkey); it is
+    /// carried to the recorder purely for the latency log.
+    pub fn try_start_recording_at(
+        &self,
+        binding_id: &str,
+        vad_policy: VadPolicy,
+        requested_at: Instant,
     ) -> Result<(), String> {
         let mut state = self.state.lock().unwrap();
 
@@ -675,7 +727,7 @@ impl AudioRecordingManager {
             }
 
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                if rec.start(vad_policy).is_ok() {
+                if rec.start_at(vad_policy, requested_at).is_ok() {
                     *self.is_recording.lock().unwrap() = true;
                     *state = RecordingState::Recording {
                         binding_id: binding_id.to_string(),
