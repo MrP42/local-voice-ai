@@ -579,7 +579,7 @@ mod tests {
     // downloading-flag lookup is injected as a plain closure.
 
     #[test]
-    fn build_downloads_orders_runtime_first_and_lists_all_five_voices() {
+    fn build_downloads_orders_runtime_first_and_lists_all_catalog_voices() {
         let dir = tempfile::TempDir::new().unwrap();
         let piper_dir = dir.path().join("piper");
 
@@ -589,7 +589,8 @@ mod tests {
             .iter()
             .filter(|d| d.kind == TtsDownloadKind::Voice)
             .collect();
-        assert_eq!(voice_rows.len(), 5, "expected the 5 curated Piper voices");
+        // 5 deutsche + 5 englische Stimmen seit 14.09.2026 (catalog.json).
+        assert_eq!(voice_rows.len(), 10, "expected the 10 curated Piper voices");
         assert!(
             voice_rows.iter().all(|d| !d.is_downloaded),
             "nothing on disk yet — no voice may read as downloaded"
