@@ -155,17 +155,21 @@ pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> 
         // Installer starten. Andersherum (16.09.2026) kam der Installer bei
         // "Extract: local-voice-ai.exe" an, waehrend die EXE noch lief ->
         // "error writing to file". Ein abgekoppelter cmd-Helfer wartet, bis
-        // unser Prozess weg ist, und startet dann den Installer passiv (/P).
+        // unser Prozess weg ist, startet dann den Installer passiv (/P) und
+        // danach die neue App wieder — wie es der GitHub-Updater auch tut.
         use std::os::windows::process::CommandExt;
         let pid = std::process::id();
+        let exe = std::env::current_exe().map_err(|e| format!("eigener Pfad: {e}"))?;
         let script = format!(
             "@echo off
 :wait
 tasklist /FI \"PID eq {pid}\" 2>NUL | find \"{pid}\" >NUL && (timeout /t 1 /nobreak >NUL & goto wait)
-start \"\" /wait \"{}\" /P
+start \"\" /wait \"{installer}\" /P
+start \"\" \"{exe}\"
 del \"%~f0\"
 ",
-            candidate.display()
+            installer = candidate.display(),
+            exe = exe.display()
         );
         let helper = std::env::temp_dir().join(format!("local-voice-update-{pid}.cmd"));
         std::fs::write(&helper, script).map_err(|e| format!("Update-Helfer: {e}"))?;
