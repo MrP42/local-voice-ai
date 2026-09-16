@@ -220,8 +220,12 @@ pub async fn llm_local_start(_app: AppHandle, model_id: String) -> Result<String
 
 #[tauri::command]
 #[specta::specta]
-pub fn llm_local_stop(app: AppHandle) -> Result<(), String> {
-    app.state::<Arc<LocalLlmServer>>().stop();
+pub async fn llm_local_stop(app: AppHandle) -> Result<(), String> {
+    // Nicht auf dem Hauptthread: `stop` wartet auf taskkill und Prozessende.
+    let server = app.state::<Arc<LocalLlmServer>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || server.stop())
+        .await
+        .map_err(|e| format!("Server-Stopp abgebrochen: {e}"))?;
     Ok(())
 }
 

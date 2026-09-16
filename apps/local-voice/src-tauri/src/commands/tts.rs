@@ -432,10 +432,17 @@ pub async fn tts_extract_url(url: String) -> Result<String, String> {
 
 /// Alles beenden, was auf dem TTS-Port lauscht — ohne Gesundheitsprüfung.
 /// Der Ausweg, wenn ein hängender Server die Grafikkarte festhält.
+///
+/// Asynchron mit `spawn_blocking`: ein synchroner Tauri-Befehl laeuft auf dem
+/// Hauptthread, und dort warteten `taskkill`, `netstat` und das Prozessende —
+/// das Fenster fror fuer die Dauer ein (beobachtet 16.09.2026, Piper wie Fish).
 #[tauri::command]
 #[specta::specta]
-pub fn tts_server_kill(app: AppHandle) -> Result<String, String> {
-    app.state::<Arc<TtsManager>>().kill_server_hard()
+pub async fn tts_server_kill(app: AppHandle) -> Result<String, String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || tts.kill_server_hard())
+        .await
+        .map_err(|e| format!("Server-Stopp abgebrochen: {e}"))?
 }
 
 #[tauri::command]
