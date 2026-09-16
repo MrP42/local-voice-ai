@@ -84,6 +84,15 @@ pub(crate) fn find_local_update(dir: &Path, current: &str, app_name: &str) -> Op
 /// einem Entwicklungsrechner ohnehin existieren — der Bundle-Ordner des
 /// Repos und der Download-Ordner des Nutzers. So funktioniert der Knopf
 /// auch, bevor jemand die Einstellung entdeckt hat.
+/// Ob ein Pfad unveraendert in ein cmd-Skript darf: keine Anfuehrungszeichen,
+/// keine Verkettungs-, Umleitungs- oder Variablenzeichen, keine Zeilenumbrueche.
+pub(crate) fn cmd_safe_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path
+            .chars()
+            .any(|c| matches!(c, '"' | '&' | '|' | '<' | '>' | '^' | '%' | '!' | '\n' | '\r' | '\0'))
+}
+
 fn candidate_dirs(app: &AppHandle) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(d) = crate::settings::get_settings(app)
@@ -160,6 +169,17 @@ pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> 
         use std::os::windows::process::CommandExt;
         let pid = std::process::id();
         let exe = std::env::current_exe().map_err(|e| format!("eigener Pfad: {e}"))?;
+        // Beide Pfade werden woertlich in ein cmd-Skript geschrieben. Ein
+        // Ordnername aus der Einstellung mit Shell-Metazeichen koennte das
+        // Skript aufbrechen — deshalb nur Pfade ohne solche Zeichen.
+        for path in [&candidate, &exe] {
+            if !cmd_safe_path(&path.to_string_lossy()) {
+                return Err(format!(
+                    "Pfad enthaelt Zeichen, die im Update-Helfer nicht erlaubt sind: {}",
+                    path.display()
+                ));
+            }
+        }
         let script = format!(
             "@echo off
 :wait
@@ -241,6 +261,22 @@ mod tests {
         assert!(found.path.ends_with("Local Voice AI_0.18.10_x64-setup.exe"));
         assert!(find_local_update(dir.path(), "0.18.10", app).is_none());
         assert!(find_local_update(dir.path(), "1.0.0", app).is_none());
+    }
+
+    #[test]
+    fn helper_refuses_shell_metacharacters_in_paths() {
+        assert!(cmd_safe_path(r"C:\Users\wolff\local-voice-project\Local Voice AI_0.18.10_x64-setup.exe"));
+        assert!(cmd_safe_path(r"C:\Users\Jörg Müller\Local Voice AI\local-voice-ai.exe"));
+        for bad in [
+            r#"C:\a" & calc & "\Local Voice AI_1.0.0_x64-setup.exe"#,
+            r"C:\a&calc\x.exe",
+            r"C:\a|calc\x.exe",
+            r"C:\%TEMP%\x.exe",
+            "C:\\a\nstart calc\\x.exe",
+            "",
+        ] {
+            assert!(!cmd_safe_path(bad), "{bad:?} muss abgelehnt werden");
+        }
     }
 
     #[test]

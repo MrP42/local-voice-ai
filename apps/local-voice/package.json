@@ -1,7 +1,7 @@
 {
   "name": "local-voice-ai-app",
   "private": true,
-  "version": "0.18.10",
+  "version": "0.18.11",
   "type": "module",
   "scripts": {
     "dev": "vite",
