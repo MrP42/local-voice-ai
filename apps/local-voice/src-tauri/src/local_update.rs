@@ -160,6 +160,11 @@ pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> 
 
     #[cfg(target_os = "windows")]
     {
+        // Alle Befehle mit vollem System32-Pfad: auf Rechnern mit Git im PATH
+        // ist `find` GNU find, die Warteschleife bricht sofort ab und der
+        // Installer startet nie (16.09.2026, zwei liegengebliebene Helfer in
+        // %TEMP%). `ping` statt `timeout` als Pause, weil `timeout` ohne
+        // Konsoleneingabe abbricht.
         // Reihenfolge ist entscheidend: erst die App beenden, DANN den
         // Installer starten. Andersherum (16.09.2026) kam der Installer bei
         // "Extract: local-voice-ai.exe" an, waehrend die EXE noch lief ->
@@ -183,7 +188,7 @@ pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> 
         let script = format!(
             "@echo off
 :wait
-tasklist /FI \"PID eq {pid}\" 2>NUL | find \"{pid}\" >NUL && (timeout /t 1 /nobreak >NUL & goto wait)
+\"%SystemRoot%\\System32\\tasklist.exe\" /FI \"PID eq {pid}\" /NH 2>NUL | \"%SystemRoot%\\System32\\find.exe\" \"{pid}\" >NUL && (\"%SystemRoot%\\System32\\ping.exe\" -n 2 127.0.0.1 >NUL & goto wait)
 start \"\" /wait \"{installer}\" /P
 start \"\" \"{exe}\"
 del \"%~f0\"
@@ -193,11 +198,15 @@ del \"%~f0\"
         );
         let helper = std::env::temp_dir().join(format!("local-voice-update-{pid}.cmd"));
         std::fs::write(&helper, script).map_err(|e| format!("Update-Helfer: {e}"))?;
+        // Nur CREATE_NO_WINDOW, kein DETACHED_PROCESS: der Helfer braucht eine
+        // (unsichtbare) Konsole, sonst laufen Pipe und `start` nicht zuverlaessig.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        std::process::Command::new("cmd")
+        let cmd = std::env::var_os("SystemRoot")
+            .map(|r| PathBuf::from(r).join("System32").join("cmd.exe"))
+            .unwrap_or_else(|| PathBuf::from("cmd.exe"));
+        std::process::Command::new(cmd)
             .args(["/C", &helper.to_string_lossy()])
-            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("Update-Helfer konnte nicht gestartet werden: {e}"))?;
         log::info!("local update: helper armed for {file_name}; exiting so the installer can replace the exe");
