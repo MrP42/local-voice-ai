@@ -74,3 +74,17 @@ synthetische Test bestätigte die korrekte deutsche Antwort. Dies ist ein
 Funktionstest, kein Langzeitbenchmark für umfangreiche Protokolle. Die neuen
 Oberflächentests prüfen Intel-Anzeige, Gemma-Suche in Hell/Dunkel und den
 Wechsel zwischen geladenem Modell und Leerlauf ohne Seitenwechsel.
+
+
+## Vorlesen und reguläre Funktionen (0.18.3)
+
+Die allgemeine Experimentell-Gruppe entfällt. Vorlesen und Transkripte sind
+reguläre Funktionen. Die verbleibenden technischen Optionen für Tastatureingabe,
+Beschleunigung und verzögertes Schließen des Audiostreams stehen im bestehenden
+Diagnosebereich. Alte gespeicherte Einstellungen bleiben lesbar.
+
+Vorlesen liest das aktuelle Zeichenlimit vor der Textvorbereitung direkt aus den
+Einstellungen. Zuvor wurde zunächst mit dem zwischengespeicherten Limit gekürzt
+und erst beim Start der Wiedergabe aktualisiert. Dadurch konnte der erste Auftrag
+nach einer Änderung weiterhin auf 5.000 Zeichen begrenzt werden. Eine bewusst
+gewählte Grenze bleibt wirksam; eine tatsächliche Kürzung wird weiterhin angezeigt.

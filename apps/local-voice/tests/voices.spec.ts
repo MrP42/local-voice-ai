@@ -40,6 +40,7 @@ test.beforeEach(async ({ page }) => {
       post_process_models: location.search.includes("llm=none") ? {} : { local: "test-model" },
       post_process_api_keys: {},
       push_to_talk: true,
+      tts_max_chars: 5000,
       tts_voice: null,
       tts_engine: "fish",
       tts_piper_voice: null,
@@ -220,6 +221,11 @@ test.beforeEach(async ({ page }) => {
             ];
           // Was die App wirklich speichern will — sonst prueft der Test nur,
           // dass ein Auswahlfeld umspringt.
+          if (cmd === "change_tts_max_chars_setting") {
+            settings.tts_max_chars = args?.value as number;
+            (window as unknown as { savedMaxChars?: unknown }).savedMaxChars = args?.value;
+            return null;
+          }
           if (cmd === "change_tts_engine_setting") {
             (window as unknown as { savedEngine?: unknown }).savedEngine =
               args?.value;
@@ -675,4 +681,29 @@ test("setup navigation stays with the source when saving fails", async ({ page }
   await expect(page.getByText("Test save failure", { exact: true })).toBeVisible();
   await expect(page.locator("textarea").first()).toHaveValue("Meine ungesicherte Notiz.");
   await expect(page.getByTestId("apple-system-models")).toHaveCount(0);
+});
+
+
+for (const theme of ["light", "dark"]) {
+  test(`standard features have no experimental switch (${theme})`, async ({ page }) => {
+    await page.goto(`/?fish=0&piper=0&system=1&theme=${theme}`);
+    await page.getByRole("button", { name: "Einstellungen", exact: true }).last().click();
+    await page.getByRole("tab", { name: "Allgemein", exact: true }).click();
+    await expect(page.getByText("Experimentelle Funktionen", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Experimentell", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "Vorlesen", exact: true })).toBeVisible();
+  });
+}
+
+
+test("system voice preserves the configured 100000 character limit", async ({ page }) => {
+  await page.goto("/?fish=0&piper=0&system=1");
+  await page.getByRole("button", { name: "Einstellungen", exact: true }).last().click();
+  await page.getByRole("tab", { name: "Vorlesen", exact: true }).click();
+  const limit = page.locator('input[max="100000"]');
+  await limit.fill("100000");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { savedMaxChars?: number }).savedMaxChars)).toBe(100000);
+  await page.getByRole("tab", { name: "Allgemein", exact: true }).click();
+  await page.getByRole("tab", { name: "Vorlesen", exact: true }).click();
+  await expect(limit).toHaveValue("100000");
 });

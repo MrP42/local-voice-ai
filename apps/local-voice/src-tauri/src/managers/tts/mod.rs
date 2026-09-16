@@ -1657,7 +1657,9 @@ impl TtsManager {
     /// den Satzfortschritt als `tts-speak-progress`-Event.
     pub async fn speak_text(self: &Arc<Self>, raw: &str) -> Result<usize, String> {
         use tauri::Emitter;
-        let max_chars = *self.core.max_chars.lock().unwrap();
+        // Read the current preference before truncating. run_speak_session refreshes
+        // the engine later, which is too late to recover already discarded text.
+        let max_chars = crate::settings::get_settings(&self.app).tts_max_chars;
         let prepared =
             protocol::prepare_text(raw, max_chars).ok_or_else(|| "empty text".to_string())?;
         // Eine Kuerzung muss man sehen. Bisher fiel sie nur einer Funktion

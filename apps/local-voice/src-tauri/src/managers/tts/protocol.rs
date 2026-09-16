@@ -580,6 +580,29 @@ mod tests {
     }
 
     #[test]
+    fn configured_large_limit_preserves_the_whole_reading() {
+        let text = "ä🙂a".repeat(7_000);
+        assert_eq!(text.chars().count(), 21_000);
+        let prepared = prepare_text(&text, 100_000).unwrap();
+        assert_eq!(prepared.text, text);
+        assert!(!prepared.truncated);
+        let lowered = prepare_text(&text, 5_000).unwrap();
+        assert_eq!(lowered.text.chars().count(), 5_000);
+        assert!(lowered.truncated);
+    }
+
+    #[test]
+    fn configured_limit_counts_characters_and_only_truncates_above_it() {
+        let text = "🙂".repeat(100_000);
+        let exact = prepare_text(&text, 100_000).unwrap();
+        assert_eq!(exact.text, text);
+        assert!(!exact.truncated);
+        let over = prepare_text(&(text.clone() + "ä"), 100_000).unwrap();
+        assert_eq!(over.text, text);
+        assert!(over.truncated);
+    }
+
+    #[test]
     fn overlong_text_is_truncated_at_a_char_boundary() {
         // 'ä' ist 2 Bytes; die Grenze zählt Zeichen, nicht Bytes.
         let p = prepare_text("ääääää", 4).unwrap();
