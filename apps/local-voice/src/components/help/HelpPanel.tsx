@@ -1,6 +1,8 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { MarkdownContent } from "../whats-new/MarkdownContent";
+import { useTtsAvailability } from "@/hooks/useTtsAvailability";
+import { moduleHelp } from "@/lib/tts/availability";
 
 /**
  * Hilfe an Ort und Stelle: je Bereich ein Markdown-Text je Sprache unter
@@ -31,11 +33,12 @@ export const findHelp = (section: string, language: string): string | null => {
 
 export const HelpPanel: React.FC<{ section: string }> = ({ section }) => {
   const { t, i18n } = useTranslation();
+  const { fishInstalled } = useTtsAvailability();
   const markdown = findHelp(section, i18n.language ?? "en");
   return (
     <div className="help-panel space-y-3" data-testid="help-panel">
       {markdown ? (
-        <MarkdownContent markdown={markdown} />
+        <MarkdownContent markdown={moduleHelp(markdown, fishInstalled)} />
       ) : (
         <p className="text-xs text-text/40">{t("help.empty")}</p>
       )}

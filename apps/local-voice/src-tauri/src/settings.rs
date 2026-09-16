@@ -788,7 +788,7 @@ fn default_tts_compile() -> bool {
 }
 
 fn default_tts_engine() -> String {
-    "fish".to_string()
+    if cfg!(target_os = "macos") { "system" } else { "fish" }.to_string()
 }
 
 /// Standardmäßig an: eine deutsche Piper-Stimme liest englischen Text sonst
@@ -1201,7 +1201,9 @@ fn default_typing_tool() -> TypingTool {
 }
 
 fn default_tts_fish_dir() -> String {
-    r"C:\AI\fish-speech".to_string()
+    // Empty selects the app-managed module directory. Existing custom paths
+    // are retained when settings are deserialized.
+    String::new()
 }
 
 fn default_tts_port() -> u16 {
@@ -2417,7 +2419,7 @@ mod tests {
         assert_eq!(s.tts_seed, 42);
         assert_eq!(s.tts_idle_minutes, 15);
         assert_eq!(s.tts_max_chars, 5000);
-        assert_eq!(s.tts_engine, "fish");
+        assert_eq!(s.tts_engine, default_tts_engine());
         assert_eq!(s.tts_preview_engine, "", "Vorschau-Engine ist aus");
         assert_eq!(s.tts_piper_voice, None);
         let b = &s.bindings["speak_clipboard"];
@@ -2431,6 +2433,6 @@ mod tests {
         let s: AppSettings = serde_json::from_value(serde_json::json!({})).unwrap();
         assert_eq!(s.tts_port, 8080);
         assert_eq!(s.tts_max_chars, 5000);
-        assert_eq!(s.tts_engine, "fish", "ohne Engine-Key bleibt es bei Fish");
+        assert_eq!(s.tts_engine, default_tts_engine());
     }
 }

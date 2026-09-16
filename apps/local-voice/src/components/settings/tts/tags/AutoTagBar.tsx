@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { Sparkles, X } from "lucide-react";
+import { hasLanguageModel, isLanguageModelSetupError } from "@/lib/llmSetup";
+import { LanguageModelSetupHint } from "@/components/shared/LanguageModelSetupHint";
 import { useSettings } from "@/hooks/useSettings";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
@@ -170,7 +172,7 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   onApplyText,
 }) => {
   const { t } = useTranslation();
-  const { getSetting, updateSetting } = useSettings();
+  const { settings, getSetting, updateSetting } = useSettings();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Fortschritt des laufenden Auto-Taggings (Abschnitte), null = kein Lauf. */
@@ -188,6 +190,7 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   }, [text]);
 
   const providerValue = getSetting("tts_tag_provider") ?? "";
+  const modelReady = providerValue === "anthropic" || hasLanguageModel(settings);
   const activeProviderId = getSetting("post_process_provider_id") ?? "";
   const anthropicKey =
     (
@@ -218,7 +221,7 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   ];
 
   const runAutoTag = async () => {
-    if (!text.trim() || loading) return;
+    if (!text.trim() || loading || !modelReady) return;
     if (missingAnthropicKey) {
       setError(t("tts.autotag.missingApiKey"));
       return;
@@ -318,7 +321,7 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
         size="sm"
         className={showSettings ? undefined : "w-full justify-start"}
         onClick={() => void runAutoTag()}
-        disabled={loading || !text.trim()}
+        disabled={!modelReady || loading || !text.trim()}
         title={t("tts.autotag.button")}
         aria-label={t("tts.autotag.button")}
       >
@@ -393,7 +396,8 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
           </Button>
         </>
       )}
-      {error && (
+      {(showSettings && settings && !modelReady || isLanguageModelSetupError(error)) && <LanguageModelSetupHint />}
+      {error && !isLanguageModelSetupError(error) && (
         <p className="w-full text-xs text-red-500 break-words">{error}</p>
       )}
     </div>

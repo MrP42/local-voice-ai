@@ -1,3 +1,6 @@
+/// Missing configuration is an actionable setup state, not an inference failure.
+pub const MODEL_SETUP_REQUIRED: &str = "language_model_setup_required: Choose or install a language model under Models, or connect a provider in Settings.";
+
 use crate::managers::usage::{self, Purpose, TokenUsage};
 use crate::settings::PostProcessProvider;
 use log::debug;
@@ -218,6 +221,24 @@ async fn send_inner(
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
 ) -> Result<(Option<String>, TokenUsage), String> {
+    if provider.id == crate::settings::APPLE_INTELLIGENCE_PROVIDER_ID
+        || provider.base_url.starts_with("apple-intelligence://")
+    {
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            let mut instructions = system_prompt.unwrap_or_default();
+            if let Some(schema) = json_schema {
+                instructions.push_str("\nReturn only valid JSON matching this schema, without Markdown fences:\n");
+                instructions.push_str(&schema.to_string());
+            }
+            let output = tauri::async_runtime::spawn_blocking(move || {
+                crate::apple_intelligence::generate_text(&instructions, &user_content)
+            }).await.map_err(|e| e.to_string())??;
+            return Ok((Some(output), TokenUsage::default()));
+        }
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        return Err("Apple Intelligence requires an Apple silicon Mac, macOS 26 or later and an available system model.".into());
+    }
     // Fuer den lokalen Anbieter ist die Adresse erst bekannt, wenn der
     // Server laeuft -- und der wird hier bei Bedarf gestartet.
     let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;

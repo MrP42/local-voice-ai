@@ -72,13 +72,14 @@ fn current_platform() -> Option<&'static str> {
 }
 
 /// Backend-Kennung aus einer Laufzeit-Kennung: `llm-runtime-windows-x64-vulkan`
-/// → `vulkan`; macOS-Pakete tragen kein Suffix und laufen ueber Metal.
+/// → `vulkan`; macOS arm64 uses Metal, the Intel package uses CPU/Accelerate.
 pub(crate) fn backend_of(runtime_id: &str, platform: &str) -> Option<String> {
     let prefix = format!("llm-runtime-{platform}");
     let rest = runtime_id.strip_prefix(&prefix)?;
     match rest.strip_prefix('-') {
         Some(backend) if !backend.is_empty() => Some(backend.to_string()),
         Some(_) => None,
+        None if rest.is_empty() && platform == "macos-x64" => Some("cpu".to_string()),
         None if rest.is_empty() => Some("metal".to_string()),
         None => None,
     }
@@ -297,7 +298,7 @@ impl LlmRuntimeManager {
                 is_downloaded: downloaded,
                 is_downloading: self.is_downloading(&e.id),
                 size_mb: e.files.iter().map(|f| f.size_bytes).sum::<u64>() / (1024 * 1024),
-                for_this_platform: true,
+                for_this_platform: platform.is_some(),
                 backend: None,
                 tags: e.tags,
                 id: e.id,
@@ -569,6 +570,10 @@ mod tests {
         assert_eq!(
             backend_of("llm-runtime-macos-aarch64", "macos-aarch64").as_deref(),
             Some("metal")
+        );
+        assert_eq!(
+            backend_of("llm-runtime-macos-x64", "macos-x64").as_deref(),
+            Some("cpu")
         );
         // Fremde Plattform: kein Backend, nicht ladbar.
         assert_eq!(backend_of("llm-runtime-macos-aarch64", "windows-x64"), None);

@@ -14,7 +14,7 @@ test.beforeEach(async ({ page }) => {
     const settings: Record<string, unknown> = {
       onboarding_completed: true,
       app_language: "de",
-      theme: "light",
+      theme: location.search.includes("dark=1") ? "dark" : "light",
       show_whats_new_on_update: false,
       debug_mode: false,
       selected_model: "",
@@ -39,8 +39,14 @@ test.beforeEach(async ({ page }) => {
       { id: "llm-qwen3-4b-q4", kind: "model", name: "Qwen3 4B", description: "Empfohlener Standard.", size_mb: 2381, is_downloaded: true, is_downloading: false, tags: ["empfohlen", "zusammenfassung"], backend: null, for_this_platform: true },
       { id: "llm-qwen3-8b-q4", kind: "model", name: "Qwen3 8B", description: "Mehr Qualität.", size_mb: 4795, is_downloaded: false, is_downloading: false, tags: ["qualitaet"], backend: null, for_this_platform: true },
     ];
+    if (location.search.includes("mac=1")) {
+      Object.assign(downloads[0], { id: "llm-runtime-macos-x64", name: "Sprachmodell-Laufzeit (macOS, Intel)", backend: "cpu" });
+    }
+    downloads.push({ id: "llm-gemma4-e2b-qat-q4", kind: "model", name: "Gemma 4 E2B", description: "Google QAT", size_mb: 3194, is_downloaded: false, is_downloading: false, tags: ["mehrsprachig"], backend: null, for_this_platform: true });
+    const localStatus = { phase: "stopped", model_id: null, backend: null, port: null, message: null };
+    Object.assign(window, { localStatus });
     Object.assign(window, {
-      __TAURI_OS_PLUGIN_INTERNALS__: { platform: "windows", os_type: "windows", family: "windows", arch: "x86_64", version: "10.0.26200", eol: "\r\n" },
+      __TAURI_OS_PLUGIN_INTERNALS__: { platform: location.search.includes("mac=1") ? "macos" : "windows", os_type: "windows", family: "windows", arch: "x86_64", version: "10.0.26200", eol: "\r\n" },
       __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} },
       __TAURI_INTERNALS__: {
         metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
@@ -57,7 +63,7 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "meetings_is_recording") return false;
           if (cmd === "tts_server_status") return { phase: "stopped", message: null };
           if (cmd === "llm_local_list") return downloads;
-          if (cmd === "llm_local_status") return { phase: "stopped", model_id: null, backend: null, port: null, message: null };
+          if (cmd === "llm_local_status") return localStatus;
           // Prognose: das 4B passt, das 8B ist knapp -- Zahlen aus dem Backend.
           if (cmd === "llm_local_fit")
             return args?.modelId === "llm-qwen3-8b-q4"
@@ -127,4 +133,28 @@ test("each model says whether it fits, with the numbers behind it", async ({ pag
   await expect(qwen4.locator("[data-fit=fits]")).toContainText("braucht ≈ 4,3 GB, frei 18,5 GB");
   const qwen8 = page.locator('[data-llm-card="llm-qwen3-8b-q4"]');
   await expect(qwen8.locator("[data-fit=tight]")).toContainText("Knapp");
+});
+
+for (const dark of [false, true]) {
+  test(`Mac compatibility and Gemma search are clear (${dark ? "dark" : "light"})`, async ({ page }) => {
+    await page.goto(`/?mac=1${dark ? "&dark=1" : ""}`);
+    await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
+    const status = page.getByTestId("local-models-status");
+    await expect(status).toContainText("Dieser Mac · Intel");
+    await expect(status).toContainText("Nur Prozessor");
+    await expect(status).toContainText("Kein Sprachmodell im Speicher");
+    await page.getByRole("textbox").first().fill("Gemma 4 E2B");
+    await expect(page.locator('[data-llm-card="llm-gemma4-e2b-qat-q4"]')).toBeVisible();
+    await expect(page.locator('[data-llm-card="llm-qwen3-4b-q4"]')).toHaveCount(0);
+    await expect(page.locator('[data-llm-card="llm-runtime-macos-x64"]')).toBeVisible();
+  });
+}
+
+test("model page refreshes running state without navigating away", async ({ page }) => {
+  await page.goto("/?mac=1");
+  await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
+  await page.evaluate(() => Object.assign((window as unknown as { localStatus: object }).localStatus, { phase: "ready", model_id: "llm-qwen3-4b-q4", backend: "cpu" }));
+  await expect(page.getByTestId("local-models-status")).toContainText("Im Speicher: Qwen3 4B", { timeout: 8000 });
+  await page.evaluate(() => Object.assign((window as unknown as { localStatus: object }).localStatus, { phase: "stopped", model_id: null, backend: null }));
+  await expect(page.getByTestId("local-models-status")).toContainText("Kein Sprachmodell im Speicher", { timeout: 8000 });
 });

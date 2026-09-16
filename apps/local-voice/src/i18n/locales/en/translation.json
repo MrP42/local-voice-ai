@@ -1,4 +1,40 @@
 {
+  "localModels": {
+    "macIntel": "This Mac · Intel",
+    "macApple": "This Mac · Apple Silicon",
+    "computer": "This computer",
+    "installed": "{{count}} of {{total}} language models installed locally",
+    "runtimeReady": "Runtime installed · {{backends}}",
+    "runtimeNeeded": "Install the runtime for your computer below to use these local models.",
+    "selected": "Selected locally: {{name}}",
+    "notSelected": "No local language model selected yet",
+    "loaded": "In memory: {{name}} · {{backend}}",
+    "stopped": "No language model in memory · Starts on the next task",
+    "starting": "Loading language model …",
+    "checking": "Checking model status …",
+    "error": "Language model could not start",
+    "compatible": "Compatible model format",
+    "unsupported": "No runtime for this device",
+    "ramEstimate": "Memory estimate: about {{need}} GB required · {{free}} GB RAM free"
+  },
+  "modelSetup": {
+    "description": "Choose a language model for AI text features: install one directly in Local Voice AI or use an available system model.",
+    "choose": "Choose or install a model",
+    "connect": "Connect a provider"
+  },
+  "appleSystem": {
+    "systemLanguage": "macOS system language",
+    "title": "macOS system models",
+    "voices": "The macOS system voice is ready to use. Additional speech modules are optional.",
+    "speechReady": "Apple Speech is available for local dictation without an in-app model download. macOS asks for permission on first use.",
+    "speechUnavailable": "Apple Speech is not available locally for the current system language. Server recognition is never used.",
+    "llmReady": "Apple Intelligence is available locally for translations, summaries and reports.",
+    "llmUnavailable": "Apple Intelligence requires an Apple silicon Mac, macOS 26 or later, and an enabled, available system model. It is currently unavailable on this Mac.",
+    "useLLM": "Use Apple Intelligence by default",
+    "active": "Apple Intelligence is the default",
+    "included": "Included in macOS",
+    "speechDescription": "Local macOS speech recognition. No in-app model download; permission is required on first dictation."
+  },
   "tray": {
     "meetingRecording": "Meeting recording is running",
     "settings": "Settings...",
@@ -24,6 +60,14 @@
     "ariaLabel": "Main navigation"
   },
   "tts": {
+    "modules": {
+      "systemDefault": "{{name}} · macOS default",
+      "system": "System voice",
+      "optional": "Read aloud is optional. Download only the voices and their module that you want to use. You can also remove them there.",
+      "manage": "Manage read-aloud modules",
+      "chooseVoice": "Choose an available voice",
+      "unavailable": "The saved voice is not ready. Set up its module or choose an available voice."
+    },
     "title": "Read Aloud",
     "serverTitle": "Voice & playback",
     "description": "Local text-to-speech via Fish Speech on your own GPU. The server starts on demand and is stopped again after idle time to free VRAM.",
@@ -43,7 +87,7 @@
     "translationPlaceholder": "No translation yet — pick a language and press “Translate”. The text stays editable.",
     "translate": {
       "title": "Audio Translation",
-      "description": "Speak or type in one language — hear it in another, in your selected voice. Transcription and speech run locally; translation uses your configured post-processing provider (Custom = local Ollama).",
+      "description": "Speak or type in one language and listen in another. Translation uses your selected language model: installed in Local Voice AI, provided by your system, or connected through a provider.",
       "targetLang": "Target language",
       "inputPlaceholder": "Type text to translate and speak…",
       "translateSpeak": "Translate & speak",
@@ -53,7 +97,7 @@
       "working": "Working…",
       "heard": "Heard:",
       "result": "Translation:",
-      "providerHint": "Requires a configured post-processing provider with a model (Settings → Post Process). For fully local translation use Custom with Ollama and a small model."
+      "providerHint": "Choose or install a language model directly in Local Voice AI under Models. Available system models need no in-app download. External providers are optional."
     },
     "translating": "Translating…",
     "dictate": "Dictate",
@@ -66,7 +110,7 @@
     "sentenceProgress": "Sentence {{position}}/{{total}}",
     "summary": {
       "title": "AI Summary",
-      "description": "Summarize a text or document with an LLM before listening — provider is selectable (local Ollama, subscription or API via Post Process settings).",
+      "description": "Summarize a text or document before listening with your selected language model. Install a model directly in Local Voice AI, use an available system model, or connect a provider.",
       "loadDocument": "Load document…",
       "urlPlaceholder": "https://example.com/article",
       "loadUrl": "Load URL",
@@ -95,7 +139,7 @@
       "speak": "Read aloud",
       "export": "Save as audio…",
       "savedTo": "Saved: {{path}}",
-      "providerHint": "Uses the post-processing provider and model (Settings → Post Process)."
+      "providerHint": "Uses your selected language model. Under Models you can install a local model or choose an available system model."
     },
     "serverStart": "Start server",
     "serverStop": "Stop server",
@@ -249,6 +293,7 @@
       "busy": "Language model is working — translating or summarizing",
       "idle": "No language model loaded. Click to warm it up — otherwise it loads on the first job by itself.",
       "loaded": "Loaded: {{models}}. Click to unload or reload.",
+      "onDemand": "Your selected language model is used for the next text task. No warm-up is required.",
       "dialogTitle": "Language model (post-processing)",
       "dialogLoaded": "Loaded: {{models}}. Unloading frees the memory at once — the next job loads again and takes correspondingly longer. Warming up loads the configured model for ten minutes so the next job starts without loading time.",
       "dialogEmpty": "No model is loaded right now; translating and summarizing load it on demand and free the memory afterwards. Warming up loads it now for ten minutes so the next job starts without loading time.",
@@ -1128,11 +1173,11 @@
         "model": "Active model",
         "description": "Used for polishing, summaries, translation, minutes and tagging. You can also switch it in the footer.",
         "placeholder": "Choose a model…",
-        "none": "No model released yet — add a connection below and release models."
+        "none": "Choose an available system model or install a language model directly under Models. Connecting a provider is optional."
       },
       "connections": {
         "title": "Connections",
-        "empty": "No connection yet. Pick a provider below — local or cloud.",
+        "empty": "External providers are optional. Install local models directly under Models, where you can also choose available system models.",
         "add": "Add provider…",
         "enabled": "Connection enabled",
         "remove": "Remove connection",
@@ -1476,10 +1521,10 @@
   },
   "llmSelector": {
     "title": "Language model",
-    "none": "No language model",
+    "none": "Choose a model",
     "loading": "{{name}} loading …",
     "error": "{{name}}: error",
-    "empty": "No model released — download one under Models and press “Use”, or connect a provider in Settings.",
+    "empty": "Choose a language model under Models or install one directly in the app. External providers are optional.",
     "unload": "Unload from memory",
     "budget": "Budget: {{spent}} of {{limit}} USD ({{percent}} %) this month",
     "budgetExceeded": "Monthly budget exhausted: {{spent}} of {{limit}} USD ({{percent}} %)"

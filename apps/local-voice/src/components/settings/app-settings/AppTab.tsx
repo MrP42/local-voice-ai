@@ -15,12 +15,7 @@ import { UpdateChecksToggle } from "../UpdateChecksToggle";
 import { ShowWhatsNewOnUpdate } from "../ShowWhatsNewOnUpdate";
 import { AppDataDirectory } from "../AppDataDirectory";
 import { LogDirectory } from "../debug";
-import { ExperimentalToggle } from "../ExperimentalToggle";
-import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationSelector";
-import { AccelerationSelector } from "../AccelerationSelector";
-import { LazyStreamClose } from "../LazyStreamClose";
 import { SyncAccountCard } from "../SyncAccountCard";
-import { useSettings } from "../../../hooks/useSettings";
 
 /**
  * The application itself: how it looks, how it starts, what it keeps, how it
@@ -29,8 +24,6 @@ import { useSettings } from "../../../hooks/useSettings";
  */
 export const AppTab: React.FC = () => {
   const { t } = useTranslation();
-  const { getSetting } = useSettings();
-  const experimentalEnabled = getSetting("experimental_enabled") || false;
 
   return (
     <div className="w-full space-y-6">
@@ -66,20 +59,6 @@ export const AppTab: React.FC = () => {
       <SettingsGroup title={t("settings.app.groups.updates")}>
         <UpdateChecksToggle descriptionMode="tooltip" grouped={true} />
         <ShowWhatsNewOnUpdate descriptionMode="tooltip" grouped={true} />
-      </SettingsGroup>
-
-      <SettingsGroup title={t("settings.advanced.groups.experimental")}>
-        <ExperimentalToggle descriptionMode="tooltip" grouped={true} />
-        {experimentalEnabled && (
-          <>
-            <KeyboardImplementationSelector
-              descriptionMode="tooltip"
-              grouped={true}
-            />
-            <AccelerationSelector descriptionMode="tooltip" grouped={true} />
-            <LazyStreamClose descriptionMode="tooltip" grouped={true} />
-          </>
-        )}
       </SettingsGroup>
     </div>
   );

@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { LanguageModelSetupHint } from "@/components/shared/LanguageModelSetupHint";
+import { hasLanguageModel, isLanguageModelSetupError } from "@/lib/llmSetup";
 import { useTranslation } from "react-i18next";
 import { save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -7,6 +9,7 @@ import { Button } from "../../ui/Button";
 import { Alert } from "../../ui/Alert";
 import Badge from "../../ui/Badge";
 import { MarkdownContent } from "../../whats-new/MarkdownContent";
+import { useSettings } from "@/hooks/useSettings";
 import { Download } from "lucide-react";
 
 interface MinutesViewProps {
@@ -19,6 +22,8 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   meetingTitle,
 }) => {
   const { t } = useTranslation();
+  const { settings } = useSettings();
+  const modelReady = hasLanguageModel(settings);
   const [doc, setDoc] = useState<MeetingDocument | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -60,6 +65,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   }, [loadLatest, refreshAutoFile]);
 
   const generate = async () => {
+    if (!modelReady) return;
     setGenerating(true);
     setError(null);
     setSaved(null);
@@ -140,10 +146,11 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
 
   return (
     <div className="space-y-3">
-      {error && <Alert variant="error">{error}</Alert>}
+      {error && !isLanguageModelSetupError(error) && <Alert variant="error">{error}</Alert>}
+      {((settings && !modelReady) || isLanguageModelSetupError(error)) && <LanguageModelSetupHint />}
 
       <div className="flex gap-2 items-center flex-wrap">
-        <Button onClick={generate} disabled={generating}>
+        <Button onClick={generate} disabled={!modelReady || generating}>
           {doc
             ? t("meetings.detail.regenerate")
             : t("meetings.detail.generate")}

@@ -56,6 +56,23 @@ public func processTextWithSystemPrompt(
     _ userContent: UnsafePointer<CChar>,
     maxTokens: Int32
 ) -> UnsafeMutablePointer<AppleLLMResponse> {
+    processAppleText(systemPrompt, userContent, maxTokens: maxTokens, cleanTranscript: true)
+}
+
+@_cdecl("generate_text_apple")
+public func generateAppleText(
+    _ systemPrompt: UnsafePointer<CChar>,
+    _ userContent: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<AppleLLMResponse> {
+    processAppleText(systemPrompt, userContent, maxTokens: 0, cleanTranscript: false)
+}
+
+private func processAppleText(
+    _ systemPrompt: UnsafePointer<CChar>,
+    _ userContent: UnsafePointer<CChar>,
+    maxTokens: Int32,
+    cleanTranscript: Bool
+) -> UnsafeMutablePointer<AppleLLMResponse> {
     let swiftSystemPrompt = String(cString: systemPrompt)
     let swiftUserContent = String(cString: userContent)
     let responsePtr = ResponsePointer.allocate(capacity: 1)
@@ -86,7 +103,7 @@ public func processTextWithSystemPrompt(
     }
     let box = ResultBox()
 
-    Task.detached(priority: .userInitiated) {
+    let task = Task.detached(priority: .userInitiated) {
         defer { semaphore.signal() }
         do {
             let session = LanguageModelSession(
@@ -95,15 +112,19 @@ public func processTextWithSystemPrompt(
             )
             var output: String
 
-            do {
-                let structured = try await session.respond(
-                    to: swiftUserContent,
-                    generating: CleanedTranscript.self
-                )
-                output = structured.content.cleanedText
-            } catch {
-                let fallbackGeneration = try await session.respond(to: swiftUserContent)
-                output = fallbackGeneration.content
+            if cleanTranscript {
+                do {
+                    let structured = try await session.respond(
+                        to: swiftUserContent, generating: CleanedTranscript.self
+                    )
+                    output = structured.content.cleanedText
+                } catch {
+                    output = try await session.respond(to: swiftUserContent).content
+                }
+            } else {
+                // Reports, translations and summaries must not be forced into
+                // the dictation-specific CleanedTranscript response type.
+                output = try await session.respond(to: swiftUserContent).content
             }
 
             if tokenLimit > 0 {
@@ -115,7 +136,11 @@ public func processTextWithSystemPrompt(
         }
     }
 
-    semaphore.wait()
+    if semaphore.wait(timeout: .now() + 120) == .timedOut {
+        task.cancel()
+        responsePtr.pointee.error_message = duplicateCString("Apple Intelligence timed out.")
+        return responsePtr
+    }
 
     // Write to responsePtr on the calling thread after task completes
     if let response = box.response {

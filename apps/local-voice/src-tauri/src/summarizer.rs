@@ -175,19 +175,14 @@ async fn ask_llm(settings: &AppSettings, prompt: String) -> Result<String, Strin
     let provider = settings
         .active_post_process_provider()
         .cloned()
-        .ok_or_else(|| {
-            "Kein LLM-Provider konfiguriert (Einstellungen → Nachbearbeitung)".to_string()
-        })?;
+        .ok_or_else(|| crate::llm_client::MODEL_SETUP_REQUIRED.to_string())?;
     let model = settings
         .post_process_models
         .get(&provider.id)
         .cloned()
         .unwrap_or_default();
     if model.trim().is_empty() {
-        return Err(format!(
-            "Für '{}' ist kein Modell eingetragen (Einstellungen → Nachbearbeitung → Modell). Ganz lokal geht es mit dem Anbieter 'Ollama (lokal)' oder 'vLLM (lokal)'.",
-            provider.label
-        ));
+        return Err(crate::llm_client::MODEL_SETUP_REQUIRED.to_string());
     }
     let api_key = settings
         .post_process_api_keys
@@ -243,6 +238,21 @@ pub async fn summarize(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn missing_summary_model_requests_setup_before_inference() {
+        let mut settings = crate::settings::get_default_settings();
+        settings.post_process_models.clear();
+        assert_eq!(
+            ask_llm(&settings, "Test".into()).await.unwrap_err(),
+            crate::llm_client::MODEL_SETUP_REQUIRED
+        );
+        settings.post_process_provider_id = "removed".into();
+        assert_eq!(
+            ask_llm(&settings, "Test".into()).await.unwrap_err(),
+            crate::llm_client::MODEL_SETUP_REQUIRED
+        );
+    }
 
     fn opts() -> SummaryOptions {
         SummaryOptions {

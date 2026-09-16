@@ -5181,6 +5181,13 @@
           "size_bytes": 19146957,
           "sha256": "6b1eb03b3735946cb35216e063e7eebcc33a6bbf5dd96ec0217959bf1cdcb0cc",
           "url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_macos_aarch64.tar.gz"
+        },
+        {
+          "filename": "piper-phonemize_macos_aarch64.tar.gz",
+          "quant": "archive",
+          "size_bytes": 26641933,
+          "sha256": "78a9c28b3c94baf6e9526b2e386ce547909abaec4f31aadd7e16b01fbfe5f322",
+          "url": "https://github.com/rhasspy/piper-phonemize/releases/download/2023.11.14-4/piper-phonemize_macos_aarch64.tar.gz"
         }
       ]
     },
@@ -5196,6 +5203,13 @@
           "size_bytes": 19146927,
           "sha256": "ced85c0a3df13945b1e623b878a48fdc2854d5c485b4b67f62857cf551deaf8b",
           "url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_macos_x64.tar.gz"
+        },
+        {
+          "filename": "piper-phonemize_macos_x64.tar.gz",
+          "quant": "archive",
+          "size_bytes": 26641959,
+          "sha256": "9ec6e300c0d012a663758bc45a097b47ee759761a3b91c7742de042af789d84b",
+          "url": "https://github.com/rhasspy/piper-phonemize/releases/download/2023.11.14-4/piper-phonemize_macos_x64.tar.gz"
         }
       ]
     },
@@ -5615,6 +5629,25 @@
           "size_bytes": 5680522464,
           "sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
           "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf"
+        }
+      ]
+    },
+    {
+      "id": "llm-gemma4-e2b-qat-q4",
+      "name": "Gemma 4 E2B",
+      "description": "Google Gemma 4 E2B, offizielle QAT-Quantisierung (Q4_0). Für lokale Textaufgaben; Bild- und Audioeingaben sind hier nicht aktiviert.",
+      "purpose": "llm-model",
+      "tags": [
+        "mehrsprachig",
+        "zusammenfassung"
+      ],
+      "files": [
+        {
+          "filename": "gemma-4-E2B_q4_0-it.gguf",
+          "quant": "Q4_0",
+          "size_bytes": 3349516256,
+          "sha256": "fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634",
+          "url": "https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/675cff42a74c774d6cb76f76d8eacb49b48c9b93/gemma-4-E2B_q4_0-it.gguf"
         }
       ]
     },

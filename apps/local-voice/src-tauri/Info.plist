@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Local Voice AI uses Apple's on-device speech recognition to transcribe your recordings locally. Audio is not sent to Apple's servers.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Request microphone access to transcribe audio locally</string>
 </dict>

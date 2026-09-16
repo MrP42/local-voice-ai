@@ -75,6 +75,11 @@ function App() {
       });
       refreshAudioDevices();
       refreshOutputDevices();
+      if (platform() === "macos") {
+        void commands.appleSystemInitialize()
+          .then(() => useSettingsStore.getState().refreshSettings())
+          .catch((error) => console.warn("Apple system defaults unavailable", error));
+      }
     }
   }, [onboardingStep, refreshAudioDevices, refreshOutputDevices]);
 

@@ -1,4 +1,40 @@
 {
+  "localModels": {
+    "macIntel": "Dieser Mac · Intel",
+    "macApple": "Dieser Mac · Apple Silicon",
+    "computer": "Dieser Computer",
+    "installed": "{{count}} von {{total}} Sprachmodellen lokal installiert",
+    "runtimeReady": "Laufzeit installiert · {{backends}}",
+    "runtimeNeeded": "Für diese lokalen Modelle zuerst die passende Laufzeit unten installieren.",
+    "selected": "Lokal ausgewählt: {{name}}",
+    "notSelected": "Noch kein lokales Sprachmodell ausgewählt",
+    "loaded": "Im Speicher: {{name}} · {{backend}}",
+    "stopped": "Kein Sprachmodell im Speicher · Start beim nächsten Auftrag",
+    "starting": "Sprachmodell wird geladen …",
+    "checking": "Modellstatus wird geprüft …",
+    "error": "Sprachmodell konnte nicht gestartet werden",
+    "compatible": "Kompatibles Modellformat",
+    "unsupported": "Keine Laufzeit für dieses Gerät",
+    "ramEstimate": "Arbeitsspeicher: etwa {{need}} GB benötigt · {{free}} GB RAM frei"
+  },
+  "modelSetup": {
+    "description": "Für KI-Textfunktionen ein Sprachmodell auswählen: direkt in Local Voice AI installieren oder ein verfügbares Systemmodell nutzen.",
+    "choose": "Modell auswählen oder installieren",
+    "connect": "Anbieter verbinden"
+  },
+  "appleSystem": {
+    "systemLanguage": "macOS-Systemsprache",
+    "title": "macOS-Systemmodelle",
+    "voices": "Die macOS-Systemstimme ist sofort verfügbar. Weitere Vorlesemodule sind optional.",
+    "speechReady": "Apple Speech ist für lokale Diktate verfügbar – ohne Modelldownload in der App. Beim ersten Mal fragt macOS nach der Freigabe.",
+    "speechUnavailable": "Apple Speech ist für die aktuelle Systemsprache nicht lokal verfügbar. Es wird keine Server-Erkennung verwendet.",
+    "llmReady": "Apple Intelligence ist lokal verfügbar. Es kann Übersetzungen, Zusammenfassungen und Protokolle erstellen.",
+    "llmUnavailable": "Apple Intelligence benötigt einen Mac mit Apple-Chip, macOS 26 oder neuer sowie ein aktiviertes, verfügbares Systemmodell. Auf diesem Mac ist es derzeit nicht nutzbar.",
+    "useLLM": "Apple Intelligence als Standard verwenden",
+    "active": "Apple Intelligence ist Standard",
+    "included": "In macOS enthalten",
+    "speechDescription": "Lokale macOS-Spracherkennung. Kein Modelldownload in der App; Freigabe beim ersten Diktat erforderlich."
+  },
   "tray": {
     "meetingRecording": "Meeting-Aufnahme läuft",
     "settings": "Einstellungen...",
@@ -24,6 +60,14 @@
     "ariaLabel": "Hauptnavigation"
   },
   "tts": {
+    "modules": {
+      "systemDefault": "{{name}} · macOS-Standard",
+      "system": "Systemstimme",
+      "optional": "Vorlesen ist optional. Lade nur die Stimmen und das zugehörige Modul, die du verwenden möchtest. Entfernen ist dort ebenfalls möglich.",
+      "manage": "Vorlesemodule verwalten",
+      "chooseVoice": "Verfügbare Stimme auswählen",
+      "unavailable": "Die gespeicherte Stimme ist nicht einsatzbereit. Bitte richte das Modul ein oder wähle eine verfügbare Stimme."
+    },
     "title": "Vorlesen",
     "serverTitle": "Stimme & Wiedergabe",
     "description": "Lokale Sprachausgabe über Fish Speech auf der eigenen GPU. Der Server startet bei Bedarf und wird nach Leerlauf wieder gestoppt, um VRAM freizugeben.",
@@ -43,7 +87,7 @@
     "translationPlaceholder": "Noch keine Übersetzung — Sprache wählen und auf „Übersetzen“ klicken. Der Text bleibt änderbar.",
     "translate": {
       "title": "Audio-Übersetzung",
-      "description": "In einer Sprache sprechen oder tippen — in einer anderen hören, in der gewählten Stimme. Transkription und Sprachausgabe laufen lokal; die Übersetzung nutzt den konfigurierten Post-Processing-Provider (Custom = lokales Ollama).",
+      "description": "In einer Sprache sprechen oder tippen und in einer anderen hören. Die Übersetzung nutzt dein ausgewähltes Sprachmodell: in Local Voice AI installiert, als Systemmodell verfügbar oder über einen Anbieter verbunden.",
       "targetLang": "Zielsprache",
       "inputPlaceholder": "Text zum Übersetzen und Vorlesen eingeben…",
       "translateSpeak": "Übersetzen & vorlesen",
@@ -53,7 +97,7 @@
       "working": "Arbeitet…",
       "heard": "Verstanden:",
       "result": "Übersetzung:",
-      "providerHint": "Braucht einen konfigurierten Post-Processing-Provider mit Modell (Einstellungen → Nachbearbeitung). Für komplett lokale Übersetzung: Custom mit Ollama und einem kleinen Modell."
+      "providerHint": "Wähle unter Modelle ein Sprachmodell aus oder installiere es direkt in Local Voice AI. Verfügbare Systemmodelle brauchen keinen App-Download. Externe Anbieter sind optional."
     },
     "translating": "Übersetze …",
     "dictate": "Diktieren",
@@ -66,7 +110,7 @@
     "sentenceProgress": "Satz {{position}}/{{total}}",
     "summary": {
       "title": "KI-Zusammenfassung",
-      "description": "Text oder Dokument vor dem Anhören per LLM zusammenfassen — Provider wählbar (lokales Ollama, Subscription oder API über die Nachbearbeitungs-Einstellungen).",
+      "description": "Text oder Dokument vor dem Anhören mit dem ausgewählten Sprachmodell zusammenfassen. Du kannst ein Modell direkt in Local Voice AI installieren, ein verfügbares Systemmodell nutzen oder einen Anbieter verbinden.",
       "loadDocument": "Dokument laden…",
       "urlPlaceholder": "https://beispiel.de/artikel",
       "loadUrl": "URL laden",
@@ -95,7 +139,7 @@
       "speak": "Vorlesen",
       "export": "Als Audio speichern…",
       "savedTo": "Gespeichert: {{path}}",
-      "providerHint": "Nutzt Provider und Modell der Nachbearbeitung (Einstellungen → Nachbearbeitung)."
+      "providerHint": "Nutzt das ausgewählte Sprachmodell. Unter Modelle kannst du ein lokales Modell installieren oder ein verfügbares Systemmodell auswählen."
     },
     "serverStart": "Server starten",
     "serverStop": "Server stoppen",
@@ -249,6 +293,7 @@
       "busy": "Sprachmodell arbeitet — übersetzt oder fasst gerade zusammen",
       "idle": "Kein Sprachmodell geladen. Klicken zum Vorwärmen — sonst lädt es beim ersten Auftrag von selbst.",
       "loaded": "Geladen: {{models}}. Klicken zum Entladen oder Neuladen.",
+      "onDemand": "Das ausgewählte Sprachmodell wird bei der nächsten Textaufgabe verwendet. Ein Vorwärmen ist nicht erforderlich.",
       "dialogTitle": "Sprachmodell (Nachbearbeitung)",
       "dialogLoaded": "Geladen ist: {{models}}. Entladen gibt den Speicher sofort frei — der nächste Auftrag lädt neu und dauert entsprechend länger. Vorwärmen lädt das konfigurierte Modell für zehn Minuten, damit der nächste Auftrag ohne Ladezeit beginnt.",
       "dialogEmpty": "Zurzeit ist kein Modell geladen; Übersetzen und Zusammenfassen laden es bei Bedarf und geben den Speicher danach wieder frei. Vorwärmen lädt es jetzt für zehn Minuten, damit der nächste Auftrag ohne Ladezeit beginnt.",
@@ -1128,11 +1173,11 @@
         "model": "Aktives Modell",
         "description": "Wird für Nachbearbeitung, Zusammenfassung, Übersetzung, Protokoll und Tagging verwendet. Wechseln geht auch unten in der Fußleiste.",
         "placeholder": "Modell wählen…",
-        "none": "Noch kein Modell freigegeben — unten eine Verbindung anlegen und Modelle freigeben."
+        "none": "Wähle ein verfügbares Systemmodell oder installiere ein Sprachmodell direkt unter Modelle. Optional kannst du einen Anbieter verbinden."
       },
       "connections": {
         "title": "Verbindungen",
-        "empty": "Noch keine Verbindung. Wähle unten einen Anbieter — lokal oder in der Cloud.",
+        "empty": "Externe Anbieter sind optional. Lokale Modelle lassen sich direkt unter Modelle installieren; verfügbare Systemmodelle kannst du dort ebenfalls auswählen.",
         "add": "Anbieter hinzufügen…",
         "enabled": "Verbindung aktiv",
         "remove": "Verbindung entfernen",
@@ -1476,10 +1521,10 @@
   },
   "llmSelector": {
     "title": "Sprachmodell",
-    "none": "Kein Sprachmodell",
+    "none": "Modell auswählen",
     "loading": "{{name}} lädt …",
     "error": "{{name}}: Fehler",
-    "empty": "Kein Modell freigegeben — unter Modelle ein Sprachmodell laden und „Verwenden“, oder in den Einstellungen einen Anbieter verbinden.",
+    "empty": "Ein Sprachmodell unter Modelle auswählen oder direkt in der App installieren. Externe Anbieter sind optional.",
     "unload": "Aus dem Speicher entladen",
     "budget": "Budget: {{spent}} von {{limit}} USD ({{percent}} %) in diesem Monat",
     "budgetExceeded": "Monatsbudget ausgeschöpft: {{spent}} von {{limit}} USD ({{percent}} %)"

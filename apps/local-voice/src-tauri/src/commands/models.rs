@@ -69,6 +69,9 @@ pub async fn delete_model(
     transcription_manager: State<'_, Arc<TranscriptionManager>>,
     model_id: String,
 ) -> Result<(), String> {
+    if model_id == crate::apple_speech::MODEL_ID {
+        return Err("The system speech model is managed by macOS".into());
+    }
     // If deleting the active model, unload it and clear the setting
     let settings = get_settings(&app_handle);
     if settings.selected_model == model_id {

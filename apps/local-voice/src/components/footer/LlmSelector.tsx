@@ -7,6 +7,7 @@ import {
   type BudgetState,
   type LocalLlmStatus,
 } from "@/bindings";
+import { LanguageModelSetupHint } from "@/components/shared/LanguageModelSetupHint";
 import { useSettings } from "../../hooks/useSettings";
 
 /**
@@ -108,7 +109,7 @@ export const LlmSelector: React.FC = () => {
   }, [open]);
 
   const light = (): string => {
-    if (!active) return "bg-red-400";
+    if (!active) return "bg-mid-gray/60";
     // Budget schlaegt Ladezustand: ein gesperrtes Modell ist nicht "gruen".
     if (budgetExceeded && budget?.enforced) return "bg-red-400";
     if (budgetWarning) return "bg-yellow-400";
@@ -222,7 +223,7 @@ export const LlmSelector: React.FC = () => {
         >
           {selectable.length === 0 ? (
             <div className="px-3 py-2 text-sm text-text/60">
-              {t("llmSelector.empty")}
+              <LanguageModelSetupHint />
             </div>
           ) : (
             selectable.map(({ model, connection }) => (

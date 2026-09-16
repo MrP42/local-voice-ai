@@ -9,6 +9,9 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 import { AlwaysOnMicrophone } from "../AlwaysOnMicrophone";
 import { SoundPicker } from "../SoundPicker";
 import { ClamshellMicrophoneSelector } from "../ClamshellMicrophoneSelector";
+import { KeyboardImplementationSelector } from "./KeyboardImplementationSelector";
+import { AccelerationSelector } from "../AccelerationSelector";
+import { LazyStreamClose } from "../LazyStreamClose";
 import { WhatsNewPreview } from "./WhatsNewPreview";
 
 export const DebugSettings: React.FC = () => {
@@ -35,6 +38,12 @@ export const DebugSettings: React.FC = () => {
         <RecordingBuffer descriptionMode="tooltip" grouped={true} />
         <AlwaysOnMicrophone descriptionMode="tooltip" grouped={true} />
         <ClamshellMicrophoneSelector descriptionMode="tooltip" grouped={true} />
+        <KeyboardImplementationSelector
+          descriptionMode="tooltip"
+          grouped={true}
+        />
+        <AccelerationSelector descriptionMode="tooltip" grouped={true} />
+        <LazyStreamClose descriptionMode="tooltip" grouped={true} />
         <LiveLogViewer descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
     </div>
