@@ -151,16 +151,35 @@ pub fn local_update_install(app: AppHandle, path: String) -> Result<(), String> 
 
     #[cfg(target_os = "windows")]
     {
-        // /P = passiv: Fortschritt sichtbar, keine Rueckfragen. Der Tauri-NSIS-
-        // Installer ersetzt die laufende Installation an Ort und Stelle.
-        std::process::Command::new(&candidate)
-            .arg("/P")
+        // Reihenfolge ist entscheidend: erst die App beenden, DANN den
+        // Installer starten. Andersherum (16.09.2026) kam der Installer bei
+        // "Extract: local-voice-ai.exe" an, waehrend die EXE noch lief ->
+        // "error writing to file". Ein abgekoppelter cmd-Helfer wartet, bis
+        // unser Prozess weg ist, und startet dann den Installer passiv (/P).
+        use std::os::windows::process::CommandExt;
+        let pid = std::process::id();
+        let script = format!(
+            "@echo off
+:wait
+tasklist /FI \"PID eq {pid}\" 2>NUL | find \"{pid}\" >NUL && (timeout /t 1 /nobreak >NUL & goto wait)
+start \"\" /wait \"{}\" /P
+del \"%~f0\"
+",
+            candidate.display()
+        );
+        let helper = std::env::temp_dir().join(format!("local-voice-update-{pid}.cmd"));
+        std::fs::write(&helper, script).map_err(|e| format!("Update-Helfer: {e}"))?;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        std::process::Command::new("cmd")
+            .args(["/C", &helper.to_string_lossy()])
+            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
             .spawn()
-            .map_err(|e| format!("Installer konnte nicht gestartet werden: {e}"))?;
-        log::info!("local update: installer started ({file_name}); exiting");
+            .map_err(|e| format!("Update-Helfer konnte nicht gestartet werden: {e}"))?;
+        log::info!("local update: helper armed for {file_name}; exiting so the installer can replace the exe");
         let app = app.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(800));
+            std::thread::sleep(std::time::Duration::from_millis(300));
             app.exit(0);
         });
         Ok(())
