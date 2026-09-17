@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
+import { ARCHIVE_EXT, exportVoiceArchive } from "./exportVoice";
 import { Check, Download, Upload } from "lucide-react";
 import { commands, type VoiceMeta } from "@/bindings";
 import { VOICE_PALETTE, voiceColor } from "@/lib/voices/palette";
@@ -10,7 +11,6 @@ import { Textarea } from "../../../ui/Textarea";
 
 /** Endung des Stimmen-Archivs — einmal hier, damit Speichern- und
  *  Oeffnen-Dialog nicht auseinanderlaufen koennen. */
-const ARCHIVE_EXT = "lvvoice";
 
 /** Grenzen der Klangregler, gespiegelt aus `VoiceSound` in den Bindings. */
 const SPEED_MIN = 0.5;
@@ -135,32 +135,15 @@ export const VoiceEditor: React.FC<VoiceEditorProps> = ({ id, onChanged }) => {
   const exportVoice = async () => {
     setError(null);
     setNote(null);
-    let target: string | null = null;
-    try {
-      target = await save({
-        defaultPath: `${id}.${ARCHIVE_EXT}`,
-        filters: [
-          { name: t("tts.voiceEdit.archiveFilter"), extensions: [ARCHIVE_EXT] },
-        ],
-      });
-    } catch (e) {
-      setError(asMessage(e));
-      return;
-    }
-    if (typeof target !== "string") return;
     setBusy(true);
-    try {
-      const res = await commands.ttsExportVoice(id, target);
-      if (res.status === "error") {
-        setError(res.error);
-        return;
-      }
-      setNote(t("tts.voiceEdit.exportDone", { path: target }));
-    } catch (e) {
-      setError(asMessage(e));
-    } finally {
-      setBusy(false);
-    }
+    const outcome = await exportVoiceArchive(
+      id,
+      t("tts.voiceEdit.archiveFilter"),
+    );
+    setBusy(false);
+    if (outcome.status === "error") setError(outcome.message);
+    if (outcome.status === "done")
+      setNote(t("tts.voiceEdit.exportDone", { path: outcome.path }));
   };
 
   if (!meta) {

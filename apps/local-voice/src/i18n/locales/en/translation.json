@@ -148,6 +148,10 @@
       "transcribing": "Transcribing …",
       "transcriptManualPlaceholder": "Exact transcript of the recording (automatic transcription is off — enter the text here)",
       "previewCreate": "Create sample",
+      "previewPlay": "Preview",
+      "previewStop": "Stop",
+      "exportArchive": "Export voice (archive)",
+      "previewSentence": "Every preview speaks the same sentence so that voices, not recordings, are compared.",
       "previewNeedsEngine": "No sample yet — creating one starts the speech engine once.",
       "piperOption": "{{name}} · Piper",
       "manage": "Manage voices …"

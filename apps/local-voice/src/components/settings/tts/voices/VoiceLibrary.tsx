@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { VoicesCard } from "../VoicesCard";
+import { VoicePreviewButton } from "./VoicePreviewButton";
 
 /**
  * Stimmen anhoeren und verwalten — auf der Modelle-Seite, nicht mehr unter
@@ -75,6 +76,14 @@ export const VoiceLibrary = () => {
               <Dices width={14} height={14} />
               {t("tts.settings.rollSeed")}
             </Button>
+            {/* Der Seed ist erst dann eine Wahl, wenn man ihn hoeren kann —
+                direkt neben dem Wuerfel, mit dem man ihn aendert. Der
+                Seed-Wert ist der Schluessel, damit nach dem Wuerfeln die
+                neue Stimme erklingt und nicht die alte aus dem Cache. */}
+            <VoicePreviewButton
+              voiceId=""
+              refreshKey={getSetting("tts_seed") ?? 42}
+            />
             <Button
               variant="secondary"
               size="sm"
