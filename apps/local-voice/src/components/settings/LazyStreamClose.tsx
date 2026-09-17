@@ -13,7 +13,7 @@ export const LazyStreamClose: React.FC<LazyStreamCloseProps> = React.memo(
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
 
-    const enabled = getSetting("lazy_stream_close") ?? false;
+    const enabled = getSetting("lazy_stream_close") ?? true;
 
     return (
       <ToggleSwitch

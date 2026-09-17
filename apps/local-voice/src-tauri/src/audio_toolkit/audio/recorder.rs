@@ -20,9 +20,9 @@ use crate::audio_toolkit::{
 };
 
 enum Cmd {
-    /// Begin capturing. Carries the send timestamp so the consumer can log how
-    /// long the command sat in the channel (and how much audio was dropped
-    /// before it was seen).
+    /// Begin capturing. Carries the moment capture was requested (the hotkey,
+    /// when the caller passes it through) so the consumer can log the real
+    /// request-to-first-audio latency, not just channel wait time.
     Start(VadPolicy, Instant),
     Stop(mpsc::Sender<Vec<f32>>),
     Shutdown,
@@ -77,6 +77,11 @@ pub struct AudioRecorder {
     vad: Option<VadConfig>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
     audio_cb: Option<AudioFrameCallback>,
+    /// Fired once per recording, when the first chunk of audio has actually been
+    /// captured. Until then the stream may be running without delivering samples
+    /// (WASAPI/USB warm-up, 200-600 ms measured), so this is the honest "you can
+    /// speak now" signal for overlay and start sound.
+    ready_cb: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
     /// Preferred stream config cached per device name. The two HAL property
     /// queries in `get_preferred_config` cost ~40-85ms per open (worse on
     /// USB/Bluetooth), which lands on the keypress->capture path in on-demand
@@ -95,6 +100,7 @@ impl AudioRecorder {
             vad: None,
             level_cb: None,
             audio_cb: None,
+            ready_cb: None,
             config_cache: Arc::new(Mutex::new(None)),
         })
     }
@@ -136,6 +142,17 @@ impl AudioRecorder {
         self
     }
 
+    /// Register a callback that fires when the first audio chunk of a recording
+    /// has been captured (see `ready_cb`). Runs on the consumer thread; keep it
+    /// cheap.
+    pub fn with_capture_ready_callback<F>(mut self, cb: F) -> Self
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.ready_cb = Some(Arc::new(cb));
+        self
+    }
+
     pub fn open(&mut self, device: Option<Device>) -> Result<(), Box<dyn std::error::Error>> {
         if self.worker_handle.is_some() {
             return Ok(()); // already open
@@ -159,6 +176,7 @@ impl AudioRecorder {
         let level_cb = self.level_cb.clone();
         // Move the optional real-time audio frame callback into the worker thread
         let audio_cb = self.audio_cb.clone();
+        let ready_cb = self.ready_cb.clone();
         let config_cache = Arc::clone(&self.config_cache);
 
         let worker = std::thread::spawn(move || {
@@ -275,6 +293,7 @@ impl AudioRecorder {
                         cmd_rx,
                         level_cb,
                         audio_cb,
+                        ready_cb,
                         stop_flag,
                         stream_running_at,
                     );
@@ -317,8 +336,19 @@ impl AudioRecorder {
     }
 
     pub fn start(&self, vad_policy: VadPolicy) -> Result<(), Box<dyn std::error::Error>> {
+        self.start_at(vad_policy, Instant::now())
+    }
+
+    /// Like `start`, but `requested_at` is when the user asked for capture (the
+    /// hotkey). It only feeds the latency log; capture itself begins with the
+    /// next chunk either way.
+    pub fn start_at(
+        &self,
+        vad_policy: VadPolicy,
+        requested_at: Instant,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(tx) = &self.cmd_tx {
-            tx.send(Cmd::Start(vad_policy, Instant::now()))?;
+            tx.send(Cmd::Start(vad_policy, requested_at))?;
         }
         Ok(())
     }
@@ -511,6 +541,76 @@ mod tests {
         assert!(!is_no_input_device_error("permission denied"));
         assert!(!is_no_input_device_error("device not found"));
     }
+
+    /// Misst am echten Standardmikrofon, wie lange es von der Aufnahme-
+    /// Anforderung bis zum ersten erfassten Audio dauert.
+    /// KALT = Stream je Lauf neu geoeffnet (so lief vor dem Fix jedes Diktat),
+    /// WARM = Stream bleibt offen (so laeuft es jetzt innerhalb des
+    /// Idle-Fensters). Braucht Hardware, deshalb nur auf Wunsch:
+    /// `cargo test capture_latency -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn capture_latency_cold_vs_warm() {
+        use super::{AudioRecorder, VadPolicy};
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        const RUNS: usize = 4;
+        // Pause zwischen Kaltstarts, damit das Geraet wieder einschlaeft
+        // (im App-Log: 10 s Abstand -> 187 ms, Minuten -> 560-630 ms).
+        const COOL_DOWN: Duration = Duration::from_secs(12);
+
+        fn make() -> (AudioRecorder, mpsc::Receiver<Instant>) {
+            let (tx, rx) = mpsc::channel();
+            let rec = AudioRecorder::new()
+                .unwrap()
+                .with_capture_ready_callback(move || {
+                    let _ = tx.send(Instant::now());
+                });
+            (rec, rx)
+        }
+        fn measure(rec: &AudioRecorder, rx: &mpsc::Receiver<Instant>) -> Duration {
+            let t0 = Instant::now();
+            rec.start_at(VadPolicy::Disabled, t0).unwrap();
+            let first = rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("kein Audio innerhalb von 5 s");
+            let _ = rec.stop().unwrap();
+            first.duration_since(t0)
+        }
+        fn ms(d: &Duration) -> String {
+            format!("{:.0}", d.as_secs_f64() * 1000.0)
+        }
+
+        let mut cold = Vec::new();
+        for i in 0..RUNS {
+            if i > 0 {
+                std::thread::sleep(COOL_DOWN);
+            }
+            let (mut rec, rx) = make();
+            let open_at = Instant::now();
+            rec.open(None).unwrap();
+            let open_ms = open_at.elapsed();
+            let d = measure(&rec, &rx);
+            rec.close().unwrap();
+            // Kalt zaehlt open() mit: vor dem Fix lag es auf dem Hotkey-Pfad.
+            cold.push(open_ms + d);
+        }
+
+        let (mut rec, rx) = make();
+        rec.open(None).unwrap();
+        let _ = measure(&rec, &rx); // Anlauf, nicht gewertet
+        let mut warm = Vec::new();
+        for _ in 0..RUNS {
+            std::thread::sleep(Duration::from_millis(800));
+            warm.push(measure(&rec, &rx));
+        }
+        rec.close().unwrap();
+
+        let fmt = |v: &Vec<Duration>| v.iter().map(ms).collect::<Vec<_>>().join(" / ");
+        eprintln!("LATENZ_KALT_MS  (Stream je Diktat neu, Verhalten vorher): {}", fmt(&cold));
+        eprintln!("LATENZ_WARM_MS  (Stream offen, Verhalten nachher):        {}", fmt(&warm));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -521,6 +621,7 @@ fn run_consumer(
     cmd_rx: mpsc::Receiver<Cmd>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
     audio_cb: Option<AudioFrameCallback>,
+    ready_cb: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
     stop_flag: Arc<AtomicBool>,
     stream_running_at: Instant,
 ) {
@@ -539,7 +640,8 @@ fn run_consumer(
     // first-captured log confirms capture begins with the chunk in flight
     // when Cmd::Start lands.
     let mut first_chunk_logged = false;
-    let mut awaiting_first_captured_chunk: Option<Instant> = None;
+    // (requested_at from Cmd::Start, moment the command was processed)
+    let mut awaiting_first_captured_chunk: Option<(Instant, Instant)> = None;
 
     // ---------- spectrum visualisation setup ---------------------------- //
     const BUCKETS: usize = 16;
@@ -606,12 +708,12 @@ fn run_consumer(
         let mut pending = Some(chunk);
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
-                Cmd::Start(policy, sent_at) => {
+                Cmd::Start(policy, requested_at) => {
                     log::debug!(
-                        "Cmd::Start processed {:?} after send; capture begins with the in-flight chunk",
-                        sent_at.elapsed()
+                        "Cmd::Start processed {:?} after request; capture begins with the in-flight chunk",
+                        requested_at.elapsed()
                     );
-                    awaiting_first_captured_chunk = Some(Instant::now());
+                    awaiting_first_captured_chunk = Some((requested_at, Instant::now()));
                     stop_flag.store(false, Ordering::Relaxed);
                     vad_policy = policy;
                     processed_samples.clear();
@@ -734,12 +836,18 @@ fn run_consumer(
         });
 
         if recording {
-            if let Some(started) = awaiting_first_captured_chunk.take() {
-                log::debug!(
-                    "first captured chunk ({:.1}ms of audio) processed {:?} after Cmd::Start",
+            if let Some((requested_at, processed_at)) = awaiting_first_captured_chunk.take() {
+                // The one number that matters for "were my first words lost":
+                // request (hotkey) -> first captured audio.
+                log::info!(
+                    "capture ready {:?} after request (first chunk {:.1}ms of audio, {:?} after Cmd::Start)",
+                    requested_at.elapsed(),
                     chunk_ms,
-                    started.elapsed()
+                    processed_at.elapsed()
                 );
+                if let Some(cb) = &ready_cb {
+                    cb();
+                }
             }
         }
     }

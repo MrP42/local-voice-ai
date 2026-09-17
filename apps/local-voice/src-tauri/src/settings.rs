@@ -811,7 +811,7 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -1387,7 +1387,7 @@ pub fn get_default_settings() -> AppSettings {
         app_language: default_app_language(),
         theme: default_theme(),
         experimental_enabled: false,
-        lazy_stream_close: false,
+        lazy_stream_close: true,
         keyboard_implementation: KeyboardImplementation::default(),
         show_tray_icon: default_show_tray_icon(),
         paste_delay_ms: default_paste_delay_ms(),
@@ -1733,6 +1733,17 @@ fn apply_settings_migrations(
         // Zusammenfassung, Uebersetzung und Protokoll. Ab hier ist sie immer
         // an; was sie tut, entscheidet allein das aktive Modell.
         settings.post_process_enabled = true;
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
+    // Schema 3: Mikrofon nach dem Diktat offen halten ist jetzt Standard. Der
+    // Kaltstart eines WASAPI-Streams liefert erst 200-600 ms nach play() das
+    // erste Sample (gemessen 15.09.2026, USB-Mikrofon). Mit geschlossenem Stream
+    // war deshalb JEDES Diktat ein Kaltstart, und die ersten Woerter fehlten.
+    // Einmalig auf `true` gesetzt; wer es bewusst aus will, schaltet es wieder ab.
+    if stored_schema_version < 3 {
+        settings.lazy_stream_close = true;
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }
@@ -2208,7 +2219,39 @@ mod tests {
         let (conn, model) = settings.active_llm_model().expect("aktives Modell");
         assert_eq!(conn.kind, "openai");
         assert_eq!(model.remote_id, "gpt-4.1-mini");
-        assert_eq!(settings.settings_schema_version, 2);
+        assert_eq!(settings.settings_schema_version, 3);
+    }
+
+    /// Schema 3 schaltet das Offenhalten des Mikrofons einmalig ein, auch wenn
+    /// es gespeichert aus war -- der alte Default war die Ursache der
+    /// Startlatenz. Danach bleibt die Nutzerwahl unangetastet.
+    #[test]
+    fn schema_3_turns_lazy_stream_close_on_once() {
+        let mut settings = get_default_settings();
+        settings.lazy_stream_close = false;
+        settings.settings_schema_version = 2;
+        let raw = serde_json::json!({
+            "settings_schema_version": 2,
+            "lazy_stream_close": false,
+            "llm_connections": []
+        });
+        assert!(apply_settings_migrations(&mut settings, &raw));
+        assert!(settings.lazy_stream_close);
+        assert_eq!(settings.settings_schema_version, 3);
+
+        settings.lazy_stream_close = false;
+        let raw = serde_json::json!({
+            "settings_schema_version": 3,
+            "lazy_stream_close": false,
+            "llm_connections": []
+        });
+        apply_settings_migrations(&mut settings, &raw);
+        assert!(!settings.lazy_stream_close, "Nutzerwahl bleibt nach der Migration");
+    }
+
+    #[test]
+    fn lazy_stream_close_defaults_on() {
+        assert!(get_default_settings().lazy_stream_close);
     }
 
     /// Ohne jede Einrichtung entsteht genau eine Verbindung: die aktive
