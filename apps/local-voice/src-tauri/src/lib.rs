@@ -13,6 +13,7 @@ mod sync;
 mod context_menu;
 mod helpers;
 mod input;
+mod local_update;
 mod llm_client;
 mod managers;
 mod media;
@@ -1388,6 +1389,9 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_mute_while_recording_setting,
             shortcut::change_dictation_audio_setting,
             shortcut::change_dictation_audio_duck_percent_setting,
+            shortcut::change_local_update_dir_setting,
+            local_update::local_update_check,
+            local_update::local_update_install,
             shortcut::change_append_trailing_space_setting,
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_vad_enabled_setting,
