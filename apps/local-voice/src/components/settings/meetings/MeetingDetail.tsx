@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, Check, Download, Pencil, X } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -7,7 +7,11 @@ import { commands, type Meeting, type StoredSegment } from "@/bindings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Button } from "../../ui/Button";
 import { Textarea } from "../../ui/Textarea";
-import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
+import {
+  AudioPlayer,
+  AudioPlayerGroup,
+  type AudioPlayerHandle,
+} from "../../ui/AudioPlayer";
 import Badge from "../../ui/Badge";
 import { MinutesView } from "./MinutesView";
 import { RetranscribeControl } from "./RetranscribeControl";
@@ -58,6 +62,20 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const [titleError, setTitleError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("transcript");
   const [segments, setSegments] = useState<StoredSegment[]>([]);
+  // Sprungmarken: Kanal 1 (Gegenseite) liegt in der Systemaufnahme, alles
+  // andere (Mikrofon, Import als Mischkanal) im Mikrofon-/Import-Player.
+  const micPlayerRef = useRef<AudioPlayerHandle>(null);
+  const systemPlayerRef = useRef<AudioPlayerHandle>(null);
+  const playSegment = (segment: StoredSegment) => {
+    const player =
+      segment.channel === 1 && systemPlayerRef.current
+        ? systemPlayerRef.current
+        : (micPlayerRef.current ?? systemPlayerRef.current);
+    player?.playAt(segment.start_ms / 1000);
+  };
+  const hasAudio = Boolean(
+    meeting?.mic_audio_path || meeting?.system_audio_path,
+  );
   const [loading, setLoading] = useState(true);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [copied, setCopied] = useState<"meta" | "plain" | null>(null);
@@ -265,6 +283,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
                   {fileBaseName(meeting.mic_audio_path)}
                 </p>
                 <AudioPlayer
+                  controlRef={micPlayerRef}
                   src={convertFileSrc(meeting.mic_audio_path, "asset")}
                   className="w-full"
                 />
@@ -278,6 +297,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
                   {fileBaseName(meeting.system_audio_path)}
                 </p>
                 <AudioPlayer
+                  controlRef={systemPlayerRef}
                   src={convertFileSrc(meeting.system_audio_path, "asset")}
                   className="w-full"
                 />
@@ -424,9 +444,20 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
                   key={segment.segment_index}
                   className="flex gap-2 items-start text-sm group"
                 >
-                  <span className="text-xs text-text/40 w-10 shrink-0 pt-0.5">
-                    {formatMmSs(segment.start_ms)}
-                  </span>
+                  {hasAudio ? (
+                    <button
+                      type="button"
+                      onClick={() => playSegment(segment)}
+                      title={t("meetings.detail.playFrom")}
+                      className="text-xs text-text/40 w-10 shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer"
+                    >
+                      {formatMmSs(segment.start_ms)}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-text/40 w-10 shrink-0 pt-0.5">
+                      {formatMmSs(segment.start_ms)}
+                    </span>
+                  )}
                   {showChannels && (
                     <span className="text-xs text-text/50 w-16 shrink-0 pt-0.5">
                       {t(channelLabelKey(segment.channel))}
