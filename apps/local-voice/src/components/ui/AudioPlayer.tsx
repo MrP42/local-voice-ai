@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -99,9 +100,19 @@ let lastVolume = 1;
 
 const formatRate = (rate: number): string => `${rate}×`;
 
+/** Steuerung von aussen — z. B. ein Zeitstempel im Transkript, der an die
+ * Stelle springen und dort abspielen soll. Als Prop statt forwardRef, damit
+ * die Komponente nicht umgehuellt (und komplett neu eingerueckt) wird. */
+export interface AudioPlayerHandle {
+  /** Springt zu `seconds` und spielt ab; laedt die Quelle vorher, falls noetig. */
+  playAt: (seconds: number) => void;
+}
+
 interface AudioPlayerProps {
   /** Audio source URL. If not provided, onLoadRequest must be provided. */
   src?: string;
+  /** Griff fuer Sprungmarken (siehe `AudioPlayerHandle`). */
+  controlRef?: React.Ref<AudioPlayerHandle>;
   /** Called when play is clicked and no src is loaded yet. Should return the audio URL. */
   onLoadRequest?: () => Promise<string | null>;
   className?: string;
@@ -142,6 +153,7 @@ export const AudioPlayerGroup: React.FC<React.PropsWithChildren> = ({
 
 export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   src: initialSrc,
+  controlRef,
   onLoadRequest,
   className = "",
   autoPlay = false,
@@ -344,6 +356,41 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       }
     };
   }, [loadedSrc]);
+
+  useImperativeHandle(
+    controlRef,
+    () => ({
+      playAt: async (seconds) => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        try {
+          if (!src && onLoadRequest) {
+            setIsLoading(true);
+            const newSrc = await onLoadRequest();
+            setIsLoading(false);
+            if (!newSrc) return;
+            setLoadedSrc(newSrc);
+            // Erst nach dem Laden der Metadaten laesst sich sicher springen.
+            audio.addEventListener(
+              "loadedmetadata",
+              () => {
+                audio.currentTime = Math.max(0, seconds);
+                void audio.play();
+              },
+              { once: true },
+            );
+            return;
+          }
+          audio.currentTime = Math.max(0, seconds);
+          setCurrentTime(audio.currentTime);
+          await audio.play();
+        } catch (error) {
+          console.error("Playback failed:", error);
+        }
+      },
+    }),
+    [src, onLoadRequest],
+  );
 
   const togglePlay = async () => {
     const audio = audioRef.current;

@@ -130,6 +130,23 @@ pub enum OverlayStyle {
     Live,
 }
 
+/// What happens to the system's audio output while a dictation runs, so
+/// music or a video neither disturbs the speaker nor ends up in the recording.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DictationAudio {
+    /// Leave the output alone.
+    Off,
+    /// Mute the default output device; restored afterwards.
+    Mute,
+    /// Lower the master volume to `dictation_audio_duck_percent`; restored afterwards.
+    #[default]
+    Duck,
+    /// Pause whatever media is playing (Windows: system media sessions) and
+    /// resume it afterwards. Elsewhere this falls back to `Mute`.
+    Pause,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelUnloadTimeout {
@@ -426,6 +443,10 @@ pub struct AppSettings {
     pub autostart_enabled: bool,
     #[serde(default = "default_update_checks_enabled")]
     pub update_checks_enabled: bool,
+    /// Ordner, in dem die App nach neueren Installern sucht (lokale
+    /// Abnahmestaende ohne GitHub-Signatur). `None` = aus.
+    #[serde(default)]
+    pub local_update_dir: Option<String>,
     #[serde(default = "default_show_whats_new_on_update")]
     pub show_whats_new_on_update: bool,
     /// The app version whose What's New the user has already seen. Fresh installs
@@ -498,8 +519,15 @@ pub struct AppSettings {
     pub llm_models: Vec<LlmModelConfig>,
     #[serde(default)]
     pub llm_active_model_id: Option<String>,
+    /// Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
+    /// Kept so older stores still deserialize; no longer read by the audio path.
     #[serde(default)]
     pub mute_while_recording: bool,
+    #[serde(default)]
+    pub dictation_audio: DictationAudio,
+    /// Target master volume in percent while dictating with `Duck`.
+    #[serde(default = "default_dictation_audio_duck_percent")]
+    pub dictation_audio_duck_percent: u8,
     #[serde(default)]
     pub append_trailing_space: bool,
     #[serde(default = "default_app_language")]
@@ -811,10 +839,14 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 4;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
+}
+
+fn default_dictation_audio_duck_percent() -> u8 {
+    10
 }
 
 fn default_push_to_talk() -> bool {
@@ -1350,6 +1382,7 @@ pub fn get_default_settings() -> AppSettings {
         start_hidden: default_start_hidden(),
         autostart_enabled: default_autostart_enabled(),
         update_checks_enabled: default_update_checks_enabled(),
+        local_update_dir: None,
         show_whats_new_on_update: default_show_whats_new_on_update(),
         whats_new_last_seen_version: default_whats_new_last_seen_version(),
         selected_model: "".to_string(),
@@ -1383,6 +1416,8 @@ pub fn get_default_settings() -> AppSettings {
         llm_models: Vec::new(),
         llm_active_model_id: None,
         mute_while_recording: false,
+        dictation_audio: DictationAudio::default(),
+        dictation_audio_duck_percent: default_dictation_audio_duck_percent(),
         append_trailing_space: false,
         app_language: default_app_language(),
         theme: default_theme(),
@@ -1744,6 +1779,20 @@ fn apply_settings_migrations(
     // Einmalig auf `true` gesetzt; wer es bewusst aus will, schaltet es wieder ab.
     if stored_schema_version < 3 {
         settings.lazy_stream_close = true;
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
+    // Schema 4: Diktat-Audio. Wer "waehrend Aufnahme stummschalten" an hatte,
+    // behaelt das als Modus `Mute`; alle anderen bekommen den neuen Standard
+    // `Duck` (Ausgabe auf 10 % absenken), damit Musik oder Video beim Diktat
+    // weder stoeren noch ins Mikrofon laufen.
+    if stored_schema_version < 4 {
+        settings.dictation_audio = if settings.mute_while_recording {
+            DictationAudio::Mute
+        } else {
+            DictationAudio::Duck
+        };
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }
@@ -2219,7 +2268,7 @@ mod tests {
         let (conn, model) = settings.active_llm_model().expect("aktives Modell");
         assert_eq!(conn.kind, "openai");
         assert_eq!(model.remote_id, "gpt-4.1-mini");
-        assert_eq!(settings.settings_schema_version, 3);
+        assert_eq!(settings.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
     }
 
     /// Schema 3 schaltet das Offenhalten des Mikrofons einmalig ein, auch wenn
@@ -2237,7 +2286,7 @@ mod tests {
         });
         assert!(apply_settings_migrations(&mut settings, &raw));
         assert!(settings.lazy_stream_close);
-        assert_eq!(settings.settings_schema_version, 3);
+        assert_eq!(settings.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
 
         settings.lazy_stream_close = false;
         let raw = serde_json::json!({
@@ -2252,6 +2301,35 @@ mod tests {
     #[test]
     fn lazy_stream_close_defaults_on() {
         assert!(get_default_settings().lazy_stream_close);
+    }
+
+    /// Schema 4 uebersetzt das alte Stummschalten in den neuen Modus und gibt
+    /// allen anderen den Standard "absenken".
+    #[test]
+    fn schema_4_maps_mute_while_recording_to_dictation_audio() {
+        let mut settings = get_default_settings();
+        settings.mute_while_recording = true;
+        settings.dictation_audio = DictationAudio::Off;
+        settings.settings_schema_version = 3;
+        let raw = serde_json::json!({ "settings_schema_version": 3, "llm_connections": [] });
+        assert!(apply_settings_migrations(&mut settings, &raw));
+        assert_eq!(settings.dictation_audio, DictationAudio::Mute);
+
+        let mut settings = get_default_settings();
+        settings.mute_while_recording = false;
+        settings.dictation_audio = DictationAudio::Off;
+        settings.settings_schema_version = 3;
+        assert!(apply_settings_migrations(&mut settings, &raw));
+        assert_eq!(settings.dictation_audio, DictationAudio::Duck);
+        assert_eq!(settings.dictation_audio_duck_percent, 10);
+        assert_eq!(settings.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn dictation_audio_defaults_to_duck_at_ten_percent() {
+        let s = get_default_settings();
+        assert_eq!(s.dictation_audio, DictationAudio::Duck);
+        assert_eq!(s.dictation_audio_duck_percent, 10);
     }
 
     /// Ohne jede Einrichtung entsteht genau eine Verbindung: die aktive

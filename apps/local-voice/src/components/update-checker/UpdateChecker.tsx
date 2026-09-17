@@ -6,7 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ProgressBar } from "../shared";
 import { useSettings } from "../../hooks/useSettings";
-import { commands } from "../../bindings";
+import { commands, type LocalUpdate } from "../../bindings";
 
 interface UpdateCheckerProps {
   className?: string;
@@ -22,6 +22,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   const [showUpToDate, setShowUpToDate] = useState(false);
   const [showPortableUpdateDialog, setShowPortableUpdateDialog] =
     useState(false);
+  // A newer installer in the configured local folder (see
+  // LocalUpdateDirectory). Independent of the GitHub check: no network, no
+  // signature, works for acceptance builds that never get published.
+  const [localUpdate, setLocalUpdate] = useState<LocalUpdate | null>(null);
 
   const { settings, isLoading } = useSettings();
   const settingsLoaded = !isLoading && settings !== null;
@@ -43,7 +47,15 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       setIsChecking(false);
       setUpdateAvailable(false);
       setShowUpToDate(false);
-      return;
+      // The local folder needs no network and no GitHub, so it is still
+      // consulted when online checks are off.
+      void checkLocalUpdate();
+      const localUnlisten = listen("check-for-updates", () => {
+        void checkLocalUpdate();
+      });
+      return () => {
+        localUnlisten.then((fn) => fn());
+      };
     }
 
     checkForUpdates();
@@ -61,13 +73,34 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
     };
   }, [settingsLoaded, updateChecksEnabled]);
 
+  const checkLocalUpdate = async (): Promise<boolean> => {
+    try {
+      const result = await commands.localUpdateCheck();
+      const found = result.status === "ok" ? result.data : null;
+      setLocalUpdate(found);
+      return found !== null;
+    } catch (error) {
+      console.error("Failed to check local update folder:", error);
+      setLocalUpdate(null);
+      return false;
+    }
+  };
+
   // Update checking functions
   const checkForUpdates = async () => {
     if (!updateChecksEnabled || isChecking) return;
 
     try {
       setIsChecking(true);
-      const update = await check();
+      // GitHub and the local folder are checked side by side; a failing
+      // GitHub check (offline, unsigned release) must not hide a local one.
+      const [update, hasLocal] = await Promise.all([
+        check().catch((error) => {
+          console.error("Failed to check for updates:", error);
+          return null;
+        }),
+        checkLocalUpdate(),
+      ]);
 
       if (update) {
         setUpdateAvailable(true);
@@ -75,7 +108,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       } else {
         setUpdateAvailable(false);
 
-        if (isManualCheckRef.current) {
+        if (isManualCheckRef.current && !hasLocal) {
           setShowUpToDate(true);
           if (upToDateTimeoutRef.current) {
             clearTimeout(upToDateTimeoutRef.current);
@@ -97,6 +130,22 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
     if (!updateChecksEnabled) return;
     isManualCheckRef.current = true;
     checkForUpdates();
+  };
+
+  const installLocalUpdate = async () => {
+    if (!localUpdate) return;
+    try {
+      setIsInstalling(true);
+      const result = await commands.localUpdateInstall(localUpdate.path);
+      if (result.status === "error") {
+        console.error("Failed to start local installer:", result.error);
+        setIsInstalling(false);
+      }
+      // On success the installer takes over and the app exits.
+    } catch (error) {
+      console.error("Failed to start local installer:", error);
+      setIsInstalling(false);
+    }
   };
 
   const installUpdate = async () => {
@@ -152,6 +201,12 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
 
   // Update status functions
   const getUpdateStatusText = () => {
+    if (isInstalling && localUpdate) {
+      return t("footer.localInstalling");
+    }
+    if (localUpdate && !isInstalling) {
+      return t("footer.localUpdateAvailable", { version: localUpdate.version });
+    }
     if (!updateChecksEnabled) {
       return t("footer.updateCheckingDisabled");
     }
@@ -171,16 +226,22 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   };
 
   const getUpdateStatusAction = () => {
-    if (!updateChecksEnabled) return undefined;
+    if (localUpdate && !isInstalling) return installLocalUpdate;
+    // Online-Suche aus: ein Klick prueft trotzdem den lokalen Ordner.
+    if (!updateChecksEnabled) return () => void checkLocalUpdate();
     if (updateAvailable && !isInstalling) return installUpdate;
     if (!isChecking && !isInstalling && !updateAvailable)
       return handleManualUpdateCheck;
     return undefined;
   };
 
-  const isUpdateDisabled = !updateChecksEnabled || isChecking || isInstalling;
+  const isUpdateDisabled = isChecking || isInstalling;
   const isUpdateClickable =
-    !isUpdateDisabled && (updateAvailable || (!isChecking && !showUpToDate));
+    !isUpdateDisabled &&
+    (localUpdate !== null ||
+      updateAvailable ||
+      !updateChecksEnabled ||
+      (!isChecking && !showUpToDate));
 
   return (
     <>
@@ -219,7 +280,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
             onClick={getUpdateStatusAction()}
             disabled={isUpdateDisabled}
             className={`transition-colors disabled:opacity-50 tabular-nums ${
-              updateAvailable
+              updateAvailable || localUpdate
                 ? "text-logo-primary hover:text-logo-primary/80 font-medium"
                 : "text-text/60 hover:text-text/80"
             }`}

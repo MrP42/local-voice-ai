@@ -770,6 +770,20 @@
       "volume": {
         "title": "Volume",
         "description": "Adjust the volume of audio feedback sounds"
+      },
+      "dictationAudio": {
+        "title": "Audio output while dictating",
+        "description": "What happens to music or a video that is playing when a dictation starts. Restored afterwards.",
+        "options": {
+          "off": "Leave as is",
+          "mute": "Mute",
+          "duck": "Lower the volume",
+          "pause": "Pause playback"
+        },
+        "duck": {
+          "title": "Level while dictating",
+          "description": "Volume the output is lowered to while you dictate."
+        }
       }
     },
     "advanced": {
@@ -1120,6 +1134,13 @@
         "updates": "Updates",
         "input": "Microphone",
         "feedback": "Audible feedback"
+      },
+      "localUpdateDir": {
+        "title": "Local update folder",
+        "description": "Folder the app scans for newer installers, e.g. acceptance builds that are not on GitHub. A found update shows up in the footer.",
+        "choose": "Choose folder…",
+        "clear": "Remove",
+        "none": "No folder set"
       }
     },
     "llm": {
@@ -1209,7 +1230,9 @@
     "checkForUpdates": "Check for updates",
     "portableUpdateTitle": "Manual update required",
     "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
-    "portableUpdateButton": "Open GitHub Releases"
+    "portableUpdateButton": "Open GitHub Releases",
+    "localUpdateAvailable": "Update {{version}} available locally",
+    "localInstalling": "Starting installer…"
   },
   "whatsNew": {
     "title": "New in Local Voice AI v{{version}}"
@@ -1378,6 +1401,7 @@
       "regenerate": "Regenerate",
       "export": "Export — as Word (.docx), text or Markdown",
       "editSegment": "Edit segment",
+      "playFrom": "Play from here",
       "save": "Save",
       "cancel": "Cancel",
       "shares": "Speaking shares",
@@ -1523,5 +1547,8 @@
     "keyMismatch": "The hub holds objects sealed with a different key – was the password changed? Please sign in again on all devices.",
     "deadLetters": "{{count}} objects rejected (too large or invalid)",
     "devices": "Devices"
+  },
+  "guard": {
+    "memoryLow": "Memory almost full: the read-aloud and language-model servers were stopped to keep the computer responsive."
   }
 }

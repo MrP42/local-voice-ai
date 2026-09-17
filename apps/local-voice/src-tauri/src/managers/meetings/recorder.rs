@@ -496,9 +496,12 @@ impl MeetingRecorderManager {
                         WorkItem::Chunk(channel, chunk) => (channel, chunk),
                         WorkItem::Shutdown => break,
                     };
-                    let samples = chunk.samples.len();
-                    match transcription.transcribe_segments(chunk.samples) {
-                        Ok(timed) => {
+                    // Nie einen Block verlieren: Wiederholung, sonst Luecke
+                    // mit Zeitraum (siehe import.rs::transcribe_chunk_resilient).
+                    let timed =
+                        super::import::transcribe_chunk_resilient(&app, &transcription, &chunk);
+                    {
+                        {
                             let appended: Vec<StoredSegment> = timed
                                 .into_iter()
                                 .filter(|s| !s.text.trim().is_empty())
@@ -533,16 +536,6 @@ impl MeetingRecorderManager {
                             let _ = (MeetingEvent::Segments {
                                 meeting_id: meeting_id.clone(),
                                 appended,
-                            })
-                            .emit(&app);
-                        }
-                        Err(e) => {
-                            error!(
-                                "meetings: chunk of {samples} samples failed to transcribe: {e}"
-                            );
-                            let _ = (MeetingEvent::Error {
-                                meeting_id: meeting_id.clone(),
-                                message: "chunk_transcription_failed".to_string(),
                             })
                             .emit(&app);
                         }

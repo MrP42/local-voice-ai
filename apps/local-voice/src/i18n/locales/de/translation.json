@@ -770,6 +770,20 @@
       "volume": {
         "title": "Lautstärke",
         "description": "Lautstärke der Audio-Feedback-Töne anpassen"
+      },
+      "dictationAudio": {
+        "title": "Audioausgabe beim Diktat",
+        "description": "Was mit laufender Musik oder einem Video passiert, sobald ein Diktat startet. Wird nach dem Diktat wieder zurückgesetzt.",
+        "options": {
+          "off": "Nicht verändern",
+          "mute": "Stummschalten",
+          "duck": "Leiser stellen",
+          "pause": "Wiedergabe pausieren"
+        },
+        "duck": {
+          "title": "Pegel während des Diktats",
+          "description": "Lautstärke, auf die die Ausgabe während des Diktats abgesenkt wird."
+        }
       }
     },
     "advanced": {
@@ -1120,6 +1134,13 @@
         "updates": "Updates",
         "input": "Mikrofon",
         "feedback": "Hörbare Rückmeldung"
+      },
+      "localUpdateDir": {
+        "title": "Lokaler Update-Ordner",
+        "description": "Ordner, in dem die App nach neueren Installern sucht, zum Beispiel für Abnahmestände, die nicht auf GitHub liegen. Ein gefundenes Update erscheint in der Fußleiste.",
+        "choose": "Ordner wählen…",
+        "clear": "Entfernen",
+        "none": "Kein Ordner gesetzt"
       }
     },
     "llm": {
@@ -1209,7 +1230,9 @@
     "checkForUpdates": "Nach Updates suchen",
     "portableUpdateTitle": "Manuelles Update erforderlich",
     "portableUpdateMessage": "Portable Installationen können nicht automatisch aktualisiert werden. Zum Aktualisieren: Lade den neuesten NSIS-Installer von GitHub Releases herunter, installiere ihn im selben Ordner und kopiere dann deinen Data/-Ordner (Einstellungen, Modelle, Aufnahmen) von der alten Version in die neue.",
-    "portableUpdateButton": "GitHub Releases öffnen"
+    "portableUpdateButton": "GitHub Releases öffnen",
+    "localUpdateAvailable": "Update {{version}} lokal verfügbar",
+    "localInstalling": "Installer wird gestartet…"
   },
   "common": {
     "loading": "Wird geladen...",
@@ -1378,6 +1401,7 @@
       "regenerate": "Neu erzeugen",
       "export": "Exportieren — als Word (.docx), Text oder Markdown",
       "editSegment": "Segment bearbeiten",
+      "playFrom": "Ab hier abspielen",
       "save": "Speichern",
       "cancel": "Abbrechen",
       "shares": "Redeanteile",
@@ -1523,5 +1547,8 @@
     "keyMismatch": "Der Hub trägt Objekte mit einem anderen Schlüssel – wurde das Passwort geändert? Bitte auf allen Geräten neu anmelden.",
     "deadLetters": "{{count}} Objekte abgewiesen (zu groß oder ungültig)",
     "devices": "Geräte"
+  },
+  "guard": {
+    "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
   }
 }

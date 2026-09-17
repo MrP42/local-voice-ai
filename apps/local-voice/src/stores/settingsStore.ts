@@ -7,6 +7,7 @@ import type {
   TranscribeAcceleratorSetting,
   OrtAcceleratorSetting,
   MeetingAudioRetention,
+  DictationAudio,
 } from "@/bindings";
 import { commands } from "@/bindings";
 
@@ -182,6 +183,10 @@ const settingUpdaters: {
     commands.setPostProcessSelectedPrompt(value as string),
   mute_while_recording: (value) =>
     commands.changeMuteWhileRecordingSetting(value as boolean),
+  dictation_audio: (value) =>
+    commands.changeDictationAudioSetting(value as DictationAudio),
+  dictation_audio_duck_percent: (value) =>
+    commands.changeDictationAudioDuckPercentSetting(value as number),
   append_trailing_space: (value) =>
     commands.changeAppendTrailingSpaceSetting(value as boolean),
   log_level: (value) => commands.setLogLevel(value as any),
@@ -191,6 +196,8 @@ const settingUpdaters: {
     commands.changeExperimentalEnabledSetting(value as boolean),
   lazy_stream_close: (value) =>
     commands.changeLazyStreamCloseSetting(value as boolean),
+  local_update_dir: (value) =>
+    commands.changeLocalUpdateDirSetting((value as string | null) ?? null),
   overlay_style: (value) => commands.changeOverlayStyleSetting(value as string),
   vad_enabled: (value) => commands.changeVadEnabledSetting(value as boolean),
   show_tray_icon: (value) =>

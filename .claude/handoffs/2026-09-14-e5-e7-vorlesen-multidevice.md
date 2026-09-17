@@ -195,6 +195,58 @@ Nebenbei: Piper-Katalogtest 5 → 10 Stimmen repariert (`a48eba4`). PR #27 offen
 Patrick (Freigabe für `gh pr merge` liegt in settings.local.json — nur auf Zuruf nutzen).
 Installer 0.18.1 lokal unter `apps/local-voice/src-tauri/target/release/bundle/nsis/`.
 
+## Endtext verschluckt — PR #28 (15.09., Zweig `fix/diktat-endtext` auf #27, Version 0.18.2)
+
+Patricks Frage: „Warum wird der Text manchmal am Ende abgeschnitten?" Belegt im Log: der
+Abschluss-Textrest wird 80–130 ms nach dem Stopp-Druck getippt, das Release von Strg+Win
+kommt erst danach; Chromium-Ziele (VS Code) verwerfen Zeichen mit gehaltenem Strg.
+Fix: `input::wait_for_modifiers_released` (GetAsyncKeyState, max 1,5 s) vor jedem Fragment
+(`refinement/injection.rs::paste_fragment`) und vor `clipboard::paste`. Zweiter Befund:
+`start_stream` setzte den Einfügezeiger vor der Worker-Prüfung zurück → Schnell-Neustart
+während der Finalisierung hätte das vorige Diktat doppelt getippt; Reihenfolge getauscht.
+Hypothese-Status: Timing belegt, das Verschlucken selbst nicht am Zielprogramm reproduziert —
+Patrick prüft mit 0.18.2 (Log-Zeile `waited … for modifier keys`).
+
+Offen (Design vorgeschlagen, Entscheidung Patrick): **Fortsetzungsfenster** — Stopp finalisiert
+den Stream nicht sofort, sondern hält ihn ~8 s offen; ein Neustart im Fenster füttert denselben
+Stream weiter, das Modell setzt den Satz nahtlos fort (keine Großschreibung/Punkt-Bruch).
+Berührt Stopp-Pfad (`actions.rs::stop`), History je Lauf, Overlay-Zustand „pausiert".
+Satzbruch bei Denkpause INNERHALB eines Diktats ist Modellverhalten (Nemotron setzt
+Interpunktion nach Pause); Hebel wäre die Satz-Verfeinerung (`refine_enabled`, aktuell aus).
+
+## Nachmittag 15.09.: Diktat-Audio (PR #30), lokale Updates (PR #31), Sync-Konzept
+
+PR-Kette (in dieser Reihenfolge mergen): #27 Startlatenz → #28 Endtext → #30 Diktat-Audio →
+#31 lokale Updates. Jeder Stand hat einen Installer: 0.18.1 … 0.18.4 unter
+`apps/local-voice/src-tauri/target/release/bundle/nsis/`.
+
+- **Diktat-Audio (0.18.3):** Setting `dictation_audio` off|mute|duck|pause, Standard duck 10 %
+  (`dictation_audio_duck_percent`), Schema 4 migriert `mute_while_recording`. Windows: Endpunkt-
+  lautstärke + WinRT Media.Control (Pause/Fortsetzen aller spielenden Sitzungen); macOS/Linux
+  Lautstärke per osascript/wpctl/pactl, Pause → Mute. Reiter Mikrofon & Töne, Komponente
+  `DictationAudio.tsx`. Cargo-Features Media_Control/Foundation/Foundation_Collections.
+- **Lokale Updates (0.18.4):** `local_update.rs` + Setting `local_update_dir`; Fußleiste zeigt
+  „Update X.Y.Z lokal verfügbar", Klick startet Installer `/P` und beendet die App. Hintergrund:
+  GitHub-Updater ohne Signaturschlüssel liefert nie etwas. Patrick: Ordner in Einstellungen →
+  Allgemein → Updates auf `…\target\release\bundle\nsis` setzen.
+- **Sync ohne Portal:** Konzept `docs/superpowers/specs/2026-09-15-sync-ohne-portal-konzept.md`
+  (Speicher-Trait; Ordner-Backend zuerst, dann GitHub-Repo per Device Flow, Google Drive später;
+  Sync-Passphrase statt Portal-Passwort). Entscheidung bei Patrick, nichts gebaut.
+- **Offen, Entscheidung Patrick:** Fortsetzungsfenster (Stream ~8 s offen halten, Neustart setzt
+  Satz nahtlos fort), siehe Abschnitt Endtext.
+
+## Systemausfall 15.09. 19:52 → Systemschutz (PR #33, Zweig `fix/systemschutz`, 0.18.6)
+
+Rechner fror komplett ein (Kernel-Power 41). Ursache belegt: Fish Speech `--compile`, Torch
+Inductor mit 32 Compile-Prozessen (ein Prozess je Kern) bei 44 GB belegtem RAM → Auslagerung.
+Fix `process_guard.rs`: Job-Objekt je Kindprozess (RAM-Deckel frei−6 GB, CPU 75 %, below-normal,
+KILL_ON_JOB_CLOSE), Start-Gate `check_ram_for_start`, Speicherwächter (<2 GB → Server stoppen,
+Overlay-Hinweis `guard.memoryLow`), `TORCHINDUCTOR_COMPILE_THREADS` 2–4, OMP/MKL halbe Kerne,
+llama-server `-t`. Praxistest `job_limit_stops_a_runaway_child` (ignored, Windows): 3 GB unter
+1-GB-Deckel → MemoryError. Patricks Regel dazu im Memory `systemschutz-ram-cpu`.
+Fish-Speech-Start selbst („kann nicht gestartet werden") war Folge desselben Ereignisses:
+19:47 Start, 19:52 Freeze; nach dem Neustart noch nicht erneut getestet — mit 0.18.6 prüfen.
+
 ## Offen / nächste Schritte (Code)
 
 - Fußleisten-Symbol für den Sync-Zustand (Spec Abschnitt 7) — noch nicht gebaut.

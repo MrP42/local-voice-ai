@@ -45,6 +45,9 @@ pub fn single_voice(sentences: Vec<String>) -> Vec<Utterance> {
     sentences.into_iter().map(|text| (text, None)).collect()
 }
 const IDLE_WATCH_INTERVAL: Duration = Duration::from_secs(30);
+/// RAM, den der Fish-Speech-Start braucht (MB): s2-pro laedt ~4 GB Gewichte
+/// ueber den Hauptspeicher, dazu Torch und der Decoder.
+const FISH_RAM_NEED_MB: u64 = 6 * 1024;
 
 /// Wie weit ein einzelner Satz vom Pegel seiner Stimme abweichen darf.
 /// Groß genug, damit jeder Satz den Zielpegel praktisch erreicht; klein
@@ -922,6 +925,9 @@ pub struct TtsManager {
     core: Arc<TtsCore>,
     app: tauri::AppHandle,
     child: Mutex<Option<Child>>,
+    /// Job-Objekt des Kindprozesses (RAM-/CPU-Deckel); lebt genau so lange
+    /// wie `child` und nimmt beim Drop den ganzen Prozessbaum mit.
+    child_guard: Mutex<Option<crate::process_guard::ProcessGuard>>,
     /// Letzte Referenzaufnahme (16 kHz mono), wartet zwischen Stopp und
     /// Speichern auf Namen + bestätigtes Transkript.
     pending_reference: Mutex<Option<Vec<f32>>>,
@@ -1493,6 +1499,7 @@ impl TtsManager {
             core,
             app: app.clone(),
             child: Mutex::new(None),
+            child_guard: Mutex::new(None),
             pending_reference: Mutex::new(None),
             reading: Mutex::new(None),
             speak_session: Mutex::new(None),
@@ -1906,6 +1913,13 @@ impl TtsManager {
             Some((file, clone))
         });
 
+        // Start-Gate: ohne genug freien RAM kein Start. Fish Speech s2-pro
+        // braucht zum Laden rund 6 GB, mit --compile kurzzeitig mehr.
+        let free_mb = crate::process_guard::check_ram_for_start(FISH_RAM_NEED_MB)?;
+
+        let cpus = crate::process_guard::logical_cpus();
+        let compile_threads = crate::process_guard::compile_threads_for(cpus).to_string();
+        let cpu_threads = crate::process_guard::cpu_threads_for(cpus).to_string();
         let mut cmd = std::process::Command::new(&python);
         cmd.args([
             "tools/api_server.py",
@@ -1913,7 +1927,13 @@ impl TtsManager {
             &format!("127.0.0.1:{port}"),
         ])
         .current_dir(&fish_dir)
-        .env("HF_HUB_DISABLE_TELEMETRY", "1");
+        .env("HF_HUB_DISABLE_TELEMETRY", "1")
+        // Torch Inductor startet sonst einen Compile-Prozess je logischem
+        // Kern (32 auf dem i9) — das war der Ausloeser des Systemausfalls
+        // am 15.09.2026. Vier reichen; Rechen-Threads auf die Haelfte.
+        .env("TORCHINDUCTOR_COMPILE_THREADS", &compile_threads)
+        .env("OMP_NUM_THREADS", &cpu_threads)
+        .env("MKL_NUM_THREADS", &cpu_threads);
         // Compile-Cache an einen Ort, den keine Datenträgerbereinigung leert.
         if let Some(cache) = self.inductor_cache_dir() {
             if std::fs::create_dir_all(&cache).is_ok() {
@@ -1942,6 +1962,14 @@ impl TtsManager {
         let child = cmd
             .spawn()
             .map_err(|e| format!("could not start fish-speech: {e}"))?;
+        // Harter Deckel fuer den ganzen Prozessbaum (Server + Compile-Kinder):
+        // scheitert dessen Allokation, bleibt das System bedienbar.
+        let guard = crate::process_guard::ProcessGuard::attach(
+            &child,
+            crate::process_guard::memory_limit_mb(free_mb),
+            crate::process_guard::CPU_CAP_PERCENT,
+        );
+        *self.child_guard.lock().unwrap() = guard;
         *self.child.lock().unwrap() = Some(child);
         self.core.owns_server.store(true, Ordering::Release);
         self.core.set_phase(TtsPhase::Starting, None);
@@ -3651,6 +3679,9 @@ impl TtsManager {
     /// erfolgreichen Stopp weiterliefen. Deshalb erst den Baum ueber
     /// `taskkill /T`, danach der uebliche Weg als Rueckfallebene.
     fn kill_owned_child(&self) {
+        // Job-Objekt zuerst schliessen: KILL_ON_JOB_CLOSE nimmt den ganzen
+        // Baum mit, auch Compile-Kinder, die taskkill /T uebersehen kann.
+        drop(self.child_guard.lock().unwrap().take());
         if let Some(mut child) = self.child.lock().unwrap().take() {
             #[cfg(windows)]
             if let Err(e) = kill_pid(child.id()) {

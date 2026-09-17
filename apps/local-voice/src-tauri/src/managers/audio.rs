@@ -8,7 +8,7 @@ use crate::audio_toolkit::{
 };
 use crate::helpers::clamshell;
 use crate::managers::transcription::StreamRouter;
-use crate::settings::{get_settings, AppSettings};
+use crate::settings::{get_settings, AppSettings, DictationAudio};
 use crate::utils;
 use log::{debug, error, info, warn};
 use std::path::Path;
@@ -240,6 +240,201 @@ fn restore_mute(prev_muted: Option<bool>) {
     }
 }
 
+/* ---------- output volume (for "duck") ------------------------------------ */
+
+/// Master output volume of the default device, 0.0-1.0. `None` if unknown.
+#[cfg(target_os = "windows")]
+fn get_volume() -> Option<f32> {
+    unsafe {
+        use windows::Win32::{
+            Media::Audio::{
+                eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
+                MMDeviceEnumerator,
+            },
+            System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED},
+        };
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let all_devices: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+        let default_device = all_devices
+            .GetDefaultAudioEndpoint(eRender, eMultimedia)
+            .ok()?;
+        let volume_interface = default_device
+            .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
+            .ok()?;
+        volume_interface.GetMasterVolumeLevelScalar().ok()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn set_volume(level: f32) {
+    unsafe {
+        use windows::Win32::{
+            Media::Audio::{
+                eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
+                MMDeviceEnumerator,
+            },
+            System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED},
+        };
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let Ok(all_devices) =
+            CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
+        else {
+            return;
+        };
+        let Ok(default_device) = all_devices.GetDefaultAudioEndpoint(eRender, eMultimedia) else {
+            return;
+        };
+        let Ok(volume_interface) =
+            default_device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
+        else {
+            return;
+        };
+        let _ = volume_interface
+            .SetMasterVolumeLevelScalar(level.clamp(0.0, 1.0), std::ptr::null());
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn get_volume() -> Option<f32> {
+    use std::process::Command;
+    let out = Command::new("osascript")
+        .args(["-e", "output volume of (get volume settings)"])
+        .output()
+        .ok()?;
+    let pct: f32 = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
+    Some((pct / 100.0).clamp(0.0, 1.0))
+}
+
+#[cfg(target_os = "macos")]
+fn set_volume(level: f32) {
+    use std::process::Command;
+    let pct = (level.clamp(0.0, 1.0) * 100.0).round() as u32;
+    let _ = Command::new("osascript")
+        .args(["-e", &format!("set volume output volume {pct}")])
+        .output();
+}
+
+#[cfg(target_os = "linux")]
+fn get_volume() -> Option<f32> {
+    use std::process::Command;
+    // wpctl: "Volume: 0.45" (possibly followed by "[MUTED]").
+    if let Ok(out) = Command::new("wpctl")
+        .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
+        .output()
+    {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout);
+            if let Some(v) = s.split_whitespace().nth(1).and_then(|v| v.parse::<f32>().ok()) {
+                return Some(v.clamp(0.0, 1.0));
+            }
+        }
+    }
+    // pactl: "Volume: front-left: 29491 /  45% / ..." -> first percentage.
+    if let Ok(out) = Command::new("pactl")
+        .env("LC_ALL", "C")
+        .args(["get-sink-volume", "@DEFAULT_SINK@"])
+        .output()
+    {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout);
+            if let Some(pct) = s
+                .split_whitespace()
+                .find_map(|t| t.strip_suffix('%').and_then(|n| n.parse::<f32>().ok()))
+            {
+                return Some((pct / 100.0).clamp(0.0, 1.0));
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn set_volume(level: f32) {
+    use std::process::Command;
+    let level = level.clamp(0.0, 1.0);
+    if Command::new("wpctl")
+        .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{level:.2}")])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let pct = (level * 100.0).round() as u32;
+    let _ = Command::new("pactl")
+        .args(["set-sink-volume", "@DEFAULT_SINK@", &format!("{pct}%")])
+        .output();
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+fn get_volume() -> Option<f32> {
+    None
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+fn set_volume(_level: f32) {}
+
+/* ---------- media pause (for "pause") -------------------------------------- */
+
+/// Pause every media session that is currently playing and return the ids of
+/// the apps that were paused, so exactly those can be resumed later. `None`
+/// means the platform cannot do this at all (caller falls back to mute).
+#[cfg(target_os = "windows")]
+fn pause_playing_media() -> Option<Vec<String>> {
+    use windows::Media::Control::{
+        GlobalSystemMediaTransportControlsSessionManager as SessionManager,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
+    };
+    let run = || -> windows::core::Result<Vec<String>> {
+        let manager = SessionManager::RequestAsync()?.get()?;
+        let mut paused = Vec::new();
+        for session in manager.GetSessions()? {
+            if session.GetPlaybackInfo()?.PlaybackStatus()? != Status::Playing {
+                continue;
+            }
+            let id = session.SourceAppUserModelId()?.to_string();
+            if session.TryPauseAsync()?.get()? {
+                paused.push(id);
+            }
+        }
+        Ok(paused)
+    };
+    match run() {
+        Ok(paused) => Some(paused),
+        Err(e) => {
+            debug!("media pause unavailable: {e}");
+            None
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn resume_media(app_ids: &[String]) {
+    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager as SessionManager;
+    let run = || -> windows::core::Result<()> {
+        let manager = SessionManager::RequestAsync()?.get()?;
+        for session in manager.GetSessions()? {
+            let id = session.SourceAppUserModelId()?.to_string();
+            if app_ids.contains(&id) {
+                let _ = session.TryPlayAsync()?.get();
+            }
+        }
+        Ok(())
+    };
+    if let Err(e) = run() {
+        warn!("media resume failed: {e}");
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn pause_playing_media() -> Option<Vec<String>> {
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resume_media(_app_ids: &[String]) {}
+
 const WHISPER_SAMPLE_RATE: usize = 16000;
 
 /* ──────────────────────────────────────────────────────────────── */
@@ -257,14 +452,39 @@ pub enum MicrophoneMode {
     OnDemand,
 }
 
-/// Tracks our forced "mute while recording" so we can restore the user's audio
-/// exactly as it was. `did_mute` is true while our mute is active; `prev_muted`
-/// is the system mute state captured just before we muted, used to decide
-/// whether to unmute on stop (so a system that was already muted stays muted).
-#[derive(Debug, Default, Clone, Copy)]
+/// Tracks what we did to the system's audio output for the running dictation
+/// so it can be restored exactly. `did_mute` is true while any reduction is
+/// active; `applied` says which one. `prev_muted` (mute), `prev_volume` (duck)
+/// and `paused` (pause) hold what to put back.
+#[derive(Debug, Default, Clone)]
 struct MuteState {
     did_mute: bool,
+    applied: Option<DictationAudio>,
     prev_muted: Option<bool>,
+    prev_volume: Option<f32>,
+    paused: Vec<String>,
+}
+
+/// Undo whatever `apply_mute` did, according to what was actually applied.
+fn restore_output(state: &mut MuteState) {
+    if !state.did_mute {
+        return;
+    }
+    match state.applied.take() {
+        Some(DictationAudio::Duck) => {
+            if let Some(v) = state.prev_volume.take() {
+                set_volume(v);
+            }
+        }
+        Some(DictationAudio::Pause) => {
+            let ids = std::mem::take(&mut state.paused);
+            resume_media(&ids);
+        }
+        // Mute, or an older state without a recorded mode: unmute unless the
+        // system was muted before us.
+        _ => restore_mute(state.prev_muted),
+    }
+    state.did_mute = false;
 }
 
 /* ──────────────────────────────────────────────────────────────── */
@@ -494,43 +714,82 @@ impl AudioRecordingManager {
 
     /* ---------- microphone life-cycle -------------------------------------- */
 
-    /// Applies mute if mute_while_recording is enabled and stream is open.
-    /// Snapshots the system's prior mute state first so `remove_mute` can
-    /// restore it instead of unconditionally unmuting.
+    /// Reduces the system's audio output for the dictation according to the
+    /// `dictation_audio` setting (mute, duck to a level, or pause playing
+    /// media), while the stream is open. Snapshots what it changes so
+    /// `remove_mute` can put it back exactly.
     pub fn apply_mute(&self) {
         let settings = get_settings(&self.app_handle);
-        if !settings.mute_while_recording {
+        let mode = settings.dictation_audio;
+        if mode == DictationAudio::Off {
             return;
         }
 
         // Lock order: is_open before mute_state (matches stop_microphone_stream).
         let is_open = self.is_open.lock().unwrap();
-        let mut mute_guard = self.mute_state.lock().unwrap();
-        // Already muted this session — don't re-snapshot, or a duplicate/late
-        // apply would overwrite prev_muted with our own forced-muted state and
-        // strand audio muted on stop.
-        if mute_guard.did_mute {
+        let mut g = self.mute_state.lock().unwrap();
+        // Already applied this session — don't re-snapshot, or a duplicate/late
+        // apply would overwrite the saved state with our own and strand the
+        // user's audio on stop.
+        if g.did_mute || !*is_open {
             return;
         }
-        if *is_open {
-            mute_guard.prev_muted = get_mute();
+
+        let mute_now = |g: &mut MuteState| {
+            g.prev_muted = get_mute();
             set_mute(true);
-            mute_guard.did_mute = true;
-            debug!("Mute applied (prev_muted={:?})", mute_guard.prev_muted);
+            g.applied = Some(DictationAudio::Mute);
+            g.did_mute = true;
+            debug!("dictation audio: muted (prev_muted={:?})", g.prev_muted);
+        };
+
+        match mode {
+            DictationAudio::Off => {}
+            DictationAudio::Mute => mute_now(&mut g),
+            DictationAudio::Duck => {
+                let target = f32::from(settings.dictation_audio_duck_percent.min(100)) / 100.0;
+                match get_volume() {
+                    Some(current) if current > target => {
+                        set_volume(target);
+                        g.prev_volume = Some(current);
+                        g.applied = Some(DictationAudio::Duck);
+                        g.did_mute = true;
+                        debug!(
+                            "dictation audio: ducked {:.0}% -> {:.0}%",
+                            current * 100.0,
+                            target * 100.0
+                        );
+                    }
+                    Some(current) => debug!(
+                        "dictation audio: output already at {:.0}%, nothing to duck",
+                        current * 100.0
+                    ),
+                    // Can't read the volume: muting is the safe equivalent.
+                    None => mute_now(&mut g),
+                }
+            }
+            DictationAudio::Pause => match pause_playing_media() {
+                Some(paused) if !paused.is_empty() => {
+                    debug!("dictation audio: paused {} media session(s)", paused.len());
+                    g.paused = paused;
+                    g.applied = Some(DictationAudio::Pause);
+                    g.did_mute = true;
+                }
+                Some(_) => debug!("dictation audio: no playing media session to pause"),
+                // Platform can't pause media: fall back to muting.
+                None => mute_now(&mut g),
+            },
         }
     }
 
-    /// Removes mute if it was applied, restoring the system's prior mute state
-    /// (a system already muted before recording stays muted).
+    /// Undoes `apply_mute`: unmutes, restores the volume, or resumes the media
+    /// that was paused — only what we changed ourselves.
     pub fn remove_mute(&self) {
-        let mut mute_guard = self.mute_state.lock().unwrap();
-        if mute_guard.did_mute {
-            restore_mute(mute_guard.prev_muted);
-            mute_guard.did_mute = false;
-            debug!(
-                "Mute removed (restored prev_muted={:?})",
-                mute_guard.prev_muted
-            );
+        let mut g = self.mute_state.lock().unwrap();
+        if g.did_mute {
+            let applied = g.applied;
+            restore_output(&mut g);
+            debug!("dictation audio: restored after {:?}", applied);
         }
     }
 
@@ -571,10 +830,7 @@ impl AudioRecordingManager {
         // flag, which would strand system audio muted.
         {
             let mut mute_guard = self.mute_state.lock().unwrap();
-            if mute_guard.did_mute {
-                restore_mute(mute_guard.prev_muted);
-                mute_guard.did_mute = false;
-            }
+            restore_output(&mut mute_guard);
         }
 
         // Get the selected device from settings, considering clamshell mode.
@@ -634,10 +890,7 @@ impl AudioRecordingManager {
 
         {
             let mut mute_guard = self.mute_state.lock().unwrap();
-            if mute_guard.did_mute {
-                restore_mute(mute_guard.prev_muted);
-            }
-            mute_guard.did_mute = false;
+            restore_output(&mut mute_guard);
         }
 
         if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
