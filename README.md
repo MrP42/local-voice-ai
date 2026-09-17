@@ -10,14 +10,16 @@ Windows-Desktop-Anwendung (Tauri 2 · Rust · React), entwickelt von
 
 ---
 
-## Plattformen im Hauptprojekt
+## Plattformen
 
-- `apps/local-voice/`: bestehende Windows-/macOS-Desktop-App (Tauri).
-- [`apps/apple/`](apps/apple/README.md): native iPhone-/Apple-Watch-App (SwiftUI),
-  inklusive lokaler Modelle, Sprachnotizen, Gesprächsmodus und Verlauf.
-- [Apple-Build und Release-Vorbereitung](apps/apple/RELEASING.md): automatische
-  Buildprüfung; öffentliche Verteilung über TestFlight/App Store ist noch nicht
-  eingerichtet. Die bisherige Geräteinstallation ist ein Entwicklungsbuild.
+- [`apps/local-voice/`](apps/local-voice/README.md): die Desktop-App für Windows
+  (und macOS), Tauri 2 · Rust · React. Das ist das Hauptprodukt.
+- [`apps/apple/`](apps/apple/README.md): native iPhone-/Apple-Watch-App (SwiftUI)
+  mit lokalen Modellen, Sprachnotizen, Gesprächsmodus und Verlauf. Noch ein
+  Entwicklungsbuild, kein TestFlight/App Store — siehe
+  [RELEASING.md](apps/apple/RELEASING.md).
+- [`packages/voice-protocol/`](packages/voice-protocol/README.md): das
+  Paketformat, über das Watch, iPhone und Desktop Aufnahmen austauschen.
 
 ## Installieren
 
@@ -45,6 +47,11 @@ nötig.
 
 Automatische Prüfung abschalten: **Einstellungen → App → Updates**.
 
+Wer selbst baut, kann der App einen **lokalen Installer-Ordner** nennen
+(Einstellungen → App → **Lokaler Update-Ordner**). Liegt dort ein neuerer
+`Local Voice AI_<version>_x64-setup.exe`, bietet die Fußleiste ihn an; die App
+beendet sich, der Installer läuft still durch, die App startet neu.
+
 > Technisch: die App liest
 > `https://github.com/MrP42/local-voice-ai/releases/latest/download/latest.json`.
 > Diese Datei entsteht im Release-Workflow und trägt die Minisign-Signatur des
@@ -58,10 +65,13 @@ Automatische Prüfung abschalten: **Einstellungen → App → Updates**.
 |---|---|
 | **Diktat** | Globales Tastenkürzel, Text landet direkt im aktiven Fenster. Streaming-Modelle schreiben schon während des Sprechens mit. |
 | **Verlauf** | Die letzten Diktate mit Audio, nachträglich kopierbar. |
-| **Besprechungen** | Mikrofon **und** System-Audio (Gegenseite) mitschneiden, laufendes Live-Transkript, Import vorhandener Audio-/Video-/Untertiteldateien, Protokollerzeugung per LLM, konfigurierbare Aufbewahrung der Audiodateien. |
+| **Besprechungen** | Mikrofon **und** System-Audio (Gegenseite) mitschneiden, Live-Transkript, Import vorhandener Audio-/Video-/Untertiteldateien, Neu-Transkription mit anderem Modell, Protokoll per LLM. Die Transkription läuft immer bis zum Ende: ein Block, der nicht transkribiert werden kann, wird als Lücke mit Zeitraum markiert und lässt sich von Hand ergänzen. Zeitstempel im Transkript springen in der Aufnahme an die Stelle. |
 | **Modelle** | Rund 70 Transkriptionsmodelle zum Herunterladen, nach Sprache filterbar; eigene GGUF-Dateien werden erkannt. |
-| **Vorlesen** | Ganze Dokumente (TXT, MD, PDF, DOCX) vorlesen, Stimmen klonen, übersetzen, Stimmwechsler — über einen lokalen Fish-Speech-Server. |
-| **Nachbearbeitung** | Diktate und Protokolle per LLM aufräumen — wahlweise über einen lokalen **Ollama-** oder **vLLM-**Server oder einen API-Anbieter. |
+| **Sprachmodelle** | Lokale LLMs (Qwen, Gemma, …) über einen eingebauten `llama-server` — für Protokolle, Zusammenfassungen und Nachbearbeitung ohne Cloud. Mit Verbrauchs-Ledger und Speicherprognose je Modell. |
+| **Vorlesen** | Ganze Dokumente (TXT, MD, PDF, DOCX) vorlesen: schnell und ohne GPU mit **Piper** (Sprache je Satz automatisch erkannt), oder mit geklonter eigener Stimme über einen lokalen **Fish-Speech**-Server. Übersetzen, zusammenfassen, Text aufbereiten. |
+| **Nachbearbeitung** | Diktate und Protokolle per LLM aufräumen — lokal (eingebaut, **Ollama**, **vLLM**) oder über einen API-Anbieter. |
+| **Multi-Device-Sync** | Optional: Ende-zu-Ende verschlüsselter Abgleich zwischen Geräten über ein eigenes Portal-Konto. |
+| **Systemschutz** | Jeder Kindprozess (Modell-Server, TTS) läuft mit RAM- und CPU-Deckel; ein Start wird verweigert, wenn der Speicher nicht reicht. Der Rechner friert nicht mehr ein, wenn ein Modell zu groß ist. |
 
 ### Empfohlene Transkriptionsmodelle
 
@@ -110,10 +120,16 @@ mkdir -p src-tauri/resources/models
 curl -o src-tauri/resources/models/silero_vad_v4.onnx \
      https://blob.handy.computer/silero_vad_v4.onnx
 
-npx tauri build          # Installer unter src-tauri/target/release/bundle/
-npx tauri build --no-bundle   # nur die .exe
-npx tauri dev            # Entwicklung
+npx tauri dev                          # Entwicklung
+pwsh -File scripts/dev.ps1 bundle      # Installer unter src-tauri/target/release/bundle/
+pwsh -File scripts/dev.ps1 build       # nur die .exe
+pwsh -File scripts/dev.ps1 test        # Rust-Tests
 ```
+
+`scripts/dev.ps1` setzt Cargo-Pfad und Umgebung richtig; Details in
+[apps/local-voice/README.md](apps/local-voice/README.md). Der Build-Ordner
+`src-tauri/target/` wächst mit jedem Debug-Build — bei Platzmangel
+`cargo clean` im `src-tauri`-Verzeichnis.
 
 > **`cargo build --release` ist kein gültiger Build-Weg.** Er endet mit Exit 0,
 > erzeugt eine startende EXE — und die lädt ihr Frontend trotzdem von
@@ -137,13 +153,13 @@ Updater sie weder anbieten noch als installiert erkennen.
 
 ```bash
 cd apps/local-voice
-node scripts/set-version.mjs 0.3.0   # package.json + Cargo.toml + tauri.conf.json
-git commit -am "chore: v0.3.0"
-git tag app-v0.3.0 && git push --follow-tags
+node scripts/set-version.mjs 0.19.0  # package.json + Cargo.toml + tauri.conf.json
+git commit -am "chore: v0.19.0"
+git tag app-v0.19.0 && git push --follow-tags
 ```
 
 Der Präfix ist **`app-v`**, nicht `v`: im Repo stecken 63 Tags aus dem
-Handy-Subtree, deren Nummern bis v0.9.4 laufen. Ein blankes `v0.3.1` ist dort
+Handy-Subtree, deren Nummern bis v0.9.4 laufen. Ein blankes `v0.19.0` wäre dort
 die Veröffentlichung eines anderen Programms.
 
 Der Tag startet [`.github/workflows/release-windows.yml`](.github/workflows/release-windows.yml):
@@ -159,16 +175,22 @@ Tag und `tauri.conf.json` nicht überein, bricht der Workflow ab.
 ## Aufbau des Repos
 
 ```
-apps/local-voice/          die Anwendung (Tauri-Projekt)
-  src/                     React-Frontend
-  src-tauri/src/           Rust-Backend
-    managers/              Audio, Modelle, Transkription, Besprechungen, TTS
-    catalog/catalog.json   der einkompilierte Modellkatalog
-  scripts/                 gen_catalog.py, set-version.mjs, Prüfskripte
-docs/                      Statusberichte, Entscheidungen, Build- und Testnachweise
-tooling/                   projektfremde Werkzeuge (Skill-Entwicklung)
-.github/workflows/         der aktive Release-Workflow
+apps/local-voice/          die Desktop-App (Tauri-Projekt) — README dort erklärt den Code
+apps/apple/                iPhone-/Watch-App (SwiftUI, Xcode-Projekt)
+packages/voice-protocol/   Paketformat zwischen den Plattformen, mit Fixtures
+docs/                      Anleitung, Entscheidungen, Roadmap, Status, Nachweise — Index in docs/README.md
+tooling/                   projektfremde Werkzeuge (Skill-Entwicklung), nicht Teil der App
+.github/workflows/         Release-Workflows (Windows, macOS, Apple-Buildprüfung)
+AGENTS.md                  Regeln für alle, die am Repo arbeiten — Mensch wie KI-Werkzeug
 ```
+
+## Mitarbeiten
+
+Mehrere Entwickler und KI-Zugänge arbeiten parallel an diesem Repo. Die Regeln
+dafür stehen in [AGENTS.md](AGENTS.md): eigener Zweig, PR nach `main`, kein
+Force-Push, keine Formatierläufe über fremde Dateien. Was auf `main` bereits rot
+ist (Prettier, Clippy, Übersetzungsprüfung), ist dort benannt — wer eine Änderung
+einreicht, prüft die eigenen Dateien und nicht den ganzen Baum.
 
 ## Herkunft und Lizenz
 

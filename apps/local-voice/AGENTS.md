@@ -261,7 +261,7 @@ Access debug features: `Cmd+Shift+D` (macOS) or `Ctrl+Shift+D` (Windows/Linux)
 
 ## Troubleshooting
 
-See the [Troubleshooting](README.md#troubleshooting) section in README.md.
+See the [Troubleshooting](README.upstream.md#troubleshooting) section of the upstream README (`README.upstream.md`).
 
 ## GitHub workflow for AI coding assistants
 
