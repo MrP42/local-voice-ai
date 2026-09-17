@@ -403,6 +403,11 @@ impl TtsModelManager {
         if let Some(token) = self.cancel_flags.lock().unwrap().get(id) {
             token.cancel();
         }
+        // Die Fussleiste hoert auf die gemeinsamen Download-Ereignisse aller
+        // Downloader und raeumt einen Eintrag nur bei complete/failed/
+        // cancelled weg. Ohne dieses Ereignis blieb ein abgebrochener
+        // Download dort als "11 %" stehen (17.09.2026).
+        let _ = self.app_handle.emit("model-download-cancelled", id);
     }
 
     pub fn delete(&self, id: &str) -> Result<(), String> {
