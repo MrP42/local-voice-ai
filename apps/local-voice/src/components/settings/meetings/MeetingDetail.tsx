@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowLeft, Check, Download, Pencil, X } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { commands, type Meeting, type StoredSegment } from "@/bindings";
+import { commands, events, type Meeting, type StoredSegment } from "@/bindings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Button } from "../../ui/Button";
 import { Textarea } from "../../ui/Textarea";
@@ -97,6 +97,40 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   useEffect(() => {
     void loadSegments();
   }, [loadSegments]);
+
+  // Live mitlesen: Import, Aufnahme und Neu-Transkription schreiben Block
+  // fuer Block und melden jeden ueber `meetingEvent`. Ohne diesen Hoerer
+  // zeigte die Detailseite nur den Stand beim Oeffnen — wer waehrend der
+  // Transkription zusah, sah nichts wachsen (17.09.2026).
+  useEffect(() => {
+    const un = events.meetingEvent.listen((e) => {
+      const payload = e.payload;
+      if (payload.kind === "levels" || payload.meeting_id !== meetingId) return;
+      if (payload.kind === "reset") {
+        setSegments([]);
+      } else if (payload.kind === "segments") {
+        setSegments((prev) =>
+          [...prev, ...payload.appended].sort(
+            (a, b) => a.start_ms - b.start_ms,
+          ),
+        );
+      } else if (payload.kind === "state") {
+        // Statusfeld und Dauer/Audio-Pfade kommen aus dem Datensatz; nach
+        // ready/failed einmal frisch laden, damit Badge und Player stimmen.
+        if (payload.status === "ready" || payload.status === "failed") {
+          void loadSegments();
+          void commands.meetingsList(0, 200).then((r) => {
+            if (r.status !== "ok") return;
+            const fresh = r.data.find((m) => m.id === meetingId);
+            if (fresh) onMeetingChange(fresh);
+          });
+        }
+      }
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [meetingId, loadSegments, onMeetingChange]);
 
   const saveTitle = async () => {
     const next = titleDraft.trim();
