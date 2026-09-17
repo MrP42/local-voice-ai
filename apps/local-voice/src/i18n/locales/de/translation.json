@@ -148,6 +148,10 @@
       "transcribing": "Wird transkribiert …",
       "transcriptManualPlaceholder": "Exaktes Transkript der Aufnahme (automatische Transkription ist ausgeschaltet — Text hier eintragen)",
       "previewCreate": "Hörprobe erzeugen",
+      "previewPlay": "Hörprobe",
+      "previewStop": "Stopp",
+      "exportArchive": "Stimme exportieren (Archiv)",
+      "previewSentence": "Alle Hörproben sprechen denselben Satz: „Guten Tag. So klingt diese Stimme: ein kurzer Satz, damit Sie Klangfarbe, Tempo und Betonung vergleichen können.“",
       "previewNeedsEngine": "Noch keine Hörprobe — Erzeugen startet einmalig die Sprach-Engine.",
       "piperOption": "{{name}} · Piper",
       "manage": "Stimmen verwalten …"

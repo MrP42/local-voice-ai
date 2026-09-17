@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
-import { commands, type VoiceInfo, type VoiceSample } from "@/bindings";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { Pencil, Play, Trash2, Upload, Wand2 } from "lucide-react";
-import { AudioPlayer } from "../../ui/AudioPlayer";
+import { toast } from "sonner";
+import { commands, type VoiceInfo } from "@/bindings";
+import { Download, Pencil, Trash2, Upload, Wand2 } from "lucide-react";
 import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Input } from "../../ui/Input";
@@ -13,7 +12,12 @@ import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import Badge from "../../ui/Badge";
 import { VoiceBuilder } from "./builder";
-import { VoiceArchiveImport, VoiceEditor } from "./voices";
+import {
+  VoiceArchiveImport,
+  VoiceEditor,
+  VoicePreviewButton,
+  exportVoiceArchive,
+} from "./voices";
 
 type Mode =
   | { kind: "idle" }
@@ -43,20 +47,6 @@ export const VoicesCard = () => {
   // noch etwas kommt.
   const [transcribing, setTranscribing] = useState(false);
   const recordTimer = useRef<number | null>(null);
-  // Which voice the user opened a preview for, and what it is. Loaded on
-  // demand rather than for every voice up front: a preview is a file read, and
-  // most of the time you only want to hear one of them.
-  const [sample, setSample] = useState<{
-    id: string;
-    data: VoiceSample | null;
-    error?: string;
-  } | null>(null);
-  const [previewing, setPreviewing] = useState<string | null>(null);
-  // Welche Stimmen ohne laufende Engine hoerbar sind. Wird beim Laden der
-  // Liste einmal erfragt: die Antwort ist eine Dateipruefung, kein
-  // Serverstart, und erst sie erlaubt es, den Player gleich hinzustellen
-  // statt jede Stimme hinter demselben Knopf zu verstecken.
-  const [cached, setCached] = useState<Record<string, VoiceSample>>({});
   // Deleting a voice throws away a recording that cannot be reproduced — the
   // same person has to sit down and speak again. That deserves a question,
   // especially since the button sits right next to "Activate".
@@ -84,32 +74,6 @@ export const VoicesCard = () => {
     void refreshVoices();
   }, [refreshVoices]);
 
-  // Welche Stimmen schon eine Hoerprobe haben. Reine Dateipruefung je Stimme,
-  // kein Serverstart — deshalb darf sie fuer die ganze Liste auf einmal
-  // laufen, und der Player steht danach ohne Zutun da.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const ids = [SEED_VOICE, ...voices.map((voice) => voice.id)];
-      const found = await Promise.all(
-        ids.map(
-          async (id) => [id, await commands.ttsVoiceDemoCached(id)] as const,
-        ),
-      );
-      if (cancelled) return;
-      setCached(
-        Object.fromEntries(
-          found.filter((entry): entry is [string, VoiceSample] =>
-            Boolean(entry[1]),
-          ),
-        ),
-      );
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [voices]);
-
   useEffect(() => {
     if (mode.kind === "recording") {
       setRecordSeconds(0);
@@ -128,68 +92,6 @@ export const VoicesCard = () => {
       }
     };
   }, [mode.kind]);
-
-  /**
-   * Erzeugt die fehlende Hoerprobe einer Stimme. Nur dieser Weg braucht die
-   * Engine — einmal je Stimme; danach steht der Player von selbst da.
-   */
-  const createPreview = async (id: string) => {
-    setSample(null);
-    setPreviewing(id);
-    const result = await commands.ttsVoiceDemo(id);
-    setPreviewing(null);
-    if (result.status === "ok") {
-      setCached((current) => ({ ...current, [id]: result.data }));
-      return;
-    }
-    setSample({ id, data: null, error: result.error });
-  };
-
-  /**
-   * Hoerprobe einer Stimme. Liegt sie vor, steht der Player sofort da — ohne
-   * Klick und ohne laufende Engine. Fehlt sie, sagt der Knopf, was der Klick
-   * kostet, statt beide Faelle gleich aussehen zu lassen.
-   */
-  const renderPreview = (id: string) => {
-    const ready = cached[id];
-    if (ready) {
-      return (
-        <div className="mt-2 space-y-1">
-          {/* Derselbe Satz fuer jede Stimme — sonst vergleicht man zwei
-              Aufnahmen und nicht zwei Stimmen. */}
-          <AudioPlayer
-            src={convertFileSrc(ready.wav_path, "asset")}
-            className="w-full"
-          />
-          <p className="text-xs text-text/60 italic">{ready.transcript}</p>
-        </div>
-      );
-    }
-    const failed = sample?.id === id && sample.data === null;
-    return (
-      <div className="mt-2 space-y-1">
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => void createPreview(id)}
-          disabled={previewing !== null}
-        >
-          <Play width={14} height={14} />
-          {previewing === id
-            ? t("tts.voices.previewGenerating")
-            : t("tts.voices.previewCreate")}
-        </Button>
-        <p className="text-xs text-text/60">
-          {t("tts.voices.previewNeedsEngine")}
-        </p>
-        {failed && (
-          <p className="text-xs text-red-400">
-            {sample?.error ?? t("tts.voices.previewMissing")}
-          </p>
-        )}
-      </div>
-    );
-  };
 
   const startRecording = async () => {
     setError(null);
@@ -327,6 +229,19 @@ export const VoicesCard = () => {
     await refreshVoices();
   };
 
+  // Export direkt aus der Zeile: das Archiv ist der Weg, eine Stimme auf
+  // einen anderen Rechner zu bringen, und der war im Bearbeiten-Panel nur
+  // zu finden, wenn man wusste, dass es ihn gibt.
+  const exportFromRow = async (id: string) => {
+    const outcome = await exportVoiceArchive(
+      id,
+      t("tts.voiceEdit.archiveFilter"),
+    );
+    if (outcome.status === "error") toast.error(outcome.message);
+    if (outcome.status === "done")
+      toast.success(t("tts.voiceEdit.exportDone", { path: outcome.path }));
+  };
+
   // Eine eingespielte Stimme ist wie eine frisch aufgenommene: Liste neu
   // laden und die neue Stimme aktiv schalten.
   const archiveImported = async (id: string) => {
@@ -340,77 +255,87 @@ export const VoicesCard = () => {
         <p className="text-sm text-text/70">{t("tts.voices.description")}</p>
         {error && <p className="text-sm text-red-500 break-words">{error}</p>}
 
-        <div className="space-y-1">
+        {/* Eine Zeile je Stimme: Hoerprobe, Name, Aktionen. Der Demo-Satz
+            ist fuer alle derselbe und steht deshalb einmal ueber der Liste
+            statt unter jeder Stimme. */}
+        <p className="text-xs text-text/50 italic">
+          {t("tts.voices.previewSentence")}
+        </p>
+        <div className="divide-y divide-mid-gray/15">
           {/* Die Standardstimme ist eine Stimme wie jede andere und wird
-              gegen die anderen ausgewaehlt — das geht nur, wenn man sie auch
-              hoeren kann. Leere Kennung heisst im Backend "Seed-Stimme". */}
-          <div className="py-1">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <span className="text-sm">{t("tts.voices.defaultVoice")}</span>
+              gegen die anderen ausgewaehlt. Leere Kennung heisst im Backend
+              "Seed-Stimme"; der Seed-Wert haelt die Hoerprobe aktuell. */}
+          <div className="flex items-center gap-2 py-1.5">
+            <VoicePreviewButton
+              voiceId={SEED_VOICE}
+              refreshKey={getSetting("tts_seed") ?? 42}
+            />
+            <span className="text-sm flex-1 min-w-0 truncate">
+              {t("tts.voices.defaultVoice")}
+            </span>
+            {activeVoice === null ? (
+              <Badge variant="success">{t("tts.voices.active")}</Badge>
+            ) : (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => updateSetting("tts_voice", null)}
+              >
+                {t("tts.voices.activate")}
+              </Button>
+            )}
+          </div>
+          {voices.map(({ id, meta }) => (
+            <div key={id} className="py-1.5" data-testid="voice-row">
               <div className="flex items-center gap-2">
-                {activeVoice === null ? (
+                <VoicePreviewButton voiceId={id} />
+                <span className="text-sm font-medium flex-1 min-w-0 truncate">
+                  {meta.display_name || id}
+                </span>
+                {activeVoice === id ? (
                   <Badge variant="success">{t("tts.voices.active")}</Badge>
                 ) : (
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => updateSetting("tts_voice", null)}
+                    onClick={() => updateSetting("tts_voice", id)}
                   >
                     {t("tts.voices.activate")}
                   </Button>
                 )}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void exportFromRow(id)}
+                  title={t("tts.voices.exportArchive")}
+                  aria-label={t("tts.voices.exportArchive")}
+                >
+                  <Download width={14} height={14} />
+                </Button>
+                {/* Der Stift oeffnet das Bearbeiten-Panel dieser Stimme:
+                    Anzeigename, Farbe, Beschreibung, Tags, Klang, Umbenennen. */}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    setEditTarget((current) => (current === id ? null : id))
+                  }
+                  aria-expanded={editTarget === id}
+                  title={t("tts.voiceEdit.open")}
+                  aria-label={t("tts.voiceEdit.open")}
+                >
+                  <Pencil width={14} height={14} />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger-ghost"
+                  onClick={() => setDeleteTarget(id)}
+                  title={t("tts.voices.delete")}
+                  aria-label={t("tts.voices.delete")}
+                >
+                  <Trash2 width={14} height={14} />
+                </Button>
               </div>
-            </div>
-            {renderPreview(SEED_VOICE)}
-          </div>
-          {voices.map(({ id, meta }) => (
-            <div key={id} className="py-1">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className="text-sm font-medium">
-                  {meta.display_name || id}
-                </span>
-                <div className="flex items-center gap-2">
-                  {activeVoice === id ? (
-                    <Badge variant="success">{t("tts.voices.active")}</Badge>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => updateSetting("tts_voice", id)}
-                    >
-                      {t("tts.voices.activate")}
-                    </Button>
-                  )}
-                  {/* Der Stift oeffnet das Bearbeiten-Panel dieser Stimme:
-                      Anzeigename, Farbe, Beschreibung, Tags, Klang — und die
-                      Aktionen Umbenennen und Exportieren. */}
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() =>
-                      setEditTarget((current) => (current === id ? null : id))
-                    }
-                    aria-expanded={editTarget === id}
-                    title={t("tts.voiceEdit.open")}
-                    aria-label={t("tts.voiceEdit.open")}
-                  >
-                    <Pencil width={14} height={14} />
-                  </Button>
-                  {/* Nur das Symbol: die Zeile traegt schon drei Knoepfe, und
-                      der Papierkorb ist eindeutiger als ein viertes Wort.
-                      Beschriftung wandert in title + aria-label. */}
-                  <Button
-                    size="sm"
-                    variant="danger-ghost"
-                    onClick={() => setDeleteTarget(id)}
-                    title={t("tts.voices.delete")}
-                    aria-label={t("tts.voices.delete")}
-                  >
-                    <Trash2 width={14} height={14} />
-                  </Button>
-                </div>
-              </div>
-              {renderPreview(id)}
               {editTarget === id && (
                 <VoiceEditor
                   id={id}

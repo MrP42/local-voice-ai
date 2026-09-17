@@ -104,11 +104,14 @@ test.beforeEach(async ({ page }) => {
               : null;
           // Ein Arbeitsblatt mit einer erzeugten Aufnahme und einer Datei,
           // die keine ist — nur die eine darf einen Abspielknopf bekommen.
-          if (cmd === "pages_list")
-            return [{ id: "p1", title: "Der Sturm" }];
+          if (cmd === "pages_list") return [{ id: "p1", title: "Der Sturm" }];
           if (cmd === "page_files")
             return [
-              { name: "Der-Sturm_2026-09-08_1405.wav", size: 120, modified_ms: 0 },
+              {
+                name: "Der-Sturm_2026-09-08_1405.wav",
+                size: 120,
+                modified_ms: 0,
+              },
               { name: "notizen.txt", size: 12, modified_ms: 0 },
             ];
           if (cmd === "page_dir") return "C:/projects/p1";
@@ -158,7 +161,8 @@ test.beforeEach(async ({ page }) => {
               args?.state;
             return null;
           }
-          if (cmd === "tts_tidy_text") return "Sauberer Text ohne Seitenzahlen.";
+          if (cmd === "tts_tidy_text")
+            return "Sauberer Text ohne Seitenzahlen.";
           if (cmd === "tts_list_downloads")
             return [
               {
@@ -201,8 +205,9 @@ test.beforeEach(async ({ page }) => {
             return null;
           }
           if (cmd === "change_tts_piper_voice_setting") {
-            (window as unknown as { savedPiperVoice?: unknown }).savedPiperVoice =
-              args?.value;
+            (
+              window as unknown as { savedPiperVoice?: unknown }
+            ).savedPiperVoice = args?.value;
             return null;
           }
           if (cmd === "get_custom_sounds") return { start: false, stop: false };
@@ -224,19 +229,24 @@ async function openVoices(page: import("@playwright/test").Page) {
   await expect(page.getByTestId("voice-library")).toBeVisible();
 }
 
-test("a voice with a stored sample plays without starting the engine", async ({
+test("a voice with a stored sample offers a preview, not a generation", async ({
   page,
 }) => {
   await openVoices(page);
 
-  const row = page.locator(".py-1", { hasText: "Erzählerin" }).first();
-  // Der Player steht da, ohne dass jemand geklickt hat.
-  await expect(row.locator("audio")).toHaveCount(1);
-  await expect(row.getByText("Probesatz.")).toBeVisible();
-  // Und kein Knopf, der eine Erzeugung anbietet.
+  // Eine Zeile je Stimme: der Knopf heisst "Hoerprobe", weil die Datei
+  // schon da ist — kein Player, kein Satz unter jeder Stimme.
+  const row = page
+    .getByTestId("voice-row")
+    .filter({ hasText: "Erzählerin" })
+    .first();
+  await expect(
+    row.getByRole("button", { name: "Hörprobe", exact: true }),
+  ).toBeVisible();
   await expect(
     row.getByRole("button", { name: "Hörprobe erzeugen" }),
   ).toHaveCount(0);
+  await expect(row.locator("audio")).toHaveCount(0);
 });
 
 test("a voice without a sample says what the click will cost", async ({
@@ -244,12 +254,37 @@ test("a voice without a sample says what the click will cost", async ({
 }) => {
   await openVoices(page);
 
-  const row = page.locator(".py-1", { hasText: "Leo Lausemaus" }).first();
-  await expect(row.locator("audio")).toHaveCount(0);
+  const row = page
+    .getByTestId("voice-row")
+    .filter({ hasText: "Leo Lausemaus" })
+    .first();
+  const create = row.getByRole("button", { name: "Hörprobe erzeugen" });
+  await expect(create).toBeVisible();
+  await expect(create).toHaveAttribute(
+    "title",
+    /startet einmalig die Sprach-Engine/,
+  );
+});
+
+test("every voice row carries an export button", async ({ page }) => {
+  await openVoices(page);
+  const row = page
+    .getByTestId("voice-row")
+    .filter({ hasText: "Erzählerin" })
+    .first();
   await expect(
-    row.getByRole("button", { name: "Hörprobe erzeugen" }),
+    row.getByRole("button", { name: "Stimme exportieren (Archiv)" }),
   ).toBeVisible();
-  await expect(row.getByText(/startet einmalig die Sprach-Engine/)).toBeVisible();
+});
+
+test("the seed row has its own preview button", async ({ page }) => {
+  await openVoices(page);
+  const seedGroup = page.getByTestId("voice-library").locator("div", {
+    has: page.getByRole("button", { name: "Würfeln" }),
+  });
+  await expect(
+    seedGroup.getByRole("button", { name: /Hörprobe/ }).first(),
+  ).toBeVisible();
 });
 
 test("a generated recording can be played from the file list", async ({
@@ -291,7 +326,9 @@ test("a recording carries its origin and hands the text back to the editor", asy
   await expect(filesArea.getByText(/erzaehlerin/).first()).toBeVisible();
 
   // Und der Text kommt zurueck in den Editor — Grundlage jeder Korrektur.
-  const editor = page.getByPlaceholder("Text zum Vorlesen eingeben oder einfügen…");
+  const editor = page.getByPlaceholder(
+    "Text zum Vorlesen eingeben oder einfügen…",
+  );
   await expect(editor).toHaveValue("");
   await filesArea.getByRole("button", { name: "Text übernehmen" }).click();
   await expect(editor).toHaveValue("Es war eine dunkle Nacht. Niemand sprach.");
@@ -357,7 +394,8 @@ test("the end of the read-aloud page can actually be reached", async ({
   // Und der Container ist wirklich am Ende — sonst haette das Scrollen
   // vorzeitig gestoppt.
   const rest = await main.evaluate(
-    (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+    (element) =>
+      element.scrollHeight - element.scrollTop - element.clientHeight,
   );
   expect(rest).toBeLessThanOrEqual(1);
 });
@@ -453,7 +491,8 @@ test("a downloaded Piper voice can be picked right in the read-aloud voice list"
   await expect
     .poll(() =>
       page.evaluate(
-        () => (window as unknown as { savedPiperVoice?: string }).savedPiperVoice,
+        () =>
+          (window as unknown as { savedPiperVoice?: string }).savedPiperVoice,
       ),
     )
     .toBe("de_DE-thorsten-medium");
@@ -502,16 +541,22 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
     .toContain('"translation":"piper:de_DE-thorsten-medium"');
 });
 
-test("the voice list links to voice management under settings", async ({ page }) => {
+test("the voice list links to voice management under settings", async ({
+  page,
+}) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
   await page.getByTestId("voice-select").click();
   await page.getByText("Stimmen verwalten …").click();
-  await expect(page.getByRole("tab", { name: "Vorlesen", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("tab", { name: "Vorlesen", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("voice-library")).toBeVisible();
 });
 
-test("clean up rewrites the original text and offers undo", async ({ page }) => {
+test("clean up rewrites the original text and offers undo", async ({
+  page,
+}) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
   const editor = page.locator("textarea").first();
