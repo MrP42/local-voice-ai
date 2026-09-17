@@ -146,13 +146,28 @@ fn sorted_segments(segments: &[StoredSegment]) -> Vec<StoredSegment> {
 /// sind verboten, optionale Strings sind explizit nullable (nur so akzeptiert
 /// der strict-Modus ein weglassbares Feld).
 pub fn minutes_schema() -> serde_json::Value {
+    minutes_schema_for(false)
+}
+
+/// `local` = Schema fuer llama-server/Ollama/vLLM. Dort erzwingt `minLength`
+/// ueber die Grammatik eine nicht-leere Zusammenfassung: Qwen3 4B lieferte am
+/// 17.09.2026 fuer eine kurze Sprachnotiz sonst gueltiges JSON mit leerem
+/// `summary` — mit `minLength: 1` schrieb es sie, und zwar in der Sprache des
+/// Transkripts. Cloud-Anbieter (OpenAI strict) lehnen `minLength` ab, fuer
+/// sie bleibt die Wiederholung in `ask_for_minutes_json` der Ausweg.
+pub fn minutes_schema_for(local: bool) -> serde_json::Value {
     let nullable_string = serde_json::json!({ "type": ["string", "null"] });
+    let summary = if local {
+        serde_json::json!({ "type": "string", "minLength": 1 })
+    } else {
+        serde_json::json!({ "type": "string" })
+    };
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
         "required": ["summary", "scope", "decisions", "tasks", "next_steps", "follow_ups", "open_questions"],
         "properties": {
-            "summary": { "type": "string" },
+            "summary": summary,
             "scope": { "type": "string" },
             "decisions": {
                 "type": "array",
@@ -534,6 +549,7 @@ async fn ask_for_minutes_json(
     user_prompt: &str,
 ) -> Result<MinutesJson, String> {
     let (provider, model, api_key) = resolve_provider(settings)?;
+    let schema = minutes_schema_for(crate::managers::llm::is_local(&provider));
 
     let mut prompt = user_prompt.to_string();
     let mut last_error = String::new();
@@ -547,7 +563,7 @@ async fn ask_for_minutes_json(
             &model,
             prompt.clone(),
             Some(minutes_system_prompt()),
-            Some(minutes_schema()),
+            Some(schema.clone()),
             None,
             None,
         )
@@ -556,6 +572,21 @@ async fn ask_for_minutes_json(
         .ok_or_else(|| "Protokoll-Antwort ohne Inhalt".to_string())?;
 
         match serde_json::from_str::<MinutesJson>(strip_code_fence(&response)) {
+            // Gueltiges JSON, aber leere Zusammenfassung: das Modell hat die
+            // Regel "leere Listen nicht auffuellen" auf die Pflichtfelder
+            // uebertragen. Einmal mit klarem Hinweis nachfragen — der
+            // Hinweis nennt die Transkriptsprache, sonst antwortet das
+            // Modell auf Englisch.
+            Ok(minutes) if attempt == 0 && minutes.summary.trim().is_empty() => {
+                last_error = "Protokoll ohne Zusammenfassung".to_string();
+                log::warn!("Protokoll-Antwort ohne Zusammenfassung (Versuch 1) — wiederhole mit Hinweis");
+                prompt = format!(
+                    "{user_prompt}\n\nYour previous reply left the summary empty. \
+                     The summary is mandatory: state in two to four sentences what \
+                     was talked about, in the same language as the transcript. \
+                     Keep everything else as before and reply with ONLY the JSON object."
+                );
+            }
             Ok(minutes) => return Ok(minutes),
             Err(e) => {
                 last_error = e.to_string();
@@ -1015,6 +1046,21 @@ mod tests {
         ] {
             assert!(req.iter().any(|v| v == k), "{k} fehlt in required");
         }
+    }
+
+    #[test]
+    fn only_the_local_schema_forces_a_non_empty_summary() {
+        assert_eq!(
+            minutes_schema_for(true)["properties"]["summary"]["minLength"],
+            serde_json::json!(1)
+        );
+        assert!(
+            minutes_schema_for(false)["properties"]["summary"]
+                .get("minLength")
+                .is_none(),
+            "Cloud-Anbieter (OpenAI strict) lehnen minLength ab"
+        );
+        assert!(minutes_schema()["properties"]["summary"].get("minLength").is_none());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "local-voice-ai"
-version = "0.18.5"
+version = "0.18.17"
 description = "Local Voice AI - lokale Sprach-KI (Diktat, Vorlesen, Stimmen, Übersetzung)"
 authors = ["Patrick Wolff"]
 edition = "2021"
@@ -150,6 +150,9 @@ windows = { version = "0.61.3", features = [
   "Media_Control",
   "Foundation",
   "Foundation_Collections",
+  # Job-Objekte: RAM-/CPU-Deckel fuer eigene Kindprozesse (fish-speech,
+  # llama-server), damit ein Modellstart nie den ganzen Rechner einfriert.
+  "Win32_System_JobObjects",
 ] }
 winreg = "0.55"
 # WASAPI loopback capture for the M8 meetings feature (system audio).

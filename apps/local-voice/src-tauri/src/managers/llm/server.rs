@@ -66,6 +66,9 @@ pub struct StartOptions {
 
 struct Running {
     child: Child,
+    /// Job-Objekt mit RAM-/CPU-Deckel; faellt mit `Running`, und mit ihm
+    /// der Prozessbaum (KILL_ON_JOB_CLOSE).
+    _guard: Option<crate::process_guard::ProcessGuard>,
     port: u16,
     model_id: String,
     backend: String,
@@ -162,6 +165,17 @@ impl LocalLlmServer {
         self.stop_requested.store(false, Ordering::Release);
         self.set_phase(LocalLlmPhase::Starting, None);
 
+        // Start-Gate: die Modelldatei wird (bei CPU-Anteil) in den RAM
+        // gemappt; mindestens ihre Groesse muss frei sein.
+        let model_mb = std::fs::metadata(&opts.model_path)
+            .map(|m| m.len() / (1024 * 1024))
+            .unwrap_or(2048);
+        let free_mb = crate::process_guard::check_ram_for_start(model_mb).map_err(|msg| {
+            self.set_phase(LocalLlmPhase::Error, Some(msg.clone()));
+            msg
+        })?;
+        let cpu_threads = crate::process_guard::cpu_threads_for(crate::process_guard::logical_cpus());
+
         let mut cmd = std::process::Command::new(binary);
         cmd.arg("-m")
             .arg(&opts.model_path)
@@ -172,6 +186,8 @@ impl LocalLlmServer {
             // Ein Slot: die Voreinstellung von vieren verdoppelt den KV-Cache,
             // und die App stellt ohnehin eine Anfrage nach der anderen.
             .args(["--parallel", "1"])
+            // Nicht alle Kerne: die Oberflaeche des Rechners bleibt bedienbar.
+            .args(["-t", &cpu_threads.to_string()])
             .arg("--no-webui");
         if let Some(dir) = binary.parent() {
             cmd.current_dir(dir);
@@ -197,6 +213,11 @@ impl LocalLlmServer {
         let child = cmd
             .spawn()
             .map_err(|e| format!("llama-server liess sich nicht starten: {e}"))?;
+        let guard = crate::process_guard::ProcessGuard::attach(
+            &child,
+            crate::process_guard::memory_limit_mb(free_mb),
+            crate::process_guard::CPU_CAP_PERCENT,
+        );
         log::info!(
             "llama-server gestartet (pid {}, {} auf 127.0.0.1:{port}, Backend {})",
             child.id(),
@@ -205,6 +226,7 @@ impl LocalLlmServer {
         );
         *self.running.lock().unwrap() = Some(Running {
             child,
+            _guard: guard,
             port,
             model_id: opts.model_id.clone(),
             backend: opts.backend.clone(),

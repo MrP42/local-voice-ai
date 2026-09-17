@@ -290,6 +290,76 @@ fn chunk_all(samples: &[i16], target_ms: u64) -> Vec<Chunk> {
     chunks
 }
 
+/// Wie oft ein Block versucht wird, bevor er als Luecke gespeichert wird.
+const CHUNK_ATTEMPTS: u32 = 3;
+
+/// Zeitstempel `m:ss` fuer die Lueckenmarkierung im Transkript.
+fn mm_ss(ms: u64) -> String {
+    let secs = ms / 1_000;
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
+/// Text des Platzhalters, der eine nicht transkribierte Stelle im Transkript
+/// markiert. Steht im Transkript selbst, damit die Luecke beim Lesen sichtbar
+/// ist und ueber den Stift von Hand ergaenzt werden kann.
+pub(super) fn gap_placeholder(start_ms: u64, end_ms: u64) -> String {
+    format!(
+        "[Nicht transkribiert {}–{} — bitte anhören und ergänzen]",
+        mm_ss(start_ms),
+        mm_ss(end_ms)
+    )
+}
+
+/// Ein Block: erst mit Wiederholung transkribieren, sonst als Luecke
+/// speichern — die Aufnahme laeuft in jedem Fall weiter.
+///
+/// Am 17.09.2026 hat ein Diktat per Tastenkuerzel waehrend eines Imports das
+/// Besprechungsmodell verdraengt; der naechste Block bekam "Model is not
+/// loaded", und der ganze Import stand auf "fehlgeschlagen", obwohl nur ein
+/// Block fehlte. Deshalb: das Besprechungsmodell erneut anfordern (die
+/// Transkription wartet auf dessen Ladevorgang), bis zu drei Versuche, und
+/// wenn es dann immer noch nicht geht, ein Platzhalter mit Zeitraum statt
+/// eines Abbruchs. Vollstaendigkeit hat Vorrang: lieber eine markierte
+/// Luecke als ein halbes Transkript.
+pub(super) fn transcribe_chunk_resilient(
+    app: &tauri::AppHandle,
+    tm: &Arc<TranscriptionManager>,
+    chunk: &Chunk,
+) -> Vec<crate::managers::transcription::TimedSegment> {
+    let mut last_error = String::new();
+    for attempt in 1..=CHUNK_ATTEMPTS {
+        match tm.transcribe_segments(chunk.samples.clone()) {
+            Ok(timed) => return timed,
+            Err(e) => {
+                last_error = e.to_string();
+                log::warn!(
+                    "meetings: Block bei {} ms nicht transkribiert (Versuch {attempt} von {CHUNK_ATTEMPTS}): {last_error}",
+                    chunk.offset_ms
+                );
+                if attempt < CHUNK_ATTEMPTS {
+                    let target = TranscriptionManager::meeting_model_target(
+                        &crate::settings::get_settings(app),
+                    );
+                    tm.initiate_model_load_target(&target);
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            }
+        }
+    }
+    let chunk_ms = (chunk.samples.len() as u64 * 1_000) / 16_000;
+    let (start_ms, end_ms) = (chunk.offset_ms, chunk.offset_ms + chunk_ms);
+    error!(
+        "meetings: Block {}–{} endgültig nicht transkribiert ({last_error}) — als Lücke gespeichert",
+        mm_ss(start_ms),
+        mm_ss(end_ms)
+    );
+    vec![crate::managers::transcription::TimedSegment {
+        text: gap_placeholder(start_ms, end_ms),
+        start_ms: 0,
+        end_ms: chunk_ms,
+    }]
+}
+
 /// Transcribes and stores each chunk in turn, same as the live worker in
 /// `recorder.rs` — chunking itself happens incrementally in `chunk_all`.
 pub(super) fn transcribe_and_store(
@@ -304,9 +374,7 @@ pub(super) fn transcribe_and_store(
     let mut next_index: u32 = first_index;
     for chunk in chunk_all(samples, IMPORT_CHUNK_TARGET_MS) {
         let offset_ms = chunk.offset_ms;
-        let timed = tm
-            .transcribe_segments(chunk.samples)
-            .map_err(|e| format!("transcription_failed: {e}"))?;
+        let timed = transcribe_chunk_resilient(app, tm, &chunk);
 
         let appended: Vec<StoredSegment> = timed
             .into_iter()
@@ -419,6 +487,14 @@ fn emit_error(app: &tauri::AppHandle, meeting_id: &str, message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gap_placeholder_names_the_time_span() {
+        assert_eq!(
+            gap_placeholder(72_000, 132_000),
+            "[Nicht transkribiert 1:12–2:12 — bitte anhören und ergänzen]"
+        );
+    }
 
     #[test]
     fn title_from_path_uses_the_file_stem() {
