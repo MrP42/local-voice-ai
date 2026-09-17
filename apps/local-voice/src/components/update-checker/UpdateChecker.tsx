@@ -12,6 +12,23 @@ interface UpdateCheckerProps {
   className?: string;
 }
 
+/** Semver-Vergleich der numerischen Teile: > 0 wenn a neuer als b. */
+export const compareVersions = (a: string, b: string): number => {
+  const parse = (v: string) =>
+    v
+      .replace(/^v/, "")
+      .split(/[.-]/)
+      .map((part) => Number.parseInt(part, 10))
+      .map((n) => (Number.isFinite(n) ? n : 0));
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+};
+
 const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   const { t } = useTranslation();
   // Update checking state
@@ -25,7 +42,19 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   // A newer installer in the configured local folder (see
   // LocalUpdateDirectory). Independent of the GitHub check: no network, no
   // signature, works for acceptance builds that never get published.
-  const [localUpdate, setLocalUpdate] = useState<LocalUpdate | null>(null);
+  const [localUpdateFound, setLocalUpdateFound] = useState<LocalUpdate | null>(
+    null,
+  );
+  // Version des GitHub-Updates, damit lokal und online verglichen werden
+  // koennen: es wird immer das NEUERE angeboten. Vorher gewann der lokale
+  // Ordner unbesehen — 0.18.17 lokal verdeckte 0.19.0 auf GitHub (17.09.2026).
+  const [githubVersion, setGithubVersion] = useState<string | null>(null);
+  const localUpdate =
+    localUpdateFound &&
+    (githubVersion === null ||
+      compareVersions(localUpdateFound.version, githubVersion) >= 0)
+      ? localUpdateFound
+      : null;
 
   const { settings, isLoading } = useSettings();
   const settingsLoaded = !isLoading && settings !== null;
@@ -77,11 +106,11 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
     try {
       const result = await commands.localUpdateCheck();
       const found = result.status === "ok" ? result.data : null;
-      setLocalUpdate(found);
+      setLocalUpdateFound(found);
       return found !== null;
     } catch (error) {
       console.error("Failed to check local update folder:", error);
-      setLocalUpdate(null);
+      setLocalUpdateFound(null);
       return false;
     }
   };
@@ -104,9 +133,11 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
 
       if (update) {
         setUpdateAvailable(true);
+        setGithubVersion(update.version);
         setShowUpToDate(false);
       } else {
         setUpdateAvailable(false);
+        setGithubVersion(null);
 
         if (isManualCheckRef.current && !hasLocal) {
           setShowUpToDate(true);
@@ -264,7 +295,9 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
               <button
                 className="px-3 py-1.5 text-sm rounded bg-logo-primary text-on-accent hover:bg-logo-primary/80 transition-colors"
                 onClick={() => {
-                  openUrl("https://github.com/MrP42/local-voice-ai/releases/latest");
+                  openUrl(
+                    "https://github.com/MrP42/local-voice-ai/releases/latest",
+                  );
                   setShowPortableUpdateDialog(false);
                 }}
               >
