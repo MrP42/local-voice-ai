@@ -225,7 +225,9 @@
       "piperAutoLanguageDescription": "Je Satz wird die Sprache erkannt und die passende geladene Piper-Stimme genommen (z. B. Englisch mit einer englischen Stimme). Ohne passende Stimme liest die gewählte.",
       "autotagProvider": "Auto-Tagging: Anbieter",
       "autotagProviderDescription": "Welches Sprachmodell die Betonungs-Tags vorschlägt: das Standardmodell der App oder Claude Haiku (API-Schlüssel nötig).",
-      "autotagDevice": "Auto-Tagging: Gerät"
+      "autotagDevice": "Auto-Tagging: Gerät",
+      "scriptCheck": "Skript vor dem Vorlesen prüfen",
+      "scriptCheckDescription": "Findet Sprechermarker ohne Stimme und Tags, die die gewählte Engine nicht kennt, und zeigt sie im Text. Ein Befund blockiert nicht, fragt aber vor dem Start nach."
     },
     "saveAudio": "Als Audio speichern…",
     "savingAudio": "Wird erzeugt…",
@@ -403,6 +405,28 @@
       "importConfirm": "Einspielen",
       "importing": "Spiele ein…",
       "importCancel": "Abbrechen"
+    },
+    "scriptCheck": {
+      "title": "Skript-Prüfung",
+      "clean": "Skript geprüft: keine Befunde.",
+      "count_one": "{{count}} Befund im Skript",
+      "count_other": "{{count}} Befunde im Skript",
+      "line": "Zeile {{line}}:",
+      "unknownSpeaker": "Sprecher „{{name}}“ hat keine Stimme – der Abschnitt wird mit der Standardstimme gelesen.",
+      "unknownTag": "Tag „{{tag}}“ kennt die gewählte Engine nicht.",
+      "reveal": "Zur Stelle springen",
+      "replaceWith": "Ersetzen durch…",
+      "replaceHere": "An dieser Stelle",
+      "replaceEverywhere": "Überall im Text",
+      "removeHere": "Entfernen hier",
+      "removeEverywhere": "Entfernen überall",
+      "dialogTitle_one": "{{count}} Befund – trotzdem fortfahren?",
+      "dialogTitle_other": "{{count}} Befunde – trotzdem fortfahren?",
+      "dialogBody_one": "Die Skript-Prüfung hat {{count}} Stelle gefunden, die anders klingen wird als gemeint. Die Befundliste über dem Text zeigt sie.",
+      "dialogBody_other": "Die Skript-Prüfung hat {{count}} Stellen gefunden, die anders klingen werden als gemeint. Die Befundliste über dem Text zeigt sie.",
+      "dialogCancel": "Zurück zum Text",
+      "dialogSpeakAnyway": "Trotzdem vorlesen",
+      "dialogSaveAnyway": "Trotzdem speichern"
     },
     "editor": {
       "tagPopoverAria": "Tag bearbeiten",

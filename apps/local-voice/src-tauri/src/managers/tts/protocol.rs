@@ -379,8 +379,10 @@ fn alt_speaker_marker<'a>(
 /// Verarbeitet ein Text-Stück (eine Zeile oder deren Rest nach einem
 /// Alt-Format-Marker): schaltet bei jedem bekannten `<Name>`/`<Name:Stil>`-
 /// Kandidaten um und flusht den bisherigen Puffer unter der bisherigen
-/// Stimme. Unbekannte Kandidaten werden nicht herausgeschnitten — ihr Text
-/// bleibt wörtlich erhalten.
+/// Stimme. Ein Marker OHNE passende Stimme wird gestrichen und schaltet auf
+/// die Standardstimme (`voice: None`) zurueck -- nicht auf den zuletzt
+/// genannten Sprecher: wer `<Bob>` schreibt, meint nicht Anna, und die
+/// eingestellte Stimme ist der ehrlichste Ersatz.
 fn process_speaker_chunk(
     chunk: &str,
     speakers: &[KnownSpeaker],
@@ -400,10 +402,16 @@ fn process_speaker_chunk(
             continue;
         }
         buffer.push_str(&chunk[last..candidate.start]);
-        if let Some(speaker) = resolve_speaker(&candidate.name, speakers) {
-            flush_speaker_segment(segments, current_voice, current_style, buffer);
-            *current_voice = Some(speaker.id.clone());
-            *current_style = candidate.style.clone();
+        flush_speaker_segment(segments, current_voice, current_style, buffer);
+        match resolve_speaker(&candidate.name, speakers) {
+            Some(speaker) => {
+                *current_voice = Some(speaker.id.clone());
+                *current_style = candidate.style.clone();
+            }
+            None => {
+                *current_voice = None;
+                *current_style = None;
+            }
         }
         last = candidate.end;
     }
@@ -1016,10 +1024,36 @@ patrick: Hi.",
     }
 
     #[test]
+    fn unbekannter_marker_faellt_auf_die_standardstimme_zurueck() {
+        // Nach Anna kommt "<Bob>", den es nicht gibt: sein Abschnitt gehoert
+        // der eingestellten Stimme (None), NICHT weiter Anna -- und der
+        // Marker selbst wird nicht vorgelesen. Der Stil faellt mit.
+        let speakers = vec![anna()];
+        let text = "<Anna:leise> Hallo. <Bob> Wer bin ich? <Anna> Wieder Anna.";
+        let segments = split_speaker_segments(text, &speakers);
+        assert_eq!(segments.len(), 3);
+        assert_eq!(segments[0].voice.as_deref(), Some("anna-id"));
+        assert_eq!(segments[0].style.as_deref(), Some("leise"));
+        assert_eq!(segments[0].text, "Hallo.");
+        assert_eq!(segments[1].voice, None);
+        assert_eq!(segments[1].style, None);
+        assert_eq!(segments[1].text, "Wer bin ich?");
+        assert_eq!(segments[2].voice.as_deref(), Some("anna-id"));
+        assert_eq!(segments[2].text, "Wieder Anna.");
+        // Auch im Alt-Format: "Anna:"-Zeile, danach unbekannter Marker.
+        let alt = split_speaker_segments("Anna: Erst ich. <Niemand> Dann Standard.", &speakers);
+        assert_eq!(alt.len(), 2);
+        assert_eq!(alt[0].voice.as_deref(), Some("anna-id"));
+        assert_eq!(alt[1].voice, None);
+        assert_eq!(alt[1].text, "Dann Standard.");
+    }
+
+    #[test]
     fn unbekannte_spitzklammer_wird_nicht_gesprochen_und_schaltet_nichts() {
-        // Ein Marker ohne passende Stimme schaltet nichts, wird aber auch
-        // nicht vorgelesen -- "<German Father>" oder "<div>" zu hoeren ist
-        // in jedem Fall falsch. Vergleiche mit Leerzeichen bleiben Text.
+        // Ein Marker ohne passende Stimme schaltet keinen Sprecher ein, wird
+        // aber auch nicht vorgelesen -- "<German Father>" oder "<div>" zu
+        // hoeren ist in jedem Fall falsch. Vergleiche mit Leerzeichen bleiben
+        // Text.
         let speakers = vec![anna()];
         let text = "<div>Eingefuegtes HTML</div> <Anna> Text.";
         let segments = split_speaker_segments(text, &speakers);

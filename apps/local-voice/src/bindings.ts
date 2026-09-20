@@ -456,6 +456,18 @@ async changeTtsPiperAutoLanguageSetting(value: boolean) : Promise<Result<null, s
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Skript-Pruefung vor dem Vorlesen bzw. Speichern (Sprecher ohne Stimme,
+ * unbekannte Tags) an- oder abschalten.
+ */
+async changeTtsScriptCheckSetting(value: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_script_check_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsSpeedSetting(value: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_speed_setting", { value }) };
@@ -2564,6 +2576,13 @@ tts_piper_voice?: string | null;
  * Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
  */
 tts_piper_auto_language?: boolean;
+/**
+ * Skript-Pruefung im Vorlesen: vor dem Vorlesen bzw. Speichern werden
+ * Sprechermarker ohne Stimme und Tags, die die aktive Engine nicht
+ * kennt, gefunden und angezeigt. Ein Befund blockiert nichts, fragt aber
+ * nach. Aus = keine Pruefung, keine Anzeige.
+ */
+tts_script_check?: boolean;
 /**
  * T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
  * Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die

@@ -23,11 +23,18 @@ import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
 import {
   TtsChipEditor,
+  type ChipEditorFinding,
   type ChipEditorInsertApi,
   type ChipEditorSuggestion,
 } from "./editor/TtsChipEditor";
+import { ScriptCheckPanel } from "./editor/ScriptCheckPanel";
+import {
+  checkScript,
+  replaceFindingEverywhere,
+  type ScriptFinding,
+} from "@/lib/voices/scriptCheck";
 import { useTagProvider } from "./tags/tagProvider";
-import { useSpeakerProvider } from "./speakers";
+import { useSpeakerProvider, useSpeakers } from "./speakers";
 import { TagPalette } from "./tags";
 import { AutoTagBar, resolveSuggestion } from "./tags/AutoTagBar";
 import { usePersistentState } from "../../../hooks/usePersistentState";
@@ -97,6 +104,14 @@ export const TtsSettings = () => {
     () => [tagProvider, speakerProvider],
     [tagProvider, speakerProvider],
   );
+  /** Bekannte Stimmen fuer die Skript-Pruefung -- dieselbe Liste, gegen die
+   *  auch die Sprecher-Chips abgeglichen werden. */
+  const speakers = useSpeakers();
+  /** Skript-Pruefung: Bestaetigungsdialog vor Vorlesen/Speichern, wenn es
+   *  Befunde gibt. Traegt, was nach "Trotzdem" laufen soll. */
+  const [checkDialog, setCheckDialog] = useState<
+    "speak" | "save" | null
+  >(null);
   /** Einfüge-API des Editors im AKTIVEN Reiter (es ist immer nur einer
    *  gemountet) — Ziel für Palette-Klick und Palette-Drag. */
   const editorApiRef = useRef<ChipEditorInsertApi | null>(null);
@@ -563,6 +578,16 @@ export const TtsSettings = () => {
       await resumeSpeaking();
       return;
     }
+    // Skript-Pruefung: ein Befund blockiert nicht, fragt aber nach -- nur
+    // beim Start, nicht beim Fortsetzen derselben Sitzung.
+    if (scriptFindings.length > 0) {
+      setCheckDialog("speak");
+      return;
+    }
+    await speakNow();
+  };
+
+  const speakNow = async () => {
     setLastError(null);
     setSpeakProgress(null);
     setTruncated(null);
@@ -621,6 +646,14 @@ export const TtsSettings = () => {
     );
 
   const saveSpokenAudio = async () => {
+    if (scriptFindings.length > 0) {
+      setCheckDialog("save");
+      return;
+    }
+    await saveSpokenAudioNow();
+  };
+
+  const saveSpokenAudioNow = async () => {
     setLastError(null);
     // Der Speichern-Dialog schlaegt den Projektordner der Seite vor: dort
     // sammelt die Dateileiste rechts, was zu diesem Arbeitsblatt gehoert.
@@ -830,6 +863,71 @@ export const TtsSettings = () => {
       : tab === "translation"
         ? (translation ?? "")
         : summary;
+
+  /**
+   * Skript-Pruefung des aktiven Reiters: Sprechermarker ohne Stimme und
+   * Tags, die die aktive Engine nicht kennt. Ist der Schalter aus, wird
+   * nicht geprueft und nichts angezeigt -- die Liste ist dann leer.
+   */
+  const scriptCheckOn = getSetting("tts_script_check") ?? true;
+  const scriptEngine =
+    (getSetting("tts_engine") ?? "fish") === "piper" ? "piper" : "fish";
+  const scriptFindings = useMemo<ScriptFinding[]>(
+    () =>
+      scriptCheckOn ? checkScript(spokenText, speakers, scriptEngine) : [],
+    [scriptCheckOn, spokenText, speakers, scriptEngine],
+  );
+  const editorFindings = useMemo<ChipEditorFinding[] | undefined>(
+    () =>
+      scriptCheckOn
+        ? scriptFindings.map((f) => ({
+            start: f.start,
+            end: f.end,
+            message:
+              f.kind === "unknown-speaker"
+                ? t("tts.scriptCheck.unknownSpeaker", { name: f.name })
+                : t("tts.scriptCheck.unknownTag", { tag: f.name }),
+          }))
+        : undefined,
+    [scriptCheckOn, scriptFindings, t],
+  );
+  /** Massnahmen der Befundliste. "Ueberall" ersetzt den ganzen Text des
+   *  Reiters in EINEM Undo-Schritt ueber die Editor-API; ohne Editor-API
+   *  (sollte nicht vorkommen) faellt es auf setState zurueck. */
+  const scriptActions = useMemo(
+    () => ({
+      reveal: (finding: ScriptFinding) =>
+        editorApiRef.current?.revealRange?.(finding.start, finding.end),
+      replace: (
+        finding: ScriptFinding,
+        replacement: (f: ScriptFinding) => string,
+        everywhere: boolean,
+      ) => {
+        const api = editorApiRef.current;
+        if (everywhere) {
+          const next = replaceFindingEverywhere(
+            spokenText,
+            scriptFindings,
+            finding,
+            replacement,
+          );
+          if (next === spokenText) return;
+          if (api?.replaceRange) {
+            api.replaceRange(0, spokenText.length, next);
+          } else if (tab === "original") {
+            setText(next);
+          } else if (tab === "translation") {
+            setTranslation(next);
+          } else {
+            setSummary(next);
+          }
+          return;
+        }
+        api?.replaceRange?.(finding.start, finding.end, replacement(finding));
+      },
+    }),
+    [spokenText, scriptFindings, tab],
+  );
 
   /**
    * Uebersetzen — nur uebersetzen. Kein Abspielen, kein Aufnehmen.
@@ -1208,6 +1306,19 @@ export const TtsSettings = () => {
             {/* Der Chip-Editor ist Drop-in für die frühere Textarea: die
                 native textarea darin bleibt die einzige Wahrheit, Tags
                 (`[…]`) erscheinen als Chips im Mirror-Overlay. */}
+            {/* Skript-Pruefung: Befundliste ueber dem Text. Nur mit
+                Schalter an -- und nur, wenn ueberhaupt Text da ist. */}
+            {scriptCheckOn && spokenText.trim().length > 0 && (
+              <div className="pb-2">
+                <ScriptCheckPanel
+                  findings={scriptFindings}
+                  speakers={speakers}
+                  engine={scriptEngine}
+                  uiLang={uiLang}
+                  actions={scriptActions}
+                />
+              </div>
+            )}
             <div className="tts-editor__fill flex-1 min-h-0">
             {tab === "original" ? (
               <TtsChipEditor
@@ -1219,6 +1330,7 @@ export const TtsSettings = () => {
                 className="w-full"
                 suggestions={tagSuggestions}
                 onResolveSuggestion={resolveTagSuggestion}
+                findings={editorFindings}
               />
             ) : tab === "translation" ? (
               <TtsChipEditor
@@ -1229,6 +1341,7 @@ export const TtsSettings = () => {
                 placeholder={t("tts.translationPlaceholder")}
                 className="w-full"
                 lang={targetLangCode(targetLang)}
+                findings={editorFindings}
               />
             ) : (
               <TtsChipEditor
@@ -1238,6 +1351,7 @@ export const TtsSettings = () => {
                 insertApiRef={editorApiRef}
                 placeholder={t("tts.summaryPlaceholder")}
                 className="w-full"
+                findings={editorFindings}
               />
             )}
             </div>
@@ -1760,6 +1874,47 @@ export const TtsSettings = () => {
 
 
 
+
+        <Dialog
+          open={checkDialog !== null}
+          onOpenChange={(isOpen) => {
+            if (!isOpen) setCheckDialog(null);
+          }}
+          title={t("tts.scriptCheck.dialogTitle", {
+            count: scriptFindings.length,
+          })}
+          closeLabel={t("tts.scriptCheck.dialogCancel")}
+          footer={
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => setCheckDialog(null)}
+              >
+                {t("tts.scriptCheck.dialogCancel")}
+              </Button>
+              <Button
+                variant="primary"
+                data-testid="script-check-proceed"
+                onClick={() => {
+                  const action = checkDialog;
+                  setCheckDialog(null);
+                  if (action === "speak") void speakNow();
+                  if (action === "save") void saveSpokenAudioNow();
+                }}
+              >
+                {checkDialog === "save"
+                  ? t("tts.scriptCheck.dialogSaveAnyway")
+                  : t("tts.scriptCheck.dialogSpeakAnyway")}
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-text/80">
+            {t("tts.scriptCheck.dialogBody", {
+              count: scriptFindings.length,
+            })}
+          </p>
+        </Dialog>
 
         <Dialog
           open={llmDialog}

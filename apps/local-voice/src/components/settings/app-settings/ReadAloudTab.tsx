@@ -48,6 +48,14 @@ export const ReadAloudTab = () => {
         description={t("tts.settings.piperAutoLanguageDescription")}
         grouped={true}
       />
+      <ToggleSwitch
+        checked={getSetting("tts_script_check") ?? true}
+        onChange={(checked) => updateSetting("tts_script_check", checked)}
+        isUpdating={isUpdating("tts_script_check")}
+        label={t("tts.settings.scriptCheck")}
+        description={t("tts.settings.scriptCheckDescription")}
+        grouped={true}
+      />
       {/* Auto-Tagging: Anbieter und Geraet sind Einstellungen, kein
           Arbeitsschritt -- auf der Vorlesen-Seite bleibt nur der Knopf. */}
       <SettingContainer

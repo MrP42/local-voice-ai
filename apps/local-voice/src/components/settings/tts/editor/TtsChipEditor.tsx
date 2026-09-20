@@ -94,12 +94,27 @@ export interface ChipEditorSuggestion {
 
 export interface ChipEditorInsertApi {
   insertAtCursor(text: string): void;
+  /** Optionale Erweiterung (Skript-Pruefung): Bereich ersetzen -- mit
+   *  nativem Undo-Schritt, wie die Chip-Popover es tun. */
+  replaceRange?(start: number, end: number, text: string): void;
+  /** Optionale Erweiterung (Skript-Pruefung): Stelle in den sichtbaren
+   *  Bereich scrollen, Textfeld fokussieren und den Bereich markieren. */
+  revealRange?(start: number, end: number): void;
   /** Optionale Erweiterung über den Vertrag hinaus (Palette-Drag):
    *  Einfügen an Viewport-Koordinaten. `false`, wenn der Punkt nicht über
    *  dem Editor liegt. Optionales Member, damit ein wörtlich gegen den
    *  Brief-Vertrag (`{ insertAtCursor }`) typisierter Consumer kompiliert —
    *  dieser Editor stellt es immer bereit. */
   insertAtPoint?(x: number, y: number, text: string): boolean;
+}
+
+/** Ein Befund der Skript-Pruefung, den der Editor sichtbar macht: wellig
+ *  unterstrichen im Text plus Marke am linken Rand der Zeile. Der Editor
+ *  kennt die Art des Befunds nicht -- nur die Stelle und den Hinweistext. */
+export interface ChipEditorFinding {
+  start: number;
+  end: number;
+  message: string;
 }
 
 interface TtsChipEditorProps {
@@ -116,6 +131,9 @@ interface TtsChipEditorProps {
   insertApiRef?: React.Ref<ChipEditorInsertApi>;
   suggestions?: ChipEditorSuggestion[];
   onResolveSuggestion?: (id: string, accept: boolean) => void;
+  /** Optionale Erweiterung: Befunde der Skript-Pruefung (siehe
+   *  `ChipEditorFinding`). Ohne Liste aendert sich nichts am Rendering. */
+  findings?: ChipEditorFinding[];
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +267,14 @@ interface RenderedMatch {
 }
 
 type Segment =
-  | { kind: "text"; start: number; text: string; color?: string }
+  | {
+      kind: "text";
+      start: number;
+      text: string;
+      color?: string;
+      /** Index in `findings`, wenn das Stueck in einem Befund liegt. */
+      finding?: number;
+    }
   | { kind: "chip"; rendered: RenderedMatch }
   | { kind: "suggestion"; suggestion: ChipEditorSuggestion; offset: number }
   | { kind: "caret"; offset: number };
@@ -286,6 +311,11 @@ const rangeStyle = (color: string): React.CSSProperties => ({
   backgroundColor: `color-mix(in srgb, ${color} 9%, transparent)`,
 });
 
+/** Wellige rote Unterstreichung wie ein Rechtschreibfehler in Word. Nur
+ *  Dekoration, keine Layout-Breite -- die Metrik bleibt zeichenidentisch. */
+const FINDING_CLASSES =
+  "underline decoration-wavy decoration-red-500 decoration-[1.5px] underline-offset-2 [text-decoration-skip-ink:none]";
+
 type PopoverState =
   | { kind: "chip"; rendered: RenderedMatch; anchor: AnchorRect }
   | {
@@ -317,6 +347,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   insertApiRef,
   suggestions,
   onResolveSuggestion,
+  findings,
 }) => {
   const { t } = useTranslation();
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -535,10 +566,30 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     [execInsert, offsetFromPoint],
   );
 
-  useImperativeHandle(insertApiRef, () => ({ insertAtCursor, insertAtPoint }), [
-    insertAtCursor,
-    insertAtPoint,
-  ]);
+  /** Stelle sichtbar machen: textarea so scrollen, dass die Zeile in der
+   *  Mitte steht, dann fokussieren und den Bereich markieren. Die Zeile
+   *  findet sich ueber den Mirror-Span, der genau an `start` beginnt --
+   *  Befund-Stuecke bekommen immer einen eigenen Span. */
+  const revealRange = useCallback((start: number, end: number) => {
+    const ta = taRef.current;
+    const mir = mirrorRef.current;
+    if (!ta) return;
+    const span = mir?.querySelector<HTMLElement>(
+      `[data-off="${start}"]:not([data-anchor])`,
+    );
+    if (span) {
+      ta.scrollTop = Math.max(0, span.offsetTop - ta.clientHeight / 2);
+    }
+    ta.scrollIntoView({ block: "nearest" });
+    ta.focus();
+    ta.setSelectionRange(start, end);
+  }, []);
+
+  useImperativeHandle(
+    insertApiRef,
+    () => ({ insertAtCursor, insertAtPoint, replaceRange, revealRange }),
+    [insertAtCursor, insertAtPoint, replaceRange, revealRange],
+  );
 
   // ---- Autocomplete-Erkennung (onChange + selectionchange) ---------------
 
@@ -683,8 +734,67 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       pos = r.match.end;
     }
     emitText(pos, value.length);
-    return out;
-  }, [value, rendered, suggestions, ac]);
+    if (!findings || findings.length === 0) return out;
+    // Befunde zerschneiden Textstuecke an ihren Grenzen, damit die
+    // Unterstreichung genau die Stelle trifft. Chips werden nicht
+    // zerschnitten -- ein Befund auf einem Chip wird beim Rendern erkannt.
+    const cuts: Segment[] = [];
+    for (const seg of out) {
+      if (seg.kind !== "text") {
+        cuts.push(seg);
+        continue;
+      }
+      let cur = seg.start;
+      const segEnd = seg.start + seg.text.length;
+      for (let i = 0; i < findings.length; i++) {
+        const f = findings[i];
+        const fs = Math.max(clamp(f.start), cur);
+        const fe = Math.min(clamp(f.end), segEnd);
+        if (fe <= fs) continue;
+        if (fs > cur) {
+          cuts.push({ ...seg, start: cur, text: value.slice(cur, fs) });
+        }
+        cuts.push({ ...seg, start: fs, text: value.slice(fs, fe), finding: i });
+        cur = fe;
+      }
+      if (cur < segEnd) {
+        cuts.push({ ...seg, start: cur, text: value.slice(cur, segEnd) });
+      }
+    }
+    return cuts;
+  }, [value, rendered, suggestions, ac, findings]);
+
+  /** Befund-Index, der einen Chip vollstaendig abdeckt (sonst -1). */
+  const findingOnChip = (m: ChipMatch): number => {
+    if (!findings) return -1;
+    return findings.findIndex((f) => f.start <= m.start && m.end <= f.end);
+  };
+
+  // ---- Randmarken je Befund (Position der ersten Zeile des Spans) --------
+
+  const [marks, setMarks] = useState<number[]>([]);
+  useLayoutEffect(() => {
+    const mir = mirrorRef.current;
+    if (!mir || !findings || findings.length === 0) {
+      setMarks((prev) => (prev.length === 0 ? prev : []));
+      return;
+    }
+    const tops: number[] = [];
+    const seen = new Set<string>();
+    for (const el of Array.from(
+      mir.querySelectorAll<HTMLElement>("[data-finding]"),
+    )) {
+      const idx = el.getAttribute("data-finding") ?? "";
+      if (seen.has(idx)) continue;
+      seen.add(idx);
+      tops.push(el.offsetTop);
+    }
+    setMarks((prev) =>
+      prev.length === tops.length && prev.every((v, i) => v === tops[i])
+        ? prev
+        : tops,
+    );
+  }, [segments, findings, tick]);
 
   // ---- Geometrie- und Scroll-Sync ----------------------------------------
 
@@ -940,30 +1050,42 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       >
         {segments.map((seg, index) => {
           switch (seg.kind) {
-            case "text":
+            case "text": {
+              const finding =
+                seg.finding !== undefined ? findings?.[seg.finding] : undefined;
               return (
                 <span
                   key={index}
                   data-off={seg.start}
+                  data-finding={seg.finding}
+                  title={finding?.message}
+                  className={finding ? FINDING_CLASSES : undefined}
                   style={seg.color ? rangeStyle(seg.color) : undefined}
                 >
                   {seg.text}
                 </span>
               );
+            }
             case "chip": {
               const { match, spec, hasPopover } = seg.rendered;
+              const findingIdx = findingOnChip(match);
+              const finding =
+                findingIdx >= 0 ? findings?.[findingIdx] : undefined;
               return (
                 <span
                   key={index}
                   data-off={match.start}
                   data-chip="1"
-                  title={spec.label}
+                  data-finding={finding ? findingIdx : undefined}
+                  title={finding ? finding.message : spec.label}
                   onClick={(event) =>
                     openChipPopover(seg.rendered, event.currentTarget)
                   }
                   className={`pointer-events-auto rounded-sm ${
                     hasPopover ? "cursor-pointer" : ""
-                  } ${chipStateClasses(spec.state)}`}
+                  } ${chipStateClasses(spec.state)} ${
+                    finding ? FINDING_CLASSES : ""
+                  }`}
                   style={chipColorStyle(spec)}
                 >
                   {match.raw}
@@ -1009,6 +1131,17 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
             dieselbe Höhe wie in der textarea — sonst liefe der Scroll-Sync
             am Textende auseinander. */}
         {"​"}
+        {/* Randmarken: ein roter Strich am linken Rand jeder Zeile mit
+            Befund -- absolut im Mirror, damit er mitscrollt. */}
+        {marks.map((top, index) => (
+          <span
+            key={`m:${index}`}
+            data-finding-mark={index}
+            aria-hidden="true"
+            className="absolute left-0 w-[3px] rounded-r bg-red-500"
+            style={{ top, height: "1.25em" }}
+          />
+        ))}
       </div>
 
       {ac && acRect && !composing && (

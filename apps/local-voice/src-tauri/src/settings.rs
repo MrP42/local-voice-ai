@@ -706,6 +706,12 @@ pub struct AppSettings {
     /// Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
     #[serde(default = "default_tts_piper_auto_language")]
     pub tts_piper_auto_language: bool,
+    /// Skript-Pruefung im Vorlesen: vor dem Vorlesen bzw. Speichern werden
+    /// Sprechermarker ohne Stimme und Tags, die die aktive Engine nicht
+    /// kennt, gefunden und angezeigt. Ein Befund blockiert nichts, fragt aber
+    /// nach. Aus = keine Pruefung, keine Anzeige.
+    #[serde(default = "default_tts_script_check")]
+    pub tts_script_check: bool,
     /// T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
     /// Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die
     /// Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
@@ -822,6 +828,12 @@ fn default_tts_engine() -> String {
 /// Standardmäßig an: eine deutsche Piper-Stimme liest englischen Text sonst
 /// mit deutscher Aussprache.
 fn default_tts_piper_auto_language() -> bool {
+    true
+}
+
+/// Skript-Pruefung standardmaessig an: ein Befund kostet einen Blick, ein
+/// vorgelesenes `<Bob>` mit der falschen Stimme kostet den ganzen Export.
+fn default_tts_script_check() -> bool {
     true
 }
 
@@ -1468,6 +1480,7 @@ pub fn get_default_settings() -> AppSettings {
         tts_preview_engine: String::new(),
         tts_piper_voice: None,
         tts_piper_auto_language: default_tts_piper_auto_language(),
+        tts_script_check: default_tts_script_check(),
         tts_tag_favorites: Vec::new(),
         tts_tag_provider: String::new(),
         tts_tag_model: default_tts_tag_model(),
