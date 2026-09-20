@@ -1576,6 +1576,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_builder_add_wav,
             commands::tts::tts_builder_commit,
             commands::tts::tts_export_voice,
+            commands::tts::tts_export_voices,
             commands::tts::tts_inspect_voice_archive,
             commands::tts::tts_import_voice_archive,
             commands::tts::tts_rename_voice_id,

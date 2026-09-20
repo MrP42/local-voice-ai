@@ -185,6 +185,109 @@ pub fn export_voice(fish_dir: &Path, id: &str, out_path: &Path) -> Result<(), St
     Ok(())
 }
 
+/// Ergebnis eines Sammel-Exports: wohin geschrieben wurde und welche
+/// Stimmen dabei scheiterten (z. B. ohne vollstaendige Referenz). Ein
+/// Fehlschlag einzelner Stimmen bricht den Lauf nicht ab — wer zwanzig
+/// Stimmen sichert, will nicht wegen einer halben nochmal anfangen.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct BulkExportReport {
+    /// Der Ordner (ungepackt) oder die Zip-Datei (gepackt).
+    pub path: String,
+    pub exported: Vec<String>,
+    /// (voice_id, Fehlermeldung)
+    pub failed: Vec<(String, String)>,
+}
+
+/// Mehrere Stimmen auf einmal sichern. `packed = false`: ein Ordner
+/// `<out_dir>/<base_name>/` mit einer `.lvvoice`-Datei je Stimme; `packed =
+/// true`: eine Datei `<out_dir>/<base_name>.zip`, in der dieselben Archive
+/// liegen (unkomprimiert, sie sind schon deflated). Jedes einzelne Archiv
+/// ist ein normales Stimmen-Archiv und laesst sich einzeln einspielen.
+pub fn export_voices(
+    fish_dir: &Path,
+    ids: &[String],
+    out_dir: &Path,
+    base_name: &str,
+    packed: bool,
+) -> Result<BulkExportReport, String> {
+    let base_name = base_name.trim();
+    if base_name.is_empty() || base_name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
+        return Err("Bezeichnung fehlt oder enthaelt Zeichen, die im Dateinamen nicht erlaubt sind".into());
+    }
+    if ids.is_empty() {
+        return Err("Keine Stimme ausgewaehlt".into());
+    }
+    std::fs::create_dir_all(out_dir)
+        .map_err(|e| format!("could not create {}: {e}", out_dir.display()))?;
+
+    // Erst alles in einen Arbeitsordner, dann verschieben oder packen — so
+    // bleibt bei einem Abbruch kein halber Zielordner zurueck.
+    let work = std::env::temp_dir().join(format!("lv-voices-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).map_err(|e| format!("could not create {}: {e}", work.display()))?;
+
+    let mut exported = Vec::new();
+    let mut failed = Vec::new();
+    for id in ids {
+        let target = work.join(format!("{id}.{ARCHIVE_EXTENSION}"));
+        match export_voice(fish_dir, id, &target) {
+            Ok(()) => exported.push(id.clone()),
+            Err(e) => failed.push((id.clone(), e)),
+        }
+    }
+    if exported.is_empty() {
+        let _ = std::fs::remove_dir_all(&work);
+        return Err(format!(
+            "Keine Stimme konnte exportiert werden: {}",
+            failed
+                .iter()
+                .map(|(id, e)| format!("{id}: {e}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
+
+    let path = if packed {
+        let zip_path = out_dir.join(format!("{base_name}.zip"));
+        let file = std::fs::File::create(&zip_path)
+            .map_err(|e| format!("could not create {}: {e}", zip_path.display()))?;
+        let mut zip = zip::ZipWriter::new(file);
+        let options: zip::write::FileOptions<'_, ()> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for id in &exported {
+            let name = format!("{id}.{ARCHIVE_EXTENSION}");
+            let bytes = std::fs::read(work.join(&name))
+                .map_err(|e| format!("could not read {name}: {e}"))?;
+            zip.start_file(&name, options)
+                .map_err(|e| format!("could not add {name}: {e}"))?;
+            zip.write_all(&bytes)
+                .map_err(|e| format!("could not write {name}: {e}"))?;
+        }
+        zip.finish().map_err(|e| format!("could not finish zip: {e}"))?;
+        zip_path
+    } else {
+        let dir = out_dir.join(base_name);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        for id in &exported {
+            let name = format!("{id}.{ARCHIVE_EXTENSION}");
+            // rename scheitert ueber Laufwerksgrenzen — dann kopieren.
+            let from = work.join(&name);
+            let to = dir.join(&name);
+            if std::fs::rename(&from, &to).is_err() {
+                std::fs::copy(&from, &to).map_err(|e| format!("could not copy {name}: {e}"))?;
+            }
+        }
+        dir
+    };
+    let _ = std::fs::remove_dir_all(&work);
+    Ok(BulkExportReport {
+        path: path.to_string_lossy().into_owned(),
+        exported,
+        failed,
+    })
+}
+
 // ----------------------------------------------------------------- Vorschau --
 
 /// Was ein Archiv enthaelt, ohne es auszupacken — fuer die Vorschau vor dem
@@ -367,6 +470,41 @@ mod tests {
             "4711"
         );
         assert_eq!(registry::read_meta(fish, "anna").display_name, "Anna");
+    }
+
+    #[test]
+    fn sammelexport_als_ordner_und_gepackt_mit_teilfehler() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fish = tmp.path().join("fish");
+        stimme_anlegen(&fish, "anna", "Anna");
+        stimme_anlegen(&fish, "bert", "Bert");
+        // "halb" hat keine Referenz — darf den Lauf nicht abbrechen.
+        std::fs::create_dir_all(voices::voice_dir(&fish, "halb")).unwrap();
+        let ids = vec!["anna".to_string(), "halb".to_string(), "bert".to_string()];
+        let out = tmp.path().join("sicherung");
+
+        let ordner = export_voices(&fish, &ids, &out, "stimmen-2026-09-20", false).unwrap();
+        assert_eq!(ordner.exported, vec!["anna", "bert"]);
+        assert_eq!(ordner.failed.len(), 1);
+        assert_eq!(ordner.failed[0].0, "halb");
+        let dir = out.join("stimmen-2026-09-20");
+        assert!(dir.join("anna.lvvoice").is_file());
+        assert!(dir.join("bert.lvvoice").is_file());
+        // Jedes Einzelarchiv ist ein normales Stimmen-Archiv.
+        assert_eq!(inspect_archive(&dir.join("bert.lvvoice")).unwrap().display_name, "Bert");
+
+        let zip = export_voices(&fish, &ids, &out, "stimmen-2026-09-20", true).unwrap();
+        let zip_path = out.join("stimmen-2026-09-20.zip");
+        assert_eq!(zip.path, zip_path.to_string_lossy());
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect();
+        assert_eq!(names, vec!["anna.lvvoice", "bert.lvvoice"]);
+
+        // Unbrauchbare Bezeichnung und leere Auswahl werden abgewiesen.
+        assert!(export_voices(&fish, &ids, &out, "a/b", true).is_err());
+        assert!(export_voices(&fish, &[], &out, "x", true).is_err());
     }
 
     #[test]
