@@ -2299,6 +2299,14 @@ async ttsExportVoice(id: string, outPath: string) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
+async ttsExportVoices(ids: string[], outDir: string, baseName: string, packed: boolean) : Promise<Result<BulkExportReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_export_voices", { ids, outDir, baseName, packed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Was in einem Archiv steckt, ohne es auszupacken — fuer die Vorschau.
  */
@@ -2948,6 +2956,19 @@ gain_db: number }
  * Ein benannter Stil einer Stimme (z. B. „fluesternd").
  */
 export type VoiceStyle = { id: string; name: string; tags: string[]; reference: string | null }
+/**
+ * Ergebnis eines Sammel-Exports: wohin geschrieben wurde und welche
+ * Stimmen dabei scheiterten (z. B. ohne vollstaendige Referenz).
+ */
+export type BulkExportReport = {
+/**
+ * Der Ordner (ungepackt) oder die Zip-Datei (gepackt).
+ */
+path: string; exported: string[];
+/**
+ * (voice_id, Fehlermeldung)
+ */
+failed: ([string, string])[] }
 export type VoiceSample = { 
 /**
  * Absoluter Pfad zur WAV — die Oberflaeche spielt sie ueber das

@@ -902,6 +902,36 @@ pub fn tts_export_voice(app: AppHandle, id: String, out_path: String) -> Result<
     portable::export_voice(&fish_dir, &id, std::path::Path::new(&out_path))
 }
 
+/// Mehrere Stimmen sichern — Ordner mit einem Archiv je Stimme oder eine
+/// Zip-Datei mit allen. Ids, die es nicht gibt, landen im Bericht unter
+/// `failed`, statt den ganzen Lauf abzubrechen.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_export_voices(
+    app: AppHandle,
+    ids: Vec<String>,
+    out_dir: String,
+    base_name: String,
+    packed: bool,
+) -> Result<portable::BulkExportReport, String> {
+    let fish_dir = app.state::<Arc<TtsManager>>().fish_dir_public();
+    let ids: Vec<String> = ids
+        .into_iter()
+        .filter_map(|id| registry::require_known_voice(&fish_dir, &id).ok())
+        .collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        portable::export_voices(
+            &fish_dir,
+            &ids,
+            std::path::Path::new(&out_dir),
+            &base_name,
+            packed,
+        )
+    })
+    .await
+    .map_err(|e| format!("Export abgebrochen: {e}"))?
+}
+
 /// Was in einem Archiv steckt, ohne es auszupacken — fuer die Vorschau vor
 /// dem Import.
 #[tauri::command]

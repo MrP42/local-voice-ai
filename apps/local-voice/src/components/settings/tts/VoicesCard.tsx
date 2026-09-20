@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { commands, type VoiceInfo } from "@/bindings";
-import { Download, Pencil, Trash2, Upload, Wand2 } from "lucide-react";
+import { Archive, Download, Pencil, Trash2, Upload, Wand2 } from "lucide-react";
 import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Input } from "../../ui/Input";
@@ -15,6 +15,7 @@ import { VoiceBuilder } from "./builder";
 import {
   VoiceArchiveImport,
   VoiceEditor,
+  VoiceExportDialog,
   VoicePreviewButton,
   exportVoiceArchive,
 } from "./voices";
@@ -55,6 +56,8 @@ export const VoicesCard = () => {
   // (AGENTS.md: kein neuer Menuepunkt) und ist zugeklappt, bis jemand ihn
   // aufmacht — die Karte ist ohnehin lang genug.
   const [builderOpen, setBuilderOpen] = useState(false);
+  // Sammel-Export im Dialog: Auswahl, Ort, Name, gepackt oder Ordner.
+  const [exportOpen, setExportOpen] = useState(false);
   // Welche Stimme gerade bearbeitet wird — hoechstens eine, sonst wird die
   // Karte unlesbar lang. Der Stift schaltet das Panel auf und wieder zu.
   const [editTarget, setEditTarget] = useState<string | null>(null);
@@ -356,13 +359,17 @@ export const VoicesCard = () => {
               <Upload width={14} height={14} />
               {t("tts.voices.import")}
             </Button>
+            <Button variant="secondary" onClick={() => setBuilderOpen(true)}>
+              <Wand2 width={14} height={14} />
+              {t("tts.builder.open")}
+            </Button>
             <Button
               variant="secondary"
-              onClick={() => setBuilderOpen((open) => !open)}
-              aria-expanded={builderOpen}
+              onClick={() => setExportOpen(true)}
+              disabled={voices.length === 0}
             >
-              <Wand2 width={14} height={14} />
-              {builderOpen ? t("common.close") : t("tts.builder.open")}
+              <Archive width={14} height={14} />
+              {t("tts.voices.exportAll.open")}
             </Button>
           </div>
         )}
@@ -374,9 +381,29 @@ export const VoicesCard = () => {
           <VoiceArchiveImport onImported={(id) => void archiveImported(id)} />
         )}
 
-        {mode.kind === "idle" && builderOpen && (
-          <VoiceBuilder onSaved={(id) => void builderSaved(id)} />
-        )}
+        {/* Der Baukasten ist ein eigener Arbeitsschritt mit Rezepten,
+            Kandidaten und Hoerproben — als Dialog statt inline, damit die
+            Stimmenliste nicht unter ihm wegrutscht. */}
+        <Dialog
+          open={builderOpen}
+          onOpenChange={setBuilderOpen}
+          title={t("tts.builder.title")}
+          closeLabel={t("common.close")}
+          className="max-w-2xl"
+        >
+          <VoiceBuilder
+            onSaved={(id) => {
+              setBuilderOpen(false);
+              void builderSaved(id);
+            }}
+          />
+        </Dialog>
+
+        <VoiceExportDialog
+          open={exportOpen}
+          onOpenChange={setExportOpen}
+          voices={voices}
+        />
 
         {mode.kind === "recording" && (
           <div className="flex items-center gap-3">
