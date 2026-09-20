@@ -215,7 +215,7 @@ impl LocalLlmServer {
             .map_err(|e| format!("llama-server liess sich nicht starten: {e}"))?;
         let guard = crate::process_guard::ProcessGuard::attach(
             &child,
-            crate::process_guard::memory_limit_mb(free_mb),
+            Some(crate::process_guard::memory_limit_mb(free_mb)),
             crate::process_guard::CPU_CAP_PERCENT,
         );
         log::info!(
