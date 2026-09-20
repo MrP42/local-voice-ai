@@ -57,6 +57,7 @@ import {
   Plus,
   Server,
   Upload,
+  SpellCheck,
 } from "lucide-react";
 
 /// Abspieltempo der Transportleiste. Bewusst grob gestuft: feiner regelt der
@@ -869,7 +870,12 @@ export const TtsSettings = () => {
    * Tags, die die aktive Engine nicht kennt. Ist der Schalter aus, wird
    * nicht geprueft und nichts angezeigt -- die Liste ist dann leer.
    */
-  const scriptCheckOn = getSetting("tts_script_check") ?? true;
+  // Manuell angestossene Pruefung ("Skript pruefen" in der Bedienspalte):
+  // gilt fuer diesen Text, auch wenn der Automatik-Schalter aus ist, und
+  // springt zur ersten Stelle. Ein neuer Text setzt sie zurueck.
+  const [manualCheck, setManualCheck] = useState<string | null>(null);
+  const scriptCheckOn =
+    (getSetting("tts_script_check") ?? true) || manualCheck === spokenText;
   const scriptEngine =
     (getSetting("tts_engine") ?? "fish") === "piper" ? "piper" : "fish";
   const scriptFindings = useMemo<ScriptFinding[]>(
@@ -894,6 +900,12 @@ export const TtsSettings = () => {
   /** Massnahmen der Befundliste. "Ueberall" ersetzt den ganzen Text des
    *  Reiters in EINEM Undo-Schritt ueber die Editor-API; ohne Editor-API
    *  (sollte nicht vorkommen) faellt es auf setState zurueck. */
+  const runScriptCheck = () => {
+    setManualCheck(spokenText);
+    const first = checkScript(spokenText, speakers, scriptEngine)[0];
+    if (first) editorApiRef.current?.revealRange?.(first.start, first.end);
+  };
+
   const scriptActions = useMemo(
     () => ({
       reveal: (finding: ScriptFinding) =>
@@ -1696,6 +1708,19 @@ export const TtsSettings = () => {
                       className={tidying ? "animate-pulse" : undefined}
                     />
                     {t("tts.tidy")}
+                  </Button>
+                  {/* Skript pruefen: jederzeit, nicht erst beim Vorlesen —
+                      auch bei abgeschaltetem Automatik-Schalter. */}
+                  <Button
+                    variant="secondary"
+                    onClick={runScriptCheck}
+                    disabled={spokenText.trim().length === 0}
+                    className="w-full justify-start"
+                    title={t("tts.scriptCheck.runHint")}
+                    data-testid="script-check-run"
+                  >
+                    <SpellCheck width={16} height={16} />
+                    {t("tts.scriptCheck.run")}
                   </Button>
                   {/* Auto-Tagging gehoert zu den Textwerkzeugen: hier in der
                       Bedienspalte, gestapelt (Knopf, Anbieter, Geraet). */}

@@ -81,7 +81,13 @@ test.beforeEach(async ({ page }) => {
         convertFileSrc: (path: string) => path,
         invoke: async (cmd: string, args?: Record<string, unknown>) => {
           if (cmd === "get_app_settings" || cmd === "get_default_settings")
-            return settings;
+            return {
+              ...settings,
+              // Ein Test schaltet die Automatik ab (siehe unten).
+              tts_script_check: !(
+                window as unknown as { __lvScriptCheckOff?: boolean }
+              ).__lvScriptCheckOff,
+            };
           if (cmd === "plugin:os|locale") return "de-DE";
           if (cmd === "plugin:app|version") return "0.16.0";
           if (cmd.includes("permission")) return true;
@@ -241,36 +247,40 @@ async function openEditorWithScript(page: import("@playwright/test").Page) {
   return editor;
 }
 
-test("an unknown speaker and an unknown tag show up as findings", async ({
+test("findings are grouped: one problem with all its spots at a time", async ({
   page,
 }) => {
   await openEditorWithScript(page);
   const panel = page.getByTestId("script-check");
+  // Drei Stellen, aber nur zwei Probleme: Bob (2x) und mysterious (1x).
   await expect(panel).toContainText("3 Befunde im Skript");
-  const rows = page.getByTestId("script-finding");
-  await expect(rows).toHaveCount(3);
-  await expect(rows.nth(0)).toContainText("Zeile 2:");
-  await expect(rows.nth(0)).toContainText("Sprecher „Bob“ hat keine Stimme");
-  await expect(rows.nth(1)).toContainText("Zeile 3:");
-  await expect(rows.nth(1)).toContainText("Tag „mysterious“");
-  await expect(rows.nth(2)).toContainText("Zeile 4:");
-  // Die bekannte Erzaehlerin ist kein Befund. Und im Text selbst sind die
+  await expect(panel).toContainText("2 Gruppen");
+  await expect(panel.getByTestId("script-check-group-position")).toHaveText(
+    "1 von 2",
+  );
+  const card = page.getByTestId("script-finding");
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText("Sprecher „Bob“ (2 Stellen)");
+  await expect(card).toContainText("Stelle 1 von 2");
+  await expect(card.getByRole("button", { name: "Z. 2" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Z. 4" })).toBeVisible();
+  // Die bekannte Erzaehlerin ist kein Befund; im Text sind alle drei
   // Stellen unterstrichen plus je eine Marke am Rand.
-  await expect(
-    rows.getByRole("button", { name: /Sprecher „Erzählerin“/ }),
-  ).toHaveCount(0);
+  await expect(panel).not.toContainText("Erzählerin");
   await expect(page.locator("[data-finding]")).toHaveCount(3);
   await expect(page.locator("[data-finding-mark]")).toHaveCount(3);
+  // Naechste Gruppe: das Tag.
+  await panel.getByRole("button", { name: "Nächste Gruppe" }).click();
+  await expect(card).toContainText("Tag „mysterious“ (1 Stelle)");
 });
 
-test("clicking a finding jumps to the spot and selects it", async ({
-  page,
-}) => {
+test("clicking a spot jumps to it and selects it", async ({ page }) => {
   const editor = await openEditorWithScript(page);
+  const panel = page.getByTestId("script-check");
+  await panel.getByRole("button", { name: "Nächste Gruppe" }).click();
   await page
     .getByTestId("script-finding")
-    .nth(1)
-    .getByRole("button", { name: /Tag „mysterious“/ })
+    .getByRole("button", { name: "Z. 3" })
     .click();
   await expect(editor).toBeFocused();
   const start = SCRIPT.indexOf("[mysterious]");
@@ -282,30 +292,66 @@ test("clicking a finding jumps to the spot and selects it", async ({
   ).toEqual([start, start + "[mysterious]".length]);
 });
 
-test("replace everywhere swaps every occurrence and keeps the style", async ({
+test("replace all swaps every spot of the group and keeps the style", async ({
   page,
 }) => {
   const editor = await openEditorWithScript(page);
-  const bobRow = page.getByTestId("script-finding").nth(0);
-  await bobRow.getByTestId("script-finding-replacement").click();
+  const card = page.getByTestId("script-finding");
+  await card.getByTestId("script-finding-replacement").click();
   await page.getByText("Leo Lausemaus", { exact: true }).click();
-  await bobRow.getByRole("button", { name: "Überall im Text" }).click();
+  await card.getByRole("button", { name: "Alle 2 ersetzen" }).click();
   await expect(editor).toHaveValue(
     "<Erzählerin> Es war einmal.\n<Leo Lausemaus> Wer bin ich?\n[mysterious] Ein Tag, das Fish nicht kennt.\n<Leo Lausemaus:leise> Und nochmal Bob.",
   );
   await expect(page.getByTestId("script-check")).toContainText(
     "1 Befund im Skript",
   );
-  // Das Tag hier entfernen — danach ist das Skript sauber.
-  await page
-    .getByTestId("script-finding")
-    .first()
-    .getByRole("button", { name: "Entfernen hier" })
-    .click();
+  // Das Tag entfernen (einzige Stelle) — danach ist das Skript sauber.
+  await card.getByRole("button", { name: "Nur diese entfernen" }).click();
   await expect(editor).toHaveValue(
     "<Erzählerin> Es war einmal.\n<Leo Lausemaus> Wer bin ich?\n Ein Tag, das Fish nicht kennt.\n<Leo Lausemaus:leise> Und nochmal Bob.",
   );
   await expect(page.getByTestId("script-check-clean")).toBeVisible();
+});
+
+test("a recommendation fixes all spots with one click", async ({ page }) => {
+  const editor = await openEditorWithScript(page);
+  // "Erzahlerin" (Tippfehler, ohne Umlaut) -> Empfehlung "Erzählerin".
+  await editor.fill(
+    "<Erzahlerin> Hallo.\n<Erzahlerin:leise> Psst.\n[calm] Ruhig.",
+  );
+  const card = page.getByTestId("script-finding");
+  await expect(card).toContainText("Sprecher „Erzahlerin“ (2 Stellen)");
+  const rec = card.getByTestId("script-finding-recommendation");
+  await expect(rec.first()).toHaveText("Erzählerin");
+  await rec.first().click();
+  await expect(editor).toHaveValue(
+    "<Erzählerin> Hallo.\n<Erzählerin:leise> Psst.\n[calm] Ruhig.",
+  );
+  // "calm" ist ein Alias von "relaxed": das wird empfohlen, nicht die
+  // ganze Liste.
+  await expect(card).toContainText("Tag „calm“ (1 Stelle)");
+  await expect(
+    card.getByTestId("script-finding-recommendation").first(),
+  ).toContainText("[relaxed]");
+});
+
+test("the check button runs even when the automatic check is off", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __lvScriptCheckOff: boolean }).__lvScriptCheckOff =
+      true;
+  });
+  const editor = await openEditorWithScript(page);
+  // Automatik aus: kein Panel, obwohl ein Befund im Text steht.
+  await expect(page.getByTestId("script-check")).toHaveCount(0);
+  await expect(page.getByTestId("script-check-clean")).toHaveCount(0);
+  await page.getByTestId("script-check-run").click();
+  await expect(page.getByTestId("script-check")).toContainText(
+    "3 Befunde im Skript",
+  );
+  await expect(editor).toBeFocused();
 });
 
 test("reading with findings asks first and then reads anyway", async ({

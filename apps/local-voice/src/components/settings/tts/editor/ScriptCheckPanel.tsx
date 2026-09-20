@@ -1,11 +1,20 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { Select, type SelectOption } from "@/components/ui/Select";
 import { localizedLabel } from "@/lib/tags/registry";
 import type { TagDef } from "@/lib/tags/types";
 import {
+  groupFindings,
   knownTagsFor,
+  suggestSpeakers,
+  suggestTags,
+  type FindingGroup,
   type ScriptEngine,
   type ScriptFinding,
 } from "@/lib/voices/scriptCheck";
@@ -39,39 +48,78 @@ interface ScriptCheckPanelProps {
 
 const ACTION_CLASSES =
   "h-7 cursor-pointer rounded-md border border-mid-gray/30 bg-mid-gray/10 px-2 text-xs text-text/80 hover:border-logo-primary hover:text-text disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary";
+const PRIMARY_CLASSES =
+  "h-7 cursor-pointer rounded-md border border-logo-primary/60 bg-logo-primary/15 px-2 text-xs font-medium text-text hover:bg-logo-primary/30 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary";
+const NAV_CLASSES =
+  "flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-text/70 hover:bg-mid-gray/20 hover:text-text disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary";
 
-/** Eine Zeile je Befund: Beschreibung, Ersetzen-Auswahl, vier Massnahmen. */
-const FindingRow: React.FC<{
-  finding: ScriptFinding;
+/**
+ * Eine Gruppe (ein Problem, n Stellen): Beschreibung, Stellen zum
+ * Durchklicken, Empfehlungen, Ersetzen/Entfernen fuer alle oder nur diese.
+ */
+const GroupCard: React.FC<{
+  group: FindingGroup;
   speakers: SpeakerRef[];
   tags: TagDef[];
+  engine: ScriptEngine;
   uiLang: string;
   actions: ScriptCheckActions;
-}> = ({ finding, speakers, tags, uiLang, actions }) => {
+}> = ({ group, speakers, tags, engine, uiLang, actions }) => {
   const { t } = useTranslation();
   const [choice, setChoice] = useState("");
-  const isSpeaker = finding.kind === "unknown-speaker";
+  const [pos, setPos] = useState(0);
+  const isSpeaker = group.kind === "unknown-speaker";
+  const count = group.findings.length;
+  const current = group.findings[Math.min(pos, count - 1)];
 
-  const replacementFor = (): ((f: ScriptFinding) => string) | null => {
+  // Neue Gruppe (anderer Name) oder weniger Stellen: Position zuruecksetzen.
+  useEffect(() => {
+    setPos(0);
+    setChoice("");
+  }, [group.key]);
+  useEffect(() => {
+    if (pos > count - 1) setPos(Math.max(0, count - 1));
+  }, [count, pos]);
+
+  const goTo = (index: number) => {
+    const clamped = Math.max(0, Math.min(count - 1, index));
+    setPos(clamped);
+    actions.reveal(group.findings[clamped]);
+  };
+
+  const speakerReplacement = (speaker: SpeakerRef) => (f: ScriptFinding) =>
+    speakerMarkerText(speaker, f.style);
+  const tagReplacement = (tag: TagDef) => () => `[${tag.insert}]`;
+
+  const chosenReplacement = (): ((f: ScriptFinding) => string) | null => {
     if (choice === "") return null;
     if (isSpeaker) {
       const speaker = speakers.find((s) => s.id === choice);
-      if (!speaker) return null;
-      return (f) => speakerMarkerText(speaker, f.style);
+      return speaker ? speakerReplacement(speaker) : null;
     }
     const tag = tags.find((d) => d.id === choice);
-    if (!tag) return null;
-    return () => `[${tag.insert}]`;
-  };
-
-  const replace = (everywhere: boolean) => {
-    const replacement = replacementFor();
-    if (replacement) actions.replace(finding, replacement, everywhere);
+    return tag ? tagReplacement(tag) : null;
   };
 
   const message = isSpeaker
-    ? t("tts.scriptCheck.unknownSpeaker", { name: finding.name })
-    : t("tts.scriptCheck.unknownTag", { tag: finding.name });
+    ? t("tts.scriptCheck.unknownSpeaker", { name: group.name })
+    : t("tts.scriptCheck.unknownTag", { tag: group.name });
+
+  const recommended: {
+    key: string;
+    label: string;
+    apply: (f: ScriptFinding) => string;
+  }[] = isSpeaker
+    ? suggestSpeakers(group.name, speakers).map((speaker) => ({
+        key: speaker.id,
+        label: speaker.displayName,
+        apply: speakerReplacement(speaker),
+      }))
+    : suggestTags(group.name, engine, uiLang).map((tag) => ({
+        key: tag.id,
+        label: `[${tag.insert}] · ${localizedLabel(tag, uiLang)}`,
+        apply: tagReplacement(tag),
+      }));
 
   const options: SelectOption[] = isSpeaker
     ? speakers.map((speaker) => ({
@@ -84,24 +132,81 @@ const FindingRow: React.FC<{
       }));
 
   return (
-    <li
-      data-testid="script-finding"
-      className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1"
-    >
-      <button
-        type="button"
-        onClick={() => actions.reveal(finding)}
-        title={t("tts.scriptCheck.reveal")}
-        className="min-w-0 flex-1 cursor-pointer truncate text-start text-xs text-text hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
-      >
-        <span className="text-text/50">
-          {t("tts.scriptCheck.line", { line: finding.line })}
-        </span>{" "}
-        {message}
-      </button>
-      <span className="flex flex-wrap items-center gap-1">
+    <div data-testid="script-finding" className="space-y-2 py-2">
+      <p className="text-sm text-text">
+        <span className="font-medium">
+          {isSpeaker
+            ? t("tts.scriptCheck.groupSpeaker", { name: group.name, count })
+            : t("tts.scriptCheck.groupTag", { tag: group.name, count })}
+        </span>
+        <span className="text-text/70"> — {message}</span>
+      </p>
+
+      {/* Stellen: durchklickbar, jede springt in den Text. */}
+      <div className="flex flex-wrap items-center gap-1">
+        <button
+          type="button"
+          onClick={() => goTo(pos - 1)}
+          disabled={pos <= 0}
+          className={NAV_CLASSES}
+          aria-label={t("tts.scriptCheck.prevSpot")}
+        >
+          <ChevronLeft width={14} height={14} />
+        </button>
+        <span className="text-xs text-text/60">
+          {t("tts.scriptCheck.spot", { index: pos + 1, count })}
+        </span>
+        <button
+          type="button"
+          onClick={() => goTo(pos + 1)}
+          disabled={pos >= count - 1}
+          className={NAV_CLASSES}
+          aria-label={t("tts.scriptCheck.nextSpot")}
+        >
+          <ChevronRight width={14} height={14} />
+        </button>
+        <span className="mx-1 text-text/30">·</span>
+        {group.findings.map((finding, index) => (
+          <button
+            key={`${finding.start}:${finding.end}`}
+            type="button"
+            onClick={() => goTo(index)}
+            title={t("tts.scriptCheck.reveal")}
+            className={`cursor-pointer rounded px-1.5 py-0.5 text-xs hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary ${
+              index === pos
+                ? "bg-red-500/20 text-text"
+                : "text-text/60 hover:text-text"
+            }`}
+          >
+            {t("tts.scriptCheck.lineShort", { line: finding.line })}
+          </button>
+        ))}
+      </div>
+
+      {/* Empfehlungen: ein Klick, alle Stellen. */}
+      {recommended.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-xs text-text/60">
+            {t("tts.scriptCheck.recommended")}
+          </span>
+          {recommended.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              data-testid="script-finding-recommendation"
+              onClick={() => actions.replace(current, item.apply, true)}
+              className={PRIMARY_CLASSES}
+              title={t("tts.scriptCheck.applyAll", { count })}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-1">
         <div
-          className="w-44"
+          className="w-48"
           data-testid="script-finding-replacement"
           title={t("tts.scriptCheck.replaceWith")}
         >
@@ -116,42 +221,50 @@ const FindingRow: React.FC<{
         <button
           type="button"
           disabled={choice === ""}
-          onClick={() => replace(false)}
+          onClick={() => {
+            const r = chosenReplacement();
+            if (r) actions.replace(current, r, true);
+          }}
           className={ACTION_CLASSES}
         >
-          {t("tts.scriptCheck.replaceHere")}
+          {t("tts.scriptCheck.replaceAll", { count })}
         </button>
         <button
           type="button"
           disabled={choice === ""}
-          onClick={() => replace(true)}
+          onClick={() => {
+            const r = chosenReplacement();
+            if (r) actions.replace(current, r, false);
+          }}
           className={ACTION_CLASSES}
         >
-          {t("tts.scriptCheck.replaceEverywhere")}
+          {t("tts.scriptCheck.replaceHere")}
+        </button>
+        <span className="mx-1 text-text/30">·</span>
+        <button
+          type="button"
+          onClick={() => actions.replace(current, () => "", true)}
+          className={ACTION_CLASSES}
+        >
+          {t("tts.scriptCheck.removeAll", { count })}
         </button>
         <button
           type="button"
-          onClick={() => actions.replace(finding, () => "", false)}
+          onClick={() => actions.replace(current, () => "", false)}
           className={ACTION_CLASSES}
         >
           {t("tts.scriptCheck.removeHere")}
         </button>
-        <button
-          type="button"
-          onClick={() => actions.replace(finding, () => "", true)}
-          className={ACTION_CLASSES}
-        >
-          {t("tts.scriptCheck.removeEverywhere")}
-        </button>
-      </span>
-    </li>
+      </div>
+    </div>
   );
 };
 
 /**
- * Kompakte Befundliste ueber dem Editor: Anzahl in der Kopfzeile, je Befund
- * eine Zeile. Ohne Befund eine einzige gruene Zeile -- damit man sieht,
- * dass geprueft wurde, nicht nur, dass nichts da ist.
+ * Befunde ueber dem Editor — wie die Rechtschreibpruefung in Office: nicht
+ * alle auf einmal, sondern EINE Gruppe (ein Problem mit all seinen
+ * Stellen), durch die man blaettert. Ohne Befund eine einzige gruene
+ * Zeile, damit man sieht, dass geprueft wurde.
  */
 export const ScriptCheckPanel: React.FC<ScriptCheckPanelProps> = ({
   findings,
@@ -162,7 +275,13 @@ export const ScriptCheckPanel: React.FC<ScriptCheckPanelProps> = ({
 }) => {
   const { t } = useTranslation();
   const tags = knownTagsFor(engine);
-  if (findings.length === 0) {
+  const groups = groupFindings(findings);
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (index > groups.length - 1) setIndex(Math.max(0, groups.length - 1));
+  }, [groups.length, index]);
+
+  if (groups.length === 0) {
     return (
       <p
         data-testid="script-check-clean"
@@ -173,33 +292,69 @@ export const ScriptCheckPanel: React.FC<ScriptCheckPanelProps> = ({
       </p>
     );
   }
+  const group = groups[Math.min(index, groups.length - 1)];
   return (
     <section
       data-testid="script-check"
       aria-label={t("tts.scriptCheck.title")}
       className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-1.5"
     >
-      <p className="flex items-center gap-1.5 text-xs font-medium text-text">
-        <AlertTriangle
-          width={14}
-          height={14}
-          aria-hidden="true"
-          className="text-red-500"
-        />
-        {t("tts.scriptCheck.count", { count: findings.length })}
-      </p>
-      <ul className="divide-y divide-red-500/15">
-        {findings.map((finding) => (
-          <FindingRow
-            key={`${finding.kind}:${finding.start}:${finding.end}`}
-            finding={finding}
-            speakers={speakers}
-            tags={tags}
-            uiLang={uiLang}
-            actions={actions}
+      <div className="flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-xs font-medium text-text">
+          <AlertTriangle
+            width={14}
+            height={14}
+            aria-hidden="true"
+            className="text-red-500"
           />
-        ))}
-      </ul>
+          {t("tts.scriptCheck.count", { count: findings.length })}
+          {groups.length > 1 && (
+            <span className="text-text/60">
+              {" · "}
+              {t("tts.scriptCheck.groups", { count: groups.length })}
+            </span>
+          )}
+        </p>
+        {groups.length > 1 && (
+          <div className="flex items-center gap-1 text-xs text-text/70">
+            <button
+              type="button"
+              onClick={() => setIndex((i) => Math.max(0, i - 1))}
+              disabled={index <= 0}
+              className={NAV_CLASSES}
+              aria-label={t("tts.scriptCheck.prevGroup")}
+            >
+              <ChevronLeft width={14} height={14} />
+            </button>
+            <span data-testid="script-check-group-position">
+              {t("tts.scriptCheck.groupPosition", {
+                index: index + 1,
+                count: groups.length,
+              })}
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                setIndex((i) => Math.min(groups.length - 1, i + 1))
+              }
+              disabled={index >= groups.length - 1}
+              className={NAV_CLASSES}
+              aria-label={t("tts.scriptCheck.nextGroup")}
+            >
+              <ChevronRight width={14} height={14} />
+            </button>
+          </div>
+        )}
+      </div>
+      <GroupCard
+        key={group.key}
+        group={group}
+        speakers={speakers}
+        tags={tags}
+        engine={engine}
+        uiLang={uiLang}
+        actions={actions}
+      />
     </section>
   );
 };
