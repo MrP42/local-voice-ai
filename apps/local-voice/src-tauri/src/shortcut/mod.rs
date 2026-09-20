@@ -693,6 +693,17 @@ pub fn change_tts_piper_auto_language_setting(app: AppHandle, value: bool) -> Re
     Ok(())
 }
 
+/// Skript-Pruefung vor dem Vorlesen bzw. Speichern (Sprecher ohne Stimme,
+/// unbekannte Tags) an- oder abschalten.
+#[tauri::command]
+#[specta::specta]
+pub fn change_tts_script_check_setting(app: AppHandle, value: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_script_check = value;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_tts_speed_setting(app: AppHandle, value: f32) -> Result<(), String> {

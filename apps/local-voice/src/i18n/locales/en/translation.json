@@ -206,7 +206,9 @@
       "piperAutoLanguageDescription": "Each sentence is checked for its language and read by a matching downloaded Piper voice. Without a match the selected voice reads.",
       "autotagProvider": "Auto-tagging: provider",
       "autotagProviderDescription": "Which language model suggests the emphasis tags: the app's default model or Claude Haiku (API key required).",
-      "autotagDevice": "Auto-tagging: device"
+      "autotagDevice": "Auto-tagging: device",
+      "scriptCheck": "Check the script before reading",
+      "scriptCheckDescription": "Finds speaker markers without a voice and tags the chosen engine does not know, and shows them in the text. A finding does not block, but asks before starting."
     },
     "saveAudio": "Save as audio…",
     "savingAudio": "Generating…",
@@ -384,6 +386,28 @@
       "importConfirm": "Import",
       "importing": "Importing…",
       "importCancel": "Cancel"
+    },
+    "scriptCheck": {
+      "title": "Script check",
+      "clean": "Script checked: no findings.",
+      "count_one": "{{count}} finding in the script",
+      "count_other": "{{count}} findings in the script",
+      "line": "Line {{line}}:",
+      "unknownSpeaker": "Speaker “{{name}}” has no voice – the section will be read with the default voice.",
+      "unknownTag": "Tag “{{tag}}” is unknown to the chosen engine.",
+      "reveal": "Jump to this spot",
+      "replaceWith": "Replace with…",
+      "replaceHere": "Here",
+      "replaceEverywhere": "Everywhere in the text",
+      "removeHere": "Remove here",
+      "removeEverywhere": "Remove everywhere",
+      "dialogTitle_one": "{{count}} finding – continue anyway?",
+      "dialogTitle_other": "{{count}} findings – continue anyway?",
+      "dialogBody_one": "The script check found {{count}} spot that will sound different from what you meant. The list above the text shows it.",
+      "dialogBody_other": "The script check found {{count}} spots that will sound different from what you meant. The list above the text shows them.",
+      "dialogCancel": "Back to the text",
+      "dialogSpeakAnyway": "Read anyway",
+      "dialogSaveAnyway": "Save anyway"
     },
     "editor": {
       "tagPopoverAria": "Edit tag",
