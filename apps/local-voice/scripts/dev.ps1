@@ -141,6 +141,18 @@ try {
             if ($Target -eq 'build') {
                 Invoke-Step 'tauri build --no-bundle' { npx tauri build --no-bundle @Rest }
             } else {
+                # createUpdaterArtifacts=true verlangt den Minisign-Schluessel,
+                # sonst bricht der Lauf NACH dem fertigen Installer beim
+                # Signieren ab (20.09.2026). Lokal liegt der Schluessel unter
+                # ~/.tauri; wenn die Variable fehlt, aus der Datei lesen.
+                $keyFile = Join-Path $HOME '.tauri\local-voice-ai.key'
+                if (-not $env:TAURI_SIGNING_PRIVATE_KEY -and (Test-Path $keyFile)) {
+                    $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -LiteralPath $keyFile -Raw).Trim()
+                    if ($null -eq $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
+                        $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ''
+                    }
+                    Write-Host ('Signaturschluessel aus ' + $keyFile) -ForegroundColor DarkGray
+                }
                 Invoke-Step 'tauri build (Installer)' { npx tauri build @Rest }
             }
         }
