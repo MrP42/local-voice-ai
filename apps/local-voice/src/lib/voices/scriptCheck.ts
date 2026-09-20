@@ -16,7 +16,7 @@
  * dieselben wie in den Chip-Providern: `scanMarkerCandidates` und
  * `scanTagMatches` -- was dort kein Fund ist, ist hier kein Befund.
  */
-import { TAG_REGISTRY } from "@/lib/tags/registry";
+import { TAG_REGISTRY, searchTags } from "@/lib/tags/registry";
 import type { TagDef } from "@/lib/tags/types";
 import { scanTagMatches } from "@/components/settings/tts/tags/tagProvider";
 import {
@@ -129,4 +129,130 @@ export function replaceFindingEverywhere(
   }
   out += text.slice(last);
   return out;
+}
+
+// ---- Gruppen und Empfehlungen ------------------------------------------
+
+/** Alle Stellen desselben Befunds (gleiche Art, gleicher Name). */
+export interface FindingGroup {
+  key: string;
+  kind: ScriptFindingKind;
+  name: string;
+  findings: ScriptFinding[];
+}
+
+/**
+ * Bündelt Befunde je (Art, Name), in der Reihenfolge des ersten Vorkommens.
+ * Siebzehn Zeilen "[calm]" sind EIN Problem mit siebzehn Stellen — und die
+ * Massnahme gilt fuer alle zugleich.
+ */
+export function groupFindings(findings: ScriptFinding[]): FindingGroup[] {
+  const groups = new Map<string, FindingGroup>();
+  for (const finding of findings) {
+    const key = `${finding.kind}:${finding.name.toLowerCase()}`;
+    const group = groups.get(key);
+    if (group) group.findings.push(finding);
+    else
+      groups.set(key, {
+        key,
+        kind: finding.kind,
+        name: finding.name,
+        findings: [finding],
+      });
+  }
+  return [...groups.values()];
+}
+
+const fold = (s: string): string =>
+  s
+    .toLowerCase()
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z0-9]/g, "");
+
+/** Levenshtein-Distanz — klein genug, um sie hier zu halten. */
+const editDistance = (a: string, b: string): number => {
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let last = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = prev[j];
+      prev[j] = Math.min(
+        prev[j] + 1,
+        prev[j - 1] + 1,
+        last + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      last = tmp;
+    }
+  }
+  return prev[b.length];
+};
+
+/**
+ * Sprecher, die dem unbekannten Namen aehneln — Tippfehler, Umlaut-Varianten
+ * ("Erzähler" vs. "Erzaehler"), Teilstrings. Hoechstens `max`, beste zuerst;
+ * leer, wenn nichts naeher als zwei Aenderungen liegt.
+ */
+export function suggestSpeakers(
+  name: string,
+  speakers: SpeakerRef[],
+  max = 3,
+): SpeakerRef[] {
+  const q = fold(name);
+  if (!q) return [];
+  const scored = speakers
+    .map((speaker) => {
+      const candidates = [fold(speaker.displayName), fold(speaker.id)];
+      let score = Infinity;
+      for (const c of candidates) {
+        if (!c) continue;
+        if (c === q) score = Math.min(score, 0);
+        else if (c.startsWith(q) || q.startsWith(c)) score = Math.min(score, 1);
+        else if (c.includes(q) || q.includes(c)) score = Math.min(score, 2);
+        else {
+          const d = editDistance(c, q);
+          if (d <= Math.max(2, Math.floor(q.length / 4)))
+            score = Math.min(score, 2 + d);
+        }
+      }
+      return { speaker, score };
+    })
+    .filter((entry) => entry.score !== Infinity)
+    .sort((a, b) => a.score - b.score);
+  return scored.slice(0, max).map((entry) => entry.speaker);
+}
+
+/**
+ * Tags, die zum unbekannten Tag passen: Synonyme aus der Registry
+ * ("calm" ist ein Alias von "relaxed"), Label-Treffer in beiden Sprachen,
+ * sonst Tippfehler-Naehe. Dokumentierte Tags zuerst — die wirken
+ * verlaesslich, Freitext liest das Modell womoeglich vor.
+ */
+export function suggestTags(
+  name: string,
+  engine: ScriptEngine,
+  uiLang: string,
+  max = 3,
+): TagDef[] {
+  const known = knownTagsFor(engine);
+  const allowed = new Set(known.map((tag) => tag.id));
+  const q = fold(name);
+  const bySearch = searchTags(name, uiLang).filter((tag) =>
+    allowed.has(tag.id),
+  );
+  const byDistance = known.filter((tag) => {
+    const c = fold(tag.insert);
+    return c && editDistance(c, q) <= Math.max(1, Math.floor(q.length / 4));
+  });
+  const merged: TagDef[] = [];
+  for (const tag of [...bySearch, ...byDistance]) {
+    if (!merged.includes(tag)) merged.push(tag);
+  }
+  merged.sort(
+    (a, b) => Number(b.verified === true) - Number(a.verified === true),
+  );
+  return merged.slice(0, max);
 }
