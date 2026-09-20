@@ -1962,11 +1962,15 @@ impl TtsManager {
         let child = cmd
             .spawn()
             .map_err(|e| format!("could not start fish-speech: {e}"))?;
-        // Harter Deckel fuer den ganzen Prozessbaum (Server + Compile-Kinder):
-        // scheitert dessen Allokation, bleibt das System bedienbar.
+        // CPU-Deckel und Prioritaet fuer den ganzen Prozessbaum (Server +
+        // Compile-Kinder). KEIN Speicherdeckel: der Job-Deckel zaehlt Commit,
+        // und CUDA reserviert beim Laden von s2-pro 48 GB davon — mit Deckel
+        // starb der Server mit 0xc0000005 (20.09.2026). Gegen Speichernot
+        // wirken Start-Gate (oben) und der Speicherwaechter.
+        let _ = free_mb;
         let guard = crate::process_guard::ProcessGuard::attach(
             &child,
-            crate::process_guard::memory_limit_mb(free_mb),
+            None,
             crate::process_guard::CPU_CAP_PERCENT,
         );
         *self.child_guard.lock().unwrap() = guard;

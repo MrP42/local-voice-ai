@@ -95,7 +95,17 @@ impl ProcessGuard {
     /// Prioritaetsdeckel. `None`, wenn das Betriebssystem das nicht kann;
     /// der Prozess laeuft dann ohne Deckel weiter (Gate und Wächter bleiben).
     #[cfg(windows)]
-    pub fn attach(child: &std::process::Child, memory_limit_mb: u64, cpu_percent: u32) -> Option<Self> {
+    ///
+    /// `memory_limit_mb = None`: kein Speicherdeckel, nur CPU, Prioritaet und
+    /// KILL_ON_JOB_CLOSE. Noetig fuer GPU-Prozesse: Fish Speech s2-pro belegt
+    /// beim Laden kurzzeitig 48 GB Commit (CUDA-Adressraum, Modell geht erst
+    /// durch den RAM) — mit einem Deckel von 22 GB starb er mit 0xc0000005
+    /// (gemessen 20.09.2026). Start-Gate und Speicherwaechter bleiben.
+    pub fn attach(
+        child: &std::process::Child,
+        memory_limit_mb: Option<u64>,
+        cpu_percent: u32,
+    ) -> Option<Self> {
         use std::os::windows::io::AsRawHandle;
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::JobObjects::{
@@ -114,11 +124,13 @@ impl ProcessGuard {
             let job = CreateJobObjectW(None, None).ok()?;
 
             let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_JOB_MEMORY
-                | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-                | JOB_OBJECT_LIMIT_PRIORITY_CLASS;
+            limits.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_PRIORITY_CLASS;
             limits.BasicLimitInformation.PriorityClass = BELOW_NORMAL_PRIORITY_CLASS.0;
-            limits.JobMemoryLimit = (memory_limit_mb as usize) * 1024 * 1024;
+            if let Some(mb) = memory_limit_mb {
+                limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+                limits.JobMemoryLimit = (mb as usize) * 1024 * 1024;
+            }
             if SetInformationJobObject(
                 job,
                 JobObjectExtendedLimitInformation,
@@ -155,9 +167,11 @@ impl ProcessGuard {
                 return None;
             }
             log::info!(
-                "process guard: pid {} limited to {} MB RAM, {}% CPU, below-normal priority",
+                "process guard: pid {} limited to {} RAM, {}% CPU, below-normal priority",
                 child.id(),
-                memory_limit_mb,
+                memory_limit_mb
+                    .map(|mb| format!("{mb} MB"))
+                    .unwrap_or_else(|| "no cap (GPU process)".to_string()),
                 cpu_percent
             );
             Some(Self { job })
@@ -251,7 +265,7 @@ mod tests {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .expect("python auf dem PATH");
-        let guard = ProcessGuard::attach(&child, 1024, 50).expect("Job-Objekt");
+        let guard = ProcessGuard::attach(&child, Some(1024), 50).expect("Job-Objekt");
         let out = child.wait_with_output().expect("wait");
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
