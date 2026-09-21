@@ -480,7 +480,30 @@
       "deviceHint": "Which device a local Ollama model runs on. Auto uses the GPU only while it is not needed for reading aloud. Has no effect on remote providers.",
       "progress": "Section {{done}}/{{total}}…",
       "starting": "Starting…",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "dialog": {
+        "title": "Auto-tagging",
+        "description": "How the language model should add delivery tags to the text. Settings stay with this page; saved as a preset they are available to every project.",
+        "run": "Start auto-tagging",
+        "presets": "Presets",
+        "presetPick": "Load preset…",
+        "presetName": "Preset name",
+        "presetSave": "Save",
+        "presetDelete": "Delete preset",
+        "presetSaved": "Preset “{{name}}” saved",
+        "coverage": "Coverage",
+        "coverage_sparse": "Sparse",
+        "coverage_balanced": "Balanced",
+        "coverage_rich": "Expressive",
+        "style": "Style hint",
+        "stylePlaceholder": "e.g. calm and child-friendly · dramatic · matter-of-fact",
+        "tags_one": "Preferred tags ({{count}})",
+        "tags_other": "Preferred tags ({{count}})",
+        "tagsVerifiedOnly": "Documented tags only",
+        "unverified": "not documented – the model may read it aloud",
+        "all": "All",
+        "none": "None"
+      }
     },
     "writingRules": {
       "title": "Writing rules: speakers & tags",
@@ -500,7 +523,25 @@
     "tidyDone": "Text cleaned up.",
     "tidyUndo": "Undo",
     "controls": "Playback and voice",
-    "translateShort": "Translate"
+    "translateShort": "Translate",
+    "replaceAll": {
+      "menu": "Replace “{{what}}” everywhere…",
+      "title": "Replace everywhere",
+      "search": "Find",
+      "replacement": "Replace with",
+      "caseSensitive": "Match case",
+      "wholeWord": "Whole words only",
+      "matches_one": "{{count}} match in the text",
+      "matches_other": "{{count}} matches in the text",
+      "run_one": "Replace {{count}} spot",
+      "run_other": "Replace {{count}} spots"
+    },
+    "history": {
+      "undo": "Undo",
+      "redo": "Redo",
+      "undoHint": "Take back the last change to the text (Ctrl+Z)",
+      "redoHint": "Restore an undone change (Ctrl+Y)"
+    }
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",

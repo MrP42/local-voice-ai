@@ -480,7 +480,30 @@
       "deviceHint": "Auf welchem Gerät ein lokales Ollama-Modell läuft. Auto nutzt die GPU nur, solange das Vorlesen sie nicht braucht. Bei entfernten Anbietern ohne Wirkung.",
       "progress": "Abschnitt {{done}}/{{total}}…",
       "starting": "Starte…",
-      "cancel": "Abbrechen"
+      "cancel": "Abbrechen",
+      "dialog": {
+        "title": "Auto-Tagging",
+        "description": "Wie das Sprachmodell den Text mit Vortrags-Tags versehen soll. Die Einstellungen bleiben bei dieser Seite; als Vorlage gespeichert stehen sie jedem Projekt zur Verfügung.",
+        "run": "Auto-Tagging starten",
+        "presets": "Vorlagen",
+        "presetPick": "Vorlage laden…",
+        "presetName": "Name der Vorlage",
+        "presetSave": "Speichern",
+        "presetDelete": "Vorlage löschen",
+        "presetSaved": "Vorlage „{{name}}“ gespeichert",
+        "coverage": "Umfang",
+        "coverage_sparse": "Sparsam",
+        "coverage_balanced": "Ausgewogen",
+        "coverage_rich": "Ausdrucksstark",
+        "style": "Stil-Hinweis",
+        "stylePlaceholder": "z. B. kindgerecht und ruhig · dramatisch · sachlich",
+        "tags_one": "Bevorzugte Tags ({{count}})",
+        "tags_other": "Bevorzugte Tags ({{count}})",
+        "tagsVerifiedOnly": "Nur dokumentierte Tags",
+        "unverified": "nicht dokumentiert – das Modell liest es womöglich vor",
+        "all": "Alle",
+        "none": "Keine"
+      }
     },
     "writingRules": {
       "title": "Schreibregeln: Sprecher & Tags",
@@ -500,7 +523,25 @@
     "tidyDone": "Text aufbereitet.",
     "tidyUndo": "Rückgängig",
     "controls": "Wiedergabe und Stimme",
-    "translateShort": "Übersetzen"
+    "translateShort": "Übersetzen",
+    "replaceAll": {
+      "menu": "„{{what}}“ überall ersetzen…",
+      "title": "Überall ersetzen",
+      "search": "Suchen nach",
+      "replacement": "Ersetzen durch",
+      "caseSensitive": "Groß-/Kleinschreibung beachten",
+      "wholeWord": "Nur ganze Wörter",
+      "matches_one": "{{count}} Treffer im Text",
+      "matches_other": "{{count}} Treffer im Text",
+      "run_one": "{{count}} Stelle ersetzen",
+      "run_other": "{{count}} Stellen ersetzen"
+    },
+    "history": {
+      "undo": "Rückgängig",
+      "redo": "Wiederherstellen",
+      "undoHint": "Letzte Änderung am Text zurücknehmen (Strg+Z)",
+      "redoHint": "Zurückgenommene Änderung wiederherstellen (Strg+Y)"
+    }
   },
   "onboarding": {
     "subtitle": "Wähle ein Transkriptionsmodell, um loszulegen",

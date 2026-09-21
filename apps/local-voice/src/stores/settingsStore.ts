@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  AutoTagOptions,
+  AutoTagPreset,
   AppSettings as Settings,
   AudioDevice,
   TranscribeAcceleratorSetting,
@@ -152,6 +154,10 @@ const settingUpdaters: {
     commands.changeTtsContextMenuSetting(value as boolean),
   tts_tag_favorites: (value) =>
     commands.changeTtsTagFavoritesSetting(value as string[]),
+  tts_autotag_presets: (value) =>
+    commands.changeTtsAutotagPresetsSetting(value as AutoTagPreset[]),
+  tts_autotag_last: (value) =>
+    commands.changeTtsAutotagLastSetting(value as AutoTagOptions | null),
   tts_tag_provider: (value) =>
     commands.changeTtsTagProviderSetting(value as string),
   tts_tag_model: (value) => commands.changeTtsTagModelSetting(value as string),

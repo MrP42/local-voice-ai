@@ -6,7 +6,8 @@ import { Sparkles, X } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
-import { commands } from "@/bindings";
+import { commands, type AutoTagOptions } from "@/bindings";
+import { AutoTagDialog } from "./AutoTagDialog";
 import { TAG_REGISTRY } from "@/lib/tags/registry";
 import type { ChipEditorSuggestion } from "../editor/TtsChipEditor";
 
@@ -157,6 +158,10 @@ interface AutoTagBarProps {
   /** Anbieter- und Geraetewahl mit anzeigen. Aus, wenn sie woanders stehen
    *  (Einstellungen -> Vorlesen), damit die Leiste nur noch der Knopf ist. */
   showSettings?: boolean;
+  /** Einstellungen des Laufs (je Seite persistiert) und ihre Aenderung. */
+  options: AutoTagOptions;
+  onOptionsChange: (next: AutoTagOptions) => void;
+  uiLang: string;
 }
 
 export const DEFAULT_TAG_PROVIDER_UI_VALUE = DEFAULT_PROVIDER_UI_VALUE;
@@ -168,10 +173,15 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   sourceText,
   onSuggestionsChange,
   onApplyText,
+  options,
+  onOptionsChange,
+  uiLang,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
   const [loading, setLoading] = useState(false);
+  // Der Knopf oeffnet erst den Dialog; gestartet wird aus dem Dialog.
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Fortschritt des laufenden Auto-Taggings (Abschnitte), null = kein Lauf. */
   const [progress, setProgress] = useState<{
@@ -221,7 +231,7 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
     { value: "gpu", label: t("tts.autotag.deviceGpu") },
   ];
 
-  const runAutoTag = async () => {
+  const runAutoTag = async (runOptions: AutoTagOptions) => {
     if (!text.trim() || loading) return;
     if (missingAnthropicKey) {
       setError(t("tts.autotag.missingApiKey"));
@@ -259,6 +269,7 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
       textAtStart,
       allowedTags,
       providerValue || null,
+      runOptions,
     );
     unlisten();
     setLoading(false);
@@ -321,8 +332,9 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
         variant="secondary"
         size="sm"
         className={showSettings ? undefined : "w-full justify-start"}
-        onClick={() => void runAutoTag()}
+        onClick={() => setDialogOpen(true)}
         disabled={loading || !text.trim()}
+        data-testid="autotag-open"
         title={t("tts.autotag.button")}
         aria-label={t("tts.autotag.button")}
       >
@@ -334,33 +346,33 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
         {t("tts.autotag.button")}
       </Button>
       {showSettings && (
-      <>
-      <div className="w-40">
-        <Select
-          value={
-            providerValue === "" ? DEFAULT_PROVIDER_UI_VALUE : providerValue
-          }
-          options={providerOptions}
-          isClearable={false}
-          onChange={(value) => {
-            void updateSetting(
-              "tts_tag_provider",
-              value === DEFAULT_PROVIDER_UI_VALUE ? "" : (value ?? ""),
-            );
-          }}
-        />
-      </div>
-      <div className="w-40" title={t("tts.autotag.deviceHint")}>
-        <Select
-          value={deviceValue}
-          options={deviceOptions}
-          isClearable={false}
-          onChange={(value) => {
-            void updateSetting("tts_tag_device", value ?? "auto");
-          }}
-        />
-      </div>
-      </>
+        <>
+          <div className="w-40">
+            <Select
+              value={
+                providerValue === "" ? DEFAULT_PROVIDER_UI_VALUE : providerValue
+              }
+              options={providerOptions}
+              isClearable={false}
+              onChange={(value) => {
+                void updateSetting(
+                  "tts_tag_provider",
+                  value === DEFAULT_PROVIDER_UI_VALUE ? "" : (value ?? ""),
+                );
+              }}
+            />
+          </div>
+          <div className="w-40" title={t("tts.autotag.deviceHint")}>
+            <Select
+              value={deviceValue}
+              options={deviceOptions}
+              isClearable={false}
+              onChange={(value) => {
+                void updateSetting("tts_tag_device", value ?? "auto");
+              }}
+            />
+          </div>
+        </>
       )}
       {loading && (
         <>
@@ -400,6 +412,14 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
       {error && (
         <p className="w-full text-xs text-red-500 break-words">{error}</p>
       )}
+      <AutoTagDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        options={options}
+        onOptionsChange={onOptionsChange}
+        onRun={(o) => void runAutoTag(o)}
+        uiLang={uiLang}
+      />
     </div>
   );
 };

@@ -87,6 +87,12 @@ pub struct ShortcutBinding {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct AutoTagPreset {
+    pub name: String,
+    pub options: crate::tagging::AutoTagOptions,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct LLMPrompt {
     pub id: String,
     pub name: String,
@@ -733,6 +739,14 @@ pub struct AppSettings {
     /// Bei entfernten Anbietern wirkungslos.
     #[serde(default = "default_tts_tag_device")]
     pub tts_tag_device: String,
+    /// Auto-Tagging-Vorlagen (Dialog vor dem Lauf): benannte Einstellungen,
+    /// die ein neues Projekt uebernehmen kann.
+    #[serde(default)]
+    pub tts_autotag_presets: Vec<AutoTagPreset>,
+    /// Zuletzt benutzte Auto-Tagging-Einstellungen — Vorbelegung fuer eine
+    /// Seite, die noch keine eigenen hat.
+    #[serde(default)]
+    pub tts_autotag_last: Option<crate::tagging::AutoTagOptions>,
     /// M8 Meetings: wie lange Audiodateien nach einer Aufnahme/einem Import
     /// aufbewahrt werden, bevor sie hart gelöscht werden. Default: sobald ein
     /// Protokoll existiert (Spec Default-Verhalten).
@@ -1485,6 +1499,8 @@ pub fn get_default_settings() -> AppSettings {
         tts_tag_provider: String::new(),
         tts_tag_model: default_tts_tag_model(),
         tts_tag_device: default_tts_tag_device(),
+        tts_autotag_presets: Vec::new(),
+        tts_autotag_last: None,
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,

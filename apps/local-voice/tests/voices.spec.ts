@@ -563,6 +563,15 @@ test("clean up rewrites the original text and offers undo", async ({
   await editor.fill("Seite 3\nText mit Sil-\nbentrennung.");
   await page.getByRole("button", { name: "Text aufbereiten" }).click();
   await expect(editor).toHaveValue("Sauberer Text ohne Seitenzahlen.");
-  await page.getByRole("button", { name: "Rückgängig" }).click();
+  // Der Undo-Toast UND der Historie-Knopf heissen "Rueckgaengig" -- hier
+  // zaehlt der Toast; die Historie deckt denselben Schritt ohnehin ab.
+  await page
+    .locator("[data-sonner-toast]")
+    .getByRole("button", { name: "Rückgängig" })
+    .click();
   await expect(editor).toHaveValue("Seite 3\nText mit Sil-\nbentrennung.");
+  // Der Toast-Undo ist selbst ein Schritt der Historie: Rueckgaengig
+  // bringt den aufbereiteten Text zurueck.
+  await page.getByTestId("history-undo").click();
+  await expect(editor).toHaveValue("Sauberer Text ohne Seitenzahlen.");
 });

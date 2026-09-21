@@ -512,6 +512,22 @@ async changeTtsTagFavoritesSetting(value: string[]) : Promise<Result<null, strin
     else return { status: "error", error: e  as any };
 }
 },
+async changeTtsAutotagPresetsSetting(value: AutoTagPreset[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_autotag_presets_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeTtsAutotagLastSetting(value: AutoTagOptions | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_autotag_last_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * T4 Auto-Tagging: welcher Provider Tag-Vorschläge liefert ("" = aktiver
  * Post-Processing-Provider, "anthropic" = fest Claude).
@@ -2173,9 +2189,9 @@ async ttsDeleteModel(id: string) : Promise<Result<null, string>> {
  * (Unicode-Skalarwert-Zählung) selbst umrechnen — siehe die Dokumentation
  * an `tagging::TagInsertion` und die Umrechnung in `AutoTagBar.tsx`.
  */
-async ttsAutoTag(text: string, allowedTags: string[], providerOverride: string | null) : Promise<Result<TagInsertion[], string>> {
+async ttsAutoTag(text: string, allowedTags: string[], providerOverride: string | null, options: AutoTagOptions | null) : Promise<Result<TagInsertion[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_auto_tag", { text, allowedTags, providerOverride }) };
+    return { status: "ok", data: await TAURI_INVOKE("tts_auto_tag", { text, allowedTags, providerOverride, options }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2588,7 +2604,15 @@ tts_script_check?: boolean;
  * Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die
  * Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
  */
-tts_tag_favorites?: string[]; 
+tts_tag_favorites?: string[];
+/**
+ * Auto-Tagging-Vorlagen (Dialog vor dem Lauf).
+ */
+tts_autotag_presets?: AutoTagPreset[];
+/**
+ * Zuletzt benutzte Auto-Tagging-Einstellungen.
+ */
+tts_autotag_last?: AutoTagOptions | null; 
 /**
  * T4 Auto-Tagging: welcher Provider die Tag-Vorschläge liefert.
  * "" = aktiver Post-Processing-Provider, "anthropic" = fest Claude
@@ -2684,6 +2708,11 @@ export type ImplementationChangeResult = { success: boolean;
 reset_bindings: string[] }
 export type ImportedVoice = { id: string; transcript: string }
 export type KeyboardImplementation = "tauri" | "handy_keys"
+/**
+ * Einstellungen eines Auto-Tagging-Laufs.
+ */
+export type AutoTagOptions = { preferred_tags: string[]; coverage: string; style_hint: string; max_per_sentence: number }
+export type AutoTagPreset = { name: string; options: AutoTagOptions }
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LlmDownloadKind = "runtime" | "model"
 /** Ein Eintrag der Modellseite fuer das lokale Sprachmodell: Laufzeitpaket oder Modell. */

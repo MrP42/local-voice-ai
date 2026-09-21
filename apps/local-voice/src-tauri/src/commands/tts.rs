@@ -688,7 +688,9 @@ pub async fn tts_auto_tag(
     text: String,
     allowed_tags: Vec<String>,
     provider_override: Option<String>,
+    options: Option<crate::tagging::AutoTagOptions>,
 ) -> Result<Vec<crate::tagging::TagInsertion>, String> {
+    let options = options.unwrap_or_default();
     let settings = crate::settings::get_settings(&app);
     let cpu_only = match settings.tts_tag_device.as_str() {
         "cpu" => true,
@@ -717,6 +719,7 @@ pub async fn tts_auto_tag(
         &settings,
         &text,
         &allowed_tags,
+        &options,
         provider_override.as_deref(),
         cpu_only,
         cancel_rx,
