@@ -226,7 +226,7 @@
       "autotagProvider": "Auto-Tagging: Anbieter",
       "autotagProviderDescription": "Welches Sprachmodell die Betonungs-Tags vorschlägt: das Standardmodell der App oder Claude Haiku (API-Schlüssel nötig).",
       "autotagDevice": "Auto-Tagging: Gerät",
-      "scriptCheck": "Skript vor dem Vorlesen prüfen",
+      "scriptCheck": "Skript während der Eingabe prüfen (Befunde rot unterstreichen)",
       "scriptCheckDescription": "Findet Sprechermarker ohne Stimme und Tags, die die gewählte Engine nicht kennt, und zeigt sie im Text. Ein Befund blockiert nicht, fragt aber vor dem Start nach."
     },
     "saveAudio": "Als Audio speichern…",

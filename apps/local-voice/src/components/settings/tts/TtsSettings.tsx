@@ -38,6 +38,7 @@ import { useSpeakerProvider, useSpeakers } from "./speakers";
 import { TagPalette } from "./tags";
 import { AutoTagBar, resolveSuggestion } from "./tags/AutoTagBar";
 import { usePersistentState } from "../../../hooks/usePersistentState";
+import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
 import {
   TTS_TARGET_LANGS,
   targetLangCode,
@@ -580,8 +581,10 @@ export const TtsSettings = () => {
       return;
     }
     // Skript-Pruefung: ein Befund blockiert nicht, fragt aber nach -- nur
-    // beim Start, nicht beim Fortsetzen derselben Sitzung.
-    if (scriptFindings.length > 0) {
+    // beim Start, nicht beim Fortsetzen derselben Sitzung. Frisch geprueft,
+    // nicht aus der verzoegerten Liste: wer direkt nach dem Tippen auf Play
+    // drueckt, soll nicht durch das Debounce-Fenster rutschen.
+    if (freshFindings().length > 0) {
       setCheckDialog("speak");
       return;
     }
@@ -647,7 +650,7 @@ export const TtsSettings = () => {
     );
 
   const saveSpokenAudio = async () => {
-    if (scriptFindings.length > 0) {
+    if (freshFindings().length > 0) {
       setCheckDialog("save");
       return;
     }
@@ -870,19 +873,32 @@ export const TtsSettings = () => {
    * Tags, die die aktive Engine nicht kennt. Ist der Schalter aus, wird
    * nicht geprueft und nichts angezeigt -- die Liste ist dann leer.
    */
-  // Manuell angestossene Pruefung ("Skript pruefen" in der Bedienspalte):
-  // gilt fuer diesen Text, auch wenn der Automatik-Schalter aus ist, und
-  // springt zur ersten Stelle. Ein neuer Text setzt sie zurueck.
+  // Automatik (Schalter, Standard an): waehrend der Eingabe pruefen und im
+  // Text unterstreichen -- wie die Rechtschreibpruefung in Office. Das
+  // Korrekturpanel oeffnet erst per Knopf "Skript pruefen"; der Knopf
+  // prueft auch bei abgeschaltetem Schalter (dann einmalig fuer diesen
+  // Text). Die Analyse laeuft ueber den um 120 ms verzoegerten Text, damit
+  // die Textarea nie auf sie wartet (Zweitmeinung 21.09.2026: Debounce +
+  // Zwei-Zeiger-Zuordnung reichen fuer 100 KB; Zeilen-Cache nur bei Bedarf).
   const [manualCheck, setManualCheck] = useState<string | null>(null);
-  const scriptCheckOn =
-    (getSetting("tts_script_check") ?? true) || manualCheck === spokenText;
+  const [panelOpen, setPanelOpen] = useState(false);
+  const scriptCheckAuto = getSetting("tts_script_check") ?? true;
+  const scriptCheckOn = scriptCheckAuto || manualCheck === spokenText;
   const scriptEngine =
     (getSetting("tts_engine") ?? "fish") === "piper" ? "piper" : "fish";
+  const debouncedText = useDebouncedValue(spokenText, 120);
   const scriptFindings = useMemo<ScriptFinding[]>(
     () =>
-      scriptCheckOn ? checkScript(spokenText, speakers, scriptEngine) : [],
-    [scriptCheckOn, spokenText, speakers, scriptEngine],
+      scriptCheckOn ? checkScript(debouncedText, speakers, scriptEngine) : [],
+    [scriptCheckOn, debouncedText, speakers, scriptEngine],
   );
+  // Panel schliesst sich, wenn nichts mehr zu tun ist oder der Reiter wechselt.
+  useEffect(() => {
+    if (scriptFindings.length === 0) setPanelOpen(false);
+  }, [scriptFindings.length]);
+  useEffect(() => {
+    setPanelOpen(false);
+  }, [tab]);
   const editorFindings = useMemo<ChipEditorFinding[] | undefined>(
     () =>
       scriptCheckOn
@@ -900,9 +916,14 @@ export const TtsSettings = () => {
   /** Massnahmen der Befundliste. "Ueberall" ersetzt den ganzen Text des
    *  Reiters in EINEM Undo-Schritt ueber die Editor-API; ohne Editor-API
    *  (sollte nicht vorkommen) faellt es auf setState zurueck. */
+  /** Befunde des aktuellen (nicht verzoegerten) Texts, nur mit Schalter an. */
+  const freshFindings = (): ScriptFinding[] =>
+    scriptCheckAuto ? checkScript(spokenText, speakers, scriptEngine) : [];
+
   const runScriptCheck = () => {
     setManualCheck(spokenText);
     const first = checkScript(spokenText, speakers, scriptEngine)[0];
+    setPanelOpen(first !== undefined);
     if (first) editorApiRef.current?.revealRange?.(first.start, first.end);
   };
 
@@ -1318,9 +1339,10 @@ export const TtsSettings = () => {
             {/* Der Chip-Editor ist Drop-in für die frühere Textarea: die
                 native textarea darin bleibt die einzige Wahrheit, Tags
                 (`[…]`) erscheinen als Chips im Mirror-Overlay. */}
-            {/* Skript-Pruefung: Befundliste ueber dem Text. Nur mit
-                Schalter an -- und nur, wenn ueberhaupt Text da ist. */}
-            {scriptCheckOn && spokenText.trim().length > 0 && (
+            {/* Skript-Pruefung: das Korrekturpanel nur nach Klick auf
+                "Skript pruefen" -- die Unterstreichung im Text ist davon
+                unabhaengig und laeuft (bei Automatik) immer mit. */}
+            {panelOpen && scriptFindings.length > 0 && (
               <div className="pb-2">
                 <ScriptCheckPanel
                   findings={scriptFindings}
@@ -1328,6 +1350,7 @@ export const TtsSettings = () => {
                   engine={scriptEngine}
                   uiLang={uiLang}
                   actions={scriptActions}
+                  onClose={() => setPanelOpen(false)}
                 />
               </div>
             )}
@@ -1719,8 +1742,22 @@ export const TtsSettings = () => {
                     title={t("tts.scriptCheck.runHint")}
                     data-testid="script-check-run"
                   >
-                    <SpellCheck width={16} height={16} />
+                    <SpellCheck
+                      width={16}
+                      height={16}
+                      className={
+                        scriptFindings.length > 0 ? "text-red-500" : undefined
+                      }
+                    />
                     {t("tts.scriptCheck.run")}
+                    {scriptFindings.length > 0 && (
+                      <span
+                        data-testid="script-check-badge"
+                        className="ml-auto rounded-full bg-red-500/20 px-1.5 text-xs text-red-500"
+                      >
+                        {scriptFindings.length}
+                      </span>
+                    )}
                   </Button>
                   {/* Auto-Tagging gehoert zu den Textwerkzeugen: hier in der
                       Bedienspalte, gestapelt (Knopf, Anbieter, Geraet). */}
