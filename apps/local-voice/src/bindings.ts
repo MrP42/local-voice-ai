@@ -512,6 +512,14 @@ async changeTtsTagFavoritesSetting(value: string[]) : Promise<Result<null, strin
     else return { status: "error", error: e  as any };
 }
 },
+async changeTtsTagLanguageSetting(value: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_language_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeTtsAutotagPresetsSetting(value: AutoTagPreset[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_autotag_presets_setting", { value }) };
@@ -2632,6 +2640,7 @@ tts_tag_favorites?: string[];
 /**
  * Auto-Tagging-Vorlagen (Dialog vor dem Lauf).
  */
+tts_tag_language?: string; 
 tts_autotag_presets?: AutoTagPreset[];
 /**
  * Zuletzt benutzte Auto-Tagging-Einstellungen.

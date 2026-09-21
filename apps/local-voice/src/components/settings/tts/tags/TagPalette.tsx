@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { LucideIcon } from "lucide-react";
+import { List } from "lucide-react";
 import {
   ChevronDown,
   ChevronUp,
@@ -18,21 +19,28 @@ import {
   TAG_CATEGORIES,
   TAG_REGISTRY,
   localizedLabel,
+  resolveTag,
   searchTags,
+  tagClass,
+  tagInsertFor,
 } from "@/lib/tags/registry";
+import { useTagLanguage } from "./tagLanguage";
 import type { TagCategoryId, TagDef } from "@/lib/tags/types";
 import { TagChip } from "./TagChip";
 
 /** "Zuletzt benutzt" merkt sich hoechstens diese vielen Eintraege. */
 const MAX_RECENT = 8;
 
-type ActiveTab = "favorites" | "recent" | TagCategoryId;
+type ActiveTab = "favorites" | "recent" | "all" | TagCategoryId;
 
 const isTagCategory = (value: string): value is TagCategoryId =>
   TAG_CATEGORIES.some((category) => category.id === value);
 
 const isActiveTab = (value: string): value is ActiveTab =>
-  value === "favorites" || value === "recent" || isTagCategory(value);
+  value === "favorites" ||
+  value === "recent" ||
+  value === "all" ||
+  isTagCategory(value);
 
 /** Grosszuegig gegen kaputten localStorage-Inhalt: alles, was keine Liste
  *  von Strings ist, gilt als leer statt als Fehler. */
@@ -59,9 +67,9 @@ interface ChipItem {
   reliable: boolean;
 }
 
-const toChipItem = (tag: TagDef, uiLang: string): ChipItem => ({
+const toChipItem = (tag: TagDef, uiLang: string, tagLang = "en"): ChipItem => ({
   key: tag.id,
-  insertText: tag.insert,
+  insertText: tagInsertFor(tag, tagLang),
   label: localizedLabel(tag, uiLang),
   description: uiLang === "de" ? tag.description?.de : tag.description?.en,
   registryId: tag.id,
@@ -138,6 +146,7 @@ export const TagPalette: React.FC<{
   const [customText, setCustomText] = useState("");
 
   const favorites = getSetting("tts_tag_favorites") ?? [];
+  const tagLang = useTagLanguage();
 
   const rememberRecent = (insertText: string) => {
     const next = [
@@ -247,24 +256,36 @@ export const TagPalette: React.FC<{
     const trimmedQuery = query.trim();
     if (trimmedQuery) {
       return searchTags(trimmedQuery, uiLang).map((tag) =>
-        toChipItem(tag, uiLang),
+        toChipItem(tag, uiLang, tagLang),
       );
     }
     if (activeTab === "favorites") {
       return TAG_REGISTRY.filter((tag) => favorites.includes(tag.id)).map(
-        (tag) => toChipItem(tag, uiLang),
+        (tag) => toChipItem(tag, uiLang, tagLang),
       );
     }
     if (activeTab === "recent") {
       return recent.map((text) => {
-        const match = TAG_REGISTRY.find((tag) => tag.insert === text);
-        return match ? toChipItem(match, uiLang) : toCustomChipItem(text);
+        const match = resolveTag(text);
+        return match
+          ? toChipItem(match, uiLang, tagLang)
+          : toCustomChipItem(text);
       });
     }
+    if (activeTab === "all") {
+      // Die ganze Liste, dokumentierte zuerst -- zum Stoebern und Pruefen.
+      return [...TAG_REGISTRY]
+        .sort(
+          (a, b) =>
+            Number(tagClass(b) === "documented") -
+            Number(tagClass(a) === "documented"),
+        )
+        .map((tag) => toChipItem(tag, uiLang, tagLang));
+    }
     return TAG_REGISTRY.filter((tag) => tag.category === activeTab).map((tag) =>
-      toChipItem(tag, uiLang),
+      toChipItem(tag, uiLang, tagLang),
     );
-  }, [query, uiLang, activeTab, favorites, recent]);
+  }, [query, uiLang, tagLang, activeTab, favorites, recent]);
 
   const emptyMessage = query.trim()
     ? t("tts.tags.emptySearch")
@@ -331,6 +352,12 @@ export const TagPalette: React.FC<{
               label={t("tts.tags.recent")}
               onClick={() => setActiveTabRaw("recent")}
             />
+            <TabButton
+              active={activeTab === "all"}
+              icon={List}
+              label={t("tts.tags.all")}
+              onClick={() => setActiveTabRaw("all")}
+            />
             {TAG_CATEGORIES.map((category) => (
               <TabButton
                 key={category.id}
@@ -342,6 +369,21 @@ export const TagPalette: React.FC<{
             ))}
           </div>
 
+          {/* Legende: was die drei Farben bedeuten -- einmal, nicht als
+              Tooltip auf jedem Chip. */}
+          <p
+            className="px-2 pt-1 text-[11px] text-text/50"
+            data-testid="tag-legend"
+          >
+            {t("tts.tags.legend", {
+              documented: TAG_REGISTRY.filter(
+                (tag) => tagClass(tag) === "documented",
+              ).length,
+              extended: TAG_REGISTRY.filter(
+                (tag) => tagClass(tag) === "extended",
+              ).length,
+            })}
+          </p>
           <div className="flex flex-wrap gap-1 p-2">
             {visibleTags.length === 0 ? (
               <p className="px-1 py-2 text-xs text-text/50">{emptyMessage}</p>

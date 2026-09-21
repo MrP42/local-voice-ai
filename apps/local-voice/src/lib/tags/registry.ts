@@ -1295,3 +1295,89 @@ export function searchTags(query: string, uiLang: string): TagDef[] {
   ranked.sort((a, b) => a.rank - b.rank || a.index - b.index);
   return ranked.map((entry) => entry.tag);
 }
+
+// ---- Aufloesung ueber alle Namen, Sprache im Text, Klassen ---------------
+
+const fold = (value: string): string =>
+  value.trim().toLowerCase().replace(/\s+/g, " ");
+
+let resolveIndex: Map<string, TagDef> | null = null;
+const buildResolveIndex = (): Map<string, TagDef> => {
+  const index = new Map<string, TagDef>();
+  // Reihenfolge = Vorrang: insert und id zuerst, dann Labels, zuletzt
+  // Aliasse -- ein Alias darf ein echtes Insert nie ueberdecken.
+  for (const tag of TAG_REGISTRY) {
+    for (const key of [tag.insert, tag.id]) {
+      if (!index.has(fold(key))) index.set(fold(key), tag);
+    }
+  }
+  for (const tag of TAG_REGISTRY) {
+    for (const key of [tag.label.en, tag.label.de]) {
+      if (!index.has(fold(key))) index.set(fold(key), tag);
+    }
+  }
+  for (const tag of TAG_REGISTRY) {
+    for (const key of tag.aliases ?? []) {
+      if (!index.has(fold(key))) index.set(fold(key), tag);
+    }
+  }
+  return index;
+};
+
+/**
+ * Das Tag zu einem Klammerinhalt -- gleich, ob englisches Insert
+ * (`relaxed`), Id, deutsche oder englische Beschriftung (`ruhig`, `Relaxed`)
+ * oder Alias (`calm`). Die Engine bekommt am Ende immer das Insert; siehe
+ * `canonicalizeTags`.
+ */
+export function resolveTag(inner: string): TagDef | undefined {
+  resolveIndex ??= buildResolveIndex();
+  return resolveIndex.get(fold(inner));
+}
+
+/** Klammerinhalt in der gewuenschten Sprache: deutsch = Beschriftung in
+ *  Kleinschreibung (`[ruhig]`), sonst das englische Insert. */
+export function tagInsertFor(tag: TagDef, lang: string): string {
+  return lang === "de" ? tag.label.de.toLowerCase() : tag.insert;
+}
+
+/** Drei Klassen, die die Oberflaeche einheitlich zeigt:
+ *  - documented: offizielle Fish-Audio-Liste oder App-Pause -- wirkt.
+ *  - extended: in der Registry, aber nicht dokumentiert -- wirkt meist.
+ *  - unknown: kein bekanntes Tag -- wird womoeglich vorgelesen. */
+export type TagClass = "documented" | "extended" | "unknown";
+export function tagClass(tag: TagDef | undefined): TagClass {
+  if (!tag) return "unknown";
+  return tag.verified === true || tag.category === "pauses"
+    ? "documented"
+    : "extended";
+}
+
+const TAG_SPAN = /\[([^\]\n]{1,60})\]/g;
+
+/** Jedes bekannte Tag in seine englische Insert-Form bringen -- das, was
+ *  Engine und Satz-Cache kennen. Unbekannte Tags bleiben unveraendert. */
+export function canonicalizeTags(text: string): string {
+  return text.replace(TAG_SPAN, (whole, inner: string) => {
+    const tag = resolveTag(inner);
+    return tag ? `[${tag.insert}]` : whole;
+  });
+}
+
+/** Wie `canonicalizeTags`, verschiebt aber einen Zeichen-Offset (UTF-16)
+ *  mit -- fuer "ab hier vorlesen", wo der Offset aus dem sichtbaren Text
+ *  stammt und im kanonischen gelten muss. */
+export function canonicalizeTagsAt(
+  text: string,
+  offset: number,
+): { text: string; offset: number } {
+  let shift = 0;
+  const out = text.replace(TAG_SPAN, (whole, inner: string, at: number) => {
+    const tag = resolveTag(inner);
+    if (!tag) return whole;
+    const next = `[${tag.insert}]`;
+    if (at + whole.length <= offset) shift += next.length - whole.length;
+    return next;
+  });
+  return { text: out, offset: Math.max(0, offset + shift) };
+}

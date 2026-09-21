@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { commands, type AutoTagOptions } from "@/bindings";
 import { AutoTagDialog } from "./AutoTagDialog";
-import { TAG_REGISTRY } from "@/lib/tags/registry";
+import { TAG_REGISTRY, resolveTag, tagInsertFor } from "@/lib/tags/registry";
+import { useTagLanguage } from "./tagLanguage";
 import type { ChipEditorSuggestion } from "../editor/TtsChipEditor";
 
 // ---------------------------------------------------------------------------
@@ -75,11 +76,18 @@ export function insertionsToSuggestions(
  * in UTF-16-Einheiten — schon die richtige Einheit, weil `offset` hier schon
  * UTF-16 ist). Verwerfen entfernt nur den Vorschlag, der Text bleibt unberührt.
  */
+/** Vorschlag des Modells (englisch) in der Tag-Sprache des Nutzers. */
+export const tagTextForName = (name: string, lang: string): string => {
+  const tag = resolveTag(name);
+  return tag ? `[${tagInsertFor(tag, lang)}]` : `[${name}]`;
+};
+
 export function resolveSuggestion(
   text: string,
   suggestions: ChipEditorSuggestion[],
   id: string,
   accept: boolean,
+  tagLang = "en",
 ): { text: string; suggestions: ChipEditorSuggestion[]; inserted: boolean } {
   const target = suggestions.find((s) => s.id === id);
   if (!target) {
@@ -89,7 +97,7 @@ export function resolveSuggestion(
   if (!accept) {
     return { text, suggestions: remaining, inserted: false };
   }
-  const insertText = `[${target.tag}]`;
+  const insertText = tagTextForName(target.tag, tagLang);
   const nextText =
     text.slice(0, target.offset) + insertText + text.slice(target.offset);
   const shifted = remaining.map((s) =>
@@ -109,6 +117,7 @@ export function resolveAllSuggestions(
   text: string,
   suggestions: ChipEditorSuggestion[],
   accept: boolean,
+  tagLang = "en",
 ): { text: string; suggestions: ChipEditorSuggestion[]; count: number } {
   const count = suggestions.length;
   if (count === 0) {
@@ -121,7 +130,9 @@ export function resolveAllSuggestions(
   let nextText = text;
   for (const s of descending) {
     nextText =
-      nextText.slice(0, s.offset) + `[${s.tag}]` + nextText.slice(s.offset);
+      nextText.slice(0, s.offset) +
+      tagTextForName(s.tag, tagLang) +
+      nextText.slice(s.offset);
   }
   return { text: nextText, suggestions: [], count };
 }
@@ -179,6 +190,7 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
+  const tagLang = useTagLanguage();
   const [loading, setLoading] = useState(false);
   // Der Knopf oeffnet erst den Dialog; gestartet wird aus dem Dialog.
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -306,7 +318,7 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
       toast.info(t("tts.autotag.staleSuggestionsDiscarded"));
       return;
     }
-    const outcome = resolveAllSuggestions(text, suggestions, true);
+    const outcome = resolveAllSuggestions(text, suggestions, true, tagLang);
     onSuggestionsChange(outcome.suggestions, null);
     if (outcome.text !== text) {
       onApplyText(outcome.text, text, outcome.count);

@@ -154,6 +154,8 @@ const settingUpdaters: {
     commands.changeTtsContextMenuSetting(value as boolean),
   tts_tag_favorites: (value) =>
     commands.changeTtsTagFavoritesSetting(value as string[]),
+  tts_tag_language: (value) =>
+    commands.changeTtsTagLanguageSetting(value as string),
   tts_autotag_presets: (value) =>
     commands.changeTtsAutotagPresetsSetting(value as AutoTagPreset[]),
   tts_autotag_last: (value) =>

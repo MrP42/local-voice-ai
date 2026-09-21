@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { tagTextFor, useTagLanguage, type TagLanguage } from "./tagLanguage";
 import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
@@ -65,8 +66,9 @@ const MenuRow: React.FC<{
 const TagRow: React.FC<{
   tag: TagDef;
   uiLang: string;
+  tagLang: TagLanguage;
   onPick: (tag: TagDef) => void;
-}> = ({ tag, uiLang, onPick }) => (
+}> = ({ tag, uiLang, tagLang, onPick }) => (
   <button
     type="button"
     role="menuitem"
@@ -75,7 +77,9 @@ const TagRow: React.FC<{
     className="flex min-h-[44px] w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2 text-start text-sm text-text/80 hover:bg-logo-primary/10 hover:text-text focus-visible:outline-none focus-visible:bg-logo-primary/10 focus-visible:text-text"
   >
     <span className="truncate">{localizedLabel(tag, uiLang)}</span>
-    <span className="shrink-0 text-xs text-text/45">[{tag.insert}]</span>
+    <span className="shrink-0 text-xs text-text/45">
+      {tagTextFor(tag, tagLang)}
+    </span>
   </button>
 );
 
@@ -228,7 +232,8 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
     }
   };
 
-  const pick = (tag: TagDef) => onInsertTag(`[${tag.insert}]`);
+  const tagLang = useTagLanguage();
+  const pick = (tag: TagDef) => onInsertTag(tagTextFor(tag, tagLang));
 
   return createPortal(
     <>
@@ -311,6 +316,7 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
                       key={tag.id}
                       tag={tag}
                       uiLang={uiLang}
+                      tagLang={tagLang}
                       onPick={pick}
                     />
                   ))
@@ -327,6 +333,7 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
                           key={tag.id}
                           tag={tag}
                           uiLang={uiLang}
+                          tagLang={tagLang}
                           onPick={pick}
                         />
                       ))}
@@ -344,6 +351,7 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
                           key={tag.id}
                           tag={tag}
                           uiLang={uiLang}
+                          tagLang={tagLang}
                           onPick={pick}
                         />
                       ))}

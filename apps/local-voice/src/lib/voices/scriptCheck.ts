@@ -16,7 +16,7 @@
  * dieselben wie in den Chip-Providern: `scanMarkerCandidates` und
  * `scanTagMatches` -- was dort kein Fund ist, ist hier kein Befund.
  */
-import { TAG_REGISTRY, searchTags } from "@/lib/tags/registry";
+import { TAG_REGISTRY, resolveTag, searchTags } from "@/lib/tags/registry";
 import type { TagDef } from "@/lib/tags/types";
 import { scanTagMatches } from "@/components/settings/tts/tags/tagProvider";
 import {
@@ -100,12 +100,14 @@ export function checkScript(
     });
   }
 
-  const known = new Set(
-    knownTagsFor(engine).map((tag) => tag.insert.toLowerCase()),
-  );
+  // Bekannt ist, was die Registry ueber irgendeinen Namen kennt (Insert,
+  // Beschriftung de/en, Alias) UND was die Engine versteht (Piper: nur
+  // Pausen). `[calm]`, `[ruhig]`, `[Relaxed]` sind alle `relaxed`.
+  const allowed = new Set(knownTagsFor(engine).map((tag) => tag.id));
   for (const span of scanTagMatches(text)) {
     const inner = text.slice(span.start + 1, span.end - 1).trim();
-    if (known.has(inner.toLowerCase())) continue;
+    const tag = resolveTag(inner);
+    if (tag && allowed.has(tag.id)) continue;
     out.push({
       kind: "unknown-tag",
       start: span.start,

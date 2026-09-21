@@ -227,7 +227,10 @@
       "autotagProviderDescription": "Which language model suggests the emphasis tags: the app's default model or Claude Haiku (API key required).",
       "autotagDevice": "Auto-tagging: device",
       "scriptCheck": "Check script while typing (underline findings in red)",
-      "scriptCheckDescription": "Finds speaker markers without a voice and tags the chosen engine does not know, and shows them in the text. A finding does not block, but asks before starting."
+      "scriptCheckDescription": "Finds speaker markers without a voice and tags the chosen engine does not know, and shows them in the text. A finding does not block, but asks before starting.",
+      "tagLanguage": "Language of tags in the text",
+      "tagLanguageDescription": "How tags appear and are inserted in the text: German ([ruhig]) or English ([relaxed]). The engine always receives the English form; both spellings are recognised.",
+      "tagLanguageAuto": "Same as the interface"
     },
     "saveAudio": "Save as audio…",
     "savingAudio": "Generating…",
@@ -311,11 +314,14 @@
       "emptyFavorites": "No favorites yet — click the star on a tag to pin it here.",
       "emptyRecent": "Nothing used yet.",
       "emptySearch": "No tags match your search.",
-      "freeText": "Free text “{{tag}}” — not a known tag. The model may read it aloud instead of following it.",
+      "freeText": "Unknown tag “{{tag}}” — the model may read it aloud instead of following it.",
       "undocumented": "{{tag}} — not in Fish Audio's official tag list. The model may read it aloud instead of following it.",
       "undocumentedHint": "Not in Fish Audio's official tag list — the model may read it aloud instead of following it.",
       "favoriteAdd": "Add \"{{tag}}\" to favorites",
-      "favoriteRemove": "Remove \"{{tag}}\" from favorites"
+      "favoriteRemove": "Remove \"{{tag}}\" from favorites",
+      "all": "All",
+      "legend": "Yellow: documented ({{documented}}, official Fish Audio list or pause). Amber: extended ({{extended}}, known, usually works). Red: unknown – may be read aloud.",
+      "extended": "{{tag}} — extended tag, not in the official Fish Audio list; usually works."
     },
     "speakers": {
       "menuInsert": "Insert speaker",

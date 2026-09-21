@@ -334,7 +334,7 @@ test("a recommendation fixes all spots with one click", async ({ page }) => {
   const editor = await openEditorWithScript(page);
   // "Erzahlerin" (Tippfehler, ohne Umlaut) -> Empfehlung "Erzählerin".
   await editor.fill(
-    "<Erzahlerin> Hallo.\n<Erzahlerin:leise> Psst.\n[calm] Ruhig.",
+    "<Erzahlerin> Hallo.\n<Erzahlerin:leise> Psst.\n[relaxd] Ruhig.",
   );
   await page.getByTestId("script-check-run").click();
   const card = page.getByTestId("script-finding");
@@ -343,14 +343,14 @@ test("a recommendation fixes all spots with one click", async ({ page }) => {
   await expect(rec.first()).toHaveText("Erzählerin");
   await rec.first().click();
   await expect(editor).toHaveValue(
-    "<Erzählerin> Hallo.\n<Erzählerin:leise> Psst.\n[calm] Ruhig.",
+    "<Erzählerin> Hallo.\n<Erzählerin:leise> Psst.\n[relaxd] Ruhig.",
   );
-  // "calm" ist ein Alias von "relaxed": das wird empfohlen, nicht die
-  // ganze Liste.
-  await expect(card).toContainText("Tag „calm“ (1 Stelle)");
+  // "relaxd" ist ein Tippfehler von "relaxed": das wird empfohlen -- in
+  // der Tag-Sprache der Oberflaeche (deutsch), nicht die ganze Liste.
+  await expect(card).toContainText("Tag „relaxd“ (1 Stelle)");
   await expect(
     card.getByTestId("script-finding-recommendation").first(),
-  ).toContainText("[relaxed]");
+  ).toContainText("[entspannt]");
 });
 
 test("the check button runs even when the automatic check is off", async ({
@@ -526,4 +526,43 @@ test("the context menu reads from here or only this sentence", async ({
       ),
     )
     .toBe(2);
+});
+
+test("aliases and German tags count as known and are canonicalized", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  const editor = page.locator("textarea").first();
+  // [calm] (Alias), [entspannt] (deutsch), [Relaxed] (Beschriftung) sind
+  // alle bekannt -- kein Befund; [zzz] nicht.
+  await editor.fill(
+    "[calm] Eins. [entspannt] Zwei. [Relaxed] Drei. [zzz] Vier.",
+  );
+  await expect(page.locator("[data-finding]")).toHaveCount(1);
+  await expect(page.getByTestId("script-check-badge")).toHaveText("1");
+  await page.getByTestId("script-check-run").click();
+  await page
+    .getByTestId("script-finding")
+    .getByRole("button", { name: "Nur diese entfernen" })
+    .click();
+  // Vorlesen schickt die englische Form an die Engine.
+  await page
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .last()
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { spokenTexts?: string[] }).spokenTexts,
+      ),
+    )
+    .toEqual(["[relaxed] Eins. [relaxed] Zwei. [relaxed] Drei.  Vier."]);
+  // Die Palette (unter "Ausdruck & Sprechstil") listet alle Tags mit Legende.
+  await page.getByText("Ausdruck & Sprechstil").click();
+  await page.getByRole("tab", { name: "Alle" }).click();
+  await expect(page.getByTestId("tag-legend")).toContainText("dokumentiert");
 });

@@ -169,8 +169,28 @@ pub async fn tts_transcribe_reference(app: AppHandle, path: String) -> Result<St
 #[tauri::command]
 #[specta::specta]
 pub fn tts_save_voice(app: AppHandle, name: String, transcript: String) -> Result<String, String> {
-    app.state::<Arc<TtsManager>>()
-        .save_pending_voice(&name, &transcript)
+    let tts = app.state::<Arc<TtsManager>>();
+    let id = tts.save_pending_voice(&name, &transcript)?;
+    keep_display_name(&tts.fish_dir_public(), &id, &name);
+    Ok(id)
+}
+
+/// Der eingetippte Name ist der Anzeigename -- mit Umlauten und
+/// Grossschreibung. Die voice_id dahinter ist der sanierte Ordnername und
+/// geht den Nutzer nichts an; vorher wurde der Anzeigename aus der Id
+/// zurueckgerechnet ("Erzaehler" statt "Erzähler").
+fn keep_display_name(fish_dir: &std::path::Path, id: &str, typed: &str) {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        return;
+    }
+    let mut meta = registry::read_meta(fish_dir, id);
+    if meta.display_name != typed {
+        meta.display_name = typed.to_string();
+        if let Err(e) = registry::write_meta(fish_dir, id, &meta) {
+            log::warn!("voice {id}: display name not stored: {e}");
+        }
+    }
 }
 
 #[tauri::command]
@@ -334,7 +354,9 @@ pub async fn llm_warm(app: AppHandle) -> Result<String, String> {
 #[specta::specta]
 pub async fn tts_save_seed_voice(app: AppHandle, name: String) -> Result<String, String> {
     let tts = app.state::<Arc<TtsManager>>().inner().clone();
-    tts.save_seed_voice(&name).await
+    let id = tts.save_seed_voice(&name).await?;
+    keep_display_name(&tts.fish_dir_public(), &id, &name);
+    Ok(id)
 }
 
 /// Diktat fuer das Vorlesefeld: Aufnahme starten.
