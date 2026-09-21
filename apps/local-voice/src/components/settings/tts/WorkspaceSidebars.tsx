@@ -13,6 +13,7 @@ import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import { Dialog } from "../../ui/Dialog";
 import { HelpPanel } from "../../help/HelpPanel";
+import { PageExportDialog, PageImportDialog } from "./pages/PagePackageDialogs";
 import {
   ChevronDown,
   ChevronUp,
@@ -23,6 +24,8 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  PackageOpen,
+  PackagePlus,
   Pencil,
   Plus,
   RefreshCw,
@@ -69,6 +72,8 @@ export const PagesSidebar: React.FC<{
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<PageInfo | null>(null);
+  const [exportTarget, setExportTarget] = useState<PageInfo | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const create = async () => {
     const result = await commands.pagesCreate("");
@@ -137,6 +142,16 @@ export const PagesSidebar: React.FC<{
             className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
           >
             <Plus width={16} height={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            title={t("tts.pages.package.importTitle")}
+            aria-label={t("tts.pages.package.importTitle")}
+            data-testid="page-import-open"
+            className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
+          >
+            <PackageOpen width={16} height={16} />
           </button>
           <button
             type="button"
@@ -238,6 +253,19 @@ export const PagesSidebar: React.FC<{
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
+                    setExportTarget(page);
+                  }}
+                  title={t("tts.pages.package.exportTitle")}
+                  aria-label={t("tts.pages.package.exportTitle")}
+                  data-testid="page-export-open"
+                  className="p-0.5 text-text/40 hover:text-text cursor-pointer"
+                >
+                  <PackagePlus width={13} height={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setDeleteTarget(page);
                   }}
                   title={t("tts.pages.delete")}
@@ -252,6 +280,18 @@ export const PagesSidebar: React.FC<{
         </div>
       ))}
 
+      <PageExportDialog
+        page={exportTarget}
+        onClose={() => setExportTarget(null)}
+      />
+      <PageImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={(page) => {
+          onChanged();
+          onSelect(page.id);
+        }}
+      />
       <Dialog
         open={deleteTarget !== null}
         onOpenChange={(isOpen) => {
@@ -450,35 +490,35 @@ export const FilesSidebar: React.FC<{
         )}
         <div className="flex items-center">
           {tab === "files" && (
-          <>
-          <button
-            type="button"
-            onClick={addFile}
-            title={t("tts.files.add")}
-            aria-label={t("tts.files.add")}
-            className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-          >
-            <FilePlus width={15} height={15} />
-          </button>
-          <button
-            type="button"
-            onClick={openFolder}
-            title={t("tts.files.openFolder")}
-            aria-label={t("tts.files.openFolder")}
-            className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-          >
-            <FolderOpen width={15} height={15} />
-          </button>
-          <button
-            type="button"
-            onClick={() => void refresh()}
-            title={t("tts.files.refresh")}
-            aria-label={t("tts.files.refresh")}
-            className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-          >
-            <RefreshCw width={14} height={14} />
-          </button>
-          </>
+            <>
+              <button
+                type="button"
+                onClick={addFile}
+                title={t("tts.files.add")}
+                aria-label={t("tts.files.add")}
+                className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
+              >
+                <FilePlus width={15} height={15} />
+              </button>
+              <button
+                type="button"
+                onClick={openFolder}
+                title={t("tts.files.openFolder")}
+                aria-label={t("tts.files.openFolder")}
+                className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
+              >
+                <FolderOpen width={15} height={15} />
+              </button>
+              <button
+                type="button"
+                onClick={() => void refresh()}
+                title={t("tts.files.refresh")}
+                aria-label={t("tts.files.refresh")}
+                className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
+              >
+                <RefreshCw width={14} height={14} />
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -494,176 +534,176 @@ export const FilesSidebar: React.FC<{
 
       {tab === "help" && <HelpPanel section={helpSection} />}
       {tab === "files" && (
-      <>
-      {error && <p className="text-xs text-red-400 break-words">{error}</p>}
-      {files.length === 0 && (
-        <p className="text-xs text-text/40">{t("tts.files.empty")}</p>
-      )}
+        <>
+          {error && <p className="text-xs text-red-400 break-words">{error}</p>}
+          {files.length === 0 && (
+            <p className="text-xs text-text/40">{t("tts.files.empty")}</p>
+          )}
 
-      {files.map((file) => (
-        <div key={file.name}>
-          <div
-            className="group flex items-center gap-1 rounded-md px-2 py-1.5 text-text/70 hover:bg-mid-gray/15 hover:text-text cursor-pointer transition-colors"
-            onClick={() => void commands.pageFileOpen(pageId, file.name)}
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              setEditingName(file.name);
-              setEditValue(file.name);
-            }}
-            title={t("tts.files.openHint")}
-          >
-            {editingName === file.name ? (
-              <Input
-                type="text"
-                variant="compact"
-                value={editValue}
-                autoFocus
-                onChange={(e) => setEditValue(e.target.value)}
-                onBlur={() => void commitRename()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void commitRename();
-                  if (e.key === "Escape") setEditingName(null);
+          {files.map((file) => (
+            <div key={file.name}>
+              <div
+                className="group flex items-center gap-1 rounded-md px-2 py-1.5 text-text/70 hover:bg-mid-gray/15 hover:text-text cursor-pointer transition-colors"
+                onClick={() => void commands.pageFileOpen(pageId, file.name)}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setEditingName(file.name);
+                  setEditValue(file.name);
                 }}
-                onClick={(e) => e.stopPropagation()}
-                className="w-full"
-              />
-            ) : (
-              <>
-                <span className="flex-1 min-w-0 truncate text-sm">
-                  {file.name}
-                </span>
-                <span className="text-[10px] text-text/35 shrink-0 group-hover:hidden group-focus-within:hidden">
-                  {formatSize(file.size)}
-                </span>
-                {isAudio(file.name) && (
-                  <button
-                    type="button"
-                    className="shrink-0 p-1 rounded hover:bg-mid-gray/25"
-                    title={t("tts.files.listen")}
-                    aria-label={t("tts.files.listen")}
-                    aria-pressed={playing === file.name}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const next = playing === file.name ? null : file.name;
-                      setPlaying(next);
-                      setNote(null);
-                      setAtMs(0);
-                      if (next) {
-                        void commands
-                          .pageAudioNote(pageId, next)
-                          .then((result) => {
-                            if (result.status === "ok") setNote(result.data);
-                          });
-                      }
+                title={t("tts.files.openHint")}
+              >
+                {editingName === file.name ? (
+                  <Input
+                    type="text"
+                    variant="compact"
+                    value={editValue}
+                    autoFocus
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onBlur={() => void commitRename()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void commitRename();
+                      if (e.key === "Escape") setEditingName(null);
                     }}
-                  >
-                    <Play width={12} height={12} />
-                  </button>
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-full"
+                  />
+                ) : (
+                  <>
+                    <span className="flex-1 min-w-0 truncate text-sm">
+                      {file.name}
+                    </span>
+                    <span className="text-[10px] text-text/35 shrink-0 group-hover:hidden group-focus-within:hidden">
+                      {formatSize(file.size)}
+                    </span>
+                    {isAudio(file.name) && (
+                      <button
+                        type="button"
+                        className="shrink-0 p-1 rounded hover:bg-mid-gray/25"
+                        title={t("tts.files.listen")}
+                        aria-label={t("tts.files.listen")}
+                        aria-pressed={playing === file.name}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const next = playing === file.name ? null : file.name;
+                          setPlaying(next);
+                          setNote(null);
+                          setAtMs(0);
+                          if (next) {
+                            void commands
+                              .pageAudioNote(pageId, next)
+                              .then((result) => {
+                                if (result.status === "ok")
+                                  setNote(result.data);
+                              });
+                          }
+                        }}
+                      >
+                        <Play width={12} height={12} />
+                      </button>
+                    )}
+                    <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingName(file.name);
+                          setEditValue(file.name);
+                        }}
+                        title={t("tts.files.rename")}
+                        aria-label={t("tts.files.rename")}
+                        className="p-0.5 text-text/40 hover:text-text cursor-pointer"
+                      >
+                        <Pencil width={13} height={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteTarget(file.name);
+                        }}
+                        title={t("tts.files.delete")}
+                        aria-label={t("tts.files.delete")}
+                        className="p-0.5 text-red-400/60 hover:text-red-400 cursor-pointer"
+                      >
+                        <Trash2 width={13} height={13} />
+                      </button>
+                    </span>
+                  </>
                 )}
-                <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingName(file.name);
-                      setEditValue(file.name);
-                    }}
-                    title={t("tts.files.rename")}
-                    aria-label={t("tts.files.rename")}
-                    className="p-0.5 text-text/40 hover:text-text cursor-pointer"
-                  >
-                    <Pencil width={13} height={13} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteTarget(file.name);
-                    }}
-                    title={t("tts.files.delete")}
-                    aria-label={t("tts.files.delete")}
-                    className="p-0.5 text-red-400/60 hover:text-red-400 cursor-pointer"
-                  >
-                    <Trash2 width={13} height={13} />
-                  </button>
-                </span>
-              </>
-            )}
-          </div>
-          {playing === file.name && dir && (
-            /* Bewusst die Steuerung des Systems statt des hauseigenen
+              </div>
+              {playing === file.name && dir && (
+                /* Bewusst die Steuerung des Systems statt des hauseigenen
                AudioPlayer: der ist fuer breite Flaechen gebaut und
                bricht in dieser schmalen Spalte in eine Saeule
                auseinander. Eine funktionierende Leiste schlaegt eine
                huebsche, die zerfaellt. */
-            <audio
-              controls
-              preload="metadata"
-              onTimeUpdate={(event) =>
-                setAtMs(event.currentTarget.currentTime * 1000)
-              }
-              className="w-full mt-1 mb-2"
-              src={convertFileSrc(`${dir}\\${file.name}`, "asset")}
-            />
-          )}
-          {playing === file.name && note && (
-            <div className="mb-2 space-y-1">
-              <p className="text-[10px] text-text/45">
-                {note.voice ?? t("tts.files.defaultVoice")} ·{" "}
-                {new Date(note.created_ms).toLocaleString()}
-              </p>
-              {note.segments.length > 0 ? (
-                /* Mit Zeitmarken laeuft der Text mit: der klingende Satz
+                <audio
+                  controls
+                  preload="metadata"
+                  onTimeUpdate={(event) =>
+                    setAtMs(event.currentTarget.currentTime * 1000)
+                  }
+                  className="w-full mt-1 mb-2"
+                  src={convertFileSrc(`${dir}\\${file.name}`, "asset")}
+                />
+              )}
+              {playing === file.name && note && (
+                <div className="mb-2 space-y-1">
+                  <p className="text-[10px] text-text/45">
+                    {note.voice ?? t("tts.files.defaultVoice")} ·{" "}
+                    {new Date(note.created_ms).toLocaleString()}
+                  </p>
+                  {note.segments.length > 0 ? (
+                    /* Mit Zeitmarken laeuft der Text mit: der klingende Satz
                    steht hervorgehoben da, mit seinem Sprecher davor. Ohne
                    Zeitmarken (Aufnahmen aelterer Fassungen) bleibt der
                    Textanfang. */
-                <ol className="space-y-0.5 max-h-40 overflow-y-auto">
-                  {note.segments.map((segment, index) => {
-                    const active =
-                      atMs >= segment.start_ms && atMs < segment.end_ms;
-                    return (
-                      <li
-                        key={`${segment.start_ms}-${index}`}
-                        aria-current={active ? "true" : undefined}
-                        className={
-                          active
-                            ? "text-[11px] text-text bg-logo-primary/25 rounded px-1"
-                            : "text-[11px] text-text/45 px-1"
-                        }
-                      >
-                        {segment.voice && (
-                          <span className="text-text/40">
-                            {segment.voice}:{" "}
-                          </span>
-                        )}
-                        {segment.text}
-                      </li>
-                    );
-                  })}
-                </ol>
-              ) : (
-                <p className="text-[11px] text-text/60 line-clamp-3">
-                  {note.text}
-                </p>
-              )}
-              {onUseText && (
-                <button
-                  type="button"
-                  className="text-[11px] underline text-text/70 hover:text-text"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onUseText(note.text);
-                  }}
-                >
-                  {t("tts.files.useText")}
-                </button>
+                    <ol className="space-y-0.5 max-h-40 overflow-y-auto">
+                      {note.segments.map((segment, index) => {
+                        const active =
+                          atMs >= segment.start_ms && atMs < segment.end_ms;
+                        return (
+                          <li
+                            key={`${segment.start_ms}-${index}`}
+                            aria-current={active ? "true" : undefined}
+                            className={
+                              active
+                                ? "text-[11px] text-text bg-logo-primary/25 rounded px-1"
+                                : "text-[11px] text-text/45 px-1"
+                            }
+                          >
+                            {segment.voice && (
+                              <span className="text-text/40">
+                                {segment.voice}:{" "}
+                              </span>
+                            )}
+                            {segment.text}
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  ) : (
+                    <p className="text-[11px] text-text/60 line-clamp-3">
+                      {note.text}
+                    </p>
+                  )}
+                  {onUseText && (
+                    <button
+                      type="button"
+                      className="text-[11px] underline text-text/70 hover:text-text"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onUseText(note.text);
+                      }}
+                    >
+                      {t("tts.files.useText")}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
-          )}
-        </div>
-      ))}
-
-      </>
+          ))}
+        </>
       )}
       <Dialog
         open={deleteTarget !== null}

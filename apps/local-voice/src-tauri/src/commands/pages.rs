@@ -128,7 +128,7 @@ fn checked_id(id: &str) -> Result<&str, String> {
 
 /// Dateinamen aus der Oberfläche: keine Pfade, keine Aufstiege. Was hier
 /// durchgeht, bleibt im Seitenordner.
-fn checked_name(name: &str) -> Result<&str, String> {
+pub(crate) fn checked_name(name: &str) -> Result<&str, String> {
     let bad = name.is_empty()
         || name.len() > 150
         || name.contains(['/', '\\', ':'])

@@ -5,6 +5,7 @@ pub mod usage;
 pub mod meetings;
 pub mod models;
 pub mod pages;
+pub mod pages_package;
 pub mod transcription;
 pub mod tts;
 
