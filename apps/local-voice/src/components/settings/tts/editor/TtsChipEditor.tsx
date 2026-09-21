@@ -12,6 +12,8 @@ import { useTranslation } from "react-i18next";
 import { Check, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { TagDef } from "@/lib/tags/types";
+import { tagInsertFor } from "@/lib/tags/registry";
+import { useTagLanguage } from "../tags/tagLanguage";
 import {
   TagAutocomplete,
   type TagAutocompleteHandle,
@@ -363,6 +365,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   onSpeakFrom,
 }) => {
   const { t } = useTranslation();
+  const tagLang = useTagLanguage();
   const taRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
 
@@ -1257,7 +1260,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
                 ta,
                 current.bracket + 1,
                 current.caret,
-                `${def.insert}]`,
+                `${tagInsertFor(def, tagLang)}]`,
               );
             }
           }}

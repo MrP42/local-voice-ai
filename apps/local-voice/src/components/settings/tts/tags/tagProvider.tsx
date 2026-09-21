@@ -3,7 +3,13 @@ import { useTranslation } from "react-i18next";
 import { Star, Trash2 } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { Input } from "@/components/ui/Input";
-import { TAG_REGISTRY, localizedLabel, searchTags } from "@/lib/tags/registry";
+import {
+  localizedLabel,
+  resolveTag,
+  searchTags,
+  tagClass,
+} from "@/lib/tags/registry";
+import { tagTextFor, useTagLanguage } from "./tagLanguage";
 import type { TagDef } from "@/lib/tags/types";
 import type {
   ChipMatch,
@@ -51,10 +57,9 @@ export function scanTagMatches(text: string): ChipMatch[] {
 
 /** Registry-Eintrag zum Klammerinhalt — case-insensitiv über `insert`;
  *  Freitext-Tags (S2-Pro versteht sie) haben keinen Eintrag. */
-const findTagDef = (inner: string): TagDef | undefined => {
-  const key = inner.trim().toLowerCase();
-  return TAG_REGISTRY.find((tag) => tag.insert.toLowerCase() === key);
-};
+// Aufloesung ueber Insert, Id, Beschriftungen und Aliasse: `[calm]` ist
+// `relaxed`, `[ruhig]` ebenso. Was hier kein Treffer ist, ist unbekannt.
+const findTagDef = (inner: string): TagDef | undefined => resolveTag(inner);
 
 /**
  * Wirkt das Tag verlässlich? Nur zwei Klassen tun das: die dokumentierten
@@ -62,7 +67,7 @@ const findTagDef = (inner: string): TagDef | undefined => {
  * ans Modell zu schicken. Alles andere ist Freitext mit offenem Ausgang.
  */
 const isReliable = (def: TagDef | undefined): boolean =>
-  def !== undefined && (def.verified === true || def.category === "pauses");
+  tagClass(def) === "documented";
 
 /** Höchstens so viele Zeilen zeigt die Ersetzen-Liste im Popover. */
 const MAX_POPOVER_RESULTS = 30;
@@ -82,6 +87,7 @@ const TagChipPopover: React.FC<{ match: ChipMatch; api: ChipPopoverApi }> = ({
   const inner = match.raw.slice(1, -1).trim();
   const def = findTagDef(inner);
   const label = def ? localizedLabel(def, uiLang) : inner;
+  const tagLang = useTagLanguage();
 
   const favorites = getSetting("tts_tag_favorites") ?? [];
   const isFavorite = def !== undefined && favorites.includes(def.id);
@@ -110,7 +116,7 @@ const TagChipPopover: React.FC<{ match: ChipMatch; api: ChipPopoverApi }> = ({
   }, [clampedSelected, results]);
 
   const replaceWith = (tag: TagDef) => {
-    api.replaceRange(match.start, match.end, `[${tag.insert}]`);
+    api.replaceRange(match.start, match.end, tagTextFor(tag, tagLang));
     api.close();
   };
 
@@ -237,7 +243,8 @@ const TagChipPopover: React.FC<{ match: ChipMatch; api: ChipPopoverApi }> = ({
             >
               <span className="truncate">{localizedLabel(tag, uiLang)}</span>
               <span className="shrink-0 text-xs text-text/45">
-                [{tag.insert}]
+                {tagTextFor(tag, tagLang)}
+                {tagClass(tag) === "extended" ? " ·" : ""}
               </span>
             </button>
           ))
@@ -276,17 +283,25 @@ export function useTagProvider(): ChipProvider {
       render: (m) => {
         const inner = m.raw.slice(1, -1).trim();
         const def = findTagDef(inner);
-        const reliable = isReliable(def);
+        // Drei Klassen, drei Farben: dokumentiert = gelb (Standard),
+        // erweitert = bernstein, unbekannt = rot. Der Chip-Text ist die
+        // Beschriftung; die Klasse steht als Tooltip dahinter.
+        const klass = tagClass(def);
         return {
-          label: reliable
-            ? localizedLabel(def as TagDef, uiLang)
-            : def
-              ? t("tts.tags.undocumented", {
-                  tag: localizedLabel(def, uiLang),
-                })
-              : t("tts.tags.freeText", { tag: inner }),
-          // Bernstein: kein Fehler, aber auch keine Zusicherung.
-          color: reliable ? undefined : "#f59e0b",
+          label:
+            klass === "documented"
+              ? localizedLabel(def as TagDef, uiLang)
+              : klass === "extended"
+                ? t("tts.tags.extended", {
+                    tag: localizedLabel(def as TagDef, uiLang),
+                  })
+                : t("tts.tags.freeText", { tag: inner }),
+          color:
+            klass === "documented"
+              ? undefined
+              : klass === "extended"
+                ? "#f59e0b"
+                : "#ef4444",
           state: "ok",
         };
       },

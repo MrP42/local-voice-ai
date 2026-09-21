@@ -227,7 +227,10 @@
       "autotagProviderDescription": "Welches Sprachmodell die Betonungs-Tags vorschlägt: das Standardmodell der App oder Claude Haiku (API-Schlüssel nötig).",
       "autotagDevice": "Auto-Tagging: Gerät",
       "scriptCheck": "Skript während der Eingabe prüfen (Befunde rot unterstreichen)",
-      "scriptCheckDescription": "Findet Sprechermarker ohne Stimme und Tags, die die gewählte Engine nicht kennt, und zeigt sie im Text. Ein Befund blockiert nicht, fragt aber vor dem Start nach."
+      "scriptCheckDescription": "Findet Sprechermarker ohne Stimme und Tags, die die gewählte Engine nicht kennt, und zeigt sie im Text. Ein Befund blockiert nicht, fragt aber vor dem Start nach.",
+      "tagLanguage": "Sprache der Tags im Text",
+      "tagLanguageDescription": "Wie Tags im Vorlesetext stehen und eingefügt werden: deutsch ([ruhig]) oder englisch ([relaxed]). Die Engine bekommt immer die englische Form; beide Schreibweisen werden erkannt.",
+      "tagLanguageAuto": "Wie die Oberfläche"
     },
     "saveAudio": "Als Audio speichern…",
     "savingAudio": "Wird erzeugt…",
@@ -311,11 +314,14 @@
       "emptyFavorites": "Noch keine Favoriten — Stern auf einem Tag anklicken, um es hier anzuheften.",
       "emptyRecent": "Noch nichts benutzt.",
       "emptySearch": "Keine Tags gefunden.",
-      "freeText": "Freitext „{{tag}}“ — kein bekanntes Tag. Das Modell liest es womöglich vor, statt ihm zu folgen.",
+      "freeText": "Unbekanntes Tag „{{tag}}“ — das Modell liest es womöglich vor, statt ihm zu folgen.",
       "undocumented": "{{tag}} — nicht in der offiziellen Tag-Liste von Fish Audio. Das Modell liest es womöglich vor, statt ihm zu folgen.",
       "undocumentedHint": "Nicht in der offiziellen Tag-Liste von Fish Audio — das Modell liest es womöglich vor, statt ihm zu folgen.",
       "favoriteAdd": "„{{tag}}“ zu Favoriten hinzufügen",
-      "favoriteRemove": "„{{tag}}“ aus Favoriten entfernen"
+      "favoriteRemove": "„{{tag}}“ aus Favoriten entfernen",
+      "all": "Alle",
+      "legend": "Gelb: dokumentiert ({{documented}}, offizielle Fish-Audio-Liste oder Pause). Bernstein: erweitert ({{extended}}, bekannt, wirkt meist). Rot: unbekannt – wird womöglich vorgelesen.",
+      "extended": "{{tag}} — erweitertes Tag, nicht in der offiziellen Fish-Audio-Liste; wirkt meist."
     },
     "speakers": {
       "menuInsert": "Sprecher einfügen",

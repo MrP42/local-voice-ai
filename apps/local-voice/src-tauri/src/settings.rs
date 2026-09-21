@@ -739,6 +739,11 @@ pub struct AppSettings {
     /// Bei entfernten Anbietern wirkungslos.
     #[serde(default = "default_tts_tag_device")]
     pub tts_tag_device: String,
+    /// Sprache der Tags im Vorlesetext: "auto" (= Oberflaeche), "de", "en".
+    /// Betrifft nur Anzeige und Einfuegen; die Engine bekommt immer die
+    /// englische Form.
+    #[serde(default = "default_tts_tag_language")]
+    pub tts_tag_language: String,
     /// Auto-Tagging-Vorlagen (Dialog vor dem Lauf): benannte Einstellungen,
     /// die ein neues Projekt uebernehmen kann.
     #[serde(default)]
@@ -858,6 +863,10 @@ fn default_tts_tag_model() -> String {
 
 /// Auto-Tagging-Gerät: "auto" = GPU, wenn der TTS-Server sie freilässt.
 fn default_tts_tag_device() -> String {
+    "auto".to_string()
+}
+
+fn default_tts_tag_language() -> String {
     "auto".to_string()
 }
 
@@ -1499,6 +1508,7 @@ pub fn get_default_settings() -> AppSettings {
         tts_tag_provider: String::new(),
         tts_tag_model: default_tts_tag_model(),
         tts_tag_device: default_tts_tag_device(),
+        tts_tag_language: default_tts_tag_language(),
         tts_autotag_presets: Vec::new(),
         tts_autotag_last: None,
         meeting_audio_retention: default_meeting_audio_retention(),

@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { tagTextFor, useTagLanguage } from "./tagLanguage";
 import { localizedLabel, searchTags } from "@/lib/tags/registry";
 import type { TagDef } from "@/lib/tags/types";
 
@@ -38,6 +39,7 @@ export const TagAutocomplete = forwardRef<
   TagAutocompleteHandle,
   TagAutocompleteProps
 >(({ anchor, query, onPick, onDismiss }, ref) => {
+  const tagLang = useTagLanguage();
   const { t, i18n } = useTranslation();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
 
@@ -136,7 +138,9 @@ export const TagAutocomplete = forwardRef<
           }`}
         >
           <span className="truncate">{localizedLabel(tag, uiLang)}</span>
-          <span className="shrink-0 text-xs text-text/45">[{tag.insert}]</span>
+          <span className="shrink-0 text-xs text-text/45">
+            {tagTextFor(tag, tagLang)}
+          </span>
         </button>
       ))}
     </div>,

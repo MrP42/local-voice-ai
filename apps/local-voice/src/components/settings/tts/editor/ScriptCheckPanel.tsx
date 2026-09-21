@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { Select, type SelectOption } from "@/components/ui/Select";
 import { localizedLabel } from "@/lib/tags/registry";
+import { tagTextFor, useTagLanguage } from "../tags/tagLanguage";
 import type { TagDef } from "@/lib/tags/types";
 import {
   groupFindings,
@@ -91,7 +92,8 @@ const GroupCard: React.FC<{
 
   const speakerReplacement = (speaker: SpeakerRef) => (f: ScriptFinding) =>
     speakerMarkerText(speaker, f.style);
-  const tagReplacement = (tag: TagDef) => () => `[${tag.insert}]`;
+  const tagLang = useTagLanguage();
+  const tagReplacement = (tag: TagDef) => () => tagTextFor(tag, tagLang);
 
   const chosenReplacement = (): ((f: ScriptFinding) => string) | null => {
     if (choice === "") return null;
@@ -119,7 +121,7 @@ const GroupCard: React.FC<{
       }))
     : suggestTags(group.name, engine, uiLang).map((tag) => ({
         key: tag.id,
-        label: `[${tag.insert}] · ${localizedLabel(tag, uiLang)}`,
+        label: `${tagTextFor(tag, tagLang)} · ${localizedLabel(tag, uiLang)}`,
         apply: tagReplacement(tag),
       }));
 
@@ -130,7 +132,7 @@ const GroupCard: React.FC<{
       }))
     : tags.map((tag) => ({
         value: tag.id,
-        label: `${localizedLabel(tag, uiLang)} [${tag.insert}]`,
+        label: `${localizedLabel(tag, uiLang)} ${tagTextFor(tag, tagLang)}`,
       }));
 
   return (

@@ -10,6 +10,8 @@ import {
 } from "@/bindings";
 import { useTextHistory } from "../../../hooks/useTextHistory";
 import { defaultAutoTagOptions } from "./tags/AutoTagDialog";
+import { canonicalizeTags, canonicalizeTagsAt } from "@/lib/tags/registry";
+import { useTagLanguage } from "./tags/tagLanguage";
 import { Redo2, Undo2 } from "lucide-react";
 import { exportFileName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
@@ -106,6 +108,7 @@ export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
+  const tagLang = useTagLanguage();
   /** Tag- und Sprecher-Chips in allen drei Text-Reitern. Reihenfolge zählt
    *  nur bei gleichem Startoffset — Tags (`[…]`) und Sprecher (`<…>`,
    *  `Name:`) können sich nicht überschneiden. */
@@ -620,9 +623,11 @@ export const TtsSettings = () => {
     setSpeakProgress(null);
     setTruncated(null);
     sessionTab.current = tab;
+    // Die Engine kennt nur die englische Tag-Form; der Offset wandert mit.
+    const canon = canonicalizeTagsAt(spokenText, charOffset);
     const result = await commands.ttsSpeakTextFrom(
-      spokenText,
-      charOffset,
+      canon.text,
+      canon.offset,
       onlyOne,
     );
     if (result.status === "error") setLastError(result.error);
@@ -658,7 +663,7 @@ export const TtsSettings = () => {
   const startPrewarm = async () => {
     setLastError(null);
     setPrewarm({ done: 0, total: 0 });
-    const result = await commands.ttsPrewarm(spokenText);
+    const result = await commands.ttsPrewarm(canonicalizeTags(spokenText));
     if (result.status === "error") {
       setPrewarm(null);
       setLastError(result.error);
@@ -670,7 +675,7 @@ export const TtsSettings = () => {
     setSpeakProgress(null);
     setTruncated(null);
     sessionTab.current = tab;
-    const result = await commands.ttsSpeakText(spokenText);
+    const result = await commands.ttsSpeakText(canonicalizeTags(spokenText));
     if (result.status === "error") setLastError(result.error);
   };
 
@@ -762,7 +767,10 @@ export const TtsSettings = () => {
     exportPerSentence.current = null;
     exportTick.current = { time: performance.now(), position: 0 };
     // Returns at once; the run reports itself through tts-export-progress.
-    const result = await commands.ttsSpeakToFile(spokenText, target);
+    const result = await commands.ttsSpeakToFile(
+      canonicalizeTags(spokenText),
+      target,
+    );
     if (result.status === "error") {
       setSaving(false);
       setExportProgress(null);
@@ -1124,7 +1132,13 @@ export const TtsSettings = () => {
       toast.info(t("tts.autotag.staleSuggestionsDiscarded"));
       return;
     }
-    const outcome = resolveSuggestion(text, tagSuggestions, id, accept);
+    const outcome = resolveSuggestion(
+      text,
+      tagSuggestions,
+      id,
+      accept,
+      tagLang,
+    );
     setTagSuggestions(outcome.suggestions);
     if (outcome.inserted) {
       applyAutoTagText(outcome.text, text, 1);

@@ -821,6 +821,18 @@ pub fn change_tts_context_menu_setting(app: AppHandle, value: bool) -> Result<()
 /// die vollstaendige Liste — dieselbe Form wie `update_custom_words`.
 #[tauri::command]
 #[specta::specta]
+pub fn change_tts_tag_language_setting(app: AppHandle, value: String) -> Result<(), String> {
+    if !matches!(value.as_str(), "auto" | "de" | "en") {
+        return Err(format!("Unbekannte Tag-Sprache '{value}'"));
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.tts_tag_language = value;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_tts_autotag_presets_setting(
     app: AppHandle,
     value: Vec<settings::AutoTagPreset>,
