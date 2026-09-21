@@ -106,6 +106,31 @@ pub fn validate_tag_only_edit(original: &str, tagged: &str) -> Result<(), String
 /// Frontend arbeitet mit UTF-16-Offsets (JS-String-Indizes) — es rechnet
 /// `offset_chars` selbst um (Iteration über die Codepoints, Surrogatpaare bei
 /// Zeichen jenseits der Basisebene wie Emoji zählen dort doppelt).
+/// Einstellungen eines Auto-Tagging-Laufs (Dialog vor dem Start; je Seite
+/// persistiert, dazu Vorlagen in den Einstellungen).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct AutoTagOptions {
+    /// Tags (Registry-`insert`), die das Modell bevorzugen soll.
+    pub preferred_tags: Vec<String>,
+    /// "sparse" | "balanced" | "rich" — wie dicht getaggt wird.
+    pub coverage: String,
+    /// Freier Stil-Hinweis ("kindgerecht, ruhig", "dramatisch").
+    pub style_hint: String,
+    /// Obergrenze je Satz (1–3).
+    pub max_per_sentence: u32,
+}
+
+impl Default for AutoTagOptions {
+    fn default() -> Self {
+        Self {
+            preferred_tags: Vec::new(),
+            coverage: "balanced".to_string(),
+            style_hint: String::new(),
+            max_per_sentence: 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
 pub struct TagInsertion {
     pub offset_in_original: usize,
@@ -349,16 +374,43 @@ pub fn split_chunks(text: &str, max_chars: usize) -> Vec<Chunk<'_>> {
 /// ist die erste (nicht die einzige) Verteidigungslinie. Deutsch/Englisch
 /// gemischt, damit sowohl deutsch- als auch englisch-trainierte Modelle die
 /// Regeln zuverlässig befolgen.
-pub fn auto_tag_system_prompt(allowed_tags: &[String]) -> String {
-    let tags_list = allowed_tags.join(", ");
+pub fn auto_tag_system_prompt(allowed_tags: &[String], options: &AutoTagOptions) -> String {
+    // Bevorzugte Tags stehen vorn und werden als "nur diese" formuliert;
+    // ohne Auswahl gilt die ganze erlaubte Liste.
+    let preferred: Vec<&String> = options
+        .preferred_tags
+        .iter()
+        .filter(|t| allowed_tags.contains(t))
+        .collect();
+    let tags_list = if preferred.is_empty() {
+        allowed_tags.join(", ")
+    } else {
+        preferred.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+    };
+    let only = if preferred.is_empty() {
+        "kurze freie Beschreibungen sind erlaubt"
+    } else {
+        "verwende AUSSCHLIESSLICH Tags aus dieser Liste"
+    };
+    let max = options.max_per_sentence.clamp(1, 3);
+    let density = match options.coverage.as_str() {
+        "sparse" => "Setze Tags sparsam: nur an Stellen, die den Vortrag deutlich verändern (etwa jeder dritte bis fünfte Satz).",
+        "rich" => "Setze Tags reichlich: fast jeder Satz darf einen tragen, wenn der Inhalt es hergibt.",
+        _ => "Setze Tags ausgewogen: dort, wo der Inhalt sie trägt; weniger ist mehr.",
+    };
+    let style = options.style_hint.trim();
+    let style_line = if style.is_empty() {
+        String::new()
+    } else {
+        format!(" Gewünschter Stil: {style}.")
+    };
     format!(
         "Du bist Regisseur für Sprachsynthese. Füge in den Text Emotions-/Vortrags-Tags in \
-         eckigen Klammern ein (z.B. [whisper], [excited], [sighing]). Bevorzugt diese Tags: \
-         {tags_list}; kurze freie Beschreibungen sind erlaubt. Regeln: (1) AUSSCHLIESSLICH Tags \
-         einfügen — kein Wort, kein Satzzeichen, keinen Zeilenumbruch ändern, nichts löschen. (2) \
-         Höchstens 3 Tags pro Satz, nur wo der Inhalt es trägt; weniger ist mehr. (3) Zeilen der \
-         Form Name: und Marker in Spitzklammern sind Sprecherwechsel — unverändert lassen. (4) \
-         Antworte NUR mit dem Text, ohne Einleitung, ohne Codeblock."
+         eckigen Klammern ein (z.B. [whisper], [excited], [sighing]). Tags: {tags_list}; {only}.{style_line} \
+         Regeln: (1) AUSSCHLIESSLICH Tags einfügen — kein Wort, kein Satzzeichen, keinen \
+         Zeilenumbruch ändern, nichts löschen. (2) Höchstens {max} Tags pro Satz. {density} (3) Zeilen \
+         der Form Name: und Marker in Spitzklammern sind Sprecherwechsel — unverändert lassen. \
+         (4) Antworte NUR mit dem Text, ohne Einleitung, ohne Codeblock."
     )
 }
 
@@ -448,10 +500,11 @@ async fn tag_text_with_retry(
     api_key: String,
     model: &str,
     allowed_tags: &[String],
+    options: &AutoTagOptions,
     original: &str,
     cpu_only: bool,
 ) -> Result<String, String> {
-    let system_prompt = auto_tag_system_prompt(allowed_tags);
+    let system_prompt = auto_tag_system_prompt(allowed_tags, options);
     let first_raw = ask_llm_for_tags(
         provider,
         api_key.clone(),
@@ -505,6 +558,7 @@ pub async fn auto_tag(
     settings: &AppSettings,
     text: &str,
     allowed_tags: &[String],
+    options: &AutoTagOptions,
     provider_override: Option<&str>,
     cpu_only: bool,
     mut cancel: tokio::sync::watch::Receiver<bool>,
@@ -539,6 +593,7 @@ pub async fn auto_tag(
             api_key.clone(),
             &resolved.model,
             allowed_tags,
+            options,
             chunk.text,
             cpu_only,
         );
@@ -586,6 +641,29 @@ mod tests {
     use tokio::net::TcpListener;
 
     // ---- validate_tag_only_edit: akzeptiert reine Tag-Einfügungen --------
+
+    #[test]
+    fn prompt_reflects_preferred_tags_coverage_and_style() {
+        let allowed = vec!["whisper".to_string(), "excited".to_string(), "calm".to_string()];
+        let opts = AutoTagOptions {
+            preferred_tags: vec!["whisper".to_string(), "unbekannt".to_string()],
+            coverage: "sparse".to_string(),
+            style_hint: "kindgerecht".to_string(),
+            max_per_sentence: 1,
+        };
+        let p = auto_tag_system_prompt(&allowed, &opts);
+        // Nur erlaubte bevorzugte Tags landen im Prompt, unbekannte nicht.
+        assert!(p.contains("Tags: whisper;"));
+        assert!(!p.contains("unbekannt"));
+        assert!(p.contains("AUSSCHLIESSLICH Tags aus dieser Liste"));
+        assert!(p.contains("Höchstens 1 Tags pro Satz"));
+        assert!(p.contains("sparsam"));
+        assert!(p.contains("Gewünschter Stil: kindgerecht."));
+        // Ohne Auswahl: ganze Liste, Freitext erlaubt.
+        let p = auto_tag_system_prompt(&allowed, &AutoTagOptions::default());
+        assert!(p.contains("whisper, excited, calm"));
+        assert!(p.contains("freie Beschreibungen"));
+    }
 
     #[test]
     fn ein_einzelnes_eingefuegtes_tag_wird_akzeptiert() {
@@ -894,7 +972,7 @@ mod tests {
         tags: &[String],
     ) -> Result<Vec<TagInsertion>, String> {
         let (tx, rx) = tokio::sync::watch::channel(false);
-        let result = auto_tag(settings, text, tags, None, true, rx, |_, _, _| {}).await;
+        let result = auto_tag(settings, text, tags, &AutoTagOptions::default(), None, true, rx, |_, _, _| {}).await;
         drop(tx);
         result
     }
@@ -1026,6 +1104,7 @@ mod tests {
             &settings,
             "Hallo Welt.",
             &["whisper".to_string()],
+            &AutoTagOptions::default(),
             None,
             true,
             rx,
@@ -1046,6 +1125,7 @@ mod tests {
             &settings,
             "Hallo Welt.",
             &["whisper".to_string()],
+            &AutoTagOptions::default(),
             None,
             true,
             rx,

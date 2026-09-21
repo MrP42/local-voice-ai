@@ -2,7 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { commands, type PageInfo, type TtsStatus } from "@/bindings";
+import {
+  commands,
+  type AutoTagOptions,
+  type PageInfo,
+  type TtsStatus,
+} from "@/bindings";
+import { useTextHistory } from "../../../hooks/useTextHistory";
+import { defaultAutoTagOptions } from "./tags/AutoTagDialog";
+import { Redo2, Undo2 } from "lucide-react";
 import { exportFileName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
@@ -68,7 +76,8 @@ import {
 /// Regler aus den Einstellungen entfallen ist: dieselbe Einstellung an zwei
 /// Orten war eine Dublette, aber der langsamste Wert soll bleiben.
 const SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
-const speedLabel = (value: number) => `${value.toFixed(2).replace(".", ",")}\u00d7`;
+const speedLabel = (value: number) =>
+  `${value.toFixed(2).replace(".", ",")}\u00d7`;
 
 /// Erlaubte MP3-Bitraten (kbit/s) — dieselben vier Stufen wie in
 /// `settings.rs`; mehr Stufen muesste die Oberflaeche auch erklaeren.
@@ -111,9 +120,7 @@ export const TtsSettings = () => {
   const speakers = useSpeakers();
   /** Skript-Pruefung: Bestaetigungsdialog vor Vorlesen/Speichern, wenn es
    *  Befunde gibt. Traegt, was nach "Trotzdem" laufen soll. */
-  const [checkDialog, setCheckDialog] = useState<
-    "speak" | "save" | null
-  >(null);
+  const [checkDialog, setCheckDialog] = useState<"speak" | "save" | null>(null);
   /** Einfüge-API des Editors im AKTIVEN Reiter (es ist immer nur einer
    *  gemountet) — Ziel für Palette-Klick und Palette-Drag. */
   const editorApiRef = useRef<ChipEditorInsertApi | null>(null);
@@ -126,6 +133,11 @@ export const TtsSettings = () => {
   // gespeichert (state.json im Seitenordner). Die localStorage-Werte von
   // frueher werden einmalig in die erste Seite uebernommen.
   const [text, setText] = useState<string>("");
+  // Auto-Tagging-Einstellungen der Seite (state.json); ohne eigene die
+  // zuletzt benutzten aus den Einstellungen, sonst die Voreinstellung.
+  const [autoTagOptions, setAutoTagOptions] = useState<AutoTagOptions | null>(
+    null,
+  );
   /** T4 Auto-Tagging: offene Vorschläge im Original-Reiter (gestrichelte
    *  Chips im Editor). Gehört der Seite hier, weil sowohl der Editor
    *  (Popover-Buttons) als auch AutoTagBar ("Alle annehmen/verwerfen")
@@ -397,12 +409,16 @@ export const TtsSettings = () => {
             sourceUrl?: string;
             tab?: string;
             voices?: Record<string, string>;
+            autoTag?: AutoTagOptions;
           };
           setText(state.text ?? "");
+          setAutoTagOptions(state.autoTag ?? null);
           setSummary(state.summary ?? "");
           setSourceUrl(state.sourceUrl ?? "");
           setTabVoices(
-            state.voices && typeof state.voices === "object" ? state.voices : {},
+            state.voices && typeof state.voices === "object"
+              ? state.voices
+              : {},
           );
           setTab(
             state.tab === "translation" || state.tab === "summary"
@@ -452,7 +468,14 @@ export const TtsSettings = () => {
       void commands
         .pageStateSave(
           activePage,
-          JSON.stringify({ text, summary, sourceUrl, tab, voices: tabVoices }),
+          JSON.stringify({
+            text,
+            summary,
+            sourceUrl,
+            tab,
+            voices: tabVoices,
+            autoTag: autoTagOptions ?? undefined,
+          }),
         )
         // Die Seitenliste zeigt Vorschau und Zeitpunkt — die stammen aus
         // genau dieser Datei und sollen nicht erst beim naechsten Start
@@ -463,7 +486,7 @@ export const TtsSettings = () => {
         });
     }, 500);
     return () => window.clearTimeout(handle);
-  }, [activePage, text, summary, sourceUrl, tab, tabVoices]);
+  }, [activePage, text, summary, sourceUrl, tab, tabVoices, autoTagOptions]);
 
   // Sprachmodell-Anzeige: Ereignis waehrend der Uebersetzung, dazu eine
   // Abfrage alle zehn Sekunden — billig (lokaler Aufruf mit kurzem Timeout)
@@ -787,8 +810,9 @@ export const TtsSettings = () => {
       try {
         if (language) {
           language =
-            new Intl.DisplayNames([uiLang], { type: "language" }).of(language) ??
-            language;
+            new Intl.DisplayNames([uiLang], { type: "language" }).of(
+              language,
+            ) ?? language;
         }
       } catch {
         /* unbekanntes Kuerzel: roh anzeigen */
@@ -867,6 +891,22 @@ export const TtsSettings = () => {
       : tab === "translation"
         ? (translation ?? "")
         : summary;
+  const setSpokenText = useCallback(
+    (next: string) => {
+      if (tab === "original") setText(next);
+      else if (tab === "translation") setTranslation(next);
+      else setSummary(next);
+    },
+    [tab],
+  );
+  // Bearbeitungshistorie je Seite und Reiter: Rueckgaengig/Wiederherstellen
+  // ueber Knoepfe und Strg+Z/Strg+Y -- auch fuer programmatische
+  // Aenderungen (Auto-Tagging, Aufbereiten, Ersetzen, Skript-Pruefung).
+  const history = useTextHistory(
+    `${activePage ?? "-"}:${tab}`,
+    spokenText,
+    setSpokenText,
+  );
 
   /**
    * Skript-Pruefung des aktiven Reiters: Sprechermarker ohne Stimme und
@@ -881,7 +921,23 @@ export const TtsSettings = () => {
   // die Textarea nie auf sie wartet (Zweitmeinung 21.09.2026: Debounce +
   // Zwei-Zeiger-Zuordnung reichen fuer 100 KB; Zeilen-Cache nur bei Bedarf).
   const [manualCheck, setManualCheck] = useState<string | null>(null);
-  const [panelOpen, setPanelOpen] = useState(false);
+  // Das Panel bleibt offen, bis man es schliesst -- auch ueber Seiten- und
+  // Reiterwechsel hinweg (localStorage: Bequemlichkeit je Rechner).
+  const [panelOpen, setPanelOpenState] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem("lv-script-check-panel") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const setPanelOpen = (open: boolean) => {
+    setPanelOpenState(open);
+    try {
+      window.localStorage.setItem("lv-script-check-panel", open ? "1" : "0");
+    } catch {
+      // egal
+    }
+  };
   const scriptCheckAuto = getSetting("tts_script_check") ?? true;
   const scriptCheckOn = scriptCheckAuto || manualCheck === spokenText;
   const scriptEngine =
@@ -892,13 +948,7 @@ export const TtsSettings = () => {
       scriptCheckOn ? checkScript(debouncedText, speakers, scriptEngine) : [],
     [scriptCheckOn, debouncedText, speakers, scriptEngine],
   );
-  // Panel schliesst sich, wenn nichts mehr zu tun ist oder der Reiter wechselt.
-  useEffect(() => {
-    if (scriptFindings.length === 0) setPanelOpen(false);
-  }, [scriptFindings.length]);
-  useEffect(() => {
-    setPanelOpen(false);
-  }, [tab]);
+
   const editorFindings = useMemo<ChipEditorFinding[] | undefined>(
     () =>
       scriptCheckOn
@@ -923,7 +973,7 @@ export const TtsSettings = () => {
   const runScriptCheck = () => {
     setManualCheck(spokenText);
     const first = checkScript(spokenText, speakers, scriptEngine)[0];
-    setPanelOpen(first !== undefined);
+    setPanelOpen(true);
     if (first) editorApiRef.current?.revealRange?.(first.start, first.end);
   };
 
@@ -1168,7 +1218,6 @@ export const TtsSettings = () => {
     setTab("summary");
   };
 
-
   /**
    * Ein Klick tut, was im jeweiligen Zustand ansteht. Beim laufenden Server
    * ist das Beenden — und weil damit ein Modellstart von bis zu zwei Minuten
@@ -1221,204 +1270,209 @@ export const TtsSettings = () => {
           >
             <HelpCircle width={20} height={20} aria-hidden="true" />
           </button>
-        {/* Das Sprachmodell der Nachbearbeitung (Uebersetzen,
+          {/* Das Sprachmodell der Nachbearbeitung (Uebersetzen,
             Zusammenfassen), in derselben Farbsprache wie der Server
             daneben. Klick: entladen oder vorwaermen. */}
-        <button
-          type="button"
-          onClick={() => setLlmDialog(true)}
-          title={llmTitle}
-          aria-label={llmTitle}
-          className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
-        >
-          <BrainCircuit
-            width={20}
-            height={20}
-            className={llmIconClass}
-            aria-hidden="true"
-          />
-        </button>
-        {/* Ein einziges Element traegt Zustand UND Bedienung. Die Farbe
+          <button
+            type="button"
+            onClick={() => setLlmDialog(true)}
+            title={llmTitle}
+            aria-label={llmTitle}
+            className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
+          >
+            <BrainCircuit
+              width={20}
+              height={20}
+              className={llmIconClass}
+              aria-hidden="true"
+            />
+          </button>
+          {/* Ein einziges Element traegt Zustand UND Bedienung. Die Farbe
           sagt, woran man ist — grau (aus), gelb (faehrt hoch), gruen
           (laeuft), orange blinkend (Fehler) —, der Klick tut, was in
           diesem Zustand ansteht. Das Wort daneben war eine zweite
           Anzeige derselben Sache; es steht jetzt im Tooltip, wo es nur
           stoert, wenn man es sucht. */}
-        <button
-          type="button"
-          onClick={onServerIconClick}
-          title={serverTitle}
-          aria-label={serverTitle}
-          className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
-        >
-          <Server
-            width={20}
-            height={20}
-            className={serverIconClass}
-            aria-hidden="true"
-          />
-        </button>
+          <button
+            type="button"
+            onClick={onServerIconClick}
+            title={serverTitle}
+            aria-label={serverTitle}
+            className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
+          >
+            <Server
+              width={20}
+              height={20}
+              className={serverIconClass}
+              aria-hidden="true"
+            />
+          </button>
         </>
       }
     >
-    {/* Volle Hoehe: Seiten links, Text in der Mitte, Bedienung rechts vom
+      {/* Volle Hoehe: Seiten links, Text in der Mitte, Bedienung rechts vom
         Text, Dateien/Hilfe ganz rechts. Nur die Spalten scrollen, der Kopf
         und der Rahmen stehen (Entscheidung Patrick 14.09. abends). */}
-    <div className="tts-workspace tts-workspace--fill w-full flex gap-4 items-stretch">
-      <PagesSidebar
-        pages={pages}
-        activeId={activePage}
-        collapsed={pagesCollapsed === "1"}
-        onToggle={() => setPagesCollapsed(pagesCollapsed === "1" ? "0" : "1")}
-        onSelect={setActivePage}
-        onChanged={() => void reloadPages()}
-      />
-      <div className="flex-1 min-w-0 min-h-0 flex gap-4">
-        <div className="tts-editor flex-1 min-w-0 min-h-0 flex flex-col rounded-lg border border-mid-gray/20 bg-background overflow-hidden">
-          {truncated && (
-            <p className="px-4 pb-2 text-sm text-orange-400">
-              {t("tts.truncatedWarning", {
-                limit: truncated.limit,
-                total: truncated.total,
-              })}
-            </p>
-          )}
-          {killNotice && (
-            <p className="px-4 pb-2 text-sm text-text/70">{killNotice}</p>
-          )}
-          {showVramHint && (
-            <p className="px-4 pb-2 text-sm text-text/70">
-              {t("tts.vramHint")}
-            </p>
-          )}
-          {lastError && (
-            <p className="px-4 pb-2 text-sm text-red-500 break-words">
-              {lastError}
-            </p>
-          )}
-          <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2">
-            {/* Zwei Reiter, ein Feld. Das Original wird nie ueberschrieben —
+      <div className="tts-workspace tts-workspace--fill w-full flex gap-4 items-stretch">
+        <PagesSidebar
+          pages={pages}
+          activeId={activePage}
+          collapsed={pagesCollapsed === "1"}
+          onToggle={() => setPagesCollapsed(pagesCollapsed === "1" ? "0" : "1")}
+          onSelect={setActivePage}
+          onChanged={() => void reloadPages()}
+        />
+        <div className="flex-1 min-w-0 min-h-0 flex gap-4">
+          <div className="tts-editor flex-1 min-w-0 min-h-0 flex flex-col rounded-lg border border-mid-gray/20 bg-background overflow-hidden">
+            {truncated && (
+              <p className="px-4 pb-2 text-sm text-orange-400">
+                {t("tts.truncatedWarning", {
+                  limit: truncated.limit,
+                  total: truncated.total,
+                })}
+              </p>
+            )}
+            {killNotice && (
+              <p className="px-4 pb-2 text-sm text-text/70">{killNotice}</p>
+            )}
+            {showVramHint && (
+              <p className="px-4 pb-2 text-sm text-text/70">
+                {t("tts.vramHint")}
+              </p>
+            )}
+            {lastError && (
+              <p className="px-4 pb-2 text-sm text-red-500 break-words">
+                {lastError}
+              </p>
+            )}
+            <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2">
+              {/* Zwei Reiter, ein Feld. Das Original wird nie ueberschrieben —
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
-            <div className="flex items-center gap-1 border-b border-mid-gray/20">
-              <button
-                type="button"
-                onClick={() => setTab("original")}
-                className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
-                  tab === "original"
-                    ? "border-logo-primary text-text"
-                    : "border-transparent text-text/50 hover:text-text/80"
-                }`}
-              >
-                {t("tts.tabOriginal")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab("translation")}
-                className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
-                  tab === "translation"
-                    ? "border-logo-primary text-text"
-                    : "border-transparent text-text/50 hover:text-text/80"
-                }`}
-              >
-                {t("tts.tabTranslation")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab("summary")}
-                className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
-                  tab === "summary"
-                    ? "border-logo-primary text-text"
-                    : "border-transparent text-text/50 hover:text-text/80"
-                }`}
-              >
-                {t("tts.tabSummary")}
-              </button>
-            </div>
+              <div className="flex items-center gap-1 border-b border-mid-gray/20">
+                <button
+                  type="button"
+                  onClick={() => setTab("original")}
+                  className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
+                    tab === "original"
+                      ? "border-logo-primary text-text"
+                      : "border-transparent text-text/50 hover:text-text/80"
+                  }`}
+                >
+                  {t("tts.tabOriginal")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("translation")}
+                  className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
+                    tab === "translation"
+                      ? "border-logo-primary text-text"
+                      : "border-transparent text-text/50 hover:text-text/80"
+                  }`}
+                >
+                  {t("tts.tabTranslation")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("summary")}
+                  className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
+                    tab === "summary"
+                      ? "border-logo-primary text-text"
+                      : "border-transparent text-text/50 hover:text-text/80"
+                  }`}
+                >
+                  {t("tts.tabSummary")}
+                </button>
+              </div>
 
-            {/* Der Chip-Editor ist Drop-in für die frühere Textarea: die
+              {/* Der Chip-Editor ist Drop-in für die frühere Textarea: die
                 native textarea darin bleibt die einzige Wahrheit, Tags
                 (`[…]`) erscheinen als Chips im Mirror-Overlay. */}
-            {/* Skript-Pruefung: das Korrekturpanel nur nach Klick auf
+              {/* Skript-Pruefung: das Korrekturpanel nur nach Klick auf
                 "Skript pruefen" -- die Unterstreichung im Text ist davon
                 unabhaengig und laeuft (bei Automatik) immer mit. */}
-            {panelOpen && scriptFindings.length > 0 && (
-              <div className="pb-2">
-                <ScriptCheckPanel
-                  findings={scriptFindings}
-                  speakers={speakers}
-                  engine={scriptEngine}
-                  uiLang={uiLang}
-                  actions={scriptActions}
-                  onClose={() => setPanelOpen(false)}
-                />
+              {panelOpen && scriptCheckOn && spokenText.trim().length > 0 && (
+                <div className="pb-2">
+                  <ScriptCheckPanel
+                    findings={scriptFindings}
+                    speakers={speakers}
+                    engine={scriptEngine}
+                    uiLang={uiLang}
+                    actions={scriptActions}
+                    onClose={() => setPanelOpen(false)}
+                  />
+                </div>
+              )}
+              <div className="tts-editor__fill flex-1 min-h-0">
+                {tab === "original" ? (
+                  <TtsChipEditor
+                    value={text}
+                    onChange={setText}
+                    providers={chipProviders}
+                    insertApiRef={editorApiRef}
+                    placeholder={t("tts.inputPlaceholder")}
+                    className="w-full"
+                    suggestions={tagSuggestions}
+                    onResolveSuggestion={resolveTagSuggestion}
+                    findings={editorFindings}
+                    onUndo={history.undo}
+                    onRedo={history.redo}
+                  />
+                ) : tab === "translation" ? (
+                  <TtsChipEditor
+                    value={translation ?? ""}
+                    onChange={setTranslation}
+                    providers={chipProviders}
+                    insertApiRef={editorApiRef}
+                    placeholder={t("tts.translationPlaceholder")}
+                    className="w-full"
+                    lang={targetLangCode(targetLang)}
+                    findings={editorFindings}
+                    onUndo={history.undo}
+                    onRedo={history.redo}
+                  />
+                ) : (
+                  <TtsChipEditor
+                    value={summary}
+                    onChange={setSummary}
+                    providers={chipProviders}
+                    insertApiRef={editorApiRef}
+                    placeholder={t("tts.summaryPlaceholder")}
+                    className="w-full"
+                    findings={editorFindings}
+                    onUndo={history.undo}
+                    onRedo={history.redo}
+                  />
+                )}
               </div>
-            )}
-            <div className="tts-editor__fill flex-1 min-h-0">
-            {tab === "original" ? (
-              <TtsChipEditor
-                value={text}
-                onChange={setText}
-                providers={chipProviders}
-                insertApiRef={editorApiRef}
-                placeholder={t("tts.inputPlaceholder")}
-                className="w-full"
-                suggestions={tagSuggestions}
-                onResolveSuggestion={resolveTagSuggestion}
-                findings={editorFindings}
-              />
-            ) : tab === "translation" ? (
-              <TtsChipEditor
-                value={translation ?? ""}
-                onChange={setTranslation}
-                providers={chipProviders}
-                insertApiRef={editorApiRef}
-                placeholder={t("tts.translationPlaceholder")}
-                className="w-full"
-                lang={targetLangCode(targetLang)}
-                findings={editorFindings}
-              />
-            ) : (
-              <TtsChipEditor
-                value={summary}
-                onChange={setSummary}
-                providers={chipProviders}
-                insertApiRef={editorApiRef}
-                placeholder={t("tts.summaryPlaceholder")}
-                className="w-full"
-                findings={editorFindings}
-              />
-            )}
-            </div>
 
-            {/* Ausdruck & Sprechstil direkt unter dem Text: die Palette fuegt
+              {/* Ausdruck & Sprechstil direkt unter dem Text: die Palette fuegt
                 an der Cursorposition ein, deshalb gehoert sie zum Feld, nicht
                 in die Bedienspalte (Entscheidung Patrick 14.09. abends). */}
-            <details className="workspace-disclosure">
-              <summary>{t("workspace.voiceStyle")}</summary>
-              <div className="space-y-3 pt-2">
-                <TagPalette
-                  uiLang={uiLang}
-                  onInsert={(tagText) =>
-                    editorApiRef.current?.insertAtCursor(tagText)
-                  }
-                  onDragInsert={(x, y, tagText) =>
-                    editorApiRef.current?.insertAtPoint?.(x, y, tagText) ??
-                    false
-                  }
-                />
-
-              </div>
-            </details>
+              <details className="workspace-disclosure">
+                <summary>{t("workspace.voiceStyle")}</summary>
+                <div className="space-y-3 pt-2">
+                  <TagPalette
+                    uiLang={uiLang}
+                    onInsert={(tagText) =>
+                      editorApiRef.current?.insertAtCursor(tagText)
+                    }
+                    onDragInsert={(x, y, tagText) =>
+                      editorApiRef.current?.insertAtPoint?.(x, y, tagText) ??
+                      false
+                    }
+                  />
+                </div>
+              </details>
+            </div>
           </div>
-        </div>
-        {/* Bedienung rechts vom Text: Transport, Tempo, Stimme, Speichern,
+          {/* Bedienung rechts vom Text: Transport, Tempo, Stimme, Speichern,
             aktueller Satz, Ausdruck & Sprechstil, Schreibregeln. Scrollt fuer
             sich, wenn die Klappen offen sind. */}
-        <aside
-          className="tts-controls w-72 shrink-0 min-h-0 overflow-y-auto space-y-3 pe-1"
-          aria-label={t("tts.controls")}
-        >
+          <aside
+            className="tts-controls w-72 shrink-0 min-h-0 overflow-y-auto space-y-3 pe-1"
+            aria-label={t("tts.controls")}
+          >
             <div className="flex gap-2 items-center flex-wrap">
               {/* Transport per design system: round glyph buttons, exactly one
                 primary. Reading aloud is playback, so it gets the same family
@@ -1518,61 +1572,61 @@ export const TtsSettings = () => {
                   )}
                 </div>
               </div>
-                {/* Die Stimme dort, wo man sie wechselt: beim Hoeren. Wechsel
+              {/* Die Stimme dort, wo man sie wechselt: beim Hoeren. Wechsel
                   wirkt sofort — eine laufende Wiedergabe stellt am aktuellen
                   Satz um. Leerer Wert = Standardstimme (Seed). Verwaltung
                   (aufnehmen, importieren, loeschen) unten bei den
                   Einstellungen. */}
-                <div
-                  className="w-full"
-                  title={t("tts.voices.title")}
-                  data-testid="voice-select"
-                >
-                  {/* Kennwert statt leerem Text fuer die Standardstimme:
+              <div
+                className="w-full"
+                title={t("tts.voices.title")}
+                data-testid="voice-select"
+              >
+                {/* Kennwert statt leerem Text fuer die Standardstimme:
                       "" gilt der Select-Komponente als "nichts gewaehlt" und
                       zeigte den Platzhalter "Select…" statt des Namens.
                       Piper-Stimmen stehen in derselben Liste (Wert
                       "piper:<id>"): wer eine waehlt, schaltet damit die
                       Engine um — die Engine-Einstellung im Reiter Vorlesen
                       bleibt als zweiter Weg bestehen. */}
-                  <Select
-                    value={voiceValue}
-                    options={[
-                      {
-                        value: "@default",
-                        label: t("tts.voices.defaultVoice"),
-                      },
-                      ...voices.map((id) => ({ value: id, label: id })),
-                      ...piperVoices.map((voice) => ({
-                        value: `piper:${voice.id}`,
-                        label: t("tts.voices.piperOption", {
-                          name: piperVoiceLabel(voice),
+                <Select
+                  value={voiceValue}
+                  options={[
+                    {
+                      value: "@default",
+                      label: t("tts.voices.defaultVoice"),
+                    },
+                    ...voices.map((id) => ({ value: id, label: id })),
+                    ...piperVoices.map((voice) => ({
+                      value: `piper:${voice.id}`,
+                      label: t("tts.voices.piperOption", {
+                        name: piperVoiceLabel(voice),
+                      }),
+                    })),
+                    // Kein Wert, ein Sprung: zur Stimmenverwaltung unter
+                    // Einstellungen -> Vorlesen.
+                    { value: "@manage", label: t("tts.voices.manage") },
+                  ]}
+                  onChange={(value) => {
+                    if (!value) return;
+                    if (value === "@manage") {
+                      window.localStorage.setItem(
+                        "lva.ui.settings.tab",
+                        "readaloud",
+                      );
+                      window.dispatchEvent(
+                        new CustomEvent("lv-navigate", {
+                          detail: { section: "settings" },
                         }),
-                      })),
-                      // Kein Wert, ein Sprung: zur Stimmenverwaltung unter
-                      // Einstellungen -> Vorlesen.
-                      { value: "@manage", label: t("tts.voices.manage") },
-                    ]}
-                    onChange={(value) => {
-                      if (!value) return;
-                      if (value === "@manage") {
-                        window.localStorage.setItem(
-                          "lva.ui.settings.tab",
-                          "readaloud",
-                        );
-                        window.dispatchEvent(
-                          new CustomEvent("lv-navigate", {
-                            detail: { section: "settings" },
-                          }),
-                        );
-                        return;
-                      }
-                      applyVoiceValue(value);
-                      setTabVoices((current) => ({ ...current, [tab]: value }));
-                    }}
-                    isClearable={false}
-                  />
-                </div>
+                      );
+                      return;
+                    }
+                    applyVoiceValue(value);
+                    setTabVoices((current) => ({ ...current, [tab]: value }));
+                  }}
+                  isClearable={false}
+                />
+              </div>
               {/* Nur das Symbol: die Zeile ist eine Transportleiste, und ein
                 Wort neben lauter Glyphen zieht das Auge auf die unwichtigste
                 Schaltflaeche. Beschriftung wandert in title + aria-label. */}
@@ -1732,6 +1786,32 @@ export const TtsSettings = () => {
                     />
                     {t("tts.tidy")}
                   </Button>
+                  {/* Historie: Rueckgaengig / Wiederherstellen fuer den
+                      aktiven Reiter (auch Strg+Z / Strg+Y im Text). */}
+                  <div className="flex gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={history.undo}
+                      disabled={!history.canUndo}
+                      className="flex-1 justify-start"
+                      title={t("tts.history.undoHint")}
+                      data-testid="history-undo"
+                    >
+                      <Undo2 width={16} height={16} />
+                      {t("tts.history.undo")}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={history.redo}
+                      disabled={!history.canRedo}
+                      className="flex-1 justify-start"
+                      title={t("tts.history.redoHint")}
+                      data-testid="history-redo"
+                    >
+                      <Redo2 width={16} height={16} />
+                      {t("tts.history.redo")}
+                    </Button>
+                  </div>
                   {/* Skript pruefen: jederzeit, nicht erst beim Vorlesen —
                       auch bei abgeschaltetem Automatik-Schalter. */}
                   <Button
@@ -1762,18 +1842,27 @@ export const TtsSettings = () => {
                   {/* Auto-Tagging gehoert zu den Textwerkzeugen: hier in der
                       Bedienspalte, gestapelt (Knopf, Anbieter, Geraet). */}
                   <div className="tts-controls__autotag">
-                {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
+                    {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
                 Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
-                {tab === "original" && (
-                  <AutoTagBar
-                    showSettings={false}
-                    text={text}
-                    suggestions={tagSuggestions}
-                    sourceText={tagSuggestionsSourceText}
-                    onSuggestionsChange={changeTagSuggestions}
-                    onApplyText={applyAutoTagText}
-                  />
-                )}
+                    {tab === "original" && (
+                      <AutoTagBar
+                        showSettings={false}
+                        text={text}
+                        suggestions={tagSuggestions}
+                        sourceText={tagSuggestionsSourceText}
+                        onSuggestionsChange={changeTagSuggestions}
+                        onApplyText={applyAutoTagText}
+                        options={
+                          autoTagOptions ??
+                          (getSetting(
+                            "tts_autotag_last",
+                          ) as AutoTagOptions | null) ??
+                          defaultAutoTagOptions()
+                        }
+                        onOptionsChange={setAutoTagOptions}
+                        uiLang={uiLang}
+                      />
+                    )}
                   </div>
                 </>
               )}
@@ -1931,211 +2020,207 @@ export const TtsSettings = () => {
                 {currentSentence}
               </p>
             )}
-        </aside>
+          </aside>
 
-
-
-
-
-        <Dialog
-          open={checkDialog !== null}
-          onOpenChange={(isOpen) => {
-            if (!isOpen) setCheckDialog(null);
-          }}
-          title={t("tts.scriptCheck.dialogTitle", {
-            count: scriptFindings.length,
-          })}
-          closeLabel={t("tts.scriptCheck.dialogCancel")}
-          footer={
-            <>
-              <Button
-                variant="secondary"
-                onClick={() => setCheckDialog(null)}
-              >
-                {t("tts.scriptCheck.dialogCancel")}
-              </Button>
-              <Button
-                variant="primary"
-                data-testid="script-check-proceed"
-                onClick={() => {
-                  const action = checkDialog;
-                  setCheckDialog(null);
-                  if (action === "speak") void speakNow();
-                  if (action === "save") void saveSpokenAudioNow();
-                }}
-              >
-                {checkDialog === "save"
-                  ? t("tts.scriptCheck.dialogSaveAnyway")
-                  : t("tts.scriptCheck.dialogSpeakAnyway")}
-              </Button>
-            </>
-          }
-        >
-          <p className="text-sm text-text/80">
-            {t("tts.scriptCheck.dialogBody", {
+          <Dialog
+            open={checkDialog !== null}
+            onOpenChange={(isOpen) => {
+              if (!isOpen) setCheckDialog(null);
+            }}
+            title={t("tts.scriptCheck.dialogTitle", {
               count: scriptFindings.length,
             })}
-          </p>
-        </Dialog>
-
-        <Dialog
-          open={llmDialog}
-          onOpenChange={setLlmDialog}
-          title={t("tts.llm.dialogTitle")}
-          closeLabel={t("tts.stopConfirmCancel")}
-          footer={
-            <>
-              <Button variant="secondary" onClick={() => setLlmDialog(false)}>
-                {t("tts.stopConfirmCancel")}
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={llmWarmNow}
-                disabled={llmWorking}
-              >
-                {t("tts.llm.warm")}
-              </Button>
-              <Button
-                variant="danger"
-                onClick={llmUnloadNow}
-                disabled={llmWorking || llmLoaded.length === 0}
-              >
-                {t("tts.llm.unload")}
-              </Button>
-            </>
-          }
-        >
-          <p className="text-sm text-text/80">
-            {llmLoaded.length > 0
-              ? t("tts.llm.dialogLoaded", { models: llmLoaded.join(", ") })
-              : t("tts.llm.dialogEmpty")}
-          </p>
-        </Dialog>
-
-        <Dialog
-          open={urlDialogOpen}
-          onOpenChange={setUrlDialogOpen}
-          title={t("tts.add.urlDialogTitle")}
-          closeLabel={t("tts.stopConfirmCancel")}
-          footer={
-            <>
-              <Button
-                variant="secondary"
-                onClick={() => setUrlDialogOpen(false)}
-              >
-                {t("tts.stopConfirmCancel")}
-              </Button>
-              <Button
-                onClick={() => {
-                  setUrlDialogOpen(false);
-                  void loadUrl();
-                }}
-                disabled={loadingSource || sourceUrl.trim().length === 0}
-              >
-                {t("tts.summary.loadUrl")}
-              </Button>
-            </>
-          }
-        >
-          <Input
-            type="text"
-            value={sourceUrl}
-            onChange={(e) => setSourceUrl(e.target.value)}
-            placeholder={t("tts.summary.urlPlaceholder")}
-            className="w-full"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && sourceUrl.trim()) {
-                setUrlDialogOpen(false);
-                void loadUrl();
-              }
-            }}
-          />
-        </Dialog>
-
-        <Dialog
-          open={confirmStop}
-          onOpenChange={setConfirmStop}
-          title={
-            phase === "stopped" || phase === "error"
-              ? t("tts.serverStartTitle")
-              : t("tts.stopConfirmTitle")
-          }
-          closeLabel={t("tts.stopConfirmCancel")}
-          footer={
-            phase === "stopped" || phase === "error" ? (
+            closeLabel={t("tts.scriptCheck.dialogCancel")}
+            footer={
               <>
                 <Button
                   variant="secondary"
-                  onClick={() => setConfirmStop(false)}
+                  onClick={() => setCheckDialog(null)}
                 >
-                  {t("tts.stopConfirmCancel")}
+                  {t("tts.scriptCheck.dialogCancel")}
                 </Button>
                 <Button
+                  variant="primary"
+                  data-testid="script-check-proceed"
                   onClick={() => {
-                    setConfirmStop(false);
-                    void startServer();
+                    const action = checkDialog;
+                    setCheckDialog(null);
+                    if (action === "speak") void speakNow();
+                    if (action === "save") void saveSpokenAudioNow();
                   }}
                 >
-                  {t("tts.serverStart")}
+                  {checkDialog === "save"
+                    ? t("tts.scriptCheck.dialogSaveAnyway")
+                    : t("tts.scriptCheck.dialogSpeakAnyway")}
                 </Button>
               </>
-            ) : (
+            }
+          >
+            <p className="text-sm text-text/80">
+              {t("tts.scriptCheck.dialogBody", {
+                count: scriptFindings.length,
+              })}
+            </p>
+          </Dialog>
+
+          <Dialog
+            open={llmDialog}
+            onOpenChange={setLlmDialog}
+            title={t("tts.llm.dialogTitle")}
+            closeLabel={t("tts.stopConfirmCancel")}
+            footer={
               <>
-                <Button
-                  variant="secondary"
-                  onClick={() => setConfirmStop(false)}
-                >
+                <Button variant="secondary" onClick={() => setLlmDialog(false)}>
                   {t("tts.stopConfirmCancel")}
                 </Button>
                 <Button
                   variant="secondary"
-                  onClick={() => {
-                    setConfirmStop(false);
-                    void restartServer();
-                  }}
+                  onClick={llmWarmNow}
+                  disabled={llmWorking}
                 >
-                  {t("tts.stopConfirmRestart")}
+                  {t("tts.llm.warm")}
                 </Button>
                 <Button
                   variant="danger"
-                  onClick={() => {
-                    setConfirmStop(false);
-                    void killServer();
-                  }}
+                  onClick={llmUnloadNow}
+                  disabled={llmWorking || llmLoaded.length === 0}
                 >
-                  {t("tts.stopConfirmAccept")}
+                  {t("tts.llm.unload")}
                 </Button>
               </>
-            )
-          }
-        >
-          <p className="text-sm text-text/80">
-            {phase === "stopped" || phase === "error"
-              ? t("tts.serverStartBody")
-              : phase === "starting"
-                ? t("tts.stopConfirmBodyStarting")
-                : t("tts.stopConfirmBody")}
-          </p>
-        </Dialog>
-      </div>
-      <FilesSidebar
-        pageId={activePage}
-        collapsed={filesCollapsed === "1"}
-        onToggle={() => setFilesCollapsed(filesCollapsed === "1" ? "0" : "1")}
-        tab={rightTab}
-        onTabChange={setRightTab}
-        helpSection="vorlesen"
-        /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
+            }
+          >
+            <p className="text-sm text-text/80">
+              {llmLoaded.length > 0
+                ? t("tts.llm.dialogLoaded", { models: llmLoaded.join(", ") })
+                : t("tts.llm.dialogEmpty")}
+            </p>
+          </Dialog>
+
+          <Dialog
+            open={urlDialogOpen}
+            onOpenChange={setUrlDialogOpen}
+            title={t("tts.add.urlDialogTitle")}
+            closeLabel={t("tts.stopConfirmCancel")}
+            footer={
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() => setUrlDialogOpen(false)}
+                >
+                  {t("tts.stopConfirmCancel")}
+                </Button>
+                <Button
+                  onClick={() => {
+                    setUrlDialogOpen(false);
+                    void loadUrl();
+                  }}
+                  disabled={loadingSource || sourceUrl.trim().length === 0}
+                >
+                  {t("tts.summary.loadUrl")}
+                </Button>
+              </>
+            }
+          >
+            <Input
+              type="text"
+              value={sourceUrl}
+              onChange={(e) => setSourceUrl(e.target.value)}
+              placeholder={t("tts.summary.urlPlaceholder")}
+              className="w-full"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && sourceUrl.trim()) {
+                  setUrlDialogOpen(false);
+                  void loadUrl();
+                }
+              }}
+            />
+          </Dialog>
+
+          <Dialog
+            open={confirmStop}
+            onOpenChange={setConfirmStop}
+            title={
+              phase === "stopped" || phase === "error"
+                ? t("tts.serverStartTitle")
+                : t("tts.stopConfirmTitle")
+            }
+            closeLabel={t("tts.stopConfirmCancel")}
+            footer={
+              phase === "stopped" || phase === "error" ? (
+                <>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setConfirmStop(false)}
+                  >
+                    {t("tts.stopConfirmCancel")}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setConfirmStop(false);
+                      void startServer();
+                    }}
+                  >
+                    {t("tts.serverStart")}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setConfirmStop(false)}
+                  >
+                    {t("tts.stopConfirmCancel")}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setConfirmStop(false);
+                      void restartServer();
+                    }}
+                  >
+                    {t("tts.stopConfirmRestart")}
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={() => {
+                      setConfirmStop(false);
+                      void killServer();
+                    }}
+                  >
+                    {t("tts.stopConfirmAccept")}
+                  </Button>
+                </>
+              )
+            }
+          >
+            <p className="text-sm text-text/80">
+              {phase === "stopped" || phase === "error"
+                ? t("tts.serverStartBody")
+                : phase === "starting"
+                  ? t("tts.stopConfirmBodyStarting")
+                  : t("tts.stopConfirmBody")}
+            </p>
+          </Dialog>
+        </div>
+        <FilesSidebar
+          pageId={activePage}
+          collapsed={filesCollapsed === "1"}
+          onToggle={() => setFilesCollapsed(filesCollapsed === "1" ? "0" : "1")}
+          tab={rightTab}
+          onTabChange={setRightTab}
+          helpSection="vorlesen"
+          /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
            falsche Zeile aendern und erneut erzeugen. Die unveraenderten
            Saetze kommen dann aus dem Satz-Cache, nur die geaenderten gehen
            durch die Engine — ein Hoerspiel muss dafuer nicht neu entstehen. */
-        onUseText={(value) => {
-          setTab("original");
-          setText(value);
-        }}
-      />
-    </div>
+          onUseText={(value) => {
+            setTab("original");
+            setText(value);
+          }}
+        />
+      </div>
     </PageShell>
   );
 };

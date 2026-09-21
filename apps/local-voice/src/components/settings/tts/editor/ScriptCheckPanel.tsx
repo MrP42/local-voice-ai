@@ -291,7 +291,18 @@ export const ScriptCheckPanel: React.FC<ScriptCheckPanelProps> = ({
         className="flex items-center gap-1.5 text-xs text-text/50"
       >
         <CheckCircle2 width={14} height={14} aria-hidden="true" />
-        {t("tts.scriptCheck.clean")}
+        <span className="flex-1">{t("tts.scriptCheck.clean")}</span>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className={NAV_CLASSES}
+            aria-label={t("common.close")}
+            data-testid="script-check-close"
+          >
+            <X width={14} height={14} />
+          </button>
+        )}
       </p>
     );
   }

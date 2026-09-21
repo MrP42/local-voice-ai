@@ -314,8 +314,9 @@ test("replace all swaps every spot of the group and keeps the style", async ({
   await expect(editor).toHaveValue(
     "<Erzählerin> Es war einmal.\n<Leo Lausemaus> Wer bin ich?\n Ein Tag, das Fish nicht kennt.\n<Leo Lausemaus:leise> Und nochmal Bob.",
   );
-  // Sauber: Panel weg, keine Unterstreichung, kein Zaehler am Knopf.
-  await expect(page.getByTestId("script-check")).toHaveCount(0);
+  // Sauber: das Panel bleibt offen und meldet es, keine Unterstreichung,
+  // kein Zaehler am Knopf.
+  await expect(page.getByTestId("script-check-clean")).toBeVisible();
   await expect(page.locator("[data-finding]")).toHaveCount(0);
   await expect(page.getByTestId("script-check-badge")).toHaveCount(0);
 });
@@ -414,4 +415,58 @@ test("reading with findings asks first and then reads anyway", async ({
       ),
     )
     .toEqual([SCRIPT]);
+});
+
+test("history: undo and redo cover typing and replace-all", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  const editor = page.locator("textarea").first();
+  await editor.fill("<Bob> Hallo Bob.\n<Bob:leise> Psst.");
+  // Ueberall ersetzen aus dem Kontextmenue: Wort unter dem Caret.
+  await editor.click();
+  await editor.evaluate((el) => {
+    const ta = el as HTMLTextAreaElement;
+    const pos = ta.value.indexOf("Bob.");
+    ta.setSelectionRange(pos, pos);
+  });
+  await editor.dispatchEvent("contextmenu", { clientX: 200, clientY: 200 });
+  // Per JS klicken: Playwrights Scroll-ins-Bild loest das Scroll-Ereignis
+  // aus, auf das das Menue mit Schliessen reagiert.
+  await page
+    .getByTestId("menu-replace-all")
+    .evaluate((el) => (el as HTMLButtonElement).click());
+  await expect(page.getByTestId("replace-all-count")).toContainText(
+    "3 Treffer",
+  );
+  await page.getByTestId("replace-all-replacement").fill("Leo");
+  await page.getByTestId("replace-all-run").click();
+  await expect(editor).toHaveValue("<Leo> Hallo Leo.\n<Leo:leise> Psst.");
+  // Historie: ein Schritt zurueck, einer vor -- per Knopf und per Tastatur.
+  await page.getByTestId("history-undo").click();
+  await expect(editor).toHaveValue("<Bob> Hallo Bob.\n<Bob:leise> Psst.");
+  await page.getByTestId("history-redo").click();
+  await expect(editor).toHaveValue("<Leo> Hallo Leo.\n<Leo:leise> Psst.");
+  await editor.press("Control+z");
+  await expect(editor).toHaveValue("<Bob> Hallo Bob.\n<Bob:leise> Psst.");
+  await editor.press("Control+y");
+  await expect(editor).toHaveValue("<Leo> Hallo Leo.\n<Leo:leise> Psst.");
+});
+
+test("auto-tagging opens its dialog first", async ({ page }) => {
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await page.locator("textarea").first().fill("Ein Satz.");
+  await page.getByTestId("autotag-open").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Auto-Tagging");
+  await expect(dialog.getByText("Sparsam")).toBeVisible();
+  await expect(page.getByTestId("autotag-run")).toBeEnabled();
 });

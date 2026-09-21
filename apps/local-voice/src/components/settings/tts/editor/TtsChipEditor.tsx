@@ -17,6 +17,8 @@ import {
   type TagAutocompleteHandle,
 } from "../tags/TagAutocomplete";
 import { TagContextMenu } from "../tags/TagContextMenu";
+import { Replace } from "lucide-react";
+import { ReplaceAllDialog } from "./ReplaceAllDialog";
 
 // ---------------------------------------------------------------------------
 // BINDENDER Vertrag (Paket-Brief B-T3): Ein späteres Paket baut einen
@@ -134,6 +136,11 @@ interface TtsChipEditorProps {
   /** Optionale Erweiterung: Befunde der Skript-Pruefung (siehe
    *  `ChipEditorFinding`). Ohne Liste aendert sich nichts am Rendering. */
   findings?: ChipEditorFinding[];
+  /** Eigene Historie der Seite (useTextHistory): Strg+Z / Strg+Y bzw.
+   *  Strg+Umschalt+Z landen hier statt in der nativen Textarea-Historie,
+   *  damit ALLE Aenderungen (auch programmatische) einen Schritt haben. */
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +355,8 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   suggestions,
   onResolveSuggestion,
   findings,
+  onUndo,
+  onRedo,
 }) => {
   const { t } = useTranslation();
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -572,17 +581,38 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
    *  Befund-Stuecke bekommen immer einen eigenen Span. */
   const revealRange = useCallback((start: number, end: number) => {
     const ta = taRef.current;
-    const mir = mirrorRef.current;
     if (!ta) return;
-    const span = mir?.querySelector<HTMLElement>(
-      `[data-off="${start}"]:not([data-anchor])`,
-    );
-    if (span) {
-      ta.scrollTop = Math.max(0, span.offsetTop - ta.clientHeight / 2);
-    }
-    ta.scrollIntoView({ block: "nearest" });
+    // Zuerst markieren, dann scrollen -- und das Scrollen erst nach dem
+    // naechsten Layout: wenn gerade das Befund-Panel aufgeht oder der
+    // Mirror neu rendert, stimmt offsetTop sonst noch nicht, und der
+    // erste Klick markierte nur, der zweite sprang (beobachtet 21.09.2026).
     ta.focus();
     ta.setSelectionRange(start, end);
+    const scrollToStart = () => {
+      const mir = mirrorRef.current;
+      if (!mir) return;
+      // Nicht nur der Span, der exakt bei `start` beginnt: der naechste
+      // davor genuegt -- Befund-Grenzen und Chip-Grenzen fallen nicht
+      // immer zusammen.
+      let best: HTMLElement | null = null;
+      let bestOff = -1;
+      for (const el of mir.querySelectorAll<HTMLElement>(
+        "[data-off]:not([data-anchor])",
+      )) {
+        const off = Number(el.dataset.off);
+        if (off <= start && off > bestOff) {
+          best = el;
+          bestOff = off;
+        }
+      }
+      if (best) {
+        ta.scrollTop = Math.max(0, best.offsetTop - ta.clientHeight / 2);
+      }
+      ta.scrollIntoView({ block: "nearest" });
+    };
+    window.requestAnimationFrame(() =>
+      window.requestAnimationFrame(scrollToStart),
+    );
   }, []);
 
   useImperativeHandle(
@@ -900,6 +930,21 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     if (event.nativeEvent.isComposing) return;
     if (ac && acRect && acHandleRef.current?.handleKey(event.key)) {
       event.preventDefault();
+      return;
+    }
+    const mod = event.ctrlKey || event.metaKey;
+    if (mod && !event.altKey && (onUndo || onRedo)) {
+      const k = event.key.toLowerCase();
+      if (k === "z" && event.shiftKey && onRedo) {
+        event.preventDefault();
+        onRedo();
+      } else if (k === "z" && onUndo) {
+        event.preventDefault();
+        onUndo();
+      } else if (k === "y" && onRedo) {
+        event.preventDefault();
+        onRedo();
+      }
     }
   };
 
@@ -1015,6 +1060,48 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   const menuApi: ChipMenuApi = {
     insertAtSelection: menuInsertTag,
     close: closeMenu,
+  };
+
+  // ---- Ueberall ersetzen (Kontextmenue) ----------------------------------
+
+  /** Was das Menue zum Ersetzen anbietet: die Selektion, sonst der Marker
+   *  `<…>`, das Tag `[…]` oder das Wort unter dem Caret. */
+  const replaceTarget = useMemo((): string => {
+    if (!menu) return "";
+    const text = valueRef.current;
+    if (menu.selEnd > menu.selStart) {
+      return text.slice(menu.selStart, menu.selEnd).trim();
+    }
+    const pos = menu.selStart;
+    const lineStart = text.lastIndexOf("\n", pos - 1) + 1;
+    let lineEnd = text.indexOf("\n", pos);
+    if (lineEnd === -1) lineEnd = text.length;
+    const line = text.slice(lineStart, lineEnd);
+    const rel = pos - lineStart;
+    for (const re of [
+      /<[^<>\n]{1,60}>/g,
+      /\[[^\]\n]{1,60}\]/g,
+      /[\p{L}\p{N}_'-]+/gu,
+    ]) {
+      for (const m of line.matchAll(re)) {
+        const a = m.index ?? 0;
+        const b = a + m[0].length;
+        if (a <= rel && rel <= b) return m[0];
+      }
+    }
+    return "";
+  }, [menu]);
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [replaceSearch, setReplaceSearch] = useState("");
+  const openReplaceAll = () => {
+    setReplaceSearch(replaceTarget);
+    setReplaceOpen(true);
+    setMenu(null);
+  };
+  const applyReplaceAll = (nextText: string) => {
+    // Ein Schritt in der Historie: der ganze Text wird ersetzt.
+    valueRef.current = nextText;
+    onChangeRef.current(nextText);
   };
 
   // ---- Render -------------------------------------------------------------
@@ -1240,15 +1327,49 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
           onCopy={menuCopy}
           onPaste={menuPaste}
           onInsertTag={menuInsertTag}
-          extraSections={providers.map((p) =>
-            p.menuSection ? (
-              <React.Fragment key={p.id}>
-                {p.menuSection(menuApi)}
+          extraSections={[
+            replaceTarget !== "" && (
+              <React.Fragment key="replace-all">
+                <div
+                  className="my-1 border-t border-mid-gray/15"
+                  aria-hidden="true"
+                />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={openReplaceAll}
+                  data-testid="menu-replace-all"
+                  className="flex min-h-[44px] w-full cursor-pointer items-center gap-2 px-3 text-start text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:bg-mid-gray/15 focus-visible:text-text focus-visible:outline-none"
+                >
+                  <Replace width={15} height={15} aria-hidden="true" />
+                  <span className="min-w-0 truncate">
+                    {t("tts.replaceAll.menu", {
+                      what:
+                        replaceTarget.length > 24
+                          ? `${replaceTarget.slice(0, 24)}…`
+                          : replaceTarget,
+                    })}
+                  </span>
+                </button>
               </React.Fragment>
-            ) : null,
-          )}
+            ),
+            ...providers.map((p) =>
+              p.menuSection ? (
+                <React.Fragment key={p.id}>
+                  {p.menuSection(menuApi)}
+                </React.Fragment>
+              ) : null,
+            ),
+          ]}
         />
       )}
+      <ReplaceAllDialog
+        open={replaceOpen}
+        onOpenChange={setReplaceOpen}
+        text={value}
+        initialSearch={replaceSearch}
+        onReplace={(next) => applyReplaceAll(next)}
+      />
     </div>
   );
 };
