@@ -110,6 +110,20 @@ test.beforeEach(async ({ page }) => {
           // Ein Arbeitsblatt mit einer erzeugten Aufnahme und einer Datei,
           // die keine ist — nur die eine darf einen Abspielknopf bekommen.
           if (cmd === "pages_list") return [{ id: "p1", title: "Der Sturm" }];
+          if (cmd === "pages_export_preview")
+            return {
+              title: "Der Sturm",
+              files: ["notizen.txt"],
+              voices: [
+                {
+                  id: "erzaehlerin",
+                  display_name: "Erzählerin",
+                  present: true,
+                },
+                { id: "halb", display_name: "Halb", present: false },
+              ],
+              rights_confirmed: false,
+            };
           if (cmd === "page_files")
             return [
               {
@@ -565,4 +579,29 @@ test("aliases and German tags count as known and are canonicalized", async ({
   await page.getByText("Ausdruck & Sprechstil").click();
   await page.getByRole("tab", { name: "Alle" }).click();
   await expect(page.getByTestId("tag-legend")).toContainText("dokumentiert");
+});
+
+test("exporting a page asks for the voice rights before it packs voices", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  const row = page.getByText("Der Sturm", { exact: true }).first();
+  await row.hover();
+  await page.getByTestId("page-export-open").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Erzählerin");
+  await expect(dialog).toContainText("unvollständig");
+  // Stimme vorausgewaehlt -> ohne Rechte-Haken kein Export.
+  await expect(page.getByTestId("page-export-run")).toBeDisabled();
+  await page.getByTestId("page-export-rights").check({ force: true });
+  await expect(page.getByTestId("page-export-run")).toBeEnabled();
+  // Ohne Stimmen braucht es keine Bestaetigung: Stimme abwaehlen, der
+  // Rechte-Haken wird gegenstandslos, der Export bleibt moeglich.
+  await dialog.getByText("Erzählerin").click();
+  await expect(page.getByTestId("page-export-rights")).toBeDisabled();
+  await expect(page.getByTestId("page-export-run")).toBeEnabled();
 });

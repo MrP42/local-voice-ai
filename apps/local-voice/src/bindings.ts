@@ -1749,6 +1749,38 @@ async pagesDelete(id: string) : Promise<Result<null, string>> {
  * übergangen, vergessene hinten angehängt — die Liste der Oberfläche kann
  * einen Moment alt sein, und deshalb darf hier keine Seite verloren gehen.
  */
+async pagesExportPreview(id: string) : Promise<Result<PackagePreview, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pages_export_preview", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pagesExport(id: string, outPath: string, voiceIds: string[], rightsConfirmed: boolean) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pages_export", { id, outPath, voiceIds, rightsConfirmed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pagesPackageInspect(path: string) : Promise<Result<PackagePreview, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pages_package_inspect", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pagesImport(path: string, importVoices: boolean) : Promise<Result<PageInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pages_import", { path, importVoices }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async pagesReorder(ids: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pages_reorder", { ids }) };
@@ -2858,6 +2890,11 @@ export type OverlayStyle = "none" | "minimal" | "live"
 export type AudioSegment = { text: string; voice: string | null; start_ms: number; end_ms: number }
 export type AudioNote = { text: string; voice: string | null; seed: number; created_ms: number; segments: AudioSegment[] }
 export type PageFile = { name: string; size: number; modified_ms: number }
+export type PackageVoice = { id: string; display_name: string; present: boolean }
+/**
+ * Vorschau vor Export und Import eines Seiten-Pakets.
+ */
+export type PackagePreview = { title: string; files: string[]; voices: PackageVoice[]; rights_confirmed: boolean }
 export type PageInfo = { id: string; title: string;
 /**
  * Wann der Arbeitsstand zuletzt gespeichert wurde (Unix-Millisekunden,
