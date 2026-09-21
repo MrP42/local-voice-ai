@@ -44,7 +44,15 @@ pub fn logical_cpus() -> usize {
 
 /// Torch-Inductor-Compile-Prozesse: 2 bis 4 statt "ein Prozess je Kern".
 /// Vier reichen fuer den ~60-s-Compile; 32 waren der Ausloeser des Ausfalls.
+///
+/// Auf Windows immer 1: jeder Wert > 1 laesst Torch (2.8) einen
+/// `SubprocPool` starten, der `pass_fds` nutzt — das gibt es unter Windows
+/// nicht, der Server bricht mit "pass_fds not supported on Windows" ab
+/// (21.09.2026). Torch selbst nimmt auf win32 ebenfalls 1.
 pub fn compile_threads_for(cpus: usize) -> usize {
+    if cfg!(windows) {
+        return 1;
+    }
     (cpus / 8).clamp(2, 4)
 }
 
@@ -230,11 +238,21 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(windows))]
     fn compile_threads_never_scale_with_cores() {
         assert_eq!(compile_threads_for(32), 4, "32 Kerne waren der Ausloeser");
         assert_eq!(compile_threads_for(8), 2);
         assert_eq!(compile_threads_for(4), 2);
         assert_eq!(compile_threads_for(64), 4);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn compile_threads_are_one_on_windows() {
+        // > 1 startet einen SubprocPool mit pass_fds — auf Windows ein Absturz.
+        for cpus in [4, 8, 32, 64] {
+            assert_eq!(compile_threads_for(cpus), 1);
+        }
     }
 
     #[test]
