@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  X,
 } from "lucide-react";
 import { Select, type SelectOption } from "@/components/ui/Select";
 import { localizedLabel } from "@/lib/tags/registry";
@@ -44,6 +45,7 @@ interface ScriptCheckPanelProps {
   engine: ScriptEngine;
   uiLang: string;
   actions: ScriptCheckActions;
+  onClose?: () => void;
 }
 
 const ACTION_CLASSES =
@@ -272,6 +274,7 @@ export const ScriptCheckPanel: React.FC<ScriptCheckPanelProps> = ({
   engine,
   uiLang,
   actions,
+  onClose,
 }) => {
   const { t } = useTranslation();
   const tags = knownTagsFor(engine);
@@ -315,36 +318,49 @@ export const ScriptCheckPanel: React.FC<ScriptCheckPanelProps> = ({
             </span>
           )}
         </p>
-        {groups.length > 1 && (
-          <div className="flex items-center gap-1 text-xs text-text/70">
+        <div className="flex items-center gap-1 text-xs text-text/70">
+          {groups.length > 1 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setIndex((i) => Math.max(0, i - 1))}
+                disabled={index <= 0}
+                className={NAV_CLASSES}
+                aria-label={t("tts.scriptCheck.prevGroup")}
+              >
+                <ChevronLeft width={14} height={14} />
+              </button>
+              <span data-testid="script-check-group-position">
+                {t("tts.scriptCheck.groupPosition", {
+                  index: index + 1,
+                  count: groups.length,
+                })}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setIndex((i) => Math.min(groups.length - 1, i + 1))
+                }
+                disabled={index >= groups.length - 1}
+                className={NAV_CLASSES}
+                aria-label={t("tts.scriptCheck.nextGroup")}
+              >
+                <ChevronRight width={14} height={14} />
+              </button>
+            </>
+          )}
+          {onClose && (
             <button
               type="button"
-              onClick={() => setIndex((i) => Math.max(0, i - 1))}
-              disabled={index <= 0}
-              className={NAV_CLASSES}
-              aria-label={t("tts.scriptCheck.prevGroup")}
+              onClick={onClose}
+              className={`${NAV_CLASSES} ml-1`}
+              aria-label={t("common.close")}
+              data-testid="script-check-close"
             >
-              <ChevronLeft width={14} height={14} />
+              <X width={14} height={14} />
             </button>
-            <span data-testid="script-check-group-position">
-              {t("tts.scriptCheck.groupPosition", {
-                index: index + 1,
-                count: groups.length,
-              })}
-            </span>
-            <button
-              type="button"
-              onClick={() =>
-                setIndex((i) => Math.min(groups.length - 1, i + 1))
-              }
-              disabled={index >= groups.length - 1}
-              className={NAV_CLASSES}
-              aria-label={t("tts.scriptCheck.nextGroup")}
-            >
-              <ChevronRight width={14} height={14} />
-            </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
       <GroupCard
         key={group.key}

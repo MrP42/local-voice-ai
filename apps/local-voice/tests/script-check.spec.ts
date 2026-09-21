@@ -244,6 +244,9 @@ async function openEditorWithScript(page: import("@playwright/test").Page) {
     .click();
   const editor = page.locator("textarea").first();
   await editor.fill(SCRIPT);
+  // Unterstreichung kommt von selbst (120 ms Debounce); das Korrekturpanel
+  // erst per Knopf -- wie in Office.
+  await page.getByTestId("script-check-run").click();
   return editor;
 }
 
@@ -311,7 +314,10 @@ test("replace all swaps every spot of the group and keeps the style", async ({
   await expect(editor).toHaveValue(
     "<Erzählerin> Es war einmal.\n<Leo Lausemaus> Wer bin ich?\n Ein Tag, das Fish nicht kennt.\n<Leo Lausemaus:leise> Und nochmal Bob.",
   );
-  await expect(page.getByTestId("script-check-clean")).toBeVisible();
+  // Sauber: Panel weg, keine Unterstreichung, kein Zaehler am Knopf.
+  await expect(page.getByTestId("script-check")).toHaveCount(0);
+  await expect(page.locator("[data-finding]")).toHaveCount(0);
+  await expect(page.getByTestId("script-check-badge")).toHaveCount(0);
 });
 
 test("a recommendation fixes all spots with one click", async ({ page }) => {
@@ -320,6 +326,7 @@ test("a recommendation fixes all spots with one click", async ({ page }) => {
   await editor.fill(
     "<Erzahlerin> Hallo.\n<Erzahlerin:leise> Psst.\n[calm] Ruhig.",
   );
+  await page.getByTestId("script-check-run").click();
   const card = page.getByTestId("script-finding");
   await expect(card).toContainText("Sprecher „Erzahlerin“ (2 Stellen)");
   const rec = card.getByTestId("script-finding-recommendation");
@@ -343,15 +350,43 @@ test("the check button runs even when the automatic check is off", async ({
     (window as unknown as { __lvScriptCheckOff: boolean }).__lvScriptCheckOff =
       true;
   });
-  const editor = await openEditorWithScript(page);
-  // Automatik aus: kein Panel, obwohl ein Befund im Text steht.
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  const editor = page.locator("textarea").first();
+  await editor.fill(SCRIPT);
+  // Automatik aus: keine Unterstreichung, kein Panel, obwohl Befunde da sind.
   await expect(page.getByTestId("script-check")).toHaveCount(0);
-  await expect(page.getByTestId("script-check-clean")).toHaveCount(0);
+  await expect(page.locator("[data-finding]")).toHaveCount(0);
   await page.getByTestId("script-check-run").click();
   await expect(page.getByTestId("script-check")).toContainText(
     "3 Befunde im Skript",
   );
+  await expect(page.locator("[data-finding]")).toHaveCount(3);
   await expect(editor).toBeFocused();
+});
+
+test("with automatic check on, the text is underlined before any click", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  const editor = page.locator("textarea").first();
+  await editor.fill(SCRIPT);
+  await expect(page.locator("[data-finding]")).toHaveCount(3);
+  await expect(page.getByTestId("script-check-badge")).toHaveText("3");
+  // Kein Panel, bis man es anfordert; Schliessen nimmt es wieder weg.
+  await expect(page.getByTestId("script-check")).toHaveCount(0);
+  await page.getByTestId("script-check-run").click();
+  await expect(page.getByTestId("script-check")).toBeVisible();
+  await page.getByTestId("script-check-close").click();
+  await expect(page.getByTestId("script-check")).toHaveCount(0);
+  await expect(page.locator("[data-finding]")).toHaveCount(3);
 });
 
 test("reading with findings asks first and then reads anyway", async ({

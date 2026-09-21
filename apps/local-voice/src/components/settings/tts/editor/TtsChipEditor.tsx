@@ -738,7 +738,12 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     // Befunde zerschneiden Textstuecke an ihren Grenzen, damit die
     // Unterstreichung genau die Stelle trifft. Chips werden nicht
     // zerschnitten -- ein Befund auf einem Chip wird beim Rendern erkannt.
+    // Befunde sind nach Position sortiert und die Segmente auch: ein
+    // Zeiger laeuft mit (O(segmente + befunde)), statt je Segment die
+    // ganze Befundliste zu durchsuchen -- bei 100 KB Text mit Dutzenden
+    // Befunden war das sonst bei jedem Tastendruck spuerbar.
     const cuts: Segment[] = [];
+    let fi = 0;
     for (const seg of out) {
       if (seg.kind !== "text") {
         cuts.push(seg);
@@ -746,8 +751,10 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       }
       let cur = seg.start;
       const segEnd = seg.start + seg.text.length;
-      for (let i = 0; i < findings.length; i++) {
+      while (fi < findings.length && clamp(findings[fi].end) <= seg.start) fi++;
+      for (let i = fi; i < findings.length; i++) {
         const f = findings[i];
+        if (clamp(f.start) >= segEnd) break;
         const fs = Math.max(clamp(f.start), cur);
         const fe = Math.min(clamp(f.end), segEnd);
         if (fe <= fs) continue;

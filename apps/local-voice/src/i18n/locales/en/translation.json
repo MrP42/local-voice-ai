@@ -226,7 +226,7 @@
       "autotagProvider": "Auto-tagging: provider",
       "autotagProviderDescription": "Which language model suggests the emphasis tags: the app's default model or Claude Haiku (API key required).",
       "autotagDevice": "Auto-tagging: device",
-      "scriptCheck": "Check the script before reading",
+      "scriptCheck": "Check script while typing (underline findings in red)",
       "scriptCheckDescription": "Finds speaker markers without a voice and tags the chosen engine does not know, and shows them in the text. A finding does not block, but asks before starting."
     },
     "saveAudio": "Save as audio…",
