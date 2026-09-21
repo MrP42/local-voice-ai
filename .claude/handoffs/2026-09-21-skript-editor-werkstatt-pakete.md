@@ -51,3 +51,56 @@ Vorheriger Handoff: `2026-09-14-e5-e7-vorlesen-multidevice.md`.
 - Heredocs im Bash-Tool fressen Backslashes → Patches per Write-Tool + `python <datei>`.
 - Playwright: Kontextmenü per `evaluate(click)`, Toasts über `[data-sonner-toast]`.
 - Während `tauri build` keine Quellen anfassen; neue, noch nicht referenzierte Dateien sind unkritisch.
+
+## Laufender Faden beim Handoff (21.09., Sessionende)
+
+- Tag `app-v0.20.0` gepusht (PR #53 gemergt, `main` = 0.20.0). Release-Workflow „Release (Windows)"
+  Lauf 35556342298 lief beim Handoff noch; danach: `gh release edit app-v0.20.0 --title "Local Voice AI 0.20.0"
+  --notes-file <Notes>` — die Notes stehen unten unter „Release-Notes 0.20.0" (auch in
+  `scratchpad/release-notes-0.20.0.md`, Temp wird gelöscht). Prüfen, dass `latest.json`, `.exe` und `.sig`
+  im Release liegen; macOS-Lauf hängt seine DMGs später an.
+- Lokaler Installer 0.19.14 liegt im Bundle-Ordner; 0.20.0 kommt über GitHub (App zeigt die neuere).
+- Goal-Hook „alles umsetzen testen und optimieren" war aktiv; alle Blöcke sind umgesetzt, offen nur die
+  Punkte unter „Offen / bei Patrick".
+
+## Empfohlene Skills für die nächste Session
+
+- `superpowers:verification-before-completion` vor jeder Erfolgsmeldung (Tests wirklich laufen lassen).
+- `fragGPT` für Architekturfragen (hat am 21.09. die Live-Prüfung sauber entschieden).
+- `code-review` (Level high) über `src-tauri/src/books.rs` und `commands/pages_package.rs` — beide ohne
+  Rundlauf-Test im Echtbetrieb.
+- `feature-dev:feature-dev` für die Sprechertrennung (Diarisierung), falls Patrick sie freigibt.
+
+## Release-Notes 0.20.0 (Vorlage)
+
+Alle Arbeiten vom 17. bis 21. September 2026 seit 0.19.0 (PR #36 bis #52).
+
+## Vorlesen: Skript-Editor
+
+- **Skript-Prüfung live beim Tippen:** unbekannte Sprecher und Tags werden rot gewellt unterstrichen, mit Randmarke je Zeile. Das Korrekturpanel öffnet per „Skript prüfen" (mit Zähler), zeigt eine Gruppe nach der anderen (ein Problem, alle Stellen, durchklickbar) und macht Empfehlungen: Tippfehler bei Sprechern, Synonyme bei Tags. Ein Klick wirkt auf alle Stellen. Bleibt offen, bis man es schließt. 100 KB Text werden in 3 ms geprüft.
+- **Historie:** Rückgängig/Wiederherstellen per Knopf und Strg+Z/Strg+Y — auch für Auto-Tagging, Aufbereiten und Ersetzen.
+- **Überall ersetzen:** Rechtsklick auf Wort, Sprecher oder Tag → Suchen-und-Ersetzen im ganzen Text (Trefferzahl, Groß/Klein, ganze Wörter).
+- **Vorlesen ab Satz / nur diesen Satz** aus dem Kontextmenü; der Sprecherkontext bleibt erhalten.
+- **Änderungen vorab erzeugen:** geänderte Sätze im Hintergrund in den Cache, auch während des Vorlesens; danach spielt der Text bei beendetem Server.
+- **Tags auf Deutsch:** `[ruhig]`, `[calm]` und `[Relaxed]` sind dasselbe Tag; Einstellung „Sprache der Tags im Text" (auto/de/en). Drei Klassen einheitlich: dokumentiert (gelb), erweitert (bernstein), unbekannt (rot) — mit Legende und Reiter „Alle" in der Palette.
+- **Auto-Tagging-Dialog:** Umfang, bevorzugte Tags je Kategorie, Stil-Hinweis; je Seite gespeichert, Vorlagen app-weit, zuletzt benutzt als Vorbelegung.
+- **Sprecher:** der eingetippte Name (mit Umlauten) ist der Anzeigename; die technische Kennung bleibt im Hintergrund.
+
+## Skript-Werkstatt (neu)
+
+- **Bücher** bündeln Seiten als Teile einer Geschichte; **Figuren** mit festen Stimmen; **Gedächtnis** (Welt, Figuren, Verlauf, Stil) als Markdown im Anwendungsordner, nach jedem erzeugten Teil fortgeschrieben — erst nach Bestätigung.
+- **Vorlagen** mit Platzhaltern: vier eingebaute (Geschichte, Hörspiel, Fortsetzung, Sachtext), anpassbar, zurücksetzbar, eigene.
+- **Erzeugen** über den eingestellten KI-Anbieter mit Gedächtnis-Kontext; Vorschau mit editierbarem Skript und Gedächtnis-Vorschlag; „Übernehmen" legt die Seite als nächsten Teil an.
+- **Bücher exportieren/einspielen** (`.lvbook`) mit Seiten, Gedächtnis und Stimmen.
+
+## Seiten und Stimmen
+
+- **Seiten als Paket** (`.lvpage`) exportieren und einspielen: Arbeitsstand, Projektdateien, optional die verwendeten Stimmen — mit Rechtebestätigung für die Weitergabe von Stimmen; Import nie überschreibend.
+- **Stimmen:** kompakte Liste mit Hörprobe je Stimme, Hörprobe für den Seed, Export je Stimme und „Alle exportieren…" (Auswahl, Ort, Name mit Zeitstempel, gepackt oder Ordner). „Neue Stimme erschaffen" als Dialog.
+
+## Updates und Stabilität
+
+- Update-Anzeige bietet immer die neuere Version (lokal oder GitHub).
+- Fish-Speech startet wieder (kein Job-Speicherdeckel für den GPU-Prozess; Compile-Threads auf Windows = 1).
+- Startton beim Diktat kommt zuverlässig (dauerhafter Ausgabestream).
+- Sprachserver beenden friert das Fenster nicht mehr ein; abgebrochene Downloads verschwinden sofort aus der Fußleiste.
