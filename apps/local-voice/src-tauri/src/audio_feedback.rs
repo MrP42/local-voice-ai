@@ -94,49 +94,121 @@ fn play_sound_at_path(app: &AppHandle, path: &Path) -> Result<(), Box<dyn std::e
     play_audio_file(path, selected_device, volume)
 }
 
+/// Ein Auftrag an den Feedback-Thread: Datei, Geraet, Lautstaerke -- und
+/// ein Kanal, ueber den er "fertig" meldet.
+struct PlayRequest {
+    path: PathBuf,
+    device: Option<String>,
+    volume: f32,
+    done: std::sync::mpsc::SyncSender<Result<(), String>>,
+}
+
+/// Der Ausgabestream fuer die Feedback-Toene lebt in EINEM Thread und bleibt
+/// zwischen zwei Toenen offen. Vorher wurde je Ton ein neuer WASAPI-Stream
+/// geoeffnet, und dessen Anlaufzeit (100-300 ms Stille) schluckte den Anfang
+/// des 0,5-s-Starttons -- mal ganz, mal halb (beobachtet 20.09.2026: "Ton
+/// kommt nicht immer"). Der Thread baut den Stream nur neu, wenn sich das
+/// Geraet aendert oder die Wiedergabe scheitert (Geraet abgezogen).
+fn feedback_thread() -> &'static std::sync::Mutex<std::sync::mpsc::Sender<PlayRequest>> {
+    static SENDER: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<PlayRequest>>> =
+        std::sync::OnceLock::new();
+    SENDER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<PlayRequest>();
+        thread::Builder::new()
+            .name("audio-feedback".to_string())
+            .spawn(move || {
+                let mut current: Option<(Option<String>, rodio::OutputStream)> = None;
+                while let Ok(req) = rx.recv() {
+                    let needs_new = match &current {
+                        Some((device, _)) => *device != req.device,
+                        None => true,
+                    };
+                    if needs_new {
+                        current = None;
+                        match open_output(&req.device) {
+                            Ok(stream) => current = Some((req.device.clone(), stream)),
+                            Err(e) => {
+                                let _ = req.done.send(Err(e));
+                                continue;
+                            }
+                        }
+                    }
+                    let result = match &current {
+                        Some((_, stream)) => play_on(stream, &req.path, req.volume),
+                        None => Err("no output stream".to_string()),
+                    };
+                    if result.is_err() {
+                        // Einmal frisch versuchen: Geraet weg, Stream tot.
+                        current = None;
+                        let retry = open_output(&req.device)
+                            .and_then(|stream| {
+                                let r = play_on(&stream, &req.path, req.volume);
+                                current = Some((req.device.clone(), stream));
+                                r
+                            });
+                        let _ = req.done.send(retry);
+                    } else {
+                        let _ = req.done.send(result);
+                    }
+                }
+            })
+            .expect("audio feedback thread");
+        std::sync::Mutex::new(tx)
+    })
+}
+
+fn open_output(selected_device: &Option<String>) -> Result<rodio::OutputStream, String> {
+    let builder = match selected_device {
+        Some(device_name) if device_name != "Default" => {
+            let host = crate::audio_toolkit::get_cpal_host();
+            let found = host
+                .output_devices()
+                .map_err(|e| e.to_string())?
+                .find(|d| d.name().map(|n| n == *device_name).unwrap_or(false));
+            match found {
+                Some(device) => OutputStreamBuilder::from_device(device).map_err(|e| e.to_string())?,
+                None => {
+                    warn!("Device '{}' not found, using default device", device_name);
+                    OutputStreamBuilder::from_default_device().map_err(|e| e.to_string())?
+                }
+            }
+        }
+        _ => {
+            debug!("Using default device");
+            OutputStreamBuilder::from_default_device().map_err(|e| e.to_string())?
+        }
+    };
+    builder.open_stream().map_err(|e| e.to_string())
+}
+
+fn play_on(stream: &rodio::OutputStream, path: &Path, volume: f32) -> Result<(), String> {
+    let file = File::open(path).map_err(|e| e.to_string())?;
+    let sink = rodio::play(stream.mixer(), BufReader::new(file)).map_err(|e| e.to_string())?;
+    sink.set_volume(volume);
+    sink.sleep_until_end();
+    Ok(())
+}
+
 fn play_audio_file(
     path: &std::path::Path,
     selected_device: Option<String>,
     volume: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let stream_builder = if let Some(device_name) = selected_device {
-        if device_name == "Default" {
-            debug!("Using default device");
-            OutputStreamBuilder::from_default_device()?
-        } else {
-            let host = crate::audio_toolkit::get_cpal_host();
-            let devices = host.output_devices()?;
-
-            let mut found_device = None;
-            for device in devices {
-                if device.name()? == device_name {
-                    found_device = Some(device);
-                    break;
-                }
-            }
-
-            match found_device {
-                Some(device) => OutputStreamBuilder::from_device(device)?,
-                None => {
-                    warn!("Device '{}' not found, using default device", device_name);
-                    OutputStreamBuilder::from_default_device()?
-                }
-            }
-        }
-    } else {
-        debug!("Using default device");
-        OutputStreamBuilder::from_default_device()?
-    };
-
-    let stream_handle = stream_builder.open_stream()?;
-    let mixer = stream_handle.mixer();
-
-    let file = File::open(path)?;
-    let buf_reader = BufReader::new(file);
-
-    let sink = rodio::play(mixer, buf_reader)?;
-    sink.set_volume(volume);
-    sink.sleep_until_end();
-
-    Ok(())
+    let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
+    feedback_thread()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .send(PlayRequest {
+            path: path.to_path_buf(),
+            device: selected_device,
+            volume,
+            done: done_tx,
+        })
+        .map_err(|e| e.to_string())?;
+    // Laenger als jeder Feedback-Ton; ein haengender Treiber darf den
+    // Aufrufer (Diktat-Start!) nicht festhalten.
+    match done_rx.recv_timeout(std::time::Duration::from_secs(3)) {
+        Ok(result) => result.map_err(|e| e.into()),
+        Err(_) => Err("audio feedback timed out".into()),
+    }
 }
