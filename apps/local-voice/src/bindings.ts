@@ -1574,6 +1574,30 @@ async ttsSpeakText(text: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async ttsSpeakTextFrom(text: string, charOffset: number, onlyOne: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_speak_text_from", { text, charOffset, onlyOne }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsPrewarm(text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prewarm", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsPrewarmCancel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prewarm_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsSpeakClipboard() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_speak_clipboard") };

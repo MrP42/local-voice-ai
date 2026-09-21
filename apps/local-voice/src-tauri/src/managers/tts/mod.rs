@@ -941,6 +941,8 @@ pub struct TtsManager {
     /// Wiedergabe: sonst würde ein Klick auf Stopp im Player den Export
     /// abwürgen (und umgekehrt) — zwei Vorgänge, zwei Schalter.
     export_cancel: Mutex<Arc<AtomicBool>>,
+    /// Abbruch-Flag der Vorab-Erzeugung (eigenes Flag, wie beim Export).
+    prewarm_cancel: Mutex<Arc<AtomicBool>>,
 }
 
 struct SpeakSession {
@@ -1504,6 +1506,7 @@ impl TtsManager {
             reading: Mutex::new(None),
             speak_session: Mutex::new(None),
             export_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+            prewarm_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
         });
         manager.refresh_from_settings();
 
@@ -1677,6 +1680,105 @@ impl TtsManager {
             position: 0,
         });
         self.run_speak_session(sentences, 0).await
+    }
+
+    /// Ab einem Satz vorlesen -- oder nur diesen einen. `char_offset` ist
+    /// der Zeichen-Offset im Rohtext (Caret bzw. Rechtsklick im Editor);
+    /// der Sprecherkontext davor bleibt erhalten, weil die Saetze aus dem
+    /// GANZEN Text entstehen und nur der Einstieg verschoben wird.
+    pub async fn speak_text_from(
+        self: &Arc<Self>,
+        raw: &str,
+        char_offset: usize,
+        only_one: bool,
+    ) -> Result<usize, String> {
+        let max_chars = *self.core.max_chars.lock().unwrap();
+        let prepared =
+            protocol::prepare_text(raw, max_chars).ok_or_else(|| "empty text".to_string())?;
+        // prepare_text trimmt vorn: den Offset entsprechend verschieben.
+        let leading = raw.len() - raw.trim_start().len();
+        let leading_chars = raw[..leading].chars().count();
+        let offset = char_offset.saturating_sub(leading_chars);
+        let sentences = self.utterances(&prepared.text);
+        if sentences.is_empty() {
+            return Err("empty text".to_string());
+        }
+        let texts: Vec<String> = sentences.iter().map(|(t, _)| t.clone()).collect();
+        let spans = protocol::locate_sentences(&prepared.text, &texts);
+        let index = protocol::sentence_index_at(&spans, offset);
+        let (session_sentences, start) = if only_one {
+            (vec![sentences[index].clone()], 0)
+        } else {
+            (sentences, index)
+        };
+        *self.speak_session.lock().unwrap() = Some(SpeakSession {
+            sentences: session_sentences.clone(),
+            position: start,
+        });
+        self.run_speak_session(session_sentences, start).await
+    }
+
+    /// Geaenderte Saetze vorab erzeugen: alles, was nicht im Cache liegt,
+    /// wird synthetisiert und abgelegt -- ohne Wiedergabe. Danach spielt der
+    /// Text aus dem Cache, auch wenn der Server laengst beendet ist. Laeuft
+    /// auch waehrend des Vorlesens (ein Aufruf zur Zeit; ein neuer Lauf
+    /// storniert den vorigen). Meldet Fortschritt ueber `tts-prewarm-progress`.
+    pub async fn prewarm(self: &Arc<Self>, raw: &str) -> Result<u32, String> {
+        use tauri::Emitter;
+        let max_chars = *self.core.max_chars.lock().unwrap();
+        let utterances = self.utterances(raw.trim());
+        // Nur die Stuecke, die wirklich fehlen.
+        let mut jobs: Vec<(String, Option<String>)> = Vec::new();
+        for (sentence, voice) in &utterances {
+            let Some(part) = protocol::prepare_text(sentence, max_chars) else {
+                continue;
+            };
+            for piece in protocol::split_pauses(&part.text) {
+                if let protocol::SpeechPart::Speak(text) = piece {
+                    if !self.core.has_cached_for(&text, voice.as_deref()) {
+                        jobs.push((text, voice.clone()));
+                    }
+                }
+            }
+        }
+        let total = jobs.len() as u32;
+        let emit = |done: u32, cancelled: bool| {
+            let _ = self.app.emit(
+                "tts-prewarm-progress",
+                serde_json::json!({ "done": done, "total": total, "cancelled": cancelled }),
+            );
+        };
+        if jobs.is_empty() {
+            emit(0, false);
+            return Ok(0);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let mut slot = self.prewarm_cancel.lock().unwrap();
+            slot.store(true, Ordering::Release);
+            *slot = cancel.clone();
+        }
+        emit(0, false);
+        self.refresh_from_settings();
+        self.ensure_engine_ready().await?;
+        self.bind_seed_voice().await;
+        let port = *self.core.port.lock().unwrap();
+        let seed = *self.core.seed.lock().unwrap();
+        let mut done = 0u32;
+        for (text, voice) in jobs {
+            if cancel.load(Ordering::Acquire) {
+                emit(done, true);
+                return Err("abgebrochen".to_string());
+            }
+            self.core.fetch_wav(port, seed, &text, voice.as_deref()).await?;
+            done += 1;
+            emit(done, false);
+        }
+        Ok(done)
+    }
+
+    pub fn prewarm_cancel(&self) {
+        self.prewarm_cancel.lock().unwrap().store(true, Ordering::Release);
     }
 
     /// Vorlesetext in Saetze samt Stimme zerlegen.

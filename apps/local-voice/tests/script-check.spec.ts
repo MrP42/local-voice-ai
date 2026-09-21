@@ -216,6 +216,15 @@ test.beforeEach(async ({ page }) => {
             return null;
           }
           if (cmd === "get_custom_sounds") return { start: false, stop: false };
+          if (cmd === "tts_speak_text_from") {
+            (window as unknown as { spokenFrom?: unknown[] }).spokenFrom = [
+              ...((window as unknown as { spokenFrom?: unknown[] })
+                .spokenFrom ?? []),
+              args,
+            ];
+            return null;
+          }
+          if (cmd === "tts_prewarm") return null;
           // Was wirklich zum Vorlesen geschickt wird — der Dialog darf das
           // Vorlesen aufhalten, aber nicht verhindern.
           if (cmd === "tts_speak_text") {
@@ -469,4 +478,52 @@ test("auto-tagging opens its dialog first", async ({ page }) => {
   await expect(dialog).toContainText("Auto-Tagging");
   await expect(dialog.getByText("Sparsam")).toBeVisible();
   await expect(page.getByTestId("autotag-run")).toBeEnabled();
+});
+
+test("the context menu reads from here or only this sentence", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  const editor = page.locator("textarea").first();
+  await editor.fill("Erster Satz hier. Zweiter Satz da. Dritter Satz dort.");
+  await editor.click();
+  await editor.evaluate((el) => {
+    const ta = el as HTMLTextAreaElement;
+    const pos = ta.value.indexOf("Zweiter") + 3;
+    ta.setSelectionRange(pos, pos);
+  });
+  await editor.dispatchEvent("contextmenu", { clientX: 200, clientY: 200 });
+  await page
+    .getByTestId("menu-speak-one")
+    .evaluate((el) => (el as HTMLButtonElement).click());
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { spokenFrom?: unknown[] }).spokenFrom,
+      ),
+    )
+    .toEqual([
+      {
+        text: "Erster Satz hier. Zweiter Satz da. Dritter Satz dort.",
+        charOffset: "Erster Satz hier. Zweiter Satz da.".indexOf("Zweiter") + 3,
+        onlyOne: true,
+      },
+    ]);
+  await editor.dispatchEvent("contextmenu", { clientX: 200, clientY: 200 });
+  await page
+    .getByTestId("menu-speak-from")
+    .evaluate((el) => (el as HTMLButtonElement).click());
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { spokenFrom?: { onlyOne: boolean }[] })
+            .spokenFrom?.length,
+      ),
+    )
+    .toBe(2);
 });
