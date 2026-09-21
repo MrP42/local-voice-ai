@@ -1749,6 +1749,126 @@ async pagesDelete(id: string) : Promise<Result<null, string>> {
  * übergangen, vergessene hinten angehängt — die Liste der Oberfläche kann
  * einen Moment alt sein, und deshalb darf hier keine Seite verloren gehen.
  */
+async booksList() : Promise<Result<Book[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksCreate(title: string) : Promise<Result<Book, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_create", { title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksUpdate(book: Book) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_update", { book }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksAddPage(bookId: string, pageId: string) : Promise<Result<Book, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_add_page", { bookId, pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksMemoryRead(bookId: string) : Promise<Result<MemoryFile[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_memory_read", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksMemoryWrite(bookId: string, kind: string, text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_memory_write", { bookId, kind, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksTemplates() : Promise<Result<ScriptTemplate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_templates") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksTemplateSave(template: ScriptTemplate) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_template_save", { template }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksTemplateReset(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_template_reset", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksGenerate(options: GenerateOptions) : Promise<Result<GeneratedScript, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_generate", { options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksExportPreview(id: string) : Promise<Result<BookPreview, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_export_preview", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksExport(id: string, outPath: string, voiceIds: string[], rightsConfirmed: boolean) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_export", { id, outPath, voiceIds, rightsConfirmed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksInspect(path: string) : Promise<Result<BookPreview, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_inspect", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async booksImport(path: string, importVoices: boolean) : Promise<Result<Book, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("books_import", { path, importVoices }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async pagesExportPreview(id: string) : Promise<Result<PackagePreview, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pages_export_preview", { id }) };
@@ -2890,6 +3010,14 @@ export type OverlayStyle = "none" | "minimal" | "live"
 export type AudioSegment = { text: string; voice: string | null; start_ms: number; end_ms: number }
 export type AudioNote = { text: string; voice: string | null; seed: number; created_ms: number; segments: AudioSegment[] }
 export type PageFile = { name: string; size: number; modified_ms: number }
+export type BookCharacter = { name: string; voice_id: string | null; description: string }
+export type Book = { id: string; title: string; created_ms: number; page_ids: string[]; characters: BookCharacter[]; language: string }
+export type MemoryFile = { kind: string; text: string }
+export type ScriptTemplate = { id: string; name: string; body: string; builtin: boolean; modified: boolean }
+export type GenerateOptions = { book_id: string | null; template_id: string; prompt: string; part_title: string; length_words: number; audience: string; tone: string; language: string; with_tags: boolean; allowed_tags: string[]; character_names: string[] }
+export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
+export type GeneratedScript = { title: string; script: string; memory: MemoryProposal }
+export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
 export type PackageVoice = { id: string; display_name: string; present: boolean }
 /**
  * Vorschau vor Export und Import eines Seiten-Pakets.

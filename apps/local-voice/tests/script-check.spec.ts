@@ -110,6 +110,68 @@ test.beforeEach(async ({ page }) => {
           // Ein Arbeitsblatt mit einer erzeugten Aufnahme und einer Datei,
           // die keine ist — nur die eine darf einen Abspielknopf bekommen.
           if (cmd === "pages_list") return [{ id: "p1", title: "Der Sturm" }];
+          if (cmd === "books_list")
+            return (window as unknown as { __books?: unknown[] }).__books ?? [];
+          if (cmd === "books_templates")
+            return [
+              {
+                id: "geschichte",
+                name: "Geschichte (Vorlesen)",
+                body: "Schreibe: {{prompt}}",
+                builtin: true,
+                modified: false,
+              },
+            ];
+          if (cmd === "books_create") {
+            const book = {
+              id: "book_1",
+              title: args?.title,
+              created_ms: 1,
+              page_ids: [],
+              characters: [],
+              language: "de",
+            };
+            (window as unknown as { __books?: unknown[] }).__books = [book];
+            return book;
+          }
+          if (cmd === "books_memory_read")
+            return ["welt", "figuren", "verlauf", "stil"].map((kind) => ({
+              kind,
+              text: "",
+            }));
+          if (cmd === "books_generate")
+            return {
+              title: "Der Drache lernt schwimmen",
+              script: "<Erzählerin> Es war einmal ein Drache.",
+              memory: {
+                verlauf: "Der Drache fiel ins Wasser.",
+                figuren: "",
+                welt: "",
+              },
+            };
+          if (cmd === "pages_create")
+            return {
+              id: "p2",
+              title: args?.title,
+              modified_ms: 0,
+              preview: "",
+            };
+          if (cmd === "page_state_save") return null;
+          if (
+            cmd === "books_add_page" ||
+            cmd === "books_memory_write" ||
+            cmd === "books_update"
+          )
+            return cmd === "books_add_page"
+              ? {
+                  id: "book_1",
+                  title: "Drachen",
+                  created_ms: 1,
+                  page_ids: ["p2"],
+                  characters: [],
+                  language: "de",
+                }
+              : null;
           if (cmd === "pages_export_preview")
             return {
               title: "Der Sturm",
@@ -604,4 +666,29 @@ test("exporting a page asks for the voice rights before it packs voices", async 
   await dialog.getByText("Erzählerin").click();
   await expect(page.getByTestId("page-export-rights")).toBeDisabled();
   await expect(page.getByTestId("page-export-run")).toBeEnabled();
+});
+
+test("the script workshop generates a part and creates a page from it", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await page.getByTestId("workshop-open").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Skript-Werkstatt");
+  await page.getByTestId("workshop-book-title").fill("Drachen");
+  await page.getByTestId("workshop-book-create").click();
+  // Nach dem Anlegen steht das Buch fest; weiter zum Erzeugen.
+  await page.getByTestId("workshop-step-generate").click();
+  await page.getByTestId("workshop-prompt").fill("Ein Drache lernt schwimmen");
+  await page.getByTestId("workshop-generate").click();
+  await expect(page.getByTestId("workshop-result")).toHaveValue(
+    "<Erzählerin> Es war einmal ein Drache.",
+  );
+  await expect(dialog).toContainText("Der Drache fiel ins Wasser.");
+  await page.getByTestId("workshop-apply").click();
+  await expect(dialog).toHaveCount(0);
 });
