@@ -614,6 +614,57 @@ export const TtsSettings = () => {
     await speakNow();
   };
 
+  /** Ab dem Satz an der Rechtsklick-Stelle vorlesen -- oder nur diesen. */
+  const speakFrom = async (charOffset: number, onlyOne: boolean) => {
+    setLastError(null);
+    setSpeakProgress(null);
+    setTruncated(null);
+    sessionTab.current = tab;
+    const result = await commands.ttsSpeakTextFrom(
+      spokenText,
+      charOffset,
+      onlyOne,
+    );
+    if (result.status === "error") setLastError(result.error);
+  };
+
+  // Vorab-Erzeugung: geaenderte Saetze in den Cache, ohne Wiedergabe.
+  // Laeuft auch waehrend des Vorlesens; danach kann der Server weg.
+  const [prewarm, setPrewarm] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+  useEffect(() => {
+    const un = listen<{ done: number; total: number; cancelled: boolean }>(
+      "tts-prewarm-progress",
+      (e) => {
+        const { done, total, cancelled } = e.payload;
+        if (cancelled || done >= total) {
+          setPrewarm(null);
+          if (!cancelled && total > 0) {
+            toast.success(t("tts.prewarm.done", { count: total }));
+          } else if (!cancelled) {
+            toast.info(t("tts.prewarm.nothing"));
+          }
+          return;
+        }
+        setPrewarm({ done, total });
+      },
+    );
+    return () => {
+      un.then((f) => f());
+    };
+  }, [t]);
+  const startPrewarm = async () => {
+    setLastError(null);
+    setPrewarm({ done: 0, total: 0 });
+    const result = await commands.ttsPrewarm(spokenText);
+    if (result.status === "error") {
+      setPrewarm(null);
+      setLastError(result.error);
+    }
+  };
+
   const speakNow = async () => {
     setLastError(null);
     setSpeakProgress(null);
@@ -1417,6 +1468,9 @@ export const TtsSettings = () => {
                     findings={editorFindings}
                     onUndo={history.undo}
                     onRedo={history.redo}
+                    onSpeakFrom={(offset, onlyOne) =>
+                      void speakFrom(offset, onlyOne)
+                    }
                   />
                 ) : tab === "translation" ? (
                   <TtsChipEditor
@@ -1430,6 +1484,9 @@ export const TtsSettings = () => {
                     findings={editorFindings}
                     onUndo={history.undo}
                     onRedo={history.redo}
+                    onSpeakFrom={(offset, onlyOne) =>
+                      void speakFrom(offset, onlyOne)
+                    }
                   />
                 ) : (
                   <TtsChipEditor
@@ -1442,6 +1499,9 @@ export const TtsSettings = () => {
                     findings={editorFindings}
                     onUndo={history.undo}
                     onRedo={history.redo}
+                    onSpeakFrom={(offset, onlyOne) =>
+                      void speakFrom(offset, onlyOne)
+                    }
                   />
                 )}
               </div>
@@ -1672,6 +1732,54 @@ export const TtsSettings = () => {
                     className="mbtn mbtn--sm"
                     onClick={cancelExport}
                     aria-label={t("tts.cancelExport")}
+                  >
+                    <Glyph name="stop" />
+                  </button>
+                </div>
+              )}
+              {/* Aenderungen vorab erzeugen: fuellt den Satz-Cache im
+                  Hintergrund -- auch waehrend des Vorlesens -- damit kein
+                  Satz beim Abspielen auf die Engine wartet. */}
+              <Button
+                variant="secondary"
+                className="w-full justify-start"
+                onClick={() => void startPrewarm()}
+                disabled={prewarm !== null || spokenText.trim().length === 0}
+                title={t("tts.prewarm.hint")}
+                data-testid="prewarm-run"
+              >
+                <Sparkles
+                  width={16}
+                  height={16}
+                  className={prewarm ? "animate-pulse" : undefined}
+                />
+                {prewarm ? t("tts.prewarm.running") : t("tts.prewarm.run")}
+              </Button>
+              {prewarm && (
+                <div className="flex items-center gap-2">
+                  <div className="w-32 h-1.5 rounded-full bg-mid-gray/20 overflow-hidden">
+                    <div
+                      className="h-full bg-logo-primary transition-[width] duration-200"
+                      style={{
+                        width: prewarm.total
+                          ? `${(prewarm.done / prewarm.total) * 100}%`
+                          : "0%",
+                      }}
+                    />
+                  </div>
+                  <span className="text-xs text-text/60">
+                    {prewarm.total
+                      ? t("tts.prewarm.progress", {
+                          done: prewarm.done,
+                          total: prewarm.total,
+                        })
+                      : t("tts.prewarm.starting")}
+                  </span>
+                  <button
+                    type="button"
+                    className="mbtn mbtn--sm"
+                    onClick={() => void commands.ttsPrewarmCancel()}
+                    aria-label={t("tts.prewarm.cancel")}
                   >
                     <Glyph name="stop" />
                   </button>

@@ -16,6 +16,43 @@ pub async fn tts_speak_text(app: AppHandle, text: String) -> Result<(), String> 
     tts.speak_text(&text).await.map(|_| ())
 }
 
+/// Ab einem Satz vorlesen (`only_one`: nur diesen). `char_offset` ist der
+/// UTF-16-freie Zeichen-Offset im Text -- das Frontend rechnet ihn um.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_speak_text_from(
+    app: AppHandle,
+    text: String,
+    char_offset: u32,
+    only_one: bool,
+) -> Result<(), String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tts.speak_text_from(&text, char_offset as usize, only_one)
+        .await
+        .map(|_| ())
+}
+
+/// Geaenderte Saetze vorab erzeugen (Cache fuellen), ohne Wiedergabe.
+/// Kehrt sofort zurueck; Fortschritt kommt ueber `tts-prewarm-progress`.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_prewarm(app: AppHandle, text: String) -> Result<(), String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = tts.prewarm(&text).await {
+            log::warn!("prewarm: {e}");
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_prewarm_cancel(app: AppHandle) -> Result<(), String> {
+    app.state::<Arc<TtsManager>>().prewarm_cancel();
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_speak_clipboard(app: AppHandle) -> Result<(), String> {

@@ -17,7 +17,7 @@ import {
   type TagAutocompleteHandle,
 } from "../tags/TagAutocomplete";
 import { TagContextMenu } from "../tags/TagContextMenu";
-import { Replace } from "lucide-react";
+import { Play, PlayCircle, Replace } from "lucide-react";
 import { ReplaceAllDialog } from "./ReplaceAllDialog";
 
 // ---------------------------------------------------------------------------
@@ -141,6 +141,9 @@ interface TtsChipEditorProps {
    *  damit ALLE Aenderungen (auch programmatische) einen Schritt haben. */
   onUndo?: () => void;
   onRedo?: () => void;
+  /** Vorlesen ab der Rechtsklick-Stelle (bzw. nur diesen Satz). Der Offset
+   *  ist ein Zeichen-Offset (Codepoints), wie ihn das Backend erwartet. */
+  onSpeakFrom?: (charOffset: number, onlyOne: boolean) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +360,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   findings,
   onUndo,
   onRedo,
+  onSpeakFrom,
 }) => {
   const { t } = useTranslation();
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -1328,6 +1332,44 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
           onPaste={menuPaste}
           onInsertTag={menuInsertTag}
           extraSections={[
+            onSpeakFrom && (
+              <React.Fragment key="speak-from">
+                <div
+                  className="my-1 border-t border-mid-gray/15"
+                  aria-hidden="true"
+                />
+                {[false, true].map((onlyOne) => (
+                  <button
+                    key={onlyOne ? "one" : "from"}
+                    type="button"
+                    role="menuitem"
+                    data-testid={onlyOne ? "menu-speak-one" : "menu-speak-from"}
+                    onClick={() => {
+                      const utf16 = menu.selStart;
+                      // UTF-16 -> Codepoints: Emoji und Co. zaehlen im
+                      // Backend einfach, hier doppelt.
+                      const chars = Array.from(
+                        valueRef.current.slice(0, utf16),
+                      ).length;
+                      setMenu(null);
+                      onSpeakFrom(chars, onlyOne);
+                    }}
+                    className="flex min-h-[44px] w-full cursor-pointer items-center gap-2 px-3 text-start text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:bg-mid-gray/15 focus-visible:text-text focus-visible:outline-none"
+                  >
+                    {onlyOne ? (
+                      <PlayCircle width={15} height={15} aria-hidden="true" />
+                    ) : (
+                      <Play width={15} height={15} aria-hidden="true" />
+                    )}
+                    {t(
+                      onlyOne
+                        ? "tts.speakFrom.onlyThis"
+                        : "tts.speakFrom.fromHere",
+                    )}
+                  </button>
+                ))}
+              </React.Fragment>
+            ),
             replaceTarget !== "" && (
               <React.Fragment key="replace-all">
                 <div

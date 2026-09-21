@@ -512,6 +512,93 @@ pub fn split_sentences(text: &str) -> Vec<String> {
     sentences
 }
 
+/// Lage jedes Satzes im Rohtext als Zeichen-Offsets (Anfang, Ende).
+///
+/// Die Saetze aus `split_speaker_segments` + `split_sentences` sind
+/// Teilstuecke des Rohtexts ohne die Sprechermarker `<…>` und mit
+/// getrimmtem Weissraum. Verortet wird deshalb tolerant: Weissraum wird auf
+/// beiden Seiten uebersprungen, ein `<…>`-Marker im Rohtext ebenfalls.
+/// Findet ein Satz keine Entsprechung, bekommt er die Position des
+/// vorherigen Endes — so bleibt die Reihenfolge immer monoton.
+///
+/// Gebraucht fuer "ab hier vorlesen": der Editor kennt nur einen
+/// Zeichen-Offset, die Wiedergabe nur Satzindizes.
+pub fn locate_sentences(raw: &str, sentences: &[String]) -> Vec<(usize, usize)> {
+    let raw_chars: Vec<char> = raw.chars().collect();
+    let mut cursor = 0usize;
+    let mut out = Vec::with_capacity(sentences.len());
+    for sentence in sentences {
+        let target: Vec<char> = sentence.chars().filter(|c| !c.is_whitespace()).collect();
+        if target.is_empty() {
+            out.push((cursor, cursor));
+            continue;
+        }
+        // Startsuche: erste Stelle ab `cursor`, an der die Zeichenfolge
+        // (ohne Weissraum, ohne Marker) passt.
+        let mut found: Option<(usize, usize)> = None;
+        let mut probe = cursor;
+        while probe < raw_chars.len() {
+            let mut i = probe;
+            let mut j = 0usize;
+            let mut start: Option<usize> = None;
+            while i < raw_chars.len() && j < target.len() {
+                let c = raw_chars[i];
+                if c.is_whitespace() {
+                    i += 1;
+                    continue;
+                }
+                if c == '<' {
+                    if let Some(close) = raw_chars[i..].iter().position(|&x| x == '>') {
+                        if raw_chars[i..i + close].iter().all(|&x| x != '\n') {
+                            i += close + 1;
+                            continue;
+                        }
+                    }
+                }
+                if c != target[j] {
+                    break;
+                }
+                if start.is_none() {
+                    start = Some(i);
+                }
+                i += 1;
+                j += 1;
+            }
+            if j == target.len() {
+                found = Some((start.unwrap_or(probe), i));
+                break;
+            }
+            probe += 1;
+            // Nicht ewig suchen: ein fehlender Satz kostet sonst O(n^2).
+            if probe - cursor > 4_000 {
+                break;
+            }
+        }
+        match found {
+            Some((a, b)) => {
+                out.push((a, b));
+                cursor = b;
+            }
+            None => out.push((cursor, cursor)),
+        }
+    }
+    out
+}
+
+/// Index des Satzes, in dem der Zeichen-Offset liegt (oder der naechste
+/// danach); bei Offset hinter dem letzten Satz der letzte.
+pub fn sentence_index_at(spans: &[(usize, usize)], offset: usize) -> usize {
+    if spans.is_empty() {
+        return 0;
+    }
+    for (i, &(start, end)) in spans.iter().enumerate() {
+        if offset < end || offset <= start {
+            return i;
+        }
+    }
+    spans.len() - 1
+}
+
 /// Ein Stueck Vorlesetext: entweder zu sprechen oder Stille (Millisekunden).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SpeechPart {
@@ -574,6 +661,33 @@ fn flush_speak(buffer: &mut String, parts: &mut Vec<SpeechPart>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saetze_werden_im_rohtext_trotz_marker_und_umbruechen_verortet() {
+        let raw = "<Erzähler> Es war einmal ein Haus.\n<Mara> [calm] Wer wohnt darin?  Niemand weiß es.";
+        let speakers = vec![
+            KnownSpeaker { id: "erz".into(), names: vec!["Erzähler".into()] },
+            KnownSpeaker { id: "mara".into(), names: vec!["Mara".into()] },
+        ];
+        let sentences: Vec<String> = split_speaker_segments(raw, &speakers)
+            .into_iter()
+            .flat_map(|seg| split_sentences(&seg.text))
+            .collect();
+        assert_eq!(sentences.len(), 3, "{sentences:?}");
+        let spans = locate_sentences(raw, &sentences);
+        let chars: Vec<char> = raw.chars().collect();
+        let text_at = |(a, b): (usize, usize)| chars[a..b].iter().collect::<String>();
+        assert_eq!(text_at(spans[0]), "Es war einmal ein Haus.");
+        assert_eq!(text_at(spans[1]), "[calm] Wer wohnt darin?");
+        assert_eq!(text_at(spans[2]), "Niemand weiß es.");
+        // Offset mitten im zweiten Satz -> Index 1; davor -> 0; danach -> 2.
+        assert_eq!(sentence_index_at(&spans, spans[1].0 + 3), 1);
+        assert_eq!(sentence_index_at(&spans, 0), 0);
+        assert_eq!(sentence_index_at(&spans, chars.len() + 10), 2);
+        // Offset im Marker vor dem zweiten Satz gehoert zum zweiten Satz.
+        let marker = raw.chars().position(|c| c == '\n').unwrap() + 2;
+        assert_eq!(sentence_index_at(&spans, marker), 1);
+    }
 
     #[test]
     fn base_url_is_always_loopback() {

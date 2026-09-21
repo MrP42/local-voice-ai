@@ -541,6 +541,21 @@
       "redo": "Redo",
       "undoHint": "Take back the last change to the text (Ctrl+Z)",
       "redoHint": "Restore an undone change (Ctrl+Y)"
+    },
+    "speakFrom": {
+      "fromHere": "Read from here",
+      "onlyThis": "Read only this sentence"
+    },
+    "prewarm": {
+      "run": "Pre-generate changes",
+      "running": "Generating sentences…",
+      "hint": "Generate all changed or new sentences now and keep them in the sentence cache – without playback, even while reading. Afterwards the text plays with the server stopped.",
+      "progress": "Sentence {{done}} of {{total}}",
+      "starting": "Starting…",
+      "cancel": "Cancel",
+      "done_one": "{{count}} sentence generated",
+      "done_other": "{{count}} sentences generated",
+      "nothing": "All sentences are already there."
     }
   },
   "onboarding": {

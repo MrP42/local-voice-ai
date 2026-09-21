@@ -541,6 +541,21 @@
       "redo": "Wiederherstellen",
       "undoHint": "Letzte Änderung am Text zurücknehmen (Strg+Z)",
       "redoHint": "Zurückgenommene Änderung wiederherstellen (Strg+Y)"
+    },
+    "speakFrom": {
+      "fromHere": "Ab hier vorlesen",
+      "onlyThis": "Nur diesen Satz vorlesen"
+    },
+    "prewarm": {
+      "run": "Änderungen vorab erzeugen",
+      "running": "Erzeuge Sätze…",
+      "hint": "Alle geänderten oder neuen Sätze jetzt erzeugen und im Satz-Cache ablegen – ohne Wiedergabe, auch während des Vorlesens. Danach spielt der Text auch bei beendetem Server.",
+      "progress": "Satz {{done}} von {{total}}",
+      "starting": "Starte…",
+      "cancel": "Abbrechen",
+      "done_one": "{{count}} Satz erzeugt",
+      "done_other": "{{count}} Sätze erzeugt",
+      "nothing": "Alle Sätze liegen bereits vor."
     }
   },
   "onboarding": {
