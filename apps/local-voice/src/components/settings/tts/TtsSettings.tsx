@@ -12,6 +12,8 @@ import { useTextHistory } from "../../../hooks/useTextHistory";
 import { defaultAutoTagOptions } from "./tags/AutoTagDialog";
 import { canonicalizeTags, canonicalizeTagsAt } from "@/lib/tags/registry";
 import { useTagLanguage } from "./tags/tagLanguage";
+import { ScriptWorkshopDialog } from "./books/ScriptWorkshopDialog";
+import { BookOpen } from "lucide-react";
 import { Redo2, Undo2 } from "lucide-react";
 import { exportFileName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
@@ -217,6 +219,7 @@ export const TtsSettings = () => {
   /** Plus-Menue fuer Quellen (Dokument, Webseite, Projektdatei). */
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
+  const [workshopOpen, setWorkshopOpen] = useState(false);
   /** Welcher Reiter offen ist. Das Original bleibt immer erhalten. */
   const [tab, setTab] = useState<"original" | "translation" | "summary">(
     "original",
@@ -395,6 +398,22 @@ export const TtsSettings = () => {
   useEffect(() => {
     void reloadPages();
   }, [reloadPages]);
+
+  /** Neue Seite mit Text anlegen und aktiv machen (Skript-Werkstatt). */
+  const createPageWithText = useCallback(
+    async (title: string, text: string): Promise<string | null> => {
+      const created = await commands.pagesCreate(title);
+      if (created.status !== "ok") return null;
+      await commands.pageStateSave(
+        created.data.id,
+        JSON.stringify({ text, summary: "", sourceUrl: "", tab: "original" }),
+      );
+      await reloadPages();
+      setActivePage(created.data.id);
+      return created.data.id;
+    },
+    [reloadPages, setActivePage],
+  );
 
   // Arbeitsstand der aktiven Seite laden. Die erste Seite uebernimmt
   // einmalig, was frueher app-weit im localStorage lag — sonst waere der
@@ -1816,6 +1835,18 @@ export const TtsSettings = () => {
             <div className="flex flex-col gap-2 items-stretch border-t border-mid-gray/20 pt-3">
               {tab === "original" && (
                 <>
+                  {/* Skript-Werkstatt: Buecher, Figuren mit festen Stimmen,
+                      Gedaechtnis und KI-gestuetzte Skripterzeugung. */}
+                  <Button
+                    variant="secondary"
+                    onClick={() => setWorkshopOpen(true)}
+                    className="w-full justify-start"
+                    title={t("tts.workshop.hint")}
+                    data-testid="workshop-open"
+                  >
+                    <BookOpen width={16} height={16} />
+                    {t("tts.workshop.open")}
+                  </Button>
                   <div className="relative">
                     <Button
                       variant="secondary"
@@ -2219,6 +2250,14 @@ export const TtsSettings = () => {
             </p>
           </Dialog>
 
+          <ScriptWorkshopDialog
+            open={workshopOpen}
+            onOpenChange={setWorkshopOpen}
+            pages={pages}
+            activePageId={activePage}
+            onCreatePage={createPageWithText}
+            onPagesChanged={() => void reloadPages()}
+          />
           <Dialog
             open={urlDialogOpen}
             onOpenChange={setUrlDialogOpen}
