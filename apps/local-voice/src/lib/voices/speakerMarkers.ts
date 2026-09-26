@@ -76,18 +76,48 @@ export function scanMarkerCandidates(text: string): MarkerCandidate[] {
   return out;
 }
 
-/** Namensabgleich gegen voice_id UND Anzeigename, Unicode-kleingeschrieben
- *  (`toLowerCase`, nicht ASCII-only) — „MÜLLER" trifft „müller". */
+/** Vergleichsform eines Sprechernamens: klein, Umlaute ausgeschrieben,
+ *  Bindestriche/Unterstriche als Leerzeichen. So treffen `<Erzaehler>`,
+ *  `<Erzähler>` und die Id `erzaehler` dieselbe Stimme -- auch nachdem der
+ *  Anzeigename um Umlaute ergaenzt wurde. Gleiche Regel wie im Backend
+ *  (`protocol::fold_speaker_name`). */
+export const foldSpeakerName = (name: string): string =>
+  name
+    .trim()
+    .toLowerCase()
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
+    .replace(/ß/g, "ss")
+    .replace(/[-_\s]+/g, " ");
+
+/** Namensabgleich gegen voice_id UND Anzeigename, umlaut- und
+ *  gross-/kleinschreibungstolerant (siehe `foldSpeakerName`). */
 export function resolveSpeaker(
   name: string,
   speakers: SpeakerRef[],
 ): SpeakerRef | undefined {
-  const needle = name.trim().toLowerCase();
+  const needle = foldSpeakerName(name);
   if (!needle) return undefined;
   return speakers.find(
     (s) =>
-      s.id.toLowerCase() === needle || s.displayName.toLowerCase() === needle,
+      foldSpeakerName(s.id) === needle ||
+      foldSpeakerName(s.displayName) === needle,
   );
+}
+
+/** Vorschlag mit Umlauten fuer einen ASCII-Namen ("Erzaehlerin" ->
+ *  "Erzählerin"); `null`, wenn es nichts zu ergaenzen gibt. Nur ein
+ *  Vorschlag -- "Michael" bleibt dem Nutzer ueberlassen. */
+export function umlautSuggestion(name: string): string | null {
+  const next = name
+    .replace(/([^aeiouAEIOU])ae/g, "$1ä")
+    .replace(/([^aeiouAEIOU])oe/g, "$1ö")
+    .replace(/([^aeiouAEIOUq])ue/g, "$1ü")
+    .replace(/^Ae/, "Ä")
+    .replace(/^Oe/, "Ö")
+    .replace(/^Ue/, "Ü");
+  return next !== name ? next : null;
 }
 
 /** Ein Fund im Text — Offsets plus das, was der Marker bedeutet. */

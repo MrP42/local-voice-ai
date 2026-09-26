@@ -515,7 +515,7 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
   // ... das Original bleibt bei der Standardstimme: Umschalten schaltet die Engine zurueck.
   await page.getByRole("button", { name: "Original", exact: true }).click();
   await page.getByTestId("voice-select").click();
-  await page.getByText("Standardstimme (Seed)").click();
+  await page.getByText("Skript mit Sprechern").click();
   await expect
     .poll(() =>
       page.evaluate(

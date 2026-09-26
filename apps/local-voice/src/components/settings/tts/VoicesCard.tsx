@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { commands, type VoiceInfo } from "@/bindings";
+import { umlautSuggestion } from "@/lib/voices/speakerMarkers";
 import { Archive, Download, Pencil, Trash2, Upload, Wand2 } from "lucide-react";
 import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -294,6 +295,35 @@ export const VoicesCard = () => {
                 <VoicePreviewButton voiceId={id} />
                 <span className="text-sm font-medium flex-1 min-w-0 truncate">
                   {meta.display_name || id}
+                  {(() => {
+                    // Aelter angelegte Stimmen heissen "Erzaehler" -- ein
+                    // Klick setzt den Anzeigenamen mit Umlauten. Marker im
+                    // Text wie <Erzaehler> treffen die Stimme weiterhin.
+                    const suggestion = umlautSuggestion(
+                      meta.display_name || id,
+                    );
+                    if (!suggestion) return null;
+                    return (
+                      <button
+                        type="button"
+                        data-testid="voice-umlaut-suggestion"
+                        className="ml-2 rounded px-1.5 text-xs font-normal text-logo-primary hover:underline"
+                        title={t("tts.voices.umlautSuggestion", {
+                          name: suggestion,
+                        })}
+                        onClick={() =>
+                          void commands
+                            .ttsSetVoiceMeta(id, {
+                              ...meta,
+                              display_name: suggestion,
+                            })
+                            .then(() => refreshVoices())
+                        }
+                      >
+                        → {suggestion}
+                      </button>
+                    );
+                  })()}
                 </span>
                 {activeVoice === id ? (
                   <Badge variant="success">{t("tts.voices.active")}</Badge>

@@ -118,10 +118,41 @@ export function useTextHistory(
     setValue(next);
   }, [key, setValue]);
 
+  /** `n` Schritte zurueck (n > 0) oder vor (n < 0) -- ein einziges
+   *  setValue, damit der Editor nicht n-mal neu rendert. */
+  const jump = useCallback(
+    (n: number) => {
+      const e = entryFor(key);
+      let current = e.present;
+      if (n > 0) {
+        for (let i = 0; i < n && e.past.length > 0; i++) {
+          e.future.push(current);
+          current = e.past.pop() as string;
+        }
+      } else {
+        for (let i = 0; i < -n && e.future.length > 0; i++) {
+          e.past.push(current);
+          current = e.future.pop() as string;
+        }
+      }
+      if (current === e.present) return;
+      e.lastAt = 0;
+      skipNext.current = true;
+      setValue(current);
+    },
+    [key, setValue],
+  );
+
   const e = entries.current.get(key);
   return {
     undo,
     redo,
+    jump,
+    /** Zustaende vor dem jetzigen, neuester zuerst. */
+    past: [...(e?.past ?? [])].reverse(),
+    /** Zurueckgenommene Zustaende, naechster zuerst. */
+    future: [...(e?.future ?? [])].reverse(),
+    present: e?.present ?? value,
     canUndo: (e?.past.length ?? 0) > 0,
     canRedo: (e?.future.length ?? 0) > 0,
   };

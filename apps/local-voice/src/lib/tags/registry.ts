@@ -346,7 +346,14 @@ export const TAG_REGISTRY: TagDef[] = [
       en: "Light, buoyant happiness.",
       de: "Leichte, beschwingte Freude.",
     },
-    aliases: ["freudig", "froehlich"],
+    aliases: [
+      "freudig",
+      "froehlich",
+      "fröhlich",
+      "happy",
+      "glücklich",
+      "gluecklich",
+    ],
     s1: "joyful",
   },
 
@@ -894,7 +901,7 @@ export const TAG_REGISTRY: TagDef[] = [
       en: "An audible in-breath.",
       de: "Ein hörbares Einatmen.",
     },
-    aliases: ["einatmen"],
+    aliases: ["einatmen", "breath", "breathing", "atmen"],
     s1: null,
   },
   {
@@ -1341,10 +1348,14 @@ export function tagInsertFor(tag: TagDef, lang: string): string {
   return lang === "de" ? tag.label.de.toLowerCase() : tag.insert;
 }
 
-/** Drei Klassen, die die Oberflaeche einheitlich zeigt:
- *  - documented: offizielle Fish-Audio-Liste oder App-Pause -- wirkt.
- *  - extended: in der Registry, aber nicht dokumentiert -- wirkt meist.
- *  - unknown: kein bekanntes Tag -- wird womoeglich vorgelesen. */
+/** Drei Klassen fuer die Anzeige (Fish Audio S2, Doku 26.09.2026: "15,000+
+ *  unique tags supported: not limited to fixed presets; S2 supports
+ *  free-form text descriptions"):
+ *  - documented: Beispiel-Tag der offiziellen Doku oder App-Pause.
+ *  - extended: aus der Registry der App (mit Beschriftung, Suche, Deutsch).
+ *  - unknown: freie Beschreibung, nicht in der Registry -- fuer Fish
+ *    trotzdem gueltig, nur ohne Beschriftung. Fehler ist ein Tag nur fuer
+ *    Piper, das ausser Pausen keine Tags umsetzt. */
 export type TagClass = "documented" | "extended" | "unknown";
 export function tagClass(tag: TagDef | undefined): TagClass {
   if (!tag) return "unknown";

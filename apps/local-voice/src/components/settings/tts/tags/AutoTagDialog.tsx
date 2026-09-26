@@ -16,7 +16,10 @@ import {
 
 /** Voreinstellung: dokumentierte Tags, ausgewogen, kein Stil-Hinweis. */
 export const defaultAutoTagOptions = (): AutoTagOptions => ({
-  preferred_tags: TAG_REGISTRY.filter((t) => t.verified).map((t) => t.insert),
+  // Pausen setzt man selbst; das Modell soll Vortrag taggen, nicht Takt.
+  preferred_tags: TAG_REGISTRY.filter(
+    (t) => t.verified && t.category !== "pauses",
+  ).map((t) => t.insert),
   coverage: "balanced",
   style_hint: "",
   max_per_sentence: 2,
@@ -238,9 +241,9 @@ export const AutoTagDialog: React.FC<AutoTagDialogProps> = ({
               onClick={() =>
                 setDraft({
                   ...draft,
-                  preferred_tags: TAG_REGISTRY.filter((x) => x.verified).map(
-                    (x) => x.insert,
-                  ),
+                  preferred_tags: TAG_REGISTRY.filter(
+                    (x) => x.verified && x.category !== "pauses",
+                  ).map((x) => x.insert),
                 })
               }
             >

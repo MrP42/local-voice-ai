@@ -83,6 +83,11 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "get_app_settings" || cmd === "get_default_settings")
             return {
               ...settings,
+              // Engine je Test: Piper setzt keine Tags um (dort sind Tags
+              // Befunde), Fish nimmt jede Beschreibung.
+              tts_engine:
+                (window as unknown as { __lvEngine?: string }).__lvEngine ??
+                settings.tts_engine,
               // Ein Test schaltet die Automatik ab (siehe unten).
               tts_script_check: !(
                 window as unknown as { __lvScriptCheckOff?: boolean }
@@ -97,6 +102,7 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "tts_server_status")
             return { phase: "stopped", message: null };
           if (cmd === "tts_list_voice_infos") return voices;
+          if (cmd === "tts_list_voices") return voices.map((v) => v.id);
           // Nur die eine Stimme hat eine Hoerprobe auf der Platte. Die andere
           // liefert null — genau wie das Backend, wenn noch nichts erzeugt
           // wurde.
@@ -321,7 +327,16 @@ test.beforeEach(async ({ page }) => {
 const SCRIPT =
   "<Erzählerin> Es war einmal.\n<Bob> Wer bin ich?\n[mysterious] Ein Tag, das Fish nicht kennt.\n<Bob:leise> Und nochmal Bob.";
 
-async function openEditorWithScript(page: import("@playwright/test").Page) {
+const usePiper = (page: import("@playwright/test").Page) =>
+  page.addInitScript(() => {
+    (window as unknown as { __lvEngine: string }).__lvEngine = "piper";
+  });
+
+async function openEditorWithScript(
+  page: import("@playwright/test").Page,
+  engine: "fish" | "piper" = "piper",
+) {
+  if (engine === "piper") await usePiper(page);
   await page.goto("/");
   await page
     .getByRole("navigation")
@@ -407,7 +422,7 @@ test("replace all swaps every spot of the group and keeps the style", async ({
 });
 
 test("a recommendation fixes all spots with one click", async ({ page }) => {
-  const editor = await openEditorWithScript(page);
+  const editor = await openEditorWithScript(page, "fish");
   // "Erzahlerin" (Tippfehler, ohne Umlaut) -> Empfehlung "Erzählerin".
   await editor.fill(
     "<Erzahlerin> Hallo.\n<Erzahlerin:leise> Psst.\n[relaxd] Ruhig.",
@@ -421,12 +436,8 @@ test("a recommendation fixes all spots with one click", async ({ page }) => {
   await expect(editor).toHaveValue(
     "<Erzählerin> Hallo.\n<Erzählerin:leise> Psst.\n[relaxd] Ruhig.",
   );
-  // "relaxd" ist ein Tippfehler von "relaxed": das wird empfohlen -- in
-  // der Tag-Sprache der Oberflaeche (deutsch), nicht die ganze Liste.
-  await expect(card).toContainText("Tag „relaxd“ (1 Stelle)");
-  await expect(
-    card.getByTestId("script-finding-recommendation").first(),
-  ).toContainText("[entspannt]");
+  // Unter Fish ist auch ein freies Tag wie [relaxd] gueltig: nichts offen.
+  await expect(page.getByTestId("script-check-clean")).toBeVisible();
 });
 
 test("the check button runs even when the automatic check is off", async ({
@@ -436,6 +447,7 @@ test("the check button runs even when the automatic check is off", async ({
     (window as unknown as { __lvScriptCheckOff: boolean }).__lvScriptCheckOff =
       true;
   });
+  await usePiper(page);
   await page.goto("/");
   await page
     .getByRole("navigation")
@@ -457,6 +469,7 @@ test("the check button runs even when the automatic check is off", async ({
 test("with automatic check on, the text is underlined before any click", async ({
   page,
 }) => {
+  await usePiper(page);
   await page.goto("/");
   await page
     .getByRole("navigation")
@@ -604,7 +617,7 @@ test("the context menu reads from here or only this sentence", async ({
     .toBe(2);
 });
 
-test("aliases and German tags count as known and are canonicalized", async ({
+test("under Fish every bracket tag is valid and known ones are canonicalized", async ({
   page,
 }) => {
   await page.goto("/");
@@ -614,18 +627,15 @@ test("aliases and German tags count as known and are canonicalized", async ({
     .click();
   const editor = page.locator("textarea").first();
   // [calm] (Alias), [entspannt] (deutsch), [Relaxed] (Beschriftung) sind
-  // alle bekannt -- kein Befund; [zzz] nicht.
+  // bekannt, [flüsternd und müde] ist eine freie Beschreibung -- Fish S2
+  // setzt alle um. Kein Befund, keine Unterstreichung.
   await editor.fill(
-    "[calm] Eins. [entspannt] Zwei. [Relaxed] Drei. [zzz] Vier.",
+    "[calm] Eins. [entspannt] Zwei. [Relaxed] Drei. [flüsternd und müde] Vier.",
   );
-  await expect(page.locator("[data-finding]")).toHaveCount(1);
-  await expect(page.getByTestId("script-check-badge")).toHaveText("1");
-  await page.getByTestId("script-check-run").click();
-  await page
-    .getByTestId("script-finding")
-    .getByRole("button", { name: "Nur diese entfernen" })
-    .click();
-  // Vorlesen schickt die englische Form an die Engine.
+  await page.waitForTimeout(300);
+  await expect(page.locator("[data-finding]")).toHaveCount(0);
+  await expect(page.getByTestId("script-check-badge")).toHaveCount(0);
+  // Vorlesen schickt bekannte Tags in englischer Form, freie unveraendert.
   await page
     .getByRole("button", { name: "Vorlesen", exact: true })
     .last()
@@ -636,11 +646,15 @@ test("aliases and German tags count as known and are canonicalized", async ({
         () => (window as unknown as { spokenTexts?: string[] }).spokenTexts,
       ),
     )
-    .toEqual(["[relaxed] Eins. [relaxed] Zwei. [relaxed] Drei.  Vier."]);
-  // Die Palette (unter "Ausdruck & Sprechstil") listet alle Tags mit Legende.
+    .toEqual([
+      "[relaxed] Eins. [relaxed] Zwei. [relaxed] Drei. [flüsternd und müde] Vier.",
+    ]);
+  // Die Palette listet alle Tags mit Legende.
   await page.getByText("Ausdruck & Sprechstil").click();
   await page.getByRole("tab", { name: "Alle" }).click();
-  await expect(page.getByTestId("tag-legend")).toContainText("dokumentiert");
+  await expect(page.getByTestId("tag-legend")).toContainText(
+    "jede Beschreibung",
+  );
 });
 
 test("exporting a page asks for the voice rights before it packs voices", async ({
@@ -691,4 +705,86 @@ test("the script workshop generates a part and creates a page from it", async ({
   await expect(dialog).toContainText("Der Drache fiel ins Wasser.");
   await page.getByTestId("workshop-apply").click();
   await expect(dialog).toHaveCount(0);
+});
+
+test("a speaker spelled without umlaut is the same voice and gets a spelling hint", async ({
+  page,
+}) => {
+  const editor = await openEditorWithScript(page, "fish");
+  await editor.fill(
+    "<Erzaehlerin> Eins." + "\n" + "<Erzaehlerin> Zwei." + "\n" + "<Bob> Drei.",
+  );
+  await page.getByTestId("script-check-run").click();
+  // <Erzaehlerin> trifft die Stimme "Erzählerin": kein Fehler (nur Bob ist
+  // rot), aber ein Vorschlag, den Anzeigenamen einzusetzen.
+  await page.waitForTimeout(300);
+  await expect(page.locator("[data-finding]")).toHaveCount(1);
+  const panel = page.getByTestId("script-check");
+  await expect(panel).toContainText("2 Gruppen");
+  // Gruppen stehen in Textreihenfolge: zuerst die Schreibweise (Zeile 1).
+  const card = page.getByTestId("script-finding");
+  await expect(card).toContainText("anders geschrieben als der Anzeigename");
+  await card.getByTestId("script-finding-recommendation").first().click();
+  await expect(editor).toHaveValue(
+    "<Erzählerin> Eins." + "\n" + "<Erzählerin> Zwei." + "\n" + "<Bob> Drei.",
+  );
+});
+
+test("fixing the first spot by hand keeps the other findings", async ({
+  page,
+}) => {
+  const editor = await openEditorWithScript(page, "fish");
+  await editor.fill(
+    "<Bob> Eins." + "\n" + "<Bob> Zwei." + "\n" + "<Bob> Drei.",
+  );
+  await page.getByTestId("script-check-run").click();
+  await expect(page.getByTestId("script-finding")).toContainText("(3 Stellen)");
+  // Erste Stelle von Hand auf eine bekannte Stimme aendern.
+  await editor.fill(
+    "<Leo Lausemaus> Eins." + "\n" + "<Bob> Zwei." + "\n" + "<Bob> Drei.",
+  );
+  await expect(page.getByTestId("script-finding")).toContainText("(2 Stellen)");
+  await expect(page.locator("[data-finding]")).toHaveCount(2);
+  await expect(page.getByTestId("script-check-badge")).toHaveText("2");
+});
+
+test("the history list jumps several steps at once", async ({ page }) => {
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  const editor = page.locator("textarea").first();
+  await editor.fill("Eins.");
+  await editor.fill("Eins. Zwei.");
+  await editor.fill("Eins. Zwei. Drei.");
+  await page.getByTestId("history-undo").click({ button: "right" });
+  const list = page.getByTestId("history-list");
+  await expect(list.getByRole("menuitem")).toHaveCount(3);
+  // Zweiter Eintrag = zwei Schritte zurueck.
+  await list.getByRole("menuitem").nth(1).click();
+  await expect(editor).toHaveValue("Eins.");
+  await page.getByTestId("history-redo").click({ button: "right" });
+  await page.getByTestId("history-list").getByRole("menuitem").nth(1).click();
+  await expect(editor).toHaveValue("Eins. Zwei. Drei.");
+});
+
+test("the voice menu offers script-with-speakers and display names", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await expect(page.getByTestId("voice-select")).toContainText(
+    "Skript mit Sprechern",
+  );
+  await expect(page.getByTestId("voice-mode-hint")).toContainText(
+    "Die Sprecher im Skript lesen ihre Zeilen",
+  );
+  await page.getByTestId("voice-select").click();
+  await expect(
+    page.getByText("Erzählerin", { exact: true }).first(),
+  ).toBeVisible();
 });

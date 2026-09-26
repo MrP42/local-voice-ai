@@ -1803,8 +1803,16 @@ impl TtsManager {
         // Eine Engine ohne Stimmwechsel (Piper) darf keinen Marker sprechen,
         // auch keinen unbekannten: alle `<…>`-Kandidaten fallen weg, der
         // Text laeuft in der einen eingestellten Stimme.
+        //
+        // Dasselbe, wenn im Stimmen-Dropdown eine BESTIMMTE Stimme gewaehlt
+        // ist (tts_voice gesetzt): dann liest diese Stimme alles, die
+        // Sprecher im Skript gelten nur bei "Skript mit Sprechern"
+        // (tts_voice = None). Vorher schalteten die Marker trotzdem um, und
+        // ein fertig erzeugtes Hoerspiel liess sich nicht mehr in einer
+        // anderen Stimme hoeren (26.09.2026).
+        let single_voice = self.core.voice.lock().unwrap().is_some();
         let stripped;
-        let text = if self.core.engine_caps().voice_switching {
+        let text = if speaker_markers_apply(self.core.engine_caps().voice_switching, single_voice) {
             text
         } else {
             stripped = protocol::strip_speaker_markers(text);
@@ -4253,6 +4261,13 @@ impl TtsManager {
 /// Ausgabe ist seit Jahrzehnten stabil, und der Alternativweg (IP Helper API)
 /// waere fuer eine einzige Abfrage viel unsafe-Code.
 /// PID des Prozesses, der auf `port` lauscht.
+/// Ob die Sprechermarker im Skript die Stimme schalten: nur mit einer
+/// Engine, die Stimmen wechseln kann, UND bei "Skript mit Sprechern"
+/// (keine feste Stimme gewaehlt). Sonst liest die gewaehlte Stimme alles.
+fn speaker_markers_apply(voice_switching: bool, single_voice: bool) -> bool {
+    voice_switching && !single_voice
+}
+
 fn listening_pid(port: u16) -> Option<u32> {
     let output = std::process::Command::new("netstat")
         .args(["-ano", "-p", "TCP"])
@@ -4345,6 +4360,17 @@ mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eine_gewaehlte_stimme_liest_alles_das_skript_nur_ohne_wahl() {
+        // Fish, "Skript mit Sprechern": Marker schalten.
+        assert!(speaker_markers_apply(true, false));
+        // Fish mit fester Stimme: alles in dieser Stimme.
+        assert!(!speaker_markers_apply(true, true));
+        // Piper kann nie schalten.
+        assert!(!speaker_markers_apply(false, false));
+        assert!(!speaker_markers_apply(false, true));
+    }
     use std::sync::atomic::AtomicUsize;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
