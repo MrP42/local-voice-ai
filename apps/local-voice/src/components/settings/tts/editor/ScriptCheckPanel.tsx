@@ -8,11 +8,12 @@ import {
   X,
 } from "lucide-react";
 import { Select, type SelectOption } from "@/components/ui/Select";
-import { localizedLabel } from "@/lib/tags/registry";
+import { TAG_REGISTRY, localizedLabel } from "@/lib/tags/registry";
 import { tagTextFor, useTagLanguage } from "../tags/tagLanguage";
 import type { TagDef } from "@/lib/tags/types";
 import {
   groupFindings,
+  isHintFinding,
   knownTagsFor,
   suggestSpeakers,
   suggestTags,
@@ -71,7 +72,8 @@ const GroupCard: React.FC<{
   const { t } = useTranslation();
   const [choice, setChoice] = useState("");
   const [pos, setPos] = useState(0);
-  const isSpeaker = group.kind !== "unknown-tag";
+  const isSpeaker =
+    group.kind === "unknown-speaker" || group.kind === "speaker-name";
   const count = group.findings.length;
   const current = group.findings[Math.min(pos, count - 1)];
 
@@ -101,17 +103,29 @@ const GroupCard: React.FC<{
       const speaker = speakers.find((s) => s.id === choice);
       return speaker ? speakerReplacement(speaker) : null;
     }
-    const tag = tags.find((d) => d.id === choice);
+    const tag = TAG_REGISTRY.find((d) => d.id === choice);
     return tag ? tagReplacement(tag) : null;
   };
 
   const message =
-    group.kind === "speaker-name"
-      ? t("tts.scriptCheck.speakerName", { name: group.name })
-      : isSpeaker
-        ? t("tts.scriptCheck.unknownSpeaker", { name: group.name })
-        : t("tts.scriptCheck.unknownTag", { tag: group.name });
+    group.kind === "free-tag"
+      ? t("tts.scriptCheck.freeTag", { tag: group.name })
+      : group.kind === "speaker-name"
+        ? t("tts.scriptCheck.speakerName", { name: group.name })
+        : isSpeaker
+          ? t("tts.scriptCheck.unknownSpeaker", { name: group.name })
+          : t("tts.scriptCheck.unknownTag", { tag: group.name });
 
+  // "[Seufzend]" allein, wenn Klammertext und Beschriftung gleich sind
+  // (deutsche Tag-Sprache); sonst "Seufzend [sighing]".
+  const tagOptionLabel = (tag: TagDef) => {
+    const text = tagTextFor(tag, tagLang);
+    const label = localizedLabel(tag, uiLang);
+    return text === `[${label}]` ? text : `${label} ${text}`;
+  };
+  const suggestedTagDefs = isSpeaker
+    ? []
+    : suggestTags(group.name, engine, uiLang);
   const recommended: {
     key: string;
     label: string;
@@ -122,9 +136,9 @@ const GroupCard: React.FC<{
         label: speaker.displayName,
         apply: speakerReplacement(speaker),
       }))
-    : suggestTags(group.name, engine, uiLang).map((tag) => ({
+    : suggestedTagDefs.slice(0, 3).map((tag) => ({
         key: tag.id,
-        label: `${tagTextFor(tag, tagLang)} · ${localizedLabel(tag, uiLang)}`,
+        label: tagOptionLabel(tag),
         apply: tagReplacement(tag),
       }));
 
@@ -133,9 +147,16 @@ const GroupCard: React.FC<{
         value: speaker.id,
         label: speaker.displayName,
       }))
-    : tags.map((tag) => ({
+    : [
+        // Empfehlungen oben, dann ALLE Tags (durchsuchbar), alphabetisch.
+        ...suggestedTagDefs,
+        ...TAG_REGISTRY.filter((tag) => !suggestedTagDefs.includes(tag)).sort(
+          (a, b) =>
+            localizedLabel(a, uiLang).localeCompare(localizedLabel(b, uiLang)),
+        ),
+      ].map((tag) => ({
         value: tag.id,
-        label: `${localizedLabel(tag, uiLang)} ${tagTextFor(tag, tagLang)}`,
+        label: tagOptionLabel(tag),
       }));
 
   return (
@@ -312,11 +333,17 @@ export const ScriptCheckPanel: React.FC<ScriptCheckPanelProps> = ({
     );
   }
   const group = groups[Math.min(index, groups.length - 1)];
+  const errors = findings.filter((f) => !isHintFinding(f.kind)).length;
+  const hints = findings.length - errors;
   return (
     <section
       data-testid="script-check"
       aria-label={t("tts.scriptCheck.title")}
-      className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-1.5"
+      className={
+        errors > 0
+          ? "rounded-md border border-red-500/30 bg-red-500/5 px-3 py-1.5"
+          : "rounded-md border border-logo-primary/30 bg-logo-primary/5 px-3 py-1.5"
+      }
     >
       <div className="flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-xs font-medium text-text">
@@ -324,9 +351,17 @@ export const ScriptCheckPanel: React.FC<ScriptCheckPanelProps> = ({
             width={14}
             height={14}
             aria-hidden="true"
-            className="text-red-500"
+            className={errors > 0 ? "text-red-500" : "text-logo-primary"}
           />
-          {t("tts.scriptCheck.count", { count: findings.length })}
+          {errors > 0
+            ? t("tts.scriptCheck.count", { count: errors })
+            : t("tts.scriptCheck.hintCount", { count: hints })}
+          {errors > 0 && hints > 0 && (
+            <span className="text-text/60">
+              {" · "}
+              {t("tts.scriptCheck.hintCount", { count: hints })}
+            </span>
+          )}
           {groups.length > 1 && (
             <span className="text-text/60">
               {" · "}

@@ -484,7 +484,10 @@
       "removeAll_other": "Remove all {{count}}",
       "run": "Check script",
       "runHint": "Check speakers and tags in the text and jump to the first spot – independent of playback.",
-      "speakerName": "“{{name}}” is spelled differently from the voice's display name."
+      "speakerName": "“{{name}}” is spelled differently from the voice's display name.",
+      "freeTag": "“{{tag}}” is a free description – Fish follows it. Pick a known tag if you prefer:",
+      "hintCount_one": "{{count}} hint",
+      "hintCount_other": "{{count}} hints"
     },
     "editor": {
       "tagPopoverAria": "Edit tag",

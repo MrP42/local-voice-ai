@@ -484,7 +484,10 @@
       "removeAll_other": "Alle {{count}} entfernen",
       "run": "Skript prüfen",
       "runHint": "Sprecher und Tags im Text prüfen und zur ersten Stelle springen – unabhängig vom Vorlesen.",
-      "speakerName": "„{{name}}“ ist anders geschrieben als der Anzeigename der Stimme."
+      "speakerName": "„{{name}}“ ist anders geschrieben als der Anzeigename der Stimme.",
+      "freeTag": "„{{tag}}“ ist eine freie Beschreibung – Fish setzt sie um. Bei Bedarf ein bekanntes Tag wählen:",
+      "hintCount_one": "{{count}} Hinweis",
+      "hintCount_other": "{{count}} Hinweise"
     },
     "editor": {
       "tagPopoverAria": "Tag bearbeiten",

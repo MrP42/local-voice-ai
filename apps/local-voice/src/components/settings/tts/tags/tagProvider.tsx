@@ -290,14 +290,16 @@ export function useTagProvider(): ChipProvider {
         // Fish: jedes Tag wirkt (freie Beschreibungen erlaubt). Einheitlich
         // gelb; freie Beschreibungen ohne Registry-Eintrag nur mit Tooltip.
         // Piper: nur Pausen wirken, alles andere wird entfernt -> grau.
-        const piperDrops = engine === "piper" && def?.category !== "pauses";
+        // Die Chips zeigen, was das Skript meint -- unabhaengig davon, ob
+        // gerade eine Piper-Stimme zum Anhoeren gewaehlt ist (Piper laesst
+        // Tags nur beim Vorlesen weg; das steht im Tooltip).
+        void klass;
         return {
-          label: piperDrops
-            ? t("tts.tags.piperIgnores", { tag: inner })
-            : def
-              ? localizedLabel(def, uiLang)
-              : t("tts.tags.freeText", { tag: inner }),
-          color: piperDrops ? "#9ca3af" : undefined,
+          label: def
+            ? engine === "piper" && def.category !== "pauses"
+              ? `${localizedLabel(def, uiLang)} — ${t("tts.tags.piperIgnores", { tag: inner })}`
+              : localizedLabel(def, uiLang)
+            : t("tts.tags.freeText", { tag: inner }),
           state: "ok",
         };
       },
