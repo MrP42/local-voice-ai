@@ -73,7 +73,8 @@ const toChipItem = (tag: TagDef, uiLang: string, tagLang = "en"): ChipItem => ({
   label: localizedLabel(tag, uiLang),
   description: uiLang === "de" ? tag.description?.de : tag.description?.en,
   registryId: tag.id,
-  reliable: tag.verified === true || tag.category === "pauses",
+  // Fish nimmt jedes Tag; die Palette markiert nur die Doku-Beispiele.
+  reliable: true,
 });
 
 const toCustomChipItem = (text: string): ChipItem => ({
@@ -379,9 +380,7 @@ export const TagPalette: React.FC<{
               documented: TAG_REGISTRY.filter(
                 (tag) => tagClass(tag) === "documented",
               ).length,
-              extended: TAG_REGISTRY.filter(
-                (tag) => tagClass(tag) === "extended",
-              ).length,
+              total: TAG_REGISTRY.length,
             })}
           </p>
           <div className="flex flex-wrap gap-1 p-2">

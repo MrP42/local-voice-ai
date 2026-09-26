@@ -8,9 +8,13 @@
  *   Stimme gehoert. Das Backend streicht ihn und faellt auf die
  *   Standardstimme zurueck (`split_speaker_segments` in protocol.rs) --
  *   gemeint war aber offensichtlich jemand anderes.
- * - `unknown-tag`: ein `[…]`-Tag, das die aktive Engine nicht kennt. Fish
- *   Speech kennt genau die Registry; Piper kennt gar keine Stil-Tags, nur
- *   die Pausen, die die App selbst als Stille einsetzt.
+ * - `unknown-tag`: ein `[…]`-Tag, das die aktive Engine nicht umsetzt. Das
+ *   betrifft nur Piper (kennt keine Stil-Tags, nur Pausen). Fish Audio S2
+ *   nimmt laut Doku jede Beschreibung in eckigen Klammern -- dort ist kein
+ *   Tag ein Befund (Korrektur 26.09.2026: 0.20 meldete fast alle Tags).
+ * - `speaker-name`: der Marker trifft eine Stimme, ist aber anders
+ *   geschrieben als ihr Anzeigename (`<Erzaehler>` statt `<Erzähler>`).
+ *   Kein Fehler -- ein Vorschlag, den richtigen Namen einzusetzen.
  *
  * Die Erkennungsregeln (welche Spans ein Marker bzw. ein Tag sind) sind
  * dieselben wie in den Chip-Providern: `scanMarkerCandidates` und
@@ -25,7 +29,8 @@ import {
   type SpeakerRef,
 } from "./speakerMarkers";
 
-export type ScriptFindingKind = "unknown-speaker" | "unknown-tag";
+export type ScriptFindingKind =
+  "unknown-speaker" | "unknown-tag" | "speaker-name";
 
 export interface ScriptFinding {
   kind: ScriptFindingKind;
@@ -88,7 +93,21 @@ export function checkScript(
     const inner = text.slice(candidate.start + 1, candidate.end - 1);
     // Wie im Backend: "a < b und b > c" ist ein Vergleich, kein Marker.
     if (/^\s/.test(inner) || /\s$/.test(inner)) continue;
-    if (resolveSpeaker(candidate.name, speakers)) continue;
+    const known = resolveSpeaker(candidate.name, speakers);
+    if (known) {
+      if (known.displayName && candidate.name.trim() !== known.displayName) {
+        out.push({
+          kind: "speaker-name",
+          start: candidate.start,
+          end: candidate.end,
+          raw: text.slice(candidate.start, candidate.end),
+          name: candidate.name.trim(),
+          style: candidate.style,
+          line: lineAt(lines, candidate.start),
+        });
+      }
+      continue;
+    }
     out.push({
       kind: "unknown-speaker",
       start: candidate.start,
@@ -104,7 +123,8 @@ export function checkScript(
   // Beschriftung de/en, Alias) UND was die Engine versteht (Piper: nur
   // Pausen). `[calm]`, `[ruhig]`, `[Relaxed]` sind alle `relaxed`.
   const allowed = new Set(knownTagsFor(engine).map((tag) => tag.id));
-  for (const span of scanTagMatches(text)) {
+  // Fish nimmt jede Beschreibung -- nur Piper hat Tags, die nicht wirken.
+  for (const span of engine === "fish" ? [] : scanTagMatches(text)) {
     const inner = text.slice(span.start + 1, span.end - 1).trim();
     const tag = resolveTag(inner);
     if (tag && allowed.has(tag.id)) continue;

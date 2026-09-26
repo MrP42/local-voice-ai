@@ -173,7 +173,11 @@
       "previewSentence": "Alle Hörproben sprechen denselben Satz: „Guten Tag. So klingt diese Stimme: ein kurzer Satz, damit Sie Klangfarbe, Tempo und Betonung vergleichen können.“",
       "previewNeedsEngine": "Noch keine Hörprobe — Erzeugen startet einmalig die Sprach-Engine.",
       "piperOption": "{{name}} · Piper",
-      "manage": "Stimmen verwalten …"
+      "manage": "Stimmen verwalten …",
+      "umlautSuggestion": "Anzeigename mit Umlauten: „{{name}}“ übernehmen",
+      "scriptVoices": "Skript mit Sprechern",
+      "scriptVoicesHint": "Die Sprecher im Skript lesen ihre Zeilen; Text ohne Sprecher liest die Standardstimme.",
+      "singleVoiceHint": "Diese Stimme liest den ganzen Text – die Sprecher im Skript werden übergangen."
     },
     "settingsTitle": "Vorlesen-Einstellungen",
     "settings": {
@@ -340,14 +344,15 @@
       "emptyFavorites": "Noch keine Favoriten — Stern auf einem Tag anklicken, um es hier anzuheften.",
       "emptyRecent": "Noch nichts benutzt.",
       "emptySearch": "Keine Tags gefunden.",
-      "freeText": "Unbekanntes Tag „{{tag}}“ — das Modell liest es womöglich vor, statt ihm zu folgen.",
+      "freeText": "Freie Beschreibung „{{tag}}“ — Fish Audio S2 setzt sie um.",
       "undocumented": "{{tag}} — nicht in der offiziellen Tag-Liste von Fish Audio. Das Modell liest es womöglich vor, statt ihm zu folgen.",
       "undocumentedHint": "Nicht in der offiziellen Tag-Liste von Fish Audio — das Modell liest es womöglich vor, statt ihm zu folgen.",
       "favoriteAdd": "„{{tag}}“ zu Favoriten hinzufügen",
       "favoriteRemove": "„{{tag}}“ aus Favoriten entfernen",
       "all": "Alle",
-      "legend": "Gelb: dokumentiert ({{documented}}, offizielle Fish-Audio-Liste oder Pause). Bernstein: erweitert ({{extended}}, bekannt, wirkt meist). Rot: unbekannt – wird womöglich vorgelesen.",
-      "extended": "{{tag}} — erweitertes Tag, nicht in der offiziellen Fish-Audio-Liste; wirkt meist."
+      "legend": "Fish Audio S2 versteht jede Beschreibung in eckigen Klammern. {{documented}} der {{total}} Tags stehen als Beispiel in der offiziellen Doku; eigene Beschreibungen wie [flüsternd und müde] funktionieren ebenfalls.",
+      "extended": "{{tag}} — erweitertes Tag, nicht in der offiziellen Fish-Audio-Liste; wirkt meist.",
+      "piperIgnores": "„{{tag}}“ — Piper setzt keine Tags um und lässt es weg (nur Pausen wirken)."
     },
     "speakers": {
       "menuInsert": "Sprecher einfügen",
@@ -445,7 +450,7 @@
       "count_other": "{{count}} Befunde im Skript",
       "line": "Zeile {{line}}:",
       "unknownSpeaker": "Sprecher „{{name}}“ hat keine Stimme – der Abschnitt wird mit der Standardstimme gelesen.",
-      "unknownTag": "Tag „{{tag}}“ ist nicht dokumentiert – das Modell liest es womöglich vor.",
+      "unknownTag": "Tag „{{tag}}“ setzt Piper nicht um — es wird weggelassen.",
       "reveal": "Zur Stelle springen",
       "replaceWith": "Ersetzen durch…",
       "replaceHere": "Nur diese Stelle",
@@ -478,7 +483,8 @@
       "removeAll_one": "Entfernen",
       "removeAll_other": "Alle {{count}} entfernen",
       "run": "Skript prüfen",
-      "runHint": "Sprecher und Tags im Text prüfen und zur ersten Stelle springen – unabhängig vom Vorlesen."
+      "runHint": "Sprecher und Tags im Text prüfen und zur ersten Stelle springen – unabhängig vom Vorlesen.",
+      "speakerName": "„{{name}}“ ist anders geschrieben als der Anzeigename der Stimme."
     },
     "editor": {
       "tagPopoverAria": "Tag bearbeiten",
@@ -571,8 +577,11 @@
     "history": {
       "undo": "Rückgängig",
       "redo": "Wiederherstellen",
-      "undoHint": "Letzte Änderung am Text zurücknehmen (Strg+Z)",
-      "redoHint": "Zurückgenommene Änderung wiederherstellen (Strg+Y)"
+      "undoHint": "Rückgängig (Strg+Z) — Rechtsklick oder kurz verweilen: mehrere Schritte",
+      "redoHint": "Wiederherstellen (Strg+Y) — Rechtsklick oder kurz verweilen: mehrere Schritte",
+      "listUndo": "Bis hierher rückgängig machen",
+      "listRedo": "Bis hierher wiederherstellen",
+      "noChange": "(Leerzeichen)"
     },
     "speakFrom": {
       "fromHere": "Ab hier vorlesen",

@@ -9,12 +9,12 @@ import {
   type TtsStatus,
 } from "@/bindings";
 import { useTextHistory } from "../../../hooks/useTextHistory";
+import { HistoryButtons } from "./editor/HistoryButtons";
 import { defaultAutoTagOptions } from "./tags/AutoTagDialog";
 import { canonicalizeTags, canonicalizeTagsAt } from "@/lib/tags/registry";
 import { useTagLanguage } from "./tags/tagLanguage";
 import { ScriptWorkshopDialog } from "./books/ScriptWorkshopDialog";
 import { BookOpen } from "lucide-react";
-import { Redo2, Undo2 } from "lucide-react";
 import { exportFileName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
@@ -1030,14 +1030,17 @@ export const TtsSettings = () => {
   const editorFindings = useMemo<ChipEditorFinding[] | undefined>(
     () =>
       scriptCheckOn
-        ? scriptFindings.map((f) => ({
-            start: f.start,
-            end: f.end,
-            message:
-              f.kind === "unknown-speaker"
-                ? t("tts.scriptCheck.unknownSpeaker", { name: f.name })
-                : t("tts.scriptCheck.unknownTag", { tag: f.name }),
-          }))
+        ? scriptFindings
+            // Schreibweisen-Vorschlaege sind kein Fehler: kein Rot im Text.
+            .filter((f) => f.kind !== "speaker-name")
+            .map((f) => ({
+              start: f.start,
+              end: f.end,
+              message:
+                f.kind === "unknown-speaker"
+                  ? t("tts.scriptCheck.unknownSpeaker", { name: f.name })
+                  : t("tts.scriptCheck.unknownTag", { tag: f.name }),
+            }))
         : undefined,
     [scriptCheckOn, scriptFindings, t],
   );
@@ -1342,6 +1345,17 @@ export const TtsSettings = () => {
       fill
       actions={
         <>
+          {/* Rueckgaengig / Wiederherstellen wie in Word: oben, nur Pfeile.
+              Die Reiterzeile ist in der schmalen Editorspalte schon voll. */}
+          <HistoryButtons
+            past={history.past}
+            future={history.future}
+            present={history.present}
+            onUndo={history.undo}
+            onRedo={history.redo}
+            onJump={history.jump}
+          />
+          <span className="mx-1 h-5 w-px bg-mid-gray/30" aria-hidden="true" />
           <button
             type="button"
             onClick={() => {
@@ -1687,9 +1701,14 @@ export const TtsSettings = () => {
                   options={[
                     {
                       value: "@default",
-                      label: t("tts.voices.defaultVoice"),
+                      label: t("tts.voices.scriptVoices"),
                     },
-                    ...voices.map((id) => ({ value: id, label: id })),
+                    // Anzeigename statt technischer Kennung.
+                    ...voices.map((id) => ({
+                      value: id,
+                      label:
+                        speakers.find((sp) => sp.id === id)?.displayName ?? id,
+                    })),
                     ...piperVoices.map((voice) => ({
                       value: `piper:${voice.id}`,
                       label: t("tts.voices.piperOption", {
@@ -1719,6 +1738,17 @@ export const TtsSettings = () => {
                   }}
                   isClearable={false}
                 />
+                {/* Was die Wahl bewirkt: mit Sprechern oder alles in einer
+                    Stimme -- sonst wundert man sich, warum die Marker
+                    nicht mehr umschalten. */}
+                <p
+                  className="mt-1 text-xs text-text/50"
+                  data-testid="voice-mode-hint"
+                >
+                  {voiceValue === "@default"
+                    ? t("tts.voices.scriptVoicesHint")
+                    : t("tts.voices.singleVoiceHint")}
+                </p>
               </div>
               {/* Nur das Symbol: die Zeile ist eine Transportleiste, und ein
                 Wort neben lauter Glyphen zieht das Auge auf die unwichtigste
@@ -1939,32 +1969,6 @@ export const TtsSettings = () => {
                     />
                     {t("tts.tidy")}
                   </Button>
-                  {/* Historie: Rueckgaengig / Wiederherstellen fuer den
-                      aktiven Reiter (auch Strg+Z / Strg+Y im Text). */}
-                  <div className="flex gap-2">
-                    <Button
-                      variant="secondary"
-                      onClick={history.undo}
-                      disabled={!history.canUndo}
-                      className="flex-1 justify-start"
-                      title={t("tts.history.undoHint")}
-                      data-testid="history-undo"
-                    >
-                      <Undo2 width={16} height={16} />
-                      {t("tts.history.undo")}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={history.redo}
-                      disabled={!history.canRedo}
-                      className="flex-1 justify-start"
-                      title={t("tts.history.redoHint")}
-                      data-testid="history-redo"
-                    >
-                      <Redo2 width={16} height={16} />
-                      {t("tts.history.redo")}
-                    </Button>
-                  </div>
                   {/* Skript pruefen: jederzeit, nicht erst beim Vorlesen —
                       auch bei abgeschaltetem Automatik-Schalter. */}
                   <Button

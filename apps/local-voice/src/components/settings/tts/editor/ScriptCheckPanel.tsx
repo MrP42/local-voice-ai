@@ -71,7 +71,7 @@ const GroupCard: React.FC<{
   const { t } = useTranslation();
   const [choice, setChoice] = useState("");
   const [pos, setPos] = useState(0);
-  const isSpeaker = group.kind === "unknown-speaker";
+  const isSpeaker = group.kind !== "unknown-tag";
   const count = group.findings.length;
   const current = group.findings[Math.min(pos, count - 1)];
 
@@ -105,9 +105,12 @@ const GroupCard: React.FC<{
     return tag ? tagReplacement(tag) : null;
   };
 
-  const message = isSpeaker
-    ? t("tts.scriptCheck.unknownSpeaker", { name: group.name })
-    : t("tts.scriptCheck.unknownTag", { tag: group.name });
+  const message =
+    group.kind === "speaker-name"
+      ? t("tts.scriptCheck.speakerName", { name: group.name })
+      : isSpeaker
+        ? t("tts.scriptCheck.unknownSpeaker", { name: group.name })
+        : t("tts.scriptCheck.unknownTag", { tag: group.name });
 
   const recommended: {
     key: string;

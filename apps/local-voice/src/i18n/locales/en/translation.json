@@ -173,7 +173,11 @@
       "previewSentence": "Every preview speaks the same sentence so that voices, not recordings, are compared.",
       "previewNeedsEngine": "No sample yet — creating one starts the speech engine once.",
       "piperOption": "{{name}} · Piper",
-      "manage": "Manage voices …"
+      "manage": "Manage voices …",
+      "umlautSuggestion": "Display name with umlauts: use “{{name}}”",
+      "scriptVoices": "Script with speakers",
+      "scriptVoicesHint": "The speakers in the script read their lines; text without a speaker uses the default voice.",
+      "singleVoiceHint": "This voice reads the whole text – the speakers in the script are skipped."
     },
     "settingsTitle": "Read Aloud settings",
     "settings": {
@@ -340,14 +344,15 @@
       "emptyFavorites": "No favorites yet — click the star on a tag to pin it here.",
       "emptyRecent": "Nothing used yet.",
       "emptySearch": "No tags match your search.",
-      "freeText": "Unknown tag “{{tag}}” — the model may read it aloud instead of following it.",
+      "freeText": "Free description “{{tag}}” — Fish Audio S2 follows it.",
       "undocumented": "{{tag}} — not in Fish Audio's official tag list. The model may read it aloud instead of following it.",
       "undocumentedHint": "Not in Fish Audio's official tag list — the model may read it aloud instead of following it.",
       "favoriteAdd": "Add \"{{tag}}\" to favorites",
       "favoriteRemove": "Remove \"{{tag}}\" from favorites",
       "all": "All",
-      "legend": "Yellow: documented ({{documented}}, official Fish Audio list or pause). Amber: extended ({{extended}}, known, usually works). Red: unknown – may be read aloud.",
-      "extended": "{{tag}} — extended tag, not in the official Fish Audio list; usually works."
+      "legend": "Fish Audio S2 understands any description in square brackets. {{documented}} of the {{total}} tags appear as examples in the official docs; your own descriptions like [whispering and tired] work as well.",
+      "extended": "{{tag}} — extended tag, not in the official Fish Audio list; usually works.",
+      "piperIgnores": "“{{tag}}” — Piper does not support tags and leaves it out (only pauses work)."
     },
     "speakers": {
       "menuInsert": "Insert speaker",
@@ -445,7 +450,7 @@
       "count_other": "{{count}} findings in the script",
       "line": "Line {{line}}:",
       "unknownSpeaker": "Speaker “{{name}}” has no voice – the section will be read with the default voice.",
-      "unknownTag": "Tag “{{tag}}” is not documented – the model may read it aloud.",
+      "unknownTag": "Piper does not support the tag “{{tag}}” — it is left out.",
       "reveal": "Jump to this spot",
       "replaceWith": "Replace with…",
       "replaceHere": "Only this spot",
@@ -478,7 +483,8 @@
       "removeAll_one": "Remove",
       "removeAll_other": "Remove all {{count}}",
       "run": "Check script",
-      "runHint": "Check speakers and tags in the text and jump to the first spot – independent of playback."
+      "runHint": "Check speakers and tags in the text and jump to the first spot – independent of playback.",
+      "speakerName": "“{{name}}” is spelled differently from the voice's display name."
     },
     "editor": {
       "tagPopoverAria": "Edit tag",
@@ -571,8 +577,11 @@
     "history": {
       "undo": "Undo",
       "redo": "Redo",
-      "undoHint": "Take back the last change to the text (Ctrl+Z)",
-      "redoHint": "Restore an undone change (Ctrl+Y)"
+      "undoHint": "Undo (Ctrl+Z) — right-click or hover: several steps",
+      "redoHint": "Redo (Ctrl+Y) — right-click or hover: several steps",
+      "listUndo": "Undo up to here",
+      "listRedo": "Redo up to here",
+      "noChange": "(whitespace)"
     },
     "speakFrom": {
       "fromHere": "Read from here",

@@ -351,10 +351,48 @@ pub fn scan_marker_candidates(text: &str) -> Vec<MarkerCandidate> {
 /// Unicode-Kleinschreibung (`to_lowercase`, NICHT `eq_ignore_ascii_case`),
 /// damit z. B. „MÜLLER" „müller" matcht.
 fn resolve_speaker<'a>(name: &str, speakers: &'a [KnownSpeaker]) -> Option<&'a KnownSpeaker> {
-    let needle = name.to_lowercase();
+    let needle = fold_speaker_name(name);
+    if needle.is_empty() {
+        return None;
+    }
     speakers
         .iter()
-        .find(|speaker| speaker.names.iter().any(|n| n.to_lowercase() == needle))
+        .find(|speaker| speaker.names.iter().any(|n| fold_speaker_name(n) == needle))
+}
+
+/// Vergleichsform eines Sprechernamens: klein, Umlaute ausgeschrieben,
+/// `-`/`_`/Leerraum als ein Leerzeichen. `<Erzaehler>` und `<Erzähler>`
+/// treffen dieselbe Stimme -- auch wenn der Anzeigename spaeter Umlaute
+/// bekommt. Gleiche Regel wie im Editor (`foldSpeakerName`).
+pub fn fold_speaker_name(name: &str) -> String {
+    let lower = name.trim().to_lowercase();
+    let mut out = String::with_capacity(lower.len());
+    let mut last_space = false;
+    for c in lower.chars() {
+        let mapped: &str = match c {
+            'ä' => "ae",
+            'ö' => "oe",
+            'ü' => "ue",
+            'ß' => "ss",
+            '-' | '_' => " ",
+            c if c.is_whitespace() => " ",
+            _ => {
+                out.push(c);
+                last_space = false;
+                continue;
+            }
+        };
+        if mapped == " " {
+            if !last_space {
+                out.push(' ');
+            }
+            last_space = true;
+        } else {
+            out.push_str(mapped);
+            last_space = false;
+        }
+    }
+    out
 }
 
 /// Alt-Format: eine Zeile, die mit einem bekannten Namen und einem
@@ -661,6 +699,21 @@ fn flush_speak(buffer: &mut String, parts: &mut Vec<SpeechPart>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sprecher_mit_und_ohne_umlaut_sind_dieselbe_stimme() {
+        let speakers = vec![KnownSpeaker {
+            id: "die-drei-fragezeichen-erzaehler".into(),
+            names: vec!["die-drei-fragezeichen-erzaehler".into(), "Erzähler".into()],
+        }];
+        for raw in ["<Erzaehler> Hallo.", "<Erzähler> Hallo.", "<ERZÄHLER> Hallo."] {
+            let segs = split_speaker_segments(raw, &speakers);
+            assert_eq!(segs.len(), 1, "{raw}");
+            assert_eq!(segs[0].voice.as_deref(), Some("die-drei-fragezeichen-erzaehler"), "{raw}");
+        }
+        assert_eq!(fold_speaker_name("Erzählerin  1"), "erzaehlerin 1");
+        assert_eq!(fold_speaker_name("leo_lausemaus"), "leo lausemaus");
+    }
 
     #[test]
     fn saetze_werden_im_rohtext_trotz_marker_und_umbruechen_verortet() {

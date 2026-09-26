@@ -275,6 +275,9 @@ const TagChipPopover: React.FC<{ match: ChipMatch; api: ChipPopoverApi }> = ({
 export function useTagProvider(): ChipProvider {
   const { t, i18n } = useTranslation();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
+  const { getSetting } = useSettings();
+  const engine =
+    (getSetting("tts_engine") ?? "fish") === "piper" ? "piper" : "fish";
 
   return useMemo<ChipProvider>(
     () => ({
@@ -283,30 +286,23 @@ export function useTagProvider(): ChipProvider {
       render: (m) => {
         const inner = m.raw.slice(1, -1).trim();
         const def = findTagDef(inner);
-        // Drei Klassen, drei Farben: dokumentiert = gelb (Standard),
-        // erweitert = bernstein, unbekannt = rot. Der Chip-Text ist die
-        // Beschriftung; die Klasse steht als Tooltip dahinter.
         const klass = tagClass(def);
+        // Fish: jedes Tag wirkt (freie Beschreibungen erlaubt). Einheitlich
+        // gelb; freie Beschreibungen ohne Registry-Eintrag nur mit Tooltip.
+        // Piper: nur Pausen wirken, alles andere wird entfernt -> grau.
+        const piperDrops = engine === "piper" && def?.category !== "pauses";
         return {
-          label:
-            klass === "documented"
-              ? localizedLabel(def as TagDef, uiLang)
-              : klass === "extended"
-                ? t("tts.tags.extended", {
-                    tag: localizedLabel(def as TagDef, uiLang),
-                  })
-                : t("tts.tags.freeText", { tag: inner }),
-          color:
-            klass === "documented"
-              ? undefined
-              : klass === "extended"
-                ? "#f59e0b"
-                : "#ef4444",
+          label: piperDrops
+            ? t("tts.tags.piperIgnores", { tag: inner })
+            : def
+              ? localizedLabel(def, uiLang)
+              : t("tts.tags.freeText", { tag: inner }),
+          color: piperDrops ? "#9ca3af" : undefined,
           state: "ok",
         };
       },
       popover: (m, api) => <TagChipPopover match={m} api={api} />,
     }),
-    [t, uiLang],
+    [t, uiLang, engine],
   );
 }
