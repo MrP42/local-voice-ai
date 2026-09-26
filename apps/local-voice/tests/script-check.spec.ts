@@ -356,7 +356,7 @@ test("findings are grouped: one problem with all its spots at a time", async ({
   await openEditorWithScript(page);
   const panel = page.getByTestId("script-check");
   // Drei Stellen, aber nur zwei Probleme: Bob (2x) und mysterious (1x).
-  await expect(panel).toContainText("3 Befunde im Skript");
+  await expect(panel).toContainText("2 Befunde im Skript · 1 Hinweis");
   await expect(panel).toContainText("2 Gruppen");
   await expect(panel.getByTestId("script-check-group-position")).toHaveText(
     "1 von 2",
@@ -370,8 +370,10 @@ test("findings are grouped: one problem with all its spots at a time", async ({
   // Die bekannte Erzaehlerin ist kein Befund; im Text sind alle drei
   // Stellen unterstrichen plus je eine Marke am Rand.
   await expect(panel).not.toContainText("Erzählerin");
-  await expect(page.locator("[data-finding]")).toHaveCount(3);
-  await expect(page.locator("[data-finding-mark]")).toHaveCount(3);
+  // [mysterious] ist eine freie Beschreibung: Hinweis im Panel, aber
+  // keine rote Stelle -- rot sind nur die beiden unbekannten Sprecher.
+  await expect(page.locator("[data-finding]")).toHaveCount(2);
+  await expect(page.locator("[data-finding-mark]")).toHaveCount(2);
   // Naechste Gruppe: das Tag.
   await panel.getByRole("button", { name: "Nächste Gruppe" }).click();
   await expect(card).toContainText("Tag „mysterious“ (1 Stelle)");
@@ -406,9 +408,10 @@ test("replace all swaps every spot of the group and keeps the style", async ({
   await expect(editor).toHaveValue(
     "<Erzählerin> Es war einmal.\n<Leo Lausemaus> Wer bin ich?\n[mysterious] Ein Tag, das Fish nicht kennt.\n<Leo Lausemaus:leise> Und nochmal Bob.",
   );
-  await expect(page.getByTestId("script-check")).toContainText(
-    "1 Befund im Skript",
-  );
+  await expect(page.getByTestId("script-check")).toContainText("1 Hinweis");
+  // Erst wenn die Karte zum Tag gewechselt hat (die Pruefung laeuft 120 ms
+  // hinterher), gehoert "Nur diese entfernen" zum Tag.
+  await expect(card).toContainText("mysterious");
   // Das Tag entfernen (einzige Stelle) — danach ist das Skript sauber.
   await card.getByRole("button", { name: "Nur diese entfernen" }).click();
   await expect(editor).toHaveValue(
@@ -436,7 +439,16 @@ test("a recommendation fixes all spots with one click", async ({ page }) => {
   await expect(editor).toHaveValue(
     "<Erzählerin> Hallo.\n<Erzählerin:leise> Psst.\n[relaxd] Ruhig.",
   );
-  // Unter Fish ist auch ein freies Tag wie [relaxd] gueltig: nichts offen.
+  // [relaxd] ist unter Fish gueltig, bekommt aber einen Hinweis mit dem
+  // passenden bekannten Tag -- in deutscher Schreibweise der Beschriftung.
+  await expect(card).toContainText("„relaxd“");
+  await expect(
+    card.getByTestId("script-finding-recommendation").first(),
+  ).toContainText("[Entspannt]");
+  await card.getByTestId("script-finding-recommendation").first().click();
+  await expect(editor).toHaveValue(
+    "<Erzählerin> Hallo.\n<Erzählerin:leise> Psst.\n[Entspannt] Ruhig.",
+  );
   await expect(page.getByTestId("script-check-clean")).toBeVisible();
 });
 
@@ -460,9 +472,9 @@ test("the check button runs even when the automatic check is off", async ({
   await expect(page.locator("[data-finding]")).toHaveCount(0);
   await page.getByTestId("script-check-run").click();
   await expect(page.getByTestId("script-check")).toContainText(
-    "3 Befunde im Skript",
+    "2 Befunde im Skript · 1 Hinweis",
   );
-  await expect(page.locator("[data-finding]")).toHaveCount(3);
+  await expect(page.locator("[data-finding]")).toHaveCount(2);
   await expect(editor).toBeFocused();
 });
 
@@ -477,15 +489,15 @@ test("with automatic check on, the text is underlined before any click", async (
     .click();
   const editor = page.locator("textarea").first();
   await editor.fill(SCRIPT);
-  await expect(page.locator("[data-finding]")).toHaveCount(3);
-  await expect(page.getByTestId("script-check-badge")).toHaveText("3");
+  await expect(page.locator("[data-finding]")).toHaveCount(2);
+  await expect(page.getByTestId("script-check-badge")).toHaveText("2");
   // Kein Panel, bis man es anfordert; Schliessen nimmt es wieder weg.
   await expect(page.getByTestId("script-check")).toHaveCount(0);
   await page.getByTestId("script-check-run").click();
   await expect(page.getByTestId("script-check")).toBeVisible();
   await page.getByTestId("script-check-close").click();
   await expect(page.getByTestId("script-check")).toHaveCount(0);
-  await expect(page.locator("[data-finding]")).toHaveCount(3);
+  await expect(page.locator("[data-finding]")).toHaveCount(2);
 });
 
 test("reading with findings asks first and then reads anyway", async ({
@@ -787,4 +799,28 @@ test("the voice menu offers script-with-speakers and display names", async ({
   await expect(
     page.getByText("Erzählerin", { exact: true }).first(),
   ).toBeVisible();
+});
+
+test("choosing a Piper voice does not turn tags into errors", async ({
+  page,
+}) => {
+  const editor = await openEditorWithScript(page, "piper");
+  await editor.fill("[Entspannt] Eins. [curious] Zwei. [soft tone] Drei.");
+  await page.waitForTimeout(300);
+  await expect(page.locator("[data-finding]")).toHaveCount(0);
+  await expect(page.getByTestId("script-check-badge")).toHaveCount(0);
+});
+
+test("the replace list offers every tag, searchable, suggestions first", async ({
+  page,
+}) => {
+  const editor = await openEditorWithScript(page, "fish");
+  await editor.fill("[müde] Gute Nacht.");
+  await page.getByTestId("script-check-run").click();
+  const card = page.getByTestId("script-finding");
+  await expect(card).toContainText("„müde“");
+  await card.getByTestId("script-finding-replacement").click();
+  // Durchsuchbar ueber die ganze Liste, nicht nur Pausen.
+  await page.keyboard.type("Flüst");
+  await expect(page.getByText("[Flüstern]", { exact: true })).toBeVisible();
 });

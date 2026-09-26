@@ -20,7 +20,8 @@
  * dieselben wie in den Chip-Providern: `scanMarkerCandidates` und
  * `scanTagMatches` -- was dort kein Fund ist, ist hier kein Befund.
  */
-import { TAG_REGISTRY, resolveTag, searchTags } from "@/lib/tags/registry";
+import { TAG_REGISTRY, resolveTag } from "@/lib/tags/registry";
+import { similarTags } from "@/lib/tags/similarity";
 import type { TagDef } from "@/lib/tags/types";
 import { scanTagMatches } from "@/components/settings/tts/tags/tagProvider";
 import {
@@ -30,7 +31,12 @@ import {
 } from "./speakerMarkers";
 
 export type ScriptFindingKind =
-  "unknown-speaker" | "unknown-tag" | "speaker-name";
+  "unknown-speaker" | "unknown-tag" | "speaker-name" | "free-tag";
+
+/** Hinweise sind keine Fehler: keine rote Unterstreichung, kein Zaehler am
+ *  Knopf, keine Rueckfrage vor dem Vorlesen -- nur ein Vorschlag im Panel. */
+export const isHintFinding = (kind: ScriptFindingKind): boolean =>
+  kind === "speaker-name" || kind === "free-tag";
 
 export interface ScriptFinding {
   kind: ScriptFindingKind;
@@ -122,14 +128,17 @@ export function checkScript(
   // Bekannt ist, was die Registry ueber irgendeinen Namen kennt (Insert,
   // Beschriftung de/en, Alias) UND was die Engine versteht (Piper: nur
   // Pausen). `[calm]`, `[ruhig]`, `[Relaxed]` sind alle `relaxed`.
-  const allowed = new Set(knownTagsFor(engine).map((tag) => tag.id));
-  // Fish nimmt jede Beschreibung -- nur Piper hat Tags, die nicht wirken.
-  for (const span of engine === "fish" ? [] : scanTagMatches(text)) {
+  // Tags: das Skript ist fuer Fish geschrieben, und Fish nimmt jede
+  // Beschreibung. Piper laesst Tags beim Vorlesen einfach weg -- das ist
+  // kein Fehler im Skript, also auch kein Befund (sonst schaltete die Wahl
+  // einer Piper-Stimme alle Tags auf Rot, 26.09.2026). Freie Beschreibungen
+  // ausserhalb der Registry bekommen nur einen Hinweis mit aehnlichen Tags.
+  void engine;
+  for (const span of scanTagMatches(text)) {
     const inner = text.slice(span.start + 1, span.end - 1).trim();
-    const tag = resolveTag(inner);
-    if (tag && allowed.has(tag.id)) continue;
+    if (!inner || resolveTag(inner)) continue;
     out.push({
-      kind: "unknown-tag",
+      kind: "free-tag",
       start: span.start,
       end: span.end,
       raw: text.slice(span.start, span.end),
@@ -272,26 +281,9 @@ export function suggestSpeakers(
  */
 export function suggestTags(
   name: string,
-  engine: ScriptEngine,
+  _engine: ScriptEngine,
   uiLang: string,
-  max = 3,
+  max = 5,
 ): TagDef[] {
-  const known = knownTagsFor(engine);
-  const allowed = new Set(known.map((tag) => tag.id));
-  const q = fold(name);
-  const bySearch = searchTags(name, uiLang).filter((tag) =>
-    allowed.has(tag.id),
-  );
-  const byDistance = known.filter((tag) => {
-    const c = fold(tag.insert);
-    return c && editDistance(c, q) <= Math.max(1, Math.floor(q.length / 4));
-  });
-  const merged: TagDef[] = [];
-  for (const tag of [...bySearch, ...byDistance]) {
-    if (!merged.includes(tag)) merged.push(tag);
-  }
-  merged.sort(
-    (a, b) => Number(b.verified === true) - Number(a.verified === true),
-  );
-  return merged.slice(0, max);
+  return similarTags(name, uiLang, max);
 }
