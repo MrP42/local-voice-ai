@@ -3775,10 +3775,17 @@ impl TtsManager {
         // kein Serverprozess ueberleben, egal wer ihn gestartet hat. Ein
         // verwaister Prozess haelt 17 GB VRAM, die niemand mehr freigibt —
         // die App kann ihn danach nicht einmal mehr finden.
-        let port = *self.core.port.lock().unwrap();
-        if let Some(pid) = listening_pid(port) {
-            if let Err(e) = kill_pid(pid) {
-                log::warn!("Could not stop server on port {port}: {e}");
+        //
+        // Ausnahme: Windows beendet gerade die Sitzung. Dann scheitert der
+        // Start von `netstat` mit 0xc0000142, und Windows zeigt bei jedem
+        // Herunterfahren "NETSTAT.EXE - Anwendungsfehler". Einen fremden
+        // Server beendet Windows in dieser Lage selbst.
+        if !crate::process_guard::session_ending() {
+            let port = *self.core.port.lock().unwrap();
+            if let Some(pid) = listening_pid(port) {
+                if let Err(e) = kill_pid(pid) {
+                    log::warn!("Could not stop server on port {port}: {e}");
+                }
             }
         }
         self.core.owns_server.store(false, Ordering::Release);
@@ -3797,9 +3804,14 @@ impl TtsManager {
         // Baum mit, auch Compile-Kinder, die taskkill /T uebersehen kann.
         drop(self.child_guard.lock().unwrap().take());
         if let Some(mut child) = self.child.lock().unwrap().take() {
+            // Beim Herunterfahren kein taskkill: der Start scheitert dann mit
+            // 0xc0000142 samt Fehlerfenster, und das Job-Objekt hat den Baum
+            // oben schon beendet.
             #[cfg(windows)]
-            if let Err(e) = kill_pid(child.id()) {
-                log::warn!("Could not kill fish-speech process tree: {e}");
+            if !crate::process_guard::session_ending() {
+                if let Err(e) = kill_pid(child.id()) {
+                    log::warn!("Could not kill fish-speech process tree: {e}");
+                }
             }
             if let Err(e) = child.kill() {
                 log::debug!("fish-speech child already gone: {e}");

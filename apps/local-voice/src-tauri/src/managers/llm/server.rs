@@ -280,8 +280,11 @@ impl LocalLlmServer {
     pub fn stop(&self) {
         self.stop_requested.store(true, Ordering::Release);
         if let Some(mut running) = self.running.lock().unwrap().take() {
+            // Beim Herunterfahren von Windows kein taskkill: der Start
+            // scheitert dann mit 0xc0000142 samt Fehlerfenster. Den Baum
+            // beendet das Job-Objekt, sobald `running` hier endet.
             #[cfg(windows)]
-            {
+            if !crate::process_guard::session_ending() {
                 let pid = running.child.id();
                 let _ = std::process::Command::new("taskkill")
                     .args(["/PID", &pid.to_string(), "/T", "/F"])

@@ -86,6 +86,28 @@ pub fn memory_limit_mb(free_mb: u64) -> u64 {
     free_mb.saturating_sub(RAM_RESERVE_MB).max(RAM_MIN_LIMIT_MB)
 }
 
+/// Beendet Windows gerade die Sitzung (Herunterfahren, Neustart, Abmelden)?
+///
+/// Dann startet kein neuer Prozess mehr: jeder scheitert beim Laden seiner
+/// DLLs mit 0xc0000142, und Windows zeigt dafuer ein Fehlerfenster. So kam
+/// "NETSTAT.EXE - Anwendungsfehler" bei jedem Herunterfahren zustande
+/// (beobachtet 18. bis 27.09.2026): `stop_server` startete beim Beenden
+/// immer `netstat`. Die Aufraeumwege starten in dieser Lage deshalb keine
+/// Hilfsprogramme. Die eigenen Kindprozesse beendet das Job-Objekt
+/// (KILL_ON_JOB_CLOSE), alles Uebrige beendet Windows ohnehin.
+pub fn session_ending() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SHUTTINGDOWN};
+        // SAFETY: GetSystemMetrics liest nur einen Systemwert und nimmt keine Zeiger.
+        unsafe { GetSystemMetrics(SM_SHUTTINGDOWN) != 0 }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 /// Haelt das Job-Objekt eines Kindprozesses. Beim Drop wird das Job-Objekt
 /// geschlossen, und mit `KILL_ON_JOB_CLOSE` stirbt der ganze Prozessbaum —
 /// also nur droppen, wenn der Prozess ohnehin beendet werden soll.
@@ -291,6 +313,13 @@ mod tests {
         drop(guard);
         assert!(!stdout.contains("ALLOCATED"), "3 GB unter 1-GB-Deckel duerfen nicht gelingen");
         assert!(!out.status.success());
+    }
+
+    #[test]
+    fn session_is_not_ending_during_a_test_run() {
+        // Waehrend eines Testlaufs faehrt Windows nicht herunter. Meldete die
+        // Abfrage hier "ja", uebersprangen Stopp und Beenden ihr Aufraeumen.
+        assert!(!session_ending());
     }
 
     #[test]
