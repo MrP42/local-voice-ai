@@ -1342,10 +1342,11 @@ export function resolveTag(inner: string): TagDef | undefined {
   return resolveIndex.get(fold(inner));
 }
 
-/** Klammerinhalt in der gewuenschten Sprache: deutsch = Beschriftung in
- *  Kleinschreibung (`[ruhig]`), sonst das englische Insert. */
+/** Klammerinhalt in der gewuenschten Sprache: deutsch = Beschriftung so,
+ *  wie sie geschrieben wird (`[Entspannt]`, `[Kurze Pause]`), sonst das
+ *  englische Insert. Die Aufloesung ist gross/klein-unabhaengig. */
 export function tagInsertFor(tag: TagDef, lang: string): string {
-  return lang === "de" ? tag.label.de.toLowerCase() : tag.insert;
+  return lang === "de" ? tag.label.de : tag.insert;
 }
 
 /** Drei Klassen fuer die Anzeige (Fish Audio S2, Doku 26.09.2026: "15,000+

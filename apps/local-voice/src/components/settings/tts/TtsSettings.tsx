@@ -42,6 +42,7 @@ import {
 import { ScriptCheckPanel } from "./editor/ScriptCheckPanel";
 import {
   checkScript,
+  isHintFinding,
   replaceFindingEverywhere,
   type ScriptFinding,
 } from "@/lib/voices/scriptCheck";
@@ -1032,7 +1033,7 @@ export const TtsSettings = () => {
       scriptCheckOn
         ? scriptFindings
             // Schreibweisen-Vorschlaege sind kein Fehler: kein Rot im Text.
-            .filter((f) => f.kind !== "speaker-name")
+            .filter((f) => !isHintFinding(f.kind))
             .map((f) => ({
               start: f.start,
               end: f.end,
@@ -1049,7 +1050,14 @@ export const TtsSettings = () => {
    *  (sollte nicht vorkommen) faellt es auf setState zurueck. */
   /** Befunde des aktuellen (nicht verzoegerten) Texts, nur mit Schalter an. */
   const freshFindings = (): ScriptFinding[] =>
-    scriptCheckAuto ? checkScript(spokenText, speakers, scriptEngine) : [];
+    scriptCheckAuto
+      ? checkScript(spokenText, speakers, scriptEngine).filter(
+          (f) => !isHintFinding(f.kind),
+        )
+      : [];
+  const errorCount = scriptFindings.filter(
+    (f) => !isHintFinding(f.kind),
+  ).length;
 
   const runScriptCheck = () => {
     setManualCheck(spokenText);
@@ -1058,21 +1066,53 @@ export const TtsSettings = () => {
     if (first) editorApiRef.current?.revealRange?.(first.start, first.end);
   };
 
+  /** Die Befunde im AKTUELLEN Text (die angezeigte Liste haengt 120 ms
+   *  hinterher) und darin die Entsprechung des angeklickten Befunds: gleiche
+   *  Art, gleicher Name, naechstgelegene Stelle. Ohne diesen Abgleich
+   *  entfernte "Nur diese entfernen" direkt nach einem "Alle ersetzen" die
+   *  falschen Zeichen (26.09.2026, Test "replace all swaps…"). */
+  const freshMatch = useCallback(
+    (finding: ScriptFinding) => {
+      const fresh = checkScript(spokenText, speakers, scriptEngine);
+      const candidates = fresh.filter(
+        (f) =>
+          f.kind === finding.kind &&
+          f.name.toLowerCase() === finding.name.toLowerCase(),
+      );
+      const target = candidates.reduce<ScriptFinding | null>(
+        (best, f) =>
+          !best ||
+          Math.abs(f.start - finding.start) <
+            Math.abs(best.start - finding.start)
+            ? f
+            : best,
+        null,
+      );
+      return { fresh, target };
+    },
+    [spokenText, speakers, scriptEngine],
+  );
+
   const scriptActions = useMemo(
     () => ({
-      reveal: (finding: ScriptFinding) =>
-        editorApiRef.current?.revealRange?.(finding.start, finding.end),
+      reveal: (finding: ScriptFinding) => {
+        const { target } = freshMatch(finding);
+        const at = target ?? finding;
+        editorApiRef.current?.revealRange?.(at.start, at.end);
+      },
       replace: (
         finding: ScriptFinding,
         replacement: (f: ScriptFinding) => string,
         everywhere: boolean,
       ) => {
         const api = editorApiRef.current;
+        const { fresh, target } = freshMatch(finding);
+        if (!target) return;
         if (everywhere) {
           const next = replaceFindingEverywhere(
             spokenText,
-            scriptFindings,
-            finding,
+            fresh,
+            target,
             replacement,
           );
           if (next === spokenText) return;
@@ -1087,10 +1127,10 @@ export const TtsSettings = () => {
           }
           return;
         }
-        api?.replaceRange?.(finding.start, finding.end, replacement(finding));
+        api?.replaceRange?.(target.start, target.end, replacement(target));
       },
     }),
-    [spokenText, scriptFindings, tab],
+    [spokenText, freshMatch, tab],
   );
 
   /**
@@ -1982,17 +2022,15 @@ export const TtsSettings = () => {
                     <SpellCheck
                       width={16}
                       height={16}
-                      className={
-                        scriptFindings.length > 0 ? "text-red-500" : undefined
-                      }
+                      className={errorCount > 0 ? "text-red-500" : undefined}
                     />
                     {t("tts.scriptCheck.run")}
-                    {scriptFindings.length > 0 && (
+                    {errorCount > 0 && (
                       <span
                         data-testid="script-check-badge"
                         className="ml-auto rounded-full bg-red-500/20 px-1.5 text-xs text-red-500"
                       >
-                        {scriptFindings.length}
+                        {errorCount}
                       </span>
                     )}
                   </Button>
