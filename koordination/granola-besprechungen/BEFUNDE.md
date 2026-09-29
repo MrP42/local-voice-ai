@@ -17,7 +17,7 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 ## B3 — P1e: Qwen 3.5 9B liefert leere Antwort (Denkmodus) (29.09. 14:10)
 - Beobachtet: --eval-notes mit Qwen3.5-9B -> llm_failed; das Modell denkt vor der Antwort (Probe "2+3": 623 Token), bei langem Prompt ist der 8192-Kontext voll, bevor JSON entsteht.
 - Konsequenz: Paket P1g (Denkmodus aus, Kontext je VRAM). Gemma 4 E4B erfuellt AK3 bereits.
-- Status: offen
+- Status: erledigt (P1g 60c4f50a; Rest: Qwen3.5 bei T=0 in 2 Kurz-Fixtures ohne KI-Eintraege -> KNOWN-LIMITATIONS, Gemma bleibt Standard)
 
 ## B4 — P1e: toter llama-server gilt als laufend (29.09. 14:10)
 - Beobachtet: Gemma 4 12B loest in der CUDA-Laufzeit "illegal memory access" aus; danach meldet is_serving den toten Server als laufend, alle Folgeaufrufe scheitern sofort.
