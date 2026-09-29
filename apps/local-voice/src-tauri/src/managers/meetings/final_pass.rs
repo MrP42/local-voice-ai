@@ -1401,6 +1401,7 @@ mod tests {
                     MeetingEvent::Error { .. } => "error",
                     MeetingEvent::Reset { .. } => "reset",
                     MeetingEvent::TranscriptFinal { .. } => "final",
+                    MeetingEvent::Health { .. } => "health",
                 })
                 .collect()
         }

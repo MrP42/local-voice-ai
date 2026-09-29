@@ -3653,13 +3653,24 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  * error. Consumers that build on the transcript (AI notes, index) start
  * here, not at `stop()`.
  */
-{ kind: "transcript_final"; meeting_id: string; epoch: number; model: string | null }
+{ kind: "transcript_final"; meeting_id: string; epoch: number; model: string | null } | 
+/**
+ * Zustandswechsel des Ausfallwaechters (M2-P2e). `channel`: 0 = Mikrofon,
+ * 1 = Systemton. Nur Wechsel, nie Dauerfeuer; `recovered` nimmt die
+ * Kanalwarnung zurueck (`vad_unavailable` und `loopback_died` bleiben bis zum
+ * Ende der Besprechung stehen).
+ */
+{ kind: "health"; meeting_id: string; channel: number; state: HealthState }
 /**
  * Ereignis des KI-Notizen-Laufs. `code` ist einer von `no_provider`,
  * `no_model`, `memory_low`, `recording_active`, `enhance_busy`,
  * `no_transcript`, `llm_failed`, `meeting_not_finished`; die Oberflaeche
  * uebersetzt ihn (Muster `MeetingEvent::Error`).
  */
+/**
+ * Zustand eines Kanals im Ausfallwaechter (`signal_watch.rs`).
+ */
+export type HealthState = "no_data" | "digital_zero" | "silent" | "clipping" | "queue_overflow" | "vad_unavailable" | "loopback_died" | "recovered"
 /**
  * Filter der Listensuche. `source` ist die HERKUNFT der Besprechung
  * (`live` | `import` | `subtitle`), nicht die Chunk-Quelle.

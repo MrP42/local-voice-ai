@@ -25,6 +25,7 @@ use super::dsp::{
 };
 use super::final_pass::{self, FinalChoice, FinalPlan, JobSpec, KeepReason};
 use super::mic_capture::MeetingMicCapture;
+use super::signal_watch::HealthState;
 use super::store::{Meeting, MeetingSource, MeetingStatus, MeetingStore, StoredSegment};
 use crate::audio_toolkit::audio::{LoopbackCapture, StreamingWavWriter};
 use crate::managers::transcription::TranscriptionManager;
@@ -133,6 +134,34 @@ pub enum MeetingEvent {
         epoch: u32,
         model: Option<String>,
     },
+    /// Zustandswechsel des Ausfallwaechters (M2-P2e, `signal_watch.rs`).
+    /// `channel`: 0 = Mikrofon, 1 = Systemton. Nur Wechsel, nie Dauerfeuer;
+    /// `recovered` nimmt die Kanalwarnung zurueck, `vad_unavailable` und
+    /// `loopback_died` bleiben bis zum Ende der Besprechung stehen.
+    #[serde(rename = "health")]
+    Health {
+        meeting_id: String,
+        channel: u8,
+        state: HealthState,
+    },
+}
+
+/// Macht eine Meldung des DSP-Threads zum Oberflaechen-Ereignis. Was kein
+/// Zustand des Kanals ist (Panik-Rueckfaelle, roher Ueberlauf-Zaehler), bleibt
+/// im Log: der Ueberlauf kommt entprellt als `Health { QueueOverflow }`.
+pub fn health_event(meeting_id: &str, notice: &DspNotice) -> Option<MeetingEvent> {
+    let (channel, state) = match *notice {
+        DspNotice::Health { channel, state } => (channel, state),
+        DspNotice::VadUnavailable { channel } => (channel, HealthState::VadUnavailable),
+        DspNotice::Overflow { .. } | DspNotice::DspPanic { .. } | DspNotice::AecPanic => {
+            return None
+        }
+    };
+    Some(MeetingEvent::Health {
+        meeting_id: meeting_id.to_string(),
+        channel,
+        state,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -623,6 +652,12 @@ impl MeetingRecorderManager {
                         if let Some(control) = &dsp_control {
                             control.reference_lost();
                         }
+                        let _ = (MeetingEvent::Health {
+                            meeting_id: meeting_id.clone(),
+                            channel: CHANNEL_SYSTEM,
+                            state: HealthState::LoopbackDied,
+                        })
+                        .emit(&app);
                         let _ = (MeetingEvent::Error {
                             meeting_id,
                             message: "loopback_died".to_string(),
@@ -651,11 +686,15 @@ impl MeetingRecorderManager {
         // DSP thread falls back to the 20-s chunker per channel.
         let vad_factory = meeting_vad_factory(&self.app);
 
-        // Until Health events exist (P2e) the notices are log-only.
+        // Channel health goes to the UI (P2e). This runs on the DSP thread, not
+        // in a capture callback, and only on state changes.
         let notice_meeting = meeting_id.to_string();
+        let notice_app = self.app.clone();
         let notice: super::dsp::NoticeFn = Arc::new(move |n: DspNotice| {
-            // TODO(P2e): map to MeetingEvent::Health { meeting_id, channel, state }.
             debug!("meetings: dsp notice for {notice_meeting}: {n:?}");
+            if let Some(event) = health_event(&notice_meeting, &n) {
+                let _ = event.emit(&notice_app);
+            }
         });
 
         let mut cfg = DspConfig::new(vad_factory, notice);
@@ -1134,6 +1173,57 @@ fn finalize_sink(sink: &Arc<Mutex<ChannelSink>>) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_channel_states_become_health_events() {
+        let ev = |n| health_event("m1", &n);
+        match ev(DspNotice::Health {
+            channel: 0,
+            state: HealthState::Silent,
+        }) {
+            Some(MeetingEvent::Health {
+                meeting_id,
+                channel: 0,
+                state: HealthState::Silent,
+            }) => assert_eq!(meeting_id, "m1"),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            ev(DspNotice::VadUnavailable { channel: 1 }),
+            Some(MeetingEvent::Health {
+                channel: 1,
+                state: HealthState::VadUnavailable,
+                ..
+            })
+        ));
+        // Roher Ueberlauf-Zaehler und Panik-Rueckfaelle bleiben im Log.
+        assert!(ev(DspNotice::Overflow {
+            channel: 0,
+            skipped_ms: 5
+        })
+        .is_none());
+        assert!(ev(DspNotice::DspPanic { channel: 0 }).is_none());
+        assert!(ev(DspNotice::AecPanic).is_none());
+    }
+
+    #[test]
+    fn the_health_event_wire_format_is_kind_health_with_snake_case_state() {
+        let json = serde_json::to_value(MeetingEvent::Health {
+            meeting_id: "m1".into(),
+            channel: 1,
+            state: HealthState::LoopbackDied,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "kind": "health",
+                "meeting_id": "m1",
+                "channel": 1,
+                "state": "loopback_died"
+            })
+        );
+    }
 
     #[test]
     fn start_without_consent_is_refused() {

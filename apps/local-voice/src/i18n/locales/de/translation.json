@@ -1594,6 +1594,23 @@
       "captureSystem": "System-Audio (Gegenseite) mitschneiden",
       "micLevel": "Mikrofon",
       "systemLevel": "System",
+      "health": {
+          "mic": {
+            "no_data": "Das Mikrofon liefert keine Daten. Bitte Anschluss und Geräteauswahl prüfen.",
+            "digital_zero": "Das Mikrofon liefert seit 10 s nur digitale Stille. Ist es stummgeschaltet?",
+            "silent": "Mikrofon liefert seit 30 s kein Signal.",
+            "clipping": "Das Mikrofon ist übersteuert. Bitte den Eingangspegel senken."
+          },
+          "system": {
+            "no_data": "Der Systemton liefert keine Daten.",
+            "digital_zero": "Der Systemton liefert nur digitale Stille.",
+            "silent": "Der Systemton liefert kein Signal.",
+            "clipping": "Der Systemton ist übersteuert."
+          },
+          "queue_overflow": "Die Live-Verarbeitung kommt nicht hinterher. Die Aufnahme ist vollständig, im Live-Transkript können Lücken sein.",
+          "vad_unavailable": "Die Spracherkennung (VAD) ist nicht verfügbar. Das Live-Transkript läuft in groben 20-Sekunden-Blöcken.",
+          "loopback_died": "Der Systemton ist ausgefallen. Die Aufnahme läuft nur mit dem Mikrofon weiter."
+      },
       "autoNotes": {
         "running": "KI-Notizen werden erstellt … {{step}}/{{total}}",
         "done": "Die KI-Notizen sind fertig. Sie stehen in der Besprechung unter „Notizen“.",

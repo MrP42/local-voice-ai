@@ -38,6 +38,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering}
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use log::{debug, error, info, warn};
 use serde::Serialize;
@@ -47,6 +48,7 @@ use super::echo::{self, AlignEvent, Aligner, EchoCanceller, Pulled, FRAME_SAMPLE
 use super::hallucination::{self, BlockFacts, Reason};
 use super::recorder::MeetingEvent;
 use super::segmenter::{Segment, SegmenterConfig, SegmenterStats, VadSegmenter};
+use super::signal_watch::{BlockStats, HealthState, SignalWatch, WatchConfig};
 use super::store::{MeetingStore, StoredSegment, TranscriptDelta};
 use crate::audio_toolkit::audio::StreamingWavWriter;
 use crate::audio_toolkit::VoiceActivityDetector;
@@ -111,10 +113,16 @@ pub enum DspMsg {
     Shutdown,
 }
 
-/// Meldungen des DSP-Threads. Heute nur Log; das Ziel ist `MeetingEvent::Health`
-/// (Paket P2e).
+/// Meldungen des DSP-Threads. Der Recorder macht daraus `MeetingEvent::Health`
+/// (`health_event`): `Health` (Ausfallwaechter, nur Zustandswechsel) und
+/// `VadUnavailable` (einmal je Kanal). Der Rest ist Log.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DspNotice {
+    /// Zustandswechsel des Ausfallwaechters (`signal_watch.rs`).
+    Health {
+        channel: u8,
+        state: HealthState,
+    },
     VadUnavailable { channel: u8 },
     Overflow { channel: u8, skipped_ms: u64 },
     DspPanic { channel: u8 },
@@ -134,7 +142,15 @@ pub struct DspConfig {
     /// Echo-Unterdrueckung fuer Kanal 0 (P2c2). `None` = aus (kein Systemton,
     /// Einstellung `off`); dann entsteht auch keine `mic_aec.wav`.
     pub echo: Option<EchoSetup>,
+    /// Ausfallwaechter je Kanal (P2e) und sein Wanduhr-Takt fuer `NoData`.
+    pub watch_mic: WatchConfig,
+    pub watch_loopback: WatchConfig,
+    pub watch_tick: Duration,
 }
+
+/// Takt, in dem der DSP-Thread ohne Nachricht nachsieht, ob ein Kanal
+/// verstummt ist (`NoData` wird also auf ~0,5 s genau gemeldet).
+pub const WATCH_TICK: Duration = Duration::from_millis(500);
 
 impl DspConfig {
     pub fn new(vad_factory: Option<VadFactory>, notice: NoticeFn) -> Self {
@@ -144,6 +160,9 @@ impl DspConfig {
             fallback_chunk_ms: FALLBACK_CHUNK_MS,
             notice,
             echo: None,
+            watch_mic: WatchConfig::mic(),
+            watch_loopback: WatchConfig::loopback(),
+            watch_tick: WATCH_TICK,
         }
     }
 
@@ -1106,7 +1125,7 @@ fn make_lane(channel: u8, cfg: &DspConfig, stats: &DspStats) -> Lane {
         warn!("meetings: kein VAD-Modell fuer Kanal {channel} - Rueckfall auf 20-s-Bloecke");
     }
     stats.vad_fallback.store(true, Ordering::Relaxed);
-    // TODO(P2e): hier MeetingEvent::Health { state: VadUnavailable } senden.
+    // Der Recorder macht daraus `Health { VadUnavailable }` (`health_event`).
     (cfg.notice)(DspNotice::VadUnavailable { channel });
     Lane::Chunker(ChunkerLane::new(cfg.fallback_chunk_ms, 0))
 }
@@ -1165,6 +1184,17 @@ fn dispatch(items: Vec<WorkItem>, work_tx: &Sender<WorkItem>, stats: &DspStats) 
     }
 }
 
+/// Meldet einen Zustandswechsel des Ausfallwaechters (Log + Notice). Nur auf
+/// dem DSP-Thread, nie im Capture-Callback.
+fn report_health(cfg: &DspConfig, channel: u8, state: HealthState) {
+    if state == HealthState::Recovered {
+        info!("meetings: Kanal {channel} liefert wieder Signal");
+    } else {
+        warn!("meetings: Kanal {channel} auffaellig: {state:?}");
+    }
+    (cfg.notice)(DspNotice::Health { channel, state });
+}
+
 fn dsp_main(
     rx: Receiver<DspMsg>,
     mut cfg: DspConfig,
@@ -1181,8 +1211,31 @@ fn dsp_main(
         .map(|setup| EchoStage::new(setup, Arc::clone(&stats)));
     stats.aec_enabled.store(echo.is_some(), Ordering::Relaxed);
 
+    // Ausfallwaechter (P2e): sieht die ROHEN Bloecke beider Kanaele (vor der
+    // Echo-Unterdrueckung, die ein totes Mikrofon nur noch stiller machte).
+    let started = Instant::now();
+    let wall_ms = || started.elapsed().as_millis() as u64;
+    let mut watches = [
+        SignalWatch::new(cfg.watch_mic.clone(), 0),
+        SignalWatch::new(cfg.watch_loopback.clone(), 0),
+    ];
+
     // Ende ohne `Shutdown` (alle Sender weg) flusht ebenfalls: nichts verlieren.
-    while let Ok(msg) = rx.recv() {
+    loop {
+        let msg = match rx.recv_timeout(cfg.watch_tick) {
+            Ok(msg) => msg,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Keine Nachricht: ein verstummter Kanal faellt nur hier auf.
+                let now = wall_ms();
+                for (ch, watch) in watches.iter_mut().enumerate() {
+                    if let Some(state) = watch.on_tick(now) {
+                        report_health(&cfg, ch as u8, state);
+                    }
+                }
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         let mut out = Vec::new();
         let (channel, gap, samples) = match msg {
             DspMsg::Shutdown => break,
@@ -1214,7 +1267,7 @@ fn dsp_main(
         if gap > 0 {
             let skipped_ms = gap / SAMPLES_PER_MS;
             warn!("meetings: DSP-Queue uebergelaufen - {skipped_ms} ms auf Kanal {channel} nicht segmentiert (WAV vollstaendig)");
-            // TODO(P2e): hier MeetingEvent::Health senden.
+            watches[ch].on_overflow();
             (cfg.notice)(DspNotice::Overflow {
                 channel,
                 skipped_ms,
@@ -1238,6 +1291,13 @@ fn dsp_main(
                 |l, o| l.skip(channel, gap, o),
             );
             lane_pos[ch] += gap;
+        }
+        let health = match &samples {
+            Some((samples, _)) => watches[ch].on_block(wall_ms(), &BlockStats::of(samples)),
+            None => watches[ch].on_pause(),
+        };
+        if let Some(state) = health {
+            report_health(&cfg, channel, state);
         }
         match samples {
             Some((samples, qpc)) => match (ch, echo.as_mut()) {
@@ -1886,11 +1946,115 @@ mod tests {
         assert!((4_990..=5_040).contains(&got[0].1), "offset {}", got[0].1);
         assert_eq!(
             log.lock().unwrap().as_slice(),
-            &[DspNotice::Overflow {
-                channel: 0,
-                skipped_ms: 4_000
-            }]
+            &[
+                DspNotice::Overflow {
+                    channel: 0,
+                    skipped_ms: 4_000
+                },
+                // P2e: derselbe Ueberlauf als Zustandswechsel fuer die Oberflaeche.
+                DspNotice::Health {
+                    channel: 0,
+                    state: HealthState::QueueOverflow
+                }
+            ]
         );
+    }
+
+    fn health_of(log: &Mutex<Vec<DspNotice>>) -> Vec<(u8, HealthState)> {
+        log.lock()
+            .unwrap()
+            .iter()
+            .filter_map(|n| match n {
+                DspNotice::Health { channel, state } => Some((*channel, *state)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn dsp_with_watch(
+        mic: WatchConfig,
+    ) -> (DspHandle, Receiver<WorkItem>, Arc<Mutex<Vec<DspNotice>>>) {
+        let (notice, log) = notices();
+        let (tx, rx) = mpsc::channel();
+        let mut cfg = DspConfig::new(Some(energy_factory()), notice);
+        cfg.watch_mic = mic;
+        cfg.watch_tick = Duration::from_millis(20);
+        (DspHandle::spawn(cfg, tx, QUEUE_CAPACITY).unwrap(), rx, log)
+    }
+
+    #[test]
+    fn a_muted_mic_reports_digital_zero_once_and_recovered_when_sound_returns() {
+        let (h, _rx, log) = dsp_only(Some(energy_factory()));
+        let mut mic = h.feed(0);
+        feed_blocks(&mut mic, &cat(&[loud(1_000), zeros(12_000), loud(1_000)]));
+        h.finish();
+        assert_eq!(
+            health_of(&log),
+            vec![(0, HealthState::DigitalZero), (0, HealthState::Recovered)]
+        );
+    }
+
+    #[test]
+    fn the_loopback_channel_reports_no_signal_health() {
+        // Stille der Gegenseite ist normal: Kanal 1 meldet trotz 40 s Nullen nichts.
+        let (h, _rx, log) = dsp_only(Some(energy_factory()));
+        let mut sys = h.feed(1);
+        feed_blocks(&mut sys, &zeros(40_000));
+        h.finish();
+        assert!(health_of(&log).is_empty(), "{:?}", health_of(&log));
+    }
+
+    #[test]
+    fn a_stalled_mic_reports_no_data_from_the_tick_and_recovers_with_the_next_block() {
+        let cfg = WatchConfig {
+            no_data_ms: Some(150),
+            start_grace_ms: 0,
+            ..WatchConfig::mic()
+        };
+        let (h, _rx, log) = dsp_with_watch(cfg);
+        let mut mic = h.feed(0);
+        feed_blocks(&mut mic, &loud(500));
+        std::thread::sleep(Duration::from_millis(600));
+        assert_eq!(health_of(&log), vec![(0, HealthState::NoData)]);
+        feed_blocks(&mut mic, &loud(60));
+        h.finish();
+        assert_eq!(
+            health_of(&log),
+            vec![(0, HealthState::NoData), (0, HealthState::Recovered)]
+        );
+    }
+
+    #[test]
+    fn a_pause_stops_the_no_data_watch() {
+        let cfg = WatchConfig {
+            no_data_ms: Some(100),
+            start_grace_ms: 0,
+            ..WatchConfig::mic()
+        };
+        let (h, _rx, log) = dsp_with_watch(cfg);
+        let mut mic = h.feed(0);
+        feed_blocks(&mut mic, &loud(500));
+        mic.pause();
+        std::thread::sleep(Duration::from_millis(400));
+        h.finish();
+        assert!(health_of(&log).is_empty(), "{:?}", health_of(&log));
+    }
+
+    #[test]
+    fn many_overflows_in_a_row_are_one_health_event() {
+        let (h, _rx, log) = dsp_only(Some(energy_factory()));
+        let tx = h.tx.clone();
+        for _ in 0..20 {
+            tx.send(DspMsg::Samples {
+                channel: 0,
+                samples: loud(100),
+                gap_before: 16_000,
+                qpc: None,
+            })
+            .unwrap();
+        }
+        h.finish();
+        assert_eq!(health_of(&log), vec![(0, HealthState::QueueOverflow)]);
     }
 
     #[test]

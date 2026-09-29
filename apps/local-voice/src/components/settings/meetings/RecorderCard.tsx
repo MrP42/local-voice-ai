@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { commands, events } from "@/bindings";
+import { commands, events, type HealthState } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Button } from "../../ui/Button";
@@ -31,6 +31,35 @@ const AUTO_NOTES_CODES = new Set([
   "no_transcript",
   "llm_failed",
 ]);
+
+/**
+ * Warnungen des Ausfallwaechters (M2-P2e). Je Kanal steht hoechstens EINE
+ * Bedingung (`conditions`); `recovered` nimmt sie zurueck. `vad_unavailable`
+ * und `loopback_died` bleiben stehen, bis die Aufnahme endet.
+ */
+type Condition = "no_data" | "digital_zero" | "silent" | "clipping";
+type HealthView = {
+  conditions: Partial<Record<number, Condition | "queue_overflow">>;
+  sticky: Partial<Record<number, "vad_unavailable" | "loopback_died">>;
+};
+const NO_HEALTH: HealthView = { conditions: {}, sticky: {} };
+
+const applyHealth = (
+  view: HealthView,
+  channel: number,
+  state: HealthState,
+): HealthView => {
+  if (state === "recovered") {
+    if (view.conditions[channel] === undefined) return view;
+    const conditions = { ...view.conditions };
+    delete conditions[channel];
+    return { ...view, conditions };
+  }
+  if (state === "vad_unavailable" || state === "loopback_died") {
+    return { ...view, sticky: { ...view.sticky, [channel]: state } };
+  }
+  return { ...view, conditions: { ...view.conditions, [channel]: state } };
+};
 
 const LevelBar: React.FC<{ label: string; value: number }> = ({
   label,
@@ -74,6 +103,7 @@ export const RecorderCard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [autoNotes, setAutoNotes] = useState<AutoNotes | null>(null);
+  const [health, setHealth] = useState<HealthView>(NO_HEALTH);
   // Besprechung, deren automatische KI-Notizen die Statuszeile zeigt.
   const notesMeetingRef = useRef<string | null>(null);
 
@@ -101,6 +131,8 @@ export const RecorderCard: React.FC = () => {
       } else if (payload.kind === "error") {
         setError(translateMeetingError(payload.message, t));
         setBusy(false);
+      } else if (payload.kind === "health") {
+        setHealth((v) => applyHealth(v, payload.channel, payload.state));
       }
     });
     const unNotes = events.meetingNotesEvent.listen((e) => {
@@ -145,6 +177,7 @@ export const RecorderCard: React.FC = () => {
     }
     setStartedWithSystem(captureSetting);
     setAutoNotes(null);
+    setHealth(NO_HEALTH);
     notesMeetingRef.current = result.data.id;
     setPhase("recording");
     // Gewaehlte Vorlage der Besprechung zuordnen; ohne Wahl gilt die
@@ -178,12 +211,33 @@ export const RecorderCard: React.FC = () => {
     setMicLevel(0);
     setSystemLevel(0);
     setStartedWithSystem(null);
+    setHealth(NO_HEALTH);
   };
 
   const recording = phase === "recording";
   const paused = phase === "paused";
   const active = recording || paused;
   const showSystem = startedWithSystem ?? captureSetting;
+
+  // Ein Text je Ursache: Ueberlauf und fehlende Spracherkennung betreffen
+  // beide Kanaele, sollen aber nur einmal erscheinen.
+  const healthTexts = (): string[] => {
+    const out: string[] = [];
+    for (const channel of [0, 1]) {
+      if (channel === 1 && !showSystem) continue;
+      const c = health.conditions[channel];
+      if (c === "queue_overflow") {
+        out.push(t("meetings.record.health.queue_overflow"));
+      } else if (c) {
+        out.push(
+          t(`meetings.record.health.${channel === 0 ? "mic" : "system"}.${c}`),
+        );
+      }
+      const sticky = health.sticky[channel];
+      if (sticky) out.push(t(`meetings.record.health.${sticky}`));
+    }
+    return [...new Set(out)];
+  };
 
   const autoNotesText = (state: AutoNotes): string => {
     if (state.kind === "running") {
@@ -277,6 +331,16 @@ export const RecorderCard: React.FC = () => {
             </>
           )}
         </div>
+
+        {active && (
+          <div data-testid="health-warnings" className="space-y-2">
+            {healthTexts().map((text) => (
+              <div key={text} data-testid="health-warning">
+                <Alert variant="warning">{text}</Alert>
+              </div>
+            ))}
+          </div>
+        )}
 
         {active && (
           <div className="space-y-1.5 pt-1">
