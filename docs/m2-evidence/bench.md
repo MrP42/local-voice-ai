@@ -19,6 +19,7 @@ _Stand 2026-09-29, automatisch aus den Ergebnis-JSON erzeugt._
 | Parakeet TDT 0.6B v3 GGUF Q8 | transcribe-cpp (Spike-Build) | CUDA RTX 4090 | 240 | **5,51 %** (287/5206) | 87,7× | Spike-Build, nicht App; WER weich 5,36 %; Laden 0,6 s |
 | Whisper large-v3-turbo Q8 | transcribe-cpp (Spike-Build) | CUDA RTX 4090 | 240 | **5,61 %** (292/5206) | 114,9× | Spike-Build, nicht App; WER weich 5,15 %; Laden 0,8 s |
 | Whisper large-v3 Q5_K_M | transcribe-cpp (Spike-Build) | CUDA RTX 4090 | 240 | **4,65 %** (242/5206) | 20,6× | Spike-Build, nicht App; WER weich 4,28 %; Laden 0,9 s |
+| parakeet-tdt-0.6b-v3-Q8_0.gguf | transcribe-cpp | CPU | 240 | **5,51 %** (287/5206) | 11,3× | WER weich 5,40 %; Laden 0,8 s; 1 Sätze weichen von der Rust-Wertung ab |
 <!-- bench:table:end -->
 
 ## Folgerung

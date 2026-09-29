@@ -72,7 +72,7 @@ pub async fn retranscribe_meeting(
 
     let target = match model_id.as_deref().map(str::trim) {
         Some(id) if !id.is_empty() => id.to_string(),
-        _ => TranscriptionManager::meeting_model_target(&crate::settings::get_settings(app)),
+        _ => tm.meeting_model_target(&crate::settings::get_settings(app)),
     };
 
     store
