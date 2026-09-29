@@ -54,11 +54,13 @@ pub const DOC_FORMAT: &str = "enhanced@1";
 const RUN_TIMEOUT: Duration = Duration::from_secs(90 * 60);
 
 /// Annahmen fuer das Einzeldurchlauf-Budget (Entwurf §6): lokal aus dem
-/// Kontext des lokalen Servers; P1e misst die Zeichen je Token und
-/// korrigiert die Konstante.
+/// Kontext des lokalen Servers. Kalibriert mit P1e (`--eval-notes`, drei
+/// Fixtures, /tokenize des Servers): 3,35 Zeichen je Token (3,12 bis 3,48),
+/// Prompt-Overhead (System, Kopf, Vorlage) 641 bis 745 Token.
 const OUTPUT_RESERVE_TOKENS: usize = 2_048;
-const PROMPT_OVERHEAD_TOKENS: usize = 1_000;
-const CHARS_PER_TOKEN: usize = 3;
+const PROMPT_OVERHEAD_TOKENS: usize = 750;
+/// Zeichen je Token mal hundert (3,35).
+const CHARS_PER_TOKEN_X100: usize = 335;
 /// Entfernte Anbieter haben grosse Kontexte; konservativ angesetzt.
 const REMOTE_SINGLE_PASS_CHARS: usize = 48_000;
 
@@ -234,7 +236,7 @@ pub fn check_recording_conflict(
 /// Stellschrauben, die Tests ersetzen (Budget, Zeitlimit, gemessener RAM).
 #[derive(Clone, Copy)]
 struct RunLimits {
-    /// `None` = `single_pass_budget_chars(local)`.
+    /// `None` = `single_pass_budget_chars(model, local)`.
     budget_chars: Option<usize>,
     timeout: Duration,
     /// Freier RAM in MB (0 = nicht messbar). Tests setzen 0: der reale Wert
@@ -260,15 +262,27 @@ type Progress<'a> = &'a (dyn Fn(u32, u32) + Send + Sync);
 
 /// Zeichen (Notizen + Transkript), die ein Einzeldurchlauf hoechstens
 /// bekommt. Lokal: Kontext des lokalen Servers minus Ausgabereserve minus
-/// Prompt-Overhead, mal Zeichen je Token (Annahme, siehe oben).
-pub fn single_pass_budget_chars(local: bool) -> usize {
+/// Prompt-Overhead, mal Zeichen je Token (Werte siehe oben). Der Kontext
+/// waehlt der Serverstart je freiem VRAM (`llm::context`, P1g).
+pub fn single_pass_budget_chars_for(context_tokens: u32, local: bool) -> usize {
     if local {
-        (crate::managers::llm::DEFAULT_CONTEXT_TOKENS as usize)
-            .saturating_sub(OUTPUT_RESERVE_TOKENS + PROMPT_OVERHEAD_TOKENS)
-            * CHARS_PER_TOKEN
+        (context_tokens as usize).saturating_sub(OUTPUT_RESERVE_TOKENS + PROMPT_OVERHEAD_TOKENS)
+            * CHARS_PER_TOKEN_X100
+            / 100
     } else {
         REMOTE_SINGLE_PASS_CHARS
     }
+}
+
+/// Wie [`single_pass_budget_chars_for`], mit dem Kontext, den der Aufruf an
+/// `model` haben wird (laufender Server, sonst die Wahl eines Starts jetzt).
+pub async fn single_pass_budget_chars(model: &str, local: bool) -> usize {
+    let context = if local {
+        crate::managers::llm::context_for_model(model).await
+    } else {
+        crate::managers::llm::DEFAULT_CONTEXT_TOKENS
+    };
+    single_pass_budget_chars_for(context, local)
 }
 
 // ---------------------------------------------------------------------------
@@ -1065,9 +1079,10 @@ async fn run_enhance(
         labels,
         limits,
     };
-    let budget = limits
-        .budget_chars
-        .unwrap_or_else(|| single_pass_budget_chars(local));
+    let budget = match limits.budget_chars {
+        Some(chars) => chars,
+        None => single_pass_budget_chars(&model, local).await,
+    };
     let payload = render_notes_for_prompt(&ctx.blocks).chars().count()
         + render_segments_with(&ctx.segments, &ctx.labels)
             .chars()
@@ -1382,9 +1397,10 @@ async fn run_instruction(
     let head = build_head_with(&meeting, &segments, &labels);
 
     let entries = entries_block(&stored);
-    let budget = limits
-        .budget_chars
-        .unwrap_or_else(|| single_pass_budget_chars(local));
+    let budget = match limits.budget_chars {
+        Some(chars) => chars,
+        None => single_pass_budget_chars(&model, local).await,
+    };
     let room = budget.saturating_sub(entries.chars().count() + instruction_chars);
     let (transcript, transcript_heading) =
         instruction_transcript_with(&stored, &segments, room, &labels);
@@ -2056,9 +2072,24 @@ mod tests {
 
     #[test]
     fn the_single_pass_budget_follows_the_local_context() {
-        // (8192 - 2048 - 1000) Token * 3 Zeichen
-        assert_eq!(single_pass_budget_chars(true), 15_432);
-        assert_eq!(single_pass_budget_chars(false), 48_000);
+        // (8192 - 2048 - 750) Token * 3,35 Zeichen
+        assert_eq!(single_pass_budget_chars_for(8_192, true), 18_069);
+        // Groesserer Kontext (je VRAM, P1g): mehr Platz im Einzeldurchlauf.
+        assert_eq!(single_pass_budget_chars_for(16_384, true), 45_513);
+        assert!(single_pass_budget_chars_for(12_288, true) > single_pass_budget_chars_for(8_192, true));
+        // Entfernte Anbieter: fester Wert, der Kontext spielt keine Rolle.
+        assert_eq!(single_pass_budget_chars_for(8_192, false), 48_000);
+        assert_eq!(single_pass_budget_chars_for(16_384, false), 48_000);
+        // Ein winziger Kontext ergibt 0, nie einen Ueberlauf.
+        assert_eq!(single_pass_budget_chars_for(1_000, true), 0);
+    }
+
+    /// Die gemessenen Werte aus P1e: 3,35 Zeichen je Token, Overhead 641-745.
+    #[test]
+    fn the_budget_constants_match_the_p1e_measurement() {
+        assert_eq!(CHARS_PER_TOKEN_X100, 335);
+        assert_eq!(PROMPT_OVERHEAD_TOKENS, 750);
+        assert!(PROMPT_OVERHEAD_TOKENS >= 745, "hoechster gemessener Overhead");
     }
 
     #[test]

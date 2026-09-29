@@ -43,6 +43,58 @@ struct ChatCompletionRequest {
     reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<ReasoningConfig>,
+    /// Nur lokal und nur fuer Denkmodelle: schaltet das Denken ab (P1g).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chat_template_kwargs: Option<Value>,
+    /// Nur lokal und nur fuer KI-Notizen: deterministisch (siehe
+    /// `deterministic_sampling`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<u32>,
+}
+
+/// Temperatur und Startwert fuer einen nicht-streamenden Aufruf: die KI-Notizen
+/// (Erzeugen, Map/Reduce, Anweisung anwenden) laufen lokal deterministisch,
+/// wie der Chat seit P4g. Sonst sampelt das Modell mal ohne, mal mit
+/// verworfener Quell-ID, und die Notizen-Eval (Soll ai_sourced >= 0,95)
+/// besteht nur zufaellig. Entfernte Anbieter und alle anderen Zwecke bekommen
+/// die Felder nicht: manche lehnen sie mit 400 ab (Denkmodelle).
+fn deterministic_sampling(local: bool, purpose: Purpose) -> (Option<f32>, Option<u32>) {
+    if local && purpose == Purpose::EnhancedNotes {
+        (Some(0.0), Some(CHAT_SEED))
+    } else {
+        (None, None)
+    }
+}
+
+/// Denkt dieses lokale Modell vor der Antwort, sofern man es nicht abschaltet?
+/// Qwen3 und Qwen3.5 (Katalog-Kennungen `llm-qwen3-...`, `llm-qwen3.5-...`)
+/// tun das: ein Prompt "2+3" kostet 623 Token, und bei einem langen Prompt ist
+/// der Kontext voll, bevor das JSON beginnt (P1e, Befund B3). Andere Modelle
+/// (Gemma, Llama, ...) bekommen nichts.
+pub fn is_thinking_model(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("qwen3")
+}
+
+/// `chat_template_kwargs` fuer einen nicht-streamenden Aufruf: nur beim
+/// lokalen Server und nur fuer Denkmodelle. Entfernte Anbieter lehnen
+/// unbekannte Felder teils mit 400 ab.
+fn thinking_off_kwargs(local: bool, model: &str) -> Option<Value> {
+    (local && is_thinking_model(model)).then(|| serde_json::json!({ "enable_thinking": false }))
+}
+
+/// Antworttext eines lokalen Servers ohne Denk-Reste: verirrt sich trotz
+/// abgeschaltetem Denken ein `<think>...</think>` in die Antwort (aeltere
+/// Chat-Vorlagen, `--reasoning-format none`), ist es sonst der Anfang eines
+/// kaputten JSON. Entfernte Anbieter bleiben unveraendert.
+fn clean_local_content(local: bool, content: Option<String>) -> Option<String> {
+    match content {
+        Some(text) if local && text.contains("think>") => {
+            Some(crate::managers::meetings::chat::citations::strip_think(&text).trim_start().to_string())
+        }
+        other => other,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,6 +231,7 @@ pub async fn send_chat_completion_with_schema(
     usage::check_budget(provider, model)?;
     let started = std::time::Instant::now();
     let (result, tokens) = match send_inner(
+        purpose,
         provider,
         api_key,
         model,
@@ -209,6 +262,7 @@ pub async fn send_chat_completion_with_schema(
 /// der Aufrufer oben beides buchen kann.
 #[allow(clippy::too_many_arguments)]
 async fn send_inner(
+    purpose: Purpose,
     provider: &PostProcessProvider,
     api_key: String,
     model: &str,
@@ -221,6 +275,8 @@ async fn send_inner(
     // Fuer den lokalen Anbieter ist die Adresse erst bekannt, wenn der
     // Server laeuft -- und der wird hier bei Bedarf gestartet.
     let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;
+    let local = crate::managers::llm::is_local(provider);
+    let sampling = deterministic_sampling(local, purpose);
     let base_url = resolved.trim_end_matches('/');
     let url = format!("{}/chat/completions", base_url);
 
@@ -261,6 +317,9 @@ async fn send_inner(
         response_format,
         reasoning_effort,
         reasoning,
+        chat_template_kwargs: thinking_off_kwargs(local, model),
+        temperature: sampling.0,
+        seed: sampling.1,
     };
 
     let response = client
@@ -288,13 +347,11 @@ async fn send_inner(
         .map_err(|e| format!("Failed to parse API response: {}", e))?;
 
     let tokens = TokenUsage::from(completion.usage);
-    Ok((
-        completion
-            .choices
-            .first()
-            .and_then(|choice| choice.message.content.clone()),
-        tokens,
-    ))
+    let content = completion
+        .choices
+        .first()
+        .and_then(|choice| choice.message.content.clone());
+    Ok((clean_local_content(local, content), tokens))
 }
 
 /// Fetch available models from an OpenAI-compatible API
@@ -988,6 +1045,96 @@ mod stream_tests {
         // Entfernte Anbieter bekommen keine Sampling-Felder.
         assert!(remote.get("temperature").is_none());
         assert!(remote.get("seed").is_none());
+    }
+
+    // ---- P1g: Denkmodus aus fuer Qwen3/Qwen3.5 ---------------------------
+
+    fn request_json(local: bool, model: &str) -> Value {
+        request_json_for(local, model, Purpose::PostProcess)
+    }
+
+    fn request_json_for(local: bool, model: &str, purpose: Purpose) -> Value {
+        let sampling = deterministic_sampling(local, purpose);
+        let request = ChatCompletionRequest {
+            model: model.to_string(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "Frage".into(),
+            }],
+            response_format: None,
+            reasoning_effort: None,
+            reasoning: None,
+            chat_template_kwargs: thinking_off_kwargs(local, model),
+            temperature: sampling.0,
+            seed: sampling.1,
+        };
+        serde_json::to_value(&request).unwrap()
+    }
+
+    #[test]
+    fn qwen3_and_qwen35_get_thinking_switched_off_locally() {
+        for model in ["llm-qwen3.5-9b-q4", "llm-qwen3-4b-q4", "Qwen3-8B-Q4_K_M"] {
+            let body = request_json(true, model);
+            assert_eq!(
+                body["chat_template_kwargs"]["enable_thinking"], false,
+                "{model}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_local_models_and_remote_providers_keep_the_request_unchanged() {
+        for model in ["llm-gemma4-e4b-q4", "llm-gemma4-12b-q4", "llama-3.1-8b"] {
+            let body = request_json(true, model);
+            assert!(body.get("chat_template_kwargs").is_none(), "{model}");
+        }
+        // Auch ein Qwen3 bei einem entfernten Anbieter: kein unbekanntes Feld.
+        let remote = request_json(false, "qwen3-235b-a22b");
+        assert!(remote.get("chat_template_kwargs").is_none());
+        // Sonst nur die bisherigen Felder.
+        let body = request_json(true, "llm-gemma4-e4b-q4");
+        let mut keys: Vec<&str> = body.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["messages", "model"]);
+    }
+
+    #[test]
+    fn local_meeting_notes_calls_are_deterministic_and_nothing_else_is() {
+        // Lokal + KI-Notizen: Temperatur 0 und fester Startwert (wie P4g im Chat).
+        let body = request_json_for(true, "llm-gemma4-e4b-q4", Purpose::EnhancedNotes);
+        assert_eq!(body["temperature"].as_f64(), Some(0.0));
+        assert_eq!(body["seed"], CHAT_SEED);
+        // Auch bei einem Denkmodell zusammen mit abgeschaltetem Denken.
+        let body = request_json_for(true, "llm-qwen3.5-9b-q4", Purpose::EnhancedNotes);
+        assert_eq!(body["temperature"].as_f64(), Some(0.0));
+        assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
+        // Entfernte Anbieter: keine Sampling-Felder (Denkmodelle lehnen sie ab).
+        let remote = request_json_for(false, "gpt-4.1", Purpose::EnhancedNotes);
+        assert!(remote.get("temperature").is_none() && remote.get("seed").is_none());
+        // Andere lokale Zwecke (Diktat, Tagging, ...) bleiben unveraendert.
+        for purpose in [Purpose::PostProcess, Purpose::Tagging, Purpose::Translation, Purpose::Summary] {
+            let other = request_json_for(true, "llm-gemma4-e4b-q4", purpose);
+            assert!(other.get("temperature").is_none() && other.get("seed").is_none(), "{purpose:?}");
+        }
+    }
+
+    #[test]
+    fn think_leftovers_are_removed_from_local_answers_only() {
+        let raw = Some("<think>\nerst nachdenken\n</think>\n\n{\"a\":1}".to_string());
+        assert_eq!(clean_local_content(true, raw.clone()).as_deref(), Some("{\"a\":1}"));
+        // Nur ein schliessendes Tag (Vorlage hat das oeffnende schon gesetzt).
+        let tail = Some("Gedanken</think>\n{\"a\":1}".to_string());
+        assert_eq!(clean_local_content(true, tail).as_deref(), Some("{\"a\":1}"));
+        // Nicht geschlossen: nichts Brauchbares dahinter.
+        let open = Some("<think>ohne Ende".to_string());
+        assert_eq!(clean_local_content(true, open).as_deref(), Some(""));
+        // Ohne Tags, ohne Antwort, entfernt: unveraendert.
+        assert_eq!(
+            clean_local_content(true, Some("{\"a\":1}".into())).as_deref(),
+            Some("{\"a\":1}")
+        );
+        assert_eq!(clean_local_content(true, None), None);
+        assert_eq!(clean_local_content(false, raw.clone()), raw);
     }
 
     #[tokio::test]
