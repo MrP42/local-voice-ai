@@ -1,3 +1,4 @@
+pub mod chat; // M4-P4c
 pub mod chunker;
 pub mod dsp;
 pub mod echo;

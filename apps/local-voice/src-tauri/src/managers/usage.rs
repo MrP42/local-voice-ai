@@ -56,6 +56,8 @@ pub enum Purpose {
     Summary,
     Tagging,
     Translation,
+    /// Chat ueber Besprechungen (M4, P4c).
+    Chat,
 }
 
 impl Purpose {
@@ -67,6 +69,7 @@ impl Purpose {
             Purpose::Summary => "summary",
             Purpose::Tagging => "tagging",
             Purpose::Translation => "translation",
+            Purpose::Chat => "chat",
         }
     }
 }

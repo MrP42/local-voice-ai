@@ -78,6 +78,102 @@ async meetingsSegmentEpoch(meetingId: string) : Promise<Result<number, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Stellt eine Frage an eine Besprechung (auch waehrend der Aufnahme) oder an
+ * viele. Antworttext kommt vorab als `MeetingChatEvent::Delta`; das Ergebnis
+ * ist die fertige Antwort mit Zitaten und Abdeckung (gespeichert im
+ * Verlauf). Fehler: `<code>` oder `<code>: <art>` und `MeetingChatEvent::Failed`.
+ */
+async meetingChatAsk(req: ChatRequest) : Promise<Result<ChatAnswer, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_ask", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht einen laufenden Chat ab (nichts wird gespeichert). `false`, wenn
+ * zu dieser Anfrage kein Lauf (mehr) existiert.
+ */
+async meetingChatCancel(requestId: string) : Promise<boolean> {
+    return await TAURI_INVOKE("meeting_chat_cancel", { requestId });
+},
+/**
+ * Verlaeufe eines Scopes (Besprechung oder global), zuletzt benutzte zuerst.
+ */
+async meetingChatThreads(scope: ChatScope) : Promise<Result<ChatThread[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_threads", { scope }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nachrichten eines Verlaufs mit Zitaten und Abdeckung.
+ */
+async meetingChatThread(threadId: string) : Promise<Result<ChatMessage[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_thread", { threadId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Loescht einen Verlauf (Nachrichten hart).
+ */
+async meetingChatThreadDelete(threadId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_thread_delete", { threadId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mitgelieferte Recipes zuerst, dann die eigenen.
+ */
+async chatRecipesList() : Promise<Result<RecipeItem[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt ein eigenes Recipe an (`id = None`) oder aendert eins. Fehler:
+ * `recipe_invalid:<grund>`, `recipe_readonly`, `recipe_not_found`.
+ */
+async chatRecipesSave(id: string | null, title: string, spec: RecipeSpec) : Promise<Result<RecipeItem, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_save", { id, title, spec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chatRecipesDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopie eines (auch mitgelieferten) Recipes als eigenes, Titel mit "(Kopie)".
+ */
+async chatRecipesDuplicate(id: string) : Promise<Result<RecipeItem, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_duplicate", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("reset_binding", { id }) };
@@ -2784,12 +2880,14 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 export const events = __makeEvents__<{
 historyUpdatePayload: HistoryUpdatePayload,
+meetingChatEvent: MeetingChatEvent,
 meetingEvent: MeetingEvent,
 meetingNotesEvent: MeetingNotesEvent,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
 }>({
 historyUpdatePayload: "history-update-payload",
+meetingChatEvent: "meeting-chat-event",
 meetingEvent: "meeting-event",
 meetingNotesEvent: "meeting-notes-event",
 streamPhaseEvent: "stream-phase-event",
@@ -3268,6 +3366,134 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  * uebersetzt ihn (Muster `MeetingEvent::Error`).
  */
 export type MeetingNotesEvent = { kind: "progress"; meeting_id: string; step: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
+export type ChatAnswer = { thread_id: string; message_id: string; 
+/**
+ * Antworttext mit `[1]`, `[2]` ... (leer bei `not_found`).
+ */
+text: string; citations: Citation[]; coverage: Coverage; 
+/**
+ * Das Modell fand in den Auszuegen keinen Beleg (UI zeigt den i18n-Text).
+ */
+not_found: boolean; 
+/**
+ * Antwort ohne ein einziges gueltiges Zitat (UI-Hinweis "ohne Beleg").
+ */
+uncited: boolean; 
+/**
+ * Lokales Modell (sonst gingen Auszuege an einen externen Anbieter).
+ */
+provider_local: boolean }
+/**
+ * Eine gespeicherte Nachricht, fuer die UI aufbereitet
+ * (`meeting_chat_thread`). Unlesbares JSON einer Zeile kostet deren Zitate,
+ * nicht den Verlauf.
+ */
+export type ChatMessage = { id: string; 
+/**
+ * `user` | `assistant`
+ */
+role: string; text: string; citations: Citation[]; coverage: Coverage | null; not_found: boolean; uncited: boolean; created_at: number }
+export type ChatRequest = { 
+/**
+ * Von der UI vergeben; Schluessel fuer Deltas und `meeting_chat_cancel`.
+ */
+request_id: string; 
+/**
+ * `None` = neuer Verlauf.
+ */
+thread_id: string | null; scope: ChatScope; 
+/**
+ * Freitext; darf leer sein, wenn ein Recipe gewaehlt ist (dann ergaenzt er es).
+ */
+question: string; recipe: RecipeCall | null }
+/**
+ * Worauf sich ein Chat bezieht: eine Besprechung (auch waehrend der
+ * Aufnahme) oder viele (alle / Ordner / Person / Zeitraum / Auswahl).
+ */
+export type ChatScope = { kind: "meeting"; meeting_id: string } | { kind: "global"; filter: ScopeFilter }
+/**
+ * Phase eines Laufs fuer `MeetingChatEvent::Stage`.
+ */
+export type ChatStage = "searching" | "reading" | "answering"
+export type ChunkSource = "title" | "transcript" | "user_notes" | "ai_notes"
+/**
+ * Ein Beleg in der Antwort. `n` ist die Anzeige-Nummer (`[n]` im Text).
+ * Transkript: `segment_index` + `start_ms` (Epoche `epoch`); Notizen:
+ * `ref_key` (NoteBlock-ID bzw. KI-Notizen-Eintrag "E7").
+ */
+export type Citation = { n: number; meeting_id: string; meeting_title: string; started_at: number | null; source: ChunkSource; epoch: number; segment_index: number | null; start_ms: number | null; ref_key: string | null; 
+/**
+ * Hoechstens 200 Zeichen aus der belegten Stelle.
+ */
+quote: string }
+/**
+ * Was der Chat gesehen hat (deterministisch; die UI formt daraus die graue
+ * Abdeckungszeile).
+ */
+export type Coverage = { meetings_in_scope: number; meetings_with_hits: number; meetings_read: number; excerpts_read: number; 
+/**
+ * Ohne Vektoren gesucht (nur Stichwortsuche).
+ */
+lexical_only: boolean; 
+/**
+ * LLM-Runden (0 = ohne Treffer gar nicht gefragt, 2 = mit Wiederholung).
+ */
+rounds: number; 
+/**
+ * Es gab mehr passende Stellen, als ins Budget passten.
+ */
+truncated: boolean; 
+/**
+ * Waehrend der Aufnahme gefragt (Live-Auszuege ohne Index).
+ */
+live: boolean; 
+/**
+ * Zitate auf unbekannte Auszugs-IDs, verworfen.
+ */
+dropped_citations: number; 
+/**
+ * Lokales Modell auf CPU: kleineres Budget ("CPU: weniger Auszuege gelesen").
+ */
+cpu_limited: boolean }
+/**
+ * Aufruf eines Recipes: ID (`builtin:<key>` oder eigene) und Werte der
+ * Variablen nach Name. Werte fuer `folder` sind Ordner-IDs, fuer `meeting`
+ * Besprechungs-IDs, fuer `date_*` `JJJJ-MM-TT`.
+ */
+export type RecipeCall = { recipe_id: string; values?: Partial<{ [key in string]: string }> }
+/**
+ * Recipe fuer die UI (`chat_recipes_list`).
+ */
+export type RecipeItem = { id: string; title: string; builtin: boolean; spec: RecipeSpec; updated_at: number }
+export type RecipeScope = "meeting" | "global" | "any"
+export type RecipeSpec = { 
+/**
+ * Immer 1.
+ */
+version: number; prompt: string; variables?: RecipeVar[]; scope: RecipeScope; 
+/**
+ * Auch waehrend der Aufnahme anbietbar.
+ */
+live_ok?: boolean }
+export type RecipeVar = { 
+/**
+ * `[a-z_]{1,24}`, im Prompt als `{{name}}`.
+ */
+name: string; label: string; kind: RecipeVarKind; required?: boolean; default?: string | null }
+export type RecipeVarKind = "text" | "person" | "folder" | "date_from" | "date_to" | "meeting"
+/**
+ * Eingrenzung fuer Chat und Suche ueber viele Besprechungen (M4 §6). Alle
+ * gesetzten Felder gelten zugleich (UND).
+ */
+export type ScopeFilter = { meeting_ids: string[] | null; folder_id: string | null; person: string | null; from: number | null; to: number | null }
+export type ChatThread = { id: string; scope_json: string; meeting_id: string | null; title: string | null; message_count: number; created_at: number; updated_at: number }
+/**
+ * Ereignis eines Chat-Laufs. `delta`: sichtbarer Antworttext in Stuecken
+ * (Zitat-Marker gefiltert; die Endantwort von `meeting_chat_ask` ersetzt
+ * ihn). `stage`: Phase und Runde (Runde 2 = Wiederholung, der bisherige
+ * Text wird verworfen). `failed.code` ist einer von `chat::EVENT_CODES`.
+ */
+export type MeetingChatEvent = { kind: "delta"; request_id: string; text: string } | { kind: "stage"; request_id: string; stage: ChatStage; round: number } | { kind: "failed"; request_id: string; code: string }
 /**
  * Der gesamte Notizblock einer Besprechung. `revision` ist der Zaehler der
  * optimistischen Sperre (`save_notes`); `updated_at` in Sekunden (0 = noch nie gespeichert).
