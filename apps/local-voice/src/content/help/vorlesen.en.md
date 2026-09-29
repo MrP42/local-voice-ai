@@ -4,11 +4,14 @@ Put text in the middle, pick a voice, press Read. Everything runs on this machin
 
 ## What this page does
 
-- **Text**: type, paste or dictate it (microphone button).
+- **Text**: type, paste or dictate it (microphone icon).
+- **Icon row** below the voice picker: equally sized icons without labels. A tooltip gives name and effect, on mouse hover after a short pause and on keyboard focus. Rarely used actions sit behind the menu (☰) at the right edge.
 - **Add (+)**: bring in a document (TXT, MD, PDF, DOCX), a web address or a file for the project.
-- **Translate** and **Summarize** put their result on a separate tab. The original stays untouched.
+- **Translate** (language icon, on the Translation tab, target language next to it) and **Summarize** (document icon, on the Summary tab; length, detail and audience are behind the sliders icon next to it) put their result on a separate tab. The original stays untouched.
 - **Read** speaks sentence by sentence. The arrows jump to the previous or next sentence, Pause holds.
-- **Save audio** writes the recording into the page's project folder. It shows up under Files on the right.
+- **Save as audio** (arrow down) writes the recording into the page's project folder. It shows up under Files on the right.
+- **Pre-generate changes** (bolt) puts changed sentences into the cache ahead of time without playing them.
+- **Menu (☰)**: script workshop, clean up text, check script and auto-tagging. Script errors show as a red number on the menu icon.
 
 ## Pages (left)
 
@@ -19,7 +22,7 @@ Each page is a worksheet with its own text and folder. The list shows the start 
 - **Speaker change**: start a line with a voice name and a colon, for example `Olga:`. Everything up to the next change is spoken by that voice.
 - **Style**: `<Olga:whispering>` picks a saved style of that voice.
 - **Tags** go in square brackets exactly where they should act: `[whisper] Come closer.` or `He opened the door. [short pause] Nothing.`
-- **Auto-tagging** suggests tags via the language model. It only inserts, never deletes. Accept suggestions one by one or undo them.
+- **Auto-tagging** (menu ☰) suggests tags via the language model. It only inserts, never deletes. Accept suggestions one by one or undo them.
 - The palette below the text lists all tags by group. Click inserts at the cursor.
 
 ## Voices

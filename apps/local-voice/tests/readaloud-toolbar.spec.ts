@@ -1,0 +1,389 @@
+import { test, expect, type Page } from "@playwright/test";
+
+// Bedienspalte der Vorlesen-Seite: eine Zeile gleich grosser Symbol-Knoepfe,
+// Seltenes hinter dem Menue. Die Tauri-Bruecke ist eine schlanke Attrappe wie
+// in script-check.spec.ts; zusaetzlich merkt sie sich die aufgerufenen Befehle.
+test.beforeEach(async ({ page }) => {
+  page.on("pageerror", (error) => {
+    throw error;
+  });
+  await page.addInitScript(() => {
+    const callbacks = new Map<number, unknown>();
+    let callback = 0;
+    const calls: string[] = [];
+    (window as unknown as { __calls: string[] }).__calls = calls;
+    const settings = {
+      onboarding_completed: true,
+      app_language: "de",
+      theme: "light",
+      show_whats_new_on_update: false,
+      debug_mode: false,
+      selected_model: "",
+      bindings: {
+        transcribe: {
+          id: "transcribe",
+          name: "Diktat",
+          description: "",
+          current_binding: "Ctrl+Space",
+          default_binding: "Ctrl+Space",
+        },
+      },
+      post_process_providers: [],
+      post_process_prompts: [],
+      custom_words: [],
+      post_process_models: {},
+      post_process_api_keys: {},
+      push_to_talk: true,
+      tts_voice: null,
+      tts_engine: "piper",
+      tts_piper_voice: null,
+      tts_script_check: true,
+    };
+    Object.assign(window, {
+      __TAURI_OS_PLUGIN_INTERNALS__: {
+        platform: "windows",
+        os_type: "windows",
+        family: "windows",
+        arch: "x86_64",
+        version: "10.0.26200",
+        eol: "\r\n",
+      },
+      __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} },
+      __TAURI_INTERNALS__: {
+        metadata: {
+          currentWindow: { label: "main" },
+          currentWebview: { label: "main" },
+        },
+        transformCallback: (fn: unknown) => {
+          callbacks.set(++callback, fn);
+          return callback;
+        },
+        unregisterCallback: (id: number) => callbacks.delete(id),
+        convertFileSrc: (path: string) => path,
+        invoke: async (cmd: string) => {
+          calls.push(cmd);
+          if (cmd === "get_app_settings" || cmd === "get_default_settings")
+            return settings;
+          if (cmd === "plugin:os|locale") return "de-DE";
+          if (cmd === "plugin:app|version") return "0.16.0";
+          if (cmd.includes("permission")) return true;
+          if (cmd === "plugin:event|listen") return ++callback;
+          if (cmd === "get_selected_model") return "";
+          if (cmd === "meetings_is_recording") return false;
+          if (cmd === "tts_server_status")
+            return { phase: "stopped", message: null };
+          if (cmd === "pages_list") return [{ id: "p1", title: "Der Sturm" }];
+          if (cmd === "books_list") return [];
+          if (cmd === "books_templates") return [];
+          if (cmd === "books_memory_read") return [];
+          if (cmd === "tts_tidy_text") return "Sauberer Text.";
+          if (cmd === "page_files") return [];
+          if (cmd === "page_dir") return "C:/projects/p1";
+          if (cmd === "tts_list_downloads") return [];
+          if (cmd === "get_custom_sounds") return { start: false, stop: false };
+          if (
+            cmd === "tts_list_voice_infos" ||
+            cmd === "tts_list_voices" ||
+            cmd === "llm_ps" ||
+            cmd === "tts_reading_list" ||
+            cmd.includes("history") ||
+            cmd.includes("models") ||
+            cmd.includes("devices") ||
+            cmd === "meetings_list"
+          )
+            return [];
+          return null;
+        },
+      },
+    });
+  });
+});
+
+const SCRIPT = "<Erzählerin> Es war einmal.\n<Bob> Wer bin ich?";
+
+async function openReadAloud(page: Page) {
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  const editor = page.locator("textarea").first();
+  await editor.fill(SCRIPT);
+  return editor;
+}
+
+const actions = (page: Page) =>
+  page.locator('.tts-controls button[data-testid^="tts-action-"]');
+
+async function openMenu(page: Page) {
+  await page.getByTestId("tts-action-menu").click();
+  await expect(page.getByRole("menu")).toBeVisible();
+}
+
+test("all action buttons are the same size and show no text", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  const boxes = await actions(page).evaluateAll((els) =>
+    els.map((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        id: el.getAttribute("data-testid"),
+        w: r.width,
+        h: r.height,
+        text: (el.textContent ?? "").trim(),
+      };
+    }),
+  );
+  expect(boxes.length).toBeGreaterThanOrEqual(5);
+  for (const box of boxes) {
+    expect(Math.abs(box.w - boxes[0].w), `${box.id} width`).toBeLessThanOrEqual(
+      1,
+    );
+    expect(
+      Math.abs(box.h - boxes[0].h),
+      `${box.id} height`,
+    ).toBeLessThanOrEqual(1);
+    expect(box.text, `${box.id} text`).toBe("");
+  }
+  expect(Math.round(boxes[0].w)).toBe(36);
+});
+
+test("every lucide symbol appears at most once in the control column", async ({
+  page,
+}) => {
+  for (const tab of ["Original", "Übersetzung", "Zusammenfassung"]) {
+    await openReadAloud(page);
+    await page.getByRole("button", { name: tab, exact: true }).click();
+    const classes = await page
+      .locator('.tts-controls svg[class*="lucide-"]')
+      .evaluateAll((els) =>
+        els.map(
+          (el) =>
+            (el.getAttribute("class") ?? "")
+              .split(/\s+/)
+              .find((c) => c.startsWith("lucide-")) ?? "",
+        ),
+      );
+    expect(classes.length, tab).toBeGreaterThanOrEqual(3);
+    const duplicates = classes.filter((c, i) => classes.indexOf(c) !== i);
+    expect(duplicates, `${tab}: doppelte Symbole`).toEqual([]);
+  }
+});
+
+test("original tab: add, dictate, save, prewarm and menu share one row", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  const ids = ["add", "dictate", "save", "prewarm", "menu"];
+  const boxes = [];
+  for (const id of ids) {
+    const box = await page.getByTestId(`tts-action-${id}`).boundingBox();
+    expect(box, id).not.toBeNull();
+    boxes.push(box!);
+  }
+  for (const box of boxes) {
+    expect(Math.abs(box.y - boxes[0].y)).toBeLessThanOrEqual(2);
+  }
+  // Hinzufuegen steht links zuerst, das Menue rechts am Ende.
+  for (let i = 1; i < boxes.length; i++) {
+    expect(boxes[i].x).toBeGreaterThan(boxes[i - 1].x);
+  }
+});
+
+test("the menu offers workshop, tidy, check and auto-tagging and each runs", async ({
+  page,
+}) => {
+  const editor = await openReadAloud(page);
+  const menuButton = page.getByTestId("tts-action-menu");
+  await expect(menuButton).toHaveAttribute("aria-haspopup", "menu");
+  await expect(menuButton).toHaveAttribute("aria-expanded", "false");
+  await openMenu(page);
+  await expect(menuButton).toHaveAttribute("aria-expanded", "true");
+  const items = page.getByRole("menuitem");
+  await expect(items).toHaveCount(4);
+  await expect(items.nth(0)).toContainText("Skript-Werkstatt");
+  await expect(items.nth(1)).toContainText("Text aufbereiten");
+  await expect(items.nth(2)).toContainText("Skript prüfen");
+  await expect(items.nth(3)).toContainText("Auto-Tagging");
+
+  // Werkstatt: Dialog auf.
+  await page.getByTestId("workshop-open").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Skript-Werkstatt");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  // Pruefen: Befund-Panel sichtbar (Bob ist kein bekannter Sprecher).
+  await openMenu(page);
+  await page.getByTestId("script-check-run").click();
+  await expect(page.getByTestId("script-check")).toBeVisible();
+  // Nach der Wahl schliesst das Menue.
+  await expect(page.getByRole("menu")).toHaveCount(0);
+
+  // Auto-Tagging: derselbe Dialog wie bisher.
+  await openMenu(page);
+  await page.getByTestId("autotag-open").click();
+  await expect(page.getByRole("dialog")).toContainText("Auto-Tagging");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  // Aufbereiten: Befehl geht raus, Text wird ersetzt.
+  await openMenu(page);
+  await page.getByRole("menuitem", { name: "Text aufbereiten" }).click();
+  await expect(editor).toHaveValue("Sauberer Text.");
+  const calls = await page.evaluate(
+    () => (window as unknown as { __calls: string[] }).__calls,
+  );
+  expect(calls).toContain("tts_tidy_text");
+});
+
+test("the menu is keyboard operable and closes on Escape and outside click", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  const menuButton = page.getByTestId("tts-action-menu");
+  await menuButton.focus();
+  await page.keyboard.press("Enter");
+  const items = page.getByRole("menuitem");
+  await expect(items.first()).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(items.nth(1)).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await expect(items.last()).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(menuButton).toBeFocused();
+  // Klick daneben schliesst ebenfalls.
+  await openMenu(page);
+  await page.locator("textarea").first().click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+});
+
+test("the add button opens the sources menu", async ({ page }) => {
+  await openReadAloud(page);
+  await page.getByTestId("tts-action-add").click();
+  const items = page.getByRole("menuitem");
+  await expect(items).toHaveCount(3);
+  await expect(items.nth(0)).toContainText("Dokument laden");
+  await expect(items.nth(1)).toContainText("Webseite laden");
+  await expect(items.nth(2)).toContainText("Datei zu den Projekt-Dateien");
+  await items.nth(1).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+});
+
+test("a tooltip names and explains the action on hover and on keyboard focus", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  const save = page.getByTestId("tts-action-save");
+  // Hover: erst nach kurzer Verzoegerung.
+  await save.hover();
+  const tip = page.getByRole("tooltip");
+  await expect(tip).toBeVisible();
+  await expect(tip).toContainText("Als Audio speichern");
+  await expect(tip.locator("strong")).toHaveCount(1);
+  // Name fett + eine Erklaerungszeile.
+  expect((await tip.innerText()).split("\n").length).toBeGreaterThanOrEqual(2);
+  const id = await tip.getAttribute("id");
+  expect(id).toBeTruthy();
+  expect(await save.getAttribute("aria-describedby")).toBe(id);
+  await page.mouse.move(600, 500);
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+
+  // Tastaturfokus: Tab zum Knopf, sofort sichtbar; Esc schliesst.
+  await page.getByTestId("tts-action-add").focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(page.getByTestId("tts-action-save")).toBeFocused();
+  await expect(page.getByRole("tooltip")).toContainText("Als Audio speichern");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  // Der Zustand steht im Namen: Diktat laeuft -> "Aufnahme beenden".
+  await expect(page.getByTestId("tts-action-dictate")).toHaveAttribute(
+    "aria-label",
+    "Diktieren",
+  );
+});
+
+test("the voice hint is a description of the voice select, not a permanent line", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  const hint = page.getByTestId("voice-mode-hint");
+  await expect(hint).toContainText("Sprecher im Skript");
+  // Nicht mehr als sichtbare Dauerzeile.
+  const hintBox = await hint.boundingBox();
+  expect(hintBox!.width).toBeLessThanOrEqual(1);
+  expect(hintBox!.height).toBeLessThanOrEqual(1);
+  const describedBy = await page
+    .getByTestId("voice-select")
+    .getAttribute("aria-describedby");
+  expect(describedBy).toBe(await hint.getAttribute("id"));
+});
+
+test("translation and summary tabs show their action as a symbol", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  await page.getByRole("button", { name: "Übersetzung", exact: true }).click();
+  const translate = page.getByTestId("tts-action-translate");
+  await expect(translate).toBeVisible();
+  await expect(translate).toHaveAttribute("aria-label", /Übersetzen/);
+  expect(((await translate.textContent()) ?? "").trim()).toBe("");
+  await expect(page.getByTestId("tts-action-save")).toBeVisible();
+  await expect(page.getByTestId("tts-action-prewarm")).toBeVisible();
+  // Zielsprache in derselben Zeile und Hoehe.
+  const row = await translate.boundingBox();
+  const lang = await page
+    .locator(".tts-controls .app-select__control")
+    .last()
+    .boundingBox();
+  expect(Math.abs(lang!.y - row!.y)).toBeLessThanOrEqual(2);
+  expect(Math.abs(lang!.height - row!.height)).toBeLessThanOrEqual(1);
+
+  await page
+    .getByRole("button", { name: "Zusammenfassung", exact: true })
+    .click();
+  const summarize = page.getByTestId("tts-action-summarize");
+  await expect(summarize).toBeVisible();
+  expect(((await summarize.textContent()) ?? "").trim()).toBe("");
+  const options = page.getByTestId("tts-action-summary-options");
+  await expect(options).toHaveAttribute("aria-haspopup", /dialog|true|menu/);
+  await options.click();
+  const popover = page.getByTestId("tts-summary-options");
+  await expect(popover).toBeVisible();
+  await expect(popover.locator(".app-select__control")).toHaveCount(3);
+  await expect(popover).toContainText("Umfang");
+  await expect(popover).toContainText("Detailgrad");
+  await expect(popover).toContainText("Zielgruppe");
+  await page.keyboard.press("Escape");
+  await expect(popover).toHaveCount(0);
+  await expect(options).toBeFocused();
+});
+
+test("the error count shows on the menu button and on the check entry", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  const badge = page.getByTestId("tts-action-menu-badge");
+  await expect(badge).toBeVisible();
+  const count = ((await badge.textContent()) ?? "").trim();
+  expect(Number(count)).toBeGreaterThan(0);
+  await openMenu(page);
+  await expect(page.getByTestId("script-check-badge")).toHaveText(count);
+});
+
+test("screenshots of the control column", async ({ page }) => {
+  test.skip(!process.env.LV_SHOTS, "nur auf Anforderung");
+  await page.setViewportSize({ width: 1920, height: 1050 });
+  await openReadAloud(page);
+  const dir = "../../koordination/ui-vorlesen-kompakt/screens/p2";
+  await openMenu(page);
+  await page.screenshot({ path: `${dir}/menue-offen.png` });
+  await page.keyboard.press("Escape");
+  await page.getByTestId("tts-action-prewarm").hover();
+  await expect(page.getByRole("tooltip")).toBeVisible();
+  await page.screenshot({ path: `${dir}/tooltip.png` });
+});

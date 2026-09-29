@@ -4,11 +4,14 @@ Text in die Mitte, Stimme wählen, Vorlesen drücken. Alles läuft auf diesem Re
 
 ## Was diese Seite kann
 
-- **Text** tippen, einfügen oder diktieren (Mikrofon-Knopf).
+- **Text** tippen, einfügen oder diktieren (Mikrofon-Symbol).
+- **Symbolzeile** unter der Stimmenwahl: lauter gleich große Symbole ohne Beschriftung. Ein Tooltip nennt Namen und Wirkung, per Maus nach kurzem Verweilen, per Tastatur beim Fokus. Seltenes liegt hinter dem Menü (☰) am rechten Rand.
 - **Hinzufügen (+)**: ein Dokument (TXT, MD, PDF, DOCX), eine Web-Adresse oder eine Datei ins Projekt holen.
-- **Übersetzen** und **Zusammenfassen** legen das Ergebnis in einen eigenen Reiter. Das Original bleibt unverändert.
+- **Übersetzen** (Sprachsymbol, im Reiter Übersetzung, daneben die Zielsprache) und **Zusammenfassen** (Dokumentsymbol, im Reiter Zusammenfassung; Umfang, Detailgrad und Zielgruppe stehen hinter dem Reglersymbol daneben) legen das Ergebnis in einen eigenen Reiter. Das Original bleibt unverändert.
 - **Vorlesen** liest Satz für Satz. Die Pfeile springen zum vorigen oder nächsten Satz, Pause hält an.
-- **Audio speichern** schreibt die Aufnahme in den Projektordner der Seite. Sie erscheint rechts unter Dateien.
+- **Als Audio speichern** (Pfeil nach unten) schreibt die Aufnahme in den Projektordner der Seite. Sie erscheint rechts unter Dateien.
+- **Änderungen vorab erzeugen** (Blitz) legt geänderte Sätze im Voraus im Cache ab, ohne abzuspielen.
+- **Menü (☰)**: Skript-Werkstatt, Text aufbereiten, Skript prüfen und Auto-Tagging. Gefundene Skript-Fehler zeigt eine rote Zahl am Menüsymbol.
 
 ## Seiten (links)
 
@@ -19,7 +22,7 @@ Jede Seite ist ein Arbeitsblatt mit eigenem Text und eigenem Ordner. Die Liste z
 - **Sprecherwechsel**: eine Zeile mit dem Namen einer Stimme und Doppelpunkt beginnen, zum Beispiel `Olga:`. Alles bis zum nächsten Wechsel spricht diese Stimme.
 - **Stil**: `<Olga:flüsternd>` wählt einen gespeicherten Stil dieser Stimme.
 - **Tags** stehen in eckigen Klammern genau dort, wo sie wirken sollen: `[whisper] Komm näher.` oder `Er öffnete die Tür. [short pause] Nichts.`
-- **Auto-Tagging** schlägt Tags per Sprachmodell vor. Es fügt nur ein, es löscht nichts. Vorschläge lassen sich einzeln übernehmen oder mit Rückgängig verwerfen.
+- **Auto-Tagging** (Menü ☰) schlägt Tags per Sprachmodell vor. Es fügt nur ein, es löscht nichts. Vorschläge lassen sich einzeln übernehmen oder mit Rückgängig verwerfen.
 - Die Palette unter dem Text listet alle Tags nach Gruppen. Klick fügt an der Cursorposition ein.
 
 ## Stimmen

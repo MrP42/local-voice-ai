@@ -148,7 +148,7 @@ export function resolveAllSuggestions(
  *  bekommt den Sentinel. */
 const DEFAULT_PROVIDER_UI_VALUE = "@default";
 
-interface AutoTagBarProps {
+export interface AutoTagBarProps {
   /** Der Text des AKTIVEN Reiters (nur der Original-Reiter montiert diese
    *  Leiste — siehe TtsSettings.tsx). */
   text: string;
@@ -173,6 +173,16 @@ interface AutoTagBarProps {
   options: AutoTagOptions;
   onOptionsChange: (next: AutoTagOptions) => void;
   uiLang: string;
+  /** Dialog von außen steuern (z. B. aus einem Menüeintrag der Bedienspalte).
+   *  Ohne Angabe verwaltet die Leiste ihn selbst über ihren Knopf. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Eigenen Knopf weglassen: die Leiste zeigt dann nur noch Fortschritt,
+   *  Abbrechen, Vorschlagszähler und Fehler. */
+  hideTrigger?: boolean;
+  /** Meldet den Ladezustand nach außen, damit der auslösende Menüeintrag ihn
+   *  anzeigen kann. */
+  onLoadingChange?: (loading: boolean) => void;
 }
 
 export const DEFAULT_TAG_PROVIDER_UI_VALUE = DEFAULT_PROVIDER_UI_VALUE;
@@ -187,13 +197,22 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   options,
   onOptionsChange,
   uiLang,
+  open,
+  onOpenChange,
+  hideTrigger = false,
+  onLoadingChange,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
   const tagLang = useTagLanguage();
   const [loading, setLoading] = useState(false);
   // Der Knopf oeffnet erst den Dialog; gestartet wird aus dem Dialog.
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const dialogOpen = open ?? internalOpen;
+  const setDialogOpen = onOpenChange ?? setInternalOpen;
+  useEffect(() => {
+    onLoadingChange?.(loading);
+  }, [loading, onLoadingChange]);
   const [error, setError] = useState<string | null>(null);
   /** Fortschritt des laufenden Auto-Taggings (Abschnitte), null = kein Lauf. */
   const [progress, setProgress] = useState<{
@@ -337,26 +356,28 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
       className={
         showSettings
           ? "flex flex-wrap items-center gap-2 rounded-lg border border-mid-gray/20 px-2 py-1.5"
-          : "flex flex-col items-stretch gap-2"
+          : "flex flex-col items-stretch gap-2 empty:hidden"
       }
     >
-      <Button
-        variant="secondary"
-        size="sm"
-        className={showSettings ? undefined : "w-full justify-start"}
-        onClick={() => setDialogOpen(true)}
-        disabled={loading || !text.trim()}
-        data-testid="autotag-open"
-        title={t("tts.autotag.button")}
-        aria-label={t("tts.autotag.button")}
-      >
-        <Sparkles
-          width={14}
-          height={14}
-          className={loading ? "animate-spin" : ""}
-        />
-        {t("tts.autotag.button")}
-      </Button>
+      {!hideTrigger && (
+        <Button
+          variant="secondary"
+          size="sm"
+          className={showSettings ? undefined : "w-full justify-start"}
+          onClick={() => setDialogOpen(true)}
+          disabled={loading || !text.trim()}
+          data-testid="autotag-open"
+          title={t("tts.autotag.button")}
+          aria-label={t("tts.autotag.button")}
+        >
+          <Sparkles
+            width={14}
+            height={14}
+            className={loading ? "animate-spin" : ""}
+          />
+          {t("tts.autotag.button")}
+        </Button>
+      )}
       {showSettings && (
         <>
           <div className="w-40">
