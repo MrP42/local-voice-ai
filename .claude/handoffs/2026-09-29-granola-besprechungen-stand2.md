@@ -34,3 +34,8 @@ Goal `koordination/granola-besprechungen/GOAL.md` (Issue #59, Integrationsbranch
 - `goal-planner-worker` (Wiederaufnahme: `goal.py status --thema granola-besprechungen`)
 - `superpowers:verification-before-completion` vor jeder Abnahme
 - `handoff` am Sessionende
+
+## Nachtrag 20:35 — Goal BLOCKED (Budget)
+- Nach dem Handoff gemergt: P1h (toter llama-server, B4 erledigt), P6b (PDF). Rust-Suite 1508 grün.
+- P5b (Kalender-Sync/Hinweisfenster) ist **geliefert, nicht gemergt**: Branch `feat/granola-p5b` gepusht; beim Squash zerbricht `settings.rs` (Felder P5c/P6c/P5b im selben Struct und Default) → von Hand zusammenführen, dazu `collect_events!` um `CalendarSyncEvent`/`MeetingPromptEvent` und `AppSettings`-Ende in bindings.ts ergänzen.
+- Goal steht auf BLOCKED (Budgetrahmen 12 MTok erreicht, Ist ~12,8). Entsperren: Patrick hebt Rahmen an oder kürzt Komfortpakete.
