@@ -11,6 +11,7 @@ pub mod notes;
 pub mod recorder;
 pub mod retention;
 pub mod retranscribe;
+pub mod search;
 pub mod segmenter;
 pub mod stats;
 pub mod store;
