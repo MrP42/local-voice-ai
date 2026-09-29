@@ -2573,7 +2573,7 @@ fn run_headless_export_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> i32
             Some(format) => format,
             None => {
                 eprintln!(
-                    "error: unknown --format '{name}' (md, txt, docx, html, srt, vtt, json)"
+                    "error: unknown --format '{name}' (md, txt, docx, html, pdf, srt, vtt, json)"
                 );
                 return 2;
             }

@@ -12,6 +12,7 @@ pub mod mail; // M6-P6c
 pub mod mic_capture;
 pub mod minutes;
 pub mod notes;
+pub mod pdf; // M6-P6b
 pub mod recorder;
 pub mod retention;
 pub mod retranscribe;

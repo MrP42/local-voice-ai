@@ -190,6 +190,9 @@ windows = { version = "0.61.3", features = [
   "Win32_Security_Cryptography",
 ] }
 winreg = "0.55"
+# M6-P6b: PDF-Export ueber ein verstecktes WebView2-Fenster (PrintToPdf). Gleiche
+# Version wie im Lock (kommt ueber wry), damit keine zweite Kopie gebaut wird.
+webview2-com = "0.38"
 # WASAPI loopback capture for the M8 meetings feature (system audio).
 # 0.24, not 0.15: 0.15's read_from_device() passes None for GetBuffer's
 # pu64DevicePosition and returns only (frames, flags). The M8 loopback timeline
