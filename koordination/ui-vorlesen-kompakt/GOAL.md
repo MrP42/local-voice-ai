@@ -1,7 +1,7 @@
 ---
 thema: ui-vorlesen-kompakt
 titel: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
-state: REWORK
+state: COMPLETE
 vorzustand: -
 pausengrund: -
 issue: 61
@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
 iteration: 3
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T21:46
+aktualisiert: 2026-09-29T22:08
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -35,7 +35,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 ## Akzeptanzkriterien
 - [x] AK1 — Audit: `koordination/ui-vorlesen-kompakt/UI-AUDIT.md` listet jede Abweichung als *Element · Ist · Standard · Fundstelle · Schwere · Status*; jede Zeile „hoch“/„mittel“ trägt Status „behoben (Paket/Commit)“, Rest „Folge-Goal“.
 - [x] AK2 — Einheitliche Aktionen: Playwright-Test `tests/readaloud-toolbar.spec.ts` → alle Aktionsknöpfe der Bedienspalte (`[data-testid^="tts-action-"]`) haben gleiche Höhe und Breite (±1 px), kein sichtbarer Beschriftungstext, jedes Symbol (`svg.lucide-*`-Klasse) kommt genau einmal vor; Auto-Tagging ist nicht mehr niedriger als der Rest.
-- [ ] AK3 — Eine Zeile + Menü: im Reiter Original stehen in einer Zeile (gleiche `top` ±2 px) Hinzufügen (zuerst), Diktieren, Als Audio speichern, Änderungen vorab erzeugen, Menü; das Menü enthält Skript-Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging und löst jede davon aus; der Fehlerzähler der Skriptprüfung ist am Menüknopf sichtbar. Übersetzung/Zusammenfassung zeigen ihre Aktion ebenfalls als Symbol.
+- [x] AK3 — Eine Zeile + Menü: im Reiter Original stehen in einer Zeile (gleiche `top` ±2 px) Hinzufügen (zuerst), Diktieren, Als Audio speichern, Änderungen vorab erzeugen, Menü; das Menü enthält Skript-Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging und löst jede davon aus; der Fehlerzähler der Skriptprüfung ist am Menüknopf sichtbar. Übersetzung/Zusammenfassung zeigen ihre Aktion ebenfalls als Symbol.
 - [x] AK4 — Tooltip: Hover UND Tastaturfokus auf jeden Aktionsknopf zeigen Name + Kurzerklärung (`role="tooltip"`, per `aria-describedby` verbunden); `aria-label` trägt den Namen.
 - [x] AK5 — Kompakt gestapelt: Viewport 1920×1050 und 1366×768 im Layout „gestapelt“ → Höhe des Bedienblocks `[data-testid="tts-controls"]` ≤ 50 % von `window.innerHeight`, Dateien/Hilfe liegen darunter in derselben Spalte; es gibt rechts vom Editor genau eine Spalte.
 - [x] AK6 — Umschaltbar: Umschalter gestapelt/nebeneinander in der rechten Spalte; Wahl übersteht Neuladen (localStorage); „nebeneinander“ entspricht dem bisherigen Aufbau.
@@ -51,17 +51,17 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 
 - [x] AK15 — Dateizeile ohne Springen: Anhören, Umbenennen, Löschen immer sichtbar an festen Positionen (boundingBox vor/nach Hover gleich ±1 px; Löschen in Audio- und Nicht-Audio-Zeilen auf gleicher x-Position) — Playwright.
 
-- [ ] AK16 — Auswahllisten schweben: Stimmen-, Zielsprachen- und Optionen-Auswahl in der gestapelten Bedienspalte öffnen als Ebene über dem Dateibereich; `tts-controls` scrollTop bleibt 0, keine äußere Scrollbar erscheint, jede Option per elementFromPoint erreichbar — Playwright 1920×1050 und 1366×768.
+- [x] AK16 — Auswahllisten schweben: Stimmen-, Zielsprachen- und Optionen-Auswahl in der gestapelten Bedienspalte öffnen als Ebene über dem Dateibereich; `tts-controls` scrollTop bleibt 0, keine äußere Scrollbar erscheint, jede Option per elementFromPoint erreichbar — Playwright 1920×1050 und 1366×768.
 
 ## Quality Gates
-- [ ] QG1 — Typen: `cd apps/local-voice && pnpm exec tsc --noEmit` → Exit 0.
-- [ ] QG2 — Gesamte Playwright-Suite: `cd apps/local-voice && pnpm exec playwright test --reporter=line` → keine neuen Fehlschläge gegenüber der Basislinie (Basislinie in Evidence).
-- [ ] QG3 — Lint/Format nur berührte Dateien: `pnpm exec eslint <Dateien>` 0 Fehler, `pnpm exec prettier --check <Dateien>` grün (vorbestehendes Rot anderer Dateien bleibt, AGENTS.md).
-- [ ] QG4 — i18n: neue Schlüssel in `de` und `en` vorhanden (Parität der neuen Schlüssel per Skript), keine hartcodierten deutschen/englischen UI-Texte.
-- [ ] QG5 — Rust unberührt außer Versionsdateien: `git diff --stat origin/chore/0.20.3-abnahme..HEAD -- apps/local-voice/src-tauri` zeigt nur `Cargo.toml`/`tauri.conf.json`(/`Cargo.lock`).
-- [ ] QG6 — Git: Commit je abgenommenem Paket, Branch gepusht, PR gestapelt auf #58 (Basis `chore/0.20.3-abnahme`), kein Push auf `main`, keine Formatierläufe über fremde Dateien.
-- [ ] QG7 — Doku + Handoff: Hilfe-Abschnitt „vorlesen“ passt zur neuen Bedienung; Handoff `.claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md`.
-- [ ] QG8 — Budget: ≤ 1,8 MTok geschätzt; Zwischenstand bei 50 %/80 %, harter Stopp bei 150 % (2,7 MTok).
+- [x] QG1 — Typen: `cd apps/local-voice && pnpm exec tsc --noEmit` → Exit 0.
+- [x] QG2 — Gesamte Playwright-Suite: `cd apps/local-voice && pnpm exec playwright test --reporter=line` → keine neuen Fehlschläge gegenüber der Basislinie (Basislinie in Evidence).
+- [x] QG3 — Lint/Format nur berührte Dateien: `pnpm exec eslint <Dateien>` 0 Fehler, `pnpm exec prettier --check <Dateien>` grün (vorbestehendes Rot anderer Dateien bleibt, AGENTS.md).
+- [x] QG4 — i18n: neue Schlüssel in `de` und `en` vorhanden (Parität der neuen Schlüssel per Skript), keine hartcodierten deutschen/englischen UI-Texte.
+- [x] QG5 — Rust unberührt außer Versionsdateien: `git diff --stat origin/chore/0.20.3-abnahme..HEAD -- apps/local-voice/src-tauri` zeigt nur `Cargo.toml`/`tauri.conf.json`(/`Cargo.lock`).
+- [x] QG6 — Git: Commit je abgenommenem Paket, Branch gepusht, PR gestapelt auf #58 (Basis `chore/0.20.3-abnahme`), kein Push auf `main`, keine Formatierläufe über fremde Dateien.
+- [x] QG7 — Doku + Handoff: Hilfe-Abschnitt „vorlesen“ passt zur neuen Bedienung; Handoff `.claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md`.
+- [x] QG8 — Budget: ≤ 1,8 MTok geschätzt; Zwischenstand bei 50 %/80 %, harter Stopp bei 150 % (2,7 MTok).
 
 ## Constraints
 - Geteilter Baum: eigener Worktree `.claude/worktrees/wt-ui`, Paket-Worktrees `wt-ui-p*`; nie `git stash`, nie `git add -A` am Repo-Root, nie `reset --hard` auf fremde Zweige.
@@ -164,6 +164,16 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29T21:46 QG6 widerrufen — wiedereröffnet: Abnahme 0.20.5: Stimmen-Dropdown gestapelt hinter Dateibereich, aeussere Scrollbar verschiebt Bedienung
 - 2026-09-29T21:46 QG7 widerrufen — wiedereröffnet: Abnahme 0.20.5: Stimmen-Dropdown gestapelt hinter Dateibereich, aeussere Scrollbar verschiebt Bedienung
 - 2026-09-29T21:46 QG8 widerrufen — wiedereröffnet: Abnahme 0.20.5: Stimmen-Dropdown gestapelt hinter Dateibereich, aeussere Scrollbar verschiebt Bedienung
+- 2026-09-29T21:52 AK3 erfüllt — readaloud-toolbar (c)(d)(f) + Menue elementFromPoint; Runde 3 (1c21460e): 127 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T21:52 AK16 erfüllt — readaloud-toolbar 'select lists float above the file area' 1920+1366: scrollTop 0, kein Innen-Scroll, Optionen per elementFromPoint, Wahl uebernommen (vorher rot, 213 px Scrollhoehe); screens/nachher/stimmen-offen-1920.png; P11; Runde 3 (1c21460e): 127 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T21:52 QG1 erfüllt — tsc Exit 0 auf 1c21460e
+- 2026-09-29T21:52 QG2 erfüllt — Runde 3 (1c21460e): 127 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T21:52 QG3 erfüllt — prettier --end-of-line auto aller beruehrten Dateien gruen, eslint 0
+- 2026-09-29T21:52 QG4 erfüllt — keine neuen i18n-Schluessel in P11; de/en-Paritaet unveraendert
+- 2026-09-29T21:52 QG5 erfüllt — src-tauri nur Versionsdateien
+- 2026-09-29T21:52 QG6 erfüllt — Commit je Paket P1-P11, PR #62 auf #58, Push folgt nach Installer
+- 2026-09-29T21:52 QG7 erfüllt — Handoff aktualisiert (0.20.6)
+- 2026-09-29T21:52 QG8 erfüllt — Runde 3 +~0,15 MTok; gesamt ~2,2 MTok < 2,7
 
 ## Blocker
 -
@@ -172,7 +182,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29 E1–E3 als Vorschlag gewählt (siehe Risiken), Basis `chore/0.20.3-abnahme`.
 
 ## Nächste empfohlene Aktion
-Abnahme 0.20.5: Stimmen-Dropdown gestapelt hinter Dateibereich, aeussere Scrollbar verschiebt Bedienung
+Goal abgeschlossen. Nächste Ziele: (noch eintragen: `goal.py complete --naechste-ziele …` oder im Issue-Kommentar „Nächste Ziele“)
 
 ## Verlauf
 - 2026-09-29T11:49 DISCOVERY — Goal State angelegt
@@ -190,4 +200,6 @@ Abnahme 0.20.5: Stimmen-Dropdown gestapelt hinter Dateibereich, aeussere Scrollb
 - 2026-09-29T17:12 VALIDATING (Runde 2) — Runde 2 validiert
 - 2026-09-29T17:12 COMPLETE (Runde 2) — COMPLETE — AK 15/15, Gates 8/8
 - 2026-09-29T21:46 REWORK (Runde 3) — WIEDERERÖFFNET (AK3, QG1, QG2, QG3, QG4, QG5, QG6, QG7, QG8): Abnahme 0.20.5: Stimmen-Dropdown gestapelt hinter Dateibereich, aeussere Scrollbar verschiebt Bedienung
+- 2026-09-29T22:08 VALIDATING (Runde 3) — Runde 3 validiert, Installer 0.20.6
+- 2026-09-29T22:08 COMPLETE (Runde 3) — COMPLETE — AK 16/16, Gates 8/8
 

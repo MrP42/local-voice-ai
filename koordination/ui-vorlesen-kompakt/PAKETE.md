@@ -22,3 +22,4 @@ P5 = Rahmen (Wrapper, aside-Tag, FilesSidebar-Einbau, persistente Zustände oben
 | P8 | M4 | Aufräumen: Aufnahmen nur mit SCREENS_DIR (B2), prettier-Rahmen, AK5-Härtetest, A14/A17, aria-label (lv-coder, wt-ui-p8, Port 1618) | Suite ohne SCREENS_DIR lässt koordination/ unverändert; AK5-Test grün | abgenommen | c8176e0 |
 | P9 | M4 | Nacharbeit P2/P5: Menü/Popover per Portal (B4), Stimmenfeld ohne Rohwert, Randhinweis Filterleiste (lv-coder, wt-ui-p9, Port 1619) | Menü-Test per elementFromPoint rot→grün; Gesamtsuite grün | abgenommen | ffdd18f |
 | P10 | M4 | Nacharbeit Abnahme 0.20.4: Ausklappen rechts, Standard Hilfe, Persistenz, Dateizeile ohne Springen (lv-coder, wt-ui-p10, Port 1620) | AK12-AK15 per Playwright; Gesamtsuite grün | abgenommen | 115fa2bc |
+| P11 | M4 | Nacharbeit Abnahme 0.20.5: Auswahllisten per Portal (lv-coder, wt-ui-p11, Port 1621) | AK16 per Playwright (rot→grün); Gesamtsuite grün | abgenommen | 12666529 |
