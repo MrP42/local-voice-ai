@@ -780,8 +780,7 @@ mod position_tests {
             system_sink: None,
             mic_path: PathBuf::new(),
             system_path: None,
-            work_tx: None,
-            worker: None,
+            pipeline: None,
         }
     }
 
