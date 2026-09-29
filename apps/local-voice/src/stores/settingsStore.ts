@@ -266,6 +266,11 @@ const settingUpdaters: {
     commands.changeMeetingReminderLeadSetting(value as number),
   meeting_reminder_all_events: (value) =>
     commands.changeMeetingReminderAllEventsSetting(value as boolean),
+  // M6-P6e
+  meeting_mcp_enabled: (value) =>
+    commands.changeMeetingMcpEnabledSetting(value as boolean),
+  meeting_mcp_include_transcript: (value) =>
+    commands.changeMeetingMcpIncludeTranscriptSetting(value as boolean),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

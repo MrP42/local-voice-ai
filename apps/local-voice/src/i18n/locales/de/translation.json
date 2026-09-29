@@ -2225,6 +2225,23 @@
         "remove": "{{label}} entfernen"
       }
     },
+    "mcp": {
+      "title": "Lokaler MCP-Server (nur lesend)",
+      "description": "Lässt einen KI-Client auf diesem Rechner (Claude, Codex) deine fertigen Besprechungen suchen und lesen. Der Server läuft nur, solange der Client ihn startet, verändert nichts und braucht kein Netzwerk. Standardmäßig aus.",
+      "warning": "Dein KI-Client (Claude, Codex) sendet gelesene Besprechungsinhalte an seinen Anbieter. Sie enthalten Aussagen Dritter (§ 201 StGB, DSGVO): nur einschalten, wenn alle Beteiligten damit einverstanden sind.",
+      "transcript": "Transkript freigeben",
+      "transcriptDescription": "Der Client darf auch das Wortprotokoll lesen (Werkzeug get_transcript und Treffer im Transkript). Ohne Häkchen sieht er nur Notizen, KI-Notizen und Protokoll.",
+      "connect": "Mit einem KI-Client verbinden",
+      "connectDescription": "Diese Angabe im Client eintragen. Der Client startet den Server selbst; ein Neustart der App ist nicht nötig.",
+      "clients": {
+        "claude-code": "Claude Code",
+        "claude-desktop": "Claude Desktop",
+        "codex": "Codex"
+      },
+      "copy": "Kopieren",
+      "copied": "Kopiert.",
+      "copyFailed": "Kopieren nicht möglich – bitte den Text markieren."
+    },
     "recipes": {
       "bar": "Recipes",
       "menu": "Recipe wählen",

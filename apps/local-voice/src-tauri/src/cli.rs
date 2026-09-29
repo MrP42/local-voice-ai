@@ -333,4 +333,15 @@ pub struct CliArgs {
     /// Format for --export-meeting (default: from the --out extension).
     #[arg(long, value_name = "FORMAT")]
     pub format: Option<String>,
+
+    // M6-P6e
+    /// Run the local MCP server on stdin/stdout (JSON-RPC 2.0, one message per
+    /// line) and exit when the client closes the pipe. Read-only access to the
+    /// finished meetings, nothing else: no window, no models, no network. The
+    /// meetings are only served while "Lokaler MCP-Server" is switched on in the
+    /// settings. Honours LVA_MEETINGS_DIR and LVA_APPDATA_DIR (sandbox). stdout
+    /// carries JSON-RPC only; diagnostics go to stderr. Exit 0 when the client
+    /// closed the pipe, 1 on an I/O error.
+    #[arg(long)]
+    pub mcp: bool,
 }

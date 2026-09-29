@@ -2356,6 +2356,37 @@ async changeMeetingReminderAllEventsSetting(enabled: boolean) : Promise<Result<n
 }
 },
 /**
+ * „Lokaler MCP-Server (nur lesend)“ ein- oder ausschalten. Wirkt sofort auch in
+ * einer laufenden Sitzung: der Server liest die Einstellung bei jedem Aufruf.
+ */
+async changeMeetingMcpEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_mcp_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Transkript freigeben“ fuer den MCP-Server.
+ */
+async changeMeetingMcpIncludeTranscriptSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_mcp_include_transcript_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingMcpInfo() : Promise<Result<McpInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_mcp_info") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Startet eine Aufnahme mit dem Bezug zu einem Termin: Titel = was der Nutzer
  * eingegeben hat, sonst der Termintitel; Vorlage = die der letzten Besprechung
  * derselben Serie (UID), sonst die Standardvorlage; danach Verknuepfung und
@@ -3935,7 +3966,19 @@ meeting_reminder_lead_s?: number;
  * M5-P5b (E11): auch Termine ohne Teilnehmende und ohne Beitritts-Adresse
  * erinnern. Standard aus: ein Einzeltermin ohne Gegenueber ist keine Besprechung.
  */
-meeting_reminder_all_events?: boolean }
+meeting_reminder_all_events?: boolean; 
+/**
+ * M6-P6e (F21, E13): der lokale MCP-Server (`local-voice-ai.exe --mcp`)
+ * gibt Besprechungsinhalte an einen KI-Client weiter. Standard AUS; der
+ * Server liest diese Datei bei jedem Aufruf frisch (`mcp::read_settings`),
+ * der Name des Feldes ist dort fest verdrahtet (ein Test haelt beide zusammen).
+ */
+meeting_mcp_enabled?: boolean; 
+/**
+ * M6-P6e (E13): darf der MCP-Server auch das Transkript liefern (`get_transcript`,
+ * Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
+ */
+meeting_mcp_include_transcript?: boolean }
 export type Attendee = { 
 /**
  * Klein geschrieben, ohne `mailto:`; `None`, wenn die Quelle keine
@@ -4474,6 +4517,14 @@ export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
  * hinter einer alten HTML-Fassung zurückbleiben.
  */
 export type MailDraft = { to: string[]; subject: string; body_text: string; body_html: string }
+/**
+ * Angaben fuer die Konfig-Schnipsel (`claude mcp add ...`, Claude Desktop, Codex).
+ */
+export type McpInfo = { 
+/**
+ * Voller Pfad der laufenden EXE; der Client startet sie mit `--mcp`.
+ */
+exe_path: string }
 export type Meeting = { id: string; title: string; status: string; source: string; started_at: number | null; ended_at: number | null; language: string | null; mic_audio_path: string | null; system_audio_path: string | null; duration_ms: number | null; consent_confirmed_at: number | null; audio_retention_until: number | null; 
 /**
  * Original file path an imported meeting came from. `None` for live
