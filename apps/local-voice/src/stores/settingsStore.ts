@@ -266,6 +266,13 @@ const settingUpdaters: {
     commands.changeMeetingReminderLeadSetting(value as number),
   meeting_reminder_all_events: (value) =>
     commands.changeMeetingReminderAllEventsSetting(value as boolean),
+  // M5-P5f
+  calendar_graph_client_id: (value) =>
+    commands.changeCalendarGraphClientIdSetting(
+      (value as string | null) ?? null,
+    ),
+  calendar_graph_tenant: (value) =>
+    commands.changeCalendarGraphTenantSetting((value as string | null) ?? null),
   // M6-P6e
   meeting_mcp_enabled: (value) =>
     commands.changeMeetingMcpEnabledSetting(value as boolean),

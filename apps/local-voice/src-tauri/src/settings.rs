@@ -857,6 +857,16 @@ pub struct AppSettings {
     /// Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
     #[serde(default = "default_true")]
     pub meeting_mcp_include_transcript: bool,
+    /// M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
+    /// Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
+    /// `http://localhost`). Es gibt keine eingebaute ID: ohne Eintrag ist die
+    /// Anmeldung gesperrt. Keine Geheimnisse (das Erneuerungs-Token liegt DPAPI-
+    /// verschluesselt in `secrets/`).
+    #[serde(default)]
+    pub calendar_graph_client_id: Option<String>,
+    /// M5-P5f: Verzeichnis (Tenant) der Anmeldung; `None` = `common`.
+    #[serde(default)]
+    pub calendar_graph_tenant: Option<String>,
 }
 
 fn default_meeting_reminder_lead_s() -> u32 {
@@ -1631,6 +1641,8 @@ pub fn get_default_settings() -> AppSettings {
         meeting_reminder_all_events: false,
         meeting_mcp_enabled: false,
         meeting_mcp_include_transcript: true,
+        calendar_graph_client_id: None,
+        calendar_graph_tenant: None,
     }
 }
 
@@ -2789,6 +2801,27 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "meeting_semantic_search": false }))
                 .unwrap();
         assert!(!off.meeting_semantic_search);
+    }
+
+    #[test]
+    fn calendar_graph_fields_default_to_none_and_keep_a_choice() {
+        let d = get_default_settings();
+        assert_eq!(d.calendar_graph_client_id, None);
+        assert_eq!(d.calendar_graph_tenant, None);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.calendar_graph_client_id, None);
+        assert_eq!(old.calendar_graph_tenant, None);
+        let chosen: AppSettings = serde_json::from_value(serde_json::json!({
+            "calendar_graph_client_id": "11111111-2222-3333-4444-555555555555",
+            "calendar_graph_tenant": "contoso.com",
+        }))
+        .unwrap();
+        assert_eq!(
+            chosen.calendar_graph_client_id.as_deref(),
+            Some("11111111-2222-3333-4444-555555555555")
+        );
+        assert_eq!(chosen.calendar_graph_tenant.as_deref(), Some("contoso.com"));
     }
 
     #[test]

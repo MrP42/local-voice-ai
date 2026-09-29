@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use tauri::State;
 
+use crate::managers::calendar::graph;
 use crate::managers::calendar::model::{CalEvent, CalendarSource};
 use crate::managers::calendar::service::{self, CalendarService};
 use crate::managers::meetings::store::MeetingStore;
@@ -138,6 +139,86 @@ pub fn change_meeting_reminder_all_events_setting(
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.meeting_reminder_all_events = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// M5-P5f: Microsoft Graph
+// ---------------------------------------------------------------------------
+
+/// Meldet sich mit Microsoft an: Systembrowser, Loopback, Token, Quelle, erster
+/// Abruf. Client-ID und Verzeichnis kommen aus den Einstellungen; ohne Client-ID
+/// gibt es keine Anmeldung (keine eingebaute ID). Laeuft bis zu 5 Minuten, bis der
+/// Nutzer im Browser fertig ist (`calendar_graph_cancel_sign_in` bricht ab).
+#[tauri::command]
+#[specta::specta]
+pub async fn calendar_graph_sign_in(
+    app: tauri::AppHandle,
+    service: State<'_, Arc<CalendarService>>,
+) -> Result<CalendarSource, String> {
+    let settings = settings::get_settings(&app);
+    let client_id = settings
+        .calendar_graph_client_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .ok_or_else(|| {
+            "Es ist keine Client-ID eingetragen. Trage zuerst die Anwendungs-(Client-)ID deiner Entra-App ein."
+                .to_string()
+        })?
+        .to_string();
+    let tenant = settings.calendar_graph_tenant.unwrap_or_default();
+    let service = Arc::clone(&service);
+    service.graph_sign_in(&client_id, &tenant).await
+}
+
+/// Bricht eine laufende Anmeldung ab. `false`, wenn keine laeuft.
+#[tauri::command]
+#[specta::specta]
+pub async fn calendar_graph_cancel_sign_in(
+    service: State<'_, Arc<CalendarService>>,
+) -> Result<bool, String> {
+    Ok(service.graph_cancel_sign_in())
+}
+
+/// Meldet ein Microsoft-Konto ab: Quelle, gespeicherte Termine und das
+/// verschluesselte Token werden geloescht. (Den Zugriff der App selbst widerruft man
+/// bei Microsoft unter „Meine Apps“.)
+#[tauri::command]
+#[specta::specta]
+pub async fn calendar_graph_sign_out(
+    service: State<'_, Arc<CalendarService>>,
+    id: String,
+) -> Result<(), String> {
+    service.graph_sign_out(&id)
+}
+
+/// Einstellung `calendar_graph_client_id`: leer = keine; sonst muss es eine GUID sein
+/// (sie steht spaeter in einer Adresse).
+#[tauri::command]
+#[specta::specta]
+pub fn change_calendar_graph_client_id_setting(
+    app: tauri::AppHandle,
+    client_id: Option<String>,
+) -> Result<(), String> {
+    let value = graph::normalize_client_id_setting(client_id.as_deref())?;
+    let mut settings = settings::get_settings(&app);
+    settings.calendar_graph_client_id = value;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Einstellung `calendar_graph_tenant`: leer oder `common` = Standard (`None`).
+#[tauri::command]
+#[specta::specta]
+pub fn change_calendar_graph_tenant_setting(
+    app: tauri::AppHandle,
+    tenant: Option<String>,
+) -> Result<(), String> {
+    let value = graph::normalize_tenant_setting(tenant.as_deref())?;
+    let mut settings = settings::get_settings(&app);
+    settings.calendar_graph_tenant = value;
     settings::write_settings(&app, settings);
     Ok(())
 }

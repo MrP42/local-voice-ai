@@ -1672,7 +1672,7 @@
     },
     "calendar": {
       "title": "Calendar",
-      "description": "Connects a calendar through an ICS address (Outlook, Google, Nextcloud, iCloud). Events are fetched every 15 minutes, stay on this computer and supply the title and attendees for a recording.",
+      "description": "Connects a calendar through a Microsoft sign-in (Outlook) or an ICS address (Outlook, Google, Nextcloud, iCloud). Events are fetched every 15 minutes, stay on this computer and supply the title and attendees for a recording.",
       "connect": "Connect calendar",
       "refresh": "Refresh now",
       "refreshing": "Refreshing …",
@@ -1687,6 +1687,7 @@
       "loadError": "The calendars could not be read.",
       "dialog": {
         "title": "Connect calendar",
+        "icsTitle": "Paste an ICS address",
         "name": "Name",
         "namePlaceholder": "e.g. Outlook work",
         "url": "ICS address",
@@ -1703,6 +1704,24 @@
         "googleSteps": "calendar.google.com → Settings → pick the calendar on the left → “Integrate calendar” → copy “Secret address in iCal format”. Do not share this address: anyone who knows it sees the whole calendar.",
         "otherTitle": "Nextcloud, iCloud and others",
         "otherSteps": "Share the calendar publicly or by link and paste the ICS or webcal link."
+      },
+      "graph": {
+        "title": "Sign in with Microsoft (Outlook, Microsoft 365)",
+        "intro": "Reads the Outlook calendar directly through Microsoft Graph, including attendees and the Teams link. Read-only (Calendars.Read); sign-in happens in the browser and the sign-in token is stored encrypted (Windows user account) on this computer.",
+        "clientId": "Application (client) ID of your own Entra app",
+        "tenant": "Directory (tenant), optional",
+        "tenantHint": "“common” allows work, school and personal accounts. For a single company enter the directory ID or domain.",
+        "noClientId": "Sign-in is not possible without your own client ID. Register an app in Microsoft Entra as a “Public client” with the redirect URI http://localhost and the permissions Calendars.Read and User.Read, then enter its application ID here.",
+        "invalidClientId": "That is not a valid client ID. The application ID of the Entra app has the format 8-4-4-4-12 (hex digits).",
+        "helpLink": "Microsoft's guide",
+        "signIn": "Sign in with Microsoft",
+        "waiting": "Waiting for sign-in in the browser …",
+        "cancelSignIn": "Cancel sign-in",
+        "or": "or",
+        "reauth": "Sign in again",
+        "signOut": "Sign out",
+        "signOutConfirm": "Sign out account “{{label}}”? The sign-in token and the stored events are deleted; existing meetings keep their calendar link.",
+        "signOutConfirmYes": "Yes, sign out"
       },
       "reminder": {
         "title": "Reminder before events",

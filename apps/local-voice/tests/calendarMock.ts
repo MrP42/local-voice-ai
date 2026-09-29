@@ -47,6 +47,9 @@ export const installTauriMock = async (
       meeting_capture_system: true,
       meeting_reminder_lead_s: 60,
       meeting_reminder_all_events: false,
+      // M5-P5f: Microsoft-Anmeldung (Client-ID des Nutzers, keine eingebaute)
+      calendar_graph_client_id: null,
+      calendar_graph_tenant: null,
     };
     w.__settings = settings;
     w.__calls = [];
@@ -59,6 +62,11 @@ export const installTauriMock = async (
     // M5-P5e: Brief-Zuschnitt, den `people_brief_info` liefert (null = Fehler).
     w.__brief = null;
     w.__addDelay = 0;
+    // M5-P5f: Microsoft-Anmeldung. `__graphWait` haelt die Anmeldung offen, bis
+    // "Abbrechen" `calendar_graph_cancel_sign_in` ruft; `__graphError` laesst sie scheitern.
+    w.__graphWait = false;
+    w.__graphError = null;
+    w.__graphCancel = null;
     w.__meeting = {
       id: "m-neu",
       title: "Neu",
@@ -183,6 +191,41 @@ export const installTauriMock = async (
               return source;
             }
             case "calendar_source_remove":
+              w.__sources = w.__sources.filter((s: any) => s.id !== args.id);
+              return null;
+            case "change_calendar_graph_client_id_setting":
+              settings.calendar_graph_client_id = args.clientId;
+              return null;
+            case "change_calendar_graph_tenant_setting":
+              settings.calendar_graph_tenant = args.tenant;
+              return null;
+            case "calendar_graph_sign_in": {
+              if (w.__graphWait) {
+                await new Promise((_resolve, reject) => {
+                  w.__graphCancel = () =>
+                    reject("Die Anmeldung wurde abgebrochen.");
+                });
+              }
+              if (w.__graphError) throw w.__graphError;
+              const source = {
+                id: "graph-1",
+                kind: "graph",
+                label: "Outlook / Microsoft 365",
+                account_hint: "anna.berg@firma.de",
+                enabled: true,
+                has_attendee_data: true,
+                last_sync_at: 1790000000000,
+                last_ok_at: 1790000000000,
+                last_error: null,
+                event_count: 12,
+              };
+              w.__sources = [...w.__sources, source];
+              return source;
+            }
+            case "calendar_graph_cancel_sign_in":
+              if (w.__graphCancel) w.__graphCancel();
+              return true;
+            case "calendar_graph_sign_out":
               w.__sources = w.__sources.filter((s: any) => s.id !== args.id);
               return null;
             case "calendar_sync_now":

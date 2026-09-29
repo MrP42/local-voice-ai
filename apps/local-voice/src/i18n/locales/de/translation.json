@@ -1672,7 +1672,7 @@
     },
     "calendar": {
       "title": "Kalender",
-      "description": "Verbindet einen Kalender per ICS-Adresse (Outlook, Google, Nextcloud, iCloud). Termine werden alle 15 Minuten abgerufen, bleiben auf diesem Rechner und liefern Titel und Teilnehmende für die Aufnahme.",
+      "description": "Verbindet einen Kalender per Microsoft-Anmeldung (Outlook) oder ICS-Adresse (Outlook, Google, Nextcloud, iCloud). Termine werden alle 15 Minuten abgerufen, bleiben auf diesem Rechner und liefern Titel und Teilnehmende für die Aufnahme.",
       "connect": "Kalender verbinden",
       "refresh": "Jetzt aktualisieren",
       "refreshing": "Wird aktualisiert …",
@@ -1687,6 +1687,7 @@
       "loadError": "Die Kalender konnten nicht gelesen werden.",
       "dialog": {
         "title": "Kalender verbinden",
+        "icsTitle": "ICS-Adresse einfügen",
         "name": "Name",
         "namePlaceholder": "z. B. Outlook Arbeit",
         "url": "ICS-Adresse",
@@ -1703,6 +1704,24 @@
         "googleSteps": "calendar.google.com → Einstellungen → links den Kalender wählen → „Kalender integrieren“ → „Privatadresse im iCal-Format“ kopieren. Diese Adresse nicht weitergeben: wer sie kennt, sieht den ganzen Kalender.",
         "otherTitle": "Nextcloud, iCloud u. a.",
         "otherSteps": "Den Kalender „öffentlich teilen“ bzw. per Link freigeben und den ICS- oder webcal-Link einfügen."
+      },
+      "graph": {
+        "title": "Mit Microsoft anmelden (Outlook, Microsoft 365)",
+        "intro": "Liest den Outlook-Kalender direkt über Microsoft Graph, mit Teilnehmenden und Teams-Link. Nur lesend (Calendars.Read); die Anmeldung läuft im Browser, das Anmelde-Token wird verschlüsselt (Windows-Benutzerkonto) auf diesem Rechner gespeichert.",
+        "clientId": "Anwendungs-(Client-)ID der eigenen Entra-App",
+        "tenant": "Verzeichnis (Tenant), optional",
+        "tenantHint": "„common“ erlaubt Arbeits-, Schul- und private Konten. Für eine einzelne Firma die Verzeichnis-ID oder Domain eintragen.",
+        "noClientId": "Ohne eigene Client-ID ist die Anmeldung nicht möglich. Registriere in Microsoft Entra eine App als „Öffentlicher Client“ mit der Weiterleitungs-URI http://localhost und den Berechtigungen Calendars.Read und User.Read und trage hier ihre Anwendungs-ID ein.",
+        "invalidClientId": "Das ist keine gültige Client-ID. Erwartet wird die Anwendungs-ID der Entra-App im Format 8-4-4-4-12 (Hexzeichen).",
+        "helpLink": "Anleitung von Microsoft",
+        "signIn": "Mit Microsoft anmelden",
+        "waiting": "Warte auf die Anmeldung im Browser …",
+        "cancelSignIn": "Anmeldung abbrechen",
+        "or": "oder",
+        "reauth": "Erneut anmelden",
+        "signOut": "Abmelden",
+        "signOutConfirm": "Konto „{{label}}“ abmelden? Das Anmelde-Token und die gespeicherten Termine werden gelöscht; bestehende Besprechungen behalten ihren Termin-Bezug.",
+        "signOutConfirmYes": "Ja, abmelden"
       },
       "reminder": {
         "title": "Erinnerung vor Terminen",

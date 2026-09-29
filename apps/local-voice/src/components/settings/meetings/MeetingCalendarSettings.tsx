@@ -64,7 +64,12 @@ export const MeetingCalendarSettings: React.FC = () => {
 
   const remove = async (id: string) => {
     setRemoving(null);
-    const result = await commands.calendarSourceRemove(id);
+    // Ein Microsoft-Konto wird abgemeldet (loescht auch das Token), eine
+    // ICS-Quelle entfernt (loescht die Adresse).
+    const isGraph = sources.some((s) => s.id === id && s.kind === "graph");
+    const result = isGraph
+      ? await commands.calendarGraphSignOut(id)
+      : await commands.calendarSourceRemove(id);
     if (result.status === "ok") {
       setSources((list) => list.filter((s) => s.id !== id));
     }
@@ -150,7 +155,9 @@ export const MeetingCalendarSettings: React.FC = () => {
                           className="text-text/60"
                           data-testid="calendar-source-hint"
                         >
-                          {` · ${source.account_hint}/…`}
+                          {source.kind === "graph"
+                            ? ` · ${source.account_hint}`
+                            : ` · ${source.account_hint}/…`}
                         </span>
                       )}
                     </div>
@@ -161,11 +168,24 @@ export const MeetingCalendarSettings: React.FC = () => {
                         onClick={() => setRemoving(source.id)}
                         data-testid="calendar-remove"
                       >
-                        {t("meetings.calendar.remove")}
+                        {source.kind === "graph"
+                          ? t("meetings.calendar.graph.signOut")
+                          : t("meetings.calendar.remove")}
                       </Button>
                     )}
                   </div>
                   <div>{status(source)}</div>
+                  {source.kind === "graph" && source.last_error && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="mt-1"
+                      onClick={() => setDialogOpen(true)}
+                      data-testid="calendar-graph-reauth"
+                    >
+                      {t("meetings.calendar.graph.reauth")}
+                    </Button>
+                  )}
                   {source.last_ok_at && !source.has_attendee_data && (
                     <p className="text-xs text-text/60">
                       {t("meetings.calendar.attendeeDataMissing")}
@@ -177,9 +197,13 @@ export const MeetingCalendarSettings: React.FC = () => {
                       data-testid="calendar-remove-confirm"
                     >
                       <p className="text-text/80">
-                        {t("meetings.calendar.removeConfirm", {
-                          label: source.label,
-                        })}
+                        {source.kind === "graph"
+                          ? t("meetings.calendar.graph.signOutConfirm", {
+                              label: source.account_hint ?? source.label,
+                            })
+                          : t("meetings.calendar.removeConfirm", {
+                              label: source.label,
+                            })}
                       </p>
                       <div className="flex gap-2">
                         <Button
@@ -188,7 +212,9 @@ export const MeetingCalendarSettings: React.FC = () => {
                           onClick={() => void remove(source.id)}
                           data-testid="calendar-remove-yes"
                         >
-                          {t("meetings.calendar.removeConfirmYes")}
+                          {source.kind === "graph"
+                            ? t("meetings.calendar.graph.signOutConfirmYes")
+                            : t("meetings.calendar.removeConfirmYes")}
                         </Button>
                         <Button
                           variant="secondary"

@@ -81,7 +81,9 @@ sonora = "=0.2.0"
 hound = "3.5.1"
 log = "0.4.25"
 env_filter = "0.1.0"
-tokio = "1.43.0"
+# Feature-Liste ausdruecklich (P5f: Loopback-Listener fuer die Microsoft-Anmeldung):
+# dieselben Features waren bisher nur ueber reqwest/tauri hereinvereinigt.
+tokio = { version = "1.43.0", features = ["net", "io-util", "sync", "time", "macros", "rt"] }
 vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
 enigo = "0.6.1"
 rodio = { git = "https://github.com/cjpais/rodio.git" }
