@@ -21,6 +21,23 @@ _Stand 2026-09-29, automatisch aus den Ergebnis-JSON erzeugt._
 | Whisper large-v3 Q5_K_M | transcribe-cpp (Spike-Build) | CUDA RTX 4090 | 240 | **4,65 %** (242/5206) | 20,6× | Spike-Build, nicht App; WER weich 4,28 %; Laden 0,9 s |
 <!-- bench:table:end -->
 
+## Folgerung
+
+- **Live-Mitschrift: Parakeet TDT 0.6B v3 als GGUF Q8 (transcribe-cpp) statt ONNX int8.** Gleiches Modell, aber
+  5,55 % statt 7,86 % WER auf der CPU (Abstand über zwei Prozentpunkte, also über der Messunsicherheit) bei 11,3× Echtzeit –
+  genug Reserve für den Live-Pfad ohne GPU. Voraussetzung: das GGUF-Modell kommt in den App-Katalog; die Zeile stammt aus
+  dem Spike-Build mit derselben Bibliothek, nicht aus der App.
+- **Enddurchlauf: Qwen3-ASR 1.7B Q5_K_M auf der CPU**, 4,17 % WER bei 4,3× Echtzeit – erfüllt AK4 (≤ 6 %) schon mit dem
+  heutigen CPU-Backend der App (eine Stunde Besprechung ≈ 14 min Rechenzeit). **Mit GPU: Whisper large-v3 Q5_K_M**
+  (4,65 %, 20,6×) als gleichwertige Alternative; der Unterschied zu Qwen3 1.7B liegt innerhalb der Unsicherheit, die Wahl
+  richtet sich also nach Gerät und Laufzeit, nicht nach der WER.
+- **Nicht gewählt:** Parakeet ONNX int8 (7,86 %) und Qwen3-ASR 0.6B (7,16 %) verfehlen AK4; Whisper large-v3-turbo Q8
+  auf der App-CPU ist mit 1,3× zu langsam und mit 8,87 % zu ungenau.
+- **Grenzen der Folgerung:** Alle GPU-Zeilen stammen aus dem Spike-Build; ein CUDA-Backend im Release ist ein eigenes Paket.
+  Qwen3-ASR 1.7B wurde nicht auf der GPU gemessen. Whisper-turbo liegt auf der App-CPU (8,87 %) deutlich schlechter als im
+  Spike auf CUDA (5,61 %) – gleiche Quantisierung, Ursache (Decoding-Optionen/Sprachvorgabe der App-CLI vs. Bibliotheks-Standard)
+  ist nicht geklärt; bis dahin ist die turbo-CPU-Zeile kein Urteil über das Modell. Speicherbedarf je Modell wurde nicht gemessen.
+
 ## Methode
 
 - **Stichprobe:** FLEURS `de_de`, Teilmenge `test` (862 Aufnahmen, 347 verschiedene Sätze). Je Satz-ID die
@@ -63,7 +80,11 @@ Ablage: `%LOCALAPPDATA%\lva-bench\` (`fleurs\`, `synth\`, `results\*.json` mit a
 Drei Szenen (SAPI-Stimmen Hedda = Ich/Mikrofon, Stefan und Katja = Gegenseite/Loopback), erzeugt aus Vorlagen mit
 Fachbegriffen und englischen Einsprengseln, `make_corpus.py synth` (deterministisch, gleiche Seeds = gleiche Texte):
 
-SYNTH_TABLE
+| Szene | Titel | Sprecher | Dauer | Äußerungen | Wörter | Überlappungen Ich/Gegenseite |
+|---|---|---|---|---|---|---|
+| `scene1_status` | Projektstatus Rechenzentrum-Umzug | Hedda, Stefan | 4,3 min | 45 | 567 | 3 |
+| `scene2_angebot` | Angebots- und Vertragsbesprechung | Hedda, Stefan, Katja | 6,4 min | 63 | 813 | 7 |
+| `scene3_sprint` | Sprint-Planung und Release-Review (viel Englisch) | Hedda, Katja, Stefan | 8,5 min | 93 | 1181 | 30 |
 
 Je Szene: `mic.wav` (nur Nahsprache), `system.wav` (Gegenseite = Referenzsignal), `mic_echo.wav` (Lautsprecher-Echo -6 dB,
 RT60 0,3 s, Rauschen -55 dB, Verzögerung je Szene, Mischer aus dem Spike `mix.py`), `mic_echo_hard.wav` (0 dB, tanh-Verzerrung,
@@ -75,7 +96,7 @@ RT60 0,3 s, Rauschen -55 dB, Verzögerung je Szene, Mischer aus dem Spike `mix.p
 - **Gelesene Sprache:** FLEURS sind vorgelesene, gut artikulierte Einzelsätze (Wikipedia-nah) in ruhiger Umgebung.
   Echte Besprechungen (Ins-Wort-Fallen, Dialekt, Nebengeräusche, Fachjargon) liegen erfahrungsgemäß deutlich darüber;
   die Werte taugen für den **Modellvergleich** und AK4, nicht als Erwartung für reale Besprechungen.
-- Je Modell nur **eine Aufnahme je Satz** (Sprecherwechsel/Geschlecht nicht kontrolliert); 240 Sätze / rund 4.000 Referenzwörter
+- Je Modell nur **eine Aufnahme je Satz** (Sprecherwechsel/Geschlecht nicht kontrolliert); 240 Sätze / 5.206 Referenzwörter
   geben bei ~5 % WER eine Unsicherheit von etwa ±1,0 Prozentpunkt (95 %). Unterschiede unter einem Prozentpunkt sind kein Befund.
 - Die strenge Normierung zählt Ziffer-vs.-Zahlwort und Bindestrich-Schreibweisen als Fehler; Literaturwerte (z. B. Parakeet ~5 % auf
   FLEURS-de) nutzen meist andere Normalisierer und sind nicht 1:1 vergleichbar.

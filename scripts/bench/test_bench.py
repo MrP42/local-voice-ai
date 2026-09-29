@@ -105,6 +105,87 @@ def test_check_fails_on_empty_dir_and_passes_on_minimal_corpus(tmp_path, monkeyp
     assert not mc.check_fleurs()[0]
 
 
+def _write_fleurs(root: Path, n: int) -> None:
+    (root / "wav").mkdir(parents=True)
+    sents = []
+    for i in range(n):
+        f = f"wav/{i}.wav"
+        sf.write(root / f, np.zeros(16000 * 2, np.float32), 16000, subtype="PCM_16")
+        sents.append({"sent_id": str(i), "file": f, "text": "hallo welt"})
+    (root / "manifest.json").write_text(json.dumps({"sentences": sents}), encoding="utf-8")
+
+
+def _write_scene(root: Path, scene) -> Path:
+    """Kleinstmoegliche gueltige Szene: 180 s Stille je Spur, 12 Aeusserungen, eine Ueberlappung."""
+    d = root / "synth" / scene.key
+    d.mkdir(parents=True)
+    dur_ms = 180_000
+    for f in mc.SCENE_FILES[:4]:
+        sf.write(d / f, np.zeros(16 * dur_ms, np.int16), 16000, subtype="PCM_16")
+    utts = []
+    for i in range(12):
+        spk = scene.speakers[i % len(scene.speakers)]
+        start = i * 10_000
+        end = start + (12_000 if i == 0 else 8_000)  # 0 (mic) ueberlappt 1 (system)
+        utts.append({"id": i, "speaker": spk.name, "channel": spk.channel, "text": "wort",
+                     "start_ms": start, "end_ms": end})
+    (d / "reference.json").write_text(json.dumps({"duration_ms": dur_ms, "utterances": utts}), encoding="utf-8")
+    return d
+
+
+def test_check_scene_passes_on_minimal_scene_and_catches_defects(tmp_path, monkeypatch):
+    monkeypatch.setenv("LVA_BENCH_DIR", str(tmp_path))
+    scene = sc.SCENES[0]
+    d = _write_scene(tmp_path, scene)
+    assert mc.check_scene(scene) == (True, "3.0 min, 12 Aeusserungen")
+
+    ref = json.loads((d / "reference.json").read_text(encoding="utf-8"))
+    no_overlap = dict(ref, utterances=[dict(u, end_ms=u["start_ms"] + 8_000) for u in ref["utterances"]])
+    (d / "reference.json").write_text(json.dumps(no_overlap), encoding="utf-8")
+    assert not mc.check_scene(scene)[0]
+
+    (d / "reference.json").write_text(json.dumps(ref), encoding="utf-8")
+    sf.write(d / "system.wav", np.zeros(16 * 1000, np.int16), 16000, subtype="PCM_16")  # Laenge weicht ab
+    assert not mc.check_scene(scene)[0]
+
+    (d / "mic.wav").unlink()
+    ok, msg = mc.check_scene(scene)
+    assert not ok and "mic.wav" in msg
+
+
+def test_check_exit_code_on_full_mini_corpus(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LVA_BENCH_DIR", str(tmp_path))
+    monkeypatch.setattr(mc.sc, "SCENES", sc.SCENES[:1])  # eine Szene reicht fuer den Exit-Code-Pfad
+    assert mc.main(["--check"]) == 1
+    _write_fleurs(tmp_path / "fleurs", mc.MIN_SENTENCES)
+    assert mc.main(["--check"]) == 1  # Szene fehlt noch
+    d = _write_scene(tmp_path, sc.SCENES[0])
+    assert mc.main(["--check"]) == 0
+    assert "Korpus vollstaendig" in capsys.readouterr().out
+    (d / "reference.json").write_text("{kaputt", encoding="utf-8")
+    assert mc.main(["--check"]) == 1
+
+
+def test_check_cli_exit_1_on_empty_dir(tmp_path):
+    import os
+    import subprocess
+    env = dict(os.environ, LVA_BENCH_DIR=str(tmp_path))
+    script = Path(__file__).resolve().parent / "make_corpus.py"
+    p = subprocess.run([sys.executable, str(script), "--check"], env=env, capture_output=True, text=True, timeout=120)
+    assert p.returncode == 1 and "UNVOLLSTAENDIG" in p.stdout
+
+
+def test_check_fleurs_rejects_too_few_and_duplicate_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv("LVA_BENCH_DIR", str(tmp_path))
+    root = tmp_path / "fleurs"
+    _write_fleurs(root, mc.MIN_SENTENCES - 1)
+    assert not mc.check_fleurs()[0]
+    mf = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    mf["sentences"].append(dict(mf["sentences"][0]))  # 220 Eintraege, aber Duplikat
+    (root / "manifest.json").write_text(json.dumps(mf), encoding="utf-8")
+    assert not mc.check_fleurs()[0]
+
+
 def test_table_and_doc_update(tmp_path):
     res = tmp_path / "results"
     res.mkdir()
