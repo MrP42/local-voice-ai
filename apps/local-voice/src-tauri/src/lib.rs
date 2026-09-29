@@ -1626,6 +1626,16 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_search::meeting_folders_delete,
             commands::meeting_search::meetings_set_folders,
             commands::meeting_search::meetings_get_folders,
+            // M4-P4c: Chat-Motor
+            commands::meeting_chat::meeting_chat_ask,
+            commands::meeting_chat::meeting_chat_cancel,
+            commands::meeting_chat::meeting_chat_threads,
+            commands::meeting_chat::meeting_chat_thread,
+            commands::meeting_chat::meeting_chat_thread_delete,
+            commands::meeting_chat::chat_recipes_list,
+            commands::meeting_chat::chat_recipes_save,
+            commands::meeting_chat::chat_recipes_delete,
+            commands::meeting_chat::chat_recipes_duplicate,
             commands::tts::tts_speak_text,
             commands::tts::tts_speak_clipboard,
             commands::tts::tts_cancel,
@@ -1747,6 +1757,8 @@ pub fn run(cli_args: CliArgs) {
             managers::meetings::recorder::MeetingEvent,
             // M1-P1b
             commands::meeting_enhance::MeetingNotesEvent,
+            // M4-P4c
+            commands::meeting_chat::MeetingChatEvent,
             managers::transcription::StreamTextEvent,
             managers::transcription::StreamPhaseEvent,
         ]);
