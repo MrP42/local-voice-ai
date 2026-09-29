@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T12:48
+aktualisiert: 2026-09-29T12:49
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -52,7 +52,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - [x] QG4 — i18n: neue Schlüssel in `de` und `en` vorhanden (Parität der neuen Schlüssel per Skript), keine hartcodierten deutschen/englischen UI-Texte.
 - [x] QG5 — Rust unberührt außer Versionsdateien: `git diff --stat origin/chore/0.20.3-abnahme..HEAD -- apps/local-voice/src-tauri` zeigt nur `Cargo.toml`/`tauri.conf.json`(/`Cargo.lock`).
 - [x] QG6 — Git: Commit je abgenommenem Paket, Branch gepusht, PR gestapelt auf #58 (Basis `chore/0.20.3-abnahme`), kein Push auf `main`, keine Formatierläufe über fremde Dateien.
-- [ ] QG7 — Doku + Handoff: Hilfe-Abschnitt „vorlesen“ passt zur neuen Bedienung; Handoff `.claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md`.
+- [x] QG7 — Doku + Handoff: Hilfe-Abschnitt „vorlesen“ passt zur neuen Bedienung; Handoff `.claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md`.
 - [x] QG8 — Budget: ≤ 1,8 MTok geschätzt; Zwischenstand bei 50 %/80 %, harter Stopp bei 150 % (2,7 MTok).
 
 ## Constraints
@@ -102,6 +102,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29T12:48 QG5 erfüllt — git diff --stat origin/chore/0.20.3-abnahme -- src-tauri: nur Cargo.lock, Cargo.toml, tauri.conf.json (Version)
 - 2026-09-29T12:48 QG6 erfüllt — Commit je Paket (P1-P9), Branch feat/ui-vorlesen-kompakt gepusht, PR #62 gestapelt auf #58, kein Push auf main
 - 2026-09-29T12:48 QG8 erfüllt — Worker ~1,23 MTok + Planer ~0,6 MTok = ~1,85 MTok bei Schaetzung 1,8 (103 %), unter hartem Stopp 2,7; Meldungen bei ~47 % und 86 % abgegeben
+- 2026-09-29T12:49 QG7 erfüllt — Hilfe vorlesen.de/en.md an Menue angepasst (P2, 2c9f6fd); Handoff .claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md; GLOBAL.md fortgeschrieben
 
 ## Blocker
 -
