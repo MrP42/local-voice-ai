@@ -75,7 +75,7 @@ impl ChannelChunker {
 /// buffer.len()]`. Falls back to `target_len` if the buffer is too short for
 /// a full search window in that range (should not happen once `push` has
 /// already checked `buffer.len() >= target_len` for any sane `target_len`).
-fn cut_point(buffer: &[i16], target_len: usize) -> usize {
+pub(super) fn cut_point(buffer: &[i16], target_len: usize) -> usize {
     let window_len = (CUT_WINDOW_MS * SAMPLES_PER_MS) as usize;
     let search_start = target_len * 3 / 4;
     let buffer_len = buffer.len();

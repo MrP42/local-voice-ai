@@ -10,20 +10,20 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
-use super::chunker::{ChannelChunker, Chunk};
-use super::mic_capture::MeetingMicCapture;
-use super::store::{
-    Meeting, MeetingSource, MeetingStatus, MeetingStore, StoredSegment, TranscriptDelta,
+use super::chunker::Chunk;
+use super::dsp::{
+    transcript_final_event, ChannelFeed, DspConfig, DspNotice, LivePipeline, VadFactory,
 };
+use super::mic_capture::MeetingMicCapture;
+use super::store::{Meeting, MeetingSource, MeetingStatus, MeetingStore, StoredSegment};
 use crate::audio_toolkit::audio::wav_writer::repair_orphan_wav;
 use crate::audio_toolkit::audio::{LoopbackCapture, StreamingWavWriter};
 use crate::managers::transcription::TranscriptionManager;
@@ -31,8 +31,11 @@ use crate::managers::transcription::TranscriptionManager;
 /// Sample rate of the whole meetings pipeline (mic capture and loopback both
 /// deliver 16 kHz mono i16).
 const SAMPLE_RATE: u32 = 16_000;
-/// Block length handed to the transcription engine.
-const CHUNK_TARGET_MS: u64 = 20_000;
+/// Silero VAD model (bundled resource) that segments the live channels.
+const VAD_MODEL_RESOURCE: &str = "resources/models/silero_vad_v4.onnx";
+/// VAD decision threshold for meetings (neutral, independent of the dictation
+/// microphone sensitivity).
+const MEETING_VAD_THRESHOLD: f32 = 0.5;
 /// WAV header rewrite cadence — one second of audio, so a crash costs at most
 /// that much of the recoverable header state.
 const FLUSH_EVERY_SAMPLES: usize = SAMPLE_RATE as usize;
@@ -117,25 +120,26 @@ pub enum MeetingEvent {
     /// new run's segments, which restart at index 0, would append to the old.
     #[serde(rename = "reset")]
     Reset { meeting_id: String },
+    /// The live transcript is complete and stored (sent at the end of `stop()`).
+    /// `epoch` is the generation of the segments (`segment_epoch`); `model` the
+    /// engine that produced them. Consumers that build on the transcript (AI
+    /// notes) start here, not at `stop()`.
+    #[serde(rename = "transcript_final")]
+    TranscriptFinal {
+        meeting_id: String,
+        epoch: u32,
+        model: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
 // Session internals
 // ---------------------------------------------------------------------------
 
-/// What the capture callbacks hand to the transcription worker. `Shutdown`
-/// exists because "all senders dropped" is not a reliable end signal here: a
-/// loopback start that timed out may still be holding a sender clone in a
-/// thread we have given up on, and `stop()` must not block on it.
-enum WorkItem {
-    Chunk(u8, Chunk),
-    Shutdown,
-}
-
-/// One channel's write path: WAV file plus the chunker that feeds the worker.
+/// One channel's write path: the raw WAV file. Segmentation happens on the DSP
+/// thread (`dsp.rs`), never here.
 struct ChannelSink {
     writer: Option<StreamingWavWriter>,
-    chunker: ChannelChunker,
     samples_since_flush: usize,
 }
 
@@ -143,7 +147,6 @@ impl ChannelSink {
     fn new(writer: StreamingWavWriter) -> Self {
         Self {
             writer: Some(writer),
-            chunker: ChannelChunker::new(CHUNK_TARGET_MS),
             samples_since_flush: 0,
         }
     }
@@ -234,8 +237,8 @@ struct RecordingSession {
     system_sink: Option<Arc<Mutex<ChannelSink>>>,
     mic_path: PathBuf,
     system_path: Option<PathBuf>,
-    work_tx: Option<mpsc::Sender<WorkItem>>,
-    worker: Option<JoinHandle<()>>,
+    /// DSP thread + transcription worker of this meeting.
+    pipeline: Option<LivePipeline>,
 }
 
 // ---------------------------------------------------------------------------
@@ -345,8 +348,11 @@ impl MeetingRecorderManager {
         let paused = Arc::new(AtomicBool::new(false));
         let levels = Arc::new(LevelEmitter::new(self.app.clone()));
 
-        let (work_tx, work_rx) = mpsc::channel::<WorkItem>();
-        let worker = self.spawn_worker(meeting_id.clone(), work_rx);
+        let pipeline = self.start_pipeline(&meeting_id).inspect_err(|_| {
+            let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
+        })?;
+        let mic_feed = pipeline.feed(CHANNEL_MIC).ok_or("dsp_thread_failed")?;
+        let system_feed = pipeline.feed(CHANNEL_SYSTEM);
 
         // Load the meeting model (dedicated `meeting_model` or the dictation
         // model as fallback); transcribe_segments waits on the load condvar.
@@ -361,7 +367,7 @@ impl MeetingRecorderManager {
                 CHANNEL_MIC,
                 Arc::clone(&mic_sink),
                 Arc::clone(&paused),
-                work_tx.clone(),
+                mic_feed,
                 Arc::clone(&levels),
             ),
         )
@@ -372,14 +378,14 @@ impl MeetingRecorderManager {
             format!("mic_start_failed: {e}")
         })?;
 
-        let loopback = match (&system_sink, capture_system) {
-            (Some(sink), true) => self.start_loopback(
+        let loopback = match (&system_sink, system_feed, capture_system) {
+            (Some(sink), Some(feed), true) => self.start_loopback(
                 &meeting_id,
                 channel_callback(
                     CHANNEL_SYSTEM,
                     Arc::clone(sink),
                     Arc::clone(&paused),
-                    work_tx.clone(),
+                    feed,
                     Arc::clone(&levels),
                 ),
             ),
@@ -395,8 +401,7 @@ impl MeetingRecorderManager {
             system_sink,
             mic_path,
             system_path,
-            work_tx: Some(work_tx),
-            worker: Some(worker),
+            pipeline: Some(pipeline),
         });
         *self.state.lock().unwrap() = MeetingRunState::Recording {
             meeting_id: meeting_id.clone(),
@@ -476,74 +481,49 @@ impl MeetingRecorderManager {
             });
     }
 
-    /// One background thread per meeting: chunk in, segments out. A failed
-    /// chunk is logged by length only (never content) and does not end the
-    /// meeting.
-    fn spawn_worker(
-        &self,
-        meeting_id: String,
-        work_rx: mpsc::Receiver<WorkItem>,
-    ) -> JoinHandle<()> {
+    /// DSP thread + transcription worker of one meeting. The worker is a single
+    /// thread on purpose (FIFO, one engine): a failed block is logged by length
+    /// only (never content) and does not end the meeting.
+    fn start_pipeline(&self, meeting_id: &str) -> Result<LivePipeline, String> {
         let app = self.app.clone();
-        let store = Arc::clone(&self.store);
         let transcription = Arc::clone(&self.transcription);
-        std::thread::Builder::new()
-            .name("meeting-transcribe".to_string())
-            .spawn(move || {
-                let mut next_index: u32 = 0;
-                while let Ok(item) = work_rx.recv() {
-                    let (channel, chunk) = match item {
-                        WorkItem::Chunk(channel, chunk) => (channel, chunk),
-                        WorkItem::Shutdown => break,
-                    };
-                    // Nie einen Block verlieren: Wiederholung, sonst Luecke
-                    // mit Zeitraum (siehe import.rs::transcribe_chunk_resilient).
-                    let timed =
-                        super::import::transcribe_chunk_resilient(&app, &transcription, &chunk);
-                    {
-                        {
-                            let appended: Vec<StoredSegment> = timed
-                                .into_iter()
-                                .filter(|s| !s.text.trim().is_empty())
-                                .map(|s| {
-                                    let segment = StoredSegment {
-                                        segment_index: next_index,
-                                        text: s.text,
-                                        start_ms: chunk.offset_ms + s.start_ms,
-                                        end_ms: chunk.offset_ms + s.end_ms,
-                                        channel,
-                                        speaker_index: None,
-                                    };
-                                    next_index += 1;
-                                    segment
-                                })
-                                .collect();
-                            if appended.is_empty() {
-                                continue;
-                            }
-                            let delta = TranscriptDelta {
-                                new_segments: appended.clone(),
-                            };
-                            if let Err(e) = store.append_delta(&meeting_id, &delta) {
-                                error!("meetings: delta not stored: {e}");
-                                let _ = (MeetingEvent::Error {
-                                    meeting_id: meeting_id.clone(),
-                                    message: "delta_store_failed".to_string(),
-                                })
-                                .emit(&app);
-                                continue;
-                            }
-                            let _ = (MeetingEvent::Segments {
-                                meeting_id: meeting_id.clone(),
-                                appended,
-                            })
-                            .emit(&app);
-                        }
-                    }
-                }
-                debug!("meetings: worker for {meeting_id} finished");
-            })
-            .expect("failed to spawn meeting transcription worker")
+        let emit_app = self.app.clone();
+
+        // VAD model: bundled resource. If it is missing or does not load, the
+        // DSP thread falls back to the 20-s chunker per channel.
+        let vad_factory: Option<VadFactory> = match self
+            .app
+            .path()
+            .resolve(VAD_MODEL_RESOURCE, tauri::path::BaseDirectory::Resource)
+        {
+            Ok(path) => Some(Arc::new(move || {
+                let vad = crate::audio_toolkit::SileroVad::new(&path, MEETING_VAD_THRESHOLD)?;
+                Ok(Box::new(vad) as Box<dyn crate::audio_toolkit::VoiceActivityDetector>)
+            })),
+            Err(e) => {
+                warn!("meetings: VAD model path not resolved: {e}");
+                None
+            }
+        };
+
+        // Until Health events exist (P2e) the notices are log-only.
+        let notice_meeting = meeting_id.to_string();
+        let notice: super::dsp::NoticeFn = Arc::new(move |n: DspNotice| {
+            // TODO(P2e): map to MeetingEvent::Health { meeting_id, channel, state }.
+            debug!("meetings: dsp notice for {notice_meeting}: {n:?}");
+        });
+
+        LivePipeline::start(
+            meeting_id.to_string(),
+            Arc::clone(&self.store),
+            DspConfig::new(vad_factory, notice),
+            move |chunk: &Chunk| {
+                super::import::transcribe_chunk_resilient(&app, &transcription, chunk)
+            },
+            move |event| {
+                let _ = event.emit(&emit_app);
+            },
+        )
     }
 
     pub fn pause(&self) -> Result<(), String> {
@@ -566,8 +546,9 @@ impl MeetingRecorderManager {
         if let Some(session) = self.session.lock().unwrap().as_ref() {
             // Paused means "discard samples"; wall-clock keeps running, so the
             // WAV timeline compresses the pause instead of padding it. That is
-            // deliberate and consistent: transcript offsets come from the
-            // chunkers, which skip the same samples.
+            // deliberate and consistent: transcript offsets come from the DSP
+            // thread, which counts the same samples (it also closes the open
+            // segment when the callback reports the pause).
             session.paused.store(paused, Ordering::Relaxed);
         }
         self.emit_state(&meeting_id, "recording", paused);
@@ -593,15 +574,15 @@ impl MeetingRecorderManager {
             system_sink,
             mic_path,
             system_path,
-            work_tx,
-            worker,
+            pipeline,
             ..
         } = session;
 
         self.set_indicator(false);
 
         // Captures first: once they are stopped no callback can touch the
-        // sinks any more, so flushing and finalizing below is race-free.
+        // sinks or the DSP queue any more, so draining and finalizing below is
+        // race-free.
         if let Some(capture) = mic_capture {
             if capture.had_error() {
                 self.emit_error(&meeting_id, "mic_stream_error");
@@ -626,19 +607,15 @@ impl MeetingRecorderManager {
         }
         self.emit_state(&meeting_id, "processing", false);
 
-        if let Some(tx) = &work_tx {
-            flush_sink(CHANNEL_MIC, &mic_sink, tx);
-            if let Some(sink) = &system_sink {
-                flush_sink(CHANNEL_SYSTEM, sink, tx);
-            }
-            // FIFO: everything queued above is transcribed before the worker
-            // sees this and stops.
-            let _ = tx.send(WorkItem::Shutdown);
+        // DSP thread first (flushes the open segments), then the worker: FIFO,
+        // everything queued is transcribed and stored before this returns.
+        if let Some(pipeline) = pipeline {
+            let _ = pipeline.drain();
         }
-        drop(work_tx);
-        if let Some(handle) = worker {
-            let _ = handle.join();
-        }
+
+        // The engine that produced the live transcript, read BEFORE the
+        // dictation model is restored below.
+        let live_model = self.transcription.get_current_model();
 
         // Restore the dictation model so the next hotkey dictation does not
         // silently run on the meeting model (no-op when they are the same).
@@ -675,6 +652,9 @@ impl MeetingRecorderManager {
             warn!("meetings: status 'ready' not stored: {e}");
         }
         self.emit_state(&meeting_id, "ready", false);
+        // Every live segment is stored: consumers may build on the transcript now.
+        // P2d moves this behind the final pass.
+        let _ = transcript_final_event(&self.store, &meeting_id, live_model).emit(&self.app);
         info!("meetings: recording stopped ({meeting_id}, {duration_ms} ms)");
         Ok(meeting_id)
     }
@@ -839,17 +819,20 @@ mod position_tests {
     }
 }
 
-/// The per-channel capture callback: WAV append (with 1-s header flush),
-/// chunking for the worker, and the throttled level readout.
+/// The per-channel capture callback: WAV append (with 1-s header flush), hand-off
+/// to the DSP thread, and the throttled level readout. The hand-off is a
+/// non-blocking `try_send` (see `dsp::ChannelFeed`); segmentation and VAD never
+/// run here.
 fn channel_callback(
     channel: u8,
     sink: Arc<Mutex<ChannelSink>>,
     paused: Arc<AtomicBool>,
-    work_tx: mpsc::Sender<WorkItem>,
+    mut feed: ChannelFeed,
     levels: Arc<LevelEmitter>,
 ) -> impl FnMut(&[i16]) + Send + 'static {
     move |samples: &[i16]| {
         if paused.load(Ordering::Relaxed) {
+            feed.pause();
             return;
         }
         {
@@ -876,19 +859,9 @@ fn channel_callback(
                     }
                 }
             }
-            if let Some(chunk) = sink.chunker.push(samples) {
-                let _ = work_tx.send(WorkItem::Chunk(channel, chunk));
-            }
         }
+        feed.push(samples);
         levels.record(channel, rms(samples));
-    }
-}
-
-fn flush_sink(channel: u8, sink: &Arc<Mutex<ChannelSink>>, work_tx: &mpsc::Sender<WorkItem>) {
-    if let Ok(mut sink) = sink.lock() {
-        if let Some(chunk) = sink.chunker.flush() {
-            let _ = work_tx.send(WorkItem::Chunk(channel, chunk));
-        }
     }
 }
 

@@ -3105,7 +3105,14 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  * Consumers that keep a local segment list must clear it — otherwise the
  * new run's segments, which restart at index 0, would append to the old.
  */
-{ kind: "reset"; meeting_id: string }
+{ kind: "reset"; meeting_id: string } | 
+/**
+ * The live transcript is complete and stored (sent at the end of `stop()`).
+ * `epoch` is the generation of the segments (`segment_epoch`); `model` the
+ * engine that produced them. Consumers that build on the transcript (AI
+ * notes) start here, not at `stop()`.
+ */
+{ kind: "transcript_final"; meeting_id: string; epoch: number; model: string | null }
 /**
  * Der gesamte Notizblock einer Besprechung. `revision` ist der Zaehler der
  * optimistischen Sperre (`save_notes`); `updated_at` in Sekunden (0 = noch nie gespeichert).

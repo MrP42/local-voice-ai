@@ -1,6 +1,8 @@
 pub mod chunker;
+pub mod dsp;
 pub mod echo;
 pub mod export;
+pub mod hallucination;
 pub mod import;
 pub mod mic_capture;
 pub mod minutes;
@@ -8,6 +10,7 @@ pub mod notes;
 pub mod recorder;
 pub mod retention;
 pub mod retranscribe;
+pub mod segmenter;
 pub mod stats;
 pub mod store;
 pub mod subtitle;
