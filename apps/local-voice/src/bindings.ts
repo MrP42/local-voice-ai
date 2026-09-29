@@ -13,6 +13,59 @@ async changeBinding(id: string, binding: string) : Promise<Result<BindingRespons
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Erzeugt KI-Notizen fuer eine fertige Besprechung aus Notizblock,
+ * Transkript und Vorlage (`None` = Vorlage der Besprechung, sonst die
+ * Standardvorlage) und legt sie als neue Version ab. Fehler tragen einen
+ * Code als Praefix (`no_provider`, `enhance_busy`, ...).
+ */
+async meetingNotesEnhance(meetingId: string, templateId: string | null) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_enhance", { meetingId, templateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wendet eine Freitext-Anweisung auf eine Version der KI-Notizen an. Die
+ * eigenen Eintraege des Nutzers bleiben unveraendert; das Ergebnis ist eine
+ * neue Version.
+ */
+async meetingNotesApplyInstruction(documentId: string, instruction: string) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_apply_instruction", { documentId, instruction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Speichert eine handbearbeitete Fassung in die bestehende Version.
+ * `expected_updated_at` ist der Stempel, den die Oberflaeche geladen hat;
+ * weicht er ab (zweites Fenster, neuer Lauf), scheitert der Aufruf mit
+ * `stale_document`. Liefert den neuen Stempel.
+ */
+async meetingNotesUpdateEnhanced(documentId: string, notes: EnhancedNotes, expectedUpdatedAt: number) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_update_enhanced", { documentId, notes, expectedUpdatedAt }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die KI-Notizen als Markdown, zum Speichern oder Kopieren (die Ausgabe
+ * selbst schreibt `meetings_export_document`).
+ */
+async meetingNotesMarkdown(documentId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_markdown", { documentId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("reset_binding", { id }) };
@@ -1581,14 +1634,6 @@ async meetingsExportDocument(path: string, body: string) : Promise<Result<null, 
 async meetingNotesGet(meetingId: string) : Promise<Result<MeetingNotes, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_notes_get", { meetingId }) };
- * Erzeugt KI-Notizen fuer eine fertige Besprechung aus Notizblock,
- * Transkript und Vorlage (`None` = Vorlage der Besprechung, sonst die
- * Standardvorlage) und legt sie als neue Version ab. Fehler tragen einen
- * Code als Praefix (`no_provider`, `enhance_busy`, ...).
- */
-async meetingNotesEnhance(meetingId: string, templateId: string | null) : Promise<Result<MeetingDocument, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_enhance", { meetingId, templateId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1601,13 +1646,6 @@ async meetingNotesEnhance(meetingId: string, templateId: string | null) : Promis
 async meetingNotesSave(meetingId: string, blocks: NoteBlock[], baseRevision: number) : Promise<Result<number, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_notes_save", { meetingId, blocks, baseRevision }) };
- * Wendet eine Freitext-Anweisung auf eine Version der KI-Notizen an. Die
- * eigenen Eintraege des Nutzers bleiben unveraendert; das Ergebnis ist eine
- * neue Version.
- */
-async meetingNotesApplyInstruction(documentId: string, instruction: string) : Promise<Result<MeetingDocument, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_apply_instruction", { documentId, instruction }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1627,14 +1665,6 @@ async meetingsRecordingPosition() : Promise<Result<RecordingPosition | null, str
 async meetingsSetTemplate(meetingId: string, templateId: string | null) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_set_template", { meetingId, templateId }) };
- * Speichert eine handbearbeitete Fassung in die bestehende Version.
- * `expected_updated_at` ist der Stempel, den die Oberflaeche geladen hat;
- * weicht er ab (zweites Fenster, neuer Lauf), scheitert der Aufruf mit
- * `stale_document`. Liefert den neuen Stempel.
- */
-async meetingNotesUpdateEnhanced(documentId: string, notes: EnhancedNotes, expectedUpdatedAt: number) : Promise<Result<number, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_update_enhanced", { documentId, notes, expectedUpdatedAt }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1715,12 +1745,6 @@ async actionItemsList(meetingId: string) : Promise<Result<ActionItem[], string>>
 async actionItemsSetStatus(id: string, done: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("action_items_set_status", { id, done }) };
- * Die KI-Notizen als Markdown, zum Speichern oder Kopieren (die Ausgabe
- * selbst schreibt `meetings_export_document`).
- */
-async meetingNotesMarkdown(documentId: string) : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_markdown", { documentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3186,6 +3210,13 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  */
 { kind: "transcript_final"; meeting_id: string; epoch: number; model: string | null }
 /**
+ * Ereignis des KI-Notizen-Laufs. `code` ist einer von `no_provider`,
+ * `no_model`, `memory_low`, `recording_active`, `enhance_busy`,
+ * `no_transcript`, `llm_failed`, `meeting_not_finished`; die Oberflaeche
+ * uebersetzt ihn (Muster `MeetingEvent::Error`).
+ */
+export type MeetingNotesEvent = { kind: "progress"; meeting_id: string; step: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
+/**
  * Der gesamte Notizblock einer Besprechung. `revision` ist der Zaehler der
  * optimistischen Sperre (`save_notes`); `updated_at` in Sekunden (0 = noch nie gespeichert).
  */
@@ -3197,14 +3228,6 @@ export type MeetingNotes = { meeting_id: string; blocks: NoteBlock[]; revision: 
  */
 export type NoteBlock = { id: string; kind: NoteBlockKind; text: string; at_ms: number | null; checked: boolean }
 export type NoteBlockKind = "paragraph" | "bullet" | "heading" | "todo"
-{ kind: "reset"; meeting_id: string }
-/**
- * Ereignis des KI-Notizen-Laufs. `code` ist einer von `no_provider`,
- * `no_model`, `memory_low`, `recording_active`, `enhance_busy`,
- * `no_transcript`, `llm_failed`, `meeting_not_finished`; die Oberflaeche
- * uebersetzt ihn (Muster `MeetingEvent::Error`).
- */
-export type MeetingNotesEvent = { kind: "progress"; meeting_id: string; step: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean; 
 /**
  * Whether the streaming look-ahead (`att_context_right`) can be chosen for
