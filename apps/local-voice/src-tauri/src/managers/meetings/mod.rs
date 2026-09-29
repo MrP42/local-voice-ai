@@ -4,6 +4,7 @@ pub mod echo;
 pub mod export;
 pub mod hallucination;
 pub mod import;
+pub mod llm_call;
 pub mod mic_capture;
 pub mod minutes;
 pub mod notes;

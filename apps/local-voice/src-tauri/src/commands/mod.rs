@@ -3,6 +3,7 @@ pub mod history;
 pub mod llm;
 pub mod usage;
 pub mod meeting_notes;
+pub mod meeting_enhance;
 pub mod meetings;
 pub mod models;
 pub mod pages;

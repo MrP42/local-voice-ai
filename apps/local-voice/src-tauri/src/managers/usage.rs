@@ -52,6 +52,7 @@ static MIGRATIONS: &[M] = &[M::up(
 pub enum Purpose {
     PostProcess,
     Minutes,
+    EnhancedNotes,
     Summary,
     Tagging,
     Translation,
@@ -62,6 +63,7 @@ impl Purpose {
         match self {
             Purpose::PostProcess => "post_process",
             Purpose::Minutes => "minutes",
+            Purpose::EnhancedNotes => "enhanced_notes",
             Purpose::Summary => "summary",
             Purpose::Tagging => "tagging",
             Purpose::Translation => "translation",

@@ -1581,6 +1581,14 @@ async meetingsExportDocument(path: string, body: string) : Promise<Result<null, 
 async meetingNotesGet(meetingId: string) : Promise<Result<MeetingNotes, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_notes_get", { meetingId }) };
+ * Erzeugt KI-Notizen fuer eine fertige Besprechung aus Notizblock,
+ * Transkript und Vorlage (`None` = Vorlage der Besprechung, sonst die
+ * Standardvorlage) und legt sie als neue Version ab. Fehler tragen einen
+ * Code als Praefix (`no_provider`, `enhance_busy`, ...).
+ */
+async meetingNotesEnhance(meetingId: string, templateId: string | null) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_enhance", { meetingId, templateId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1593,6 +1601,13 @@ async meetingNotesGet(meetingId: string) : Promise<Result<MeetingNotes, string>>
 async meetingNotesSave(meetingId: string, blocks: NoteBlock[], baseRevision: number) : Promise<Result<number, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_notes_save", { meetingId, blocks, baseRevision }) };
+ * Wendet eine Freitext-Anweisung auf eine Version der KI-Notizen an. Die
+ * eigenen Eintraege des Nutzers bleiben unveraendert; das Ergebnis ist eine
+ * neue Version.
+ */
+async meetingNotesApplyInstruction(documentId: string, instruction: string) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_apply_instruction", { documentId, instruction }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1612,6 +1627,14 @@ async meetingsRecordingPosition() : Promise<Result<RecordingPosition | null, str
 async meetingsSetTemplate(meetingId: string, templateId: string | null) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_set_template", { meetingId, templateId }) };
+ * Speichert eine handbearbeitete Fassung in die bestehende Version.
+ * `expected_updated_at` ist der Stempel, den die Oberflaeche geladen hat;
+ * weicht er ab (zweites Fenster, neuer Lauf), scheitert der Aufruf mit
+ * `stale_document`. Liefert den neuen Stempel.
+ */
+async meetingNotesUpdateEnhanced(documentId: string, notes: EnhancedNotes, expectedUpdatedAt: number) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_update_enhanced", { documentId, notes, expectedUpdatedAt }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1692,6 +1715,12 @@ async actionItemsList(meetingId: string) : Promise<Result<ActionItem[], string>>
 async actionItemsSetStatus(id: string, done: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("action_items_set_status", { id, done }) };
+ * Die KI-Notizen als Markdown, zum Speichern oder Kopieren (die Ausgabe
+ * selbst schreibt `meetings_export_document`).
+ */
+async meetingNotesMarkdown(documentId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_markdown", { documentId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2696,11 +2725,13 @@ async isLaptop() : Promise<Result<boolean, string>> {
 export const events = __makeEvents__<{
 historyUpdatePayload: HistoryUpdatePayload,
 meetingEvent: MeetingEvent,
+meetingNotesEvent: MeetingNotesEvent,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
 }>({
 historyUpdatePayload: "history-update-payload",
 meetingEvent: "meeting-event",
+meetingNotesEvent: "meeting-notes-event",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event"
 })
@@ -3024,6 +3055,31 @@ export type EngineType =
  * the file, so this one variant covers the whole transcribe-cpp family.
  */
 "TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
+export type EnhanceStats = { user_notes_total: number; user_notes_by_model: number; user_notes_by_fallback: number; ai_entries: number; ai_entries_sourced: number; dropped_source_ids: number; chunks_total: number; chunks_failed: number[]; single_pass: boolean }
+export type EnhancedEntry = {
+/**
+ * "E1", "E2", ... in Ausgabereihenfolge.
+ */
+id: string; origin: Origin; text: string;
+/**
+ * Bei `origin = User`: der Block, aus dem der Text stammt.
+ */
+note_id: string | null; source_segment_ids: number[]; assignee: string | null; due: string | null; flags: EntryFlags }
+export type EnhancedNotes = {
+/**
+ * Immer "enhanced@1".
+ */
+format: string; template_id: string | null; template_title: string;
+/**
+ * `transcripts.segment_epoch` zum Zeitpunkt der Erzeugung.
+ */
+segment_epoch: number; sections: EnhancedSection[]; stats: EnhanceStats }
+export type EnhancedSection = { id: string; title: string; kind: SectionKind; entries: EnhancedEntry[] }
+export type EntryFlags = {
+/**
+ * KI-Eintrag ohne gueltige Quelle.
+ */
+unsupported: boolean; dropped_sources: number; placed_by_fallback: boolean; edited: boolean }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
@@ -3094,7 +3150,23 @@ export type MeetingAudioRetention =
  * Never delete the audio automatically.
  */
 "forever"
-export type MeetingDocument = { id: string; meeting_id: string; kind: string; body_format: string; body: string; version: number; created_at: number }
+export type MeetingDocument = { id: string; meeting_id: string; kind: string; body_format: string; body: string; version: number;
+/**
+ * Seconds since the epoch.
+ */
+created_at: number;
+/**
+ * Template the document was generated from (KI-Notizen); `None` for
+ * minutes and for rows written before M1.
+ */
+template_id: string | null;
+/**
+ * Version stamp for the optimistic lock of `update_document_body`.
+ * Milliseconds since the epoch for rows written from M1 on; rows written
+ * earlier still carry seconds — the value is only ever compared for
+ * equality, never interpreted, so both work.
+ */
+updated_at: number }
 /**
  * Typed frontend event (pattern: `HistoryUpdatePayload`). `message` on the
  * error variant carries an i18n-able code string, never a prose sentence.
@@ -3125,6 +3197,14 @@ export type MeetingNotes = { meeting_id: string; blocks: NoteBlock[]; revision: 
  */
 export type NoteBlock = { id: string; kind: NoteBlockKind; text: string; at_ms: number | null; checked: boolean }
 export type NoteBlockKind = "paragraph" | "bullet" | "heading" | "todo"
+{ kind: "reset"; meeting_id: string }
+/**
+ * Ereignis des KI-Notizen-Laufs. `code` ist einer von `no_provider`,
+ * `no_model`, `memory_low`, `recording_active`, `enhance_busy`,
+ * `no_transcript`, `llm_failed`, `meeting_not_finished`; die Oberflaeche
+ * uebersetzt ihn (Muster `MeetingEvent::Error`).
+ */
+export type MeetingNotesEvent = { kind: "progress"; meeting_id: string; step: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean; 
 /**
  * Whether the streaming look-ahead (`att_context_right`) can be chosen for
@@ -3159,6 +3239,7 @@ sha256: string | null } } |
  */
 "Local"
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
+export type Origin = "user" | "ai"
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "top" | "bottom"
 /**

@@ -1507,6 +1507,11 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_notes::meeting_templates_import,
             commands::meeting_notes::action_items_list,
             commands::meeting_notes::action_items_set_status,
+            // M1-P1b: KI-Notizen-Motor
+            commands::meeting_enhance::meeting_notes_enhance,
+            commands::meeting_enhance::meeting_notes_apply_instruction,
+            commands::meeting_enhance::meeting_notes_update_enhanced,
+            commands::meeting_enhance::meeting_notes_markdown,
             commands::tts::tts_speak_text,
             commands::tts::tts_speak_clipboard,
             commands::tts::tts_cancel,
@@ -1626,6 +1631,8 @@ pub fn run(cli_args: CliArgs) {
         .events(collect_events![
             managers::history::HistoryUpdatePayload,
             managers::meetings::recorder::MeetingEvent,
+            // M1-P1b
+            commands::meeting_enhance::MeetingNotesEvent,
             managers::transcription::StreamTextEvent,
             managers::transcription::StreamPhaseEvent,
         ]);

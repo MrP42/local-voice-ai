@@ -16,17 +16,22 @@ use log::info;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::stats::{label_for_channel, speaking_shares, SpeakerShare};
+use super::llm_call::{
+    ask_json, build_head, duration_label, head_facts_block, mm_ss, resolve_provider, retry_chunk,
+    sorted_segments, AskOptions, SemanticRetry,
+};
+use super::stats::label_for_channel;
 use super::store::{MeetingDocument, MeetingStore, StoredSegment};
 use crate::settings::AppSettings;
+
+/// Kopfdaten eines Protokolls; die Definition lebt in `llm_call`, weil auch
+/// die KI-Notizen sie nutzen.
+pub use super::llm_call::MeetingHead as MinutesHead;
 
 /// Ab dieser Transkriptlänge läuft die Erzeugung zweistufig (map-reduce).
 /// Gleicher Wert wie im Summarizer: auch ein lokales 8k-Modell verkraftet
 /// einen Block samt Prompt.
 const MAP_REDUCE_CHARS: usize = 16_000;
-/// Versuche je Block der map-Stufe (eigenes Budget, unabhaengig vom
-/// Struktur-Retry innerhalb eines Versuchs).
-const CHUNK_ATTEMPTS: usize = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct DecisionItem {
@@ -69,44 +74,7 @@ pub struct MinutesJson {
     pub open_questions: Vec<TextItem>,
 }
 
-/// Die deterministisch berechneten Kopfdaten eines Protokolls.
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
-pub struct MinutesHead {
-    pub title: String,
-    pub date_iso: String,
-    pub duration_ms: u64,
-    pub shares: Vec<SpeakerShare>,
-    /// Nur ein Kanal im Transkript: Redeanteile sind dann keine Information,
-    /// sondern Rauschen — Tabelle und Validator lassen sie weg.
-    pub single_speaker: bool,
-    /// Der einzige Kanal ist eine Mischaufnahme (MixedCapture, Kanal 2): ein
-    /// Import kann vier Personen enthalten, die alle auf denselben Kanal
-    /// laufen. „Ein Kanal" heißt hier ausdrücklich NICHT „ein Sprecher" —
-    /// die Unterscheidung steuert die Prompt-Formulierung.
-    pub mixed_channel: bool,
-}
-
 // -- Formatierung ---------------------------------------------------------
-
-fn mm_ss(ms: u64) -> String {
-    let total_seconds = ms / 1_000;
-    format!("{:02}:{:02}", total_seconds / 60, total_seconds % 60)
-}
-
-fn duration_label(ms: u64) -> String {
-    let total_seconds = ms / 1_000;
-    let hours = total_seconds / 3_600;
-    if hours > 0 {
-        format!(
-            "{}:{:02}:{:02}",
-            hours,
-            (total_seconds % 3_600) / 60,
-            total_seconds % 60
-        )
-    } else {
-        mm_ss(ms)
-    }
-}
 
 /// Prozent in deutscher Schreibweise ("60,0 %") für das Markdown.
 fn percent_de(percent: f64) -> String {
@@ -130,16 +98,6 @@ pub fn render_transcript_for_prompt(segments: &[StoredSegment]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// Segmente nach Startzeit sortieren. `get_segments` liefert sie in
-/// `segment_index`-Reihenfolge, die bei Live-Meetings Mikrofon- und
-/// System-Blöcke verschränkt; für das Prompt-Rendering ist die gemeinsame
-/// Zeitachse (beide Kanäle starten beim Meeting-Start) die bessere Ordnung.
-fn sorted_segments(segments: &[StoredSegment]) -> Vec<StoredSegment> {
-    let mut sorted = segments.to_vec();
-    sorted.sort_by_key(|segment| segment.start_ms);
-    sorted
 }
 
 /// Striktes JSON-Schema: alle sieben Sektionen sind Pflicht, Extra-Felder
@@ -237,39 +195,6 @@ pub fn minutes_system_prompt() -> String {
      - No meta commentary, no markdown, no headings inside the fields.\n\
      - Reply with ONLY a JSON object that matches the given schema."
         .to_string()
-}
-
-fn head_facts_block(head: &MinutesHead) -> String {
-    let mut block = format!(
-        "# Meeting facts (computed, treat as given — restate them, never recompute)\n\
-         Title: {}\nDate: {}\nDuration: {}\n",
-        head.title,
-        head.date_iso,
-        duration_label(head.duration_ms),
-    );
-    if head.mixed_channel {
-        // Eine Mischaufnahme kann beliebig viele Personen enthalten. Dem
-        // Modell hier „ein Sprecher" als Fakt zu geben, würde ein Meeting mit
-        // vier Personen zum Monolog machen — genau die Halluzination, die der
-        // System-Prompt verbietet.
-        block.push_str(
-            "Speakers: the transcript is a single mixed recording channel; the \
-             number of speakers is unknown and speaking shares are not \
-             available. Attribute statements only where the transcript itself \
-             makes the speaker clear.\n",
-        );
-    } else if head.single_speaker || head.shares.is_empty() {
-        block.push_str("Speakers: a single recorded speaker (no speaking shares).\n");
-    } else {
-        block.push_str("Speaking shares:\n");
-        for share in &head.shares {
-            block.push_str(&format!(
-                "- {} (channel {}): {:.1} % of the speech time\n",
-                share.label, share.channel, share.percent
-            ));
-        }
-    }
-    block
 }
 
 pub fn minutes_user_prompt(head: &MinutesHead, transcript: &str) -> String {
@@ -500,173 +425,56 @@ pub fn minutes_to_markdown(head: &MinutesHead, minutes: &MinutesJson) -> String 
 
 // -- Erzeugung ------------------------------------------------------------
 
-/// Modelle liefern das JSON gelegentlich in einem Codefence; das kostet einen
-/// Retry, den ein Dreizeiler spart.
-fn strip_code_fence(raw: &str) -> &str {
-    let trimmed = raw.trim();
-    let Some(rest) = trimmed.strip_prefix("```") else {
-        return trimmed;
-    };
-    let body = match rest.find('\n') {
-        Some(newline) => &rest[newline + 1..],
-        None => rest,
-    };
-    body.trim_end().trim_end_matches("```").trim()
-}
-
-fn resolve_provider(
-    settings: &AppSettings,
-) -> Result<(crate::settings::PostProcessProvider, String, String), String> {
-    let provider = settings
-        .active_post_process_provider()
-        .cloned()
-        .ok_or_else(|| {
-            "Kein LLM-Provider konfiguriert (Einstellungen → Nachbearbeitung)".to_string()
-        })?;
-    let model = settings
-        .post_process_models
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-    if model.trim().is_empty() {
-        // Der Hinweis nannte frueher den Umweg ueber 'Custom'; seit es eigene
-        // Eintraege fuer Ollama und vLLM gibt, ist der falsch.
-        return Err(format!(
-            "Für '{}' ist kein Modell eingetragen (Einstellungen → Nachbearbeitung → Modell). Ganz lokal geht es mit dem Anbieter 'Ollama (lokal)' oder 'vLLM (lokal)'.",
-            provider.label
-        ));
-    }
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-    Ok((provider, model, api_key))
+/// Fachlich leere Zusammenfassung trotz gueltigem JSON: das Modell hat die
+/// Regel "leere Listen nicht auffuellen" auf die Pflichtfelder uebertragen.
+/// Einmal mit klarem Hinweis nachfragen — der Hinweis nennt die
+/// Transkriptsprache, sonst antwortet das Modell auf Englisch.
+fn empty_summary_retry(minutes: &MinutesJson) -> Option<SemanticRetry> {
+    minutes.summary.trim().is_empty().then(|| SemanticRetry {
+        reason: "Protokoll ohne Zusammenfassung".to_string(),
+        hint: "Your previous reply left the summary empty. \
+               The summary is mandatory: state in two to four sentences what \
+               was talked about, in the same language as the transcript. \
+               Keep everything else as before and reply with ONLY the JSON object."
+            .to_string(),
+    })
 }
 
 async fn ask_for_minutes_json(
     settings: &AppSettings,
     user_prompt: &str,
 ) -> Result<MinutesJson, String> {
-    let (provider, model, api_key) = resolve_provider(settings)?;
-    let schema = minutes_schema_for(crate::managers::llm::is_local(&provider));
-
-    let mut prompt = user_prompt.to_string();
-    let mut last_error = String::new();
-    // Ein Retry: Struktur-Fehler sind meist einmalige Ausrutscher, ein zweiter
-    // Versuch mit dem Fehlertext repariert sie — mehr wäre nur Wartezeit.
-    for attempt in 0..2 {
-        let response = crate::llm_client::send_chat_completion_with_schema(
-            crate::managers::usage::Purpose::Minutes,
-            &provider,
-            api_key.clone(),
-            &model,
-            prompt.clone(),
-            Some(minutes_system_prompt()),
-            Some(schema.clone()),
-            None,
-            None,
-        )
-        .await
-        .map_err(|e| format!("Protokoll-Erzeugung fehlgeschlagen: {e}"))?
-        .ok_or_else(|| "Protokoll-Antwort ohne Inhalt".to_string())?;
-
-        match serde_json::from_str::<MinutesJson>(strip_code_fence(&response)) {
-            // Gueltiges JSON, aber leere Zusammenfassung: das Modell hat die
-            // Regel "leere Listen nicht auffuellen" auf die Pflichtfelder
-            // uebertragen. Einmal mit klarem Hinweis nachfragen — der
-            // Hinweis nennt die Transkriptsprache, sonst antwortet das
-            // Modell auf Englisch.
-            Ok(minutes) if attempt == 0 && minutes.summary.trim().is_empty() => {
-                last_error = "Protokoll ohne Zusammenfassung".to_string();
-                log::warn!("Protokoll-Antwort ohne Zusammenfassung (Versuch 1) — wiederhole mit Hinweis");
-                prompt = format!(
-                    "{user_prompt}\n\nYour previous reply left the summary empty. \
-                     The summary is mandatory: state in two to four sentences what \
-                     was talked about, in the same language as the transcript. \
-                     Keep everything else as before and reply with ONLY the JSON object."
-                );
-            }
-            Ok(minutes) => return Ok(minutes),
-            Err(e) => {
-                last_error = e.to_string();
-                log::warn!(
-                    "Protokoll-Antwort war kein gültiges JSON (Versuch {}): {}",
-                    attempt + 1,
-                    last_error
-                );
-                prompt = format!(
-                    "{user_prompt}\n\nYour previous reply could not be parsed as \
-                     the required JSON object (error: {last_error}). Reply with \
-                     ONLY a JSON object matching the schema, nothing else."
-                );
-            }
-        }
-    }
-    Err(format!(
-        "Protokoll-Antwort war kein gültiges JSON: {last_error}"
-    ))
+    ask_json(
+        settings,
+        &AskOptions {
+            purpose: crate::managers::usage::Purpose::Minutes,
+            noun: "Protokoll",
+            redact_parse_errors: false,
+        },
+        &minutes_system_prompt(),
+        &minutes_schema_for,
+        user_prompt,
+        &empty_summary_retry,
+    )
+    .await
 }
 
-/// Ein Block der map-Stufe mit eigenem Retry-Budget. `ask_for_minutes_json`
-/// wiederholt nur Struktur-Fehler; ein Transportfehler (Ollama kurz weg,
-/// Timeout) kommt sofort zurueck und wuerde ohne diesen zweiten Anlauf den
-/// ganzen Lauf kosten.
+/// Ein Block der map-Stufe mit eigenem Retry-Budget (siehe
+/// `llm_call::retry_chunk`); das Protokoll wiederholt wie bisher immer.
 async fn ask_for_chunk(
     settings: &AppSettings,
     prompt: &str,
     index: usize,
     total: usize,
 ) -> Result<MinutesJson, String> {
-    let mut last_error = String::new();
-    for attempt in 1..=CHUNK_ATTEMPTS {
-        match ask_for_minutes_json(settings, prompt).await {
-            Ok(minutes) => return Ok(minutes),
-            Err(e) => {
-                last_error = e;
-                log::warn!(
-                    "Protokoll: Block {}/{} fehlgeschlagen (Versuch {} von {}): {}",
-                    index + 1,
-                    total,
-                    attempt,
-                    CHUNK_ATTEMPTS,
-                    last_error
-                );
-            }
-        }
-    }
-    Err(last_error)
-}
-
-/// Kopfdaten aus den Store-Fakten. `date_iso` bevorzugt den Start der
-/// Aufnahme und fällt auf das Anlagedatum zurück (Importe haben kein
-/// `started_at`).
-fn build_head(meeting: &super::store::Meeting, segments: &[StoredSegment]) -> MinutesHead {
-    let shares = speaking_shares(segments);
-    let duration_ms = meeting.duration_ms.unwrap_or_else(|| {
-        segments
-            .iter()
-            .map(|segment| segment.end_ms)
-            .max()
-            .unwrap_or(0)
-    });
-    let timestamp = meeting.started_at.unwrap_or(meeting.created_at);
-    let date_iso = chrono::DateTime::from_timestamp(timestamp, 0)
-        .map(|dt| dt.format("%Y-%m-%d").to_string())
-        .unwrap_or_default();
-
-    // Importe landen vollständig auf Kanal 2 (MixedCapture) — dort steht ein
-    // Kanal für unbekannt viele Sprecher, nicht für einen.
-    let mixed_channel = segments.iter().any(|segment| segment.channel == 2);
-
-    MinutesHead {
-        title: meeting.title.clone(),
-        date_iso,
-        duration_ms,
-        single_speaker: shares.len() <= 1,
-        mixed_channel,
-        shares,
-    }
+    retry_chunk(
+        "Protokoll",
+        index,
+        total,
+        |_| true,
+        || ask_for_minutes_json(settings, prompt),
+    )
+    .await
 }
 
 /// Protokoll erzeugen und als neue Dokumentversion ablegen. Ändert den Status
@@ -875,6 +683,7 @@ pub async fn generate_minutes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::managers::meetings::stats::SpeakerShare;
 
     fn head(single: bool) -> MinutesHead {
         MinutesHead {
@@ -1137,66 +946,10 @@ mod tests {
 
     use crate::managers::meetings::store::{MeetingSource, MeetingStatus, TranscriptDelta};
     use crate::settings::get_default_settings;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
 
-    /// Mock eines OpenAI-kompatiblen /chat/completions-Endpunkts (Muster
-    /// `translator.rs`), der den kompletten Antwort-Body vorgibt und den
-    /// Request — inklusive `response_format` — schlicht verwirft.
-    async fn spawn_llm_mock(body: String) -> u16 {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            loop {
-                let Ok((mut sock, _)) = listener.accept().await else {
-                    break;
-                };
-                let body = body.clone();
-                tokio::spawn(async move {
-                    let mut buf = vec![0u8; 1_048_576];
-                    let mut read = 0usize;
-                    loop {
-                        let n = sock.read(&mut buf[read..]).await.unwrap_or(0);
-                        if n == 0 {
-                            break;
-                        }
-                        read += n;
-                        let text = String::from_utf8_lossy(&buf[..read]).to_lowercase();
-                        if let Some(header_end) = text.find("\r\n\r\n") {
-                            let content_length = text
-                                .lines()
-                                .find_map(|l| l.strip_prefix("content-length: "))
-                                .and_then(|v| v.trim().parse::<usize>().ok())
-                                .unwrap_or(0);
-                            if read >= header_end + 4 + content_length {
-                                let head = format!(
-                                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
-                                    body.len()
-                                );
-                                let _ = sock.write_all(head.as_bytes()).await;
-                                let _ = sock.write_all(body.as_bytes()).await;
-                                let _ = sock.shutdown().await;
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
-        });
-        port
-    }
-
-    fn settings_with_mock_provider(port: u16) -> AppSettings {
-        let mut settings = get_default_settings();
-        settings.post_process_provider_id = "custom".into();
-        if let Some(custom) = settings.post_process_provider_mut("custom") {
-            custom.base_url = format!("http://127.0.0.1:{port}/v1");
-        }
-        settings
-            .post_process_models
-            .insert("custom".into(), "test-model".into());
-        settings
-    }
+    use crate::managers::meetings::llm_call::test_support::{
+        settings_with_mock_provider, spawn_llm_mock,
+    };
 
     fn temp_store() -> (Arc<MeetingStore>, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
