@@ -1,17 +1,38 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { commands, events, type Meeting } from "@/bindings";
+import {
+  commands,
+  events,
+  type Folder,
+  type Meeting,
+  type MeetingSearchItem,
+} from "@/bindings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { Alert } from "../../ui/Alert";
 import Badge from "../../ui/Badge";
-import { Trash2, Upload } from "lucide-react";
+import { FolderInput, Trash2, Upload } from "lucide-react";
 import { translateMeetingError } from "./meetingErrors";
+import { SearchBar, SearchSnippet } from "./search/SearchBar";
+import {
+  EMPTY_FILTER,
+  FilterChips,
+  type ListFilter,
+} from "./search/FilterChips";
+import { ContextMenu, FolderChips } from "./search/FolderChips";
+import { FolderPickerDialog } from "./search/FolderPickerDialog";
 
 const PAGE_SIZE = 25;
+const DAY_SECONDS = 86_400;
 
 // One list for the picker filter AND the drag-and-drop filter — they must
 // never diverge (same import pipeline behind both).
@@ -64,7 +85,8 @@ interface MeetingListProps {
 
 export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
   const { t, i18n } = useTranslation();
-  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  // Ohne Suche/Filter tragen die Eintraege kein Snippet.
+  const [items, setItems] = useState<MeetingSearchItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -78,36 +100,131 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
   const [listError, setListError] = useState<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
+  // Jede Ladeanfrage bekommt eine Nummer; eine spaet eintreffende Antwort
+  // einer ueberholten Suche darf die aktuelle Liste nicht ueberschreiben.
+  const requestRef = useRef(0);
 
-  const loadPage = useCallback(async (offset: number) => {
-    const isFirstPage = offset === 0;
-    if (!isFirstPage && loadingRef.current) return;
-    loadingRef.current = true;
-    if (isFirstPage) setLoading(true);
+  // M4-P4d: Suche, Filter, Ordner
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<ListFilter>(EMPTY_FILTER);
+  const [folderId, setFolderId] = useState<string | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [truncated, setTruncated] = useState(false);
+  const [pickerTarget, setPickerTarget] = useState<Meeting | null>(null);
+  const [rowMenu, setRowMenu] = useState<{
+    x: number;
+    y: number;
+    meeting: Meeting;
+  } | null>(null);
+  const filtered =
+    query !== "" ||
+    folderId !== null ||
+    filter.rangeDays !== null ||
+    filter.source !== null ||
+    filter.hasNotes;
+  const fromTs = useMemo(
+    () =>
+      filter.rangeDays === null
+        ? null
+        : Math.floor(Date.now() / 1000) - filter.rangeDays * DAY_SECONDS,
+    [filter.rangeDays],
+  );
 
-    try {
-      const result = await commands.meetingsList(offset, PAGE_SIZE);
-      if (result.status === "ok") {
+  const loadPage = useCallback(
+    async (offset: number) => {
+      const isFirstPage = offset === 0;
+      if (!isFirstPage && loadingRef.current) return;
+      const request = ++requestRef.current;
+      loadingRef.current = true;
+      if (isFirstPage) setLoading(true);
+
+      try {
+        let pageItems: MeetingSearchItem[];
+        let more: boolean;
+        let cut = false;
+        if (!filtered) {
+          // Ohne Suchtext und Filter: die bisherige Liste (25er-Seiten).
+          const result = await commands.meetingsList(offset, PAGE_SIZE);
+          if (request !== requestRef.current) return;
+          if (result.status !== "ok") {
+            // A failing list used to render as "no meetings yet" — visually
+            // indistinguishable from data loss. Say what actually happened.
+            setListError(
+              t("meetings.errors.listFailed", { error: result.error }),
+            );
+            setHasMore(false);
+            return;
+          }
+          const data = result.data ?? [];
+          pageItems = data.map((meeting) => ({
+            meeting,
+            snippet: null,
+            hit_source: null,
+          }));
+          more = data.length === PAGE_SIZE;
+        } else {
+          const result = await commands.meetingsSearch(
+            query,
+            {
+              folder_id: folderId,
+              from: fromTs,
+              to: null,
+              source: filter.source,
+              has_notes: filter.hasNotes ? true : null,
+            },
+            offset,
+            PAGE_SIZE,
+          );
+          if (request !== requestRef.current) return;
+          if (result.status !== "ok") {
+            const reason =
+              result.error === "filter_invalid"
+                ? t("meetings.search.filterInvalid")
+                : result.error;
+            setListError(t("meetings.search.failed", { error: reason }));
+            setHasMore(false);
+            return;
+          }
+          pageItems = result.data?.items ?? [];
+          more =
+            pageItems.length > 0 &&
+            offset + pageItems.length < (result.data?.total ?? 0);
+          cut = result.data?.truncated ?? false;
+        }
         setListError(null);
-        setMeetings((prev) =>
-          isFirstPage ? result.data : [...prev, ...result.data],
-        );
-        setHasMore(result.data.length === PAGE_SIZE);
-      } else {
-        // A failing list used to render as "no meetings yet" — visually
-        // indistinguishable from data loss. Say what actually happened.
-        setListError(result.error);
-        setHasMore(false);
+        setItems((prev) => (isFirstPage ? pageItems : [...prev, ...pageItems]));
+        setHasMore(more);
+        setTruncated(cut);
+      } finally {
+        if (request === requestRef.current) {
+          setLoading(false);
+          loadingRef.current = false;
+        }
       }
-    } finally {
-      setLoading(false);
-      loadingRef.current = false;
-    }
-  }, []);
+    },
+    [filtered, query, folderId, fromTs, filter.source, filter.hasNotes, t],
+  );
 
   useEffect(() => {
     void loadPage(0);
   }, [loadPage]);
+
+  // Andere Specs/aeltere Backends liefern hier `null`: dann eben keine Ordner.
+  const loadFolders = useCallback(async () => {
+    const result = await commands.meetingFoldersList();
+    if (result.status === "ok") setFolders(result.data ?? []);
+  }, []);
+
+  useEffect(() => {
+    void loadFolders();
+  }, [loadFolders]);
+
+  // Ein geloeschter Ordner darf nicht als aktiver Filter stehen bleiben.
+  useEffect(() => {
+    if (folderId !== null && !folders.some((f) => f.id === folderId)) {
+      setFolderId(null);
+    }
+  }, [folders, folderId]);
 
   // Refresh from the current recording/import/generation lifecycle. The
   // import path in particular emits no state events at all — its command
@@ -130,14 +247,14 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting) {
-          void loadPage(meetings.length);
+          void loadPage(items.length);
         }
       },
       { threshold: 0 },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loading, hasMore, loadPage, meetings.length]);
+  }, [loading, hasMore, loadPage, items.length]);
 
   const pickImportFile = async () => {
     setImportError(null);
@@ -218,12 +335,20 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
     const id = deleteTarget.id;
     setDeleteTarget(null);
     setDeleteError(null);
-    setMeetings((prev) => prev.filter((m) => m.id !== id));
+    setItems((prev) => prev.filter((item) => item.meeting.id !== id));
     const result = await commands.meetingsDelete(id);
     if (result.status === "error") {
       setDeleteError(t("meetings.errors.deleteFailed"));
       void loadPage(0);
     }
+    // Die Ordnerzaehler zaehlen nur lebende Besprechungen.
+    void loadFolders();
+  };
+
+  const afterFoldersChanged = () => {
+    void loadFolders();
+    // Im Ordnerfilter kann die Besprechung gerade herausgefallen sein.
+    if (folderId !== null) void loadPage(0);
   };
 
   return (
@@ -247,16 +372,22 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
             {t("meetings.list.import")}
           </Button>
         </div>
+        <div className="space-y-2">
+          <SearchBar onSearch={setQuery} />
+          <FolderChips
+            folders={folders}
+            activeId={folderId}
+            onSelect={setFolderId}
+            onChanged={afterFoldersChanged}
+          />
+          <FilterChips value={filter} onChange={setFilter} />
+        </div>
         {isDragOver && (
           <p className="text-sm text-logo-primary font-medium text-center">
             {t("meetings.list.dropHint")}
           </p>
         )}
-        {listError && (
-          <Alert variant="error">
-            {t("meetings.errors.listFailed", { error: listError })}
-          </Alert>
-        )}
+        {listError && <Alert variant="error">{listError}</Alert>}
         {importError && <Alert variant="error">{importError}</Alert>}
         {deleteError && <Alert variant="error">{deleteError}</Alert>}
 
@@ -264,13 +395,22 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
           <p className="text-sm text-text/60 text-center py-3">
             {t("meetings.list.loading")}
           </p>
-        ) : meetings.length === 0 ? (
+        ) : items.length === 0 ? (
           <p className="text-sm text-text/60 text-center py-3">
-            {t("meetings.list.empty")}
+            {query !== ""
+              ? t("meetings.search.noResults")
+              : filtered
+                ? t("meetings.search.noFilterResults")
+                : t("meetings.list.empty")}
           </p>
         ) : (
           <div className="divide-y divide-mid-gray/20">
-            {meetings.map((meeting) => {
+            {truncated && (
+              <p className="text-xs text-text/60 py-1">
+                {t("meetings.search.truncated")}
+              </p>
+            )}
+            {items.map(({ meeting, snippet, hit_source }) => {
               const timestamp = meeting.started_at ?? meeting.created_at;
               const dateLabel = new Intl.DateTimeFormat(i18n.language, {
                 year: "numeric",
@@ -284,7 +424,12 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
                 <div
                   key={meeting.id}
                   className="flex items-center justify-between gap-2 py-2 cursor-pointer hover:bg-mid-gray/10 rounded-md px-1"
+                  data-meeting-id={meeting.id}
                   onClick={() => onSelect(meeting)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setRowMenu({ x: e.clientX, y: e.clientY, meeting });
+                  }}
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">
@@ -302,7 +447,18 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
                     )}
                     <p className="text-xs text-text/60">
                       {dateLabel} · {formatDuration(meeting.duration_ms)}
+                      {hit_source && (
+                        <>
+                          {" · "}
+                          {t("meetings.search.hitIn", {
+                            source: t(
+                              `meetings.search.hitSource.${hit_source}`,
+                            ),
+                          })}
+                        </>
+                      )}
                     </p>
+                    {snippet && <SearchSnippet snippet={snippet} />}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <Badge variant={statusBadgeVariant(meeting.status)}>
@@ -310,6 +466,18 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
                         defaultValue: meeting.status,
                       })}
                     </Badge>
+                    <button
+                      type="button"
+                      className="p-1.5 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/15 cursor-pointer"
+                      title={t("meetings.folders.moveTo")}
+                      aria-label={t("meetings.folders.moveTo")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPickerTarget(meeting);
+                      }}
+                    >
+                      <FolderInput width={16} height={16} />
+                    </button>
                     <button
                       type="button"
                       className="p-1.5 rounded-md text-text/50 hover:text-red-400 hover:bg-red-500/10 cursor-pointer"
@@ -329,6 +497,33 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
         )}
         <div ref={sentinelRef} className="h-1" />
       </div>
+
+      {rowMenu && (
+        <ContextMenu
+          x={rowMenu.x}
+          y={rowMenu.y}
+          label={rowMenu.meeting.title}
+          onClose={() => setRowMenu(null)}
+          items={[
+            {
+              label: t("meetings.folders.moveTo"),
+              onSelect: () => setPickerTarget(rowMenu.meeting),
+            },
+            {
+              label: t("meetings.list.deleteButton"),
+              danger: true,
+              onSelect: () => setDeleteTarget(rowMenu.meeting),
+            },
+          ]}
+        />
+      )}
+
+      <FolderPickerDialog
+        meeting={pickerTarget}
+        folders={folders}
+        onClose={() => setPickerTarget(null)}
+        onSaved={afterFoldersChanged}
+      />
 
       <Dialog
         open={deleteTarget !== null}

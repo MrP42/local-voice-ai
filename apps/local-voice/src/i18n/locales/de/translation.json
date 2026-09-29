@@ -1872,6 +1872,59 @@
         "instruction_invalid": "Die Anweisung ist ungültig: sie darf nicht leer und höchstens 500 Zeichen lang sein.",
         "store_failed": "Das Speichern in der Datenbank ist fehlgeschlagen."
       }
+    },
+    "search": {
+      "placeholder": "Besprechungen durchsuchen …",
+      "label": "Besprechungen durchsuchen",
+      "clear": "Suche leeren",
+      "noResults": "Keine Treffer. Neue Besprechungen erscheinen in der Suche, sobald sie indexiert sind.",
+      "noFilterResults": "Keine Besprechungen passen zu diesem Filter.",
+      "truncated": "Sehr viele Treffer – Suche eingrenzen.",
+      "failed": "Suche fehlgeschlagen: {{error}}",
+      "filterInvalid": "Dieser Filter ist ungültig.",
+      "filters": "Filter",
+      "range7": "7 Tage",
+      "range30": "30 Tage",
+      "range365": "12 Monate",
+      "sourceLive": "Aufnahme",
+      "sourceImport": "Import",
+      "sourceSubtitle": "Untertitel",
+      "hasNotes": "Mit Notizen",
+      "hitIn": "Treffer in: {{source}}",
+      "hitSource": {
+        "title": "Titel",
+        "transcript": "Transkript",
+        "user_notes": "Meine Notizen",
+        "ai_notes": "KI-Notizen"
+      }
+    },
+    "folders": {
+      "label": "Ordner",
+      "all": "Alle",
+      "add": "Ordner anlegen",
+      "moveTo": "In Ordner …",
+      "menu": "Aktionen",
+      "rename": "Umbenennen",
+      "delete": "Löschen",
+      "newTitle": "Neuer Ordner",
+      "renameTitle": "Ordner umbenennen",
+      "nameLabel": "Name",
+      "namePlaceholder": "z. B. Vertrieb",
+      "save": "Speichern",
+      "create": "Anlegen",
+      "cancel": "Abbrechen",
+      "deleteTitle": "Ordner löschen?",
+      "deleteBody": "Der Ordner „{{name}}“ wird gelöscht. Die Besprechungen darin bleiben erhalten.",
+      "pickerTitle": "In Ordner",
+      "pickerHint": "Eine Besprechung kann in mehreren Ordnern liegen.",
+      "pickerEmpty": "Noch keine Ordner. Lege unten einen an.",
+      "loadFailed": "Ordner konnten nicht geladen werden.",
+      "errors": {
+        "nameInvalid": "Der Name muss 1 bis 60 Zeichen lang sein.",
+        "nameTaken": "Einen Ordner mit diesem Namen gibt es schon.",
+        "notFound": "Diesen Ordner gibt es nicht mehr.",
+        "failed": "Ordner konnte nicht gespeichert werden."
+      }
     }
   },
   "micSelector": {

@@ -1872,6 +1872,59 @@
         "instruction_invalid": "The instruction is invalid: it must not be empty and at most 500 characters long.",
         "store_failed": "Saving to the database failed."
       }
+    },
+    "search": {
+      "placeholder": "Search meetings …",
+      "label": "Search meetings",
+      "clear": "Clear search",
+      "noResults": "No matches. New meetings appear in search once they are indexed.",
+      "noFilterResults": "No meetings match this filter.",
+      "truncated": "Very many matches – narrow the search.",
+      "failed": "Search failed: {{error}}",
+      "filterInvalid": "This filter is invalid.",
+      "filters": "Filters",
+      "range7": "7 days",
+      "range30": "30 days",
+      "range365": "12 months",
+      "sourceLive": "Recording",
+      "sourceImport": "Import",
+      "sourceSubtitle": "Subtitles",
+      "hasNotes": "With notes",
+      "hitIn": "Match in: {{source}}",
+      "hitSource": {
+        "title": "Title",
+        "transcript": "Transcript",
+        "user_notes": "My notes",
+        "ai_notes": "AI notes"
+      }
+    },
+    "folders": {
+      "label": "Folders",
+      "all": "All",
+      "add": "New folder",
+      "moveTo": "Move to folder …",
+      "menu": "Actions",
+      "rename": "Rename",
+      "delete": "Delete",
+      "newTitle": "New folder",
+      "renameTitle": "Rename folder",
+      "nameLabel": "Name",
+      "namePlaceholder": "e.g. Sales",
+      "save": "Save",
+      "create": "Create",
+      "cancel": "Cancel",
+      "deleteTitle": "Delete folder?",
+      "deleteBody": "The folder “{{name}}” will be deleted. The meetings in it are kept.",
+      "pickerTitle": "Move to folder",
+      "pickerHint": "A meeting can be in several folders.",
+      "pickerEmpty": "No folders yet. Create one below.",
+      "loadFailed": "Folders could not be loaded.",
+      "errors": {
+        "nameInvalid": "The name must be 1 to 60 characters long.",
+        "nameTaken": "A folder with this name already exists.",
+        "notFound": "This folder no longer exists.",
+        "failed": "The folder could not be saved."
+      }
     }
   },
   "micSelector": {

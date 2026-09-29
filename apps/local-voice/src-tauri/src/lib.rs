@@ -1521,6 +1521,13 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_enhance::meeting_notes_markdown,
             // M1-P1d
             commands::meeting_enhance::meetings_segment_epoch,
+            // M4-P4d: Suche und Ordner in der Besprechungsliste
+            commands::meeting_search::meetings_search,
+            commands::meeting_search::meeting_folders_list,
+            commands::meeting_search::meeting_folders_save,
+            commands::meeting_search::meeting_folders_delete,
+            commands::meeting_search::meetings_set_folders,
+            commands::meeting_search::meetings_get_folders,
             commands::tts::tts_speak_text,
             commands::tts::tts_speak_clipboard,
             commands::tts::tts_cancel,
