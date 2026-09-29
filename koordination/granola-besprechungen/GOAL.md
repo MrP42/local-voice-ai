@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T11:13
+aktualisiert: 2026-09-29T11:28
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -82,6 +82,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - E2 KI-Notizen nach Stopp automatisch (Default an, nur mit konfiguriertem Anbieter) — Vorschlag: ja.
 - E3 Nutzertext bleibt bei „Anweisung anwenden" unverändert — Vorschlag: ja.
 - E4 Eigener Block-Editor statt TipTap (keine neue Abhängigkeit) — Vorschlag: ja.
+- E5 GPU-STT im Windows-Release (P2f): heute rechnet STT nur auf der CPU (`release-windows.yml` ohne `gpu-vulkan`). Vorschlag: Vulkan-Feature im Release aktivieren (CI hat das SDK schon), lokal LunarG-Vulkan-SDK installieren (`winget install KhronosGroup.VulkanSDK`, Admin). Ohne GPU gilt: Live-Transkript (Parakeet, CPU) ist zugleich Endtranskript.
 - R9 Lokaler Kontext fest 8192 Token → Map-Reduce als Normalfall; misst P1e unter 95 % Belegquote, folgt Paket P1g (Kontext je VRAM größer, `ensure_local`).
 
 ## Meilensteine
@@ -100,15 +101,17 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29T11:13 AK1 erfüllt — Recherche-Dateien + FEATURE-MATRIX.md in 45f3a3b, Artefakt https://claude.ai/artifact/JL7yCpwFDTcrvAm9Xj2Dwo (Kopie 91217fa), Issue #59
 
 ## Blocker
--
+- B1 [offen] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart
 
 ## Entscheidungen
+- 2026-09-29 M1/M2-Berührpunkt B4: Auto-KI-Notizen starten auf `MeetingEvent::TranscriptFinal` (P2a führt es ein und sendet es am Ende von `stop()`, P1f hängt sich daran, P2d verschiebt das Senden hinter den Enddurchlauf). Enddurchlauf nutzt `segment_epoch` aus P1a; M2 liefert `remap_sources()`; M2 fügt keine meetings.db-Migration hinzu.
+- 2026-09-29 Silero v6 verschoben (vad-rs lädt v6 nicht); M2 nutzt v4.
 - 2026-09-29 Worker-Routing (Patricks Auftrag, zugleich Freigabe für Subagents nach der M9-Regel): Orchestrator Opus 5.5; Coding `lv-coder` (Sonnet 5.5 high), riskante Pakete `lv-coder-xhigh` (Sonnet 5.5 xhigh), Architektur/Spike/Review `lv-architect` (Opus 5.5 high); kleine Re-Reviews Haiku. Definitionen in `.claude/agents/`.
 - 2026-09-29 Branch basiert auf `chore/0.20.3-abnahme` (PR #58 = #56 + #57), damit Abnahme-Installer die installierten Fixes enthalten.
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-P1/P2-Entwuerfe validieren, Coder-Pakete P1a.. / P2a.. in Worktrees briefen; P0 veroeffentlichen
+P1a validieren + auf feat/granola-besprechungen mergen; P2-Entwurf validieren, M2-Pakete in wt-m2; danach W2: P1b (xhigh) + P1c (lv-coder) parallel
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -116,4 +119,7 @@ P1/P2-Entwuerfe validieren, Coder-Pakete P1a.. / P2a.. in Worktrees briefen; P0 
 - 2026-09-29T11:02 READY (Runde 0) — Goal definiert, Issue #59, Discovery abgeschlossen (3 Recherchen)
 - 2026-09-29T11:04 PLANNING (Runde 1) — Pakete P0-P2 geplant
 - 2026-09-29T11:04 EXECUTING (Runde 1) — P0 (Artefakt, Sonnet), P1 (Entwurf M1, lv-architect), P2 (Spike+Entwurf M2, lv-architect) laufen
+- 2026-09-29T11:18 EXECUTING (Runde 1) — P0+P1 abgenommen (Artefakt JL7yCpwFDTcrvAm9Xj2Dwo, Entwurf M1 4b12c80); P1a (lv-coder-xhigh, wt-m1) und P2 (Spike M2) laufen; Budget ~1,4 MTok
+- 2026-09-29T11:23 EXECUTING (Runde 1) — Laufwerk C: war bei 34 GB frei (99 %); Build-Caches (target) von 4 alten, in main gemergten Worktrees geloescht -> 70 GB frei. Haupt-target 63 GB. Vor Installer-Builds freien Platz pruefen (>= 20 GB).
+- 2026-09-29T11:28 EXECUTING (Runde 1) — B1 blockiert Paket P2f: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) – übrige Pakete laufen weiter
 
