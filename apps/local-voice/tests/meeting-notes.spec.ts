@@ -993,11 +993,9 @@ const withSettings = async (page: Page, patch: Record<string, unknown>) => {
 };
 
 const grantClipboard = async (page: Page) => {
-  await page
-    .context()
-    .grantPermissions(["clipboard-read", "clipboard-write"], {
-      origin: "http://localhost:1420",
-    });
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: "http://localhost:1420",
+  });
 };
 
 const readClipboard = (page: Page) =>
@@ -1033,9 +1031,9 @@ test.describe("Hinweis Meeting-Chat", () => {
     await expect(page.getByTestId("recording-chat-notice-text")).toHaveText(
       REMOTE_NOTICE,
     );
-    await expect(page.getByTestId("recording-chat-notice-text")).not.toContainText(
-      "keine Daten an Dritte",
-    );
+    await expect(
+      page.getByTestId("recording-chat-notice-text"),
+    ).not.toContainText("keine Daten an Dritte");
     await page.getByTestId("recording-chat-notice-copy").click();
     expect(await readClipboard(page)).toBe(REMOTE_NOTICE);
   });
@@ -1131,7 +1129,9 @@ test.describe("Systemton Vorgabe", () => {
     await expect(
       page.getByText("KI-Notizen nach der Besprechung automatisch erstellen"),
     ).toBeVisible();
-    await expect(page.getByText("Standardvorlage", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Standardvorlage", { exact: true }),
+    ).toBeVisible();
     // Standard: beide Schalter an.
     const toggles = page.locator("label:has(input.peer)");
     const capture = page
@@ -1285,7 +1285,9 @@ test.describe("Auto-Lauf nach dem Stopp", () => {
       });
     });
     await expect(status).toHaveAttribute("data-state", "failed");
-    await expect(status).toContainText("kein Sprachmodell-Anbieter eingerichtet");
+    await expect(status).toContainText(
+      "kein Sprachmodell-Anbieter eingerichtet",
+    );
     await page.evaluate(() => {
       (window as any).__emit("meeting-notes-event", {
         kind: "done",

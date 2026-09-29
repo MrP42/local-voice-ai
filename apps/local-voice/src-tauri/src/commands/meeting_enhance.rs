@@ -167,6 +167,17 @@ pub fn auto_enhance_decision(
     }
 }
 
+/// Vorlage des Auto-Laufs: die der Besprechung (`meetings_set_template`),
+/// sonst die Standardvorlage aus den Einstellungen. `None` = der Motor nimmt
+/// `builtin:allgemein`.
+fn auto_template(meeting: Option<String>, default_setting: Option<&str>) -> Option<String> {
+    meeting.or_else(|| {
+        default_setting
+            .filter(|t| !t.trim().is_empty())
+            .map(str::to_string)
+    })
+}
+
 /// Der Hinweis "kein Anbieter" erscheint hoechstens einmal je Programmlauf:
 /// wer keinen Anbieter eingerichtet hat, soll nicht nach jeder Besprechung
 /// wieder dieselbe Meldung sehen.
@@ -219,10 +230,15 @@ fn on_transcript_final(app: &AppHandle, meeting_id: String) {
         }
     }
     let app = app.clone();
+    let default_template = settings.meeting_default_template_id.clone();
     tauri::async_runtime::spawn(async move {
-        // Vorlage der Besprechung (aus `meetings_set_template`); `None` faellt
-        // im Motor auf die Standardvorlage zurueck.
-        let template = store.meeting_template_id(&meeting_id).ok().flatten();
+        // Vorlage der Besprechung (aus `meetings_set_template`), sonst die
+        // Standardvorlage der Einstellungen; `None` faellt im Motor auf
+        // `builtin:allgemein` zurueck.
+        let template = auto_template(
+            store.meeting_template_id(&meeting_id).ok().flatten(),
+            default_template.as_deref(),
+        );
         // Fehler kommen bereits als Ereignis an; hier nur der Code im Log.
         if let Err(message) = enhance_and_notify(
             &app,
@@ -464,6 +480,23 @@ mod tests {
             AutoEnhanceDecision::Run,
             "entfernter Anbieter konkurriert nicht um die Maschine"
         );
+    }
+
+    #[test]
+    fn auto_template_prefers_the_meeting_then_the_default_setting() {
+        assert_eq!(
+            auto_template(Some("builtin:vertrieb".into()), Some("builtin:jour-fixe")),
+            Some("builtin:vertrieb".to_string())
+        );
+        // Ohne Wahl an der Besprechung (z. B. Stopp vor `meetings_set_template`)
+        // gilt die Standardvorlage aus den Einstellungen.
+        assert_eq!(
+            auto_template(None, Some("builtin:jour-fixe")),
+            Some("builtin:jour-fixe".to_string())
+        );
+        // Beides leer: `None`, der Motor nimmt `builtin:allgemein`.
+        assert_eq!(auto_template(None, None), None);
+        assert_eq!(auto_template(None, Some("  ")), None);
     }
 
     #[test]
