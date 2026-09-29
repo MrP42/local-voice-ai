@@ -37,7 +37,7 @@ oder du die Architektur nicht kennst.
   `check:translations` sind auf main VORBESTEHEND rot: nur die eigenen Dateien/Hunks
   bewerten, nie den Baum gruen machen.
 - `src/bindings.ts` ist seit P7a exakt die tauri-specta-Ausgabe: neue Commands/Settings-Felder
-  per einmaligem Debug-Start regenerieren (oder von Hand im selben Format), settingsStore-Mapping
+  per einmaligem Debug-Start regenerieren (`cd apps/local-voice/src-tauri && ./target/debug/local-voice-ai.exe --list-models`; nur aus diesem Verzeichnis, der Pfad ist relativ) (oder von Hand im selben Format), settingsStore-Mapping
   von Hand. Playwright nutzt je Checkout einen eigenen Port (automatisch), parallele Laeufe ok.
 - Kein Modul, das aus `llm_client` erreichbar ist, darf `settings::get_settings(&AppHandle)`
   rufen (Test-Exe startet sonst nicht, STATUS_ENTRYPOINT_NOT_FOUND).
