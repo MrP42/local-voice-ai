@@ -247,4 +247,18 @@ pub struct CliArgs {
     /// raw) to this directory, e.g. for a cross-check with another scorer.
     #[arg(long, value_name = "DIR")]
     pub rttm_out: Option<PathBuf>,
+
+    // M6-P6a
+    /// Export one meeting to a file and exit: --export-meeting <ID> --format
+    /// md|txt|docx|html|srt|vtt|json --out <FILE>. Honours LVA_MEETINGS_DIR;
+    /// read-only (no model, no recording, no startup housekeeping). All parts
+    /// are included; SRT/VTT hold the transcript only; audio is never
+    /// exported. Exit 0 ok, 1 error, 2 bad input (unknown meeting or format,
+    /// no --out).
+    #[arg(long, value_name = "ID")]
+    pub export_meeting: Option<String>,
+
+    /// Format for --export-meeting (default: from the --out extension).
+    #[arg(long, value_name = "FORMAT")]
+    pub format: Option<String>,
 }

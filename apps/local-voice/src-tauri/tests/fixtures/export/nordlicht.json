@@ -1,0 +1,227 @@
+{
+  "action_items": [
+    {
+      "assignee": "Anna Berg",
+      "entry_id": "E4",
+      "source": "ai",
+      "source_segment_ids": [],
+      "status": "todo",
+      "text": "Angebot an Nordlicht senden"
+    },
+    {
+      "assignee": null,
+      "entry_id": "E5",
+      "source": "ai",
+      "source_segment_ids": [],
+      "status": "done",
+      "text": "Termin für den Workshop finden"
+    },
+    {
+      "assignee": null,
+      "entry_id": null,
+      "source": "manual",
+      "source_segment_ids": [],
+      "status": "todo",
+      "text": "Rechnung prüfen"
+    }
+  ],
+  "ai_notes": {
+    "sections": [
+      {
+        "entries": [
+          {
+            "assignee": null,
+            "done": false,
+            "due": null,
+            "edited": false,
+            "id": "E1",
+            "origin": "ai",
+            "source_segment_ids": [
+              0,
+              1
+            ],
+            "text": "Kickoff mit Nordlicht: Umfang & Zeitplan besprochen",
+            "unsupported": false
+          },
+          {
+            "assignee": null,
+            "done": false,
+            "due": null,
+            "edited": false,
+            "id": "E2",
+            "origin": "user",
+            "source_segment_ids": [],
+            "text": "Größe des Pilotprojekts: 3 Standorte",
+            "unsupported": false
+          },
+          {
+            "assignee": null,
+            "done": false,
+            "due": null,
+            "edited": true,
+            "id": "E3",
+            "origin": "ai",
+            "source_segment_ids": [
+              3
+            ],
+            "text": "Budget von Frau Berg freigegeben",
+            "unsupported": false
+          }
+        ],
+        "id": "summary",
+        "kind": "text",
+        "title": "Zusammenfassung"
+      },
+      {
+        "entries": [
+          {
+            "assignee": "Anna Berg",
+            "done": false,
+            "due": "2026-10-02",
+            "edited": false,
+            "id": "E4",
+            "origin": "ai",
+            "source_segment_ids": [
+              2,
+              3
+            ],
+            "text": "Angebot an Nordlicht senden",
+            "unsupported": false
+          },
+          {
+            "assignee": null,
+            "done": true,
+            "due": null,
+            "edited": false,
+            "id": "E5",
+            "origin": "user",
+            "source_segment_ids": [],
+            "text": "Termin für den Workshop finden",
+            "unsupported": false
+          }
+        ],
+        "id": "tasks",
+        "kind": "tasks",
+        "title": "Aufgaben"
+      },
+      {
+        "entries": [],
+        "id": "leer",
+        "kind": "text",
+        "title": "Risiken"
+      }
+    ],
+    "segment_epoch": 1,
+    "template_id": "builtin:jour_fixe",
+    "template_title": "Jour fixe"
+  },
+  "format": "lva-meeting-export@1",
+  "meeting": {
+    "created_at": 1790000000,
+    "duration_ms": 3725000,
+    "ended_at": 1790003725,
+    "id": "01NORDLICHT",
+    "language": "de",
+    "source": "live",
+    "started_at": 1790000000,
+    "status": "ready",
+    "title": "Nordlicht: Projekt-Kickoff"
+  },
+  "minutes_markdown": "# Protokoll: Nordlicht: Projekt-Kickoff\n\n**Datum:** 2026-09-28 · **Dauer:** 1:02:05\n\n## Zusammenfassung\n\nDer Umfang des **Piloten** wurde festgelegt.\n\n## Sprecher & Redeanteile\n\n| Sprecher | Redezeit | Anteil |\n|---|---|---|\n| Ich | 10:00 | 60,0 % |\n| Gegenseite | 06:40 | 40,0 % |\n\n## Entscheidungen\n\n- Start im Oktober\n",
+  "my_notes": [
+    {
+      "at_ms": null,
+      "checked": false,
+      "id": "N1",
+      "kind": "heading",
+      "text": "Vorab"
+    },
+    {
+      "at_ms": 12000,
+      "checked": false,
+      "id": "N2",
+      "kind": "bullet",
+      "text": "Pilot mit <3 Standorten> prüfen"
+    },
+    {
+      "at_ms": 40000,
+      "checked": true,
+      "id": "N3",
+      "kind": "todo",
+      "text": "Angebot senden"
+    },
+    {
+      "at_ms": null,
+      "checked": false,
+      "id": "N4",
+      "kind": "paragraph",
+      "text": "Kunde mag knappe Mails."
+    }
+  ],
+  "participants": [
+    {
+      "email": "anna.berg@nordlicht.example",
+      "name": "Anna Berg",
+      "role": "organizer"
+    },
+    {
+      "email": "jonas@nordlicht.example",
+      "name": null,
+      "role": null
+    }
+  ],
+  "parts": {
+    "ai_notes": true,
+    "minutes": true,
+    "notes": true,
+    "participants": true,
+    "transcript": true
+  },
+  "transcript": [
+    {
+      "channel": 0,
+      "end_ms": 4000,
+      "segment_id": 0,
+      "speaker": "Ich",
+      "speaker_index": null,
+      "start_ms": 1000,
+      "text": "Guten Morgen zusammen."
+    },
+    {
+      "channel": 1,
+      "end_ms": 9000,
+      "segment_id": 1,
+      "speaker": "Gegenseite",
+      "speaker_index": null,
+      "start_ms": 5000,
+      "text": "Wir starten mit drei Standorten."
+    },
+    {
+      "channel": 1,
+      "end_ms": 15500,
+      "segment_id": 2,
+      "speaker": "Anna Berg",
+      "speaker_index": 1,
+      "start_ms": 12000,
+      "text": "Das Budget & der Zeitplan stehen (snake_case_wort)."
+    },
+    {
+      "channel": 2,
+      "end_ms": 3725000,
+      "segment_id": 3,
+      "speaker": "",
+      "speaker_index": null,
+      "start_ms": 3723000,
+      "text": "Danke, bis nächste Woche."
+    },
+    {
+      "channel": 0,
+      "end_ms": 3724500,
+      "segment_id": 4,
+      "speaker": "Ich",
+      "speaker_index": null,
+      "start_ms": 3724000,
+      "text": "   "
+    }
+  ]
+}

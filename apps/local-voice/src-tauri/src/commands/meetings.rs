@@ -236,3 +236,50 @@ pub async fn meetings_import_file(
     )
     .await
 }
+
+// M6-P6a: Export einer ganzen Besprechung.
+
+/// Schreibt die Besprechung in eine vom Nutzer gewählte Datei; das Format
+/// ergibt sich aus der Endung (`md`, `txt`, `docx`, `html`, `srt`, `vtt`,
+/// `json`). `parts` wählt die Teile (SRT/VTT enthalten immer nur das
+/// Transkript). Audio wird nie exportiert.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_export(
+    store: State<'_, Arc<MeetingStore>>,
+    meeting_id: String,
+    path: String,
+    parts: crate::managers::meetings::export::ExportParts,
+) -> Result<(), String> {
+    use crate::managers::meetings::export::{build_bundle, write_export, ExportFormat};
+    let store = Arc::clone(&store);
+    tauri::async_runtime::spawn_blocking(move || {
+        let bundle = build_bundle(&store, &meeting_id)?;
+        let target = PathBuf::from(&path);
+        write_export(&target, ExportFormat::from_path(&target), &bundle, &parts)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Legt die Besprechung formatiert (HTML + Klartext) in die Zwischenablage.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_copy_formatted(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    meeting_id: String,
+    parts: crate::managers::meetings::export::ExportParts,
+) -> Result<(), String> {
+    use crate::managers::meetings::export::{build_bundle, clipboard_payload};
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let store = Arc::clone(&store);
+    let (html, text) = tauri::async_runtime::spawn_blocking(move || {
+        build_bundle(&store, &meeting_id).map(|b| clipboard_payload(&b, &parts))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    app.clipboard()
+        .write_html(html, Some(text))
+        .map_err(|e| e.to_string())
+}

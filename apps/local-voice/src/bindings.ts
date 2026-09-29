@@ -1828,6 +1828,31 @@ async meetingsExportDocument(path: string, body: string) : Promise<Result<null, 
 }
 },
 /**
+ * M6-P6a: Schreibt die Besprechung in eine vom Nutzer gewählte Datei; das Format
+ * ergibt sich aus der Endung (`md`, `txt`, `docx`, `html`, `srt`, `vtt`,
+ * `json`). `parts` wählt die Teile (SRT/VTT enthalten immer nur das
+ * Transkript). Audio wird nie exportiert.
+ */
+async meetingsExport(meetingId: string, path: string, parts: ExportParts) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_export", { meetingId, path, parts }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt die Besprechung formatiert (HTML + Klartext) in die Zwischenablage.
+ */
+async meetingsCopyFormatted(meetingId: string, parts: ExportParts) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_copy_formatted", { meetingId, parts }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * M1-P1c: Notizblock, Vorlagen, Aufgaben. Fehlercodes des Stores
  * (`revision_conflict`, `template_readonly`, ...) kommen als String.
  */
@@ -3536,6 +3561,11 @@ export type EntryFlags = {
  * KI-Eintrag ohne gueltige Quelle.
  */
 unsupported: boolean; dropped_sources: number; placed_by_fallback: boolean; edited: boolean }
+/**
+ * Welche Teile in den Export kommen (`meetings_export`, Zwischenablage).
+ * Fehlende Felder gelten als "an": ein Aufruf ohne Auswahl exportiert alles.
+ */
+export type ExportParts = { ai_notes: boolean; notes: boolean; minutes: boolean; transcript: boolean; participants: boolean }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
