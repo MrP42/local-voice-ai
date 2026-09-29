@@ -43,6 +43,16 @@ oder du die Architektur nicht kennst.
 - Patch-Skripte mit Backslashes oder Nicht-ASCII nie per Bash-Heredoc schreiben: Datei
   per Write-Tool anlegen, dann ausfuehren. `.ps1`-Dateien nur ASCII.
 - Tests duerfen produktive Daten nie beruehren (`LVA_MEETINGS_DIR`-Sandbox o. ae.).
+- Parallel bauen andere Worker: vor cargo immer `export CARGO_BUILD_JOBS=8`.
+- Erster cargo-Lauf in einem umgezogenen/wiederverwendeten Worktree bricht im Build-Skript
+  von transcribe-cpp-sys mit "CMakeCache.txt directory ... is different" ab: einfach EINMAL
+  wiederholen (CMake heilt den Cache selbst). Nicht diagnostizieren.
+- Test-Fixtures unter `src-tauri/tests/fixtures/` sind per `.gitignore` ausgeschlossen:
+  neue Fixtures im Report nennen, der Planer committet sie mit `git add -f`.
+- Windows PowerShell 5.1: `$PSScriptRoot` ist in `param()`-Defaults leer -> Pfad-Defaults im
+  Skriptkoerper setzen. Stimmen wie "Stefan" (SAPI) sieht nur `pwsh` 7.
+- Es gibt schon einen Test-`#[global_allocator]` (`meetings::echo::alloc_probe`); fuer
+  Allokationspruefungen dessen `count_allocs` nutzen, keinen zweiten definieren.
 
 ## Systemschutz (harte Vorgabe)
 Die App darf RAM/CPU nie so belasten, dass Windows unbedienbar wird. Jeder neue

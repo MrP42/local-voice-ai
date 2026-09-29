@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T11:43
+aktualisiert: 2026-09-29T12:05
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -125,4 +125,5 @@ Lieferungen validieren und seriell in feat/granola-besprechungen mergen (Konflik
 - 2026-09-29T11:28 EXECUTING (Runde 1) — B1 blockiert Paket P2f: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) – übrige Pakete laufen weiter
 - 2026-09-29T11:29 EXECUTING (Runde 1) — P1a (wt-m1), P2c1 (wt-m2), P2b1 (wt-m2b) laufen parallel; P2f blockiert (E5); Budget ~1,75 MTok
 - 2026-09-29T11:43 EXECUTING (Runde 1) — P1a abgenommen (13fa4d3, 732 Tests). Laufend: P1b (wt-m1), P1c (wt-m1c), P2a (wt-m2a), P2c1 (wt-m2), P2b1 (wt-m2b), P4-Entwurf. CARGO_BUILD_JOBS=8 je Worker. Budget ~2,0 MTok
+- 2026-09-29T12:05 EXECUTING (Runde 1) — BUDGET: Ist ~3,0 MTok (Subagents 2,7 + Orchestrator ~0,35). Real je Coder-Paket 250-310 kTok, je Entwurf 170-240 kTok. Hochrechnung voller Umfang (M1-M7, ~33 Pakete offen) ~12 MTok = +50 % ueber Schaetzung 8 -> Rueckfrage an Patrick (Regel: anhalten und fragen). Abgenommen: P0, P1, P2, P1a, P1c, P2c1; laufend P1b, P2a, P2b1; P4 geliefert.
 
