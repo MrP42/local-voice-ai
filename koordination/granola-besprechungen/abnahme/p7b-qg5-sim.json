@@ -1,0 +1,19 @@
+{
+  "meeting_id": "01M3QJSHBVNV5ZCYN6EZHF31KW",
+  "audio_ms": 640106,
+  "live_model": "parakeet-tdt-0.6b-v3",
+  "final_model": "handy-computer/whisper-large-v3-gguf/whisper-large-v3-Q5_K_M.gguf",
+  "final_kept": null,
+  "speakers_state": "done",
+  "notes": {
+    "document_id": "01M3QJWEHD06VSVTT0R421F3WM",
+    "error_code": null,
+    "ms": 31676,
+    "ok": true,
+    "provider": "local:llm-gemma4-e4b-q4",
+    "ran": true,
+    "steps": 1,
+    "template": null
+  },
+  "status": "ready"
+}

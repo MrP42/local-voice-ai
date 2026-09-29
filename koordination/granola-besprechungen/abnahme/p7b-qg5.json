@@ -1,0 +1,260 @@
+{
+  "gate": "QG5",
+  "finished": "2026-09-30T00:00:21",
+  "app_exe": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\p7b-gpu\\local-voice-ai.exe",
+  "app_exe_mtime": "2026-09-29T23:57:30",
+  "proxy_control": "logged",
+  "steps": {
+    "1_simulate_final_speakers_notes": {
+      "args": "--simulate-meeting --scene-mic mic_echo.wav --final-model auto --notes --json --out C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg5-sim.full.json --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene1_status --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene2_angebot",
+      "env": {
+        "HF_HOME": "C:\\Users\\wolff\\lva-spikes\\p7b\\hf",
+        "ALL_PROXY": "http://127.0.0.1:18089",
+        "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg5-c8dc240a29734ab8acddb614c39719a3",
+        "HTTP_PROXY": "http://127.0.0.1:18089",
+        "NO_PROXY": "localhost,127.0.0.1,::1",
+        "HTTPS_PROXY": "http://127.0.0.1:18089"
+      },
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ms": 98594,
+      "peak_job_mb": 6720,
+      "free_mb_start": 28179,
+      "leftovers": [],
+      "log": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg5-1.log",
+      "started": "2026-09-29T23:58:02"
+    },
+    "2_reindex_embeddings": {
+      "args": "--reindex-meetings --json --out abnahme\\p7b-qg5-reindex.json",
+      "env": {
+        "HF_HOME": "C:\\Users\\wolff\\lva-spikes\\p7b\\hf",
+        "ALL_PROXY": "http://127.0.0.1:18089",
+        "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg5-c8dc240a29734ab8acddb614c39719a3",
+        "HTTP_PROXY": "http://127.0.0.1:18089",
+        "NO_PROXY": "localhost,127.0.0.1,::1",
+        "HTTPS_PROXY": "http://127.0.0.1:18089"
+      },
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ms": 3838,
+      "peak_job_mb": 2294,
+      "free_mb_start": 27784,
+      "leftovers": [],
+      "log": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg5-2.log",
+      "started": "2026-09-29T23:59:43"
+    },
+    "3_chat": {
+      "args": "--eval-chat C:\\Users\\wolff\\local-voice-project\\.claude\\worktrees\\wt-m2b\\apps\\local-voice\\src-tauri\\tests\\fixtures\\chat --json --out C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg5-chat.json",
+      "env": {
+        "HF_HOME": "C:\\Users\\wolff\\lva-spikes\\p7b\\hf",
+        "ALL_PROXY": "http://127.0.0.1:18089",
+        "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg5-c8dc240a29734ab8acddb614c39719a3",
+        "HTTP_PROXY": "http://127.0.0.1:18089",
+        "NO_PROXY": "localhost,127.0.0.1,::1",
+        "HTTPS_PROXY": "http://127.0.0.1:18089"
+      },
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ms": 26719,
+      "peak_job_mb": 9172,
+      "free_mb_start": 27706,
+      "leftovers": [],
+      "log": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg5-3.log",
+      "started": "2026-09-29T23:59:49"
+    },
+    "4_export_pdf": {
+      "args": "--export-meeting 01M3QJSHBVNV5ZCYN6EZHF31KW --format pdf --out C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg5-c8dc240a29734ab8acddb614c39719a3\\p7b-export.pdf",
+      "env": {
+        "HF_HOME": "C:\\Users\\wolff\\lva-spikes\\p7b\\hf",
+        "ALL_PROXY": "http://127.0.0.1:18089",
+        "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg5-c8dc240a29734ab8acddb614c39719a3",
+        "HTTP_PROXY": "http://127.0.0.1:18089",
+        "NO_PROXY": "localhost,127.0.0.1,::1",
+        "HTTPS_PROXY": "http://127.0.0.1:18089"
+      },
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_ms": 1060,
+      "peak_job_mb": 182,
+      "free_mb_start": 27601,
+      "leftovers": [],
+      "log": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg5-4.log",
+      "started": "2026-09-30T00:00:18"
+    }
+  },
+  "meeting_id": "01M3QJSHBVNV5ZCYN6EZHF31KW",
+  "reindex": {
+    "chunks": 16,
+    "db": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg5-c8dc240a29734ab8acddb614c39719a3\\meetings.db",
+    "embed_batches": 1,
+    "embed_error": null,
+    "embed_ms": 3757,
+    "embed_server_peak_mb": 1526,
+    "embed_server_running": false,
+    "embedded_meetings": 1,
+    "indexed": 1,
+    "lexical_meetings": 0,
+    "lexical_ms": 18,
+    "meetings": 1,
+    "mode": "reindex_meetings",
+    "model": "emb-bge-m3-q8",
+    "model_ready": true,
+    "seeded": 0,
+    "skipped_chunks": 0,
+    "vectors": 16
+  },
+  "chat_accuracy": 1.0,
+  "chat_questions": 24,
+  "pdf_magic": "%PDF-",
+  "pdf_bytes": 75583,
+  "processes_seen": [
+    {
+      "pid": 100760,
+      "name": "local-voice-ai.exe",
+      "first_seen": "23:59:49.334"
+    },
+    {
+      "pid": 97324,
+      "name": "taskkill.exe",
+      "first_seen": "23:59:53.338"
+    },
+    {
+      "pid": 41048,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:44.138"
+    },
+    {
+      "pid": 80632,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:58.325"
+    },
+    {
+      "pid": 85680,
+      "name": "taskkill.exe",
+      "first_seen": "23:59:39.705"
+    },
+    {
+      "pid": 98988,
+      "name": "conhost.exe",
+      "first_seen": "23:59:44.138"
+    },
+    {
+      "pid": 98444,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:08.346"
+    },
+    {
+      "pid": 77000,
+      "name": "conhost.exe",
+      "first_seen": "23:59:58.325"
+    },
+    {
+      "pid": 40092,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:50.126"
+    },
+    {
+      "pid": 55916,
+      "name": "conhost.exe",
+      "first_seen": "23:59:54.141"
+    },
+    {
+      "pid": 5452,
+      "name": "conhost.exe",
+      "first_seen": "23:59:50.126"
+    },
+    {
+      "pid": 101980,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:54.141"
+    },
+    {
+      "pid": 54840,
+      "name": "local-voice-ai.exe",
+      "first_seen": "23:58:02.501"
+    },
+    {
+      "pid": 31028,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:43.399"
+    },
+    {
+      "pid": 13696,
+      "name": "conhost.exe",
+      "first_seen": "23:59:39.705"
+    },
+    {
+      "pid": 26932,
+      "name": "taskkill.exe",
+      "first_seen": "00:00:13.507"
+    },
+    {
+      "pid": 42420,
+      "name": "conhost.exe",
+      "first_seen": "00:00:13.507"
+    },
+    {
+      "pid": 78620,
+      "name": "conhost.exe",
+      "first_seen": "23:59:49.334"
+    },
+    {
+      "pid": 62624,
+      "name": "msedgewebview2.exe",
+      "first_seen": "00:00:18.179"
+    },
+    {
+      "pid": 77528,
+      "name": "local-voice-ai.exe",
+      "first_seen": "23:59:43.399"
+    },
+    {
+      "pid": 17508,
+      "name": "local-voice-ai.exe",
+      "first_seen": "00:00:18.179"
+    },
+    {
+      "pid": 96372,
+      "name": "conhost.exe",
+      "first_seen": "23:59:46.512"
+    },
+    {
+      "pid": 96288,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:49.334"
+    },
+    {
+      "pid": 71912,
+      "name": "conhost.exe",
+      "first_seen": "23:59:08.346"
+    },
+    {
+      "pid": 93844,
+      "name": "conhost.exe",
+      "first_seen": "23:59:53.338"
+    },
+    {
+      "pid": 68940,
+      "name": "conhost.exe",
+      "first_seen": "23:59:43.399"
+    },
+    {
+      "pid": 99336,
+      "name": "msedgewebview2.exe",
+      "first_seen": "00:00:18.179"
+    },
+    {
+      "pid": 100196,
+      "name": "taskkill.exe",
+      "first_seen": "23:59:46.512"
+    }
+  ],
+  "sockets_seen": 94,
+  "netwatch_ticks": 192,
+  "netwatch_ticks_with_app": 163,
+  "non_loopback_sockets": [],
+  "non_loopback_count": 0,
+  "proxy_requests": [],
+  "proxy_request_count": 0,
+  "qg5_pass": true
+}

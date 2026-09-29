@@ -1057,6 +1057,13 @@ fn run_simulate_opts(
                     final_model,
                 );
             }
+            // M7-P7b: KI-Notizen wie der Auto-Lauf nach `TranscriptFinal`.
+            if let (true, Some(id)) = (args.notes, payload["meeting_id"].as_str()) {
+                // Das STT-Modell bleibt geladen wie in der App (Entladen erst
+                // nach `model_unload_timeout`).
+                let id = id.to_string();
+                payload["notes"] = simulate_notes(app, store, &id, args.notes_model.as_deref());
+            }
             emit_headless_payload(&payload, args.out.as_deref());
             0
         }
@@ -1065,6 +1072,78 @@ fn run_simulate_opts(
             1
         }
     }
+}
+
+/// M7-P7b (QG3): KI-Notizen nach dem Enddurchlauf wie der Auto-Lauf nach
+/// `TranscriptFinal` (`on_transcript_final`: Entscheidung, Vorlage,
+/// `enhance_meeting`), mit Zeitmessung. Der lokale Server wird wie in
+/// `--eval-notes` eingerichtet (samt Speicherwaechter) und am Ende gestoppt.
+/// Kein Notiztext im Ergebnis (D9), nur Kennzahlen.
+fn simulate_notes(
+    app: &AppHandle,
+    store: &Arc<managers::meetings::store::MeetingStore>,
+    meeting_id: &str,
+    model_override: Option<&str>,
+) -> serde_json::Value {
+    use commands::meeting_enhance::{auto_enhance_decision, AutoEnhanceDecision};
+    use managers::meetings::notes::enhance;
+
+    let mut settings = get_settings(app);
+    if let Some(model) = model_override.map(str::trim).filter(|m| !m.is_empty()) {
+        managers::meetings::notes::eval::apply_model_override(&mut settings, model);
+    }
+    let decision = auto_enhance_decision(&settings, "live", false);
+    let provider = managers::meetings::llm_call::resolve_provider_coded(&settings)
+        .ok()
+        .map(|(p, model, _)| format!("{}:{model}", p.id));
+    if decision != AutoEnhanceDecision::Run {
+        return serde_json::json!({
+            "ran": false,
+            "decision": format!("{decision:?}"),
+            "provider": provider,
+        });
+    }
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            return serde_json::json!({ "ran": false, "error": format!("llm runtime: {e}") })
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+    let template = settings
+        .meeting_default_template_id
+        .clone()
+        .filter(|t| !t.trim().is_empty());
+    let steps = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let steps_in = Arc::clone(&steps);
+    let started = std::time::Instant::now();
+    let result = tauri::async_runtime::block_on(enhance::enhance_meeting(
+        &settings,
+        Arc::clone(store),
+        meeting_id,
+        template.as_deref(),
+        move |_, total| steps_in.store(total, std::sync::atomic::Ordering::Relaxed),
+    ));
+    let ms = started.elapsed().as_millis() as u64;
+    llm_server.stop();
+    serde_json::json!({
+        "ran": true,
+        "ok": result.is_ok(),
+        "ms": ms,
+        "provider": provider,
+        "template": template,
+        "steps": steps.load(std::sync::atomic::Ordering::Relaxed),
+        "error_code": result.as_ref().err().map(|e| enhance::event_code(e)),
+        "document_id": result.as_ref().ok().map(|d| d.id.clone()),
+    })
 }
 
 /// `--dump-meeting`: one JSON object describing what the store actually

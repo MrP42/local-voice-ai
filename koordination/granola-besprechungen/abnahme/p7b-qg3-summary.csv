@@ -1,0 +1,6 @@
+lauf,datei,audio_min,cpu_cap_percent,final_model,final_load_ms,final_transcribe_ms,final_rtf,speakers_ms,stop_to_transcript_final_ms,notes_model,notes_ms,notes_ok,stop_to_notes_ms,peak_job_mb
+"gpu-qwen, Notizen Gemma 4 E4B, CPU-Deckel 80 %",p7b-qg3-gpu-qwen.json,61.8,80,handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf,3823,75906,50.7,19303,118054,local:llm-gemma4-e4b-q4,83284,True,201338,8252
+"gpu-auto, Notizen Gemma 4 E4B",p7b-qg3-gpu-auto.json,61.8,100,handy-computer/whisper-large-v3-gguf/whisper-large-v3-Q5_K_M.gguf,3180,97081,39.6,11359,130744,local:llm-gemma4-e4b-q4,86259,True,217003,7328
+"gpu-qwen, Notizen Qwen3.5-9B",p7b-qg3-gpu-qwen-notes-qwen35.json,61.8,100,handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf,1337,63121,61.0,11172,94652,local:llm-qwen3.5-9b-q4,42073,True,136725,11149
+"cpu-auto, Notizen Gemma 4 E4B auf CPU",p7b-qg3-cpu-auto.json,12.8,100,cpu_only,0,0,,18999,19015,local:llm-gemma4-e4b-q4,391104,True,410119,3928
+"cpu-qwen, ohne Notizen",p7b-qg3-cpu-qwen.json,12.8,100,handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf,1352,212767,3.8,19010,237013,,,,,2904
