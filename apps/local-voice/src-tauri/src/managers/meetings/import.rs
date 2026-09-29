@@ -21,9 +21,10 @@ use tauri_specta::Event;
 
 use super::chunker::{ChannelChunker, Chunk};
 use super::recorder::MeetingEvent;
+use super::speakers::{self, ApplyOutcome};
 use super::store::{MeetingSource, MeetingStatus, MeetingStore, StoredSegment, TranscriptDelta};
 use super::subtitle::parse_subtitles;
-use crate::managers::transcription::TranscriptionManager;
+use crate::managers::transcription::{TranscriptionManager, WordTime};
 use crate::media;
 
 /// `StoredSegment::channel` for a single imported track — there is no
@@ -194,6 +195,9 @@ fn run_import(
         transcribe_and_store(app, store, tm, meeting_id, &samples, CHANNEL_MIXED, 0)?;
 
         let duration_ms = (samples.len() as u64 * 1_000) / 16_000;
+        // Der Puffer (i16) wird nicht mehr gebraucht; die Sprechertrennung liest
+        // die Spur selbst (f32) und soll nicht zwei Kopien nebeneinander halten.
+        drop(samples);
         store
             .set_audio_paths(
                 meeting_id,
@@ -202,6 +206,9 @@ fn run_import(
                 Some(duration_ms),
             )
             .map_err(|e| format!("audio_paths_failed: {e}"))?;
+        // M3-P3b: Sprecher (Einstellung `meeting_diarization`). Ein Fehler hier
+        // macht den Import nicht kaputt: das Transkript steht schon.
+        run_speaker_step(app, store, meeting_id);
         Ok(duration_ms)
     })();
 
@@ -246,6 +253,63 @@ fn run_import(
     tm.initiate_model_load_target(&dictation_model);
 
     result
+}
+
+/// M3-P3b: Sprechertrennung fuer das gespeicherte Transkript einer
+/// Besprechung (Import, Neu-Transkription): gespeicherte Turns zuerst, sonst
+/// Sortformer (Einstellung `meeting_diarization`, RAM-Tor, ein Modell zur
+/// Zeit). Danach laedt die Anzeige das Transkript neu (`Reset` + `Segments`),
+/// weil sich Sprecher und Segmentgrenzen geaendert haben. Nie ein Fehler und
+/// keine Panik nach aussen: das Transkript bleibt, wie es ist, der Bericht
+/// steht in `metadata_json.diarize`.
+pub(super) fn run_speaker_step(
+    app: &tauri::AppHandle,
+    store: &Arc<MeetingStore>,
+    meeting_id: &str,
+) {
+    let mut diarizer = super::final_pass::AppDiarizer::from_app(
+        app,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
+    let step = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        speakers::step_on_stored(store, meeting_id, &mut diarizer, true)
+    }));
+    let (report, outcome) = match step {
+        Ok(done) => done,
+        Err(_) => {
+            error!("meetings: speaker step panicked ({meeting_id}) - transcript without speakers");
+            return;
+        }
+    };
+    match outcome {
+        ApplyOutcome::Applied {
+            epoch,
+            epoch_bumped,
+        } => {
+            info!(
+                "meetings: speakers applied ({meeting_id}): {} assigned, {} split, epoch {epoch}{}",
+                report.assigned,
+                report.split_added,
+                if epoch_bumped { " (new)" } else { "" }
+            );
+            if let Ok(all) = store.get_segments(meeting_id) {
+                let _ = (MeetingEvent::Reset {
+                    meeting_id: meeting_id.to_string(),
+                })
+                .emit(app);
+                let _ = (MeetingEvent::Segments {
+                    meeting_id: meeting_id.to_string(),
+                    appended: all,
+                })
+                .emit(app);
+            }
+        }
+        ApplyOutcome::Unchanged => {}
+        ApplyOutcome::Conflict => {
+            log::warn!("meetings: speakers not applied ({meeting_id}): transcript kept changing")
+        }
+        ApplyOutcome::Failed(e) => log::warn!("meetings: speakers not applied ({meeting_id}): {e}"),
+    }
 }
 
 /// Success half of the "always reach a terminal status" contract.
@@ -310,6 +374,12 @@ pub(super) fn gap_placeholder(start_ms: u64, end_ms: u64) -> String {
     )
 }
 
+/// Ist `text` ein Luecken-Platzhalter von [`gap_placeholder`]? Ein solcher
+/// Text gehoert keiner Person (Sprecherzuordnung laesst ihn aus).
+pub(super) fn is_gap_placeholder(text: &str) -> bool {
+    text.starts_with("[Nicht transkribiert ")
+}
+
 /// Ein Block: erst mit Wiederholung transkribieren, sonst als Luecke
 /// speichern — die Aufnahme laeuft in jedem Fall weiter.
 ///
@@ -361,6 +431,44 @@ pub(super) fn transcribe_chunk_resilient(
     }]
 }
 
+/// STT-Ergebnis eines Blocks -> zu speichernde Segmente: Zeiten auf die
+/// Kanal-Achse (`offset_ms` = Beginn des Blocks), leere Texte entfallen,
+/// `segment_index` laeuft ab `next_index` weiter. M3-P3b: die Wortzeiten
+/// bleiben erhalten (ebenfalls auf der Kanal-Achse, wie in `live_segments`),
+/// damit Segmente an Sprecherwechseln geteilt werden koennen.
+pub(super) fn stored_segments(
+    timed: Vec<crate::managers::transcription::TimedSegment>,
+    offset_ms: u64,
+    channel: u8,
+    next_index: &mut u32,
+) -> Vec<StoredSegment> {
+    timed
+        .into_iter()
+        .filter(|s| !s.text.trim().is_empty())
+        .map(|s| {
+            let segment = StoredSegment {
+                segment_index: *next_index,
+                text: s.text,
+                start_ms: offset_ms + s.start_ms,
+                end_ms: offset_ms + s.end_ms,
+                channel,
+                speaker_index: None,
+                words: s.words.map(|ws| {
+                    ws.into_iter()
+                        .map(|w| WordTime {
+                            text: w.text,
+                            start_ms: offset_ms + w.start_ms,
+                            end_ms: offset_ms + w.end_ms,
+                        })
+                        .collect()
+                }),
+            };
+            *next_index += 1;
+            segment
+        })
+        .collect()
+}
+
 /// Transcribes and stores each chunk in turn, same as the live worker in
 /// `recorder.rs` — chunking itself happens incrementally in `chunk_all`.
 pub(super) fn transcribe_and_store(
@@ -377,23 +485,7 @@ pub(super) fn transcribe_and_store(
         let offset_ms = chunk.offset_ms;
         let timed = transcribe_chunk_resilient(app, tm, &chunk);
 
-        let appended: Vec<StoredSegment> = timed
-            .into_iter()
-            .filter(|s| !s.text.trim().is_empty())
-            .map(|s| {
-                let segment = StoredSegment {
-                    segment_index: next_index,
-                    text: s.text,
-                    start_ms: offset_ms + s.start_ms,
-                    end_ms: offset_ms + s.end_ms,
-                    channel,
-                    speaker_index: None,
-                    words: None,
-                };
-                next_index += 1;
-                segment
-            })
-            .collect();
+        let appended = stored_segments(timed, offset_ms, channel, &mut next_index);
         if appended.is_empty() {
             continue;
         }
@@ -496,6 +588,62 @@ mod tests {
             gap_placeholder(72_000, 132_000),
             "[Nicht transkribiert 1:12–2:12 — bitte anhören und ergänzen]"
         );
+    }
+
+    #[test]
+    fn imported_segments_keep_their_word_times_on_the_channel_axis() {
+        use crate::managers::transcription::TimedSegment;
+        let timed = vec![
+            TimedSegment {
+                text: "Guten Tag zusammen".into(),
+                start_ms: 0,
+                end_ms: 1_500,
+                words: Some(vec![
+                    WordTime {
+                        text: "Guten".into(),
+                        start_ms: 100,
+                        end_ms: 400,
+                    },
+                    WordTime {
+                        text: "Tag".into(),
+                        start_ms: 450,
+                        end_ms: 700,
+                    },
+                ]),
+            },
+            TimedSegment {
+                text: "   ".into(),
+                start_ms: 1_500,
+                end_ms: 1_700,
+                words: None,
+            },
+            TimedSegment {
+                text: "Ohne Woerter".into(),
+                start_ms: 1_700,
+                end_ms: 2_500,
+                words: None,
+            },
+        ];
+        let mut next = 7;
+        let out = stored_segments(timed, 60_000, CHANNEL_MIXED, &mut next);
+        assert_eq!(out.len(), 2, "der leere Text entfaellt");
+        assert_eq!(next, 9, "Indizes laufen weiter");
+        assert_eq!((out[0].segment_index, out[1].segment_index), (7, 8));
+        assert_eq!((out[0].start_ms, out[0].end_ms), (60_000, 61_500));
+        assert_eq!(out[0].channel, CHANNEL_MIXED);
+        assert_eq!(out[0].speaker_index, None);
+        let words = out[0].words.as_ref().expect("Woerter bleiben");
+        assert_eq!((words[0].start_ms, words[0].end_ms), (60_100, 60_400));
+        assert_eq!((words[1].start_ms, words[1].end_ms), (60_450, 60_700));
+        assert!(out[1].words.is_none(), "ohne Wortzeiten keine erfinden");
+    }
+
+    #[test]
+    fn a_gap_placeholder_is_recognised_and_ordinary_text_is_not() {
+        assert!(is_gap_placeholder(&gap_placeholder(0, 60_000)));
+        assert!(!is_gap_placeholder("Nicht transkribiert wurde gestern"));
+        assert!(!is_gap_placeholder("[Applaus]"));
+        assert!(!is_gap_placeholder(""));
     }
 
     #[test]

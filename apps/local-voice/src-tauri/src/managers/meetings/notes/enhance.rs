@@ -35,10 +35,10 @@ use super::model::{
 };
 use super::templates::{builtin_templates, DEFAULT_TEMPLATE_ID};
 use crate::managers::meetings::llm_call::{
-    ask_json, build_head, head_facts_block, mm_ss, resolve_provider_coded, retry_chunk,
+    ask_json, build_head_with, head_facts_block, mm_ss, resolve_provider_coded, retry_chunk,
     should_retry, sorted_segments, AskOptions, MeetingHead, SemanticRetry,
 };
-use crate::managers::meetings::stats::label_for_channel;
+use crate::managers::meetings::speakers::SpeakerDirectory;
 use crate::managers::meetings::store::{MeetingDocument, MeetingStore, StoredSegment};
 use crate::managers::usage::Purpose;
 use crate::settings::AppSettings;
@@ -475,19 +475,29 @@ fn render_notes_where(blocks: &[NoteBlock], keep: impl Fn(usize, &NoteBlock) -> 
 /// Transkript fuer den Prompt: `S12 [03:15] Ich: Text`. Reihenfolge
 /// uebernimmt der Aufrufer (`sorted_segments`).
 pub fn render_segments_for_prompt(segments: &[StoredSegment]) -> String {
+    render_segments_with(segments, &SpeakerDirectory::from_segments(segments))
+}
+
+/// Wie [`render_segments_for_prompt`], mit den Sprechernamen der Besprechung
+/// (M3-P3b): `S12 [03:15] Anna Berg: Text`.
+pub fn render_segments_with(segments: &[StoredSegment], labels: &SpeakerDirectory) -> String {
     segments
         .iter()
-        .map(render_segment_line)
+        .map(|segment| render_segment_line_with(segment, labels))
         .collect::<Vec<_>>()
         .join("\n")
 }
 
 fn render_segment_line(segment: &StoredSegment) -> String {
+    render_segment_line_with(segment, &SpeakerDirectory::default())
+}
+
+fn render_segment_line_with(segment: &StoredSegment, labels: &SpeakerDirectory) -> String {
     format!(
         "S{} [{}] {}: {}",
         segment.segment_index,
         mm_ss(segment.start_ms),
-        label_for_channel(segment.channel),
+        labels.label(segment),
         one_line(&segment.text)
     )
 }
@@ -702,6 +712,8 @@ struct Ctx<'a> {
     blocks: Vec<NoteBlock>,
     /// Nach Startzeit sortiert.
     segments: Vec<StoredSegment>,
+    /// M3-P3b: Sprechernamen der Besprechung fuer die Labels im Prompt.
+    labels: SpeakerDirectory,
     limits: RunLimits,
 }
 
@@ -710,7 +722,7 @@ async fn single_pass(ctx: &Ctx<'_>) -> Result<RawEnhanced, EnhanceError> {
         &ctx.head,
         &ctx.spec,
         &render_notes_for_prompt(&ctx.blocks),
-        &render_segments_for_prompt(&ctx.segments),
+        &render_segments_with(&ctx.segments, &ctx.labels),
     );
     ask_json::<RawEnhanced>(
         ctx.settings,
@@ -728,10 +740,18 @@ async fn single_pass(ctx: &Ctx<'_>) -> Result<RawEnhanced, EnhanceError> {
 /// Segment ueber dem Limit bildet einen eigenen Block). Liefert Indexbereiche,
 /// weil die Notizfenster der Bloecke die Segmentzeiten brauchen.
 fn chunk_ranges(segments: &[StoredSegment], max_chars: usize) -> Vec<std::ops::Range<usize>> {
+    chunk_ranges_with(segments, max_chars, &SpeakerDirectory::default())
+}
+
+fn chunk_ranges_with(
+    segments: &[StoredSegment],
+    max_chars: usize,
+    labels: &SpeakerDirectory,
+) -> Vec<std::ops::Range<usize>> {
     let mut ranges = Vec::new();
     let (mut start, mut used) = (0usize, 0usize);
     for (index, segment) in segments.iter().enumerate() {
-        let len = render_segment_line(segment).chars().count() + 1;
+        let len = render_segment_line_with(segment, labels).chars().count() + 1;
         if index > start && used + len > max_chars {
             ranges.push(start..index);
             start = index;
@@ -777,7 +797,7 @@ async fn map_reduce(
     let block_chars = budget
         .saturating_sub(notes_rendered.chars().count().min(budget / 3))
         .max(200);
-    let ranges = chunk_ranges(&ctx.segments, block_chars);
+    let ranges = chunk_ranges_with(&ctx.segments, block_chars, &ctx.labels);
     let total_blocks = ranges.len();
     let total_steps = (total_blocks + 1) as u32;
     let valid: HashSet<u32> = ctx.segments.iter().map(|s| s.segment_index).collect();
@@ -807,7 +827,7 @@ async fn map_reduce(
             index,
             total_blocks,
             &window_notes,
-            &render_segments_for_prompt(&ctx.segments[range.clone()]),
+            &render_segments_with(&ctx.segments[range.clone()], &ctx.labels),
         );
         let (settings, spec, prompt_ref) = (ctx.settings, &ctx.spec, &prompt);
         let result = retry_chunk(
@@ -1035,19 +1055,23 @@ async fn run_enhance(
     let info = resolve_template(&store, meeting_id, template_id)?;
     let blocks = store.get_notes(meeting_id).map_err(store_err)?.blocks;
 
+    let labels = SpeakerDirectory::load(&store, meeting_id);
     let ctx = Ctx {
         settings,
-        head: build_head(&meeting, &segments),
+        head: build_head_with(&meeting, &segments, &labels),
         spec: info.spec.clone(),
         blocks,
         segments,
+        labels,
         limits,
     };
     let budget = limits
         .budget_chars
         .unwrap_or_else(|| single_pass_budget_chars(local));
     let payload = render_notes_for_prompt(&ctx.blocks).chars().count()
-        + render_segments_for_prompt(&ctx.segments).chars().count();
+        + render_segments_with(&ctx.segments, &ctx.labels)
+            .chars()
+            .count();
     log::info!(
         "KI-Notizen: {} Notizbloecke, {} Segmente, {payload} Zeichen (Einzeldurchlauf bis {budget})",
         ctx.blocks.len(),
@@ -1273,11 +1297,25 @@ fn instruction_transcript(
     segments: &[StoredSegment],
     room_chars: usize,
 ) -> (String, &'static str) {
-    let full = render_segments_for_prompt(segments);
+    instruction_transcript_with(
+        notes,
+        segments,
+        room_chars,
+        &SpeakerDirectory::from_segments(segments),
+    )
+}
+
+fn instruction_transcript_with(
+    notes: &EnhancedNotes,
+    segments: &[StoredSegment],
+    room_chars: usize,
+    labels: &SpeakerDirectory,
+) -> (String, &'static str) {
+    let full = render_segments_with(segments, labels);
     if full.chars().count() <= room_chars {
         return (full, "Transcript (segment ids S<k>)");
     }
-    let excerpt = render_segments_for_prompt(&cited_excerpt(notes, segments));
+    let excerpt = render_segments_with(&cited_excerpt(notes, segments), labels);
     if !excerpt.is_empty() && excerpt.chars().count() <= room_chars {
         return (
             excerpt,
@@ -1340,14 +1378,16 @@ async fn run_instruction(
     };
     let spec = spec_from_document(&stored, template.as_ref());
     let protected = protected_entries(&stored);
-    let head = build_head(&meeting, &segments);
+    let labels = SpeakerDirectory::load(&store, &meeting_id);
+    let head = build_head_with(&meeting, &segments, &labels);
 
     let entries = entries_block(&stored);
     let budget = limits
         .budget_chars
         .unwrap_or_else(|| single_pass_budget_chars(local));
     let room = budget.saturating_sub(entries.chars().count() + instruction_chars);
-    let (transcript, transcript_heading) = instruction_transcript(&stored, &segments, room);
+    let (transcript, transcript_heading) =
+        instruction_transcript_with(&stored, &segments, room, &labels);
     let transcript_block = if transcript.is_empty() {
         String::new()
     } else {

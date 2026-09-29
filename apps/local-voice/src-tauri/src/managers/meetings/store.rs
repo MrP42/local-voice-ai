@@ -283,6 +283,183 @@ impl std::fmt::Display for ReplaceError {
     }
 }
 
+/// M3-P3b: was `write_transcript` mit dem Transkript macht.
+enum TranscriptWrite<'a> {
+    /// Endtranskript (P2d): Modell und Granularitaet setzen, Epoche + 1.
+    Replace {
+        model: &'a str,
+        granularity: &'a str,
+    },
+    /// Segmente umschreiben (Sprecher, geteilte Segmente): Modell und
+    /// Granularitaet bleiben, Epoche + 1 nur bei `bump_epoch`.
+    InPlace { bump_epoch: bool },
+}
+
+/// M3-P3b: eine lebende Zeile aus `speakers`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SpeakerRow {
+    pub channel: u8,
+    pub speaker_index: u32,
+    pub display_name: Option<String>,
+    pub human_id: Option<String>,
+    pub consent_state: Option<String>,
+}
+
+/// M3-P3b: Sprecherdaten, die mit den Segmenten in EINER Transaktion
+/// geschrieben werden.
+#[derive(Clone, Debug, Default)]
+pub struct SpeakerWrite {
+    /// Neuer Inhalt von `transcripts.speaker_hints_json`.
+    pub hints_json: String,
+    /// Diese (Kanal, Sprecher) brauchen eine Zeile in `speakers`.
+    pub present: Vec<(u8, u32)>,
+    /// Kanaele, die jetzt NEU diarisiert wurden. `Some(map)` = alte Nummer ->
+    /// neue Nummer (`speakers::remap_speakers`): Namen wandern mit, Zeilen
+    /// ohne Partner in der neuen Diarisierung entfallen. `None` = keine alten
+    /// Turns zum Abgleich, die vorhandenen Zeilen bleiben stehen.
+    pub fresh: std::collections::BTreeMap<u8, Option<std::collections::HashMap<u32, u32>>>,
+}
+
+/// `speakers`-Zeilen fuer `SpeakerWrite`: Nummern umhaengen, ergaenzen. Wird
+/// innerhalb der Transaktion des Transkripts aufgerufen.
+fn write_speakers(
+    tx: &rusqlite::Transaction<'_>,
+    meeting_id: &str,
+    w: &SpeakerWrite,
+    now: i64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "UPDATE transcripts SET speaker_hints_json = ?1 WHERE meeting_id = ?2",
+        params![w.hints_json, meeting_id],
+    )?;
+    for (channel, remap) in &w.fresh {
+        let Some(remap) = remap else { continue };
+        let rows: Vec<(String, Option<i64>)> = {
+            let mut stmt = tx.prepare(
+                "SELECT id, speaker_index FROM speakers
+                 WHERE meeting_id = ?1 AND channel = ?2 AND deleted_at IS NULL",
+            )?;
+            let mapped = stmt.query_map(params![meeting_id, i64::from(*channel)], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+            mapped.collect::<rusqlite::Result<_>>()?
+        };
+        for (id, index) in rows {
+            let old = index.and_then(|i| u32::try_from(i).ok());
+            let target = old.and_then(|o| remap.get(&o).copied());
+            match target {
+                Some(new) if Some(new) != old => {
+                    tx.execute(
+                        "UPDATE speakers SET speaker_index = ?1, updated_at = ?2 WHERE id = ?3",
+                        params![i64::from(new), now, id],
+                    )?;
+                }
+                Some(_) => {}
+                None => {
+                    // Kein Partner in der neuen Diarisierung: ein Name ohne
+                    // Sprecher waere falsch angehaengt, also faellt die Zeile
+                    // weg (weich, wie jede Loeschung hier).
+                    tx.execute(
+                        "UPDATE speakers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+                        params![now, id],
+                    )?;
+                }
+            }
+        }
+    }
+    for (channel, index) in &w.present {
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM speakers WHERE meeting_id = ?1 AND channel = ?2
+                 AND speaker_index = ?3 AND deleted_at IS NULL)",
+            params![meeting_id, i64::from(*channel), i64::from(*index)],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            tx.execute(
+                "INSERT INTO speakers (id, meeting_id, channel, speaker_index,
+                     created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                params![
+                    Ulid::new().to_string(),
+                    meeting_id,
+                    i64::from(*channel),
+                    i64::from(*index),
+                    now
+                ],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Schreibt `segments_json` (und je nach Modus Modell, Granularitaet, Epoche)
+/// in die Transkriptzeile und gibt die Epoche danach zurueck. Die Deltas
+/// entfallen immer: sie sind das Protokoll der alten Segmente, ein Replay
+/// wuerde sie wieder aufleben lassen.
+fn write_transcript_row(
+    tx: &rusqlite::Transaction<'_>,
+    meeting_id: &str,
+    row: Option<(String, i64, i64)>,
+    json: &str,
+    mode: &TranscriptWrite<'_>,
+    now: i64,
+) -> std::result::Result<i64, ReplaceError> {
+    let store_err = |e: &dyn std::fmt::Display| ReplaceError::Store(e.to_string());
+    let Some((id, _, epoch)) = row else {
+        return match mode {
+            TranscriptWrite::Replace { model, granularity } => {
+                tx.execute(
+                    "INSERT INTO transcripts (id, meeting_id, model, granularity, segments_json,
+                         content_revision, segment_epoch, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 1, 1, ?6, ?6)",
+                    params![
+                        Ulid::new().to_string(),
+                        meeting_id,
+                        model,
+                        granularity,
+                        json,
+                        now
+                    ],
+                )
+                .map_err(|e| store_err(&e))?;
+                Ok(1)
+            }
+            TranscriptWrite::InPlace { .. } => Err(ReplaceError::Store(format!(
+                "no transcript for meeting {meeting_id}"
+            ))),
+        };
+    };
+    tx.execute(
+        "DELETE FROM transcript_deltas WHERE transcript_id = ?1",
+        params![id],
+    )
+    .map_err(|e| store_err(&e))?;
+    match mode {
+        TranscriptWrite::Replace { model, granularity } => {
+            tx.execute(
+                "UPDATE transcripts SET segments_json = ?1, model = ?2, granularity = ?3,
+                     content_revision = content_revision + 1,
+                     segment_epoch = segment_epoch + 1, updated_at = ?4
+                 WHERE id = ?5",
+                params![json, model, granularity, now, id],
+            )
+            .map_err(|e| store_err(&e))?;
+            Ok(epoch + 1)
+        }
+        TranscriptWrite::InPlace { bump_epoch } => {
+            let bump = i64::from(*bump_epoch);
+            tx.execute(
+                "UPDATE transcripts SET segments_json = ?1,
+                     content_revision = content_revision + 1,
+                     segment_epoch = segment_epoch + ?2, updated_at = ?3
+                 WHERE id = ?4",
+                params![json, bump, now, id],
+            )
+            .map_err(|e| store_err(&e))?;
+            Ok(epoch + bump)
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct TranscriptDelta {
     pub new_segments: Vec<StoredSegment>,
@@ -638,6 +815,68 @@ impl MeetingStore {
         granularity: &str,
         expected_revision: i64,
     ) -> std::result::Result<u32, ReplaceError> {
+        self.write_transcript(
+            meeting_id,
+            segments,
+            expected_revision,
+            TranscriptWrite::Replace { model, granularity },
+            None,
+        )
+    }
+
+    /// M3-P3b: wie [`Self::replace_segments`], und in DERSELBEN Transaktion die
+    /// Sprecherdaten (`speaker_hints_json`, `speakers`-Zeilen): entweder ist
+    /// alles neu oder nichts (Abbruch, volle Platte, Absturz).
+    pub fn replace_segments_with_speakers(
+        &self,
+        meeting_id: &str,
+        segments: &[StoredSegment],
+        model: &str,
+        granularity: &str,
+        expected_revision: i64,
+        speakers: &SpeakerWrite,
+    ) -> std::result::Result<u32, ReplaceError> {
+        self.write_transcript(
+            meeting_id,
+            segments,
+            expected_revision,
+            TranscriptWrite::Replace { model, granularity },
+            Some(speakers),
+        )
+    }
+
+    /// M3-P3b: schreibt die zugeordneten Segmente (Sprecher, geteilte
+    /// Segmente) auf das vorhandene Transkript, zusammen mit den
+    /// Sprecherdaten, in einer Transaktion. Modell und Granularitaet bleiben.
+    /// `bump_epoch` nur, wenn sich `segment_index`-Werte verschieben (geteilte
+    /// Segmente): dann kennen Belege aus KI-Notizen die alte Epoche nicht mehr.
+    /// Gibt die Epoche nach dem Schreiben zurueck. Wie `replace_segments`
+    /// mit `expected_revision` gegen gleichzeitige Korrekturen von Hand.
+    pub fn update_segments_with_speakers(
+        &self,
+        meeting_id: &str,
+        segments: &[StoredSegment],
+        expected_revision: i64,
+        bump_epoch: bool,
+        speakers: &SpeakerWrite,
+    ) -> std::result::Result<u32, ReplaceError> {
+        self.write_transcript(
+            meeting_id,
+            segments,
+            expected_revision,
+            TranscriptWrite::InPlace { bump_epoch },
+            Some(speakers),
+        )
+    }
+
+    fn write_transcript(
+        &self,
+        meeting_id: &str,
+        segments: &[StoredSegment],
+        expected_revision: i64,
+        mode: TranscriptWrite<'_>,
+        speakers: Option<&SpeakerWrite>,
+    ) -> std::result::Result<u32, ReplaceError> {
         let store_err = |e: &dyn std::fmt::Display| ReplaceError::Store(e.to_string());
         let mut conn = self.get_connection().map_err(|e| store_err(&e))?;
         let now = Utc::now().timestamp();
@@ -662,36 +901,107 @@ impl MeetingStore {
             });
         }
         let json = serde_json::to_string(segments).map_err(|e| store_err(&e))?;
-        let epoch = match row {
-            Some((transcript_id, _, epoch)) => {
+        let epoch = write_transcript_row(&tx, meeting_id, row, &json, &mode, now)?;
+        if let Some(speakers) = speakers {
+            write_speakers(&tx, meeting_id, speakers, now).map_err(|e| store_err(&e))?;
+        }
+        tx.commit().map_err(|e| store_err(&e))?;
+        Ok(epoch as u32)
+    }
+
+    /// M3-P3b: `transcripts.speaker_hints_json` (Turns je Kanal, Modell,
+    /// Parameter), `None` ohne Diarisierung. Ein Fehler beim Lesen gilt nicht
+    /// als "keine Daten": der Aufrufer bekommt ihn.
+    pub fn speaker_hints(&self, meeting_id: &str) -> Result<Option<String>> {
+        let conn = self.get_connection()?;
+        let hints: Option<Option<String>> = conn
+            .query_row(
+                "SELECT speaker_hints_json FROM transcripts
+                 WHERE meeting_id = ?1 AND deleted_at IS NULL",
+                params![meeting_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(hints.flatten().filter(|t| !t.trim().is_empty()))
+    }
+
+    /// M3-P3b: die lebenden Zeilen aus `speakers` (Namen, Personenbezug),
+    /// nach Kanal und Sprecher sortiert.
+    pub fn speaker_rows(&self, meeting_id: &str) -> Result<Vec<SpeakerRow>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT channel, speaker_index, display_name, human_id, consent_state FROM speakers
+             WHERE meeting_id = ?1 AND deleted_at IS NULL AND speaker_index IS NOT NULL
+             ORDER BY channel, speaker_index, created_at",
+        )?;
+        let rows = stmt
+            .query_map(params![meeting_id], |row| {
+                Ok(SpeakerRow {
+                    channel: row.get::<_, i64>(0)?.clamp(0, 255) as u8,
+                    speaker_index: row.get::<_, i64>(1)?.clamp(0, i64::from(u32::MAX)) as u32,
+                    display_name: row.get(2)?,
+                    human_id: row.get(3)?,
+                    consent_state: row.get(4)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// M3-P3b: Name eines Sprechers setzen (`None` oder leer = Name loeschen).
+    /// Legt die Zeile an, wenn es sie noch nicht gibt (Upsert in einer
+    /// Transaktion per SELECT, ohne Unique-Index). Liefert, ob sich etwas
+    /// geaendert hat. Aufrufer ist das Benennen im Transkript (P3c, Command
+    /// `meeting_speaker_rename`); bis dahin nutzen es nur die Tests.
+    #[allow(dead_code)]
+    pub fn set_speaker_name(
+        &self,
+        meeting_id: &str,
+        channel: u8,
+        speaker_index: u32,
+        name: Option<&str>,
+    ) -> Result<bool> {
+        let name = name.map(str::trim).filter(|n| !n.is_empty());
+        let mut conn = self.get_connection()?;
+        let now = Utc::now().timestamp();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Self::ensure_meeting_is_live(&tx, meeting_id)?;
+        let existing: Option<(String, Option<String>)> = tx
+            .query_row(
+                "SELECT id, display_name FROM speakers
+                 WHERE meeting_id = ?1 AND channel = ?2 AND speaker_index = ?3
+                   AND deleted_at IS NULL ORDER BY created_at LIMIT 1",
+                params![meeting_id, i64::from(channel), i64::from(speaker_index)],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let changed = match existing {
+            Some((_, old)) if old.as_deref() == name => false,
+            Some((id, _)) => {
                 tx.execute(
-                    "DELETE FROM transcript_deltas WHERE transcript_id = ?1",
-                    params![transcript_id],
-                )
-                .map_err(|e| store_err(&e))?;
-                tx.execute(
-                    "UPDATE transcripts SET segments_json = ?1, model = ?2, granularity = ?3,
-                         content_revision = content_revision + 1,
-                         segment_epoch = segment_epoch + 1, updated_at = ?4
-                     WHERE id = ?5",
-                    params![json, model, granularity, now, transcript_id],
-                )
-                .map_err(|e| store_err(&e))?;
-                epoch + 1
+                    "UPDATE speakers SET display_name = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![name, now, id],
+                )?;
+                true
             }
             None => {
                 tx.execute(
-                    "INSERT INTO transcripts (id, meeting_id, model, granularity, segments_json,
-                         content_revision, segment_epoch, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, 1, 1, ?6, ?6)",
-                    params![Ulid::new().to_string(), meeting_id, model, granularity, json, now],
-                )
-                .map_err(|e| store_err(&e))?;
-                1
+                    "INSERT INTO speakers (id, meeting_id, channel, speaker_index, display_name,
+                         created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                    params![
+                        Ulid::new().to_string(),
+                        meeting_id,
+                        i64::from(channel),
+                        i64::from(speaker_index),
+                        name,
+                        now
+                    ],
+                )?;
+                name.is_some()
             }
         };
-        tx.commit().map_err(|e| store_err(&e))?;
-        Ok(epoch as u32)
+        tx.commit()?;
+        Ok(changed)
     }
 
     pub fn set_status(&self, id: &str, status: MeetingStatus) -> Result<()> {

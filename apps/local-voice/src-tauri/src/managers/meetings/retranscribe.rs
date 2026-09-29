@@ -16,7 +16,7 @@ use std::sync::Arc;
 use log::{error, info};
 use tauri_specta::Event;
 
-use super::import::{read_wav_i16_mono_16k, transcribe_and_store};
+use super::import::{read_wav_i16_mono_16k, run_speaker_step, transcribe_and_store};
 use super::recorder::MeetingEvent;
 use super::store::{MeetingStatus, MeetingStore};
 use crate::managers::transcription::TranscriptionManager;
@@ -137,7 +137,7 @@ fn run_retranscribe(
         tracks.push((read_wav_i16_mono_16k(Path::new(path))?, *channel));
     }
 
-    let result = (|| -> Result<(), String> {
+    let result = (move || -> Result<(), String> {
         store
             .clear_segments(meeting_id)
             .map_err(|e| format!("clear_segments_failed: {e}"))?;
@@ -151,6 +151,11 @@ fn run_retranscribe(
             next_index =
                 transcribe_and_store(app, store, tm, meeting_id, samples, *channel, next_index)?;
         }
+        // M3-P3b: Sprecher. Die Turns stehen in `speaker_hints_json` und ueber-
+        // stehen `clear_segments` (samt Namen in `speakers`): die neuen Segmente
+        // bekommen dieselben Sprecher, nur fehlende Turns werden neu berechnet.
+        drop(tracks);
+        run_speaker_step(app, store, meeting_id);
         Ok(())
     })();
 

@@ -12,7 +12,7 @@ use super::ChunkSource;
 use crate::managers::meetings::notes::model::{EnhancedNotes, NoteBlock, NoteBlockKind};
 use crate::managers::meetings::search::chunking::clock;
 use crate::managers::meetings::search::index::ChunkRow;
-use crate::managers::meetings::stats::label_for_channel;
+use crate::managers::meetings::speakers::default_label;
 use crate::managers::meetings::store::StoredSegment;
 
 // ---------------------------------------------------------------------------
@@ -247,7 +247,7 @@ pub fn segment_line(seg: &StoredSegment) -> ExcerptLine {
             "S{} {} {}: {}",
             seg.segment_index,
             clock(seg.start_ms),
-            label_for_channel(seg.channel),
+            default_label(seg),
             content
         ),
         content,

@@ -3286,7 +3286,14 @@ meeting_semantic_search?: boolean;
  * oder eine Modell-ID (laeuft auch auf der CPU). Ohne den Schluessel
  * (aeltere settings.json) gilt `auto`.
  */
-meeting_final_model?: string }
+meeting_final_model?: string; 
+/**
+ * M3-P3b: Sprechertrennung nach dem Stopp, beim Import und bei der
+ * Neu-Transkription: `auto` (Standard, lokal, keine Speicherung
+ * biometrischer Merkmale) oder `off`. Ohne den Schluessel (aeltere
+ * settings.json) gilt `auto`; jeder andere Wert als `off` zaehlt als `auto`.
+ */
+meeting_diarization?: string }
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
  * Verknuepfung mit der `humans`-Tabelle folgt in M9.

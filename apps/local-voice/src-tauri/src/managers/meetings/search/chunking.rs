@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::super::notes::model::{EnhancedNotes, NoteBlock, NoteBlockKind};
-use super::super::stats::label_for_channel;
+use super::super::speakers::default_label;
 use super::super::store::StoredSegment;
 
 /// Richtwert je Chunk; Umbrueche an Pause/Kanalwechsel greifen erst ab hier.
@@ -218,7 +218,7 @@ fn segment_lines(seg: &StoredSegment) -> Vec<Line> {
         "S{} {} {}: ",
         seg.segment_index,
         clock(seg.start_ms),
-        label_for_channel(seg.channel)
+        default_label(seg)
     );
     split_to_fit(&prefix, &normalize_ws(&seg.text), MAX_CHARS)
         .into_iter()

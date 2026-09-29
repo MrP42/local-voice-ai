@@ -819,10 +819,25 @@ pub struct AppSettings {
     /// (aeltere settings.json) gilt `auto`.
     #[serde(default = "default_meeting_final_model")]
     pub meeting_final_model: String,
+    /// M3-P3b: Sprechertrennung nach dem Stopp, beim Import und bei der
+    /// Neu-Transkription: `auto` (Standard, lokal, keine Speicherung
+    /// biometrischer Merkmale) oder `off`. Ohne den Schluessel (aeltere
+    /// settings.json) gilt `auto`; jeder andere Wert als `off` zaehlt als `auto`.
+    #[serde(default = "default_meeting_diarization")]
+    pub meeting_diarization: String,
 }
 
 fn default_meeting_final_model() -> String {
     "auto".to_string()
+}
+
+fn default_meeting_diarization() -> String {
+    "auto".to_string()
+}
+
+/// M3-P3b: ist die Sprechertrennung eingeschaltet (`meeting_diarization`)?
+pub fn meeting_diarization_enabled(value: &str) -> bool {
+    !value.trim().eq_ignore_ascii_case("off")
 }
 
 fn default_meeting_language() -> String {
@@ -1572,6 +1587,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_semantic_search: true,
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,
         meeting_final_model: default_meeting_final_model(),
+        meeting_diarization: default_meeting_diarization(),
     }
 }
 
@@ -2729,6 +2745,24 @@ mod tests {
         let off: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_final_model": "off" })).unwrap();
         assert_eq!(off.meeting_final_model, "off");
+    }
+
+    // M3-P3b
+    #[test]
+    fn diarization_defaults_to_auto_and_old_files_load() {
+        assert_eq!(get_default_settings().meeting_diarization, "auto");
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_diarization, "auto");
+        assert!(meeting_diarization_enabled(&old.meeting_diarization));
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_diarization": "off" })).unwrap();
+        assert_eq!(off.meeting_diarization, "off");
+        assert!(!meeting_diarization_enabled(&off.meeting_diarization));
+        assert!(!meeting_diarization_enabled(" OFF "));
+        assert!(meeting_diarization_enabled("auto"));
+        assert!(meeting_diarization_enabled(""), "leer = auto");
+        assert!(meeting_diarization_enabled("irgendwas"));
     }
 
     #[test]

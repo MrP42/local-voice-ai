@@ -17,10 +17,10 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::llm_call::{
-    ask_json, build_head, duration_label, head_facts_block, mm_ss, resolve_provider, retry_chunk,
-    sorted_segments, AskOptions, SemanticRetry,
+    ask_json, build_head_with, duration_label, head_facts_block, mm_ss, resolve_provider,
+    retry_chunk, sorted_segments, AskOptions, SemanticRetry,
 };
-use super::stats::label_for_channel;
+use super::speakers::SpeakerDirectory;
 use super::store::{MeetingDocument, MeetingStore, StoredSegment};
 use crate::settings::AppSettings;
 
@@ -86,12 +86,21 @@ fn percent_de(percent: f64) -> String {
 /// Transkript für den Prompt: eine Zeile je Segment, mit Kanal-Label und
 /// Startzeit. Reihenfolge übernimmt der Aufrufer (siehe `sorted_segments`).
 pub fn render_transcript_for_prompt(segments: &[StoredSegment]) -> String {
+    render_transcript_for_prompt_with(segments, &SpeakerDirectory::from_segments(segments))
+}
+
+/// Wie [`render_transcript_for_prompt`], mit den Sprechernamen der Besprechung
+/// (M3-P3b): "Anna Berg [03:15]: ...", sonst "Gegenseite 2 [03:15]: ...".
+pub fn render_transcript_for_prompt_with(
+    segments: &[StoredSegment],
+    labels: &SpeakerDirectory,
+) -> String {
     segments
         .iter()
         .map(|segment| {
             format!(
                 "{} [{}]: {}",
-                label_for_channel(segment.channel),
+                labels.label(segment),
                 mm_ss(segment.start_ms),
                 segment.text.trim()
             )
@@ -508,8 +517,9 @@ pub async fn generate_minutes_with_settings(
         return Err("Kein Transkript vorhanden — Protokoll nicht möglich".into());
     }
 
-    let head = build_head(&meeting, &segments);
-    let transcript = render_transcript_for_prompt(&segments);
+    let labels = SpeakerDirectory::load(&store, meeting_id);
+    let head = build_head_with(&meeting, &segments, &labels);
+    let transcript = render_transcript_for_prompt_with(&segments, &labels);
 
     // Blockbilanz der map-Stufe: bei einem einzelnen Ausreisser wird
     // degradiert statt abgebrochen - ein zwei Stunden langes Meeting darf
@@ -784,7 +794,37 @@ mod tests {
     }
 
     #[test]
+    fn the_transcript_prompt_names_the_speakers() {
+        let seg = |channel: u8, speaker: Option<u32>, start_ms: u64| StoredSegment {
+            segment_index: 0,
+            text: "Guten Tag".into(),
+            start_ms,
+            end_ms: start_ms + 1_000,
+            channel,
+            speaker_index: speaker,
+            words: None,
+        };
+        let segs = vec![
+            seg(0, None, 0),
+            seg(1, Some(1), 65_000),
+            seg(1, Some(2), 70_000),
+        ];
+        // Ohne Verzeichnis: Kanal-Label bzw. Nummer, wie vor der Sprechertrennung fuer Kanal 0.
+        let plain = render_transcript_for_prompt(&segs);
+        assert_eq!(
+            plain,
+            "Ich [00:00]: Guten Tag\nGegenseite 1 [01:05]: Guten Tag\nGegenseite 2 [01:10]: Guten Tag"
+        );
+        let dir = SpeakerDirectory::new([((1, 2), "Anna Berg".to_string())], true);
+        let named = render_transcript_for_prompt_with(&segs, &dir);
+        assert!(named.contains("Anna Berg [01:10]: Guten Tag"), "{named}");
+        assert!(named.contains("Gegenseite 1 [01:05]"), "{named}");
+        assert!(named.starts_with("Ich [00:00]"), "{named}");
+    }
+
+    #[test]
     fn build_head_marks_channel_two_as_mixed_and_channel_zero_as_not_mixed() {
+        use crate::managers::meetings::llm_call::build_head;
         let meeting = super::super::store::Meeting {
             id: "m".into(),
             title: "T".into(),
@@ -822,6 +862,25 @@ mod tests {
         let mic_only = build_head(&meeting, &[segment(0)]);
         assert!(!mic_only.mixed_channel);
         assert!(mic_only.single_speaker);
+
+        // M3-P3b: hat die Sprechertrennung den Import aufgeteilt, gibt es
+        // Redeanteile je Person und keinen "Kanal fuer unbekannt viele".
+        let person = |speaker: u32, start_ms: u64, end_ms: u64| StoredSegment {
+            speaker_index: Some(speaker),
+            start_ms,
+            end_ms,
+            ..segment(2)
+        };
+        let split = build_head(&meeting, &[person(1, 0, 3_000), person(2, 3_000, 4_000)]);
+        assert!(!split.mixed_channel);
+        assert!(!split.single_speaker);
+        assert_eq!(split.shares.len(), 2);
+        assert_eq!(split.shares[0].label, "Person 1");
+        let one = build_head(&meeting, &[person(1, 0, 3_000), person(1, 3_000, 4_000)]);
+        assert!(
+            one.single_speaker && !one.mixed_channel,
+            "genau ein erkannter Sprecher"
+        );
     }
 
     #[test]

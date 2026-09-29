@@ -842,7 +842,12 @@ impl MeetingRecorderManager {
             plan,
             live_model,
         };
-        if matches!(job.plan, FinalPlan::Keep(_)) {
+        // M3-P3b: die Sprechertrennung kann Minuten dauern (CPU: ~2 min je Stunde
+        // Audio), also nie im Aufruf von `stop()`: mit ihr laeuft der Auftrag
+        // immer im Hintergrund-Thread, auch wenn das Live-Transkript bleibt.
+        let diarization =
+            crate::settings::meeting_diarization_enabled(&settings.meeting_diarization);
+        if matches!(job.plan, FinalPlan::Keep(_)) && !diarization {
             let mut env = final_pass::AppEnv::new(
                 &self.app,
                 Arc::clone(&self.transcription),
