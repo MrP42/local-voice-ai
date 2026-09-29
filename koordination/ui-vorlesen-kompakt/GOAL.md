@@ -1,15 +1,15 @@
 ---
 thema: ui-vorlesen-kompakt
 titel: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
-state: EXECUTING
-vorzustand: -
-pausengrund: -
+state: PAUSED
+vorzustand: EXECUTING
+pausengrund: limit
 issue: 61
 repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T12:49
+aktualisiert: 2026-09-29T12:50
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -111,7 +111,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29 E1–E3 als Vorschlag gewählt (siehe Risiken), Basis `chore/0.20.3-abnahme`.
 
 ## Nächste empfohlene Aktion
-P9 validieren+mergen, Nachher-Bilder, Version 0.20.4 + Installer, Artefakt, Push + PR auf #58, Handoff
+Installer pruefen: .claude/worktrees/wt-ui/apps/local-voice/src-tauri/target/release/bundle/nsis/Local Voice AI_0.20.4_x64-setup.exe; falls fehlt: PowerShell $env:CARGO_BUILD_JOBS='6'; PATH+=~/.cargo/bin; pnpm exec tauri build --bundles nsis. Dann goal.py check --ak 11 --done, goal.py complete
 
 ## Verlauf
 - 2026-09-29T11:49 DISCOVERY — Goal State angelegt
@@ -121,4 +121,5 @@ P9 validieren+mergen, Nachher-Bilder, Version 0.20.4 + Installer, Artefakt, Push
 - 2026-09-29T11:58 EXECUTING (Runde 1) — P1 (Opus) und P2-P5 (Sonnet) laufen parallel in wt-ui-p1..p5
 - 2026-09-29T12:14 EXECUTING (Runde 1) — P1,P3,P4,P5 abgenommen (Integration 96 passed). P2 laeuft; P6/P7 aus Audit gestartet. Budget ca. 0,85 MTok (~47 %)
 - 2026-09-29T12:34 EXECUTING (Runde 1) — P1-P8 integriert (115 passed). B4 Menue abgeschnitten -> P9 laeuft. Budget ~1,55/1,8 MTok (86 %)
+- 2026-09-29T12:50 PAUSED (Runde 1) — Alles gemergt/gepusht, PR #62, Artefakt veroeffentlicht; nur AK11 (Installer) offen - Build lief (Log scratchpad/build-0.20.4.log) [Pause: limit]
 
