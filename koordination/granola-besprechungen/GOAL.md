@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T12:05
+aktualisiert: 2026-09-29T12:10
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -49,7 +49,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - [ ] QG6 — Lizenzen: jedes neue Modell/Crate mit Lizenz in den Third-Party-Notices, keine Nicht-kommerziell-Lizenz
 - [ ] QG7 — i18n: alle neuen Texte in de + en, echte Umlaute
 - [ ] QG8 — Doku + Handoff aktualisiert, PR offen gegen `main`
-- [ ] QG9 — Budget ≤ 8 MTok (Meldung bei 4,0 / 6,4 MTok, harter Stopp 12 MTok)
+- [ ] QG9 — Budget ≤ 12 MTok (angehoben 29.09. durch Patrick; Meldung bei 6,0 / 9,6 MTok, harter Stopp 18 MTok)
 
 ## Constraints
 - Lokal und kostenfrei im Betrieb: nur Open-Source-/frei nutzbare Modelle und Bibliotheken, Lizenz je Baustein geprüft (keine Nicht-kommerziell-Klauseln ohne Ansage).
@@ -83,6 +83,10 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - E3 Nutzertext bleibt bei „Anweisung anwenden" unverändert — Vorschlag: ja.
 - E4 Eigener Block-Editor statt TipTap (keine neue Abhängigkeit) — Vorschlag: ja.
 - E5 GPU-STT im Windows-Release (P2f): heute rechnet STT nur auf der CPU (`release-windows.yml` ohne `gpu-vulkan`). Vorschlag: Vulkan-Feature im Release aktivieren (CI hat das SDK schon), lokal LunarG-Vulkan-SDK installieren (`winget install KhronosGroup.VulkanSDK`, Admin). Ohne GPU gilt: Live-Transkript (Parakeet, CPU) ist zugleich Endtranskript.
+- E6 Semantische Suche lädt 635 MB (BGE-M3) per Knopf, nicht automatisch — Vorschlag: ja.
+- E7 Live-Chat mit lokalem LLM nur mit GPU-Backend (Schutz der Live-Latenz) — Vorschlag: ja.
+- E8 Chats werden gespeichert (Threads je Scope) — Vorschlag: ja.
+- E9 Ordner flach, eine Besprechung in mehreren Ordnern (n:m) — Vorschlag: ja.
 - R9 Lokaler Kontext fest 8192 Token → Map-Reduce als Normalfall; misst P1e unter 95 % Belegquote, folgt Paket P1g (Kontext je VRAM größer, `ensure_local`).
 
 ## Meilensteine
@@ -102,9 +106,11 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29T11:41 QG1 widerrufen — frühere Belege gelten nicht mehr
 
 ## Blocker
-- B1 [offen] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart
+- B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
 
 ## Entscheidungen
+- 2026-09-29 Patrick: voller Umfang M1–M7 in diesem Goal, Budgetrahmen ~12 MTok (Hochrechnung nach Ist 3,0 MTok).
+- 2026-09-29 Patrick zu E5: GPU-STT per Vulkan aktivieren; Claude installiert das LunarG-Vulkan-SDK (winget) und alles Nötige.
 - 2026-09-29 M1/M2-Berührpunkt B4: Auto-KI-Notizen starten auf `MeetingEvent::TranscriptFinal` (P2a führt es ein und sendet es am Ende von `stop()`, P1f hängt sich daran, P2d verschiebt das Senden hinter den Enddurchlauf). Enddurchlauf nutzt `segment_epoch` aus P1a; M2 liefert `remap_sources()`; M2 fügt keine meetings.db-Migration hinzu.
 - 2026-09-29 Silero v6 verschoben (vad-rs lädt v6 nicht); M2 nutzt v4.
 - 2026-09-29 Worker-Routing (Patricks Auftrag, zugleich Freigabe für Subagents nach der M9-Regel): Orchestrator Opus 5.5; Coding `lv-coder` (Sonnet 5.5 high), riskante Pakete `lv-coder-xhigh` (Sonnet 5.5 xhigh), Architektur/Spike/Review `lv-architect` (Opus 5.5 high); kleine Re-Reviews Haiku. Definitionen in `.claude/agents/`.
@@ -126,4 +132,5 @@ Lieferungen validieren und seriell in feat/granola-besprechungen mergen (Konflik
 - 2026-09-29T11:29 EXECUTING (Runde 1) — P1a (wt-m1), P2c1 (wt-m2), P2b1 (wt-m2b) laufen parallel; P2f blockiert (E5); Budget ~1,75 MTok
 - 2026-09-29T11:43 EXECUTING (Runde 1) — P1a abgenommen (13fa4d3, 732 Tests). Laufend: P1b (wt-m1), P1c (wt-m1c), P2a (wt-m2a), P2c1 (wt-m2), P2b1 (wt-m2b), P4-Entwurf. CARGO_BUILD_JOBS=8 je Worker. Budget ~2,0 MTok
 - 2026-09-29T12:05 EXECUTING (Runde 1) — BUDGET: Ist ~3,0 MTok (Subagents 2,7 + Orchestrator ~0,35). Real je Coder-Paket 250-310 kTok, je Entwurf 170-240 kTok. Hochrechnung voller Umfang (M1-M7, ~33 Pakete offen) ~12 MTok = +50 % ueber Schaetzung 8 -> Rueckfrage an Patrick (Regel: anhalten und fragen). Abgenommen: P0, P1, P2, P1a, P1c, P2c1; laufend P1b, P2a, P2b1; P4 geliefert.
+- 2026-09-29T12:10 EXECUTING (Runde 1) — B1 gelöst: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
 
