@@ -21,7 +21,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::stats::{speaking_shares, SpeakerShare};
+use super::speakers::SpeakerDirectory;
+use super::stats::{speaking_shares_with, SpeakerShare};
 use super::store::{Meeting, StoredSegment};
 use crate::managers::usage::Purpose;
 use crate::settings::{AppSettings, PostProcessProvider};
@@ -123,7 +124,21 @@ pub fn head_facts_block(head: &MeetingHead) -> String {
 /// Aufnahme und fällt auf das Anlagedatum zurück (Importe haben kein
 /// `started_at`).
 pub fn build_head(meeting: &Meeting, segments: &[StoredSegment]) -> MeetingHead {
-    let shares = speaking_shares(segments);
+    build_head_with(
+        meeting,
+        segments,
+        &SpeakerDirectory::from_segments(segments),
+    )
+}
+
+/// Wie [`build_head`], mit den Sprechernamen der Besprechung (M3-P3b): die
+/// Redeanteile laufen je Sprecher, nicht je Kanal.
+pub fn build_head_with(
+    meeting: &Meeting,
+    segments: &[StoredSegment],
+    labels: &SpeakerDirectory,
+) -> MeetingHead {
+    let shares = speaking_shares_with(segments, labels);
     let duration_ms = meeting.duration_ms.unwrap_or_else(|| {
         segments
             .iter()
@@ -137,8 +152,14 @@ pub fn build_head(meeting: &Meeting, segments: &[StoredSegment]) -> MeetingHead 
         .unwrap_or_default();
 
     // Importe landen vollständig auf Kanal 2 (MixedCapture) — dort steht ein
-    // Kanal für unbekannt viele Sprecher, nicht für einen.
-    let mixed_channel = segments.iter().any(|segment| segment.channel == 2);
+    // Kanal für unbekannt viele Sprecher, nicht für einen. Hat die
+    // Sprechertrennung (M3-P3b) ihn aufgeteilt, gibt es Redeanteile je Person.
+    let on_mixed = |segment: &&StoredSegment| segment.channel == 2;
+    let mixed_channel = segments.iter().filter(on_mixed).count() > 0
+        && segments
+            .iter()
+            .filter(on_mixed)
+            .all(|segment| segment.speaker_index.is_none());
 
     MeetingHead {
         title: meeting.title.clone(),

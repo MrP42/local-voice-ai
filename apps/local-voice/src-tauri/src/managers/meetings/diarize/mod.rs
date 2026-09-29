@@ -17,10 +17,11 @@
 //! - zu kurzes Audio (< 2 s): leeres Ergebnis, das Modell wird nicht geladen;
 //! - NaN/Inf im Puffer: vor dem Modell auf 0 gesetzt (Kopie nur dann).
 
-// Die Pipeline-API (`diarize`, Abbruch, Kurz-Audio) bindet erst P3b in den
-// Enddurchlauf ein; bis dahin nutzt sie nur das DER-Werkzeug und die Tests.
+// Teile der API (rohe Motor-Schnittstelle, `resolve_model_path`) nutzen nur das
+// DER-Werkzeug und die Tests; die Pipeline (P3b) ruft `diarize`/`Diarizer`.
 #![allow(dead_code)]
 
+pub mod assign; // M3-P3b
 pub mod der;
 pub mod engine;
 pub mod postproc;

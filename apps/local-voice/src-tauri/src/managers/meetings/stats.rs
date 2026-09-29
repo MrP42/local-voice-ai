@@ -1,12 +1,16 @@
 //! M8 meetings: deterministic speaking shares. Pure aggregation over the
 //! already-stored segment durations — no diarization, no heuristics beyond
-//! "sum each channel's segment time, divide by the total". M8 labels are
-//! per-channel display fallbacks only; the frontend is expected to translate
-//! via `channel`, not to rely on `label` for logic.
+//! "sum each speaker's segment time, divide by the total". Without a
+//! diarization (`speaker_index` unset) a speaker is a whole channel and the
+//! label is the per-channel display fallback of M8; with one (M3-P3b) every
+//! (channel, speaker) gets its own share and the label comes from the
+//! `SpeakerDirectory` (name, else "Gegenseite 2"). The frontend is expected
+//! to translate via `channel`, not to rely on `label` for logic.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use super::speakers::SpeakerDirectory;
 use super::store::StoredSegment;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
@@ -29,38 +33,52 @@ pub fn label_for_channel(channel: u8) -> String {
     }
 }
 
-/// Redeanteile aus Segmentdauern. M8: Label je Kanal ("Ich" / "Gegenseite" /
-/// "Aufnahme"). Die Labels sind Anzeige-Fallbacks; das Frontend übersetzt
-/// über channel.
+/// Redeanteile aus Segmentdauern, ohne Namen: Label je Kanal ("Ich" /
+/// "Gegenseite" / "Aufnahme"), bei Sprechertrennung je Sprecher ("Gegenseite
+/// 2"). Die Labels sind Anzeige-Fallbacks; das Frontend übersetzt über channel.
+// Die App ruft `speaking_shares_with` (mit den Namen der Besprechung); diese
+// Fassung ohne Namen bleibt fuer Aufrufer ohne Store und fuer die Tests.
+#[allow(dead_code)]
 pub fn speaking_shares(segments: &[StoredSegment]) -> Vec<SpeakerShare> {
+    speaking_shares_with(segments, &SpeakerDirectory::from_segments(segments))
+}
+
+/// Wie [`speaking_shares`], mit den Namen der Besprechung (M3-P3b): je
+/// (Kanal, Sprecher) ein Anteil, in der Reihenfolge des ersten Auftretens.
+/// Segmente ohne `speaker_index` (Kanal ohne Sprechertrennung, "Ich") bilden
+/// je Kanal einen eigenen Anteil.
+pub fn speaking_shares_with(
+    segments: &[StoredSegment],
+    labels: &SpeakerDirectory,
+) -> Vec<SpeakerShare> {
     if segments.is_empty() {
         return Vec::new();
     }
 
-    let mut channels: Vec<u8> = Vec::new();
-    let mut speech_ms_by_channel: std::collections::HashMap<u8, u64> =
+    let mut order: Vec<(u8, Option<u32>)> = Vec::new();
+    let mut speech_ms_by_speaker: std::collections::HashMap<(u8, Option<u32>), u64> =
         std::collections::HashMap::new();
     for segment in segments {
         let duration = segment.end_ms.saturating_sub(segment.start_ms);
-        let entry = speech_ms_by_channel.entry(segment.channel).or_insert(0);
-        *entry += duration;
-        if !channels.contains(&segment.channel) {
-            channels.push(segment.channel);
+        let key = (segment.channel, segment.speaker_index);
+        *speech_ms_by_speaker.entry(key).or_insert(0) += duration;
+        if !order.contains(&key) {
+            order.push(key);
         }
     }
 
-    let total_ms: u64 = speech_ms_by_channel.values().sum();
+    let total_ms: u64 = speech_ms_by_speaker.values().sum();
     if total_ms == 0 {
         return Vec::new();
     }
 
-    channels
+    order
         .into_iter()
-        .map(|channel| {
-            let speech_ms = speech_ms_by_channel[&channel];
+        .map(|key| {
+            let speech_ms = speech_ms_by_speaker[&key];
             SpeakerShare {
-                label: label_for_channel(channel),
-                channel,
+                label: labels.label_for(key.0, key.1),
+                channel: key.0,
                 speech_ms,
                 percent: (speech_ms as f64 / total_ms as f64) * 100.0,
             }
@@ -132,6 +150,48 @@ mod tests {
     #[test]
     fn no_segments_no_shares_no_division_by_zero() {
         assert!(speaking_shares(&[]).is_empty());
+    }
+
+    fn spk(channel: u8, speaker: Option<u32>, start_ms: u64, end_ms: u64) -> StoredSegment {
+        StoredSegment {
+            speaker_index: speaker,
+            ..seg(channel, start_ms, end_ms)
+        }
+    }
+
+    #[test]
+    fn shares_run_per_speaker_and_use_names_when_there_are_any() {
+        // Ich (Kanal 0, keine Sprechertrennung) 4 s, Gegenseite: Sprecher 1 4 s, Sprecher 2 2 s.
+        let segs = vec![
+            spk(0, None, 0, 4_000),
+            spk(1, Some(1), 4_000, 8_000),
+            spk(1, Some(2), 8_000, 10_000),
+            spk(1, Some(1), 10_000, 11_000),
+        ];
+        let shares = speaking_shares(&segs);
+        let labels: Vec<&str> = shares.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["Ich", "Gegenseite 1", "Gegenseite 2"]);
+        assert_eq!(shares[1].speech_ms, 5_000);
+        assert!(shares.iter().all(|s| s.channel <= 1));
+        assert!((shares.iter().map(|s| s.percent).sum::<f64>() - 100.0).abs() < 0.01);
+        // Mit Namen: der Name ersetzt die Nummer, die Anteile bleiben gleich.
+        let dir = SpeakerDirectory::new([((1, 2), "Anna Berg".to_string())], true);
+        let named = speaking_shares_with(&segs, &dir);
+        assert_eq!(named[2].label, "Anna Berg");
+        assert_eq!(named[2].speech_ms, shares[2].speech_ms);
+    }
+
+    #[test]
+    fn a_diarized_import_has_one_share_per_person() {
+        let segs = vec![
+            spk(2, Some(1), 0, 3_000),
+            spk(2, Some(2), 3_000, 4_000),
+            spk(2, Some(3), 4_000, 8_000),
+        ];
+        let shares = speaking_shares(&segs);
+        let labels: Vec<&str> = shares.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["Person 1", "Person 2", "Person 3"]);
+        assert!((shares[2].percent - 50.0).abs() < 0.01);
     }
 
     #[test]

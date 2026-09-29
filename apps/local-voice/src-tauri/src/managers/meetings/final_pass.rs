@@ -20,6 +20,17 @@
 //! oder `processing` stand, wird hier nachgeholt: je Kanal der Rest ab dem
 //! letzten gespeicherten Segment, dann der Enddurchlauf (falls aktiv).
 //!
+//! M3-P3b: Sprechertrennung. Vor dem End-STT (ein grosses Modell zur Zeit)
+//! liefert `speakers::collect_turns` die Turns je Kanal (Gegenseite,
+//! Import, optional "mehrere Personen am Mikrofon"); nach dem End-STT ordnet
+//! `diarize::assign` jedes Wort einem Sprecher zu und teilt Segmente an
+//! Sprecherwechseln, danach schreibt EINE Transaktion Segmente, Turns
+//! (`speaker_hints_json`) und `speakers`-Zeilen. Bleibt das Live-Transkript
+//! stehen (Einstellung `off`, nur CPU, Fehler), gilt dieselbe Zuordnung fuer
+//! das Live-Transkript (`speakers::apply_to_stored`). Ein Fehler im Sprecher-
+//! Schritt (Modell fehlt, wenig RAM, Panik) laesst das Transkript, wie es ist:
+//! die Besprechung wird `ready`, die Labels bleiben "Ich" / "Gegenseite".
+//!
 //! Alles, was Tauri, das Modell oder die Hardware braucht, steckt hinter
 //! [`FinalEnv`]; die Ablaeufe selbst sind ohne Geraet und ohne Modell testbar.
 
@@ -34,9 +45,11 @@ use log::{error, info, warn};
 use serde::Serialize;
 
 use super::chunker::{ChannelChunker, Chunk};
+use super::diarize::assign::assign_segments;
 use super::dsp::{live_segments, DspStats, SegmentMeta, VadFactory, FALLBACK_CHUNK_MS};
 use super::recorder::{MeetingEvent, CHANNEL_MIC, CHANNEL_SYSTEM};
 use super::segmenter::{Segment, SegmenterConfig, VadSegmenter};
+use super::speakers::{self, ApplyOutcome, ChannelDiarizer, StepReport, TurnSet};
 use super::store::{
     Meeting, MeetingStatus, MeetingStore, ReplaceError, StoredSegment, TranscriptDelta,
 };
@@ -318,6 +331,12 @@ pub trait FinalEnv {
     fn emit(&mut self, event: MeetingEvent);
     /// Eine neue Aufnahme will die Engine: zwischen zwei Segmenten aufhoeren.
     fn cancelled(&self) -> bool;
+    /// M3-P3b: die Sprechertrennung dieser Umgebung. Standard: keine (Attrappen
+    /// ohne Diarisierer); die App liefert immer einen (auch abgeschaltet, dann
+    /// nutzt der Schritt nur gespeicherte Turns).
+    fn diarizer(&mut self) -> Option<&mut dyn ChannelDiarizer> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -617,6 +636,9 @@ pub struct FinalReport {
     pub with_words: bool,
     pub catch_up_segments: usize,
     pub catch_up_gaps: usize,
+    /// M3-P3b: Bericht des Sprecher-Schritts (nur wenn er lief).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speakers: Option<StepReport>,
 }
 
 /// Nachholen nach einem Absturz: je Kanal alles ab dem groessten `end_ms`
@@ -748,6 +770,7 @@ fn final_pass(
     max_segment_ms: u64,
     env: &mut dyn FinalEnv,
     report: &mut FinalReport,
+    turns: Option<&TurnSet>,
 ) -> Result<u32, KeepReason> {
     let metadata = store.metadata_json(&meeting.id).ok().flatten();
     let tracks = final_tracks(meeting, metadata.as_ref());
@@ -820,6 +843,19 @@ fn final_pass(
         return Err(KeepReason::EmptyResult);
     }
 
+    // M3-P3b: Wort -> Sprecher, Segmente an Sprecherwechseln teilen. Vor dem
+    // Nummerieren, damit es EINE Epoche gibt und die Indizes der geteilten
+    // Segmente stimmen.
+    if let Some(ts) = turns {
+        let (assigned, stats) = assign_segments(std::mem::take(&mut fresh), &ts.channels);
+        fresh = assigned;
+        if let Some(step) = report.speakers.as_mut() {
+            step.assigned = stats.assigned;
+            step.unassigned = stats.unassigned;
+            step.split_added = stats.split_added;
+        }
+    }
+
     // Kanaele ineinander, zeitlich geordnet; Indizes der neuen Epoche ab 0.
     fresh.sort_by_key(|s| (s.start_ms, s.channel, s.end_ms));
     for (i, s) in fresh.iter_mut().enumerate() {
@@ -843,15 +879,37 @@ fn final_pass(
     }
 
     let granularity = if with_words { "word@1" } else { "segment@1" };
-    let epoch = store
-        .replace_segments(&meeting.id, &fresh, model_id, granularity, snapshot.revision)
-        .map_err(|e| {
-            warn!("meetings: final transcript not stored ({e}) - live transcript kept");
-            match e {
-                ReplaceError::Conflict { .. } => KeepReason::Conflict,
-                ReplaceError::Store(_) => KeepReason::StoreFailed,
-            }
-        })?;
+    let replaced = match turns {
+        // Segmente, Turns und Sprecherzeilen in EINER Transaktion.
+        Some(ts) => {
+            let write = speakers::speaker_write(store, &meeting.id, ts, &fresh);
+            store.replace_segments_with_speakers(
+                &meeting.id,
+                &fresh,
+                model_id,
+                granularity,
+                snapshot.revision,
+                &write,
+            )
+        }
+        None => store.replace_segments(
+            &meeting.id,
+            &fresh,
+            model_id,
+            granularity,
+            snapshot.revision,
+        ),
+    };
+    let epoch = replaced.map_err(|e| {
+        warn!("meetings: final transcript not stored ({e}) - live transcript kept");
+        match e {
+            ReplaceError::Conflict { .. } => KeepReason::Conflict,
+            ReplaceError::Store(_) => KeepReason::StoreFailed,
+        }
+    })?;
+    if let Some(step) = report.speakers.as_mut() {
+        step.applied = turns.is_some();
+    }
     report.segments = fresh.len();
     env.emit(MeetingEvent::Reset {
         meeting_id: meeting.id.clone(),
@@ -861,6 +919,96 @@ fn final_pass(
         appended: fresh,
     });
     Ok(epoch)
+}
+
+/// M3-P3b: Turns je Kanal holen, bevor das End-STT-Modell geladen wird. Kein
+/// Fehler und keine Panik dieses Schritts darf den Enddurchlauf verhindern:
+/// dann `None`, und alles laeuft wie bisher.
+fn turns_before_stt(
+    store: &MeetingStore,
+    meeting: &Meeting,
+    plan: &FinalPlan,
+    env: &mut dyn FinalEnv,
+    report: &mut FinalReport,
+) -> Option<TurnSet> {
+    let metadata = store.metadata_json(&meeting.id).ok().flatten();
+    let tracks = speakers::diarize_tracks(meeting, metadata.as_ref());
+    if tracks.is_empty() {
+        return None;
+    }
+    // Bleibt das Live-Transkript stehen und ist leer, gibt es nichts zuzuordnen.
+    if matches!(plan, FinalPlan::Keep(_))
+        && store
+            .get_segments(&meeting.id)
+            .map_or(true, |s| s.is_empty())
+    {
+        return None;
+    }
+    let diarizer = env.diarizer()?;
+    let mut step = StepReport::default();
+    let collected = catch_unwind(AssertUnwindSafe(|| {
+        speakers::collect_turns(
+            store,
+            meeting,
+            metadata.as_ref(),
+            &tracks,
+            true,
+            diarizer,
+            &mut step,
+        )
+    }));
+    let set = match collected {
+        Ok(Ok(set)) => set,
+        Ok(Err(speakers::Cancelled)) => None,
+        Err(_) => {
+            error!(
+                "meetings: speaker step panicked ({}) - transcript without speakers",
+                meeting.id
+            );
+            step.state = "aborted".into();
+            None
+        }
+    };
+    report.speakers = Some(step);
+    set
+}
+
+/// M3-P3b: das Live-Transkript bleibt (kein oder gescheiterter Enddurchlauf):
+/// Sprecher darauf anwenden und die Anzeige neu laden lassen. Nie ein Fehler:
+/// bei Abbruch, Konflikt oder Store-Fehler bleibt das Transkript, wie es ist.
+fn apply_speakers_to_live(
+    store: &MeetingStore,
+    meeting: &Meeting,
+    turns: Option<&TurnSet>,
+    env: &mut dyn FinalEnv,
+    report: &mut FinalReport,
+) {
+    let Some(ts) = turns else { return };
+    if env.cancelled() {
+        return;
+    }
+    let step = report.speakers.get_or_insert_with(StepReport::default);
+    match speakers::apply_to_stored(store, &meeting.id, ts, step) {
+        ApplyOutcome::Applied { .. } => {
+            if let Ok(all) = store.get_segments(&meeting.id) {
+                env.emit(MeetingEvent::Reset {
+                    meeting_id: meeting.id.clone(),
+                });
+                env.emit(MeetingEvent::Segments {
+                    meeting_id: meeting.id.clone(),
+                    appended: all,
+                });
+            }
+        }
+        ApplyOutcome::Unchanged => {}
+        ApplyOutcome::Conflict => {
+            warn!(
+                "meetings: speakers not applied ({}): transcript kept changing",
+                meeting.id
+            )
+        }
+        ApplyOutcome::Failed(e) => warn!("meetings: speakers not applied ({}): {e}", meeting.id),
+    }
 }
 
 /// Ergebnis eines Auftrags.
@@ -888,14 +1036,29 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
         if let Some(model) = &job.catch_up_model {
             catch_up(store, &meeting, model, env, &mut report);
         }
-        match &job.plan {
+        // M3-P3b: die Turns VOR dem End-STT holen (ein grosses Modell zur Zeit).
+        let turns = turns_before_stt(store, &meeting, &job.plan, env, &mut report);
+        let outcome = match &job.plan {
             FinalPlan::Keep(reason) => Err(*reason),
             FinalPlan::Run {
                 model_id,
                 max_segment_ms,
-            } => final_pass(store, &meeting, model_id, *max_segment_ms, env, &mut report)
-                .map(|epoch| (epoch, model_id.clone())),
+            } => final_pass(
+                store,
+                &meeting,
+                model_id,
+                *max_segment_ms,
+                env,
+                &mut report,
+                turns.as_ref(),
+            )
+            .map(|epoch| (epoch, model_id.clone())),
+        };
+        if outcome.is_err() {
+            // Das Live-Transkript bleibt: die Sprecher kommen auf dieses.
+            apply_speakers_to_live(store, &meeting, turns.as_ref(), env, &mut report);
         }
+        outcome
     }));
     let result = result.unwrap_or_else(|_| {
         error!("meetings: final pass panicked ({}) - live transcript kept", job.meeting_id);
@@ -933,6 +1096,10 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
         }
     };
 
+    if let Some(step) = report.speakers.as_ref() {
+        // Endstand (Zuordnung, geschrieben ja/nein) statt der Zwischenstaende.
+        speakers::write_report(store, &job.meeting_id, step);
+    }
     if let Ok(value) = serde_json::to_value(&report) {
         if let Err(e) = store.set_metadata_key(&job.meeting_id, REPORT_KEY, value) {
             warn!("meetings: final pass report not stored: {e}");
@@ -1073,12 +1240,116 @@ pub fn plan_for_app(app: &tauri::AppHandle, choice: &FinalChoice) -> FinalPlan {
     plan_final_pass(choice, &probe_hardware(app), &installed_models(app))
 }
 
+/// M3-P3b: Sortformer fuer die App. Das Modell kommt aus dem Katalogordner
+/// (`<app_data>/models/diarization`), die Einstellung `meeting_diarization`
+/// schaltet ab, der Abbruch-Merker der Engine bricht einen laufenden Kanal ab
+/// (ein Wachthund-Thread reicht ihn an `transcribe_cpp::CancelToken` weiter).
+/// Das Modell laeuft im App-Prozess (FFI): ein nativer Absturz reisst die App
+/// mit, deshalb die Absturzmarke in `speakers::collect_turns`. Es ist hoechstens
+/// eines geladen (`diarize::engine::ExclusiveSlot`) und wird nach den Kanaelen
+/// freigegeben (`release`), bevor das End-STT-Modell kommt.
+pub struct AppDiarizer {
+    enabled: bool,
+    model_path: PathBuf,
+    threads: usize,
+    cancel: Arc<AtomicBool>,
+    loaded: Option<super::diarize::Diarizer>,
+}
+
+/// So oft fragt der Wachthund den Abbruch-Merker ab.
+const CANCEL_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
+impl AppDiarizer {
+    /// Einstellung und Modellpfad der App; `cancel` ist der Merker der Engine.
+    pub fn from_app(app: &tauri::AppHandle, cancel: Arc<AtomicBool>) -> Self {
+        let enabled = crate::settings::meeting_diarization_enabled(
+            &crate::settings::get_settings(app).meeting_diarization,
+        );
+        let models_root = crate::portable::app_data_dir(app)
+            .map(|d| d.join("models"))
+            .unwrap_or_default();
+        Self {
+            enabled,
+            model_path: super::diarize::resolve_model_path(&models_root, None),
+            threads: super::diarize::default_threads(),
+            cancel,
+            loaded: None,
+        }
+    }
+}
+
+impl ChannelDiarizer for AppDiarizer {
+    fn model_name(&self) -> String {
+        speakers::HINTS_MODEL_NAME.to_string()
+    }
+
+    fn unavailable(&self) -> Option<&'static str> {
+        if !self.enabled {
+            Some("disabled")
+        } else if !self.model_path.is_file() {
+            Some("model_missing")
+        } else {
+            None
+        }
+    }
+
+    fn check_ram(&mut self, need_mb: u64) -> Result<(), String> {
+        crate::process_guard::check_ram_for_start(need_mb).map(|_| ())
+    }
+
+    fn diarize(
+        &mut self,
+        _channel: u8,
+        pcm: &[f32],
+    ) -> Result<Vec<super::diarize::Turn>, super::diarize::DiarizeError> {
+        use super::diarize::{DiarizeError, DiarizeParams, Diarizer};
+        if self.cancel.load(Ordering::Relaxed) {
+            return Err(DiarizeError::Cancelled);
+        }
+        if self.loaded.is_none() {
+            self.loaded = Some(Diarizer::load(&self.model_path, self.threads)?);
+        }
+        let Some(diarizer) = self.loaded.as_mut() else {
+            return Err(DiarizeError::Load("diarizer not loaded".into()));
+        };
+        let token = transcribe_cpp::CancelToken::new();
+        let mut params = DiarizeParams::new(&self.model_path);
+        params.threads = self.threads;
+        params.cancel = Some(token.clone());
+        let done = AtomicBool::new(false);
+        let cancel = &self.cancel;
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !done.load(Ordering::Relaxed) {
+                    if cancel.load(Ordering::Relaxed) {
+                        token.cancel();
+                        break;
+                    }
+                    std::thread::sleep(CANCEL_POLL);
+                }
+            });
+            let result = diarizer.diarize(pcm, &params);
+            done.store(true, Ordering::Relaxed);
+            result
+        })
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    fn release(&mut self) {
+        self.loaded = None;
+    }
+}
+
 /// Produktionsumgebung: der `TranscriptionManager` der App.
 pub struct AppEnv {
     app: tauri::AppHandle,
     tm: Arc<crate::managers::transcription::TranscriptionManager>,
     cancel: Arc<AtomicBool>,
     vad: Option<VadFactory>,
+    diarizer: AppDiarizer,
 }
 
 /// So lange wartet ein Laden auf einen laufenden fremden Ladevorgang.
@@ -1093,6 +1364,7 @@ impl AppEnv {
         Self {
             app: app.clone(),
             tm,
+            diarizer: AppDiarizer::from_app(app, Arc::clone(&cancel)),
             cancel,
             vad: super::recorder::meeting_vad_factory(app),
         }
@@ -1194,14 +1466,23 @@ impl FinalEnv for AppEnv {
     fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
     }
+
+    fn diarizer(&mut self) -> Option<&mut dyn ChannelDiarizer> {
+        Some(&mut self.diarizer)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::diarize::{DiarizeError, Turn};
     use super::super::segmenter::test_support::{loud, quiet, EnergyVad};
     use super::super::store::MeetingSource;
     use super::*;
     use crate::audio_toolkit::audio::StreamingWavWriter;
+    use crate::managers::transcription::WordTime;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
 
     fn seg(index: u32, channel: u8, start_ms: u64, end_ms: u64) -> StoredSegment {
         StoredSegment {
@@ -1364,6 +1645,40 @@ mod tests {
 
     // ---- Ablaeufe mit Attrappe ---------------------------------------------
 
+    /// Attrappe der Sprechertrennung: feste Turns je Kanal, Ablaufprotokoll
+    /// gemeinsam mit der Umgebung (Reihenfolge Diarisierer -> End-STT).
+    struct FakeDiar {
+        turns: BTreeMap<u8, Vec<Turn>>,
+        log: Rc<RefCell<Vec<String>>>,
+        unavailable: Option<&'static str>,
+        panic: bool,
+        runs: Rc<RefCell<usize>>,
+    }
+
+    impl ChannelDiarizer for FakeDiar {
+        fn model_name(&self) -> String {
+            "fake-diar".into()
+        }
+        fn unavailable(&self) -> Option<&'static str> {
+            self.unavailable
+        }
+        fn check_ram(&mut self, _: u64) -> Result<(), String> {
+            Ok(())
+        }
+        fn diarize(&mut self, channel: u8, pcm: &[f32]) -> Result<Vec<Turn>, DiarizeError> {
+            assert!(!pcm.is_empty());
+            self.log.borrow_mut().push(format!("diarize:{channel}"));
+            *self.runs.borrow_mut() += 1;
+            if self.panic {
+                panic!("diarizer exploded");
+            }
+            Ok(self.turns.get(&channel).cloned().unwrap_or_default())
+        }
+        fn release(&mut self) {
+            self.log.borrow_mut().push("release".into());
+        }
+    }
+
     struct FakeEnv {
         loads: Vec<String>,
         events: Vec<MeetingEvent>,
@@ -1374,6 +1689,10 @@ mod tests {
         empty: bool,
         calls: usize,
         on_call: Option<Box<dyn FnMut(usize)>>,
+        /// Jeder Block liefert 4 Woerter zu je 500 ms (statt einem).
+        many_words: bool,
+        log: Rc<RefCell<Vec<String>>>,
+        diar: Option<FakeDiar>,
     }
 
     impl FakeEnv {
@@ -1388,7 +1707,23 @@ mod tests {
                 empty: false,
                 calls: 0,
                 on_call: None,
+                many_words: false,
+                log: Rc::new(RefCell::new(Vec::new())),
+                diar: None,
             }
+        }
+
+        /// Sprechertrennung mit festen Turns (Kanal -> Turns); Zaehler der Laeufe.
+        fn with_turns(mut self, turns: &[(u8, Vec<Turn>)]) -> (Self, Rc<RefCell<usize>>) {
+            let runs = Rc::new(RefCell::new(0));
+            self.diar = Some(FakeDiar {
+                turns: turns.iter().cloned().collect(),
+                log: Rc::clone(&self.log),
+                unavailable: None,
+                panic: false,
+                runs: Rc::clone(&runs),
+            });
+            (self, runs)
         }
 
         fn kinds(&self) -> Vec<&'static str> {
@@ -1420,7 +1755,11 @@ mod tests {
                 return Err(r);
             }
             self.loads.push(model_id.to_string());
+            self.log.borrow_mut().push(format!("load:{model_id}"));
             Ok(7)
+        }
+        fn diarizer(&mut self) -> Option<&mut dyn ChannelDiarizer> {
+            self.diar.as_mut().map(|d| d as &mut dyn ChannelDiarizer)
         }
         fn transcribe(&mut self, model_id: &str, chunk: &Chunk) -> Result<Vec<TimedSegment>, String> {
             self.calls += 1;
@@ -1437,6 +1776,21 @@ mod tests {
                 return Ok(Vec::new());
             }
             let ms = chunk.samples.len() as u64 / 16;
+            if self.many_words {
+                let words: Vec<WordTime> = (0..4u64)
+                    .map(|i| WordTime {
+                        text: format!("wort{i}"),
+                        start_ms: i * 500,
+                        end_ms: (i + 1) * 500,
+                    })
+                    .collect();
+                return Ok(vec![TimedSegment {
+                    text: "wort0 wort1 wort2 wort3".into(),
+                    start_ms: 0,
+                    end_ms: ms,
+                    words: Some(words),
+                }]);
+            }
             Ok(vec![TimedSegment {
                 text: format!("{} bei {}", model_id.rsplit('/').next().unwrap(), chunk.offset_ms),
                 start_ms: 0,
@@ -1779,6 +2133,346 @@ mod tests {
         let last_mic = segs.iter().filter(|s| s.channel == 0).map(|s| s.end_ms).max().unwrap();
         assert!(last_mic >= 5_000, "Segmente bis zum Ende: {last_mic}");
         assert_eq!(env.kinds().last(), Some(&"final"));
+    }
+
+    // ---- M3-P3b: Sprecher im Enddurchlauf ------------------------------------
+
+    fn turn(start_ms: u64, end_ms: u64, speaker: u32) -> Turn {
+        Turn {
+            start_ms,
+            end_ms,
+            speaker,
+        }
+    }
+
+    /// Kanal 1: Sprecher 1 in der ersten Sekunde, danach Sprecher 2.
+    fn two_speakers() -> Vec<(u8, Vec<Turn>)> {
+        vec![(1, vec![turn(0, 1_000, 1), turn(1_000, 9_000, 2)])]
+    }
+
+    fn channel_speakers(snap: &[StoredSegment], channel: u8) -> Vec<Option<u32>> {
+        snap.iter()
+            .filter(|s| s.channel == channel)
+            .map(|s| s.speaker_index)
+            .collect()
+    }
+
+    #[test]
+    fn the_final_pass_assigns_speakers_before_the_stt_model_and_writes_one_epoch() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+        env.many_words = true;
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+
+        // Reihenfolge: erst der Diarisierer (und frei), dann das End-STT-Modell.
+        let log = env.log.borrow().clone();
+        assert_eq!(
+            log,
+            vec![
+                "diarize:1",
+                "release",
+                "load:handy-computer/whisper-large-v3-gguf/whisper-large-v3-Q5_K_M.gguf"
+            ]
+        );
+        assert_eq!(
+            *runs.borrow(),
+            1,
+            "nur die Gegenseite, das Mikrofon ist 'Ich'"
+        );
+
+        // EINE Epoche, Kanal 1 in zwei Sprecher geteilt, Kanal 0 ohne Sprecher.
+        assert_eq!(out.epoch, 1);
+        let snap = f.store.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 1);
+        let speakers = channel_speakers(&snap.segments, 1);
+        assert!(speakers.iter().all(Option::is_some), "{speakers:?}");
+        assert!(
+            speakers.contains(&Some(1)) && speakers.contains(&Some(2)),
+            "{speakers:?}"
+        );
+        assert!(
+            speakers.len() >= 3,
+            "der erste Block wurde geteilt: {speakers:?}"
+        );
+        assert!(channel_speakers(&snap.segments, 0)
+            .iter()
+            .all(Option::is_none));
+        assert_eq!(
+            snap.segments
+                .iter()
+                .map(|s| s.segment_index)
+                .collect::<Vec<_>>(),
+            (0..snap.segments.len() as u32).collect::<Vec<_>>(),
+            "Indizes lueckenlos ab 0"
+        );
+        // Turns, Modell und Zeilen stehen in derselben Transaktion.
+        let hints: serde_json::Value =
+            serde_json::from_str(&f.store.speaker_hints(&f.id).unwrap().unwrap()).unwrap();
+        assert_eq!(hints["model"], "fake-diar");
+        assert_eq!(hints["channels"]["1"][0], serde_json::json!([0, 1_000, 1]));
+        let rows = f.store.speaker_rows(&f.id).unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.channel, r.speaker_index))
+                .collect::<Vec<_>>(),
+            vec![(1, 1), (1, 2)]
+        );
+        // Anzeige neu laden, dann fertig; der Bericht nennt die Zahlen.
+        assert_eq!(env.kinds(), vec!["reset", "segments", "state", "final"]);
+        assert_eq!(env.final_event(), (1, Some(LARGE.to_string())));
+        assert_eq!(out.report.speakers.as_ref().unwrap().state, "done");
+        assert!(out.report.speakers.as_ref().unwrap().applied);
+        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert_eq!(
+            meta["final_pass"]["speakers"]["split_added"],
+            out.report.speakers.as_ref().unwrap().split_added
+        );
+        assert_eq!(meta["diarize"]["state"], "done");
+    }
+
+    #[test]
+    fn a_kept_live_transcript_still_gets_its_speakers_without_a_second_epoch() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+        let out = run_job(
+            &f.store,
+            &job(&f, FinalPlan::Keep(KeepReason::CpuOnly)),
+            &mut env,
+        );
+        assert_eq!(*runs.borrow(), 1);
+        // Live = Ende: keine neue Epoche (die Segmente wurden nicht geteilt), aber Sprecher.
+        assert_eq!(out.epoch, 0);
+        let snap = f.store.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 0);
+        assert_eq!(
+            channel_speakers(&snap.segments, 1),
+            vec![Some(2)],
+            "0..2400 ms: Sprecher 1 hat 1000, Sprecher 2 1400 ms"
+        );
+        assert_eq!(snap.segments.len(), 2);
+        assert_eq!(snap.segments[0].text, "s0", "Text unveraendert");
+        // Die Anzeige laedt neu, TranscriptFinal mit dem Live-Modell zuletzt.
+        assert_eq!(env.kinds(), vec!["reset", "segments", "state", "final"]);
+        assert_eq!(env.final_event(), (0, Some("live-model".to_string())));
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        assert!(env.loads.is_empty(), "kein STT-Modell");
+    }
+
+    #[test]
+    fn a_failed_final_pass_still_applies_the_speakers_to_the_live_transcript() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let (mut env, _) = FakeEnv::new().with_turns(&two_speakers());
+        env.fail_transcribe = true;
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_eq!(out.report.kept, Some(KeepReason::TranscribeFailed));
+        let snap = f.store.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 0);
+        let texts: Vec<&str> = snap.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["s0", "s1"],
+            "Live-Transkript unveraendert im Text"
+        );
+        assert_eq!(channel_speakers(&snap.segments, 1), vec![Some(2)]);
+        assert_eq!(env.final_event(), (0, None));
+    }
+
+    #[test]
+    fn a_missing_model_or_a_panicking_diarizer_never_blocks_the_transcript() {
+        // Modell fehlt: Enddurchlauf laeuft wie ohne Sprecher, Bericht nennt den Grund.
+        let f = fixture(true, MeetingStatus::Processing);
+        let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+        env.diar.as_mut().unwrap().unavailable = Some("model_missing");
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_eq!(out.epoch, 1);
+        assert_eq!(*runs.borrow(), 0);
+        assert_eq!(f.store.speaker_hints(&f.id).unwrap(), None);
+        let step = out.report.speakers.as_ref().unwrap();
+        assert_eq!(step.state, "skipped");
+        assert_eq!(step.channels[0].skipped, Some("model_missing"));
+        assert!(!step.applied);
+        assert_eq!(env.kinds(), vec!["reset", "segments", "state", "final"]);
+
+        // Panik im Diarisierer: das End-STT laeuft trotzdem, ohne Sprecher.
+        let f = fixture(true, MeetingStatus::Processing);
+        let (mut env, _) = FakeEnv::new().with_turns(&two_speakers());
+        env.diar.as_mut().unwrap().panic = true;
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_eq!(out.epoch, 1, "Enddurchlauf trotz Panik im Sprecher-Schritt");
+        assert_eq!(out.report.kept, None);
+        assert_eq!(out.report.speakers.as_ref().unwrap().state, "aborted");
+        assert_eq!(f.store.speaker_hints(&f.id).unwrap(), None);
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        // Die Absturzmarke steht nicht auf running (Panik-Wache) und der Lauf zaehlt nicht mit.
+        let meta = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert_ne!(meta["diarize"]["state"], "running");
+    }
+
+    #[test]
+    fn a_recovery_run_after_the_replace_reuses_the_stored_turns_and_changes_nothing() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+        env.many_words = true;
+        run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_eq!(*runs.borrow(), 1);
+        let first = f.store.transcript_snapshot(&f.id).unwrap();
+        // Absturz nach dem Ersatz, vor `ready`: der Lauf beginnt erneut.
+        f.store
+            .set_status(&f.id, MeetingStatus::Processing)
+            .unwrap();
+        let (mut env, runs2) = FakeEnv::new().with_turns(&two_speakers());
+        let out = run_job(&f.store, &job(&f, run_plan(QWEN)), &mut env);
+        assert_eq!(out.report.kept, Some(KeepReason::AlreadyFinal));
+        assert_eq!(*runs2.borrow(), 0, "gespeicherte Turns, kein Modelllauf");
+        let second = f.store.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(
+            (second.epoch, second.revision),
+            (first.epoch, first.revision)
+        );
+        assert_eq!(second.segments, first.segments);
+        assert_eq!(env.kinds(), vec!["state", "final"], "nichts neu zu laden");
+    }
+
+    #[test]
+    fn the_microphone_is_diarized_only_with_the_flag_or_without_a_system_track() {
+        let both = vec![
+            (0u8, vec![turn(0, 1_000, 1), turn(1_000, 9_000, 2)]),
+            (1u8, vec![turn(0, 9_000, 1)]),
+        ];
+        // Online mit Systemton, ohne Haekchen: nur die Gegenseite.
+        let f = fixture(true, MeetingStatus::Processing);
+        let (mut env, runs) = FakeEnv::new().with_turns(&both);
+        let out = run_job(
+            &f.store,
+            &job(&f, FinalPlan::Keep(KeepReason::CpuOnly)),
+            &mut env,
+        );
+        assert_eq!(*runs.borrow(), 1);
+        assert_eq!(
+            channel_speakers(&f.store.get_segments(&f.id).unwrap(), 0),
+            vec![None]
+        );
+        assert!(
+            !out.report.speakers.as_ref().unwrap().mic_without_aec,
+            "das Mikrofon wird nicht diarisiert, also kein Hinweis"
+        );
+
+        // Mit "Mehrere Personen am Mikrofon": beide Kanaele, "Ich" wird zu "Raum n".
+        let f = fixture(true, MeetingStatus::Processing);
+        f.store
+            .set_metadata_key(&f.id, "diarize_mic", serde_json::json!(true))
+            .unwrap();
+        let (mut env, runs) = FakeEnv::new().with_turns(&both);
+        let out = run_job(
+            &f.store,
+            &job(&f, FinalPlan::Keep(KeepReason::CpuOnly)),
+            &mut env,
+        );
+        assert_eq!(*runs.borrow(), 2);
+        assert!(
+            out.report.speakers.as_ref().unwrap().mic_without_aec,
+            "ohne mic_aec.wav rat die Anzeige zu Kopfhoerern oder Echo-Unterdrueckung"
+        );
+        let segs = f.store.get_segments(&f.id).unwrap();
+        assert_eq!(
+            channel_speakers(&segs, 0),
+            vec![Some(2)],
+            "0..2500 ms: Sprecher 2 hat 1500, Sprecher 1 1000 ms"
+        );
+        let dir = super::super::speakers::SpeakerDirectory::load(&f.store, &f.id);
+        assert_eq!(dir.label(&segs[0]), "Raum 2");
+
+        // Praesenz (kein Systemton): das Mikrofon ist die einzige Spur, "Person n".
+        let f = fixture(false, MeetingStatus::Processing);
+        f.store.clear_segments(&f.id).unwrap();
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(0, 0, 0, 2_500)],
+                },
+            )
+            .unwrap();
+        let (mut env, runs) = FakeEnv::new().with_turns(&both);
+        run_job(
+            &f.store,
+            &job(&f, FinalPlan::Keep(KeepReason::CpuOnly)),
+            &mut env,
+        );
+        assert_eq!(*runs.borrow(), 1);
+        let segs = f.store.get_segments(&f.id).unwrap();
+        let dir = super::super::speakers::SpeakerDirectory::load(&f.store, &f.id);
+        assert_eq!(channel_speakers(&segs, 0), vec![Some(2)]);
+        assert_eq!(dir.label(&segs[0]), "Person 2");
+    }
+
+    fn app_diarizer(enabled: bool, model: &Path, cancelled: bool) -> AppDiarizer {
+        AppDiarizer {
+            enabled,
+            model_path: model.to_path_buf(),
+            threads: 1,
+            cancel: Arc::new(AtomicBool::new(cancelled)),
+            loaded: None,
+        }
+    }
+
+    #[test]
+    fn the_app_diarizer_says_why_it_cannot_run_and_honours_a_cancel() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("diar.gguf");
+        // Ausgeschaltet hat Vorrang, dann fehlt das Modell, sonst ist es bereit.
+        assert_eq!(
+            app_diarizer(false, &model, false).unavailable(),
+            Some("disabled")
+        );
+        assert_eq!(
+            app_diarizer(true, &model, false).unavailable(),
+            Some("model_missing")
+        );
+        std::fs::write(&model, b"x").unwrap();
+        assert_eq!(app_diarizer(true, &model, false).unavailable(), None);
+        assert_eq!(
+            app_diarizer(true, &model, false).model_name(),
+            "sortformer-4spk-v2.1-q8"
+        );
+
+        // Neue Aufnahme vor dem Lauf: es wird kein Modell geladen.
+        let mut d = app_diarizer(true, &model, true);
+        assert!(d.cancelled());
+        assert!(matches!(
+            d.diarize(1, &[0.0; 16]),
+            Err(DiarizeError::Cancelled)
+        ));
+        assert!(d.loaded.is_none());
+
+        // Fehlt die Datei, ist es ein Fehler und keine Panik.
+        let mut d = app_diarizer(true, &dir.path().join("weg.gguf"), false);
+        assert!(matches!(
+            d.diarize(1, &[0.0; 16]),
+            Err(DiarizeError::ModelMissing(_))
+        ));
+        d.release();
+        assert!(d.loaded.is_none());
+    }
+
+    #[test]
+    fn without_a_diarizer_or_tracks_nothing_changes() {
+        // Umgebung ohne Diarisierer (alle bisherigen Tests): kein Sprecher-Bericht.
+        let f = fixture(true, MeetingStatus::Processing);
+        let mut env = FakeEnv::new();
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert!(out.report.speakers.is_none());
+        assert_eq!(f.store.speaker_hints(&f.id).unwrap(), None);
+        // Keep-Plan und leeres Live-Transkript: nichts zuzuordnen, also kein Modelllauf.
+        let g = fixture(true, MeetingStatus::Processing);
+        g.store.clear_segments(&g.id).unwrap();
+        let (mut env, runs) = FakeEnv::new().with_turns(&two_speakers());
+        run_job(
+            &g.store,
+            &job(&g, FinalPlan::Keep(KeepReason::CpuOnly)),
+            &mut env,
+        );
+        assert_eq!(*runs.borrow(), 0);
     }
 
     #[test]

@@ -211,13 +211,24 @@ pub fn score(reference: &[Segment], hypothesis: &[Segment], collar_s: f64) -> De
 }
 
 /// Maximale Summe einer 1:1-Zuordnung Zeilen -> Spalten (rechteckig erlaubt).
-/// Hungarian mit Potentialen, O(k^3) auf der quadratisch aufgefuellten Matrix.
 pub fn max_assignment(w: &[Vec<i64>]) -> i64 {
+    max_assignment_pairs(w)
+        .into_iter()
+        .map(|(r, c)| w[r][c])
+        .sum()
+}
+
+/// Die Zuordnung selbst: Paare `(Zeile, Spalte)` einer maximalen 1:1-Zuordnung
+/// (rechteckig erlaubt; Auffuellzeilen und -spalten erscheinen nicht). Auch
+/// `speakers::remap_speakers` nutzt sie, damit Namen demselben Code folgen
+/// wie die DER-Zuordnung. Hungarian mit Potentialen, O(k^3) auf der
+/// quadratisch aufgefuellten Matrix.
+pub fn max_assignment_pairs(w: &[Vec<i64>]) -> Vec<(usize, usize)> {
     let rows = w.len();
     let cols = w.first().map_or(0, |r| r.len());
     let k = rows.max(cols);
     if k == 0 {
-        return 0;
+        return Vec::new();
     }
     let maxv = w.iter().flatten().copied().max().unwrap_or(0).max(0);
     // Kosten = maxv - Gewicht (Auffuellung: Gewicht 0).
@@ -276,8 +287,8 @@ pub fn max_assignment(w: &[Vec<i64>]) -> i64 {
     }
     (1..=k)
         .filter(|&j| p[j] >= 1 && p[j] <= rows && j <= cols)
-        .map(|j| w[p[j] - 1][j - 1])
-        .sum()
+        .map(|j| (p[j] - 1, j - 1))
+        .collect()
 }
 
 // --------------------------------------------------------------- Werkzeug

@@ -18,6 +18,7 @@ pub mod search;
 pub mod segmenter;
 pub mod signal_watch; // M2-P2e
 pub mod simulate;
+pub mod speakers; // M3-P3b
 pub mod stats;
 pub mod store;
 pub mod subtitle;
