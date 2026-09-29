@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T12:10
+aktualisiert: 2026-09-29T12:12
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -87,6 +87,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - E7 Live-Chat mit lokalem LLM nur mit GPU-Backend (Schutz der Live-Latenz) — Vorschlag: ja.
 - E8 Chats werden gespeichert (Threads je Scope) — Vorschlag: ja.
 - E9 Ordner flach, eine Besprechung in mehreren Ordnern (n:m) — Vorschlag: ja.
+- E10–E17 (Entwurf M5/M6 §11): Erkennung Standard „Meeting-Apps“ nur als Hinweis; Erinnerung 1 min nur bei ≥ 2 Teilnehmenden oder Join-URL; Geheimnisse DPAPI-verschlüsselt, nie im Sync; MCP standardmäßig aus mit Warnung; Graph-Client-ID registriert Patrick in Entra (P5f danach); PDF über WebView2; Briefs nur per Knopf; kein Massenexport in M6 — Vorschlag jeweils: ja.
 - R9 Lokaler Kontext fest 8192 Token → Map-Reduce als Normalfall; misst P1e unter 95 % Belegquote, folgt Paket P1g (Kontext je VRAM größer, `ensure_local`).
 
 ## Meilensteine
@@ -118,7 +119,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-Lieferungen validieren und seriell in feat/granola-besprechungen mergen (Konflikte lib.rs/bindings.ts/recorder.rs); dann W3: P1d, P1e, P1f, P2c2, P2b2, P2e; M3-Spike wenn Builds ruhen
+Lieferungen P1b/P2a/P2b1/P4a/P5 validieren+mergen; dann P2f (Vulkan), W3 M1 (P1d/P1e/P1f), M2 (P2c2/P2b2/P2e), M3-Spike
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -133,4 +134,5 @@ Lieferungen validieren und seriell in feat/granola-besprechungen mergen (Konflik
 - 2026-09-29T11:43 EXECUTING (Runde 1) — P1a abgenommen (13fa4d3, 732 Tests). Laufend: P1b (wt-m1), P1c (wt-m1c), P2a (wt-m2a), P2c1 (wt-m2), P2b1 (wt-m2b), P4-Entwurf. CARGO_BUILD_JOBS=8 je Worker. Budget ~2,0 MTok
 - 2026-09-29T12:05 EXECUTING (Runde 1) — BUDGET: Ist ~3,0 MTok (Subagents 2,7 + Orchestrator ~0,35). Real je Coder-Paket 250-310 kTok, je Entwurf 170-240 kTok. Hochrechnung voller Umfang (M1-M7, ~33 Pakete offen) ~12 MTok = +50 % ueber Schaetzung 8 -> Rueckfrage an Patrick (Regel: anhalten und fragen). Abgenommen: P0, P1, P2, P1a, P1c, P2c1; laufend P1b, P2a, P2b1; P4 geliefert.
 - 2026-09-29T12:10 EXECUTING (Runde 1) — B1 gelöst: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
+- 2026-09-29T12:12 EXECUTING (Runde 1) — Vulkan-SDK installiert (C:\VulkanSDK\1.4.357.0, VULKAN_SDK Machine). Laufend: P1b, P2a, P2b1, P4a, P5. P2f startet, sobald ein Build frei ist (CPU 74 %, RAM frei 23,7 GB).
 
