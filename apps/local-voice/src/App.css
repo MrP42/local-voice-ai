@@ -668,6 +668,24 @@ textarea:focus::-webkit-resizer {
   outline-offset: 2px;
 }
 
+/* Klappbereich unter dem Editor (Ausdruck & Sprechstil): hoehenbegrenzt und
+   in sich scrollend. Ohne Deckel wuchs er mit den ~95 Tags von "Alle" und
+   drueckte den Editor (min-h-0) unter die textarea-Mindesthoehe -- die Suche
+   lag dann ueber dem Text. Die Ueberschrift klebt oben, damit der Bereich
+   auch mitten im Scrollen zuklappbar bleibt. */
+.workspace-disclosure--scroll {
+  flex: 0 1 auto;
+  max-height: 40%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.workspace-disclosure--scroll > summary {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-background);
+}
+
 /* Arbeitsflaechen mit fester Hoehe (Vorlesen): der Hauptbereich scrollt
    nicht, die Spalten scrollen fuer sich, Kopf und Rahmen stehen. */
 .workspace-main {
