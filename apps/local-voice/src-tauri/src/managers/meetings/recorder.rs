@@ -763,6 +763,80 @@ impl MeetingRecorderManager {
         })
         .emit(&self.app);
     }
+
+    // M1-P1c (Beruehrpunkt B2): Audioposition fuer den Notizblock.
+    /// The running meeting's id and the microphone audio position in
+    /// milliseconds, or `None` when nothing is being recorded. Same timeline
+    /// as `StoredSegment.start_ms` (paused stretches are compressed).
+    pub fn position_ms(&self) -> Option<(String, u64)> {
+        let session = self.session.lock().ok()?;
+        session.as_ref().and_then(Self::session_position)
+    }
+
+    /// `None` once the mic WAV writer is gone (RIFF limit reached): a wrong
+    /// position would be worse than none, the notepad then stores no timestamp.
+    fn session_position(session: &RecordingSession) -> Option<(String, u64)> {
+        let sink = session.mic_sink.lock().ok()?;
+        let ms = sink.writer.as_ref()?.position_ms();
+        Some((session.meeting_id.clone(), ms))
+    }
+}
+
+#[cfg(test)]
+mod position_tests {
+    use super::*;
+
+    fn session_with(dir: &std::path::Path, writer: Option<StreamingWavWriter>) -> RecordingSession {
+        let mut sink = ChannelSink::new(
+            StreamingWavWriter::create(&dir.join("placeholder.wav"), 16_000).unwrap(),
+        );
+        sink.writer = writer;
+        RecordingSession {
+            meeting_id: "m-pos".to_string(),
+            paused: Arc::new(AtomicBool::new(false)),
+            mic_capture: None,
+            loopback: None,
+            mic_sink: Arc::new(Mutex::new(sink)),
+            system_sink: None,
+            mic_path: PathBuf::new(),
+            system_path: None,
+            work_tx: None,
+            worker: None,
+        }
+    }
+
+    #[test]
+    fn position_tracks_the_mic_writer_of_a_running_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut w = StreamingWavWriter::create(&dir.path().join("mic.wav"), 16_000).unwrap();
+        w.append(&vec![0i16; 48_000]).unwrap(); // 3 s
+        let session = session_with(dir.path(), Some(w));
+        assert_eq!(
+            MeetingRecorderManager::session_position(&session),
+            Some(("m-pos".to_string(), 3_000))
+        );
+        // Weiterschreiben ueber den Sink: die Position laeuft mit.
+        session
+            .mic_sink
+            .lock()
+            .unwrap()
+            .writer
+            .as_mut()
+            .unwrap()
+            .append(&vec![0i16; 16_000])
+            .unwrap();
+        assert_eq!(
+            MeetingRecorderManager::session_position(&session),
+            Some(("m-pos".to_string(), 4_000))
+        );
+    }
+
+    #[test]
+    fn position_is_none_without_a_mic_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = session_with(dir.path(), None);
+        assert_eq!(MeetingRecorderManager::session_position(&session), None);
+    }
 }
 
 /// The per-channel capture callback: WAV append (with 1-s header flush),

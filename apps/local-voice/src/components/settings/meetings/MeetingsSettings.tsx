@@ -4,6 +4,7 @@ import { PageShell } from "../../ui/PageShell";
 import type { Meeting } from "@/bindings";
 import { RecorderCard } from "./RecorderCard";
 import { LiveTranscript } from "./LiveTranscript";
+import { LiveNotesPad } from "./notes/LiveNotesPad";
 import { MeetingList } from "./MeetingList";
 import { MeetingDetail } from "./MeetingDetail";
 
@@ -30,7 +31,12 @@ export const MeetingsSettings: React.FC = () => {
       help="aufnahmen"
     >
       <RecorderCard />
-      <LiveTranscript />
+      {/* Notizblock links, Transkript rechts (ab 1024 px), sonst untereinander.
+          Ist nur eines von beiden sichtbar, nimmt es die ganze Breite. */}
+      <div className="flex flex-col gap-4 empty:hidden lg:flex-row lg:items-start [&>*]:min-w-0 lg:[&>*]:flex-1">
+        <LiveNotesPad />
+        <LiveTranscript />
+      </div>
       <MeetingList onSelect={setSelected} />
     </PageShell>
   );

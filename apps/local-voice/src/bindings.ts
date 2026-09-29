@@ -1574,6 +1574,129 @@ async meetingsExportDocument(path: string, body: string) : Promise<Result<null, 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * M1-P1c: Notizblock, Vorlagen, Aufgaben. Fehlercodes des Stores
+ * (`revision_conflict`, `template_readonly`, ...) kommen als String.
+ */
+async meetingNotesGet(meetingId: string) : Promise<Result<MeetingNotes, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_get", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Speichert den gesamten Notizblock; Rueckgabe = neue Revision. Bei abweichender
+ * `base_revision` Fehler `revision_conflict` ohne Schreiben.
+ */
+async meetingNotesSave(meetingId: string, blocks: NoteBlock[], baseRevision: number) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_save", { meetingId, blocks, baseRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Audioposition der laufenden Aufnahme; `None`, wenn keine laeuft.
+ */
+async meetingsRecordingPosition() : Promise<Result<RecordingPosition | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_recording_position") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingsSetTemplate(meetingId: string, templateId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_set_template", { meetingId, templateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vorlage, die fuer die Besprechung gewaehlt wurde (`None` = Standard).
+ */
+async meetingsGetTemplate(meetingId: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_get_template", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingTemplatesList() : Promise<Result<TemplateInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingTemplatesSave(id: string | null, title: string, spec: TemplateSpec) : Promise<Result<TemplateInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_save", { id, title, spec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingTemplatesDuplicate(id: string) : Promise<Result<TemplateInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_duplicate", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingTemplatesDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schreibt die Vorlage als `.lvtemplate.json`. Der Pfad stammt aus dem
+ * Speichern-Dialog; geschrieben wird im Backend (das fs-Plugin laesst nur
+ * `$APPDATA` zu, siehe `export.rs`).
+ */
+async meetingTemplatesExport(id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_export", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingTemplatesImport(path: string) : Promise<Result<TemplateInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_import", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async actionItemsList(meetingId: string) : Promise<Result<ActionItem[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("action_items_list", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async actionItemsSetStatus(id: string, done: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("action_items_set_status", { id, done }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsSpeakText(text: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_speak_text", { text }) };
@@ -2839,6 +2962,27 @@ meeting_language?: string;
  * profitieren von Batch-Modellen (z. B. Parakeet V3).
  */
 meeting_model?: string | null }
+/**
+ * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
+ * Verknuepfung mit der `humans`-Tabelle folgt in M9.
+ */
+export type ActionItem = { id: string; meeting_id: string; text: string; 
+/**
+ * `todo` | `done`
+ */
+status: string; assignee_label: string | null; 
+/**
+ * Erzeugende KI-Notizen-Version (`None` bei `manual`).
+ */
+document_id: string | null; 
+/**
+ * Eintrag darin ("E7").
+ */
+entry_id: string | null; source_segment_ids: number[]; 
+/**
+ * `ai` | `user` | `manual`
+ */
+source: string }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
@@ -2962,6 +3106,18 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  * new run's segments, which restart at index 0, would append to the old.
  */
 { kind: "reset"; meeting_id: string }
+/**
+ * Der gesamte Notizblock einer Besprechung. `revision` ist der Zaehler der
+ * optimistischen Sperre (`save_notes`); `updated_at` in Sekunden (0 = noch nie gespeichert).
+ */
+export type MeetingNotes = { meeting_id: string; blocks: NoteBlock[]; revision: number; updated_at: number }
+/**
+ * Ein Block des Notizblocks. Die ID erzeugt das Frontend (ULID); `at_ms` ist
+ * die Audioposition beim Anlegen (`None` = importiert oder nach dem Stopp
+ * geschrieben) auf derselben Zeitachse wie `StoredSegment.start_ms`.
+ */
+export type NoteBlock = { id: string; kind: NoteBlockKind; text: string; at_ms: number | null; checked: boolean }
+export type NoteBlockKind = "paragraph" | "bullet" | "heading" | "todo"
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean; 
 /**
  * Whether the streaming look-ahead (`att_context_right`) can be chosen for
@@ -3066,6 +3222,11 @@ key: string; title: string;
  */
 position: number; total: number; finished: boolean; playing: boolean }
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+/**
+ * Laufende Aufnahme und ihre Audioposition (Mikrofon-Zeitachse, ms).
+ */
+export type RecordingPosition = { meeting_id: string; position_ms: number }
+export type SectionKind = "text" | "tasks"
 export type SecretMap = Partial<{ [key in string]: string }>
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
@@ -3144,6 +3305,18 @@ export type TagInsertion = { offset_in_original: number; offset_chars: number; t
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.
  */
+/**
+ * Vorlage samt Metadaten. `builtin` = mitgeliefert (ID `builtin:<key>`, schreibgeschuetzt).
+ */
+export type TemplateInfo = { id: string; title: string; builtin: boolean; spec: TemplateSpec; updated_at: number }
+/**
+ * Ein Abschnitt einer Vorlage. `id` ist ein stabiler Schluessel (`[a-z0-9_]{1,32}`).
+ */
+export type TemplateSection = { id: string; title: string; instruction: string; kind: SectionKind }
+/**
+ * Inhalt einer Vorlage; `version` ist heute immer 1.
+ */
+export type TemplateSpec = { version: number; context: string; sections: TemplateSection[] }
 export type Theme = "system" | "light" | "dark"
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TranslateOutcome = { transcript: string; translation: string }

@@ -14,6 +14,8 @@ import {
 } from "../../ui/AudioPlayer";
 import Badge from "../../ui/Badge";
 import { MinutesView } from "./MinutesView";
+import { MyNotesView } from "./notes/MyNotesView";
+import { MeetingTemplatePicker } from "./notes/TemplatePicker";
 import { RetranscribeControl } from "./RetranscribeControl";
 import { Input } from "../../ui/Input";
 import { translateMeetingError } from "./meetingErrors";
@@ -36,7 +38,8 @@ const channelLabelKey = (channel: number) => {
   }
 };
 
-type Tab = "transcript" | "minutes";
+type Tab = "notes" | "transcript" | "minutes";
+type NotesView = "mine" | "ai";
 
 // Windows paths use backslashes; the old class `[\/]` matched only the
 // forward slash, so a C:\... path came back whole.
@@ -61,6 +64,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const [titleDraft, setTitleDraft] = useState(meetingTitle);
   const [titleError, setTitleError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("transcript");
+  const [notesView, setNotesView] = useState<NotesView>("mine");
   const [segments, setSegments] = useState<StoredSegment[]>([]);
   // Sprungmarken: Kanal 1 (Gegenseite) liegt in der Systemaufnahme, alles
   // andere (Mikrofon, Import als Mischkanal) im Mikrofon-/Import-Player.
@@ -407,6 +411,17 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         <div className="flex gap-1 border-b border-mid-gray/20">
           <button
             type="button"
+            onClick={() => setTab("notes")}
+            className={`px-3 py-1.5 text-sm font-medium border-b-2 cursor-pointer ${
+              tab === "notes"
+                ? "border-logo-primary text-text"
+                : "border-transparent text-text/60 hover:text-text"
+            }`}
+          >
+            {t("meetings.notes.tab")}
+          </button>
+          <button
+            type="button"
             onClick={() => setTab("transcript")}
             className={`px-3 py-1.5 text-sm font-medium border-b-2 cursor-pointer ${
               tab === "transcript"
@@ -463,6 +478,44 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         )}
         {tab === "transcript" && transcriptError && (
           <p className="text-sm text-red-400">{transcriptError}</p>
+        )}
+        {tab === "notes" && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div
+                role="group"
+                aria-label={t("meetings.notes.tab")}
+                className="inline-flex rounded-lg border border-mid-gray/20 p-0.5 text-sm"
+              >
+                {(["mine", "ai"] as const).map((view) => (
+                  <button
+                    key={view}
+                    type="button"
+                    aria-pressed={notesView === view}
+                    onClick={() => setNotesView(view)}
+                    className={`rounded-md px-3 py-1 cursor-pointer ${
+                      notesView === view
+                        ? "bg-logo-primary/20 text-text"
+                        : "text-text/60 hover:text-text"
+                    }`}
+                  >
+                    {t(`meetings.notes.view.${view}`)}
+                  </button>
+                ))}
+              </div>
+              <MeetingTemplatePicker meetingId={meetingId} />
+            </div>
+            {notesView === "mine" ? (
+              <MyNotesView meeting={meeting} />
+            ) : (
+              <p
+                className="text-sm text-text/60"
+                data-testid="ai-notes-placeholder"
+              >
+                {t("meetings.notes.aiPlaceholder")}
+              </p>
+            )}
+          </div>
         )}
         {tab === "transcript" ? (
           loading ? (
@@ -542,9 +595,9 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
               ))}
             </div>
           )
-        ) : (
+        ) : tab === "minutes" ? (
           <MinutesView meetingId={meetingId} meetingTitle={meetingTitle} />
-        )}
+        ) : null}
       </div>
     </SettingsGroup>
   );
