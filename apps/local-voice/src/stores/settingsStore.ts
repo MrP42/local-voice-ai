@@ -9,6 +9,7 @@ import type {
   TranscribeAcceleratorSetting,
   OrtAcceleratorSetting,
   MeetingAudioRetention,
+  MeetingEchoCancellation,
   DictationAudio,
 } from "@/bindings";
 import { commands } from "@/bindings";
@@ -236,6 +237,11 @@ const settingUpdaters: {
   meeting_default_template_id: (value) =>
     commands.changeMeetingDefaultTemplateSetting(
       (value as string | null) ?? null,
+    ),
+  // M2-P2c2
+  meeting_echo_cancellation: (value) =>
+    commands.changeMeetingEchoCancellationSetting(
+      value as MeetingEchoCancellation,
     ),
 };
 

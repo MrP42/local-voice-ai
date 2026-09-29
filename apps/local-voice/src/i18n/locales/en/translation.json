@@ -812,7 +812,12 @@
       "autoEnhance": "Create AI notes automatically after the meeting",
       "autoEnhanceDescription": "As soon as the transcript is complete after stopping, the AI builds the meeting notes from your notes and the transcript. Imports never trigger this. Nothing happens without a configured language-model provider.",
       "defaultTemplate": "Default template",
-      "defaultTemplateDescription": "Template that is preselected for new meetings."
+      "defaultTemplateDescription": "Template that is preselected for new meetings.",
+      "echoCancellation": "Echo cancellation",
+      "echoCancellationDescription": "Removes the other party, which comes back from your speakers into the microphone, from your track so it does not appear twice as “Me” in the transcript. Needs system audio as the reference. The raw microphone recording is kept unchanged. Takes effect from the next recording.",
+      "echoCancellationAuto": "Automatic (with system audio)",
+      "echoCancellationOn": "On",
+      "echoCancellationOff": "Off"
     },
     "modelSettings": {
       "title": "{{model}} Settings"

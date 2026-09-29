@@ -13,11 +13,30 @@ pub mod retention;
 pub mod retranscribe;
 pub mod search;
 pub mod segmenter;
+pub mod simulate;
 pub mod stats;
 pub mod store;
 pub mod subtitle;
 
 use std::path::{Path, PathBuf};
+
+/// M2-P2c2: Dateiname der Mikrofonspur ohne Echo, neben `mic.wav` im
+/// Besprechungsordner. Sie steht in keiner DB-Spalte (keine Migration, B5).
+pub const MIC_AEC_FILE: &str = "mic_aec.wav";
+
+/// Dateien, die aus einer Audiodatei der Besprechung abgeleitet sind und mit
+/// ihr geloescht werden muessen (Aufbewahrung, Loeschen). Heute: `mic_aec.wav`
+/// neben einer `mic.wav`. Pfad als Text, weil die Loeschwege Texte fuehren.
+pub fn derived_audio_paths(path: &str) -> Vec<String> {
+    let p = Path::new(path);
+    if p.file_name().and_then(|n| n.to_str()) != Some("mic.wav") {
+        return Vec::new();
+    }
+    p.with_file_name(MIC_AEC_FILE)
+        .to_str()
+        .map(|s| vec![s.to_string()])
+        .unwrap_or_default()
+}
 
 /// Overrides the meetings data directory (DB + per-meeting audio folders).
 /// Exists so the acceptance harness can run against a sandbox and NEVER
@@ -47,6 +66,22 @@ pub fn meetings_data_dir(app: &tauri::AppHandle) -> anyhow::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_echo_free_track_is_derived_only_from_a_live_mic_wav() {
+        let mic = Path::new("C:/m/01ABC").join("mic.wav");
+        let derived = derived_audio_paths(mic.to_str().unwrap());
+        assert_eq!(
+            derived,
+            vec![Path::new("C:/m/01ABC")
+                .join(MIC_AEC_FILE)
+                .to_str()
+                .unwrap()
+                .to_string()]
+        );
+        assert!(derived_audio_paths("C:/m/01ABC/system.wav").is_empty());
+        assert!(derived_audio_paths("C:/import/interview.wav").is_empty());
+    }
 
     #[test]
     fn without_override_the_meetings_dir_lives_under_the_app_data_dir() {

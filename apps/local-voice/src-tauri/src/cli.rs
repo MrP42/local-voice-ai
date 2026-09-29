@@ -130,6 +130,42 @@ pub struct CliArgs {
     #[arg(long, value_name = "WAV", hide = true)]
     pub make_orphan: Option<PathBuf>,
 
+    // M2-P2c2
+    /// Simulate a live meeting headlessly from WAV files (16 kHz mono PCM16):
+    /// --mic is the microphone track, --system the system audio (loopback
+    /// reference). Runs the real DSP thread (VAD, echo cancellation) and the
+    /// real transcription, then prints one JSON object (transcripts per
+    /// channel, echo-cancellation report, mic_aec.wav length, and
+    /// ich_far_word_leak when --far-text/--near-text are given). Refuses to run
+    /// without the sandbox LVA_MEETINGS_DIR.
+    #[arg(long)]
+    pub simulate_meeting: bool,
+
+    /// Microphone track for --simulate-meeting.
+    #[arg(long, value_name = "WAV")]
+    pub mic: Option<PathBuf>,
+
+    /// System-audio track (echo reference) for --simulate-meeting.
+    #[arg(long, value_name = "WAV")]
+    pub system: Option<PathBuf>,
+
+    /// --simulate-meeting without echo cancellation (baseline).
+    #[arg(long)]
+    pub no_aec: bool,
+
+    /// --simulate-meeting: the system track starts this much later than the
+    /// microphone (a late loopback start; its first MS are dropped).
+    #[arg(long, value_name = "MS")]
+    pub system_delay_ms: Option<u64>,
+
+    /// Reference text of the far end (system track) for ich_far_word_leak.
+    #[arg(long, value_name = "FILE")]
+    pub far_text: Option<PathBuf>,
+
+    /// Reference text of the near talker (microphone) for ich_far_word_leak.
+    #[arg(long, value_name = "FILE")]
+    pub near_text: Option<PathBuf>,
+
     /// Open this document (txt/md/pdf/docx) in the read-aloud library and
     /// start playback — used by the Explorer context menu. Forwards to a
     /// running instance if there is one.

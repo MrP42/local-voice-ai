@@ -18,6 +18,69 @@ pub fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
         .collect()
 }
 
+/// QPC-Positionen von WASAPI (`BufferInfo::timestamp`) und cpal
+/// (`InputCallbackInfo::timestamp().capture` auf Windows) zählen in 100 ns.
+pub const QPC_UNITS_PER_SEC: i128 = 10_000_000;
+
+/// M2-P2c2: Zeitstempel für resampelte Ausgabeblöcke. Die Capture-Threads
+/// kennen den QPC-Zeitstempel je Geräte-Puffer; weitergereicht werden aber
+/// 30-ms-Blöcke nach dem Resampler. Der Stempler rechnet für jeden Block den
+/// QPC-Zeitpunkt seines ersten Samples aus dem zuletzt gesehenen Geräte-Stempel
+/// (lineare Fortschreibung mit der Nennrate, Fehler bei 30 ms Abstand im
+/// µs-Bereich). Rein, ohne Allokation, ohne Sperre: läuft im Capture-Thread.
+///
+/// Ablauf je Geräte-Puffer: `mark(qpc, frames_ahead)` (Stempel des ersten
+/// Frames dieses Puffers, `frames_ahead` = davor noch einzuschiebende
+/// Stille-Frames), dann `advance_input` für alles, was in den Resampler geht,
+/// und je ausgegebenem Block `next_block(len)`.
+#[derive(Debug, Clone)]
+pub struct QpcStamper {
+    in_rate: u64,
+    out_rate: u64,
+    in_frames: u64,
+    out_samples: u64,
+    /// (Eingangs-Frame-Index, QPC in 100 ns)
+    anchor: Option<(u64, u64)>,
+}
+
+impl QpcStamper {
+    pub fn new(in_rate: usize, out_rate: usize) -> Self {
+        Self {
+            in_rate: in_rate.max(1) as u64,
+            out_rate: out_rate.max(1) as u64,
+            in_frames: 0,
+            out_samples: 0,
+            anchor: None,
+        }
+    }
+
+    /// Setzt den Anker: der Eingangs-Frame `in_frames + frames_ahead` wurde zum
+    /// Zeitpunkt `qpc` aufgenommen. `None`/0 (Gerät meldet keinen gültigen
+    /// Stempel) lässt den alten Anker stehen.
+    pub fn mark(&mut self, qpc: Option<u64>, frames_ahead: u64) {
+        if let Some(q) = qpc.filter(|q| *q > 0) {
+            self.anchor = Some((self.in_frames + frames_ahead, q));
+        }
+    }
+
+    /// So viele Eingangs-Frames (Gerätetakt) gehen in den Resampler.
+    pub fn advance_input(&mut self, frames: u64) {
+        self.in_frames += frames;
+    }
+
+    /// Stempel des nächsten Ausgabeblocks (`len` Samples im Zieltakt), oder
+    /// `None`, solange kein Anker bekannt ist.
+    pub fn next_block(&mut self, len: usize) -> Option<u64> {
+        let stamp = self.anchor.and_then(|(i0, q0)| {
+            let in_idx = self.out_samples as i128 * self.in_rate as i128 / self.out_rate as i128;
+            let q = q0 as i128 + (in_idx - i0 as i128) * QPC_UNITS_PER_SEC / self.in_rate as i128;
+            u64::try_from(q).ok()
+        });
+        self.out_samples += len as u64;
+        stamp
+    }
+}
+
 /// Pure: f32 [-1, 1] -> i16 mit Clamping (Werte außerhalb werden begrenzt).
 pub fn f32_to_i16(samples: &[f32]) -> Vec<i16> {
     samples
@@ -31,7 +94,7 @@ pub fn f32_to_i16(samples: &[f32]) -> Vec<i16> {
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use super::{downmix_to_mono, f32_to_i16, TARGET_SAMPLE_RATE};
+    use super::{downmix_to_mono, f32_to_i16, QpcStamper, TARGET_SAMPLE_RATE};
     use crate::audio_toolkit::audio::{FrameResampler, LoopbackTimeline, TimelineAction};
     use anyhow::{anyhow, Result};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -50,7 +113,10 @@ mod windows_impl {
 
     /// Startet Loopback-Capture des Default-Render-Endpoints. Liefert
     /// 16-kHz-Mono-i16-Blöcke (zeitachsen-korrekt inkl. Silence-Padding) an den
-    /// Callback, bis `stop()` gerufen wird.
+    /// Callback, bis `stop()` gerufen wird. Zweites Argument: QPC-Zeitstempel
+    /// (100 ns) des ersten Samples im Block, `None`, solange WASAPI keinen
+    /// gültigen Stempel geliefert hat (M2-P2c2, gemeinsame Zeitachse mit dem
+    /// Mikrofon für die Echo-Unterdrückung).
     pub struct LoopbackCapture {
         stop: Arc<AtomicBool>,
         /// Wird gesetzt, wenn der Capture-Thread NACH erfolgreichem Start mit
@@ -62,7 +128,7 @@ mod windows_impl {
     }
 
     impl LoopbackCapture {
-        pub fn start(on_samples: impl FnMut(&[i16]) + Send + 'static) -> Result<Self> {
+        pub fn start(on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static) -> Result<Self> {
             let stop = Arc::new(AtomicBool::new(false));
             let thread_stop = Arc::clone(&stop);
             let error = Arc::new(AtomicBool::new(false));
@@ -131,7 +197,7 @@ mod windows_impl {
 
     fn capture_loop(
         stop: Arc<AtomicBool>,
-        mut on_samples: impl FnMut(&[i16]) + Send + 'static,
+        mut on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
         init_tx: &mpsc::Sender<Result<(), String>>,
     ) -> Result<()> {
         initialize_mta()
@@ -167,6 +233,7 @@ mod windows_impl {
         let _ = init_tx.send(Ok(()));
 
         let mut resampler = FrameResampler::new(mix_rate, TARGET_SAMPLE_RATE, FRAME_DURATION);
+        let mut stamper = QpcStamper::new(mix_rate, TARGET_SAMPLE_RATE);
         let mut timeline = LoopbackTimeline::new();
         let mut byte_buf: Vec<u8> = Vec::new();
         let silence_chunk = vec![0.0f32; SILENCE_CHUNK_FRAMES];
@@ -201,7 +268,7 @@ mod windows_impl {
                 // von IAudioCaptureClient::GetBuffer) — niemals aus gezählten
                 // Buffern oder Wall-Clock-Zeit.
                 let device_position = info.index;
-                match timeline.on_buffer(device_position, frames_read as u64) {
+                let pad_frames = match timeline.on_buffer(device_position, frames_read as u64) {
                     TimelineAction::Drop => {
                         dropped_buffers += 1;
                         if dropped_buffers % 100 == 1 {
@@ -211,21 +278,30 @@ mod windows_impl {
                         }
                         continue;
                     }
-                    TimelineAction::PadSilence(gap_frames) => {
-                        padded_frames += gap_frames;
-                        log::debug!(
-                            "loopback: gap of {gap_frames} frames padded with silence (total {padded_frames})"
-                        );
-                        let mut remaining = gap_frames;
-                        while remaining > 0 {
-                            let take = remaining.min(SILENCE_CHUNK_FRAMES as u64) as usize;
-                            resampler.push(&silence_chunk[..take], |frame| {
-                                on_samples(&f32_to_i16(frame))
-                            });
-                            remaining -= take as u64;
-                        }
+                    TimelineAction::PadSilence(gap_frames) => gap_frames,
+                    TimelineAction::Append => 0,
+                };
+                // M2-P2c2: QPC des ersten Frames DIESES Puffers (hinter der
+                // Stille); die eingeschobene Stille bekommt davon
+                // zurueckgerechnete Stempel. Kein gueltiger Stempel: alter Anker.
+                let qpc = (!info.flags.timestamp_error && info.timestamp > 0)
+                    .then_some(info.timestamp);
+                stamper.mark(qpc, pad_frames);
+                if pad_frames > 0 {
+                    padded_frames += pad_frames;
+                    log::debug!(
+                        "loopback: gap of {pad_frames} frames padded with silence (total {padded_frames})"
+                    );
+                    let mut remaining = pad_frames;
+                    while remaining > 0 {
+                        let take = remaining.min(SILENCE_CHUNK_FRAMES as u64) as usize;
+                        stamper.advance_input(take as u64);
+                        resampler.push(&silence_chunk[..take], |frame| {
+                            let stamp = stamper.next_block(frame.len());
+                            on_samples(&f32_to_i16(frame), stamp)
+                        });
+                        remaining -= take as u64;
                     }
-                    TimelineAction::Append => {}
                 }
 
                 let interleaved: Vec<f32> = byte_buf[..valid]
@@ -233,14 +309,21 @@ mod windows_impl {
                     .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                     .collect();
                 let mono = downmix_to_mono(&interleaved, channels);
-                resampler.push(&mono, |frame| on_samples(&f32_to_i16(frame)));
+                stamper.advance_input(mono.len() as u64);
+                resampler.push(&mono, |frame| {
+                    let stamp = stamper.next_block(frame.len());
+                    on_samples(&f32_to_i16(frame), stamp)
+                });
             }
 
             // Timeout ist normal (kein Ton) — dann nur das Stop-Flag prüfen.
             let _ = h_event.wait_for_event(EVENT_TIMEOUT_MS);
         }
 
-        resampler.finish(|frame| on_samples(&f32_to_i16(frame)));
+        resampler.finish(|frame| {
+            let stamp = stamper.next_block(frame.len());
+            on_samples(&f32_to_i16(frame), stamp)
+        });
         audio_client.stop_stream()?;
         log::info!(
             "loopback capture stopped (padded {padded_frames} silence frames, dropped {dropped_buffers} buffers)"
@@ -264,7 +347,7 @@ mod stub_impl {
     }
 
     impl LoopbackCapture {
-        pub fn start(_on_samples: impl FnMut(&[i16]) + Send + 'static) -> Result<Self> {
+        pub fn start(_on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static) -> Result<Self> {
             Err(anyhow!("loopback capture is windows-only in M8"))
         }
 
@@ -300,5 +383,50 @@ mod tests {
     fn i16_conversion_clamps_out_of_range() {
         let out = f32_to_i16(&[0.0, 1.0, -1.0, 2.0, -2.0]);
         assert_eq!(out, vec![0, 32767, -32768, 32767, -32768]);
+    }
+
+    // ---- M2-P2c2: QPC-Stempel je Ausgabeblock --------------------------------
+
+    #[test]
+    fn stamper_gives_each_output_block_the_time_of_its_first_sample() {
+        // 48 kHz rein, 16 kHz raus, 30-ms-Bloecke = 480 Samples.
+        let mut s = QpcStamper::new(48_000, 16_000);
+        assert_eq!(s.next_block(480), None, "ohne Anker kein Stempel");
+        let mut s = QpcStamper::new(48_000, 16_000);
+        s.mark(Some(1_000_000), 0);
+        s.advance_input(2_880);
+        assert_eq!(s.next_block(480), Some(1_000_000));
+        assert_eq!(s.next_block(480), Some(1_000_000 + 300_000), "30 ms spaeter");
+        // Naechster Geraetepuffer mit eigenem Stempel (Uhr lief 1 ms vor):
+        // ab jetzt zaehlt der neue Anker.
+        s.mark(Some(1_000_000 + 600_000 + 10_000), 0);
+        s.advance_input(1_440);
+        assert_eq!(s.next_block(480), Some(1_000_000 + 600_000 + 10_000));
+    }
+
+    #[test]
+    fn stamper_back_dates_padded_silence_before_the_buffer() {
+        // 100 ms Stille (4800 Frames bei 48 kHz) vor einem Puffer mit Stempel T:
+        // der erste Stille-Block liegt bei T - 100 ms.
+        let mut s = QpcStamper::new(48_000, 16_000);
+        s.mark(Some(5_000_000), 4_800);
+        s.advance_input(4_800 + 480);
+        assert_eq!(s.next_block(480), Some(5_000_000 - 1_000_000));
+        // Ein Stempel vor 0 waere unsinnig: kein Stempel statt Unterlauf.
+        let mut s = QpcStamper::new(16_000, 16_000);
+        s.mark(Some(100), 16_000);
+        assert_eq!(s.next_block(160), None);
+    }
+
+    #[test]
+    fn an_invalid_device_stamp_keeps_the_previous_anchor() {
+        let mut s = QpcStamper::new(16_000, 16_000);
+        s.mark(Some(2_000_000), 0);
+        s.advance_input(480);
+        assert_eq!(s.next_block(480), Some(2_000_000));
+        s.mark(None, 0);
+        s.mark(Some(0), 0);
+        s.advance_input(480);
+        assert_eq!(s.next_block(480), Some(2_000_000 + 300_000));
     }
 }

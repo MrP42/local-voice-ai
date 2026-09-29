@@ -17,7 +17,7 @@
 //! * [`should_drop_duplicate`] – Sicherheitsnetz auf Textebene (Konzept §3.3),
 //!   falls trotz AEC ein Echo als „Ich"-Segment durchkommt.
 //!
-//! # Einbau (P2c2, nicht Teil dieses Pakets)
+//! # Einbau (P2c2: `dsp.rs`, `EchoStage`)
 //!
 //! Im „meeting-dsp"-Thread, ein Thread für Aligner **und** Canceller:
 //!
@@ -55,7 +55,7 @@
 //! * Nicht `Sync`-geteilt: alle Methoden nehmen `&mut self`, die Typen sind
 //!   `Send` und gehören dem DSP-Thread.
 //!
-//! Noch nicht angebunden (P2c2): bis dahin sind die Items ungenutzt.
+//! Einige Zaehler/Varianten dienen nur Tests und dem Bericht.
 #![allow(dead_code)]
 
 use std::collections::HashMap;

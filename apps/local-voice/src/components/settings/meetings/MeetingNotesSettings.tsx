@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { commands, type TemplateInfo } from "@/bindings";
+import {
+  commands,
+  type MeetingEchoCancellation,
+  type TemplateInfo,
+} from "@/bindings";
 import { DEFAULT_TEMPLATE_ID } from "@/lib/meetingNotes";
 import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
@@ -8,8 +12,9 @@ import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { useSettings } from "../../../hooks/useSettings";
 
 /**
- * Die drei Vorgaben der Aufnahme (M1-P1f), als Zeilen der bestehenden Gruppe
- * "Besprechungen": Systemton, automatische KI-Notizen, Standardvorlage.
+ * Die Vorgaben der Aufnahme (M1-P1f, M2-P2c2), als Zeilen der bestehenden
+ * Gruppe "Besprechungen": Systemton, Echo-Unterdrueckung, automatische
+ * KI-Notizen, Standardvorlage.
  */
 export const MeetingNotesSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -38,6 +43,12 @@ export const MeetingNotesSettings: React.FC = () => {
       ? stored
       : DEFAULT_TEMPLATE_ID;
 
+  const echoOptions: { value: MeetingEchoCancellation; label: string }[] = [
+    { value: "auto", label: t("settings.meetings.echoCancellationAuto") },
+    { value: "on", label: t("settings.meetings.echoCancellationOn") },
+    { value: "off", label: t("settings.meetings.echoCancellationOff") },
+  ];
+
   return (
     <>
       <ToggleSwitch
@@ -49,6 +60,23 @@ export const MeetingNotesSettings: React.FC = () => {
         descriptionMode="tooltip"
         grouped={true}
       />
+      <SettingContainer
+        title={t("settings.meetings.echoCancellation")}
+        description={t("settings.meetings.echoCancellationDescription")}
+        grouped={true}
+      >
+        <Dropdown
+          options={echoOptions}
+          selectedValue={getSetting("meeting_echo_cancellation") ?? "auto"}
+          onSelect={(value) =>
+            void updateSetting(
+              "meeting_echo_cancellation",
+              value as MeetingEchoCancellation,
+            )
+          }
+          disabled={isUpdating("meeting_echo_cancellation")}
+        />
+      </SettingContainer>
       <ToggleSwitch
         checked={getSetting("meeting_auto_enhance") ?? true}
         onChange={(v) => void updateSetting("meeting_auto_enhance", v)}

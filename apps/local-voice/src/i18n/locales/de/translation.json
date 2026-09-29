@@ -812,7 +812,12 @@
       "autoEnhance": "KI-Notizen nach der Besprechung automatisch erstellen",
       "autoEnhanceDescription": "Sobald das Transkript nach dem Stopp vollständig ist, erstellt die KI aus Notizen und Transkript die Besprechungsnotizen. Importe lösen das nie aus. Ohne eingerichteten Sprachmodell-Anbieter passiert nichts.",
       "defaultTemplate": "Standardvorlage",
-      "defaultTemplateDescription": "Vorlage, die bei neuen Besprechungen vorausgewählt ist."
+      "defaultTemplateDescription": "Vorlage, die bei neuen Besprechungen vorausgewählt ist.",
+      "echoCancellation": "Echo-Unterdrückung",
+      "echoCancellationDescription": "Nimmt die Gegenseite, die aus den Lautsprechern ins Mikrofon zurückkommt, aus Ihrer Spur, damit sie nicht doppelt als „Ich“ im Transkript steht. Braucht den Systemton als Referenz. Die rohe Mikrofonaufnahme bleibt unverändert erhalten. Wirkt ab der nächsten Aufnahme.",
+      "echoCancellationAuto": "Automatisch (mit Systemton)",
+      "echoCancellationOn": "Ein",
+      "echoCancellationOff": "Aus"
     },
     "modelSettings": {
       "title": "{{model}}-Einstellungen"

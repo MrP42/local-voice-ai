@@ -1076,6 +1076,14 @@ async changeMeetingDefaultTemplateSetting(templateId: string | null) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+async changeMeetingEchoCancellationSetting(mode: MeetingEchoCancellation) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_echo_cancellation_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Start key recording mode
  */
@@ -3068,7 +3076,12 @@ meeting_auto_enhance?: boolean;
  * M1-P1f: Vorlage, die neue Besprechungen vorbelegt. `None` = die
  * Standardvorlage (`builtin:allgemein`).
  */
-meeting_default_template_id?: string | null }
+meeting_default_template_id?: string | null;
+/**
+ * M2-P2c2: Echo-Unterdrückung der Ich-Spur (`auto` | `on` | `off`). Ohne
+ * den Schlüssel (ältere settings.json) gilt `auto`.
+ */
+meeting_echo_cancellation?: MeetingEchoCancellation }
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
  * Verknuepfung mit der `humans`-Tabelle folgt in M9.
@@ -3226,6 +3239,16 @@ export type MeetingAudioRetention =
  * Never delete the audio automatically.
  */
 "forever"
+/**
+ * M2-P2c2: Echo-Unterdrückung der Ich-Spur einer Besprechung (der Systemton
+ * dient als Referenz; Rauschunterdrückung und AGC bleiben immer aus).
+ */
+export type MeetingEchoCancellation =
+/**
+ * An, sobald der Systemton aufgenommen wird. Heute gleichbedeutend mit
+ * `on`; Platz für eine spätere Headset-Erkennung.
+ */
+"auto" | "on" | "off"
 export type MeetingDocument = { id: string; meeting_id: string; kind: string; body_format: string; body: string; version: number;
 /**
  * Seconds since the epoch.

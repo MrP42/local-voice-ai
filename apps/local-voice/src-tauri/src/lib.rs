@@ -743,6 +743,20 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
 
     use managers::meetings::{retention, store::MeetingStore};
 
+    // M2-P2c2: the simulation writes a whole fabricated meeting; it must never
+    // land in a user's real meetings.db, so it only runs in a sandbox.
+    if args.simulate_meeting
+        && std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+    {
+        eprintln!(
+            "error: --simulate-meeting only runs in a sandbox: set {}=<empty temp dir>",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+
     let store = match MeetingStore::new(app) {
         Ok(store) => Arc::new(store),
         Err(e) => {
@@ -786,6 +800,10 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
             return 3;
         }
         return make_orphan_meeting(&store, &source, args.out.as_deref());
+    }
+
+    if args.simulate_meeting {
+        return run_simulate_meeting(app, &store, &tm, args);
     }
 
     if let Some(path) = args.import_meeting.clone() {
@@ -877,6 +895,85 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
     }
 
     0
+}
+
+/// `--simulate-meeting` (M2-P2c2): two WAVs through the live DSP thread and
+/// transcription worker, one JSON object out. Exit 0 ok, 1 runtime error,
+/// 2 bad input.
+fn run_simulate_meeting(
+    app: &AppHandle,
+    store: &Arc<managers::meetings::store::MeetingStore>,
+    tm: &Arc<TranscriptionManager>,
+    args: &CliArgs,
+) -> i32 {
+    use managers::meetings::simulate::{read_pcm16_mono, simulate_with_app, SimulateOptions};
+
+    let Some(mic_path) = args.mic.as_deref() else {
+        eprintln!("error: --simulate-meeting needs --mic <wav>");
+        return 2;
+    };
+    let mic = match read_pcm16_mono(mic_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let system = match args.system.as_deref().map(read_pcm16_mono).transpose() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let read_text = |p: &Option<std::path::PathBuf>| -> Result<Option<String>, String> {
+        p.as_deref()
+            .map(|p| std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display())))
+            .transpose()
+    };
+    let (far_text, near_text) = match (read_text(&args.far_text), read_text(&args.near_text)) {
+        (Ok(f), Ok(n)) => (f, n),
+        (Err(e), _) | (_, Err(e)) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+
+    let model_id = args.model.clone().unwrap_or_else(|| {
+        TranscriptionManager::meeting_model_target(&get_settings(app))
+    });
+    if model_id.is_empty() {
+        eprintln!("error: no model selected (pass --model or pick one in the app)");
+        return 2;
+    }
+    let load_start = std::time::Instant::now();
+    if let Err(e) = tm.load_model_with_device(&model_id, args.device_index) {
+        eprintln!("error: load_model('{model_id}') failed: {e}");
+        return 1;
+    }
+    let load_ms = load_start.elapsed().as_millis() as u64;
+
+    let opts = SimulateOptions {
+        title: "Simulation".to_string(),
+        mic,
+        system,
+        aec: !args.no_aec,
+        system_delay_ms: args.system_delay_ms.unwrap_or(0),
+        far_text,
+        near_text,
+    };
+    match simulate_with_app(app, Arc::clone(store), Arc::clone(tm), opts) {
+        Ok(mut payload) => {
+            payload["model"] = serde_json::json!(model_id);
+            payload["load_ms"] = serde_json::json!(load_ms);
+            emit_headless_payload(&payload, args.out.as_deref());
+            0
+        }
+        Err(e) => {
+            eprintln!("error: simulation failed: {e}");
+            1
+        }
+    }
 }
 
 /// `--dump-meeting`: one JSON object describing what the store actually
@@ -1431,6 +1528,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_meeting_capture_system_setting,
             shortcut::change_meeting_auto_enhance_setting,
             shortcut::change_meeting_default_template_setting,
+            shortcut::change_meeting_echo_cancellation_setting,
             shortcut::handy_keys::start_handy_keys_recording,
             shortcut::handy_keys::stop_handy_keys_recording,
             trigger_update_check,
@@ -1665,6 +1763,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.import_meeting.is_some()
         || cli_args.dump_meeting.is_some()
         || cli_args.make_orphan.is_some()
+        || cli_args.simulate_meeting // M2-P2c2
         || cli_args.bench_search; // M4-P4a
 
     #[allow(unused_mut)]
@@ -1898,7 +1997,8 @@ pub fn run(cli_args: CliArgs) {
                 let args = cli_args.clone();
                 let meetings_mode = args.import_meeting.is_some()
                     || args.dump_meeting.is_some()
-                    || args.make_orphan.is_some();
+                    || args.make_orphan.is_some()
+                    || args.simulate_meeting;
                 std::thread::spawn(move || {
                     let code = if meetings_mode {
                         run_headless_guarded(|| run_headless_meetings(&handle, &args))

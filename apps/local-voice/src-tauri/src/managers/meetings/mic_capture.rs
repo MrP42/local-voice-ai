@@ -20,7 +20,9 @@ use std::sync::{
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::audio_toolkit::audio::{downmix_to_mono, f32_to_i16, CpalDeviceInfo, FrameResampler};
+use crate::audio_toolkit::audio::{
+    downmix_to_mono, f32_to_i16, CpalDeviceInfo, FrameResampler, QpcStamper,
+};
 use crate::audio_toolkit::{get_cpal_host, list_input_devices};
 
 /// Ziel-Samplerate der Meeting-Pipeline (wie die Loopback-Capture, Task 4).
@@ -30,8 +32,10 @@ const FRAME_DURATION: Duration = Duration::from_millis(30);
 
 enum Msg {
     /// Rohe, interleaved f32-Samples direkt aus dem cpal-Callback (noch nicht
-    /// downgemischt oder resampled — das passiert auf dem Konsumenten-Thread).
-    Samples(Vec<f32>),
+    /// downgemischt oder resampled — das passiert auf dem Konsumenten-Thread),
+    /// dazu der QPC-Zeitstempel (100 ns) des ersten Frames, sofern das Gerät
+    /// einen liefert (M2-P2c2).
+    Samples(Vec<f32>, Option<u64>),
     /// Sentinel: der Stream wurde gestoppt, keine weiteren `Samples` folgen.
     End,
 }
@@ -59,10 +63,13 @@ impl MeetingMicCapture {
     /// der Name nicht (oder ist keiner angegeben), fällt es auf das
     /// System-Standardgerät zurück. `on_samples` erhält 16-kHz-Mono-i16-Blöcke
     /// bis `stop()` gerufen wird (läuft auf dem Konsumenten-Thread, nicht im
-    /// Audio-Callback).
+    /// Audio-Callback). Zweites Argument: QPC-Zeitstempel (100 ns) des ersten
+    /// Samples im Block (Windows/WASAPI: `InputCallbackInfo::timestamp().capture`),
+    /// `None`, solange das Gerät keinen geliefert hat. Der Stempel des ersten
+    /// Blocks ist `mic_qpc0`, der Nullpunkt von `mic.wav`.
     pub fn start(
         device_name: Option<String>,
-        mut on_samples: impl FnMut(&[i16]) + Send + 'static,
+        mut on_samples: impl FnMut(&[i16], Option<u64>) + Send + 'static,
     ) -> Result<Self> {
         let error_flag = Arc::new(AtomicBool::new(false));
         let (msg_tx, msg_rx) = mpsc::channel::<Msg>();
@@ -121,16 +128,25 @@ impl MeetingMicCapture {
             .spawn(move || {
                 let mut resampler =
                     FrameResampler::new(sample_rate, TARGET_SAMPLE_RATE, FRAME_DURATION);
+                let mut stamper = QpcStamper::new(sample_rate, TARGET_SAMPLE_RATE);
                 while let Ok(msg) = msg_rx.recv() {
                     match msg {
-                        Msg::Samples(interleaved) => {
+                        Msg::Samples(interleaved, qpc) => {
                             let mono = downmix_to_mono(&interleaved, channels);
-                            resampler.push(&mono, |frame| on_samples(&f32_to_i16(frame)));
+                            stamper.mark(qpc, 0);
+                            stamper.advance_input(mono.len() as u64);
+                            resampler.push(&mono, |frame| {
+                                let stamp = stamper.next_block(frame.len());
+                                on_samples(&f32_to_i16(frame), stamp)
+                            });
                         }
                         Msg::End => break,
                     }
                 }
-                resampler.finish(|frame| on_samples(&f32_to_i16(frame)));
+                resampler.finish(|frame| {
+                    let stamp = stamper.next_block(frame.len());
+                    on_samples(&f32_to_i16(frame), stamp)
+                });
             })
             .map_err(|e| anyhow!("Failed to spawn meeting mic consumer thread: {e}"))?;
 
@@ -219,6 +235,22 @@ fn resolve_device(device_name: Option<&str>) -> Result<cpal::Device> {
         .ok_or_else(|| anyhow!("No input device available for meeting mic capture"))
 }
 
+/// Aufnahmezeitpunkt des ersten Frames in 100-ns-QPC-Einheiten (dieselbe
+/// Einheit wie `wasapi::BufferInfo::timestamp` des Loopbacks). cpal rechnet
+/// auf WASAPI die `qpc_position` von `GetBuffer` in einen `StreamInstant` um;
+/// hier geht es zurück. Nur Arithmetik, keine Allokation (läuft im
+/// Audio-Callback). Andere Hosts haben eine andere Zeitbasis; der DSP-Thread
+/// erkennt das am unplausiblen Versatz und fällt auf die Ankunftszeit zurück.
+fn capture_qpc(info: &cpal::InputCallbackInfo) -> Option<u64> {
+    let since_zero = info
+        .timestamp()
+        .capture
+        .duration_since(&cpal::StreamInstant::new(0, 0))?;
+    u64::try_from(since_zero.as_nanos() / 100)
+        .ok()
+        .filter(|q| *q > 0)
+}
+
 fn build_stream(
     device: &cpal::Device,
     config: &cpal::SupportedStreamConfig,
@@ -245,11 +277,11 @@ where
     T: Sample + SizedSample + Send + 'static,
     f32: cpal::FromSample<T>,
 {
-    let stream_cb = move |data: &[T], _: &cpal::InputCallbackInfo| {
+    let stream_cb = move |data: &[T], info: &cpal::InputCallbackInfo| {
         let interleaved: Vec<f32> = data.iter().map(|&s| s.to_sample::<f32>()).collect();
         // Empfänger kann während des Stoppens bereits weg sein — dann ist der
         // Stream ohnehin gleich gedroppt, ein verlorener Block ist unkritisch.
-        let _ = msg_tx.send(Msg::Samples(interleaved));
+        let _ = msg_tx.send(Msg::Samples(interleaved, capture_qpc(info)));
     };
     let err_cb = move |err: cpal::StreamError| {
         log::error!("meeting mic capture stream error: {err}");

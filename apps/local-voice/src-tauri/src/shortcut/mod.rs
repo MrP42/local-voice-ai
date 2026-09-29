@@ -607,6 +607,19 @@ pub fn change_meeting_default_template_setting(
     Ok(())
 }
 
+// M2-P2c2: wirkt ab der naechsten Aufnahme.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_echo_cancellation_setting(
+    app: AppHandle,
+    mode: settings::MeetingEchoCancellation,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_echo_cancellation = mode;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_meeting_language_setting(app: AppHandle, language: String) -> Result<(), String> {
