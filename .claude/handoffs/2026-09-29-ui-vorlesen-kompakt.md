@@ -1,14 +1,14 @@
 # Handoff – Local Voice AI: Vorlesen-Oberfläche einheitlich, kompakt, anpassbar (29.09.2026)
 
 ## Stand in einem Satz
-Goal `ui-vorlesen-kompakt` (Issue #61) ist umgesetzt und belegt: **PR #62** (<https://github.com/MrP42/local-voice-ai/pull/62>) auf Branch `feat/ui-vorlesen-kompakt`, gestapelt auf #58 (`chore/0.20.3-abnahme`); Version 0.20.4; Vorher/Nachher-Seite <https://claude.ai/artifact/USSYtsBp5gUgs2eUxUPyRw>; Installer `Local Voice AI_0.20.4_x64-setup.exe` unter `.claude/worktrees/wt-ui/apps/local-voice/src-tauri/target/release/bundle/nsis/`.
+Goal `ui-vorlesen-kompakt` (Issue #61) ist umgesetzt und belegt: **PR #62** (<https://github.com/MrP42/local-voice-ai/pull/62>) auf Branch `feat/ui-vorlesen-kompakt`, gestapelt auf #58 (`chore/0.20.3-abnahme`); Version **0.20.5** (Runde 2 nach Patricks Abnahme von 0.20.4: P10 – Ausklappen-Knopf rechts, erster Start mit Reiter Hilfe, Dateizeilen-Aktionen fest und immer sichtbar; Persistenz war intakt, per Test belegt); Vorher/Nachher-Seite <https://claude.ai/artifact/USSYtsBp5gUgs2eUxUPyRw>; Installer `Local Voice AI_0.20.5_x64-setup.exe` unter `.claude/worktrees/wt-ui/apps/local-voice/src-tauri/target/release/bundle/nsis/`.
 
 ## Wo alles steht (nicht wiederholen)
 - Goal State: `koordination/ui-vorlesen-kompakt/{GOAL,PAKETE,BEFUNDE,UI-AUDIT}.md`, Bilder `screens/vorher|nachher`. `python ~/.claude/skills/goal-planner-worker/scripts/goal.py status --thema ui-vorlesen-kompakt` (aus dem Worktree `wt-ui`).
 - Pakete P0–P9 mit Commit in PAKETE.md; Befunde B1–B4 (alle erledigt) in BEFUNDE.md.
 
 ## Was Patrick tun muss
-1. Installer 0.20.4 installieren, Vorlesen-Seite durchklicken (Symbolzeile + ☰, Tooltips, Umschalter gestapelt/nebeneinander im Kopf der Dateileiste, Ziehgriffe, neue Aufnahme → Name `Stimme_Datum_Uhrzeit`, Palette „Alle“).
+1. Installer 0.20.5 installieren, Vorlesen-Seite durchklicken (Symbolzeile + ☰, Tooltips, Umschalter gestapelt/nebeneinander im Kopf der Dateileiste, Ziehgriffe, neue Aufnahme → Name `Stimme_Datum_Uhrzeit`, Palette „Alle“).
 2. In PR #62 die „Human Written Description“ ausfüllen; Merge-Reihenfolge: #56, #57 → #58 → #62 (GitHub setzt die Basis von #62 nach dem Merge von #58 auf `main`, sonst von Hand umstellen).
 3. Entscheidungen E1–E3 (GOAL.md) bestätigen oder ändern: Dateiname aus Stimme, Standard „gestapelt“, Menüinhalt.
 

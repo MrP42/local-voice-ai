@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
 iteration: 2
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T16:51
+aktualisiert: 2026-09-29T17:01
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -33,32 +33,33 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - Neuer Seitenleisten-Eintrag oder neuer Einstellungsreiter (Memory „Einstellungen am richtigen Ort“).
 
 ## Akzeptanzkriterien
-- [ ] AK1 — Audit: `koordination/ui-vorlesen-kompakt/UI-AUDIT.md` listet jede Abweichung als *Element · Ist · Standard · Fundstelle · Schwere · Status*; jede Zeile „hoch“/„mittel“ trägt Status „behoben (Paket/Commit)“, Rest „Folge-Goal“.
-- [ ] AK2 — Einheitliche Aktionen: Playwright-Test `tests/readaloud-toolbar.spec.ts` → alle Aktionsknöpfe der Bedienspalte (`[data-testid^="tts-action-"]`) haben gleiche Höhe und Breite (±1 px), kein sichtbarer Beschriftungstext, jedes Symbol (`svg.lucide-*`-Klasse) kommt genau einmal vor; Auto-Tagging ist nicht mehr niedriger als der Rest.
-- [ ] AK3 — Eine Zeile + Menü: im Reiter Original stehen in einer Zeile (gleiche `top` ±2 px) Hinzufügen (zuerst), Diktieren, Als Audio speichern, Änderungen vorab erzeugen, Menü; das Menü enthält Skript-Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging und löst jede davon aus; der Fehlerzähler der Skriptprüfung ist am Menüknopf sichtbar. Übersetzung/Zusammenfassung zeigen ihre Aktion ebenfalls als Symbol.
-- [ ] AK4 — Tooltip: Hover UND Tastaturfokus auf jeden Aktionsknopf zeigen Name + Kurzerklärung (`role="tooltip"`, per `aria-describedby` verbunden); `aria-label` trägt den Namen.
-- [ ] AK5 — Kompakt gestapelt: Viewport 1920×1050 und 1366×768 im Layout „gestapelt“ → Höhe des Bedienblocks `[data-testid="tts-controls"]` ≤ 50 % von `window.innerHeight`, Dateien/Hilfe liegen darunter in derselben Spalte; es gibt rechts vom Editor genau eine Spalte.
-- [ ] AK6 — Umschaltbar: Umschalter gestapelt/nebeneinander in der rechten Spalte; Wahl übersteht Neuladen (localStorage); „nebeneinander“ entspricht dem bisherigen Aufbau.
-- [ ] AK7 — Ziehbare Spalten: Griffe zwischen Seitenliste|Editor und Editor|rechter Spalte (`role="separator"`, Pfeiltasten, Doppelklick = Standard) ändern die Breite in Grenzen; Breite übersteht Neuladen; Test belegt beides.
-- [ ] AK8 — Dateiname: `tests/exportName.spec.ts` → neuer Name `<Stimme>[-<Zusatz>]_<JJJJ-MM-TT_HHMM>.<ext>` (z. B. `Patrick_2026-09-29_1736.wav`, `Skript_…` bei Skript-Stimmen, `-EN` im Reiter Übersetzung, `-Zusammenfassung`), Stamm ohne Zeitstempel ≤ 24 Zeichen, Windows-sicher; der Speichern-Dialog schlägt ihn vor.
-- [ ] AK9 — Dateiliste: ein langer Altname (`CASE-GESPRÄCH-IE2S-…_2026-09-28_1736.wav`) zeigt sichtbar Anfang, „…“ und `2026-09-28_1736`; voller Name im Tooltip.
-- [ ] AK10 — Palette-Fehler: Playwright → „Ausdruck & Sprechstil“ öffnen, „Alle“ wählen → Klappbereich ist in der Höhe begrenzt und scrollt (`scrollHeight > clientHeight`), Editor-Box ≥ 160 px hoch und überschneidet sich nicht mit dem Klappbereich (Screenshot-Beleg).
+- [x] AK1 — Audit: `koordination/ui-vorlesen-kompakt/UI-AUDIT.md` listet jede Abweichung als *Element · Ist · Standard · Fundstelle · Schwere · Status*; jede Zeile „hoch“/„mittel“ trägt Status „behoben (Paket/Commit)“, Rest „Folge-Goal“.
+- [x] AK2 — Einheitliche Aktionen: Playwright-Test `tests/readaloud-toolbar.spec.ts` → alle Aktionsknöpfe der Bedienspalte (`[data-testid^="tts-action-"]`) haben gleiche Höhe und Breite (±1 px), kein sichtbarer Beschriftungstext, jedes Symbol (`svg.lucide-*`-Klasse) kommt genau einmal vor; Auto-Tagging ist nicht mehr niedriger als der Rest.
+- [x] AK3 — Eine Zeile + Menü: im Reiter Original stehen in einer Zeile (gleiche `top` ±2 px) Hinzufügen (zuerst), Diktieren, Als Audio speichern, Änderungen vorab erzeugen, Menü; das Menü enthält Skript-Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging und löst jede davon aus; der Fehlerzähler der Skriptprüfung ist am Menüknopf sichtbar. Übersetzung/Zusammenfassung zeigen ihre Aktion ebenfalls als Symbol.
+- [x] AK4 — Tooltip: Hover UND Tastaturfokus auf jeden Aktionsknopf zeigen Name + Kurzerklärung (`role="tooltip"`, per `aria-describedby` verbunden); `aria-label` trägt den Namen.
+- [x] AK5 — Kompakt gestapelt: Viewport 1920×1050 und 1366×768 im Layout „gestapelt“ → Höhe des Bedienblocks `[data-testid="tts-controls"]` ≤ 50 % von `window.innerHeight`, Dateien/Hilfe liegen darunter in derselben Spalte; es gibt rechts vom Editor genau eine Spalte.
+- [x] AK6 — Umschaltbar: Umschalter gestapelt/nebeneinander in der rechten Spalte; Wahl übersteht Neuladen (localStorage); „nebeneinander“ entspricht dem bisherigen Aufbau.
+- [x] AK7 — Ziehbare Spalten: Griffe zwischen Seitenliste|Editor und Editor|rechter Spalte (`role="separator"`, Pfeiltasten, Doppelklick = Standard) ändern die Breite in Grenzen; Breite übersteht Neuladen; Test belegt beides.
+- [x] AK8 — Dateiname: `tests/exportName.spec.ts` → neuer Name `<Stimme>[-<Zusatz>]_<JJJJ-MM-TT_HHMM>.<ext>` (z. B. `Patrick_2026-09-29_1736.wav`, `Skript_…` bei Skript-Stimmen, `-EN` im Reiter Übersetzung, `-Zusammenfassung`), Stamm ohne Zeitstempel ≤ 24 Zeichen, Windows-sicher; der Speichern-Dialog schlägt ihn vor.
+- [x] AK9 — Dateiliste: ein langer Altname (`CASE-GESPRÄCH-IE2S-…_2026-09-28_1736.wav`) zeigt sichtbar Anfang, „…“ und `2026-09-28_1736`; voller Name im Tooltip.
+- [x] AK10 — Palette-Fehler: Playwright → „Ausdruck & Sprechstil“ öffnen, „Alle“ wählen → Klappbereich ist in der Höhe begrenzt und scrollt (`scrollHeight > clientHeight`), Editor-Box ≥ 160 px hoch und überschneidet sich nicht mit dem Klappbereich (Screenshot-Beleg).
 - [ ] AK11 — Anfassbar: Vorher/Nachher-Screenshots (gestapelt, nebeneinander, Menü offen, Tooltip, Palette „Alle“) als Artefakt-Link; Installer `Local Voice AI_0.20.4_x64-setup.exe` gebaut.
 
-- [ ] AK12 — Ausklappen rechts: Dateileiste zugeklappt → der Ausklappen-Knopf sitzt in BEIDEN Layouts am rechten Rand (gestapelt: rechte Kante des Knopfs = rechte Kante der rechten Spalte ±2 px; nebeneinander: ganz rechts wie bisher) — Playwright.
-- [ ] AK13 — Erster Start: leerer localStorage → Layout „gestapelt“, Dateileiste aufgeklappt, Reiter „Hilfe“ ausgewählt und sichtbar — Playwright.
-- [ ] AK14 — Persistenz: Reiter (Dateien/Hilfe) und Zuklappen bleiben nach Neuladen, nach Seitenwechsel in der Seitenliste und nach Wechsel in ein anderes Modul (z. B. Verlauf) und zurück erhalten — Playwright.
+- [x] AK12 — Ausklappen rechts: Dateileiste zugeklappt → der Ausklappen-Knopf sitzt in BEIDEN Layouts am rechten Rand (gestapelt: rechte Kante des Knopfs = rechte Kante der rechten Spalte ±2 px; nebeneinander: ganz rechts wie bisher) — Playwright.
+- [x] AK13 — Erster Start: leerer localStorage → Layout „gestapelt“, Dateileiste aufgeklappt, Reiter „Hilfe“ ausgewählt und sichtbar — Playwright.
+- [x] AK14 — Persistenz: Reiter (Dateien/Hilfe) und Zuklappen bleiben nach Neuladen, nach Seitenwechsel in der Seitenliste und nach Wechsel in ein anderes Modul (z. B. Verlauf) und zurück erhalten — Playwright.
 
-- [ ] AK15 — Dateizeile ohne Springen: Anhören, Umbenennen, Löschen immer sichtbar an festen Positionen (boundingBox vor/nach Hover gleich ±1 px; Löschen in Audio- und Nicht-Audio-Zeilen auf gleicher x-Position) — Playwright.
+- [x] AK15 — Dateizeile ohne Springen: Anhören, Umbenennen, Löschen immer sichtbar an festen Positionen (boundingBox vor/nach Hover gleich ±1 px; Löschen in Audio- und Nicht-Audio-Zeilen auf gleicher x-Position) — Playwright.
+
 ## Quality Gates
-- [ ] QG1 — Typen: `cd apps/local-voice && pnpm exec tsc --noEmit` → Exit 0.
-- [ ] QG2 — Gesamte Playwright-Suite: `cd apps/local-voice && pnpm exec playwright test --reporter=line` → keine neuen Fehlschläge gegenüber der Basislinie (Basislinie in Evidence).
-- [ ] QG3 — Lint/Format nur berührte Dateien: `pnpm exec eslint <Dateien>` 0 Fehler, `pnpm exec prettier --check <Dateien>` grün (vorbestehendes Rot anderer Dateien bleibt, AGENTS.md).
-- [ ] QG4 — i18n: neue Schlüssel in `de` und `en` vorhanden (Parität der neuen Schlüssel per Skript), keine hartcodierten deutschen/englischen UI-Texte.
-- [ ] QG5 — Rust unberührt außer Versionsdateien: `git diff --stat origin/chore/0.20.3-abnahme..HEAD -- apps/local-voice/src-tauri` zeigt nur `Cargo.toml`/`tauri.conf.json`(/`Cargo.lock`).
-- [ ] QG6 — Git: Commit je abgenommenem Paket, Branch gepusht, PR gestapelt auf #58 (Basis `chore/0.20.3-abnahme`), kein Push auf `main`, keine Formatierläufe über fremde Dateien.
-- [ ] QG7 — Doku + Handoff: Hilfe-Abschnitt „vorlesen“ passt zur neuen Bedienung; Handoff `.claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md`.
-- [ ] QG8 — Budget: ≤ 1,8 MTok geschätzt; Zwischenstand bei 50 %/80 %, harter Stopp bei 150 % (2,7 MTok).
+- [x] QG1 — Typen: `cd apps/local-voice && pnpm exec tsc --noEmit` → Exit 0.
+- [x] QG2 — Gesamte Playwright-Suite: `cd apps/local-voice && pnpm exec playwright test --reporter=line` → keine neuen Fehlschläge gegenüber der Basislinie (Basislinie in Evidence).
+- [x] QG3 — Lint/Format nur berührte Dateien: `pnpm exec eslint <Dateien>` 0 Fehler, `pnpm exec prettier --check <Dateien>` grün (vorbestehendes Rot anderer Dateien bleibt, AGENTS.md).
+- [x] QG4 — i18n: neue Schlüssel in `de` und `en` vorhanden (Parität der neuen Schlüssel per Skript), keine hartcodierten deutschen/englischen UI-Texte.
+- [x] QG5 — Rust unberührt außer Versionsdateien: `git diff --stat origin/chore/0.20.3-abnahme..HEAD -- apps/local-voice/src-tauri` zeigt nur `Cargo.toml`/`tauri.conf.json`(/`Cargo.lock`).
+- [x] QG6 — Git: Commit je abgenommenem Paket, Branch gepusht, PR gestapelt auf #58 (Basis `chore/0.20.3-abnahme`), kein Push auf `main`, keine Formatierläufe über fremde Dateien.
+- [x] QG7 — Doku + Handoff: Hilfe-Abschnitt „vorlesen“ passt zur neuen Bedienung; Handoff `.claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md`.
+- [x] QG8 — Budget: ≤ 1,8 MTok geschätzt; Zwischenstand bei 50 %/80 %, harter Stopp bei 150 % (2,7 MTok).
 
 ## Constraints
 - Geteilter Baum: eigener Worktree `.claude/worktrees/wt-ui`, Paket-Worktrees `wt-ui-p*`; nie `git stash`, nie `git add -A` am Repo-Root, nie `reset --hard` auf fremde Zweige.
@@ -129,6 +130,28 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29T16:51 QG6 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
 - 2026-09-29T16:51 QG7 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
 - 2026-09-29T16:51 QG8 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T17:01 AK1 erfüllt — UI-AUDIT.md Statusspalte: 2 hoch + 12 mittel behoben, A18 Folge-Goal; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK2 erfüllt — readaloud-toolbar.spec.ts (a)(b) gruen; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK3 erfüllt — readaloud-toolbar.spec.ts (c)(d)(f) + Menue-Sichtbarkeit elementFromPoint gruen; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK4 erfüllt — readaloud-toolbar.spec.ts (e) Tooltip Hover/Fokus gruen; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK5 erfüllt — readaloud-layout.spec.ts AK5-Test (<=50 %, kein Innen-Scroll) gruen; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK6 erfüllt — readaloud-layout.spec.ts Umschalter + Neuladen gruen; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK7 erfüllt — readaloud-layout.spec.ts Ziehgriffe/Pfeile/Neuladen/Doppelklick gruen; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK8 erfüllt — exportName.spec.ts + readaloud-files.spec.ts gruen; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK9 erfüllt — readaloud-files.spec.ts Zeitstempel sichtbar gruen; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK10 erfüllt — readaloud-palette.spec.ts gruen; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK12 erfüllt — readaloud-layout.spec.ts: Ausklappen-Knopf rechtsbuendig gestapelt/nebeneinander 1920+1366; screens/nachher/gestapelt-zugeklappt-1920.png; P10 115fa2bc; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK13 erfüllt — readaloud-layout.spec.ts: leerer localStorage -> gestapelt, aufgeklappt, Reiter Hilfe sichtbar; screens/nachher/erster-start-1920.png; P10 115fa2bc; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK14 erfüllt — readaloud-layout.spec.ts: Reiter + Zuklappen ueberstehen Neuladen, Seitenwechsel, Modulwechsel Verlauf->Vorlesen; P10 115fa2bc; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 AK15 erfüllt — readaloud-standards.spec.ts: Anhoeren/Umbenennen/Loeschen vor/nach Hover gleich +-1 px, per elementFromPoint sichtbar, Loeschen gleiche x in Text-/Audiozeile; P10 115fa2bc; Runde 2 (0d56a196): playwright 125 passed/11 skipped/0 failed, tsc 0
+- 2026-09-29T17:01 QG1 erfüllt — tsc --noEmit Exit 0 auf 0d56a196
+- 2026-09-29T17:01 QG2 erfüllt — playwright 125 passed, 11 skipped, 0 failed (Basislinie 72)
+- 2026-09-29T17:01 QG3 erfüllt — prettier --end-of-line auto --check aller beruehrten Dateien gruen (workspace.spec.ts vorbestehend rot, nur 1 Zeile beruehrt), eslint Exit 0
+- 2026-09-29T17:01 QG4 erfüllt — neue i18n-Schluessel de+en paritaetisch (Runde 1: 23; P10 ohne neue Schluessel)
+- 2026-09-29T17:01 QG5 erfüllt — src-tauri: nur 3 Versionsdateien geaendert
+- 2026-09-29T17:01 QG6 erfüllt — Commit je Paket P1-P10, Branch gepusht, PR #62 auf #58, kein Push auf main
+- 2026-09-29T17:01 QG7 erfüllt — Hilfe-Texte (P2), Handoff 2026-09-29-ui-vorlesen-kompakt.md aktualisiert
+- 2026-09-29T17:01 QG8 erfüllt — Runde 2 +~0,2 MTok; gesamt ~2,05 MTok < harter Stopp 2,7
 
 ## Blocker
 -
