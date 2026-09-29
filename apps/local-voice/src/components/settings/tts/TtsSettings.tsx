@@ -1809,6 +1809,24 @@ export const TtsSettings = () => {
                             name: piperVoiceLabel(voice),
                           }),
                         })),
+                        // Piper ist aktiv, aber die Stimme fehlt (keine gewählt
+                        // oder nicht mehr in der Liste): sonst zeigte das Select
+                        // den Rohwert "piper:". Nicht wählbar, nur Beschriftung.
+                        ...(voiceValue.startsWith("piper:") &&
+                        !piperVoices.some((v) => `piper:${v.id}` === voiceValue)
+                          ? [
+                              {
+                                value: voiceValue,
+                                label:
+                                  voiceValue === "piper:"
+                                    ? t("tts.voices.piperNoVoice")
+                                    : t("tts.voices.piperVoiceMissing", {
+                                        id: voiceValue.slice(6),
+                                      }),
+                                isDisabled: true,
+                              },
+                            ]
+                          : []),
                         // Kein Wert, ein Sprung: zur Stimmenverwaltung unter
                         // Einstellungen -> Vorlesen.
                         { value: "@manage", label: t("tts.voices.manage") },

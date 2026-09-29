@@ -324,6 +324,16 @@ test("the voice hint is a description of the voice select, not a permanent line"
   expect(describedBy).toBe(await hint.getAttribute("id"));
 });
 
+test("the voice select names a missing Piper voice instead of showing the raw value", async ({
+  page,
+}) => {
+  // Die Attrappe steht auf Piper ohne gewaehlte Stimme: kein "piper:" im Feld.
+  await openReadAloud(page);
+  const select = page.getByTestId("voice-select");
+  await expect(select).toContainText("Piper – keine Stimme gewählt");
+  await expect(select).not.toContainText("piper:");
+});
+
 test("translation and summary tabs show their action as a symbol", async ({
   page,
 }) => {
@@ -373,6 +383,91 @@ test("the error count shows on the menu button and on the check entry", async ({
   await openMenu(page);
   await expect(page.getByTestId("script-check-badge")).toHaveText(count);
 });
+
+// Echte Bedienbarkeit statt toBeVisible(): Ein Menue, das die scrollende
+// Bedienspalte abschneidet, ist fuers DOM "sichtbar", aber nicht anklickbar.
+// Darum trifft die Mitte jedes Eintrags per elementFromPoint den Eintrag selbst,
+// und der Eintrag liegt ganz im Fenster.
+async function expectFullyUsable(page: Page, root: string, what: string) {
+  const report = await page.evaluate((selector) => {
+    const items = Array.from(
+      document.querySelectorAll<HTMLElement>(selector),
+    ).filter((el) => el.offsetParent !== null || el.getClientRects().length);
+    return items.map((el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        r.left + r.width / 2,
+        r.top + r.height / 2,
+      );
+      return {
+        name: (el.getAttribute("data-testid") ?? el.textContent ?? "").trim(),
+        hit: !!hit && (hit === el || el.contains(hit)),
+        inside:
+          r.left >= 0 &&
+          r.top >= 0 &&
+          r.right <= window.innerWidth &&
+          r.bottom <= window.innerHeight,
+      };
+    });
+  }, root);
+  expect(report.length, `${what}: keine Eintraege`).toBeGreaterThan(0);
+  for (const entry of report) {
+    expect(
+      entry.hit,
+      `${what}: "${entry.name}" ist verdeckt/abgeschnitten`,
+    ).toBe(true);
+    expect(entry.inside, `${what}: "${entry.name}" ragt aus dem Fenster`).toBe(
+      true,
+    );
+  }
+}
+
+const controlsScrollTop = (page: Page) =>
+  page.getByTestId("tts-controls").evaluate((el) => el.scrollTop);
+
+for (const size of [
+  { width: 1920, height: 1050 },
+  { width: 1366, height: 768 },
+]) {
+  test(`menus stay fully usable in the stacked control column at ${size.width}x${size.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(size);
+    await openReadAloud(page);
+    await expect(page.getByTestId("tts-controls")).toHaveClass(
+      /tts-controls--stacked/,
+    );
+
+    // Menue (Original-Reiter).
+    await openMenu(page);
+    await expectFullyUsable(page, '[role="menuitem"]', "Menue");
+    expect(await controlsScrollTop(page), "Menue scrollt die Spalte").toBe(0);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+
+    // Hinzufuegen-Menue.
+    await page.getByTestId("tts-action-add").click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    await expectFullyUsable(page, '[role="menuitem"]', "Hinzufuegen");
+    expect(await controlsScrollTop(page), "Hinzufuegen scrollt").toBe(0);
+    await page.keyboard.press("Escape");
+
+    // Optionen-Popover (Zusammenfassung).
+    await page
+      .getByRole("tab", { name: "Zusammenfassung", exact: true })
+      .click();
+    await page.getByTestId("tts-action-summary-options").click();
+    await expect(page.getByTestId("tts-summary-options")).toBeVisible();
+    await expectFullyUsable(
+      page,
+      '[data-testid="tts-summary-options"] .app-select__control',
+      "Optionen",
+    );
+    const panel = await page.getByTestId("tts-summary-options").boundingBox();
+    expect(panel!.y + panel!.height).toBeLessThanOrEqual(size.height);
+    expect(await controlsScrollTop(page), "Optionen scrollt").toBe(0);
+  });
+}
 
 test("screenshots of the control column", async ({ page }) => {
   test.skip(
