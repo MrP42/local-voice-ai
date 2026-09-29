@@ -175,4 +175,8 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
-          args: --bundles nsis,updater
+          # gpu-vulkan: STT (transcribe-cpp) rechnet auf der GPU per Vulkan, mit
+          # Rueckfall auf die CPU-Backends. Braucht das Vulkan-SDK und die
+          # SPIRV-Headers der Schritte oben; build.rs buendelt ggml-vulkan.dll
+          # ueber transcribe-libs/ (tauri.windows.conf.json), keine Extra-Ressource.
+          args: --features gpu-vulkan --bundles nsis,updater
