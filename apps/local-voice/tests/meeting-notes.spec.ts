@@ -62,6 +62,7 @@ test.beforeEach(async ({ page }) => {
         kind: i === n - 1 ? "tasks" : "text",
       })),
     });
+    w.__settings = settings;
     w.__calls = [];
     w.__recording = false;
     w.__position = null;
@@ -169,6 +170,10 @@ test.beforeEach(async ({ page }) => {
             }
             case "get_selected_model":
               return "";
+            case "meetings_start":
+              return { ...w.__meetings[0], id: "m-neu", status: "recording" };
+            case "meetings_stop":
+              return "m-neu";
             case "meetings_is_recording":
               return w.__recording;
             case "meetings_recording_position":
@@ -1010,6 +1015,352 @@ test("Vorlagen: ungueltige Eingabe wird vor dem Speichern abgefangen", async ({
     editor.getByText("Der Name muss 1 bis 60 Zeichen lang sein."),
   ).toBeVisible();
   expect(await calls(page, "meeting_templates_save")).toHaveLength(0);
+});
+
+// ---------------------------------------------------------------------------
+// M1-P1f: Hinweistext, Systemton-Vorgabe, Vorlage vor dem Start, Auto-Lauf
+// ---------------------------------------------------------------------------
+
+const LOCAL_NOTICE =
+  "Hinweis: Ich transkribiere diese Besprechung lokal auf meinem Rechner mit Local Voice AI, um Notizen zu erstellen. Es werden keine Daten an Dritte übertragen.";
+const REMOTE_NOTICE =
+  "Hinweis: Ich transkribiere diese Besprechung lokal auf meinem Rechner mit Local Voice AI, um Notizen zu erstellen. Für die Notizen wird der Text an OpenAI übermittelt.";
+
+/** Aktiver Anbieter im Einstellungsstand der Attrappe (`local` oder ein entfernter). */
+const useProvider = async (page: Page, kind: "local" | "remote") => {
+  await page.addInitScript((k) => {
+    const w = window as any;
+    w.__settings.post_process_providers =
+      k === "local"
+        ? [
+            {
+              id: "local",
+              label: "Lokales Modell",
+              base_url: "http://127.0.0.1:0/v1",
+            },
+          ]
+        : [
+            {
+              id: "openai",
+              label: "OpenAI",
+              base_url: "https://api.openai.com/v1",
+            },
+          ];
+    w.__settings.post_process_provider_id = k === "local" ? "local" : "openai";
+  }, kind);
+};
+
+const withSettings = async (page: Page, patch: Record<string, unknown>) => {
+  await page.addInitScript((p) => {
+    Object.assign((window as any).__settings, p);
+  }, patch);
+};
+
+const grantClipboard = async (page: Page) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: "http://localhost:1420",
+  });
+};
+
+const readClipboard = (page: Page) =>
+  page.evaluate(() => navigator.clipboard.readText());
+
+test.describe("Hinweis Meeting-Chat", () => {
+  test("Hinweis kopieren: lokaler Anbieter, waehrend der Aufnahme", async ({
+    page,
+  }) => {
+    await grantClipboard(page);
+    await useProvider(page, "local");
+    await startRecording(page);
+    await openRecordings(page);
+    const notice = page.getByTestId("recording-chat-notice");
+    await expect(notice).toBeVisible();
+    await expect(page.getByTestId("recording-chat-notice-text")).toHaveText(
+      LOCAL_NOTICE,
+    );
+    await page.getByTestId("recording-chat-notice-copy").click();
+    await expect(page.getByTestId("recording-chat-notice-copy")).toHaveText(
+      "Kopiert",
+    );
+    expect(await readClipboard(page)).toBe(LOCAL_NOTICE);
+  });
+
+  test("Hinweis kopieren: externer Anbieter nennt den Empfaenger", async ({
+    page,
+  }) => {
+    await grantClipboard(page);
+    await useProvider(page, "remote");
+    await startRecording(page);
+    await openRecordings(page);
+    await expect(page.getByTestId("recording-chat-notice-text")).toHaveText(
+      REMOTE_NOTICE,
+    );
+    await expect(
+      page.getByTestId("recording-chat-notice-text"),
+    ).not.toContainText("keine Daten an Dritte");
+    await page.getByTestId("recording-chat-notice-copy").click();
+    expect(await readClipboard(page)).toBe(REMOTE_NOTICE);
+  });
+
+  test("Hinweis kopieren: auch im Einwilligungsdialog", async ({ page }) => {
+    await grantClipboard(page);
+    await useProvider(page, "remote");
+    await openRecordings(page);
+    // Vor dem Start gibt es die Zeile nicht, nur im Dialog.
+    await expect(page.getByTestId("recording-chat-notice")).toHaveCount(0);
+    await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByTestId("consent-chat-notice-text")).toHaveText(
+      REMOTE_NOTICE,
+    );
+    await dialog.getByTestId("consent-chat-notice-copy").click();
+    await expect(dialog.getByTestId("consent-chat-notice-copy")).toHaveText(
+      "Kopiert",
+    );
+    expect(await readClipboard(page)).toBe(REMOTE_NOTICE);
+  });
+
+  test("Hinweis: ohne eingerichteten Anbieter gilt die lokale Fassung", async ({
+    page,
+  }) => {
+    await startRecording(page);
+    await openRecordings(page);
+    await expect(page.getByTestId("recording-chat-notice-text")).toHaveText(
+      LOCAL_NOTICE,
+    );
+  });
+});
+
+test.describe("Systemton Vorgabe", () => {
+  test("Systemton: ohne gespeicherte Wahl ist das Haekchen an", async ({
+    page,
+  }) => {
+    await openRecordings(page);
+    await expect(page.getByTestId("capture-system")).toBeChecked();
+    await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    await page
+      .getByRole("button", { name: "Alle Beteiligten haben zugestimmt" })
+      .click();
+    await expect
+      .poll(async () => (await calls(page, "meetings_start")).length)
+      .toBe(1);
+    expect(
+      ((await calls(page, "meetings_start"))[0].args as any).captureSystem,
+    ).toBe(true);
+  });
+
+  test("Systemton: die Einstellung ist die Vorgabe, die Wahl wird gemerkt", async ({
+    page,
+  }) => {
+    await withSettings(page, { meeting_capture_system: false });
+    await openRecordings(page);
+    const box = page.getByTestId("capture-system");
+    await expect(box).not.toBeChecked();
+    await box.check();
+    await expect
+      .poll(
+        async () =>
+          (await calls(page, "change_meeting_capture_system_setting")).length,
+      )
+      .toBe(1);
+    expect(
+      (await calls(page, "change_meeting_capture_system_setting"))[0].args,
+    ).toEqual({ enabled: true });
+    await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    await page
+      .getByRole("button", { name: "Alle Beteiligten haben zugestimmt" })
+      .click();
+    await expect
+      .poll(async () => (await calls(page, "meetings_start")).length)
+      .toBe(1);
+    expect(
+      ((await calls(page, "meetings_start"))[0].args as any).captureSystem,
+    ).toBe(true);
+  });
+
+  test("Systemton: die Einstellungen zeigen die drei Vorgaben in der Gruppe Besprechungen", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 1000 });
+    await page.goto("/");
+    await page
+      .getByRole("navigation")
+      .getByRole("button", { name: "Einstellungen", exact: true })
+      .click();
+    await expect(
+      page.getByText("Systemton standardmäßig aufnehmen"),
+    ).toBeVisible();
+    await expect(
+      page.getByText("KI-Notizen nach der Besprechung automatisch erstellen"),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Standardvorlage", { exact: true }),
+    ).toBeVisible();
+    // Standard: beide Schalter an.
+    const toggles = page.locator("label:has(input.peer)");
+    const capture = page
+      .getByText("Systemton standardmäßig aufnehmen")
+      .locator("xpath=ancestor::div[.//input[@type='checkbox']][1]")
+      .locator("input[type=checkbox]");
+    await expect(capture).toBeChecked();
+    expect(await toggles.count()).toBeGreaterThan(1);
+    await capture.evaluate((el) => (el as HTMLInputElement).click());
+    await expect
+      .poll(
+        async () =>
+          (await calls(page, "change_meeting_capture_system_setting")).length,
+      )
+      .toBe(1);
+    expect(
+      (await calls(page, "change_meeting_capture_system_setting"))[0].args,
+    ).toEqual({ enabled: false });
+  });
+});
+
+test.describe("Vorlage vor dem Start", () => {
+  const startNow = async (page: Page) => {
+    await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    await page
+      .getByRole("button", { name: "Alle Beteiligten haben zugestimmt" })
+      .click();
+  };
+
+  test("Vorlage vor Start: Wahl geht nach dem Start an die Besprechung", async ({
+    page,
+  }) => {
+    await openRecordings(page);
+    const picker = page.getByTestId("record-template");
+    await picker.locator(".app-select__control").click();
+    await page
+      .getByRole("option", { name: "Kundengespräch / Vertrieb", exact: true })
+      .click();
+    // Vor dem Start wird nichts gesetzt: es gibt noch keine Besprechung.
+    expect(await calls(page, "meetings_set_template")).toHaveLength(0);
+    await startNow(page);
+    await expect
+      .poll(async () => (await calls(page, "meetings_set_template")).length)
+      .toBe(1);
+    expect((await calls(page, "meetings_set_template"))[0].args).toEqual({
+      meetingId: "m-neu",
+      templateId: "builtin:vertrieb",
+    });
+  });
+
+  test("Vorlage vor Start: ohne Wahl gilt die Standardvorlage aus den Einstellungen", async ({
+    page,
+  }) => {
+    await withSettings(page, {
+      meeting_default_template_id: "builtin:vertrieb",
+    });
+    await openRecordings(page);
+    await expect(
+      page.getByTestId("record-template").locator(".app-select__single-value"),
+    ).toHaveText("Kundengespräch / Vertrieb");
+    await startNow(page);
+    await expect
+      .poll(async () => (await calls(page, "meetings_set_template")).length)
+      .toBe(1);
+    expect(
+      ((await calls(page, "meetings_set_template"))[0].args as any).templateId,
+    ).toBe("builtin:vertrieb");
+  });
+
+  test("Vorlage vor Start: waehrend der Aufnahme gibt es nur eine Vorlagenwahl", async ({
+    page,
+  }) => {
+    await startRecording(page);
+    await openRecordings(page);
+    await expect(page.getByTestId("live-notes-pad")).toBeVisible();
+    await expect(page.getByTestId("record-template")).toHaveCount(0);
+    await expect(
+      page.getByTestId("live-notes-pad").locator(".app-select__control"),
+    ).toHaveCount(1);
+  });
+});
+
+test.describe("Auto-Lauf nach dem Stopp", () => {
+  test("flushAllNotes laeuft vor meetings_stop", async ({ page }) => {
+    await startRecording(page);
+    await openRecordings(page);
+    const pad = page.getByTestId("live-notes-pad");
+    await pad.getByTestId("note-starter").click();
+    await page.keyboard.type("Nicht vergessen: Angebot bis Freitag", {
+      delay: 10,
+    });
+    // Sofort beenden, weit vor der Entprellzeit von 700 ms. Per JS-Klick:
+    // ein echter Mausklick nimmt dem Feld den Fokus, und der Blur-Flush
+    // wuerde das Speichern schon vor `flushAllNotes()` erledigen.
+    await page
+      .getByRole("button", { name: "Beenden" })
+      .evaluate((el) => (el as HTMLButtonElement).click());
+    await expect
+      .poll(async () => (await calls(page, "meetings_stop")).length)
+      .toBe(1);
+    const order = await page.evaluate(() =>
+      ((window as any).__calls as Call[])
+        .map((c) => c.cmd)
+        .filter((c) => c === "meeting_notes_save" || c === "meetings_stop"),
+    );
+    expect(order[0]).toBe("meeting_notes_save");
+    expect(order).toContain("meetings_stop");
+    expect(order.indexOf("meeting_notes_save")).toBeLessThan(
+      order.indexOf("meetings_stop"),
+    );
+  });
+
+  test("Auto-Lauf: Fortschritt, Ende und der Hinweis ohne Anbieter erscheinen an der Aufnahmekarte", async ({
+    page,
+  }) => {
+    await openRecordings(page);
+    const status = page.getByTestId("auto-notes-status");
+    await expect(status).toHaveCount(0);
+    // Ereignisse anderer Besprechungen bleiben ohne Wirkung.
+    await page.evaluate(() => {
+      (window as any).__emit("meeting-event", {
+        kind: "state",
+        meeting_id: "m1",
+        status: "processing",
+        paused: false,
+      });
+    });
+    await page.evaluate(() => {
+      (window as any).__emit("meeting-notes-event", {
+        kind: "progress",
+        meeting_id: "andere",
+        step: 1,
+        total: 3,
+      });
+    });
+    await expect(status).toHaveCount(0);
+    await page.evaluate(() => {
+      (window as any).__emit("meeting-notes-event", {
+        kind: "progress",
+        meeting_id: "m1",
+        step: 2,
+        total: 5,
+      });
+    });
+    await expect(status).toContainText("KI-Notizen werden erstellt … 2/5");
+    await page.evaluate(() => {
+      (window as any).__emit("meeting-notes-event", {
+        kind: "failed",
+        meeting_id: "m1",
+        code: "no_provider",
+      });
+    });
+    await expect(status).toHaveAttribute("data-state", "failed");
+    await expect(status).toContainText(
+      "kein Sprachmodell-Anbieter eingerichtet",
+    );
+    await page.evaluate(() => {
+      (window as any).__emit("meeting-notes-event", {
+        kind: "done",
+        meeting_id: "m1",
+        document_id: "d1",
+      });
+    });
+    await expect(status).toHaveAttribute("data-state", "done");
+  });
 });
 
 // ---------------------------------------------------------------------------

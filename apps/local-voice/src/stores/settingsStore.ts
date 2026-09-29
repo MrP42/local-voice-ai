@@ -228,6 +228,15 @@ const settingUpdaters: {
     commands.changeMeetingLanguageSetting(value as string),
   meeting_model: (value) =>
     commands.changeMeetingModelSetting((value as string | null) ?? null),
+  // M1-P1f
+  meeting_capture_system: (value) =>
+    commands.changeMeetingCaptureSystemSetting(value as boolean),
+  meeting_auto_enhance: (value) =>
+    commands.changeMeetingAutoEnhanceSetting(value as boolean),
+  meeting_default_template_id: (value) =>
+    commands.changeMeetingDefaultTemplateSetting(
+      (value as string | null) ?? null,
+    ),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

@@ -116,6 +116,156 @@ pub async fn enhance_and_notify(
     result
 }
 
+// M1-P1f: Auto-Lauf nach dem Live-Transkript ---------------------------------
+
+/// Warum der Auto-Lauf nicht startet. Kein Fehler: der Nutzer kann die
+/// KI-Notizen jederzeit von Hand erzeugen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AutoEnhanceSkip {
+    /// Einstellung `meeting_auto_enhance` ist aus.
+    Disabled,
+    /// Import und Untertitel loesen nie aus (M1, Entscheidung E2).
+    NotLive,
+    /// Kein (vollstaendiger) Anbieter; der Code ist `no_provider` | `no_model`.
+    NoProvider(&'static str),
+    /// Eine neue Aufnahme laeuft schon und der Anbieter ist lokal.
+    RecordingActive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AutoEnhanceDecision {
+    Run,
+    Skip(AutoEnhanceSkip),
+}
+
+/// Reine Entscheidung, ob nach `TranscriptFinal` KI-Notizen entstehen.
+/// `source` ist `Meeting::source` (`live` | `import` | `subtitle`).
+/// Reihenfolge: Einstellung, Herkunft, Anbieter, Aufnahme.
+pub fn auto_enhance_decision(
+    settings: &crate::settings::AppSettings,
+    source: &str,
+    recording_active: bool,
+) -> AutoEnhanceDecision {
+    use AutoEnhanceDecision::{Run, Skip};
+    if !settings.meeting_auto_enhance {
+        return Skip(AutoEnhanceSkip::Disabled);
+    }
+    if source != "live" {
+        return Skip(AutoEnhanceSkip::NotLive);
+    }
+    match resolve_provider_coded(settings) {
+        Err(e) => Skip(AutoEnhanceSkip::NoProvider(e.code)),
+        Ok((provider, _, _)) => {
+            if check_recording_conflict(crate::managers::llm::is_local(&provider), recording_active)
+                .is_err()
+            {
+                Skip(AutoEnhanceSkip::RecordingActive)
+            } else {
+                Run
+            }
+        }
+    }
+}
+
+/// Vorlage des Auto-Laufs: die der Besprechung (`meetings_set_template`),
+/// sonst die Standardvorlage aus den Einstellungen. `None` = der Motor nimmt
+/// `builtin:allgemein`.
+fn auto_template(meeting: Option<String>, default_setting: Option<&str>) -> Option<String> {
+    meeting.or_else(|| {
+        default_setting
+            .filter(|t| !t.trim().is_empty())
+            .map(str::to_string)
+    })
+}
+
+/// Der Hinweis "kein Anbieter" erscheint hoechstens einmal je Programmlauf:
+/// wer keinen Anbieter eingerichtet hat, soll nicht nach jeder Besprechung
+/// wieder dieselbe Meldung sehen.
+static NO_PROVIDER_HINT_SHOWN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn first_no_provider_hint(flag: &std::sync::atomic::AtomicBool) -> bool {
+    !flag.swap(true, std::sync::atomic::Ordering::AcqRel)
+}
+
+/// Reagiert auf `TranscriptFinal`: startet die KI-Notizen im Hintergrund.
+/// Laeuft im Backend, damit es auch ohne offenes Fenster klappt. Fehler
+/// erscheinen nur als `MeetingNotesEvent::Failed`; das Transkript bleibt
+/// unberuehrt. Kein Notiz-, Transkript- oder Ausgabetext im Log (D9).
+fn on_transcript_final(app: &AppHandle, meeting_id: String) {
+    use tauri::Manager;
+    let Some(store) = app.try_state::<Arc<MeetingStore>>() else {
+        return;
+    };
+    let store = Arc::clone(&store);
+    let recording_active = app
+        .try_state::<Arc<MeetingRecorderManager>>()
+        .map(|r| r.is_recording())
+        .unwrap_or(false);
+    let source = match store.get_meeting(&meeting_id) {
+        Ok(Some(meeting)) => meeting.source,
+        _ => return,
+    };
+    let settings = crate::settings::get_settings(app);
+    match auto_enhance_decision(&settings, &source, recording_active) {
+        AutoEnhanceDecision::Run => {}
+        AutoEnhanceDecision::Skip(AutoEnhanceSkip::NoProvider(code)) => {
+            log::info!("KI-Notizen: Auto-Lauf uebersprungen ({code})");
+            if first_no_provider_hint(&NO_PROVIDER_HINT_SHOWN) {
+                let _ = MeetingNotesEvent::Failed {
+                    meeting_id,
+                    code: code.to_string(),
+                }
+                .emit(app);
+            }
+            return;
+        }
+        AutoEnhanceDecision::Skip(AutoEnhanceSkip::RecordingActive) => {
+            emit_failed(app, &meeting_id, "recording_active");
+            return;
+        }
+        AutoEnhanceDecision::Skip(reason) => {
+            log::debug!("KI-Notizen: Auto-Lauf uebersprungen ({reason:?})");
+            return;
+        }
+    }
+    let app = app.clone();
+    let default_template = settings.meeting_default_template_id.clone();
+    tauri::async_runtime::spawn(async move {
+        // Vorlage der Besprechung (aus `meetings_set_template`), sonst die
+        // Standardvorlage der Einstellungen; `None` faellt im Motor auf
+        // `builtin:allgemein` zurueck.
+        let template = auto_template(
+            store.meeting_template_id(&meeting_id).ok().flatten(),
+            default_template.as_deref(),
+        );
+        // Fehler kommen bereits als Ereignis an; hier nur der Code im Log.
+        if let Err(message) = enhance_and_notify(
+            &app,
+            store,
+            recording_active,
+            &meeting_id,
+            template.as_deref(),
+        )
+        .await
+        {
+            log::info!("KI-Notizen: Auto-Lauf endete mit {}", event_code(&message));
+        }
+    });
+}
+
+/// Haengt den Auto-Lauf an `MeetingEvent::TranscriptFinal` (einmal beim
+/// Start, nachdem Store und Recorder verwaltet werden).
+pub fn register_auto_enhance(app: &AppHandle) {
+    use crate::managers::meetings::recorder::MeetingEvent;
+    let handle = app.clone();
+    MeetingEvent::listen_any(app, move |event| {
+        if let MeetingEvent::TranscriptFinal { meeting_id, .. } = event.payload {
+            on_transcript_final(&handle, meeting_id);
+        }
+    });
+}
+
 /// Erzeugt KI-Notizen fuer eine fertige Besprechung aus Notizblock,
 /// Transkript und Vorlage (`None` = Vorlage der Besprechung, sonst die
 /// Standardvorlage) und legt sie als neue Version ab. Fehler tragen einen
@@ -270,5 +420,102 @@ mod tests {
         // Ohne Anbieter meldet der Motor den Fehler selbst.
         settings.post_process_provider_id = "gibt-es-nicht".into();
         assert!(recording_conflict(&settings, true).is_ok());
+    }
+
+    fn provider_settings(local: bool) -> crate::settings::AppSettings {
+        let mut settings = get_default_settings();
+        let id = if local { "local" } else { "custom" };
+        settings.post_process_provider_id = id.into();
+        settings
+            .post_process_models
+            .insert(id.into(), "modell".into());
+        settings
+    }
+
+    #[test]
+    fn auto_enhance_runs_for_a_live_meeting_with_a_provider() {
+        let settings = provider_settings(true);
+        assert_eq!(
+            auto_enhance_decision(&settings, "live", false),
+            AutoEnhanceDecision::Run
+        );
+    }
+
+    #[test]
+    fn auto_enhance_respects_the_setting() {
+        let mut settings = provider_settings(true);
+        settings.meeting_auto_enhance = false;
+        assert_eq!(
+            auto_enhance_decision(&settings, "live", false),
+            AutoEnhanceDecision::Skip(AutoEnhanceSkip::Disabled)
+        );
+    }
+
+    #[test]
+    fn auto_enhance_never_runs_for_imports() {
+        let settings = provider_settings(true);
+        for source in ["import", "subtitle"] {
+            assert_eq!(
+                auto_enhance_decision(&settings, source, false),
+                AutoEnhanceDecision::Skip(AutoEnhanceSkip::NotLive),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_enhance_needs_a_complete_provider() {
+        let mut settings = get_default_settings();
+        settings.post_process_provider_id = "gibt-es-nicht".into();
+        assert_eq!(
+            auto_enhance_decision(&settings, "live", false),
+            AutoEnhanceDecision::Skip(AutoEnhanceSkip::NoProvider("no_provider"))
+        );
+        // Anbieter ohne Modell: ebenfalls kein Lauf, eigener Code.
+        let mut settings = get_default_settings();
+        settings.post_process_provider_id = "custom".into();
+        settings.post_process_models.remove("custom");
+        assert_eq!(
+            auto_enhance_decision(&settings, "live", false),
+            AutoEnhanceDecision::Skip(AutoEnhanceSkip::NoProvider("no_model"))
+        );
+    }
+
+    #[test]
+    fn auto_enhance_waits_for_a_running_recording_only_with_a_local_provider() {
+        assert_eq!(
+            auto_enhance_decision(&provider_settings(true), "live", true),
+            AutoEnhanceDecision::Skip(AutoEnhanceSkip::RecordingActive)
+        );
+        assert_eq!(
+            auto_enhance_decision(&provider_settings(false), "live", true),
+            AutoEnhanceDecision::Run,
+            "entfernter Anbieter konkurriert nicht um die Maschine"
+        );
+    }
+
+    #[test]
+    fn auto_template_prefers_the_meeting_then_the_default_setting() {
+        assert_eq!(
+            auto_template(Some("builtin:vertrieb".into()), Some("builtin:jour-fixe")),
+            Some("builtin:vertrieb".to_string())
+        );
+        // Ohne Wahl an der Besprechung (z. B. Stopp vor `meetings_set_template`)
+        // gilt die Standardvorlage aus den Einstellungen.
+        assert_eq!(
+            auto_template(None, Some("builtin:jour-fixe")),
+            Some("builtin:jour-fixe".to_string())
+        );
+        // Beides leer: `None`, der Motor nimmt `builtin:allgemein`.
+        assert_eq!(auto_template(None, None), None);
+        assert_eq!(auto_template(None, Some("  ")), None);
+    }
+
+    #[test]
+    fn the_no_provider_hint_shows_once() {
+        let flag = std::sync::atomic::AtomicBool::new(false);
+        assert!(first_no_provider_hint(&flag));
+        assert!(!first_no_provider_hint(&flag));
+        assert!(!first_no_provider_hint(&flag));
     }
 }

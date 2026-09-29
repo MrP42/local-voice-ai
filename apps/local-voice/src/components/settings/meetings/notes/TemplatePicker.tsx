@@ -32,7 +32,7 @@ export const TemplatePicker: React.FC<TemplatePickerProps> = ({
 
   const load = useCallback(async () => {
     const result = await commands.meetingTemplatesList();
-    if (result.status === "ok") setTemplates(result.data);
+    if (result.status === "ok") setTemplates(result.data ?? []);
   }, []);
 
   useEffect(() => {

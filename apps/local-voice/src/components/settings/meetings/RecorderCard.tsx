@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands, events } from "@/bindings";
+import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
@@ -8,8 +9,28 @@ import { Dialog } from "../../ui/Dialog";
 import { Alert } from "../../ui/Alert";
 import Badge from "../../ui/Badge";
 import { translateMeetingError } from "./meetingErrors";
+import { MeetingChatNotice } from "./MeetingChatNotice";
+import { TemplatePicker } from "./notes/TemplatePicker";
+import { flushAllNotes } from "./notes/useNotesAutosave";
 
 type Phase = "idle" | "recording" | "paused";
+
+/** Stand der KI-Notizen, die nach dem Stopp automatisch entstehen (M1-P1f). */
+type AutoNotes =
+  | { kind: "running"; step: number; total: number }
+  | { kind: "done" }
+  | { kind: "failed"; code: string };
+
+/** Codes von `MeetingNotesEvent::Failed`, fuer die es einen eigenen Text gibt. */
+const AUTO_NOTES_CODES = new Set([
+  "no_provider",
+  "no_model",
+  "memory_low",
+  "recording_active",
+  "enhance_busy",
+  "no_transcript",
+  "llm_failed",
+]);
 
 const LevelBar: React.FC<{ label: string; value: number }> = ({
   label,
@@ -31,14 +52,30 @@ const LevelBar: React.FC<{ label: string; value: number }> = ({
 
 export const RecorderCard: React.FC = () => {
   const { t } = useTranslation();
+  const { getSetting, updateSetting } = useSettings();
   const [title, setTitle] = useState("");
-  const [captureSystem, setCaptureSystem] = useState(false);
+  // Vorgabe und letzte Wahl liegen in den Einstellungen (`meeting_capture_system`,
+  // Standard an): das Haekchen ist kein eigener UI-Zustand mehr.
+  const captureSetting = getSetting("meeting_capture_system") ?? true;
+  // Womit die laufende Aufnahme gestartet wurde; ohne Wert (Seite mitten in
+  // einer Aufnahme geoeffnet) gilt die Einstellung.
+  const [startedWithSystem, setStartedWithSystem] = useState<boolean | null>(
+    null,
+  );
+  // Vorlage fuer die naechste Besprechung: bis der Nutzer waehlt, gilt die
+  // Standardvorlage aus den Einstellungen (`null` = Standardvorlage).
+  const defaultTemplate = getSetting("meeting_default_template_id") ?? null;
+  const [templateChoice, setTemplateChoice] = useState<string | null>(null);
+  const templateId = templateChoice ?? defaultTemplate;
   const [phase, setPhase] = useState<Phase>("idle");
   const [consentOpen, setConsentOpen] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [systemLevel, setSystemLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [autoNotes, setAutoNotes] = useState<AutoNotes | null>(null);
+  // Besprechung, deren automatische KI-Notizen die Statuszeile zeigt.
+  const notesMeetingRef = useRef<string | null>(null);
 
   useEffect(() => {
     commands.meetingsIsRecording().then((r) => {
@@ -52,6 +89,11 @@ export const RecorderCard: React.FC = () => {
           setPhase(payload.paused ? "paused" : "recording");
         } else {
           setPhase("idle");
+          if (payload.status === "processing") {
+            // Ende der Aufnahme: ab jetzt gehoert die Statuszeile dieser Besprechung.
+            notesMeetingRef.current = payload.meeting_id;
+            setAutoNotes(null);
+          }
         }
       } else if (payload.kind === "levels") {
         setMicLevel(payload.mic);
@@ -61,8 +103,24 @@ export const RecorderCard: React.FC = () => {
         setBusy(false);
       }
     });
+    const unNotes = events.meetingNotesEvent.listen((e) => {
+      const payload = e.payload;
+      if (payload.meeting_id !== notesMeetingRef.current) return;
+      if (payload.kind === "progress") {
+        setAutoNotes({
+          kind: "running",
+          step: payload.step,
+          total: payload.total,
+        });
+      } else if (payload.kind === "done") {
+        setAutoNotes({ kind: "done" });
+      } else {
+        setAutoNotes({ kind: "failed", code: payload.code });
+      }
+    });
     return () => {
       un.then((f) => f());
+      unNotes.then((f) => f());
     };
   }, []);
 
@@ -77,7 +135,7 @@ export const RecorderCard: React.FC = () => {
     const result = await commands.meetingsStart(
       title.trim() || t("meetings.record.titlePlaceholder"),
       true,
-      captureSystem,
+      captureSetting,
     );
     setBusy(false);
     setConsentOpen(false);
@@ -85,7 +143,15 @@ export const RecorderCard: React.FC = () => {
       setError(translateMeetingError(result.error, t));
       return;
     }
+    setStartedWithSystem(captureSetting);
+    setAutoNotes(null);
+    notesMeetingRef.current = result.data.id;
     setPhase("recording");
+    // Gewaehlte Vorlage der Besprechung zuordnen; ohne Wahl gilt die
+    // Standardvorlage (der Motor faellt bei `None` selbst darauf zurueck).
+    if (templateId) {
+      void commands.meetingsSetTemplate(result.data.id, templateId);
+    }
   };
 
   const pause = () => {
@@ -98,6 +164,9 @@ export const RecorderCard: React.FC = () => {
 
   const stop = async () => {
     setBusy(true);
+    // Ungespeicherte Notizen sichern, bevor die Aufnahme endet: danach laeuft
+    // der Auto-Lauf und liest den Notizblock.
+    await flushAllNotes();
     const result = await commands.meetingsStop();
     setBusy(false);
     if (result.status === "error") {
@@ -108,16 +177,46 @@ export const RecorderCard: React.FC = () => {
     setTitle("");
     setMicLevel(0);
     setSystemLevel(0);
+    setStartedWithSystem(null);
   };
 
   const recording = phase === "recording";
   const paused = phase === "paused";
   const active = recording || paused;
+  const showSystem = startedWithSystem ?? captureSetting;
+
+  const autoNotesText = (state: AutoNotes): string => {
+    if (state.kind === "running") {
+      return t("meetings.record.autoNotes.running", {
+        step: state.step,
+        total: state.total,
+      });
+    }
+    if (state.kind === "done") return t("meetings.record.autoNotes.done");
+    return AUTO_NOTES_CODES.has(state.code)
+      ? t(`meetings.record.autoNotes.failed.${state.code}`)
+      : t("meetings.record.autoNotes.failed.generic");
+  };
 
   return (
     <SettingsGroup title={t("meetings.title")}>
       <div className="px-4 py-3 space-y-3">
         {error && <Alert variant="error">{error}</Alert>}
+        {!active && autoNotes && (
+          <div data-testid="auto-notes-status" data-state={autoNotes.kind}>
+            <Alert
+              variant={
+                autoNotes.kind === "failed"
+                  ? "warning"
+                  : autoNotes.kind === "done"
+                    ? "success"
+                    : "info"
+              }
+            >
+              {autoNotesText(autoNotes)}
+            </Alert>
+          </div>
+        )}
 
         {!active && (
           <div className="flex gap-2 items-center flex-wrap">
@@ -131,12 +230,25 @@ export const RecorderCard: React.FC = () => {
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
-                checked={captureSystem}
-                onChange={(e) => setCaptureSystem(e.target.checked)}
+                checked={captureSetting}
+                onChange={(e) =>
+                  void updateSetting("meeting_capture_system", e.target.checked)
+                }
                 className="accent-logo-primary"
+                data-testid="capture-system"
               />
               {t("meetings.record.captureSystem")}
             </label>
+          </div>
+        )}
+
+        {!active && (
+          <div data-testid="record-template">
+            <TemplatePicker
+              value={templateId}
+              onChange={(id) => setTemplateChoice(id)}
+              disabled={busy}
+            />
           </div>
         )}
 
@@ -169,7 +281,7 @@ export const RecorderCard: React.FC = () => {
         {active && (
           <div className="space-y-1.5 pt-1">
             <LevelBar label={t("meetings.record.micLevel")} value={micLevel} />
-            {captureSystem && (
+            {showSystem && (
               <LevelBar
                 label={t("meetings.record.systemLevel")}
                 value={systemLevel}
@@ -177,6 +289,8 @@ export const RecorderCard: React.FC = () => {
             )}
           </div>
         )}
+
+        {active && <MeetingChatNotice testId="recording" />}
       </div>
 
       <Dialog
@@ -199,9 +313,12 @@ export const RecorderCard: React.FC = () => {
           </>
         }
       >
-        <p className="text-sm text-text/80 whitespace-pre-wrap">
-          {t("meetings.consent.body")}
-        </p>
+        <div className="space-y-3">
+          <p className="text-sm text-text/80 whitespace-pre-wrap">
+            {t("meetings.consent.body")}
+          </p>
+          <MeetingChatNotice testId="consent" />
+        </div>
       </Dialog>
     </SettingsGroup>
   );

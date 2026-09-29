@@ -806,6 +806,14 @@
     "legacy": "Veraltet"
   },
   "settings": {
+    "meetings": {
+      "captureSystem": "Systemton standardmäßig aufnehmen",
+      "captureSystemDescription": "Vorgabe für das Häkchen „System-Audio mitschneiden“ beim Start. Die letzte Wahl auf der Aufnahmeseite wird hier gemerkt.",
+      "autoEnhance": "KI-Notizen nach der Besprechung automatisch erstellen",
+      "autoEnhanceDescription": "Sobald das Transkript nach dem Stopp vollständig ist, erstellt die KI aus Notizen und Transkript die Besprechungsnotizen. Importe lösen das nie aus. Ohne eingerichteten Sprachmodell-Anbieter passiert nichts.",
+      "defaultTemplate": "Standardvorlage",
+      "defaultTemplateDescription": "Vorlage, die bei neuen Besprechungen vorausgewählt ist."
+    },
     "modelSettings": {
       "title": "{{model}}-Einstellungen"
     },
@@ -1570,7 +1578,29 @@
       "titlePlaceholder": "Titel der Besprechung",
       "captureSystem": "System-Audio (Gegenseite) mitschneiden",
       "micLevel": "Mikrofon",
-      "systemLevel": "System"
+      "systemLevel": "System",
+      "autoNotes": {
+        "running": "KI-Notizen werden erstellt … {{step}}/{{total}}",
+        "done": "Die KI-Notizen sind fertig. Sie stehen in der Besprechung unter „Notizen“.",
+        "failed": {
+          "no_provider": "Es wurden keine KI-Notizen erstellt: Es ist noch kein Sprachmodell-Anbieter eingerichtet. Die Notizen lassen sich später in der Besprechung erstellen.",
+          "no_model": "Es wurden keine KI-Notizen erstellt: Für den gewählten Anbieter ist kein Modell eingetragen.",
+          "memory_low": "Es wurden keine KI-Notizen erstellt: Zu wenig freier Arbeitsspeicher. Bitte andere Programme schließen und die Notizen in der Besprechung erstellen.",
+          "recording_active": "Die KI-Notizen wurden nicht gestartet, weil bereits eine neue Aufnahme läuft. Sie lassen sich danach in der Besprechung erstellen.",
+          "enhance_busy": "Es werden gerade schon KI-Notizen erstellt. Diese Besprechung lässt sich danach von Hand erstellen.",
+          "no_transcript": "Es wurden keine KI-Notizen erstellt: Die Besprechung enthält kein Transkript.",
+          "llm_failed": "Die KI-Notizen konnten nicht erstellt werden. Bitte in der Besprechung erneut versuchen.",
+          "generic": "Die KI-Notizen konnten nicht erstellt werden. Bitte in der Besprechung erneut versuchen."
+        }
+      },
+      "chatNotice": {
+        "title": "Hinweis für den Meeting-Chat",
+        "copy": "Kopieren",
+        "copied": "Kopiert",
+        "copyError": "Kopieren nicht möglich – Text bitte von Hand markieren.",
+        "local": "Hinweis: Ich transkribiere diese Besprechung lokal auf meinem Rechner mit Local Voice AI, um Notizen zu erstellen. Es werden keine Daten an Dritte übertragen.",
+        "remote": "Hinweis: Ich transkribiere diese Besprechung lokal auf meinem Rechner mit Local Voice AI, um Notizen zu erstellen. Für die Notizen wird der Text an {{provider}} übermittelt."
+      }
     },
     "consent": {
       "title": "Einwilligung erforderlich",
