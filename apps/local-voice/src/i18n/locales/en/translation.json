@@ -301,6 +301,12 @@
       "useText": "Use this text",
       "defaultVoice": "Default voice"
     },
+    "layout": {
+      "sideBySide": "Show controls and files side by side",
+      "resizePages": "Resize page list",
+      "resizeRight": "Resize right column",
+      "resizeFiles": "Resize file list"
+    },
     "translateAction": "Translate — writes the translation into the second tab, plays nothing",
     "summarizeHint": "Summarize — always summarizes the original and writes the summary into the third tab, plays nothing",
     "llm": {

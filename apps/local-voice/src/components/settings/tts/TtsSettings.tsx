@@ -24,6 +24,8 @@ import {
   isRightTab,
   type RightTab,
 } from "./WorkspaceSidebars";
+import { ResizeHandle } from "../../ui/ResizeHandle";
+import { useWorkspaceLayout } from "./useWorkspaceLayout";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { PageShell } from "../../ui/PageShell";
 import { SettingContainer } from "../../ui/SettingContainer";
@@ -186,6 +188,9 @@ export const TtsSettings = () => {
     "files",
     isRightTab,
   );
+  // Anordnung rechts vom Editor (gestapelt oder nebeneinander) und die
+  // per Ziehgriff verstellbaren Breiten; alles bleibt ueber Neustarts.
+  const ws = useWorkspaceLayout(pagesCollapsed === "1", filesCollapsed === "1");
   /** Erst nach dem Laden einer Seite darf gespeichert werden — sonst
    *  ueberschriebe der leere Anfangszustand den echten. */
   const pageLoaded = useRef(false);
@@ -1471,7 +1476,10 @@ export const TtsSettings = () => {
       {/* Volle Hoehe: Seiten links, Text in der Mitte, Bedienung rechts vom
         Text, Dateien/Hilfe ganz rechts. Nur die Spalten scrollen, der Kopf
         und der Rahmen stehen (Entscheidung Patrick 14.09. abends). */}
-      <div className="tts-workspace tts-workspace--fill w-full flex gap-4 items-stretch">
+      <div
+        ref={ws.ref}
+        className="tts-workspace tts-workspace--fill w-full flex gap-4 items-stretch"
+      >
         <PagesSidebar
           pages={pages}
           activeId={activePage}
@@ -1479,7 +1487,20 @@ export const TtsSettings = () => {
           onToggle={() => setPagesCollapsed(pagesCollapsed === "1" ? "0" : "1")}
           onSelect={setActivePage}
           onChanged={() => void reloadPages()}
+          width={ws.pages.width}
         />
+        {pagesCollapsed !== "1" && (
+          <ResizeHandle
+            testId="resize-pages"
+            label={t("tts.layout.resizePages")}
+            direction={1}
+            value={ws.pages.width}
+            min={ws.pages.min}
+            max={ws.pages.max}
+            defaultValue={ws.pages.def}
+            onChange={ws.pages.set}
+          />
+        )}
         <div className="flex-1 min-w-0 min-h-0 flex gap-4">
           <div className="tts-editor flex-1 min-w-0 min-h-0 flex flex-col rounded-lg border border-mid-gray/20 bg-background overflow-hidden">
             {truncated && (
@@ -1639,8 +1660,41 @@ export const TtsSettings = () => {
           {/* Bedienung rechts vom Text: Transport, Tempo, Stimme, Speichern,
             aktueller Satz, Ausdruck & Sprechstil, Schreibregeln. Scrollt fuer
             sich, wenn die Klappen offen sind. */}
+          {/* Rechte Spalte: gestapelt sind Bedienung und Dateien EINE Spalte
+            (Griff davor, Breite ws.right); nebeneinander loest sich der
+            Rahmen auf (display: contents) und die beiden stehen wie frueher
+            als Geschwister neben dem Editor, der Griff sitzt vor den Dateien.
+            prettier-ignore: der Rahmen zieht den Inhalt der aside um zwei
+            Spalten ein -- ein Einrueck-Diff ueber ~600 Zeilen, der jede
+            parallele Aenderung darin zum Konflikt machte. Nach dem Merge der
+            Pakete einmal entfernen und TtsSettings.tsx formatieren. */}
+          {ws.stacked && (
+            <ResizeHandle
+              testId="resize-right"
+              label={t("tts.layout.resizeRight")}
+              direction={-1}
+              value={ws.right.width}
+              min={ws.right.min}
+              max={ws.right.max}
+              defaultValue={ws.right.def}
+              onChange={ws.right.set}
+            />
+          )}
+          {/* prettier-ignore */}
+          <div
+            data-testid="tts-right-column"
+            className={ws.stacked ? "tts-right-column--stacked" : "contents"}
+            style={
+              ws.stacked
+                ? ({ "--tts-w": `${ws.right.width}px` } as React.CSSProperties)
+                : undefined
+            }
+          >
           <aside
-            className="tts-controls w-72 shrink-0 min-h-0 overflow-y-auto space-y-3 pe-1"
+            data-testid="tts-controls"
+            className={`tts-controls shrink-0 min-h-0 overflow-y-auto space-y-3 pe-1 ${
+              ws.stacked ? "tts-controls--stacked" : "w-72"
+            }`}
             aria-label={t("tts.controls")}
           >
             <div className="flex gap-2 items-center flex-wrap">
@@ -2239,6 +2293,40 @@ export const TtsSettings = () => {
               </p>
             )}
           </aside>
+          {!ws.stacked && filesCollapsed !== "1" && (
+            <ResizeHandle
+              testId="resize-right"
+              label={t("tts.layout.resizeFiles")}
+              direction={-1}
+              value={ws.right.width}
+              min={ws.right.min}
+              max={ws.right.max}
+              defaultValue={ws.right.def}
+              onChange={ws.right.set}
+            />
+          )}
+          <FilesSidebar
+            pageId={activePage}
+            collapsed={filesCollapsed === "1"}
+            onToggle={() =>
+              setFilesCollapsed(filesCollapsed === "1" ? "0" : "1")
+            }
+            tab={rightTab}
+            onTabChange={setRightTab}
+            helpSection="vorlesen"
+            width={ws.right.width}
+            stacked={ws.stacked}
+            onLayoutToggle={ws.toggleLayout}
+            /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
+             falsche Zeile aendern und erneut erzeugen. Die unveraenderten
+             Saetze kommen dann aus dem Satz-Cache, nur die geaenderten gehen
+             durch die Engine — ein Hoerspiel muss dafuer nicht neu entstehen. */
+            onUseText={(value) => {
+              setTab("original");
+              setText(value);
+            }}
+          />
+          </div>
 
           <Dialog
             open={checkDialog !== null}
@@ -2430,22 +2518,6 @@ export const TtsSettings = () => {
             </p>
           </Dialog>
         </div>
-        <FilesSidebar
-          pageId={activePage}
-          collapsed={filesCollapsed === "1"}
-          onToggle={() => setFilesCollapsed(filesCollapsed === "1" ? "0" : "1")}
-          tab={rightTab}
-          onTabChange={setRightTab}
-          helpSection="vorlesen"
-          /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
-           falsche Zeile aendern und erneut erzeugen. Die unveraenderten
-           Saetze kommen dann aus dem Satz-Cache, nur die geaenderten gehen
-           durch die Engine — ein Hoerspiel muss dafuer nicht neu entstehen. */
-          onUseText={(value) => {
-            setTab("original");
-            setText(value);
-          }}
-        />
       </div>
     </PageShell>
   );
