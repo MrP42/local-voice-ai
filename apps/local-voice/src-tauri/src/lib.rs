@@ -1025,7 +1025,7 @@ fn run_simulate_opts(
     use managers::meetings::simulate::simulate_with_app;
 
     let model_id = args.model.clone().unwrap_or_else(|| {
-        TranscriptionManager::meeting_model_target(&get_settings(app))
+        tm.meeting_model_target(&get_settings(app))
     });
     if model_id.is_empty() {
         eprintln!("error: no model selected (pass --model or pick one in the app)");

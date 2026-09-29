@@ -1886,8 +1886,8 @@
     },
     "model": {
       "title": "Transkriptionsmodell",
-      "likeDictation": "Wie Diktat (Standard)",
-      "description": "Eigenes Modell für Besprechungen und Importe. Streaming-Modelle sind fürs Live-Diktat optimiert — Besprechungen transkribieren in Blöcken und profitieren von Batch-Modellen wie Parakeet V3.",
+      "likeDictation": "Automatisch (Parakeet V3 GGUF, sonst wie Diktat)",
+      "description": "Eigenes Modell für Besprechungen und Importe. Streaming-Modelle sind fürs Live-Diktat optimiert — Besprechungen transkribieren in Blöcken und profitieren von Batch-Modellen wie Parakeet V3. Automatisch: Parakeet V3 GGUF Q8 (genauer als die ONNX-Fassung), sobald es unter Modelle heruntergeladen ist; sonst das Diktatmodell.",
       "finalTitle": "Enddurchlauf nach dem Stopp",
       "finalDescription": "Nach dem Stopp schreibt ein genaueres Modell das ganze Transkript neu; KI-Notizen entstehen erst danach. Automatisch: mit Grafikkarte Whisper Large v3 (sonst Qwen3-ASR 1.7B), ohne Grafikkarte bleibt das Live-Transkript. Ein fest gewähltes Modell läuft auch ohne Grafikkarte, dann dauert eine Stunde Besprechung etwa eine Viertelstunde.",
       "finalAuto": "Automatisch (empfohlen)",

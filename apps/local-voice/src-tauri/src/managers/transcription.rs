@@ -812,14 +812,44 @@ impl TranscriptionManager {
         Ok(())
     }
 
-    /// The model meetings should transcribe with: the dedicated
-    /// `meeting_model` when set, otherwise the dictation model. Pure so the
-    /// fallback rule is testable (empty/whitespace counts as "not set").
-    pub fn meeting_model_target(settings: &AppSettings) -> String {
-        match settings.meeting_model.as_deref().map(str::trim) {
-            Some(id) if !id.is_empty() => id.to_string(),
-            _ => settings.selected_model.clone(),
+    /// The model meetings should transcribe with, see [`choose_meeting_model`].
+    /// Asks the registry whether the default GGUF is on disk; logs which model
+    /// was picked and why (a fallback is only a hint, never an error).
+    pub fn meeting_model_choice(&self, settings: &AppSettings) -> MeetingModelChoice {
+        let default_installed = self
+            .model_manager
+            .get_model_info(MEETING_DEFAULT_MODEL_ID)
+            .is_some_and(|m| m.is_downloaded);
+        let choice = choose_meeting_model(settings, default_installed);
+        match &choice {
+            MeetingModelChoice::Explicit(id) => {
+                debug!("meetings: Modell '{id}' (Nutzerwahl)");
+            }
+            MeetingModelChoice::Default(id) => {
+                debug!("meetings: Standardmodell '{id}'");
+            }
+            MeetingModelChoice::Fallback(id) => {
+                info!(
+                    "meetings: Standardmodell '{MEETING_DEFAULT_MODEL_ID}' nicht installiert,                      Rueckfall auf '{id}' (Hinweis: unter Modelle herunterladen, dann rechnet                      die Mitschrift mit geringerer Fehlerrate)"
+                );
+            }
         }
+        choice
+    }
+
+    /// Convenience over [`Self::meeting_model_choice`] for the callers that only
+    /// need the id.
+    pub fn meeting_model_target(&self, settings: &AppSettings) -> String {
+        self.meeting_model_choice(settings).id().to_string()
+    }
+
+    /// Kicks off loading the meeting model. When the automatic default fails to
+    /// load (broken file, no RAM), the dictation model is loaded instead so a
+    /// meeting is never left without a transcriber.
+    pub fn initiate_meeting_model_load(&self, settings: &AppSettings) {
+        let choice = self.meeting_model_choice(settings);
+        let fallback = choice.load_fallback(settings);
+        self.initiate_model_load_target_with_fallback(choice.id(), fallback.as_deref());
     }
 
     /// Like `initiate_model_load`, but for an explicit target: swaps the
@@ -831,6 +861,12 @@ impl TranscriptionManager {
     /// starts would be transcribed by the meeting model — live meetings
     /// themselves block dictation via the recorder guard.
     pub fn initiate_model_load_target(&self, model_id: &str) {
+        self.initiate_model_load_target_with_fallback(model_id, None);
+    }
+
+    /// [`Self::initiate_model_load_target`] plus an optional second model that
+    /// is loaded when the first fails to load.
+    pub fn initiate_model_load_target_with_fallback(&self, model_id: &str, fallback: Option<&str>) {
         let mut is_loading = self.is_loading.lock().unwrap();
         if *is_loading {
             return;
@@ -850,6 +886,7 @@ impl TranscriptionManager {
         *is_loading = true;
         let self_clone = self.clone();
         let target = model_id.to_string();
+        let fallback = fallback.map(str::to_string);
         thread::spawn(move || {
             if reload_pending {
                 self_clone
@@ -858,6 +895,12 @@ impl TranscriptionManager {
             }
             if let Err(e) = self_clone.load_model(&target) {
                 error!("Failed to load model: {}", e);
+                if let Some(fallback) = fallback.filter(|f| *f != target) {
+                    warn!("meetings: Rueckfall auf Modell '{fallback}'");
+                    if let Err(e) = self_clone.load_model(&fallback) {
+                        error!("Failed to load fallback model: {}", e);
+                    }
+                }
             }
             let mut is_loading = self_clone.is_loading.lock().unwrap();
             *is_loading = false;
@@ -2298,6 +2341,62 @@ impl StreamPerf {
     }
 }
 
+/// M2-P2g (Befund B1): Standard-Live-Modell fuer Besprechungen. Parakeet TDT
+/// 0.6B v3 als GGUF Q8 ueber transcribe-cpp: gleiches Modell wie die ONNX-Fassung,
+/// aber 5,55 % statt 7,86 % WER auf FLEURS-de (docs/m2-evidence/bench.md) und mit
+/// Wortzeiten. Katalog-ID = `"{repo_id}/{datei}"`.
+pub const MEETING_DEFAULT_MODEL_ID: &str =
+    "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf";
+
+/// Welches Modell eine Besprechung nimmt und warum.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MeetingModelChoice {
+    /// Der Nutzer hat in den Einstellungen ein Modell gewaehlt.
+    Explicit(String),
+    /// Keine Wahl, und das Standard-GGUF ist installiert.
+    Default(String),
+    /// Keine Wahl, Standard-GGUF fehlt: das Diktatmodell wie bisher.
+    Fallback(String),
+}
+
+impl MeetingModelChoice {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Explicit(id) | Self::Default(id) | Self::Fallback(id) => id,
+        }
+    }
+
+    /// Das Modell, das zu laden ist, wenn `id()` sich nicht laden laesst. Nur der
+    /// selbst gewaehlte Standard faellt zurueck; eine ausdrueckliche Wahl wird
+    /// nie heimlich ersetzt.
+    pub fn load_fallback(&self, settings: &AppSettings) -> Option<String> {
+        match self {
+            Self::Default(_) => Some(settings.selected_model.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// Reine Regel fuer das Besprechungsmodell: die Nutzerwahl (`meeting_model`,
+/// leer/Leerraum = nicht gesetzt) gewinnt immer; ohne Wahl gilt das Standard-GGUF,
+/// wenn installiert, sonst das Diktatmodell (Verhalten vor P2g). Diktat selbst
+/// bleibt unberuehrt.
+pub fn choose_meeting_model(settings: &AppSettings, default_installed: bool) -> MeetingModelChoice {
+    match settings.meeting_model.as_deref().map(str::trim) {
+        Some(id) if !id.is_empty() => MeetingModelChoice::Explicit(id.to_string()),
+        _ if default_installed => MeetingModelChoice::Default(MEETING_DEFAULT_MODEL_ID.to_string()),
+        _ => MeetingModelChoice::Fallback(settings.selected_model.clone()),
+    }
+}
+
+/// [`choose_meeting_model`] nur als ID.
+#[cfg(test)]
+fn meeting_model_for(settings: &AppSettings, default_installed: bool) -> String {
+    choose_meeting_model(settings, default_installed)
+        .id()
+        .to_string()
+}
+
 /// A transcript span with millisecond timestamps. Produced by
 /// `transcribe_segments()` (see docs/superpowers/plans/2026-08-19-m8-meetings-fundament.md).
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -2989,24 +3088,105 @@ mod tests {
     }
 
     #[test]
-    fn meetings_use_their_own_model_and_fall_back_to_dictation() {
+    fn meeting_default_model_is_the_parakeet_v3_gguf_q8_from_the_catalog() {
+        // B1 (M2-P2g): 5,55 % statt 7,86 % WER auf FLEURS-de. Der Eintrag muss
+        // im Katalog stehen und ueber HuggingFace herunterladbar sein.
+        assert_eq!(
+            MEETING_DEFAULT_MODEL_ID,
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf"
+        );
+        let entry = crate::catalog::CATALOG
+            .iter()
+            .find(|d| d.id == MEETING_DEFAULT_MODEL_ID)
+            .expect("Standardmodell fuer Besprechungen fehlt im Katalog");
+        assert!(matches!(
+            entry.source,
+            crate::managers::model::ModelSource::HuggingFace { .. }
+        ));
+        assert_eq!(entry.default_quant.as_deref(), Some("Q8_0"));
+        assert!(
+            crate::catalog::file_in_catalog(
+                "parakeet-tdt-0.6b-v3-Q8_0.gguf",
+                Some("handy-computer/parakeet-tdt-0.6b-v3-gguf")
+            )
+            .is_some(),
+            "Datei muss mit Groesse und Hash im Katalog stehen"
+        );
+    }
+
+    #[test]
+    fn meetings_default_to_the_gguf_when_installed() {
         let mut settings = crate::settings::get_default_settings();
         settings.selected_model = "diktat-modell".into();
+        settings.meeting_model = None;
+        let choice = choose_meeting_model(&settings, true);
         assert_eq!(
-            TranscriptionManager::meeting_model_target(&settings),
-            "diktat-modell",
-            "ohne eigenes Meeting-Modell gilt das Diktat-Modell"
+            choice,
+            MeetingModelChoice::Default(MEETING_DEFAULT_MODEL_ID.into())
+        );
+        assert_eq!(choice.id(), MEETING_DEFAULT_MODEL_ID);
+        assert_eq!(meeting_model_for(&settings, true), MEETING_DEFAULT_MODEL_ID);
+    }
+
+    #[test]
+    fn meetings_fall_back_to_the_dictation_model_without_the_gguf() {
+        let mut settings = crate::settings::get_default_settings();
+        settings.selected_model = "parakeet-tdt-0.6b-v3".into();
+        settings.meeting_model = None;
+        assert_eq!(
+            choose_meeting_model(&settings, false),
+            MeetingModelChoice::Fallback("parakeet-tdt-0.6b-v3".into()),
+            "ohne GGUF: Rueckfall wie bisher (Diktatmodell), kein Abbruch"
         );
         settings.meeting_model = Some("  ".into());
         assert_eq!(
-            TranscriptionManager::meeting_model_target(&settings),
-            "diktat-modell",
+            meeting_model_for(&settings, false),
+            "parakeet-tdt-0.6b-v3",
             "leere Eintraege zaehlen als nicht gesetzt"
         );
-        settings.meeting_model = Some("parakeet-v3".into());
         assert_eq!(
-            TranscriptionManager::meeting_model_target(&settings),
-            "parakeet-v3"
+            meeting_model_for(&settings, true),
+            MEETING_DEFAULT_MODEL_ID,
+            "leer + installiert = Standard"
+        );
+    }
+
+    #[test]
+    fn an_explicit_meeting_model_always_wins() {
+        let mut settings = crate::settings::get_default_settings();
+        settings.selected_model = "diktat-modell".into();
+        settings.meeting_model = Some("parakeet-v3".into());
+        for installed in [true, false] {
+            assert_eq!(
+                choose_meeting_model(&settings, installed),
+                MeetingModelChoice::Explicit("parakeet-v3".into())
+            );
+            assert_eq!(meeting_model_for(&settings, installed), "parakeet-v3");
+        }
+        // Auch die ONNX-Variante bleibt waehlbar, obwohl das GGUF installiert ist.
+        settings.meeting_model = Some("parakeet-tdt-0.6b-v3".into());
+        assert_eq!(meeting_model_for(&settings, true), "parakeet-tdt-0.6b-v3");
+    }
+
+    #[test]
+    fn only_the_fallback_needs_a_second_model_to_try() {
+        let mut settings = crate::settings::get_default_settings();
+        settings.selected_model = "diktat-modell".into();
+        settings.meeting_model = None;
+        assert_eq!(
+            choose_meeting_model(&settings, true).load_fallback(&settings),
+            Some("diktat-modell".to_string()),
+            "Standard-GGUF laesst sich nicht laden -> Diktatmodell"
+        );
+        assert_eq!(
+            choose_meeting_model(&settings, false).load_fallback(&settings),
+            None
+        );
+        settings.meeting_model = Some("x".into());
+        assert_eq!(
+            choose_meeting_model(&settings, true).load_fallback(&settings),
+            None,
+            "eine ausdrueckliche Wahl wird nie heimlich ersetzt"
         );
     }
 

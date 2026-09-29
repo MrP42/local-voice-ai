@@ -177,10 +177,7 @@ fn run_import(
         // same in start() (recorder.rs). Without this, any import after the
         // idle unload (default 5 min) failed immediately. Meetings may use
         // their own model (`meeting_model`, dictation model as fallback).
-        let target = crate::managers::transcription::TranscriptionManager::meeting_model_target(
-            &crate::settings::get_settings(app),
-        );
-        tm.initiate_model_load_target(&target);
+        tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
         let (wav_path, _tmp_guard) = media::ensure_wav(path, 16_000)?;
         let samples = read_wav_i16_mono_16k(&wav_path)?;
 
@@ -407,10 +404,7 @@ pub(super) fn transcribe_chunk_resilient(
                     chunk.offset_ms
                 );
                 if attempt < CHUNK_ATTEMPTS {
-                    let target = TranscriptionManager::meeting_model_target(
-                        &crate::settings::get_settings(app),
-                    );
-                    tm.initiate_model_load_target(&target);
+                    tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
             }

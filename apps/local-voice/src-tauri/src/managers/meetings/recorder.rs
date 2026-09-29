@@ -522,10 +522,8 @@ impl MeetingRecorderManager {
 
         // Load the meeting model (dedicated `meeting_model` or the dictation
         // model as fallback); transcribe_segments waits on the load condvar.
-        let target = crate::managers::transcription::TranscriptionManager::meeting_model_target(
-            &crate::settings::get_settings(&self.app),
-        );
-        self.transcription.initiate_model_load_target(&target);
+        self.transcription
+            .initiate_meeting_model_load(&crate::settings::get_settings(&self.app));
 
         let mic_capture = MeetingMicCapture::start(
             crate::settings::get_settings(&self.app).selected_microphone,
@@ -910,7 +908,7 @@ impl MeetingRecorderManager {
     pub fn recover_orphans(&self) {
         let settings = crate::settings::get_settings(&self.app);
         let choice = FinalChoice::parse(&settings.meeting_final_model);
-        let catch_up_model = TranscriptionManager::meeting_model_target(&settings);
+        let catch_up_model = self.transcription.meeting_model_target(&settings);
         let mut jobs: Vec<JobSpec> = Vec::new();
         let mut offset = 0u32;
         let mut recovered: Vec<String> = Vec::new();

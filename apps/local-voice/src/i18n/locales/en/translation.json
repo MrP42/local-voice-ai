@@ -1886,8 +1886,8 @@
     },
     "model": {
       "title": "Transcription model",
-      "likeDictation": "Same as dictation (default)",
-      "description": "Dedicated model for meetings and imports. Streaming models are tuned for live dictation — meetings transcribe in batches and profit from batch models like Parakeet V3.",
+      "likeDictation": "Automatic (Parakeet V3 GGUF, otherwise same as dictation)",
+      "description": "Dedicated model for meetings and imports. Streaming models are tuned for live dictation — meetings transcribe in batches and profit from batch models like Parakeet V3. Automatic: Parakeet V3 GGUF Q8 (more accurate than the ONNX build) once downloaded under Models; otherwise the dictation model.",
       "finalTitle": "Final pass after stopping",
       "finalDescription": "After stopping, a more accurate model rewrites the whole transcript; AI notes are created only afterwards. Automatic: with a graphics card Whisper Large v3 (otherwise Qwen3-ASR 1.7B), without one the live transcript stays. A model picked explicitly also runs without a graphics card; an hour of meeting then takes about a quarter of an hour.",
       "finalAuto": "Automatic (recommended)",
