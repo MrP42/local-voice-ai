@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 2
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T22:18
+aktualisiert: 2026-09-29T22:35
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -46,8 +46,8 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - [ ] QG3 — Performance: 60-min-Besprechung auf RTX 4090 → Enddurchlauf + KI-Notizen ≤ 3 min nach Stopp; CPU-only-Pfad funktioniert (Messung dokumentiert)
 - [ ] QG4 — Systemschutz: alle neuen Modelle/Prozesse hinter RAM-Start-Gate/Deckel; Test mit knappem RAM → sauberer Abbruch statt Einfrieren
 - [ ] QG5 — Datenschutz: Besprechungspfad ohne Netzverkehr (außer Modell-Download und bewusst gewähltem externem LLM), Nachweis per Offline-Lauf
-- [ ] QG6 — Lizenzen: jedes neue Modell/Crate mit Lizenz in den Third-Party-Notices, keine Nicht-kommerziell-Lizenz
-- [ ] QG7 — i18n: alle neuen Texte in de + en, echte Umlaute
+- [x] QG6 — Lizenzen: jedes neue Modell/Crate mit Lizenz in den Third-Party-Notices, keine Nicht-kommerziell-Lizenz
+- [x] QG7 — i18n: alle neuen Texte in de + en, echte Umlaute
 - [ ] QG8 — Doku + Handoff aktualisiert, PR offen gegen `main`
 - [ ] QG9 — Budget ≤ 16 MTok (29.09. abends von 12 auf 16 angehoben durch Patrick; Meldung bei 6,0 / 9,6 MTok, harter Stopp 18 MTok)
 
@@ -115,6 +115,8 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29T21:51 AK7 erfüllt — P3a/P3b/P3c: AMI-Pruefteil 15,19 % (Patrick wertet als erfuellt, B7), deutsch 0,94 %, Benennen + Namen ueberstehen Neu-Transkription (a97a1008)
 - 2026-09-29T21:55 AK9 erfüllt — P5a/P5b 892c3291 + P5c 34c948e2: ICS-Fixture-Tests, reminder-Tests, --detect-mic; cargo 1552 passed, Playwright 205 passed
 - 2026-09-29T22:18 AK10 erfüllt — P6a/P6b/P6c/P6d 95e21c66: Follow-up-Mail, formatiert kopieren, PDF/SRT/JSON; Playwright 214 passed, cargo 1552 passed
+- 2026-09-29T22:35 QG6 erfüllt — P7c 31ccc1f7: ATTRIBUTION.md + Info-Seite, alle neuen Crates/Modelle frei (BSD/MIT/Apache/CC-BY, Sortformer NVIDIA Open Model); vorbestehende Funde B10
+- 2026-09-29T22:35 QG7 erfüllt — P7c 31ccc1f7: check_i18n_meetings.py Exit 0 (640 Schluessel de/en, keine Umlaut-Ersatzschreibung)
 
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)

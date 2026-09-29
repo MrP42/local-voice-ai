@@ -49,3 +49,9 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beobachtet: volle Suite 30-37 rot, einzeln gruen; alle Worktrees nutzen Port 1420 mit reuseExistingServer -> Tests laufen gegen fremden Vite-Server.
 - Konsequenz: Planer prueft die UI-Suite nur ohne parallele Playwright-Laeufe; dauerhaft Paket P7a (Port je Worktree).
 - Status: erledigt (P7a d4ffa6cf)
+
+## B10 — P7c: vorbestehende Lizenzfunde außerhalb des Goals (29.09. 22:40)
+- Beobachtet: mp3lame-encoder 0.2.5 ist LGPL-3.0 (deny.toml behauptet das Gegenteil); ASR-Katalog enthält Canary 1B (CC-BY-NC-4.0, nicht vorgewählt, nicht im Besprechungspfad).
+- Beleg: docs/m2-evidence/ATTRIBUTION.md (Befund-Absätze), cargo metadata.
+- Konsequenz: nicht aus diesem Goal; QG6 betrifft nur neue Crates/Modelle (alle frei). An Patrick gemeldet, Entscheidung außerhalb des Goals.
+- Status: erledigt (dokumentiert, an Patrick gemeldet; nicht Goal-Scope)
