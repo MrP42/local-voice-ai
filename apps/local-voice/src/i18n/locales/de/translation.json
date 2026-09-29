@@ -2080,6 +2080,41 @@
         "failed": "Ordner konnte nicht gespeichert werden."
       }
     },
+    "export": {
+      "button": "Exportieren",
+      "buttonTitle": "Die Besprechung in eine Datei exportieren oder formatiert kopieren",
+      "title": "Besprechung exportieren",
+      "close": "Schließen",
+      "audioHint": "Audio wird nie exportiert.",
+      "partsTitle": "Enthaltene Teile",
+      "parts": {
+        "notes": "Meine Notizen",
+        "ai_notes": "KI-Notizen",
+        "minutes": "Protokoll",
+        "transcript": "Transkript",
+        "participants": "Teilnehmende"
+      },
+      "noParts": "Wähle mindestens einen Teil aus.",
+      "formatsTitle": "Als Datei speichern",
+      "formats": {
+        "docx": "Word",
+        "txt": "TXT",
+        "md": "Markdown",
+        "html": "HTML",
+        "pdf": "PDF",
+        "srt": "SRT",
+        "vtt": "VTT",
+        "json": "JSON"
+      },
+      "subtitleHint": "Untertitel (SRT, VTT) enthalten immer nur das Transkript.",
+      "copy": "Formatiert kopieren",
+      "copyTitle": "Die Besprechung als HTML und Klartext in die Zwischenablage legen – beim Einfügen in Word oder eine Mail bleiben Überschriften und Listen erhalten",
+      "copied": "Formatiert in die Zwischenablage kopiert.",
+      "copyError": "Kopieren fehlgeschlagen: {{error}}",
+      "saved": "Exportiert nach {{path}}",
+      "error": "Export fehlgeschlagen: {{error}}",
+      "pdfFallback": "Alternative: als HTML speichern und die Datei im Browser drucken."
+    },
     "followup": {
       "button": "Follow-up-Mail",
       "buttonTitle": "Aus dieser Besprechung einen Mailentwurf erzeugen, den du prüfen und bearbeiten kannst",

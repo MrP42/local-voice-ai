@@ -2083,6 +2083,41 @@
         "failed": "The folder could not be saved."
       }
     },
+    "export": {
+      "button": "Export",
+      "buttonTitle": "Export the meeting to a file or copy it with formatting",
+      "title": "Export meeting",
+      "close": "Close",
+      "audioHint": "Audio is never exported.",
+      "partsTitle": "Included parts",
+      "parts": {
+        "notes": "My notes",
+        "ai_notes": "AI notes",
+        "minutes": "Minutes",
+        "transcript": "Transcript",
+        "participants": "Participants"
+      },
+      "noParts": "Select at least one part.",
+      "formatsTitle": "Save as file",
+      "formats": {
+        "docx": "Word",
+        "txt": "TXT",
+        "md": "Markdown",
+        "html": "HTML",
+        "pdf": "PDF",
+        "srt": "SRT",
+        "vtt": "VTT",
+        "json": "JSON"
+      },
+      "subtitleHint": "Subtitles (SRT, VTT) only ever contain the transcript.",
+      "copy": "Copy formatted",
+      "copyTitle": "Put the meeting on the clipboard as HTML and plain text - headings and lists survive pasting into Word or an email",
+      "copied": "Copied to the clipboard with formatting.",
+      "copyError": "Copy failed: {{error}}",
+      "saved": "Exported to {{path}}",
+      "error": "Export failed: {{error}}",
+      "pdfFallback": "Alternative: save as HTML and print the file from your browser."
+    },
     "followup": {
       "button": "Follow-up email",
       "buttonTitle": "Create an email draft from this meeting that you can review and edit",
