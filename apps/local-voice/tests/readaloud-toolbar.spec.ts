@@ -82,9 +82,13 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "page_dir") return "C:/projects/p1";
           if (cmd === "tts_list_downloads") return [];
           if (cmd === "get_custom_sounds") return { start: false, stop: false };
+          // Testweise vorgegebene Stimmenliste (window.__voices), sonst leer.
+          if (cmd === "tts_list_voices")
+            return (
+              (window as unknown as { __voices?: string[] }).__voices ?? []
+            );
           if (
             cmd === "tts_list_voice_infos" ||
-            cmd === "tts_list_voices" ||
             cmd === "llm_ps" ||
             cmd === "tts_reading_list" ||
             cmd.includes("history") ||
@@ -469,14 +473,165 @@ for (const size of [
   });
 }
 
+// Auswahllisten in der gestapelten Bedienspalte: Die Liste schwebt ueber dem
+// Dateibereich (Portal an body), die Bedienspalte scrollt dabei nie. Belegt
+// wird das wie bei den Menues per elementFromPoint statt toBeVisible().
+const VOICES = ["anna", "ben", "clara", "dora", "emil", "fritz", "gustav"];
+
+async function expectFloatingSelectMenu(
+  page: Page,
+  size: { width: number; height: number },
+  what: string,
+  minOptions = 4,
+) {
+  const menu = page.locator(".app-select__menu");
+  await expect(menu, `${what}: Liste offen`).toBeVisible();
+  const report = await page.evaluate(() => {
+    const controls = document.querySelector<HTMLElement>(
+      '[data-testid="tts-controls"]',
+    )!;
+    const menuEl = document.querySelector<HTMLElement>(".app-select__menu")!;
+    const list = menuEl.querySelector<HTMLElement>(".app-select__menu-list")!;
+    const listRect = list.getBoundingClientRect();
+    const menuRect = menuEl.getBoundingClientRect();
+    const options = Array.from(
+      menuEl.querySelectorAll<HTMLElement>(".app-select__option"),
+    )
+      .map((el) => ({ el, r: el.getBoundingClientRect() }))
+      // Sichtbar = ganz im Ausschnitt der (ggf. eigens scrollenden) Liste.
+      .filter(
+        ({ r }) =>
+          r.top >= listRect.top - 0.5 && r.bottom <= listRect.bottom + 0.5,
+      )
+      .map(({ el, r }) => {
+        const hit = document.elementFromPoint(
+          r.left + r.width / 2,
+          r.top + r.height / 2,
+        );
+        return {
+          name: (el.textContent ?? "").trim(),
+          hit: !!hit && (hit === el || el.contains(hit)),
+        };
+      });
+    return {
+      controlsScrollTop: controls.scrollTop,
+      controlsOverflow: controls.scrollHeight - controls.clientHeight,
+      inWindow:
+        menuRect.left >= 0 &&
+        menuRect.top >= 0 &&
+        menuRect.right <= window.innerWidth &&
+        menuRect.bottom <= window.innerHeight,
+      inControls: controls.contains(menuEl),
+      options,
+    };
+  });
+  expect(report.controlsScrollTop, `${what}: Spalte scrollt`).toBe(0);
+  expect(
+    report.controlsOverflow,
+    `${what}: aeussere Scrollbar in der Bedienspalte`,
+  ).toBeLessThanOrEqual(1);
+  expect(report.inControls, `${what}: Liste steckt in der Bedienspalte`).toBe(
+    false,
+  );
+  expect(report.inWindow, `${what}: Liste ragt aus dem Fenster`).toBe(true);
+  expect(
+    report.options.length,
+    `${what}: zu wenige sichtbare Eintraege`,
+  ).toBeGreaterThanOrEqual(minOptions);
+  for (const option of report.options) {
+    expect(option.hit, `${what}: "${option.name}" ist verdeckt`).toBe(true);
+  }
+  void size;
+}
+
+for (const size of [
+  { width: 1920, height: 1050 },
+  { width: 1366, height: 768 },
+]) {
+  test(`select lists float above the file area in the stacked column at ${size.width}x${size.height}`, async ({
+    page,
+  }) => {
+    await page.addInitScript((voices) => {
+      (window as unknown as { __voices: string[] }).__voices = voices;
+    }, VOICES);
+    await page.setViewportSize(size);
+    await openReadAloud(page);
+    await expect(page.getByTestId("tts-controls")).toHaveClass(
+      /tts-controls--stacked/,
+    );
+
+    // Stimmen-Select: Liste offen, Wahl uebernimmt die Stimme.
+    const voice = page.getByTestId("voice-select");
+    await voice.locator(".app-select__control").click();
+    await expectFloatingSelectMenu(page, size, "Stimme");
+    await page
+      .locator(".app-select__option", { hasText: /^dora$/ })
+      .evaluate((el) => (el as HTMLElement).click());
+    await expect(page.locator(".app-select__menu")).toHaveCount(0);
+    await expect(voice).toContainText("dora");
+
+    // Zielsprache (Reiter Uebersetzung).
+    await page.getByRole("tab", { name: "Übersetzung", exact: true }).click();
+    const lang = page.locator(".tts-controls .app-select__control").last();
+    await lang.click();
+    await expectFloatingSelectMenu(page, size, "Zielsprache");
+    const langOption = page.locator(".app-select__option").nth(1);
+    const langName = ((await langOption.textContent()) ?? "").trim();
+    await langOption.evaluate((el) => (el as HTMLElement).click());
+    await expect(page.locator(".app-select__menu")).toHaveCount(0);
+    await expect(lang).toContainText(langName);
+
+    // Select im Optionen-Popover: Popover bleibt bis zur Wahl offen.
+    await page
+      .getByRole("tab", { name: "Zusammenfassung", exact: true })
+      .click();
+    await page.getByTestId("tts-action-summary-options").click();
+    const popover = page.getByTestId("tts-summary-options");
+    await expect(popover).toBeVisible();
+    const first = popover.locator(".app-select__control").first();
+    await first.click();
+    await expectFloatingSelectMenu(page, size, "Popover-Select", 3);
+    await expect(popover).toBeVisible();
+    // Escape schliesst zuerst nur die Liste, nicht das Popover dahinter.
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".app-select__menu")).toHaveCount(0);
+    await expect(popover).toBeVisible();
+    await first.click();
+    await expect(page.locator(".app-select__menu")).toBeVisible();
+    const optionBox = await page
+      .locator(".app-select__option", { hasText: "Lang" })
+      .boundingBox();
+    // Echter Mausklick (mousedown zaehlt fuer die Aussenklick-Erkennung).
+    await page.mouse.click(
+      optionBox!.x + optionBox!.width / 2,
+      optionBox!.y + optionBox!.height / 2,
+    );
+    await expect(popover).toBeVisible();
+    await expect(first).toContainText("Lang");
+    await expect(page.locator(".app-select__menu")).toHaveCount(0);
+  });
+}
+
 test("screenshots of the control column", async ({ page }) => {
   test.skip(
     !process.env.SCREENS_DIR,
     "nur mit SCREENS_DIR (Aufnahme, kein Verhaltenstest)",
   );
+  await page.addInitScript((voices) => {
+    (window as unknown as { __voices: string[] }).__voices = voices;
+  }, VOICES);
   await page.setViewportSize({ width: 1920, height: 1050 });
   await openReadAloud(page);
   const dir = path.resolve(process.env.SCREENS_DIR!);
+  await page
+    .getByTestId("voice-select")
+    .locator(".app-select__control")
+    .click();
+  await page.screenshot({
+    path: path.join(dir, "stimmen-offen-1920.png"),
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
   await openMenu(page);
   await page.screenshot({
     path: path.join(dir, "menue-offen-1920.png"),

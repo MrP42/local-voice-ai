@@ -1792,6 +1792,7 @@ export const TtsSettings = () => {
                       Engine um — die Engine-Einstellung im Reiter Vorlesen
                       bleibt als zweiter Weg bestehen. */}
                     <Select
+                      menuPortal
                       value={voiceValue}
                       options={[
                         {
