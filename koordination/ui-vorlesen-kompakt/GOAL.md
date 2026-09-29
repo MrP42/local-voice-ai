@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T12:14
+aktualisiert: 2026-09-29T12:22
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -34,9 +34,9 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 
 ## Akzeptanzkriterien
 - [ ] AK1 — Audit: `koordination/ui-vorlesen-kompakt/UI-AUDIT.md` listet jede Abweichung als *Element · Ist · Standard · Fundstelle · Schwere · Status*; jede Zeile „hoch“/„mittel“ trägt Status „behoben (Paket/Commit)“, Rest „Folge-Goal“.
-- [ ] AK2 — Einheitliche Aktionen: Playwright-Test `tests/readaloud-toolbar.spec.ts` → alle Aktionsknöpfe der Bedienspalte (`[data-testid^="tts-action-"]`) haben gleiche Höhe und Breite (±1 px), kein sichtbarer Beschriftungstext, jedes Symbol (`svg.lucide-*`-Klasse) kommt genau einmal vor; Auto-Tagging ist nicht mehr niedriger als der Rest.
-- [ ] AK3 — Eine Zeile + Menü: im Reiter Original stehen in einer Zeile (gleiche `top` ±2 px) Hinzufügen (zuerst), Diktieren, Als Audio speichern, Änderungen vorab erzeugen, Menü; das Menü enthält Skript-Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging und löst jede davon aus; der Fehlerzähler der Skriptprüfung ist am Menüknopf sichtbar. Übersetzung/Zusammenfassung zeigen ihre Aktion ebenfalls als Symbol.
-- [ ] AK4 — Tooltip: Hover UND Tastaturfokus auf jeden Aktionsknopf zeigen Name + Kurzerklärung (`role="tooltip"`, per `aria-describedby` verbunden); `aria-label` trägt den Namen.
+- [x] AK2 — Einheitliche Aktionen: Playwright-Test `tests/readaloud-toolbar.spec.ts` → alle Aktionsknöpfe der Bedienspalte (`[data-testid^="tts-action-"]`) haben gleiche Höhe und Breite (±1 px), kein sichtbarer Beschriftungstext, jedes Symbol (`svg.lucide-*`-Klasse) kommt genau einmal vor; Auto-Tagging ist nicht mehr niedriger als der Rest.
+- [x] AK3 — Eine Zeile + Menü: im Reiter Original stehen in einer Zeile (gleiche `top` ±2 px) Hinzufügen (zuerst), Diktieren, Als Audio speichern, Änderungen vorab erzeugen, Menü; das Menü enthält Skript-Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging und löst jede davon aus; der Fehlerzähler der Skriptprüfung ist am Menüknopf sichtbar. Übersetzung/Zusammenfassung zeigen ihre Aktion ebenfalls als Symbol.
+- [x] AK4 — Tooltip: Hover UND Tastaturfokus auf jeden Aktionsknopf zeigen Name + Kurzerklärung (`role="tooltip"`, per `aria-describedby` verbunden); `aria-label` trägt den Namen.
 - [ ] AK5 — Kompakt gestapelt: Viewport 1920×1050 und 1366×768 im Layout „gestapelt“ → Höhe des Bedienblocks `[data-testid="tts-controls"]` ≤ 50 % von `window.innerHeight`, Dateien/Hilfe liegen darunter in derselben Spalte; es gibt rechts vom Editor genau eine Spalte.
 - [x] AK6 — Umschaltbar: Umschalter gestapelt/nebeneinander in der rechten Spalte; Wahl übersteht Neuladen (localStorage); „nebeneinander“ entspricht dem bisherigen Aufbau.
 - [x] AK7 — Ziehbare Spalten: Griffe zwischen Seitenliste|Editor und Editor|rechter Spalte (`role="separator"`, Pfeiltasten, Doppelklick = Standard) ändern die Breite in Grenzen; Breite übersteht Neuladen; Test belegt beides.
@@ -90,6 +90,9 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29T12:09 AK10 erfüllt — readaloud-palette.spec.ts 4 passed (1920x1050: Editor 488px, Klappbereich 356px=40%, scrollt; 1366x768 ebenso), Screenshot screens/p3/palette-alle-1920.png; 86 passed, 534f66c
 - 2026-09-29T12:12 AK6 erfüllt — readaloud-layout.spec.ts: Umschalter gestapelt->nebeneinander, Neuladen behaelt Wahl; Integration 96 passed, cb9501d
 - 2026-09-29T12:12 AK7 erfüllt — readaloud-layout.spec.ts: resize-pages/resize-right ziehen, Pfeiltaste +-16, Neuladen behaelt Breite, Doppelklick=Standard, Grenzen; Editor>=358px bei 1280; Integration 96 passed, cb9501d
+- 2026-09-29T12:22 AK2 erfüllt — readaloud-toolbar.spec.ts (a)(b): alle tts-action-Knoepfe 36x36 +-1 ohne Text, jede lucide-Klasse hoechstens einmal in allen 3 Reitern; Integration 110 passed/6 skipped, 2c9f6fd
+- 2026-09-29T12:22 AK3 erfüllt — readaloud-toolbar.spec.ts (c)(d)(f): add,dictate,save,prewarm,menu eine Zeile, add zuerst; Menue loest Werkstatt/Pruefen/Auto-Tag/tidy aus; Badge am Menue; Uebersetzen/Zusammenfassen als Symbol; screens/p2/menue-offen.png; 110 passed, 2c9f6fd
+- 2026-09-29T12:22 AK4 erfüllt — readaloud-toolbar.spec.ts (e): Tooltip bei Hover (400 ms) und Tastaturfokus, role=tooltip, aria-describedby, Esc schliesst; screens/p2/tooltip.png; 110 passed, 2c9f6fd
 
 ## Blocker
 -
