@@ -26,6 +26,14 @@ export const CitationChip: React.FC<CitationChipProps> = ({
   const ref = useRef<HTMLButtonElement>(null);
   const [hover, setHover] = useState(false);
   const tipId = useId();
+  // Der Antworttext, in dem der Chip steht: die Sprechblase darf ihn nicht
+  // ueberdecken (B6) und weicht daneben bzw. darunter aus.
+  const answerRef = useRef<HTMLElement | null>(null);
+  const show = () => {
+    answerRef.current =
+      ref.current?.closest<HTMLElement>("[data-citation-scope]") ?? null;
+    setHover(true);
+  };
 
   if (!citation) return <span>[{n}]</span>;
 
@@ -45,9 +53,9 @@ export const CitationChip: React.FC<CitationChipProps> = ({
         data-cite={n}
         aria-label={label}
         aria-describedby={hover ? tipId : undefined}
-        onMouseEnter={() => setHover(true)}
+        onMouseEnter={show}
         onMouseLeave={() => setHover(false)}
-        onFocus={() => setHover(true)}
+        onFocus={show}
         onBlur={() => setHover(false)}
         onClick={() => onJump?.(citation)}
         className="mx-0.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-md border border-logo-primary/50 bg-logo-primary/10 px-1 align-baseline text-[11px] font-medium leading-4 tabular-nums text-text hover:bg-logo-primary/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/60 cursor-pointer"
@@ -55,7 +63,7 @@ export const CitationChip: React.FC<CitationChipProps> = ({
         {n}
       </button>
       {hover && (
-        <Tooltip targetRef={ref} position="top">
+        <Tooltip targetRef={ref} position="top" avoidRef={answerRef}>
           <div role="tooltip" id={tipId} className="space-y-1 text-xs">
             <p className="font-medium text-text">{citation.meeting_title}</p>
             <p className="text-text/60 tabular-nums">

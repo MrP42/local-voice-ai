@@ -46,7 +46,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           {t("meetings.chat.notFound")}
         </p>
       ) : (
-        <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-text">
+        <p
+          data-citation-scope
+          className="whitespace-pre-wrap break-words text-sm leading-relaxed text-text"
+        >
           {parts.map((part, i) =>
             part.kind === "text" ? (
               <React.Fragment key={i}>{part.text}</React.Fragment>

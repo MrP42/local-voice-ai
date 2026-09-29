@@ -1258,3 +1258,72 @@ test("Screenshot für die Abnahme", async ({ page }) => {
   await page.waitForTimeout(300);
   await page.screenshot({ path: process.env.P4E_SCREENSHOT!, fullPage: false });
 });
+
+// ---------------------------------------------------------------------------
+// B6: Beleg-Tooltip verdeckt den Antworttext nicht
+// ---------------------------------------------------------------------------
+
+test("Beleg-Tooltip überdeckt den Antworttext nicht (B6)", async ({ page }) => {
+  await withAudio(page);
+  await openDetail(page);
+  await page.keyboard.press("Control+j");
+  await questionBox(page).fill("Was hält der Kunde vom Preis?");
+  await questionBox(page).press("Enter");
+  await pendingRequest(page);
+  await resolveAsk(
+    page,
+    answer({
+      text: "Der Kunde findet den Preis zu hoch [1] und will bis Freitag ein neues Angebot [2].",
+      citations: [
+        citation(),
+        citation({
+          n: 2,
+          segment_index: 13,
+          start_ms: 225_000,
+          quote: "Schicken Sie uns bis Freitag ein neues Angebot.",
+        }),
+      ],
+    }),
+  );
+  const text = panel(page).locator("[data-citation-scope]").first();
+  const chips = panel(page).getByTestId("citation-chip");
+
+  const boxesAfterHover = async (index: number) => {
+    await chips.nth(index).hover();
+    const tip = page.getByRole("tooltip");
+    await expect(tip).toBeVisible();
+    // Die Sprechblase blendet ein (150 ms) und misst sich beim ersten Bild.
+    await page.waitForTimeout(300);
+    const tipBox = (await tip.locator("xpath=..").boundingBox())!;
+    const textBox = (await text.boundingBox())!;
+    return { tipBox, textBox };
+  };
+  const overlaps = (
+    a: { x: number; y: number; width: number; height: number },
+    b: { x: number; y: number; width: number; height: number },
+  ) =>
+    a.x < b.x + b.width &&
+    b.x < a.x + a.width &&
+    a.y < b.y + b.height &&
+    b.y < a.y + a.height;
+
+  // Breites Fenster: neben dem Chat-Bereich.
+  for (const index of [0, 1]) {
+    const { tipBox, textBox } = await boxesAfterHover(index);
+    expect(overlaps(tipBox, textBox)).toBe(false);
+    expect(tipBox.x).toBeGreaterThanOrEqual(0);
+    expect(tipBox.x + tipBox.width).toBeLessThanOrEqual(1400);
+  }
+  if (process.env.LVA_SCREENSHOTS) {
+    await page.screenshot({
+      path: "../../koordination/granola-besprechungen/abnahme/b6-tooltip.png",
+      animations: "disabled",
+    });
+  }
+
+  // Schmales Fenster: kein Platz daneben, also darunter oder darüber.
+  await page.setViewportSize({ width: 620, height: 900 });
+  await page.mouse.move(0, 0);
+  const narrow = await boxesAfterHover(1);
+  expect(overlaps(narrow.tipBox, narrow.textBox)).toBe(false);
+});

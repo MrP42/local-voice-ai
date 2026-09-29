@@ -39,6 +39,7 @@ import { translateMeetingError } from "./meetingErrors";
 import { SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
 import { ChatPanel } from "./chat/ChatPanel";
 import { FollowupDialog } from "./FollowupDialog";
+import { MeetingExportDialog } from "./MeetingExportDialog";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -156,6 +157,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const [chatOpen, setChatOpen] = useState(false);
   // M6-P6c: Follow-up-Mail
   const [followupOpen, setFollowupOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const notesRef = useRef<HTMLDivElement>(null);
   const [noteTarget, setNoteTarget] = useState<{
     selector: string;
@@ -484,6 +486,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             {t("meetings.detail.back")}
           </button>
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setExportOpen(true)}
+              title={t("meetings.export.buttonTitle")}
+              data-testid="export-open"
+            >
+              <Download width={14} height={14} aria-hidden="true" />
+              {t("meetings.export.button")}
+            </Button>
             <Button
               size="sm"
               variant="secondary"
@@ -912,6 +924,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           />
         </aside>
       )}
+      <MeetingExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        meetingId={meetingId}
+        meetingTitle={meetingTitle}
+      />
       <FollowupDialog
         open={followupOpen}
         onOpenChange={setFollowupOpen}
