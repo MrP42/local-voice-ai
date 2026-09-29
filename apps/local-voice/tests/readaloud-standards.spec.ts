@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import * as path from "node:path";
 
 // Vorlesen: Seiten-/Dateileiste und Editor-Reiter folgen dem App-Standard
 // (Goal ui-vorlesen-kompakt, P6): Reiter mit Rollen und Tastaturführung,
@@ -408,7 +409,7 @@ test("screenshot of both side bars with an opened recording", async ({
   // Zeile mit eingeblendeten Aktionen zeigen.
   await page.getByTestId("tts-pages").locator(".group").nth(0).hover();
   await page.screenshot({
-    path: `${dir}/leisten-1920x1050.png`,
+    path: path.resolve(dir!, "leisten-1920.png"),
     animations: "disabled",
   });
 });

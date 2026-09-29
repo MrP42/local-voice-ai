@@ -28,6 +28,7 @@
     "serverTitle": "Voice & playback",
     "description": "Local text-to-speech via Fish Speech on your own GPU. The server starts on demand and is stopped again after idle time to free VRAM.",
     "inputPlaceholder": "Type or paste text to read aloud…",
+    "tabsLabel": "Text version",
     "tabOriginal": "Original",
     "tabTranslation": "Translation",
     "tabSummary": "Summary",
@@ -286,6 +287,7 @@
     },
     "files": {
       "title": "Files",
+      "tabsLabel": "Side panel",
       "add": "Add file (copied in)",
       "openFolder": "Show folder in Explorer",
       "refresh": "Refresh",

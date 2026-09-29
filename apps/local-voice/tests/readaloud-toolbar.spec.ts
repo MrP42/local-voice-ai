@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import * as path from "node:path";
 
 // Bedienspalte der Vorlesen-Seite: eine Zeile gleich grosser Symbol-Knoepfe,
 // Seltenes hinter dem Menue. Die Tauri-Bruecke ist eine schlanke Attrappe wie
@@ -343,9 +344,7 @@ test("translation and summary tabs show their action as a symbol", async ({
   expect(Math.abs(lang!.y - row!.y)).toBeLessThanOrEqual(2);
   expect(Math.abs(lang!.height - row!.height)).toBeLessThanOrEqual(1);
 
-  await page
-    .getByRole("tab", { name: "Zusammenfassung", exact: true })
-    .click();
+  await page.getByRole("tab", { name: "Zusammenfassung", exact: true }).click();
   const summarize = page.getByTestId("tts-action-summarize");
   await expect(summarize).toBeVisible();
   expect(((await summarize.textContent()) ?? "").trim()).toBe("");
@@ -376,14 +375,23 @@ test("the error count shows on the menu button and on the check entry", async ({
 });
 
 test("screenshots of the control column", async ({ page }) => {
-  test.skip(!process.env.LV_SHOTS, "nur auf Anforderung");
+  test.skip(
+    !process.env.SCREENS_DIR,
+    "nur mit SCREENS_DIR (Aufnahme, kein Verhaltenstest)",
+  );
   await page.setViewportSize({ width: 1920, height: 1050 });
   await openReadAloud(page);
-  const dir = "../../koordination/ui-vorlesen-kompakt/screens/p2";
+  const dir = path.resolve(process.env.SCREENS_DIR!);
   await openMenu(page);
-  await page.screenshot({ path: `${dir}/menue-offen.png` });
+  await page.screenshot({
+    path: path.join(dir, "menue-offen-1920.png"),
+    animations: "disabled",
+  });
   await page.keyboard.press("Escape");
   await page.getByTestId("tts-action-prewarm").hover();
   await expect(page.getByRole("tooltip")).toBeVisible();
-  await page.screenshot({ path: `${dir}/tooltip.png` });
+  await page.screenshot({
+    path: path.join(dir, "tooltip-1920.png"),
+    animations: "disabled",
+  });
 });

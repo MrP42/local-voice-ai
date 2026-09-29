@@ -385,7 +385,7 @@ for (const viewport of ["1920", "1366"] as const) {
   test(`uebersicht ${viewport}`, async ({ page }) => {
     await openReadAloud(page, viewport);
     const file = save(`uebersicht-${viewport}`, await measure(page));
-    await page.screenshot({ path: file });
+    await page.screenshot({ path: file, animations: "disabled" });
   });
 }
 
@@ -395,7 +395,7 @@ test("palette alle 1920", async ({ page }) => {
   await page.getByRole("tab", { name: "Alle" }).click();
   await page.waitForTimeout(300);
   const file = save("palette-alle-1920", await measure(page));
-  await page.screenshot({ path: file });
+  await page.screenshot({ path: file, animations: "disabled" });
 });
 
 // Vergleichswerte fuer den App-Standard: dieselbe Messung auf den anderen
@@ -422,5 +422,5 @@ test("datei abspielen 1920", async ({ page }) => {
   await expect(page.locator("audio")).toHaveCount(1);
   await page.waitForTimeout(300);
   const file = save("datei-abspielen-1920", await measure(page));
-  await page.screenshot({ path: file });
+  await page.screenshot({ path: file, animations: "disabled" });
 });

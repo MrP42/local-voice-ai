@@ -838,7 +838,7 @@ body.lv-resizing * {
   min-width: 2.5rem;
   padding: 0 0.6rem;
   border-radius: 999px;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--color-text) 80%, transparent);
 }

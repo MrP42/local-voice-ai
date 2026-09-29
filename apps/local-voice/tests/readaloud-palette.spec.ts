@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import * as path from "node:path";
 
 // Ausdruck & Sprechstil unter dem Editor (Goal ui-vorlesen-kompakt, P3): der
 // geoeffnete Klappbereich ueberlagert den Text nie und der Editor behaelt
@@ -391,12 +392,17 @@ for (const size of [
     const column = await box(page.locator(".tts-editor"));
     expect(detailsBox.height).toBeLessThanOrEqual(column.height * 0.42);
 
-    await page.screenshot({
-      path:
-        size.width === 1920
-          ? "../../koordination/ui-vorlesen-kompakt/screens/p3/palette-alle-1920.png"
-          : "../../koordination/ui-vorlesen-kompakt/screens/p3/palette-alle-1366.png",
-    });
+    // Aufnahme nur auf Anforderung (SCREENS_DIR), nie im normalen Lauf --
+    // sonst ueberschreibt jeder Testlauf versionierte PNGs.
+    if (process.env.SCREENS_DIR) {
+      await page.screenshot({
+        path: path.resolve(
+          process.env.SCREENS_DIR,
+          `palette-klappbereich-${size.width}.png`,
+        ),
+        animations: "disabled",
+      });
+    }
   });
 }
 
@@ -531,20 +537,25 @@ test("palette tags are compact and the favorite star has a 24px hit area", async
 });
 
 for (const size of [
-  { width: 1920, height: 1050, file: "palette-alle-1920.png" },
-  { width: 1366, height: 768, file: "palette-alle-1366.png" },
+  { width: 1920, height: 1050, file: "palette-kompakt-1920.png" },
+  { width: 1366, height: 768, file: "palette-kompakt-1366.png" },
 ]) {
   test(`p7 screenshot palette alle ${size.width}x${size.height}`, async ({
     page,
   }) => {
+    test.skip(
+      !process.env.SCREENS_DIR,
+      "nur mit SCREENS_DIR (Aufnahme, kein Verhaltenstest)",
+    );
     await page.setViewportSize(size);
     await openPaletteAlle(page);
     await page.screenshot({
-      path: `../../koordination/ui-vorlesen-kompakt/screens/p7/${size.file}`,
+      path: path.resolve(process.env.SCREENS_DIR!, size.file),
       animations: "disabled",
     });
-    await expect(
-      page.getByRole("tab", { name: "Alle" }),
-    ).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Alle" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 }
