@@ -62,6 +62,9 @@ oder du die Architektur nicht kennst.
 - Es gibt schon einen Test-`#[global_allocator]` (`meetings::echo::alloc_probe`); fuer
   Allokationspruefungen dessen `count_allocs` nutzen, keinen zweiten definieren.
 
+- Scratchpad wird von parallelen Workern geteilt: eigene Hilfsdateien immer mit Paket-Praefix
+  benennen (`p6e_add_i18n.py`), nie generische Namen.
+
 ## Systemschutz (harte Vorgabe)
 Die App darf RAM/CPU nie so belasten, dass Windows unbedienbar wird. Jeder neue
 Kindprozess laeuft ueber `process_guard.rs` (Job-Objekt mit RAM-/CPU-Deckel), vor jedem
