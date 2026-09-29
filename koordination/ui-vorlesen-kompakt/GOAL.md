@@ -49,6 +49,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - [ ] AK13 — Erster Start: leerer localStorage → Layout „gestapelt“, Dateileiste aufgeklappt, Reiter „Hilfe“ ausgewählt und sichtbar — Playwright.
 - [ ] AK14 — Persistenz: Reiter (Dateien/Hilfe) und Zuklappen bleiben nach Neuladen, nach Seitenwechsel in der Seitenliste und nach Wechsel in ein anderes Modul (z. B. Verlauf) und zurück erhalten — Playwright.
 
+- [ ] AK15 — Dateizeile ohne Springen: Anhören, Umbenennen, Löschen immer sichtbar an festen Positionen (boundingBox vor/nach Hover gleich ±1 px; Löschen in Audio- und Nicht-Audio-Zeilen auf gleicher x-Position) — Playwright.
 ## Quality Gates
 - [ ] QG1 — Typen: `cd apps/local-voice && pnpm exec tsc --noEmit` → Exit 0.
 - [ ] QG2 — Gesamte Playwright-Suite: `cd apps/local-voice && pnpm exec playwright test --reporter=line` → keine neuen Fehlschläge gegenüber der Basislinie (Basislinie in Evidence).
