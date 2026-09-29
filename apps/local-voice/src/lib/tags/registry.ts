@@ -5,7 +5,7 @@ import {
   Volume2,
   Wind,
   PauseCircle,
-  Sparkles,
+  Shapes,
 } from "lucide-react";
 import type { TagCategoryDef, TagDef } from "./types";
 
@@ -26,7 +26,7 @@ export const TAG_CATEGORIES: TagCategoryDef[] = [
   { id: "dynamics", icon: Volume2 },
   { id: "effects", icon: Wind },
   { id: "pauses", icon: PauseCircle },
-  { id: "special", icon: Sparkles },
+  { id: "special", icon: Shapes },
 ];
 
 export const TAG_REGISTRY: TagDef[] = [
