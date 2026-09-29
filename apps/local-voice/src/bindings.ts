@@ -66,6 +66,18 @@ async meetingNotesMarkdown(documentId: string) : Promise<Result<string, string>>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Aktuelle Segment-Epoche des Transkripts (M1, P1d). Weicht sie von
+ * `EnhancedNotes.segment_epoch` ab, sind die Quellverweise veraltet.
+ */
+async meetingsSegmentEpoch(meetingId: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_segment_epoch", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("reset_binding", { id }) };

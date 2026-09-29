@@ -15,10 +15,12 @@ import {
 import Badge from "../../ui/Badge";
 import { MinutesView } from "./MinutesView";
 import { MyNotesView } from "./notes/MyNotesView";
+import { EnhancedNotesView } from "./notes/EnhancedNotesView";
 import { MeetingTemplatePicker } from "./notes/TemplatePicker";
 import { RetranscribeControl } from "./RetranscribeControl";
 import { Input } from "../../ui/Input";
 import { translateMeetingError } from "./meetingErrors";
+import { SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -66,6 +68,13 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const [tab, setTab] = useState<Tab>("transcript");
   const [notesView, setNotesView] = useState<NotesView>("mine");
   const [segments, setSegments] = useState<StoredSegment[]>([]);
+  // Quellsprung aus den KI-Notizen: das Segment bleibt kurz markiert.
+  const [highlightIndex, setHighlightIndex] = useState<number | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  // Erhoeht sich, wenn sich die Segmente ersetzt haben koennten (Laden,
+  // Neu-Transkription): die KI-Notizen lesen dann die Epoche neu.
+  const [epochKey, setEpochKey] = useState(0);
   // Sprungmarken: Kanal 1 (Gegenseite) liegt in der Systemaufnahme, alles
   // andere (Mikrofon, Import als Mischkanal) im Mikrofon-/Import-Player.
   const micPlayerRef = useRef<AudioPlayerHandle>(null);
@@ -80,6 +89,39 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const hasAudio = Boolean(
     meeting?.mic_audio_path || meeting?.system_audio_path,
   );
+
+  /**
+   * Quelle einer KI-Notiz: ins Transkript wechseln, das Segment markieren
+   * und (solange Audio da ist) ab der Stelle abspielen. Die Player liegen
+   * ueber den Tabs und bleiben beim Wechsel erhalten.
+   */
+  const jumpToSource = (segmentIndex: number) => {
+    const segment = segments.find((s) => s.segment_index === segmentIndex);
+    if (!segment) return;
+    setTab("transcript");
+    setHighlightIndex(segmentIndex);
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(
+      () => setHighlightIndex(null),
+      SOURCE_HIGHLIGHT_MS,
+    );
+    if (hasAudio) playSegment(segment);
+  };
+
+  useEffect(
+    () => () => {
+      if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    },
+    [],
+  );
+
+  // Nach dem Wechsel in den Transkript-Tab steht die Zeile erst im DOM.
+  useEffect(() => {
+    if (highlightIndex === null || tab !== "transcript") return;
+    transcriptRef.current
+      ?.querySelector<HTMLElement>(`[data-segment-index="${highlightIndex}"]`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [highlightIndex, tab]);
   const [loading, setLoading] = useState(true);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [copied, setCopied] = useState<"meta" | "plain" | null>(null);
@@ -91,6 +133,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     setLoading(true);
     const result = await commands.meetingsGetSegments(meetingId);
     setLoading(false);
+    setEpochKey((k) => k + 1);
     if (result.status === "ok") {
       // Segments come back in segment_index order, which interleaves
       // channels for a live-recorded meeting — always sort by start_ms.
@@ -112,6 +155,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       if (payload.kind === "levels" || payload.meeting_id !== meetingId) return;
       if (payload.kind === "reset") {
         setSegments([]);
+        setEpochKey((k) => k + 1);
       } else if (payload.kind === "segments") {
         setSegments((prev) =>
           [...prev, ...payload.appended].sort(
@@ -508,12 +552,13 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             {notesView === "mine" ? (
               <MyNotesView meeting={meeting} />
             ) : (
-              <p
-                className="text-sm text-text/60"
-                data-testid="ai-notes-placeholder"
-              >
-                {t("meetings.notes.aiPlaceholder")}
-              </p>
+              <EnhancedNotesView
+                meeting={meeting}
+                segments={segments}
+                epochKey={epochKey}
+                hasAudio={hasAudio}
+                onJumpToSource={jumpToSource}
+              />
             )}
           </div>
         )}
@@ -525,11 +570,22 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           ) : segments.length === 0 ? (
             <p className="text-sm text-text/60">{t("meetings.live.empty")}</p>
           ) : (
-            <div className="space-y-2 max-h-96 overflow-y-auto">
+            <div
+              ref={transcriptRef}
+              className="space-y-2 max-h-96 overflow-y-auto"
+            >
               {segments.map((segment) => (
                 <div
                   key={segment.segment_index}
-                  className="flex gap-2 items-start text-sm group"
+                  data-segment-index={segment.segment_index}
+                  data-highlighted={
+                    highlightIndex === segment.segment_index ? "true" : undefined
+                  }
+                  className={`flex gap-2 items-start text-sm group rounded-md px-1 -mx-1 transition-colors ${
+                    highlightIndex === segment.segment_index
+                      ? "bg-logo-primary/25 ring-1 ring-logo-primary/50"
+                      : ""
+                  }`}
                 >
                   {hasAudio ? (
                     <button

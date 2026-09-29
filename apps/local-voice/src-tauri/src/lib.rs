@@ -1512,6 +1512,8 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_enhance::meeting_notes_apply_instruction,
             commands::meeting_enhance::meeting_notes_update_enhanced,
             commands::meeting_enhance::meeting_notes_markdown,
+            // M1-P1d
+            commands::meeting_enhance::meetings_segment_epoch,
             commands::tts::tts_speak_text,
             commands::tts::tts_speak_clipboard,
             commands::tts::tts_cancel,
