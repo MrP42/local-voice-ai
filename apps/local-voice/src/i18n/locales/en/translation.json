@@ -2279,6 +2279,23 @@
         "remove": "Remove {{label}}"
       }
     },
+    "mcp": {
+      "title": "Local MCP server (read-only)",
+      "description": "Lets an AI client on this computer (Claude, Codex) search and read your finished meetings. The server only runs while the client starts it, changes nothing and needs no network. Off by default.",
+      "warning": "Your AI client (Claude, Codex) sends the meeting content it reads to its provider. It contains statements of third parties (§ 201 StGB, GDPR): only switch this on if everyone involved agrees.",
+      "transcript": "Share the transcript",
+      "transcriptDescription": "The client may also read the word-for-word transcript (tool get_transcript and hits in the transcript). Without it, it only sees notes, AI notes and minutes.",
+      "connect": "Connect an AI client",
+      "connectDescription": "Enter this in the client. The client starts the server itself; the app does not need a restart.",
+      "clients": {
+        "claude-code": "Claude Code",
+        "claude-desktop": "Claude Desktop",
+        "codex": "Codex"
+      },
+      "copy": "Copy",
+      "copied": "Copied.",
+      "copyFailed": "Could not copy – please select the text."
+    },
     "recipes": {
       "bar": "Recipes",
       "menu": "Choose recipe",

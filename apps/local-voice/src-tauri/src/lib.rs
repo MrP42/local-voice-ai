@@ -18,6 +18,7 @@ mod local_update;
 mod llm_client;
 mod managers;
 mod media;
+pub mod mcp; // M6-P6e
 mod meeting_prompt; // M5-P5b
 mod overlay;
 mod paste_guard;
@@ -1761,6 +1762,10 @@ pub fn run(cli_args: CliArgs) {
             commands::calendar::calendar_open_join_url,
             commands::calendar::change_meeting_reminder_lead_setting,
             commands::calendar::change_meeting_reminder_all_events_setting,
+            // M6-P6e
+            commands::meeting_mcp::change_meeting_mcp_enabled_setting,
+            commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,
+            commands::meeting_mcp::meeting_mcp_info,
             commands::meetings::meetings_start_from_event,
             meeting_prompt::meeting_prompt_current,
             meeting_prompt::meeting_prompt_ready,

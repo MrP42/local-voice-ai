@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use log::{debug, info, warn};
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use rusqlite_migration::{Migrations, M};
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -572,7 +572,44 @@ pub struct MeetingTemplate {
 
 pub struct MeetingStore {
     db_path: PathBuf,
+    /// M6-P6e: `Some(Wartezeit)` = nur lesend geoeffnet (`open_read_only`,
+    /// lokaler MCP-Server). Jede Verbindung dieses Stores ist dann
+    /// `SQLITE_OPEN_READ_ONLY`: ein Schreibversuch scheitert in SQLite selbst,
+    /// nicht an einer Pruefung im Code.
+    read_only_busy: Option<std::time::Duration>,
 }
+
+/// M6-P6e: warum `MeetingStore::open_read_only` keinen Store liefert.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadOnlyOpenError {
+    /// Die Datenbankdatei gibt es (noch) nicht.
+    Missing,
+    /// Die Datenbank hat ein neueres Schema als diese Programmversion kennt
+    /// (die App wurde aktualisiert, dieser Prozess ist noch die alte EXE).
+    SchemaNewer { found: i64, known: i64 },
+    /// Die Datenbank ist aelter als diese Programmversion (die App wurde noch
+    /// nicht gestartet und hat noch nicht migriert). Der Server migriert nie.
+    SchemaOlder { found: i64, known: i64 },
+    /// Gesperrt (laenger als die Wartezeit), keine Datenbank, Platte defekt.
+    Unreadable(String),
+}
+
+impl std::fmt::Display for ReadOnlyOpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing => write!(f, "database_missing"),
+            Self::SchemaNewer { found, known } => {
+                write!(f, "schema_newer: database {found}, known {known}")
+            }
+            Self::SchemaOlder { found, known } => {
+                write!(f, "schema_older: database {found}, known {known}")
+            }
+            Self::Unreadable(e) => write!(f, "database_unreadable: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ReadOnlyOpenError {}
 
 impl MeetingStore {
     /// Opens (and, on first run, creates + migrates) `<meetings_dir>/meetings.db`
@@ -599,6 +636,7 @@ impl MeetingStore {
     pub fn open_at(path: &Path) -> Result<Self> {
         let store = Self {
             db_path: path.to_path_buf(),
+            read_only_busy: None,
         };
         store.init_database()?;
         store.seed_default_template()?;
@@ -696,7 +734,73 @@ impl MeetingStore {
     /// `pub(super)`: die Such-Erweiterung (`meetings::search`) haengt eigene
     /// `impl MeetingStore`-Bloecke an und oeffnet ueber dieselbe Stelle.
     pub(super) fn get_connection(&self) -> Result<Connection> {
+        if let Some(busy) = self.read_only_busy {
+            let conn = Connection::open_with_flags(
+                &self.db_path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | OpenFlags::SQLITE_OPEN_URI
+                    | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?;
+            conn.busy_timeout(busy)?;
+            return Ok(conn);
+        }
         Ok(Connection::open(&self.db_path)?)
+    }
+
+    /// M6-P6e: oeffnet die Datenbank NUR LESEND (`SQLITE_OPEN_READ_ONLY`), ohne
+    /// Migration, ohne Vorlagen-Seed, ohne Anlegen der Datei. Fuer den lokalen
+    /// MCP-Server (`--mcp`), der neben der laufenden App liest. Prueft das
+    /// Schema (`user_version` gegen die bekannten Migrationen): ein anderes
+    /// Schema ergibt einen Fehler statt eines Migrationsversuchs. Eine
+    /// gesperrte Datenbank (die App schreibt gerade) wird `busy` lang
+    /// abgewartet, danach `Unreadable`.
+    pub fn open_read_only(
+        path: &Path,
+        busy: std::time::Duration,
+    ) -> std::result::Result<Self, ReadOnlyOpenError> {
+        if !path.is_file() {
+            return Err(ReadOnlyOpenError::Missing);
+        }
+        let store = Self {
+            db_path: path.to_path_buf(),
+            read_only_busy: Some(busy),
+        };
+        let conn = store
+            .get_connection()
+            .map_err(|e| ReadOnlyOpenError::Unreadable(e.to_string()))?;
+        let found: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(|e| ReadOnlyOpenError::Unreadable(e.to_string()))?;
+        let known = MIGRATIONS.len() as i64;
+        if found > known {
+            return Err(ReadOnlyOpenError::SchemaNewer { found, known });
+        }
+        if found < known {
+            return Err(ReadOnlyOpenError::SchemaOlder { found, known });
+        }
+        Ok(store)
+    }
+
+    /// M6-P6e: Teilnehmende einer Besprechung als `(Name, E-Mail, Rolle)`, ohne
+    /// zusammengefuehrte oder geloeschte Personen. Leer, solange keine
+    /// Teilnehmenden erfasst sind (Personen-Paket P5d).
+    pub fn meeting_participant_rows(
+        &self,
+        meeting_id: &str,
+    ) -> Result<Vec<(String, Option<String>, String)>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT h.name, COALESCE(h.email_norm, h.email), p.role
+             FROM meeting_participants p JOIN humans h ON h.id = p.human_id
+             WHERE p.meeting_id = ?1 AND h.deleted_at IS NULL AND h.merged_into IS NULL
+             ORDER BY p.created_at, h.name",
+        )?;
+        let rows = stmt
+            .query_map(params![meeting_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// Guards write paths that key off a `meeting_id` but don't otherwise

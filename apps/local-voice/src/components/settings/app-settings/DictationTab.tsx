@@ -1,6 +1,7 @@
 import React from "react";
 import { MeetingCalendarSettings } from "../meetings/MeetingCalendarSettings";
 import { MeetingLanguageSetting } from "../meetings/MeetingLanguageSetting";
+import { MeetingMcpSettings } from "../meetings/MeetingMcpSettings";
 import { MeetingModelSetting } from "../meetings/MeetingModelSetting";
 import { MeetingNotesSettings } from "../meetings/MeetingNotesSettings";
 import { useTranslation } from "react-i18next";
@@ -66,6 +67,7 @@ export const DictationTab: React.FC = () => {
         <MeetingModelSetting />
         <MeetingNotesSettings />
         <MeetingCalendarSettings />
+        <MeetingMcpSettings />
       </SettingsGroup>
       <DictationTest />
     </div>

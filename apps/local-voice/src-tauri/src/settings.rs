@@ -847,6 +847,16 @@ pub struct AppSettings {
     /// erinnern. Standard aus: ein Einzeltermin ohne Gegenueber ist keine Besprechung.
     #[serde(default)]
     pub meeting_reminder_all_events: bool,
+    /// M6-P6e (F21, E13): der lokale MCP-Server (`local-voice-ai.exe --mcp`)
+    /// gibt Besprechungsinhalte an einen KI-Client weiter. Standard AUS; der
+    /// Server liest diese Datei bei jedem Aufruf frisch (`mcp::read_settings`),
+    /// der Name des Feldes ist dort fest verdrahtet (ein Test haelt beide zusammen).
+    #[serde(default)]
+    pub meeting_mcp_enabled: bool,
+    /// M6-P6e (E13): darf der MCP-Server auch das Transkript liefern (`get_transcript`,
+    /// Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
+    #[serde(default = "default_true")]
+    pub meeting_mcp_include_transcript: bool,
 }
 
 fn default_meeting_reminder_lead_s() -> u32 {
@@ -1619,6 +1629,8 @@ pub fn get_default_settings() -> AppSettings {
         meeting_self_emails: Vec::new(),
         meeting_reminder_lead_s: default_meeting_reminder_lead_s(),
         meeting_reminder_all_events: false,
+        meeting_mcp_enabled: false,
+        meeting_mcp_include_transcript: true,
     }
 }
 
@@ -2725,6 +2737,31 @@ mod tests {
         .unwrap();
         assert_eq!(chosen.meeting_reminder_lead_s, 0);
         assert!(chosen.meeting_reminder_all_events);
+    }
+
+    /// M6-P6e: der lokale MCP-Server ist ohne Zutun AUS (auch bei einer
+    /// settings.json aus einer Fassung vor P6e), das Transkript ist freigegeben,
+    /// sobald er eingeschaltet wird; eine Wahl bleibt erhalten.
+    #[test]
+    fn meeting_mcp_is_off_by_default_and_keeps_a_choice() {
+        let d = get_default_settings();
+        assert!(!d.meeting_mcp_enabled);
+        assert!(d.meeting_mcp_include_transcript);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(!old.meeting_mcp_enabled, "ältere settings.json: Server bleibt aus");
+        assert!(old.meeting_mcp_include_transcript, "nicht false wie beim bool-Typ");
+        let chosen: AppSettings = serde_json::from_value(serde_json::json!({
+            "meeting_mcp_enabled": true,
+            "meeting_mcp_include_transcript": false,
+        }))
+        .unwrap();
+        assert!(chosen.meeting_mcp_enabled);
+        assert!(!chosen.meeting_mcp_include_transcript);
+        // Geräte-Sync: die Freigabe bleibt auf dem Gerät.
+        assert!(!crate::sync::collect::SYNCED_SETTINGS
+            .iter()
+            .any(|key| key.starts_with("meeting_mcp")));
     }
 
     #[test]
