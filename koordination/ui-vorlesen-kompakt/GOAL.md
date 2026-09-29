@@ -1,7 +1,7 @@
 ---
 thema: ui-vorlesen-kompakt
 titel: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
-state: REWORK
+state: COMPLETE
 vorzustand: -
 pausengrund: -
 issue: 61
@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
 iteration: 2
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T17:01
+aktualisiert: 2026-09-29T17:12
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -43,7 +43,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - [x] AK8 — Dateiname: `tests/exportName.spec.ts` → neuer Name `<Stimme>[-<Zusatz>]_<JJJJ-MM-TT_HHMM>.<ext>` (z. B. `Patrick_2026-09-29_1736.wav`, `Skript_…` bei Skript-Stimmen, `-EN` im Reiter Übersetzung, `-Zusammenfassung`), Stamm ohne Zeitstempel ≤ 24 Zeichen, Windows-sicher; der Speichern-Dialog schlägt ihn vor.
 - [x] AK9 — Dateiliste: ein langer Altname (`CASE-GESPRÄCH-IE2S-…_2026-09-28_1736.wav`) zeigt sichtbar Anfang, „…“ und `2026-09-28_1736`; voller Name im Tooltip.
 - [x] AK10 — Palette-Fehler: Playwright → „Ausdruck & Sprechstil“ öffnen, „Alle“ wählen → Klappbereich ist in der Höhe begrenzt und scrollt (`scrollHeight > clientHeight`), Editor-Box ≥ 160 px hoch und überschneidet sich nicht mit dem Klappbereich (Screenshot-Beleg).
-- [ ] AK11 — Anfassbar: Vorher/Nachher-Screenshots (gestapelt, nebeneinander, Menü offen, Tooltip, Palette „Alle“) als Artefakt-Link; Installer `Local Voice AI_0.20.4_x64-setup.exe` gebaut.
+- [x] AK11 — Anfassbar: Vorher/Nachher-Screenshots (gestapelt, nebeneinander, Menü offen, Tooltip, Palette „Alle“) als Artefakt-Link; Installer `Local Voice AI_0.20.4_x64-setup.exe` gebaut.
 
 - [x] AK12 — Ausklappen rechts: Dateileiste zugeklappt → der Ausklappen-Knopf sitzt in BEIDEN Layouts am rechten Rand (gestapelt: rechte Kante des Knopfs = rechte Kante der rechten Spalte ±2 px; nebeneinander: ganz rechts wie bisher) — Playwright.
 - [x] AK13 — Erster Start: leerer localStorage → Layout „gestapelt“, Dateileiste aufgeklappt, Reiter „Hilfe“ ausgewählt und sichtbar — Playwright.
@@ -152,6 +152,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29T17:01 QG6 erfüllt — Commit je Paket P1-P10, Branch gepusht, PR #62 auf #58, kein Push auf main
 - 2026-09-29T17:01 QG7 erfüllt — Hilfe-Texte (P2), Handoff 2026-09-29-ui-vorlesen-kompakt.md aktualisiert
 - 2026-09-29T17:01 QG8 erfüllt — Runde 2 +~0,2 MTok; gesamt ~2,05 MTok < harter Stopp 2,7
+- 2026-09-29T17:12 AK11 erfüllt — Artefakt https://claude.ai/artifact/USSYtsBp5gUgs2eUxUPyRw; Nachher-Bilder inkl. erster-start + gestapelt-zugeklappt; Installer Local Voice AI_0.20.5_x64-setup.exe (16,8 MB, 29.09. 17:11; nur Updater-Signatur fehlt lokal, erwartet)
 
 ## Blocker
 -
@@ -160,7 +161,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29 E1–E3 als Vorschlag gewählt (siehe Risiken), Basis `chore/0.20.3-abnahme`.
 
 ## Nächste empfohlene Aktion
-Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+Goal abgeschlossen. Nächste Ziele: (noch eintragen: `goal.py complete --naechste-ziele …` oder im Issue-Kommentar „Nächste Ziele“)
 
 ## Verlauf
 - 2026-09-29T11:49 DISCOVERY — Goal State angelegt
@@ -175,4 +176,6 @@ Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard
 - 2026-09-29T16:28 VALIDATING (Runde 1) — Alle AK/QG belegt, Installer 0.20.4 vorhanden
 - 2026-09-29T16:28 COMPLETE (Runde 1) — COMPLETE — AK 11/11, Gates 8/8
 - 2026-09-29T16:51 REWORK (Runde 2) — WIEDERERÖFFNET (AK1, AK10, AK11, AK2, AK3, AK4, AK5, AK6, AK7, AK8, AK9, QG1, QG2, QG3, QG4, QG5, QG6, QG7, QG8): Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T17:12 VALIDATING (Runde 2) — Runde 2 validiert
+- 2026-09-29T17:12 COMPLETE (Runde 2) — COMPLETE — AK 15/15, Gates 8/8
 
