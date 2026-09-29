@@ -29,7 +29,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 
 ## Akzeptanzkriterien
 - [x] AK1 — Analyse + Plan: `recherche/granola-analyse.md`, `recherche/lokaler-stack.md`, `recherche/ist-stand.md`, `FEATURE-MATRIX.md` im Branch; Analyse-Artefakt (Link) veröffentlicht; Issue angelegt
-- [ ] AK2 — Feature-Parität: `python koordination/granola-besprechungen/check_matrix.py` → Exit 0 (alle Kern-Funktionen gleichwertig/besser/vorhanden, je mit Beleg)
+- [x] AK2 — Feature-Parität: `python koordination/granola-besprechungen/check_matrix.py` → Exit 0 (alle Kern-Funktionen gleichwertig/besser/vorhanden, je mit Beleg)
 - [x] AK3 — Notizblock + KI-Notizen (F07–F10): Eval über Fixture-Besprechungen mit Nutzerstichpunkten → 100 % der Nutzerstichpunkte wörtlich erhalten und als Nutzertext markiert, ≥ 95 % der KI-Aussagen mit Quellsegment belegt; Rust- und Playwright-Tests des Pfads grün
 - [x] AK4 — Transkription Deutsch: Benchmark-Befehl → WER Enddurchlauf ≤ 6 % und Live ≤ 8 % auf FLEURS-de-Stichprobe (≥ 200 Sätze); WER auf deutschem Mehrsprecher-Besprechungskorpus gemessen und in der Doku
 - [x] AK5 — Live-Latenz: Harness-Messung über ≥ 10 min Aufnahme → p95 Ende der Äußerung bis Anzeige ≤ 5 s
@@ -119,6 +119,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29T22:35 QG7 erfüllt — P7c 31ccc1f7: check_i18n_meetings.py Exit 0 (640 Schluessel de/en, keine Umlaut-Ersatzschreibung)
 - 2026-09-30T00:30 QG4 erfüllt — P7b ea876e60: abnahme/p7b-qg4.md, knapper RAM -> sauberer Abbruch je Schritt (LowRam/memory_low/pdf_low_memory), keine Restprozesse
 - 2026-09-30T00:30 QG5 erfüllt — P7b ea876e60: abnahme/p7b-qg5.md, ganze Kette 0 Nicht-Loopback-Verbindungen (94 Sockets 127.0.0.1), Proxy 0 Anfragen
+- 2026-09-30T00:30 AK2 erfüllt — check_matrix.py Exit 0: 22/22 Kern-Funktionen gleichwertig/besser/vorhanden mit Beleg (Stand 2ea33a91)
 
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
