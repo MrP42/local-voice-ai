@@ -23,6 +23,8 @@ export default defineConfig(async () => ({
       input: {
         main: resolve(__dirname, "index.html"),
         overlay: resolve(__dirname, "src/overlay/index.html"),
+        // M5-P5b: Hinweisfenster fuer Besprechungen
+        meeting_prompt: resolve(__dirname, "src/meeting-prompt/index.html"),
       },
     },
   },

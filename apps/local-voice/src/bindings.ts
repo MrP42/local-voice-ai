@@ -1852,6 +1852,159 @@ async meetingsCopyFormatted(meetingId: string, parts: ExportParts) : Promise<Res
     else return { status: "error", error: e  as any };
 }
 },
+async calendarSourcesList() : Promise<Result<CalendarSource[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_sources_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verbindet eine ICS-Adresse. Der Probeabruf laeuft VOR dem Speichern: eine
+ * Adresse, die keinen lesbaren Kalender liefert, erzeugt weder Quelle noch
+ * Geheimnis, und der Fehler nennt den Grund (nie die Adresse).
+ */
+async calendarSourceAddIcs(label: string, url: string) : Promise<Result<CalendarSource, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_source_add_ics", { label, url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt die Quelle samt Terminen im Cache und ihrem Geheimnis.
+ */
+async calendarSourceRemove(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_source_remove", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Jetzt aktualisieren“: ruft eine (`id`) oder alle Quellen ab und liefert den
+ * Stand danach. Fehler je Quelle stehen in `last_error` der Quelle.
+ */
+async calendarSyncNow(id: string | null) : Promise<Result<CalendarSource[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_sync_now", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Termine der naechsten `hours` Stunden (laufende eingeschlossen), abgesagte nie.
+ */
+async calendarUpcoming(hours: number) : Promise<Result<CalEvent[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_upcoming", { hours }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Termin, dem eine jetzt beginnende Aufnahme gehoert (Beginn +-15 min,
+ * genau einer); Grundlage des Titelvorschlags.
+ */
+async calendarSuggestEvent() : Promise<Result<CalEvent | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_suggest_event") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Oeffnet die Beitritts-Adresse eines Termins im Browser. Die Adresse kommt aus
+ * dem Cache (nicht vom Fenster) und muss mit `https://` beginnen: eine
+ * Kalenderdatei ist fremde Eingabe und darf kein anderes Schema oeffnen.
+ */
+async calendarOpenJoinUrl(eventKey: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_open_join_url", { eventKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vorlauf der Erinnerung in Sekunden; 0 schaltet sie aus.
+ */
+async changeMeetingReminderLeadSetting(seconds: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_reminder_lead_setting", { seconds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Auch Termine ohne Teilnehmende erinnern.“
+ */
+async changeMeetingReminderAllEventsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_reminder_all_events_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Startet eine Aufnahme mit dem Bezug zu einem Termin: Titel = was der Nutzer
+ * eingegeben hat, sonst der Termintitel; Vorlage = die der letzten Besprechung
+ * derselben Serie (UID), sonst die Standardvorlage; danach Verknuepfung und
+ * Teilnehmenden-Schnappschuss. `meetings_start` bleibt unveraendert.
+ * 
+ * `link_mode`: `prompt` (Hinweisfenster, Terminkarte; Standard) oder `auto`
+ * (Titelvorschlag der Aufnahmekarte). `app_key` gehoert der Erkennung (P5c) und
+ * wird bis dahin nicht gelesen. Ohne bestaetigte Einwilligung startet nichts
+ * (`consent_required` vom Recorder). Fehler NACH dem Start (Verknuepfung,
+ * Vorlage) kippen die laufende Aufnahme nicht; sie stehen im Log.
+ */
+async meetingsStartFromEvent(eventKey: string | null, appKey: string | null, consentConfirmed: boolean, captureSystem: boolean, title: string | null, linkMode: string | null) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_start_from_event", { eventKey, appKey, consentConfirmed, captureSystem, title, linkMode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der aktuelle Hinweis; `None`, wenn keiner offen ist.
+ */
+async meetingPromptCurrent() : Promise<MeetingPromptPayload | null> {
+    return await TAURI_INVOKE("meeting_prompt_current");
+},
+/**
+ * Die Oberflaeche hat gerendert und meldet ihre Hoehe (logisch): jetzt wird das
+ * Fenster positioniert und ohne Fokus gezeigt.
+ */
+async meetingPromptReady(height: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_prompt_ready", { height }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Nutzer hat entschieden. `later` = nicht jetzt (der Termin wird als
+ * verworfen gemerkt und erinnert nicht erneut), `close` = nur schliessen (nach
+ * dem Start der Aufnahme). Ein veralteter `prompt_id` wird ignoriert.
+ */
+async meetingPromptDismiss(promptId: string, action: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_prompt_dismiss", { promptId, action }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * M1-P1c: Notizblock, Vorlagen, Aufgaben. Fehlercodes des Stores
  * (`revision_conflict`, `template_readonly`, ...) kommen als String.
@@ -3004,19 +3157,23 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
+calendarSyncEvent: CalendarSyncEvent,
 historyUpdatePayload: HistoryUpdatePayload,
 meetingChatEvent: MeetingChatEvent,
 meetingEvent: MeetingEvent,
 meetingIndexEvent: MeetingIndexEvent,
 meetingNotesEvent: MeetingNotesEvent,
+meetingPromptEvent: MeetingPromptEvent,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
 }>({
+calendarSyncEvent: "calendar-sync-event",
 historyUpdatePayload: "history-update-payload",
 meetingChatEvent: "meeting-chat-event",
 meetingEvent: "meeting-event",
 meetingIndexEvent: "meeting-index-event",
 meetingNotesEvent: "meeting-notes-event",
+meetingPromptEvent: "meeting-prompt-event",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event"
 })
@@ -3318,7 +3475,17 @@ meeting_final_model?: string;
  * biometrischer Merkmale) oder `off`. Ohne den Schluessel (aeltere
  * settings.json) gilt `auto`; jeder andere Wert als `off` zaehlt als `auto`.
  */
-meeting_diarization?: string }
+meeting_diarization?: string; 
+/**
+ * M5-P5b (E11): Vorlauf der Erinnerung vor einem Termin in Sekunden;
+ * 0 = Erinnerung aus. Ohne den Schluessel (aeltere settings.json) gilt 60.
+ */
+meeting_reminder_lead_s?: number; 
+/**
+ * M5-P5b (E11): auch Termine ohne Teilnehmende und ohne Beitritts-Adresse
+ * erinnern. Standard aus: ein Einzeltermin ohne Gegenueber ist keine Besprechung.
+ */
+meeting_reminder_all_events?: boolean }
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
  * Verknuepfung mit der `humans`-Tabelle folgt in M9.
@@ -3340,6 +3507,36 @@ entry_id: string | null; source_segment_ids: number[];
  * `ai` | `user` | `manual`
  */
 source: string }
+export type Attendee = { 
+/**
+ * Klein geschrieben, ohne `mailto:`; `None`, wenn die Quelle keine
+ * Adresse liefert (nur ein Name).
+ */
+email: string | null; name: string | null; organizer: boolean; 
+/**
+ * Wird erst von der Personen-/Einstellungsschicht gesetzt (P5b/P5d).
+ */
+is_self: boolean; partstat: string | null }
+export type CalEvent = { 
+/**
+ * `source:uid:start_ms` - stabil ueber Abrufe, damit `reminded_at` und
+ * `dismissed_at` einen erneuten Abruf ueberleben.
+ */
+key: string; source_id: string; uid: string; title: string; starts_at: number; ends_at: number; all_day: boolean; cancelled: boolean; location: string | null; join_url: string | null; description: string | null; attendees: Attendee[] }
+/**
+ * Art einer Kalenderquelle. `Graph` ist fuer P5f reserviert.
+ */
+export type CalendarKind = "ics" | "graph"
+/**
+ * Eine Kalenderquelle, wie die Oberflaeche sie zeigt. Die ICS-Adresse ist
+ * ein Geheimnis (Lesezugriff auf den ganzen Kalender) und steht NIE hier:
+ * `account_hint` traegt nur den Host bzw. das Benutzerkonto.
+ */
+export type CalendarSource = { id: string; kind: CalendarKind; label: string; account_hint: string | null; enabled: boolean; has_attendee_data: boolean; last_sync_at: number | null; last_ok_at: number | null; last_error: string | null; event_count: number }
+/**
+ * Ergebnis eines Abrufs fuer die Oberflaeche (`CalendarSyncEvent`).
+ */
+export type CalendarSyncEvent = { source_id: string; ok: boolean; count: number }
 /**
  * Stand des Such-Index fuer die Einstellungszeile "Semantische Suche".
  * Besprechungen: `total` fertige, davon `lexical_done` mit Stichwortindex
@@ -3495,6 +3692,27 @@ dropped_citations: number;
  * Lokales Modell auf CPU: kleineres Budget ("CPU: weniger Auszuege gelesen").
  */
 cpu_limited: boolean }
+/**
+ * Ereignis an das Fenster: `show` = es liegt ein neuer Hinweis vor (die
+ * Oberflaeche holt ihn ueber `meeting_prompt_current`), `close` = zu.
+ */
+export type MeetingPromptEvent = { kind: "show"; prompt_id: string } | { kind: "close" }
+/**
+ * Inhalt eines Hinweises.
+ */
+export type MeetingPromptPayload = { prompt_id: string; 
+/**
+ * `reminder` (Termin steht an); `detected` folgt mit P5c.
+ */
+kind: string; event: CalEvent | null; 
+/**
+ * Verschiedene Teilnehmende des Termins (0 ohne Termin).
+ */
+attendee_count: number; 
+/**
+ * Name der erkannten Anwendung (P5c), sonst `None`.
+ */
+app_label: string | null }
 /**
  * Aufruf eines Recipes: ID (`builtin:<key>` oder eigene) und Werte der
  * Variablen nach Name. Werte fuer `folder` sind Ordner-IDs, fuer `meeting`

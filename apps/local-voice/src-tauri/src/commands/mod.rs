@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod calendar; // M5-P5b
 pub mod history;
 pub mod llm;
 pub mod usage;
