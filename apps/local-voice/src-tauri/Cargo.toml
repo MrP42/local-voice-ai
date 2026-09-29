@@ -127,6 +127,11 @@ ulid = "1"
 # MP3-Export mit waehlbarer Bitrate. Bringt LAME als vendored C-Quellen mit
 # (cc-Build), baut daher auf Windows-MSVC ohne vorinstallierte Bibliothek.
 mp3lame-encoder = "0.2.5"
+# M5-P5a: ICS-Kalender (Parser + Serienexpansion, Stalwart, Apache-2.0/MIT).
+# Version festgenagelt: junges Projekt, zwei Fehler gefunden (V8 UTC-Serien,
+# V9 globales Expansionslimit), die calendar/ics.rs umgeht. Nur hinter
+# `parse_and_expand` verwendet, damit ein Wechsel lokal bleibt.
+calcard = { version = "=0.3.14", default-features = false }
 
 [features]
 # GPU acceleration for the Whisper/GGUF backend on Windows x86_64. Opt-in because
@@ -178,6 +183,8 @@ windows = { version = "0.61.3", features = [
   # Job-Objekte: RAM-/CPU-Deckel fuer eigene Kindprozesse (fish-speech,
   # llama-server), damit ein Modellstart nie den ganzen Rechner einfriert.
   "Win32_System_JobObjects",
+  # M5-P5a: DPAPI (CryptProtectData) fuer die Kalender-Geheimnisse.
+  "Win32_Security_Cryptography",
 ] }
 winreg = "0.55"
 # WASAPI loopback capture for the M8 meetings feature (system audio).

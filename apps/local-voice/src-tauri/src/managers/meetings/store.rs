@@ -8,6 +8,9 @@ use specta::Type;
 use std::path::{Path, PathBuf};
 use ulid::Ulid;
 
+use crate::managers::calendar::model::{
+    Attendee, CalEvent, CalendarKind, CalendarSource, MeetingCalendarLink,
+};
 use crate::managers::transcription::WordTime;
 
 use super::notes::model::{
@@ -86,6 +89,9 @@ static MIGRATIONS: &[M] = &[
     // Zeilen bleiben unberuehrt, die neuen Tabellen sind leer, die Migration
     // bleibt schnell (kein Backfill; der Indexer holt Altbestand nach).
     M::up(SEARCH_INDEX_MIGRATION),
+    // M5 (Kalender-Cache, Verknuepfungen, Personen). Nur CREATE und ADD COLUMN
+    // mit Defaults: vorhandene Zeilen bleiben unberuehrt.
+    M::up(CALENDAR_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
@@ -163,6 +169,58 @@ pub(super) const SEARCH_INDEX_MIGRATION: &str = "CREATE TABLE meeting_chunks (
       id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL,
       citations_json TEXT, coverage_json TEXT, created_at INTEGER NOT NULL);
     CREATE INDEX idx_chat_messages_thread ON chat_messages(thread_id, created_at);";
+
+/// Migration Index 4 (M5, `entwurf/m5-m6-kalender-export.md` §4): Kalender-Cache,
+/// Verknuepfung Besprechung <-> Termin, Personen (Spalten an `humans`, Aliasse,
+/// Teilnahmen). Nur `CREATE` und `ADD COLUMN` mit Vorgabewerten: vorhandene
+/// Zeilen bleiben byte-gleich, die neuen Tabellen sind leer. Wie jede Migration
+/// EINE Transaktion, ein Abbruch rollt sie ganz zurueck.
+///
+/// Abweichungen vom Entwurf, beide nur additiv:
+/// - `idx_cal_events_source`: das Ersetzen einer Quelle loescht ueber
+///   `source_id`; ohne Index waere das ein voller Tabellenlauf.
+/// - `calendar_sources.deleted_at` markiert entfernte Quellen: die Zeile bleibt
+///   fuer die Historie, Termine und Teilnehmende gehen hart.
+///
+/// `calendar_event_attendees` fuehrt leere Zeichenketten statt NULL in `email`
+/// und `name` (Teil des Primaerschluessels; NULLs gaelten dort als verschieden).
+pub(super) const CALENDAR_MIGRATION: &str = "CREATE TABLE calendar_sources (
+      id TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT NOT NULL,
+      account_hint TEXT, enabled INTEGER NOT NULL DEFAULT 1,
+      has_attendee_data INTEGER NOT NULL DEFAULT 0,
+      etag TEXT, last_modified TEXT, last_sync_at INTEGER, last_ok_at INTEGER, last_error TEXT,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER);
+    CREATE TABLE calendar_events (
+      key TEXT PRIMARY KEY, source_id TEXT NOT NULL, uid TEXT NOT NULL,
+      title TEXT NOT NULL, starts_at INTEGER NOT NULL, ends_at INTEGER NOT NULL,
+      all_day INTEGER NOT NULL DEFAULT 0, cancelled INTEGER NOT NULL DEFAULT 0,
+      location TEXT, join_url TEXT, description TEXT,
+      reminded_at INTEGER, dismissed_at INTEGER, fetched_at INTEGER NOT NULL);
+    CREATE INDEX idx_cal_events_start ON calendar_events(starts_at);
+    CREATE INDEX idx_cal_events_source ON calendar_events(source_id);
+    CREATE TABLE calendar_event_attendees (
+      event_key TEXT NOT NULL, email TEXT, name TEXT,
+      organizer INTEGER NOT NULL DEFAULT 0, partstat TEXT,
+      PRIMARY KEY (event_key, email, name));
+    CREATE TABLE meeting_calendar_links (
+      meeting_id TEXT PRIMARY KEY, event_key TEXT, source_id TEXT, uid TEXT NOT NULL,
+      event_start INTEGER NOT NULL, event_title TEXT NOT NULL,
+      linked_by TEXT NOT NULL, created_at INTEGER NOT NULL);
+    CREATE INDEX idx_links_uid ON meeting_calendar_links(uid);
+    ALTER TABLE humans ADD COLUMN email_norm TEXT;
+    ALTER TABLE humans ADD COLUMN company TEXT;
+    ALTER TABLE humans ADD COLUMN is_self INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE humans ADD COLUMN merged_into TEXT;
+    CREATE UNIQUE INDEX idx_humans_email ON humans(email_norm)
+      WHERE email_norm IS NOT NULL AND deleted_at IS NULL;
+    CREATE TABLE human_aliases (
+      kind TEXT NOT NULL, value_norm TEXT NOT NULL, human_id TEXT NOT NULL,
+      PRIMARY KEY (kind, value_norm));
+    CREATE TABLE meeting_participants (
+      meeting_id TEXT NOT NULL, human_id TEXT NOT NULL, role TEXT NOT NULL,
+      source TEXT NOT NULL, created_at INTEGER NOT NULL,
+      PRIMARY KEY (meeting_id, human_id));
+    CREATE INDEX idx_participants_human ON meeting_participants(human_id);";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MeetingSource {
@@ -1252,6 +1310,18 @@ impl MeetingStore {
             params![id],
         )?;
 
+        // M5: Verknuepfung mit dem Termin und Teilnahmen gehoeren zur Besprechung
+        // und gehen mit ihr. Personen (`humans`) und Termine (`calendar_events`)
+        // bleiben: sie gehoeren nicht der Besprechung.
+        tx.execute(
+            "DELETE FROM meeting_calendar_links WHERE meeting_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM meeting_participants WHERE meeting_id = ?1",
+            params![id],
+        )?;
+
         tx.commit()?;
 
         let mut audio_paths = Vec::new();
@@ -2037,6 +2107,573 @@ impl MeetingStore {
             return Err(anyhow!("action_item_not_found"));
         }
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// M5 / P5a: Kalender-Cache und Verknuepfungen
+// ---------------------------------------------------------------------------
+
+/// Herkunft und Ergebnis eines Abrufs, der `calendar_source_mark_sync` zugeht.
+// Der Sync-Dienst (P5b) konstruiert beide Varianten; bis dahin nur die Tests.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncMark<'a> {
+    /// Server hat mit 304 geantwortet: Cache bleibt, `last_ok_at` rueckt vor.
+    NotModified,
+    /// Abruf oder Auswertung ist gescheitert: Cache und Pruefwerte bleiben.
+    Failed(&'a str),
+}
+
+/// Pruefwerte und Stand, die zusammen mit den Terminen in EINER Transaktion
+/// gespeichert werden. Wuerden `etag` und Termine getrennt geschrieben, koennte
+/// ein Abbruch dazwischen einen neuen ETag bei altem Cache hinterlassen, und
+/// der Server antwortete danach fuer immer mit 304.
+#[derive(Clone, Copy, Debug)]
+pub struct SyncMeta<'a> {
+    pub has_attendee_data: bool,
+    pub etag: Option<&'a str>,
+    pub last_modified: Option<&'a str>,
+    pub now_ms: i64,
+}
+
+/// Ergebnis von `calendar_replace_events`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplaceStats {
+    pub inserted: u32,
+    /// Vorher gespeicherte Termine, die nicht mehr im Ergebnis stehen.
+    pub removed: u32,
+    /// Termine, deren `reminded_at`/`dismissed_at` uebernommen wurde.
+    pub state_kept: u32,
+}
+
+/// Kalender-Cache (`calendar_*`) und Verknuepfung Besprechung <-> Termin
+/// (`meeting_calendar_links`). Alle Zeitstempel dieser Tabellen sind
+/// Millisekunden UTC. Jeder Schreibweg ist EINE `IMMEDIATE`-Transaktion: ein
+/// Abbruch (auch ein voller Datentraeger) laesst den alten Stand.
+///
+/// Die Adresse einer ICS-Quelle steht NICHT hier (DPAPI, `calendar::secret`).
+// Der Sync-Dienst (P5b) und die Personenschicht (P5d) sind die Verbraucher.
+#[allow(dead_code)]
+impl MeetingStore {
+    /// Legt eine Quelle an. `id` ist zugleich der Name des Geheimnisses.
+    pub fn calendar_source_add(
+        &self,
+        id: &str,
+        kind: CalendarKind,
+        label: &str,
+        account_hint: Option<&str>,
+        now_ms: i64,
+    ) -> Result<CalendarSource> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO calendar_sources (id, kind, label, account_hint, enabled, has_attendee_data,
+                                           created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 1, 0, ?5, ?5)",
+            params![id, kind.as_str(), label, account_hint, now_ms],
+        )?;
+        self.calendar_source(id)?
+            .ok_or_else(|| anyhow!("calendar source {id} vanished"))
+    }
+
+    fn map_calendar_source(row: &rusqlite::Row<'_>) -> rusqlite::Result<CalendarSource> {
+        let kind: String = row.get("kind")?;
+        Ok(CalendarSource {
+            id: row.get("id")?,
+            kind: CalendarKind::parse(&kind).unwrap_or(CalendarKind::Ics),
+            label: row.get("label")?,
+            account_hint: row.get("account_hint")?,
+            enabled: row.get::<_, i64>("enabled")? != 0,
+            has_attendee_data: row.get::<_, i64>("has_attendee_data")? != 0,
+            last_sync_at: row.get("last_sync_at")?,
+            last_ok_at: row.get("last_ok_at")?,
+            last_error: row.get("last_error")?,
+            event_count: row.get::<_, i64>("event_count")?.max(0) as u32,
+        })
+    }
+
+    const CALENDAR_SOURCE_SELECT: &'static str =
+        "SELECT s.id, s.kind, s.label, s.account_hint, s.enabled, s.has_attendee_data,
+                s.last_sync_at, s.last_ok_at, s.last_error,
+                (SELECT COUNT(*) FROM calendar_events e WHERE e.source_id = s.id) AS event_count
+         FROM calendar_sources s";
+
+    /// Eine nicht entfernte Quelle.
+    pub fn calendar_source(&self, id: &str) -> Result<Option<CalendarSource>> {
+        let conn = self.get_connection()?;
+        Ok(conn
+            .query_row(
+                &format!(
+                    "{} WHERE s.id = ?1 AND s.deleted_at IS NULL",
+                    Self::CALENDAR_SOURCE_SELECT
+                ),
+                params![id],
+                Self::map_calendar_source,
+            )
+            .optional()?)
+    }
+
+    /// Alle nicht entfernten Quellen, aelteste zuerst.
+    pub fn calendar_sources(&self) -> Result<Vec<CalendarSource>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(&format!(
+            "{} WHERE s.deleted_at IS NULL ORDER BY s.created_at, s.id",
+            Self::CALENDAR_SOURCE_SELECT
+        ))?;
+        let rows = stmt
+            .query_map([], Self::map_calendar_source)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// `ETag` und `Last-Modified` des letzten erfolgreichen Abrufs, fuer die
+    /// bedingte Anfrage.
+    pub fn calendar_source_validators(
+        &self,
+        id: &str,
+    ) -> Result<Option<(Option<String>, Option<String>)>> {
+        let conn = self.get_connection()?;
+        Ok(conn
+            .query_row(
+                "SELECT etag, last_modified FROM calendar_sources WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn calendar_source_set_enabled(&self, id: &str, enabled: bool, now_ms: i64) -> Result<()> {
+        let conn = self.get_connection()?;
+        let n = conn.execute(
+            "UPDATE calendar_sources SET enabled = ?2, updated_at = ?3 WHERE id = ?1 AND deleted_at IS NULL",
+            params![id, enabled as i64, now_ms],
+        )?;
+        if n == 0 {
+            return Err(anyhow!("calendar_source_not_found"));
+        }
+        Ok(())
+    }
+
+    /// Vermerkt einen Abruf ohne neue Termine (304 oder Fehler). Der Cache und
+    /// die Pruefwerte bleiben unberuehrt; bei einem Fehler steht der Klartext in
+    /// `last_error`, bei 304 rueckt `last_ok_at` vor.
+    pub fn calendar_source_mark_sync(
+        &self,
+        id: &str,
+        now_ms: i64,
+        mark: SyncMark<'_>,
+    ) -> Result<()> {
+        let conn = self.get_connection()?;
+        let n = match mark {
+            SyncMark::NotModified => conn.execute(
+                "UPDATE calendar_sources SET last_sync_at = ?2, last_ok_at = ?2, last_error = NULL,
+                        updated_at = ?2 WHERE id = ?1 AND deleted_at IS NULL",
+                params![id, now_ms],
+            )?,
+            SyncMark::Failed(msg) => conn.execute(
+                "UPDATE calendar_sources SET last_sync_at = ?2, last_error = ?3, updated_at = ?2
+                 WHERE id = ?1 AND deleted_at IS NULL",
+                params![id, now_ms, msg],
+            )?,
+        };
+        if n == 0 {
+            return Err(anyhow!("calendar_source_not_found"));
+        }
+        Ok(())
+    }
+
+    /// Ersetzt ALLE Termine der Quelle durch `events` (das Ergebnis eines
+    /// Abrufs im Fenster) und speichert Pruefwerte und Stand in derselben
+    /// Transaktion. Was nicht mehr im Ergebnis steht, faellt aus dem Cache.
+    /// `reminded_at` und `dismissed_at` bleiben je Schluessel
+    /// (`source:uid:start_ms`) erhalten; ein verschobener Termin hat einen neuen
+    /// Schluessel und wird neu erinnert. Doppelte Schluessel im Ergebnis
+    /// gelten einmal (der spaetere gewinnt), damit sie den Abruf nicht kippen.
+    pub fn calendar_replace_events(
+        &self,
+        source_id: &str,
+        events: &[CalEvent],
+        meta: &SyncMeta<'_>,
+    ) -> Result<ReplaceStats> {
+        if let Some(bad) = events.iter().find(|e| e.source_id != source_id) {
+            return Err(anyhow!(
+                "event {} does not belong to source {source_id}",
+                bad.key
+            ));
+        }
+        let mut latest: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for (i, e) in events.iter().enumerate() {
+            latest.insert(e.key.as_str(), i);
+        }
+
+        let mut conn = self.get_connection()?;
+        let tx = Self::write_tx(&mut conn)?;
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM calendar_sources WHERE id = ?1 AND deleted_at IS NULL)",
+            params![source_id],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            return Err(anyhow!("calendar_source_not_found"));
+        }
+
+        // Vorheriger Stand: alle Schluessel, dazu die Merker, die wir behalten.
+        let mut previous_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut carried: std::collections::HashMap<String, (Option<i64>, Option<i64>)> =
+            std::collections::HashMap::new();
+        {
+            let mut stmt = tx.prepare(
+                "SELECT key, reminded_at, dismissed_at FROM calendar_events WHERE source_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![source_id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                ))
+            })?;
+            for row in rows {
+                let (key, reminded, dismissed) = row?;
+                if reminded.is_some() || dismissed.is_some() {
+                    carried.insert(key.clone(), (reminded, dismissed));
+                }
+                previous_keys.insert(key);
+            }
+        }
+
+        tx.execute(
+            "DELETE FROM calendar_event_attendees
+             WHERE event_key IN (SELECT key FROM calendar_events WHERE source_id = ?1)",
+            params![source_id],
+        )?;
+        tx.execute(
+            "DELETE FROM calendar_events WHERE source_id = ?1",
+            params![source_id],
+        )?;
+
+        let mut inserted = 0u32;
+        let mut state_kept = 0u32;
+        {
+            let mut ins = tx.prepare(
+                "INSERT INTO calendar_events (key, source_id, uid, title, starts_at, ends_at, all_day,
+                        cancelled, location, join_url, description, reminded_at, dismissed_at, fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            )?;
+            let mut ins_att = tx.prepare(
+                "INSERT OR IGNORE INTO calendar_event_attendees (event_key, email, name, organizer, partstat)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+            for (i, e) in events.iter().enumerate() {
+                if latest.get(e.key.as_str()) != Some(&i) {
+                    continue;
+                }
+                let (reminded, dismissed) = carried.get(&e.key).copied().unwrap_or((None, None));
+                if reminded.is_some() || dismissed.is_some() {
+                    state_kept += 1;
+                }
+                ins.execute(params![
+                    e.key,
+                    source_id,
+                    e.uid,
+                    e.title,
+                    e.starts_at,
+                    e.ends_at,
+                    e.all_day as i64,
+                    e.cancelled as i64,
+                    e.location,
+                    e.join_url,
+                    e.description,
+                    reminded,
+                    dismissed,
+                    meta.now_ms
+                ])?;
+                for a in &e.attendees {
+                    // Die Primaerschluessel-Spalten duerfen nicht NULL sein (NULLs
+                    // gelten in SQLite als verschieden): leer statt NULL.
+                    ins_att.execute(params![
+                        e.key,
+                        a.email.as_deref().unwrap_or(""),
+                        a.name.as_deref().unwrap_or(""),
+                        a.organizer as i64,
+                        a.partstat
+                    ])?;
+                }
+                inserted += 1;
+            }
+        }
+        tx.execute(
+            "UPDATE calendar_sources SET has_attendee_data = ?2, etag = ?3, last_modified = ?4,
+                    last_sync_at = ?5, last_ok_at = ?5, last_error = NULL, updated_at = ?5
+             WHERE id = ?1",
+            params![
+                source_id,
+                meta.has_attendee_data as i64,
+                meta.etag,
+                meta.last_modified,
+                meta.now_ms
+            ],
+        )?;
+        tx.commit()?;
+        let removed = previous_keys
+            .iter()
+            .filter(|k| !latest.contains_key(k.as_str()))
+            .count() as u32;
+        Ok(ReplaceStats {
+            inserted,
+            removed,
+            state_kept,
+        })
+    }
+
+    /// Entfernt eine Quelle: Termine und Teilnehmende gehen hart aus dem Cache,
+    /// die Quelle wird als entfernt markiert. Verknuepfungen behalten ihren
+    /// Schnappschuss (UID, Beginn, Titel); nur der Verweis auf Termin und Quelle
+    /// faellt weg. Das Geheimnis loescht der Aufrufer (`calendar::secret`).
+    /// Gibt die Zahl der entfernten Termine zurueck.
+    pub fn calendar_source_remove(&self, id: &str, now_ms: i64) -> Result<u32> {
+        let mut conn = self.get_connection()?;
+        let tx = Self::write_tx(&mut conn)?;
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM calendar_sources WHERE id = ?1 AND deleted_at IS NULL)",
+            params![id],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            return Err(anyhow!("calendar_source_not_found"));
+        }
+        tx.execute(
+            "DELETE FROM calendar_event_attendees
+             WHERE event_key IN (SELECT key FROM calendar_events WHERE source_id = ?1)",
+            params![id],
+        )?;
+        let removed = tx.execute(
+            "DELETE FROM calendar_events WHERE source_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "UPDATE meeting_calendar_links SET event_key = NULL, source_id = NULL WHERE source_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "UPDATE calendar_sources SET deleted_at = ?2, updated_at = ?2, enabled = 0,
+                    etag = NULL, last_modified = NULL WHERE id = ?1",
+            params![id, now_ms],
+        )?;
+        tx.commit()?;
+        Ok(removed as u32)
+    }
+
+    /// Termine, die das Fenster `[from_ms, to_ms)` beruehren, aus aktiven
+    /// Quellen, nach Beginn sortiert. Abgesagte nur mit `include_cancelled`
+    /// (angezeigt und erinnert werden sie nie).
+    pub fn calendar_events_between(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+        include_cancelled: bool,
+    ) -> Result<Vec<CalEvent>> {
+        let conn = self.get_connection()?;
+        let filter = "e.starts_at < ?2 AND (e.ends_at > ?1 OR e.starts_at >= ?1)
+             AND (?3 = 1 OR e.cancelled = 0)
+             AND e.source_id IN (SELECT id FROM calendar_sources WHERE deleted_at IS NULL AND enabled = 1)";
+        let mut stmt = conn.prepare(&format!(
+            "SELECT e.key, e.source_id, e.uid, e.title, e.starts_at, e.ends_at, e.all_day, e.cancelled,
+                    e.location, e.join_url, e.description
+             FROM calendar_events e WHERE {filter} ORDER BY e.starts_at, e.uid, e.key"
+        ))?;
+        let mut events = stmt
+            .query_map(
+                params![from_ms, to_ms, include_cancelled as i64],
+                Self::map_cal_event,
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut att_stmt = conn.prepare(&format!(
+            "SELECT a.event_key, a.email, a.name, a.organizer, a.partstat
+             FROM calendar_event_attendees a JOIN calendar_events e ON e.key = a.event_key
+             WHERE {filter} ORDER BY a.rowid"
+        ))?;
+        let mut by_key: std::collections::HashMap<String, Vec<Attendee>> =
+            std::collections::HashMap::new();
+        let rows = att_stmt.query_map(params![from_ms, to_ms, include_cancelled as i64], |r| {
+            Ok((r.get::<_, String>(0)?, Self::map_attendee(r, 1)?))
+        })?;
+        for row in rows {
+            let (key, a) = row?;
+            by_key.entry(key).or_default().push(a);
+        }
+        for e in &mut events {
+            e.attendees = by_key.remove(&e.key).unwrap_or_default();
+        }
+        Ok(events)
+    }
+
+    /// Ein Termin aus dem Cache, unabhaengig davon, ob er abgesagt ist.
+    pub fn calendar_event(&self, key: &str) -> Result<Option<CalEvent>> {
+        let conn = self.get_connection()?;
+        let event = conn
+            .query_row(
+                "SELECT e.key, e.source_id, e.uid, e.title, e.starts_at, e.ends_at, e.all_day, e.cancelled,
+                        e.location, e.join_url, e.description
+                 FROM calendar_events e WHERE e.key = ?1",
+                params![key],
+                Self::map_cal_event,
+            )
+            .optional()?;
+        let Some(mut event) = event else {
+            return Ok(None);
+        };
+        let mut stmt = conn.prepare(
+            "SELECT event_key, email, name, organizer, partstat FROM calendar_event_attendees
+             WHERE event_key = ?1 ORDER BY rowid",
+        )?;
+        event.attendees = stmt
+            .query_map(params![key], |r| Self::map_attendee(r, 1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(Some(event))
+    }
+
+    fn map_cal_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<CalEvent> {
+        Ok(CalEvent {
+            key: row.get(0)?,
+            source_id: row.get(1)?,
+            uid: row.get(2)?,
+            title: row.get(3)?,
+            starts_at: row.get(4)?,
+            ends_at: row.get(5)?,
+            all_day: row.get::<_, i64>(6)? != 0,
+            cancelled: row.get::<_, i64>(7)? != 0,
+            location: row.get(8)?,
+            join_url: row.get(9)?,
+            description: row.get(10)?,
+            attendees: Vec::new(),
+        })
+    }
+
+    fn map_attendee(row: &rusqlite::Row<'_>, first: usize) -> rusqlite::Result<Attendee> {
+        let non_empty = |s: String| if s.is_empty() { None } else { Some(s) };
+        Ok(Attendee {
+            email: non_empty(row.get(first)?),
+            name: non_empty(row.get(first + 1)?),
+            organizer: row.get::<_, i64>(first + 2)? != 0,
+            is_self: false,
+            partstat: row.get(first + 3)?,
+        })
+    }
+
+    /// (`reminded_at`, `dismissed_at`) eines Termins; `None`, wenn es ihn nicht gibt.
+    pub fn calendar_reminder_state(&self, key: &str) -> Result<Option<(Option<i64>, Option<i64>)>> {
+        let conn = self.get_connection()?;
+        Ok(conn
+            .query_row(
+                "SELECT reminded_at, dismissed_at FROM calendar_events WHERE key = ?1",
+                params![key],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    /// Merkt, dass zu diesem Termin erinnert wurde. `false`, wenn es ihn nicht gibt.
+    pub fn calendar_mark_reminded(&self, key: &str, at_ms: i64) -> Result<bool> {
+        let conn = self.get_connection()?;
+        Ok(conn.execute(
+            "UPDATE calendar_events SET reminded_at = ?2 WHERE key = ?1",
+            params![key, at_ms],
+        )? > 0)
+    }
+
+    /// Merkt, dass der Nutzer den Hinweis zu diesem Termin verworfen hat.
+    pub fn calendar_mark_dismissed(&self, key: &str, at_ms: i64) -> Result<bool> {
+        let conn = self.get_connection()?;
+        Ok(conn.execute(
+            "UPDATE calendar_events SET dismissed_at = ?2 WHERE key = ?1",
+            params![key, at_ms],
+        )? > 0)
+    }
+
+    // ---- Verknuepfung Besprechung <-> Termin --------------------------------
+
+    /// Verknuepft eine Besprechung mit einem Termin (eine je Besprechung; eine
+    /// neue ersetzt die alte). `linked_by`: `prompt`, `auto` oder `manual`. Der
+    /// Schnappschuss (UID, Beginn, Titel) bleibt, auch wenn der Termin aus dem
+    /// Cache faellt.
+    pub fn link_meeting_event(
+        &self,
+        meeting_id: &str,
+        event: &CalEvent,
+        linked_by: &str,
+        now_ms: i64,
+    ) -> Result<()> {
+        if !matches!(linked_by, "prompt" | "auto" | "manual") {
+            return Err(anyhow!("invalid linked_by: {linked_by}"));
+        }
+        let mut conn = self.get_connection()?;
+        let tx = Self::write_tx(&mut conn)?;
+        Self::ensure_meeting_is_live(&tx, meeting_id)?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meeting_calendar_links
+               (meeting_id, event_key, source_id, uid, event_start, event_title, linked_by, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                meeting_id,
+                event.key,
+                event.source_id,
+                event.uid,
+                event.starts_at,
+                event.title,
+                linked_by,
+                now_ms
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn meeting_calendar_link(&self, meeting_id: &str) -> Result<Option<MeetingCalendarLink>> {
+        let conn = self.get_connection()?;
+        Ok(conn
+            .query_row(
+                "SELECT meeting_id, event_key, source_id, uid, event_start, event_title, linked_by, created_at
+                 FROM meeting_calendar_links WHERE meeting_id = ?1",
+                params![meeting_id],
+                |r| {
+                    Ok(MeetingCalendarLink {
+                        meeting_id: r.get(0)?,
+                        event_key: r.get(1)?,
+                        source_id: r.get(2)?,
+                        uid: r.get(3)?,
+                        event_start: r.get(4)?,
+                        event_title: r.get(5)?,
+                        linked_by: r.get(6)?,
+                        created_at: r.get(7)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub fn unlink_meeting_event(&self, meeting_id: &str) -> Result<()> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "DELETE FROM meeting_calendar_links WHERE meeting_id = ?1",
+            params![meeting_id],
+        )?;
+        Ok(())
+    }
+
+    /// Lebende Besprechungen, die zu dieser Termin-UID (Serie) verknuepft sind,
+    /// juengste zuerst: Grundlage fuer die Vorlage der letzten Besprechung
+    /// derselben Serie und den Brief.
+    pub fn meetings_by_event_uid(&self, uid: &str) -> Result<Vec<String>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT l.meeting_id FROM meeting_calendar_links l
+             JOIN meetings m ON m.id = l.meeting_id AND m.deleted_at IS NULL
+             WHERE l.uid = ?1 ORDER BY l.event_start DESC, l.meeting_id DESC",
+        )?;
+        let ids = stmt
+            .query_map(params![uid], |r| r.get(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        Ok(ids)
     }
 }
 
@@ -4018,11 +4655,13 @@ mod tests {
 
         let conn = Connection::open(&path).unwrap();
         assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
-        assert_eq!(MIGRATIONS.len(), 4, "Index 3 ist genau EIN Schritt");
+        assert!(MIGRATIONS.len() >= 4, "Index 3 ist genau EIN Schritt");
+        // `humans` bekommt mit Index 4 (M5) neue Spalten: verglichen wird mit den
+        // Spalten von vor der Migration.
         assert_eq!(
-            snapshot(&conn, &M1_TABLES),
+            snapshot_like(&conn, &before),
             before,
-            "alle Zeilen und Spalten aller M1-Tabellen wertgleich"
+            "alle Zeilen und Alt-Spalten aller M1-Tabellen wertgleich"
         );
         // Die neuen Tabellen sind leer, der Backfill ist nicht Sache der Migration.
         for t in M4_TABLES {
@@ -4124,8 +4763,8 @@ mod tests {
         // Danach laeuft die echte Migration sauber durch.
         MeetingStore::open_at(&path).unwrap();
         let conn = Connection::open(&path).unwrap();
-        assert_eq!(user_version(&conn), 4);
-        assert_eq!(snapshot(&conn, &M1_TABLES), before);
+        assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
+        assert_eq!(snapshot_like(&conn, &before), before);
     }
 
     #[test]
@@ -4297,5 +4936,961 @@ mod tests {
         assert!(s2.search_index_is_consistent().unwrap());
         let conn = s2.get_connection().unwrap();
         assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
+    }
+
+    // ---------------------------------------------------------------------
+    // M5 / P5a: Migration Index 4 (Kalender, Verknuepfungen, Personen)
+    // ---------------------------------------------------------------------
+
+    const CALENDAR_TABLES: [&str; 6] = [
+        "calendar_sources",
+        "calendar_events",
+        "calendar_event_attendees",
+        "meeting_calendar_links",
+        "human_aliases",
+        "meeting_participants",
+    ];
+
+    const CALENDAR_INDEXES: [&str; 5] = [
+        "idx_cal_events_start",
+        "idx_cal_events_source",
+        "idx_links_uid",
+        "idx_humans_email",
+        "idx_participants_human",
+    ];
+
+    /// Wie `snapshot`, aber mit den Spalten VOR der Migration: `humans` bekommt
+    /// mit Index 4 neue Spalten, die Altzeilen muessen in den alten wertgleich bleiben.
+    type TableSnapshot = (String, Vec<String>, Vec<Vec<Value>>);
+
+    fn snapshot_like(conn: &Connection, before: &[TableSnapshot]) -> Vec<TableSnapshot> {
+        before
+            .iter()
+            .map(|(t, cols, _)| {
+                let filter = if t == "meeting_templates" {
+                    "WHERE id NOT LIKE 'builtin:%'"
+                } else {
+                    ""
+                };
+                (t.clone(), cols.clone(), dump(conn, t, cols, filter))
+            })
+            .collect()
+    }
+
+    /// Eine Datenbank, wie die App mit M4 (Index 0 bis 3) sie hinterlaesst: die
+    /// Zeilen von M8 und M1 plus je eine Zeile in JEDER Tabelle des Such-Index,
+    /// der Ordner, Recipes und Chats.
+    fn create_m4_db(path: &Path) {
+        create_m1_db(path);
+        let mut conn = Connection::open(path).unwrap();
+        Migrations::new(MIGRATIONS[..4].to_vec())
+            .to_latest(&mut conn)
+            .unwrap();
+        conn.execute_batch(
+            r#"
+            INSERT INTO meeting_chunks (meeting_id, source, epoch, segment_ids, ref_keys, text,
+                started_at, created_at)
+            VALUES ('M1', 'transcript', 2, '[0,1]', '[]',
+                    'Guten Tag, schön dass Sie da sind. Danke, gern.', 1755600000, 1755603700);
+            INSERT INTO meeting_chunk_vectors (chunk_id, model, dim, vec)
+            VALUES (1, 'test-model', 2, x'0000803f00000040');
+            INSERT INTO meeting_index_state (meeting_id, transcript_epoch, transcript_rev,
+                notes_revision, title, status, updated_at)
+            VALUES ('M1', 2, 3, 3, 'Kundengespräch Größe 🚀', 'ready', 1755603800);
+            INSERT INTO meeting_folders (id, name, color, sort, parent_id, created_at, updated_at)
+            VALUES ('F1', 'Kunden', '#ff0000', 1, NULL, 1755600000, 1755600000);
+            INSERT INTO meeting_folder_items (folder_id, meeting_id, added_at)
+            VALUES ('F1', 'M1', 1755600100);
+            INSERT INTO chat_recipes (id, title, spec_json, created_at, updated_at)
+            VALUES ('R1', 'Größe prüfen', '{"k":"v"}', 1755600000, 1755600000);
+            INSERT INTO chat_threads (id, scope_json, meeting_id, title, created_at, updated_at)
+            VALUES ('C1', '{"kind":"meeting"}', 'M1', 'Frage zu Größe', 1755600000, 1755600001);
+            INSERT INTO chat_messages (id, thread_id, role, content, citations_json, coverage_json,
+                created_at)
+            VALUES ('MSG1', 'C1', 'user', 'Wie groß ist das Budget?', NULL, NULL, 1755600002),
+                   ('MSG2', 'C1', 'assistant', 'Das Budget beträgt 10 000 €. [1]', '[{"i":1}]',
+                    '{"c":1}', 1755600003);
+            "#,
+        )
+        .unwrap();
+    }
+
+    fn old_tables() -> Vec<&'static str> {
+        M1_TABLES.iter().chain(M4_TABLES.iter()).copied().collect()
+    }
+
+    fn sqlite_master_count(conn: &Connection, name: &str) -> i64 {
+        scalar(
+            conn,
+            &format!("SELECT COUNT(*) FROM sqlite_master WHERE name = '{name}'"),
+        )
+    }
+
+    #[test]
+    fn migration_keeps_m4_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        create_m4_db(&path);
+
+        let before = {
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(user_version(&conn), 4, "M4-Stand: Index 0 bis 3 angewendet");
+            for name in CALENDAR_TABLES.iter().chain(CALENDAR_INDEXES.iter()) {
+                assert_eq!(
+                    sqlite_master_count(&conn, name),
+                    0,
+                    "{name} gibt es vor Index 4 nicht"
+                );
+            }
+            let before = snapshot(&conn, &old_tables());
+            assert!(
+                before.iter().all(|(_, _, rows)| !rows.is_empty()),
+                "jede Tabelle hat Zeilen, auch die von M4: {:?}",
+                before
+                    .iter()
+                    .filter(|(_, _, r)| r.is_empty())
+                    .map(|(t, _, _)| t)
+                    .collect::<Vec<_>>()
+            );
+            before
+        };
+
+        let s = MeetingStore::open_at(&path).unwrap();
+
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
+        assert!(MIGRATIONS.len() >= 5, "Index 4 ist genau EIN Schritt");
+        assert_eq!(
+            snapshot_like(&conn, &before),
+            before,
+            "alle Zeilen und Alt-Spalten aller M1- und M4-Tabellen wertgleich"
+        );
+        for t in CALENDAR_TABLES {
+            assert_eq!(
+                scalar(&conn, &format!("SELECT COUNT(*) FROM {t}")),
+                0,
+                "{t} leer"
+            );
+        }
+        for index in CALENDAR_INDEXES {
+            assert_eq!(sqlite_master_count(&conn, index), 1, "{index}");
+        }
+        // Die Altzeile in `humans` traegt die Vorgaben der neuen Spalten.
+        let (email_norm, company, is_self, merged_into): (
+            Option<String>,
+            Option<String>,
+            i64,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT email_norm, company, is_self, merged_into FROM humans WHERE id = 'H1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (email_norm, company, is_self, merged_into),
+            (None, None, 0, None)
+        );
+        drop(conn);
+
+        // Der neue Code liest die Altdaten und der Such-Index bleibt heil.
+        assert_eq!(
+            s.get_meeting("M1").unwrap().unwrap().title,
+            "Kundengespräch Größe 🚀"
+        );
+        assert_eq!(s.get_notes("M1").unwrap().revision, 3);
+        assert!(s.search_index_is_consistent().unwrap());
+
+        // Und die neuen Schreibwege laufen auf den Altdaten: Quelle, Termin,
+        // Verknuepfung, dann Loeschen der Besprechung raeumt die Verknuepfung, nicht mehr.
+        s.calendar_source_add("src1", CalendarKind::Ics, "Outlook", None, 1_000)
+            .unwrap();
+        let ev = cal_event("src1", "uid-1", 1_790_000_000_000, "Jour fixe");
+        s.calendar_replace_events("src1", std::slice::from_ref(&ev), &meta(2_000, Some("e1")))
+            .unwrap();
+        s.link_meeting_event("M1", &ev, "manual", 3_000).unwrap();
+        assert_eq!(
+            s.meetings_by_event_uid("uid-1").unwrap(),
+            vec!["M1".to_string()]
+        );
+        s.soft_delete_meeting("M1").unwrap();
+        assert!(s.meeting_calendar_link("M1").unwrap().is_none());
+        assert!(
+            s.calendar_event(&ev.key).unwrap().is_some(),
+            "der Termin bleibt"
+        );
+        let conn = s.get_connection().unwrap();
+        assert_eq!(
+            scalar(&conn, "SELECT COUNT(*) FROM humans WHERE id = 'H1'"),
+            1,
+            "Personen bleiben"
+        );
+    }
+
+    #[test]
+    fn migration_4_is_all_or_nothing_when_it_fails_midway() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        create_m4_db(&path);
+        let before = {
+            let conn = Connection::open(&path).unwrap();
+            snapshot(&conn, &old_tables())
+        };
+
+        // Index 4 plus ein Schritt, der erst nach dem ganzen Schema scheitert
+        // (wie ein Abbruch durch einen vollen Datentraeger am Ende).
+        let broken_sql: &'static str =
+            Box::leak(format!("{CALENDAR_MIGRATION} SELECT no_such_function();").into_boxed_str());
+        let mut broken = MIGRATIONS[..4].to_vec();
+        broken.push(M::up(broken_sql));
+        let mut conn = Connection::open(&path).unwrap();
+        assert!(Migrations::new(broken).to_latest(&mut conn).is_err());
+        drop(conn);
+
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(user_version(&conn), 4, "Version unveraendert");
+        for name in CALENDAR_TABLES.iter().chain(CALENDAR_INDEXES.iter()) {
+            assert_eq!(
+                sqlite_master_count(&conn, name),
+                0,
+                "{name} darf nicht halb angelegt sein"
+            );
+        }
+        let humans = table_columns(&conn, "humans");
+        for col in ["email_norm", "company", "is_self", "merged_into"] {
+            assert!(
+                !humans.contains(&col.to_string()),
+                "{col} darf nicht halb angelegt sein"
+            );
+        }
+        assert_eq!(snapshot(&conn, &old_tables()), before, "Daten unberuehrt");
+        drop(conn);
+
+        // Danach laeuft die echte Migration sauber durch.
+        MeetingStore::open_at(&path).unwrap();
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
+        assert_eq!(snapshot_like(&conn, &before), before);
+    }
+
+    #[test]
+    fn migration_4_creates_the_specified_schema() {
+        let (_dir, s) = tmp_store();
+        let conn = s.get_connection().unwrap();
+        assert_eq!(
+            table_columns(&conn, "calendar_sources"),
+            [
+                "id",
+                "kind",
+                "label",
+                "account_hint",
+                "enabled",
+                "has_attendee_data",
+                "etag",
+                "last_modified",
+                "last_sync_at",
+                "last_ok_at",
+                "last_error",
+                "created_at",
+                "updated_at",
+                "deleted_at"
+            ]
+        );
+        assert_eq!(
+            table_columns(&conn, "calendar_events"),
+            [
+                "key",
+                "source_id",
+                "uid",
+                "title",
+                "starts_at",
+                "ends_at",
+                "all_day",
+                "cancelled",
+                "location",
+                "join_url",
+                "description",
+                "reminded_at",
+                "dismissed_at",
+                "fetched_at"
+            ]
+        );
+        assert_eq!(
+            table_columns(&conn, "calendar_event_attendees"),
+            ["event_key", "email", "name", "organizer", "partstat"]
+        );
+        assert_eq!(
+            table_columns(&conn, "meeting_calendar_links"),
+            [
+                "meeting_id",
+                "event_key",
+                "source_id",
+                "uid",
+                "event_start",
+                "event_title",
+                "linked_by",
+                "created_at"
+            ]
+        );
+        assert_eq!(
+            table_columns(&conn, "human_aliases"),
+            ["kind", "value_norm", "human_id"]
+        );
+        assert_eq!(
+            table_columns(&conn, "meeting_participants"),
+            ["meeting_id", "human_id", "role", "source", "created_at"]
+        );
+        assert_eq!(
+            table_columns(&conn, "humans"),
+            [
+                "id",
+                "name",
+                "email",
+                "memo",
+                "created_at",
+                "updated_at",
+                "deleted_at",
+                "email_norm",
+                "company",
+                "is_self",
+                "merged_into"
+            ]
+        );
+        for index in CALENDAR_INDEXES {
+            assert_eq!(sqlite_master_count(&conn, index), 1, "{index}");
+        }
+
+        // Eine E-Mail gehoert hoechstens einer lebenden Person; ohne Adresse und
+        // bei geloeschten Personen darf es beliebig viele geben.
+        let insert = |id: &str, email: Option<&str>, deleted: Option<i64>| {
+            conn.execute(
+                "INSERT INTO humans (id, name, email_norm, created_at, updated_at, deleted_at)
+                 VALUES (?1, 'N', ?2, 1, 1, ?3)",
+                params![id, email, deleted],
+            )
+        };
+        insert("a", Some("anna@example.com"), None).unwrap();
+        assert!(insert("b", Some("anna@example.com"), None).is_err());
+        insert("c", Some("anna@example.com"), Some(5)).unwrap();
+        insert("d", None, None).unwrap();
+        insert("e", None, None).unwrap();
+        // Alias und Teilnahme: je Schluessel einmal.
+        conn.execute(
+            "INSERT INTO human_aliases (kind, value_norm, human_id) VALUES ('email', 'x@y', 'a')",
+            [],
+        )
+        .unwrap();
+        assert!(conn
+            .execute(
+                "INSERT INTO human_aliases (kind, value_norm, human_id) VALUES ('email', 'x@y', 'b')",
+                [],
+            )
+            .is_err());
+    }
+
+    // ---- Kalender-Cache -----------------------------------------------------
+
+    fn cal_event(source: &str, uid: &str, start_ms: i64, title: &str) -> CalEvent {
+        CalEvent {
+            key: crate::managers::calendar::model::event_key(source, uid, start_ms),
+            source_id: source.to_string(),
+            uid: uid.to_string(),
+            title: title.to_string(),
+            starts_at: start_ms,
+            ends_at: start_ms + 1_800_000,
+            all_day: false,
+            cancelled: false,
+            location: Some("Raum 2.14".into()),
+            join_url: Some("https://meet.google.com/abc-defg-hij".into()),
+            description: Some("Agenda\nPunkt 1".into()),
+            attendees: vec![
+                Attendee {
+                    email: Some("anna.berg@example.com".into()),
+                    name: Some("Anna Berg".into()),
+                    organizer: true,
+                    is_self: false,
+                    partstat: None,
+                },
+                Attendee {
+                    email: None,
+                    name: Some("Ohne Adresse".into()),
+                    organizer: false,
+                    is_self: false,
+                    partstat: Some("ACCEPTED".into()),
+                },
+            ],
+        }
+    }
+
+    fn meta(now_ms: i64, etag: Option<&str>) -> SyncMeta<'_> {
+        SyncMeta {
+            has_attendee_data: true,
+            etag,
+            last_modified: None,
+            now_ms,
+        }
+    }
+
+    const T1: i64 = 1_790_000_000_000;
+    const T2: i64 = 1_790_100_000_000;
+
+    fn cal_store() -> (tempfile::TempDir, MeetingStore) {
+        let (dir, s) = tmp_store();
+        s.calendar_source_add(
+            "src1",
+            CalendarKind::Ics,
+            "Outlook",
+            Some("outlook.office365.com"),
+            1_000,
+        )
+        .unwrap();
+        (dir, s)
+    }
+
+    fn reminder_state(s: &MeetingStore, key: &str) -> Option<(Option<i64>, Option<i64>)> {
+        s.calendar_reminder_state(key).unwrap()
+    }
+
+    #[test]
+    fn resync_keeps_reminded_at() {
+        let (_dir, s) = cal_store();
+        let a = cal_event("src1", "u1", T1, "Jour fixe");
+        let b = cal_event("src1", "u2", T2, "Kunde");
+        let stats = s
+            .calendar_replace_events("src1", &[a.clone(), b.clone()], &meta(2_000, Some("e1")))
+            .unwrap();
+        assert_eq!(
+            stats,
+            ReplaceStats {
+                inserted: 2,
+                removed: 0,
+                state_kept: 0
+            }
+        );
+        assert!(s.calendar_mark_reminded(&a.key, 5_000).unwrap());
+        assert!(s.calendar_mark_dismissed(&b.key, 6_000).unwrap());
+        assert!(!s.calendar_mark_reminded("nicht:da:1", 1).unwrap());
+
+        // Zweiter Abruf: `a` unveraendert, `b` umbenannt (gleicher Schluessel), `c` neu,
+        // `a_moved` = `a` zu anderer Zeit (neuer Schluessel).
+        let mut b2 = b.clone();
+        b2.title = "Kunde (neuer Titel)".into();
+        let c = cal_event("src1", "u3", T2 + 1_000_000, "Neu");
+        let mut a_moved = a.clone();
+        a_moved.starts_at += 3_600_000;
+        a_moved.ends_at += 3_600_000;
+        a_moved.key = crate::managers::calendar::model::event_key("src1", "u1", a_moved.starts_at);
+        let stats = s
+            .calendar_replace_events(
+                "src1",
+                &[a.clone(), b2.clone(), c.clone(), a_moved.clone()],
+                &meta(3_000, Some("e2")),
+            )
+            .unwrap();
+        assert_eq!(
+            stats,
+            ReplaceStats {
+                inserted: 4,
+                removed: 0,
+                state_kept: 2
+            }
+        );
+        assert_eq!(reminder_state(&s, &a.key), Some((Some(5_000), None)));
+        assert_eq!(reminder_state(&s, &b.key), Some((None, Some(6_000))));
+        assert_eq!(reminder_state(&s, &c.key), Some((None, None)));
+        assert_eq!(
+            reminder_state(&s, &a_moved.key),
+            Some((None, None)),
+            "ein verschobener Termin hat einen neuen Schluessel und wird neu erinnert"
+        );
+        assert_eq!(
+            s.calendar_event(&b.key).unwrap().unwrap().title,
+            "Kunde (neuer Titel)"
+        );
+
+        // Dritter Abruf: nur noch `c`. Was verschwindet, verliert auch seinen Merker.
+        let stats = s
+            .calendar_replace_events("src1", std::slice::from_ref(&c), &meta(4_000, Some("e3")))
+            .unwrap();
+        assert_eq!(
+            stats,
+            ReplaceStats {
+                inserted: 1,
+                removed: 3,
+                state_kept: 0
+            }
+        );
+        assert!(s.calendar_event(&a.key).unwrap().is_none());
+        assert_eq!(
+            s.calendar_source_validators("src1").unwrap(),
+            Some((Some("e3".to_string()), None))
+        );
+        let src = s.calendar_source("src1").unwrap().unwrap();
+        assert_eq!(src.event_count, 1);
+        assert!(src.has_attendee_data);
+        assert_eq!(
+            (src.last_sync_at, src.last_ok_at, src.last_error),
+            (Some(4_000), Some(4_000), None)
+        );
+        // Wieder auftauchend gilt der Termin als neu (kein Merker aus der Vergangenheit).
+        s.calendar_replace_events("src1", &[a.clone(), c], &meta(5_000, None))
+            .unwrap();
+        assert_eq!(reminder_state(&s, &a.key), Some((None, None)));
+    }
+
+    #[test]
+    fn resync_replaces_only_its_own_source_and_keeps_attendee_order() {
+        let (_dir, s) = cal_store();
+        s.calendar_source_add("src2", CalendarKind::Ics, "Google", None, 1_000)
+            .unwrap();
+        let a = cal_event("src1", "u1", T1, "Aus Quelle 1");
+        let z = cal_event("src2", "u1", T1, "Aus Quelle 2");
+        s.calendar_replace_events("src1", std::slice::from_ref(&a), &meta(2_000, None))
+            .unwrap();
+        s.calendar_replace_events("src2", std::slice::from_ref(&z), &meta(2_000, None))
+            .unwrap();
+        // Ein leeres Ergebnis leert nur Quelle 1.
+        s.calendar_replace_events("src1", &[], &meta(3_000, None))
+            .unwrap();
+        assert!(s.calendar_event(&a.key).unwrap().is_none());
+        let got = s.calendar_event(&z.key).unwrap().unwrap();
+        assert_eq!(
+            got, z,
+            "Quelle 2 unberuehrt, Teilnehmende in Reihenfolge, Organisator zuerst"
+        );
+        // Die Teilnehmenden von Quelle 1 sind mit weg.
+        let conn = s.get_connection().unwrap();
+        assert_eq!(
+            scalar(
+                &conn,
+                &format!(
+                    "SELECT COUNT(*) FROM calendar_event_attendees WHERE event_key = '{}'",
+                    a.key
+                )
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn duplicate_keys_in_one_batch_do_not_abort_the_sync() {
+        let (_dir, s) = cal_store();
+        let first = cal_event("src1", "u1", T1, "Alt");
+        let mut second = first.clone();
+        second.title = "Neu".into();
+        let stats = s
+            .calendar_replace_events("src1", &[first, second.clone()], &meta(2_000, None))
+            .unwrap();
+        assert_eq!(stats.inserted, 1);
+        assert_eq!(s.calendar_event(&second.key).unwrap().unwrap().title, "Neu");
+    }
+
+    #[test]
+    fn events_of_a_foreign_or_removed_source_are_refused() {
+        let (_dir, s) = cal_store();
+        let foreign = cal_event("src9", "u1", T1, "Fremd");
+        assert!(s
+            .calendar_replace_events("src1", &[foreign], &meta(2_000, None))
+            .is_err());
+        let own = cal_event("src1", "u1", T1, "Eigen");
+        assert!(s
+            .calendar_replace_events(
+                "gibt-es-nicht",
+                &[cal_event("gibt-es-nicht", "u", T1, "x")],
+                &meta(2_000, None)
+            )
+            .is_err());
+        s.calendar_source_remove("src1", 9_000).unwrap();
+        assert_eq!(
+            s.calendar_replace_events("src1", &[own], &meta(10_000, None))
+                .unwrap_err()
+                .to_string(),
+            "calendar_source_not_found"
+        );
+    }
+
+    #[test]
+    fn replace_is_all_or_nothing_when_a_row_fails() {
+        let (_dir, s) = cal_store();
+        let a = cal_event("src1", "u1", T1, "Bleibt");
+        s.calendar_replace_events("src1", std::slice::from_ref(&a), &meta(2_000, Some("e1")))
+            .unwrap();
+        s.calendar_mark_reminded(&a.key, 5_000).unwrap();
+
+        // Ein Fehler mitten im Einfuegen (wie ein voller Datentraeger): der Loeschschritt
+        // davor, der neue ETag und der Stand werden zurueckgerollt.
+        s.get_connection()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER boom BEFORE INSERT ON calendar_event_attendees WHEN NEW.name = 'BOOM'
+                 BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END;",
+            )
+            .unwrap();
+        let mut bad = cal_event("src1", "u2", T2, "Scheitert");
+        bad.attendees[1].name = Some("BOOM".into());
+        let mut changed = a.clone();
+        changed.title = "Geaendert".into();
+        assert!(s
+            .calendar_replace_events("src1", &[changed, bad], &meta(3_000, Some("e2")))
+            .is_err());
+
+        let events = s.calendar_events_between(0, i64::MAX, true).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title, "Bleibt");
+        assert_eq!(
+            events[0].attendees.len(),
+            2,
+            "auch die Teilnehmenden sind noch da"
+        );
+        assert_eq!(reminder_state(&s, &a.key), Some((Some(5_000), None)));
+        assert_eq!(
+            s.calendar_source_validators("src1").unwrap(),
+            Some((Some("e1".to_string()), None)),
+            "der neue ETag darf ohne die neuen Termine nicht stehen"
+        );
+        let src = s.calendar_source("src1").unwrap().unwrap();
+        assert_eq!(src.last_ok_at, Some(2_000));
+    }
+
+    #[test]
+    fn concurrent_resyncs_leave_a_consistent_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let s = MeetingStore::open_at(&path).unwrap();
+        s.calendar_source_add("src1", CalendarKind::Ics, "Outlook", None, 1_000)
+            .unwrap();
+
+        let barrier = Barrier::new(6);
+        let results: Vec<Result<ReplaceStats>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..6usize)
+                .map(|g| {
+                    let (barrier, path) = (&barrier, &path);
+                    scope.spawn(move || {
+                        let store = MeetingStore::open_at(path).unwrap();
+                        let events: Vec<CalEvent> = (0..25)
+                            .map(|i| {
+                                cal_event(
+                                    "src1",
+                                    &format!("u{i}"),
+                                    T1 + i * 60_000,
+                                    &format!("gen-{g}"),
+                                )
+                            })
+                            .collect();
+                        let etag = format!("etag-{g}");
+                        barrier.wait();
+                        store.calendar_replace_events(
+                            "src1",
+                            &events,
+                            &SyncMeta {
+                                has_attendee_data: true,
+                                etag: Some(&etag),
+                                last_modified: None,
+                                now_ms: 10_000 + g as i64,
+                            },
+                        )
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        for r in &results {
+            assert!(
+                r.is_ok(),
+                "gleichzeitige Abrufe duerfen nicht scheitern: {r:?}"
+            );
+        }
+        let events = s.calendar_events_between(0, i64::MAX, true).unwrap();
+        assert_eq!(events.len(), 25);
+        let generation = events[0].title.clone();
+        assert!(
+            events.iter().all(|e| e.title == generation),
+            "kein Mischstand"
+        );
+        assert!(
+            events.iter().all(|e| e.attendees.len() == 2),
+            "keine doppelten Teilnehmenden"
+        );
+        assert_eq!(
+            s.calendar_source_validators("src1").unwrap().unwrap().0,
+            Some(generation.replace("gen-", "etag-")),
+            "ETag und Termine stammen aus demselben Abruf"
+        );
+    }
+
+    #[test]
+    fn a_failed_sync_keeps_the_cache_and_only_notes_the_error() {
+        let (_dir, s) = cal_store();
+        let a = cal_event("src1", "u1", T1, "Bleibt");
+        s.calendar_replace_events("src1", std::slice::from_ref(&a), &meta(2_000, Some("e1")))
+            .unwrap();
+        s.calendar_source_mark_sync(
+            "src1",
+            3_000,
+            SyncMark::Failed("Zugriff verweigert (HTTP 403)"),
+        )
+        .unwrap();
+        let src = s.calendar_source("src1").unwrap().unwrap();
+        assert_eq!(
+            src.last_error.as_deref(),
+            Some("Zugriff verweigert (HTTP 403)")
+        );
+        assert_eq!(
+            (src.last_sync_at, src.last_ok_at),
+            (Some(3_000), Some(2_000))
+        );
+        assert_eq!(src.event_count, 1, "Cache bleibt");
+        assert_eq!(
+            s.calendar_source_validators("src1")
+                .unwrap()
+                .unwrap()
+                .0
+                .as_deref(),
+            Some("e1")
+        );
+        // 304 loescht den Fehler und rueckt `last_ok_at` vor.
+        s.calendar_source_mark_sync("src1", 4_000, SyncMark::NotModified)
+            .unwrap();
+        let src = s.calendar_source("src1").unwrap().unwrap();
+        assert_eq!((src.last_error, src.last_ok_at), (None, Some(4_000)));
+        assert!(s
+            .calendar_source_mark_sync("nope", 1, SyncMark::NotModified)
+            .is_err());
+    }
+
+    #[test]
+    fn events_between_hides_cancelled_and_disabled_sources() {
+        let (_dir, s) = cal_store();
+        s.calendar_source_add("src2", CalendarKind::Ics, "Google", None, 1_000)
+            .unwrap();
+        let normal = cal_event("src1", "u1", T1, "Normal");
+        let mut cancelled = cal_event("src1", "u2", T1 + 60_000, "Abgesagt");
+        cancelled.cancelled = true;
+        let other = cal_event("src2", "u3", T1 + 120_000, "Andere Quelle");
+        let late = cal_event("src1", "u4", T1 + 10 * 3_600_000, "Spaeter");
+        s.calendar_replace_events(
+            "src1",
+            &[late.clone(), normal.clone(), cancelled.clone()],
+            &meta(2_000, None),
+        )
+        .unwrap();
+        s.calendar_replace_events("src2", std::slice::from_ref(&other), &meta(2_000, None))
+            .unwrap();
+
+        let window = (T1 - 1, T1 + 5 * 3_600_000);
+        let titles = |include: bool, s: &MeetingStore| -> Vec<String> {
+            s.calendar_events_between(window.0, window.1, include)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.title)
+                .collect()
+        };
+        assert_eq!(titles(false, &s), ["Normal", "Andere Quelle"]);
+        assert_eq!(titles(true, &s), ["Normal", "Abgesagt", "Andere Quelle"]);
+        // Ein Termin, der ins Fenster hineinragt, zaehlt; einer, der davor endet, nicht.
+        let overlapping = s
+            .calendar_events_between(T1 + 1_000_000, T1 + 2_000_000, false)
+            .unwrap();
+        assert_eq!(
+            overlapping
+                .iter()
+                .map(|e| e.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Normal", "Andere Quelle"],
+            "beide laufen im Fenster noch, der abgesagte ist ausgeblendet"
+        );
+        s.calendar_source_set_enabled("src2", false, 3_000).unwrap();
+        assert_eq!(
+            titles(false, &s),
+            ["Normal"],
+            "abgeschaltete Quelle bleibt aus der Liste"
+        );
+        assert_eq!(
+            s.calendar_sources().unwrap().len(),
+            2,
+            "abgeschaltet ist nicht entfernt"
+        );
+        // Ein einzelner Termin ist auch abgesagt lesbar.
+        assert!(s.calendar_event(&cancelled.key).unwrap().unwrap().cancelled);
+    }
+
+    #[test]
+    fn source_remove_keeps_the_snapshot_of_links() {
+        let (_dir, s) = cal_store();
+        let m = live_meeting(&s);
+        let ev = cal_event("src1", "u1", T1, "Jour fixe");
+        s.calendar_replace_events("src1", std::slice::from_ref(&ev), &meta(2_000, Some("e1")))
+            .unwrap();
+        s.link_meeting_event(&m.id, &ev, "auto", 3_000).unwrap();
+        let link = s.meeting_calendar_link(&m.id).unwrap().unwrap();
+        assert_eq!(link.event_key.as_deref(), Some(ev.key.as_str()));
+        assert_eq!(link.source_id.as_deref(), Some("src1"));
+        assert_eq!(link.linked_by, "auto");
+
+        assert_eq!(s.calendar_source_remove("src1", 9_000).unwrap(), 1);
+        assert!(
+            s.calendar_event(&ev.key).unwrap().is_none(),
+            "Termin ist hart weg"
+        );
+        assert!(s.calendar_source("src1").unwrap().is_none());
+        assert!(s.calendar_sources().unwrap().is_empty());
+        let conn = s.get_connection().unwrap();
+        assert_eq!(
+            scalar(&conn, "SELECT COUNT(*) FROM calendar_event_attendees"),
+            0
+        );
+        drop(conn);
+        // Der Schnappschuss der Verknuepfung bleibt, nur die Verweise fallen weg.
+        let link = s.meeting_calendar_link(&m.id).unwrap().unwrap();
+        assert_eq!(
+            (link.event_key, link.source_id),
+            (None, None),
+            "Verweise auf entfernten Termin und Quelle"
+        );
+        assert_eq!(
+            (
+                link.uid.as_str(),
+                link.event_start,
+                link.event_title.as_str()
+            ),
+            ("u1", T1, "Jour fixe")
+        );
+        assert_eq!(
+            s.calendar_source_remove("src1", 9_001)
+                .unwrap_err()
+                .to_string(),
+            "calendar_source_not_found"
+        );
+    }
+
+    #[test]
+    fn soft_delete_removes_calendar_links_and_participants() {
+        let (_dir, s) = cal_store();
+        let m = live_meeting(&s);
+        let other = live_meeting(&s);
+        let ev = cal_event("src1", "u1", T1, "Jour fixe");
+        s.calendar_replace_events("src1", std::slice::from_ref(&ev), &meta(2_000, None))
+            .unwrap();
+        s.link_meeting_event(&m.id, &ev, "manual", 3_000).unwrap();
+        s.link_meeting_event(&other.id, &ev, "manual", 3_000)
+            .unwrap();
+        let conn = s.get_connection().unwrap();
+        conn.execute(
+            "INSERT INTO humans (id, name, created_at, updated_at) VALUES ('H1', 'Anna Berg', 1, 1)",
+            [],
+        )
+        .unwrap();
+        for id in [&m.id, &other.id] {
+            conn.execute(
+                "INSERT INTO meeting_participants (meeting_id, human_id, role, source, created_at)
+                 VALUES (?1, 'H1', 'attendee', 'calendar', 1)",
+                params![id],
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        s.soft_delete_meeting(&m.id).unwrap();
+
+        assert!(s.meeting_calendar_link(&m.id).unwrap().is_none());
+        assert!(
+            s.meeting_calendar_link(&other.id).unwrap().is_some(),
+            "fremde Verknuepfung bleibt"
+        );
+        let conn = s.get_connection().unwrap();
+        assert_eq!(
+            scalar(
+                &conn,
+                &format!(
+                    "SELECT COUNT(*) FROM meeting_participants WHERE meeting_id = '{}'",
+                    m.id
+                )
+            ),
+            0
+        );
+        assert_eq!(
+            scalar(
+                &conn,
+                &format!(
+                    "SELECT COUNT(*) FROM meeting_participants WHERE meeting_id = '{}'",
+                    other.id
+                )
+            ),
+            1
+        );
+        assert_eq!(
+            scalar(&conn, "SELECT COUNT(*) FROM humans WHERE id = 'H1'"),
+            1,
+            "Personen bleiben"
+        );
+        assert_eq!(
+            scalar(&conn, "SELECT COUNT(*) FROM calendar_events"),
+            1,
+            "Termine bleiben"
+        );
+    }
+
+    #[test]
+    fn links_roundtrip_and_lookup_by_series_uid() {
+        let (_dir, s) = cal_store();
+        let old = live_meeting(&s);
+        let new = live_meeting(&s);
+        let gone = live_meeting(&s);
+        let e1 = cal_event("src1", "serie", T1, "Jour fixe");
+        let e2 = cal_event("src1", "serie", T2, "Jour fixe");
+        s.link_meeting_event(&old.id, &e1, "prompt", 1).unwrap();
+        s.link_meeting_event(&new.id, &e2, "manual", 2).unwrap();
+        s.link_meeting_event(&gone.id, &e2, "auto", 3).unwrap();
+        s.soft_delete_meeting(&gone.id).unwrap();
+
+        assert_eq!(
+            s.meetings_by_event_uid("serie").unwrap(),
+            vec![new.id.clone(), old.id.clone()],
+            "juengste zuerst, geloeschte nicht"
+        );
+        assert!(s.meetings_by_event_uid("andere").unwrap().is_empty());
+
+        // Neu verknuepfen ersetzt.
+        s.link_meeting_event(&old.id, &e2, "manual", 4).unwrap();
+        let link = s.meeting_calendar_link(&old.id).unwrap().unwrap();
+        assert_eq!((link.event_start, link.linked_by.as_str()), (T2, "manual"));
+        s.unlink_meeting_event(&old.id).unwrap();
+        assert!(s.meeting_calendar_link(&old.id).unwrap().is_none());
+        s.unlink_meeting_event(&old.id).unwrap();
+
+        // Ungueltiger Ursprung, unbekannte und geloeschte Besprechung.
+        assert!(s.link_meeting_event(&new.id, &e1, "zufall", 5).is_err());
+        assert!(s
+            .link_meeting_event("gibt-es-nicht", &e1, "manual", 5)
+            .is_err());
+        assert!(s.link_meeting_event(&gone.id, &e1, "manual", 5).is_err());
+    }
+
+    #[test]
+    fn sources_list_in_creation_order_with_counts() {
+        let (_dir, s) = tmp_store();
+        s.calendar_source_add("b-src", CalendarKind::Ics, "Zweite", None, 2_000)
+            .unwrap();
+        s.calendar_source_add(
+            "a-src",
+            CalendarKind::Ics,
+            "Erste",
+            Some("host.example"),
+            1_000,
+        )
+        .unwrap();
+        let list = s.calendar_sources().unwrap();
+        assert_eq!(
+            list.iter().map(|x| x.label.as_str()).collect::<Vec<_>>(),
+            ["Erste", "Zweite"]
+        );
+        assert_eq!(list[0].account_hint.as_deref(), Some("host.example"));
+        assert!(list
+            .iter()
+            .all(|x| x.enabled && !x.has_attendee_data && x.event_count == 0));
+        assert!(s
+            .calendar_source_add("a-src", CalendarKind::Ics, "Dublette", None, 3_000)
+            .is_err());
     }
 }

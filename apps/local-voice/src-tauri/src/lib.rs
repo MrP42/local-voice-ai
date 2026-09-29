@@ -1876,7 +1876,8 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.reindex_meetings // M4-P4b
         || cli_args.eval_diarization.is_some() // M3-P3a
         || cli_args.eval_chat.is_some() // M4-P4f
-        || cli_args.export_meeting.is_some(); // M6-P6a
+        || cli_args.export_meeting.is_some() // M6-P6a
+        || cli_args.calendar_dump.is_some(); // M5-P5a
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -2068,6 +2069,20 @@ pub fn run(cli_args: CliArgs) {
                             tts.stop_server();
                             code
                         });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // M5-P5a: Kalender lesen (ICS-Datei oder Adresse), Serien
+                // expandieren, Termine ausgeben. Keine Datenbank, keine Modelle.
+                if cli_args.calendar_dump.is_some() {
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| run_headless_calendar_dump(&args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2415,6 +2430,40 @@ pub fn run(cli_args: CliArgs) {
             }
             _ => {}
         });
+}
+
+// M5-P5a: `--calendar-dump <datei|url> [--from D] [--to D]`. Liest einen
+// Kalender wie der Sync-Dienst (Abruf, Parser, Serienexpansion) und gibt die
+// Termine im Fenster aus; die Adresse erscheint nie in der Ausgabe. JSON auf
+// stdout mit `--json`, sonst eine Tabelle; `--out` schreibt das JSON in eine
+// Datei (das Release-Binary hat kein Konsolen-Subsystem). Exit 0 gelesen,
+// 1 Lese-/Abruf-/Parse-Fehler, 2 falscher Aufruf.
+fn run_headless_calendar_dump(args: &CliArgs) -> i32 {
+    let target = args.calendar_dump.clone().unwrap_or_default();
+    let (code, payload) = managers::calendar::dump::run_cli(
+        &target,
+        args.cal_from.as_deref(),
+        args.cal_to.as_deref(),
+        chrono::Utc::now().timestamp_millis(),
+    );
+    if let Some(error) = payload.get("error").and_then(|e| e.as_str()) {
+        eprintln!("error: calendar-dump failed: {error}");
+    }
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        println!("{}", managers::calendar::dump::format_table(&payload));
+        if let Some(path) = args.out.as_deref() {
+            match std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                Ok(()) => eprintln!("wrote {}", path.display()),
+                Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
+    code
 }
 
 // M4-P4a: `--bench-search`. Misst Listensuche, Wortsuche und hybride Suche auf
