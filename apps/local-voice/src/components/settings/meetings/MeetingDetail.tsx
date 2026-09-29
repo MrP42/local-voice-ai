@@ -579,7 +579,9 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
                   key={segment.segment_index}
                   data-segment-index={segment.segment_index}
                   data-highlighted={
-                    highlightIndex === segment.segment_index ? "true" : undefined
+                    highlightIndex === segment.segment_index
+                      ? "true"
+                      : undefined
                   }
                   className={`flex gap-2 items-start text-sm group rounded-md px-1 -mx-1 transition-colors ${
                     highlightIndex === segment.segment_index
