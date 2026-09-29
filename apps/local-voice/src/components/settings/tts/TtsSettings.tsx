@@ -15,7 +15,7 @@ import { canonicalizeTags, canonicalizeTagsAt } from "@/lib/tags/registry";
 import { useTagLanguage } from "./tags/tagLanguage";
 import { ScriptWorkshopDialog } from "./books/ScriptWorkshopDialog";
 import { BookOpen } from "lucide-react";
-import { exportFileName } from "@/lib/utils/exportName";
+import { audioExportName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
 import {
@@ -737,16 +737,36 @@ export const TtsSettings = () => {
    * sounds like what you heard.
    */
   /**
-   * Dateiname des naechsten Exports, aus Titel des Arbeitsblatts und
-   * Zeitpunkt. Die Namensbildung selbst steht in `exportName.ts` — dort ist
-   * sie ohne Oberflaeche pruefbar.
+   * Dateiname des naechsten Exports: `<Stimme>[-Zusatz]_<Zeitstempel>.<ext>`.
+   * Nicht der Seitentitel — der ist lang und verdraengt in der Dateileiste
+   * den Zeitstempel; die Seite kennt man ohnehin am Projektordner. Die
+   * Namensbildung selbst steht in `exportName.ts`, ohne Oberflaeche pruefbar.
    */
-  const nextExportName = (ext: string) =>
-    exportFileName(
-      pages.find((page) => page.id === activePage)?.title,
-      t("tts.export.untitled"),
+  const nextExportName = (ext: string) => {
+    let voice: string;
+    if (voiceValue === "@default") {
+      voice = t("tts.export.scriptStem");
+    } else if (voiceValue.startsWith("piper:")) {
+      const piper = piperVoices.find((v) => `piper:${v.id}` === voiceValue);
+      // Nur der Name: Sprache und Qualitaet der Auswahl-Beschriftung gehoeren
+      // nicht in einen Dateinamen.
+      voice = piper ? piperVoiceLabel(piper).split(" · ")[0] : "";
+    } else {
+      voice = speakers.find((sp) => sp.id === voiceValue)?.displayName ?? "";
+    }
+    const suffix =
+      tab === "translation"
+        ? targetLangCode(targetLang).toUpperCase()
+        : tab === "summary"
+          ? t("tts.export.summaryStem")
+          : "";
+    return audioExportName({
+      voice,
+      suffix,
+      fallback: t("tts.export.untitled"),
       ext,
-    );
+    });
+  };
 
   const saveSpokenAudio = async () => {
     if (freshFindings().length > 0) {

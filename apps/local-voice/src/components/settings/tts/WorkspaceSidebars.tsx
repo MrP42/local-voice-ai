@@ -12,6 +12,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import { Dialog } from "../../ui/Dialog";
+import { splitFileNameTail } from "@/lib/utils/exportName";
 import { HelpPanel } from "../../help/HelpPanel";
 import { PageExportDialog, PageImportDialog } from "./pages/PagePackageDialogs";
 import {
@@ -569,8 +570,19 @@ export const FilesSidebar: React.FC<{
                   />
                 ) : (
                   <>
-                    <span className="flex-1 min-w-0 truncate text-sm">
-                      {file.name}
+                    {/* Mittig kuerzen: der Anfang schrumpft mit "...", der
+                        Zeitstempel am Ende bleibt lesbar -- er unterscheidet
+                        die Fassungen. Nur CSS, keine Messung. */}
+                    <span
+                      className="flex flex-1 min-w-0 text-sm"
+                      title={file.name}
+                    >
+                      <span className="truncate">
+                        {splitFileNameTail(file.name).head}
+                      </span>
+                      <span className="shrink-0 whitespace-pre">
+                        {splitFileNameTail(file.name).tail}
+                      </span>
                     </span>
                     <span className="text-[10px] text-text/35 shrink-0 group-hover:hidden group-focus-within:hidden">
                       {formatSize(file.size)}

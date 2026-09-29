@@ -556,7 +556,9 @@
     "serverStartTitle": "Fish-Speech-Server starten?",
     "serverStartBody": "Der Server lädt das Sprachmodell in den Grafikspeicher — rund 17 GB — und braucht dafür je nach Einstellung bis zu zwei Minuten. Solange er läuft, rechnet die Übersetzung auf der CPU. Beendet wird er über dasselbe Symbol oder von selbst nach der eingestellten Leerlaufzeit.",
     "export": {
-      "untitled": "Vorlesen"
+      "untitled": "Vorlesen",
+      "scriptStem": "Skript",
+      "summaryStem": "Zusammenfassung"
     },
     "tidy": "Text aufbereiten",
     "tidyHint": "Text fürs Vorlesen aufbereiten – Seitenzahlen, Kopfzeilen, Trennungen und Umbrüche raus, nichts wird gekürzt",
