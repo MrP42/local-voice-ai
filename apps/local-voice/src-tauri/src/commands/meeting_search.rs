@@ -179,6 +179,106 @@ pub async fn meetings_get_folders(
 }
 
 // ---------------------------------------------------------------------------
+// 4. Index-Status (P4b)
+// ---------------------------------------------------------------------------
+
+/// Stand des Such-Index fuer die Einstellungszeile "Semantische Suche".
+/// Besprechungen: `total` fertige, davon `lexical_done` mit Stichwortindex
+/// (inkl. eingebetteter) und `embedded` mit allen Vektoren.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct IndexStatus {
+    pub total: u32,
+    pub pending: u32,
+    pub lexical_done: u32,
+    pub embedded: u32,
+    pub chunks: u32,
+    pub vectors: u32,
+    /// Embedding-Modell heruntergeladen.
+    pub model_ready: bool,
+    /// Download laeuft.
+    pub downloading: bool,
+    /// Einstellung `meeting_semantic_search`.
+    pub enabled: bool,
+    /// Der Indexer hat Arbeit (Queue, Entprellung oder fehlende Vektoren).
+    pub running: bool,
+    /// Der Embedding-Server laeuft gerade.
+    pub server_running: bool,
+    /// Code des letzten Fehlers der Vektorstufe (`memory_low`, `no_model`, ...).
+    pub last_error: Option<String>,
+}
+
+/// Zaehlt den Stand aus dem Store; der Rest kommt vom Aufrufer.
+fn index_status_from(store: &MeetingStore, model: &str) -> Result<IndexStatus, String> {
+    let counts = store.index_counts().map_err(|e| e.to_string())?;
+    Ok(IndexStatus {
+        total: counts.meetings,
+        pending: counts.pending,
+        lexical_done: counts.lexical + counts.embedded,
+        embedded: counts.embedded,
+        chunks: counts.chunks,
+        vectors: store.vector_count(model).map_err(|e| e.to_string())?,
+        ..IndexStatus::default()
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_index_status(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+) -> Result<IndexStatus, String> {
+    use crate::managers::llm;
+    use crate::managers::meetings::search::indexer::MeetingIndexer;
+    use tauri::Manager;
+    let mut status = index_status_from(&store, llm::EMBED_MODEL_ID)?;
+    status.model_ready = llm::embedding_model_ready(llm::EMBED_MODEL_ID);
+    status.downloading = llm::embedding_model_downloading(llm::EMBED_MODEL_ID);
+    status.enabled = crate::settings::get_settings(&app).meeting_semantic_search;
+    status.server_running = llm::embedding_running();
+    if let Some(indexer) = app.try_state::<Arc<MeetingIndexer>>() {
+        status.running = indexer.busy();
+        status.last_error = indexer.last_error();
+    }
+    Ok(status)
+}
+
+/// Laedt das Embedding-Modell (635 MB) -- nur auf Knopfdruck (E6). Danach
+/// holt der Indexer die Vektoren im Hintergrund nach.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_embedding_model_download(
+    app: tauri::AppHandle,
+    runtime: State<'_, Arc<crate::managers::llm::LlmRuntimeManager>>,
+) -> Result<(), String> {
+    use crate::managers::meetings::search::indexer::{submit, IndexJob};
+    runtime
+        .download(crate::managers::llm::EMBED_MODEL_ID)
+        .await?;
+    submit(&app, IndexJob::EmbedPending);
+    Ok(())
+}
+
+/// Einstellung `meeting_semantic_search`. Ausschalten beendet einen laufenden
+/// Embedding-Server sofort; Einschalten stoesst das Nachholen an.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_semantic_search_setting(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    use crate::managers::meetings::search::indexer::{submit, IndexJob};
+    let mut settings = crate::settings::get_settings(&app);
+    settings.meeting_semantic_search = enabled;
+    crate::settings::write_settings(&app, settings);
+    if enabled {
+        submit(&app, IndexJob::EmbedPending);
+    } else {
+        crate::managers::llm::stop_embedding();
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -315,6 +415,31 @@ mod tests {
         s.folder_delete(&f1.id).unwrap();
         assert_eq!(s.meeting_folder_ids(&m.id).unwrap(), vec![f2.id.clone()]);
         assert_eq!(search(&s, "", filter(), 0, 25).unwrap().total, 1);
+    }
+
+    /// P4b: der Status zaehlt fertige Besprechungen, lexikalisch indexierte
+    /// (inkl. eingebetteter) und eingebettete getrennt.
+    #[test]
+    fn index_status_counts_meetings_chunks_and_vectors() {
+        let (_dir, s) = tmp_store();
+        let a = ready_meeting(&s, "A", 1_000);
+        let _b = ready_meeting(&s, "B", 2_000);
+        let ids = s
+            .replace_meeting_chunks(
+                &a.id,
+                &[ChunkSource::Transcript],
+                &[draft(ChunkSource::Transcript, "Budget")],
+                &state(STATUS_LEXICAL),
+            )
+            .unwrap();
+        let st = index_status_from(&s, "m").unwrap();
+        assert_eq!((st.total, st.pending, st.lexical_done, st.embedded), (2, 1, 1, 0));
+        assert_eq!((st.chunks, st.vectors), (1, 0));
+        s.put_vectors("m", &[(ids[0], vec![1.0, 0.0])]).unwrap();
+        s.set_index_status(&a.id, "ready", None, Some("m")).unwrap();
+        let st = index_status_from(&s, "m").unwrap();
+        assert_eq!((st.lexical_done, st.embedded, st.vectors), (1, 1, 1));
+        assert!(!st.model_ready && !st.running && st.last_error.is_none());
     }
 
     #[test]

@@ -197,6 +197,20 @@ pub struct CliArgs {
     #[arg(long, value_name = "DIR")]
     pub bench_dir: Option<PathBuf>,
 
+    // M4-P4b
+    /// Rebuild the meeting search index (chunks, full-text, vectors through
+    /// the embedding server, which is stopped at the end) and exit. Honours
+    /// LVA_MEETINGS_DIR. Output via --json/--out. Exit code 0 ok (lexical only
+    /// without the embedding model), 1 error, 3 when vectors are incomplete.
+    #[arg(long)]
+    pub reindex_meetings: bool,
+
+    /// With --reindex-meetings: first import every meeting fixture (*.json
+    /// with title, segments, notes) from this directory. Only allowed with
+    /// LVA_MEETINGS_DIR set (sandbox), never on the productive database.
+    #[arg(long, value_name = "DIR", hide = true)]
+    pub seed_meetings: Option<PathBuf>,
+
     // M1-P1e
     /// Evaluate the AI meeting notes (acceptance AK3) on the synthetic
     /// fixtures in DIR (tests/fixtures/notes) with the configured language

@@ -12,6 +12,7 @@ use crate::managers::meetings::minutes::{generate_minutes, latest_minutes_file};
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 use crate::managers::meetings::retention::delete_audio_files;
 use crate::managers::meetings::retranscribe::retranscribe_meeting;
+use crate::managers::meetings::search::indexer::{self, IndexJob};
 use crate::managers::meetings::store::{Meeting, MeetingDocument, MeetingStore, StoredSegment};
 use crate::managers::transcription::TranscriptionManager;
 
@@ -94,6 +95,7 @@ pub async fn meetings_get_segments(
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_update_segment(
+    app: tauri::AppHandle,
     store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
     segment_index: u32,
@@ -101,7 +103,9 @@ pub async fn meetings_update_segment(
 ) -> Result<(), String> {
     store
         .update_segment_text(&meeting_id, segment_index, &text)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    indexer::submit(&app, IndexJob::Meeting(meeting_id)); // M4-P4b
+    Ok(())
 }
 
 /// Renames a meeting. The title is free text and deliberately independent of
@@ -109,13 +113,16 @@ pub async fn meetings_update_segment(
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_rename(
+    app: tauri::AppHandle,
     store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
     title: String,
 ) -> Result<(), String> {
     store
         .set_title(&meeting_id, &title)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    indexer::submit(&app, IndexJob::Meeting(meeting_id)); // M4-P4b
+    Ok(())
 }
 
 /// Re-runs the transcription of a finished meeting from its stored audio,
@@ -149,12 +156,14 @@ pub async fn meetings_get_documents(
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_delete(
+    app: tauri::AppHandle,
     store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
 ) -> Result<(), String> {
     let paths = store
         .soft_delete_meeting(&meeting_id)
         .map_err(|e| e.to_string())?;
+    indexer::submit(&app, IndexJob::Deleted(meeting_id)); // M4-P4b
     delete_audio_files(&paths);
     Ok(())
 }

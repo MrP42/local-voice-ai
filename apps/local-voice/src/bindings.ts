@@ -2921,6 +2921,38 @@ async ttsRenameVoiceId(oldId: string, newDisplayName: string) : Promise<Result<s
     else return { status: "error", error: e  as any };
 }
 },
+async meetingIndexStatus() : Promise<Result<IndexStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_index_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laedt das Embedding-Modell (635 MB) -- nur auf Knopfdruck (E6). Danach
+ * holt der Indexer die Vektoren im Hintergrund nach.
+ */
+async meetingEmbeddingModelDownload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_embedding_model_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_semantic_search`. Ausschalten beendet einen laufenden
+ * Embedding-Server sofort; Einschalten stoesst das Nachholen an.
+ */
+async changeMeetingSemanticSearchSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_semantic_search_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Stub implementation for non-macOS platforms
  * Always returns false since laptop detection is macOS-specific
@@ -2942,6 +2974,7 @@ export const events = __makeEvents__<{
 historyUpdatePayload: HistoryUpdatePayload,
 meetingChatEvent: MeetingChatEvent,
 meetingEvent: MeetingEvent,
+meetingIndexEvent: MeetingIndexEvent,
 meetingNotesEvent: MeetingNotesEvent,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
@@ -2949,6 +2982,7 @@ streamTextEvent: StreamTextEvent
 historyUpdatePayload: "history-update-payload",
 meetingChatEvent: "meeting-chat-event",
 meetingEvent: "meeting-event",
+meetingIndexEvent: "meeting-index-event",
 meetingNotesEvent: "meeting-notes-event",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event"
@@ -3231,7 +3265,13 @@ meeting_default_template_id?: string | null;
  * M2-P2c2: Echo-Unterdrückung der Ich-Spur (`auto` | `on` | `off`). Ohne
  * den Schlüssel (ältere settings.json) gilt `auto`.
  */
-meeting_echo_cancellation?: MeetingEchoCancellation }
+meeting_echo_cancellation?: MeetingEchoCancellation; 
+/**
+ * M4-P4b (E6): semantische Suche in Besprechungen (Vektoren ueber das
+ * Embedding-Modell BGE-M3). Wirkt erst, wenn das Modell per Knopf
+ * heruntergeladen ist; ohne den Schluessel gilt `true`.
+ */
+meeting_semantic_search?: boolean }
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
  * Verknuepfung mit der `humans`-Tabelle folgt in M9.
@@ -3253,6 +3293,40 @@ entry_id: string | null; source_segment_ids: number[];
  * `ai` | `user` | `manual`
  */
 source: string }
+/**
+ * Stand des Such-Index fuer die Einstellungszeile "Semantische Suche".
+ * Besprechungen: `total` fertige, davon `lexical_done` mit Stichwortindex
+ * (inkl. eingebetteter) und `embedded` mit allen Vektoren.
+ */
+export type IndexStatus = { total: number; pending: number; lexical_done: number; embedded: number; chunks: number; vectors: number; 
+/**
+ * Embedding-Modell heruntergeladen.
+ */
+model_ready: boolean; 
+/**
+ * Download laeuft.
+ */
+downloading: boolean; 
+/**
+ * Einstellung `meeting_semantic_search`.
+ */
+enabled: boolean; 
+/**
+ * Der Indexer hat Arbeit (Queue, Entprellung oder fehlende Vektoren).
+ */
+running: boolean; 
+/**
+ * Der Embedding-Server laeuft gerade.
+ */
+server_running: boolean; 
+/**
+ * Code des letzten Fehlers der Vektorstufe (`memory_low`, `no_model`, ...).
+ */
+last_error: string | null }
+/**
+ * Fortschritt der Vektorstufe fuer die Einstellungszeile.
+ */
+export type MeetingIndexEvent = { kind: "progress"; done: number; total: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }

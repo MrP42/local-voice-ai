@@ -102,14 +102,17 @@ pub async fn meeting_notes_get(
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_notes_save(
+    app: tauri::AppHandle,
     store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
     blocks: Vec<NoteBlock>,
     base_revision: u64,
 ) -> Result<u64, String> {
-    store
+    let revision = store
         .save_notes(&meeting_id, &blocks, base_revision)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::managers::meetings::search::indexer::submit_debounced(&app, &meeting_id); // M4-P4b
+    Ok(revision)
 }
 
 /// Audioposition der laufenden Aufnahme; `None`, wenn keine laeuft.

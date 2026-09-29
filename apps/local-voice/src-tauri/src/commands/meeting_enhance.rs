@@ -20,6 +20,7 @@ use crate::managers::meetings::notes::enhance::{
 };
 use crate::managers::meetings::notes::model::EnhancedNotes;
 use crate::managers::meetings::recorder::MeetingRecorderManager;
+use crate::managers::meetings::search::indexer as search_indexer;
 use crate::managers::meetings::store::{MeetingDocument, MeetingStore};
 
 /// Ereignis des KI-Notizen-Laufs. `code` ist einer von `no_provider`,
@@ -55,6 +56,8 @@ fn emit_failed(app: &AppHandle, meeting_id: &str, err: &str) {
 }
 
 fn emit_done(app: &AppHandle, document: &MeetingDocument) {
+    // M4-P4b: neue KI-Notizen-Version (Lauf oder Anweisung) in den Such-Index.
+    search_indexer::submit(app, search_indexer::IndexJob::Meeting(document.meeting_id.clone()));
     let _ = MeetingNotesEvent::Done {
         meeting_id: document.meeting_id.clone(),
         document_id: document.id.clone(),
@@ -330,12 +333,15 @@ pub async fn meeting_notes_apply_instruction(
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_notes_update_enhanced(
+    app: AppHandle,
     store: State<'_, Arc<MeetingStore>>,
     document_id: String,
     notes: EnhancedNotes,
     expected_updated_at: i64,
 ) -> Result<i64, String> {
-    enhance::update_enhanced(&store, &document_id, notes, expected_updated_at)
+    let stamp = enhance::update_enhanced(&store, &document_id, notes, expected_updated_at)?;
+    search_indexer::submit(&app, search_indexer::IndexJob::Backfill); // M4-P4b: Handbearbeitung
+    Ok(stamp)
 }
 
 /// Die KI-Notizen als Markdown, zum Speichern oder Kopieren (die Ausgabe

@@ -62,6 +62,91 @@ pub struct StartOptions {
     pub context_tokens: u32,
     /// Schichten auf der GPU; 99 = alles, 0 = nur CPU.
     pub gpu_layers: u32,
+    /// M4-P4b: `Some` startet den Server im Embedding-Modus (zweiter Prozess
+    /// neben dem Chat-Server, M4 V4). `None` = Chat-Server wie bisher.
+    pub embedding: Option<EmbeddingOpts>,
+}
+
+/// Embedding-Modus von `llama-server` (M4 §4, D3): `--embedding --pooling
+/// <pooling> -b 2048 -ub 2048 -np <parallel>`. Ein Embedding-Server beantwortet
+/// keine Chat-Anfragen (HTTP 500, Spike V4) -- deshalb ein eigener Prozess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmbeddingOpts {
+    /// `cls` fuer BGE-M3.
+    pub pooling: &'static str,
+    /// Gleichzeitige Sequenzen (`-np`).
+    pub parallel: u32,
+    /// Windows-Prozessklasse BELOW_NORMAL schon beim Start (Creation-Flag),
+    /// nicht erst mit dem Job-Objekt.
+    pub below_normal: bool,
+}
+
+/// Physische Batchgroesse im Embedding-Modus. Ein Nicht-Kausal-Modell muss
+/// eine ganze Eingabe in EINEM Batch sehen; Chunks haben hoechstens 1 800
+/// Zeichen (+ Kopfzeile), BGE-M3 braucht ~5 Zeichen je Token (M7).
+pub const EMBED_BATCH_TOKENS: u32 = 2048;
+/// CPU-Threads des Embedding-Servers auf dem CPU-Backend (M4 §9): er laeuft
+/// im Hintergrund und darf die Maschine nicht belegen.
+pub const EMBED_CPU_THREADS: usize = 4;
+/// RAM-Bedarf fuer das Start-Gate des Embedding-Servers (MB): gemessene
+/// Spitze 1,9 GB (M4), unabhaengig von der kleinen Modelldatei.
+pub const EMBED_RAM_NEED_MB: u64 = 2048;
+
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+
+/// Argumente nach `-m <modell>`. Rein, damit die Kommandozeile testbar ist;
+/// ohne `embedding` exakt die Argumente des Chat-Servers wie vor M4.
+pub(crate) fn server_args(opts: &StartOptions, port: u16, cpu_threads: usize) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "--host".into(),
+        "127.0.0.1".into(),
+        "--port".into(),
+        port.to_string(),
+        "-c".into(),
+        opts.context_tokens.to_string(),
+        "-ngl".into(),
+        opts.gpu_layers.to_string(),
+    ];
+    match opts.embedding {
+        None => {
+            // Ein Slot: die Voreinstellung von vieren verdoppelt den KV-Cache,
+            // und die App stellt ohnehin eine Anfrage nach der anderen.
+            args.extend(["--parallel".into(), "1".into()]);
+            // Nicht alle Kerne: die Oberflaeche des Rechners bleibt bedienbar.
+            args.extend(["-t".into(), cpu_threads.to_string()]);
+        }
+        Some(emb) => {
+            args.extend([
+                "--embedding".into(),
+                "--pooling".into(),
+                emb.pooling.to_string(),
+                "-b".into(),
+                EMBED_BATCH_TOKENS.to_string(),
+                "-ub".into(),
+                EMBED_BATCH_TOKENS.to_string(),
+                "-np".into(),
+                emb.parallel.max(1).to_string(),
+            ]);
+            let threads = if opts.backend == "cpu" {
+                EMBED_CPU_THREADS.min(cpu_threads.max(1))
+            } else {
+                cpu_threads
+            };
+            args.extend(["-t".into(), threads.to_string()]);
+        }
+    }
+    args.push("--no-webui".into());
+    args
+}
+
+/// Creation-Flags fuer Windows: nie ein Konsolenfenster; im Embedding-Modus
+/// auf Wunsch gleich mit niedriger Prioritaet.
+pub(crate) fn creation_flags(opts: &StartOptions) -> u32 {
+    match opts.embedding {
+        Some(emb) if emb.below_normal => CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
+        _ => CREATE_NO_WINDOW,
+    }
 }
 
 struct Running {
@@ -132,6 +217,41 @@ impl LocalLlmServer {
                 .is_some_and(|r| r.model_id == model_id)
     }
 
+    /// M4-P4b: Ist der verwaltete Prozess inzwischen beendet (Absturz, Deckel
+    /// des Job-Objekts)? Dann darf er nicht als "bereit" wiederverwendet
+    /// werden -- sonst liefe jede Anfrage gegen einen toten Port.
+    pub fn child_exited(&self) -> bool {
+        self.running
+            .lock()
+            .unwrap()
+            .as_mut()
+            .is_some_and(|r| matches!(r.child.try_wait(), Ok(Some(_))))
+    }
+
+    /// M4-P4b: Gibt es einen verwalteten Prozess (startend oder bereit)?
+    pub fn has_process(&self) -> bool {
+        self.running.lock().unwrap().is_some()
+    }
+
+    /// M4-P4b: PID des verwalteten Prozesses (Messung, Diagnose).
+    pub fn pid(&self) -> Option<u32> {
+        self.running.lock().unwrap().as_ref().map(|r| r.child.id())
+    }
+
+    /// Test: einen fremden (z. B. schon beendeten) Prozess als "bereit"
+    /// uebernehmen, um den Absturzfall nachzustellen.
+    #[cfg(test)]
+    pub(crate) fn adopt_for_test(&self, child: Child, model_id: &str) {
+        *self.running.lock().unwrap() = Some(Running {
+            child,
+            _guard: None,
+            port: 1,
+            model_id: model_id.to_string(),
+            backend: "cpu".into(),
+        });
+        self.set_phase(LocalLlmPhase::Ready, None);
+    }
+
     fn set_phase(&self, phase: LocalLlmPhase, message: Option<String>) {
         *self.phase.lock().unwrap() = (phase, message);
     }
@@ -170,7 +290,13 @@ impl LocalLlmServer {
         let model_mb = std::fs::metadata(&opts.model_path)
             .map(|m| m.len() / (1024 * 1024))
             .unwrap_or(2048);
-        let free_mb = crate::process_guard::check_ram_for_start(model_mb).map_err(|msg| {
+        // M4-P4b: der Embedding-Server braucht mehr als seine kleine Datei.
+        let need_mb = if opts.embedding.is_some() {
+            model_mb.max(EMBED_RAM_NEED_MB)
+        } else {
+            model_mb
+        };
+        let free_mb = crate::process_guard::check_ram_for_start(need_mb).map_err(|msg| {
             self.set_phase(LocalLlmPhase::Error, Some(msg.clone()));
             msg
         })?;
@@ -179,16 +305,7 @@ impl LocalLlmServer {
         let mut cmd = std::process::Command::new(binary);
         cmd.arg("-m")
             .arg(&opts.model_path)
-            .args(["--host", "127.0.0.1"])
-            .args(["--port", &port.to_string()])
-            .args(["-c", &opts.context_tokens.to_string()])
-            .args(["-ngl", &opts.gpu_layers.to_string()])
-            // Ein Slot: die Voreinstellung von vieren verdoppelt den KV-Cache,
-            // und die App stellt ohnehin eine Anfrage nach der anderen.
-            .args(["--parallel", "1"])
-            // Nicht alle Kerne: die Oberflaeche des Rechners bleibt bedienbar.
-            .args(["-t", &cpu_threads.to_string()])
-            .arg("--no-webui");
+            .args(server_args(&opts, port, cpu_threads));
         if let Some(dir) = binary.parent() {
             cmd.current_dir(dir);
         }
@@ -208,7 +325,7 @@ impl LocalLlmServer {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+            cmd.creation_flags(creation_flags(&opts)); // CREATE_NO_WINDOW (+ BELOW_NORMAL)
         }
         let child = cmd
             .spawn()
@@ -352,6 +469,7 @@ mod tests {
                     backend: "vulkan".into(),
                     context_tokens: 4096,
                     gpu_layers: 99,
+                    embedding: None,
                 },
                 None,
             )
@@ -369,5 +487,107 @@ mod tests {
         server.stop();
         server.stop();
         assert_eq!(server.status().phase, LocalLlmPhase::Stopped);
+    }
+
+    // ---- M4-P4b: Embedding-Modus -----------------------------------------
+
+    fn opts(backend: &str, embedding: Option<EmbeddingOpts>) -> StartOptions {
+        StartOptions {
+            model_id: "m".into(),
+            model_path: PathBuf::from("m.gguf"),
+            backend: backend.into(),
+            context_tokens: 4096,
+            gpu_layers: 99,
+            embedding,
+        }
+    }
+
+    const BGE: EmbeddingOpts = EmbeddingOpts {
+        pooling: "cls",
+        parallel: 2,
+        below_normal: true,
+    };
+
+    fn pair(args: &[String], flag: &str) -> Option<String> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1).cloned())
+    }
+
+    #[test]
+    fn embedding_args_contain_pooling_cls() {
+        let args = server_args(&opts("vulkan", Some(BGE)), 4711, 16);
+        assert!(args.contains(&"--embedding".to_string()), "{args:?}");
+        assert_eq!(pair(&args, "--pooling").as_deref(), Some("cls"));
+        assert_eq!(pair(&args, "-b").as_deref(), Some("2048"));
+        assert_eq!(pair(&args, "-ub").as_deref(), Some("2048"));
+        assert_eq!(pair(&args, "-np").as_deref(), Some("2"));
+        assert_eq!(pair(&args, "--host").as_deref(), Some("127.0.0.1"));
+        assert_eq!(pair(&args, "--port").as_deref(), Some("4711"));
+        // Kein Chat-Slot-Argument im Embedding-Modus.
+        assert!(!args.contains(&"--parallel".to_string()));
+    }
+
+    /// `embedding: None` ist exakt die Kommandozeile des Chat-Servers vor M4.
+    #[test]
+    fn chat_args_are_unchanged_without_embedding() {
+        let args = server_args(&opts("cuda", None), 5000, 16);
+        let expected: Vec<String> = [
+            "--host", "127.0.0.1", "--port", "5000", "-c", "4096", "-ngl", "99", "--parallel",
+            "1", "-t", "16", "--no-webui",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(args, expected);
+        assert!(!args.contains(&"--embedding".to_string()));
+        assert_eq!(creation_flags(&opts("cuda", None)), CREATE_NO_WINDOW);
+    }
+
+    /// Auf dem CPU-Backend bekommt der Embedding-Server hoechstens 4 Threads
+    /// und startet mit Prozessklasse BELOW_NORMAL (0x4000).
+    #[test]
+    fn embedding_on_cpu_is_throttled_and_below_normal() {
+        let cpu = server_args(&opts("cpu", Some(BGE)), 1, 16);
+        assert_eq!(pair(&cpu, "-t").as_deref(), Some("4"));
+        let gpu = server_args(&opts("vulkan", Some(BGE)), 1, 16);
+        assert_eq!(pair(&gpu, "-t").as_deref(), Some("16"));
+        assert_eq!(
+            creation_flags(&opts("cpu", Some(BGE))),
+            CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+        );
+        let normal = EmbeddingOpts {
+            below_normal: false,
+            ..BGE
+        };
+        assert_eq!(creation_flags(&opts("cpu", Some(normal))), CREATE_NO_WINDOW);
+    }
+
+    /// Ein abgestuerzter Kindprozess gilt nicht mehr als lebendig: sonst
+    /// lieferte `ensure_embedding` die Adresse eines toten Servers.
+    #[cfg(windows)]
+    #[test]
+    fn a_dead_child_is_reported_as_exited() {
+        let server = LocalLlmServer::new();
+        assert!(!server.child_exited() && !server.has_process());
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", "exit 3"]);
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = cmd.spawn().expect("cmd.exe");
+        let _ = child.wait();
+        *server.running.lock().unwrap() = Some(Running {
+            child,
+            _guard: None,
+            port: 1,
+            model_id: "m".into(),
+            backend: "cpu".into(),
+        });
+        assert!(server.has_process());
+        assert!(server.child_exited());
+        server.stop();
+        assert!(!server.has_process());
     }
 }

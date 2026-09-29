@@ -10,6 +10,7 @@ import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { useSettings } from "../../../hooks/useSettings";
+import { MeetingSemanticSearchSetting } from "./MeetingSemanticSearchSetting";
 
 /**
  * Die Vorgaben der Aufnahme (M1-P1f, M2-P2c2), als Zeilen der bestehenden
@@ -104,6 +105,7 @@ export const MeetingNotesSettings: React.FC = () => {
           disabled={isUpdating("meeting_default_template_id")}
         />
       </SettingContainer>
+      <MeetingSemanticSearchSetting />
     </>
   );
 };
