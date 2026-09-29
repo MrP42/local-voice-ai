@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T12:34
+aktualisiert: 2026-09-29T12:48
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -46,14 +46,14 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - [ ] AK11 — Anfassbar: Vorher/Nachher-Screenshots (gestapelt, nebeneinander, Menü offen, Tooltip, Palette „Alle“) als Artefakt-Link; Installer `Local Voice AI_0.20.4_x64-setup.exe` gebaut.
 
 ## Quality Gates
-- [ ] QG1 — Typen: `cd apps/local-voice && pnpm exec tsc --noEmit` → Exit 0.
-- [ ] QG2 — Gesamte Playwright-Suite: `cd apps/local-voice && pnpm exec playwright test --reporter=line` → keine neuen Fehlschläge gegenüber der Basislinie (Basislinie in Evidence).
-- [ ] QG3 — Lint/Format nur berührte Dateien: `pnpm exec eslint <Dateien>` 0 Fehler, `pnpm exec prettier --check <Dateien>` grün (vorbestehendes Rot anderer Dateien bleibt, AGENTS.md).
-- [ ] QG4 — i18n: neue Schlüssel in `de` und `en` vorhanden (Parität der neuen Schlüssel per Skript), keine hartcodierten deutschen/englischen UI-Texte.
-- [ ] QG5 — Rust unberührt außer Versionsdateien: `git diff --stat origin/chore/0.20.3-abnahme..HEAD -- apps/local-voice/src-tauri` zeigt nur `Cargo.toml`/`tauri.conf.json`(/`Cargo.lock`).
-- [ ] QG6 — Git: Commit je abgenommenem Paket, Branch gepusht, PR gestapelt auf #58 (Basis `chore/0.20.3-abnahme`), kein Push auf `main`, keine Formatierläufe über fremde Dateien.
+- [x] QG1 — Typen: `cd apps/local-voice && pnpm exec tsc --noEmit` → Exit 0.
+- [x] QG2 — Gesamte Playwright-Suite: `cd apps/local-voice && pnpm exec playwright test --reporter=line` → keine neuen Fehlschläge gegenüber der Basislinie (Basislinie in Evidence).
+- [x] QG3 — Lint/Format nur berührte Dateien: `pnpm exec eslint <Dateien>` 0 Fehler, `pnpm exec prettier --check <Dateien>` grün (vorbestehendes Rot anderer Dateien bleibt, AGENTS.md).
+- [x] QG4 — i18n: neue Schlüssel in `de` und `en` vorhanden (Parität der neuen Schlüssel per Skript), keine hartcodierten deutschen/englischen UI-Texte.
+- [x] QG5 — Rust unberührt außer Versionsdateien: `git diff --stat origin/chore/0.20.3-abnahme..HEAD -- apps/local-voice/src-tauri` zeigt nur `Cargo.toml`/`tauri.conf.json`(/`Cargo.lock`).
+- [x] QG6 — Git: Commit je abgenommenem Paket, Branch gepusht, PR gestapelt auf #58 (Basis `chore/0.20.3-abnahme`), kein Push auf `main`, keine Formatierläufe über fremde Dateien.
 - [ ] QG7 — Doku + Handoff: Hilfe-Abschnitt „vorlesen“ passt zur neuen Bedienung; Handoff `.claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md`.
-- [ ] QG8 — Budget: ≤ 1,8 MTok geschätzt; Zwischenstand bei 50 %/80 %, harter Stopp bei 150 % (2,7 MTok).
+- [x] QG8 — Budget: ≤ 1,8 MTok geschätzt; Zwischenstand bei 50 %/80 %, harter Stopp bei 150 % (2,7 MTok).
 
 ## Constraints
 - Geteilter Baum: eigener Worktree `.claude/worktrees/wt-ui`, Paket-Worktrees `wt-ui-p*`; nie `git stash`, nie `git add -A` am Repo-Root, nie `reset --hard` auf fremde Zweige.
@@ -95,6 +95,13 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29T12:22 AK4 erfüllt — readaloud-toolbar.spec.ts (e): Tooltip bei Hover (400 ms) und Tastaturfokus, role=tooltip, aria-describedby, Esc schliesst; screens/p2/tooltip.png; 110 passed, 2c9f6fd
 - 2026-09-29T12:34 AK5 erfüllt — readaloud-layout.spec.ts AK5-Test (P8): gestapelt 1920x1050 und 1366x768 mit Text: tts-controls <= 0,5*innerHeight UND scrollHeight <= clientHeight+1, tts-files darunter; Bild p5/gestapelt nach P2: Bedienung ~175 px; 115 passed, c8176e0
 - 2026-09-29T12:34 AK1 erfüllt — UI-AUDIT.md: 24 Befunde mit Messwert+Fundstelle, Statusspalte: alle 2 hoch + 12 mittel behoben (P2-P8 mit Commit), A18 (niedrig) teilweise -> Folge-Goal; 3448e46
+- 2026-09-29T12:48 QG1 erfüllt — pnpm exec tsc --noEmit -> Exit 0 auf fb3c79f/fdf153d
+- 2026-09-29T12:48 QG2 erfüllt — playwright test (LV_DEV_PORT=1610) -> 119 passed, 10 skipped, 0 failed (Basislinie 72 passed); mit SCREENS_DIR 129 passed
+- 2026-09-29T12:48 QG3 erfüllt — prettier --end-of-line auto --check auf 28 beruehrte Dateien gruen; eslint beruehrte src-Dateien Exit 0
+- 2026-09-29T12:48 QG4 erfüllt — 23 neue de-Schluessel, alle auch in en (Paritaetsskript); Texte ueber i18n
+- 2026-09-29T12:48 QG5 erfüllt — git diff --stat origin/chore/0.20.3-abnahme -- src-tauri: nur Cargo.lock, Cargo.toml, tauri.conf.json (Version)
+- 2026-09-29T12:48 QG6 erfüllt — Commit je Paket (P1-P9), Branch feat/ui-vorlesen-kompakt gepusht, PR #62 gestapelt auf #58, kein Push auf main
+- 2026-09-29T12:48 QG8 erfüllt — Worker ~1,23 MTok + Planer ~0,6 MTok = ~1,85 MTok bei Schaetzung 1,8 (103 %), unter hartem Stopp 2,7; Meldungen bei ~47 % und 86 % abgegeben
 
 ## Blocker
 -

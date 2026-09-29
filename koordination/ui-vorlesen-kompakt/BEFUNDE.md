@@ -25,4 +25,4 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beobachtung: Menü/Popover (P2, `ActionMenu.tsx`) sind absolut im Dokumentfluss positioniert; die gestapelte Bedienspalte (P5) scrollt in sich (max-height 50 %). Nach dem Verdichten durch P2 ist sie nur ~184 px hoch → vom Menü ist nur „Skript-Werkstatt…“ sichtbar, die Spalte scrollt beim Öffnen.
 - Beleg: Nachher-Bild `screens/nachher/menue-offen-1920.png` (P8), Messung controls y 79–263, Einträge 263–364. Tests prüften nur `toBeVisible()`.
 - Konsequenz: Nacharbeit P9 (Portal + fixed, Test per `elementFromPoint`). Lehre: Sichtbarkeit in overflow-Containern nie per `toBeVisible` belegen; Nachher-Bilder VOR der Abnahme ansehen.
-- Status: offen
+- Status: erledigt (P9, ffdd18f — Portal + fixed; Test elementFromPoint vorher rot, jetzt grün; Nachher-Bild menue-offen-1920 zeigt alle 4 Einträge)
