@@ -1722,6 +1722,10 @@ pub fn run(cli_args: CliArgs) {
             // M6-P6a: Export einer Besprechung
             commands::meetings::meetings_export,
             commands::meetings::meetings_copy_formatted,
+            // M6-P6c: Follow-up-Mail
+            commands::meetings::meeting_followup_draft,
+            commands::meetings::meeting_followup_open,
+            commands::meetings::change_meeting_self_emails_setting,
             commands::tts::tts_speak_text,
             commands::tts::tts_speak_clipboard,
             commands::tts::tts_cancel,

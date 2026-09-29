@@ -249,6 +249,9 @@ const settingUpdaters: {
   // M2-P2d
   meeting_final_model: (value) =>
     commands.changeMeetingFinalModelSetting((value as string) || "auto"),
+  // M6-P6c
+  meeting_self_emails: (value) =>
+    commands.changeMeetingSelfEmailsSetting((value as string[]) ?? []),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

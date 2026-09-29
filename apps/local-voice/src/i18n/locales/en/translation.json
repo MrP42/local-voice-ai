@@ -1963,6 +1963,39 @@
         "failed": "The folder could not be saved."
       }
     },
+    "followup": {
+      "button": "Follow-up email",
+      "buttonTitle": "Create an email draft from this meeting that you can review and edit",
+      "title": "Follow-up email",
+      "remote": "The draft is written with {{provider}}: excerpts of the meeting are sent to this provider.",
+      "generate": "Create draft",
+      "generating": "Writing the draft …",
+      "regenerate": "Create again",
+      "retry": "Try again",
+      "to": "To",
+      "toHint": "Separate several addresses with a comma or semicolon.",
+      "noRecipients": "No participants with an email address are known – please enter the recipient.",
+      "subject": "Subject",
+      "body": "Text",
+      "copy": "Copy",
+      "copyTitle": "Put the text on the clipboard, formatted (HTML and plain text)",
+      "mailto": "Open in email app",
+      "eml": "Save as .eml",
+      "emlTitle": "Classic Outlook opens the file as a draft; new Outlook and Thunderbird may open it read-only.",
+      "close": "Close",
+      "copied": "Copied to the clipboard.",
+      "opened": "Opened in the email app.",
+      "mailtoClipped": "The text was too long for the mail link and is on the clipboard – paste it in the email app with Ctrl+V.",
+      "emlSaved": "Saved: {{path}}",
+      "errors": {
+        "followup_empty": "The language model returned no text. Please try again.",
+        "mailto_failed": "The email app could not be opened. Copy the text instead and paste it there.",
+        "clipboard_failed": "The clipboard is not available right now.",
+        "write_failed": "The file could not be saved.",
+        "path_missing": "No save location was chosen.",
+        "generic": "That went wrong ({{error}})."
+      }
+    },
     "chat": {
       "ask": "Ask",
       "askTitle": "Ask about this meeting (Ctrl+J)",

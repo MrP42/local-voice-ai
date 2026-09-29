@@ -1853,6 +1853,50 @@ async meetingsCopyFormatted(meetingId: string, parts: ExportParts) : Promise<Res
 }
 },
 /**
+ * Erzeugt den Follow-up-Entwurf: das Recipe "Follow-up-E-Mail an ..." läuft
+ * im Scope der Besprechung (gleicher Motor, gleiche Sperren und Fehlercodes
+ * wie `meeting_chat_ask`), danach wird die Antwort zum Entwurf. Empfänger
+ * sind die Teilnehmenden ohne die eigene Person (leer, wenn keine bekannt).
+ * Zusätzlicher Fehlercode: `followup_empty` (das Modell lieferte keinen Text).
+ */
+async meetingFollowupDraft(meetingId: string) : Promise<Result<MailDraft, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_followup_draft", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gibt einen (im Dialog bearbeiteten) Entwurf aus. `Copy`: HTML + Text in die
+ * Zwischenablage. `Mailto`: Mailprogramm öffnen; ist die Adresse zu lang
+ * (> 1 800 Zeichen), gehen nur Empfänger und Betreff mit, der Text kommt in
+ * die Zwischenablage und das Ergebnis ist `true` (UI: Hinweis "einfügen").
+ * `Eml`: Datei nach `path` schreiben (Endung `.eml` wird ergänzt).
+ * Fehler: `clipboard_failed`, `mailto_failed` (Kopieren bleibt möglich),
+ * `path_missing`, `write_failed`.
+ */
+async meetingFollowupOpen(draft: MailDraft, mode: FollowupMode, path: string | null) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_followup_open", { draft, mode, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_self_emails` ("Meine E-Mail-Adressen"): gespeichert
+ * wird die bereinigte Liste (klein geschrieben, nur brauchbare, ohne Dubletten).
+ */
+async changeMeetingSelfEmailsSetting(emails: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_self_emails_setting", { emails }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * M1-P1c: Notizblock, Vorlagen, Aufgaben. Fehlercodes des Stores
  * (`revision_conflict`, `template_readonly`, ...) kommen als String.
  */
@@ -3318,7 +3362,13 @@ meeting_final_model?: string;
  * biometrischer Merkmale) oder `off`. Ohne den Schluessel (aeltere
  * settings.json) gilt `auto`; jeder andere Wert als `off` zaehlt als `auto`.
  */
-meeting_diarization?: string }
+meeting_diarization?: string;
+/**
+ * M6-P6c: Meine E-Mail-Adressen. Personen mit diesen Adressen zählen bei
+ * der Follow-up-Mail als "ich" und werden nicht Empfänger. Ohne den
+ * Schlüssel (ältere settings.json) leer.
+ */
+meeting_self_emails?: string[] }
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
  * Verknuepfung mit der `humans`-Tabelle folgt in M9.
@@ -3573,6 +3623,28 @@ unsupported: boolean; dropped_sources: number; placed_by_fallback: boolean; edit
  * Fehlende Felder gelten als "an": ein Aufruf ohne Auswahl exportiert alles.
  */
 export type ExportParts = { ai_notes: boolean; notes: boolean; minutes: boolean; transcript: boolean; participants: boolean }
+/**
+ * Ausgang eines Follow-up-Entwurfs für `meeting_followup_open`.
+ */
+export type FollowupMode =
+/**
+ * HTML + Text in die Zwischenablage.
+ */
+"copy" |
+/**
+ * Mailprogramm per `mailto:` öffnen.
+ */
+"mailto" |
+/**
+ * Als .eml-Datei speichern (`path`).
+ */
+"eml"
+/**
+ * Ein bearbeitbarer Mailentwurf. `body_html` wird beim Kopieren und Speichern
+ * aus `body_text` neu gebaut (`finalize`), damit Änderungen im Dialog nie
+ * hinter einer alten HTML-Fassung zurückbleiben.
+ */
+export type MailDraft = { to: string[]; subject: string; body_text: string; body_html: string }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }

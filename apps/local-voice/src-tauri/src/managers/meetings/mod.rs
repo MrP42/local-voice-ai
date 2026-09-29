@@ -8,6 +8,7 @@ pub mod final_pass;
 pub mod hallucination;
 pub mod import;
 pub mod llm_call;
+pub mod mail; // M6-P6c
 pub mod mic_capture;
 pub mod minutes;
 pub mod notes;
