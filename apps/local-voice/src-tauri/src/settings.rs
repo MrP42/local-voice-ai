@@ -839,6 +839,18 @@ pub struct AppSettings {
     /// Schluessel (aeltere settings.json) leer.
     #[serde(default)]
     pub meeting_self_emails: Vec<String>,
+    /// M5-P5b (E11): Vorlauf der Erinnerung vor einem Termin in Sekunden;
+    /// 0 = Erinnerung aus. Ohne den Schluessel (aeltere settings.json) gilt 60.
+    #[serde(default = "default_meeting_reminder_lead_s")]
+    pub meeting_reminder_lead_s: u32,
+    /// M5-P5b (E11): auch Termine ohne Teilnehmende und ohne Beitritts-Adresse
+    /// erinnern. Standard aus: ein Einzeltermin ohne Gegenueber ist keine Besprechung.
+    #[serde(default)]
+    pub meeting_reminder_all_events: bool,
+}
+
+fn default_meeting_reminder_lead_s() -> u32 {
+    60
 }
 
 fn default_meeting_final_model() -> String {
@@ -1605,6 +1617,8 @@ pub fn get_default_settings() -> AppSettings {
         meeting_detect_mode: crate::managers::meeting_detect::DetectMode::default(),
         meeting_detect_ignored_apps: Vec::new(),
         meeting_self_emails: Vec::new(),
+        meeting_reminder_lead_s: default_meeting_reminder_lead_s(),
+        meeting_reminder_all_events: false,
     }
 }
 
@@ -2691,6 +2705,26 @@ mod tests {
         assert!(s.meeting_capture_system, "Systemton ist vorangehakt");
         assert!(s.meeting_auto_enhance, "KI-Notizen starten automatisch");
         assert_eq!(s.meeting_default_template_id, None);
+    }
+
+    /// M5-P5b: die Erinnerung ist ohne den Schluessel auf 1 min gestellt und
+    /// betrifft nur echte Besprechungen; eine Wahl bleibt erhalten, auch 0 (aus).
+    #[test]
+    fn meeting_reminder_defaults_and_keeps_a_choice() {
+        let d = get_default_settings();
+        assert_eq!(d.meeting_reminder_lead_s, 60);
+        assert!(!d.meeting_reminder_all_events);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_reminder_lead_s, 60, "nicht 0 (aus) wie beim u32-Typ");
+        assert!(!old.meeting_reminder_all_events);
+        let chosen: AppSettings = serde_json::from_value(serde_json::json!({
+            "meeting_reminder_lead_s": 0,
+            "meeting_reminder_all_events": true,
+        }))
+        .unwrap();
+        assert_eq!(chosen.meeting_reminder_lead_s, 0);
+        assert!(chosen.meeting_reminder_all_events);
     }
 
     #[test]

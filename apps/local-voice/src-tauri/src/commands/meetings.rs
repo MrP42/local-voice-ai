@@ -443,3 +443,52 @@ pub fn change_meeting_self_emails_setting(
     crate::settings::write_settings(&app, settings);
     Ok(())
 }
+
+// M5-P5b: Aufnahme aus einem Kalendertermin.
+
+/// Startet eine Aufnahme mit dem Bezug zu einem Termin: Titel = was der Nutzer
+/// eingegeben hat, sonst der Termintitel; Vorlage = die der letzten Besprechung
+/// derselben Serie (UID), sonst die Standardvorlage; danach Verknuepfung und
+/// Teilnehmenden-Schnappschuss. `meetings_start` bleibt unveraendert.
+///
+/// `link_mode`: `prompt` (Hinweisfenster, Terminkarte; Standard) oder `auto`
+/// (Titelvorschlag der Aufnahmekarte). `app_key` gehoert der Erkennung (P5c) und
+/// wird bis dahin nicht gelesen. Ohne bestaetigte Einwilligung startet nichts
+/// (`consent_required` vom Recorder). Fehler NACH dem Start (Verknuepfung,
+/// Vorlage) kippen die laufende Aufnahme nicht; sie stehen im Log.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub async fn meetings_start_from_event(
+    app: tauri::AppHandle,
+    recorder: State<'_, Arc<MeetingRecorderManager>>,
+    store: State<'_, Arc<MeetingStore>>,
+    event_key: Option<String>,
+    app_key: Option<String>,
+    consent_confirmed: bool,
+    capture_system: bool,
+    title: Option<String>,
+    link_mode: Option<String>,
+) -> Result<Meeting, String> {
+    use crate::managers::calendar::service::{finish_start, plan_start};
+    let _ = app_key; // P5c
+    let linked_by = match link_mode.as_deref() {
+        Some("auto") => "auto",
+        _ => "prompt",
+    };
+    let recorder = Arc::clone(&recorder);
+    let store = Arc::clone(&store);
+    let meeting = tauri::async_runtime::spawn_blocking(move || {
+        let plan = plan_start(&store, event_key.as_deref(), title.as_deref())?;
+        let meeting = recorder.start(plan.title.clone(), consent_confirmed, capture_system)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        for problem in finish_start(&store, &meeting.id, &plan, linked_by, now) {
+            log::warn!("meetings_start_from_event: {problem}");
+        }
+        Ok::<Meeting, String>(meeting)
+    })
+    .await
+    .map_err(|e| format!("meetings_start_from_event panicked: {e}"))??;
+    crate::meeting_prompt::close(&app);
+    Ok(meeting)
+}

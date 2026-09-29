@@ -18,6 +18,7 @@ mod local_update;
 mod llm_client;
 mod managers;
 mod media;
+mod meeting_prompt; // M5-P5b
 mod overlay;
 mod paste_guard;
 pub mod portable;
@@ -258,6 +259,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         usage_ledger.clone(),
         Arc::new(move || settings::get_settings(&settings_handle)),
     );
+    // M5-P5b: Zustand des Hinweisfensters (auch ohne Store verwaltet: die Befehle
+    // des Fensters brauchen ihn).
+    app_handle.manage(meeting_prompt::MeetingPromptState::default());
     // Meetings (M8): the store is shared by recorder and commands. A store
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.
@@ -326,6 +330,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             log::warn!("meetings: startup retention purge failed: {e}");
         }
         let index_store = store.clone(); // M4-P4b
+        let calendar_store = store.clone(); // M5-P5b
         app_handle.manage(store);
         app_handle.manage(recorder);
         // M1-P1f: KI-Notizen starten nach `TranscriptFinal` (Einstellung
@@ -334,6 +339,11 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         // M4-P4b: Such-Index. Lexikalisch sofort, Vektoren im Hintergrund
         // hinter Gates; Nachholen beim Start, Ausloeser ueber MeetingEvent.
         managers::meetings::search::indexer::start_for_app(app_handle, index_store);
+        // M5-P5b: Kalender-Sync (15 min), Erinnerung 1 min vorher, Hinweisfenster.
+        // Legt auch den Geheimnisordner fest (`secret::init_dir`).
+        let calendar =
+            managers::calendar::service::CalendarService::spawn(app_handle.clone(), calendar_store);
+        app_handle.manage(calendar);
     }
 
     // M5-P5c: Ad-hoc-Erkennung laufender Besprechungen (nur Hinweis).
@@ -1741,6 +1751,20 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::meeting_followup_draft,
             commands::meetings::meeting_followup_open,
             commands::meetings::change_meeting_self_emails_setting,
+            // M5-P5b: Kalender, Erinnerung, Hinweisfenster, Start aus Termin
+            commands::calendar::calendar_sources_list,
+            commands::calendar::calendar_source_add_ics,
+            commands::calendar::calendar_source_remove,
+            commands::calendar::calendar_sync_now,
+            commands::calendar::calendar_upcoming,
+            commands::calendar::calendar_suggest_event,
+            commands::calendar::calendar_open_join_url,
+            commands::calendar::change_meeting_reminder_lead_setting,
+            commands::calendar::change_meeting_reminder_all_events_setting,
+            commands::meetings::meetings_start_from_event,
+            meeting_prompt::meeting_prompt_current,
+            meeting_prompt::meeting_prompt_ready,
+            meeting_prompt::meeting_prompt_dismiss,
             commands::tts::tts_speak_text,
             commands::tts::tts_speak_clipboard,
             commands::tts::tts_cancel,
@@ -1870,6 +1894,9 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_chat::MeetingChatEvent,
             // M3-P3c
             commands::meeting_speakers::SpeakersChanged,
+            // M5-P5b
+            managers::calendar::service::CalendarSyncEvent,
+            meeting_prompt::MeetingPromptEvent,
             managers::transcription::StreamTextEvent,
             managers::transcription::StreamPhaseEvent,
         ]);

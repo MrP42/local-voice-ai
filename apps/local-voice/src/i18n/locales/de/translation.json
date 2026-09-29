@@ -1654,6 +1654,76 @@
       "cancel": "Abbrechen",
       "importBody": "Sie importieren eine bestehende Aufnahme. Dass die Datei existiert, belegt keine Einwilligung — bestätigen Sie, dass alle an diesem Gespräch Beteiligten der Aufzeichnung zugestimmt haben."
     },
+    "calendar": {
+      "title": "Kalender",
+      "description": "Verbindet einen Kalender per ICS-Adresse (Outlook, Google, Nextcloud, iCloud). Termine werden alle 15 Minuten abgerufen, bleiben auf diesem Rechner und liefern Titel und Teilnehmende für die Aufnahme.",
+      "connect": "Kalender verbinden",
+      "refresh": "Jetzt aktualisieren",
+      "refreshing": "Wird aktualisiert …",
+      "remove": "Entfernen",
+      "removeConfirm": "Kalender „{{label}}“ entfernen? Die Adresse und die gespeicherten Termine werden gelöscht; bestehende Besprechungen behalten ihren Termin-Bezug.",
+      "removeConfirmYes": "Ja, entfernen",
+      "cancel": "Abbrechen",
+      "empty": "Noch kein Kalender verbunden.",
+      "neverSynced": "noch nicht abgerufen",
+      "syncOk": "{{count}} Termine · {{time}} ✓",
+      "attendeeDataMissing": "Ohne Teilnehmerdaten: Erinnerungen kommen für jeden Termin mit Beitritts-Adresse.",
+      "loadError": "Die Kalender konnten nicht gelesen werden.",
+      "dialog": {
+        "title": "Kalender verbinden",
+        "name": "Name",
+        "namePlaceholder": "z. B. Outlook Arbeit",
+        "url": "ICS-Adresse",
+        "urlPlaceholder": "https://… oder webcal://…",
+        "show": "Adresse anzeigen",
+        "hide": "Adresse verbergen",
+        "connect": "Verbinden",
+        "checking": "Kalender wird geprüft …",
+        "privacy": "Die Adresse gibt Lesezugriff auf den ganzen Kalender. Sie wird verschlüsselt (Windows-Benutzerkonto) auf diesem Rechner gespeichert und nur an den Kalenderanbieter gesendet.",
+        "helpTitle": "Wo finde ich die Adresse?",
+        "outlookTitle": "Outlook (Microsoft 365, Outlook im Web)",
+        "outlookSteps": "Einstellungen → Kalender → Freigegebene Kalender → „Kalender veröffentlichen“. Kalender wählen, Berechtigung „Alle Details anzeigen“ (sonst fehlen die Teilnehmenden), „Veröffentlichen“ und den ICS-Link kopieren. Sperrt die IT das Veröffentlichen, erscheint die Option nicht. Veröffentlichte Kalender werden je nach Anbieter mit einigen Stunden Verzögerung aktualisiert.",
+        "googleTitle": "Google Kalender",
+        "googleSteps": "calendar.google.com → Einstellungen → links den Kalender wählen → „Kalender integrieren“ → „Privatadresse im iCal-Format“ kopieren. Diese Adresse nicht weitergeben: wer sie kennt, sieht den ganzen Kalender.",
+        "otherTitle": "Nextcloud, iCloud u. a.",
+        "otherSteps": "Den Kalender „öffentlich teilen“ bzw. per Link freigeben und den ICS- oder webcal-Link einfügen."
+      },
+      "reminder": {
+        "title": "Erinnerung vor Terminen",
+        "description": "Ein Hinweisfenster erscheint vor dem Beginn und bietet die Aufnahme an. Es kommt nur bei Besprechungen (ab 2 Teilnehmenden oder mit Beitritts-Adresse), nie während einer Aufnahme.",
+        "off": "Aus",
+        "minute1": "1 Minute vorher",
+        "minutes2": "2 Minuten vorher",
+        "minutes5": "5 Minuten vorher",
+        "allEvents": "Auch Termine ohne Teilnehmende",
+        "allEventsDescription": "Erinnert auch an Termine allein, ohne Gegenüber und ohne Beitritts-Adresse."
+      },
+      "upcoming": {
+        "title": "Nächste Termine (heute)",
+        "empty": "Heute stehen keine weiteren Termine an.",
+        "start": "Aufnahme starten",
+        "attendees": "{{count}} Teilnehmende",
+        "running": "läuft"
+      },
+      "suggestion": {
+        "chip": "aus Kalender",
+        "chipWithAttendees": "aus Kalender · {{count}} Teilnehmende",
+        "clear": "Terminbezug lösen"
+      }
+    },
+    "prompt": {
+      "noEvent": "Besprechung",
+      "startsIn": "beginnt in {{count}} min",
+      "startsNow": "beginnt jetzt",
+      "runningSince": "läuft seit {{count}} min",
+      "attendees": "{{count}} Teilnehmende",
+      "start": "Aufnahme starten",
+      "join": "Beitreten",
+      "later": "Später",
+      "confirm": "Starten",
+      "starting": "Wird gestartet …",
+      "back": "Zurück"
+    },
     "live": {
       "empty": "Noch keine Segmente — das erste erscheint nach ~20 Sekunden.",
       "me": "Ich",

@@ -261,6 +261,11 @@ const settingUpdaters: {
   // M6-P6c
   meeting_self_emails: (value) =>
     commands.changeMeetingSelfEmailsSetting((value as string[]) ?? []),
+  // M5-P5b
+  meeting_reminder_lead_s: (value) =>
+    commands.changeMeetingReminderLeadSetting(value as number),
+  meeting_reminder_all_events: (value) =>
+    commands.changeMeetingReminderAllEventsSetting(value as boolean),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

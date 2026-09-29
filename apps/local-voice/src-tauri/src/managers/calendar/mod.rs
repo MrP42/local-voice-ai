@@ -31,4 +31,6 @@ pub mod dump;
 pub mod fetch;
 pub mod ics;
 pub mod model;
+pub mod reminder; // M5-P5b
 pub mod secret;
+pub mod service; // M5-P5b
