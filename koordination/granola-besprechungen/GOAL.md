@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T17:21
+aktualisiert: 2026-09-29T17:36
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -33,7 +33,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - [x] AK3 — Notizblock + KI-Notizen (F07–F10): Eval über Fixture-Besprechungen mit Nutzerstichpunkten → 100 % der Nutzerstichpunkte wörtlich erhalten und als Nutzertext markiert, ≥ 95 % der KI-Aussagen mit Quellsegment belegt; Rust- und Playwright-Tests des Pfads grün
 - [ ] AK4 — Transkription Deutsch: Benchmark-Befehl → WER Enddurchlauf ≤ 6 % und Live ≤ 8 % auf FLEURS-de-Stichprobe (≥ 200 Sätze); WER auf deutschem Mehrsprecher-Besprechungskorpus gemessen und in der Doku
 - [ ] AK5 — Live-Latenz: Harness-Messung über ≥ 10 min Aufnahme → p95 Ende der Äußerung bis Anzeige ≤ 5 s
-- [ ] AK6 — Echo: Fixture mit Lautsprecher-Echo → Ich-Transkript enthält ≤ 10 % der Gegenseite-Wörter (Baseline ohne AEC mitgemessen)
+- [x] AK6 — Echo: Fixture mit Lautsprecher-Echo → Ich-Transkript enthält ≤ 10 % der Gegenseite-Wörter (Baseline ohne AEC mitgemessen)
 - [ ] AK7 — Sprecher: DER ≤ 15 % auf Diarisierungs-Testsatz (AMI-Stichprobe + deutsches Mehrsprecher-Fixture); Sprecher benennbar, Namen überstehen Neu-Transkription
 - [ ] AK8 — Chat/Suche: Eval mit ≥ 20 Fragen über ≥ 5 Fixture-Besprechungen → ≥ 85 % richtige Antworten mit korrektem Zitat (lokales Modell); Suche < 500 ms bei 500 Besprechungen
 - [ ] AK9 — Kalender + Erkennung: ICS-Fixture → Termine mit Titel/Teilnehmenden übernommen, Erinnerung; laufende Meeting-App (Mikrofonnutzung) → Hinweis „Aufnahme starten?"; Tests grün
@@ -107,6 +107,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29T11:41 QG1 widerrufen — frühere Belege gelten nicht mehr
 - 2026-09-29T16:53 QG2 widerrufen — frühere Belege gelten nicht mehr
 - 2026-09-29T17:21 AK3 erfüllt — --eval-notes (Gemma 4 E4B, CUDA): user_preserved 1.0 (30/30), ai_sourced 1.0 (21/21), abnahme/p1e-eval-notes.json, Commit 2ec9c328; Rust 1012 gruen, Playwright meeting-notes 34 gruen
+- 2026-09-29T17:36 AK6 erfüllt — --simulate-meeting m2_echo_mic/render: ich_far_word_leak mit AEC 0,00, Baseline --no-aec 0,565; Commit ea2a398f
 
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
