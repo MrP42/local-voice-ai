@@ -1,7 +1,7 @@
 # Handoff – Goal „Besprechungen auf Granola-Niveau“ (29.09.2026 abends, Stand 2)
 
 ## Stand in einem Satz
-Goal `koordination/granola-besprechungen/GOAL.md` (Issue #59, Integrationsbranch `feat/granola-besprechungen`, gepusht) läuft (EXECUTING); AK1, AK3, AK4, AK5, AK6, AK8 erfüllt, Feature-Matrix 18/22 Kern belegt (`python koordination/granola-besprechungen/check_matrix.py`), Rust-Suite 1487 grün; drei Worker liefen beim Schreiben: P5b (wt-m1c), P6b (wt-m1), P1h (wt-m2a).
+Goal `koordination/granola-besprechungen/GOAL.md` (Issue #59, Integrationsbranch `feat/granola-besprechungen`, gepusht) läuft (EXECUTING); AK1, AK3, AK4, AK5, AK6, AK8 erfüllt, Feature-Matrix 17/22 Kern belegt (`python koordination/granola-besprechungen/check_matrix.py`), Rust-Suite 1487 grün; drei Worker liefen beim Schreiben: P5b (wt-m1c), P6b (wt-m1), P1h (wt-m2a).
 
 ## Wo alles steht (nicht wiederholen, dort lesen)
 - Ziel, AK/QG, Entscheidungen E1–E23, Verlauf: `koordination/granola-besprechungen/GOAL.md`
