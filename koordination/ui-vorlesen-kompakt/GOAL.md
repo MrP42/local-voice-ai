@@ -1,0 +1,102 @@
+---
+thema: ui-vorlesen-kompakt
+titel: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
+state: DISCOVERY
+vorzustand: -
+pausengrund: -
+issue: 61
+repo: MrP42/local-voice-ai
+branch: feat/ui-vorlesen-kompakt
+iteration: 0
+erstellt: 2026-09-29
+aktualisiert: 2026-09-29T11:55
+---
+
+# Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
+
+## Zielzustand
+Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kompakte Bedienung (Transport, Stimme, eine Zeile reiner Symbol-Knöpfe mit Tooltip, Seltenes hinter einem Menü), darunter Dateien/Hilfe – wahlweise wie bisher nebeneinander; Spaltenbreiten sind ziehbar und bleiben erhalten, erzeugte Audios heißen kurz und unterscheidbar, und „Ausdruck & Sprechstil“ scrollt statt den Text zu überdecken. Erkennbar an den Playwright-Belegen unten, an Vorher/Nachher-Screenshots (Artefakt) und am Abnahme-Installer 0.20.4.
+
+## Scope
+- UI-Audit der Vorlesen-Seite (Seitenliste, Editor mit Reitern, Ausdruck & Sprechstil, Bedienspalte, Dateien/Hilfe): Abweichungen vom App-Standard (Knopfgrößen, Symbole, Schriftgrößen, Abstände, Tab-Stile) mit Fundstelle → `UI-AUDIT.md`; Befunde der Schwere „hoch“ und „mittel“ auf dieser Seite beheben.
+- Bedienspalte: Aktionen als Symbol-Knöpfe in einer Zeile (je Reiter Original/Übersetzung/Zusammenfassung), Seltenes im Menü „☰“, Tooltip mit Name + Kurzerklärung (Maus und Tastaturfokus), je Aktion ein eigenes Symbol, einheitliche Größe.
+- Layout: rechte Spalte gestapelt (Standard) oder nebeneinander (bisher), Umschalter in der Spalte selbst; linke und rechte Spalte per Ziehgriff in der Breite verstellbar, dauerhaft gespeichert.
+- Dateiname erzeugter Audios kürzer und eigenständig; Dateiliste zeigt bei langen Namen Anfang UND Zeitstempel.
+- Fehler: „Ausdruck & Sprechstil“ → „Alle“ überlagert den Text.
+- Tests (Playwright gegen die Tauri-Attrappe, Unit), Hilfe-Text der Seite, Abnahme-Installer.
+
+## Non-Scope
+- Andere Seiten (Verlauf, Besprechungen, Modelle, Einstellungen): Audit-Befunde dort nur als Folge-Goal notieren.
+- Rust-Backend (Export-Logik, Satz-Cache) – nur der vorgeschlagene Dateiname ändert sich.
+- Granola-Goal (`koordination/granola-besprechungen`, Worktrees wt-m*), offene fremde PRs #21, #32, #56–#58, #60.
+- Umbenennen bestehender Audiodateien auf der Platte.
+- Neuer Seitenleisten-Eintrag oder neuer Einstellungsreiter (Memory „Einstellungen am richtigen Ort“).
+
+## Akzeptanzkriterien
+- [ ] AK1 — Audit: `koordination/ui-vorlesen-kompakt/UI-AUDIT.md` listet jede Abweichung als *Element · Ist · Standard · Fundstelle · Schwere · Status*; jede Zeile „hoch“/„mittel“ trägt Status „behoben (Paket/Commit)“, Rest „Folge-Goal“.
+- [ ] AK2 — Einheitliche Aktionen: Playwright-Test `tests/readaloud-toolbar.spec.ts` → alle Aktionsknöpfe der Bedienspalte (`[data-testid^="tts-action-"]`) haben gleiche Höhe und Breite (±1 px), kein sichtbarer Beschriftungstext, jedes Symbol (`svg.lucide-*`-Klasse) kommt genau einmal vor; Auto-Tagging ist nicht mehr niedriger als der Rest.
+- [ ] AK3 — Eine Zeile + Menü: im Reiter Original stehen in einer Zeile (gleiche `top` ±2 px) Hinzufügen (zuerst), Diktieren, Als Audio speichern, Änderungen vorab erzeugen, Menü; das Menü enthält Skript-Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging und löst jede davon aus; der Fehlerzähler der Skriptprüfung ist am Menüknopf sichtbar. Übersetzung/Zusammenfassung zeigen ihre Aktion ebenfalls als Symbol.
+- [ ] AK4 — Tooltip: Hover UND Tastaturfokus auf jeden Aktionsknopf zeigen Name + Kurzerklärung (`role="tooltip"`, per `aria-describedby` verbunden); `aria-label` trägt den Namen.
+- [ ] AK5 — Kompakt gestapelt: Viewport 1920×1050 und 1366×768 im Layout „gestapelt“ → Höhe des Bedienblocks `[data-testid="tts-controls"]` ≤ 50 % von `window.innerHeight`, Dateien/Hilfe liegen darunter in derselben Spalte; es gibt rechts vom Editor genau eine Spalte.
+- [ ] AK6 — Umschaltbar: Umschalter gestapelt/nebeneinander in der rechten Spalte; Wahl übersteht Neuladen (localStorage); „nebeneinander“ entspricht dem bisherigen Aufbau.
+- [ ] AK7 — Ziehbare Spalten: Griffe zwischen Seitenliste|Editor und Editor|rechter Spalte (`role="separator"`, Pfeiltasten, Doppelklick = Standard) ändern die Breite in Grenzen; Breite übersteht Neuladen; Test belegt beides.
+- [ ] AK8 — Dateiname: `tests/exportName.spec.ts` → neuer Name `<Stimme>[-<Zusatz>]_<JJJJ-MM-TT_HHMM>.<ext>` (z. B. `Patrick_2026-09-29_1736.wav`, `Skript_…` bei Skript-Stimmen, `-EN` im Reiter Übersetzung, `-Zusammenfassung`), Stamm ohne Zeitstempel ≤ 24 Zeichen, Windows-sicher; der Speichern-Dialog schlägt ihn vor.
+- [ ] AK9 — Dateiliste: ein langer Altname (`CASE-GESPRÄCH-IE2S-…_2026-09-28_1736.wav`) zeigt sichtbar Anfang, „…“ und `2026-09-28_1736`; voller Name im Tooltip.
+- [ ] AK10 — Palette-Fehler: Playwright → „Ausdruck & Sprechstil“ öffnen, „Alle“ wählen → Klappbereich ist in der Höhe begrenzt und scrollt (`scrollHeight > clientHeight`), Editor-Box ≥ 160 px hoch und überschneidet sich nicht mit dem Klappbereich (Screenshot-Beleg).
+- [ ] AK11 — Anfassbar: Vorher/Nachher-Screenshots (gestapelt, nebeneinander, Menü offen, Tooltip, Palette „Alle“) als Artefakt-Link; Installer `Local Voice AI_0.20.4_x64-setup.exe` gebaut.
+
+## Quality Gates
+- [ ] QG1 — Typen: `cd apps/local-voice && pnpm exec tsc --noEmit` → Exit 0.
+- [ ] QG2 — Gesamte Playwright-Suite: `cd apps/local-voice && pnpm exec playwright test --reporter=line` → keine neuen Fehlschläge gegenüber der Basislinie (Basislinie in Evidence).
+- [ ] QG3 — Lint/Format nur berührte Dateien: `pnpm exec eslint <Dateien>` 0 Fehler, `pnpm exec prettier --check <Dateien>` grün (vorbestehendes Rot anderer Dateien bleibt, AGENTS.md).
+- [ ] QG4 — i18n: neue Schlüssel in `de` und `en` vorhanden (Parität der neuen Schlüssel per Skript), keine hartcodierten deutschen/englischen UI-Texte.
+- [ ] QG5 — Rust unberührt außer Versionsdateien: `git diff --stat origin/chore/0.20.3-abnahme..HEAD -- apps/local-voice/src-tauri` zeigt nur `Cargo.toml`/`tauri.conf.json`(/`Cargo.lock`).
+- [ ] QG6 — Git: Commit je abgenommenem Paket, Branch gepusht, PR gestapelt auf #58 (Basis `chore/0.20.3-abnahme`), kein Push auf `main`, keine Formatierläufe über fremde Dateien.
+- [ ] QG7 — Doku + Handoff: Hilfe-Abschnitt „vorlesen“ passt zur neuen Bedienung; Handoff `.claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md`.
+- [ ] QG8 — Budget: ≤ 1,8 MTok geschätzt; Zwischenstand bei 50 %/80 %, harter Stopp bei 150 % (2,7 MTok).
+
+## Constraints
+- Geteilter Baum: eigener Worktree `.claude/worktrees/wt-ui`, Paket-Worktrees `wt-ui-p*`; nie `git stash`, nie `git add -A` am Repo-Root, nie `reset --hard` auf fremde Zweige.
+- Tests je Worktree auf eigenem Port (`PW_PORT`), sonst testet Playwright per `reuseExistingServer` den Vite-Server eines anderen Worktrees.
+- Design-System der App: Tokens/Klassen aus `App.css` (`.mbtn`, `Button`, `text-text/..`), lucide-Symbole, gelber Primärton nur für die eine Hauptaktion (Abspielen).
+- Tag-Einfügen per Cursor bleibt: Palette gehört unter das Textfeld (Entscheidung Patrick 14.09.).
+
+## Architekturprinzipien
+- Kleinster Diff: Bedienleiste als eigene Komponente aus `TtsSettings.tsx` herauslösen statt die 2.400-Zeilen-Datei weiter aufzublähen; Verhalten (Handler, Zustände) bleibt, nur die Darstellung ändert sich.
+- Persistenz über den vorhandenen `usePersistentState` (localStorage), keine neuen Backend-Settings.
+- Barrierefrei: Tastatur (Tab, Enter, Pfeiltasten, Esc), `aria-*`, Fokus sichtbar.
+
+## Dependencies
+- Basis `origin/chore/0.20.3-abnahme` (PR #58 = #56 + #57); PR dieses Goals wird darauf gestapelt.
+- `node_modules` je Worktree per `pnpm install --frozen-lockfile --prefer-offline`.
+
+## Risiken / Owner-Entscheidungen
+- E1 Dateiname (Vorschlag gewählt, änderbar): `<Stimme>[-Zusatz]_<Zeitstempel>` statt Projekttitel – der Ordner gehört ohnehin zur Seite.
+- E2 Standard-Layout (Vorschlag gewählt, änderbar): „gestapelt“; Umschalter in der rechten Spalte, kein Einstellungsreiter.
+- E3 Menüinhalt (Vorschlag gewählt): Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging ins Menü; Hinzufügen, Diktieren, Speichern, Vorab erzeugen in der Zeile.
+- R1 Konflikte in `TtsSettings.tsx` zwischen parallelen Paketen → Paketgrenzen je Codebereich festgelegt, Merge durch den Planer.
+
+## Meilensteine
+| M | Ergebnis (anfassbar) | Status |
+|---|---|---|
+| M1 | UI-AUDIT.md + Vorher-Screenshots | offen |
+| M2 | Symbolleiste mit Menü/Tooltips, Palette-Fix, Dateinamen – Screenshots | offen |
+| M3 | Gestapeltes Layout + ziehbare Spalten – Screenshots | offen |
+| M4 | Installer 0.20.4 + Artefakt Vorher/Nachher, PR offen | offen |
+
+## Evidence
+-
+
+## Blocker
+-
+
+## Entscheidungen
+- 2026-09-29 E1–E3 als Vorschlag gewählt (siehe Risiken), Basis `chore/0.20.3-abnahme`.
+
+## Nächste empfohlene Aktion
+Werkzeug reparieren (PW_PORT), Basislinie der Playwright-Suite messen, Pakete P1–P4 briefen.
+
+## Verlauf
+- 2026-09-29T11:49 DISCOVERY — Goal State angelegt
+- 2026-09-29T11:55 DISCOVERY (Runde 0) — Metadaten: issue=61
+

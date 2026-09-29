@@ -31,9 +31,11 @@ export default defineConfig(async () => ({
   //
   // 1. prevent vite from obscuring rust errors
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
+  // 2. tauri expects a fixed port, fail if that port is not available.
+  //    LV_DEV_PORT only for parallel Playwright runs from several worktrees
+  //    (see playwright.config.ts); `tauri dev` keeps 1420.
   server: {
-    port: 1420,
+    port: Number(process.env.LV_DEV_PORT) || 1420,
     strictPort: true,
     host: host || false,
     hmr: host
