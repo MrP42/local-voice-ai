@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T11:41
+aktualisiert: 2026-09-29T11:43
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -112,7 +112,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-P1a validieren+mergen -> W2: P1b (xhigh), P1c (coder), P2a (xhigh) in eigenen Worktrees; P2c1/P2b1 validieren
+Lieferungen validieren und seriell in feat/granola-besprechungen mergen (Konflikte lib.rs/bindings.ts/recorder.rs); dann W3: P1d, P1e, P1f, P2c2, P2b2, P2e; M3-Spike wenn Builds ruhen
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -124,4 +124,5 @@ P1a validieren+mergen -> W2: P1b (xhigh), P1c (coder), P2a (xhigh) in eigenen Wo
 - 2026-09-29T11:23 EXECUTING (Runde 1) — Laufwerk C: war bei 34 GB frei (99 %); Build-Caches (target) von 4 alten, in main gemergten Worktrees geloescht -> 70 GB frei. Haupt-target 63 GB. Vor Installer-Builds freien Platz pruefen (>= 20 GB).
 - 2026-09-29T11:28 EXECUTING (Runde 1) — B1 blockiert Paket P2f: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) – übrige Pakete laufen weiter
 - 2026-09-29T11:29 EXECUTING (Runde 1) — P1a (wt-m1), P2c1 (wt-m2), P2b1 (wt-m2b) laufen parallel; P2f blockiert (E5); Budget ~1,75 MTok
+- 2026-09-29T11:43 EXECUTING (Runde 1) — P1a abgenommen (13fa4d3, 732 Tests). Laufend: P1b (wt-m1), P1c (wt-m1c), P2a (wt-m2a), P2c1 (wt-m2), P2b1 (wt-m2b), P4-Entwurf. CARGO_BUILD_JOBS=8 je Worker. Budget ~2,0 MTok
 
