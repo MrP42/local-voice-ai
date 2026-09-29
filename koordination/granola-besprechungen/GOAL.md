@@ -78,6 +78,11 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - R6 Diarisierung auf deutschen Besprechungen mit > 4 Sprechern und Überlappung unsicher → Rückfall Sortformer; Sprecher manuell korrigierbar.
 - R7 Kein öffentlicher deutscher Besprechungs-Benchmark → Eigenkorpus (TTS-Dialoge mit mehreren Stimmen + Echo/Überlappung simuliert), optional echte Aufnahmen von Patrick mit Referenztext.
 - R8 Sprechernamen aus Teams/Zoom-Oberfläche (wie Granola, UI Automation) — Komfort, nach M3.
+- E1 Aufbewahrung: Default `AfterMinutes` löscht Audio nach dem Protokoll; KI-Notizen lösen die Löschung nicht aus (Entwurf M1). Vorschlag: Default für neue Nutzer auf 30 Tage, damit der Audio-Sprung (F08 „besser") dauerhaft wirkt — bis zur Entscheidung unverändert.
+- E2 KI-Notizen nach Stopp automatisch (Default an, nur mit konfiguriertem Anbieter) — Vorschlag: ja.
+- E3 Nutzertext bleibt bei „Anweisung anwenden" unverändert — Vorschlag: ja.
+- E4 Eigener Block-Editor statt TipTap (keine neue Abhängigkeit) — Vorschlag: ja.
+- R9 Lokaler Kontext fest 8192 Token → Map-Reduce als Normalfall; misst P1e unter 95 % Belegquote, folgt Paket P1g (Kontext je VRAM größer, `ensure_local`).
 
 ## Meilensteine
 | M | Ergebnis (anfassbar) | Status |
