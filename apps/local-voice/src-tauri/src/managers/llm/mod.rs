@@ -17,7 +17,7 @@ use std::sync::{Arc, OnceLock};
 pub use estimate::FitReport;
 pub use resources::SystemMemory;
 pub use runtime::{LlmDownloadInfo, LlmDownloadKind, LlmRuntimeManager};
-pub use server::{LocalLlmServer, LocalLlmStatus, StartOptions};
+pub use server::{LocalLlmServer, LocalLlmStatus, StartOptions, CODE_SERVER_CRASHED};
 
 use crate::settings::PostProcessProvider;
 
@@ -64,6 +64,14 @@ pub fn downloaded_model_ids() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Kam der Fehler von einem abgestuerzten lokalen Server (Code
+/// `server_crashed`, P1h)? Aufrufer koennen dann auf einen Wiederholversuch
+/// verzichten: der naechste Start ist fuer eine Minute gesperrt.
+pub fn is_server_crashed(err: &str) -> bool {
+    err.strip_prefix(CODE_SERVER_CRASHED)
+        .is_some_and(|rest| rest.starts_with(':'))
+}
+
 /// Die Adresse, an die eine Anfrage fuer `model` geht: fuer jeden Anbieter
 /// seine eigene -- fuer den lokalen die des laufenden Servers, der dafuer
 /// bei Bedarf gestartet wird.
@@ -85,10 +93,11 @@ pub async fn ensure_local(model_id: &str) -> Result<String, String> {
     let server = SERVER
         .get()
         .ok_or_else(|| "Lokales Sprachmodell nicht initialisiert".to_string())?;
-    if server.is_serving(model_id) {
-        if let Some(url) = server.base_url() {
-            return Ok(url);
-        }
+    // P1h: nur ein lebender Prozess UND antwortender Port zaehlt als bereit.
+    // Sonst weiter zu `ensure`, das einen Absturz abraeumt, hoechstens einmal
+    // pro Minute neu startet und sonst `server_crashed: ...` meldet.
+    if let Some(port) = server.live_port(model_id).await {
+        return Ok(format!("http://127.0.0.1:{port}/v1"));
     }
     let model_path = runtime
         .model_path(model_id)
@@ -204,16 +213,14 @@ pub async fn ensure_embedding(model_id: &str) -> Result<String, String> {
     let _guard = lock.lock().await;
     touch_embedding();
     let server = embed_server();
-    if server.child_exited() {
-        // Abgestuerzt (oder vom Job-Deckel beendet): erst abraeumen, sonst
-        // haelt `ensure` den toten Prozess fuer bereit und liefert seinen Port.
+    // Abgestuerzt (oder vom Job-Deckel beendet): sofort abraeumen und den
+    // Absturz vormerken, damit der Neustart unter der Ein-Minuten-Sperre
+    // steht (P1h) und nie ein toter Port als bereit gilt.
+    if server.reap_if_dead() {
         log::warn!("Embedding-Server hat sich beendet, wird neu gestartet");
-        server.stop();
     }
-    if server.is_serving(model_id) {
-        if let Some(url) = server.base_url() {
-            return Ok(url);
-        }
+    if let Some(port) = server.live_port(model_id).await {
+        return Ok(format!("http://127.0.0.1:{port}/v1"));
     }
     let runtime = RUNTIME
         .get()
@@ -250,7 +257,11 @@ pub async fn ensure_embedding(model_id: &str) -> Result<String, String> {
         )
         .await
         .map_err(|e| {
-            if e.contains("Arbeitsspeicher") {
+            if is_server_crashed(&e) {
+                // Code bleibt vorn (`server_crashed: ...`); der Text darf den
+                // Speicher-Marker des gescheiterten Neustarts enthalten.
+                e
+            } else if e.contains("Arbeitsspeicher") {
                 format!("memory_low: {e}")
             } else if e.contains("Modell fehlt") {
                 format!("no_model: {e}")
@@ -381,6 +392,17 @@ pub(crate) mod tests {
         let result = ensure_embedding(EMBED_MODEL_ID).await;
         assert!(result.is_err(), "toter Server darf nicht als bereit gelten: {result:?}");
         assert!(!embedding_running(), "toter Prozess abgeraeumt");
+    }
+
+    /// P1h: Der Fehlercode eines abgestuerzten Servers steht vorn und ist
+    /// eindeutig erkennbar; Praefix allein oder ein Fremdtext zaehlt nicht.
+    #[test]
+    fn a_crashed_server_error_is_recognised_by_its_code() {
+        assert!(is_server_crashed("server_crashed: Das lokale Sprachmodell ist abgestuerzt."));
+        assert!(is_server_crashed(&format!("{CODE_SERVER_CRASHED}: x")));
+        assert!(!is_server_crashed("server_crashed_at_all"));
+        assert!(!is_server_crashed("failed: server_crashed: x"));
+        assert!(!is_server_crashed("HTTP request failed: connection refused"));
     }
 
     #[test]
