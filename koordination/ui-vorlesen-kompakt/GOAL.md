@@ -1,15 +1,15 @@
 ---
 thema: ui-vorlesen-kompakt
 titel: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
-state: PAUSED
-vorzustand: EXECUTING
-pausengrund: limit
+state: COMPLETE
+vorzustand: -
+pausengrund: -
 issue: 61
 repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T12:50
+aktualisiert: 2026-09-29T16:28
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -43,7 +43,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - [x] AK8 — Dateiname: `tests/exportName.spec.ts` → neuer Name `<Stimme>[-<Zusatz>]_<JJJJ-MM-TT_HHMM>.<ext>` (z. B. `Patrick_2026-09-29_1736.wav`, `Skript_…` bei Skript-Stimmen, `-EN` im Reiter Übersetzung, `-Zusammenfassung`), Stamm ohne Zeitstempel ≤ 24 Zeichen, Windows-sicher; der Speichern-Dialog schlägt ihn vor.
 - [x] AK9 — Dateiliste: ein langer Altname (`CASE-GESPRÄCH-IE2S-…_2026-09-28_1736.wav`) zeigt sichtbar Anfang, „…“ und `2026-09-28_1736`; voller Name im Tooltip.
 - [x] AK10 — Palette-Fehler: Playwright → „Ausdruck & Sprechstil“ öffnen, „Alle“ wählen → Klappbereich ist in der Höhe begrenzt und scrollt (`scrollHeight > clientHeight`), Editor-Box ≥ 160 px hoch und überschneidet sich nicht mit dem Klappbereich (Screenshot-Beleg).
-- [ ] AK11 — Anfassbar: Vorher/Nachher-Screenshots (gestapelt, nebeneinander, Menü offen, Tooltip, Palette „Alle“) als Artefakt-Link; Installer `Local Voice AI_0.20.4_x64-setup.exe` gebaut.
+- [x] AK11 — Anfassbar: Vorher/Nachher-Screenshots (gestapelt, nebeneinander, Menü offen, Tooltip, Palette „Alle“) als Artefakt-Link; Installer `Local Voice AI_0.20.4_x64-setup.exe` gebaut.
 
 ## Quality Gates
 - [x] QG1 — Typen: `cd apps/local-voice && pnpm exec tsc --noEmit` → Exit 0.
@@ -103,6 +103,8 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29T12:48 QG6 erfüllt — Commit je Paket (P1-P9), Branch feat/ui-vorlesen-kompakt gepusht, PR #62 gestapelt auf #58, kein Push auf main
 - 2026-09-29T12:48 QG8 erfüllt — Worker ~1,23 MTok + Planer ~0,6 MTok = ~1,85 MTok bei Schaetzung 1,8 (103 %), unter hartem Stopp 2,7; Meldungen bei ~47 % und 86 % abgegeben
 - 2026-09-29T12:49 QG7 erfüllt — Hilfe vorlesen.de/en.md an Menue angepasst (P2, 2c9f6fd); Handoff .claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md; GLOBAL.md fortgeschrieben
+- 2026-09-29T16:28 AK11 erfüllt — Artefakt https://claude.ai/artifact/USSYtsBp5gUgs2eUxUPyRw (Vorher/Nachher, Menue, Tooltip, gestapelt/nebeneinander, Palette); Installer apps/local-voice/src-tauri/target/release/bundle/nsis/Local Voice AI_0.20.4_x64-setup.exe (16,8 MB, 29.09. 13:01; nur Updater-Signatur fehlt lokal, erwartet)
+- 2026-09-29T16:28 Abschlussprüfung grün — `node apps/local-voice/node_modules/typescript/bin/tsc --noEmit -p apps/local-voice` → (keine Ausgabe)
 
 ## Blocker
 -
@@ -111,7 +113,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29 E1–E3 als Vorschlag gewählt (siehe Risiken), Basis `chore/0.20.3-abnahme`.
 
 ## Nächste empfohlene Aktion
-Installer pruefen: .claude/worktrees/wt-ui/apps/local-voice/src-tauri/target/release/bundle/nsis/Local Voice AI_0.20.4_x64-setup.exe; falls fehlt: PowerShell $env:CARGO_BUILD_JOBS='6'; PATH+=~/.cargo/bin; pnpm exec tauri build --bundles nsis. Dann goal.py check --ak 11 --done, goal.py complete
+Goal abgeschlossen. Nächste Ziele: (noch eintragen: `goal.py complete --naechste-ziele …` oder im Issue-Kommentar „Nächste Ziele“)
 
 ## Verlauf
 - 2026-09-29T11:49 DISCOVERY — Goal State angelegt
@@ -122,4 +124,7 @@ Installer pruefen: .claude/worktrees/wt-ui/apps/local-voice/src-tauri/target/rel
 - 2026-09-29T12:14 EXECUTING (Runde 1) — P1,P3,P4,P5 abgenommen (Integration 96 passed). P2 laeuft; P6/P7 aus Audit gestartet. Budget ca. 0,85 MTok (~47 %)
 - 2026-09-29T12:34 EXECUTING (Runde 1) — P1-P8 integriert (115 passed). B4 Menue abgeschnitten -> P9 laeuft. Budget ~1,55/1,8 MTok (86 %)
 - 2026-09-29T12:50 PAUSED (Runde 1) — Alles gemergt/gepusht, PR #62, Artefakt veroeffentlicht; nur AK11 (Installer) offen - Build lief (Log scratchpad/build-0.20.4.log) [Pause: limit]
+- 2026-09-29T16:28 EXECUTING (Runde 1) — wiederaufgenommen
+- 2026-09-29T16:28 VALIDATING (Runde 1) — Alle AK/QG belegt, Installer 0.20.4 vorhanden
+- 2026-09-29T16:28 COMPLETE (Runde 1) — COMPLETE — AK 11/11, Gates 8/8
 
