@@ -5675,6 +5675,28 @@
           "url": "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf"
         }
       ]
+    },
+    {
+      "id": "diar-sortformer-4spk-v2.1-q8",
+      "name": "Sortformer 4spk v2.1 (Sprechertrennung)",
+      "description": "Sprechertrennung für Besprechungen: erkennt bis zu vier Sprecher je Kanal (NVIDIA Streaming Sortformer, Q8). Lizenz: NVIDIA Open Model License, das Modell wird geladen, nicht mitgeliefert.",
+      "purpose": "diarization",
+      "category": "Sprechertrennung",
+      "license": "NVIDIA Open Model License",
+      "license_url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/",
+      "revision": "ae4afbb5c3d33b71cf2dbf600022b655ee706dd0",
+      "tags": [
+        "sprechertrennung"
+      ],
+      "files": [
+        {
+          "filename": "diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf",
+          "quant": "Q8_0",
+          "size_bytes": 139310336,
+          "sha256": "a5dacdc650790266c7a362e54e6bf51952015487edaa606c4e11632bc32442a9",
+          "url": "https://huggingface.co/handy-computer/diar_streaming_sortformer_4spk-v2.1-gguf/resolve/ae4afbb5c3d33b71cf2dbf600022b655ee706dd0/diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf"
+        }
+      ]
     }
   ]
 }

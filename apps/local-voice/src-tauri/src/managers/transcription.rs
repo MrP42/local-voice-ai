@@ -647,23 +647,26 @@ impl TranscriptionManager {
                 // --device-index flag) hard-select that registered device;
                 // otherwise re-read the persisted accelerator preference (so an
                 // accelerator change marked for reload takes effect here).
-                let (backend, gpu_device) = match device_index {
+                let (backend, device) = match device_index {
                     Some(index) => resolve_device_index(index).inspect_err(|e| {
                         emit_loading_failed(&e.to_string());
                     })?,
                     None => {
                         let settings = get_settings(&self.app_handle);
                         let accelerator = settings.transcribe_accelerator;
-                        (
-                            select_transcribe_backend(accelerator),
-                            resolve_gpu_device(accelerator, settings.transcribe_gpu_device),
-                        )
+                        let device =
+                            resolve_gpu_device(accelerator, settings.transcribe_gpu_device);
+                        // transcribe-cpp 0.2.4: an explicit device must match a
+                        // non-Auto backend, so take the backend from the device.
+                        let backend = device
+                            .as_ref()
+                            .and_then(|d| backend_for_device_kind(&d.kind))
+                            .unwrap_or_else(|| select_transcribe_backend(accelerator));
+                        (backend, device)
                     }
                 };
-                let model_options = ModelOptions {
-                    backend,
-                    gpu_device,
-                };
+                let gpu_device = device.as_ref().and_then(|d| d.index);
+                let model_options = ModelOptions { backend, device };
                 let model = Model::load_with(&model_path, &model_options).map_err(|e| {
                     let error_msg = format!("Failed to load whisper model {}: {}", model_id, e);
                     emit_loading_failed(&error_msg);
@@ -693,7 +696,7 @@ impl TranscriptionManager {
                     caps.languages.clone(),
                 );
                 info!(
-                    "Loaded whisper model '{}' (requested {:?}, gpu_device {}, bound backend '{}', \
+                    "Loaded whisper model '{}' (requested {:?}, gpu_device {:?}, bound backend '{}', \
                      supports_streaming={}, supports_translate={}, supports_language_detect={})",
                     model_id,
                     backend,
@@ -2574,35 +2577,43 @@ pub fn describe_compute_devices() -> Vec<String> {
         .collect()
 }
 
-/// Resolve a `--list-devices` registry index to the (backend, gpu_device) pair
+/// The transcribe-cpp backend that hosts a device of this `kind`, or `None`
+/// for kinds that cannot host a model.
+fn backend_for_device_kind(kind: &str) -> Option<Backend> {
+    match kind {
+        "cpu" => Some(Backend::Cpu),
+        "metal" => Some(Backend::Metal),
+        "cuda" => Some(Backend::Cuda),
+        "vulkan" => Some(Backend::Vulkan),
+        _ => None,
+    }
+}
+
+/// Resolve a `--list-devices` registry index to the (backend, device) pair
 /// for a transcribe-cpp model load (the `--device-index` flag). The
 /// backend is set explicitly from the device's kind, so there's no "index 0 =
 /// auto" ambiguity. Errors if the index isn't a registered, loadable device.
-fn resolve_device_index(index: usize) -> Result<(Backend, i32)> {
+fn resolve_device_index(index: usize) -> Result<(Backend, Option<transcribe_cpp::Device>)> {
     let device = transcribe_compute_devices()
         .into_iter()
         .find(|d| d.index == Some(index))
         .ok_or_else(|| {
             anyhow::anyhow!("No compute device with index {index} (see --list-devices)")
         })?;
-    let backend = match device.kind.as_str() {
-        "cpu" => Backend::Cpu,
-        "metal" => Backend::Metal,
-        "cuda" => Backend::Cuda,
-        "vulkan" => Backend::Vulkan,
-        other => {
-            return Err(anyhow::anyhow!(
-                "Device index {index} has kind '{other}', which cannot host a model"
-            ))
-        }
-    };
-    // gpu_device is a registry index used only by GPU backends; CPU ignores it.
-    let gpu_device = if matches!(backend, Backend::Cpu) {
-        0
+    let backend = backend_for_device_kind(&device.kind).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Device index {index} has kind '{}', which cannot host a model",
+            device.kind
+        )
+    })?;
+    // transcribe-cpp 0.2.4 selects the exact device by handle; for CPU the
+    // backend's automatic policy is enough (as the old index 0 was).
+    let device = if matches!(backend, Backend::Cpu) {
+        None
     } else {
-        index as i32
+        Some(device)
     };
-    Ok((backend, gpu_device))
+    Ok((backend, device))
 }
 
 /// Map Handy's whisper accelerator setting to a transcribe-cpp [`Backend`].
@@ -2636,34 +2647,34 @@ fn select_transcribe_backend(setting: TranscribeAcceleratorSetting) -> Backend {
     }
 }
 
-/// Resolve the user's stored GPU device choice into a [`ModelOptions::gpu_device`]
-/// registry index for the next model load.
+/// Resolve the user's stored GPU device choice into a [`ModelOptions::device`]
+/// for the next model load.
 ///
 /// Settings store a registry index into [`transcribe_cpp::devices`] (`-1` is the
-/// UI's auto/CPU sentinel); transcribe-cpp treats `0` as "auto / first match" and
-/// rejects an out-of-range or non-GPU index. So an explicit selection is honored
-/// only when the user chose the GPU accelerator and the stored index still
-/// resolves to a registered GPU device — otherwise fall back to `0` so a stale
-/// selection can never fail the load.
-fn resolve_gpu_device(setting: TranscribeAcceleratorSetting, gpu_device: i32) -> i32 {
+/// UI's auto/CPU sentinel, `0` the old "auto / first match"). An explicit
+/// selection is honored only when the user chose the GPU accelerator and the
+/// stored index still resolves to a registered GPU device — otherwise `None`
+/// (the backend's automatic policy) so a stale selection can never fail the load.
+fn resolve_gpu_device(
+    setting: TranscribeAcceleratorSetting,
+    gpu_device: i32,
+) -> Option<transcribe_cpp::Device> {
     if transcribe_gpu_disabled_for_host()
         || setting != TranscribeAcceleratorSetting::Gpu
         || gpu_device <= 0
     {
-        return 0;
+        return None;
     }
-    let still_valid = transcribe_compute_devices()
-        .iter()
-        .any(|d| d.index == Some(gpu_device as usize) && is_transcribe_gpu_device(d));
-    if still_valid {
-        gpu_device
-    } else {
+    let found = transcribe_compute_devices()
+        .into_iter()
+        .find(|d| d.index == Some(gpu_device as usize) && is_transcribe_gpu_device(d));
+    if found.is_none() {
         warn!(
             "Stored transcribe GPU device index {} is no longer available; using auto",
             gpu_device
         );
-        0
     }
+    found
 }
 
 /// Apply the user's ORT accelerator preference to the transcribe-rs global.
