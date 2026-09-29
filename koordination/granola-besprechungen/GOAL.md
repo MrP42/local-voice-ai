@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T18:57
+aktualisiert: 2026-09-29T19:33
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -35,7 +35,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - [x] AK5 — Live-Latenz: Harness-Messung über ≥ 10 min Aufnahme → p95 Ende der Äußerung bis Anzeige ≤ 5 s
 - [x] AK6 — Echo: Fixture mit Lautsprecher-Echo → Ich-Transkript enthält ≤ 10 % der Gegenseite-Wörter (Baseline ohne AEC mitgemessen)
 - [ ] AK7 — Sprecher: DER ≤ 15 % auf Diarisierungs-Testsatz (AMI-Stichprobe + deutsches Mehrsprecher-Fixture); Sprecher benennbar, Namen überstehen Neu-Transkription
-- [ ] AK8 — Chat/Suche: Eval mit ≥ 20 Fragen über ≥ 5 Fixture-Besprechungen → ≥ 85 % richtige Antworten mit korrektem Zitat (lokales Modell); Suche < 500 ms bei 500 Besprechungen
+- [x] AK8 — Chat/Suche: Eval mit ≥ 20 Fragen über ≥ 5 Fixture-Besprechungen → ≥ 85 % richtige Antworten mit korrektem Zitat (lokales Modell); Suche < 500 ms bei 500 Besprechungen
 - [ ] AK9 — Kalender + Erkennung: ICS-Fixture → Termine mit Titel/Teilnehmenden übernommen, Erinnerung; laufende Meeting-App (Mikrofonnutzung) → Hinweis „Aufnahme starten?"; Tests grün
 - [ ] AK10 — Nachbereitung/Export: Follow-up-Mail-Entwurf, formatierte Zwischenablage, PDF/SRT/JSON-Export; Tests grün
 - [ ] AK11 — Abnahme: Installer gebaut und installiert, Screenshots der Kernabläufe (Aufnahme mit Notizen → KI-Notizen → Chat) in `koordination/granola-besprechungen/abnahme/`
@@ -111,6 +111,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29T17:36 AK6 erfüllt — --simulate-meeting m2_echo_mic/render: ich_far_word_leak mit AEC 0,00, Baseline --no-aec 0,565; Commit ea2a398f
 - 2026-09-29T18:57 AK5 erfüllt — m2-bench.ps1 -Full: 12,8 min Echtzeit, 128 Segmente, Latenz p95 1385 ms (p50 960, max 4604), docs/m2-evidence/bench.md, Commit d0f3391e
 - 2026-09-29T18:57 AK4 erfüllt — docs/m2-evidence/bench.md: FLEURS-de 240 Saetze Enddurchlauf Qwen3-ASR 1.7B 4,17 % (nach Upgrade 0.2.4 +0,21 Pp), Whisper large-v3 CUDA 4,65 %; Live Parakeet ONNX 7,86 %; Mehrsprecher-Korpus Live 6,86 %; Commits 44c4bde, d0f3391e
+- 2026-09-29T19:33 AK8 erfüllt — --eval-chat 24 Fragen/5 Besprechungen: Gemma 4 E4B accuracy 1,000 in 3 von 3 Laeufen (abnahme/p4g-eval-chat-1..3.json), 12B 1,000; Suche ui p95 180 ms (Release, P4a) bei 500 Besprechungen; Commit a4207200
 
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)

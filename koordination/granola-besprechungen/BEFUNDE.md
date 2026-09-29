@@ -43,4 +43,4 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beobachtet: --eval-chat E4B 0,58/0,71 (Streuung), 12B 0,83; 6 Fehlfragen nur wegen Zitatformat [S8]/[Q2:S44] (Antwort inhaltlich richtig), 2 Retrieval (Kompositum, lange Besprechung), 2 Modell.
 - Beleg: abnahme/p4f-eval-chat*.json, Commit b0f18199.
 - Konsequenz: Paket P4g.
-- Status: offen
+- Status: erledigt (P4g, a4207200)
