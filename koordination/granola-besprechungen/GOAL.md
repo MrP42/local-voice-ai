@@ -1,15 +1,15 @@
 ---
 thema: granola-besprechungen
 titel: Besprechungen auf Granola-Niveau - lokal, ohne Abo
-state: EXECUTING
-vorzustand: -
-pausengrund: -
+state: PAUSED
+vorzustand: EXECUTING
+pausengrund: limit
 issue: 59
 repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T12:12
+aktualisiert: 2026-09-29T12:50
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -119,7 +119,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-Lieferungen P1b/P2a/P2b1/P4a/P5 validieren+mergen; dann P2f (Vulkan), W3 M1 (P1d/P1e/P1f), M2 (P2c2/P2b2/P2e), M3-Spike
+Session-Start: goal.py resume; je Worktree git status pruefen, Worker-Stand validieren (Tests selbst laufen lassen), committen, rebase auf feat/granola-besprechungen (bindings.ts-Konflikte mit tools/reapply_diff.py), ff-merge; dann P1e, P2c2, P2e, P2b2, P2d, M3-Spike, P4b-f, P5a-f, P6a-e
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -135,4 +135,5 @@ Lieferungen P1b/P2a/P2b1/P4a/P5 validieren+mergen; dann P2f (Vulkan), W3 M1 (P1d
 - 2026-09-29T12:05 EXECUTING (Runde 1) — BUDGET: Ist ~3,0 MTok (Subagents 2,7 + Orchestrator ~0,35). Real je Coder-Paket 250-310 kTok, je Entwurf 170-240 kTok. Hochrechnung voller Umfang (M1-M7, ~33 Pakete offen) ~12 MTok = +50 % ueber Schaetzung 8 -> Rueckfrage an Patrick (Regel: anhalten und fragen). Abgenommen: P0, P1, P2, P1a, P1c, P2c1; laufend P1b, P2a, P2b1; P4 geliefert.
 - 2026-09-29T12:10 EXECUTING (Runde 1) — B1 gelöst: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
 - 2026-09-29T12:12 EXECUTING (Runde 1) — Vulkan-SDK installiert (C:\VulkanSDK\1.4.357.0, VULKAN_SDK Machine). Laufend: P1b, P2a, P2b1, P4a, P5. P2f startet, sobald ein Build frei ist (CPU 74 %, RAM frei 23,7 GB).
+- 2026-09-29T12:50 PAUSED (Runde 1) — Nutzungslimit naht (Patrick). Abgenommen+gemergt: P0,P1,P2,P4,P5 (Entwuerfe), P1a,P1b,P1c,P2a,P2c1. Beim Pausieren noch laufend/uncommittet in Worktrees: P1d (wt-m1), P1f (wt-m1c), P2b1 (wt-m2b), P4a (wt-m4), P2f (wt-m2). Budget ~4,3 MTok. [Pause: limit]
 
