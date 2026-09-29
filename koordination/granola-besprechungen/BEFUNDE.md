@@ -33,3 +33,8 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beobachtet: Screenshot abnahme/p4e-chat.png, der Tooltip ueberlagert die Antwortzeile.
 - Konsequenz: kleine UI-Korrektur (Tooltip unterhalb/seitlich) im Abnahme-Feinschliff M7.
 - Status: offen
+
+## B7 — P3a: AMI-Pruefteil 15,19 % DER, knapp ueber AK7-Grenze 15 % (29.09. 15:50)
+- Beobachtet: --eval-diarization; ES2004a 15,30 % (v. a. Wortpausen/Miss), IS1009a 15,09 % (6 % Verwechslung); deutsch 0,94 %; AMI-Entwicklung 14,72 %.
+- Konsequenz: laut E21 nicht nachtunen. Owner-Entscheidung Patrick: (a) AK7 fuer AMI als erfuellt im Rahmen der Messunsicherheit werten, (b) Nemotron-3 (8 Sprecher, im Spike AMI 14,0 %) spaeter nachziehen, sobald transcribe.cpp es laedt, (c) Grenze beibehalten und AK7 offen lassen.
+- Status: offen
