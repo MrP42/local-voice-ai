@@ -91,6 +91,8 @@ export const RecorderCard: React.FC = () => {
   const [startedWithSystem, setStartedWithSystem] = useState<boolean | null>(
     null,
   );
+  // M3-P3c: mehrere Personen am Mikrofon (Raum): je Besprechung, nicht gemerkt.
+  const [diarizeMic, setDiarizeMic] = useState(false);
   // Vorlage fuer die naechste Besprechung: bis der Nutzer waehlt, gilt die
   // Standardvorlage aus den Einstellungen (`null` = Standardvorlage).
   const defaultTemplate = getSetting("meeting_default_template_id") ?? null;
@@ -176,6 +178,10 @@ export const RecorderCard: React.FC = () => {
       return;
     }
     setStartedWithSystem(captureSetting);
+    if (diarizeMic && captureSetting) {
+      void commands.meetingsSetDiarizeMic(result.data.id, true);
+    }
+    setDiarizeMic(false);
     setAutoNotes(null);
     setHealth(NO_HEALTH);
     notesMeetingRef.current = result.data.id;
@@ -293,6 +299,21 @@ export const RecorderCard: React.FC = () => {
               />
               {t("meetings.record.captureSystem")}
             </label>
+            {captureSetting && (
+              <label
+                className="flex items-center gap-2 text-sm"
+                title={t("meetings.record.diarizeMicHint")}
+              >
+                <input
+                  type="checkbox"
+                  checked={diarizeMic}
+                  onChange={(e) => setDiarizeMic(e.target.checked)}
+                  className="accent-logo-primary"
+                  data-testid="diarize-mic"
+                />
+                {t("meetings.record.diarizeMic")}
+              </label>
+            )}
           </div>
         )}
 

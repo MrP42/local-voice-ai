@@ -35,9 +35,10 @@ use super::super::notes::enhance::DOC_FORMAT;
 use super::super::notes::model::{EnhancedNotes, NoteBlock};
 use super::super::store::{MeetingStore, StoredSegment};
 use super::chunking::{
-    chunk_enhanced, chunk_title, chunk_transcript, chunk_user_notes, ChunkDraft, ChunkHead,
+    chunk_enhanced, chunk_title, chunk_transcript_with, chunk_user_notes, ChunkDraft, ChunkHead,
     ChunkSource,
 };
+use super::super::speakers::SpeakerDirectory;
 use super::embed::{EmbedError, EmbedKind, Embedder};
 use super::index::{IndexState, STATUS_ERROR, STATUS_LEXICAL, STATUS_PENDING};
 use super::vectors::{global_cache, VectorCache, IDLE_TTL};
@@ -547,7 +548,13 @@ impl IndexerCore {
             match source {
                 ChunkSource::Title => drafts.extend(chunk_title(&head)),
                 ChunkSource::Transcript => {
-                    drafts.extend(chunk_transcript(&snap.segments, snap.epoch, &head))
+                    let speakers = SpeakerDirectory::load(&self.store, &snap.meeting_id);
+                    drafts.extend(chunk_transcript_with(
+                        &snap.segments,
+                        snap.epoch,
+                        &head,
+                        &speakers,
+                    ))
                 }
                 ChunkSource::UserNotes => drafts.extend(chunk_user_notes(&snap.blocks, &head)),
                 ChunkSource::AiNotes => {

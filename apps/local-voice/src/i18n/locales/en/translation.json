@@ -827,7 +827,9 @@
       "echoCancellationDescription": "Removes the other party, which comes back from your speakers into the microphone, from your track so it does not appear twice as “Me” in the transcript. Needs system audio as the reference. The raw microphone recording is kept unchanged. Takes effect from the next recording.",
       "echoCancellationAuto": "Automatic (with system audio)",
       "echoCancellationOn": "On",
-      "echoCancellationOff": "Off"
+      "echoCancellationOff": "Off",
+      "diarization": "Separate speakers automatically",
+      "diarizationDescription": "After stopping, on import and on re-transcription, a local model detects who speaks when and labels the transcript with numbered speakers (\"Gegenseite 1\", \"Person 2\", ...). You can name the speakers in the transcript. Nothing that recognises a voice is stored. Takes effect from the next run."
     },
     "modelSettings": {
       "title": "{{model}} Settings"
@@ -1592,6 +1594,8 @@
       "resume": "Resume",
       "titlePlaceholder": "Meeting title",
       "captureSystem": "Capture system audio (other party)",
+      "diarizeMic": "Several people at the microphone",
+      "diarizeMicHint": "Several people speak into your microphone (e.g. a meeting room): after the recording the microphone is separated into speakers as well. Best with headphones or echo cancellation, otherwise the remote side may show up among the room speakers (\"Raum n\").",
       "micLevel": "Microphone",
       "systemLevel": "System",
       "health": {
@@ -1646,6 +1650,40 @@
       "me": "Me",
       "remote": "Other party",
       "mixed": "Recording"
+    },
+    "speakers": {
+      "title": "Speaker",
+      "open": "Name or change speaker",
+      "share": "Speaking share {{pct}} %",
+      "nameLabel": "Name (applies to all segments of this speaker)",
+      "namePlaceholder": "Enter a name",
+      "save": "Save",
+      "removeName": "Remove name",
+      "mergeTitle": "Merge with another speaker",
+      "mergeWith": "Merge with {{label}}",
+      "mergeConfirm": "\"{{from}}\" merges into \"{{into}}\": all segments switch to \"{{into}}\". This cannot be undone.",
+      "mergeDo": "Merge",
+      "cancel": "Cancel",
+      "moveTitle": "Assign only this segment",
+      "moveTo": "To {{label}}",
+      "moveNew": "New speaker",
+      "notices": {
+        "disabled": "Speaker separation was switched off for this meeting.",
+        "model_missing": "The speaker separation model is not installed, so there are no speakers here.",
+        "crash_loop": "Speaker separation was skipped because it crashed before.",
+        "low_memory": "Speaker separation was skipped: not enough free memory.",
+        "failed": "Speaker separation failed.",
+        "too_long": "The recording is too long for speaker separation.",
+        "unreadable": "The audio file could not be read for speaker separation.",
+        "mic_without_aec": "The microphone was separated without echo cancellation: the remote side may show up among the room speakers (\"Raum n\"). Headphones or echo cancellation help."
+      },
+      "errors": {
+        "notFound": "This speaker no longer exists.",
+        "invalid": "This choice is not possible.",
+        "segmentNotFound": "This segment no longer exists.",
+        "staleEpoch": "The transcript has been replaced in the meantime. Please reopen it.",
+        "failed": "The change could not be saved."
+      }
     },
     "errors": {
       "consentRequired": "Recording will not start without confirmed consent.",

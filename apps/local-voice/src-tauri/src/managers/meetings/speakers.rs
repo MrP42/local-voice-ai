@@ -167,14 +167,6 @@ impl SpeakerDirectory {
     }
 }
 
-/// Label ohne Verzeichnis (Suche, Chat: dort fehlt der Store-Zugriff je
-/// Zeile): "Ich", "Gegenseite 2", "Person 1". Ohne Namen und ohne Kenntnis der
-/// Kanalform ("Raum" nur mit Systemton); die Namen kommen mit `SpeakerChanged`
-/// und dem Neuaufbau des Index (P3c).
-pub fn default_label(segment: &StoredSegment) -> String {
-    SpeakerDirectory::default().label(segment)
-}
-
 // ---------------------------------------------------------------------------
 // speaker_hints_json
 // ---------------------------------------------------------------------------
@@ -248,6 +240,28 @@ pub fn hints_with_turns(
     );
     root.insert("channels".into(), Value::Object(channels_json));
     Value::Object(root).to_string()
+}
+
+/// M3-P3c (Zusammenfuehren): in `speaker_hints_json` gehoeren alle Turns von
+/// `from` im Kanal `channel` jetzt `into`. Alles andere (Modell, Parameter,
+/// andere Kanaele, unbekannte Schluessel) bleibt unangetastet; ein unlesbarer
+/// Text kommt unveraendert zurueck.
+pub fn rewrite_turn_speaker(hints: &str, channel: u8, from: u32, into: u32) -> String {
+    let Ok(mut root) = serde_json::from_str::<Value>(hints) else {
+        return hints.to_string();
+    };
+    let list = root
+        .get_mut("channels")
+        .and_then(|c| c.get_mut(channel.to_string()))
+        .and_then(Value::as_array_mut);
+    if let Some(list) = list {
+        for turn in list.iter_mut().filter_map(Value::as_array_mut) {
+            if turn.get(2).and_then(Value::as_u64) == Some(u64::from(from)) {
+                turn[2] = json!(into);
+            }
+        }
+    }
+    root.to_string()
 }
 
 // ---------------------------------------------------------------------------

@@ -25,6 +25,7 @@ use super::notes::enhance::{enhanced_to_markdown_with_done, parse_enhanced, DOC_
 use super::notes::model::{
     ActionItem, EnhancedNotes, NoteBlock, NoteBlockKind, Origin, SectionKind, STATUS_DONE,
 };
+use super::speakers::SpeakerDirectory;
 use super::store::{Meeting, MeetingStore, StoredSegment};
 use super::subtitle::{segments_to_srt, segments_to_vtt, speaker_label};
 
@@ -510,13 +511,19 @@ pub struct ExportBundle {
     pub segments: Vec<StoredSegment>,
     /// Aufgaben der jüngsten KI-Notizen plus manuelle.
     pub action_items: Vec<ActionItem>,
-    /// Vom Nutzer vergebene Sprechernamen je `speaker_index`.
-    pub speaker_names: BTreeMap<u32, String>,
+    /// Namen und Labels der Sprecher (M3-P3c): je (Kanal, Sprecher) der vom
+    /// Nutzer vergebene Name, sonst "Gegenseite 2" / "Raum 1" / "Person 1".
+    pub speakers: SpeakerDirectory,
 }
 
 impl ExportBundle {
     fn label(&self, segment: &StoredSegment) -> String {
-        speaker_label(segment, &self.speaker_names)
+        match segment.speaker_index {
+            // Mit Sprechertrennung: Name oder Nummer aus dem Verzeichnis.
+            Some(_) => self.speakers.label(segment),
+            // Ohne: Kanalname ("Ich", "Gegenseite", Import ohne Praefix).
+            None => speaker_label(segment, &BTreeMap::new()),
+        }
     }
 
     fn sorted_segments(&self) -> Vec<&StoredSegment> {
@@ -592,7 +599,7 @@ pub fn build_bundle(store: &MeetingStore, meeting_id: &str) -> Result<ExportBund
         minutes_md,
         segments,
         action_items,
-        speaker_names: BTreeMap::new(),
+        speakers: SpeakerDirectory::load(store, meeting_id),
     })
 }
 
@@ -1539,7 +1546,7 @@ mod tests {
                 action("E5", "Termin für den Workshop finden", "done", None),
                 manual,
             ],
-            speaker_names: BTreeMap::from([(1, "Anna Berg".to_string())]),
+            speakers: SpeakerDirectory::new([((1, 1), "Anna Berg".to_string())], true),
         }
     }
 

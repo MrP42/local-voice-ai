@@ -16,6 +16,7 @@ import {
   events,
   type Citation,
   type Meeting,
+  type MeetingSpeaker,
   type StoredSegment,
 } from "@/bindings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -32,6 +33,7 @@ import { MyNotesView } from "./notes/MyNotesView";
 import { EnhancedNotesView } from "./notes/EnhancedNotesView";
 import { MeetingTemplatePicker } from "./notes/TemplatePicker";
 import { RetranscribeControl } from "./RetranscribeControl";
+import { SpeakerPopover } from "./SpeakerPopover";
 import { Input } from "../../ui/Input";
 import { translateMeetingError } from "./meetingErrors";
 import { SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
@@ -90,6 +92,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const [tab, setTab] = useState<Tab>("transcript");
   const [notesView, setNotesView] = useState<NotesView>("mine");
   const [segments, setSegments] = useState<StoredSegment[]>([]);
+  // M3-P3c: Sprecher (Namen, Anteile), Epoche der Segmentnummern und Hinweise
+  // zur Sprechertrennung (`metadata_json.diarize`).
+  const [speakers, setSpeakers] = useState<MeetingSpeaker[]>([]);
+  const [segmentEpoch, setSegmentEpoch] = useState<number | null>(null);
+  const [speakerNotices, setSpeakerNotices] = useState<string[]>([]);
   // Quellsprung aus den KI-Notizen: das Segment bleibt kurz markiert.
   const [highlightIndex, setHighlightIndex] = useState<number | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -238,9 +245,24 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const [editText, setEditText] = useState("");
   const [saving, setSaving] = useState(false);
 
+  /** Sprecher, Epoche und Hinweise; ein Fehler lässt den alten Stand stehen. */
+  const loadSpeakers = useCallback(async () => {
+    const [list, epoch, notices] = await Promise.all([
+      commands.meetingSpeakersList(meetingId),
+      commands.meetingsSegmentEpoch(meetingId),
+      commands.meetingSpeakerNotices(meetingId),
+    ]);
+    if (list.status === "ok") setSpeakers(list.data ?? []);
+    if (epoch.status === "ok") setSegmentEpoch(epoch.data);
+    if (notices.status === "ok") setSpeakerNotices(notices.data ?? []);
+  }, [meetingId]);
+
   const loadSegments = useCallback(async () => {
     setLoading(true);
-    const result = await commands.meetingsGetSegments(meetingId);
+    const [result] = await Promise.all([
+      commands.meetingsGetSegments(meetingId),
+      loadSpeakers(),
+    ]);
     setLoading(false);
     setEpochKey((k) => k + 1);
     if (result.status === "ok") {
@@ -248,7 +270,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       // channels for a live-recorded meeting — always sort by start_ms.
       setSegments([...result.data].sort((a, b) => a.start_ms - b.start_ms));
     }
-  }, [meetingId]);
+  }, [meetingId, loadSpeakers]);
 
   useEffect(() => {
     void loadSegments();
@@ -304,6 +326,33 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     };
   }, [meetingId, loadSegments, onMeetingChange]);
 
+  // M3-P3c: Namen, Zusammenführen und Umhängen (auch aus anderen Ansichten):
+  // Segmente tragen neue Sprecher, die Sprecherliste neue Labels.
+  useEffect(() => {
+    const un = events.speakersChanged.listen((e) => {
+      if (e.payload.meeting_id !== meetingId) return;
+      void commands.meetingsGetSegments(meetingId).then((result) => {
+        if (result.status === "ok") {
+          setSegments([...result.data].sort((a, b) => a.start_ms - b.start_ms));
+        }
+      });
+      void loadSpeakers();
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [meetingId, loadSpeakers]);
+
+  /** Nach einer Änderung im Popover: Segmente und Sprecher frisch holen. */
+  const onSpeakersChanged = useCallback(() => {
+    void commands.meetingsGetSegments(meetingId).then((result) => {
+      if (result.status === "ok") {
+        setSegments([...result.data].sort((a, b) => a.start_ms - b.start_ms));
+      }
+    });
+    void loadSpeakers();
+  }, [meetingId, loadSpeakers]);
+
   const saveTitle = async () => {
     const next = titleDraft.trim();
     if (next === "" || next === meetingTitle) {
@@ -332,7 +381,21 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
    * und kostet nur Platz und Aufmerksamkeit. Erst wenn Mikrofon und
    * Gegenseite getrennt vorliegen, traegt sie eine Information.
    */
-  const showChannels = new Set(segments.map((s) => s.channel)).size > 1;
+  const hasSpeakers = segments.some((s) => s.speaker_index !== null);
+  const showChannels =
+    hasSpeakers || new Set(segments.map((s) => s.channel)).size > 1;
+
+  /** Wer spricht: der Sprechername (oder "Gegenseite 2"), sonst der Kanal. */
+  const speakerOf = (segment: StoredSegment) =>
+    segment.speaker_index === null
+      ? undefined
+      : speakers.find(
+          (s) =>
+            s.channel === segment.channel &&
+            s.speaker_index === segment.speaker_index,
+        );
+  const whoLabel = (segment: StoredSegment) =>
+    speakerOf(segment)?.label ?? t(channelLabelKey(segment.channel));
 
   /** `withMeta` false liefert den blanken Text — ohne Zeitstempel, ohne
    *  Quelle, mit Leerzeile zwischen den Abschnitten, damit er sich als
@@ -341,7 +404,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     segments
       .map((s) => {
         if (!withMeta) return s.text;
-        const who = showChannels ? `${t(channelLabelKey(s.channel))} ` : ``;
+        const who = showChannels ? `${whoLabel(s)} ` : ``;
         return `${who}[${formatMmSs(s.start_ms)}]: ${s.text}`;
       })
       .join(withMeta ? "\n" : "\n\n");
@@ -371,10 +434,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     // nur $APPDATA zulaesst. Der Sprecher steht fett vor seinem Beitrag,
     // damit die Word-Fassung als Mitschrift lesbar ist und nicht als Liste.
     const body = segments
-      .map(
-        (s) =>
-          `**${t(channelLabelKey(s.channel))} [${formatMmSs(s.start_ms)}]:** ${s.text}`,
-      )
+      .map((s) => `**${whoLabel(s)} [${formatMmSs(s.start_ms)}]:** ${s.text}`)
       .join("\n\n");
     const result = await commands.meetingsExportDocument(target, body);
     if (result.status !== "ok") {
@@ -671,6 +731,20 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         {tab === "transcript" && transcriptError && (
           <p className="text-sm text-red-400">{transcriptError}</p>
         )}
+        {tab === "transcript" && speakerNotices.length > 0 && (
+          <ul
+            className="space-y-0.5 text-xs text-text/50"
+            data-testid="speaker-notices"
+          >
+            {speakerNotices.map((code) => (
+              <li key={code} data-notice={code}>
+                {t(`meetings.speakers.notices.${code}`, {
+                  defaultValue: code,
+                })}
+              </li>
+            ))}
+          </ul>
+        )}
         {tab === "notes" && (
           <div className="space-y-3" ref={notesRef}>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -752,8 +826,25 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
                     </span>
                   )}
                   {showChannels && (
-                    <span className="text-xs text-text/50 w-16 shrink-0 pt-0.5">
-                      {t(channelLabelKey(segment.channel))}
+                    <span
+                      className={`text-xs text-text/50 shrink-0 pt-0.5 truncate ${
+                        hasSpeakers ? "w-24" : "w-16"
+                      }`}
+                      title={whoLabel(segment)}
+                    >
+                      {speakerOf(segment) ? (
+                        <SpeakerPopover
+                          meetingId={meetingId}
+                          segment={segment}
+                          speaker={speakerOf(segment)!}
+                          speakers={speakers}
+                          epoch={segmentEpoch}
+                          onChanged={onSpeakersChanged}
+                          className="max-w-full"
+                        />
+                      ) : (
+                        t(channelLabelKey(segment.channel))
+                      )}
                     </span>
                   )}
                   {editingIndex === segment.segment_index ? (

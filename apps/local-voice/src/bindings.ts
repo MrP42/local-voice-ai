@@ -14,6 +14,86 @@ async changeBinding(id: string, binding: string) : Promise<Result<BindingRespons
 }
 },
 /**
+ * M3-P3c: Die Sprecher einer Besprechung (Popover, Zusammenfuehren, Zuordnen).
+ */
+async meetingSpeakersList(meetingId: string) : Promise<Result<MeetingSpeaker[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speakers_list", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Benennt einen Sprecher; gilt fuer alle seine Segmente.
+ */
+async meetingSpeakerRename(meetingId: string, channel: number, speakerIndex: number, name: string | null) : Promise<Result<MeetingSpeaker, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_rename", { meetingId, channel, speakerIndex, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fuehrt zwei Sprecher eines Kanals zusammen (`from` geht in `into` auf).
+ */
+async meetingSpeakerMerge(meetingId: string, channel: number, from: number, into: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_merge", { meetingId, channel, from, into }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ordnet ein einzelnes Segment einem anderen Sprecher zu (`None`: Zuordnung
+ * aufheben). `epoch` ist die Epoche, auf der die Ansicht das Segment sah.
+ */
+async meetingSegmentSetSpeaker(meetingId: string, segmentIndex: number, epoch: number, speakerIndex: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_segment_set_speaker", { meetingId, segmentIndex, epoch, speakerIndex }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Hinweise zur Sprechertrennung dieser Besprechung (Codes).
+ */
+async meetingSpeakerNotices(meetingId: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_notices", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "Mehrere Personen am Mikrofon": das Mikrofon dieser Besprechung wird
+ * ebenfalls in Sprecher getrennt (`metadata_json.diarize_mic`).
+ */
+async meetingsSetDiarizeMic(meetingId: string, enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_set_diarize_mic", { meetingId, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_diarization` (`auto` | `off`): wirkt ab dem naechsten
+ * Stopp, Import und der naechsten Neu-Transkription.
+ */
+async changeMeetingDiarizationSetting(mode: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_diarization_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Erzeugt KI-Notizen fuer eine fertige Besprechung aus Notizblock,
  * Transkript und Vorlage (`None` = Vorlage der Besprechung, sonst die
  * Standardvorlage) und legt sie als neue Version ab. Fehler tragen einen
@@ -3053,6 +3133,7 @@ meetingChatEvent: MeetingChatEvent,
 meetingEvent: MeetingEvent,
 meetingIndexEvent: MeetingIndexEvent,
 meetingNotesEvent: MeetingNotesEvent,
+speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
 }>({
@@ -3061,6 +3142,7 @@ meetingChatEvent: "meeting-chat-event",
 meetingEvent: "meeting-event",
 meetingIndexEvent: "meeting-index-event",
 meetingNotesEvent: "meeting-notes-event",
+speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event"
 })
@@ -3799,6 +3881,39 @@ total: number;
  * Die Trefferliste wurde gekappt (Allerwelts-Suchwort).
  */
 truncated: boolean }
+/**
+ * Ein Sprecher einer Besprechung, wie das Popover ihn braucht.
+ */
+export type MeetingSpeaker = { 
+/**
+ * 0 = Mikrofon, 1 = Systemton (Gegenseite), 2 = Import (Mischspur).
+ */
+channel: number; 
+/**
+ * Nummer im Kanal, ab 1.
+ */
+speaker_index: number; 
+/**
+ * Anzeige: der Name, sonst "Gegenseite 2" / "Raum 1" / "Person 1".
+ */
+label: string; 
+/**
+ * Der vom Nutzer vergebene Name.
+ */
+display_name: string | null; 
+/**
+ * Verweis auf die Personentabelle (gefuellt ab P3d/P5d).
+ */
+human_id: string | null; 
+/**
+ * Redeanteil an der gesamten Sprechzeit, in Prozent (eine Nachkommastelle).
+ */
+share_pct: number }
+/**
+ * Namen, Zusammenfuehrungen oder Zuordnungen haben sich geaendert: offene
+ * Ansichten laden Segmente und Sprecher neu.
+ */
+export type SpeakersChanged = { meeting_id: string }
 export type MeetingNotesEvent = { kind: "progress"; meeting_id: string; step: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
 /**
  * Der gesamte Notizblock einer Besprechung. `revision` ist der Zaehler der

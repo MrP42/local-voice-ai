@@ -6,6 +6,7 @@ pub mod meeting_chat; // M4-P4c
 pub mod meeting_notes;
 pub mod meeting_enhance;
 pub mod meeting_search;
+pub mod meeting_speakers; // M3-P3c
 pub mod meetings;
 pub mod models;
 pub mod pages;
