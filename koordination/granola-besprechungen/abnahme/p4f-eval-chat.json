@@ -1,0 +1,1379 @@
+{
+  "aggregate": {
+    "accuracy": 0.583,
+    "by_kind": {
+      "filter": {
+        "correct": 0,
+        "questions": 3
+      },
+      "global": {
+        "correct": 1,
+        "questions": 5
+      },
+      "meeting": {
+        "correct": 10,
+        "questions": 10
+      },
+      "two_meetings": {
+        "correct": 0,
+        "questions": 3
+      },
+      "unanswerable": {
+        "correct": 3,
+        "questions": 3
+      }
+    },
+    "causes": {
+      "citation": 6,
+      "model": 2,
+      "retrieval": 2
+    },
+    "correct": 14,
+    "elapsed_ms": 21828,
+    "errors": 0,
+    "index_ms": 3735,
+    "lexical_only_answers": 0,
+    "meetings": 5,
+    "question_ms": {
+      "max": 3664,
+      "mean": 751,
+      "p50": 570,
+      "p95": 2922
+    },
+    "questions": 24
+  },
+  "backend_cpu": false,
+  "context_tokens": 8192,
+  "embedding_model": "emb-bge-m3-q8",
+  "exit_code": 3,
+  "index": {
+    "chunks": 51,
+    "embed_batches": 4,
+    "embed_error": null,
+    "embed_ms": 3353,
+    "embed_server_peak_mb": 1537,
+    "embed_server_running": false,
+    "embedded_meetings": 5,
+    "indexed": 5,
+    "lexical_meetings": 0,
+    "lexical_ms": 70,
+    "meetings": 5,
+    "model": "emb-bge-m3-q8",
+    "model_ready": true,
+    "skipped_chunks": 0,
+    "vectors": 51
+  },
+  "items": [
+    {
+      "answer": "Bis Mittwoch [1][2][3][4].",
+      "cause": null,
+      "citations": [
+        {
+          "chunk_segments": [],
+          "meeting": "jour_fixe",
+          "ref_key": "01K6EVALJF0000000000000008",
+          "segment_index": null,
+          "source": "user_notes"
+        },
+        {
+          "chunk_segments": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "meeting": "jour_fixe",
+          "ref_key": null,
+          "segment_index": 6,
+          "source": "transcript"
+        },
+        {
+          "chunk_segments": [
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52
+          ],
+          "meeting": "jour_fixe",
+          "ref_key": null,
+          "segment_index": 44,
+          "source": "transcript"
+        },
+        {
+          "chunk_segments": [
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63
+          ],
+          "meeting": "jour_fixe",
+          "ref_key": null,
+          "segment_index": 60,
+          "source": "transcript"
+        }
+      ],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 7,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": false
+      },
+      "elapsed_ms": 3664,
+      "expected_retrieved": {
+        "jour_fixe": true
+      },
+      "id": "m01",
+      "kind": "meeting",
+      "not_found": false,
+      "question": "Bis wann macht Miriam das Review für den Bestellexport?",
+      "scope": {
+        "kind": "meeting",
+        "meeting": "jour_fixe"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 3,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "Die Retrospektive wird am Dienstag um zehn nachgeholt [1].",
+      "cause": null,
+      "citations": [
+        {
+          "chunk_segments": [
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63
+          ],
+          "meeting": "jour_fixe",
+          "ref_key": null,
+          "segment_index": 54,
+          "source": "transcript"
+        }
+      ],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 7,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": false
+      },
+      "elapsed_ms": 185,
+      "expected_retrieved": {
+        "jour_fixe": true
+      },
+      "id": "m02",
+      "kind": "meeting",
+      "not_found": false,
+      "question": "Wann wird die ausgefallene Retrospektive nachgeholt?",
+      "scope": {
+        "kind": "meeting",
+        "meeting": "jour_fixe"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 1,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "Brenner Haustechnik hat achtundzwanzig Monteure im Außendienst [1].",
+      "cause": null,
+      "citations": [
+        {
+          "chunk_segments": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "meeting": "kundengespraech",
+          "ref_key": null,
+          "segment_index": 3,
+          "source": "transcript"
+        }
+      ],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 8,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": false
+      },
+      "elapsed_ms": 428,
+      "expected_retrieved": {
+        "kundengespraech": true
+      },
+      "id": "m03",
+      "kind": "meeting",
+      "not_found": false,
+      "question": "Wie viele Monteure hat Brenner Haustechnik im Außendienst?",
+      "scope": {
+        "kind": "meeting",
+        "meeting": "kundengespraech"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 1,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "Die Einrichtung mit Schnittstelle und Schulung kostet einmalig etwa viertausendfünfhundert Euro [1].",
+      "cause": null,
+      "citations": [
+        {
+          "chunk_segments": [
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27
+          ],
+          "meeting": "kundengespraech",
+          "ref_key": null,
+          "segment_index": 25,
+          "source": "transcript"
+        }
+      ],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 8,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": false
+      },
+      "elapsed_ms": 267,
+      "expected_retrieved": {
+        "kundengespraech": true
+      },
+      "id": "m04",
+      "kind": "meeting",
+      "not_found": false,
+      "question": "Was kostet die einmalige Einrichtung mit Schnittstelle und Schulung?",
+      "scope": {
+        "kind": "meeting",
+        "meeting": "kundengespraech"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 1,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "Es wurde Option B für die Datenmigration beschlossen, was eine schlanke Migration mit zwei Jahren Bewegungsdaten und fünf Jahre lesendem Altsystem beinhaltet, ergänzt um das Archiv der alten Stücklisten im Dokumentenmanagement [1].",
+      "cause": null,
+      "citations": [
+        {
+          "chunk_segments": [
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45
+          ],
+          "meeting": "lenkungskreis_lang",
+          "ref_key": null,
+          "segment_index": 43,
+          "source": "transcript"
+        }
+      ],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 14,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 2922,
+      "expected_retrieved": {
+        "lenkungskreis_lang": true
+      },
+      "id": "m05",
+      "kind": "meeting",
+      "not_found": false,
+      "question": "Welche Option wurde für die Datenmigration beschlossen?",
+      "scope": {
+        "kind": "meeting",
+        "meeting": "lenkungskreis_lang"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 1,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "Von zweiunddreißig Schlüsselanwendern haben bisher neunzehn die Grundschulung abgeschlossen [1].",
+      "cause": null,
+      "citations": [
+        {
+          "chunk_segments": [
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76
+          ],
+          "meeting": "lenkungskreis_lang",
+          "ref_key": null,
+          "segment_index": 73,
+          "source": "transcript"
+        }
+      ],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 14,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 647,
+      "expected_retrieved": {
+        "lenkungskreis_lang": true
+      },
+      "id": "m06",
+      "kind": "meeting",
+      "not_found": false,
+      "question": "Wie viele Schlüsselanwender haben die Grundschulung bisher abgeschlossen?",
+      "scope": {
+        "kind": "meeting",
+        "meeting": "lenkungskreis_lang"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 1,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "Die Angebote beinhalteten Preise von 16 €/Monteur [1] und 16 Euro pro Monteur und Monat [2].",
+      "cause": null,
+      "citations": [
+        {
+          "chunk_segments": [],
+          "meeting": "nordlicht_folgetermin",
+          "ref_key": "01K6EVALNL0000000000000003",
+          "segment_index": null,
+          "source": "user_notes"
+        },
+        {
+          "chunk_segments": [
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18
+          ],
+          "meeting": "nordlicht_folgetermin",
+          "ref_key": null,
+          "segment_index": 13,
+          "source": "transcript"
+        }
+      ],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 5,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": false
+      },
+      "elapsed_ms": 413,
+      "expected_retrieved": {
+        "nordlicht_folgetermin": true
+      },
+      "id": "m07",
+      "kind": "meeting",
+      "not_found": false,
+      "question": "Welchen Preis pro Monteur hat Frau Vogt angeboten?",
+      "scope": {
+        "kind": "meeting",
+        "meeting": "nordlicht_folgetermin"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 2,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "Frau Kraus vermisst eine Wochenansicht pro Monteur [1].",
+      "cause": null,
+      "citations": [
+        {
+          "chunk_segments": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "meeting": "nordlicht_folgetermin",
+          "ref_key": null,
+          "segment_index": 5,
+          "source": "transcript"
+        }
+      ],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 5,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": false
+      },
+      "elapsed_ms": 192,
+      "expected_retrieved": {
+        "nordlicht_folgetermin": true
+      },
+      "id": "m08",
+      "kind": "meeting",
+      "not_found": false,
+      "question": "Was fehlt Frau Kraus an der Planungstafel?",
+      "scope": {
+        "kind": "meeting",
+        "meeting": "nordlicht_folgetermin"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 1,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "Es gibt siebzehn offene Tickets, davon sind drei kritisch [1].",
+      "cause": null,
+      "citations": [
+        {
+          "chunk_segments": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "meeting": "projekt_statusrunde",
+          "ref_key": null,
+          "segment_index": 11,
+          "source": "transcript"
+        }
+      ],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 4,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": false
+      },
+      "elapsed_ms": 324,
+      "expected_retrieved": {
+        "projekt_statusrunde": true
+      },
+      "id": "m09",
+      "kind": "meeting",
+      "not_found": false,
+      "question": "Wie viele offene Tickets gibt es, und wie viele davon sind kritisch?",
+      "scope": {
+        "kind": "meeting",
+        "meeting": "projekt_statusrunde"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 1,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "Nora schreibt das Verarbeitungsverzeichnis bis Ende September [1][2].",
+      "cause": null,
+      "citations": [
+        {
+          "chunk_segments": [],
+          "meeting": "projekt_statusrunde",
+          "ref_key": "01K6EVALSR0000000000000005",
+          "segment_index": null,
+          "source": "user_notes"
+        },
+        {
+          "chunk_segments": [
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28
+          ],
+          "meeting": "projekt_statusrunde",
+          "ref_key": null,
+          "segment_index": 27,
+          "source": "transcript"
+        }
+      ],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 4,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": false
+      },
+      "elapsed_ms": 186,
+      "expected_retrieved": {
+        "projekt_statusrunde": true
+      },
+      "id": "m10",
+      "kind": "meeting",
+      "not_found": false,
+      "question": "Wer schreibt das Verarbeitungsverzeichnis, und bis wann?",
+      "scope": {
+        "kind": "meeting",
+        "meeting": "projekt_statusrunde"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 2,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "Brenner Haustechnik nutzt Sanitas Office [S15].",
+      "cause": "citation",
+      "citations": [],
+      "correct": false,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 14,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 5,
+        "meetings_read": 5,
+        "meetings_with_hits": 5,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 570,
+      "expected_retrieved": {
+        "kundengespraech": true,
+        "nordlicht_folgetermin": false
+      },
+      "id": "g01",
+      "kind": "global",
+      "not_found": false,
+      "question": "Welche Warenwirtschaft nutzt Brenner Haustechnik?",
+      "scope": {
+        "kind": "global"
+      },
+      "verdict": {
+        "cite_ok": false,
+        "correct": false,
+        "keys_ok": true,
+        "matched_citations": 0,
+        "missing_groups": [],
+        "reason": "no_citation"
+      }
+    },
+    {
+      "answer": "Die Ladezeit der Startseite beträgt momentan eins Komma acht Sekunden und das Ziel sind eins Komma zwei Sekunden [S8].",
+      "cause": "citation",
+      "citations": [],
+      "correct": false,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 15,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 5,
+        "meetings_read": 5,
+        "meetings_with_hits": 5,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 749,
+      "expected_retrieved": {
+        "projekt_statusrunde": true
+      },
+      "id": "g02",
+      "kind": "global",
+      "not_found": false,
+      "question": "Wie lange lädt die Startseite des Kundenportals, und was ist das Ziel?",
+      "scope": {
+        "kind": "global"
+      },
+      "verdict": {
+        "cite_ok": false,
+        "correct": false,
+        "keys_ok": true,
+        "matched_citations": 0,
+        "missing_groups": [],
+        "reason": "no_citation"
+      }
+    },
+    {
+      "answer": "Es wird nicht angegeben, wie hoch die Budgetreserve im ERP-Projekt ist.",
+      "cause": "retrieval",
+      "citations": [],
+      "correct": false,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 14,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 5,
+        "meetings_read": 5,
+        "meetings_with_hits": 5,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 599,
+      "expected_retrieved": {
+        "lenkungskreis_lang": false
+      },
+      "id": "g03",
+      "kind": "global",
+      "not_found": false,
+      "question": "Wie hoch ist die Budgetreserve im ERP-Projekt?",
+      "scope": {
+        "kind": "global"
+      },
+      "verdict": {
+        "cite_ok": false,
+        "correct": false,
+        "keys_ok": false,
+        "matched_citations": 0,
+        "missing_groups": [
+          [
+            "150000",
+            "150 t"
+          ]
+        ],
+        "reason": "keys_missing"
+      }
+    },
+    {
+      "answer": "Frau Lorenz [S17]",
+      "cause": "citation",
+      "citations": [],
+      "correct": false,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 15,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 5,
+        "meetings_read": 5,
+        "meetings_with_hits": 5,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 588,
+      "expected_retrieved": {
+        "jour_fixe": true
+      },
+      "id": "g04",
+      "kind": "global",
+      "not_found": false,
+      "question": "Bei wem werden die fehlenden Zugangsdaten für Single Sign-on eskaliert?",
+      "scope": {
+        "kind": "global"
+      },
+      "verdict": {
+        "cite_ok": false,
+        "correct": false,
+        "keys_ok": true,
+        "matched_citations": 0,
+        "missing_groups": [],
+        "reason": "no_citation"
+      }
+    },
+    {
+      "answer": "Der Lasttest des Kundenportals ist für den zweiundzwanzigsten Oktober angesetzt, mit zweitausend gleichzeitigen Nutzern [1].",
+      "cause": null,
+      "citations": [
+        {
+          "chunk_segments": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "meeting": "projekt_statusrunde",
+          "ref_key": null,
+          "segment_index": 12,
+          "source": "transcript"
+        }
+      ],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 15,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 5,
+        "meetings_read": 5,
+        "meetings_with_hits": 5,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 796,
+      "expected_retrieved": {
+        "projekt_statusrunde": true
+      },
+      "id": "g05",
+      "kind": "global",
+      "not_found": false,
+      "question": "Wann ist der Lasttest des Kundenportals angesetzt, und mit wie vielen gleichzeitigen Nutzern?",
+      "scope": {
+        "kind": "global"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 1,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "Beim Erstgespräch wurde Anfang August ein Start genannt [Q2:S44], während beim Folgetermin der frühestmögliche Start der erste September war [Q3:S18].",
+      "cause": "citation",
+      "citations": [],
+      "correct": false,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 14,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 5,
+        "meetings_read": 5,
+        "meetings_with_hits": 5,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 829,
+      "expected_retrieved": {
+        "kundengespraech": true,
+        "nordlicht_folgetermin": true
+      },
+      "id": "t01",
+      "kind": "two_meetings",
+      "not_found": false,
+      "question": "Wie hat sich der geplante Start der Einführung bei Brenner Haustechnik zwischen Erstgespräch und Folgetermin verändert?",
+      "scope": {
+        "kind": "global"
+      },
+      "verdict": {
+        "cite_ok": false,
+        "correct": false,
+        "keys_ok": true,
+        "matched_citations": 0,
+        "missing_groups": [],
+        "reason": "no_citation"
+      }
+    },
+    {
+      "answer": "Für Brenner Haustechnik wurde ein Go-Live am ersten Oktober ohne Schnittstelle und die Schnittstelle zu Sanitas Office im Januar vereinbart [1].\n\nFür das Kundenportal wurde der Launch für den dritten November geplant [2]. Falls der Lasttest am zweiundzwanzigsten Oktober nicht klappt, würde der Launch auf den siebzehnten November verschoben [3].",
+      "cause": "retrieval",
+      "citations": [
+        {
+          "chunk_segments": [
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26
+          ],
+          "meeting": "nordlicht_folgetermin",
+          "ref_key": null,
+          "segment_index": 25,
+          "source": "transcript"
+        },
+        {
+          "chunk_segments": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "meeting": "projekt_statusrunde",
+          "ref_key": null,
+          "segment_index": 14,
+          "source": "transcript"
+        },
+        {
+          "chunk_segments": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "meeting": "projekt_statusrunde",
+          "ref_key": null,
+          "segment_index": 15,
+          "source": "transcript"
+        }
+      ],
+      "correct": false,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 13,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 5,
+        "meetings_read": 5,
+        "meetings_with_hits": 5,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 1054,
+      "expected_retrieved": {
+        "lenkungskreis_lang": false,
+        "nordlicht_folgetermin": true
+      },
+      "id": "t02",
+      "kind": "two_meetings",
+      "not_found": false,
+      "question": "Welche Go-Live-Termine wurden für das ERP-Projekt und für Brenner Haustechnik festgelegt oder empfohlen?",
+      "scope": {
+        "kind": "global"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": false,
+        "keys_ok": false,
+        "matched_citations": 1,
+        "missing_groups": [
+          [
+            "februar"
+          ]
+        ],
+        "reason": "keys_missing"
+      }
+    },
+    {
+      "answer": "Im Erstgespräch nannte Wolkenfeld – den Monatspreis pro Monteur. Im Folgetermin nannte Wolkenfeld sechzehn Euro pro Monteur und Monat bei einer Laufzeit von vierundzwanzig Monaten [1].",
+      "cause": "model",
+      "citations": [
+        {
+          "chunk_segments": [
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18
+          ],
+          "meeting": "nordlicht_folgetermin",
+          "ref_key": null,
+          "segment_index": 13,
+          "source": "transcript"
+        }
+      ],
+      "correct": false,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 13,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 5,
+        "meetings_read": 5,
+        "meetings_with_hits": 5,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 870,
+      "expected_retrieved": {
+        "kundengespraech": true,
+        "nordlicht_folgetermin": true
+      },
+      "id": "t03",
+      "kind": "two_meetings",
+      "not_found": false,
+      "question": "Welchen Monatspreis pro Monteur nannte Wolkenfeld im Erstgespräch und welchen im Folgetermin?",
+      "scope": {
+        "kind": "global"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": false,
+        "keys_ok": false,
+        "matched_citations": 1,
+        "missing_groups": [
+          [
+            "19"
+          ]
+        ],
+        "reason": "keys_missing"
+      }
+    },
+    {
+      "answer": "Bis zum zwanzigsten Juli [S29].",
+      "cause": "citation",
+      "citations": [],
+      "correct": false,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 6,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 2,
+        "meetings_read": 2,
+        "meetings_with_hits": 2,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 366,
+      "expected_retrieved": {
+        "nordlicht_folgetermin": true
+      },
+      "id": "f01",
+      "kind": "filter",
+      "not_found": false,
+      "question": "Bis wann will Herr Brenner unterschreiben?",
+      "scope": {
+        "folder": "Vertrieb",
+        "kind": "global"
+      },
+      "verdict": {
+        "cite_ok": false,
+        "correct": false,
+        "keys_ok": true,
+        "matched_citations": 0,
+        "missing_groups": [],
+        "reason": "no_citation"
+      }
+    },
+    {
+      "answer": "Herr Okafor wird den Plan für das Archiv vorlegen und die Etikettendrucker klären [S138]. Zusätzlich übernimmt er die Umsetzung des Archivs der alten Stücklisten im Dokumentenmanagement [S44].",
+      "cause": "citation",
+      "citations": [],
+      "correct": false,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 3,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 532,
+      "expected_retrieved": {
+        "lenkungskreis_lang": true
+      },
+      "id": "f02",
+      "kind": "filter",
+      "not_found": false,
+      "question": "Welche Aufgaben hat Herr Okafor übernommen?",
+      "scope": {
+        "kind": "global",
+        "person": "Okafor"
+      },
+      "verdict": {
+        "cite_ok": false,
+        "correct": false,
+        "keys_ok": true,
+        "matched_citations": 0,
+        "missing_groups": [],
+        "reason": "no_citation"
+      }
+    },
+    {
+      "answer": "Der Launch des Kundenportals ist für den dritten November geplant [1]. Falls der Lasttest am zweiundzwanzigsten Oktober nicht klappt, wird der Launch auf den siebzehnten November verschoben [2].",
+      "cause": "model",
+      "citations": [
+        {
+          "chunk_segments": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "meeting": "projekt_statusrunde",
+          "ref_key": null,
+          "segment_index": 14,
+          "source": "transcript"
+        },
+        {
+          "chunk_segments": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "meeting": "projekt_statusrunde",
+          "ref_key": null,
+          "segment_index": 15,
+          "source": "transcript"
+        }
+      ],
+      "correct": false,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 6,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 2,
+        "meetings_read": 2,
+        "meetings_with_hits": 2,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 519,
+      "expected_retrieved": {
+        "jour_fixe": true,
+        "projekt_statusrunde": true
+      },
+      "id": "f03",
+      "kind": "filter",
+      "not_found": false,
+      "question": "Welche Termine für Release oder Launch wurden festgelegt?",
+      "scope": {
+        "from": "2026-09-01",
+        "kind": "global",
+        "to": "2026-09-30"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": false,
+        "keys_ok": false,
+        "matched_citations": 2,
+        "missing_groups": [
+          [
+            "15"
+          ]
+        ],
+        "reason": "keys_missing"
+      }
+    },
+    {
+      "answer": "",
+      "cause": null,
+      "citations": [],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 7,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 1,
+        "meetings_read": 1,
+        "meetings_with_hits": 1,
+        "rounds": 1,
+        "truncated": false
+      },
+      "elapsed_ms": 172,
+      "expected_retrieved": null,
+      "id": "u01",
+      "kind": "unanswerable",
+      "not_found": true,
+      "question": "Wie viel Euro hat die Geschäftsführung für die mobile App freigegeben?",
+      "scope": {
+        "kind": "meeting",
+        "meeting": "jour_fixe"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 0,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "",
+      "cause": null,
+      "citations": [],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 15,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 5,
+        "meetings_read": 5,
+        "meetings_with_hits": 5,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 570,
+      "expected_retrieved": null,
+      "id": "u02",
+      "kind": "unanswerable",
+      "not_found": true,
+      "question": "Wie viel kostet der Messestand in Hannover?",
+      "scope": {
+        "kind": "global"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 0,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    },
+    {
+      "answer": "",
+      "cause": null,
+      "citations": [],
+      "correct": true,
+      "coverage": {
+        "cpu_limited": false,
+        "dropped_citations": 0,
+        "excerpts_read": 15,
+        "lexical_only": false,
+        "live": false,
+        "meetings_in_scope": 5,
+        "meetings_read": 5,
+        "meetings_with_hits": 5,
+        "rounds": 1,
+        "truncated": true
+      },
+      "elapsed_ms": 605,
+      "expected_retrieved": null,
+      "id": "u03",
+      "kind": "unanswerable",
+      "not_found": true,
+      "question": "Welche Note hat das Team in der letzten Kundenzufriedenheitsumfrage bekommen?",
+      "scope": {
+        "kind": "global"
+      },
+      "verdict": {
+        "cite_ok": true,
+        "correct": true,
+        "keys_ok": true,
+        "matched_citations": 0,
+        "missing_groups": [],
+        "reason": "ok"
+      }
+    }
+  ],
+  "lexical_only_requested": false,
+  "local": true,
+  "meetings": 5,
+  "mode": "eval-chat",
+  "model": "llm-gemma4-e4b-q4",
+  "passed": false,
+  "provider": "local",
+  "questions": 24,
+  "target_accuracy": 0.85
+}

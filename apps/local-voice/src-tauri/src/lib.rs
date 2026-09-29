@@ -1816,7 +1816,8 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.simulate_meeting // M2-P2c2
         || cli_args.eval_notes.is_some() // M1-P1e
         || cli_args.reindex_meetings // M4-P4b
-        || cli_args.eval_diarization.is_some(); // M3-P3a
+        || cli_args.eval_diarization.is_some() // M3-P3a
+        || cli_args.eval_chat.is_some(); // M4-P4f
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -2061,6 +2062,27 @@ pub fn run(cli_args: CliArgs) {
                         let code = run_headless_guarded(|| {
                             run_headless_eval_notes(&app_handle, &args, &dir)
                         });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // M4-P4f: Chat-Eval (AK8) auf synthetischen Fixtures in einem
+                // Sandbox-Store; Sprachmodell und Embedding-Server werden am
+                // Ende beendet.
+                if let Some(dir) = cli_args.eval_chat.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_eval_chat(&app_handle, &args, &dir)
+                        });
+                        // Nach Panik: Embedding-Server ausdruecklich; der
+                        // LLM-Server stirbt mit dem Job-Objekt (KILL_ON_JOB_CLOSE).
+                        managers::llm::stop_embedding();
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2467,6 +2489,79 @@ fn seed_meetings_from_fixtures(
         count += 1;
     }
     Ok(count)
+}
+
+// M4-P4f: `--eval-chat <dir> [--lexical-only]`. Chat ueber Besprechungen
+// gegen synthetische Fixtures (AK8) mit dem eingestellten (oder per `--model`
+// gewaehlten lokalen) Sprachmodell. Sandbox-Store im Temp-Ordner, nie die
+// produktive meetings.db. Globale Zugriffe des lokalen Servers wie in
+// `run_headless_eval_notes`, Speicherwaechter fuer beide llama-server; beide
+// werden am Ende gestoppt. Exit 0 Soll erfuellt, 3 verfehlt, 1 Fehler.
+fn run_headless_eval_chat(app: &AppHandle, args: &CliArgs, dir: &std::path::Path) -> i32 {
+    use managers::meetings::chat::eval;
+
+    crate::selftest::begin_headless_run();
+    let mut settings = get_settings(app);
+    if let Some(model) = args.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        managers::meetings::notes::eval::apply_model_override(&mut settings, model.trim());
+    }
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            managers::llm::stop_embedding();
+            eprintln!("error: memory watchdog stopped the LLM servers at {free_mb} MB free");
+        });
+    }
+    let backend_cpu = tauri::async_runtime::block_on(llm_runtime.resolve_runtime())
+        .map(|(_, backend, _)| backend == "cpu")
+        .unwrap_or(true);
+    let sandbox = match tempfile::Builder::new().prefix("lva-eval-chat-").tempdir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("error: no sandbox directory: {e}");
+            return 1;
+        }
+    };
+    eprintln!("eval-chat: Sandbox {}", sandbox.path().display());
+    let (code, payload) = eval::run_cli(
+        settings,
+        dir,
+        sandbox.path(),
+        eval::CliOptions {
+            lexical_only: args.lexical_only,
+            backend_cpu,
+        },
+    );
+    managers::llm::stop_embedding();
+    llm_server.stop();
+
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        for line in eval::summary_lines(&payload) {
+            println!("{line}");
+        }
+        if let Some(path) = args.out.as_deref() {
+            match std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                Ok(()) => eprintln!("wrote {}", path.display()),
+                Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
+    code
 }
 
 // M1-P1e: `--eval-notes <dir>`. KI-Notizen gegen die synthetischen Fixtures,

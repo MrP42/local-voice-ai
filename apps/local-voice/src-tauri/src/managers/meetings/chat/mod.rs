@@ -14,6 +14,7 @@
 //! - `live`: Auszuege waehrend einer laufenden Aufnahme (ohne Index).
 //! - `recipes`: Recipes mit Variablen, mitgelieferte Recipes.
 //! - `controller`: der Ablauf mit Store, Embedder und LLM-Stream.
+//! - `eval`: Eval AK8 (`--eval-chat`, P4f) auf synthetischen Fixtures.
 //!
 //! Datenschutz (wie M1 D9): kein Frage-, Antwort- oder Auszugstext im Log und
 //! in Fehlermeldungen; nur Codes, Laengen, Zaehler. Kein Modul hier ruft
@@ -22,6 +23,7 @@
 pub mod citations;
 pub mod context;
 pub mod controller;
+pub mod eval;
 pub mod live;
 pub mod prompt;
 pub mod recipes;

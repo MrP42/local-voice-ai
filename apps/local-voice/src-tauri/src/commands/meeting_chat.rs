@@ -30,6 +30,7 @@ use crate::managers::meetings::chat::{
 use crate::managers::meetings::llm_call::resolve_provider_coded;
 use crate::managers::meetings::notes::enhance::EnhanceGuard;
 use crate::managers::meetings::recorder::MeetingRecorderManager;
+use crate::managers::meetings::search::embed::{Embedder, LlamaEmbedder};
 use crate::managers::meetings::search::index::{ChatThread, ThreadScope};
 use crate::managers::meetings::store::MeetingStore;
 
@@ -154,6 +155,31 @@ fn live_snapshot(
         .flatten()
 }
 
+/// Semantische Suche im Chat (Befund B5): nur mit Einstellung
+/// `meeting_semantic_search` und vorhandenem BGE-M3. Waehrend einer Aufnahme
+/// startet der Chat den Embedding-Server nicht selbst (Speicher und GPU
+/// gehoeren dann der Transkription); laeuft er schon, darf er fragen.
+fn semantic_search_usable(
+    enabled: bool,
+    model_ready: bool,
+    recording_active: bool,
+    server_running: bool,
+) -> bool {
+    enabled && model_ready && (!recording_active || server_running)
+}
+
+/// Der Embedder fuer die Suche des Chats: der echte (Embedding-Server mit
+/// RAM-Gate und Job-Objekt, `llm::ensure_embedding`) oder rein lexikalisch.
+/// Scheitert der echte zur Laufzeit (Server startet nicht, RAM knapp), faellt
+/// die Suche selbst auf Worte zurueck (`hybrid_search`, `lexical_only`).
+fn chat_embedder(semantic: bool) -> Arc<dyn Embedder> {
+    if semantic {
+        Arc::new(LlamaEmbedder::new(crate::managers::llm::EMBED_MODEL_ID))
+    } else {
+        Arc::new(LexicalOnly)
+    }
+}
+
 /// Laeuft ein KI-Notizen-Lauf? Kurzer Griff nach dessen Guard (der hat
 /// Vorrang): belegt -> ja; frei -> sofort wieder freigeben.
 fn enhance_running() -> bool {
@@ -185,6 +211,12 @@ pub async fn meeting_chat_ask(
         .unwrap_or(false);
     let backend_cpu = local && local_backend_is_cpu(&app).await;
     let live = live_snapshot(&store, &recorder, &req.scope);
+    let semantic = semantic_search_usable(
+        settings.meeting_semantic_search,
+        crate::managers::llm::embedding_model_ready(crate::managers::llm::EMBED_MODEL_ID),
+        recorder.is_recording(),
+        crate::managers::llm::embedding_running(),
+    );
     let cancel = CancelFlag::default();
     let _registration = CancelRegistration::new(&request_id, cancel.clone());
     let env = ChatEnv {
@@ -215,7 +247,7 @@ pub async fn meeting_chat_ask(
         running_flag(),
         &settings,
         store,
-        Arc::new(LexicalOnly),
+        chat_embedder(semantic),
         live,
         req,
         &env,
@@ -394,6 +426,37 @@ mod tests {
         })
         .unwrap();
         assert_eq!(failed["kind"], "failed");
+    }
+
+    #[test]
+    fn semantic_search_needs_setting_and_model_and_spares_a_recording() {
+        assert!(semantic_search_usable(true, true, false, false));
+        assert!(
+            !semantic_search_usable(false, true, false, true),
+            "Einstellung aus"
+        );
+        assert!(
+            !semantic_search_usable(true, false, false, true),
+            "Modell fehlt"
+        );
+        assert!(
+            !semantic_search_usable(true, true, true, false),
+            "Aufnahme: kein Serverstart"
+        );
+        assert!(
+            semantic_search_usable(true, true, true, true),
+            "Aufnahme, Server laeuft schon"
+        );
+    }
+
+    #[test]
+    fn the_chat_uses_the_real_embedder_or_falls_back_to_words() {
+        assert_eq!(
+            chat_embedder(true).model_id(),
+            crate::managers::llm::EMBED_MODEL_ID
+        );
+        let lexical = chat_embedder(false);
+        assert_eq!(lexical.model_id(), "");
     }
 
     #[test]
