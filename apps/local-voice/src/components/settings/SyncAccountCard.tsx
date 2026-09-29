@@ -195,10 +195,10 @@ export const SyncAccountCard: React.FC = () => {
             {status && status.dead_letters > 0 && (
               <p className="text-orange-500">{t("sync.deadLetters", { count: status.dead_letters })}</p>
             )}
-            {hub && hub.devices.length > 0 && (
+            {hub && (hub.devices ?? []).length > 0 && (
               <p className="text-text/50">
                 {t("sync.devices")}:{" "}
-                {hub.devices
+                {(hub.devices ?? [])
                   .map((d) => `${d.device.slice(0, 6)} (${d.last_push ? relativeTime(Date.parse(d.last_push + "Z"), i18n.language) : "–"})`)
                   .join(", ")}
               </p>

@@ -1059,9 +1059,9 @@ const withSettings = async (page: Page, patch: Record<string, unknown>) => {
   }, patch);
 };
 
-const grantClipboard = async (page: Page) => {
+const grantClipboard = async (page: Page, baseURL?: string) => {
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
-    origin: "http://localhost:1420",
+    origin: baseURL,
   });
 };
 
@@ -1071,8 +1071,9 @@ const readClipboard = (page: Page) =>
 test.describe("Hinweis Meeting-Chat", () => {
   test("Hinweis kopieren: lokaler Anbieter, waehrend der Aufnahme", async ({
     page,
+    baseURL,
   }) => {
-    await grantClipboard(page);
+    await grantClipboard(page, baseURL);
     await useProvider(page, "local");
     await startRecording(page);
     await openRecordings(page);
@@ -1090,8 +1091,9 @@ test.describe("Hinweis Meeting-Chat", () => {
 
   test("Hinweis kopieren: externer Anbieter nennt den Empfaenger", async ({
     page,
+    baseURL,
   }) => {
-    await grantClipboard(page);
+    await grantClipboard(page, baseURL);
     await useProvider(page, "remote");
     await startRecording(page);
     await openRecordings(page);
@@ -1105,8 +1107,11 @@ test.describe("Hinweis Meeting-Chat", () => {
     expect(await readClipboard(page)).toBe(REMOTE_NOTICE);
   });
 
-  test("Hinweis kopieren: auch im Einwilligungsdialog", async ({ page }) => {
-    await grantClipboard(page);
+  test("Hinweis kopieren: auch im Einwilligungsdialog", async ({
+    page,
+    baseURL,
+  }) => {
+    await grantClipboard(page, baseURL);
     await useProvider(page, "remote");
     await openRecordings(page);
     // Vor dem Start gibt es die Zeile nicht, nur im Dialog.
