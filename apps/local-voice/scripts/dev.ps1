@@ -153,7 +153,27 @@ try {
                     }
                     Write-Host ('Signaturschluessel aus ' + $keyFile) -ForegroundColor DarkGray
                 }
-                Invoke-Step 'tauri build (Installer)' { npx tauri build @Rest }
+                # Der Installer rechnet STT wie das Release per Vulkan auf der GPU
+                # (Feature gpu-vulkan, P2f). Das braucht das LunarG-SDK; der
+                # SDK-Installer setzt VULKAN_SDK maschinenweit, eine vor der
+                # Installation geoeffnete Shell sieht es aber noch nicht.
+                $featureArgs = @()
+                if (-not ($Rest -match '^--features')) {
+                    if (-not $env:VULKAN_SDK) {
+                        $env:VULKAN_SDK = [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')
+                    }
+                    if ($env:VULKAN_SDK -and (Test-Path $env:VULKAN_SDK)) {
+                        $sdkBin = Join-Path $env:VULKAN_SDK 'Bin'
+                        if (-not ($env:PATH -split ';' | Where-Object { $_ -ieq $sdkBin })) {
+                            $env:PATH = "$sdkBin;$env:PATH"
+                        }
+                        $featureArgs = @('--features', 'gpu-vulkan')
+                        Write-Host ('Vulkan-SDK ' + $env:VULKAN_SDK + ' -> --features gpu-vulkan') -ForegroundColor DarkGray
+                    } else {
+                        Write-Warning 'VULKAN_SDK fehlt: Installer wird OHNE GPU-STT gebaut (nur CPU). Siehe docs/BUILD-WINDOWS.md, Abschnitt GPU.'
+                    }
+                }
+                Invoke-Step 'tauri build (Installer)' { npx tauri build @featureArgs @Rest }
             }
         }
     }

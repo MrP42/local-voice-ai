@@ -210,11 +210,42 @@ pwsh -File apps\local-voice\scripts\m3-verify.ps1 -Scenario endurance -Runs 100
 Das Skript liest den Hotkey aus `settings_store.json` — es setzt nicht mehr
 Strg+Leertaste voraus. Ergebnisse landen unter `docs/m3-evidence/`.
 
-## GPU (optional)
+## GPU per Vulkan (Release und lokaler Installer)
 
-CPU ist der Standard und für Diktatlängen ausreichend (392 ms für 9,15 s
-Audio). Vulkan ist ein Opt-in und braucht das LunarG Vulkan SDK:
+Das Release und der lokale Installer rechnen STT (transcribe-cpp: Whisper,
+Parakeet-GGUF, Qwen3-ASR) per Vulkan auf der GPU. Das Cargo-Feature
+`gpu-vulkan` bleibt aber **nicht** Standard: ein frischer Checkout ohne SDK
+baut weiter mit den CPU-Backends.
+
+- **Bauen braucht das LunarG Vulkan SDK** (Header, Import-Bibliothek, `glslc`).
+  Der SDK-Installer setzt `VULKAN_SDK` maschinenweit; eine vorher geöffnete
+  Shell sieht die Variable erst nach einem Neustart.
+- **Zur Laufzeit** genügt der Grafiktreiber (`vulkan-1.dll`). `ggml-vulkan.dll`
+  (≈ 71 MB, im Installer LZMA-gepackt ≈ 6 MB) landet über `build.rs` in
+  `transcribe-libs/` und wird wie `ggml-cpu-*` neben die EXE gebündelt
+  (`tauri.windows.conf.json`), keine eigene Ressource.
+- **Rückfall:** Fehlt der Treiber oder ein Vulkan-Gerät, lädt transcribe-cpp
+  das Modul nicht bzw. registriert kein Vulkan-Gerät; die Einstellung „Auto“
+  bindet dann die CPU. Kein Absturz.
+- **CI:** `release-windows.yml` installiert SDK und SPIRV-Headers und baut mit
+  `--features gpu-vulkan`. Lokal: `dev.ps1 bundle` hängt das Feature an,
+  sobald `VULKAN_SDK` gesetzt ist, und warnt sonst.
 
 ```powershell
-cargo build --release --features gpu-vulkan
+# Git Bash: export VULKAN_SDK=/c/VulkanSDK/<version>; PATH="$VULKAN_SDK/Bin:$PATH"
+cargo build --release --features gpu-vulkan          # nur Rust, erster Lauf ~10 min länger
+pwsh -File apps\local-voice\scripts\dev.ps1 bundle   # Installer, Feature automatisch
+.\local-voice-ai.exe --list-devices                   # Vulkan-Geräte mit Index
+.\local-voice-ai.exe -f audio.wav --model <id> --device-index 0 --json
 ```
+
+Gemessen am 29.09.2026 (RTX 4090, i9-13900K, `m8_short_de.wav` 60 s,
+beste von 3 Läufen):
+
+| Modell | Vulkan 4090 | CPU |
+|---|---|---|
+| Whisper large-v3-turbo Q8 | 536 ms, RTF 112 | 16,8 s, RTF 3,6 |
+| Parakeet TDT 0.6B v3 Q8 (GGUF) | 429 ms, RTF 140 | 3,4 s, RTF 17,7 |
+
+Der erste Lauf nach dem Laden kann spürbar länger dauern (Parakeet 5,4 s),
+weil Vulkan dann seine Pipelines anlegt.
