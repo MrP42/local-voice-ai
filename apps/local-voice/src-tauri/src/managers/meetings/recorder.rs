@@ -20,7 +20,8 @@ use tauri_specta::Event;
 
 use super::chunker::Chunk;
 use super::dsp::{
-    transcript_final_event, ChannelFeed, DspConfig, DspNotice, LivePipeline, VadFactory,
+    transcript_final_event, ChannelFeed, DspConfig, DspControl, DspNotice, EchoSetup,
+    LivePipeline, MeetingTimeline, PcmSink, VadFactory, WavFileSink,
 };
 use super::mic_capture::MeetingMicCapture;
 use super::store::{Meeting, MeetingSource, MeetingStatus, MeetingStore, StoredSegment};
@@ -348,11 +349,20 @@ impl MeetingRecorderManager {
         let paused = Arc::new(AtomicBool::new(false));
         let levels = Arc::new(LevelEmitter::new(self.app.clone()));
 
-        let pipeline = self.start_pipeline(&meeting_id).inspect_err(|_| {
+        // M2-P2c2: Echo-Unterdrueckung der Ich-Spur (braucht den Systemton als
+        // Referenz). Das Ergebnis geht an die Transkription und nach
+        // mic_aec.wav; mic.wav bleibt roh.
+        let echo_mode = crate::settings::get_settings(&self.app).meeting_echo_cancellation;
+        let echo = echo_mode
+            .enabled(capture_system)
+            .then(|| self.echo_setup(&meeting_id, &dir.join(super::MIC_AEC_FILE)));
+
+        let pipeline = self.start_pipeline(&meeting_id, echo).inspect_err(|_| {
             let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
         })?;
         let mic_feed = pipeline.feed(CHANNEL_MIC).ok_or("dsp_thread_failed")?;
         let system_feed = pipeline.feed(CHANNEL_SYSTEM);
+        let dsp_control = pipeline.control();
 
         // Load the meeting model (dedicated `meeting_model` or the dictation
         // model as fallback); transcribe_segments waits on the load condvar.
@@ -388,9 +398,16 @@ impl MeetingRecorderManager {
                     feed,
                     Arc::clone(&levels),
                 ),
+                dsp_control.clone(),
             ),
             _ => None,
         };
+        if loopback.is_none() {
+            // Ohne Referenz keine Echo-Unterdrueckung (No-op, wenn sie aus ist).
+            if let Some(control) = &dsp_control {
+                control.reference_lost();
+            }
+        }
 
         *self.session.lock().unwrap() = Some(RecordingSession {
             meeting_id: meeting_id.clone(),
@@ -422,7 +439,8 @@ impl MeetingRecorderManager {
     fn start_loopback(
         &self,
         meeting_id: &str,
-        callback: impl FnMut(&[i16]) + Send + 'static,
+        callback: impl FnMut(&[i16], Option<u64>) + Send + 'static,
+        dsp_control: Option<DspControl>,
     ) -> Option<LoopbackCapture> {
         let (tx, rx) = mpsc::channel::<Result<LoopbackCapture, String>>();
         std::thread::Builder::new()
@@ -435,7 +453,7 @@ impl MeetingRecorderManager {
 
         match rx.recv_timeout(LOOPBACK_START_TIMEOUT) {
             Ok(Ok(capture)) => {
-                self.watch_loopback(meeting_id, &capture);
+                self.watch_loopback(meeting_id, &capture, dsp_control);
                 Some(capture)
             }
             Ok(Err(e)) => {
@@ -457,7 +475,12 @@ impl MeetingRecorderManager {
     /// missing without anyone noticing. This watchdog turns that silence into
     /// an error event; it ends with the capture (stop flag) or right after it
     /// reported the failure.
-    fn watch_loopback(&self, meeting_id: &str, capture: &LoopbackCapture) {
+    fn watch_loopback(
+        &self,
+        meeting_id: &str,
+        capture: &LoopbackCapture,
+        dsp_control: Option<DspControl>,
+    ) {
         let (stopped, failed) = capture.watch_flags();
         let app = self.app.clone();
         let meeting_id = meeting_id.to_string();
@@ -469,6 +492,10 @@ impl MeetingRecorderManager {
                         warn!(
                             "meetings: loopback capture died mid-meeting ({meeting_id})                              - system audio is gone, the meeting continues mic-only"
                         );
+                        // M2-P2c2: ohne Referenz Echo-Unterdrueckung aus.
+                        if let Some(control) = &dsp_control {
+                            control.reference_lost();
+                        }
                         let _ = (MeetingEvent::Error {
                             meeting_id,
                             message: "loopback_died".to_string(),
@@ -484,27 +511,18 @@ impl MeetingRecorderManager {
     /// DSP thread + transcription worker of one meeting. The worker is a single
     /// thread on purpose (FIFO, one engine): a failed block is logged by length
     /// only (never content) and does not end the meeting.
-    fn start_pipeline(&self, meeting_id: &str) -> Result<LivePipeline, String> {
+    fn start_pipeline(
+        &self,
+        meeting_id: &str,
+        echo: Option<EchoSetup>,
+    ) -> Result<LivePipeline, String> {
         let app = self.app.clone();
         let transcription = Arc::clone(&self.transcription);
         let emit_app = self.app.clone();
 
         // VAD model: bundled resource. If it is missing or does not load, the
         // DSP thread falls back to the 20-s chunker per channel.
-        let vad_factory: Option<VadFactory> = match self
-            .app
-            .path()
-            .resolve(VAD_MODEL_RESOURCE, tauri::path::BaseDirectory::Resource)
-        {
-            Ok(path) => Some(Arc::new(move || {
-                let vad = crate::audio_toolkit::SileroVad::new(&path, MEETING_VAD_THRESHOLD)?;
-                Ok(Box::new(vad) as Box<dyn crate::audio_toolkit::VoiceActivityDetector>)
-            })),
-            Err(e) => {
-                warn!("meetings: VAD model path not resolved: {e}");
-                None
-            }
-        };
+        let vad_factory = meeting_vad_factory(&self.app);
 
         // Until Health events exist (P2e) the notices are log-only.
         let notice_meeting = meeting_id.to_string();
@@ -513,10 +531,15 @@ impl MeetingRecorderManager {
             debug!("meetings: dsp notice for {notice_meeting}: {n:?}");
         });
 
+        let mut cfg = DspConfig::new(vad_factory, notice);
+        if let Some(echo) = echo {
+            cfg = cfg.with_echo(echo);
+        }
+
         LivePipeline::start(
             meeting_id.to_string(),
             Arc::clone(&self.store),
-            DspConfig::new(vad_factory, notice),
+            cfg,
             move |chunk: &Chunk| {
                 super::import::transcribe_chunk_resilient(&app, &transcription, chunk)
             },
@@ -524,6 +547,23 @@ impl MeetingRecorderManager {
                 let _ = event.emit(&emit_app);
             },
         )
+    }
+
+    /// M2-P2c2: `mic_aec.wav` + Ablage der Zeitachse in `metadata_json`.
+    /// Laesst sich die Datei nicht anlegen (Platte voll), laeuft die
+    /// Echo-Unterdrueckung trotzdem fuer die Transkription.
+    fn echo_setup(&self, meeting_id: &str, aec_path: &std::path::Path) -> EchoSetup {
+        let sink = match WavFileSink::create(aec_path) {
+            Ok(sink) => Some(Box::new(sink) as Box<dyn PcmSink>),
+            Err(e) => {
+                warn!("meetings: mic_aec.wav not created ({e}) - echo cancellation for the transcript only");
+                None
+            }
+        };
+        EchoSetup {
+            sink,
+            on_timeline: Some(timeline_writer(Arc::clone(&self.store), meeting_id)),
+        }
     }
 
     pub fn pause(&self) -> Result<(), String> {
@@ -610,7 +650,12 @@ impl MeetingRecorderManager {
         // DSP thread first (flushes the open segments), then the worker: FIFO,
         // everything queued is transcribed and stored before this returns.
         if let Some(pipeline) = pipeline {
-            let _ = pipeline.drain();
+            let stats = pipeline.drain();
+            // M2-P2c2: Bericht der Echo-Unterdrueckung (Zahlen, ob mic_aec.wav
+            // gueltig ist) fuer den Enddurchlauf und die Fehlersuche.
+            if let Some(summary) = stats.echo_summary() {
+                store_echo_summary(&self.store, &meeting_id, &summary);
+            }
         }
 
         // The engine that produced the live transcript, read BEFORE the
@@ -679,12 +724,23 @@ impl MeetingRecorderManager {
                 if meeting.status != "recording" {
                     continue;
                 }
+                // M2-P2c2: auch die entechote Kopie (mic_aec.wav), sonst bliebe
+                // ihr Header auf dem Stand der letzten Sekunde vor dem Absturz.
+                let derived: Vec<String> = meeting
+                    .mic_audio_path
+                    .as_deref()
+                    .map(super::derived_audio_paths)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|p| std::path::Path::new(p).exists())
+                    .collect();
                 for path in [
                     meeting.mic_audio_path.clone(),
                     meeting.system_audio_path.clone(),
                 ]
                 .into_iter()
                 .flatten()
+                .chain(derived)
                 {
                     match repair_orphan_wav(std::path::Path::new(&path)) {
                         Ok(Some(ms)) => debug!("meetings: repaired orphan wav ({ms} ms)"),
@@ -818,18 +874,69 @@ mod position_tests {
     }
 }
 
+/// The meetings VAD (bundled Silero v4) as a factory for the DSP thread, or
+/// `None` when the resource path does not resolve (DSP falls back to the
+/// 20-s chunker). Shared by the live recorder and `--simulate-meeting`.
+pub(crate) fn meeting_vad_factory(app: &AppHandle) -> Option<VadFactory> {
+    match app
+        .path()
+        .resolve(VAD_MODEL_RESOURCE, tauri::path::BaseDirectory::Resource)
+    {
+        Ok(path) => Some(Arc::new(move || {
+            let vad = crate::audio_toolkit::SileroVad::new(&path, MEETING_VAD_THRESHOLD)?;
+            Ok(Box::new(vad) as Box<dyn crate::audio_toolkit::VoiceActivityDetector>)
+        })),
+        Err(e) => {
+            warn!("meetings: VAD model path not resolved: {e}");
+            None
+        }
+    }
+}
+
+/// M2-P2c2: legt die Zeitachse (`{mic_qpc0, sys_qpc0, offset_ms, basis}`)
+/// in `meetings.metadata_json.timeline` ab, sobald der DSP-Thread sie kennt –
+/// waehrend der Aufnahme, damit sie auch einen Absturz ueberlebt.
+pub(crate) fn timeline_writer(
+    store: Arc<MeetingStore>,
+    meeting_id: &str,
+) -> super::dsp::TimelineFn {
+    let meeting_id = meeting_id.to_string();
+    Arc::new(move |timeline: &MeetingTimeline| {
+        let value = serde_json::to_value(timeline).unwrap_or_default();
+        if let Err(e) = store.set_metadata_key(&meeting_id, "timeline", value) {
+            warn!("meetings: timeline not stored: {e}");
+        }
+    })
+}
+
+/// M2-P2c2: Abschlussbericht der Echo-Unterdrueckung nach `metadata_json.aec`.
+pub(crate) fn store_echo_summary(
+    store: &MeetingStore,
+    meeting_id: &str,
+    summary: &super::dsp::EchoSummary,
+) {
+    let mut value = serde_json::to_value(summary).unwrap_or_default();
+    if summary.wav_kept {
+        value["file"] = serde_json::json!(super::MIC_AEC_FILE);
+    }
+    if let Err(e) = store.set_metadata_key(meeting_id, "aec", value) {
+        warn!("meetings: aec summary not stored: {e}");
+    }
+}
+
 /// The per-channel capture callback: WAV append (with 1-s header flush), hand-off
 /// to the DSP thread, and the throttled level readout. The hand-off is a
 /// non-blocking `try_send` (see `dsp::ChannelFeed`); segmentation and VAD never
-/// run here.
+/// run here. The second argument is the QPC stamp of the block's first sample
+/// (P2c2), passed through untouched.
 fn channel_callback(
     channel: u8,
     sink: Arc<Mutex<ChannelSink>>,
     paused: Arc<AtomicBool>,
     mut feed: ChannelFeed,
     levels: Arc<LevelEmitter>,
-) -> impl FnMut(&[i16]) + Send + 'static {
-    move |samples: &[i16]| {
+) -> impl FnMut(&[i16], Option<u64>) + Send + 'static {
+    move |samples: &[i16], qpc: Option<u64>| {
         if paused.load(Ordering::Relaxed) {
             feed.pause();
             return;
@@ -859,7 +966,7 @@ fn channel_callback(
                 }
             }
         }
-        feed.push(samples);
+        feed.push_stamped(samples, qpc);
         levels.record(channel, rms(samples));
     }
 }

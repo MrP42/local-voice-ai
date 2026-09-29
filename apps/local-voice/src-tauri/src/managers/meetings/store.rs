@@ -605,6 +605,59 @@ impl MeetingStore {
         Ok(())
     }
 
+    /// M2-P2c2: setzt `key` im JSON-Objekt `meetings.metadata_json` und laesst
+    /// alle anderen Schluessel stehen (z. B. `timeline`, `aec`). Keine Migration
+    /// (Beruehrpunkt B5). Leere Spalte = leeres Objekt. Steht dort etwas, das
+    /// kein JSON-Objekt ist, wird NICHT ueberschrieben (Fehler statt Datenverlust).
+    pub fn set_metadata_key(&self, id: &str, key: &str, value: serde_json::Value) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current: Option<Option<String>> = tx
+            .query_row(
+                "SELECT metadata_json FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(current) = current else {
+            return Err(anyhow!("Meeting {} not found", id));
+        };
+        let mut object = match current.as_deref().map(str::trim) {
+            None | Some("") => serde_json::Map::new(),
+            Some(text) => match serde_json::from_str::<serde_json::Value>(text) {
+                Ok(serde_json::Value::Object(map)) => map,
+                _ => return Err(anyhow!("metadata_json of {} is not a JSON object", id)),
+            },
+        };
+        object.insert(key.to_string(), value);
+        let now = Utc::now().timestamp();
+        tx.execute(
+            "UPDATE meetings SET metadata_json = ?1, updated_at = ?2 WHERE id = ?3",
+            params![serde_json::Value::Object(object).to_string(), now, id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Das ganze `metadata_json` einer Besprechung (`None`: leer).
+    pub fn metadata_json(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        let conn = self.get_connection()?;
+        let text: Option<Option<String>> = conn
+            .query_row(
+                "SELECT metadata_json FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(text) = text else {
+            return Err(anyhow!("Meeting {} not found", id));
+        };
+        match text.as_deref().map(str::trim) {
+            None | Some("") => Ok(None),
+            Some(t) => Ok(Some(serde_json::from_str(t)?)),
+        }
+    }
+
     /// Sets (or clears) the audio expiry timestamp computed by
     /// `retention::retention_until`. Task 12.
     pub fn set_retention_until(&self, id: &str, until: Option<i64>) -> Result<()> {
@@ -1548,6 +1601,65 @@ mod tests {
         let s = MeetingStore::open_at(&path).unwrap();
         std::mem::forget(dir); // Tempdir bis Prozessende behalten
         s
+    }
+
+    // ---- M2-P2c2: metadata_json-Helfer ---------------------------------------
+
+    #[test]
+    fn metadata_keys_are_merged_not_overwritten() {
+        let s = store();
+        let m = s.create_meeting("Meta", MeetingSource::Live, Some(1)).unwrap();
+        assert_eq!(s.metadata_json(&m.id).unwrap(), None, "neue Besprechung: leer");
+        s.set_metadata_key(
+            &m.id,
+            "timeline",
+            serde_json::json!({"mic_qpc0": 10, "sys_qpc0": 20, "offset_ms": -0.001, "basis": "qpc"}),
+        )
+        .unwrap();
+        s.set_metadata_key(&m.id, "aec", serde_json::json!({"frames": 5}))
+            .unwrap();
+        // Ein zweites Setzen ersetzt nur diesen Schluessel.
+        s.set_metadata_key(&m.id, "aec", serde_json::json!({"frames": 6}))
+            .unwrap();
+        let meta = s.metadata_json(&m.id).unwrap().unwrap();
+        assert_eq!(meta["timeline"]["sys_qpc0"], 20);
+        assert_eq!(meta["timeline"]["basis"], "qpc");
+        assert_eq!(meta["aec"]["frames"], 6);
+    }
+
+    #[test]
+    fn foreign_metadata_is_kept_and_garbage_is_never_overwritten() {
+        let s = store();
+        let m = s.create_meeting("Alt", MeetingSource::Live, Some(1)).unwrap();
+        let conn = s.get_connection().unwrap();
+        conn.execute(
+            "UPDATE meetings SET metadata_json = ?1 WHERE id = ?2",
+            params![r#"{"fremd": [1, 2]}"#, m.id],
+        )
+        .unwrap();
+        s.set_metadata_key(&m.id, "timeline", serde_json::json!({"offset_ms": 0}))
+            .unwrap();
+        let meta = s.metadata_json(&m.id).unwrap().unwrap();
+        assert_eq!(meta["fremd"], serde_json::json!([1, 2]), "Altdaten bleiben");
+        assert_eq!(meta["timeline"]["offset_ms"], 0);
+
+        conn.execute(
+            "UPDATE meetings SET metadata_json = 'kein json' WHERE id = ?1",
+            params![m.id],
+        )
+        .unwrap();
+        assert!(s
+            .set_metadata_key(&m.id, "aec", serde_json::json!(1))
+            .is_err());
+        let raw: String = conn
+            .query_row(
+                "SELECT metadata_json FROM meetings WHERE id = ?1",
+                params![m.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, "kein json", "nichts ueberschrieben");
+        assert!(s.set_metadata_key("gibt-es-nicht", "a", serde_json::json!(1)).is_err());
     }
 
     #[test]

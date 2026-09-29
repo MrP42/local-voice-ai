@@ -113,13 +113,25 @@ fn paths_to_clear(
 pub fn purge_meeting_audio(store: &MeetingStore, meeting: &Meeting) -> u32 {
     let paths = meeting.audio_paths();
     let outcomes: Vec<DeleteOutcome> = paths.iter().map(|p| delete_audio_file(p)).collect();
-    let deleted = outcomes.iter().filter(|o| o.removed).count() as u32;
+    // M2-P2c2: die entechote Kopie der Mikrofonspur (`mic_aec.wav`) teilt das
+    // Schicksal der `mic.wav`; ist sie nicht loeschbar, bleibt auch der
+    // mic-Pfad fuer den naechsten Versuch stehen.
+    let derived: Vec<DeleteOutcome> = meeting
+        .mic_audio_path
+        .as_deref()
+        .map(super::derived_audio_paths)
+        .unwrap_or_default()
+        .iter()
+        .map(|p| delete_audio_file(p))
+        .collect();
+    let deleted = outcomes.iter().chain(&derived).filter(|o| o.removed).count() as u32;
 
     let (clear_mic, clear_system) = paths_to_clear(
         meeting.mic_audio_path.as_deref(),
         meeting.system_audio_path.as_deref(),
         &outcomes,
     );
+    let clear_mic = clear_mic && derived.iter().all(|o| o.cleared);
     let new_mic = if clear_mic {
         None
     } else {
@@ -177,7 +189,8 @@ pub fn purge_due_audio(store: &MeetingStore, now_unix: i64) -> anyhow::Result<u3
 pub fn delete_audio_files(paths: &[String]) -> u32 {
     paths
         .iter()
-        .map(|p| delete_audio_file(p))
+        .flat_map(|p| std::iter::once(p.clone()).chain(super::derived_audio_paths(p)))
+        .map(|p| delete_audio_file(&p))
         .filter(|o| o.removed)
         .count() as u32
 }
@@ -400,5 +413,36 @@ mod tests {
 
         assert_eq!(deleted, 1);
         assert!(!mic_path.exists());
+    }
+
+    // -- M2-P2c2: mic_aec.wav teilt das Schicksal der mic.wav --
+
+    #[test]
+    fn purge_and_delete_also_remove_the_echo_free_mic_track() {
+        let (s, dir) = store();
+        let meeting = s.create_meeting("T", MeetingSource::Live, Some(1)).unwrap();
+        let mic_path = dir.path().join("mic.wav");
+        let aec_path = dir.path().join(super::super::MIC_AEC_FILE);
+        std::fs::write(&mic_path, b"RIFF....WAVEfmt ").unwrap();
+        std::fs::write(&aec_path, b"RIFF....WAVEfmt ").unwrap();
+        s.set_audio_paths(&meeting.id, mic_path.to_str(), None, Some(1_000))
+            .unwrap();
+        s.set_retention_until(&meeting.id, Some(500)).unwrap();
+
+        assert_eq!(purge_due_audio(&s, 1_000).unwrap(), 2);
+        assert!(!mic_path.exists());
+        assert!(!aec_path.exists(), "Aufbewahrung gilt auch fuer die Kopie");
+        let stored = s.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(stored.mic_audio_path, None);
+
+        // Loeschen der Besprechung (soft delete + Dateien).
+        let meeting = s.create_meeting("T2", MeetingSource::Live, Some(1)).unwrap();
+        std::fs::write(&mic_path, b"RIFF....WAVEfmt ").unwrap();
+        std::fs::write(&aec_path, b"RIFF....WAVEfmt ").unwrap();
+        s.set_audio_paths(&meeting.id, mic_path.to_str(), None, Some(1_000))
+            .unwrap();
+        let paths = s.soft_delete_meeting(&meeting.id).unwrap();
+        assert_eq!(delete_audio_files(&paths), 2);
+        assert!(!aec_path.exists());
     }
 }

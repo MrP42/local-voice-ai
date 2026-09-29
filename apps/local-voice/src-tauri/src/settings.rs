@@ -153,6 +153,26 @@ pub enum DictationAudio {
     Pause,
 }
 
+/// M2-P2c2: Echo-Unterdrückung der Ich-Spur einer Besprechung (der Systemton
+/// dient als Referenz; Rauschunterdrückung und AGC bleiben immer aus).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MeetingEchoCancellation {
+    /// An, sobald der Systemton aufgenommen wird. Heute gleichbedeutend mit
+    /// `on`; Platz für eine spätere Headset-Erkennung.
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl MeetingEchoCancellation {
+    /// Läuft die Echo-Unterdrückung? Ohne Systemton fehlt die Referenz.
+    pub fn enabled(self, capture_system: bool) -> bool {
+        capture_system && self != Self::Off
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelUnloadTimeout {
@@ -784,6 +804,10 @@ pub struct AppSettings {
     /// Standardvorlage (`builtin:allgemein`).
     #[serde(default)]
     pub meeting_default_template_id: Option<String>,
+    /// M2-P2c2: Echo-Unterdrückung der Ich-Spur (`auto` | `on` | `off`). Ohne
+    /// den Schlüssel (ältere settings.json) gilt `auto`.
+    #[serde(default)]
+    pub meeting_echo_cancellation: MeetingEchoCancellation,
 }
 
 fn default_meeting_language() -> String {
@@ -1530,6 +1554,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_capture_system: true,
         meeting_auto_enhance: true,
         meeting_default_template_id: None,
+        meeting_echo_cancellation: MeetingEchoCancellation::Auto,
     }
 }
 
@@ -2644,5 +2669,32 @@ mod tests {
             parsed.meeting_default_template_id.as_deref(),
             Some("builtin:vertrieb")
         );
+    }
+
+    // M2-P2c2
+    #[test]
+    fn echo_cancellation_defaults_to_auto_and_old_files_load() {
+        assert_eq!(
+            get_default_settings().meeting_echo_cancellation,
+            MeetingEchoCancellation::Auto
+        );
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_echo_cancellation, MeetingEchoCancellation::Auto);
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_echo_cancellation": "off" }))
+                .unwrap();
+        assert_eq!(off.meeting_echo_cancellation, MeetingEchoCancellation::Off);
+    }
+
+    #[test]
+    fn echo_cancellation_needs_system_audio_and_is_off_when_switched_off() {
+        use MeetingEchoCancellation::*;
+        assert!(Auto.enabled(true));
+        assert!(On.enabled(true));
+        assert!(!Off.enabled(true), "Einstellung off");
+        for mode in [Auto, On, Off] {
+            assert!(!mode.enabled(false), "ohne Systemton keine Referenz");
+        }
     }
 }
