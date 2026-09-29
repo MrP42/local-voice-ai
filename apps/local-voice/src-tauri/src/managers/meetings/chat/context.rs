@@ -12,7 +12,7 @@ use super::ChunkSource;
 use crate::managers::meetings::notes::model::{EnhancedNotes, NoteBlock, NoteBlockKind};
 use crate::managers::meetings::search::chunking::{clock, compound_parts};
 use crate::managers::meetings::search::index::ChunkRow;
-use crate::managers::meetings::speakers::default_label;
+use crate::managers::meetings::speakers::SpeakerDirectory;
 use crate::managers::meetings::store::StoredSegment;
 
 // ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ fn parse_transcript_line(line: &str) -> Option<(u32, u64, &str)> {
 }
 
 /// Zeile eines Segments, gleiches Format wie der Index (`chunking`).
-pub fn segment_line(seg: &StoredSegment) -> ExcerptLine {
+pub fn segment_line(seg: &StoredSegment, speakers: &SpeakerDirectory) -> ExcerptLine {
     let content = seg.text.split_whitespace().collect::<Vec<_>>().join(" ");
     ExcerptLine {
         segment_index: Some(seg.segment_index),
@@ -247,7 +247,7 @@ pub fn segment_line(seg: &StoredSegment) -> ExcerptLine {
             "S{} {} {}: {}",
             seg.segment_index,
             clock(seg.start_ms),
-            default_label(seg),
+            speakers.label(seg),
             content
         ),
         content,
@@ -263,6 +263,23 @@ pub fn transcript_blocks(
     epoch: u32,
     max_chars: usize,
 ) -> Vec<Excerpt> {
+    transcript_blocks_with(
+        meeting,
+        segs,
+        epoch,
+        max_chars,
+        &SpeakerDirectory::from_segments(segs),
+    )
+}
+
+/// Wie [`transcript_blocks`], mit den Sprechernamen der Besprechung (M3-P3c).
+pub fn transcript_blocks_with(
+    meeting: &MeetingRef,
+    segs: &[StoredSegment],
+    epoch: u32,
+    max_chars: usize,
+    speakers: &SpeakerDirectory,
+) -> Vec<Excerpt> {
     let mut ordered: Vec<&StoredSegment> =
         segs.iter().filter(|s| !s.text.trim().is_empty()).collect();
     ordered.sort_by_key(|s| (s.start_ms, s.segment_index));
@@ -270,7 +287,7 @@ pub fn transcript_blocks(
     let mut cur = Excerpt::empty(meeting, ChunkSource::Transcript, epoch);
     let mut cur_chars = 0usize;
     for seg in ordered {
-        let line = segment_line(seg);
+        let line = segment_line(seg, speakers);
         let chars = line.text.chars().count() + 1;
         if !cur.lines.is_empty() && cur_chars + chars > max_chars {
             out.push(std::mem::replace(

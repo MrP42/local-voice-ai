@@ -13,9 +13,9 @@ import { useSettings } from "../../../hooks/useSettings";
 import { MeetingSemanticSearchSetting } from "./MeetingSemanticSearchSetting";
 
 /**
- * Die Vorgaben der Aufnahme (M1-P1f, M2-P2c2), als Zeilen der bestehenden
- * Gruppe "Besprechungen": Systemton, Echo-Unterdrueckung, automatische
- * KI-Notizen, Standardvorlage.
+ * Die Vorgaben der Aufnahme (M1-P1f, M2-P2c2, M3-P3c), als Zeilen der
+ * bestehenden Gruppe "Besprechungen": Systemton, Echo-Unterdrueckung,
+ * automatische KI-Notizen, Sprechertrennung, Standardvorlage.
  */
 export const MeetingNotesSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -84,6 +84,17 @@ export const MeetingNotesSettings: React.FC = () => {
         isUpdating={isUpdating("meeting_auto_enhance")}
         label={t("settings.meetings.autoEnhance")}
         description={t("settings.meetings.autoEnhanceDescription")}
+        descriptionMode="tooltip"
+        grouped={true}
+      />
+      <ToggleSwitch
+        checked={(getSetting("meeting_diarization") ?? "auto") !== "off"}
+        onChange={(v) =>
+          void updateSetting("meeting_diarization", v ? "auto" : "off")
+        }
+        isUpdating={isUpdating("meeting_diarization")}
+        label={t("settings.meetings.diarization")}
+        description={t("settings.meetings.diarizationDescription")}
         descriptionMode="tooltip"
         grouped={true}
       />

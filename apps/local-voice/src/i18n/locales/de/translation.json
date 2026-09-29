@@ -827,7 +827,9 @@
       "echoCancellationDescription": "Nimmt die Gegenseite, die aus den Lautsprechern ins Mikrofon zurückkommt, aus Ihrer Spur, damit sie nicht doppelt als „Ich“ im Transkript steht. Braucht den Systemton als Referenz. Die rohe Mikrofonaufnahme bleibt unverändert erhalten. Wirkt ab der nächsten Aufnahme.",
       "echoCancellationAuto": "Automatisch (mit Systemton)",
       "echoCancellationOn": "Ein",
-      "echoCancellationOff": "Aus"
+      "echoCancellationOff": "Aus",
+      "diarization": "Sprecher automatisch trennen",
+      "diarizationDescription": "Nach dem Stopp, beim Import und bei der Neu-Transkription erkennt ein lokales Modell, wer wann spricht, und beschriftet das Transkript mit „Gegenseite 1“, „Person 2“ usw. Sie können die Sprecher im Transkript benennen. Es wird nichts gespeichert, was eine Stimme wiedererkennt. Wirkt ab dem nächsten Durchlauf."
     },
     "modelSettings": {
       "title": "{{model}}-Einstellungen"
@@ -1592,6 +1594,8 @@
       "resume": "Weiter",
       "titlePlaceholder": "Titel der Besprechung",
       "captureSystem": "System-Audio (Gegenseite) mitschneiden",
+      "diarizeMic": "Mehrere Personen am Mikrofon",
+      "diarizeMicHint": "Mehrere Personen sprechen in Ihr Mikrofon (z. B. ein Besprechungsraum): Das Mikrofon wird nach der Aufnahme ebenfalls in Sprecher getrennt. Am besten mit Kopfhörern oder Echo-Unterdrückung, sonst kann die Gegenseite als „Raum“ erscheinen.",
       "micLevel": "Mikrofon",
       "systemLevel": "System",
       "health": {
@@ -1646,6 +1650,40 @@
       "me": "Ich",
       "remote": "Gegenseite",
       "mixed": "Aufnahme"
+    },
+    "speakers": {
+      "title": "Sprecher",
+      "open": "Sprecher benennen oder ändern",
+      "share": "Redeanteil {{pct}} %",
+      "nameLabel": "Name (gilt für alle Segmente dieses Sprechers)",
+      "namePlaceholder": "Name eingeben",
+      "save": "Speichern",
+      "removeName": "Namen entfernen",
+      "mergeTitle": "Mit anderem Sprecher zusammenführen",
+      "mergeWith": "Mit {{label}} zusammenführen",
+      "mergeConfirm": "„{{from}}“ geht in „{{into}}“ auf: Alle Segmente wechseln zu „{{into}}“. Das lässt sich nicht rückgängig machen.",
+      "mergeDo": "Zusammenführen",
+      "cancel": "Abbrechen",
+      "moveTitle": "Nur dieses Segment zuordnen",
+      "moveTo": "Zu {{label}}",
+      "moveNew": "Neuer Sprecher",
+      "notices": {
+        "disabled": "Die Sprechertrennung war für diese Besprechung ausgeschaltet.",
+        "model_missing": "Das Modell zur Sprechertrennung ist nicht installiert, deshalb gibt es hier keine Sprecher.",
+        "crash_loop": "Die Sprechertrennung wurde übersprungen, weil sie zuvor abgestürzt ist.",
+        "low_memory": "Die Sprechertrennung wurde übersprungen: zu wenig freier Arbeitsspeicher.",
+        "failed": "Die Sprechertrennung ist fehlgeschlagen.",
+        "too_long": "Die Aufnahme ist für die Sprechertrennung zu lang.",
+        "unreadable": "Die Audiodatei ließ sich für die Sprechertrennung nicht lesen.",
+        "mic_without_aec": "Das Mikrofon wurde ohne Echo-Unterdrückung getrennt: Die Gegenseite kann als „Raum“ erscheinen. Kopfhörer oder Echo-Unterdrückung helfen."
+      },
+      "errors": {
+        "notFound": "Diesen Sprecher gibt es nicht mehr.",
+        "invalid": "Diese Auswahl ist nicht möglich.",
+        "segmentNotFound": "Dieses Segment gibt es nicht mehr.",
+        "staleEpoch": "Das Transkript wurde inzwischen ersetzt. Bitte neu öffnen.",
+        "failed": "Die Änderung ließ sich nicht speichern."
+      }
     },
     "errors": {
       "consentRequired": "Ohne bestätigte Einwilligung startet keine Aufnahme.",

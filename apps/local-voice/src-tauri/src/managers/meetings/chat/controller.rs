@@ -23,7 +23,7 @@ use super::citations::{postprocess, DeltaFilter};
 use super::context::{
     bm25_rank, budget_chars, card_summary, context_budget_tokens, enhanced_excerpts,
     history_budget_chars, notes_excerpts, number_excerpts, order_for_reading, pack, pack_dynamic,
-    rank_meetings, total_cost, transcript_blocks, Excerpt, ExcerptPlan, MeetingCard, MeetingRef,
+    rank_meetings, total_cost, transcript_blocks_with, Excerpt, ExcerptPlan, MeetingCard, MeetingRef,
     SEARCH_TOP, SECOND_ROUND_LAST_RANK, SHORTLIST,
 };
 use super::live::{live_plan, LiveSnapshot};
@@ -41,6 +41,7 @@ use crate::managers::meetings::notes::model::EnhancedNotes;
 use crate::managers::meetings::search::chunking::TARGET_CHARS;
 use crate::managers::meetings::search::hybrid::{hybrid_search, EmbedError, EmbedKind, Embedder};
 use crate::managers::meetings::search::index::{ChatMessageRow, STATUS_LEXICAL, STATUS_READY};
+use crate::managers::meetings::speakers::SpeakerDirectory;
 use crate::managers::meetings::store::MeetingStore;
 use crate::managers::usage::Purpose;
 use crate::settings::AppSettings;
@@ -626,7 +627,8 @@ async fn meeting_plan(
         .map(|n| enhanced_excerpts(&meeting, &n))
         .unwrap_or_default();
     overview.extend(notes_excerpts(&meeting, &notes, TARGET_CHARS));
-    let blocks = transcript_blocks(&meeting, &segments, epoch, TARGET_CHARS);
+    let speakers = SpeakerDirectory::load(store, meeting_id);
+    let blocks = transcript_blocks_with(&meeting, &segments, epoch, TARGET_CHARS, &speakers);
 
     let folders: HashMap<String, String> = store
         .folders_list()

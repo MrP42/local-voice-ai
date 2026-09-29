@@ -249,6 +249,9 @@ const settingUpdaters: {
   // M2-P2d
   meeting_final_model: (value) =>
     commands.changeMeetingFinalModelSetting((value as string) || "auto"),
+  // M3-P3c
+  meeting_diarization: (value) =>
+    commands.changeMeetingDiarizationSetting((value as string) || "auto"),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

@@ -1722,6 +1722,14 @@ pub fn run(cli_args: CliArgs) {
             // M6-P6a: Export einer Besprechung
             commands::meetings::meetings_export,
             commands::meetings::meetings_copy_formatted,
+            // M3-P3c: Sprecher benennen, zusammenfuehren, zuordnen
+            commands::meeting_speakers::meeting_speakers_list,
+            commands::meeting_speakers::meeting_speaker_rename,
+            commands::meeting_speakers::meeting_speaker_merge,
+            commands::meeting_speakers::meeting_segment_set_speaker,
+            commands::meeting_speakers::meeting_speaker_notices,
+            commands::meeting_speakers::meetings_set_diarize_mic,
+            commands::meeting_speakers::change_meeting_diarization_setting,
             commands::tts::tts_speak_text,
             commands::tts::tts_speak_clipboard,
             commands::tts::tts_cancel,
@@ -1847,6 +1855,8 @@ pub fn run(cli_args: CliArgs) {
             managers::meetings::search::indexer::MeetingIndexEvent,
             // M4-P4c
             commands::meeting_chat::MeetingChatEvent,
+            // M3-P3c
+            commands::meeting_speakers::SpeakersChanged,
             managers::transcription::StreamTextEvent,
             managers::transcription::StreamPhaseEvent,
         ]);

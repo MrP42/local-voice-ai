@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::super::notes::model::{EnhancedNotes, NoteBlock, NoteBlockKind};
-use super::super::speakers::default_label;
+use super::super::speakers::SpeakerDirectory;
 use super::super::store::StoredSegment;
 
 /// Richtwert je Chunk; Umbrueche an Pause/Kanalwechsel greifen erst ab hier.
@@ -213,12 +213,12 @@ struct Line {
     chars: usize,
 }
 
-fn segment_lines(seg: &StoredSegment) -> Vec<Line> {
+fn segment_lines(seg: &StoredSegment, speakers: &SpeakerDirectory) -> Vec<Line> {
     let prefix = format!(
         "S{} {} {}: ",
         seg.segment_index,
         clock(seg.start_ms),
-        default_label(seg)
+        speakers.label(seg)
     );
     split_to_fit(&prefix, &normalize_ws(&seg.text), MAX_CHARS)
         .into_iter()
@@ -278,7 +278,22 @@ fn transcript_draft(lines: &[Line], epoch: u32, head: &ChunkHead) -> ChunkDraft 
 ///   Segment des vorigen (wenn beide zusammen in `TARGET_CHARS` passen).
 /// - Leere Segmente entfallen; ein Segment ueber `MAX_CHARS` wird an
 ///   Wortgrenzen geteilt (jedes Stueck behaelt seine `S<n> mm:ss Sprecher:`-Zeile).
+// Die App ruft `chunk_transcript_with` (mit den Sprechernamen der Besprechung);
+// diese Fassung ohne Namen bleibt fuer die Tests.
+#[allow(dead_code)]
 pub fn chunk_transcript(segs: &[StoredSegment], epoch: u32, head: &ChunkHead) -> Vec<ChunkDraft> {
+    chunk_transcript_with(segs, epoch, head, &SpeakerDirectory::from_segments(segs))
+}
+
+/// Wie [`chunk_transcript`], mit den Sprechernamen (M3-P3c): der Chunk-Text
+/// traegt "Anna Berg" statt "Gegenseite 2", damit Suche und Chat den Namen
+/// finden. Ein Umbenennen hebt `content_revision` und baut das Transkript neu.
+pub fn chunk_transcript_with(
+    segs: &[StoredSegment],
+    epoch: u32,
+    head: &ChunkHead,
+    speakers: &SpeakerDirectory,
+) -> Vec<ChunkDraft> {
     let mut ordered: Vec<&StoredSegment> =
         segs.iter().filter(|s| !s.text.trim().is_empty()).collect();
     ordered.sort_by_key(|s| (s.start_ms, s.segment_index));
@@ -286,7 +301,10 @@ pub fn chunk_transcript(segs: &[StoredSegment], epoch: u32, head: &ChunkHead) ->
     let mut out = Vec::new();
     let mut cur: Vec<Line> = Vec::new();
     let mut cur_chars = 0usize;
-    for line in ordered.into_iter().flat_map(segment_lines) {
+    for line in ordered
+        .into_iter()
+        .flat_map(|seg| segment_lines(seg, speakers))
+    {
         if let Some(prev) = cur.last() {
             let hard = cur_chars + 1 + line.chars > MAX_CHARS;
             let gap = line.start_ms.saturating_sub(prev.end_ms);
