@@ -6,6 +6,7 @@
 //! (`managers::tts::models`): Katalogeintrag je Plattform, Download mit
 //! Pruefsumme, entpacken, aufloesen.
 
+pub mod context;
 pub mod estimate;
 pub mod resources;
 pub mod runtime;
@@ -30,11 +31,15 @@ pub const LOCAL_PROVIDER_ID: &str = "local";
 pub const LOCAL_PLACEHOLDER_URL: &str = "http://127.0.0.1:0/v1";
 
 /// Standard-Kontext fuer lokale Modelle. Gross genug fuer ein Protokoll,
-/// klein genug, dass der KV-Cache nicht den Speicher frisst.
+/// klein genug, dass der KV-Cache nicht den Speicher frisst. Boden der
+/// automatischen Wahl (`context::choose_context_tokens`, P1g).
 pub const DEFAULT_CONTEXT_TOKENS: u32 = 8192;
 
 static RUNTIME: OnceLock<Arc<LlmRuntimeManager>> = OnceLock::new();
 static SERVER: OnceLock<Arc<LocalLlmServer>> = OnceLock::new();
+/// Modell und Kontext, mit denen der lokale Server zuletzt gestartet wurde.
+/// Die Notizen-Budgets richten sich danach (P1g).
+static ACTIVE_CONTEXT: std::sync::Mutex<Option<(String, u32)>> = std::sync::Mutex::new(None);
 
 /// Einmal beim App-Start gesetzt. `llm_client` hat keinen `AppHandle`, muss
 /// den lokalen Server aber starten koennen, bevor es ihn anspricht.
@@ -105,6 +110,8 @@ pub async fn ensure_local(model_id: &str) -> Result<String, String> {
         .ok_or_else(|| format!("Modell nicht geladen: {model_id}"))?;
     let (_, backend, binary) = runtime.resolve_runtime().await?;
     let gpu_layers = if backend == "cpu" { 0 } else { 99 };
+    let context_tokens = plan_context(&model_path, &backend).await;
+    let starts_before = server.start_count();
     let port = server
         .ensure(
             &binary,
@@ -112,14 +119,68 @@ pub async fn ensure_local(model_id: &str) -> Result<String, String> {
                 model_id: model_id.to_string(),
                 model_path,
                 backend,
-                context_tokens: DEFAULT_CONTEXT_TOKENS,
+                context_tokens,
                 gpu_layers,
                 embedding: None,
             },
             Some(runtime.log_path()),
         )
         .await?;
+    // Nur ein Start durch diesen Aufruf setzt den Kontext neu; ein Server, der
+    // schon lief, hat ihn beim Start bekommen.
+    if server.start_count() != starts_before {
+        set_active_context(model_id, context_tokens);
+    }
     Ok(format!("http://127.0.0.1:{port}/v1"))
+}
+
+/// Kontext fuer einen Start, je freiem Grafikspeicher (`context`). Fehler beim
+/// Messen fuehren zum Standard, nie zu einem Abbruch.
+async fn plan_context(model_path: &std::path::Path, backend: &str) -> u32 {
+    let path = model_path.to_path_buf();
+    let backend = backend.to_string();
+    tokio::task::spawn_blocking(move || context::plan_for_file(&path, &backend))
+        .await
+        .unwrap_or(DEFAULT_CONTEXT_TOKENS)
+}
+
+fn set_active_context(model_id: &str, context_tokens: u32) {
+    *ACTIVE_CONTEXT.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some((model_id.to_string(), context_tokens));
+}
+
+/// Kontext, mit dem der laufende lokale Server `model_id` bedient. `None`, wenn
+/// er nicht laeuft oder ein anderes Modell haelt.
+pub fn active_context_tokens(model_id: &str) -> Option<u32> {
+    if !SERVER.get().is_some_and(|s| s.has_process()) {
+        return None;
+    }
+    ACTIVE_CONTEXT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|(id, _)| id == model_id)
+        .map(|(_, ctx)| *ctx)
+}
+
+/// Kontext, den ein Aufruf an `model_id` haben wird: der des laufenden Servers,
+/// sonst die Wahl, die ein Start jetzt treffen wuerde. Damit kennt der Aufrufer
+/// sein Prompt-Budget schon vor dem (lazy) Serverstart. Ohne Laufzeit oder
+/// Modelldatei (Test, unvollstaendige Installation): der Standard.
+pub async fn context_for_model(model_id: &str) -> u32 {
+    if let Some(ctx) = active_context_tokens(model_id) {
+        return ctx;
+    }
+    let Some(runtime) = RUNTIME.get() else {
+        return DEFAULT_CONTEXT_TOKENS;
+    };
+    let Some(path) = runtime.model_path(model_id).filter(|p| p.is_file()) else {
+        return DEFAULT_CONTEXT_TOKENS;
+    };
+    match runtime.resolve_runtime().await {
+        Ok((_, backend, _)) => plan_context(&path, &backend).await,
+        Err(_) => DEFAULT_CONTEXT_TOKENS,
+    }
 }
 
 // ---------------------------------------------------------------------------

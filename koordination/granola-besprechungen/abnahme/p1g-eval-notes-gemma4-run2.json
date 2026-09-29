@@ -1,0 +1,1321 @@
+{
+  "aggregate": {
+    "ai_entries": 26,
+    "ai_entries_lexical": 25,
+    "ai_entries_sourced": 26,
+    "ai_sourced_ratio": 1.0,
+    "chars_per_token": 3.353,
+    "elapsed_ms": 153228,
+    "failed_fixtures": 0,
+    "fixtures": 3,
+    "lexical_support_ratio": 0.9615384615384616,
+    "user_notes_preserved": 30,
+    "user_notes_total": 30,
+    "user_preserved_ratio": 1.0
+  },
+  "chars_per_token_assumed": 3.35,
+  "context_tokens": 16384,
+  "exit_code": 0,
+  "fixtures": [
+    {
+      "chars_per_token": 3.123,
+      "chunks_failed": [],
+      "chunks_total": 1,
+      "elapsed_ms": 41260,
+      "enhanced": {
+        "format": "enhanced@1",
+        "sections": [
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E1",
+                "note_id": "01K6EVALJF0000000000000001",
+                "origin": "user",
+                "source_segment_ids": [
+                  0
+                ],
+                "text": "Runde"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E2",
+                "note_id": "01K6EVALJF0000000000000002",
+                "origin": "user",
+                "source_segment_ids": [
+                  3,
+                  4
+                ],
+                "text": "Export fertig, Review fehlt (Miriam bis Mi)"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E3",
+                "note_id": "01K6EVALJF0000000000000003",
+                "origin": "user",
+                "source_segment_ids": [
+                  8
+                ],
+                "text": "Export bei 5000 Pos. ~40 s langsam -> Release-Notes"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E4",
+                "note_id": "01K6EVALJF0000000000000005",
+                "origin": "user",
+                "source_segment_ids": [
+                  22,
+                  23
+                ],
+                "text": "41 Tickets, Hälfte Suche alte Artikelnummer"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E5",
+                "note_id": "01K6EVALJF0000000000000006",
+                "origin": "user",
+                "source_segment_ids": [
+                  33
+                ],
+                "text": "Mobile App nächstes Quartal, Stelle ab Januar"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E6",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  50,
+                  51
+                ],
+                "text": "Miriam kann die Bereitschaftsdienstleistung für den Dezember übernehmen."
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": true,
+                  "unsupported": false
+                },
+                "id": "E7",
+                "note_id": "01K6EVALJF0000000000000007",
+                "origin": "user",
+                "source_segment_ids": [],
+                "text": "Offene Punkte"
+              }
+            ],
+            "id": "stand",
+            "kind": "text",
+            "title": "Stand je Person oder Thema"
+          },
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E8",
+                "note_id": "01K6EVALJF0000000000000004",
+                "origin": "user",
+                "source_segment_ids": [
+                  13,
+                  14
+                ],
+                "text": "SSO blockiert: Zugangsdaten Kunde fehlen"
+              }
+            ],
+            "id": "blocker",
+            "kind": "text",
+            "title": "Blocker"
+          },
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E9",
+                "note_id": "01K6EVALJF0000000000000008",
+                "origin": "user",
+                "source_segment_ids": [
+                  46
+                ],
+                "text": "Release bleibt am 15., SSO-Entscheidung Mittwoch"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E10",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  11
+                ],
+                "text": "Die langsame Exportleistung bei 5000 Positionen wird als bekannte Einschränkung in die Release-Notes aufgenommen."
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E11",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  28
+                ],
+                "text": "Die alte Artikelnummer soll wieder als Suchfeld aufgenommen werden, da dies wenig Aufwand bedeutet und den Support entlastet."
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E12",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  39
+                ],
+                "text": "Es wird zuerst eine Stelle ausgeschrieben; ein Freelancer wird nur als Rückfalloption ab November beauftragt."
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E13",
+                "note_id": "01K6EVALJF0000000000000009",
+                "origin": "user",
+                "source_segment_ids": [
+                  54
+                ],
+                "text": "Retro Dienstag 10 Uhr"
+              }
+            ],
+            "id": "entscheidungen",
+            "kind": "text",
+            "title": "Entscheidungen"
+          },
+          {
+            "entries": [
+              {
+                "assignee": "Ich",
+                "due": "Heute Nachmittag",
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E14",
+                "note_id": "01K6EVALJF0000000000000010",
+                "origin": "user",
+                "source_segment_ids": [
+                  17
+                ],
+                "text": "Frau Lorenz anrufen wegen SSO-Zugangsdaten"
+              },
+              {
+                "assignee": "Tarek",
+                "due": "Nach Erhalt",
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E15",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  42
+                ],
+                "text": "Die Stellenanzeige für die Mobile App gegenlesen."
+              },
+              {
+                "assignee": "Alle",
+                "due": "Ende des Monats",
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E16",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  47
+                ],
+                "text": "Urlaubsplanung im Teamkalender eintragen."
+              }
+            ],
+            "id": "aufgaben",
+            "kind": "tasks",
+            "title": "Aufgaben"
+          },
+          {
+            "entries": [],
+            "id": "themen_naechstes_mal",
+            "kind": "text",
+            "title": "Themen fürs nächste Mal"
+          }
+        ],
+        "segment_epoch": 0,
+        "stats": {
+          "ai_entries": 6,
+          "ai_entries_sourced": 6,
+          "chunks_failed": [],
+          "chunks_total": 1,
+          "dropped_source_ids": 0,
+          "single_pass": true,
+          "user_notes_by_fallback": 1,
+          "user_notes_by_model": 9,
+          "user_notes_total": 10
+        },
+        "template_id": "builtin:jour_fixe",
+        "template_title": "Jour fixe / Team"
+      },
+      "metrics": {
+        "ai_entries": 6,
+        "ai_entries_lexical": 5,
+        "ai_entries_sourced": 6,
+        "ai_sourced_ratio": 1.0,
+        "lexical_support_ratio": 0.8333333333333334,
+        "user_notes_preserved": 10,
+        "user_notes_total": 10,
+        "user_preserved_ratio": 1.0
+      },
+      "name": "jour_fixe",
+      "notes": 10,
+      "notes_without_at_ms": 0,
+      "payload_chars": 7539,
+      "payload_tokens": 2414,
+      "prompt_overhead_tokens": 641,
+      "segments": 64,
+      "single_pass": true,
+      "stats": {
+        "ai_entries": 6,
+        "ai_entries_sourced": 6,
+        "chunks_failed": [],
+        "chunks_total": 1,
+        "dropped_source_ids": 0,
+        "single_pass": true,
+        "user_notes_by_fallback": 1,
+        "user_notes_by_model": 9,
+        "user_notes_total": 10
+      },
+      "targets_met": true,
+      "template_id": "builtin:jour_fixe",
+      "template_key": "jour_fixe",
+      "title": "Jour fixe Team Plattform",
+      "unsourced_ai_entries": [],
+      "usage": {
+        "calls": 1,
+        "completion_tokens": 2504,
+        "failed_calls": 0,
+        "first_prompt_tokens": 3055,
+        "llm_ms": 41133,
+        "prompt_tokens": 3055
+      }
+    },
+    {
+      "chars_per_token": 3.251,
+      "chunks_failed": [],
+      "chunks_total": 1,
+      "elapsed_ms": 49280,
+      "enhanced": {
+        "format": "enhanced@1",
+        "sections": [
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E1",
+                "note_id": "01K6EVALKG0000000000000001",
+                "origin": "user",
+                "source_segment_ids": [
+                  3,
+                  4
+                ],
+                "text": "28 Monteure, Planung per Excel + Zuruf (Fr. Kraus)"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E2",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  3,
+                  1
+                ],
+                "text": "Der Kunde ist die Brenner Haustechnik, Heizung und Sanitär. Der Ansprechpartner ist Herr Albrecht."
+              }
+            ],
+            "id": "kunde_ausgangslage",
+            "kind": "text",
+            "title": "Kunde & Ausgangslage"
+          },
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E3",
+                "note_id": "01K6EVALKG0000000000000002",
+                "origin": "user",
+                "source_segment_ids": [
+                  8
+                ],
+                "text": "Notdienste werfen Tagesplan um"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E4",
+                "note_id": "01K6EVALKG0000000000000003",
+                "origin": "user",
+                "source_segment_ids": [
+                  11,
+                  31
+                ],
+                "text": "Nachfahrten wg. fehlendem Material = größter Kostenblock"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E5",
+                "note_id": "01K6EVALKG0000000000000004",
+                "origin": "user",
+                "source_segment_ids": [
+                  15,
+                  16
+                ],
+                "text": "Schnittstelle Sanitas Office Pflicht"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E6",
+                "note_id": "01K6EVALKG0000000000000006",
+                "origin": "user",
+                "source_segment_ids": [
+                  39,
+                  40
+                ],
+                "text": "Offline im Keller muss gehen"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E7",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  6,
+                  9,
+                  19
+                ],
+                "text": "Im Winter gibt es gut dreihundert Einsätze pro Woche. Die Disponentin Frau Kraus verbringt täglich etwa eine Stunde mit der manuellen Erfassung der Stundenzettel."
+              }
+            ],
+            "id": "bedarf_schmerzpunkte",
+            "kind": "text",
+            "title": "Bedarf & Schmerzpunkte"
+          },
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E8",
+                "note_id": "01K6EVALKG0000000000000005",
+                "origin": "user",
+                "source_segment_ids": [
+                  23,
+                  27
+                ],
+                "text": "Preis zu hoch?! Chef entscheidet (Hr. Brenner)"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E9",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  56
+                ],
+                "text": "Der Preis pro Monteur muss gesenkt werden, da dies sonst schwierig wird."
+              }
+            ],
+            "id": "einwaende",
+            "kind": "text",
+            "title": "Einwände"
+          },
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E10",
+                "note_id": "01K6EVALKG0000000000000007",
+                "origin": "user",
+                "source_segment_ids": [
+                  43
+                ],
+                "text": "Go-Live vor Mitte Oktober"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E11",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  24,
+                  25
+                ],
+                "text": "Die Kosten für die Monteur-App betragen neunzehn Euro pro Nutzer und Monat. Die Planungstafel kostet neunundvierzig Euro pro Disponent. Die Einrichtung mit Schnittstelle und Schulung kostet einmalig etwa viertausendfünfhundert Euro."
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E12",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  27,
+                  29
+                ],
+                "text": "Der Entscheider ist Herr Brenner, der Inhaber. Ein fester Budgetrahmen existiert noch nicht."
+              }
+            ],
+            "id": "budget_zeitrahmen_entscheider",
+            "kind": "text",
+            "title": "Budget, Zeitrahmen, Entscheider"
+          },
+          {
+            "entries": [
+              {
+                "assignee": "Ich",
+                "due": "Freitag",
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E13",
+                "note_id": "01K6EVALKG0000000000000008",
+                "origin": "user",
+                "source_segment_ids": [
+                  54
+                ],
+                "text": "Angebot + ROI-Rechnung bis Freitag"
+              },
+              {
+                "assignee": "Ich",
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E14",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  52
+                ],
+                "text": "Ein Testzugang für Frau Kraus wird für vierzehn Tage eingerichtet."
+              },
+              {
+                "assignee": "Ich",
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E15",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  55
+                ],
+                "text": "Ein Termin mit Herrn Brenner in der zweiten Juliwoche wird gesucht."
+              },
+              {
+                "assignee": "Gegenseite",
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E16",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  53
+                ],
+                "text": "Die E-Mail-Adresse von Frau Kraus wird mitgeteilt."
+              }
+            ],
+            "id": "naechste_schritte",
+            "kind": "tasks",
+            "title": "Nächste Schritte"
+          },
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E17",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  57
+                ],
+                "text": "Die Preisverhandlung ist möglich bei einer Laufzeit von vierundzwanzig Monaten."
+              }
+            ],
+            "id": "einschaetzung",
+            "kind": "text",
+            "title": "Einschätzung"
+          }
+        ],
+        "segment_epoch": 0,
+        "stats": {
+          "ai_entries": 9,
+          "ai_entries_sourced": 9,
+          "chunks_failed": [],
+          "chunks_total": 1,
+          "dropped_source_ids": 0,
+          "single_pass": true,
+          "user_notes_by_fallback": 0,
+          "user_notes_by_model": 8,
+          "user_notes_total": 8
+        },
+        "template_id": "builtin:vertrieb",
+        "template_title": "Kundengespräch / Vertrieb"
+      },
+      "metrics": {
+        "ai_entries": 9,
+        "ai_entries_lexical": 9,
+        "ai_entries_sourced": 9,
+        "ai_sourced_ratio": 1.0,
+        "lexical_support_ratio": 1.0,
+        "user_notes_preserved": 8,
+        "user_notes_total": 8,
+        "user_preserved_ratio": 1.0
+      },
+      "name": "kundengespraech",
+      "notes": 8,
+      "notes_without_at_ms": 0,
+      "payload_chars": 7871,
+      "payload_tokens": 2421,
+      "prompt_overhead_tokens": 745,
+      "segments": 60,
+      "single_pass": true,
+      "stats": {
+        "ai_entries": 9,
+        "ai_entries_sourced": 9,
+        "chunks_failed": [],
+        "chunks_total": 1,
+        "dropped_source_ids": 0,
+        "single_pass": true,
+        "user_notes_by_fallback": 0,
+        "user_notes_by_model": 8,
+        "user_notes_total": 8
+      },
+      "targets_met": true,
+      "template_id": "builtin:vertrieb",
+      "template_key": "vertrieb",
+      "title": "Erstgespräch Brenner Haustechnik",
+      "unsourced_ai_entries": [],
+      "usage": {
+        "calls": 1,
+        "completion_tokens": 2517,
+        "failed_calls": 0,
+        "first_prompt_tokens": 3166,
+        "llm_ms": 49249,
+        "prompt_tokens": 3166
+      }
+    },
+    {
+      "chars_per_token": 3.482,
+      "chunks_failed": [],
+      "chunks_total": 1,
+      "elapsed_ms": 61566,
+      "enhanced": {
+        "format": "enhanced@1",
+        "sections": [
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E1",
+                "note_id": "01K6EVALLK0000000000000005",
+                "origin": "user",
+                "source_segment_ids": [
+                  23,
+                  26
+                ],
+                "text": "Migration"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E2",
+                "note_id": "01K6EVALLK0000000000000007",
+                "origin": "user",
+                "source_segment_ids": [
+                  54,
+                  55
+                ],
+                "text": "Go-Live: Empfehlung 1. Februar, GL muss zustimmen"
+              }
+            ],
+            "id": "entscheidungsvorlage_optionen",
+            "kind": "text",
+            "title": "Entscheidungsvorlage & Optionen"
+          },
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E3",
+                "note_id": "01K6EVALLK0000000000000001",
+                "origin": "user",
+                "source_segment_ids": [
+                  0,
+                  2
+                ],
+                "text": "Status"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E4",
+                "note_id": "01K6EVALLK0000000000000002",
+                "origin": "user",
+                "source_segment_ids": [
+                  4,
+                  5,
+                  6
+                ],
+                "text": "Fertigung 3 Wochen Verzug – Stücklisten bis 8 Ebenen"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E5",
+                "note_id": "01K6EVALLK0000000000000003",
+                "origin": "user",
+                "source_segment_ids": [
+                  9,
+                  31
+                ],
+                "text": "+45 PT ≈ 55 T€, nicht im Budget"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E6",
+                "note_id": "01K6EVALLK0000000000000004",
+                "origin": "user",
+                "source_segment_ids": [
+                  11,
+                  12
+                ],
+                "text": "Budget: 1,1 von 1,8 Mio. verbraucht, Reserve 150 T€"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E7",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  32,
+                  122
+                ],
+                "text": "Option A gefährdet den Termin, da die 70 Tage Migration mit der Anpassung des Fertigungsmoduls zusammenfallen. Die Budgetzahlen je Modul hängen vom Dienstleister ab."
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E8",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  106,
+                  110
+                ],
+                "text": "Es wurde vereinbart, kurzfristig in den Schichtbesprechungen und im November in der Betriebsversammlung über den Projektstand zu informieren."
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E9",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  113,
+                  43
+                ],
+                "text": "Es wurde die Notwendigkeit einer monatlich aktualisierten Tabelle mit geplanten und verbrauchten Personentagen je Modul festgestellt."
+              }
+            ],
+            "id": "diskussion",
+            "kind": "text",
+            "title": "Diskussion"
+          },
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E10",
+                "note_id": "01K6EVALLK0000000000000006",
+                "origin": "user",
+                "source_segment_ids": [
+                  41,
+                  143
+                ],
+                "text": "Beschluss: Option B + Archiv alte Stücklisten im DMS"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E11",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  133
+                ],
+                "text": "Schulungen der Schlüsselanwender in halben Tagen, Samstage nur freiwillig und nach Zustimmung des Betriebsrats."
+              }
+            ],
+            "id": "beschluesse",
+            "kind": "text",
+            "title": "Beschlüsse"
+          },
+          {
+            "entries": [
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E12",
+                "note_id": "01K6EVALLK0000000000000008",
+                "origin": "user",
+                "source_segment_ids": [
+                  73
+                ],
+                "text": "Nur 19 von 32 Key-Usern geschult"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E13",
+                "note_id": "01K6EVALLK0000000000000009",
+                "origin": "user",
+                "source_segment_ids": [
+                  80
+                ],
+                "text": "Hauptberater Dienstleister geht Jahresende -> 8 Wochen Übergabe"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E14",
+                "note_id": "01K6EVALLK0000000000000011",
+                "origin": "user",
+                "source_segment_ids": [
+                  64
+                ],
+                "text": "Aufsichtsrat kennt bisher nur den Januar-Termin"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E15",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  95,
+                  96
+                ],
+                "text": "In der Fertigung kursieren Gerüchte über mögliche Stellenabbau im Zusammenhang mit dem neuen System, was die Belegschaft verunsichert."
+              }
+            ],
+            "id": "risiken_eskalationen",
+            "kind": "text",
+            "title": "Risiken & Eskalationen"
+          },
+          {
+            "entries": [
+              {
+                "assignee": "Herr Okafor",
+                "due": "nächste Sitzung",
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E16",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  17,
+                  44
+                ],
+                "text": "Erstellen eines Plans mit Terminen für das Archiv der alten Stücklisten im Dokumentenmanagement."
+              },
+              {
+                "assignee": "Frau Brandt",
+                "due": "nächste Sitzung",
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E17",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  49,
+                  137
+                ],
+                "text": "Vorlegen einer aktualisierten Budgetplanung, basierend auf der Einsparung durch Option B."
+              },
+              {
+                "assignee": "Frau Petersen",
+                "due": "diese Woche",
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E18",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  51,
+                  137
+                ],
+                "text": "Anfordern der finalen Schätzungen des Dienstleisters für die Budgetplanung."
+              },
+              {
+                "assignee": "Frau Petersen",
+                "due": "nächste Woche",
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E19",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  30,
+                  139
+                ],
+                "text": "Klärung der Abstimmung mit dem Betriebsrat bezüglich Samstagsschulungen."
+              },
+              {
+                "assignee": "Herr Okafor",
+                "due": "nächste Sitzung",
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E20",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  91,
+                  138
+                ],
+                "text": "Prüfen der Etikettendrucker in der Fertigung und Klärung der notwendigen Budgetierung aus dem IT-Budget."
+              },
+              {
+                "assignee": "Frau Petersen",
+                "due": "nächste Woche",
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": false,
+                  "unsupported": false
+                },
+                "id": "E21",
+                "note_id": null,
+                "origin": "ai",
+                "source_segment_ids": [
+                  105,
+                  135
+                ],
+                "text": "Information der Belegschaft in den Schichtbesprechungen über den Projektstand."
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": true,
+                  "unsupported": false
+                },
+                "id": "E22",
+                "note_id": "01K6EVALLK0000000000000010",
+                "origin": "user",
+                "source_segment_ids": [],
+                "text": "Etikettendrucker prüfen (IT)"
+              },
+              {
+                "assignee": null,
+                "due": null,
+                "flags": {
+                  "dropped_sources": 0,
+                  "edited": false,
+                  "placed_by_fallback": true,
+                  "unsupported": false
+                },
+                "id": "E23",
+                "note_id": "01K6EVALLK0000000000000012",
+                "origin": "user",
+                "source_segment_ids": [],
+                "text": "Betriebsrat wegen Samstagsschulungen fragen"
+              }
+            ],
+            "id": "auftraege",
+            "kind": "tasks",
+            "title": "Aufträge"
+          }
+        ],
+        "segment_epoch": 0,
+        "stats": {
+          "ai_entries": 11,
+          "ai_entries_sourced": 11,
+          "chunks_failed": [],
+          "chunks_total": 1,
+          "dropped_source_ids": 0,
+          "single_pass": true,
+          "user_notes_by_fallback": 2,
+          "user_notes_by_model": 10,
+          "user_notes_total": 12
+        },
+        "template_id": "builtin:lenkungskreis",
+        "template_title": "Lenkungskreis / Entscheidung"
+      },
+      "metrics": {
+        "ai_entries": 11,
+        "ai_entries_lexical": 11,
+        "ai_entries_sourced": 11,
+        "ai_sourced_ratio": 1.0,
+        "lexical_support_ratio": 1.0,
+        "user_notes_preserved": 12,
+        "user_notes_total": 12,
+        "user_preserved_ratio": 1.0
+      },
+      "name": "lenkungskreis_lang",
+      "notes": 12,
+      "notes_without_at_ms": 2,
+      "payload_chars": 21704,
+      "payload_tokens": 6234,
+      "prompt_overhead_tokens": 667,
+      "segments": 144,
+      "single_pass": true,
+      "stats": {
+        "ai_entries": 11,
+        "ai_entries_sourced": 11,
+        "chunks_failed": [],
+        "chunks_total": 1,
+        "dropped_source_ids": 0,
+        "single_pass": true,
+        "user_notes_by_fallback": 2,
+        "user_notes_by_model": 10,
+        "user_notes_total": 12
+      },
+      "targets_met": true,
+      "template_id": "builtin:lenkungskreis",
+      "template_key": "lenkungskreis",
+      "title": "Lenkungskreis ERP-Einführung",
+      "unsourced_ai_entries": [],
+      "usage": {
+        "calls": 1,
+        "completion_tokens": 3404,
+        "failed_calls": 0,
+        "first_prompt_tokens": 6901,
+        "llm_ms": 61533,
+        "prompt_tokens": 6901
+      }
+    }
+  ],
+  "local": true,
+  "mode": "eval-notes",
+  "model": "llm-gemma4-e4b-q4",
+  "passed": true,
+  "provider": "local",
+  "single_pass_budget_chars": 45513,
+  "targets": {
+    "ai_sourced_ratio": 0.95,
+    "user_preserved_ratio": 1.0
+  }
+}

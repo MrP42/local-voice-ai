@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 
 use super::enhance::{
     enhance_meeting, parse_enhanced, render_notes_for_prompt, render_segments_for_prompt,
-    single_pass_budget_chars,
+    single_pass_budget_chars_for,
 };
 use super::model::{EnhancedNotes, NoteBlock, Origin};
 use super::templates::builtin_id;
@@ -375,7 +375,7 @@ async fn usage_since(after_id: i64) -> UsageTotals {
 }
 
 /// Token eines Texts ueber `/tokenize` des laufenden lokalen Servers: misst
-/// genau die Groesse, die `single_pass_budget_chars` in Zeichen schaetzt.
+/// genau die Groesse, die `single_pass_budget_chars_for` in Zeichen schaetzt.
 async fn count_tokens(model: &str, text: &str) -> Option<u64> {
     let base = crate::managers::llm::ensure_local(model).await.ok()?;
     let root = base.trim_end_matches('/').trim_end_matches("/v1");
@@ -431,7 +431,17 @@ pub async fn run_cli(settings: AppSettings, dir: &Path, sandbox: &Path) -> (i32,
         Err(e) => log::warn!("eval-notes: kein Ledger, Token-Zaehler fehlen ({e})"),
     }
 
-    let budget = single_pass_budget_chars(local);
+    // Kontext wie ihn ein Serverstart jetzt waehlt (je freiem VRAM, P1g); das
+    // Budget richtet sich danach.
+    let context_tokens = if local {
+        Some(crate::managers::llm::context_for_model(&model).await)
+    } else {
+        None
+    };
+    let budget = single_pass_budget_chars_for(
+        context_tokens.unwrap_or(crate::managers::llm::DEFAULT_CONTEXT_TOKENS),
+        local,
+    );
     let started = Instant::now();
     let mut reports = Vec::new();
     let mut all = Vec::new();
@@ -544,9 +554,9 @@ pub async fn run_cli(settings: AppSettings, dir: &Path, sandbox: &Path) -> (i32,
         "provider": provider.id,
         "model": model,
         "local": local,
-        "context_tokens": local.then_some(crate::managers::llm::DEFAULT_CONTEXT_TOKENS),
+        "context_tokens": context_tokens,
         "single_pass_budget_chars": budget,
-        "chars_per_token_assumed": 3,
+        "chars_per_token_assumed": 3.35,
         "targets": {
             "user_preserved_ratio": USER_PRESERVED_TARGET,
             "ai_sourced_ratio": AI_SOURCED_TARGET,
@@ -904,15 +914,17 @@ mod tests {
         let lk = fixture("lenkungskreis_lang");
         assert_eq!(lk.notes.len(), 12);
         assert_eq!(lk.notes.iter().filter(|b| b.at_ms.is_none()).count(), 2);
-        // Erzwingt lokal Map-Reduce, mit Abstand (auch wenn die Konstante
-        // Zeichen/Token nach oben korrigiert wird).
-        let budget = single_pass_budget_chars(true);
+        // Erzwingt lokal Map-Reduce, mit Abstand -- bei dem Standard-Kontext.
+        // Waehlt der Serverstart je VRAM einen groesseren (P1g), laeuft die
+        // Fixture live im Einzeldurchlauf; Map-Reduce decken die Stub-Tests ab
+        // (oder `LVA_LLM_CONTEXT_TOKENS=8192` beim Eval-Lauf).
+        let budget = single_pass_budget_chars_for(crate::managers::llm::DEFAULT_CONTEXT_TOKENS, true);
         let payload = render_notes_for_prompt(&lk.notes).chars().count()
             + render_segments_for_prompt(&sorted_segments(&lk.segments))
                 .chars()
                 .count();
         assert!(
-            payload * 10 > budget * 13,
+            payload * 100 > budget * 115,
             "{payload} Zeichen vs. Budget {budget}"
         );
     }
