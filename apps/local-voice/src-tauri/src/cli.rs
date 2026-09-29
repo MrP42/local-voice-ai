@@ -220,4 +220,21 @@ pub struct CliArgs {
     /// Output via --json/--out. Exit 0 targets met, 3 missed, 1 error.
     #[arg(long, value_name = "DIR")]
     pub eval_notes: Option<PathBuf>,
+
+    // M4-P4f
+    /// Evaluate the meeting chat (acceptance AK8) on the synthetic fixtures
+    /// in DIR (tests/fixtures/chat with questions.json) with the configured
+    /// language model and exit. Imports the meetings into a sandbox store in
+    /// the temp directory (never the productive meetings.db), builds the
+    /// search index including vectors (the embedding server is started and
+    /// stopped), asks the questions one after the other and stops both
+    /// llama-servers at the end. --model picks a local model for this run.
+    /// Output via --json/--out. Exit 0 accuracy >= 0.85, 3 below, 1 error.
+    #[arg(long, value_name = "DIR")]
+    pub eval_chat: Option<PathBuf>,
+
+    /// With --eval-chat: search by words only, without the embedding model
+    /// (comparison run).
+    #[arg(long)]
+    pub lexical_only: bool,
 }

@@ -1,0 +1,298 @@
+{
+  "title": "Folgetermin Brenner Haustechnik",
+  "folder": "Vertrieb",
+  "participants": [
+    "Lena Vogt",
+    "Herr Brenner",
+    "Herr Albrecht",
+    "Frau Kraus"
+  ],
+  "started_at": "2026-07-09T14:00:00+02:00",
+  "segments": [
+    {
+      "segment_index": 0,
+      "text": "Hallo zusammen, schön, dass es heute mit Ihnen allen klappt. Für alle, die mich noch nicht kennen: Lena Vogt von Wolkenfeld Software.",
+      "start_ms": 2000,
+      "end_ms": 10645,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 1,
+      "text": "Brenner hier, ich bin der Inhaber. Herr Albrecht hat mir das Wichtigste aus dem ersten Gespräch erzählt. Frau Kraus ist auch dabei.",
+      "start_ms": 12445,
+      "end_ms": 20960,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 2,
+      "text": "Kraus, guten Tag. Ich habe den Testzugang jetzt zehn Tage lang benutzt.",
+      "start_ms": 22760,
+      "end_ms": 27375,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 3,
+      "text": "Wunderbar. Wie ist Ihr Eindruck bisher?",
+      "start_ms": 29175,
+      "end_ms": 31710,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 4,
+      "text": "Kraus: Die Planungstafel ist deutlich übersichtlicher als meine Excel-Liste. Die Notdienst-Funktion hat mir letzte Woche zweimal geholfen.",
+      "start_ms": 33510,
+      "end_ms": 42480,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 5,
+      "text": "Kraus: Was mir fehlt, ist eine Wochenansicht pro Monteur. Urlaube und Schulungen plane ich immer wochenweise.",
+      "start_ms": 44280,
+      "end_ms": 51365,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 6,
+      "text": "Die Wochenansicht kommt mit dem nächsten Update im September. Ich schreibe Ihnen das ins Angebot, dann ist es verbindlich.",
+      "start_ms": 53165,
+      "end_ms": 61095,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 7,
+      "text": "Brenner: Kommen wir zu den Zahlen. Ich habe Ihre Wirtschaftlichkeitsrechnung gelesen.",
+      "start_ms": 62895,
+      "end_ms": 68420,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 8,
+      "text": "Kurz zusammengefasst: Die Einsparung liegt bei etwa dreitausendzweihundert Euro im Monat, vor allem durch weniger Nachfahrten.",
+      "start_ms": 70220,
+      "end_ms": 78410,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 9,
+      "text": "Dazu kommen rund zwanzig Stunden im Monat, die Frau Kraus nicht mehr mit Abtippen verbringt.",
+      "start_ms": 80210,
+      "end_ms": 86190,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 10,
+      "text": "Brenner: Die Nachfahrten habe ich nachgezählt. Im letzten Winter waren es sogar zweiundfünfzig im Monat, nicht vierzig.",
+      "start_ms": 87990,
+      "end_ms": 95725,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 11,
+      "text": "Dann ist die Rechnung eher vorsichtig. Das freut mich.",
+      "start_ms": 97525,
+      "end_ms": 101035,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 12,
+      "text": "Brenner: Trotzdem, neunzehn Euro pro Monteur sind mir zu viel. Was können Sie mir anbieten?",
+      "start_ms": 102835,
+      "end_ms": 108750,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 13,
+      "text": "Bei einer Laufzeit von vierundzwanzig Monaten gehe ich auf sechzehn Euro pro Monteur und Monat. Die Planungstafel bleibt bei neunundvierzig Euro.",
+      "start_ms": 110550,
+      "end_ms": 119975,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 14,
+      "text": "Die Einrichtung reduziere ich auf viertausend Euro, weil der Betrieb in Kassel uns die Schnittstelle schon vorgemacht hat.",
+      "start_ms": 121775,
+      "end_ms": 129705,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 15,
+      "text": "Albrecht: Bei der Referenz in Kassel habe ich übrigens angerufen. Die sind zufrieden, nur die Schulung war ihnen zu kurz.",
+      "start_ms": 131505,
+      "end_ms": 139370,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 16,
+      "text": "Das nehmen wir mit: Wir planen bei Ihnen zwei Schulungstermine statt einem, einen davon direkt im Lager.",
+      "start_ms": 141170,
+      "end_ms": 147930,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 17,
+      "text": "Brenner: Gut. Jetzt zum Zeitplan. Herr Albrecht sagte, Sie könnten Anfang August mit der Einführung starten.",
+      "start_ms": 149730,
+      "end_ms": 156750,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 18,
+      "text": "Da muss ich leider korrigieren. Unser Einführungsteam ist im August komplett belegt. Der frühestmögliche Start ist der erste September.",
+      "start_ms": 158550,
+      "end_ms": 167325,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 19,
+      "text": "Albrecht: Moment, im ersten Gespräch hieß es Start Anfang August und fertig Ende September. Darauf hatte ich mich verlassen.",
+      "start_ms": 169125,
+      "end_ms": 177185,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 20,
+      "text": "Das stimmt, und das tut mir leid. Mit Start am ersten September und sechs bis acht Wochen wären wir erst Mitte bis Ende Oktober live.",
+      "start_ms": 178985,
+      "end_ms": 187630,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 21,
+      "text": "Albrecht: Ab Mitte Oktober wird es bei uns voll. Genau das wollten wir vermeiden.",
+      "start_ms": 189430,
+      "end_ms": 194695,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 22,
+      "text": "Brenner: Und wenn wir die Schnittstelle zu Sanitas Office erst später anschließen? Geht es dann schneller?",
+      "start_ms": 196495,
+      "end_ms": 203385,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 23,
+      "text": "Ja. Ohne Schnittstelle schaffen wir Planungstafel und App in vier Wochen, also Go-Live am ersten Oktober. Die Schnittstelle folgt dann im Januar.",
+      "start_ms": 205185,
+      "end_ms": 214610,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 24,
+      "text": "Kraus: Dann tippe ich die Stundenzettel eben noch einen Winter lang ab. Hauptsache, die Notdienste laufen über die Tafel.",
+      "start_ms": 216410,
+      "end_ms": 224275,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 25,
+      "text": "Brenner: Einverstanden. Go-Live am ersten Oktober ohne Schnittstelle, die Schnittstelle im Januar. So machen wir es.",
+      "start_ms": 226075,
+      "end_ms": 233615,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 26,
+      "text": "Dann halte ich fest: Start am ersten September, Go-Live am ersten Oktober, Schnittstelle zu Sanitas Office im Januar.",
+      "start_ms": 235415,
+      "end_ms": 243020,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 27,
+      "text": "Albrecht: Die Firmenhandys für die vier Kollegen ohne Smartphone besorgen wir bis Ende August selbst.",
+      "start_ms": 244820,
+      "end_ms": 251385,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 28,
+      "text": "Prima. Ich schicke Ihnen bis Montag das überarbeitete Angebot mit sechzehn Euro, viertausend Euro Einrichtung und dem neuen Zeitplan.",
+      "start_ms": 253185,
+      "end_ms": 261830,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 29,
+      "text": "Brenner: Wenn das Angebot so kommt, unterschreibe ich bis zum zwanzigsten Juli.",
+      "start_ms": 263630,
+      "end_ms": 268765,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 30,
+      "text": "Vielen Dank, Herr Brenner, Herr Albrecht und Frau Kraus. Dann bis bald.",
+      "start_ms": 270565,
+      "end_ms": 275180,
+      "channel": 0,
+      "speaker_index": null
+    }
+  ],
+  "notes": [
+    {
+      "id": "01K6EVALNL0000000000000001",
+      "kind": "bullet",
+      "text": "Fr. Kraus: Wochenansicht fehlt -> Update Sept.",
+      "at_ms": 61595,
+      "checked": false
+    },
+    {
+      "id": "01K6EVALNL0000000000000002",
+      "kind": "bullet",
+      "text": "Brenner: 52 Nachfahrten/Monat im Winter",
+      "at_ms": 96225,
+      "checked": false
+    },
+    {
+      "id": "01K6EVALNL0000000000000003",
+      "kind": "bullet",
+      "text": "Preis: 16 €/Monteur bei 24 Mon., Einrichtung 4.000 €",
+      "at_ms": 130205,
+      "checked": false
+    },
+    {
+      "id": "01K6EVALNL0000000000000004",
+      "kind": "bullet",
+      "text": "Start erst 1.9. (nicht August!) -> Go-Live 1.10. ohne Schnittstelle",
+      "at_ms": 243520,
+      "checked": false
+    },
+    {
+      "id": "01K6EVALNL0000000000000005",
+      "kind": "todo",
+      "text": "Angebot überarbeiten bis Montag",
+      "at_ms": 262330,
+      "checked": false
+    }
+  ]
+}
