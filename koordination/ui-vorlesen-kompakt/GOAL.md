@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T12:12
+aktualisiert: 2026-09-29T12:14
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -98,7 +98,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29 E1–E3 als Vorschlag gewählt (siehe Risiken), Basis `chore/0.20.3-abnahme`.
 
 ## Nächste empfohlene Aktion
-Reports abwarten, je Paket selbst validieren, in feat/ui-vorlesen-kompakt mergen
+P2 validieren + mergen (Konflikt am aside-Rahmen), dann P6/P7, Nachher-Screens, prettier-ignore-Rahmen klaeren, Installer 0.20.4
 
 ## Verlauf
 - 2026-09-29T11:49 DISCOVERY — Goal State angelegt
@@ -106,4 +106,5 @@ Reports abwarten, je Paket selbst validieren, in feat/ui-vorlesen-kompakt mergen
 - 2026-09-29T11:58 READY (Runde 0) — Goal definiert, Issue #61, Basislinie 72/72
 - 2026-09-29T11:58 PLANNING (Runde 1) — P1-P5 geschnitten
 - 2026-09-29T11:58 EXECUTING (Runde 1) — P1 (Opus) und P2-P5 (Sonnet) laufen parallel in wt-ui-p1..p5
+- 2026-09-29T12:14 EXECUTING (Runde 1) — P1,P3,P4,P5 abgenommen (Integration 96 passed). P2 laeuft; P6/P7 aus Audit gestartet. Budget ca. 0,85 MTok (~47 %)
 
