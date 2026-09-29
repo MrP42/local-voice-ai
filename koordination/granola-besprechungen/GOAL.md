@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T19:33
+aktualisiert: 2026-09-29T19:39
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -126,7 +126,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-Session-Start: goal.py resume; je Worktree git status pruefen, Worker-Stand validieren (Tests selbst laufen lassen), committen, rebase auf feat/granola-besprechungen (bindings.ts-Konflikte mit tools/reapply_diff.py), ff-merge; dann P1e, P2c2, P2e, P2b2, P2d, M3-Spike, P4b-f, P5a-f, P6a-e
+Nach Merge: P5d, P6b, P6d, P6e, P1g/h, P2g, P3d, P5e, P7a, dann M7 (Installer, Offline-Nachweis QG5, Lizenzen QG6, Performance QG3, Doku, PR); Merge-Werkzeug tools/reapply_diff.py; headless-Bedingung in lib.rs je Flag ergaenzen
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -144,4 +144,5 @@ Session-Start: goal.py resume; je Worktree git status pruefen, Worker-Stand vali
 - 2026-09-29T12:12 EXECUTING (Runde 1) — Vulkan-SDK installiert (C:\VulkanSDK\1.4.357.0, VULKAN_SDK Machine). Laufend: P1b, P2a, P2b1, P4a, P5. P2f startet, sobald ein Build frei ist (CPU 74 %, RAM frei 23,7 GB).
 - 2026-09-29T12:50 PAUSED (Runde 1) — Nutzungslimit naht (Patrick). Abgenommen+gemergt: P0,P1,P2,P4,P5 (Entwuerfe), P1a,P1b,P1c,P2a,P2c1. Beim Pausieren noch laufend/uncommittet in Worktrees: P1d (wt-m1), P1f (wt-m1c), P2b1 (wt-m2b), P4a (wt-m4), P2f (wt-m2). Budget ~4,3 MTok. [Pause: limit]
 - 2026-09-29T16:29 EXECUTING (Runde 1) — wiederaufgenommen
+- 2026-09-29T19:39 EXECUTING (Runde 1) — Stand 29.09. abends: AK1,3,4,5,6,8 erfuellt; Matrix 16/22 (inkl. F13). Gemergt: P1a-f, P2a-f, P2b1/2, P3a/b, P4a-g, P5a, P6a. Offen AK2,7(B7 Owner),9,10,11. Budget ~11 MTok, Hochrechnung 15-16. Laufend P3c (wt-m1), P5b (wt-m1c), P5c (wt-m2a), P6c (wt-m2b).
 
