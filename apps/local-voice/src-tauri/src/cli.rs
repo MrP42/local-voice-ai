@@ -175,6 +175,24 @@ pub struct CliArgs {
     #[arg(long, value_name = "FILE")]
     pub near_text: Option<PathBuf>,
 
+    // M2-P2b2
+    /// --simulate-meeting in real time: the files are fed at wall-clock pace,
+    /// so each segment's latency (emitted_at_ms - vad_end_ms) is what a live
+    /// meeting would see. Reports latency p50/p95/max.
+    #[arg(long)]
+    pub realtime: bool,
+
+    /// --simulate-meeting from benchmark scene folders instead of --mic/--system
+    /// (repeatable; scenes are played back to back). Each folder holds the mic
+    /// track (--scene-mic), system.wav and reference.json; the reference texts
+    /// give the live WER and ich_far_word_leak.
+    #[arg(long, value_name = "DIR")]
+    pub scene: Vec<PathBuf>,
+
+    /// Microphone file inside each --scene folder (default mic_echo.wav).
+    #[arg(long, value_name = "FILE")]
+    pub scene_mic: Option<String>,
+
     /// Open this document (txt/md/pdf/docx) in the read-aloud library and
     /// start playback — used by the Explorer context menu. Forwards to a
     /// running instance if there is one.

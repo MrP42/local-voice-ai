@@ -91,6 +91,37 @@ RT60 0,3 s, Rauschen -55 dB, Verzögerung je Szene, Mischer aus dem Spike `mix.p
 150 ppm Drift, Verzögerungssprung 50 → 170 ms bei 50 %, Spike `mix_hard.py`) und `reference.json` (Sprecher, Kanal, Text,
 `start_ms`/`end_ms` je Äußerung, Referenztext je Kanal, Wörter, die nur die Gegenseite spricht).
 
+## Live-Latenz und Live-WER (AK5, P2b2)
+
+**AK5 erfüllt:** Über 12,8 min Aufnahme liegt p95 (Ende der Äußerung → Segment-Event) bei **1.385 ms** (Soll ≤ 5.000 ms).
+Gemessen mit der Release-CLI dieses Stands (CPU, Parakeet ONNX wie in der App konfiguriert). Die Szenen laufen im Echtzeit-Takt
+durch **denselben** DSP-Thread (Echo-Unterdrückung, Silero-VAD, Segmentierer) und Transkriptions-Worker wie eine Live-Besprechung.
+
+| Lauf | Audio | Modell | Segmente | Latenz p50 / p95 / max | Live-WER gesamt | Ich / Gegenseite | Gegenseite im Ich-Kanal | FLEURS-de |
+|---|---|---|---|---|---|---|---|---|
+| `-Full`: scene3 + scene1, `mic_echo.wav`, AEC an | 12,8 min | Parakeet TDT 0.6B v3 int8 (ONNX, CPU) | 128 | 960 / **1.385** / 4.604 ms | **6,86 %** (120/1748) | 6,65 % / 7,03 % | 0 % | 7,86 % (240 Sätze) |
+| `-Quick`: scene1, `mic_echo.wav`, AEC an | 4,3 min | Parakeet TDT 0.6B v3 int8 (ONNX, CPU) | 41 | 938 / 1.326 / 1.418 ms | 5,29 % (30/567) | 5,97 % / 4,42 % | 0 % | 10,04 % (20 Sätze) |
+
+- **Befehle:** `pwsh apps/local-voice/scripts/m2-bench.ps1 -Full` bzw. `-Quick` (Stand 29.09.2026). Das Skript ruft
+  `local-voice-ai.exe --simulate-meeting --realtime --scene <Szene> … --json --out …` in einer `LVA_MEETINGS_DIR`-Sandbox auf und
+  danach `scripts/bench/sentence_bench.py` (FLEURS). Rohdaten mit allen Segmentzeiten: `%LOCALAPPDATA%\lva-bench\results\live\`.
+- **Latenz** = `emitted_at_ms − vad_end_ms` je `Segments`-Event: `emitted_at_ms` ist die Wanduhr ab Einspeisebeginn, `vad_end_ms`
+  das Ende der Äußerung auf der Audio-Achse. Die Blöcke kommen im 30-ms-Takt erst nach ihrer Aufnahmedauer an, wie bei einem
+  Capture-Gerät. Perzentile nach Nearest-Rank. Die Zeit bis zur Anzeige in React ist nicht enthalten (erwartet < 50 ms).
+- **Zusammensetzung:** Median ≈ 600 ms VAD-Nachlauf + ~350 ms Transkription und Speichern. Das Maximum von 4,6 s ist der einzige
+  Schnitt an der Höchstlänge (15 s) im Lauf: Der Segmentierer schneidet im letzten Viertel an der leisesten Stelle, entscheidet
+  aber erst bei 15 s. Für Monologe über 11 s ist das der schlimmste Fall, er liegt weiter unter 5 s.
+- **`vad_end_ms` ist abgeleitet** (Blockende minus 300 ms Nachlaufpolster), weil der Harness die Metadaten des Segmentierers
+  nicht sieht. Für Segmente, die mit dem VAD-Nachlauf enden, ist der Wert exakt. Beim Schnitt an der Höchstlänge und beim letzten
+  Segment liegt er bis zu 300 ms zu früh, die Latenz ist dort also höchstens 300 ms zu hoch (konservativ).
+- **Live-WER** = Summe der Wortfehler beider Kanäle / Summe der Referenzwörter. Berechnet in Rust über
+  `selftest::SelfTestResult::build` (eine WER-Implementierung, Normierung wie oben) gegen `reference_text` aus `reference.json`.
+  Sie enthält Segmentierung, Echo-Unterdrückung und Halluzinationsfilter, ist also nicht mit der Satz-WER vergleichbar.
+- **Parakeet GGUF Q8 (Befund B1) nicht gemessen:** Das Modell ist nicht im App-Katalog installiert. Nachholen mit
+  `m2-bench.ps1 -Full -Model <Katalog-ID>`, sobald es dort liegt.
+- **Systemschutz:** Die App läuft im Job-Objekt (BelowNormal, 8 GB Speicherdeckel, 50 % CPU-Hard-Cap, Kill-on-close) mit
+  RAM-Start-Gate (≥ 4 GB frei) und Zeitlimit (1,5 × Audiodauer + 5 min). Es läuft immer nur ein Messprozess.
+
 ## Grenzen
 
 - **Gelesene Sprache:** FLEURS sind vorgelesene, gut artikulierte Einzelsätze (Wikipedia-nah) in ruhiger Umgebung.

@@ -915,7 +915,45 @@ fn run_simulate_meeting(
     tm: &Arc<TranscriptionManager>,
     args: &CliArgs,
 ) -> i32 {
-    use managers::meetings::simulate::{read_pcm16_mono, simulate_with_app, SimulateOptions};
+    use managers::meetings::simulate::{read_pcm16_mono, SimulateOptions};
+
+    // M2-P2b2: benchmark scenes (mic + system + reference.json) instead of
+    // --mic/--system; the reference texts give live WER and far-word leak.
+    let scene = if args.scene.is_empty() {
+        None
+    } else {
+        if args.mic.is_some() || args.system.is_some() {
+            eprintln!("error: --scene replaces --mic/--system, pass one or the other");
+            return 2;
+        }
+        let mic_file = args.scene_mic.as_deref().unwrap_or("mic_echo.wav");
+        match managers::meetings::simulate::load_scenes(&args.scene, mic_file) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 2;
+            }
+        }
+    };
+    if let Some(scene) = scene {
+        return run_simulate_opts(
+            app,
+            store,
+            tm,
+            args,
+            SimulateOptions {
+                title: "Simulation".to_string(),
+                mic: scene.mic,
+                system: Some(scene.system),
+                aec: !args.no_aec,
+                system_delay_ms: args.system_delay_ms.unwrap_or(0),
+                far_text: Some(scene.far_text),
+                near_text: Some(scene.near_text),
+                realtime: args.realtime,
+            },
+            Some(scene.utterances),
+        );
+    }
 
     let Some(mic_path) = args.mic.as_deref() else {
         eprintln!("error: --simulate-meeting needs --mic <wav>");
@@ -948,6 +986,30 @@ fn run_simulate_meeting(
         }
     };
 
+    let opts = SimulateOptions {
+        title: "Simulation".to_string(),
+        mic,
+        system,
+        aec: !args.no_aec,
+        system_delay_ms: args.system_delay_ms.unwrap_or(0),
+        far_text,
+        near_text,
+        realtime: args.realtime, // M2-P2b2
+    };
+    run_simulate_opts(app, store, tm, args, opts, None)
+}
+
+/// Loads the live model and runs the simulation (shared by --mic and --scene).
+fn run_simulate_opts(
+    app: &AppHandle,
+    store: &Arc<managers::meetings::store::MeetingStore>,
+    tm: &Arc<TranscriptionManager>,
+    args: &CliArgs,
+    opts: managers::meetings::simulate::SimulateOptions,
+    utterances: Option<usize>,
+) -> i32 {
+    use managers::meetings::simulate::simulate_with_app;
+
     let model_id = args.model.clone().unwrap_or_else(|| {
         TranscriptionManager::meeting_model_target(&get_settings(app))
     });
@@ -962,19 +1024,12 @@ fn run_simulate_meeting(
     }
     let load_ms = load_start.elapsed().as_millis() as u64;
 
-    let opts = SimulateOptions {
-        title: "Simulation".to_string(),
-        mic,
-        system,
-        aec: !args.no_aec,
-        system_delay_ms: args.system_delay_ms.unwrap_or(0),
-        far_text,
-        near_text,
-    };
     match simulate_with_app(app, Arc::clone(store), Arc::clone(tm), opts) {
         Ok(mut payload) => {
             payload["model"] = serde_json::json!(model_id);
             payload["load_ms"] = serde_json::json!(load_ms);
+            payload["scenes"] = serde_json::json!(args.scene); // M2-P2b2
+            payload["reference_utterances"] = serde_json::json!(utterances);
             // M2-P2d: Enddurchlauf auf derselben Besprechung.
             if let (Some(final_model), Some(id)) =
                 (args.final_model.as_deref(), payload["meeting_id"].as_str())
