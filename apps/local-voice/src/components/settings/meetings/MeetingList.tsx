@@ -14,13 +14,20 @@ import {
   type Folder,
   type Meeting,
   type MeetingSearchItem,
+  type ScopeFilter,
 } from "@/bindings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { Alert } from "../../ui/Alert";
 import Badge from "../../ui/Badge";
-import { FolderInput, Trash2, Upload } from "lucide-react";
+import {
+  CheckSquare,
+  FolderInput,
+  MessageSquare,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { translateMeetingError } from "./meetingErrors";
 import { SearchBar, SearchSnippet } from "./search/SearchBar";
 import {
@@ -81,9 +88,14 @@ const formatDuration = (durationMs: number | null) => {
 
 interface MeetingListProps {
   onSelect: (meeting: Meeting) => void;
+  /** M4-P4e: Chat ueber viele Besprechungen oeffnen (Scope vorbelegt). */
+  onAsk?: (filter: ScopeFilter) => void;
 }
 
-export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
+export const MeetingList: React.FC<MeetingListProps> = ({
+  onSelect,
+  onAsk,
+}) => {
   const { t, i18n } = useTranslation();
   // Ohne Suche/Filter tragen die Eintraege kein Snippet.
   const [items, setItems] = useState<MeetingSearchItem[]>([]);
@@ -116,6 +128,13 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
     y: number;
     meeting: Meeting;
   } | null>(null);
+  // M4-P4e: Auswahlmodus fuer "Auswahl fragen".
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const toggleSelected = (id: string) =>
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
   const filtered =
     query !== "" ||
     folderId !== null ||
@@ -345,6 +364,31 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
     void loadFolders();
   };
 
+  // Ordner und Zeitraum der Liste gelten auch fuer den Chat; Quelle und
+  // "mit Notizen" kennt der Chat-Scope nicht.
+  const askAll = () =>
+    onAsk?.({
+      meeting_ids: null,
+      folder_id: folderId,
+      person: null,
+      from: fromTs,
+      to: null,
+    });
+
+  const askSelection = () => {
+    // In Listenreihenfolge, nicht in Klickreihenfolge.
+    const order = items.map((item) => item.meeting.id);
+    const ids = order.filter((id) => selectedIds.includes(id));
+    if (ids.length === 0) return;
+    onAsk?.({
+      meeting_ids: ids,
+      folder_id: null,
+      person: null,
+      from: null,
+      to: null,
+    });
+  };
+
   const afterFoldersChanged = () => {
     void loadFolders();
     // Im Ordnerfilter kann die Besprechung gerade herausgefallen sein.
@@ -362,16 +406,55 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
       >
         <div className="flex justify-between items-center gap-2">
           <p className="text-sm text-text/70">{t("meetings.list.title")}</p>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={pickImportFile}
-            disabled={importing}
-          >
-            <Upload width={14} height={14} />
-            {t("meetings.list.import")}
-          </Button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {onAsk && (
+              <>
+                <Button variant="secondary" size="sm" onClick={askAll}>
+                  <MessageSquare width={14} height={14} />
+                  {t("meetings.chat.list.askAll")}
+                </Button>
+                <Button
+                  variant={selecting ? "primary-soft" : "secondary"}
+                  size="sm"
+                  aria-pressed={selecting}
+                  onClick={() => {
+                    setSelecting((on) => !on);
+                    setSelectedIds([]);
+                  }}
+                >
+                  <CheckSquare width={14} height={14} />
+                  {selecting
+                    ? t("meetings.chat.list.selectDone")
+                    : t("meetings.chat.list.select")}
+                </Button>
+              </>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={pickImportFile}
+              disabled={importing}
+            >
+              <Upload width={14} height={14} />
+              {t("meetings.list.import")}
+            </Button>
+          </div>
         </div>
+        {selecting && (
+          <div className="flex items-center justify-between gap-2 rounded-md bg-logo-primary/10 px-3 py-1.5">
+            <span className="text-sm">
+              {t("meetings.chat.list.selected", { count: selectedIds.length })}
+            </span>
+            <Button
+              size="sm"
+              onClick={askSelection}
+              disabled={selectedIds.length === 0}
+            >
+              <MessageSquare width={14} height={14} />
+              {t("meetings.chat.list.askSelection")}
+            </Button>
+          </div>
+        )}
         <div className="space-y-2">
           <SearchBar onSearch={setQuery} />
           <FolderChips
@@ -425,13 +508,27 @@ export const MeetingList: React.FC<MeetingListProps> = ({ onSelect }) => {
                   key={meeting.id}
                   className="flex items-center justify-between gap-2 py-2 cursor-pointer hover:bg-mid-gray/10 rounded-md px-1"
                   data-meeting-id={meeting.id}
-                  onClick={() => onSelect(meeting)}
+                  onClick={() =>
+                    selecting ? toggleSelected(meeting.id) : onSelect(meeting)
+                  }
                   onContextMenu={(e) => {
                     e.preventDefault();
                     setRowMenu({ x: e.clientX, y: e.clientY, meeting });
                   }}
                 >
-                  <div className="min-w-0">
+                  {selecting && (
+                    <input
+                      type="checkbox"
+                      className="shrink-0 cursor-pointer"
+                      aria-label={t("meetings.chat.list.selectRow", {
+                        title: meeting.title,
+                      })}
+                      checked={selectedIds.includes(meeting.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => toggleSelected(meeting.id)}
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium truncate">
                       {meeting.title}
                     </p>

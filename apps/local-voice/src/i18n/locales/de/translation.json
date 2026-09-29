@@ -1930,6 +1930,168 @@
         "notFound": "Diesen Ordner gibt es nicht mehr.",
         "failed": "Ordner konnte nicht gespeichert werden."
       }
+    },
+    "chat": {
+      "ask": "Fragen",
+      "askTitle": "Fragen zu dieser Besprechung (Strg+J)",
+      "panelLabel": "Chat",
+      "scope": {
+        "meeting": "Diese Besprechung",
+        "live": "Laufende Besprechung",
+        "global": "Besprechungen"
+      },
+      "close": "Chat schließen",
+      "placeholder": "Frage stellen … („/“ für Recipes)",
+      "inputLabel": "Frage",
+      "send": "Senden",
+      "cancel": "Abbrechen",
+      "cancelled": "Abgebrochen – nichts gespeichert.",
+      "threads": "Verläufe",
+      "newThread": "Neuer Verlauf",
+      "threadUntitled": "Verlauf ohne Titel",
+      "threadCount_one": "{{count}} Nachricht",
+      "threadCount_other": "{{count}} Nachrichten",
+      "deleteThread": "Verlauf löschen",
+      "empty": "Stell eine Frage – jede Aussage der Antwort ist mit einer Stelle belegt.",
+      "you": "Du",
+      "assistant": "Antwort",
+      "stage": {
+        "searching": "Suche passende Stellen …",
+        "reading": "Lese Auszüge …",
+        "answering": "Antworte …",
+        "retry": "Zweiter Anlauf mit weiteren Stellen …"
+      },
+      "notFound": "Dazu steht in den durchsuchten Besprechungen nichts.",
+      "uncited": "ohne Beleg",
+      "uncitedHint": "Diese Antwort nennt keine belegte Stelle – bitte selbst prüfen.",
+      "citation": {
+        "label": "Beleg {{n}}",
+        "jump": "Zur Stelle springen",
+        "deleted": "Besprechung gelöscht",
+        "source": {
+          "title": "Titel",
+          "transcript": "Transkript",
+          "user_notes": "Meine Notizen",
+          "ai_notes": "KI-Notizen"
+        }
+      },
+      "coverage": {
+        "live": "Live-Mitschrift.",
+        "searched_one": "Durchsucht: {{count}} Besprechung.",
+        "searched_other": "Durchsucht: {{count}} Besprechungen.",
+        "readGlobal": "Gelesen: {{meetings}}, {{excerpts}}.",
+        "read": "Gelesen: {{excerpts}}.",
+        "meetings_one": "{{count}} Besprechung",
+        "meetings_other": "{{count}} Besprechungen",
+        "excerpts_one": "{{count}} Stelle",
+        "excerpts_other": "{{count}} Stellen",
+        "unread_one": "{{count}} weitere mit Treffern nicht gelesen – Frage eingrenzen.",
+        "unread_other": "{{count}} weitere mit Treffern nicht gelesen – Frage eingrenzen.",
+        "truncated": "Es gab mehr passende Stellen, als gelesen werden konnten.",
+        "secondRound": "Zweiter Suchlauf.",
+        "lexicalOnly": "Nur Stichwortsuche.",
+        "cpuLimited": "CPU: weniger Auszüge gelesen.",
+        "dropped_one": "{{count}} ungültiger Beleg verworfen.",
+        "dropped_other": "{{count}} ungültige Belege verworfen."
+      },
+      "remote": {
+        "bar": "Antworten erzeugt {{provider}}. Ausschnitte aus deinen Besprechungen werden dorthin übertragen.",
+        "confirmTitle": "Ausschnitte an {{provider}} senden?",
+        "confirmBody": "Für die Antwort gehen Ausschnitte aus Transkript und Notizen an {{provider}}. Diese Bestätigung gilt für diesen Anbieter und wird nicht erneut abgefragt.",
+        "confirm": "Senden",
+        "cancel": "Abbrechen"
+      },
+      "errors": {
+        "no_provider": "Kein KI-Anbieter eingerichtet (Einstellungen → Nachbearbeitung).",
+        "no_model": "Für den KI-Anbieter ist kein Modell eingetragen.",
+        "memory_low": "Zu wenig freier Arbeitsspeicher für das lokale Modell. Bitte andere Programme schließen.",
+        "recording_active_cpu": "Während der Aufnahme antwortet das lokale Modell nur mit Grafikkarte – sonst leidet die Mitschrift.",
+        "chat_busy": "Es läuft schon eine Frage. Bitte kurz warten.",
+        "empty_scope": "In dieser Eingrenzung gibt es keine Besprechungen.",
+        "llm_failed": "Das Sprachmodell hat nicht geantwortet. Bitte erneut versuchen.",
+        "cancelled": "Abgebrochen – nichts gespeichert.",
+        "recipe_invalid": "Das Recipe passt hier nicht oder ist unvollständig.",
+        "invalid_request": "Die Frage ist leer oder zu lang.",
+        "meeting_not_found": "Die Besprechung gibt es nicht mehr.",
+        "thread_not_found": "Der Verlauf wurde gelöscht.",
+        "store_failed": "Die Antwort konnte nicht gespeichert werden.",
+        "unknown": "Die Frage ist fehlgeschlagen ({{code}})."
+      },
+      "live": {
+        "row": "Frage zur laufenden Besprechung",
+        "expand": "Chat zur laufenden Besprechung öffnen",
+        "collapse": "Chat einklappen"
+      },
+      "list": {
+        "askAll": "Alle Besprechungen fragen",
+        "select": "Auswählen",
+        "selectDone": "Auswahl beenden",
+        "selected_one": "{{count}} ausgewählt",
+        "selected_other": "{{count}} ausgewählt",
+        "askSelection": "Auswahl fragen",
+        "selectRow": "{{title}} auswählen"
+      },
+      "scopeChips": {
+        "label": "Eingrenzung",
+        "all": "Alle Besprechungen",
+        "folder": "Ordner: {{name}}",
+        "from": "Ab {{date}}",
+        "to": "Bis {{date}}",
+        "person": "Person: {{name}}",
+        "selection_one": "{{count}} Besprechung",
+        "selection_other": "{{count}} Besprechungen",
+        "remove": "{{label}} entfernen"
+      }
+    },
+    "recipes": {
+      "bar": "Recipes",
+      "menu": "Recipe wählen",
+      "manage": "Recipes verwalten",
+      "noMatch": "Kein Recipe passt.",
+      "remove": "Recipe entfernen",
+      "missing": "Bitte „{{label}}“ ausfüllen.",
+      "chooseFolder": "Ordner wählen",
+      "builtin": "Mitgeliefert",
+      "readonly": "Mitgelieferte Recipes sind schreibgeschützt – zum Anpassen duplizieren.",
+      "empty": "Noch keine Recipes.",
+      "duplicate": "Duplizieren",
+      "edit": "Bearbeiten",
+      "delete": "Löschen",
+      "new": "Neues Recipe",
+      "save": "Speichern",
+      "cancel": "Abbrechen",
+      "close": "Schließen",
+      "fieldTitle": "Titel",
+      "fieldPrompt": "Anweisung",
+      "promptHint": "Variablen in doppelten geschweiften Klammern, z. B. {{example}}.",
+      "fieldScope": "Gilt für",
+      "scope": {
+        "meeting": "Eine Besprechung",
+        "global": "Viele Besprechungen",
+        "any": "Beides"
+      },
+      "liveOk": "Auch während der Aufnahme anbieten",
+      "variables": "Variablen",
+      "addVariable": "Variable hinzufügen",
+      "removeVariable": "Variable entfernen",
+      "varName": "Name",
+      "varLabel": "Beschriftung",
+      "varKind": "Art",
+      "varRequired": "Pflicht",
+      "kind": {
+        "text": "Text",
+        "person": "Person",
+        "folder": "Ordner",
+        "date_from": "Datum ab",
+        "date_to": "Datum bis",
+        "meeting": "Besprechung"
+      },
+      "errors": {
+        "invalid": "Das Recipe ist ungültig ({{reason}}).",
+        "readonly": "Mitgelieferte Recipes lassen sich nicht ändern.",
+        "not_found": "Das Recipe gibt es nicht mehr.",
+        "generic": "Speichern fehlgeschlagen: {{error}}"
+      }
     }
   },
   "micSelector": {
