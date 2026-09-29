@@ -1594,6 +1594,23 @@
       "captureSystem": "Capture system audio (other party)",
       "micLevel": "Microphone",
       "systemLevel": "System",
+      "health": {
+          "mic": {
+            "no_data": "The microphone is delivering no data. Please check the connection and the selected device.",
+            "digital_zero": "The microphone has delivered only digital silence for 10 s. Is it muted?",
+            "silent": "The microphone has delivered no signal for 30 s.",
+            "clipping": "The microphone is overdriven. Please lower the input level."
+          },
+          "system": {
+            "no_data": "System audio is delivering no data.",
+            "digital_zero": "System audio is delivering only digital silence.",
+            "silent": "System audio is delivering no signal.",
+            "clipping": "System audio is overdriven."
+          },
+          "queue_overflow": "Live processing cannot keep up. The recording is complete, but the live transcript may have gaps.",
+          "vad_unavailable": "Speech detection (VAD) is unavailable. The live transcript runs in coarse 20-second blocks.",
+          "loopback_died": "System audio failed. The recording continues with the microphone only."
+      },
       "autoNotes": {
         "running": "Creating AI notes … {{step}}/{{total}}",
         "done": "The AI notes are ready. Find them in the meeting under “Notes”.",
