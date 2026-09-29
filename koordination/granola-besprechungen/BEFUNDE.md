@@ -32,7 +32,7 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 ## B6 — P4e: Zitat-Tooltip verdeckt Antworttext (29.09. 15:20)
 - Beobachtet: Screenshot abnahme/p4e-chat.png, der Tooltip ueberlagert die Antwortzeile.
 - Konsequenz: kleine UI-Korrektur (Tooltip unterhalb/seitlich) im Abnahme-Feinschliff M7.
-- Status: offen
+- Status: erledigt (P6d 95e21c66, abnahme/b6-tooltip.png)
 
 ## B7 — P3a: AMI-Pruefteil 15,19 % DER, knapp ueber AK7-Grenze 15 % (29.09. 15:50)
 - Beobachtet: --eval-diarization; ES2004a 15,30 % (v. a. Wortpausen/Miss), IS1009a 15,09 % (6 % Verwechslung); deutsch 0,94 %; AMI-Entwicklung 14,72 %.

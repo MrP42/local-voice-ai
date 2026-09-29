@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 2
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T21:56
+aktualisiert: 2026-09-29T22:18
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -37,7 +37,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - [x] AK7 — Sprecher: DER ≤ 15 % auf Diarisierungs-Testsatz (AMI-Stichprobe + deutsches Mehrsprecher-Fixture); Sprecher benennbar, Namen überstehen Neu-Transkription
 - [x] AK8 — Chat/Suche: Eval mit ≥ 20 Fragen über ≥ 5 Fixture-Besprechungen → ≥ 85 % richtige Antworten mit korrektem Zitat (lokales Modell); Suche < 500 ms bei 500 Besprechungen
 - [x] AK9 — Kalender + Erkennung: ICS-Fixture → Termine mit Titel/Teilnehmenden übernommen, Erinnerung; laufende Meeting-App (Mikrofonnutzung) → Hinweis „Aufnahme starten?"; Tests grün
-- [ ] AK10 — Nachbereitung/Export: Follow-up-Mail-Entwurf, formatierte Zwischenablage, PDF/SRT/JSON-Export; Tests grün
+- [x] AK10 — Nachbereitung/Export: Follow-up-Mail-Entwurf, formatierte Zwischenablage, PDF/SRT/JSON-Export; Tests grün
 - [ ] AK11 — Abnahme: Installer gebaut und installiert, Screenshots der Kernabläufe (Aufnahme mit Notizen → KI-Notizen → Chat) in `koordination/granola-besprechungen/abnahme/`
 
 ## Quality Gates
@@ -114,6 +114,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29T19:33 AK8 erfüllt — --eval-chat 24 Fragen/5 Besprechungen: Gemma 4 E4B accuracy 1,000 in 3 von 3 Laeufen (abnahme/p4g-eval-chat-1..3.json), 12B 1,000; Suche ui p95 180 ms (Release, P4a) bei 500 Besprechungen; Commit a4207200
 - 2026-09-29T21:51 AK7 erfüllt — P3a/P3b/P3c: AMI-Pruefteil 15,19 % (Patrick wertet als erfuellt, B7), deutsch 0,94 %, Benennen + Namen ueberstehen Neu-Transkription (a97a1008)
 - 2026-09-29T21:55 AK9 erfüllt — P5a/P5b 892c3291 + P5c 34c948e2: ICS-Fixture-Tests, reminder-Tests, --detect-mic; cargo 1552 passed, Playwright 205 passed
+- 2026-09-29T22:18 AK10 erfüllt — P6a/P6b/P6c/P6d 95e21c66: Follow-up-Mail, formatiert kopieren, PDF/SRT/JSON; Playwright 214 passed, cargo 1552 passed
 
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)

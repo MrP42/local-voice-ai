@@ -27,7 +27,7 @@ Quelle Granola: [recherche/granola-analyse.md](recherche/granola-analyse.md) · 
 | F17 | People/Companies aus Kalender | Komfort | fehlt | Personenliste aus Teilnehmern und Sprechernamen, Besprechungen je Person | M5 | offen | |
 | F18 | Pre-Meeting-Brief | Komfort | fehlt | Kurzbrief aus früheren Besprechungen mit denselben Teilnehmenden | M5 | offen | |
 | F19 | Follow-up-Mail (nur Gmail) | Kern | fehlt | Entwurf erzeugen, kopieren/als Mail öffnen (jedes Mailprogramm) | M6 | besser | P6c d4fe2229: Entwurf lokal, jedes Mailprogramm (Kopieren/mailto/.eml) statt nur Gmail |
-| F20 | Teilen/Export (Link, CSV per Mail) | Kern | Word/TXT/MD/Zwischenablage | **besser:** formatierte Zwischenablage, PDF/SRT/JSON; kein gehosteter Link | M6 | offen | |
+| F20 | Teilen/Export (Link, CSV per Mail) | Kern | Word/TXT/MD/Zwischenablage | **besser:** formatierte Zwischenablage, PDF/SRT/JSON; kein gehosteter Link | M6 | besser | P6a/P6b/P6d 95e21c66: Word/TXT/MD/HTML/PDF/SRT/VTT/JSON, Teile waehlbar, formatiert kopieren; Playwright meeting-export, abnahme/p6d-export.png |
 | F21 | MCP-Server/API (remote, bezahlt) | Komfort | fehlt | **besser:** lokaler MCP-Server (nur lesend) für Claude/Codex | M6 | offen | |
 | F22 | Integrationen Slack/Notion/HubSpot/Zapier | Nein | – | Cloud-Integrationen außerhalb des Ziels; Export deckt den Bedarf | – | verworfen | Non-Scope GOAL.md |
 | F23 | Mobile (iOS/Android/Watch), Telefonate | Nein | Apple-App separat | Non-Scope | – | verworfen | Non-Scope GOAL.md |
