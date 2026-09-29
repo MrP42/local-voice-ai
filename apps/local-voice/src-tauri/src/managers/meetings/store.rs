@@ -80,7 +80,87 @@ static MIGRATIONS: &[M] = &[
     ALTER TABLE action_items ADD COLUMN sources_json TEXT;
     CREATE INDEX idx_action_items_meeting ON action_items(meeting_id, deleted_at);",
     ),
+    // M4 (Such-Index, Ordner, Recipes, Chat-Verlaeufe). Nur CREATE: vorhandene
+    // Zeilen bleiben unberuehrt, die neuen Tabellen sind leer, die Migration
+    // bleibt schnell (kein Backfill; der Indexer holt Altbestand nach).
+    M::up(SEARCH_INDEX_MIGRATION),
 ];
+
+/// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
+///
+/// Abweichung vom Entwurf: `meeting_chunks.id` ist `AUTOINCREMENT`. Ohne
+/// verwendet SQLite die hoechste geloeschte Rowid wieder; ein Indexer, der
+/// waehrend des Einbettens neu chunkt, haette dann einen Vektor des ALTEN
+/// Textes an einen NEUEN Chunk mit derselben Nummer gehaengt (stiller Fehler,
+/// dauerhaft falsche semantische Treffer). Mit AUTOINCREMENT verschwindet die
+/// Nummer nach dem Loeschen fuer immer; `put_vectors` ueberspringt sie.
+///
+/// Die beiden FTS5-Tabellen sind "external content" ueber `meeting_chunks`;
+/// die Trigger halten sie synchron und loeschen die Vektoren mit dem Chunk.
+pub(super) const SEARCH_INDEX_MIGRATION: &str = "CREATE TABLE meeting_chunks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, meeting_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      epoch INTEGER NOT NULL DEFAULT 0,
+      segment_ids TEXT NOT NULL DEFAULT '[]',
+      ref_keys TEXT NOT NULL DEFAULT '[]',
+      document_id TEXT,
+      start_ms INTEGER, end_ms INTEGER, channel INTEGER,
+      text TEXT NOT NULL,
+      started_at INTEGER,
+      created_at INTEGER NOT NULL);
+    CREATE INDEX idx_chunks_meeting ON meeting_chunks(meeting_id, source);
+    CREATE VIRTUAL TABLE meeting_chunks_fts_words USING fts5(
+      text, content='meeting_chunks', content_rowid='id',
+      tokenize='unicode61 remove_diacritics 2');
+    CREATE VIRTUAL TABLE meeting_chunks_fts_tri USING fts5(
+      text, content='meeting_chunks', content_rowid='id',
+      tokenize='trigram remove_diacritics 1');
+    CREATE TRIGGER meeting_chunks_ai AFTER INSERT ON meeting_chunks BEGIN
+      INSERT INTO meeting_chunks_fts_words(rowid, text) VALUES (new.id, new.text);
+      INSERT INTO meeting_chunks_fts_tri(rowid, text) VALUES (new.id, new.text);
+    END;
+    CREATE TRIGGER meeting_chunks_ad AFTER DELETE ON meeting_chunks BEGIN
+      INSERT INTO meeting_chunks_fts_words(meeting_chunks_fts_words, rowid, text)
+        VALUES ('delete', old.id, old.text);
+      INSERT INTO meeting_chunks_fts_tri(meeting_chunks_fts_tri, rowid, text)
+        VALUES ('delete', old.id, old.text);
+      DELETE FROM meeting_chunk_vectors WHERE chunk_id = old.id;
+    END;
+    CREATE TRIGGER meeting_chunks_au AFTER UPDATE ON meeting_chunks BEGIN
+      INSERT INTO meeting_chunks_fts_words(meeting_chunks_fts_words, rowid, text)
+        VALUES ('delete', old.id, old.text);
+      INSERT INTO meeting_chunks_fts_tri(meeting_chunks_fts_tri, rowid, text)
+        VALUES ('delete', old.id, old.text);
+      INSERT INTO meeting_chunks_fts_words(rowid, text) VALUES (new.id, new.text);
+      INSERT INTO meeting_chunks_fts_tri(rowid, text) VALUES (new.id, new.text);
+      DELETE FROM meeting_chunk_vectors
+        WHERE chunk_id = old.id AND (old.text IS NOT new.text OR old.id IS NOT new.id);
+    END;
+    CREATE TABLE meeting_chunk_vectors (
+      chunk_id INTEGER PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL,
+      vec BLOB NOT NULL);
+    CREATE TABLE meeting_index_state (
+      meeting_id TEXT PRIMARY KEY, transcript_epoch INTEGER, transcript_rev INTEGER,
+      notes_revision INTEGER, enhanced_doc_id TEXT, enhanced_updated_at INTEGER, title TEXT,
+      embed_model TEXT, embedded_at INTEGER, status TEXT NOT NULL DEFAULT 'pending',
+      error TEXT, updated_at INTEGER NOT NULL);
+    CREATE TABLE meeting_folders (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT, sort INTEGER NOT NULL DEFAULT 0,
+      parent_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER);
+    CREATE TABLE meeting_folder_items (
+      folder_id TEXT NOT NULL, meeting_id TEXT NOT NULL, added_at INTEGER NOT NULL,
+      PRIMARY KEY (folder_id, meeting_id));
+    CREATE INDEX idx_folder_items_meeting ON meeting_folder_items(meeting_id);
+    CREATE TABLE chat_recipes (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, spec_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER);
+    CREATE TABLE chat_threads (
+      id TEXT PRIMARY KEY, scope_json TEXT NOT NULL, meeting_id TEXT, title TEXT,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER);
+    CREATE TABLE chat_messages (
+      id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL,
+      citations_json TEXT, coverage_json TEXT, created_at INTEGER NOT NULL);
+    CREATE INDEX idx_chat_messages_thread ON chat_messages(thread_id, created_at);";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MeetingSource {
@@ -324,7 +404,9 @@ impl MeetingStore {
         Ok(())
     }
 
-    fn get_connection(&self) -> Result<Connection> {
+    /// `pub(super)`: die Such-Erweiterung (`meetings::search`) haengt eigene
+    /// `impl MeetingStore`-Bloecke an und oeffnet ueber dieselbe Stelle.
+    pub(super) fn get_connection(&self) -> Result<Connection> {
         Ok(Connection::open(&self.db_path)?)
     }
 
@@ -332,7 +414,7 @@ impl MeetingStore {
     /// touch the `meetings` row (`append_delta`, `upsert_document`): without
     /// this, a typo'd id or a write arriving after `soft_delete_meeting`
     /// would silently create orphaned/invisible rows instead of failing.
-    fn ensure_meeting_is_live(conn: &Connection, meeting_id: &str) -> Result<()> {
+    pub(super) fn ensure_meeting_is_live(conn: &Connection, meeting_id: &str) -> Result<()> {
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?1 AND deleted_at IS NULL)",
             params![meeting_id],
@@ -344,7 +426,7 @@ impl MeetingStore {
         Ok(())
     }
 
-    fn map_meeting(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
+    pub(super) fn map_meeting(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
         Ok(Meeting {
             id: row.get("id")?,
             title: row.get("title")?,
@@ -597,7 +679,10 @@ impl MeetingStore {
         let mut conn = self.get_connection()?;
         let now = Utc::now().timestamp();
 
-        let tx = conn.transaction()?;
+        // IMMEDIATE (M4): die Transaktion liest zuerst und schreibt dann; als
+        // DEFERRED wuerde ein Fremdschreiber dazwischen das Hochstufen sofort
+        // scheitern lassen (SQLITE_BUSY_SNAPSHOT), statt den Busy-Timeout zu nutzen.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         let paths: Option<(Option<String>, Option<String>)> = tx
             .query_row(
@@ -634,6 +719,34 @@ impl MeetingStore {
         tx.execute(
             "UPDATE meeting_notes SET deleted_at = ?1, updated_at = ?1 WHERE meeting_id = ?2",
             params![now, id],
+        )?;
+
+        // M4: der Such-Index ist eine abgeleitete Kopie des Textes und wird mit
+        // der Besprechung HART entfernt (Text, Vektoren, Verlaeufe sollen nicht
+        // ueberleben). Die Trigger auf `meeting_chunks` raeumen beide FTS-Tabellen
+        // und die Vektoren mit. Ordner behalten sich selbst, nur die Zuordnung
+        // faellt weg. Besprechungsgebundene Chats gehen samt Nachrichten; globale
+        // Verlaeufe behalten ihren Text (Zitate zeigt die UI dann als "geloescht").
+        tx.execute(
+            "DELETE FROM meeting_chunks WHERE meeting_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM meeting_index_state WHERE meeting_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM meeting_folder_items WHERE meeting_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM chat_messages
+             WHERE thread_id IN (SELECT id FROM chat_threads WHERE meeting_id = ?1)",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM chat_threads WHERE meeting_id = ?1",
+            params![id],
         )?;
 
         tx.commit()?;
@@ -901,7 +1014,7 @@ impl MeetingStore {
 // Consumers arrive with P1b/P1c; remove the allow when they do.
 #[allow(dead_code)]
 impl MeetingStore {
-    fn write_tx(conn: &mut Connection) -> Result<rusqlite::Transaction<'_>> {
+    pub(super) fn write_tx(conn: &mut Connection) -> Result<rusqlite::Transaction<'_>> {
         Ok(conn.transaction_with_behavior(TransactionBehavior::Immediate)?)
     }
 
@@ -3067,5 +3180,387 @@ mod tests {
             s.list_action_items(&m.id).unwrap().is_empty(),
             "Zeilen einer aelteren Dokumentversion erscheinen nicht"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // M4 / P4a: Migration Index 3 (Such-Index, Ordner, Recipes, Chat)
+    // ---------------------------------------------------------------------
+
+    const M1_TABLES: [&str; 9] = [
+        "meetings",
+        "meeting_documents",
+        "transcripts",
+        "transcript_deltas",
+        "speakers",
+        "humans",
+        "action_items",
+        "meeting_templates",
+        "meeting_notes",
+    ];
+
+    const M4_TABLES: [&str; 8] = [
+        "meeting_chunks",
+        "meeting_chunk_vectors",
+        "meeting_index_state",
+        "meeting_folders",
+        "meeting_folder_items",
+        "chat_recipes",
+        "chat_threads",
+        "chat_messages",
+    ];
+
+    /// Eine Datenbank, wie die App mit M1 (Index 0 bis 2) sie hinterlaesst:
+    /// die Altzeilen von `create_legacy_db` plus Zeilen, die erst M1 kennt
+    /// (Notizblock, KI-Notizen mit Vorlage, Epoche 2, Aufgabe mit Quellen).
+    fn create_m1_db(path: &Path) {
+        create_legacy_db(path);
+        let mut conn = Connection::open(path).unwrap();
+        Migrations::new(MIGRATIONS[..3].to_vec())
+            .to_latest(&mut conn)
+            .unwrap();
+        conn.execute_batch(
+            r#"
+            INSERT INTO meeting_notes (meeting_id, blocks_json, revision, created_at, updated_at)
+            VALUES ('M1', '[{"id":"b1","kind":"bullet","text":"Größe & Übergang","at_ms":1000,"checked":false}]',
+                    3, 1755600000, 1755600100);
+            UPDATE transcripts SET segment_epoch = 2 WHERE id = 'T1';
+            UPDATE meetings SET template_id = 'builtin:allgemein' WHERE id = 'M1';
+            INSERT INTO meeting_documents (id, meeting_id, kind, template_id, title, body_format,
+                body, generation_metadata_json, version, created_at, updated_at)
+            VALUES ('D4', 'M1', 'enhanced_notes', 'builtin:allgemein', NULL, 'enhanced@1',
+                    '{"format":"enhanced@1"}', NULL, 1, 1755603900, 1755603900123);
+            UPDATE action_items SET document_id = 'D4', entry_id = 'E1',
+                assignee_label = 'Frau Müller', sources_json = '[1,2]' WHERE id = 'A1';
+            "#,
+        )
+        .unwrap();
+    }
+
+    fn snapshot(conn: &Connection, tables: &[&str]) -> Vec<(String, Vec<String>, Vec<Vec<Value>>)> {
+        tables
+            .iter()
+            .map(|t| {
+                let cols = table_columns(conn, t);
+                let filter = if *t == "meeting_templates" {
+                    "WHERE id NOT LIKE 'builtin:%'"
+                } else {
+                    ""
+                };
+                let rows = dump(conn, t, &cols, filter);
+                (t.to_string(), cols, rows)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn migration_3_keeps_m1_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        create_m1_db(&path);
+
+        let before = {
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(user_version(&conn), 3, "M1-Stand: Index 0 bis 2 angewendet");
+            for t in M4_TABLES {
+                assert_eq!(
+                    scalar(
+                        &conn,
+                        &format!("SELECT COUNT(*) FROM sqlite_master WHERE name = '{t}'")
+                    ),
+                    0,
+                    "{t} gibt es vor Index 3 nicht"
+                );
+            }
+            let before = snapshot(&conn, &M1_TABLES);
+            assert!(
+                before.iter().all(|(_, _, rows)| !rows.is_empty()),
+                "jede Tabelle hat Zeilen, auch die von M1"
+            );
+            before
+        };
+
+        let s = MeetingStore::open_at(&path).unwrap();
+
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
+        assert_eq!(MIGRATIONS.len(), 4, "Index 3 ist genau EIN Schritt");
+        assert_eq!(
+            snapshot(&conn, &M1_TABLES),
+            before,
+            "alle Zeilen und Spalten aller M1-Tabellen wertgleich"
+        );
+        // Die neuen Tabellen sind leer, der Backfill ist nicht Sache der Migration.
+        for t in M4_TABLES {
+            assert_eq!(
+                scalar(&conn, &format!("SELECT COUNT(*) FROM {t}")),
+                0,
+                "{t} leer"
+            );
+        }
+        drop(conn);
+
+        // Der neue Code liest die Altdaten (M1-Zeilen inklusive).
+        let notes = s.get_notes("M1").unwrap();
+        assert_eq!(notes.revision, 3);
+        assert_eq!(notes.blocks[0].text, "Größe & Übergang");
+        assert_eq!(s.segment_epoch("M1").unwrap(), 2);
+        assert_eq!(
+            s.meeting_template_id("M1").unwrap().as_deref(),
+            Some("builtin:allgemein")
+        );
+        assert_eq!(s.get_segments("M1").unwrap().len(), 2);
+        assert_eq!(s.list_action_items("M1").unwrap().len(), 2);
+        // Bestehende Besprechungen sind noch nicht indexiert: sie stehen zur Nachholung an.
+        assert_eq!(s.stale_meetings(10).unwrap(), vec!["M1".to_string()]);
+
+        // Und der Index laeuft auf den Altdaten.
+        use crate::managers::meetings::search::chunking::{ChunkDraft, ChunkSource};
+        use crate::managers::meetings::search::index::{IndexState, MeetingFilter};
+        let segments = s.get_segments("M1").unwrap();
+        let drafts: Vec<ChunkDraft> = crate::managers::meetings::search::chunking::chunk_transcript(
+            &segments,
+            s.segment_epoch("M1").unwrap(),
+            &Default::default(),
+        );
+        assert_eq!(drafts.len(), 1);
+        let state = IndexState {
+            transcript_epoch: Some(2),
+            transcript_rev: Some(3),
+            notes_revision: Some(3),
+            title: Some("Kundengespräch Größe 🚀".into()),
+            status: "lexical".into(),
+            ..Default::default()
+        };
+        s.replace_meeting_chunks("M1", &[ChunkSource::Transcript], &drafts, &state)
+            .unwrap();
+        let page = s
+            .search_meetings("SCHÖN", &MeetingFilter::default(), 0, 25)
+            .unwrap();
+        assert_eq!(page.total, 1, "Umlaut-Suche im Altbestand: {page:?}");
+        assert!(page.items[0].snippet.as_deref().unwrap().contains("<mark>"));
+    }
+
+    #[test]
+    fn migration_3_is_all_or_nothing_when_it_fails_midway() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        create_m1_db(&path);
+        let before = {
+            let conn = Connection::open(&path).unwrap();
+            snapshot(&conn, &M1_TABLES)
+        };
+
+        // Index 3 plus ein Schritt, der erst nach dem ganzen Schema scheitert
+        // (wie ein Abbruch durch einen vollen Datentraeger am Ende).
+        let broken_sql: &'static str = Box::leak(
+            format!("{SEARCH_INDEX_MIGRATION} SELECT no_such_function();").into_boxed_str(),
+        );
+        let mut broken = MIGRATIONS[..3].to_vec();
+        broken.push(M::up(broken_sql));
+        let mut conn = Connection::open(&path).unwrap();
+        assert!(Migrations::new(broken).to_latest(&mut conn).is_err());
+        drop(conn);
+
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(user_version(&conn), 3, "Version unveraendert");
+        for name in [
+            "meeting_chunks",
+            "meeting_chunks_fts_words",
+            "meeting_chunks_fts_tri",
+            "meeting_chunk_vectors",
+            "chat_threads",
+            "idx_chunks_meeting",
+            "meeting_chunks_ai",
+            "meeting_chunks_ad",
+            "meeting_chunks_au",
+        ] {
+            assert_eq!(
+                scalar(
+                    &conn,
+                    &format!("SELECT COUNT(*) FROM sqlite_master WHERE name = '{name}'")
+                ),
+                0,
+                "{name} darf nicht halb angelegt sein"
+            );
+        }
+        assert_eq!(snapshot(&conn, &M1_TABLES), before, "Daten unberuehrt");
+        drop(conn);
+
+        // Danach laeuft die echte Migration sauber durch.
+        MeetingStore::open_at(&path).unwrap();
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(user_version(&conn), 4);
+        assert_eq!(snapshot(&conn, &M1_TABLES), before);
+    }
+
+    #[test]
+    fn migration_3_creates_the_specified_schema() {
+        let (_dir, s) = tmp_store();
+        let conn = s.get_connection().unwrap();
+        let sql_of = |name: &str| -> String {
+            conn.query_row(
+                "SELECT sql FROM sqlite_master WHERE name = ?1",
+                params![name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            table_columns(&conn, "meeting_chunks"),
+            [
+                "id",
+                "meeting_id",
+                "source",
+                "epoch",
+                "segment_ids",
+                "ref_keys",
+                "document_id",
+                "start_ms",
+                "end_ms",
+                "channel",
+                "text",
+                "started_at",
+                "created_at"
+            ]
+        );
+        assert!(sql_of("meeting_chunks").contains("AUTOINCREMENT"));
+        assert!(sql_of("meeting_chunks_fts_words").contains("unicode61 remove_diacritics 2"));
+        assert!(sql_of("meeting_chunks_fts_words").contains("content='meeting_chunks'"));
+        assert!(sql_of("meeting_chunks_fts_tri").contains("trigram remove_diacritics 1"));
+        assert_eq!(
+            table_columns(&conn, "meeting_chunk_vectors"),
+            ["chunk_id", "model", "dim", "vec"]
+        );
+        assert_eq!(
+            table_columns(&conn, "meeting_index_state"),
+            [
+                "meeting_id",
+                "transcript_epoch",
+                "transcript_rev",
+                "notes_revision",
+                "enhanced_doc_id",
+                "enhanced_updated_at",
+                "title",
+                "embed_model",
+                "embedded_at",
+                "status",
+                "error",
+                "updated_at"
+            ]
+        );
+        assert_eq!(
+            table_columns(&conn, "meeting_folders"),
+            [
+                "id",
+                "name",
+                "color",
+                "sort",
+                "parent_id",
+                "created_at",
+                "updated_at",
+                "deleted_at"
+            ]
+        );
+        assert_eq!(
+            table_columns(&conn, "meeting_folder_items"),
+            ["folder_id", "meeting_id", "added_at"]
+        );
+        assert_eq!(
+            table_columns(&conn, "chat_recipes"),
+            [
+                "id",
+                "title",
+                "spec_json",
+                "created_at",
+                "updated_at",
+                "deleted_at"
+            ]
+        );
+        assert_eq!(
+            table_columns(&conn, "chat_threads"),
+            [
+                "id",
+                "scope_json",
+                "meeting_id",
+                "title",
+                "created_at",
+                "updated_at",
+                "deleted_at"
+            ]
+        );
+        assert_eq!(
+            table_columns(&conn, "chat_messages"),
+            [
+                "id",
+                "thread_id",
+                "role",
+                "content",
+                "citations_json",
+                "coverage_json",
+                "created_at"
+            ]
+        );
+        for index in [
+            "idx_chunks_meeting",
+            "idx_folder_items_meeting",
+            "idx_chat_messages_thread",
+        ] {
+            assert_eq!(
+                scalar(
+                    &conn,
+                    &format!("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = '{index}'")
+                ),
+                1,
+                "{index}"
+            );
+        }
+        for trigger in [
+            "meeting_chunks_ai",
+            "meeting_chunks_ad",
+            "meeting_chunks_au",
+        ] {
+            assert_eq!(
+                scalar(
+                    &conn,
+                    &format!("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = '{trigger}'")
+                ),
+                1,
+                "{trigger}"
+            );
+        }
+        // Beide FTS-Tabellen haben fuer den DELETE-Trigger den Rohinhalt der Chunks.
+        assert!(sql_of("meeting_chunks_ad").contains("'delete', old.id, old.text"));
+    }
+
+    #[test]
+    fn reopening_a_migrated_database_keeps_index_and_state() {
+        use crate::managers::meetings::search::chunking::ChunkSource;
+        use crate::managers::meetings::search::index::tests::{draft, ready_meeting, state};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let s = MeetingStore::open_at(&path).unwrap();
+        let m = ready_meeting(&s, "Titel", 1_000);
+        s.replace_meeting_chunks(
+            &m.id,
+            &[ChunkSource::Transcript],
+            &[draft(
+                ChunkSource::Transcript,
+                "Wiederoeffnen prueft den Index",
+            )],
+            &state("lexical"),
+        )
+        .unwrap();
+        let s2 = MeetingStore::open_at(&path).unwrap();
+        MeetingStore::open_at(&path).unwrap();
+        assert_eq!(
+            s2.search_words("\"wiederoeffnen\"", &[m.id.clone()], 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(s2.index_state(&m.id).unwrap().is_some());
+        assert!(s2.search_index_is_consistent().unwrap());
+        let conn = s2.get_connection().unwrap();
+        assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
     }
 }

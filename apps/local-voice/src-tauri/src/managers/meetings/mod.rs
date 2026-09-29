@@ -8,6 +8,7 @@ pub mod notes;
 pub mod recorder;
 pub mod retention;
 pub mod retranscribe;
+pub mod search;
 pub mod stats;
 pub mod store;
 pub mod subtitle;

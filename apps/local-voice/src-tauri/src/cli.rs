@@ -135,4 +135,27 @@ pub struct CliArgs {
     /// running instance if there is one.
     #[arg(long, value_name = "FILE")]
     pub read_file: Option<PathBuf>,
+
+    // M4-P4a
+    /// Measure the meeting search index (list search, word search, hybrid
+    /// search) on a synthetic sandbox database in the temp directory and exit.
+    /// Sizes via --meetings and --chunks, runs per query via --repeat, output
+    /// via --json/--out. Exit code 0 ok, 1 error, 3 when a p95 reaches 500 ms.
+    /// Never touches the productive meetings.db.
+    #[arg(long)]
+    pub bench_search: bool,
+
+    /// Number of synthetic meetings for --bench-search (default 500).
+    #[arg(long, value_name = "N")]
+    pub meetings: Option<usize>,
+
+    /// Chunks per synthetic meeting for --bench-search (default 200).
+    #[arg(long, value_name = "N")]
+    pub chunks: Option<usize>,
+
+    /// Directory in which --bench-search creates its temporary database
+    /// (default: the system temp directory; needs about 1.2 GB for the
+    /// default size).
+    #[arg(long, value_name = "DIR")]
+    pub bench_dir: Option<PathBuf>,
 }

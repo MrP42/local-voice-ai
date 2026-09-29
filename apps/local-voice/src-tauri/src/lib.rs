@@ -1648,7 +1648,8 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.tts_test
         || cli_args.import_meeting.is_some()
         || cli_args.dump_meeting.is_some()
-        || cli_args.make_orphan.is_some();
+        || cli_args.make_orphan.is_some()
+        || cli_args.bench_search; // M4-P4a
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -1840,6 +1841,22 @@ pub fn run(cli_args: CliArgs) {
                             tts.stop_server();
                             code
                         });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // M4-P4a: Performance des Such-Index auf einer synthetischen
+                // Sandbox-DB im Temp-Verzeichnis (nie die produktive meetings.db).
+                // Braucht weder Modelle noch Mikrofon; Exit 0 ok, 1 Fehler,
+                // 3 wenn ein p95 die 500-ms-Grenze erreicht.
+                if cli_args.bench_search {
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| run_headless_bench_search(&args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2076,4 +2093,23 @@ pub fn run(cli_args: CliArgs) {
             }
             _ => {}
         });
+}
+
+// M4-P4a: `--bench-search`. Misst Listensuche, Wortsuche und hybride Suche auf
+// einer synthetischen Sandbox-Datenbank (Temp-Ordner, wird danach geloescht).
+// Ausgabe wie die anderen Headless-Laeufe: JSON auf stdout und mit `--out` in
+// eine Datei (das Release-Binary hat kein Konsolen-Subsystem). Exit 0 bestanden,
+// 1 Fehler, 3 wenn `ui_search_p95_ms` oder `hybrid_p95_ms` 500 ms erreichen.
+fn run_headless_bench_search(args: &CliArgs) -> i32 {
+    let (code, payload) = managers::meetings::search::bench::run_cli(
+        args.meetings,
+        args.chunks,
+        args.repeat,
+        args.bench_dir.clone(),
+    );
+    if let Some(error) = payload.get("error").and_then(|e| e.as_str()) {
+        eprintln!("error: bench-search failed: {error}");
+    }
+    emit_headless_payload(&payload, args.out.as_deref());
+    code
 }
