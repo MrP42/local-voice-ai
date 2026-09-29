@@ -8,6 +8,8 @@ use specta::Type;
 use std::path::{Path, PathBuf};
 use ulid::Ulid;
 
+use crate::managers::transcription::WordTime;
+
 use super::notes::model::{
     ActionItem, MeetingNotes, NoteBlock, TemplateInfo, TemplateSpec, SOURCE_AI, SOURCE_MANUAL,
     SOURCE_USER, STATUS_DONE, STATUS_TODO,
@@ -234,7 +236,7 @@ impl Meeting {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 pub struct StoredSegment {
     pub segment_index: u32,
     pub text: String,
@@ -242,6 +244,43 @@ pub struct StoredSegment {
     pub end_ms: u64,
     pub channel: u8, // 0=DirectMic, 1=RemoteParty, 2=MixedCapture
     pub speaker_index: Option<u32>,
+    /// M2-P2d: Wortzeiten auf der Kanal-Achse, wenn die Engine sie liefert
+    /// (Grundlage fuer M3). Fehlt in allen aelteren `segments_json` und wird
+    /// dann nicht geschrieben: alte Zeilen laden und bleiben unveraendert,
+    /// keine Migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<WordTime>>,
+}
+
+/// M2-P2d: Stand eines Transkripts fuer den Ersatz durch den Enddurchlauf.
+#[derive(Clone, Debug)]
+pub struct TranscriptSnapshot {
+    pub segments: Vec<StoredSegment>,
+    pub epoch: u32,
+    /// `content_revision`: steigt mit jeder Aenderung am Transkript.
+    pub revision: i64,
+    pub model: Option<String>,
+}
+
+/// M2-P2d: warum `replace_segments` nichts ersetzt hat.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReplaceError {
+    /// Das Transkript hat sich seit dem Schnappschuss geaendert (z. B. eine
+    /// Korrektur von Hand): der Enddurchlauf ueberschreibt sie nicht.
+    Conflict { expected: i64, found: i64 },
+    /// Besprechung geloescht oder DB-Fehler.
+    Store(String),
+}
+
+impl std::fmt::Display for ReplaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReplaceError::Conflict { expected, found } => {
+                write!(f, "transcript changed (revision {expected} -> {found})")
+            }
+            ReplaceError::Store(e) => write!(f, "{e}"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -552,6 +591,107 @@ impl MeetingStore {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// M2-P2d: das Transkript, wie es jetzt gespeichert ist (Segmente,
+    /// Epoche, Revision, Modell). Ohne Transkriptzeile: leer, Epoche 0,
+    /// Revision 0.
+    pub fn transcript_snapshot(&self, meeting_id: &str) -> Result<TranscriptSnapshot> {
+        let conn = self.get_connection()?;
+        let row: Option<(String, i64, i64, Option<String>)> = conn
+            .query_row(
+                "SELECT segments_json, segment_epoch, content_revision, model FROM transcripts
+                 WHERE meeting_id = ?1 AND deleted_at IS NULL",
+                params![meeting_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?;
+        Ok(match row {
+            Some((json, epoch, revision, model)) => TranscriptSnapshot {
+                segments: serde_json::from_str(&json)?,
+                epoch: epoch as u32,
+                revision,
+                model,
+            },
+            None => TranscriptSnapshot {
+                segments: Vec::new(),
+                epoch: 0,
+                revision: 0,
+                model: None,
+            },
+        })
+    }
+
+    /// M2-P2d: ersetzt das ganze Transkript durch das des Enddurchlaufs, in
+    /// EINER Transaktion: `segments_json` neu (Indizes wie uebergeben, ab 0),
+    /// Deltas geloescht (sie sind das Protokoll der alten Segmente),
+    /// `segment_epoch + 1`, `content_revision + 1`, `model`/`granularity`
+    /// gesetzt. `expected_revision` ist die Revision des Schnappschusses, aus
+    /// dem `transcript_live.json` entstand: hat sich das Transkript seither
+    /// geaendert, bleibt alles, wie es ist (`Conflict`). Ohne Transkriptzeile
+    /// wird eine angelegt (Revision 0). Gibt die neue Epoche zurueck.
+    pub fn replace_segments(
+        &self,
+        meeting_id: &str,
+        segments: &[StoredSegment],
+        model: &str,
+        granularity: &str,
+        expected_revision: i64,
+    ) -> std::result::Result<u32, ReplaceError> {
+        let store_err = |e: &dyn std::fmt::Display| ReplaceError::Store(e.to_string());
+        let mut conn = self.get_connection().map_err(|e| store_err(&e))?;
+        let now = Utc::now().timestamp();
+        // IMMEDIATE: Pruefen und Schreiben ohne fremden Schreiber dazwischen.
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| store_err(&e))?;
+        Self::ensure_meeting_is_live(&tx, meeting_id).map_err(|e| store_err(&e))?;
+        let row: Option<(String, i64, i64)> = tx
+            .query_row(
+                "SELECT id, content_revision, segment_epoch FROM transcripts WHERE meeting_id = ?1",
+                params![meeting_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| store_err(&e))?;
+        let found = row.as_ref().map(|r| r.1).unwrap_or(0);
+        if found != expected_revision {
+            return Err(ReplaceError::Conflict {
+                expected: expected_revision,
+                found,
+            });
+        }
+        let json = serde_json::to_string(segments).map_err(|e| store_err(&e))?;
+        let epoch = match row {
+            Some((transcript_id, _, epoch)) => {
+                tx.execute(
+                    "DELETE FROM transcript_deltas WHERE transcript_id = ?1",
+                    params![transcript_id],
+                )
+                .map_err(|e| store_err(&e))?;
+                tx.execute(
+                    "UPDATE transcripts SET segments_json = ?1, model = ?2, granularity = ?3,
+                         content_revision = content_revision + 1,
+                         segment_epoch = segment_epoch + 1, updated_at = ?4
+                     WHERE id = ?5",
+                    params![json, model, granularity, now, transcript_id],
+                )
+                .map_err(|e| store_err(&e))?;
+                epoch + 1
+            }
+            None => {
+                tx.execute(
+                    "INSERT INTO transcripts (id, meeting_id, model, granularity, segments_json,
+                         content_revision, segment_epoch, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 1, 1, ?6, ?6)",
+                    params![Ulid::new().to_string(), meeting_id, model, granularity, json, now],
+                )
+                .map_err(|e| store_err(&e))?;
+                1
+            }
+        };
+        tx.commit().map_err(|e| store_err(&e))?;
+        Ok(epoch as u32)
     }
 
     pub fn set_status(&self, id: &str, status: MeetingStatus) -> Result<()> {
@@ -1729,6 +1869,7 @@ mod tests {
                     end_ms: 1_000,
                     channel: 0,
                     speaker_index: None,
+                    words: None,
                 }],
             },
         )
@@ -1752,6 +1893,7 @@ mod tests {
                         end_ms: 1_000,
                         channel: 0,
                         speaker_index: None,
+                        words: None,
                     }],
                 },
             )
@@ -1774,6 +1916,7 @@ mod tests {
                 end_ms: 900,
                 channel: 0,
                 speaker_index: None,
+                words: None,
             }],
         };
         let d2 = TranscriptDelta {
@@ -1784,6 +1927,7 @@ mod tests {
                 end_ms: 2100,
                 channel: 1,
                 speaker_index: None,
+                words: None,
             }],
         };
         assert_eq!(s.append_delta(&m.id, &d1).unwrap(), 1);
@@ -1808,6 +1952,7 @@ mod tests {
                     end_ms: 800,
                     channel: 0,
                     speaker_index: None,
+                    words: None,
                 }],
             },
         )
@@ -1890,6 +2035,7 @@ mod tests {
                 end_ms: 500,
                 channel: 0,
                 speaker_index: None,
+                words: None,
             }],
         };
         assert!(s.append_delta(&m.id, &delta).is_err());
@@ -2645,6 +2791,172 @@ mod tests {
         assert_eq!(s.get_notes(&m.id).unwrap().blocks.len(), 1);
     }
 
+    // ---- M2-P2d: Enddurchlauf ersetzt das Transkript ------------------------
+
+    fn p2d_seg(index: u32, text: &str, start_ms: u64) -> StoredSegment {
+        StoredSegment {
+            segment_index: index,
+            text: text.to_string(),
+            start_ms,
+            end_ms: start_ms + 1_000,
+            channel: 0,
+            speaker_index: None,
+            words: None,
+        }
+    }
+
+    fn p2d_live(s: &MeetingStore) -> Meeting {
+        let m = live_meeting(s);
+        for i in 0..2 {
+            s.append_delta(
+                &m.id,
+                &TranscriptDelta {
+                    new_segments: vec![p2d_seg(i, "live", u64::from(i) * 1_000)],
+                },
+            )
+            .unwrap();
+        }
+        m
+    }
+
+    fn p2d_deltas(s: &MeetingStore) -> i64 {
+        scalar(&s.get_connection().unwrap(), "SELECT COUNT(*) FROM transcript_deltas")
+    }
+
+    #[test]
+    fn replace_segments_swaps_the_transcript_and_bumps_the_epoch_in_one_step() {
+        let (_dir, s) = tmp_store();
+        let m = p2d_live(&s);
+        let before = s.transcript_snapshot(&m.id).unwrap();
+        assert_eq!((before.epoch, before.revision, before.segments.len()), (0, 2, 2));
+        assert_eq!(p2d_deltas(&s), 2);
+
+        let mut fresh = vec![p2d_seg(0, "neu", 0), p2d_seg(1, "neu", 900), p2d_seg(2, "neu", 2_000)];
+        fresh[1].words = Some(vec![WordTime {
+            text: "neu".into(),
+            start_ms: 950,
+            end_ms: 1_200,
+        }]);
+        let epoch = s
+            .replace_segments(&m.id, &fresh, "large-v3", "word@1", before.revision)
+            .unwrap();
+        assert_eq!(epoch, 1);
+
+        let after = s.transcript_snapshot(&m.id).unwrap();
+        assert_eq!(after.epoch, 1);
+        assert_eq!(after.revision, 3, "content_revision + 1");
+        assert_eq!(after.model.as_deref(), Some("large-v3"));
+        assert_eq!(after.segments, fresh, "Segmente samt Wortzeiten");
+        assert_eq!(p2d_deltas(&s), 0, "Deltas der alten Segmente geloescht");
+        assert_eq!(s.segment_epoch(&m.id).unwrap(), 1);
+        let conn = s.get_connection().unwrap();
+        let granularity: String = conn
+            .query_row("SELECT granularity FROM transcripts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(granularity, "word@1");
+        // Ein zweiter Ersatz zaehlt weiter.
+        assert_eq!(
+            s.replace_segments(&m.id, &fresh, "large-v3", "word@1", after.revision)
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn replace_segments_refuses_when_the_transcript_changed_since_the_snapshot() {
+        let (_dir, s) = tmp_store();
+        let m = p2d_live(&s);
+        let snap = s.transcript_snapshot(&m.id).unwrap();
+        s.update_segment_text(&m.id, 0, "von Hand").unwrap();
+        let err = s
+            .replace_segments(&m.id, &[p2d_seg(0, "neu", 0)], "x", "segment@1", snap.revision)
+            .unwrap_err();
+        assert_eq!(err, ReplaceError::Conflict { expected: 2, found: 3 });
+        let now = s.transcript_snapshot(&m.id).unwrap();
+        assert_eq!(now.epoch, 0);
+        assert_eq!(now.segments[0].text, "von Hand");
+        assert_eq!(p2d_deltas(&s), 2);
+    }
+
+    #[test]
+    fn replace_segments_is_all_or_nothing() {
+        let (_dir, s) = tmp_store();
+        let m = p2d_live(&s);
+        s.get_connection()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER fail_replace BEFORE UPDATE ON transcripts
+                 BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END;",
+            )
+            .unwrap();
+        let err = s
+            .replace_segments(&m.id, &[p2d_seg(0, "neu", 0)], "x", "segment@1", 2)
+            .unwrap_err();
+        assert!(matches!(err, ReplaceError::Store(_)), "{err:?}");
+        s.get_connection()
+            .unwrap()
+            .execute_batch("DROP TRIGGER fail_replace;")
+            .unwrap();
+        let snap = s.transcript_snapshot(&m.id).unwrap();
+        assert_eq!((snap.epoch, snap.revision), (0, 2));
+        assert!(snap.segments.iter().all(|x| x.text == "live"));
+        assert_eq!(p2d_deltas(&s), 2, "Loeschen der Deltas mit zurueckgerollt");
+    }
+
+    #[test]
+    fn replace_segments_without_transcript_row_creates_epoch_one_and_refuses_deleted_meetings() {
+        let (_dir, s) = tmp_store();
+        let m = live_meeting(&s);
+        assert_eq!(s.transcript_snapshot(&m.id).unwrap().revision, 0);
+        assert_eq!(
+            s.replace_segments(&m.id, &[p2d_seg(0, "neu", 0)], "x", "segment@1", 0)
+                .unwrap(),
+            1
+        );
+        assert_eq!(s.get_segments(&m.id).unwrap().len(), 1);
+        let gone = live_meeting(&s);
+        s.soft_delete_meeting(&gone.id).unwrap();
+        assert!(matches!(
+            s.replace_segments(&gone.id, &[], "x", "segment@1", 0),
+            Err(ReplaceError::Store(_))
+        ));
+    }
+
+    #[test]
+    fn legacy_segments_without_words_load_and_stay_without_words() {
+        let (_dir, s) = tmp_store();
+        let m = live_meeting(&s);
+        // Altdaten: segments_json aus der Zeit vor P2d, ohne `words`.
+        let legacy = r#"[{"segment_index":0,"text":"alt","start_ms":0,"end_ms":900,"channel":1,"speaker_index":null}]"#;
+        s.get_connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO transcripts (id, meeting_id, segments_json, created_at, updated_at)
+                 VALUES ('T-legacy', ?1, ?2, 0, 0)",
+                params![m.id, legacy],
+            )
+            .unwrap();
+        let segs = s.get_segments(&m.id).unwrap();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].text, "alt");
+        assert!(segs[0].words.is_none());
+        // Weiterschreiben laesst das Format der alten Zeile unveraendert.
+        s.append_delta(
+            &m.id,
+            &TranscriptDelta {
+                new_segments: vec![p2d_seg(1, "neu", 1_000)],
+            },
+        )
+        .unwrap();
+        let json: String = s
+            .get_connection()
+            .unwrap()
+            .query_row("SELECT segments_json FROM transcripts", [], |r| r.get(0))
+            .unwrap();
+        assert!(json.starts_with(&legacy[..legacy.len() - 1]), "{json}");
+        assert!(!json.contains("words"), "ohne Wortzeiten kein Feld: {json}");
+    }
+
     #[test]
     fn clear_segments_bumps_the_segment_epoch() {
         let (_dir, s) = tmp_store();
@@ -2665,6 +2977,7 @@ mod tests {
                 end_ms: 1,
                 channel: 0,
                 speaker_index: None,
+                words: None,
             }],
         };
         s.append_delta(&m.id, &delta(0)).unwrap();

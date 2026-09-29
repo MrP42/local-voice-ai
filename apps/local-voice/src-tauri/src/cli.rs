@@ -160,6 +160,13 @@ pub struct CliArgs {
     #[arg(long, value_name = "MS")]
     pub system_delay_ms: Option<u64>,
 
+    /// M2-P2d: after --simulate-meeting, run the final pass with this model
+    /// (`auto`, `off` or a model id; same job as after a real stop) and add
+    /// its result as `final` (live/final epoch, transcript per channel,
+    /// timings) to the JSON.
+    #[arg(long, value_name = "ID")]
+    pub final_model: Option<String>,
+
     /// Reference text of the far end (system track) for ich_far_word_leak.
     #[arg(long, value_name = "FILE")]
     pub far_text: Option<PathBuf>,

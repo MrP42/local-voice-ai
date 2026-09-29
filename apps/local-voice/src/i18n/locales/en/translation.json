@@ -1638,6 +1638,7 @@
       "noAudio": "No recording stored for this meeting — there is nothing to transcribe again.",
       "audioMissing": "The recording is no longer on disk (retention period expired).",
       "retranscribeFailed": "Re-transcription failed. The transcript was left unchanged.",
+      "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, or cancelled).",
       "listFailed": "The meeting list could not be loaded: {{error}}"
     },
     "retention": {
@@ -1723,7 +1724,11 @@
     "model": {
       "title": "Transcription model",
       "likeDictation": "Same as dictation (default)",
-      "description": "Dedicated model for meetings and imports. Streaming models are tuned for live dictation — meetings transcribe in batches and profit from batch models like Parakeet V3."
+      "description": "Dedicated model for meetings and imports. Streaming models are tuned for live dictation — meetings transcribe in batches and profit from batch models like Parakeet V3.",
+      "finalTitle": "Final pass after stopping",
+      "finalDescription": "After stopping, a more accurate model rewrites the whole transcript; AI notes are created only afterwards. Automatic: with a graphics card Whisper Large v3 (otherwise Qwen3-ASR 1.7B), without one the live transcript stays. A model picked explicitly also runs without a graphics card; an hour of meeting then takes about a quarter of an hour.",
+      "finalAuto": "Automatic (recommended)",
+      "finalOff": "Off – keep the live transcript"
     },
     "retranscribe": {
       "description": "Transcribe this meeting again from its recording — for example with a different model.",

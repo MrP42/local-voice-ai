@@ -11,6 +11,9 @@ import { useModelStore } from "../../../stores/modelStore";
  * meetings transcribe in batches and profit from batch models. The backend
  * swaps to this model for meeting work and restores the dictation model
  * afterwards (TranscriptionManager::meeting_model_target).
+ *
+ * M2-P2d: second field on the same card — the final pass after stopping
+ * (`meeting_final_model`: `auto` | `off` | model id, see final_pass.rs).
  */
 export const MeetingModelSetting: React.FC = () => {
   const { t } = useTranslation();
@@ -22,27 +25,51 @@ export const MeetingModelSetting: React.FC = () => {
   }, [models.length, loadModels]);
 
   const value = getSetting("meeting_model") ?? "";
+  const finalValue = getSetting("meeting_final_model") || "auto";
+
+  const downloaded = models
+    .filter((m) => m.is_downloaded)
+    .map((m) => ({ value: m.id, label: m.name }));
 
   const options = [
     { value: "", label: t("meetings.model.likeDictation") },
-    ...models
-      .filter((m) => m.is_downloaded)
-      .map((m) => ({ value: m.id, label: m.name })),
+    ...downloaded,
+  ];
+
+  const finalOptions = [
+    { value: "auto", label: t("meetings.model.finalAuto") },
+    { value: "off", label: t("meetings.model.finalOff") },
+    ...downloaded,
   ];
 
   return (
-    <SettingContainer
-      title={t("meetings.model.title")}
-      description={t("meetings.model.description")}
-      grouped={true}
-    >
-      <Dropdown
-        options={options}
-        selectedValue={value}
-        onSelect={(v) => updateSetting("meeting_model", v === "" ? null : v)}
-        placeholder={t("meetings.model.likeDictation")}
-        disabled={isUpdating("meeting_model")}
-      />
-    </SettingContainer>
+    <>
+      <SettingContainer
+        title={t("meetings.model.title")}
+        description={t("meetings.model.description")}
+        grouped={true}
+      >
+        <Dropdown
+          options={options}
+          selectedValue={value}
+          onSelect={(v) => updateSetting("meeting_model", v === "" ? null : v)}
+          placeholder={t("meetings.model.likeDictation")}
+          disabled={isUpdating("meeting_model")}
+        />
+      </SettingContainer>
+      <SettingContainer
+        title={t("meetings.model.finalTitle")}
+        description={t("meetings.model.finalDescription")}
+        grouped={true}
+      >
+        <Dropdown
+          options={finalOptions}
+          selectedValue={finalValue}
+          onSelect={(v) => updateSetting("meeting_final_model", v || "auto")}
+          placeholder={t("meetings.model.finalAuto")}
+          disabled={isUpdating("meeting_final_model")}
+        />
+      </SettingContainer>
+    </>
   );
 };

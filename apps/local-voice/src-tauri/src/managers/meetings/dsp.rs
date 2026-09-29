@@ -50,7 +50,7 @@ use super::segmenter::{Segment, SegmenterConfig, SegmenterStats, VadSegmenter};
 use super::store::{MeetingStore, StoredSegment, TranscriptDelta};
 use crate::audio_toolkit::audio::StreamingWavWriter;
 use crate::audio_toolkit::VoiceActivityDetector;
-use crate::managers::transcription::TimedSegment;
+use crate::managers::transcription::{TimedSegment, WordTime};
 
 /// Kanaele: 0 = Mikrofon, 1 = Systemton.
 pub const CHANNEL_COUNT: usize = 2;
@@ -1477,6 +1477,16 @@ pub(super) fn live_segments(
                 end_ms: chunk.offset_ms + s.end_ms,
                 channel,
                 speaker_index: None,
+                // M2-P2d: Wortzeiten auf die Kanal-Achse (wie start_ms).
+                words: s.words.map(|ws| {
+                    ws.into_iter()
+                        .map(|w| WordTime {
+                            text: w.text,
+                            start_ms: chunk.offset_ms + w.start_ms,
+                            end_ms: chunk.offset_ms + w.end_ms,
+                        })
+                        .collect()
+                }),
             };
             *next_index += 1;
             segment
@@ -2029,6 +2039,7 @@ mod tests {
             text: text.to_string(),
             start_ms: start,
             end_ms: end,
+            words: None,
         }
     }
 
@@ -2189,6 +2200,7 @@ mod tests {
                     text,
                     start_ms: 0,
                     end_ms: chunk.samples.len() as u64 / 16,
+                    words: None,
                 }]
             },
             move |e| sink.lock().unwrap().push(e),
@@ -2813,6 +2825,7 @@ mod tests {
                 text: "Bitte schicken Sie mir die Kalkulation bis Donnerstag".into(),
                 start_ms: 0,
                 end_ms: c.samples.len() as u64 / 16,
+                words: None,
             }]
         };
         run_worker(

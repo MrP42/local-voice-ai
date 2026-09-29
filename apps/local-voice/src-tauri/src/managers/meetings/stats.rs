@@ -80,6 +80,7 @@ mod tests {
             end_ms,
             channel,
             speaker_index: None,
+            words: None,
         }
     }
 
@@ -93,6 +94,7 @@ mod tests {
                 end_ms: 6_000,
                 channel: 0,
                 speaker_index: None,
+                words: None,
             },
             StoredSegment {
                 segment_index: 1,
@@ -101,6 +103,7 @@ mod tests {
                 end_ms: 8_000,
                 channel: 1,
                 speaker_index: None,
+                words: None,
             },
         ];
         let shares = speaking_shares(&segs);
@@ -119,6 +122,7 @@ mod tests {
             end_ms: 1_000,
             channel: 2,
             speaker_index: None,
+            words: None,
         }];
         let shares = speaking_shares(&segs);
         assert_eq!(shares.len(), 1);

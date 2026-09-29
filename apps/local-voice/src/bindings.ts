@@ -1136,6 +1136,14 @@ async changeMeetingEchoCancellationSetting(mode: MeetingEchoCancellation) : Prom
     else return { status: "error", error: e  as any };
 }
 },
+async changeMeetingFinalModelSetting(model: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_final_model_setting", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Start key recording mode
  */
@@ -3133,7 +3141,14 @@ meeting_default_template_id?: string | null;
  * M2-P2c2: Echo-Unterdrückung der Ich-Spur (`auto` | `on` | `off`). Ohne
  * den Schlüssel (ältere settings.json) gilt `auto`.
  */
-meeting_echo_cancellation?: MeetingEchoCancellation }
+meeting_echo_cancellation?: MeetingEchoCancellation;
+/**
+ * M2-P2d: Enddurchlauf nach dem Stopp: `auto` (mit GPU Whisper large-v3
+ * bzw. Qwen3-ASR 1.7B, nur CPU: Live-Transkript = Endtranskript), `off`
+ * oder eine Modell-ID (laeuft auch auf der CPU). Ohne den Schluessel
+ * (aeltere settings.json) gilt `auto`.
+ */
+meeting_final_model?: string }
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
  * Verknuepfung mit der `humans`-Tabelle folgt in M9.
@@ -3332,10 +3347,12 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  */
 { kind: "reset"; meeting_id: string } | 
 /**
- * The live transcript is complete and stored (sent at the end of `stop()`).
+ * The transcript is final and stored: after the final pass (P2d), or at
+ * once when the live transcript stays (setting `off`, CPU only, skipped).
  * `epoch` is the generation of the segments (`segment_epoch`); `model` the
- * engine that produced them. Consumers that build on the transcript (AI
- * notes) start here, not at `stop()`.
+ * engine that produced them, `None` when the final pass was skipped by an
+ * error. Consumers that build on the transcript (AI notes, index) start
+ * here, not at `stop()`.
  */
 { kind: "transcript_final"; meeting_id: string; epoch: number; model: string | null }
 /**
@@ -3489,7 +3506,20 @@ export type SectionKind = "text" | "tasks"
 export type SecretMap = Partial<{ [key in string]: string }>
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
-export type StoredSegment = { segment_index: number; text: string; start_ms: number; end_ms: number; channel: number; speaker_index: number | null }
+export type StoredSegment = { segment_index: number; text: string; start_ms: number; end_ms: number; channel: number; speaker_index: number | null;
+/**
+ * M2-P2d: Wortzeiten auf der Kanal-Achse, wenn die Engine sie liefert
+ * (Grundlage fuer M3). Fehlt in allen aelteren `segments_json` und wird
+ * dann nicht geschrieben: alte Zeilen laden und bleiben unveraendert,
+ * keine Migration.
+ */
+words?: WordTime[] | null }
+/**
+ * M2-P2d: one word with its time span in milliseconds. In a
+ * `TimedSegment` relative to the clip, in a stored meeting segment on the
+ * channel timeline (basis for M3's word-to-speaker assignment).
+ */
+export type WordTime = { text: string; start_ms: number; end_ms: number }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */

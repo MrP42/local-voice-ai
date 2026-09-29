@@ -775,6 +775,9 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         Arc::clone(&tm),
     ));
     recorder.recover_orphans();
+    // M2-P2d: Nachholen/Enddurchlauf laufen im Hintergrund; dieser Prozess
+    // endet sonst, bevor die Besprechung `ready` ist.
+    recorder.wait_final_jobs();
     match retention::purge_due_audio(&store, chrono::Utc::now().timestamp()) {
         Ok(deleted) => eprintln!("meetings: startup retention purge deleted {deleted} file(s)"),
         Err(e) => eprintln!("warning: startup retention purge failed: {e}"),
@@ -966,6 +969,19 @@ fn run_simulate_meeting(
         Ok(mut payload) => {
             payload["model"] = serde_json::json!(model_id);
             payload["load_ms"] = serde_json::json!(load_ms);
+            // M2-P2d: Enddurchlauf auf derselben Besprechung.
+            if let (Some(final_model), Some(id)) =
+                (args.final_model.as_deref(), payload["meeting_id"].as_str())
+            {
+                let id = id.to_string();
+                payload["final"] = managers::meetings::simulate::final_pass_with_app(
+                    app,
+                    Arc::clone(store),
+                    Arc::clone(tm),
+                    &id,
+                    final_model,
+                );
+            }
             emit_headless_payload(&payload, args.out.as_deref());
             0
         }
@@ -1132,6 +1148,7 @@ fn make_orphan_meeting(
         end_ms: 3_000,
         channel: 0,
         speaker_index: None,
+        words: None,
     };
     if let Err(e) = store.append_delta(
         &meeting.id,
@@ -1529,6 +1546,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_meeting_auto_enhance_setting,
             shortcut::change_meeting_default_template_setting,
             shortcut::change_meeting_echo_cancellation_setting,
+            shortcut::change_meeting_final_model_setting,
             shortcut::handy_keys::start_handy_keys_recording,
             shortcut::handy_keys::stop_handy_keys_recording,
             trigger_update_check,
