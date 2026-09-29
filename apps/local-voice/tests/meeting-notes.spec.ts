@@ -762,7 +762,10 @@ test("Notizblock: Aufnahmeseite zweispaltig mit Transkript (Screenshot)", async 
     process.cwd(),
     "../../koordination/granola-besprechungen/abnahme/p1c-notizblock-aufnahme.png",
   );
-  await page.screenshot({ path: shot, animations: "disabled" });
+  // Abnahme-Bild nur auf Wunsch (LVA_SCREENSHOTS=1), sonst schreibt jeder Suitenlauf das PNG neu.
+  if (process.env.LVA_SCREENSHOTS) {
+    await page.screenshot({ path: shot, animations: "disabled" });
+  }
 
   // Schmal: untereinander.
   await page.setViewportSize({ width: 800, height: 900 });
@@ -1782,6 +1785,7 @@ test.describe("KI-Notizen", () => {
   });
 
   test("KI-Notizen: Ansicht (Screenshot)", async ({ page }) => {
+    test.skip(!process.env.LVA_SCREENSHOTS, "Abnahme-Bild nur mit LVA_SCREENSHOTS=1");
     await setup(page, { audio: true });
     await openAiNotes(page);
     await expect(entryOf(page, "E4")).toBeVisible();

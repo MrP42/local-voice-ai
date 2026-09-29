@@ -132,6 +132,9 @@ mp3lame-encoder = "0.2.5"
 # V9 globales Expansionslimit), die calendar/ics.rs umgeht. Nur hinter
 # `parse_and_expand` verwendet, damit ein Wechsel lokal bleibt.
 calcard = { version = "=0.3.14", default-features = false }
+# M6-P6c: .eml der Follow-up-Mail (kommt schon mit calcard, Apache-2.0/MIT;
+# ohne gethostname: die Message-ID setzt mail.rs selbst).
+mail-builder = { version = "=1.0.0", default-features = false }
 
 [features]
 # GPU acceleration for the Whisper/GGUF backend on Windows x86_64. Opt-in because

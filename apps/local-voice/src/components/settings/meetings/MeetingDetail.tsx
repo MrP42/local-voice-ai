@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Check,
   Download,
+  Mail,
   MessageSquare,
   Pencil,
   X,
@@ -35,6 +36,7 @@ import { Input } from "../../ui/Input";
 import { translateMeetingError } from "./meetingErrors";
 import { SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
 import { ChatPanel } from "./chat/ChatPanel";
+import { FollowupDialog } from "./FollowupDialog";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -145,6 +147,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
 
   // M4-P4e: Chat-Seitenleiste (Strg+J) und Belegsprung.
   const [chatOpen, setChatOpen] = useState(false);
+  // M6-P6c: Follow-up-Mail
+  const [followupOpen, setFollowupOpen] = useState(false);
   const notesRef = useRef<HTMLDivElement>(null);
   const [noteTarget, setNoteTarget] = useState<{
     selector: string;
@@ -419,17 +423,30 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             <ArrowLeft width={16} height={16} />
             {t("meetings.detail.back")}
           </button>
-          <Button
-            size="sm"
-            variant={chatOpen ? "primary-soft" : "secondary"}
-            onClick={toggleChat}
-            title={t("meetings.chat.askTitle")}
-            aria-pressed={chatOpen}
-            aria-keyshortcuts="Control+J"
-          >
-            <MessageSquare width={14} height={14} aria-hidden="true" />
-            {t("meetings.chat.ask")}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setFollowupOpen(true)}
+              title={t("meetings.followup.buttonTitle")}
+              disabled={segments.length === 0}
+              data-testid="followup-open"
+            >
+              <Mail width={14} height={14} aria-hidden="true" />
+              {t("meetings.followup.button")}
+            </Button>
+            <Button
+              size="sm"
+              variant={chatOpen ? "primary-soft" : "secondary"}
+              onClick={toggleChat}
+              title={t("meetings.chat.askTitle")}
+              aria-pressed={chatOpen}
+              aria-keyshortcuts="Control+J"
+            >
+              <MessageSquare width={14} height={14} aria-hidden="true" />
+              {t("meetings.chat.ask")}
+            </Button>
+          </div>
         </div>
         {/* Title and origin are two different facts: the title is what the
         user calls this meeting, `source_path` is the file it was imported
@@ -804,6 +821,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           />
         </aside>
       )}
+      <FollowupDialog
+        open={followupOpen}
+        onOpenChange={setFollowupOpen}
+        meetingId={meetingId}
+      />
     </div>
   );
 };

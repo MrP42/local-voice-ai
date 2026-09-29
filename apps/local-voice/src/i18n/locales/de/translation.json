@@ -1963,6 +1963,39 @@
         "failed": "Ordner konnte nicht gespeichert werden."
       }
     },
+    "followup": {
+      "button": "Follow-up-Mail",
+      "buttonTitle": "Aus dieser Besprechung einen Mailentwurf erzeugen, den du prüfen und bearbeiten kannst",
+      "title": "Follow-up-Mail",
+      "remote": "Der Entwurf wird mit {{provider}} geschrieben: Auszüge der Besprechung werden an diesen Anbieter übermittelt.",
+      "generate": "Entwurf erzeugen",
+      "generating": "Entwurf wird geschrieben …",
+      "regenerate": "Neu erzeugen",
+      "retry": "Erneut versuchen",
+      "to": "An",
+      "toHint": "Mehrere Adressen mit Komma oder Semikolon trennen.",
+      "noRecipients": "Keine Teilnehmenden mit E-Mail-Adresse bekannt – bitte den Empfänger eintragen.",
+      "subject": "Betreff",
+      "body": "Text",
+      "copy": "Kopieren",
+      "copyTitle": "Text formatiert (HTML und Klartext) in die Zwischenablage legen",
+      "mailto": "Im Mailprogramm öffnen",
+      "eml": "Als .eml speichern",
+      "emlTitle": "Outlook (klassisch) öffnet die Datei als Entwurf; das neue Outlook und Thunderbird öffnen sie eventuell nur zum Lesen.",
+      "close": "Schließen",
+      "copied": "In die Zwischenablage kopiert.",
+      "opened": "Im Mailprogramm geöffnet.",
+      "mailtoClipped": "Der Text war zu lang für den Mail-Link und liegt in der Zwischenablage – im Mailprogramm mit Strg+V einfügen.",
+      "emlSaved": "Gespeichert: {{path}}",
+      "errors": {
+        "followup_empty": "Das Sprachmodell hat keinen Text geliefert. Bitte erneut versuchen.",
+        "mailto_failed": "Das Mailprogramm ließ sich nicht öffnen. Kopiere den Text stattdessen und füge ihn dort ein.",
+        "clipboard_failed": "Die Zwischenablage ist gerade nicht erreichbar.",
+        "write_failed": "Die Datei konnte nicht gespeichert werden.",
+        "path_missing": "Es wurde kein Speicherort gewählt.",
+        "generic": "Das ging schief ({{error}})."
+      }
+    },
     "chat": {
       "ask": "Fragen",
       "askTitle": "Fragen zu dieser Besprechung (Strg+J)",

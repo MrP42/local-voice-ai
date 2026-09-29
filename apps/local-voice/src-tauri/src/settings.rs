@@ -825,6 +825,11 @@ pub struct AppSettings {
     /// settings.json) gilt `auto`; jeder andere Wert als `off` zaehlt als `auto`.
     #[serde(default = "default_meeting_diarization")]
     pub meeting_diarization: String,
+    /// M6-P6c: Meine E-Mail-Adressen. Personen mit diesen Adressen zaehlen bei
+    /// der Follow-up-Mail als "ich" und werden nicht Empfaenger. Ohne den
+    /// Schluessel (aeltere settings.json) leer.
+    #[serde(default)]
+    pub meeting_self_emails: Vec<String>,
 }
 
 fn default_meeting_final_model() -> String {
@@ -1588,6 +1593,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,
         meeting_final_model: default_meeting_final_model(),
         meeting_diarization: default_meeting_diarization(),
+        meeting_self_emails: Vec::new(),
     }
 }
 
@@ -2701,6 +2707,19 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "meeting_semantic_search": false }))
                 .unwrap();
         assert!(!off.meeting_semantic_search);
+    }
+
+    #[test]
+    fn meeting_self_emails_default_empty_and_keep_a_choice() {
+        assert!(get_default_settings().meeting_self_emails.is_empty());
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(old.meeting_self_emails.is_empty());
+        let set: AppSettings = serde_json::from_value(
+            serde_json::json!({ "meeting_self_emails": ["ich@wolff.de"] }),
+        )
+        .unwrap();
+        assert_eq!(set.meeting_self_emails, vec!["ich@wolff.de".to_string()]);
     }
 
     #[test]

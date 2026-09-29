@@ -3486,6 +3486,7 @@ dependencies = [
  "hkdf",
  "hound",
  "log",
+ "mail-builder",
  "mp3lame-encoder",
  "natural",
  "once_cell",

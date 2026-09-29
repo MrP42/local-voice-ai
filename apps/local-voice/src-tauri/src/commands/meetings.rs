@@ -283,3 +283,158 @@ pub async fn meetings_copy_formatted(
         .write_html(html, Some(text))
         .map_err(|e| e.to_string())
 }
+
+// M6-P6c: Follow-up-Mail.
+
+/// Ausgang eines Follow-up-Entwurfs für `meeting_followup_open`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowupMode {
+    /// HTML + Text in die Zwischenablage.
+    Copy,
+    /// Mailprogramm per `mailto:` öffnen.
+    Mailto,
+    /// Als .eml-Datei speichern (`path`).
+    Eml,
+}
+
+/// Erzeugt den Follow-up-Entwurf: das Recipe "Follow-up-E-Mail an ..." läuft
+/// im Scope der Besprechung (gleicher Motor, gleiche Sperren und Fehlercodes
+/// wie `meeting_chat_ask`), danach wird die Antwort zum Entwurf. Empfänger
+/// sind die Teilnehmenden ohne die eigene Person (leer, wenn keine bekannt).
+/// Zusätzlicher Fehlercode: `followup_empty` (das Modell lieferte keinen Text).
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_followup_draft(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    recorder: State<'_, Arc<MeetingRecorderManager>>,
+    meeting_id: String,
+) -> Result<crate::managers::meetings::mail::MailDraft, String> {
+    use crate::managers::meetings::chat::{ChatRequest, ChatScope, RecipeCall};
+    use crate::managers::meetings::mail::{draft_from_answer, participant_recipients};
+    let settings = crate::settings::get_settings(&app);
+    let (title, recipients) = {
+        let store = Arc::clone(&store);
+        let id = meeting_id.clone();
+        let own = settings.meeting_self_emails.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let meeting = store
+                .get_meeting(&id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "meeting_not_found".to_string())?;
+            let recipients =
+                participant_recipients(&store, &id, &own).map_err(|e| e.to_string())?;
+            Ok::<_, String>((meeting.title, recipients))
+        })
+        .await
+        .map_err(|e| e.to_string())??
+    };
+    let addressee = if recipients.names.is_empty() {
+        "die Teilnehmenden".to_string()
+    } else {
+        recipients.names.join(", ")
+    };
+    let mut values = std::collections::HashMap::new();
+    values.insert("empfaenger".to_string(), addressee);
+    let req = ChatRequest {
+        request_id: format!("followup-{}", ulid::Ulid::new()),
+        thread_id: None,
+        scope: ChatScope::Meeting {
+            meeting_id: meeting_id.clone(),
+        },
+        question: String::new(),
+        recipe: Some(RecipeCall {
+            recipe_id: format!(
+                "{}follow-up-mail",
+                crate::managers::meetings::search::index::BUILTIN_PREFIX
+            ),
+            values,
+        }),
+    };
+    let answer = crate::commands::meeting_chat::meeting_chat_ask(app, store, recorder, req).await?;
+    if answer.not_found || answer.text.trim().is_empty() {
+        return Err("followup_empty".to_string());
+    }
+    Ok(draft_from_answer(&answer.text, &title, recipients.emails))
+}
+
+/// Gibt einen (im Dialog bearbeiteten) Entwurf aus. `Copy`: HTML + Text in die
+/// Zwischenablage. `Mailto`: Mailprogramm öffnen; ist die Adresse zu lang
+/// (> 1 800 Zeichen), gehen nur Empfänger und Betreff mit, der Text kommt in
+/// die Zwischenablage und das Ergebnis ist `true` (UI: Hinweis "einfügen").
+/// `Eml`: Datei nach `path` schreiben (Endung `.eml` wird ergänzt).
+/// Fehler: `clipboard_failed`, `mailto_failed` (Kopieren bleibt möglich),
+/// `path_missing`, `write_failed`.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_followup_open(
+    app: tauri::AppHandle,
+    draft: crate::managers::meetings::mail::MailDraft,
+    mode: FollowupMode,
+    path: Option<String>,
+) -> Result<bool, String> {
+    use crate::managers::meetings::mail::{
+        finalize, mailto_url, write_eml, MailDraft, MAILTO_MAX_LEN,
+    };
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    use tauri_plugin_opener::OpenerExt;
+    let d = finalize(&draft);
+    let copy = |d: &MailDraft| {
+        app.clipboard()
+            .write_html(d.body_html.clone(), Some(d.body_text.clone()))
+            .map_err(|e| {
+                log::warn!("Follow-up: Zwischenablage fehlgeschlagen ({e})");
+                "clipboard_failed".to_string()
+            })
+    };
+    match mode {
+        FollowupMode::Copy => copy(&d).map(|()| false),
+        FollowupMode::Mailto => {
+            let (url, clipped) = mailto_url(&d, MAILTO_MAX_LEN);
+            if clipped {
+                copy(&d)?;
+            }
+            app.opener().open_url(url, None::<String>).map_err(|e| {
+                log::warn!("Follow-up: mailto nicht geöffnet ({e})");
+                "mailto_failed".to_string()
+            })?;
+            Ok(clipped)
+        }
+        FollowupMode::Eml => {
+            let raw = path.unwrap_or_default();
+            if raw.trim().is_empty() {
+                return Err("path_missing".to_string());
+            }
+            let mut target = PathBuf::from(raw.trim());
+            if target.extension().is_none() {
+                target.set_extension("eml");
+            }
+            let now = chrono::Utc::now();
+            let seed = now.timestamp_nanos_opt().unwrap_or_default() as u64;
+            let bytes = write_eml(&d, now, seed);
+            tauri::async_runtime::spawn_blocking(move || std::fs::write(&target, bytes))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| {
+                    log::warn!("Follow-up: .eml nicht geschrieben ({e})");
+                    "write_failed".to_string()
+                })?;
+            Ok(false)
+        }
+    }
+}
+
+/// Einstellung `meeting_self_emails` ("Meine E-Mail-Adressen"): gespeichert
+/// wird die bereinigte Liste (klein geschrieben, nur brauchbare, ohne Dubletten).
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_self_emails_setting(
+    app: tauri::AppHandle,
+    emails: Vec<String>,
+) -> Result<(), String> {
+    let mut settings = crate::settings::get_settings(&app);
+    settings.meeting_self_emails = crate::managers::meetings::mail::normalize_self_emails(&emails);
+    crate::settings::write_settings(&app, settings);
+    Ok(())
+}
