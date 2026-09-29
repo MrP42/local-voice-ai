@@ -13,5 +13,6 @@
 
 pub mod assemble;
 pub mod enhance;
+pub mod eval;
 pub mod model;
 pub mod templates;

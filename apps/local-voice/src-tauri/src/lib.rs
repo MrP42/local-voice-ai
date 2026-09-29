@@ -1672,7 +1672,8 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.import_meeting.is_some()
         || cli_args.dump_meeting.is_some()
         || cli_args.make_orphan.is_some()
-        || cli_args.bench_search; // M4-P4a
+        || cli_args.bench_search // M4-P4a
+        || cli_args.eval_notes.is_some(); // M1-P1e
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -1880,6 +1881,23 @@ pub fn run(cli_args: CliArgs) {
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| run_headless_bench_search(&args));
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // M1-P1e: KI-Notizen-Eval (AK3) auf synthetischen Fixtures in
+                // einem Sandbox-Store; braucht nur das Sprachmodell.
+                if let Some(dir) = cli_args.eval_notes.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_eval_notes(&app_handle, &args, &dir)
+                        });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2134,5 +2152,69 @@ fn run_headless_bench_search(args: &CliArgs) -> i32 {
         eprintln!("error: bench-search failed: {error}");
     }
     emit_headless_payload(&payload, args.out.as_deref());
+    code
+}
+
+// M1-P1e: `--eval-notes <dir>`. KI-Notizen gegen die synthetischen Fixtures,
+// mit dem eingestellten (oder per `--model` gewaehlten lokalen) Sprachmodell.
+// Sandbox-Store im Temp-Ordner, nie die produktive meetings.db. Die globalen
+// Zugriffe des lokalen Servers werden wie in `initialize_core_logic` gesetzt
+// (ohne sie scheitert der lokale Anbieter headless mit "nicht initialisiert"),
+// samt Speicherwaechter; der Server wird am Ende gestoppt. Exit 0 Soll
+// erfuellt, 3 verfehlt, 1 Fehler.
+fn run_headless_eval_notes(app: &AppHandle, args: &CliArgs, dir: &std::path::Path) -> i32 {
+    use managers::meetings::notes::eval;
+
+    crate::selftest::begin_headless_run();
+    let mut settings = get_settings(app);
+    if let Some(model) = args.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        eval::apply_model_override(&mut settings, model.trim());
+    }
+
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+
+    let sandbox = match tempfile::Builder::new().prefix("lva-eval-notes-").tempdir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("error: no sandbox directory: {e}");
+            return 1;
+        }
+    };
+    eprintln!("eval-notes: Sandbox {}", sandbox.path().display());
+    let (code, payload) =
+        tauri::async_runtime::block_on(eval::run_cli(settings, dir, sandbox.path()));
+    llm_server.stop();
+
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        for line in eval::summary_lines(&payload) {
+            println!("{line}");
+        }
+        if let Some(path) = args.out.as_deref() {
+            match std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                Ok(()) => eprintln!("wrote {}", path.display()),
+                Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
     code
 }
