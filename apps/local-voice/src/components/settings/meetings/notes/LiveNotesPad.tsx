@@ -17,6 +17,9 @@ import { recordingStamper, useNotesAutosave } from "./useNotesAutosave";
 export const LiveNotesPad: React.FC = () => {
   const { t } = useTranslation();
   const [meetingId, setMeetingId] = useState<string | null>(null);
+  // Die Vorlagenwahl der laufenden Besprechung; davor waehlt die Aufnahmekarte
+  // (RecorderCard), danach die Detailansicht - nie zwei Wahlen zugleich.
+  const [recording, setRecording] = useState(false);
   const autosave = useNotesAutosave(meetingId);
   const { flush } = autosave;
 
@@ -26,11 +29,15 @@ export const LiveNotesPad: React.FC = () => {
     void commands.meetingsRecordingPosition().then((result) => {
       if (!cancelled && result.status === "ok" && result.data) {
         setMeetingId((prev) => prev ?? result.data!.meeting_id);
+        setRecording(true);
       }
     });
     const un = events.meetingEvent.listen((e) => {
       const payload = e.payload;
       if (payload.kind !== "state") return;
+      setRecording(
+        payload.status === "recording" || payload.status === "paused",
+      );
       if (payload.status === "recording") {
         setMeetingId(payload.meeting_id);
       } else if (payload.status === "processing") {
@@ -64,7 +71,7 @@ export const LiveNotesPad: React.FC = () => {
             {t("meetings.notes.padHint")}
           </p>
         </div>
-        <MeetingTemplatePicker meetingId={meetingId} />
+        {recording && <MeetingTemplatePicker meetingId={meetingId} />}
         <div className="max-h-80 min-h-[8rem] overflow-y-auto">
           {autosave.loaded && (
             <NoteBlocksEditor

@@ -574,6 +574,39 @@ pub fn change_meeting_model_setting(app: AppHandle, model: Option<String>) -> Re
     Ok(())
 }
 
+// M1-P1f
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_capture_system_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_capture_system = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+// M1-P1f
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_auto_enhance_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_auto_enhance = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+// M1-P1f: `None`/leer = Standardvorlage (`builtin:allgemein`).
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_default_template_setting(
+    app: AppHandle,
+    template_id: Option<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_default_template_id = template_id.filter(|t| !t.trim().is_empty());
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_meeting_language_setting(app: AppHandle, language: String) -> Result<(), String> {

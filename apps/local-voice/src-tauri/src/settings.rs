@@ -771,6 +771,19 @@ pub struct AppSettings {
     /// profitieren von Batch-Modellen (z. B. Parakeet V3).
     #[serde(default)]
     pub meeting_model: Option<String>,
+    /// M1-P1f: Systemton (Loopback) ist beim Start einer Besprechung
+    /// vorangehakt. Die Oberflaeche merkt sich die letzte Wahl hier; ohne den
+    /// Schluessel (aeltere settings.json) gilt `true`.
+    #[serde(default = "default_true")]
+    pub meeting_capture_system: bool,
+    /// M1-P1f (E2): KI-Notizen starten automatisch, sobald das Live-Transkript
+    /// endgueltig ist (`MeetingEvent::TranscriptFinal`). Import loest nie aus.
+    #[serde(default = "default_true")]
+    pub meeting_auto_enhance: bool,
+    /// M1-P1f: Vorlage, die neue Besprechungen vorbelegt. `None` = die
+    /// Standardvorlage (`builtin:allgemein`).
+    #[serde(default)]
+    pub meeting_default_template_id: Option<String>,
 }
 
 fn default_meeting_language() -> String {
@@ -1514,6 +1527,9 @@ pub fn get_default_settings() -> AppSettings {
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,
+        meeting_capture_system: true,
+        meeting_auto_enhance: true,
+        meeting_default_template_id: None,
     }
 }
 
@@ -2592,5 +2608,41 @@ mod tests {
         assert_eq!(s.tts_port, 8080);
         assert_eq!(s.tts_max_chars, 5000);
         assert_eq!(s.tts_engine, "fish", "ohne Engine-Key bleibt es bei Fish");
+    }
+
+    #[test]
+    fn defaults_enable_capture_system_and_auto_enhance() {
+        let s = get_default_settings();
+        assert!(s.meeting_capture_system, "Systemton ist vorangehakt");
+        assert!(s.meeting_auto_enhance, "KI-Notizen starten automatisch");
+        assert_eq!(s.meeting_default_template_id, None);
+    }
+
+    #[test]
+    fn meeting_p1f_fields_survive_an_old_settings_file() {
+        // Eine settings.json aus einer Fassung vor M1-P1f kennt die Felder
+        // nicht: `serde(default)` muss `true`/`true`/`None` liefern, nicht
+        // das `false` des bool-Typs.
+        let old = serde_json::json!({ "meeting_language": "de", "meeting_model": null });
+        let parsed: AppSettings = serde_json::from_value(old).unwrap();
+        assert!(parsed.meeting_capture_system);
+        assert!(parsed.meeting_auto_enhance);
+        assert_eq!(parsed.meeting_default_template_id, None);
+    }
+
+    #[test]
+    fn meeting_p1f_fields_keep_an_explicit_choice() {
+        let json = serde_json::json!({
+            "meeting_capture_system": false,
+            "meeting_auto_enhance": false,
+            "meeting_default_template_id": "builtin:vertrieb",
+        });
+        let parsed: AppSettings = serde_json::from_value(json).unwrap();
+        assert!(!parsed.meeting_capture_system);
+        assert!(!parsed.meeting_auto_enhance);
+        assert_eq!(
+            parsed.meeting_default_template_id.as_deref(),
+            Some("builtin:vertrieb")
+        );
     }
 }

@@ -325,6 +325,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         }
         app_handle.manage(store);
         app_handle.manage(recorder);
+        // M1-P1f: KI-Notizen starten nach `TranscriptFinal` (Einstellung
+        // `meeting_auto_enhance`); das Backend entscheidet, kein Fenster noetig.
+        commands::meeting_enhance::register_auto_enhance(app_handle);
     }
 
     // Note: Shortcuts are NOT initialized here.
@@ -1424,6 +1427,10 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_meeting_audio_retention_setting,
             shortcut::change_meeting_language_setting,
             shortcut::change_meeting_model_setting,
+            // M1-P1f
+            shortcut::change_meeting_capture_system_setting,
+            shortcut::change_meeting_auto_enhance_setting,
+            shortcut::change_meeting_default_template_setting,
             shortcut::handy_keys::start_handy_keys_recording,
             shortcut::handy_keys::stop_handy_keys_recording,
             trigger_update_check,

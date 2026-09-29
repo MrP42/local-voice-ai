@@ -806,6 +806,14 @@
     }
   },
   "settings": {
+    "meetings": {
+      "captureSystem": "Record system audio by default",
+      "captureSystemDescription": "Default for the “Capture system audio” checkbox when starting. The last choice on the recording page is remembered here.",
+      "autoEnhance": "Create AI notes automatically after the meeting",
+      "autoEnhanceDescription": "As soon as the transcript is complete after stopping, the AI builds the meeting notes from your notes and the transcript. Imports never trigger this. Nothing happens without a configured language-model provider.",
+      "defaultTemplate": "Default template",
+      "defaultTemplateDescription": "Template that is preselected for new meetings."
+    },
     "modelSettings": {
       "title": "{{model}} Settings"
     },
@@ -1569,7 +1577,29 @@
       "titlePlaceholder": "Meeting title",
       "captureSystem": "Capture system audio (other party)",
       "micLevel": "Microphone",
-      "systemLevel": "System"
+      "systemLevel": "System",
+      "autoNotes": {
+        "running": "Creating AI notes … {{step}}/{{total}}",
+        "done": "The AI notes are ready. Find them in the meeting under “Notes”.",
+        "failed": {
+          "no_provider": "No AI notes were created: no language-model provider is set up yet. You can create the notes later from the meeting.",
+          "no_model": "No AI notes were created: the selected provider has no model entered.",
+          "memory_low": "No AI notes were created: not enough free memory. Close other programs and create the notes from the meeting.",
+          "recording_active": "The AI notes were not started because a new recording is already running. Create them from the meeting afterwards.",
+          "enhance_busy": "AI notes are already being created. Create this meeting’s notes by hand afterwards.",
+          "no_transcript": "No AI notes were created: the meeting has no transcript.",
+          "llm_failed": "The AI notes could not be created. Please try again from the meeting.",
+          "generic": "The AI notes could not be created. Please try again from the meeting."
+        }
+      },
+      "chatNotice": {
+        "title": "Notice for the meeting chat",
+        "copy": "Copy",
+        "copied": "Copied",
+        "copyError": "Copying failed – please select the text by hand.",
+        "local": "Note: I am transcribing this meeting locally on my computer with Local Voice AI to create notes. No data is sent to third parties.",
+        "remote": "Note: I am transcribing this meeting locally on my computer with Local Voice AI to create notes. For the notes, the text is sent to {{provider}}."
+      }
     },
     "consent": {
       "title": "Consent required",

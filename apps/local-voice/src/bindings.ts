@@ -1040,6 +1040,30 @@ async changeMeetingModelSetting(model: string | null) : Promise<Result<null, str
     else return { status: "error", error: e  as any };
 }
 },
+async changeMeetingCaptureSystemSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_capture_system_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMeetingAutoEnhanceSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_auto_enhance_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMeetingDefaultTemplateSetting(templateId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_default_template_setting", { templateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Start key recording mode
  */
@@ -3016,7 +3040,23 @@ meeting_language?: string;
  * fuers Diktat optimiert; Meetings transkribieren in Batches und
  * profitieren von Batch-Modellen (z. B. Parakeet V3).
  */
-meeting_model?: string | null }
+meeting_model?: string | null; 
+/**
+ * M1-P1f: Systemton (Loopback) ist beim Start einer Besprechung
+ * vorangehakt. Die Oberflaeche merkt sich die letzte Wahl hier; ohne den
+ * Schluessel (aeltere settings.json) gilt `true`.
+ */
+meeting_capture_system?: boolean; 
+/**
+ * M1-P1f (E2): KI-Notizen starten automatisch, sobald das Live-Transkript
+ * endgueltig ist (`MeetingEvent::TranscriptFinal`). Import loest nie aus.
+ */
+meeting_auto_enhance?: boolean; 
+/**
+ * M1-P1f: Vorlage, die neue Besprechungen vorbelegt. `None` = die
+ * Standardvorlage (`builtin:allgemein`).
+ */
+meeting_default_template_id?: string | null }
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
  * Verknuepfung mit der `humans`-Tabelle folgt in M9.

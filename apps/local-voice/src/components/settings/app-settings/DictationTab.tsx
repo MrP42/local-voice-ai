@@ -1,6 +1,7 @@
 import React from "react";
 import { MeetingLanguageSetting } from "../meetings/MeetingLanguageSetting";
 import { MeetingModelSetting } from "../meetings/MeetingModelSetting";
+import { MeetingNotesSettings } from "../meetings/MeetingNotesSettings";
 import { useTranslation } from "react-i18next";
 import { type } from "@tauri-apps/plugin-os";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -62,6 +63,7 @@ export const DictationTab: React.FC = () => {
       <SettingsGroup title={t("meetings.title")}>
         <MeetingLanguageSetting />
         <MeetingModelSetting />
+        <MeetingNotesSettings />
       </SettingsGroup>
       <DictationTest />
     </div>
