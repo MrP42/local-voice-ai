@@ -1,15 +1,15 @@
 ---
 thema: ui-vorlesen-kompakt
 titel: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
-state: COMPLETE
+state: REWORK
 vorzustand: -
 pausengrund: -
 issue: 61
 repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
-iteration: 1
+iteration: 2
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T16:28
+aktualisiert: 2026-09-29T16:51
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -33,27 +33,31 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - Neuer Seitenleisten-Eintrag oder neuer Einstellungsreiter (Memory „Einstellungen am richtigen Ort“).
 
 ## Akzeptanzkriterien
-- [x] AK1 — Audit: `koordination/ui-vorlesen-kompakt/UI-AUDIT.md` listet jede Abweichung als *Element · Ist · Standard · Fundstelle · Schwere · Status*; jede Zeile „hoch“/„mittel“ trägt Status „behoben (Paket/Commit)“, Rest „Folge-Goal“.
-- [x] AK2 — Einheitliche Aktionen: Playwright-Test `tests/readaloud-toolbar.spec.ts` → alle Aktionsknöpfe der Bedienspalte (`[data-testid^="tts-action-"]`) haben gleiche Höhe und Breite (±1 px), kein sichtbarer Beschriftungstext, jedes Symbol (`svg.lucide-*`-Klasse) kommt genau einmal vor; Auto-Tagging ist nicht mehr niedriger als der Rest.
-- [x] AK3 — Eine Zeile + Menü: im Reiter Original stehen in einer Zeile (gleiche `top` ±2 px) Hinzufügen (zuerst), Diktieren, Als Audio speichern, Änderungen vorab erzeugen, Menü; das Menü enthält Skript-Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging und löst jede davon aus; der Fehlerzähler der Skriptprüfung ist am Menüknopf sichtbar. Übersetzung/Zusammenfassung zeigen ihre Aktion ebenfalls als Symbol.
-- [x] AK4 — Tooltip: Hover UND Tastaturfokus auf jeden Aktionsknopf zeigen Name + Kurzerklärung (`role="tooltip"`, per `aria-describedby` verbunden); `aria-label` trägt den Namen.
-- [x] AK5 — Kompakt gestapelt: Viewport 1920×1050 und 1366×768 im Layout „gestapelt“ → Höhe des Bedienblocks `[data-testid="tts-controls"]` ≤ 50 % von `window.innerHeight`, Dateien/Hilfe liegen darunter in derselben Spalte; es gibt rechts vom Editor genau eine Spalte.
-- [x] AK6 — Umschaltbar: Umschalter gestapelt/nebeneinander in der rechten Spalte; Wahl übersteht Neuladen (localStorage); „nebeneinander“ entspricht dem bisherigen Aufbau.
-- [x] AK7 — Ziehbare Spalten: Griffe zwischen Seitenliste|Editor und Editor|rechter Spalte (`role="separator"`, Pfeiltasten, Doppelklick = Standard) ändern die Breite in Grenzen; Breite übersteht Neuladen; Test belegt beides.
-- [x] AK8 — Dateiname: `tests/exportName.spec.ts` → neuer Name `<Stimme>[-<Zusatz>]_<JJJJ-MM-TT_HHMM>.<ext>` (z. B. `Patrick_2026-09-29_1736.wav`, `Skript_…` bei Skript-Stimmen, `-EN` im Reiter Übersetzung, `-Zusammenfassung`), Stamm ohne Zeitstempel ≤ 24 Zeichen, Windows-sicher; der Speichern-Dialog schlägt ihn vor.
-- [x] AK9 — Dateiliste: ein langer Altname (`CASE-GESPRÄCH-IE2S-…_2026-09-28_1736.wav`) zeigt sichtbar Anfang, „…“ und `2026-09-28_1736`; voller Name im Tooltip.
-- [x] AK10 — Palette-Fehler: Playwright → „Ausdruck & Sprechstil“ öffnen, „Alle“ wählen → Klappbereich ist in der Höhe begrenzt und scrollt (`scrollHeight > clientHeight`), Editor-Box ≥ 160 px hoch und überschneidet sich nicht mit dem Klappbereich (Screenshot-Beleg).
-- [x] AK11 — Anfassbar: Vorher/Nachher-Screenshots (gestapelt, nebeneinander, Menü offen, Tooltip, Palette „Alle“) als Artefakt-Link; Installer `Local Voice AI_0.20.4_x64-setup.exe` gebaut.
+- [ ] AK1 — Audit: `koordination/ui-vorlesen-kompakt/UI-AUDIT.md` listet jede Abweichung als *Element · Ist · Standard · Fundstelle · Schwere · Status*; jede Zeile „hoch“/„mittel“ trägt Status „behoben (Paket/Commit)“, Rest „Folge-Goal“.
+- [ ] AK2 — Einheitliche Aktionen: Playwright-Test `tests/readaloud-toolbar.spec.ts` → alle Aktionsknöpfe der Bedienspalte (`[data-testid^="tts-action-"]`) haben gleiche Höhe und Breite (±1 px), kein sichtbarer Beschriftungstext, jedes Symbol (`svg.lucide-*`-Klasse) kommt genau einmal vor; Auto-Tagging ist nicht mehr niedriger als der Rest.
+- [ ] AK3 — Eine Zeile + Menü: im Reiter Original stehen in einer Zeile (gleiche `top` ±2 px) Hinzufügen (zuerst), Diktieren, Als Audio speichern, Änderungen vorab erzeugen, Menü; das Menü enthält Skript-Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging und löst jede davon aus; der Fehlerzähler der Skriptprüfung ist am Menüknopf sichtbar. Übersetzung/Zusammenfassung zeigen ihre Aktion ebenfalls als Symbol.
+- [ ] AK4 — Tooltip: Hover UND Tastaturfokus auf jeden Aktionsknopf zeigen Name + Kurzerklärung (`role="tooltip"`, per `aria-describedby` verbunden); `aria-label` trägt den Namen.
+- [ ] AK5 — Kompakt gestapelt: Viewport 1920×1050 und 1366×768 im Layout „gestapelt“ → Höhe des Bedienblocks `[data-testid="tts-controls"]` ≤ 50 % von `window.innerHeight`, Dateien/Hilfe liegen darunter in derselben Spalte; es gibt rechts vom Editor genau eine Spalte.
+- [ ] AK6 — Umschaltbar: Umschalter gestapelt/nebeneinander in der rechten Spalte; Wahl übersteht Neuladen (localStorage); „nebeneinander“ entspricht dem bisherigen Aufbau.
+- [ ] AK7 — Ziehbare Spalten: Griffe zwischen Seitenliste|Editor und Editor|rechter Spalte (`role="separator"`, Pfeiltasten, Doppelklick = Standard) ändern die Breite in Grenzen; Breite übersteht Neuladen; Test belegt beides.
+- [ ] AK8 — Dateiname: `tests/exportName.spec.ts` → neuer Name `<Stimme>[-<Zusatz>]_<JJJJ-MM-TT_HHMM>.<ext>` (z. B. `Patrick_2026-09-29_1736.wav`, `Skript_…` bei Skript-Stimmen, `-EN` im Reiter Übersetzung, `-Zusammenfassung`), Stamm ohne Zeitstempel ≤ 24 Zeichen, Windows-sicher; der Speichern-Dialog schlägt ihn vor.
+- [ ] AK9 — Dateiliste: ein langer Altname (`CASE-GESPRÄCH-IE2S-…_2026-09-28_1736.wav`) zeigt sichtbar Anfang, „…“ und `2026-09-28_1736`; voller Name im Tooltip.
+- [ ] AK10 — Palette-Fehler: Playwright → „Ausdruck & Sprechstil“ öffnen, „Alle“ wählen → Klappbereich ist in der Höhe begrenzt und scrollt (`scrollHeight > clientHeight`), Editor-Box ≥ 160 px hoch und überschneidet sich nicht mit dem Klappbereich (Screenshot-Beleg).
+- [ ] AK11 — Anfassbar: Vorher/Nachher-Screenshots (gestapelt, nebeneinander, Menü offen, Tooltip, Palette „Alle“) als Artefakt-Link; Installer `Local Voice AI_0.20.4_x64-setup.exe` gebaut.
+
+- [ ] AK12 — Ausklappen rechts: Dateileiste zugeklappt → der Ausklappen-Knopf sitzt in BEIDEN Layouts am rechten Rand (gestapelt: rechte Kante des Knopfs = rechte Kante der rechten Spalte ±2 px; nebeneinander: ganz rechts wie bisher) — Playwright.
+- [ ] AK13 — Erster Start: leerer localStorage → Layout „gestapelt“, Dateileiste aufgeklappt, Reiter „Hilfe“ ausgewählt und sichtbar — Playwright.
+- [ ] AK14 — Persistenz: Reiter (Dateien/Hilfe) und Zuklappen bleiben nach Neuladen, nach Seitenwechsel in der Seitenliste und nach Wechsel in ein anderes Modul (z. B. Verlauf) und zurück erhalten — Playwright.
 
 ## Quality Gates
-- [x] QG1 — Typen: `cd apps/local-voice && pnpm exec tsc --noEmit` → Exit 0.
-- [x] QG2 — Gesamte Playwright-Suite: `cd apps/local-voice && pnpm exec playwright test --reporter=line` → keine neuen Fehlschläge gegenüber der Basislinie (Basislinie in Evidence).
-- [x] QG3 — Lint/Format nur berührte Dateien: `pnpm exec eslint <Dateien>` 0 Fehler, `pnpm exec prettier --check <Dateien>` grün (vorbestehendes Rot anderer Dateien bleibt, AGENTS.md).
-- [x] QG4 — i18n: neue Schlüssel in `de` und `en` vorhanden (Parität der neuen Schlüssel per Skript), keine hartcodierten deutschen/englischen UI-Texte.
-- [x] QG5 — Rust unberührt außer Versionsdateien: `git diff --stat origin/chore/0.20.3-abnahme..HEAD -- apps/local-voice/src-tauri` zeigt nur `Cargo.toml`/`tauri.conf.json`(/`Cargo.lock`).
-- [x] QG6 — Git: Commit je abgenommenem Paket, Branch gepusht, PR gestapelt auf #58 (Basis `chore/0.20.3-abnahme`), kein Push auf `main`, keine Formatierläufe über fremde Dateien.
-- [x] QG7 — Doku + Handoff: Hilfe-Abschnitt „vorlesen“ passt zur neuen Bedienung; Handoff `.claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md`.
-- [x] QG8 — Budget: ≤ 1,8 MTok geschätzt; Zwischenstand bei 50 %/80 %, harter Stopp bei 150 % (2,7 MTok).
+- [ ] QG1 — Typen: `cd apps/local-voice && pnpm exec tsc --noEmit` → Exit 0.
+- [ ] QG2 — Gesamte Playwright-Suite: `cd apps/local-voice && pnpm exec playwright test --reporter=line` → keine neuen Fehlschläge gegenüber der Basislinie (Basislinie in Evidence).
+- [ ] QG3 — Lint/Format nur berührte Dateien: `pnpm exec eslint <Dateien>` 0 Fehler, `pnpm exec prettier --check <Dateien>` grün (vorbestehendes Rot anderer Dateien bleibt, AGENTS.md).
+- [ ] QG4 — i18n: neue Schlüssel in `de` und `en` vorhanden (Parität der neuen Schlüssel per Skript), keine hartcodierten deutschen/englischen UI-Texte.
+- [ ] QG5 — Rust unberührt außer Versionsdateien: `git diff --stat origin/chore/0.20.3-abnahme..HEAD -- apps/local-voice/src-tauri` zeigt nur `Cargo.toml`/`tauri.conf.json`(/`Cargo.lock`).
+- [ ] QG6 — Git: Commit je abgenommenem Paket, Branch gepusht, PR gestapelt auf #58 (Basis `chore/0.20.3-abnahme`), kein Push auf `main`, keine Formatierläufe über fremde Dateien.
+- [ ] QG7 — Doku + Handoff: Hilfe-Abschnitt „vorlesen“ passt zur neuen Bedienung; Handoff `.claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md`.
+- [ ] QG8 — Budget: ≤ 1,8 MTok geschätzt; Zwischenstand bei 50 %/80 %, harter Stopp bei 150 % (2,7 MTok).
 
 ## Constraints
 - Geteilter Baum: eigener Worktree `.claude/worktrees/wt-ui`, Paket-Worktrees `wt-ui-p*`; nie `git stash`, nie `git add -A` am Repo-Root, nie `reset --hard` auf fremde Zweige.
@@ -105,6 +109,25 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29T12:49 QG7 erfüllt — Hilfe vorlesen.de/en.md an Menue angepasst (P2, 2c9f6fd); Handoff .claude/handoffs/2026-09-29-ui-vorlesen-kompakt.md; GLOBAL.md fortgeschrieben
 - 2026-09-29T16:28 AK11 erfüllt — Artefakt https://claude.ai/artifact/USSYtsBp5gUgs2eUxUPyRw (Vorher/Nachher, Menue, Tooltip, gestapelt/nebeneinander, Palette); Installer apps/local-voice/src-tauri/target/release/bundle/nsis/Local Voice AI_0.20.4_x64-setup.exe (16,8 MB, 29.09. 13:01; nur Updater-Signatur fehlt lokal, erwartet)
 - 2026-09-29T16:28 Abschlussprüfung grün — `node apps/local-voice/node_modules/typescript/bin/tsc --noEmit -p apps/local-voice` → (keine Ausgabe)
+- 2026-09-29T16:51 AK1 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 AK10 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 AK11 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 AK2 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 AK3 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 AK4 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 AK5 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 AK6 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 AK7 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 AK8 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 AK9 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 QG1 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 QG2 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 QG3 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 QG4 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 QG5 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 QG6 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 QG7 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
+- 2026-09-29T16:51 QG8 widerrufen — wiedereröffnet: Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
 
 ## Blocker
 -
@@ -113,7 +136,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29 E1–E3 als Vorschlag gewählt (siehe Risiken), Basis `chore/0.20.3-abnahme`.
 
 ## Nächste empfohlene Aktion
-Goal abgeschlossen. Nächste Ziele: (noch eintragen: `goal.py complete --naechste-ziele …` oder im Issue-Kommentar „Nächste Ziele“)
+Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
 
 ## Verlauf
 - 2026-09-29T11:49 DISCOVERY — Goal State angelegt
@@ -127,4 +150,5 @@ Goal abgeschlossen. Nächste Ziele: (noch eintragen: `goal.py complete --naechst
 - 2026-09-29T16:28 EXECUTING (Runde 1) — wiederaufgenommen
 - 2026-09-29T16:28 VALIDATING (Runde 1) — Alle AK/QG belegt, Installer 0.20.4 vorhanden
 - 2026-09-29T16:28 COMPLETE (Runde 1) — COMPLETE — AK 11/11, Gates 8/8
+- 2026-09-29T16:51 REWORK (Runde 2) — WIEDERERÖFFNET (AK1, AK10, AK11, AK2, AK3, AK4, AK5, AK6, AK7, AK8, AK9, QG1, QG2, QG3, QG4, QG5, QG6, QG7, QG8): Abnahme Patrick 0.20.4: Ausklappen-Symbol wandert gestapelt nach links; Standard Hilfe-Reiter; Persistenz ueber Neustart/Seiten-/Modulwechsel
 
