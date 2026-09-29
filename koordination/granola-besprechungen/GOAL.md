@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T11:04
+aktualisiert: 2026-09-29T11:13
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -28,7 +28,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - Offene fremde PRs (#21, #32, #56–#58) und das Diktat-/Vorlesen-Verhalten außerhalb gemeinsam genutzter Bausteine.
 
 ## Akzeptanzkriterien
-- [ ] AK1 — Analyse + Plan: `recherche/granola-analyse.md`, `recherche/lokaler-stack.md`, `recherche/ist-stand.md`, `FEATURE-MATRIX.md` im Branch; Analyse-Artefakt (Link) veröffentlicht; Issue angelegt
+- [x] AK1 — Analyse + Plan: `recherche/granola-analyse.md`, `recherche/lokaler-stack.md`, `recherche/ist-stand.md`, `FEATURE-MATRIX.md` im Branch; Analyse-Artefakt (Link) veröffentlicht; Issue angelegt
 - [ ] AK2 — Feature-Parität: `python koordination/granola-besprechungen/check_matrix.py` → Exit 0 (alle Kern-Funktionen gleichwertig/besser/vorhanden, je mit Beleg)
 - [ ] AK3 — Notizblock + KI-Notizen (F07–F10): Eval über Fixture-Besprechungen mit Nutzerstichpunkten → 100 % der Nutzerstichpunkte wörtlich erhalten und als Nutzertext markiert, ≥ 95 % der KI-Aussagen mit Quellsegment belegt; Rust- und Playwright-Tests des Pfads grün
 - [ ] AK4 — Transkription Deutsch: Benchmark-Befehl → WER Enddurchlauf ≤ 6 % und Live ≤ 8 % auf FLEURS-de-Stichprobe (≥ 200 Sätze); WER auf deutschem Mehrsprecher-Besprechungskorpus gemessen und in der Doku
@@ -92,7 +92,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 | M7 | Gesamttest, Performance, Offline-Nachweis, Installer, Doku, PR | offen |
 
 ## Evidence
--
+- 2026-09-29T11:13 AK1 erfüllt — Recherche-Dateien + FEATURE-MATRIX.md in 45f3a3b, Artefakt https://claude.ai/artifact/JL7yCpwFDTcrvAm9Xj2Dwo (Kopie 91217fa), Issue #59
 
 ## Blocker
 -
