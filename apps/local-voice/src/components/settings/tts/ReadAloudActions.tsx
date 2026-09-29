@@ -332,6 +332,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
                 className="w-full"
               >
                 <Select
+                  menuPortal
                   value={props.targetLang}
                   options={TTS_TARGET_LANGS}
                   onChange={(value) => value && props.onTargetLangChange(value)}
@@ -368,6 +369,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
               <label className="flex flex-col gap-1 text-sm">
                 {t("tts.summary.length")}
                 <Select
+                  menuPortal
                   value={props.sumLength}
                   isClearable={false}
                   options={[
@@ -381,6 +383,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
               <label className="flex flex-col gap-1 text-sm">
                 {t("tts.summary.detail")}
                 <Select
+                  menuPortal
                   value={props.sumDetail}
                   isClearable={false}
                   options={[
@@ -403,6 +406,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
               <label className="flex flex-col gap-1 text-sm">
                 {t("tts.summary.audience")}
                 <Select
+                  menuPortal
                   value={props.sumAudience}
                   isClearable={false}
                   options={[

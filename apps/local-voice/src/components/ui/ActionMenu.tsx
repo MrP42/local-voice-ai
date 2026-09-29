@@ -70,13 +70,25 @@ const useOutsideClose = (
     if (!open) return;
     const onDown = (event: MouseEvent) => {
       const target = event.target as Node;
-      const inside = refsRef.current.some((r) => r.current?.contains(target));
+      // Auswahllisten mit `menuPortal` hängen an body, nicht im Fenster: ein
+      // Klick darauf ist kein Klick daneben.
+      const inside =
+        refsRef.current.some((r) => r.current?.contains(target)) ||
+        (target instanceof Element &&
+          target.closest(SELECT_MENU_PORTAL) !== null);
       if (!inside) onClose();
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open, onClose]);
 };
+
+const SELECT_MENU_PORTAL = ".app-select__menu-portal";
+
+/** Ist im Popover eine Auswahlliste offen (im Fenster oder als Portal)? */
+const hasOpenSelectMenu = (panel: HTMLElement | null) =>
+  !!panel?.querySelector(".app-select__menu") ||
+  !!document.querySelector(`${SELECT_MENU_PORTAL} .app-select__menu`);
 
 const MARGIN = 8;
 const GAP = 4;
@@ -385,7 +397,7 @@ export const ActionPopover: React.FC<ActionPopoverProps> = ({
   // Stattdessen schließen und vom Knopf aus weitertabben lassen.
   const onPanelKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== "Tab" || !panelRef.current) return;
-    if (panelRef.current.querySelector(".app-select__menu")) return;
+    if (hasOpenSelectMenu(panelRef.current)) return;
     const list = Array.from(
       panelRef.current.querySelectorAll<HTMLElement>(
         'input,button,select,textarea,[tabindex]:not([tabindex="-1"])',
@@ -408,7 +420,7 @@ export const ActionPopover: React.FC<ActionPopoverProps> = ({
       onKeyDownCapture={(event) => {
         if (!open || event.key !== "Escape") return;
         // Ein offenes Auswahlmenü im Popover schließt zuerst sich selbst.
-        if (panelRef.current?.querySelector(".app-select__menu")) return;
+        if (hasOpenSelectMenu(panelRef.current)) return;
         event.preventDefault();
         event.stopPropagation();
         setOpen(false);
