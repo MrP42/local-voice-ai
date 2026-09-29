@@ -9,6 +9,7 @@ import type {
   TranscribeAcceleratorSetting,
   OrtAcceleratorSetting,
   MeetingAudioRetention,
+  DetectMode,
   MeetingEchoCancellation,
   DictationAudio,
 } from "@/bindings";
@@ -249,6 +250,11 @@ const settingUpdaters: {
   // M2-P2d
   meeting_final_model: (value) =>
     commands.changeMeetingFinalModelSetting((value as string) || "auto"),
+  // M5-P5c
+  meeting_detect_mode: (value) =>
+    commands.changeMeetingDetectModeSetting(value as DetectMode),
+  meeting_detect_ignored_apps: (value) =>
+    commands.changeMeetingDetectIgnoredAppsSetting((value as string[]) ?? []),
   // M3-P3c
   meeting_diarization: (value) =>
     commands.changeMeetingDiarizationSetting((value as string) || "auto"),

@@ -10,6 +10,7 @@ import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { useSettings } from "../../../hooks/useSettings";
+import { MeetingDetectSettings } from "./MeetingDetectSettings";
 import { MeetingSemanticSearchSetting } from "./MeetingSemanticSearchSetting";
 
 /**
@@ -117,6 +118,7 @@ export const MeetingNotesSettings: React.FC = () => {
         />
       </SettingContainer>
       <MeetingSemanticSearchSetting />
+      <MeetingDetectSettings />
     </>
   );
 };

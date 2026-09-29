@@ -13,6 +13,29 @@ async changeBinding(id: string, binding: string) : Promise<Result<BindingRespons
     else return { status: "error", error: e  as any };
 }
 },
+async changeMeetingDetectModeSetting(mode: DetectMode) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_detect_mode_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMeetingDetectIgnoredAppsSetting(apps: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_detect_ignored_apps_setting", { apps }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * M5-P5c: kann diese Maschine die Mikrofonnutzung lesen? Sonst zeigt die
+ * Einstellung "auf diesem System nicht verfuegbar".
+ */
+async meetingDetectAvailable() : Promise<boolean> {
+    return await TAURI_INVOKE("meeting_detect_available");
+},
 /**
  * M3-P3c: Die Sprecher einer Besprechung (Popover, Zusammenfuehren, Zuordnen).
  */
@@ -3130,6 +3153,7 @@ async isLaptop() : Promise<Result<boolean, string>> {
 export const events = __makeEvents__<{
 historyUpdatePayload: HistoryUpdatePayload,
 meetingChatEvent: MeetingChatEvent,
+meetingDetectEvent: MeetingDetectEvent,
 meetingEvent: MeetingEvent,
 meetingIndexEvent: MeetingIndexEvent,
 meetingNotesEvent: MeetingNotesEvent,
@@ -3139,6 +3163,7 @@ streamTextEvent: StreamTextEvent
 }>({
 historyUpdatePayload: "history-update-payload",
 meetingChatEvent: "meeting-chat-event",
+meetingDetectEvent: "meeting-detect-event",
 meetingEvent: "meeting-event",
 meetingIndexEvent: "meeting-index-event",
 meetingNotesEvent: "meeting-notes-event",
@@ -3450,7 +3475,18 @@ meeting_diarization?: string;
  * der Follow-up-Mail als "ich" und werden nicht Empfänger. Ohne den
  * Schlüssel (ältere settings.json) leer.
  */
-meeting_self_emails?: string[] }
+meeting_self_emails?: string[]; 
+/**
+ * M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
+ * Mikrofonnutzung: `off` | `meeting_apps` (Standard) | `all_apps`. Nur ein
+ * Hinweis, nie ein automatischer Start.
+ */
+meeting_detect_mode?: DetectMode;
+/**
+ * M5-P5c: Programme, die nie gemeldet werden (Dateiname, Anzeigename oder
+ * Teil des Registry-Schluessels, ohne Gross-/Kleinschreibung).
+ */
+meeting_detect_ignored_apps?: string[] }
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
  * Verknuepfung mit der `humans`-Tabelle folgt in M9.
@@ -3668,6 +3704,22 @@ export type ChatThread = { id: string; scope_json: string; meeting_id: string | 
 export type MeetingChatEvent = { kind: "delta"; request_id: string; text: string } | { kind: "stage"; request_id: string; stage: ChatStage; round: number } | { kind: "failed"; request_id: string; code: string }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
+/**
+ * Einstellung `meeting_detect_mode`.
+ */
+export type DetectMode =
+/**
+ * Keine Erkennung; die Registry wird nicht einmal gelesen.
+ */
+"off" |
+/**
+ * Katalog-Apps und Browser (Standard).
+ */
+"meeting_apps" |
+/**
+ * Jedes Programm mit Mikrofonzugriff, auch ausserhalb des Katalogs.
+ */
+"all_apps"
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -3866,6 +3918,10 @@ export type HealthState = "no_data" | "digital_zero" | "silent" | "clipping" | "
  * Filter der Listensuche. `source` ist die HERKUNFT der Besprechung
  * (`live` | `import` | `subtitle`), nicht die Chunk-Quelle.
  */
+/**
+ * Ereignis an Fenster und Rust-Verbraucher (Muster `MeetingEvent`).
+ */
+export type MeetingDetectEvent = { kind: "started"; app_key: string; label: string; class: string } | { kind: "ended"; app_key: string }
 export type MeetingFilter = { folder_id: string | null; from: number | null; to: number | null; source: string | null; has_notes: boolean | null }
 export type MeetingSearchItem = { meeting: Meeting; 
 /**

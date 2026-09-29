@@ -301,6 +301,23 @@ pub struct CliArgs {
     #[arg(long = "to", value_name = "DATE")]
     pub cal_to: Option<String>,
 
+    // M5-P5c
+    /// Watch the microphone usage log for --seconds and print which programs
+    /// opened the microphone (same rules as the in-app hint: 5 s debounce, own
+    /// exe, dead entries and webview2 filtered), then exit. Read-only; never
+    /// opens the microphone. Honours --json/--out. Exit 0 watched, 1 registry
+    /// unreadable, 2 bad arguments.
+    #[arg(long)]
+    pub detect_mic: bool,
+
+    /// Duration for --detect-mic in seconds (default 15, at most 3600).
+    #[arg(long, value_name = "N")]
+    pub seconds: Option<u64>,
+
+    /// --detect-mic: also report programs outside the meeting catalog.
+    #[arg(long)]
+    pub all_apps: bool,
+
     // M6-P6a
     /// Export one meeting to a file and exit: --export-meeting <ID> --format
     /// md|txt|docx|html|srt|vtt|json --out <FILE>. Honours LVA_MEETINGS_DIR;
