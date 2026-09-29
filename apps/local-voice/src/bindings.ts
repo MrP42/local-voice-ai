@@ -78,6 +78,58 @@ async meetingsSegmentEpoch(meetingId: string) : Promise<Result<number, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Listensuche (M4-P4d): ohne Suchterme eine reine Filterliste, sonst
+ * Besprechungen mit Treffern im Such-Index samt Snippet (`<mark>`).
+ */
+async meetingsSearch(query: string, filter: MeetingFilter, offset: number, limit: number) : Promise<Result<MeetingSearchPage, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_search", { query, filter, offset, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingFoldersList() : Promise<Result<Folder[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_folders_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingFoldersSave(id: string | null, name: string, color: string | null) : Promise<Result<Folder, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_folders_save", { id, name, color }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingFoldersDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_folders_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingsSetFolders(meetingId: string, folderIds: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_set_folders", { meetingId, folderIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingsGetFolders(meetingId: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_get_folders", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("reset_binding", { id }) };
@@ -3122,6 +3174,7 @@ file: string; created_at: number;
  * vorgetaeuschte Nachvollziehbarkeit.
  */
 source: CandidateSource }
+export type ChunkSource = "title" | "transcript" | "user_notes" | "ai_notes"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
 export type EngineType = 
@@ -3181,6 +3234,7 @@ export type LlmDownloadInfo = { id: string; kind: LlmDownloadKind; name: string;
 export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
 export type GpuMemory = { name: string; budget_mb: number; used_mb: number; dedicated_mb: number; shared: boolean }
 export type SystemMemory = { ram_total_mb: number; ram_used_mb: number; gpus: GpuMemory[] }
+export type Folder = { id: string; name: string; color: string | null; sort: number; meeting_count: number; created_at: number; updated_at: number }
 export type FitVerdict = "fits" | "tight" | "unlikely" | "unknown"
 export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: number; total_mb: number; context_tokens: number; from_metadata: boolean }
 export type FitReport = { estimate: MemoryEstimate; free_mb: number; on_gpu: boolean; verdict: FitVerdict }
@@ -3267,6 +3321,25 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  * `no_transcript`, `llm_failed`, `meeting_not_finished`; die Oberflaeche
  * uebersetzt ihn (Muster `MeetingEvent::Error`).
  */
+/**
+ * Filter der Listensuche. `source` ist die HERKUNFT der Besprechung
+ * (`live` | `import` | `subtitle`), nicht die Chunk-Quelle.
+ */
+export type MeetingFilter = { folder_id: string | null; from: number | null; to: number | null; source: string | null; has_notes: boolean | null }
+export type MeetingSearchItem = { meeting: Meeting; 
+/**
+ * HTML-sicher: alles ausser den Treffermarkierungen `<mark>...</mark>` ist maskiert.
+ */
+snippet: string | null; hit_source: ChunkSource | null }
+export type MeetingSearchPage = { items: MeetingSearchItem[]; 
+/**
+ * Besprechungen mit Treffern. Bei `truncated` eine Untergrenze.
+ */
+total: number; 
+/**
+ * Die Trefferliste wurde gekappt (Allerwelts-Suchwort).
+ */
+truncated: boolean }
 export type MeetingNotesEvent = { kind: "progress"; meeting_id: string; step: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
 /**
  * Der gesamte Notizblock einer Besprechung. `revision` ist der Zaehler der

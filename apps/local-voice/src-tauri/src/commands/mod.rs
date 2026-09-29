@@ -4,6 +4,7 @@ pub mod llm;
 pub mod usage;
 pub mod meeting_notes;
 pub mod meeting_enhance;
+pub mod meeting_search;
 pub mod meetings;
 pub mod models;
 pub mod pages;
