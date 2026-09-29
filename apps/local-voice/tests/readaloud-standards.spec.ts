@@ -158,6 +158,11 @@ async function openReadAloud(page: Page) {
     .click();
   await expect(page.getByTestId("tts-pages")).toBeVisible();
   await expect(page.getByTestId("tts-files")).toBeVisible();
+  // Erster Start zeigt den Reiter "Hilfe"; die Dateizeilen brauchen "Dateien".
+  await page
+    .getByTestId("tts-files")
+    .getByRole("tab", { name: "Dateien", exact: true })
+    .click();
   await expect(page.getByTestId("tts-files").getByText(AUDIO)).toBeVisible();
 }
 
@@ -248,6 +253,84 @@ test("files/help tabs are real tabs with keyboard navigation", async ({
   await expect(dateien).toHaveCSS("font-weight", "500");
   await expect(dateien).toHaveCSS("text-transform", "none");
   await expect(dateien).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+});
+
+// Abnahme 0.20.4: beim Hover blendeten Umbenennen + Loeschen ein und schoben
+// den Papierkorb genau dorthin, wo eben noch "Anhoeren" stand. Jetzt sind alle
+// Zeilenaktionen immer da und stehen fest.
+test("file row actions are always visible and never move on hover", async ({
+  page,
+}) => {
+  await openReadAloud(page);
+  const files = page.getByTestId("tts-files");
+  const audioRow = files.locator(".group").filter({ hasText: AUDIO });
+  const textRow = files.locator(".group").filter({ hasText: "notizen.txt" });
+  const names = ["Anhören", "Umbenennen", "Datei löschen"] as const;
+
+  const measure = async (row: Locator) => {
+    const out: Record<string, { x: number; y: number; w: number; h: number }> =
+      {};
+    for (const name of names) {
+      const button = row.getByRole("button", { name, exact: true });
+      if ((await button.count()) === 0) continue;
+      // Sichtbar heisst hier: das Element an der Stelle IST der Knopf.
+      const hit = await button.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const top = document.elementFromPoint(
+          r.x + r.width / 2,
+          r.y + r.height / 2,
+        );
+        return !!top && (el === top || el.contains(top));
+      });
+      expect(hit, `${name} sichtbar und oben`).toBe(true);
+      const b = await size(button);
+      out[name] = { x: b.x, y: b.y, w: b.width, h: b.height };
+    }
+    return out;
+  };
+
+  // Maus sicher weg von der Zeile.
+  await page.mouse.move(2, 2);
+  const audioBefore = await measure(audioRow);
+  expect(Object.keys(audioBefore)).toEqual([...names]);
+  const textBefore = await measure(textRow);
+  expect(Object.keys(textBefore)).toEqual(["Umbenennen", "Datei löschen"]);
+
+  await audioRow.hover({ position: { x: 20, y: 6 } });
+  const audioAfter = await measure(audioRow);
+  for (const name of names) {
+    for (const key of ["x", "y", "w", "h"] as const) {
+      expect(
+        Math.abs(audioAfter[name][key] - audioBefore[name][key]),
+        `${name}.${key}`,
+      ).toBeLessThanOrEqual(1);
+    }
+  }
+  await textRow.hover({ position: { x: 20, y: 6 } });
+  const textAfter = await measure(textRow);
+  for (const name of ["Umbenennen", "Datei löschen"] as const) {
+    for (const key of ["x", "w", "h"] as const) {
+      expect(
+        Math.abs(textAfter[name][key] - textBefore[name][key]),
+        `${name}.${key} (Textdatei)`,
+      ).toBeLessThanOrEqual(1);
+    }
+  }
+  // Reihenfolge von links: Anhören, Umbenennen, Löschen (ganz aussen).
+  expect(audioBefore["Anhören"].x).toBeLessThan(audioBefore["Umbenennen"].x);
+  expect(audioBefore["Umbenennen"].x).toBeLessThan(
+    audioBefore["Datei löschen"].x,
+  );
+  // Nicht-Audio: Löschen steht auf derselben x-Position wie in der Audiozeile
+  // (der Platz des Anhören-Knopfs bleibt frei).
+  expect(
+    Math.abs(textBefore["Datei löschen"].x - audioBefore["Datei löschen"].x),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(textBefore["Umbenennen"].x - audioBefore["Umbenennen"].x),
+  ).toBeLessThanOrEqual(1);
+  // Die Größe steht in einer Metazeile und wechselt nicht mit dem Hover.
+  await expect(audioRow.getByText(/^\d+(\.\d+)? ?(B|KB|MB)$/)).toBeVisible();
 });
 
 test("every row action has a click target of at least 24x24 px", async ({
