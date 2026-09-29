@@ -171,9 +171,11 @@ export const TtsSettings = () => {
   );
   // Rechte Leiste: Dateien oder Hilfe. Die Hilfe ist ein Reiter derselben
   // Leiste, kein Fenster — sie soll neben dem Text stehen, nicht davor.
+  // Erster Start: Hilfe, damit niemand die Leiste fuer eine leere
+  // Dateiliste haelt. Ein gespeicherter Reiter hat immer Vorrang.
   const [rightTab, setRightTab] = usePersistentState<RightTab>(
     "tts.rightTab",
-    "files",
+    "help",
     isRightTab,
   );
   // Anordnung rechts vom Editor (gestapelt oder nebeneinander) und die

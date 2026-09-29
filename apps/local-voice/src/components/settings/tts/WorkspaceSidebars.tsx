@@ -69,6 +69,10 @@ const ROW_ACTION =
   "p-[4px] rounded text-text/60 hover:text-text hover:bg-mid-gray/25 disabled:opacity-30 cursor-pointer transition-colors";
 const ROW_ACTION_DANGER =
   "p-[4px] rounded text-red-400/70 hover:text-red-400 hover:bg-mid-gray/25 cursor-pointer transition-colors";
+/** Dateizeilen: die Aktionen sind immer sichtbar; Loeschen bleibt grau und
+ *  wird erst bei Hover/Fokus rot, damit es nicht die ganze Liste faerbt. */
+const ROW_ACTION_QUIET_DANGER =
+  "p-[4px] rounded text-text/60 hover:text-red-400 focus-visible:text-red-400 hover:bg-mid-gray/25 cursor-pointer transition-colors";
 
 /**
  * Die Seitenliste links: welches Arbeitsblatt gerade offen ist, wie bei den
@@ -481,13 +485,17 @@ export const FilesSidebar: React.FC<{
 
   if (collapsed) {
     return (
-      <div className="shrink-0 pt-1">
+      // Rechtsbuendig: gestapelt ist das eine Flex-Spalte, in der der Knopf
+      // sonst links unter der Bedienung klebte; nebeneinander bleibt er am
+      // rechten Rand. Gleiche Flaeche (p-1) wie die Knoepfe im Leistenkopf.
+      <div className="shrink-0 pt-1 flex justify-end">
         <button
           type="button"
           onClick={onToggle}
           title={t("tts.files.expand")}
           aria-label={t("tts.files.expand")}
-          className="p-1.5 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
+          data-testid="files-expand"
+          className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
         >
           <PanelRightOpen width={16} height={16} />
         </button>
@@ -625,21 +633,23 @@ export const FilesSidebar: React.FC<{
                     {/* Mittig kuerzen: der Anfang schrumpft mit "...", der
                         Zeitstempel am Ende bleibt lesbar -- er unterscheidet
                         die Fassungen. Nur CSS, keine Messung. */}
-                    <span
-                      className="flex flex-1 min-w-0 text-sm"
-                      title={file.name}
-                    >
-                      <span className="truncate">
-                        {splitFileNameTail(file.name).head}
+                    <span className="flex flex-1 min-w-0 flex-col">
+                      <span className="flex text-sm" title={file.name}>
+                        <span className="truncate">
+                          {splitFileNameTail(file.name).head}
+                        </span>
+                        <span className="shrink-0 whitespace-pre">
+                          {splitFileNameTail(file.name).tail}
+                        </span>
                       </span>
-                      <span className="shrink-0 whitespace-pre">
-                        {splitFileNameTail(file.name).tail}
+                      {/* Groesse als eigene Metazeile: frueher tauschte sie beim
+                          Hover den Platz mit den Aktionen, und der Papierkorb
+                          landete dort, wo eben noch "Anhoeren" stand. */}
+                      <span className="text-xs text-text/60">
+                        {formatSize(file.size)}
                       </span>
                     </span>
-                    <span className="text-xs text-text/60 shrink-0 group-hover:hidden group-focus-within:hidden">
-                      {formatSize(file.size)}
-                    </span>
-                    {isAudio(file.name) && (
+                    {isAudio(file.name) ? (
                       <button
                         type="button"
                         className={`shrink-0 p-[4px] rounded cursor-pointer transition-colors ${
@@ -674,8 +684,12 @@ export const FilesSidebar: React.FC<{
                           <Play width={16} height={16} />
                         )}
                       </button>
+                    ) : (
+                      // Platz des Anhoeren-Knopfs bleibt frei, damit
+                      // Umbenennen und Loeschen in jeder Zeile gleich stehen.
+                      <span className="w-6 shrink-0" aria-hidden="true" />
                     )}
-                    <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
+                    <span className="flex items-center shrink-0">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -697,7 +711,7 @@ export const FilesSidebar: React.FC<{
                         }}
                         title={t("tts.files.delete")}
                         aria-label={t("tts.files.delete")}
-                        className={ROW_ACTION_DANGER}
+                        className={ROW_ACTION_QUIET_DANGER}
                       >
                         <Trash2 width={16} height={16} />
                       </button>
