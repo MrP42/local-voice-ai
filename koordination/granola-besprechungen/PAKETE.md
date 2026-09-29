@@ -43,7 +43,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | P6c | M6 | Follow-up-Mail: Entwurf, mailto, .eml — lv-coder | `--lib meetings::mail` ≥ 10 Tests; Playwright meeting-followup grün (AK10/3) | abgenommen | d4fe2229 |
 | P6d | M6 | Export-Oberfläche (Menü, Teile, formatiert kopieren) — lv-coder | Playwright meeting-export grün (AK10/4) | abgenommen | 95e21c66 |
 | P6e | M6 | Lokaler MCP-Server --mcp (stdio, nur lesend, Standard aus) — lv-coder-xhigh | `--lib mcp::` ≥ 16 Tests; mcp_smoke.py gegen Release-Binary Exit 0 | abgenommen | 563bff6f |
-| P2g | M2 | Live-Modell für Besprechungen auf Parakeet v3 GGUF Q8 umstellen (Befund B1), Latenz/WER-Regression — lv-coder | Satz-Benchmark GGUF ≤ 6 % WER in der App; Latenz-Test grün | in_arbeit | |
+| P2g | M2 | Live-Modell für Besprechungen auf Parakeet v3 GGUF Q8 umstellen (Befund B1), Latenz/WER-Regression — lv-coder | Satz-Benchmark GGUF ≤ 6 % WER in der App; Latenz-Test grün | abgenommen | 0e9b05d6 |
 | P3 | M3 | Entwurf + Spike Sprechertrennung (Diarisierung Gegenseite/Import/Präsenz, Benennen, Wiedererkennen, DER-Messung) — lv-architect | `entwurf/m3-sprecher.md` mit DER-Messung + Coder-Paketen | abgenommen | 187ef221 |
 | P1g | M1 | Denkmodus aus fuer Qwen3.5 (enable_thinking=false/Reasoning-Budget 0) + Kontext je VRAM + Budget-Konstanten kalibriert (3,35 Z./Token, Overhead ~750) — lv-coder | --eval-notes mit Qwen3.5-9B Exit 0; ai_sourced ≥ 0,95 | in_arbeit | |
 | P1h | M1 | llama-server: toter Server wird erkannt und neu gestartet (is_serving nach CUDA-Absturz) — lv-coder-xhigh | Test mit beendetem Serverprozess → nächster Aufruf startet neu; llm::server grün | abgenommen | f146816e |
