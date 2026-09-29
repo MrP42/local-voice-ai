@@ -22,8 +22,8 @@ use futures_util::future::BoxFuture;
 use super::citations::{postprocess, DeltaFilter};
 use super::context::{
     bm25_rank, budget_chars, card_summary, context_budget_tokens, enhanced_excerpts,
-    history_budget_chars, notes_excerpts, number_excerpts, order_for_reading, pack, rank_meetings,
-    total_cost, transcript_blocks, Excerpt, ExcerptPlan, MeetingCard, MeetingRef, MAX_PER_MEETING,
+    history_budget_chars, notes_excerpts, number_excerpts, order_for_reading, pack, pack_dynamic,
+    rank_meetings, total_cost, transcript_blocks, Excerpt, ExcerptPlan, MeetingCard, MeetingRef,
     SEARCH_TOP, SECOND_ROUND_LAST_RANK, SHORTLIST,
 };
 use super::live::{live_plan, LiveSnapshot};
@@ -356,7 +356,16 @@ pub async fn ask(
     let history = render_history(&history_rows, history_budget_chars());
     let today = date_de(Some(env.now));
     let live_position = live.as_ref().map(LiveSnapshot::end_ms);
-    let per_meeting = meeting_scope.is_none().then_some(MAX_PER_MEETING);
+    // Global: Breite vor Tiefe, Tiefe je Besprechung nach Budget (`pack_dynamic`);
+    // eine Besprechung: nur das Budget.
+    let global = meeting_scope.is_none();
+    let pack_round = |candidates: Vec<Excerpt>| -> (Vec<Excerpt>, Vec<Excerpt>) {
+        if global {
+            pack_dynamic(candidates, budget)
+        } else {
+            pack(candidates, budget, None)
+        }
+    };
     let mut coverage = Coverage {
         meetings_in_scope: plan.meetings_in_scope,
         meetings_with_hits: plan.meetings_with_hits,
@@ -372,12 +381,12 @@ pub async fn ask(
     let mut secondary = plan.secondary;
     let mut cards = plan.cards;
     if excerpts.is_empty() {
-        excerpts = pack(std::mem::take(&mut secondary), budget, per_meeting).0;
+        excerpts = pack_round(std::mem::take(&mut secondary)).0;
     }
     let mut outcome: (String, Vec<Citation>, bool) = (String::new(), Vec::new(), true);
     for round in 1..=2u8 {
         if round == 2 {
-            let (next, rest) = pack(std::mem::take(&mut secondary), budget, per_meeting);
+            let (next, rest) = pack_round(std::mem::take(&mut secondary));
             if next.is_empty() {
                 break;
             }
@@ -884,17 +893,22 @@ async fn global_plan(
         .partition(|e| top.contains(&e.meeting_id.as_str()));
     order_for_reading(&mut first);
     order_for_reading(&mut later);
-    let (read, unread_top) = pack(first, left, Some(MAX_PER_MEETING));
+    let (read, unread_top) = pack_dynamic(first, left);
 
     let mut primary = prefix;
     primary.extend(read);
     let with_hits = ranking.len() as u32;
+    let truncated =
+        !unread_top.is_empty() || !later.is_empty() || ranking.len() > SECOND_ROUND_LAST_RANK;
+    // Runde 2 liest zuerst, was von den besten Besprechungen nicht mehr ins
+    // Budget passte (die lange Besprechung mit dem Teil "Go-Live Februar"),
+    // dann die Raenge 9-20.
+    let mut secondary = unread_top;
+    secondary.extend(later);
     Ok(ExcerptPlan {
-        truncated: !unread_top.is_empty()
-            || !later.is_empty()
-            || ranking.len() > SECOND_ROUND_LAST_RANK,
+        truncated,
         primary,
-        secondary: later,
+        secondary,
         cards,
         lexical_only: result.lexical_only,
         meetings_in_scope: ids.len() as u32,
@@ -1505,6 +1519,90 @@ mod tests {
         assert!(answer.not_found);
         assert_eq!(answer.coverage.rounds, 1);
         assert_eq!(prompts.lock().unwrap().len(), 1);
+    }
+
+    /// Eine lange (30 Stellen) und eine kurze Besprechung, alle Stellen ~1 400
+    /// Zeichen: zusammen mehr als das Budget eines entfernten Anbieters (P4g).
+    fn long_and_short_meeting(store: &MeetingStore) -> (Meeting, Meeting) {
+        let long = ready_meeting(store, "Lenkungskreis", 1_000);
+        let short = ready_meeting(store, "Kurzrunde", 2_000);
+        let filler = "Fuelltext ".repeat(130);
+        let texts: Vec<(String, u32)> = (0..30u32)
+            .map(|i| {
+                (
+                    format!(
+                        "{}Lang-Stelle {i:02} {filler}",
+                        "Budget ".repeat(30 - i as usize)
+                    ),
+                    i,
+                )
+            })
+            .collect();
+        index(
+            store,
+            &long,
+            &texts
+                .iter()
+                .map(|(t, s)| (t.as_str(), *s))
+                .collect::<Vec<_>>(),
+        );
+        let shorts: Vec<(String, u32)> = (0..2u32)
+            .map(|i| (format!("Budget Kurz-Stelle {i} {filler}"), i))
+            .collect();
+        index(
+            store,
+            &short,
+            &shorts
+                .iter()
+                .map(|(t, s)| (t.as_str(), *s))
+                .collect::<Vec<_>>(),
+        );
+        (long, short)
+    }
+
+    #[tokio::test]
+    async fn a_long_meeting_is_read_deeper_than_three_excerpts_and_round_two_reads_the_rest() {
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        long_and_short_meeting(&store);
+        let (port, prompts) = mock(vec!["KEIN_BELEG", "Das Budget steht [Q1]."]).await;
+        let settings = settings_with_mock_provider(port);
+        let answer = run(
+            &settings,
+            &store,
+            request(global(), "Wie steht das Budget?"),
+        )
+        .await
+        .unwrap();
+        let prompts = prompts.lock().unwrap().clone();
+        // Vorher: hoechstens 3 + 2 Stellen und keine Wiederholung (nichts "ungelesen").
+        assert_eq!(prompts.len(), 2, "die ungelesenen Stellen bekommen Runde 2");
+        let count = |p: &str, what: &str| p.matches(what).count();
+        assert!(
+            count(&prompts[0], "Lang-Stelle") > super::context::MAX_PER_MEETING,
+            "die lange Besprechung wird tiefer gelesen als 3: {}",
+            count(&prompts[0], "Lang-Stelle")
+        );
+        assert_eq!(
+            count(&prompts[0], "Kurz-Stelle"),
+            2,
+            "die kurze bekommt ihre Stellen"
+        );
+        // Jede Stelle genau einmal, ueber beide Runden.
+        for i in 0..30 {
+            let tag = format!("Lang-Stelle {i:02}");
+            assert_eq!(
+                count(&prompts[0], &tag) + count(&prompts[1], &tag),
+                1,
+                "{tag}"
+            );
+        }
+        assert_eq!(answer.coverage.rounds, 2);
+        assert_eq!(answer.coverage.excerpts_read, 32);
+        assert!(!answer.not_found && answer.citations.len() == 1);
+        // Das Budget gilt in jeder Runde.
+        let limit = budget_chars(context_budget_tokens(8_192, false, false));
+        assert!(prompts.iter().all(|p| p.chars().count() < limit + 4_000));
     }
 
     #[tokio::test]

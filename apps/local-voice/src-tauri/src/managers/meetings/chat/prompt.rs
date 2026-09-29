@@ -103,6 +103,26 @@ pub fn render_history(messages: &[ChatMessageRow], max_chars: usize) -> String {
     picked.join("\n")
 }
 
+/// Zeilen eines Auszugs, wie das Modell sie sieht. Transkriptzeilen ohne
+/// die Segmentnummer (`03:15 Ich: ...` statt `S12 03:15 Ich: ...`): die
+/// Nummern sind nur je Besprechung eindeutig, ein kleines Modell zitierte sie
+/// trotzdem (`[S17]`, `[Q2:S44]`) statt der Auszugs-ID, und in einem globalen
+/// Chat ist `[S17]` mehrdeutig (P4g: Eval E4B mit Nummern 0,92-0,96 mit 1-2
+/// Zitatfehlern je Lauf, ohne 0,96-1,00 ohne Zitatfehler). Das Segment
+/// bestimmt `citations` je Satz aus dem Inhalt; intern behaelt jede Zeile
+/// ihren Index.
+pub fn prompt_body(ex: &Excerpt) -> String {
+    ex.lines
+        .iter()
+        .map(|l| {
+            l.segment_index
+                .and_then(|i| l.text.strip_prefix(&format!("S{i} ")))
+                .unwrap_or(&l.text)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub struct PromptInput<'a> {
     /// `TT.MM.JJJJ`
     pub today: &'a str,
@@ -127,7 +147,7 @@ pub fn build_user_prompt(p: &PromptInput<'_>) -> String {
     for ex in p.excerpts {
         out.push_str(&excerpt_heading(ex));
         out.push('\n');
-        out.push_str(&ex.body());
+        out.push_str(&prompt_body(ex));
         out.push_str("\n\n");
     }
     if !p.cards.is_empty() {
@@ -201,7 +221,14 @@ mod tests {
             question: "Wie hoch ist das Budget?",
         });
         assert!(prompt.starts_with("Heute: 29.09.2026\n"));
-        assert!(prompt.contains("[Q1] B1 · Transkript 03:15–04:44\nS12 03:15 Ich: Das Budget steht.\nS13 04:40 Gegenseite: Gut."));
+        assert!(prompt.contains(
+            "[Q1] B1 · Transkript 03:15–04:44\n03:15 Ich: Das Budget steht.\n04:40 Gegenseite: Gut."
+        ));
+        // Keine Segmentnummer, die das Modell statt der Auszugs-ID zitieren koennte.
+        assert!(
+            !prompt.contains("S12") && !prompt.contains("S13"),
+            "{prompt}"
+        );
         assert!(prompt.contains("[Q2] B1 · KI-Notizen, Abschnitt Entscheidungen"));
         assert!(prompt
             .contains("B1 \"Besprechung a\" 12.09.2026 · Ordner Vertrieb · Budget freigegeben"));
@@ -211,6 +238,34 @@ mod tests {
         assert!(pos("Überblick:") < pos("Verlauf:"));
         assert!(pos("Verlauf:") < pos("Frage: Wie hoch ist das Budget?"));
         assert!(prompt.ends_with("Frage: Wie hoch ist das Budget?"));
+    }
+
+    #[test]
+    fn the_prompt_body_drops_only_the_segment_number_of_transcript_lines() {
+        let mut ex = transcript_blocks(
+            &meeting("a"),
+            &[seg(12, 195, "Das Budget steht."), seg(130, 280, "Gut.")],
+            0,
+            10_000,
+        )
+        .remove(0);
+        assert_eq!(
+            prompt_body(&ex),
+            "03:15 Ich: Das Budget steht.\n04:40 Ich: Gut."
+        );
+        // Zeile ohne Segment (Notizen) und Text, der nicht mit der Nummer beginnt: unveraendert.
+        ex.lines[0].segment_index = None;
+        ex.lines[1].text = "S131 04:40 Gegenseite: Gut.".into();
+        assert_eq!(
+            prompt_body(&ex),
+            "S12 03:15 Ich: Das Budget steht.\nS131 04:40 Gegenseite: Gut."
+        );
+        // "S1" darf nicht von "S12 ..." abgeschnitten werden (Leerzeichen gehoert zum Praefix).
+        ex.lines[0].segment_index = Some(1);
+        assert!(prompt_body(&ex).starts_with("S12 03:15"));
+        // Der Auszug selbst behaelt seine Zeilen mit Index (Zitat-Verfeinerung).
+        assert_eq!(ex.lines[1].segment_index, Some(130));
+        assert!(ex.body().contains("S12 03:15"));
     }
 
     #[test]

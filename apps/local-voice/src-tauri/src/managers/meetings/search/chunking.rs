@@ -623,16 +623,99 @@ pub(super) fn and_of_terms(terms: &[String]) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" AND "))
 }
 
+/// Kleinster Teil eines zerlegten Kompositums (Zeichen).
+const MIN_COMPOUND_PART: usize = 4;
+/// Erst ab dieser Laenge kann ein Term aus zwei Teilen mit je
+/// `MIN_COMPOUND_PART` Zeichen bestehen.
+const MIN_COMPOUND_CHARS: usize = 2 * MIN_COMPOUND_PART;
+/// Teile je Term und je Anfrage: haelt den Match-Ausdruck klein, auch wenn
+/// jemand 24 lange Woerter tippt.
+const MAX_PARTS_PER_TERM: usize = 12;
+const MAX_PARTS_PER_QUERY: usize = 48;
+/// Ab dieser Laenge bekommt ein Teil zusaetzlich einen Praefix (`"teil"*`);
+/// kuerzere nur exakt, damit zufaellige Wortstuecke ("serve") nicht "server"
+/// mitziehen.
+const PART_PREFIX_MIN_CHARS: usize = 6;
+
+/// Einfache Zerlegung eines Kompositums ohne Woerterbuch: jeder Schnitt mit
+/// zwei Teilen ab `MIN_COMPOUND_PART` Zeichen, ausgewogene Schnitte zuerst
+/// ("budgetreserve" -> budget, reserve, ...). Beim Vorderteil zusaetzlich
+/// ohne Fugenlaut (s, es, n: "arbeitsplan" -> arbeits, arbeit, plan). Teile,
+/// die es im Index nicht gibt, kosten nichts (exakte Terme ohne Treffer);
+/// Stoppwoerter fallen weg. Nur reine Buchstaben-Terme; Ziffern bleiben ganz.
+pub(crate) fn compound_parts(term: &str) -> Vec<String> {
+    let chars: Vec<char> = term.chars().collect();
+    let n = chars.len();
+    if n < MIN_COMPOUND_CHARS || !chars.iter().all(|c| c.is_alphabetic()) {
+        return Vec::new();
+    }
+    let mut cuts: Vec<usize> = (MIN_COMPOUND_PART..=n - MIN_COMPOUND_PART).collect();
+    cuts.sort_by_key(|&i| i.abs_diff(n - i));
+    let mut parts: Vec<String> = Vec::new();
+    let add = |candidate: String, parts: &mut Vec<String>| {
+        if char_len(&candidate) >= MIN_COMPOUND_PART
+            && candidate != term
+            && !is_stopword(&candidate)
+            && !parts.contains(&candidate)
+        {
+            parts.push(candidate);
+        }
+    };
+    for cut in cuts {
+        let left: String = chars[..cut].iter().collect();
+        let right: String = chars[cut..].iter().collect();
+        for linking in ["es", "s", "n"] {
+            if let Some(stem) = left.strip_suffix(linking) {
+                add(stem.to_string(), &mut parts);
+            }
+        }
+        add(left, &mut parts);
+        add(right, &mut parts);
+        if parts.len() >= MAX_PARTS_PER_TERM {
+            break;
+        }
+    }
+    parts.truncate(MAX_PARTS_PER_TERM);
+    parts
+}
+
 /// Match-Ausdruck fuer die Wort-FTS (unicode61) im Chat: Stoppwoerter raus,
 /// Terme gequotet, ab 5 Zeichen zusaetzlich als Praefix (`"term"*`), ss/ß-
-/// Varianten, alles mit ODER (BM25 gewichtet). `None`, wenn nichts Suchbares
-/// uebrig bleibt.
+/// Varianten, alles mit ODER (BM25 gewichtet). Lange Terme werden zusaetzlich
+/// in ihre Teile zerlegt (`compound_parts`): "Budgetreserve" findet "Die
+/// Reserve betraegt ...". `None`, wenn nichts Suchbares uebrig bleibt.
 pub fn fts_query_words(q: &str) -> Option<String> {
     let terms: Vec<String> = query_terms(q)
         .into_iter()
         .filter(|t| !is_stopword(t))
         .collect();
-    or_of_terms(&terms, true)
+    let head = or_of_terms(&terms, true)?;
+    let mut parts: Vec<String> = Vec::new();
+    for term in &terms {
+        for part in compound_parts(term) {
+            if parts.len() >= MAX_PARTS_PER_QUERY {
+                break;
+            }
+            if !terms.contains(&part) && !parts.contains(&part) {
+                parts.push(part);
+            }
+        }
+    }
+    let mut pieces: Vec<String> = Vec::new();
+    for part in &parts {
+        for variant in spelling_variants(part) {
+            let q = quoted(&variant);
+            if char_len(&variant) >= PART_PREFIX_MIN_CHARS {
+                pieces.push(format!("{q}*"));
+            }
+            pieces.push(q);
+        }
+    }
+    if pieces.is_empty() {
+        Some(head)
+    } else {
+        Some(format!("{head} OR {}", pieces.join(" OR ")))
+    }
 }
 
 /// Wie `fts_query_words`, aber ohne Stoppwortfilter und ohne Praefixe; fuer die
@@ -1052,6 +1135,120 @@ mod tests {
         assert!(q.contains("\"straße\"") && q.contains("\"strasse\""), "{q}");
         let q = fts_query_words("Strasse").unwrap();
         assert!(q.contains("\"strasse\"") && q.contains("\"straße\""), "{q}");
+    }
+
+    /// Die Terme eines Match-Ausdrucks (ohne `*`, ohne Anfuehrungszeichen).
+    fn words_in(query: &str) -> Vec<String> {
+        query
+            .split(" OR ")
+            .map(|p| p.trim_matches(|c| c == '"' || c == '*').to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_compound_is_also_searched_by_its_parts() {
+        let q = fts_query_words("Wie hoch ist die Budgetreserve im ERP-Projekt?").unwrap();
+        let words = words_in(&q);
+        for wanted in [
+            "budgetreserve",
+            "budget",
+            "reserve",
+            "erp",
+            "projekt",
+            "hoch",
+        ] {
+            assert!(words.contains(&wanted.to_string()), "{wanted} fehlt in {q}");
+        }
+        // Der ganze Term bleibt mit Praefix, die Teile stehen dahinter.
+        assert!(
+            q.starts_with("\"hoch\" OR \"budgetreserve\"* OR \"budgetreserve\""),
+            "{q}"
+        );
+        assert!(q.contains("\"budget\"* OR \"budget\""), "{q}");
+        assert!(q.contains("\"reserve\"* OR \"reserve\""), "{q}");
+        // Fugen-s: "Arbeitsplan" -> arbeits, arbeit, plan.
+        let words = words_in(&fts_query_words("Arbeitsplan").unwrap());
+        for wanted in ["arbeitsplan", "arbeits", "arbeit", "plan"] {
+            assert!(words.contains(&wanted.to_string()), "{wanted} in {words:?}");
+        }
+        // Kunden|portal: das n faellt fuer die Grundform ("kunde").
+        let words = words_in(&fts_query_words("Kundenportal").unwrap());
+        assert!(words.contains(&"kunden".to_string()) && words.contains(&"kunde".to_string()));
+        assert!(words.contains(&"portal".to_string()));
+        // Umlaute und ss/ß: die Teile bekommen beide Schreibweisen.
+        let q = fts_query_words("Straßenbaustelle").unwrap();
+        assert!(
+            q.contains("\"straßen\"") && q.contains("\"strassen\""),
+            "{q}"
+        );
+        assert!(q.contains("\"baustelle\""), "{q}");
+    }
+
+    #[test]
+    fn short_words_digits_and_stopword_parts_are_not_split() {
+        // Unter acht Zeichen: unveraendert (bestehende Ausdruecke).
+        assert_eq!(
+            fts_query_words("Wie war der Termin?").as_deref(),
+            Some("\"termin\"* OR \"termin\"")
+        );
+        assert_eq!(
+            fts_query_words("Planung").as_deref(),
+            Some("\"planung\"* OR \"planung\"")
+        );
+        // Ziffern gehoeren zu keinem Wortteil.
+        assert_eq!(compound_parts("projekt2026"), Vec::<String>::new());
+        assert_eq!(compound_parts("q3planung"), Vec::<String>::new());
+        // Teile unter vier Zeichen und Stoppwoerter fallen weg.
+        let parts = compound_parts("zwischendurch");
+        assert!(parts.contains(&"zwischen".to_string()), "{parts:?}");
+        assert!(
+            !parts.contains(&"durch".to_string()),
+            "Stoppwort: {parts:?}"
+        );
+        assert!(parts.iter().all(|p| char_len(p) >= MIN_COMPOUND_PART));
+        // Genau zwei Mindestteile sind der kleinste Fall.
+        assert_eq!(compound_parts("abcdefgh"), vec!["abcd", "efgh"]);
+        assert!(compound_parts("abcdefg").is_empty());
+        // Kein Schnitt an Nicht-Buchstaben; der Term selbst ist nie sein eigener Teil.
+        assert!(compound_parts("ab-cdefgh").is_empty());
+        assert!(!compound_parts("budgetreserve").contains(&"budgetreserve".to_string()));
+    }
+
+    #[test]
+    fn the_parts_of_a_query_stay_bounded_and_the_expression_valid() {
+        let long: Vec<String> = (0..24)
+            .map(|i| {
+                format!(
+                    "verarbeitungsverzeichnis{}",
+                    &"abcdefghijklmnopqrstuvwx"[..i]
+                )
+            })
+            .collect();
+        let q = fts_query_words(&long.join(" ")).unwrap();
+        let mut extra = words_in(&q);
+        extra.retain(|w| !long.contains(w));
+        extra.sort();
+        extra.dedup();
+        assert!(
+            extra.len() <= MAX_PARTS_PER_QUERY * 3,
+            "{} Teile (mit ss-Varianten und Grundform)",
+            extra.len()
+        );
+        assert!(
+            q.len() < 8_000,
+            "Ausdruck bleibt klein: {} Zeichen",
+            q.len()
+        );
+        // Je Term hoechstens MAX_PARTS_PER_TERM Teile.
+        assert!(compound_parts(&long[23]).len() <= MAX_PARTS_PER_TERM);
+        // Anfuehrungszeichen paarig, nur Buchstaben und Ziffern darin.
+        let parts: Vec<&str> = q.split('"').collect();
+        assert_eq!(parts.len() % 2, 1);
+        for (i, part) in parts.iter().enumerate() {
+            if i % 2 == 1 {
+                assert!(!part.is_empty() && part.chars().all(char::is_alphanumeric));
+            }
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::ChunkSource;
 use crate::managers::meetings::notes::model::{EnhancedNotes, NoteBlock, NoteBlockKind};
-use crate::managers::meetings::search::chunking::clock;
+use crate::managers::meetings::search::chunking::{clock, compound_parts};
 use crate::managers::meetings::search::index::ChunkRow;
 use crate::managers::meetings::stats::label_for_channel;
 use crate::managers::meetings::store::StoredSegment;
@@ -420,6 +420,74 @@ pub fn pack(
     (taken, left)
 }
 
+/// Obergrenze fuer die Tiefe einer Besprechung im globalen Chat (P4g): nie
+/// unter `MAX_PER_MEETING`, sonst hoechstens die Haelfte der Stellen, die ins
+/// Budget passen (mittlere Kosten der Kandidaten). So liest eine lange
+/// Besprechung bei grossem Budget tiefer als drei Stellen, ohne dass sie
+/// allein das Budget belegt.
+pub fn depth_cap(candidates: &[Excerpt], budget: usize) -> usize {
+    if candidates.is_empty() {
+        return MAX_PER_MEETING;
+    }
+    let avg_cost = (total_cost(candidates) / candidates.len()).max(1);
+    let slots = (budget / avg_cost).max(1);
+    slots.div_ceil(2).max(MAX_PER_MEETING)
+}
+
+/// Auswahl der Auszuege im globalen Chat in drei Stufen, jeweils nach Rang
+/// (Eingabereihenfolge) und nur, solange sie ins Budget passen:
+/// 1. Breite: von jeder Besprechung die beste Stelle;
+/// 2. Tiefe: weitere Stellen, je Besprechung bis `depth_cap`;
+/// 3. Rest: uebriges Budget frei an die besten der uebrigen Stellen.
+///
+/// Statt fest drei Stellen je Besprechung (die schwach passende dritte Stelle
+/// einer kurzen Besprechung verdraengte die vierte bis sechste der langen,
+/// in der "Go-Live Februar" stand). Liefert (genommen, uebrig), beide in der
+/// Eingabereihenfolge (Rang, Prompt-Cache).
+pub fn pack_dynamic(candidates: Vec<Excerpt>, budget: usize) -> (Vec<Excerpt>, Vec<Excerpt>) {
+    let cap = depth_cap(&candidates, budget);
+    let mut used = 0usize;
+    let mut per: HashMap<String, usize> = HashMap::new();
+    let mut take = vec![false; candidates.len()];
+    // Breite.
+    for (i, ex) in candidates.iter().enumerate() {
+        let cost = ex.cost();
+        if !per.contains_key(&ex.meeting_id) && used + cost <= budget {
+            used += cost;
+            per.insert(ex.meeting_id.clone(), 1);
+            take[i] = true;
+        }
+    }
+    // Tiefe.
+    for (i, ex) in candidates.iter().enumerate() {
+        let cost = ex.cost();
+        let count = per.get(&ex.meeting_id).copied().unwrap_or(0);
+        if !take[i] && count < cap && used + cost <= budget {
+            used += cost;
+            per.insert(ex.meeting_id.clone(), count + 1);
+            take[i] = true;
+        }
+    }
+    // Rest.
+    for (i, ex) in candidates.iter().enumerate() {
+        let cost = ex.cost();
+        if !take[i] && used + cost <= budget {
+            used += cost;
+            take[i] = true;
+        }
+    }
+    let mut taken = Vec::new();
+    let mut left = Vec::new();
+    for (ex, took) in candidates.into_iter().zip(take) {
+        if took {
+            taken.push(ex);
+        } else {
+            left.push(ex);
+        }
+    }
+    (taken, left)
+}
+
 pub fn total_cost(excerpts: &[Excerpt]) -> usize {
     excerpts.iter().map(Excerpt::cost).sum()
 }
@@ -447,7 +515,8 @@ pub struct ExcerptPlan {
 pub const SHORTLIST: usize = 8;
 /// Raenge 9..=20: Kandidaten der einen Wiederholung.
 pub const SECOND_ROUND_LAST_RANK: usize = 20;
-/// Hoechstens so viele Auszuege je Besprechung (global).
+/// Mindestens so viele Auszuege darf jede Besprechung im globalen Chat
+/// bekommen; mehr je nach Budget (`depth_cap`, `pack_dynamic`).
 pub const MAX_PER_MEETING: usize = 3;
 /// Treffer der hybriden Suche, die der Chat betrachtet.
 pub const SEARCH_TOP: usize = 40;
@@ -618,7 +687,22 @@ pub fn bm25_rank(query: &str, docs: &[String]) -> Vec<(usize, f64)> {
     const B: f64 = 0.75;
     let q: Vec<String> = {
         let mut seen = HashSet::new();
-        content_terms(query)
+        // Lange Woerter zusaetzlich in ihren Teilen ("Budgetreserve" findet
+        // "Die Reserve ..."), wie die Wortsuche im Index.
+        let mut terms = content_terms(query);
+        for word in query
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+        {
+            let lower = word.to_lowercase();
+            if STOPWORDS.contains(&fold(&lower).as_str()) {
+                continue;
+            }
+            for part in compound_parts(&lower) {
+                terms.extend(content_terms(&part));
+            }
+        }
+        terms
             .into_iter()
             .filter(|t| seen.insert(t.clone()))
             .collect()
@@ -860,6 +944,106 @@ pub(crate) mod tests {
         assert_eq!(taken.len(), 4);
     }
 
+    /// Kandidat einer Besprechung mit `len` Zeichen Text (Kosten: len + 1 + Kopf).
+    fn cand(meeting_id: &str, chunk: i64, len: usize) -> Excerpt {
+        let mut ex = Excerpt::empty(&meeting(meeting_id), ChunkSource::Transcript, 0);
+        ex.chunk_id = Some(chunk);
+        ex.lines.push(plain_line(&"x".repeat(len), None));
+        ex
+    }
+
+    fn ids(list: &[Excerpt]) -> Vec<i64> {
+        list.iter().filter_map(|e| e.chunk_id).collect()
+    }
+
+    #[test]
+    fn the_depth_cap_is_half_the_slots_but_never_below_three() {
+        // 13 Stellen passen ins Budget: 7; kleines Budget, leer, null: die Untergrenze.
+        let cost = 1_000 + HEADING_ALLOWANCE + 1;
+        let cands: Vec<Excerpt> = (0..30).map(|i| cand("lang", i, 1_000)).collect();
+        assert_eq!(depth_cap(&cands, 13 * cost), 7);
+        assert_eq!(depth_cap(&cands, 40 * cost), 20);
+        assert_eq!(depth_cap(&cands, 2 * cost), MAX_PER_MEETING);
+        assert_eq!(depth_cap(&cands, 0), MAX_PER_MEETING);
+        assert_eq!(depth_cap(&[], 13 * cost), MAX_PER_MEETING);
+    }
+
+    #[test]
+    fn breadth_first_then_depth_then_the_rest_of_the_budget() {
+        let cost = 1_000 + HEADING_ALLOWANCE + 1;
+        // Rangfolge: die lange Besprechung zuerst (0..9), dann zwei schwaechere.
+        let mut cands: Vec<Excerpt> = (0..10).map(|i| cand("lang", i, 1_000)).collect();
+        cands.push(cand("kurz", 100, 1_000));
+        cands.push(cand("kurz", 101, 1_000));
+        cands.push(cand("mittel", 200, 1_000));
+        // Platz fuer 8: jede Besprechung ihre beste Stelle (0, 100, 200), dann die
+        // Tiefe bis zur halben Platzzahl (4 je Besprechung: 1, 2, 3 und 101), der
+        // Rest des Budgets geht an die naechste der langen (4).
+        let (taken, left) = pack_dynamic(cands.clone(), 8 * cost);
+        assert_eq!(ids(&taken), vec![0, 1, 2, 3, 4, 100, 101, 200]);
+        assert_eq!(ids(&left), vec![5, 6, 7, 8, 9]);
+        let long_taken = taken.iter().filter(|e| e.meeting_id == "lang").count();
+        assert!(
+            long_taken > MAX_PER_MEETING,
+            "tiefer als die alten drei: {long_taken}"
+        );
+        assert!(total_cost(&taken) <= 8 * cost);
+        // Reicht das Budget nur fuer zwei: die besten Stellen der ersten zwei
+        // Besprechungen im Rang, nicht drei aus einer.
+        let few = vec![
+            cand("a", 1, 1_000),
+            cand("a", 2, 1_000),
+            cand("b", 3, 1_000),
+            cand("c", 4, 1_000),
+        ];
+        let (taken, left) = pack_dynamic(few, 2 * cost);
+        assert_eq!(ids(&taken), vec![1, 3]);
+        assert_eq!(ids(&left), vec![2, 4]);
+        // Grosses Budget: alles; Budget kleiner als jede Stelle: nichts, ohne Panik.
+        let (taken, left) = pack_dynamic(cands.clone(), 100 * cost);
+        assert_eq!((taken.len(), left.len()), (13, 0));
+        let (taken, left) = pack_dynamic(cands.clone(), cost - 1);
+        assert_eq!((taken.len(), left.len()), (0, 13));
+        assert_eq!(pack_dynamic(Vec::new(), 100).0.len(), 0);
+        // Beide Listen behalten die Eingabereihenfolge.
+        let (taken, left) = pack_dynamic(cands, 6 * cost);
+        assert!(ids(&taken).windows(2).all(|w| w[0] < w[1]));
+        assert!(ids(&left).windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn pack_dynamic_never_exceeds_the_budget_for_any_mix() {
+        // Kleiner Zufallsgenerator (fester Startwert): Kosten, Besprechungen, Budget.
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = |m: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % m
+        };
+        for _ in 0..300 {
+            let n = next(40) as usize;
+            let cands: Vec<Excerpt> = (0..n)
+                .map(|i| {
+                    let m = format!("m{}", next(6));
+                    cand(&m, i as i64, 10 + next(1_500) as usize)
+                })
+                .collect();
+            let budget = next(20_000) as usize;
+            let (taken, left) = pack_dynamic(cands.clone(), budget);
+            assert!(total_cost(&taken) <= budget, "Budget ueberschritten");
+            assert_eq!(taken.len() + left.len(), n);
+            let mut all = ids(&taken);
+            all.extend(ids(&left));
+            all.sort_unstable();
+            assert_eq!(
+                all,
+                (0..n as i64).collect::<Vec<_>>(),
+                "jede Stelle genau einmal"
+            );
+        }
+    }
+
     #[test]
     fn meetings_rank_by_best_hit_plus_a_share_of_the_rest() {
         let hits = vec![
@@ -990,6 +1174,26 @@ pub(crate) mod tests {
         assert_eq!(
             content_terms("KI und 5 Entscheidungen"),
             vec!["ki", "5", "entsch"]
+        );
+    }
+
+    #[test]
+    fn bm25_finds_a_compound_of_the_question_by_its_parts() {
+        // P4g: Live-Pfad wie die Wortsuche im Index.
+        let docs = vec![
+            "Wir sprechen kurz über das Wetter.".to_string(),
+            "Die Reserve beträgt 150000 Euro für unvorhergesehene Kosten.".to_string(),
+            "Nichts davon.".to_string(),
+        ];
+        let ranked = bm25_rank("Wie hoch ist die Budgetreserve?", &docs);
+        assert_eq!(ranked.first().map(|r| r.0), Some(1), "{ranked:?}");
+        // Ohne zerlegbares Wort aendert sich nichts.
+        assert_eq!(
+            bm25_rank("Reserve", &docs)
+                .iter()
+                .map(|r| r.0)
+                .collect::<Vec<_>>(),
+            vec![1]
         );
     }
 }
