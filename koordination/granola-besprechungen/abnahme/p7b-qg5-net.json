@@ -1,0 +1,155 @@
+{
+  "app_exe": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\p7b-gpu\\local-voice-ai.exe",
+  "started": "2026-09-29T23:57:57",
+  "finished": "2026-09-30T00:00:21",
+  "interval_ms": 400,
+  "ticks": 192,
+  "ticks_with_tree": 163,
+  "processes_seen": [
+    {
+      "pid": 100760,
+      "name": "local-voice-ai.exe",
+      "first_seen": "23:59:49.334"
+    },
+    {
+      "pid": 97324,
+      "name": "taskkill.exe",
+      "first_seen": "23:59:53.338"
+    },
+    {
+      "pid": 41048,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:44.138"
+    },
+    {
+      "pid": 80632,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:58.325"
+    },
+    {
+      "pid": 85680,
+      "name": "taskkill.exe",
+      "first_seen": "23:59:39.705"
+    },
+    {
+      "pid": 98988,
+      "name": "conhost.exe",
+      "first_seen": "23:59:44.138"
+    },
+    {
+      "pid": 98444,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:08.346"
+    },
+    {
+      "pid": 77000,
+      "name": "conhost.exe",
+      "first_seen": "23:59:58.325"
+    },
+    {
+      "pid": 40092,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:50.126"
+    },
+    {
+      "pid": 55916,
+      "name": "conhost.exe",
+      "first_seen": "23:59:54.141"
+    },
+    {
+      "pid": 5452,
+      "name": "conhost.exe",
+      "first_seen": "23:59:50.126"
+    },
+    {
+      "pid": 101980,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:54.141"
+    },
+    {
+      "pid": 54840,
+      "name": "local-voice-ai.exe",
+      "first_seen": "23:58:02.501"
+    },
+    {
+      "pid": 31028,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:43.399"
+    },
+    {
+      "pid": 13696,
+      "name": "conhost.exe",
+      "first_seen": "23:59:39.705"
+    },
+    {
+      "pid": 26932,
+      "name": "taskkill.exe",
+      "first_seen": "00:00:13.507"
+    },
+    {
+      "pid": 42420,
+      "name": "conhost.exe",
+      "first_seen": "00:00:13.507"
+    },
+    {
+      "pid": 78620,
+      "name": "conhost.exe",
+      "first_seen": "23:59:49.334"
+    },
+    {
+      "pid": 62624,
+      "name": "msedgewebview2.exe",
+      "first_seen": "00:00:18.179"
+    },
+    {
+      "pid": 77528,
+      "name": "local-voice-ai.exe",
+      "first_seen": "23:59:43.399"
+    },
+    {
+      "pid": 17508,
+      "name": "local-voice-ai.exe",
+      "first_seen": "00:00:18.179"
+    },
+    {
+      "pid": 96372,
+      "name": "conhost.exe",
+      "first_seen": "23:59:46.512"
+    },
+    {
+      "pid": 96288,
+      "name": "llama-server.exe",
+      "first_seen": "23:59:49.334"
+    },
+    {
+      "pid": 71912,
+      "name": "conhost.exe",
+      "first_seen": "23:59:08.346"
+    },
+    {
+      "pid": 93844,
+      "name": "conhost.exe",
+      "first_seen": "23:59:53.338"
+    },
+    {
+      "pid": 68940,
+      "name": "conhost.exe",
+      "first_seen": "23:59:43.399"
+    },
+    {
+      "pid": 99336,
+      "name": "msedgewebview2.exe",
+      "first_seen": "00:00:18.179"
+    },
+    {
+      "pid": 100196,
+      "name": "taskkill.exe",
+      "first_seen": "23:59:46.512"
+    }
+  ],
+  "sockets": 94,
+  "tcp_sockets": 94,
+  "udp_endpoints": 0,
+  "non_loopback": [],
+  "non_loopback_count": 0
+}

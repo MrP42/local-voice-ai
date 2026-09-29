@@ -1,0 +1,20 @@
+{
+  "chunks": 16,
+  "db": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg5-c8dc240a29734ab8acddb614c39719a3\\meetings.db",
+  "embed_batches": 1,
+  "embed_error": null,
+  "embed_ms": 3757,
+  "embed_server_peak_mb": 1526,
+  "embed_server_running": false,
+  "embedded_meetings": 1,
+  "indexed": 1,
+  "lexical_meetings": 0,
+  "lexical_ms": 18,
+  "meetings": 1,
+  "mode": "reindex_meetings",
+  "model": "emb-bge-m3-q8",
+  "model_ready": true,
+  "seeded": 0,
+  "skipped_chunks": 0,
+  "vectors": 16
+}

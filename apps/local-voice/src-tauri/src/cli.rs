@@ -167,6 +167,18 @@ pub struct CliArgs {
     #[arg(long, value_name = "ID")]
     pub final_model: Option<String>,
 
+    /// M7-P7b: after --simulate-meeting (and --final-model), create the AI
+    /// meeting notes the way the automatic run after TranscriptFinal does
+    /// (same decision, template and engine; the local llama-server is stopped
+    /// at the end) and add `notes` (ran, ok, ms, error code) to the JSON.
+    #[arg(long)]
+    pub notes: bool,
+
+    /// M7-P7b: local language model for --notes in this run only (catalog id,
+    /// e.g. llm-qwen3.5-9b-q4); default: the configured provider/model.
+    #[arg(long, value_name = "ID")]
+    pub notes_model: Option<String>,
+
     /// Reference text of the far end (system track) for ich_far_word_leak.
     #[arg(long, value_name = "FILE")]
     pub far_text: Option<PathBuf>,

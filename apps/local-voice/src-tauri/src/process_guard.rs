@@ -29,11 +29,32 @@ pub const RAM_MIN_LIMIT_MB: u64 = 4 * 1024;
 pub const CPU_CAP_PERCENT: u32 = 75;
 pub const WATCH_INTERVAL: Duration = Duration::from_secs(5);
 
+/// M7-P7b (QG4): Testschalter fuer knappen Speicher, ohne den Rechner
+/// wirklich zu fuellen. `LVA_TEST_FREE_RAM_MB=<n>` deckelt den gemessenen
+/// freien RAM auf n MB. Er kann Tore nur SCHLIESSEN, nie oeffnen (Minimum
+/// mit dem Messwert); ungueltige Werte werden ignoriert.
+pub const TEST_FREE_RAM_ENV: &str = "LVA_TEST_FREE_RAM_MB";
+
 /// Freier physischer Speicher in MB (0, wenn nicht messbar).
 pub fn available_ram_mb() -> u64 {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
-    sys.available_memory() / (1024 * 1024)
+    let measured = sys.available_memory() / (1024 * 1024);
+    let cap = std::env::var(TEST_FREE_RAM_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok());
+    capped_free_mb(measured, cap)
+}
+
+/// Messwert unter dem Testdeckel: nie mehr als gemessen, und "nicht
+/// messbar" (0) wird mit Deckel zum Deckel (strenger, nicht offener).
+fn capped_free_mb(measured: u64, cap: Option<u64>) -> u64 {
+    // 0 hiesse "nicht messbar" und liesse alles durch: der Deckel ist >= 1.
+    match cap.map(|c| c.max(1)) {
+        Some(cap) if measured == 0 => cap,
+        Some(cap) => measured.min(cap),
+        None => measured,
+    }
 }
 
 pub fn logical_cpus() -> usize {
@@ -320,6 +341,19 @@ mod tests {
         // Waehrend eines Testlaufs faehrt Windows nicht herunter. Meldete die
         // Abfrage hier "ja", uebersprangen Stopp und Beenden ihr Aufraeumen.
         assert!(!session_ending());
+    }
+
+    #[test]
+    fn test_cap_only_ever_lowers_the_free_ram() {
+        assert_eq!(capped_free_mb(20_000, None), 20_000);
+        assert_eq!(capped_free_mb(20_000, Some(5_000)), 5_000);
+        // Ein Deckel ueber dem Messwert oeffnet nichts.
+        assert_eq!(capped_free_mb(3_000, Some(50_000)), 3_000);
+        // Nicht messbar blockiert sonst nie; mit Deckel gilt der Deckel.
+        assert_eq!(capped_free_mb(0, None), 0);
+        assert_eq!(capped_free_mb(0, Some(1_500)), 1_500);
+        // Deckel 0 darf nicht als "nicht messbar" alle Tore oeffnen.
+        assert_eq!(capped_free_mb(20_000, Some(0)), 1);
     }
 
     #[test]
