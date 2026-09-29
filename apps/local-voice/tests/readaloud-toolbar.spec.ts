@@ -154,7 +154,7 @@ test("every lucide symbol appears at most once in the control column", async ({
 }) => {
   for (const tab of ["Original", "Übersetzung", "Zusammenfassung"]) {
     await openReadAloud(page);
-    await page.getByRole("button", { name: tab, exact: true }).click();
+    await page.getByRole("tab", { name: tab, exact: true }).click();
     const classes = await page
       .locator('.tts-controls svg[class*="lucide-"]')
       .evaluateAll((els) =>
@@ -327,7 +327,7 @@ test("translation and summary tabs show their action as a symbol", async ({
   page,
 }) => {
   await openReadAloud(page);
-  await page.getByRole("button", { name: "Übersetzung", exact: true }).click();
+  await page.getByRole("tab", { name: "Übersetzung", exact: true }).click();
   const translate = page.getByTestId("tts-action-translate");
   await expect(translate).toBeVisible();
   await expect(translate).toHaveAttribute("aria-label", /Übersetzen/);
@@ -344,7 +344,7 @@ test("translation and summary tabs show their action as a symbol", async ({
   expect(Math.abs(lang!.height - row!.height)).toBeLessThanOrEqual(1);
 
   await page
-    .getByRole("button", { name: "Zusammenfassung", exact: true })
+    .getByRole("tab", { name: "Zusammenfassung", exact: true })
     .click();
   const summarize = page.getByTestId("tts-action-summarize");
   await expect(summarize).toBeVisible();

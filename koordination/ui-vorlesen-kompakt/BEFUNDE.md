@@ -14,3 +14,9 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beleg: `git status` nach der Gesamtsuite im Integrationszweig: 6 geänderte PNGs; P7-Bild mit `animations: "disabled"` neu aufgenommen → „Alle“ korrekt aktiv.
 - Konsequenz: Screenshot-Tests nur mit `LV_SHOTS=1` (wie P2) und immer `animations: "disabled"`; Nacharbeit P8.
 - Status: offen
+
+## B3 — Integration P2+P6: neue Toolbar-Tests suchten die Editor-Reiter als `button`
+- Beobachtung: P6 machte die Editor-Reiter zu `role="tab"`; zwei in P2 parallel entstandene Tests (`readaloud-toolbar.spec.ts`) klickten sie noch als `button` → Timeout.
+- Beleg: Gesamtsuite nach Merge P6: 2 failed (Z. 152, 326); nach Umstellung auf `getByRole("tab")` 116 passed, 7 skipped.
+- Konsequenz: Planer-Einzeiler im Integrationszweig; Lehre: parallele Pakete, die Rollen ändern, im Briefing gegenseitig nennen.
+- Status: erledigt (Integration, siehe Commit „test: Editor-Reiter als tab“)

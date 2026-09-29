@@ -17,5 +17,5 @@ P5 = Rahmen (Wrapper, aside-Tag, FilesSidebar-Einbau, persistente Zustände oben
 | P3 | M2 | Fehler „Ausdruck & Sprechstil → Alle“ überlagert Text (lv-coder, wt-ui-p3, Port 1613) | AK10 per Playwright; Gesamtsuite grün | abgenommen | 534f66c |
 | P4 | M2 | Dateiname kurz + Dateiliste mit Zeitstempel (lv-coder, wt-ui-p4, Port 1614) | AK8, AK9; Gesamtsuite grün | abgenommen (B1 vom Planer nachgezogen) | c0da046 |
 | P5 | M3 | Layout gestapelt/nebeneinander + ziehbare Spalten (lv-coder, wt-ui-p5, Port 1615) | AK5 (Struktur), AK6, AK7 per `tests/readaloud-layout.spec.ts`; Gesamtsuite grün | abgenommen | cb9501d |
-| P6 | M2 | Audit-Standards Seitenleisten + Editor-Reiter: A09, A10, A12, A13, A14-A16, A21, A22 (lv-coder, wt-ui-p6, Port 1616) | `tests/readaloud-standards.spec.ts` grün; Gesamtsuite grün | in_arbeit | - |
+| P6 | M2 | Audit-Standards Seitenleisten + Editor-Reiter: A09, A10, A12, A13, A14-A16, A21, A22 (lv-coder, wt-ui-p6, Port 1616) | `tests/readaloud-standards.spec.ts` grün; Gesamtsuite grün | abgenommen | fd979ef |
 | P7 | M2 | Audit-Standards Palette: A05, A10, A11, A12, A14, A23, A24 (lv-coder, wt-ui-p7, Port 1617) | Palette-Tests erweitert grün; Gesamtsuite grün | abgenommen | 5bd3775 |
