@@ -55,3 +55,10 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beleg: docs/m2-evidence/ATTRIBUTION.md (Befund-Absätze), cargo metadata.
 - Konsequenz: nicht aus diesem Goal; QG6 betrifft nur neue Crates/Modelle (alle frei). An Patrick gemeldet, Entscheidung außerhalb des Goals.
 - Status: erledigt (dokumentiert, an Patrick gemeldet; nicht Goal-Scope)
+
+## B11 — P7b: KI-Notizen mit Gemma verwerfen bei 60 min still den ersten Block (30.09. 00:40)
+- Beobachtet: Gemma 4 E4B, erster Map-Block 15.140 Token Prompt bei 16.384 Kontext -> Antwort viermal abgeschnitten, Block verworfen, Notizen decken nur die zweite Hälfte ab, `ok: true`. Kalibrierung 3,35 Z./Token stammt von Qwen3.5, Gemma ~3,0. QG3 mit Gemma 201-217 s (> 180 s), mit Qwen3.5 136,7 s.
+- Nebenbefunde: AUTO_GPU_CANDIDATES bevorzugt Whisper large-v3 statt schnellerem Qwen3-ASR (~35 s je 60 min); Live-Modell lädt ohne RAM-Gate.
+- Beleg: abnahme/p7b-qg3.md, p7b-qg3-*.json.
+- Konsequenz: Paket P1i.
+- Status: offen

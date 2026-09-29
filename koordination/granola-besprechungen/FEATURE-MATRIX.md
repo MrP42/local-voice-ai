@@ -34,7 +34,7 @@ Quelle Granola: [recherche/granola-analyse.md](recherche/granola-analyse.md) · 
 | F24 | Team-Spaces, Teilen im Team, SSO/SCIM, Audit | Nein | – | Einzelnutzer, lokal | – | verworfen | Non-Scope GOAL.md |
 | F25 | Screenshots geteilter Bildschirme (Beta macOS) | Nein | – | Non-Scope | – | verworfen | Non-Scope GOAL.md |
 | F26 | Transparenz/Einwilligung | Kern | Einwilligungsdialog (§ 201 StGB) | gleich; Hinweistext zum Kopieren in den Meeting-Chat | M1 | gleichwertig | P1f d0bc230: Hinweistext lokal/extern zum Kopieren + Einwilligungsdialog |
-| F27 | Datenschutz: Cloud USA, Training-Default an | Kern | lokal | **besser:** kein Netzverkehr im Besprechungspfad (außer bewusst gewähltem externem LLM) | M7 | offen | |
+| F27 | Datenschutz: Cloud USA, Training-Default an | Kern | lokal | **besser:** kein Netzverkehr im Besprechungspfad (außer bewusst gewähltem externem LLM) | M7 | besser | P7b ea876e60: Offline-Nachweis ganze Kette 0 Verbindungen ausser Loopback (abnahme/p7b-qg5.md) |
 | F28 | Audio-Wiedergabe zur Verifikation (Granola: keine) | Kern | vorhanden (Player, Zeit → Audio) | **besser:** bleibt; Aufbewahrung wählbar | – | vorhanden | ist-stand.md: MeetingDetail Player je Kanal |
 | F29 | Datei-Import (Granola: ausdrücklich nicht geplant) | Kern | vorhanden (Audio/Video, VTT/SRT) | **besser:** bleibt; Diarisierung für Importe (F06) | – | vorhanden | ist-stand.md: import.rs |
-| F30 | Kosten | Kern | lokal | **besser:** 0 € laufend; alle Modelle lokal nutzbar | M7 | offen | |
+| F30 | Kosten | Kern | lokal | **besser:** 0 € laufend; alle Modelle lokal nutzbar | M7 | besser | P7b ea876e60: alle Standardmodelle lokal, kein API-Schluessel, Proxy 0 Anfragen (p7b-qg5.md) |

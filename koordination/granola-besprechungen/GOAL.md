@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 2
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T23:12
+aktualisiert: 2026-09-30T00:30
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -44,8 +44,8 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - [ ] QG1 — Rust komplett grün: `cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml --lib`
 - [ ] QG2 — Frontend komplett grün: `npx tsc --noEmit` + `pnpm test:playwright`; eigene Dateien eslint/prettier-sauber
 - [ ] QG3 — Performance: 60-min-Besprechung auf RTX 4090 → Enddurchlauf + KI-Notizen ≤ 3 min nach Stopp; CPU-only-Pfad funktioniert (Messung dokumentiert)
-- [ ] QG4 — Systemschutz: alle neuen Modelle/Prozesse hinter RAM-Start-Gate/Deckel; Test mit knappem RAM → sauberer Abbruch statt Einfrieren
-- [ ] QG5 — Datenschutz: Besprechungspfad ohne Netzverkehr (außer Modell-Download und bewusst gewähltem externem LLM), Nachweis per Offline-Lauf
+- [x] QG4 — Systemschutz: alle neuen Modelle/Prozesse hinter RAM-Start-Gate/Deckel; Test mit knappem RAM → sauberer Abbruch statt Einfrieren
+- [x] QG5 — Datenschutz: Besprechungspfad ohne Netzverkehr (außer Modell-Download und bewusst gewähltem externem LLM), Nachweis per Offline-Lauf
 - [x] QG6 — Lizenzen: jedes neue Modell/Crate mit Lizenz in den Third-Party-Notices, keine Nicht-kommerziell-Lizenz
 - [x] QG7 — i18n: alle neuen Texte in de + en, echte Umlaute
 - [ ] QG8 — Doku + Handoff aktualisiert, PR offen gegen `main`
@@ -117,6 +117,8 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29T22:18 AK10 erfüllt — P6a/P6b/P6c/P6d 95e21c66: Follow-up-Mail, formatiert kopieren, PDF/SRT/JSON; Playwright 214 passed, cargo 1552 passed
 - 2026-09-29T22:35 QG6 erfüllt — P7c 31ccc1f7: ATTRIBUTION.md + Info-Seite, alle neuen Crates/Modelle frei (BSD/MIT/Apache/CC-BY, Sortformer NVIDIA Open Model); vorbestehende Funde B10
 - 2026-09-29T22:35 QG7 erfüllt — P7c 31ccc1f7: check_i18n_meetings.py Exit 0 (640 Schluessel de/en, keine Umlaut-Ersatzschreibung)
+- 2026-09-30T00:30 QG4 erfüllt — P7b ea876e60: abnahme/p7b-qg4.md, knapper RAM -> sauberer Abbruch je Schritt (LowRam/memory_low/pdf_low_memory), keine Restprozesse
+- 2026-09-30T00:30 QG5 erfüllt — P7b ea876e60: abnahme/p7b-qg5.md, ganze Kette 0 Nicht-Loopback-Verbindungen (94 Sockets 127.0.0.1), Proxy 0 Anfragen
 
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
