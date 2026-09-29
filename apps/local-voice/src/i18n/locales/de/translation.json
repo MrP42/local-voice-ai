@@ -301,6 +301,12 @@
       "useText": "Text übernehmen",
       "defaultVoice": "Standardstimme"
     },
+    "layout": {
+      "sideBySide": "Bedienung und Dateien nebeneinander anzeigen",
+      "resizePages": "Breite der Seitenliste ändern",
+      "resizeRight": "Breite der rechten Spalte ändern",
+      "resizeFiles": "Breite der Dateileiste ändern"
+    },
     "translateAction": "Übersetzen — erzeugt die Übersetzung im zweiten Reiter, spielt nichts ab",
     "summarizeHint": "Zusammenfassen – fasst immer das Original zusammen und legt das Ergebnis in den dritten Reiter, spielt nichts ab",
     "llm": {

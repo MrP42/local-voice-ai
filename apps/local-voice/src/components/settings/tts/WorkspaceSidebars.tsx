@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -17,6 +17,7 @@ import { PageExportDialog, PageImportDialog } from "./pages/PagePackageDialogs";
 import {
   ChevronDown,
   ChevronUp,
+  Columns2,
   FilePlus,
   Play,
   FolderOpen,
@@ -29,6 +30,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Rows2,
   Trash2,
 } from "lucide-react";
 
@@ -67,7 +69,9 @@ export const PagesSidebar: React.FC<{
   onToggle: () => void;
   onSelect: (id: string) => void;
   onChanged: () => void;
-}> = ({ pages, activeId, collapsed, onToggle, onSelect, onChanged }) => {
+  /** Breite in Pixeln (Ziehgriff); ohne Angabe gilt die Standardbreite. */
+  width?: number;
+}> = ({ pages, activeId, collapsed, onToggle, onSelect, onChanged, width }) => {
   const { t, i18n } = useTranslation();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -128,7 +132,11 @@ export const PagesSidebar: React.FC<{
   }
 
   return (
-    <div className="tts-workspace__pages w-52 shrink-0 space-y-1 min-h-0 overflow-y-auto">
+    <div
+      data-testid="tts-pages"
+      className="tts-workspace__pages shrink-0 space-y-1 min-h-0 overflow-y-auto"
+      style={width ? ({ "--tts-w": `${width}px` } as CSSProperties) : undefined}
+    >
       <div className="flex items-center justify-between pb-1">
         <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
           {t("tts.pages.title")}
@@ -355,6 +363,12 @@ export const FilesSidebar: React.FC<{
   tab?: RightTab;
   onTabChange?: (tab: RightTab) => void;
   helpSection?: string;
+  /** Breite in Pixeln (Ziehgriff) im Nebeneinander-Layout. */
+  width?: number;
+  /** Gestapelt unter der Bedienung: volle Spaltenbreite, füllt die Resthöhe. */
+  stacked?: boolean;
+  /** Umschalter Gestapelt/Nebeneinander im Kopf; ohne ihn kein Knopf. */
+  onLayoutToggle?: () => void;
 }> = ({
   pageId,
   collapsed,
@@ -363,6 +377,9 @@ export const FilesSidebar: React.FC<{
   tab = "files",
   onTabChange,
   helpSection = "vorlesen",
+  width,
+  stacked = false,
+  onLayoutToggle,
 }) => {
   const { t } = useTranslation();
   const [files, setFiles] = useState<PageFile[]>([]);
@@ -462,7 +479,17 @@ export const FilesSidebar: React.FC<{
   }
 
   return (
-    <div className="tts-workspace__files w-60 shrink-0 space-y-1 min-h-0 overflow-y-auto">
+    <div
+      data-testid="tts-files"
+      className={`tts-workspace__files space-y-1 min-h-0 overflow-y-auto ${
+        stacked ? "" : "shrink-0"
+      }`}
+      style={
+        !stacked && width
+          ? ({ "--tts-w": `${width}px` } as CSSProperties)
+          : undefined
+      }
+    >
       <div className="flex items-center justify-between pb-1">
         {onTabChange ? (
           <div className="flex items-center gap-1" role="tablist">
@@ -519,6 +546,23 @@ export const FilesSidebar: React.FC<{
                 <RefreshCw width={14} height={14} />
               </button>
             </>
+          )}
+          {onLayoutToggle && (
+            <button
+              type="button"
+              onClick={onLayoutToggle}
+              data-testid="layout-toggle"
+              aria-pressed={!stacked}
+              title={t("tts.layout.sideBySide")}
+              aria-label={t("tts.layout.sideBySide")}
+              className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
+            >
+              {stacked ? (
+                <Rows2 width={16} height={16} />
+              ) : (
+                <Columns2 width={16} height={16} />
+              )}
+            </button>
           )}
           <button
             type="button"
