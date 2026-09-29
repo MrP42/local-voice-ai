@@ -536,6 +536,45 @@ test("palette tags are compact and the favorite star has a 24px hit area", async
   expect(icon.width).toBeGreaterThanOrEqual(12);
 });
 
+// P9: Die einzeilige Filterleiste zeigt am Rand, dass waagrecht mehr kommt
+// (weicher Verlauf), und nur solange dort noch Reiter verborgen sind.
+test("palette filter row hints at hidden tabs with an edge fade", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const { details } = await openPaletteAlle(page);
+  const list = details.getByRole("tablist");
+  const fadeStart = details.getByTestId("tag-tabs-fade-start");
+  const fadeEnd = details.getByTestId("tag-tabs-fade-end");
+
+  const overflowing = await list.evaluate(
+    (el) => el.scrollWidth > el.clientWidth + 1,
+  );
+  expect(overflowing, "Leiste passt schon: kein Test moeglich").toBe(true);
+
+  // Anfang: rechts Hinweis, links keiner.
+  await expect(fadeEnd).toHaveCSS("opacity", "1");
+  await expect(fadeStart).toHaveCSS("opacity", "0");
+  // Der Hinweis fängt keine Klicks ab und verschiebt nichts.
+  await expect(fadeEnd).toHaveCSS("pointer-events", "none");
+  const listBox = await list.boundingBox();
+  const endBox = await fadeEnd.boundingBox();
+  expect(endBox!.x + endBox!.width).toBeLessThanOrEqual(
+    listBox!.x + listBox!.width + 1,
+  );
+
+  // Ans Ende scrollen: rechts weg, links da.
+  await list.evaluate((el) => {
+    el.scrollLeft = el.scrollWidth;
+  });
+  await expect(fadeEnd).toHaveCSS("opacity", "0");
+  await expect(fadeStart).toHaveCSS("opacity", "1");
+  expect(
+    await list.evaluate((el) => el.scrollLeft),
+    "Leiste sitzt am Ende",
+  ).toBeGreaterThan(0);
+});
+
 for (const size of [
   { width: 1920, height: 1050, file: "palette-kompakt-1920.png" },
   { width: 1366, height: 768, file: "palette-kompakt-1366.png" },

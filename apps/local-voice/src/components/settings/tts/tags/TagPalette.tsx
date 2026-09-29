@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { LucideIcon } from "lucide-react";
@@ -108,6 +108,77 @@ const TabButton: React.FC<{
     {label}
   </button>
 );
+
+/**
+ * Einzeilige, waagrecht scrollende Filterleiste mit weichem Verlauf am linken
+ * und rechten Rand, solange dort noch Reiter verborgen sind. Die Verläufe sind
+ * absolut über der Leiste (kein Layoutsprung) und schlucken keine Klicks; sie
+ * blenden nur per Deckkraft ein und aus.
+ */
+const TabStrip: React.FC<{
+  label: string;
+  children: React.ReactNode;
+}> = ({ label, children }) => {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState({ start: false, end: false });
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const update = () => {
+      // 1 px Toleranz: Bruchpixel beim Skalieren.
+      const start = list.scrollLeft > 1;
+      const end = list.scrollLeft + list.clientWidth < list.scrollWidth - 1;
+      setMore((old) =>
+        old.start === start && old.end === end ? old : { start, end },
+      );
+    };
+    update();
+    list.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(list);
+    return () => {
+      list.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, []);
+
+  const fade =
+    "pointer-events-none absolute inset-y-0 z-[1] w-8 transition-opacity duration-150 motion-reduce:transition-none";
+  return (
+    <div className="relative">
+      <div
+        ref={listRef}
+        role="tablist"
+        aria-label={label}
+        // Einzeilig und waagrecht scrollend statt dreizeilig umbrechend
+        // (A24); die Bildlaufleiste bleibt unsichtbar, das Mausrad
+        // scrollt waagrecht mit.
+        onWheel={(event) => {
+          if (event.deltaY === 0) return;
+          event.currentTarget.scrollLeft += event.deltaY;
+        }}
+        className="flex flex-nowrap gap-1 overflow-x-auto px-2 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {children}
+      </div>
+      <div
+        aria-hidden="true"
+        data-testid="tag-tabs-fade-start"
+        className={`${fade} left-0 bg-[linear-gradient(to_right,var(--color-background),transparent)] ${
+          more.start ? "opacity-100" : "opacity-0"
+        }`}
+      />
+      <div
+        aria-hidden="true"
+        data-testid="tag-tabs-fade-end"
+        className={`${fade} right-0 bg-[linear-gradient(to_left,var(--color-background),transparent)] ${
+          more.end ? "opacity-100" : "opacity-0"
+        }`}
+      />
+    </div>
+  );
+};
 
 /**
  * Die Tag-Palette: Suche, Favoriten/Zuletzt/Kategorien-Reiter, ein Chip-Grid
@@ -342,18 +413,7 @@ export const TagPalette: React.FC<{
         </div>
 
         {isOpen && (
-          <div
-            role="tablist"
-            aria-label={t("tts.tags.tabsAriaLabel")}
-            // Einzeilig und waagrecht scrollend statt dreizeilig umbrechend
-            // (A24); die Bildlaufleiste bleibt unsichtbar, das Mausrad
-            // scrollt waagrecht mit.
-            onWheel={(event) => {
-              if (event.deltaY === 0) return;
-              event.currentTarget.scrollLeft += event.deltaY;
-            }}
-            className="flex flex-nowrap gap-1 overflow-x-auto px-2 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          >
+          <TabStrip label={t("tts.tags.tabsAriaLabel")}>
             <TabButton
               active={activeTab === "favorites"}
               icon={Star}
@@ -381,7 +441,7 @@ export const TagPalette: React.FC<{
                 onClick={() => setActiveTabRaw(category.id)}
               />
             ))}
-          </div>
+          </TabStrip>
         )}
       </div>
 
