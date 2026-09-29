@@ -1382,6 +1382,22 @@
           "title": "ggml",
           "description": "High-performance tensor library for on-device machine learning inference",
           "details": "Local Voice AI's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
+        },
+        "models": {
+          "title": "Models",
+          "description": "Downloaded on demand, not bundled (except Silero VAD)",
+          "details": "Parakeet TDT 0.6B v3 (NVIDIA, CC-BY-4.0) · Qwen3-ASR (Alibaba/Qwen, Apache-2.0) · Whisper large-v3 (OpenAI, Apache-2.0 or MIT) · Silero VAD (MIT) · BGE-M3 (BAAI, MIT) · Qwen3 and Qwen3.5 (Alibaba/Qwen, Apache-2.0) · Gemma 4 (Google, Apache-2.0) · Gemma 3 (Google, Gemma Terms of Use). Each model's licence is on its model card."
+        },
+        "sortformer": {
+          "title": "Sortformer (NVIDIA)",
+          "description": "Speaker separation in meetings",
+          "details": "NVIDIA Streaming Sortformer 4spk v2.1 is licensed under the NVIDIA Open Model License. The model is downloaded on demand and is not shipped with the app.",
+          "button": "Read licence text"
+        },
+        "libraries": {
+          "title": "Libraries",
+          "description": "Echo cancellation, calendar and mail export",
+          "details": "sonora (BSD-3-Clause, echo cancellation based on WebRTC AEC3) · calcard (Apache-2.0 or MIT, ICS calendar) · mail-builder (Apache-2.0 or MIT, .eml files). All licences and attributions are in docs/m2-evidence/ATTRIBUTION.md in the source code."
         }
       }
     },

@@ -1378,6 +1378,22 @@
           "title": "ggml",
           "description": "Hochleistungs-Inferenz des Whisper-Spracherkennungsmodells von OpenAI",
           "details": "Local Voice AI verwendet ggml für schnelle, lokale Sprach-zu-Text-Verarbeitung. Dank an Georgi Gerganov und die Mitwirkenden für ihre großartige Arbeit."
+        },
+        "models": {
+          "title": "Modelle",
+          "description": "Werden bei Bedarf geladen, nicht mitgeliefert (Silero VAD ausgenommen)",
+          "details": "Parakeet TDT 0.6B v3 (NVIDIA, CC-BY-4.0) · Qwen3-ASR (Alibaba/Qwen, Apache-2.0) · Whisper large-v3 (OpenAI, Apache-2.0 bzw. MIT) · Silero VAD (MIT) · BGE-M3 (BAAI, MIT) · Qwen3 und Qwen3.5 (Alibaba/Qwen, Apache-2.0) · Gemma 4 (Google, Apache-2.0) · Gemma 3 (Google, Gemma-Nutzungsbedingungen). Die Lizenz jedes Modells steht auf seiner Modellkarte."
+        },
+        "sortformer": {
+          "title": "Sortformer (NVIDIA)",
+          "description": "Sprechertrennung in Besprechungen",
+          "details": "NVIDIA Streaming Sortformer 4spk v2.1 steht unter der NVIDIA Open Model License. Das Modell wird bei Bedarf heruntergeladen und nicht mit der App ausgeliefert.",
+          "button": "Lizenztext lesen"
+        },
+        "libraries": {
+          "title": "Bibliotheken",
+          "description": "Echo-Unterdrückung, Kalender und Mail-Export",
+          "details": "sonora (BSD-3-Clause, Echo-Unterdrückung nach WebRTC AEC3) · calcard (Apache-2.0 oder MIT, ICS-Kalender) · mail-builder (Apache-2.0 oder MIT, .eml-Dateien). Alle Lizenzen und Namensnennungen stehen in docs/m2-evidence/ATTRIBUTION.md im Quellcode."
         }
       },
       "whatsNewUpdates": {
@@ -1702,12 +1718,14 @@
         "title": "Nächste Termine (heute)",
         "empty": "Heute stehen keine weiteren Termine an.",
         "start": "Aufnahme starten",
-        "attendees": "{{count}} Teilnehmende",
+        "attendees_one": "{{count}} Teilnehmende",
+        "attendees_other": "{{count}} Teilnehmende",
         "running": "läuft"
       },
       "suggestion": {
         "chip": "aus Kalender",
-        "chipWithAttendees": "aus Kalender · {{count}} Teilnehmende",
+        "chipWithAttendees_one": "aus Kalender · {{count}} Teilnehmende",
+        "chipWithAttendees_other": "aus Kalender · {{count}} Teilnehmende",
         "clear": "Terminbezug lösen"
       }
     },
@@ -1716,7 +1734,8 @@
       "startsIn": "beginnt in {{count}} min",
       "startsNow": "beginnt jetzt",
       "runningSince": "läuft seit {{count}} min",
-      "attendees": "{{count}} Teilnehmende",
+      "attendees_one": "{{count}} Teilnehmende",
+      "attendees_other": "{{count}} Teilnehmende",
       "start": "Aufnahme starten",
       "join": "Beitreten",
       "later": "Später",
