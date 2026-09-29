@@ -246,6 +246,9 @@ const settingUpdaters: {
     commands.changeMeetingEchoCancellationSetting(
       value as MeetingEchoCancellation,
     ),
+  // M2-P2d
+  meeting_final_model: (value) =>
+    commands.changeMeetingFinalModelSetting((value as string) || "auto"),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

@@ -809,6 +809,7 @@ mod tests {
             end_ms: 1_000,
             channel,
             speaker_index: None,
+            words: None,
         };
 
         let imported = build_head(&meeting, &[segment(2)]);
@@ -935,6 +936,7 @@ mod tests {
             end_ms: 66_000,
             channel: 1,
             speaker_index: None,
+            words: None,
         }];
         assert_eq!(
             render_transcript_for_prompt(&segs),
@@ -1008,6 +1010,7 @@ mod tests {
                             end_ms: 3_000,
                             channel: 0,
                             speaker_index: None,
+                            words: None,
                         },
                         StoredSegment {
                             segment_index: 1,
@@ -1016,6 +1019,7 @@ mod tests {
                             end_ms: 7_000,
                             channel: 1,
                             speaker_index: None,
+                            words: None,
                         },
                     ],
                 },

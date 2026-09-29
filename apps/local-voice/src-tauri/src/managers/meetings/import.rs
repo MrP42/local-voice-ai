@@ -357,6 +357,7 @@ pub(super) fn transcribe_chunk_resilient(
         text: gap_placeholder(start_ms, end_ms),
         start_ms: 0,
         end_ms: chunk_ms,
+        words: None,
     }]
 }
 
@@ -387,6 +388,7 @@ pub(super) fn transcribe_and_store(
                     end_ms: offset_ms + s.end_ms,
                     channel,
                     speaker_index: None,
+                    words: None,
                 };
                 next_index += 1;
                 segment

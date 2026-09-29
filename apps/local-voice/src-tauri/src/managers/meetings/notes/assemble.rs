@@ -413,6 +413,7 @@ mod tests {
             end_ms: u64::from(index) * 1_000 + 900,
             channel: 0,
             speaker_index: None,
+            words: None,
         }
     }
 

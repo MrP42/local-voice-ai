@@ -2186,6 +2186,7 @@ pub(crate) mod tests {
                     end_ms: 900,
                     channel: 0,
                     speaker_index: None,
+                    words: None,
                 }],
             },
         )
@@ -2703,6 +2704,7 @@ pub(crate) mod tests {
                     end_ms: 1,
                     channel: 0,
                     speaker_index: None,
+                    words: None,
                 }],
             },
         )

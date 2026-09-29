@@ -689,6 +689,7 @@ pub(crate) mod tests {
             end_ms: start_s * 1_000 + 4_000,
             channel: (i % 2) as u8,
             speaker_index: None,
+            words: None,
         }
     }
 

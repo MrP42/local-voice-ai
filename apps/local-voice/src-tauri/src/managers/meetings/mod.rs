@@ -3,6 +3,7 @@ pub mod chunker;
 pub mod dsp;
 pub mod echo;
 pub mod export;
+pub mod final_pass;
 pub mod hallucination;
 pub mod import;
 pub mod llm_call;

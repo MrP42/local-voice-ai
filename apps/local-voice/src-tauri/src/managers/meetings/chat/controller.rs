@@ -1006,6 +1006,7 @@ mod tests {
                 end_ms: i as u64 * 10_000 + 8_000,
                 channel: 0,
                 speaker_index: None,
+                words: None,
             })
             .collect();
         store

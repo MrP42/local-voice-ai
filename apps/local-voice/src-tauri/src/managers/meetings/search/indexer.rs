@@ -1318,6 +1318,7 @@ mod tests {
             end_ms: u64::from(i) * 5_000 + 4_000,
             channel: (i % 2) as u8,
             speaker_index: None,
+            words: None,
         }
     }
 

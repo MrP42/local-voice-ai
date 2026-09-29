@@ -316,6 +316,7 @@ mod tests {
             end_ms: start_s * 1_000 + 3_000,
             channel: 0,
             speaker_index: None,
+            words: None,
         }
     }
 

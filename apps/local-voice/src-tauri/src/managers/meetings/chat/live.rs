@@ -207,6 +207,7 @@ mod tests {
                 end_ms: u64::from(i) * 30_000 + 25_000,
                 channel: 0,
                 speaker_index: None,
+                words: None,
             })
             .collect();
         LiveSnapshot {

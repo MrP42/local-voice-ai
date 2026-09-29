@@ -813,6 +813,16 @@ pub struct AppSettings {
     /// den Schlüssel (ältere settings.json) gilt `auto`.
     #[serde(default)]
     pub meeting_echo_cancellation: MeetingEchoCancellation,
+    /// M2-P2d: Enddurchlauf nach dem Stopp: `auto` (mit GPU Whisper large-v3
+    /// bzw. Qwen3-ASR 1.7B, nur CPU: Live-Transkript = Endtranskript), `off`
+    /// oder eine Modell-ID (laeuft auch auf der CPU). Ohne den Schluessel
+    /// (aeltere settings.json) gilt `auto`.
+    #[serde(default = "default_meeting_final_model")]
+    pub meeting_final_model: String,
+}
+
+fn default_meeting_final_model() -> String {
+    "auto".to_string()
 }
 
 fn default_meeting_language() -> String {
@@ -1561,6 +1571,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_default_template_id: None,
         meeting_semantic_search: true,
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,
+        meeting_final_model: default_meeting_final_model(),
     }
 }
 
@@ -2706,6 +2717,18 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "meeting_echo_cancellation": "off" }))
                 .unwrap();
         assert_eq!(off.meeting_echo_cancellation, MeetingEchoCancellation::Off);
+    }
+
+    // M2-P2d
+    #[test]
+    fn final_model_defaults_to_auto_and_old_files_load() {
+        assert_eq!(get_default_settings().meeting_final_model, "auto");
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_final_model, "auto");
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_final_model": "off" })).unwrap();
+        assert_eq!(off.meeting_final_model, "off");
     }
 
     #[test]
