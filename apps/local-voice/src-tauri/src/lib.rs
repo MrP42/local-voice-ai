@@ -242,6 +242,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         process_guard::spawn_memory_watchdog(move |free_mb| {
             tts.stop_server();
             llm.stop();
+            // M4-P4b: auch der zweite llama-server (Embedding-Modus).
+            managers::llm::stop_embedding();
             log::error!("memory watchdog stopped TTS and LLM servers at {free_mb} MB free");
             crate::utils::show_transient_notice(&notify, "guard.memoryLow");
         });
@@ -323,11 +325,15 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         {
             log::warn!("meetings: startup retention purge failed: {e}");
         }
+        let index_store = store.clone(); // M4-P4b
         app_handle.manage(store);
         app_handle.manage(recorder);
         // M1-P1f: KI-Notizen starten nach `TranscriptFinal` (Einstellung
         // `meeting_auto_enhance`); das Backend entscheidet, kein Fenster noetig.
         commands::meeting_enhance::register_auto_enhance(app_handle);
+        // M4-P4b: Such-Index. Lexikalisch sofort, Vektoren im Hintergrund
+        // hinter Gates; Nachholen beim Start, Ausloeser ueber MeetingEvent.
+        managers::meetings::search::indexer::start_for_app(app_handle, index_store);
     }
 
     // Note: Shortcuts are NOT initialized here.
@@ -1528,6 +1534,10 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_search::meeting_folders_delete,
             commands::meeting_search::meetings_set_folders,
             commands::meeting_search::meetings_get_folders,
+            // M4-P4b: Index-Status, Embedding-Modell, Einstellung
+            commands::meeting_search::meeting_index_status,
+            commands::meeting_search::meeting_embedding_model_download,
+            commands::meeting_search::change_meeting_semantic_search_setting,
             commands::tts::tts_speak_text,
             commands::tts::tts_speak_clipboard,
             commands::tts::tts_cancel,
@@ -1649,6 +1659,8 @@ pub fn run(cli_args: CliArgs) {
             managers::meetings::recorder::MeetingEvent,
             // M1-P1b
             commands::meeting_enhance::MeetingNotesEvent,
+            // M4-P4b
+            managers::meetings::search::indexer::MeetingIndexEvent,
             managers::transcription::StreamTextEvent,
             managers::transcription::StreamPhaseEvent,
         ]);
@@ -1672,7 +1684,8 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.import_meeting.is_some()
         || cli_args.dump_meeting.is_some()
         || cli_args.make_orphan.is_some()
-        || cli_args.bench_search; // M4-P4a
+        || cli_args.bench_search // M4-P4a
+        || cli_args.reindex_meetings; // M4-P4b
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -1880,6 +1893,26 @@ pub fn run(cli_args: CliArgs) {
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| run_headless_bench_search(&args));
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // M4-P4b: Such-Index neu aufbauen (lexikalisch + Vektoren) und
+                // den Embedding-Server am Ende beenden. Braucht kein Mikrofon
+                // und kein Sprachmodell fuer die Transkription.
+                if cli_args.reindex_meetings {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_reindex_meetings(&app_handle, &args)
+                        });
+                        // Nie einen Kindprozess zuruecklassen, auch nach Panik.
+                        managers::llm::stop_embedding();
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2104,6 +2137,8 @@ pub fn run(cli_args: CliArgs) {
                 if let Some(llm) = app.try_state::<Arc<managers::llm::LocalLlmServer>>() {
                     llm.stop();
                 }
+                // M4-P4b: der Embedding-Server ebenso.
+                managers::llm::stop_embedding();
                 // Kein Serverprozess ueberlebt die Anwendung — auch keiner,
                 // den wir nur adoptiert haben. Er haelt rund 17 GB VRAM, und
                 // nach dem Ende der App gibt es niemanden mehr, der ihn
@@ -2135,4 +2170,135 @@ fn run_headless_bench_search(args: &CliArgs) -> i32 {
     }
     emit_headless_payload(&payload, args.out.as_deref());
     code
+}
+
+// M4-P4b: `--reindex-meetings [--seed-meetings DIR]`. Baut den Such-Index der
+// Besprechungen (`LVA_MEETINGS_DIR` wird beachtet) neu auf: Chunks und FTS
+// sofort, dann Vektoren ueber den Embedding-Server, der am Ende beendet wird.
+// Ausgabe wie die anderen Headless-Laeufe: JSON auf stdout und mit `--out` in
+// eine Datei. Exit 0 fertig (ohne Modell nur lexikalisch), 1 Fehler, 2 falscher
+// Aufruf, 3 Modell vorhanden, aber nicht alle Chunks eingebettet.
+fn run_headless_reindex_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
+    crate::selftest::begin_headless_run();
+    use managers::meetings::search::{embed::LlamaEmbedder, indexer, vectors::global_cache};
+    use managers::meetings::store::MeetingStore;
+
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if args.seed_meetings.is_some() && sandbox.is_none() {
+        eprintln!(
+            "error: --seed-meetings writes test meetings and requires {} (sandbox)",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let store = match MeetingStore::new(app) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    eprintln!("DB={}", store.db_path().display());
+    let mut seeded = 0usize;
+    if let Some(dir) = args.seed_meetings.as_deref() {
+        match seed_meetings_from_fixtures(&store, dir) {
+            Ok(n) => seeded = n,
+            Err(e) => {
+                eprintln!("error: --seed-meetings failed: {e}");
+                return 1;
+            }
+        }
+    }
+    let runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: llm runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    managers::llm::install_globals(runtime, Arc::new(managers::llm::LocalLlmServer::new()));
+    // Auch headless gilt der Speicherwaechter: faellt der freie RAM unter die
+    // Notgrenze, wird der Embedding-Server beendet (die Charge scheitert dann
+    // mit einem Code, nichts Halbes wird gespeichert).
+    process_guard::spawn_memory_watchdog(|free_mb| {
+        managers::llm::stop_embedding();
+        eprintln!("memory watchdog stopped the embedding server at {free_mb} MB free");
+    });
+    let embed = Arc::new(LlamaEmbedder::new(managers::llm::EMBED_MODEL_ID));
+    let report = indexer::reindex_all(store.clone(), embed, global_cache(), true, &|| {
+        managers::llm::embedding_pid()
+    });
+    managers::llm::stop_embedding();
+    match report {
+        Ok(report) => {
+            let mut payload = serde_json::to_value(&report).unwrap_or_default();
+            payload["mode"] = serde_json::json!("reindex_meetings");
+            payload["seeded"] = serde_json::json!(seeded);
+            payload["db"] = serde_json::json!(store.db_path().display().to_string());
+            payload["embed_server_running"] =
+                serde_json::json!(managers::llm::embedding_running());
+            emit_headless_payload(&payload, args.out.as_deref());
+            if report.model_ready && report.vectors != report.chunks {
+                3
+            } else {
+                0
+            }
+        }
+        Err(e) => {
+            eprintln!("error: reindex failed: {e}");
+            1
+        }
+    }
+}
+
+/// Eine Besprechungs-Fixture (Format der M1-Eval, `tests/fixtures/notes`).
+#[derive(serde::Deserialize)]
+struct MeetingFixture {
+    title: String,
+    segments: Vec<managers::meetings::store::StoredSegment>,
+    #[serde(default)]
+    notes: Vec<managers::meetings::notes::model::NoteBlock>,
+}
+
+/// Legt je `*.json` in `dir` eine fertige Besprechung (Import) an. Nur fuer
+/// die Sandbox (`LVA_MEETINGS_DIR`), siehe `run_headless_reindex_meetings`.
+fn seed_meetings_from_fixtures(
+    store: &managers::meetings::store::MeetingStore,
+    dir: &std::path::Path,
+) -> anyhow::Result<usize> {
+    use managers::meetings::store::{MeetingSource, MeetingStatus, TranscriptDelta};
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    files.sort();
+    let mut count = 0usize;
+    for file in files {
+        let fixture: MeetingFixture = match serde_json::from_str(&std::fs::read_to_string(&file)?) {
+            Ok(f) => f,
+            Err(_) => {
+                eprintln!("seed: {} ist keine Besprechungs-Fixture, uebersprungen", file.display());
+                continue;
+            }
+        };
+        let meeting = store.create_meeting(
+            &fixture.title,
+            MeetingSource::Import,
+            Some(chrono::Utc::now().timestamp()),
+        )?;
+        store.append_delta(
+            &meeting.id,
+            &TranscriptDelta {
+                new_segments: fixture.segments,
+            },
+        )?;
+        if !fixture.notes.is_empty() {
+            store.save_notes(&meeting.id, &fixture.notes, 0)?;
+        }
+        store.set_status(&meeting.id, MeetingStatus::Ready)?;
+        count += 1;
+    }
+    Ok(count)
 }

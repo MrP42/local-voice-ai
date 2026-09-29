@@ -784,6 +784,11 @@ pub struct AppSettings {
     /// Standardvorlage (`builtin:allgemein`).
     #[serde(default)]
     pub meeting_default_template_id: Option<String>,
+    /// M4-P4b (E6): semantische Suche in Besprechungen (Vektoren ueber das
+    /// Embedding-Modell BGE-M3). Wirkt erst, wenn das Modell per Knopf
+    /// heruntergeladen ist; ohne den Schluessel gilt `true`.
+    #[serde(default = "default_true")]
+    pub meeting_semantic_search: bool,
 }
 
 fn default_meeting_language() -> String {
@@ -1530,6 +1535,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_capture_system: true,
         meeting_auto_enhance: true,
         meeting_default_template_id: None,
+        meeting_semantic_search: true,
     }
 }
 
@@ -2628,6 +2634,21 @@ mod tests {
         assert!(parsed.meeting_capture_system);
         assert!(parsed.meeting_auto_enhance);
         assert_eq!(parsed.meeting_default_template_id, None);
+    }
+
+    /// M4-P4b: eine settings.json ohne den Schluessel schaltet die semantische
+    /// Suche ein (sie wirkt ohnehin erst mit geladenem Modell); ein explizites
+    /// `false` bleibt.
+    #[test]
+    fn meeting_semantic_search_defaults_on_and_keeps_a_choice() {
+        assert!(get_default_settings().meeting_semantic_search);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(old.meeting_semantic_search);
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_semantic_search": false }))
+                .unwrap();
+        assert!(!off.meeting_semantic_search);
     }
 
     #[test]

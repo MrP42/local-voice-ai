@@ -5655,6 +5655,26 @@
           "url": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf"
         }
       ]
+    },
+    {
+      "id": "emb-bge-m3-q8",
+      "name": "BGE-M3 (Suche)",
+      "description": "Embedding-Modell für die semantische Suche in Besprechungen (1024 Dimensionen, mehrsprachig, MIT). Wird nur für den Such-Index gebraucht.",
+      "purpose": "llm-embedding",
+      "license": "MIT",
+      "tags": [
+        "suche",
+        "mehrsprachig"
+      ],
+      "files": [
+        {
+          "filename": "bge-m3-Q8_0.gguf",
+          "quant": "Q8_0",
+          "size_bytes": 634553760,
+          "sha256": "950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167",
+          "url": "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf"
+        }
+      ]
     }
   ]
 }

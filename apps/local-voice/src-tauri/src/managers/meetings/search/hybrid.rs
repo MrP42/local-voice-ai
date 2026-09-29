@@ -4,62 +4,26 @@
 //! reine Wortsuche zurueck und `lexical_only` ist gesetzt (der Chat sagt das in
 //! der Abdeckungsnotiz).
 //!
-//! `Embedder` steht vorlaeufig hier, weil `embed.rs` zu P4b gehoert; P4b zieht
-//! Trait und Enums dorthin um und behaelt sie hier per `pub use`.
+//! `Embedder` und seine Enums liegen seit P4b in `embed.rs`; hier bleiben sie
+//! per `pub use` erreichbar (bestehende Aufrufer, P4c).
 
 use anyhow::Result;
+#[cfg(test)]
 use futures_util::future::BoxFuture;
 use std::collections::{HashMap, HashSet};
 
 use super::super::store::MeetingStore;
 use super::chunking::fts_query_words;
 use super::vectors::{global_cache, VectorCache, COARSE_CANDIDATES};
+// Alter Pfad fuer P4c (`hybrid::EmbedError` ...), auch wenn hier nicht alles gebraucht wird.
+#[allow(unused_imports)]
+pub use super::embed::{EmbedError, EmbedKind, Embedder};
 
 /// RRF-Konstante (Cormack et al.): dampft den Vorsprung der obersten Raenge.
 pub const RRF_K: f64 = 60.0;
 /// Kandidaten je Liste vor der Fusion (M4 §6.2).
 pub const WORD_LIMIT: u32 = 100;
 pub const VECTOR_LIMIT: usize = 100;
-
-// ---------------------------------------------------------------------------
-// Embedder (Signatur fuer P4b; hier nur der Vertrag)
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EmbedKind {
-    Query,
-    Document,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EmbedError {
-    NoModel,
-    MemoryLow,
-    Busy,
-    Failed(String),
-}
-
-impl EmbedError {
-    /// Kurzcode fuer Log und Anzeige (nie der Text der Anfrage).
-    pub fn code(&self) -> &'static str {
-        match self {
-            EmbedError::NoModel => "no_model",
-            EmbedError::MemoryLow => "memory_low",
-            EmbedError::Busy => "busy",
-            EmbedError::Failed(_) => "failed",
-        }
-    }
-}
-
-pub trait Embedder: Send + Sync {
-    fn embed<'a>(
-        &'a self,
-        texts: &'a [String],
-        kind: EmbedKind,
-    ) -> BoxFuture<'a, Result<Vec<Vec<f32>>, EmbedError>>;
-
-    fn model_id(&self) -> &str;
-}
 
 // ---------------------------------------------------------------------------
 // RRF
