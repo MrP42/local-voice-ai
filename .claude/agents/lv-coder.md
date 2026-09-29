@@ -51,6 +51,13 @@ oder du die Architektur nicht kennst.
   neue Fixtures im Report nennen, der Planer committet sie mit `git add -f`.
 - Windows PowerShell 5.1: `$PSScriptRoot` ist in `param()`-Defaults leer -> Pfad-Defaults im
   Skriptkoerper setzen. Stimmen wie "Stefan" (SAPI) sieht nur `pwsh` 7.
+- Die Debug-EXE (`target/debug/local-voice-ai.exe`, auch headless) schreibt beim Start
+  `src/bindings.ts` per tauri-specta neu. Wer sie startet: VORHER eigene bindings-Aenderungen
+  als Patch sichern (`git diff -- apps/local-voice/src/bindings.ts > <scratch>/b.patch`), NACHHER
+  `git checkout -- apps/local-voice/src/bindings.ts` und den Patch wieder anwenden. (Ausnahme von der
+  checkout-Regel, nur fuer diese eine Datei.)
+- Nach Arbeiten, die viel Platz brauchen (Release-/Vulkan-Build), freien Platz auf C: pruefen;
+  unter 15 GB frei: melden statt weiterbauen.
 - Es gibt schon einen Test-`#[global_allocator]` (`meetings::echo::alloc_probe`); fuer
   Allokationspruefungen dessen `count_allocs` nutzen, keinen zweiten definieren.
 
