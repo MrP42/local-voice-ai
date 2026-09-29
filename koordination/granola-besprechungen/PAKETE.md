@@ -35,8 +35,8 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | P5a | M5 | Kalender-Fundament: Migration (nächster Index), calcard =0.3.14 mit UTC/Limit/Override-Umgehungen, DPAPI-Geheimnisse, --calendar-dump (Entwurf M5/M6 §3-§5, §9) — lv-coder-xhigh | `cargo test --lib calendar::` ≥ 22 Tests; --calendar-dump outlook_series.ics exakt wie Fixture-Tabelle (AK9/1) | abgenommen | a6fcd613 |
 | P5b | M5 | Sync-Dienst, Erinnerung 1 min, Hinweisfenster meeting_prompt, Start aus Termin — lv-coder | `--lib calendar::reminder` ≥ 12 Tests; Playwright meeting-calendar + meeting-prompt grün (AK9/2) | abgenommen | 892c3291 |
 | P5c | M5 | Ad-hoc-Erkennung über Mikrofonnutzung (Registry, Detector, Eigenfilter) — lv-coder | `--lib meeting_detect` ≥ 14 Tests; --detect-mic erkennt python.exe ≤ 8 s, eigene EXE nicht (AK9/3) | abgenommen | 34c948e2 |
-| P5d | M5 | Personen (humans, Aliasse, Teilnehmende, Zusammenführen, Filter) — lv-coder | `--lib people` ≥ 12 Tests; Playwright meeting-people grün | in_arbeit | |
-| P5e | M5 | Pre-Meeting-Brief über M4-Recipe — lv-coder | `--lib people::brief` ≥ 5 Tests; Playwright -g Vorbereiten grün | offen | |
+| P5d | M5 | Personen (humans, Aliasse, Teilnehmende, Zusammenführen, Filter) — lv-coder | `--lib people` ≥ 12 Tests; Playwright meeting-people grün | abgenommen | b3d0dce5 |
+| P5e | M5 | Pre-Meeting-Brief über M4-Recipe — lv-coder | `--lib people::brief` ≥ 5 Tests; Playwright -g Vorbereiten grün | abgenommen | b3d0dce5 |
 | P5f | M5 | Microsoft Graph (PKCE, Loopback, calendarView) — lv-coder-xhigh; braucht Client-ID (E14) | `--lib calendar::graph` ≥ 10 Tests gegen Test-HTTP-Server; manuell Patrick: Termine erscheinen | offen | |
 | P6a | M6 | Export-Renderer HTML/SRT/VTT/JSON, formatierte Zwischenablage, --export-meeting — lv-coder | `--lib meetings::export meetings::subtitle` ≥ 12 neue Tests inkl. Golden; JSON-Export lva-meeting-export@1 (AK10/1) | abgenommen | 2edf1752 |
 | P6b | M6 | PDF über WebView2 PrintToPdf (verstecktes Fenster) — lv-coder-xhigh | --export-meeting --format pdf → %PDF-, Titel/Umlaute extrahierbar, kein verwaistes Fenster (AK10/2) | abgenommen | 6876c1ce |
