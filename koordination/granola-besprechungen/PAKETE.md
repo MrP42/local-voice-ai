@@ -29,7 +29,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | P4b | M4 | Embedding-Server (BGE-M3) + Indexer mit Gates + Katalog + Einstellung — lv-coder-xhigh | indexer ≥ 8 Tests, llm::server grün; --reindex-meetings Sandbox: vectors == chunks, Server am Ende gestoppt | in_arbeit | |
 | P4c | M4 | Chat-Motor: Controller, Kontext, Prompt, Zitate per Konstruktion, Live, Recipes, Stream — lv-coder-xhigh | `cargo test --lib meetings::chat` ≥ 25 Tests grün; llm_client grün | abgenommen | 5ed91387 |
 | P4d | M4 | Suche, Filter, Ordner in der Liste (MeetingList) — lv-coder | tsc ok; Playwright meeting-search.spec.ts grün | abgenommen | be9cb4e7 |
-| P4e | M4 | Chat-Oberfläche: ChatPanel, Zitat-Chips, Coverage, Recipes, Live-Zeile — lv-coder | Playwright meeting-chat.spec.ts grün | offen | |
+| P4e | M4 | Chat-Oberfläche: ChatPanel, Zitat-Chips, Coverage, Recipes, Live-Zeile — lv-coder | Playwright meeting-chat.spec.ts grün | in_arbeit | |
 | P4f | M4 | Eval AK8: 2 neue Fixtures, ≥ 24 Fragen, --eval-chat — lv-coder | Stub-Tests grün; Release-Lauf lokal: accuracy ≥ 0.85, ≥ 20 Fragen, ≥ 5 Besprechungen | offen | |
 | P5 | M5/M6 | Entwurf + Spike Kalender (ICS, Graph), Meeting-Erkennung (Mikrofonnutzung), Personen/Brief, Follow-up-Mail, Export PDF/SRT/JSON/Zwischenablage, lokaler MCP-Server — lv-architect | `entwurf/m5-m6-kalender-export.md` mit Messungen + Coder-Paketen | abgenommen | 26f212d |
 | P5a | M5 | Kalender-Fundament: Migration (nächster Index), calcard =0.3.14 mit UTC/Limit/Override-Umgehungen, DPAPI-Geheimnisse, --calendar-dump (Entwurf M5/M6 §3-§5, §9) — lv-coder-xhigh | `cargo test --lib calendar::` ≥ 22 Tests; --calendar-dump outlook_series.ics exakt wie Fixture-Tabelle (AK9/1) | offen | |
