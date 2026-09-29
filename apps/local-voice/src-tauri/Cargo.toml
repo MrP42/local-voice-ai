@@ -10,6 +10,26 @@ default-run = "local-voice-ai"
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
 
+# sonora (AEC3) ist reine DSP-Arithmetik und muss im 10-ms-Takt mithalten.
+# Unoptimiert (Dev-Build, cargo test) braucht ein Frame p50 ~1,7 ms und p99
+# ~8,5 ms, also fast das ganze Frame-Budget; optimiert deutlich weniger. Nur
+# diese sieben Crates hochdrehen, der Rest des Dev-Builds bleibt schnell
+# kompilierbar. Release ist davon unberuehrt.
+[profile.dev.package.sonora]
+opt-level = 3
+[profile.dev.package.sonora-aec3]
+opt-level = 3
+[profile.dev.package.sonora-agc2]
+opt-level = 3
+[profile.dev.package.sonora-common-audio]
+opt-level = 3
+[profile.dev.package.sonora-fft]
+opt-level = 3
+[profile.dev.package.sonora-ns]
+opt-level = 3
+[profile.dev.package.sonora-simd]
+opt-level = 3
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
@@ -53,6 +73,11 @@ anyhow = "1.0.95"
 # RAM-Messung fuer die Fussleiste (Sprachmodelle: passt es rein?).
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 rubato = "0.16.2"
+# Echo-Unterdrueckung (AEC3, Port von WebRTC M145) fuer die Ich-Spur einer
+# Besprechung: managers/meetings/echo.rs. Reines Rust, BSD-3-Clause. Version
+# festgenagelt (junges Projekt); ohne Feature `examples`, das cpal 0.18
+# mitbringen wuerde.
+sonora = "=0.2.0"
 hound = "3.5.1"
 log = "0.4.25"
 env_filter = "0.1.0"

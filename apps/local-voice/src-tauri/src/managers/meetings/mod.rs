@@ -1,4 +1,5 @@
 pub mod chunker;
+pub mod echo;
 pub mod export;
 pub mod import;
 pub mod mic_capture;
