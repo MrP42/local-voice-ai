@@ -13,3 +13,13 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beleg: npx playwright test -> 17 failed; nach Fix 118 passed.
 - Konsequenz: `result.data ?? []` in MeetingNotesSettings.tsx und TemplatePicker.tsx (im P1f-Commit).
 - Status: erledigt (P1f, d0bc230e)
+
+## B3 — P1e: Qwen 3.5 9B liefert leere Antwort (Denkmodus) (29.09. 14:10)
+- Beobachtet: --eval-notes mit Qwen3.5-9B -> llm_failed; das Modell denkt vor der Antwort (Probe "2+3": 623 Token), bei langem Prompt ist der 8192-Kontext voll, bevor JSON entsteht.
+- Konsequenz: Paket P1g (Denkmodus aus, Kontext je VRAM). Gemma 4 E4B erfuellt AK3 bereits.
+- Status: offen
+
+## B4 — P1e: toter llama-server gilt als laufend (29.09. 14:10)
+- Beobachtet: Gemma 4 12B loest in der CUDA-Laufzeit "illegal memory access" aus; danach meldet is_serving den toten Server als laufend, alle Folgeaufrufe scheitern sofort.
+- Konsequenz: Paket P1h (Lebendpruefung + Neustart).
+- Status: offen

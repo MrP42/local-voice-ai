@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T16:53
+aktualisiert: 2026-09-29T17:21
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -30,7 +30,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 ## Akzeptanzkriterien
 - [x] AK1 — Analyse + Plan: `recherche/granola-analyse.md`, `recherche/lokaler-stack.md`, `recherche/ist-stand.md`, `FEATURE-MATRIX.md` im Branch; Analyse-Artefakt (Link) veröffentlicht; Issue angelegt
 - [ ] AK2 — Feature-Parität: `python koordination/granola-besprechungen/check_matrix.py` → Exit 0 (alle Kern-Funktionen gleichwertig/besser/vorhanden, je mit Beleg)
-- [ ] AK3 — Notizblock + KI-Notizen (F07–F10): Eval über Fixture-Besprechungen mit Nutzerstichpunkten → 100 % der Nutzerstichpunkte wörtlich erhalten und als Nutzertext markiert, ≥ 95 % der KI-Aussagen mit Quellsegment belegt; Rust- und Playwright-Tests des Pfads grün
+- [x] AK3 — Notizblock + KI-Notizen (F07–F10): Eval über Fixture-Besprechungen mit Nutzerstichpunkten → 100 % der Nutzerstichpunkte wörtlich erhalten und als Nutzertext markiert, ≥ 95 % der KI-Aussagen mit Quellsegment belegt; Rust- und Playwright-Tests des Pfads grün
 - [ ] AK4 — Transkription Deutsch: Benchmark-Befehl → WER Enddurchlauf ≤ 6 % und Live ≤ 8 % auf FLEURS-de-Stichprobe (≥ 200 Sätze); WER auf deutschem Mehrsprecher-Besprechungskorpus gemessen und in der Doku
 - [ ] AK5 — Live-Latenz: Harness-Messung über ≥ 10 min Aufnahme → p95 Ende der Äußerung bis Anzeige ≤ 5 s
 - [ ] AK6 — Echo: Fixture mit Lautsprecher-Echo → Ich-Transkript enthält ≤ 10 % der Gegenseite-Wörter (Baseline ohne AEC mitgemessen)
@@ -106,6 +106,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29T11:13 AK1 erfüllt — Recherche-Dateien + FEATURE-MATRIX.md in 45f3a3b, Artefakt https://claude.ai/artifact/JL7yCpwFDTcrvAm9Xj2Dwo (Kopie 91217fa), Issue #59
 - 2026-09-29T11:41 QG1 widerrufen — frühere Belege gelten nicht mehr
 - 2026-09-29T16:53 QG2 widerrufen — frühere Belege gelten nicht mehr
+- 2026-09-29T17:21 AK3 erfüllt — --eval-notes (Gemma 4 E4B, CUDA): user_preserved 1.0 (30/30), ai_sourced 1.0 (21/21), abnahme/p1e-eval-notes.json, Commit 2ec9c328; Rust 1012 gruen, Playwright meeting-notes 34 gruen
 
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
