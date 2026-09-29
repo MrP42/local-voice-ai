@@ -43,3 +43,4 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | P6c | M6 | Follow-up-Mail: Entwurf, mailto, .eml — lv-coder | `--lib meetings::mail` ≥ 10 Tests; Playwright meeting-followup grün (AK10/3) | offen | |
 | P6d | M6 | Export-Oberfläche (Menü, Teile, formatiert kopieren) — lv-coder | Playwright meeting-export grün (AK10/4) | offen | |
 | P6e | M6 | Lokaler MCP-Server --mcp (stdio, nur lesend, Standard aus) — lv-coder-xhigh | `--lib mcp::` ≥ 16 Tests; mcp_smoke.py gegen Release-Binary Exit 0 | offen | |
+| P2g | M2 | Live-Modell für Besprechungen auf Parakeet v3 GGUF Q8 umstellen (Befund B1), Latenz/WER-Regression — lv-coder | Satz-Benchmark GGUF ≤ 6 % WER in der App; Latenz-Test grün | offen | |
