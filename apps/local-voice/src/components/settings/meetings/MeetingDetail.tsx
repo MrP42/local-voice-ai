@@ -1,9 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Check, Download, Pencil, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  Download,
+  MessageSquare,
+  Pencil,
+  X,
+} from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { commands, events, type Meeting, type StoredSegment } from "@/bindings";
+import {
+  commands,
+  events,
+  type Citation,
+  type Meeting,
+  type StoredSegment,
+} from "@/bindings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Button } from "../../ui/Button";
 import { Textarea } from "../../ui/Textarea";
@@ -21,6 +34,7 @@ import { RetranscribeControl } from "./RetranscribeControl";
 import { Input } from "../../ui/Input";
 import { translateMeetingError } from "./meetingErrors";
 import { SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
+import { ChatPanel } from "./chat/ChatPanel";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -52,12 +66,18 @@ interface MeetingDetailProps {
   onBack: () => void;
   /** Propagates a title change back to the list, which owns the record. */
   onMeetingChange: (meeting: Meeting) => void;
+  /** M4-P4e: Sprung aus einem Chat ausserhalb (global); `nonce` je Klick neu. */
+  jumpRequest?: { citation: Citation; nonce: number } | null;
+  /** M4-P4e: die eigene Chat-Seitenleiste geht auf (ein globaler Chat weicht). */
+  onChatOpen?: () => void;
 }
 
 export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   meeting,
   onBack,
   onMeetingChange,
+  jumpRequest,
+  onChatOpen,
 }) => {
   const { t, i18n } = useTranslation();
   const meetingId = meeting.id;
@@ -122,6 +142,91 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       ?.querySelector<HTMLElement>(`[data-segment-index="${highlightIndex}"]`)
       ?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [highlightIndex, tab]);
+
+  // M4-P4e: Chat-Seitenleiste (Strg+J) und Belegsprung.
+  const [chatOpen, setChatOpen] = useState(false);
+  const notesRef = useRef<HTMLDivElement>(null);
+  const [noteTarget, setNoteTarget] = useState<{
+    selector: string;
+    nonce: number;
+  } | null>(null);
+
+  const toggleChat = useCallback(() => {
+    if (!chatOpen) onChatOpen?.();
+    setChatOpen(!chatOpen);
+  }, [chatOpen, onChatOpen]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "j"
+      ) {
+        e.preventDefault();
+        toggleChat();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [toggleChat]);
+
+  /**
+   * Beleg aus dem Chat: Transkript-Stelle wie eine KI-Notizen-Quelle
+   * (markieren + abspielen), Notizen-Beleg im Tab Notizen markieren.
+   */
+  const jumpToCitation = (citation: Citation) => {
+    if (citation.source === "user_notes" || citation.source === "ai_notes") {
+      setTab("notes");
+      setNotesView(citation.source === "user_notes" ? "mine" : "ai");
+      if (citation.ref_key) {
+        const attr =
+          citation.source === "user_notes" ? "data-block-id" : "data-entry-id";
+        setNoteTarget({
+          selector: `[${attr}="${CSS.escape(citation.ref_key)}"]`,
+          nonce: Date.now(),
+        });
+      }
+      return;
+    }
+    if (citation.segment_index !== null) jumpToSource(citation.segment_index);
+    else setTab("transcript");
+  };
+
+  // Notizen laden nach dem Tabwechsel: kurz auf den Block warten, dann
+  // markieren (wie das Segment, SOURCE_HIGHLIGHT_MS lang).
+  useEffect(() => {
+    if (!noteTarget) return;
+    let tries = 0;
+    let marked: HTMLElement | null = null;
+    let clear: ReturnType<typeof setTimeout> | null = null;
+    const unmark = () => {
+      if (!marked) return;
+      delete marked.dataset.highlighted;
+      marked.classList.remove("bg-logo-primary/25", "rounded-md");
+      marked = null;
+    };
+    const poll = setInterval(() => {
+      const el = notesRef.current?.querySelector<HTMLElement>(
+        noteTarget.selector,
+      );
+      if (!el && ++tries < 30) return;
+      clearInterval(poll);
+      if (!el) return;
+      marked = el;
+      el.dataset.highlighted = "true";
+      el.classList.add("bg-logo-primary/25", "rounded-md");
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      clear = setTimeout(unmark, SOURCE_HIGHLIGHT_MS);
+    }, 100);
+    return () => {
+      clearInterval(poll);
+      if (clear) clearTimeout(clear);
+      unmark();
+    };
+  }, [noteTarget]);
+
   const [loading, setLoading] = useState(true);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [copied, setCopied] = useState<"meta" | "plain" | null>(null);
@@ -144,6 +249,21 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   useEffect(() => {
     void loadSegments();
   }, [loadSegments]);
+
+  // M4-P4e: Sprung aus einem globalen Chat erst, wenn die Segmente da sind.
+  const handledJump = useRef<number | null>(null);
+  useEffect(() => {
+    if (
+      !jumpRequest ||
+      loading ||
+      handledJump.current === jumpRequest.nonce ||
+      jumpRequest.citation.meeting_id !== meetingId
+    )
+      return;
+    handledJump.current = jumpRequest.nonce;
+    jumpToCitation(jumpRequest.citation);
+    // jumpToCitation liest den aktuellen Stand; ausloesen nur je Anfrage.
+  }, [jumpRequest?.nonce, loading, meetingId]);
 
   // Live mitlesen: Import, Aufnahme und Neu-Transkription schreiben Block
   // fuer Block und melden jeden ueber `meetingEvent`. Ohne diesen Hoerer
@@ -287,7 +407,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     }
   };
 
-  return (
+  const main = (
     <SettingsGroup>
       <div className="px-4 py-3 space-y-3">
         <div className="flex items-center justify-between gap-2">
@@ -299,10 +419,21 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             <ArrowLeft width={16} height={16} />
             {t("meetings.detail.back")}
           </button>
+          <Button
+            size="sm"
+            variant={chatOpen ? "primary-soft" : "secondary"}
+            onClick={toggleChat}
+            title={t("meetings.chat.askTitle")}
+            aria-pressed={chatOpen}
+            aria-keyshortcuts="Control+J"
+          >
+            <MessageSquare width={14} height={14} aria-hidden="true" />
+            {t("meetings.chat.ask")}
+          </Button>
         </div>
         {/* Title and origin are two different facts: the title is what the
-            user calls this meeting, `source_path` is the file it was imported
-            from. Renaming must not lose the second one, hence both lines. */}
+        user calls this meeting, `source_path` is the file it was imported
+        from. Renaming must not lose the second one, hence both lines. */}
         {editingTitle ? (
           <div className="flex flex-wrap items-center gap-2">
             <Input
@@ -524,7 +655,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           <p className="text-sm text-red-400">{transcriptError}</p>
         )}
         {tab === "notes" && (
-          <div className="space-y-3">
+          <div className="space-y-3" ref={notesRef}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div
                 role="group"
@@ -658,5 +789,21 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         ) : null}
       </div>
     </SettingsGroup>
+  );
+
+  return (
+    <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+      <div className="min-w-0 flex-1">{main}</div>
+      {chatOpen && (
+        <aside className="w-full shrink-0 lg:sticky lg:top-0 lg:w-96">
+          <ChatPanel
+            scope={{ kind: "meeting", meeting_id: meetingId }}
+            mode="meeting"
+            onClose={() => setChatOpen(false)}
+            onJump={jumpToCitation}
+          />
+        </aside>
+      )}
+    </div>
   );
 };
