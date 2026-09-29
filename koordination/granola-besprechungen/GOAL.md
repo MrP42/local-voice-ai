@@ -1,15 +1,15 @@
 ---
 thema: granola-besprechungen
 titel: Besprechungen auf Granola-Niveau - lokal, ohne Abo
-state: EXECUTING
-vorzustand: -
+state: BLOCKED
+vorzustand: EXECUTING
 pausengrund: -
 issue: 59
 repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T19:39
+aktualisiert: 2026-09-29T20:32
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -115,6 +115,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
+- B2 [offen] 2026-09-29T20:32 Ursache: Freigegebener Budgetrahmen 12 MTok erreicht (Ist ~12,8 MTok); Hochrechnung bis COMPLETE 15-16 MTok · Owner: Patrick · entsperrt, wenn: Patrick hebt den Rahmen an (Vorschlag 16 MTok) oder kuerzt den Umfang (Komfortpakete P3d/P5d/P5e/P5f/P6e in Folge-Goal); dazu offen: B7, E14, E23 · nächste Prüfung: beim nächsten Sessionstart
 
 ## Entscheidungen
 - 2026-09-29 Patrick: voller Umfang M1–M7 in diesem Goal, Budgetrahmen ~12 MTok (Hochrechnung nach Ist 3,0 MTok).
@@ -126,7 +127,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-Nach Merge: P5d, P6b, P6d, P6e, P1g/h, P2g, P3d, P5e, P7a, dann M7 (Installer, Offline-Nachweis QG5, Lizenzen QG6, Performance QG3, Doku, PR); Merge-Werkzeug tools/reapply_diff.py; headless-Bedingung in lib.rs je Flag ergaenzen
+B2 auflösen (Patrick): Patrick hebt den Rahmen an (Vorschlag 16 MTok) oder kuerzt den Umfang (Komfortpakete P3d/P5d/P5e/P5f/P6e in Folge-Goal); dazu offen: B7, E14, E23. Dann `goal.py resolve-blocker --id B2 --beleg …` und `goal.py set --state PLANNING`.
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -145,4 +146,5 @@ Nach Merge: P5d, P6b, P6d, P6e, P1g/h, P2g, P3d, P5e, P7a, dann M7 (Installer, O
 - 2026-09-29T12:50 PAUSED (Runde 1) — Nutzungslimit naht (Patrick). Abgenommen+gemergt: P0,P1,P2,P4,P5 (Entwuerfe), P1a,P1b,P1c,P2a,P2c1. Beim Pausieren noch laufend/uncommittet in Worktrees: P1d (wt-m1), P1f (wt-m1c), P2b1 (wt-m2b), P4a (wt-m4), P2f (wt-m2). Budget ~4,3 MTok. [Pause: limit]
 - 2026-09-29T16:29 EXECUTING (Runde 1) — wiederaufgenommen
 - 2026-09-29T19:39 EXECUTING (Runde 1) — Stand 29.09. abends: AK1,3,4,5,6,8 erfuellt; Matrix 16/22 (inkl. F13). Gemergt: P1a-f, P2a-f, P2b1/2, P3a/b, P4a-g, P5a, P6a. Offen AK2,7(B7 Owner),9,10,11. Budget ~11 MTok, Hochrechnung 15-16. Laufend P3c (wt-m1), P5b (wt-m1c), P5c (wt-m2a), P6c (wt-m2b).
+- 2026-09-29T20:32 BLOCKED (Runde 1) — BLOCKIERT B2 (global, keine unabhängige Arbeit mehr): Freigegebener Budgetrahmen 12 MTok erreicht (Ist ~12,8 MTok); Hochrechnung bis COMPLETE 15-16 MTok
 

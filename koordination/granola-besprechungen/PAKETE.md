@@ -39,7 +39,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | P5e | M5 | Pre-Meeting-Brief über M4-Recipe — lv-coder | `--lib people::brief` ≥ 5 Tests; Playwright -g Vorbereiten grün | offen | |
 | P5f | M5 | Microsoft Graph (PKCE, Loopback, calendarView) — lv-coder-xhigh; braucht Client-ID (E14) | `--lib calendar::graph` ≥ 10 Tests gegen Test-HTTP-Server; manuell Patrick: Termine erscheinen | offen | |
 | P6a | M6 | Export-Renderer HTML/SRT/VTT/JSON, formatierte Zwischenablage, --export-meeting — lv-coder | `--lib meetings::export meetings::subtitle` ≥ 12 neue Tests inkl. Golden; JSON-Export lva-meeting-export@1 (AK10/1) | abgenommen | 2edf1752 |
-| P6b | M6 | PDF über WebView2 PrintToPdf (verstecktes Fenster) — lv-coder-xhigh | --export-meeting --format pdf → %PDF-, Titel/Umlaute extrahierbar, kein verwaistes Fenster (AK10/2) | in_arbeit | |
+| P6b | M6 | PDF über WebView2 PrintToPdf (verstecktes Fenster) — lv-coder-xhigh | --export-meeting --format pdf → %PDF-, Titel/Umlaute extrahierbar, kein verwaistes Fenster (AK10/2) | abgenommen | 6876c1ce |
 | P6c | M6 | Follow-up-Mail: Entwurf, mailto, .eml — lv-coder | `--lib meetings::mail` ≥ 10 Tests; Playwright meeting-followup grün (AK10/3) | abgenommen | d4fe2229 |
 | P6d | M6 | Export-Oberfläche (Menü, Teile, formatiert kopieren) — lv-coder | Playwright meeting-export grün (AK10/4) | offen | |
 | P6e | M6 | Lokaler MCP-Server --mcp (stdio, nur lesend, Standard aus) — lv-coder-xhigh | `--lib mcp::` ≥ 16 Tests; mcp_smoke.py gegen Release-Binary Exit 0 | offen | |
