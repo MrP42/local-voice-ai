@@ -7,6 +7,18 @@ Namensnennung der Daten: [ATTRIBUTION.md](ATTRIBUTION.md).
 ## Ergebnis
 
 <!-- bench:table:begin -->
+_Stand 2026-09-29, automatisch aus den Ergebnis-JSON erzeugt._
+
+| Modell | Engine | Gerät | Sätze | WER FLEURS-de | RTF | Hinweise |
+|---|---|---|---|---|---|---|
+| Parakeet TDT 0.6B v3 int8 | transcribe-rs (ONNX) | CPU | 240 | **7,86 %** (409/5206) | 16,5× | WER weich 7,38 %; Laden 1,2 s; 1 Sätze weichen von der Rust-Wertung ab |
+| Whisper large-v3-turbo Q8 | transcribe-cpp | CPU | 240 | **8,87 %** (462/5206) | 1,3× | WER weich 8,39 %; Laden 0,9 s; 2 Sätze weichen von der Rust-Wertung ab |
+| Qwen3-ASR 0.6B Q8 | transcribe-cpp | CPU | 240 | **7,16 %** (373/5206) | 5,3× | WER weich 6,97 %; Laden 1,0 s; 2 Sätze weichen von der Rust-Wertung ab |
+| Qwen3-ASR 1.7B Q5_K_M | transcribe-cpp | CPU | 240 | **4,17 %** (217/5206) | 4,3× | WER weich 4,21 %; Laden 1,3 s; 3 Sätze weichen von der Rust-Wertung ab |
+| Parakeet TDT 0.6B v3 GGUF Q8 | transcribe-cpp (Spike-Build) | CPU | 240 | **5,55 %** (289/5206) | 11,3× | Spike-Build, nicht App (Modell nicht im App-Katalog installiert); WER weich 5,46 %; Laden 0,8 s |
+| Parakeet TDT 0.6B v3 GGUF Q8 | transcribe-cpp (Spike-Build) | CUDA RTX 4090 | 240 | **5,51 %** (287/5206) | 87,7× | Spike-Build, nicht App; WER weich 5,36 %; Laden 0,6 s |
+| Whisper large-v3-turbo Q8 | transcribe-cpp (Spike-Build) | CUDA RTX 4090 | 240 | **5,61 %** (292/5206) | 114,9× | Spike-Build, nicht App; WER weich 5,15 %; Laden 0,8 s |
+| Whisper large-v3 Q5_K_M | transcribe-cpp (Spike-Build) | CUDA RTX 4090 | 240 | **4,65 %** (242/5206) | 20,6× | Spike-Build, nicht App; WER weich 4,28 %; Laden 0,9 s |
 <!-- bench:table:end -->
 
 ## Methode
