@@ -33,7 +33,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - Neuer Seitenleisten-Eintrag oder neuer Einstellungsreiter (Memory „Einstellungen am richtigen Ort“).
 
 ## Akzeptanzkriterien
-- [ ] AK1 — Audit: `koordination/ui-vorlesen-kompakt/UI-AUDIT.md` listet jede Abweichung als *Element · Ist · Standard · Fundstelle · Schwere · Status*; jede Zeile „hoch“/„mittel“ trägt Status „behoben (Paket/Commit)“, Rest „Folge-Goal“.
+- [x] AK1 — Audit: `koordination/ui-vorlesen-kompakt/UI-AUDIT.md` listet jede Abweichung als *Element · Ist · Standard · Fundstelle · Schwere · Status*; jede Zeile „hoch“/„mittel“ trägt Status „behoben (Paket/Commit)“, Rest „Folge-Goal“.
 - [x] AK2 — Einheitliche Aktionen: Playwright-Test `tests/readaloud-toolbar.spec.ts` → alle Aktionsknöpfe der Bedienspalte (`[data-testid^="tts-action-"]`) haben gleiche Höhe und Breite (±1 px), kein sichtbarer Beschriftungstext, jedes Symbol (`svg.lucide-*`-Klasse) kommt genau einmal vor; Auto-Tagging ist nicht mehr niedriger als der Rest.
 - [x] AK3 — Eine Zeile + Menü: im Reiter Original stehen in einer Zeile (gleiche `top` ±2 px) Hinzufügen (zuerst), Diktieren, Als Audio speichern, Änderungen vorab erzeugen, Menü; das Menü enthält Skript-Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging und löst jede davon aus; der Fehlerzähler der Skriptprüfung ist am Menüknopf sichtbar. Übersetzung/Zusammenfassung zeigen ihre Aktion ebenfalls als Symbol.
 - [x] AK4 — Tooltip: Hover UND Tastaturfokus auf jeden Aktionsknopf zeigen Name + Kurzerklärung (`role="tooltip"`, per `aria-describedby` verbunden); `aria-label` trägt den Namen.
@@ -94,6 +94,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29T12:22 AK3 erfüllt — readaloud-toolbar.spec.ts (c)(d)(f): add,dictate,save,prewarm,menu eine Zeile, add zuerst; Menue loest Werkstatt/Pruefen/Auto-Tag/tidy aus; Badge am Menue; Uebersetzen/Zusammenfassen als Symbol; screens/p2/menue-offen.png; 110 passed, 2c9f6fd
 - 2026-09-29T12:22 AK4 erfüllt — readaloud-toolbar.spec.ts (e): Tooltip bei Hover (400 ms) und Tastaturfokus, role=tooltip, aria-describedby, Esc schliesst; screens/p2/tooltip.png; 110 passed, 2c9f6fd
 - 2026-09-29T12:34 AK5 erfüllt — readaloud-layout.spec.ts AK5-Test (P8): gestapelt 1920x1050 und 1366x768 mit Text: tts-controls <= 0,5*innerHeight UND scrollHeight <= clientHeight+1, tts-files darunter; Bild p5/gestapelt nach P2: Bedienung ~175 px; 115 passed, c8176e0
+- 2026-09-29T12:34 AK1 erfüllt — UI-AUDIT.md: 24 Befunde mit Messwert+Fundstelle, Statusspalte: alle 2 hoch + 12 mittel behoben (P2-P8 mit Commit), A18 (niedrig) teilweise -> Folge-Goal; 3448e46
 
 ## Blocker
 -
@@ -102,7 +103,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29 E1–E3 als Vorschlag gewählt (siehe Risiken), Basis `chore/0.20.3-abnahme`.
 
 ## Nächste empfohlene Aktion
-P2 validieren + mergen (Konflikt am aside-Rahmen), dann P6/P7, Nachher-Screens, prettier-ignore-Rahmen klaeren, Installer 0.20.4
+P9 validieren+mergen, Nachher-Bilder, Version 0.20.4 + Installer, Artefakt, Push + PR auf #58, Handoff
 
 ## Verlauf
 - 2026-09-29T11:49 DISCOVERY — Goal State angelegt
@@ -111,4 +112,5 @@ P2 validieren + mergen (Konflikt am aside-Rahmen), dann P6/P7, Nachher-Screens, 
 - 2026-09-29T11:58 PLANNING (Runde 1) — P1-P5 geschnitten
 - 2026-09-29T11:58 EXECUTING (Runde 1) — P1 (Opus) und P2-P5 (Sonnet) laufen parallel in wt-ui-p1..p5
 - 2026-09-29T12:14 EXECUTING (Runde 1) — P1,P3,P4,P5 abgenommen (Integration 96 passed). P2 laeuft; P6/P7 aus Audit gestartet. Budget ca. 0,85 MTok (~47 %)
+- 2026-09-29T12:34 EXECUTING (Runde 1) — P1-P8 integriert (115 passed). B4 Menue abgeschnitten -> P9 laeuft. Budget ~1,55/1,8 MTok (86 %)
 
