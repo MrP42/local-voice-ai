@@ -827,7 +827,16 @@
       "echoCancellationDescription": "Removes the other party, which comes back from your speakers into the microphone, from your track so it does not appear twice as “Me” in the transcript. Needs system audio as the reference. The raw microphone recording is kept unchanged. Takes effect from the next recording.",
       "echoCancellationAuto": "Automatic (with system audio)",
       "echoCancellationOn": "On",
-      "echoCancellationOff": "Off"
+      "echoCancellationOff": "Off",
+      "detect": "Detect ongoing meetings",
+      "detectDescription": "Notices when a program uses the microphone (Teams, Zoom, Webex, Slack, Discord, WhatsApp, Skype, Signal or a browser) and shows a hint. Only Windows' usage log is read, never the microphone itself. It only ever shows a hint and never starts recording on its own.",
+      "detectOff": "Off",
+      "detectMeetingApps": "Meeting apps",
+      "detectAllApps": "All apps",
+      "detectUnavailable": "Not available on this system.",
+      "detectIgnored": "Never report",
+      "detectIgnoredDescription": "Programs that never trigger a hint. Separate names with commas, for example \"obs64.exe, Discord\". Case does not matter and part of a name is enough.",
+      "detectIgnoredPlaceholder": "e.g. obs64.exe, Discord"
     },
     "modelSettings": {
       "title": "{{model}} Settings"

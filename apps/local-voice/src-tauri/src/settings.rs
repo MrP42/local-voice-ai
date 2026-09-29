@@ -825,6 +825,15 @@ pub struct AppSettings {
     /// settings.json) gilt `auto`; jeder andere Wert als `off` zaehlt als `auto`.
     #[serde(default = "default_meeting_diarization")]
     pub meeting_diarization: String,
+    /// M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
+    /// Mikrofonnutzung: `off` | `meeting_apps` (Standard) | `all_apps`. Nur ein
+    /// Hinweis, nie ein automatischer Start.
+    #[serde(default)]
+    pub meeting_detect_mode: crate::managers::meeting_detect::DetectMode,
+    /// M5-P5c: Programme, die nie gemeldet werden (Dateiname, Anzeigename oder
+    /// Teil des Registry-Schluessels, ohne Gross-/Kleinschreibung).
+    #[serde(default)]
+    pub meeting_detect_ignored_apps: Vec<String>,
 }
 
 fn default_meeting_final_model() -> String {
@@ -1588,6 +1597,8 @@ pub fn get_default_settings() -> AppSettings {
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,
         meeting_final_model: default_meeting_final_model(),
         meeting_diarization: default_meeting_diarization(),
+        meeting_detect_mode: crate::managers::meeting_detect::DetectMode::default(),
+        meeting_detect_ignored_apps: Vec::new(),
     }
 }
 
@@ -2733,6 +2744,25 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "meeting_echo_cancellation": "off" }))
                 .unwrap();
         assert_eq!(off.meeting_echo_cancellation, MeetingEchoCancellation::Off);
+    }
+
+    // M5-P5c
+    #[test]
+    fn meeting_detect_defaults_to_meeting_apps_and_old_files_load() {
+        use crate::managers::meeting_detect::DetectMode;
+        let d = get_default_settings();
+        assert_eq!(d.meeting_detect_mode, DetectMode::MeetingApps);
+        assert!(d.meeting_detect_ignored_apps.is_empty());
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_detect_mode, DetectMode::MeetingApps);
+        let set: AppSettings = serde_json::from_value(serde_json::json!({
+            "meeting_detect_mode": "all_apps",
+            "meeting_detect_ignored_apps": ["obs64.exe"],
+        }))
+        .unwrap();
+        assert_eq!(set.meeting_detect_mode, DetectMode::AllApps);
+        assert_eq!(set.meeting_detect_ignored_apps, vec!["obs64.exe".to_string()]);
     }
 
     // M2-P2d

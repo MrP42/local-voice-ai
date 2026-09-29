@@ -635,6 +635,46 @@ pub fn change_meeting_echo_cancellation_setting(
     Ok(())
 }
 
+// M5-P5c: wirkt beim naechsten Durchlauf des Watchers (hoechstens 2 s).
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_detect_mode_setting(
+    app: AppHandle,
+    mode: crate::managers::meeting_detect::DetectMode,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_detect_mode = mode;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+// M5-P5c: leere Zeilen und Doppelte fallen weg, die Reihenfolge bleibt.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_detect_ignored_apps_setting(
+    app: AppHandle,
+    apps: Vec<String>,
+) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    let apps: Vec<String> = apps
+        .into_iter()
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty() && seen.insert(a.to_ascii_lowercase()))
+        .collect();
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_detect_ignored_apps = apps;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// M5-P5c: kann diese Maschine die Mikrofonnutzung lesen? Sonst zeigt die
+/// Einstellung "auf diesem System nicht verfuegbar".
+#[tauri::command]
+#[specta::specta]
+pub fn meeting_detect_available() -> bool {
+    crate::managers::meeting_detect::available()
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_meeting_language_setting(app: AppHandle, language: String) -> Result<(), String> {

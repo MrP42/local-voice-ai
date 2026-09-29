@@ -827,7 +827,16 @@
       "echoCancellationDescription": "Nimmt die Gegenseite, die aus den Lautsprechern ins Mikrofon zurückkommt, aus Ihrer Spur, damit sie nicht doppelt als „Ich“ im Transkript steht. Braucht den Systemton als Referenz. Die rohe Mikrofonaufnahme bleibt unverändert erhalten. Wirkt ab der nächsten Aufnahme.",
       "echoCancellationAuto": "Automatisch (mit Systemton)",
       "echoCancellationOn": "Ein",
-      "echoCancellationOff": "Aus"
+      "echoCancellationOff": "Aus",
+      "detect": "Laufende Besprechungen erkennen",
+      "detectDescription": "Merkt, wenn ein Programm das Mikrofon benutzt (Teams, Zoom, Webex, Slack, Discord, WhatsApp, Skype, Signal oder ein Browser), und weist darauf hin. Gelesen wird nur das Nutzungsprotokoll von Windows, das Mikrofon selbst nie. Es gibt nur einen Hinweis, nie einen automatischen Start.",
+      "detectOff": "Aus",
+      "detectMeetingApps": "Meeting-Apps",
+      "detectAllApps": "Alle Apps",
+      "detectUnavailable": "Auf diesem System nicht verfügbar.",
+      "detectIgnored": "Nie melden für",
+      "detectIgnoredDescription": "Programme, die nie einen Hinweis auslösen. Namen mit Komma trennen, zum Beispiel „obs64.exe, Discord“. Groß- und Kleinschreibung ist egal; ein Namensteil genügt.",
+      "detectIgnoredPlaceholder": "z. B. obs64.exe, Discord"
     },
     "modelSettings": {
       "title": "{{model}}-Einstellungen"

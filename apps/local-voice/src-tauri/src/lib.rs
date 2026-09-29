@@ -336,6 +336,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         managers::meetings::search::indexer::start_for_app(app_handle, index_store);
     }
 
+    // M5-P5c: Ad-hoc-Erkennung laufender Besprechungen (nur Hinweis).
+    managers::meeting_detect::start(app_handle);
+
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
     // after permissions are confirmed (on macOS) or after onboarding completes.
@@ -1608,6 +1611,10 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_meeting_default_template_setting,
             shortcut::change_meeting_echo_cancellation_setting,
             shortcut::change_meeting_final_model_setting,
+            // M5-P5c
+            shortcut::change_meeting_detect_mode_setting,
+            shortcut::change_meeting_detect_ignored_apps_setting,
+            shortcut::meeting_detect_available,
             shortcut::handy_keys::start_handy_keys_recording,
             shortcut::handy_keys::stop_handy_keys_recording,
             trigger_update_check,
@@ -1845,6 +1852,8 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_enhance::MeetingNotesEvent,
             // M4-P4b
             managers::meetings::search::indexer::MeetingIndexEvent,
+            // M5-P5c
+            managers::meeting_detect::MeetingDetectEvent,
             // M4-P4c
             commands::meeting_chat::MeetingChatEvent,
             managers::transcription::StreamTextEvent,
@@ -1877,7 +1886,8 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.eval_diarization.is_some() // M3-P3a
         || cli_args.eval_chat.is_some() // M4-P4f
         || cli_args.export_meeting.is_some() // M6-P6a
-        || cli_args.calendar_dump.is_some(); // M5-P5a
+        || cli_args.calendar_dump.is_some() // M5-P5a
+        || cli_args.detect_mic; // M5-P5c
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -2083,6 +2093,20 @@ pub fn run(cli_args: CliArgs) {
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| run_headless_calendar_dump(&args));
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // M5-P5c: Mikrofonnutzung beobachten (Registry, nur lesend).
+                // Keine Datenbank, keine Modelle, kein Mikrofonzugriff.
+                if cli_args.detect_mic {
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| run_headless_detect_mic(&args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2460,6 +2484,38 @@ fn run_headless_calendar_dump(args: &CliArgs) -> i32 {
             ) {
                 Ok(()) => eprintln!("wrote {}", path.display()),
                 Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
+    code
+}
+
+// M5-P5c: `--detect-mic --seconds N [--all-apps] [--json] [--out F]`. Beobachtet
+// N Sekunden lang, welche Programme das Mikrofon oeffnen, mit denselben Regeln
+// wie der Watcher (5 s Entprellung, Eigenfilter, Leichen, webview2), nur mit
+// 1 s statt 2 s Abfrageabstand, damit eine Messung nach dem Oeffnen schneller
+// ein Ergebnis hat. `--all-apps` meldet auch Programme ausserhalb des
+// Katalogs. Nur lesend. Exit 0 beobachtet, 1 Registry nicht lesbar,
+// 2 falscher Aufruf.
+fn run_headless_detect_mic(args: &CliArgs) -> i32 {
+    let (code, payload) = managers::meeting_detect::run_cli(
+        args.seconds.unwrap_or(15),
+        args.all_apps,
+        std::time::Duration::from_secs(1),
+    );
+    if let Some(error) = payload.get("error").and_then(|e| e.as_str()) {
+        eprintln!("error: detect-mic failed: {error}");
+    }
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        println!("{}", managers::meeting_detect::format_table(&payload));
+        if let Some(path) = args.out.as_deref() {
+            if let Err(e) = std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                eprintln!("error: could not write {}: {}", path.display(), e);
             }
         }
     }
