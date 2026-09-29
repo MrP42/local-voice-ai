@@ -1,0 +1,632 @@
+{
+  "Verlauf": {
+    "viewport": {
+      "w": 1920,
+      "h": 1050
+    },
+    "columns": {
+      ".tts-workspace__pages": null,
+      ".tts-editor": null,
+      ".tts-controls": null,
+      ".tts-workspace__files": null
+    },
+    "editorTextarea": null,
+    "disclosure": null,
+    "fonts": {
+      "header": {
+        "18.75px": 1,
+        "13.125px": 1,
+        "11.25px": 1
+      },
+      "sonst": {
+        "15px": 1
+      }
+    },
+    "smallText": [
+      {
+        "region": "header",
+        "text": "Aufnahmeordner öffnen",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      }
+    ],
+    "controls": [
+      {
+        "region": "header",
+        "tag": "button",
+        "label": "Hilfe zu dieser Seite",
+        "x": 1325,
+        "y": 15,
+        "w": 31,
+        "h": 31,
+        "fontSize": "15px",
+        "fontWeight": "400",
+        "svg": "20x20",
+        "lucide": "lucide-circle-question-mark"
+      },
+      {
+        "region": "header",
+        "tag": "button",
+        "label": "Aufnahmeordner öffnen",
+        "x": 1360,
+        "y": 18,
+        "w": 163,
+        "h": 25,
+        "fontSize": "11.25px",
+        "fontWeight": "500",
+        "svg": "15x15",
+        "lucide": "lucide-folder-open"
+      }
+    ]
+  },
+  "Modelle": {
+    "viewport": {
+      "w": 1920,
+      "h": 1050
+    },
+    "columns": {
+      ".tts-workspace__pages": null,
+      ".tts-editor": null,
+      ".tts-controls": null,
+      ".tts-workspace__files": null
+    },
+    "editorTextarea": null,
+    "disclosure": null,
+    "fonts": {
+      "header": {
+        "18.75px": 1,
+        "13.125px": 1
+      },
+      "sonst": {
+        "15px": 1
+      }
+    },
+    "smallText": [],
+    "controls": [
+      {
+        "region": "header",
+        "tag": "button",
+        "label": "Hilfe zu dieser Seite",
+        "x": 1492,
+        "y": 15,
+        "w": 31,
+        "h": 31,
+        "fontSize": "15px",
+        "fontWeight": "400",
+        "svg": "20x20",
+        "lucide": "lucide-circle-question-mark"
+      },
+      {
+        "region": "sonst",
+        "tag": "input",
+        "label": "Modelle nach Namen suchen…",
+        "x": 628,
+        "y": 87,
+        "w": 883,
+        "h": 19,
+        "fontSize": "13.125px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      }
+    ]
+  },
+  "Einstellungen": {
+    "viewport": {
+      "w": 1920,
+      "h": 1050
+    },
+    "columns": {
+      ".tts-workspace__pages": null,
+      ".tts-editor": null,
+      ".tts-controls": null,
+      ".tts-workspace__files": null
+    },
+    "editorTextarea": {
+      "x": 598,
+      "y": 899,
+      "w": 921,
+      "h": 55
+    },
+    "disclosure": null,
+    "fonts": {
+      "header": {
+        "18.75px": 1,
+        "13.125px": 1
+      },
+      "sonst": {
+        "13.125px": 26,
+        "11.25px": 19
+      }
+    },
+    "smallText": [
+      {
+        "region": "sonst",
+        "text": "Tastenkürzel",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(128, 128, 128)"
+      },
+      {
+        "region": "sonst",
+        "text": "Transkription",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(128, 128, 128)"
+      },
+      {
+        "region": "sonst",
+        "text": "Ausgabe",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(128, 128, 128)"
+      },
+      {
+        "region": "sonst",
+        "text": "Besprechungen",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(128, 128, 128)"
+      },
+      {
+        "region": "sonst",
+        "text": "Diktattest",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(128, 128, 128)"
+      },
+      {
+        "region": "sonst",
+        "text": "1. Was gesagt werden soll",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(128, 128, 128)"
+      },
+      {
+        "region": "sonst",
+        "text": "Satz",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      },
+      {
+        "region": "sonst",
+        "text": "1",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      },
+      {
+        "region": "sonst",
+        "text": "Satz",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      },
+      {
+        "region": "sonst",
+        "text": "2",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      },
+      {
+        "region": "sonst",
+        "text": "Satz",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      },
+      {
+        "region": "sonst",
+        "text": "3",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      },
+      {
+        "region": "sonst",
+        "text": "Satz",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      },
+      {
+        "region": "sonst",
+        "text": "4",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      },
+      {
+        "region": "sonst",
+        "text": "Vom PC vorlesen lassen",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      },
+      {
+        "region": "sonst",
+        "text": "2. Was angekommen ist",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(128, 128, 128)"
+      },
+      {
+        "region": "sonst",
+        "text": "Feld aktivieren",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      },
+      {
+        "region": "sonst",
+        "text": "Leeren",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(31, 41, 55)"
+      },
+      {
+        "region": "sonst",
+        "text": "Ergebnis",
+        "fontSize": "11.25px",
+        "lineHeight": "15px",
+        "color": "rgb(128, 128, 128)"
+      }
+    ],
+    "controls": [
+      {
+        "region": "header",
+        "tag": "button",
+        "label": "Hilfe zu dieser Seite",
+        "x": 1492,
+        "y": 15,
+        "w": 31,
+        "h": 31,
+        "fontSize": "15px",
+        "fontWeight": "400",
+        "svg": "20x20",
+        "lucide": "lucide-circle-question-mark"
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Diktat",
+        "x": 593,
+        "y": 79,
+        "w": 47,
+        "h": 41,
+        "fontSize": "13.125px",
+        "fontWeight": "500",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Vorlesen",
+        "x": 644,
+        "y": 79,
+        "w": 73,
+        "h": 41,
+        "fontSize": "13.125px",
+        "fontWeight": "500",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Mikrofon & Töne",
+        "x": 721,
+        "y": 79,
+        "w": 122,
+        "h": 41,
+        "fontSize": "13.125px",
+        "fontWeight": "500",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "KI-Textverbesserung",
+        "x": 847,
+        "y": 79,
+        "w": 143,
+        "h": 41,
+        "fontSize": "13.125px",
+        "fontWeight": "500",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Allgemein",
+        "x": 995,
+        "y": 79,
+        "w": 83,
+        "h": 41,
+        "fontSize": "13.125px",
+        "fontWeight": "500",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Über",
+        "x": 1081,
+        "y": 79,
+        "w": 51,
+        "h": 41,
+        "fontSize": "13.125px",
+        "fontWeight": "500",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "",
+        "x": 1478,
+        "y": 167,
+        "w": 30,
+        "h": 30,
+        "fontSize": "15px",
+        "fontWeight": "400",
+        "svg": "20x20",
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "input",
+        "label": "",
+        "x": 1465,
+        "y": 227,
+        "w": 1,
+        "h": 1,
+        "fontSize": "15px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "input",
+        "label": "",
+        "x": 1465,
+        "y": 319,
+        "w": 1,
+        "h": 1,
+        "fontSize": "15px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "input",
+        "label": "Wort hinzufügen",
+        "x": 1248,
+        "y": 351,
+        "w": 150,
+        "h": 28,
+        "fontSize": "13.125px",
+        "fontWeight": "600",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Hinzufügen",
+        "x": 1406,
+        "y": 350,
+        "w": 101,
+        "h": 31,
+        "fontSize": "13.125px",
+        "fontWeight": "500",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "input",
+        "label": "",
+        "x": 1465,
+        "y": 411,
+        "w": 1,
+        "h": 1,
+        "fontSize": "15px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Zwischenablage (Ctrl+V)",
+        "x": 1307,
+        "y": 488,
+        "w": 200,
+        "h": 31,
+        "fontSize": "13.125px",
+        "fontWeight": "600",
+        "svg": "15x15",
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Zwischenablage nicht ändern",
+        "x": 1294,
+        "y": 535,
+        "w": 213,
+        "h": 31,
+        "fontSize": "13.125px",
+        "fontWeight": "600",
+        "svg": "15x15",
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Aus",
+        "x": 1307,
+        "y": 582,
+        "w": 200,
+        "h": 31,
+        "fontSize": "13.125px",
+        "fontWeight": "600",
+        "svg": "15x15",
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Automatisch erkennen",
+        "x": 1307,
+        "y": 675,
+        "w": 200,
+        "h": 31,
+        "fontSize": "13.125px",
+        "fontWeight": "600",
+        "svg": "15x15",
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Wie Diktat (Standard)",
+        "x": 1307,
+        "y": 721,
+        "w": 200,
+        "h": 31,
+        "fontSize": "13.125px",
+        "fontWeight": "600",
+        "svg": "15x15",
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "textarea",
+        "label": "",
+        "x": 598,
+        "y": 899,
+        "w": 921,
+        "h": 55,
+        "fontSize": "13.125px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Satz 1",
+        "x": 598,
+        "y": 967,
+        "w": 47,
+        "h": 25,
+        "fontSize": "11.25px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Satz 2",
+        "x": 652,
+        "y": 967,
+        "w": 47,
+        "h": 25,
+        "fontSize": "11.25px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Satz 3",
+        "x": 706,
+        "y": 967,
+        "w": 47,
+        "h": 25,
+        "fontSize": "11.25px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Satz 4",
+        "x": 761,
+        "y": 967,
+        "w": 47,
+        "h": 25,
+        "fontSize": "11.25px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Vom PC vorlesen lassen",
+        "x": 815,
+        "y": 967,
+        "w": 134,
+        "h": 25,
+        "fontSize": "11.25px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "textarea",
+        "label": "Feld anklicken, dann den Hotkey drücken und sprech",
+        "x": 598,
+        "y": 1049,
+        "w": 921,
+        "h": 75,
+        "fontSize": "13.125px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Feld aktivieren",
+        "x": 598,
+        "y": 1138,
+        "w": 89,
+        "h": 25,
+        "fontSize": "11.25px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      },
+      {
+        "region": "sonst",
+        "tag": "button",
+        "label": "Leeren",
+        "x": 694,
+        "y": 1138,
+        "w": 50,
+        "h": 25,
+        "fontSize": "11.25px",
+        "fontWeight": "400",
+        "svg": null,
+        "lucide": null
+      }
+    ]
+  }
+}
