@@ -203,9 +203,9 @@ export const PagesSidebar: React.FC<{
                 <span className="block truncate text-xs text-text/45">
                   {page.preview || t("tts.pages.emptyPreview")}
                 </span>
-                {page.modified_ms > 0 && (
+                {(page.modified_ms ?? 0) > 0 && (
                   <span className="block text-[11px] text-text/40">
-                    {relativeTime(page.modified_ms, i18n.language)}
+                    {relativeTime(page.modified_ms ?? 0, i18n.language)}
                   </span>
                 )}
               </span>
@@ -653,13 +653,13 @@ export const FilesSidebar: React.FC<{
                     {note.voice ?? t("tts.files.defaultVoice")} ·{" "}
                     {new Date(note.created_ms).toLocaleString()}
                   </p>
-                  {note.segments.length > 0 ? (
+                  {(note.segments ?? []).length > 0 ? (
                     /* Mit Zeitmarken laeuft der Text mit: der klingende Satz
                    steht hervorgehoben da, mit seinem Sprecher davor. Ohne
                    Zeitmarken (Aufnahmen aelterer Fassungen) bleibt der
                    Textanfang. */
                     <ol className="space-y-0.5 max-h-40 overflow-y-auto">
-                      {note.segments.map((segment, index) => {
+                      {(note.segments ?? []).map((segment, index) => {
                         const active =
                           atMs >= segment.start_ms && atMs < segment.end_ms;
                         return (

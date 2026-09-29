@@ -5,6 +5,11 @@ import { resolve } from "path";
 
 const host = process.env.TAURI_DEV_HOST;
 
+// Dev-Port: Standard 1420 (fest verdrahtet in tauri.conf.json devUrl). Die
+// Playwright-Konfiguration setzt LV_DEV_PORT je Checkout, damit parallele
+// Testlaeufe in mehreren Worktrees nicht denselben Server teilen.
+const devPort = Number(process.env.LV_DEV_PORT) || 1420;
+
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
@@ -35,14 +40,14 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 1420,
+    port: devPort,
     strictPort: true,
     host: host || false,
     hmr: host
       ? {
           protocol: "ws",
           host,
-          port: 1421,
+          port: devPort + 1,
         }
       : undefined,
     watch: {
