@@ -1,0 +1,722 @@
+{
+  "viewport": {
+    "w": 1920,
+    "h": 1050
+  },
+  "columns": {
+    ".tts-workspace__pages": {
+      "x": 211,
+      "y": 79,
+      "w": 195,
+      "h": 904
+    },
+    ".tts-editor": {
+      "x": 421,
+      "y": 79,
+      "w": 959,
+      "h": 904
+    },
+    ".tts-controls": {
+      "x": 1395,
+      "y": 79,
+      "w": 270,
+      "h": 904
+    },
+    ".tts-workspace__files": {
+      "x": 1680,
+      "y": 79,
+      "w": 225,
+      "h": 904
+    }
+  },
+  "editorTextarea": {
+    "x": 437,
+    "y": 119,
+    "w": 927,
+    "h": 800
+  },
+  "disclosure": {
+    "x": 437,
+    "y": 927,
+    "w": 927,
+    "h": 44,
+    "open": false,
+    "scrollHeight": 44,
+    "clientHeight": 44
+  },
+  "fonts": {
+    "header": {
+      "18.75px": 1,
+      "13.125px": 1
+    },
+    "seiten": {
+      "11.25px": 4,
+      "13.125px": 3,
+      "11px": 3
+    },
+    "editor": {
+      "13.125px": 14,
+      "14px": 1
+    },
+    "bedienung": {
+      "12.75px": 1,
+      "13.125px": 8,
+      "11.25px": 3
+    },
+    "dateien": {
+      "11.25px": 2,
+      "13.125px": 6,
+      "10px": 6
+    }
+  },
+  "smallText": [
+    {
+      "region": "seiten",
+      "text": "Seiten",
+      "fontSize": "11.25px",
+      "lineHeight": "15px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.5)"
+    },
+    {
+      "region": "seiten",
+      "text": "1. Ausgangslage beim Kunden: I",
+      "fontSize": "11.25px",
+      "lineHeight": "15px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.45)"
+    },
+    {
+      "region": "seiten",
+      "text": "vor 20 Minuten",
+      "fontSize": "11px",
+      "lineHeight": "24px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.4)"
+    },
+    {
+      "region": "seiten",
+      "text": "Sehr geehrte Damen und Herren,",
+      "fontSize": "11.25px",
+      "lineHeight": "15px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.45)"
+    },
+    {
+      "region": "seiten",
+      "text": "gestern",
+      "fontSize": "11px",
+      "lineHeight": "24px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.4)"
+    },
+    {
+      "region": "seiten",
+      "text": "<Erzählerin> Es war eine dunkl",
+      "fontSize": "11.25px",
+      "lineHeight": "15px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.45)"
+    },
+    {
+      "region": "seiten",
+      "text": "vor 5 Tagen",
+      "fontSize": "11px",
+      "lineHeight": "24px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.4)"
+    },
+    {
+      "region": "bedienung",
+      "text": "Die Sprecher im Skript lesen i",
+      "fontSize": "11.25px",
+      "lineHeight": "15px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.5)"
+    },
+    {
+      "region": "bedienung",
+      "text": "Auto-Tagging",
+      "fontSize": "11.25px",
+      "lineHeight": "15px",
+      "color": "rgb(31, 41, 55)"
+    },
+    {
+      "region": "bedienung",
+      "text": "Schreibregeln: Sprecher & Tags",
+      "fontSize": "11.25px",
+      "lineHeight": "15px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.5)"
+    },
+    {
+      "region": "dateien",
+      "text": "Dateien",
+      "fontSize": "11.25px",
+      "lineHeight": "15px",
+      "color": "rgb(31, 41, 55)"
+    },
+    {
+      "region": "dateien",
+      "text": "Hilfe",
+      "fontSize": "11.25px",
+      "lineHeight": "15px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.5)"
+    },
+    {
+      "region": "dateien",
+      "text": "34.6 MB",
+      "fontSize": "10px",
+      "lineHeight": "24px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.35)"
+    },
+    {
+      "region": "dateien",
+      "text": "33.1 MB",
+      "fontSize": "10px",
+      "lineHeight": "24px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.35)"
+    },
+    {
+      "region": "dateien",
+      "text": "31.8 MB",
+      "fontSize": "10px",
+      "lineHeight": "24px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.35)"
+    },
+    {
+      "region": "dateien",
+      "text": "30.2 MB",
+      "fontSize": "10px",
+      "lineHeight": "24px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.35)"
+    },
+    {
+      "region": "dateien",
+      "text": "32.7 MB",
+      "fontSize": "10px",
+      "lineHeight": "24px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.35)"
+    },
+    {
+      "region": "dateien",
+      "text": "35.0 MB",
+      "fontSize": "10px",
+      "lineHeight": "24px",
+      "color": "oklab(0.278074 -0.00672175 -0.0288133 / 0.35)"
+    }
+  ],
+  "controls": [
+    {
+      "region": "header",
+      "tag": "button",
+      "label": "Rückgängig",
+      "x": 1726,
+      "y": 16,
+      "w": 30,
+      "h": 30,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "20x20",
+      "lucide": "lucide-undo2"
+    },
+    {
+      "region": "header",
+      "tag": "button",
+      "label": "Wiederherstellen",
+      "x": 1758,
+      "y": 16,
+      "w": 30,
+      "h": 30,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "20x20",
+      "lucide": "lucide-redo2"
+    },
+    {
+      "region": "header",
+      "tag": "button",
+      "label": "Hilfe zu dieser Seite",
+      "x": 1804,
+      "y": 15,
+      "w": 31,
+      "h": 31,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "20x20",
+      "lucide": "lucide-circle-question-mark"
+    },
+    {
+      "region": "header",
+      "tag": "button",
+      "label": "Kein Sprachmodell geladen. Klicken zum Vorwärmen —",
+      "x": 1839,
+      "y": 15,
+      "w": 31,
+      "h": 31,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "20x20",
+      "lucide": "lucide-brain-circuit"
+    },
+    {
+      "region": "header",
+      "tag": "button",
+      "label": "Fish-Speech-Server starten",
+      "x": 1874,
+      "y": 15,
+      "w": 31,
+      "h": 31,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "20x20",
+      "lucide": "lucide-server"
+    },
+    {
+      "region": "seiten",
+      "tag": "button",
+      "label": "Neue Seite",
+      "x": 336,
+      "y": 79,
+      "w": 24,
+      "h": 24,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "16x16",
+      "lucide": "lucide-plus"
+    },
+    {
+      "region": "seiten",
+      "tag": "button",
+      "label": "Seite aus Paket einspielen…",
+      "x": 359,
+      "y": 79,
+      "w": 24,
+      "h": 24,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "16x16",
+      "lucide": "lucide-package-open"
+    },
+    {
+      "region": "seiten",
+      "tag": "button",
+      "label": "Seitenliste einklappen",
+      "x": 383,
+      "y": 79,
+      "w": 24,
+      "h": 24,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "16x16",
+      "lucide": "lucide-panel-left-close"
+    },
+    {
+      "region": "editor",
+      "tag": "button",
+      "label": "Original",
+      "x": 437,
+      "y": 80,
+      "w": 68,
+      "h": 32,
+      "fontSize": "13.125px",
+      "fontWeight": "400",
+      "svg": null,
+      "lucide": null
+    },
+    {
+      "region": "editor",
+      "tag": "button",
+      "label": "Übersetzung",
+      "x": 509,
+      "y": 80,
+      "w": 96,
+      "h": 32,
+      "fontSize": "13.125px",
+      "fontWeight": "400",
+      "svg": null,
+      "lucide": null
+    },
+    {
+      "region": "editor",
+      "tag": "button",
+      "label": "Zusammenfassung",
+      "x": 609,
+      "y": 80,
+      "w": 131,
+      "h": 32,
+      "fontSize": "13.125px",
+      "fontWeight": "400",
+      "svg": null,
+      "lucide": null
+    },
+    {
+      "region": "editor",
+      "tag": "textarea",
+      "label": "Text zum Vorlesen eingeben oder einfügen…",
+      "x": 437,
+      "y": 119,
+      "w": 927,
+      "h": 800,
+      "fontSize": "13.125px",
+      "fontWeight": "600",
+      "svg": null,
+      "lucide": null
+    },
+    {
+      "region": "editor",
+      "tag": "summary",
+      "label": "Ausdruck & Sprechstil",
+      "x": 437,
+      "y": 927,
+      "w": 927,
+      "h": 44,
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "svg": null,
+      "lucide": null
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Vorheriger Satz",
+      "x": 1395,
+      "y": 79,
+      "w": 34,
+      "h": 34,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "17x17",
+      "lucide": null
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Vorlesen",
+      "x": 1433,
+      "y": 79,
+      "w": 34,
+      "h": 34,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "23x23",
+      "lucide": null
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Nächster Satz",
+      "x": 1472,
+      "y": 79,
+      "w": 34,
+      "h": 34,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "17x17",
+      "lucide": null
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Stopp",
+      "x": 1518,
+      "y": 79,
+      "w": 34,
+      "h": 34,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "17x17",
+      "lucide": null
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Wiedergabegeschwindigkeit",
+      "x": 1565,
+      "y": 79,
+      "w": 52,
+      "h": 34,
+      "fontSize": "12.75px",
+      "fontWeight": "400",
+      "svg": null,
+      "lucide": null
+    },
+    {
+      "region": "bedienung",
+      "tag": "input",
+      "label": "",
+      "x": 1408,
+      "y": 131,
+      "w": 4,
+      "h": 24,
+      "fontSize": "13.125px",
+      "fontWeight": "400",
+      "svg": null,
+      "lucide": null
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Als Audio speichern…",
+      "x": 1395,
+      "y": 207,
+      "w": 266,
+      "h": 31,
+      "fontSize": "13.125px",
+      "fontWeight": "500",
+      "svg": "16x16",
+      "lucide": "lucide-download"
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Änderungen vorab erzeugen",
+      "x": 1395,
+      "y": 246,
+      "w": 266,
+      "h": 31,
+      "fontSize": "13.125px",
+      "fontWeight": "500",
+      "svg": "16x16",
+      "lucide": "lucide-sparkles"
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Skript-Werkstatt…",
+      "x": 1395,
+      "y": 300,
+      "w": 266,
+      "h": 31,
+      "fontSize": "13.125px",
+      "fontWeight": "500",
+      "svg": "16x16",
+      "lucide": "lucide-book-open"
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Hinzufügen — Dokument, Webseite oder Datei fürs Pr",
+      "x": 1395,
+      "y": 338,
+      "w": 266,
+      "h": 31,
+      "fontSize": "13.125px",
+      "fontWeight": "500",
+      "svg": "16x16",
+      "lucide": "lucide-plus"
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Diktieren",
+      "x": 1395,
+      "y": 376,
+      "w": 266,
+      "h": 31,
+      "fontSize": "13.125px",
+      "fontWeight": "500",
+      "svg": "16x16",
+      "lucide": "lucide-mic"
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Text aufbereiten",
+      "x": 1395,
+      "y": 415,
+      "w": 266,
+      "h": 31,
+      "fontSize": "13.125px",
+      "fontWeight": "500",
+      "svg": "16x16",
+      "lucide": "lucide-sparkles"
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Skript prüfen",
+      "x": 1395,
+      "y": 453,
+      "w": 266,
+      "h": 31,
+      "fontSize": "13.125px",
+      "fontWeight": "500",
+      "svg": "16x16",
+      "lucide": "lucide-spell-check"
+    },
+    {
+      "region": "bedienung",
+      "tag": "button",
+      "label": "Auto-Tagging",
+      "x": 1395,
+      "y": 491,
+      "w": 266,
+      "h": 25,
+      "fontSize": "11.25px",
+      "fontWeight": "500",
+      "svg": "14x14",
+      "lucide": "lucide-sparkles"
+    },
+    {
+      "region": "bedienung",
+      "tag": "summary",
+      "label": "Schreibregeln: Sprecher & Tags",
+      "x": 1395,
+      "y": 527,
+      "w": 266,
+      "h": 15,
+      "fontSize": "11.25px",
+      "fontWeight": "400",
+      "svg": null,
+      "lucide": null
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "DATEIEN",
+      "x": 1680,
+      "y": 81,
+      "w": 58,
+      "h": 19,
+      "fontSize": "11.25px",
+      "fontWeight": "600",
+      "svg": null,
+      "lucide": null
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "HILFE",
+      "x": 1741,
+      "y": 81,
+      "w": 41,
+      "h": 19,
+      "fontSize": "11.25px",
+      "fontWeight": "600",
+      "svg": null,
+      "lucide": null
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "Datei hinzufügen (wird kopiert)",
+      "x": 1815,
+      "y": 79,
+      "w": 23,
+      "h": 23,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "15x15",
+      "lucide": "lucide-file-plus"
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "Ordner im Explorer zeigen",
+      "x": 1838,
+      "y": 79,
+      "w": 23,
+      "h": 23,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "15x15",
+      "lucide": "lucide-folder-open"
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "Aktualisieren",
+      "x": 1860,
+      "y": 80,
+      "w": 22,
+      "h": 22,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "14x14",
+      "lucide": "lucide-refresh-cw"
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "Dateileiste einklappen",
+      "x": 1882,
+      "y": 79,
+      "w": 24,
+      "h": 24,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "16x16",
+      "lucide": "lucide-panel-right-close"
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "Anhören",
+      "x": 1878,
+      "y": 118,
+      "w": 20,
+      "h": 20,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "12x12",
+      "lucide": "lucide-play"
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "Anhören",
+      "x": 1878,
+      "y": 157,
+      "w": 20,
+      "h": 20,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "12x12",
+      "lucide": "lucide-play"
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "Anhören",
+      "x": 1878,
+      "y": 196,
+      "w": 20,
+      "h": 20,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "12x12",
+      "lucide": "lucide-play"
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "Anhören",
+      "x": 1878,
+      "y": 235,
+      "w": 20,
+      "h": 20,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "12x12",
+      "lucide": "lucide-play"
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "Anhören",
+      "x": 1878,
+      "y": 274,
+      "w": 20,
+      "h": 20,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "12x12",
+      "lucide": "lucide-play"
+    },
+    {
+      "region": "dateien",
+      "tag": "button",
+      "label": "Anhören",
+      "x": 1878,
+      "y": 313,
+      "w": 20,
+      "h": 20,
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "svg": "12x12",
+      "lucide": "lucide-play"
+    }
+  ]
+}
