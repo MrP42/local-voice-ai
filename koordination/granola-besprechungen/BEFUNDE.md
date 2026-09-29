@@ -28,3 +28,8 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beobachtet: commands/meeting_chat.rs (P4c) arbeitet mit dem Platzhalter-Embedder; P4b liefert LlamaEmbedder, hat den Tausch aber nicht vorgenommen.
 - Konsequenz: Tausch im Paket P4f (Eval AK8 braucht Vektoren).
 - Status: offen
+
+## B6 — P4e: Zitat-Tooltip verdeckt Antworttext (29.09. 15:20)
+- Beobachtet: Screenshot abnahme/p4e-chat.png, der Tooltip ueberlagert die Antwortzeile.
+- Konsequenz: kleine UI-Korrektur (Tooltip unterhalb/seitlich) im Abnahme-Feinschliff M7.
+- Status: offen
