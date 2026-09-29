@@ -64,6 +64,7 @@ fn normalize_filter(filter: MeetingFilter) -> Result<MeetingFilter, String> {
         to: filter.to,
         source,
         has_notes: filter.has_notes.filter(|v| *v),
+        person_id: non_empty(filter.person_id),
     })
 }
 

@@ -1,15 +1,17 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
-import type { Folder, ScopeFilter } from "@/bindings";
+import { commands, type Folder, type ScopeFilter } from "@/bindings";
 import { formatDay } from "@/lib/meetingChat";
 
 export const EMPTY_SCOPE: ScopeFilter = {
   meeting_ids: null,
   folder_id: null,
   person: null,
+  person_id: null,
   from: null,
   to: null,
+  event_uid: null,
 };
 
 interface ScopeChipsProps {
@@ -30,6 +32,24 @@ export const ScopeChips: React.FC<ScopeChipsProps> = ({
   onChange,
 }) => {
   const { t, i18n } = useTranslation();
+  // M5-P5d: eine bekannte Person steht als ID im Scope, der Chip zeigt ihren Namen.
+  const [personName, setPersonName] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  useEffect(() => {
+    const id = filter.person_id;
+    if (!id) return;
+    let cancelled = false;
+    void commands.peopleGet(id).then((result) => {
+      if (!cancelled && result.status === "ok") {
+        setPersonName({ id, name: result.data.name });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filter.person_id]);
   const chips: { key: keyof ScopeFilter; label: string }[] = [];
   if (filter.meeting_ids && filter.meeting_ids.length > 0) {
     chips.push({
@@ -51,6 +71,13 @@ export const ScopeChips: React.FC<ScopeChipsProps> = ({
     chips.push({
       key: "person",
       label: t("meetings.chat.scopeChips.person", { name: filter.person }),
+    });
+  }
+  if (filter.person_id) {
+    const name = personName?.id === filter.person_id ? personName.name : "…";
+    chips.push({
+      key: "person_id",
+      label: t("meetings.chat.scopeChips.person", { name }),
     });
   }
   if (filter.from !== null) {

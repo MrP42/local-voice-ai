@@ -101,8 +101,19 @@ interface ChatPanelProps {
   onJump?: (citation: Citation) => void;
   /** Nur global: Scope-Chips aendern die Eingrenzung. */
   onScopeChange?: (filter: ScopeFilter) => void;
-  /** Recipe sofort ausfuehren (Knoepfe der Live-Zeile); `nonce` je Klick neu. */
-  autoRecipe?: { id: string; nonce: number } | null;
+  /**
+   * Recipe sofort ausfuehren (Knoepfe der Live-Zeile, Brief); `nonce` je Klick
+   * neu. `values`: Werte der Recipe-Variablen (M5-P5e: Teilnehmende).
+   */
+  autoRecipe?: {
+    id: string;
+    nonce: number;
+    values?: Record<string, string>;
+    /** Was im Verlauf als Frage erscheint (sonst der Titel des Recipes). */
+    display?: string;
+  } | null;
+  /** M5-P5e: einen gespeicherten Verlauf sofort oeffnen (Brief); `nonce` je Klick neu. */
+  openThread?: { id: string; nonce: number } | null;
 }
 
 /**
@@ -117,6 +128,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onJump,
   onScopeChange,
   autoRecipe,
+  openThread: openThreadRequest,
 }) => {
   const { t } = useTranslation();
   const global = mode === "global";
@@ -390,14 +402,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const handledNonce = useRef<number | null>(null);
   useEffect(() => {
     if (!autoRecipe || handledNonce.current === autoRecipe.nonce) return;
-    const { id, nonce } = autoRecipe;
+    const { id, nonce, values: given, display } = autoRecipe;
     const timer = setTimeout(() => {
       handledNonce.current = nonce;
       const item = recipes.find((r) => r.id === id);
       guardedSend({
         question: "",
-        recipe: { recipe_id: id, values: {} },
-        display: item ? recipeTitleText(item) : id,
+        recipe: { recipe_id: id, values: given ?? {} },
+        display: display ?? (item ? recipeTitleText(item) : id),
       });
     }, 0);
     return () => clearTimeout(timer);
@@ -423,6 +435,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     const result = await commands.meetingChatThread(id);
     setMessages(result.status === "ok" ? (result.data ?? []) : []);
   };
+
+  // M5-P5e: gespeicherter Brief. Wie beim Recipe erst nach den Mount-Effekten.
+  const handledThreadNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (
+      !openThreadRequest ||
+      handledThreadNonce.current === openThreadRequest.nonce
+    )
+      return;
+    const { id, nonce } = openThreadRequest;
+    const timer = setTimeout(() => {
+      handledThreadNonce.current = nonce;
+      void openThread(id);
+    }, 0);
+    return () => clearTimeout(timer);
+    // Nur je Klick (nonce).
+  }, [openThreadRequest?.nonce]);
 
   const newThread = () => {
     if (pendingRef.current) return;

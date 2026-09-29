@@ -27,6 +27,7 @@ import {
   MessageSquare,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { translateMeetingError } from "./meetingErrors";
 import { SearchBar, SearchSnippet } from "./search/SearchBar";
@@ -36,6 +37,7 @@ import {
   type ListFilter,
 } from "./search/FilterChips";
 import { ContextMenu, FolderChips } from "./search/FolderChips";
+import type { PersonRef } from "./people/PersonPopover";
 import { FolderPickerDialog } from "./search/FolderPickerDialog";
 
 const PAGE_SIZE = 25;
@@ -90,11 +92,16 @@ interface MeetingListProps {
   onSelect: (meeting: Meeting) => void;
   /** M4-P4e: Chat ueber viele Besprechungen oeffnen (Scope vorbelegt). */
   onAsk?: (filter: ScopeFilter) => void;
+  /** M5-P5d: Filter "Person: Anna Berg" (kommt aus dem Popover der Detailansicht). */
+  personFilter?: PersonRef | null;
+  onPersonFilterChange?: (person: PersonRef | null) => void;
 }
 
 export const MeetingList: React.FC<MeetingListProps> = ({
   onSelect,
   onAsk,
+  personFilter = null,
+  onPersonFilterChange,
 }) => {
   const { t, i18n } = useTranslation();
   // Ohne Suche/Filter tragen die Eintraege kein Snippet.
@@ -135,9 +142,11 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
+  const personId = personFilter?.id ?? null;
   const filtered =
     query !== "" ||
     folderId !== null ||
+    personId !== null ||
     filter.rangeDays !== null ||
     filter.source !== null ||
     filter.hasNotes;
@@ -190,6 +199,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
               to: null,
               source: filter.source,
               has_notes: filter.hasNotes ? true : null,
+              person_id: personId,
             },
             offset,
             PAGE_SIZE,
@@ -221,7 +231,16 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         }
       }
     },
-    [filtered, query, folderId, fromTs, filter.source, filter.hasNotes, t],
+    [
+      filtered,
+      query,
+      folderId,
+      personId,
+      fromTs,
+      filter.source,
+      filter.hasNotes,
+      t,
+    ],
   );
 
   useEffect(() => {
@@ -371,8 +390,10 @@ export const MeetingList: React.FC<MeetingListProps> = ({
       meeting_ids: null,
       folder_id: folderId,
       person: null,
+      person_id: personId,
       from: fromTs,
       to: null,
+      event_uid: null,
     });
 
   const askSelection = () => {
@@ -384,8 +405,10 @@ export const MeetingList: React.FC<MeetingListProps> = ({
       meeting_ids: ids,
       folder_id: null,
       person: null,
+      person_id: null,
       from: null,
       to: null,
+      event_uid: null,
     });
   };
 
@@ -464,6 +487,34 @@ export const MeetingList: React.FC<MeetingListProps> = ({
             onChanged={afterFoldersChanged}
           />
           <FilterChips value={filter} onChange={setFilter} />
+          {personFilter && (
+            <div
+              className="flex flex-wrap items-center gap-1.5"
+              role="group"
+              aria-label={t("meetings.people.filter.group")}
+            >
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-logo-primary bg-logo-primary/20 px-2.5 py-0.5 text-xs text-text"
+                data-testid="person-filter-chip"
+              >
+                {t("meetings.people.filter.chip", { name: personFilter.name })}
+                <button
+                  type="button"
+                  onClick={() => onPersonFilterChange?.(null)}
+                  aria-label={t("meetings.people.filter.remove", {
+                    name: personFilter.name,
+                  })}
+                  title={t("meetings.people.filter.remove", {
+                    name: personFilter.name,
+                  })}
+                  className="rounded-full p-0.5 text-text/60 hover:bg-mid-gray/20 hover:text-text cursor-pointer"
+                  data-testid="person-filter-remove"
+                >
+                  <X width={10} height={10} aria-hidden="true" />
+                </button>
+              </span>
+            </div>
+          )}
         </div>
         {isDragOver && (
           <p className="text-sm text-logo-primary font-medium text-center">

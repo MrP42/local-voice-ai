@@ -11,6 +11,7 @@ import { syncLanguageFromSettings } from "@/i18n";
 import { useSettings } from "@/hooks/useSettings";
 import { Button } from "@/components/ui/Button";
 import { MeetingChatNotice } from "@/components/settings/meetings/MeetingChatNotice";
+import { BriefButton } from "@/components/settings/meetings/people/BriefButton";
 import { translateMeetingError } from "@/components/settings/meetings/meetingErrors";
 
 type Step = "offer" | "consent";
@@ -167,6 +168,14 @@ const MeetingPrompt: React.FC = () => {
               >
                 {t("meetings.prompt.join")}
               </Button>
+            )}
+            {event && (
+              <BriefButton
+                eventKey={event.key}
+                onOpen={(info) => void commands.peopleBriefOpen(info.event_key)}
+                testId="prompt-brief"
+                size="md"
+              />
             )}
             <Button variant="ghost" onClick={later} data-testid="prompt-later">
               {t("meetings.prompt.later")}

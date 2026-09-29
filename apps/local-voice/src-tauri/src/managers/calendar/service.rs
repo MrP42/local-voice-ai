@@ -307,6 +307,10 @@ pub fn finish_start(
         if let Err(e) = store.set_metadata_key(meeting_id, "calendar", snapshot) {
             problems.push(format!("Teilnehmende des Termins: {e}"));
         }
+        // M5-P5d: die Teilnehmenden werden Personen und Teilnehmende der Besprechung.
+        if let Err(e) = crate::managers::people::participants_from_event(store, meeting_id, event) {
+            problems.push(format!("Personen des Termins: {e}"));
+        }
     }
     if let Some(template) = &plan.template_id {
         if let Err(e) = store.set_meeting_template(meeting_id, Some(template)) {
@@ -983,6 +987,34 @@ mod tests {
             Some(2)
         );
         assert_eq!(meta["calendar"]["event_key"], ev.key);
+    }
+
+    #[test]
+    fn finish_start_stores_the_attendees_as_people_of_the_meeting() {
+        let s = store();
+        add_source(&s, "src");
+        let ev = cal_event("src", "a", T0, 3);
+        put_events(&s, "src", &[ev.clone()], true);
+        let m = s
+            .create_meeting("Termin a", MeetingSource::Live, Some(1))
+            .unwrap();
+        let plan = StartPlan {
+            title: "Termin a".into(),
+            event: Some(ev),
+            template_id: None,
+        };
+        assert!(finish_start(&s, &m.id, &plan, "prompt", 42).is_empty());
+        let people = s.participants_of(&m.id, &[]).unwrap();
+        assert_eq!(people.len(), 3);
+        assert_eq!(people[0].role, "organizer", "der Organisator steht vorn");
+        assert_eq!(people[0].email.as_deref(), Some("p0@example.org"));
+        assert!(people.iter().all(|p| p.source == "calendar"));
+        // Ein zweiter Start (gleiche Personen) legt niemanden doppelt an.
+        let again = s
+            .create_meeting("Termin a, wieder", MeetingSource::Live, Some(1))
+            .unwrap();
+        assert!(finish_start(&s, &again.id, &plan, "prompt", 43).is_empty());
+        assert_eq!(s.list_people(None, &[]).unwrap().len(), 3);
     }
 
     #[test]

@@ -106,6 +106,8 @@ pub struct MeetingFilter {
     pub to: Option<i64>,
     pub source: Option<String>,
     pub has_notes: Option<bool>,
+    /// M5-P5d: nur Besprechungen, an denen diese Person (`humans.id`) teilnahm.
+    pub person_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -135,6 +137,13 @@ pub struct ScopeFilter {
     pub person: Option<String>,
     pub from: Option<i64>,
     pub to: Option<i64>,
+    /// M5-P5d: eine bekannte Person (`humans.id`) statt Freitext; trifft auf
+    /// ihre Teilnahmen (`meeting_participants`).
+    pub person_id: Option<String>,
+    /// M5-P5d: der Kalendertermin (Serien-UID), fuer den ein Vorbereitungs-Brief
+    /// gefragt wurde. Grenzt nichts ein; der Chat-Verlauf traegt ihn im
+    /// `scope_json`, damit ein zweiter Klick den gespeicherten Brief oeffnet.
+    pub event_uid: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -269,6 +278,7 @@ fn map_chunk_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChunkRow> {
 /// `AND ...`-Fragmente.
 fn meeting_constraints(
     folder_id: Option<&str>,
+    person_id: Option<&str>,
     from: Option<i64>,
     to: Option<i64>,
     source: Option<&str>,
@@ -282,6 +292,13 @@ fn meeting_constraints(
             " AND m.id IN (SELECT fi.meeting_id FROM meeting_folder_items fi
                            JOIN meeting_folders f ON f.id = fi.folder_id AND f.deleted_at IS NULL
                            WHERE fi.folder_id = ?{})",
+            params.len()
+        ));
+    }
+    if let Some(person_id) = person_id {
+        params.push(Value::Text(person_id.to_string()));
+        sql.push_str(&format!(
+            " AND m.id IN (SELECT meeting_id FROM meeting_participants WHERE human_id = ?{})",
             params.len()
         ));
     }
@@ -795,6 +812,7 @@ impl MeetingStore {
         let mut params: Vec<Value> = vec![Value::Text(primary.clone())];
         let constraints = meeting_constraints(
             filter.folder_id.as_deref(),
+            filter.person_id.as_deref(),
             filter.from,
             filter.to,
             filter.source.as_deref(),
@@ -891,6 +909,7 @@ impl MeetingStore {
         let mut params: Vec<Value> = Vec::new();
         let constraints = meeting_constraints(
             filter.folder_id.as_deref(),
+            filter.person_id.as_deref(),
             filter.from,
             filter.to,
             filter.source.as_deref(),
@@ -976,6 +995,11 @@ impl MeetingStore {
         );
         sql.push_str(&meeting_constraints(
             scope.folder_id.as_deref(),
+            scope
+                .person_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|p| !p.is_empty()),
             scope.from,
             scope.to,
             None,
@@ -1003,10 +1027,43 @@ impl MeetingStore {
             .map(str::trim)
             .filter(|p| !p.is_empty())
         {
-            let matching = Self::meetings_mentioning(&conn, person)?;
+            let mut matching = Self::meetings_mentioning(&conn, person)?;
+            // M5-P5d: wer laut Teilnahmen dabei war, gilt auch ohne Namensnennung.
+            matching.extend(Self::meetings_with_participant_named(&conn, person)?);
             ids.retain(|id| matching.contains(id));
         }
         Ok(ids)
+    }
+
+    /// Besprechungen, an denen eine Person teilnahm (`meeting_participants`),
+    /// deren Name oder Adresse den Suchtext enthaelt. Vergleich ohne Gross- und
+    /// Kleinschreibung und ueber den Namensschluessel („Berg, Anna“ trifft
+    /// „Anna Berg“).
+    fn meetings_with_participant_named(conn: &Connection, person: &str) -> Result<HashSet<String>> {
+        use crate::managers::people::normalize::normalize_name;
+        let needle = person.to_lowercase();
+        let key = normalize_name(person);
+        let mut found: HashSet<String> = HashSet::new();
+        let mut stmt = conn.prepare(
+            "SELECT p.meeting_id, h.name, COALESCE(h.email_norm, '')
+             FROM meeting_participants p
+             JOIN humans h ON h.id = p.human_id
+              AND h.deleted_at IS NULL AND h.merged_into IS NULL",
+        )?;
+        for row in stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })? {
+            let (meeting_id, name, email) = row?;
+            let by_key = !key.is_empty() && normalize_name(&name).contains(&key);
+            if by_key || name.to_lowercase().contains(&needle) || email.contains(&needle) {
+                found.insert(meeting_id);
+            }
+        }
+        Ok(found)
     }
 
     fn meetings_mentioning(conn: &Connection, person: &str) -> Result<HashSet<String>> {

@@ -2115,6 +2115,81 @@
       "error": "Export fehlgeschlagen: {{error}}",
       "pdfFallback": "Alternative: als HTML speichern und die Datei im Browser drucken."
     },
+    "people": {
+      "chipsLabel": "Teilnehmende",
+      "you": "ich",
+      "role": {
+        "organizer": "Organisator",
+        "attendee": "Teilnehmer",
+        "speaker": "Sprecher"
+      },
+      "source": {
+        "calendar": "Aus dem Kalender",
+        "speaker": "Aus dem Transkript",
+        "manual": "Von Hand"
+      },
+      "popover": {
+        "company": "Firma",
+        "email": "E-Mail",
+        "noEmail": "Keine Adresse bekannt",
+        "meetingsWith_one": "{{count}} Besprechung mit {{name}}",
+        "meetingsWith_other": "{{count}} Besprechungen mit {{name}}",
+        "meetingsFilterTitle": "Liste auf Besprechungen mit {{name}} eingrenzen",
+        "ask": "Fragen",
+        "askTitle": "Alle Besprechungen mit {{name}} befragen",
+        "manage": "Personen verwalten …"
+      },
+      "filter": {
+        "group": "Personenfilter",
+        "chip": "Person: {{name}}",
+        "remove": "Personenfilter „{{name}}“ entfernen"
+      },
+      "dialog": {
+        "title": "Personen verwalten",
+        "description": "Namen ändern oder zwei Einträge derselben Person zusammenführen. Gleiche E-Mail-Adressen und gleiche Namen erkennt die App selbst; alles Weitere entscheiden Sie.",
+        "search": "Personen suchen",
+        "searchLabel": "Personen suchen",
+        "empty": "Noch keine Personen. Sie entstehen aus den Teilnehmenden Ihrer Kalendertermine und aus benannten Sprechern.",
+        "noHits": "Keine Treffer.",
+        "meetings_one": "{{count}} Besprechung",
+        "meetings_other": "{{count}} Besprechungen",
+        "self": "ich",
+        "name": "Name",
+        "email": "E-Mail",
+        "emailHint": "Leer lassen, um die Adresse zu entfernen.",
+        "otherEmails": "Weitere Adressen: {{list}}",
+        "save": "Speichern",
+        "saved": "Gespeichert.",
+        "mergeTitle": "Mit einer anderen Person zusammenführen",
+        "mergeHint": "Diese Person geht in der gewählten auf: Besprechungen, Namen und Adressen wandern mit.",
+        "mergeTarget": "Zusammenführen mit",
+        "mergePick": "Person wählen …",
+        "mergeAction": "Zusammenführen …",
+        "mergeConfirm": "„{{gone}}“ in „{{keep}}“ zusammenführen? Das lässt sich nicht rückgängig machen.",
+        "mergeDo": "Jetzt zusammenführen",
+        "merged": "Zusammengeführt.",
+        "cancel": "Abbrechen",
+        "back": "Zur Liste",
+        "close": "Schließen"
+      },
+      "errors": {
+        "notFound": "Diese Person gibt es nicht mehr.",
+        "nameInvalid": "Bitte einen Namen eingeben.",
+        "emailInvalid": "Das ist keine gültige E-Mail-Adresse.",
+        "emailTaken": "Diese Adresse gehört einer anderen Person. Führen Sie die beiden zusammen.",
+        "mergeInvalid": "Eine Person lässt sich nicht mit sich selbst zusammenführen.",
+        "failed": "Das hat nicht geklappt."
+      },
+      "brief": {
+        "question": "Vorbereitung auf den Termin mit {{names}}",
+        "button": "Vorbereiten",
+        "title_one": "Mit {{count}} früheren Besprechung vorbereiten",
+        "title_other": "Mit {{count}} früheren Besprechungen vorbereiten",
+        "saved": "Gespeicherten Brief öffnen",
+        "none": "Keine früheren Besprechungen mit diesen Teilnehmenden.",
+        "error": "Der Brief lässt sich nicht öffnen."
+      }
+    },
     "followup": {
       "button": "Follow-up-Mail",
       "buttonTitle": "Aus dieser Besprechung einen Mailentwurf erzeugen, den du prüfen und bearbeiten kannst",

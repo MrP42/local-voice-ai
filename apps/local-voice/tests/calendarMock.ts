@@ -56,6 +56,8 @@ export const installTauriMock = async (
     w.__prompt = null;
     w.__addError = null;
     w.__startError = null;
+    // M5-P5e: Brief-Zuschnitt, den `people_brief_info` liefert (null = Fehler).
+    w.__brief = null;
     w.__addDelay = 0;
     w.__meeting = {
       id: "m-neu",
@@ -204,6 +206,12 @@ export const installTauriMock = async (
               return null;
             case "change_meeting_capture_system_setting":
               settings.meeting_capture_system = args.enabled;
+              return null;
+            // Brief (P5e)
+            case "people_brief_info":
+              if (!w.__brief) throw "calendar_event_not_found";
+              return w.__brief;
+            case "people_brief_open":
               return null;
             // Hinweisfenster
             case "meeting_prompt_current":

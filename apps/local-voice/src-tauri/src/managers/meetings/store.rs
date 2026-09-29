@@ -695,7 +695,7 @@ impl MeetingStore {
 
     /// `pub(super)`: die Such-Erweiterung (`meetings::search`) haengt eigene
     /// `impl MeetingStore`-Bloecke an und oeffnet ueber dieselbe Stelle.
-    pub(super) fn get_connection(&self) -> Result<Connection> {
+    pub(crate) fn get_connection(&self) -> Result<Connection> {
         Ok(Connection::open(&self.db_path)?)
     }
 
@@ -703,7 +703,7 @@ impl MeetingStore {
     /// touch the `meetings` row (`append_delta`, `upsert_document`): without
     /// this, a typo'd id or a write arriving after `soft_delete_meeting`
     /// would silently create orphaned/invisible rows instead of failing.
-    pub(super) fn ensure_meeting_is_live(conn: &Connection, meeting_id: &str) -> Result<()> {
+    pub(crate) fn ensure_meeting_is_live(conn: &Connection, meeting_id: &str) -> Result<()> {
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?1 AND deleted_at IS NULL)",
             params![meeting_id],
