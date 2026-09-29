@@ -1664,6 +1664,9 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_chat::chat_recipes_save,
             commands::meeting_chat::chat_recipes_delete,
             commands::meeting_chat::chat_recipes_duplicate,
+            // M6-P6a: Export einer Besprechung
+            commands::meetings::meetings_export,
+            commands::meetings::meetings_copy_formatted,
             commands::tts::tts_speak_text,
             commands::tts::tts_speak_clipboard,
             commands::tts::tts_cancel,
@@ -1817,7 +1820,8 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.eval_notes.is_some() // M1-P1e
         || cli_args.reindex_meetings // M4-P4b
         || cli_args.eval_diarization.is_some() // M3-P3a
-        || cli_args.eval_chat.is_some(); // M4-P4f
+        || cli_args.eval_chat.is_some() // M4-P4f
+        || cli_args.export_meeting.is_some(); // M6-P6a
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -2108,6 +2112,23 @@ pub fn run(cli_args: CliArgs) {
                     return Ok(());
                 }
 
+                // M6-P6a: Export einer Besprechung. Nur lesend: kein Modell,
+                // keine Aufnahme, keine Aufraeumarbeiten beim Start.
+                if let Some(id) = cli_args.export_meeting.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_export_meeting(&app_handle, &args, &id)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
                 let app_handle = app.handle().clone();
                 let model_manager = Arc::new(
                     ModelManager::new(&app_handle).expect("Failed to initialize model manager"),
@@ -2358,6 +2379,61 @@ fn run_headless_bench_search(args: &CliArgs) -> i32 {
     }
     emit_headless_payload(&payload, args.out.as_deref());
     code
+}
+
+// M6-P6a: `--export-meeting <id> --format <f> --out <datei>`. Liest die
+// Besprechung (`LVA_MEETINGS_DIR` wird beachtet) und schreibt sie im Format;
+// ohne Modell, ohne Aufraeumen beim Start. Exit 0 ok, 1 Fehler, 2 Eingabe
+// (unbekannte Besprechung oder Format, kein --out).
+fn run_headless_export_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> i32 {
+    use managers::meetings::export::{build_bundle, write_export, ExportFormat, ExportParts};
+    use managers::meetings::store::MeetingStore;
+
+    crate::selftest::begin_headless_run();
+    let Some(out) = args.out.as_deref() else {
+        eprintln!("error: --export-meeting needs --out <file>");
+        return 2;
+    };
+    let format = match args.format.as_deref() {
+        Some(name) => match ExportFormat::from_extension(name) {
+            Some(format) => format,
+            None => {
+                eprintln!(
+                    "error: unknown --format '{name}' (md, txt, docx, html, srt, vtt, json)"
+                );
+                return 2;
+            }
+        },
+        None => ExportFormat::from_path(out),
+    };
+    let store = match MeetingStore::new(app) {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    let bundle = match build_bundle(&store, id) {
+        Ok(bundle) => bundle,
+        Err(e) if e.starts_with("meeting_not_found") => {
+            eprintln!("error: no meeting {id}");
+            return 2;
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    };
+    match write_export(out, format, &bundle, &ExportParts::all()) {
+        Ok(()) => {
+            eprintln!("wrote {}", out.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            1
+        }
+    }
 }
 
 // M4-P4b: `--reindex-meetings [--seed-meetings DIR]`. Baut den Such-Index der
