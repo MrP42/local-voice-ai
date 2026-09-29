@@ -39,6 +39,7 @@ use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
 use super::fetch::{self, FetchOutcome};
+use super::graph::{self, GraphError, GraphState, SystemVault};
 use super::ics::{self, IcsResult};
 use super::model::{CalEvent, CalendarError, CalendarKind, CalendarSource};
 use super::reminder::{self, ReminderCtx};
@@ -59,6 +60,8 @@ const DAY_MS: i64 = 86_400_000;
 const PARSE_STACK_BYTES: usize = 16 * 1024 * 1024;
 /// Freier Arbeitsspeicher, den ein Abruf samt Parsen hoechstens braucht (MB).
 const SYNC_NEED_MB: u64 = 400;
+/// Ein Graph-Abruf haelt hoechstens 60 Seiten a 8 MB nacheinander, eine zur Zeit.
+const GRAPH_SYNC_NEED_MB: u64 = 150;
 /// Titel, wenn weder der Nutzer noch ein Termin einen liefert.
 pub const DEFAULT_TITLE: &str = "Besprechung";
 
@@ -329,6 +332,9 @@ pub struct CalendarService {
     store: Arc<MeetingStore>,
     /// Ein Abruf zur Zeit (Zeitgeber, „Jetzt aktualisieren“, Hinzufuegen).
     gate: tauri::async_runtime::Mutex<()>,
+    /// M5-P5f: Microsoft Graph (Zugriffstoken, Drosselung, laufende Anmeldung).
+    graph: GraphState,
+    endpoints: graph::Endpoints,
 }
 
 fn now_ms() -> i64 {
@@ -346,6 +352,8 @@ impl CalendarService {
             app,
             store,
             gate: tauri::async_runtime::Mutex::new(()),
+            graph: GraphState::default(),
+            endpoints: graph::Endpoints::production(),
         });
 
         let syncer = service.clone();
@@ -414,33 +422,165 @@ impl CalendarService {
                 return Vec::new();
             }
         };
-        for source in sources.iter().filter(|s| {
-            s.enabled && s.kind == CalendarKind::Ics && only.as_deref().is_none_or(|id| id == s.id)
-        }) {
-            let outcome = self.sync_source(source).await;
-            let now = now_ms();
-            let (ok, count) = match outcome {
-                Ok(report) => (true, report.count),
-                Err(msg) => {
-                    log::warn!("calendar: sync of {} failed: {msg}", source.id);
-                    if let Err(e) = self.store.calendar_source_mark_sync(
-                        &source.id,
-                        now,
-                        SyncMark::Failed(&msg),
-                    ) {
-                        log::warn!("calendar: could not record the failure: {e}");
-                    }
-                    (false, source.event_count)
-                }
-            };
-            let _ = CalendarSyncEvent {
-                source_id: source.id.clone(),
-                ok,
-                count,
-            }
-            .emit(&self.app);
+        for source in sources
+            .iter()
+            .filter(|s| s.enabled && only.as_deref().is_none_or(|id| id == s.id))
+        {
+            self.run_sync(source).await;
         }
         self.store.calendar_sources().unwrap_or_default()
+    }
+
+    /// Ein Abruf einer Quelle samt Vermerk in der Quelle und Ereignis an die
+    /// Oberflaeche. Der Aufrufer haelt den `gate`.
+    async fn run_sync(&self, source: &CalendarSource) {
+        let outcome = match source.kind {
+            CalendarKind::Ics => self.sync_source(source).await,
+            CalendarKind::Graph => self.sync_graph_source(source).await,
+        };
+        let now = now_ms();
+        let (ok, count) = match outcome {
+            Ok(report) => (true, report.count),
+            Err(msg) => {
+                log::warn!("calendar: sync of {} failed: {msg}", source.id);
+                if let Err(e) =
+                    self.store
+                        .calendar_source_mark_sync(&source.id, now, SyncMark::Failed(&msg))
+                {
+                    log::warn!("calendar: could not record the failure: {e}");
+                }
+                (false, source.event_count)
+            }
+        };
+        let _ = CalendarSyncEvent {
+            source_id: source.id.clone(),
+            ok,
+            count,
+        }
+        .emit(&self.app);
+    }
+
+    /// Ein Graph-Abruf: Zugriffstoken (Cache oder Erneuerung), Termine im Fenster,
+    /// Cache in EINER Transaktion ersetzen. 429 merkt `Retry-After` fuer die Quelle;
+    /// bis dahin wird sie uebersprungen (Klartext). Bei jedem Fehler bleibt der Cache.
+    async fn sync_graph_source(&self, source: &CalendarSource) -> Result<SyncReport, String> {
+        crate::process_guard::check_ram_for_start(GRAPH_SYNC_NEED_MB)?;
+        if let Some(wait) = self.graph.throttle_left(&source.id) {
+            return Err(GraphError::Throttled { retry_after: wait }.to_string());
+        }
+        let now = now_ms();
+        let (from, to) = window_for(now);
+        let fetched = graph::sync_events(
+            &self.endpoints,
+            &SystemVault,
+            &self.graph.tokens,
+            &source.id,
+            from,
+            to,
+            source.account_hint.as_deref(),
+        )
+        .await
+        .map_err(|e| {
+            if let GraphError::Throttled { retry_after } = &e {
+                self.graph.throttle(&source.id, *retry_after);
+            }
+            e.to_string()
+        })?;
+        let warnings = fetched.warnings.len();
+        for w in fetched.warnings.iter().take(5) {
+            log::warn!("calendar: graph: {w}");
+        }
+        let store = self.store.clone();
+        let id = source.id.clone();
+        let events = fetched.events;
+        let count = events.len() as u32;
+        tauri::async_runtime::spawn_blocking(move || {
+            store
+                .calendar_replace_events(
+                    &id,
+                    &events,
+                    &SyncMeta {
+                        has_attendee_data: true,
+                        etag: None,
+                        last_modified: None,
+                        now_ms: now,
+                    },
+                )
+                .map_err(|e| format!("Die Termine konnten nicht gespeichert werden: {e}"))
+        })
+        .await
+        .map_err(|e| format!("Speichern abgebrochen: {e}"))??;
+        Ok(SyncReport { count, warnings })
+    }
+
+    /// Anmeldung mit Microsoft (P5f): Systembrowser, Loopback, Token, Quelle, erster
+    /// Abruf. Client-ID und Verzeichnis kommen aus den Einstellungen (der Aufrufer
+    /// liest sie). Waehrend des Wartens auf den Browser wird der `gate` NICHT gehalten;
+    /// er kommt erst beim Speichern und beim ersten Abruf dran.
+    pub async fn graph_sign_in(
+        &self,
+        client_id: &str,
+        tenant: &str,
+    ) -> Result<CalendarSource, String> {
+        use tauri_plugin_opener::OpenerExt;
+        let (cancel, _active) = self.graph.begin_sign_in().map_err(|e| e.to_string())?;
+        let app = self.app.clone();
+        let signed = graph::sign_in(
+            &self.endpoints,
+            client_id,
+            tenant,
+            move |url| {
+                app.opener()
+                    .open_url(url, None::<&str>)
+                    .map_err(|e| e.to_string())
+            },
+            graph::SIGN_IN_TIMEOUT,
+            &cancel,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let me = graph::fetch_me(&self.endpoints, &signed.access_token)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let _gate = self.gate.lock().await;
+        let now = now_ms();
+        let store = self.store.clone();
+        let account = signed.account.clone();
+        let me_for_store = me.clone();
+        let source = tauri::async_runtime::spawn_blocking(move || {
+            graph::register_account(&store, &SystemVault, &account, &me_for_store, now)
+        })
+        .await
+        .map_err(|e| format!("Speichern abgebrochen: {e}"))??;
+        self.graph
+            .tokens
+            .put(&source.id, signed.access_token.clone(), signed.expires_in);
+        // Der erste Abruf laeuft sofort; scheitert er, zeigt die Quelle den Grund
+        // und „Jetzt aktualisieren“ wiederholt ihn, ohne neue Anmeldung.
+        self.run_sync(&source).await;
+        self.store
+            .calendar_source(&source.id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Die Quelle ist nicht mehr da.".to_string())
+    }
+
+    /// Bricht eine laufende Anmeldung ab; `false`, wenn keine laeuft.
+    pub fn graph_cancel_sign_in(&self) -> bool {
+        self.graph.cancel_sign_in()
+    }
+
+    /// Meldet ein Microsoft-Konto ab: Quelle, Termine und Token werden geloescht.
+    pub fn graph_sign_out(&self, id: &str) -> Result<(), String> {
+        let source = self
+            .store
+            .calendar_source(id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "calendar_source_not_found".to_string())?;
+        if source.kind != CalendarKind::Graph {
+            return Err("calendar_source_not_graph".to_string());
+        }
+        self.remove_source(id)
     }
 
     /// Ein Abruf: Geheimnis lesen, Adresse abrufen, parsen, speichern. Bei
@@ -571,6 +711,7 @@ impl CalendarService {
             .calendar_source_remove(id, now_ms())
             .map_err(|e| e.to_string())?;
         secret::secret_delete(id);
+        self.graph.forget(id);
         Ok(())
     }
 }

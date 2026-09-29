@@ -353,6 +353,277 @@ test.describe("Kalender in den Einstellungen", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Microsoft-Anmeldung (P5f)
+// ---------------------------------------------------------------------------
+
+test.describe("Microsoft-Anmeldung in den Einstellungen", () => {
+  const CLIENT_ID = "11111111-2222-3333-4444-555555555555";
+  const withClientId = () => {
+    (window as any).__settings.calendar_graph_client_id =
+      "11111111-2222-3333-4444-555555555555";
+  };
+  const graphSource = (over: Record<string, unknown> = {}) => ({
+    id: "graph-1",
+    kind: "graph",
+    label: "Outlook / Microsoft 365",
+    account_hint: "anna.berg@firma.de",
+    enabled: true,
+    has_attendee_data: true,
+    last_sync_at: 1,
+    last_ok_at: 1,
+    last_error: null,
+    event_count: 12,
+    ...over,
+  });
+
+  const openDialog = async (page: Page) => {
+    await openSettings(page);
+    await page.getByTestId("calendar-connect").click();
+    const dialog = page.getByRole("dialog", { name: "Kalender verbinden" });
+    await expect(dialog).toBeVisible();
+    return dialog;
+  };
+
+  test("ohne Client-ID ist die Anmeldung gesperrt, der Hinweis erklärt die Registrierung", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openDialog(page);
+    const signIn = page.getByTestId("calendar-graph-signin");
+    await expect(signIn).toBeDisabled();
+    const hint = page.getByTestId("calendar-graph-hint");
+    await expect(hint).toContainText("Ohne eigene Client-ID");
+    await expect(hint).toContainText("http://localhost");
+    await expect(hint).toContainText("Calendars.Read");
+    await expect(page.getByTestId("calendar-graph-tenant")).toHaveAttribute(
+      "placeholder",
+      "common",
+    );
+
+    // Der Link führt auf die Microsoft-Anleitung (über den Systembrowser).
+    await page.getByTestId("calendar-graph-help-link").click();
+    await expect
+      .poll(async () => (await calls(page, "plugin:opener|open_url")).length)
+      .toBe(1);
+    expect(
+      String((await calls(page, "plugin:opener|open_url"))[0].args.url),
+    ).toContain("learn.microsoft.com/entra");
+
+    // Eine Eingabe, die keine Client-ID ist, ändert nichts.
+    await page.getByTestId("calendar-graph-client-id").fill("nicht-gueltig");
+    await expect(signIn).toBeDisabled();
+    await expect(hint).toContainText("keine gültige Client-ID");
+    expect(await calls(page, "calendar_graph_sign_in")).toHaveLength(0);
+    expect(
+      await calls(page, "change_calendar_graph_client_id_setting"),
+    ).toHaveLength(0);
+  });
+
+  test("mit Client-ID aus den Einstellungen ist die Anmeldung aktiv und ruft calendar_graph_sign_in", async ({
+    page,
+  }) => {
+    await setup(page, withClientId);
+    await openDialog(page);
+    await expect(page.getByTestId("calendar-graph-client-id")).toHaveValue(
+      CLIENT_ID,
+    );
+    await expect(page.getByTestId("calendar-graph-hint")).toHaveCount(0);
+    const signIn = page.getByTestId("calendar-graph-signin");
+    await expect(signIn).toBeEnabled();
+    await signIn.click();
+    await expect
+      .poll(async () => (await calls(page, "calendar_graph_sign_in")).length)
+      .toBe(1);
+    // Unveränderte Einstellungen werden nicht neu geschrieben.
+    expect(
+      await calls(page, "change_calendar_graph_client_id_setting"),
+    ).toHaveLength(0);
+    expect(
+      await calls(page, "change_calendar_graph_tenant_setting"),
+    ).toHaveLength(0);
+
+    await expect(
+      page.getByRole("dialog", { name: "Kalender verbinden" }),
+    ).toBeHidden();
+    await expect(page.getByTestId("calendar-source")).toContainText(
+      "Outlook / Microsoft 365",
+    );
+    // Bei Microsoft steht das Konto, nicht ein Host mit "/…".
+    await expect(page.getByTestId("calendar-source-hint")).toHaveText(
+      "· anna.berg@firma.de",
+    );
+    await expect(page.getByTestId("calendar-source-status")).toContainText(
+      "12 Termine",
+    );
+  });
+
+  test("eine eingetragene Client-ID und ein Verzeichnis werden gespeichert, bevor die Anmeldung startet", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openDialog(page);
+    await page
+      .getByTestId("calendar-graph-client-id")
+      .fill(CLIENT_ID.toUpperCase());
+    await page.getByTestId("calendar-graph-tenant").fill("contoso.com");
+    await expect(page.getByTestId("calendar-graph-hint")).toHaveCount(0);
+    await page.getByTestId("calendar-graph-signin").click();
+    await expect
+      .poll(async () => (await calls(page, "calendar_graph_sign_in")).length)
+      .toBe(1);
+    expect(
+      (await calls(page, "change_calendar_graph_client_id_setting"))[0].args,
+    ).toEqual({ clientId: CLIENT_ID });
+    expect(
+      (await calls(page, "change_calendar_graph_tenant_setting"))[0].args,
+    ).toEqual({ tenant: "contoso.com" });
+    // Reihenfolge: erst speichern, dann anmelden (das Backend liest die Einstellungen).
+    const order = await page.evaluate(() =>
+      (window as any).__calls
+        .map((c: { cmd: string }) => c.cmd)
+        .filter(
+          (c: string) =>
+            c.startsWith("change_calendar_graph") ||
+            c === "calendar_graph_sign_in",
+        ),
+    );
+    expect(order).toEqual([
+      "change_calendar_graph_client_id_setting",
+      "change_calendar_graph_tenant_setting",
+      "calendar_graph_sign_in",
+    ]);
+  });
+
+  test("während der Anmeldung zeigt der Dialog den Wartezustand, Abbrechen ruft calendar_graph_cancel_sign_in ohne Fehlermeldung", async ({
+    page,
+  }) => {
+    await setup(page, () => {
+      (window as any).__settings.calendar_graph_client_id =
+        "11111111-2222-3333-4444-555555555555";
+      (window as any).__graphWait = true;
+    });
+    const dialog = await openDialog(page);
+    const signIn = page.getByTestId("calendar-graph-signin");
+    await signIn.click();
+    await expect(signIn).toHaveText("Warte auf die Anmeldung im Browser …");
+    await expect(signIn).toBeDisabled();
+    // Nichts anderes im Dialog ist jetzt bedienbar.
+    await expect(page.getByTestId("calendar-connect-submit")).toBeDisabled();
+    await expect(page.getByTestId("calendar-graph-client-id")).toBeDisabled();
+
+    await page.getByTestId("calendar-graph-cancel").click();
+    await expect
+      .poll(
+        async () => (await calls(page, "calendar_graph_cancel_sign_in")).length,
+      )
+      .toBe(1);
+    await expect(signIn).toHaveText("Mit Microsoft anmelden");
+    await expect(signIn).toBeEnabled();
+    await expect(page.getByTestId("calendar-graph-error")).toHaveCount(0);
+    await expect(page.getByTestId("calendar-graph-cancel")).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+    await expect(page.getByTestId("calendar-source")).toHaveCount(0);
+  });
+
+  test("scheitert die Anmeldung, steht der Grund im Dialog und es entsteht keine Quelle", async ({
+    page,
+  }) => {
+    await setup(page, () => {
+      (window as any).__settings.calendar_graph_client_id =
+        "11111111-2222-3333-4444-555555555555";
+      (window as any).__graphError =
+        "Microsoft hat den Zugriff abgelehnt: AADSTS65001: Die Einwilligung fehlt.";
+    });
+    await openDialog(page);
+    await page.getByTestId("calendar-graph-signin").click();
+    await expect(page.getByTestId("calendar-graph-error")).toContainText(
+      "Die Einwilligung fehlt.",
+    );
+    await expect(
+      page.getByRole("dialog", { name: "Kalender verbinden" }),
+    ).toBeVisible();
+    await expect(page.getByTestId("calendar-graph-signin")).toBeEnabled();
+    await page
+      .getByRole("dialog", { name: "Kalender verbinden" })
+      .getByText("Abbrechen", { exact: true })
+      .last()
+      .click();
+    await expect(page.getByTestId("calendar-empty")).toBeVisible();
+  });
+
+  test("ein Konto mit Fehler bietet „Erneut anmelden“, Abmelden ruft calendar_graph_sign_out", async ({
+    page,
+  }) => {
+    await setup(page, () => {
+      (window as any).__settings.calendar_graph_client_id =
+        "11111111-2222-3333-4444-555555555555";
+      (window as any).__sources = [
+        {
+          id: "graph-1",
+          kind: "graph",
+          label: "Outlook / Microsoft 365",
+          account_hint: "anna.berg@firma.de",
+          enabled: true,
+          has_attendee_data: true,
+          last_sync_at: 1,
+          last_ok_at: 1,
+          last_error: "Anmeldung nötig: Bitte erneut mit Microsoft anmelden.",
+          event_count: 12,
+        },
+      ];
+    });
+    await openSettings(page);
+    await expect(page.getByTestId("calendar-source-error")).toContainText(
+      "Anmeldung nötig",
+    );
+    await page.getByTestId("calendar-graph-reauth").click();
+    const dialog = page.getByRole("dialog", { name: "Kalender verbinden" });
+    await expect(dialog).toBeVisible();
+    await expect(page.getByTestId("calendar-graph-signin")).toBeEnabled();
+    await dialog.getByText("Abbrechen", { exact: true }).last().click();
+    await expect(dialog).toBeHidden();
+
+    await page.getByTestId("calendar-remove").click();
+    await expect(page.getByTestId("calendar-remove-confirm")).toContainText(
+      "Konto „anna.berg@firma.de“ abmelden?",
+    );
+    await page.getByTestId("calendar-remove-yes").click();
+    await expect
+      .poll(async () => (await calls(page, "calendar_graph_sign_out")).length)
+      .toBe(1);
+    expect((await calls(page, "calendar_graph_sign_out"))[0].args).toEqual({
+      id: "graph-1",
+    });
+    expect(await calls(page, "calendar_source_remove")).toHaveLength(0);
+    await expect(page.getByTestId("calendar-empty")).toBeVisible();
+  });
+
+  test("ein Konto ohne Fehler zeigt keinen Knopf „Erneut anmelden“", async ({
+    page,
+  }) => {
+    await setup(page, () => {
+      (window as any).__sources = [
+        {
+          id: "graph-1",
+          kind: "graph",
+          label: "Outlook / Microsoft 365",
+          account_hint: "anna.berg@firma.de",
+          enabled: true,
+          has_attendee_data: true,
+          last_sync_at: 1,
+          last_ok_at: 1,
+          last_error: null,
+          event_count: 3,
+        },
+      ];
+    });
+    await openSettings(page);
+    await expect(page.getByTestId("calendar-source")).toHaveCount(1);
+    await expect(page.getByTestId("calendar-graph-reauth")).toHaveCount(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Aufnahmeseite
 // ---------------------------------------------------------------------------
 

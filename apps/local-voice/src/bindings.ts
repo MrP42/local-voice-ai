@@ -2356,6 +2356,67 @@ async changeMeetingReminderAllEventsSetting(enabled: boolean) : Promise<Result<n
 }
 },
 /**
+ * Meldet sich mit Microsoft an: Systembrowser, Loopback, Token, Quelle, erster
+ * Abruf. Client-ID und Verzeichnis kommen aus den Einstellungen; ohne Client-ID
+ * gibt es keine Anmeldung (keine eingebaute ID). Laeuft bis zu 5 Minuten, bis der
+ * Nutzer im Browser fertig ist (`calendar_graph_cancel_sign_in` bricht ab).
+ */
+async calendarGraphSignIn() : Promise<Result<CalendarSource, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_graph_sign_in") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht eine laufende Anmeldung ab. `false`, wenn keine laeuft.
+ */
+async calendarGraphCancelSignIn() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_graph_cancel_sign_in") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Meldet ein Microsoft-Konto ab: Quelle, gespeicherte Termine und das
+ * verschluesselte Token werden geloescht. (Den Zugriff der App selbst widerruft man
+ * bei Microsoft unter „Meine Apps“.)
+ */
+async calendarGraphSignOut(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_graph_sign_out", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `calendar_graph_client_id`: leer = keine; sonst muss es eine GUID sein
+ * (sie steht spaeter in einer Adresse).
+ */
+async changeCalendarGraphClientIdSetting(clientId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_calendar_graph_client_id_setting", { clientId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `calendar_graph_tenant`: leer oder `common` = Standard (`None`).
+ */
+async changeCalendarGraphTenantSetting(tenant: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_calendar_graph_tenant_setting", { tenant }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * „Lokaler MCP-Server (nur lesend)“ ein- oder ausschalten. Wirkt sofort auch in
  * einer laufenden Sitzung: der Server liest die Einstellung bei jedem Aufruf.
  */
@@ -4066,7 +4127,19 @@ meeting_mcp_enabled?: boolean;
  * M6-P6e (E13): darf der MCP-Server auch das Transkript liefern (`get_transcript`,
  * Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
  */
-meeting_mcp_include_transcript?: boolean }
+meeting_mcp_include_transcript?: boolean; 
+/**
+ * M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
+ * Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
+ * `http://localhost`). Es gibt keine eingebaute ID: ohne Eintrag ist die
+ * Anmeldung gesperrt. Keine Geheimnisse (das Erneuerungs-Token liegt DPAPI-
+ * verschluesselt in `secrets/`).
+ */
+calendar_graph_client_id?: string | null; 
+/**
+ * M5-P5f: Verzeichnis (Tenant) der Anmeldung; `None` = `common`.
+ */
+calendar_graph_tenant?: string | null }
 export type Attendee = { 
 /**
  * Klein geschrieben, ohne `mailto:`; `None`, wenn die Quelle keine

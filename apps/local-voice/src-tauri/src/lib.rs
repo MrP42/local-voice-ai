@@ -1762,6 +1762,12 @@ pub fn run(cli_args: CliArgs) {
             commands::calendar::calendar_open_join_url,
             commands::calendar::change_meeting_reminder_lead_setting,
             commands::calendar::change_meeting_reminder_all_events_setting,
+            // M5-P5f: Microsoft Graph
+            commands::calendar::calendar_graph_sign_in,
+            commands::calendar::calendar_graph_cancel_sign_in,
+            commands::calendar::calendar_graph_sign_out,
+            commands::calendar::change_calendar_graph_client_id_setting,
+            commands::calendar::change_calendar_graph_tenant_setting,
             // M6-P6e
             commands::meeting_mcp::change_meeting_mcp_enabled_setting,
             commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,

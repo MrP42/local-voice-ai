@@ -29,6 +29,7 @@
 
 pub mod dump;
 pub mod fetch;
+pub mod graph; // M5-P5f
 pub mod ics;
 pub mod model;
 pub mod reminder; // M5-P5b

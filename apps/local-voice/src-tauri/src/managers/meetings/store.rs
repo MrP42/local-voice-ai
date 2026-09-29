@@ -2812,7 +2812,18 @@ impl MeetingStore {
         for e in &mut events {
             e.attendees = by_key.remove(&e.key).unwrap_or_default();
         }
-        Ok(events)
+        // M5-P5f: derselbe Termin aus ICS und Graph erscheint einmal, aus Graph.
+        let graph_sources: std::collections::HashSet<String> = conn
+            .prepare(
+                "SELECT id FROM calendar_sources
+                 WHERE deleted_at IS NULL AND enabled = 1 AND kind = 'graph'",
+            )?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(crate::managers::calendar::graph::dedupe_graph_wins(
+            events,
+            &graph_sources,
+        ))
     }
 
     /// Ein Termin aus dem Cache, unabhaengig davon, ob er abgesagt ist.

@@ -42,11 +42,11 @@ pub const MAX_INSTANCES_PER_SERIES: usize = 20_000;
 const MAX_TOTAL_INSTANCES: usize = 2_000_000;
 /// Mehr Termine im Fenster speichert keine Quelle (Speicher, Datenbank).
 pub const MAX_EVENTS_PER_SOURCE: usize = 20_000;
-const MAX_DESCRIPTION_CHARS: usize = 4_000;
-const MAX_LOCATION_CHARS: usize = 500;
-const MAX_TITLE_CHARS: usize = 300;
+pub(super) const MAX_DESCRIPTION_CHARS: usize = 4_000;
+pub(super) const MAX_LOCATION_CHARS: usize = 500;
+pub(super) const MAX_TITLE_CHARS: usize = 300;
 const MAX_ATTENDEES: usize = 500;
-const MAX_JOIN_URL_CHARS: usize = 2_000;
+pub(super) const MAX_JOIN_URL_CHARS: usize = 2_000;
 const MAX_WARNINGS: usize = 100;
 /// Titel fuer Termine ohne SUMMARY.
 pub const UNTITLED: &str = "(ohne Titel)";
@@ -299,7 +299,7 @@ fn other_property(comp: &ICalendarComponent, name: &str) -> Option<String> {
     })
 }
 
-fn normalize_email(raw: &str) -> Option<String> {
+pub(super) fn normalize_email(raw: &str) -> Option<String> {
     let t = raw.trim();
     let t = match t.get(..7) {
         Some(prefix) if prefix.eq_ignore_ascii_case("mailto:") => &t[7..],
@@ -411,7 +411,7 @@ fn build_attendees(fields: &Fields, truncated: &mut bool) -> Vec<Attendee> {
     out
 }
 
-fn cap_chars(s: &str, max: usize) -> String {
+pub(super) fn cap_chars(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
@@ -419,7 +419,7 @@ fn cap_chars(s: &str, max: usize) -> String {
     }
 }
 
-fn is_http_url(s: &str) -> bool {
+pub(super) fn is_http_url(s: &str) -> bool {
     let l = s.trim().to_ascii_lowercase();
     l.starts_with("https://") || l.starts_with("http://")
 }
