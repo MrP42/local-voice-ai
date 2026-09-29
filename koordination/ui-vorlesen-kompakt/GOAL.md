@@ -1,15 +1,15 @@
 ---
 thema: ui-vorlesen-kompakt
 titel: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
-state: DISCOVERY
+state: EXECUTING
 vorzustand: -
 pausengrund: -
 issue: 61
 repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
-iteration: 0
+iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T11:55
+aktualisiert: 2026-09-29T11:58
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -94,9 +94,12 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29 E1–E3 als Vorschlag gewählt (siehe Risiken), Basis `chore/0.20.3-abnahme`.
 
 ## Nächste empfohlene Aktion
-Werkzeug reparieren (PW_PORT), Basislinie der Playwright-Suite messen, Pakete P1–P4 briefen.
+Reports abwarten, je Paket selbst validieren, in feat/ui-vorlesen-kompakt mergen
 
 ## Verlauf
 - 2026-09-29T11:49 DISCOVERY — Goal State angelegt
 - 2026-09-29T11:55 DISCOVERY (Runde 0) — Metadaten: issue=61
+- 2026-09-29T11:58 READY (Runde 0) — Goal definiert, Issue #61, Basislinie 72/72
+- 2026-09-29T11:58 PLANNING (Runde 1) — P1-P5 geschnitten
+- 2026-09-29T11:58 EXECUTING (Runde 1) — P1 (Opus) und P2-P5 (Sonnet) laufen parallel in wt-ui-p1..p5
 
