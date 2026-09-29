@@ -502,7 +502,7 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
   // Uebersetzung bekommt die Piper-Stimme ...
-  await page.getByRole("button", { name: "Übersetzung", exact: true }).click();
+  await page.getByRole("tab", { name: "Übersetzung", exact: true }).click();
   await page.getByTestId("voice-select").click();
   await page.getByText("Thorsten · Deutsch · MQ · Piper").click();
   await expect
@@ -513,7 +513,7 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
     )
     .toBe("piper");
   // ... das Original bleibt bei der Standardstimme: Umschalten schaltet die Engine zurueck.
-  await page.getByRole("button", { name: "Original", exact: true }).click();
+  await page.getByRole("tab", { name: "Original", exact: true }).click();
   await page.getByTestId("voice-select").click();
   await page.getByText("Skript mit Sprechern").click();
   await expect
@@ -523,7 +523,7 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
       ),
     )
     .toBe("fish");
-  await page.getByRole("button", { name: "Übersetzung", exact: true }).click();
+  await page.getByRole("tab", { name: "Übersetzung", exact: true }).click();
   await expect
     .poll(() =>
       page.evaluate(

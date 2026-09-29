@@ -34,6 +34,7 @@ import { Dialog } from "../../ui/Dialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
+import { TabList } from "../../ui/TabList";
 import {
   TtsChipEditor,
   type ChipEditorFinding,
@@ -1516,41 +1517,16 @@ export const TtsSettings = () => {
               {/* Zwei Reiter, ein Feld. Das Original wird nie ueberschrieben —
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
-              <div className="flex items-center gap-1 border-b border-mid-gray/20">
-                <button
-                  type="button"
-                  onClick={() => setTab("original")}
-                  className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
-                    tab === "original"
-                      ? "border-logo-primary text-text"
-                      : "border-transparent text-text/50 hover:text-text/80"
-                  }`}
-                >
-                  {t("tts.tabOriginal")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTab("translation")}
-                  className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
-                    tab === "translation"
-                      ? "border-logo-primary text-text"
-                      : "border-transparent text-text/50 hover:text-text/80"
-                  }`}
-                >
-                  {t("tts.tabTranslation")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTab("summary")}
-                  className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
-                    tab === "summary"
-                      ? "border-logo-primary text-text"
-                      : "border-transparent text-text/50 hover:text-text/80"
-                  }`}
-                >
-                  {t("tts.tabSummary")}
-                </button>
-              </div>
+              <TabList
+                tabs={[
+                  { id: "original", label: t("tts.tabOriginal") },
+                  { id: "translation", label: t("tts.tabTranslation") },
+                  { id: "summary", label: t("tts.tabSummary") },
+                ]}
+                value={tab}
+                onChange={setTab}
+                className="border-b border-mid-gray/20"
+              />
 
               {/* Der Chip-Editor ist Drop-in für die frühere Textarea: die
                 native textarea darin bleibt die einzige Wahrheit, Tags

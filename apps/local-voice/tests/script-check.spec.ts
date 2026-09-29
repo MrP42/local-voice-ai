@@ -685,7 +685,9 @@ test("exporting a page asks for the voice rights before it packs voices", async 
     .getByRole("button", { name: "Vorlesen", exact: true })
     .click();
   const row = page.getByText("Der Sturm", { exact: true }).first();
-  await row.hover();
+  // Am linken Rand des Titels: die Aktionen schweben rechts über der Zeile und
+  // decken deren Mitte ab, sobald sie eingeblendet sind.
+  await row.hover({ position: { x: 4, y: 4 } });
   await page.getByTestId("page-export-open").click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Erzählerin");
