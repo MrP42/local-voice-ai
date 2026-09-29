@@ -1,15 +1,15 @@
 ---
 thema: granola-besprechungen
 titel: Besprechungen auf Granola-Niveau - lokal, ohne Abo
-state: DISCOVERY
+state: READY
 vorzustand: -
 pausengrund: -
-issue: -
+issue: 59
 repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 0
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T10:40
+aktualisiert: 2026-09-29T11:02
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -103,7 +103,10 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-Goal-Abschnitte füllen, Akzeptanzkriterien prüfbar machen, dann `goal.py set --state READY`.
+M0: Analyse-Artefakt + Paketplan M1/M2; Spikes P1 (Notizblock-Architektur) und P2 (Audio/STT-Spike) briefen
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
+- 2026-09-29T11:02 DISCOVERY (Runde 0) — Metadaten: issue=59
+- 2026-09-29T11:02 READY (Runde 0) — Goal definiert, Issue #59, Discovery abgeschlossen (3 Recherchen)
+
