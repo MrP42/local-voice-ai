@@ -1,7 +1,7 @@
 ---
 thema: granola-besprechungen
 titel: Besprechungen auf Granola-Niveau - lokal, ohne Abo
-state: PLANNING
+state: EXECUTING
 vorzustand: EXECUTING
 pausengrund: -
 issue: 59
@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 2
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T21:55
+aktualisiert: 2026-09-29T21:56
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -130,7 +130,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-P5b von Hand mergen, dann P6d+P7a parallel, dann M7
+Nach P7a: P6d + B6 (UI), dann M7
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -152,4 +152,5 @@ P5b von Hand mergen, dann P6d+P7a parallel, dann M7
 - 2026-09-29T20:32 BLOCKED (Runde 1) — BLOCKIERT B2 (global, keine unabhängige Arbeit mehr): Freigegebener Budgetrahmen 12 MTok erreicht (Ist ~12,8 MTok); Hochrechnung bis COMPLETE 15-16 MTok
 - 2026-09-29T21:51 BLOCKED (Runde 1) — B2 gelöst: Patrick 29.09. abends: Rahmen 16 MTok, B7 a, E14 als Einstellung spaeter, E23 spaeter
 - 2026-09-29T21:51 PLANNING (Runde 2) — Blocker B2 aufgeloest (Rahmen 16 MTok), AK7 erfuellt
+- 2026-09-29T21:56 EXECUTING (Runde 2) — P7a (wt-m1), P1g (wt-m2a), P2g (wt-m2b) laufen; Budget ~12,9 von 16 MTok (80 %-Marke erreicht)
 

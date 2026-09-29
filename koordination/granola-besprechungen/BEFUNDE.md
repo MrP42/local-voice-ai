@@ -48,4 +48,4 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 ## B9 — Playwright-Laeufe parallel in mehreren Worktrees stoeren sich (29.09. 20:10)
 - Beobachtet: volle Suite 30-37 rot, einzeln gruen; alle Worktrees nutzen Port 1420 mit reuseExistingServer -> Tests laufen gegen fremden Vite-Server.
 - Konsequenz: Planer prueft die UI-Suite nur ohne parallele Playwright-Laeufe; dauerhaft Paket P7a (Port je Worktree).
-- Status: offen
+- Status: erledigt (P7a d4ffa6cf)

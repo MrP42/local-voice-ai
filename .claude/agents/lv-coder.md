@@ -36,8 +36,9 @@ oder du die Architektur nicht kennst.
 - `prettier --check`, `cargo clippy` (approx_constant in settings.rs) und
   `check:translations` sind auf main VORBESTEHEND rot: nur die eigenen Dateien/Hunks
   bewerten, nie den Baum gruen machen.
-- `src/bindings.ts` wird nur von `tauri dev` regeneriert: neue Commands/Settings-Felder
-  von Hand nachziehen (Command + Typ + settingsStore-Mapping), sonst bricht `tsc`.
+- `src/bindings.ts` ist seit P7a exakt die tauri-specta-Ausgabe: neue Commands/Settings-Felder
+  per einmaligem Debug-Start regenerieren (oder von Hand im selben Format), settingsStore-Mapping
+  von Hand. Playwright nutzt je Checkout einen eigenen Port (automatisch), parallele Laeufe ok.
 - Kein Modul, das aus `llm_client` erreichbar ist, darf `settings::get_settings(&AppHandle)`
   rufen (Test-Exe startet sonst nicht, STATUS_ENTRYPOINT_NOT_FOUND).
 - Patch-Skripte mit Backslashes oder Nicht-ASCII nie per Bash-Heredoc schreiben: Datei
