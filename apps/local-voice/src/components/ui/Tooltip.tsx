@@ -14,6 +14,15 @@ interface TooltipProps {
   targetRef: React.RefObject<HTMLElement>;
   position?: TooltipPosition;
   children: React.ReactNode;
+  /** Fuer aria-describedby des Ziels; ohne Angabe bleibt das Tooltip anonym. */
+  id?: string;
+  /** "tooltip" fuer Bedienelemente, die es per aria-describedby verbinden. */
+  role?: string;
+  /** Breite in px (Standard 200). Kurze Aktionstexte brauchen mehr. */
+  width?: number;
+  /** Mausereignisse durchlassen, damit das Tooltip nie einen Nachbarknopf
+   *  verdeckt, den man gerade anfahren will. */
+  passThrough?: boolean;
 }
 
 const TOOLTIP_WIDTH = 200;
@@ -26,6 +35,10 @@ export const Tooltip: React.FC<TooltipProps> = ({
   targetRef,
   position = "top",
   children,
+  id,
+  role,
+  width = TOOLTIP_WIDTH,
+  passThrough = false,
 }) => {
   const [coords, setCoords] = useState<TooltipCoords | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -59,21 +72,21 @@ export const Tooltip: React.FC<TooltipProps> = ({
     }
 
     const targetCenter = targetRect.left + targetRect.width / 2;
-    let left = targetCenter - TOOLTIP_WIDTH / 2;
+    let left = targetCenter - width / 2;
 
     if (left < VIEWPORT_PADDING) {
       left = VIEWPORT_PADDING;
-    } else if (left + TOOLTIP_WIDTH > window.innerWidth - VIEWPORT_PADDING) {
-      left = window.innerWidth - TOOLTIP_WIDTH - VIEWPORT_PADDING;
+    } else if (left + width > window.innerWidth - VIEWPORT_PADDING) {
+      left = window.innerWidth - width - VIEWPORT_PADDING;
     }
 
     const arrowLeft = Math.min(
       Math.max(targetCenter - left, ARROW_MARGIN),
-      TOOLTIP_WIDTH - ARROW_MARGIN,
+      width - ARROW_MARGIN,
     );
 
     setCoords({ top, left, arrowLeft, actualPosition });
-  }, [targetRef, position]);
+  }, [targetRef, position, width]);
 
   useEffect(() => {
     updatePosition();
@@ -93,15 +106,19 @@ export const Tooltip: React.FC<TooltipProps> = ({
   return createPortal(
     <div
       ref={tooltipRef}
+      id={id}
+      role={role}
       style={{
         position: "fixed",
         top: coords?.top ?? -9999,
         left: coords?.left ?? -9999,
-        width: TOOLTIP_WIDTH,
+        width: width,
         zIndex: 9999,
         opacity: coords ? 1 : 0,
       }}
-      className="px-3 py-2 bg-background border border-mid-gray/80 rounded-lg shadow-lg whitespace-normal transition-opacity duration-150"
+      className={`px-3 py-2 bg-background border border-mid-gray/80 rounded-lg shadow-lg whitespace-normal transition-opacity duration-150${
+        passThrough ? " pointer-events-none" : ""
+      }`}
     >
       {children}
       <div

@@ -753,3 +753,17 @@ textarea:focus::-webkit-resizer {
 .tts-controls .mbtn {
   --_mb-size: 2.25rem;
 }
+
+/* Aktionszeile der Bedienspalte: das Zielsprache-Feld steht neben 36-px-
+   Symbolknoepfen und soll dieselbe Hoehe haben (Select setzt sonst 40 px). */
+.tts-actions__lang .app-select__control {
+  height: 36px;
+  min-height: 36px;
+}
+.tts-actions__lang .app-select__value-container {
+  padding-block: 0;
+}
+.tts-actions__lang .app-select__input-container {
+  margin-block: 0;
+  padding-block: 0;
+}

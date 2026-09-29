@@ -561,7 +561,9 @@ test("clean up rewrites the original text and offers undo", async ({
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
   const editor = page.locator("textarea").first();
   await editor.fill("Seite 3\nText mit Sil-\nbentrennung.");
-  await page.getByRole("button", { name: "Text aufbereiten" }).click();
+  // Aufbereiten wohnt seit der kompakten Bedienspalte im Menue (Hamburger).
+  await page.getByTestId("tts-action-menu").click();
+  await page.getByRole("menuitem", { name: "Text aufbereiten" }).click();
   await expect(editor).toHaveValue("Sauberer Text ohne Seitenzahlen.");
   // Der Undo-Toast UND der Historie-Knopf heissen "Rueckgaengig" -- hier
   // zaehlt der Toast; die Historie deckt denselben Schritt ohnehin ab.

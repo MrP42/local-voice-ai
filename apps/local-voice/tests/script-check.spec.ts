@@ -1,4 +1,11 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+
+// Seit der kompakten Bedienspalte wohnen Skript pruefen, Werkstatt und
+// Auto-Tagging hinter dem Menue (Hamburger): erst oeffnen, dann waehlen.
+async function pickMenuItem(page: Page, testId: string) {
+  await page.getByTestId("tts-action-menu").click();
+  await page.getByTestId(testId).click();
+}
 
 // Skript-Pruefung im Vorlesen-Editor. Die Tauri-Bruecke ist dieselbe
 // Attrappe wie in voices.spec.ts (zwei benannte Stimmen plus achtzehn
@@ -346,7 +353,7 @@ async function openEditorWithScript(
   await editor.fill(SCRIPT);
   // Unterstreichung kommt von selbst (120 ms Debounce); das Korrekturpanel
   // erst per Knopf -- wie in Office.
-  await page.getByTestId("script-check-run").click();
+  await pickMenuItem(page, "script-check-run");
   return editor;
 }
 
@@ -421,7 +428,7 @@ test("replace all swaps every spot of the group and keeps the style", async ({
   // kein Zaehler am Knopf.
   await expect(page.getByTestId("script-check-clean")).toBeVisible();
   await expect(page.locator("[data-finding]")).toHaveCount(0);
-  await expect(page.getByTestId("script-check-badge")).toHaveCount(0);
+  await expect(page.getByTestId("tts-action-menu-badge")).toHaveCount(0);
 });
 
 test("a recommendation fixes all spots with one click", async ({ page }) => {
@@ -430,7 +437,7 @@ test("a recommendation fixes all spots with one click", async ({ page }) => {
   await editor.fill(
     "<Erzahlerin> Hallo.\n<Erzahlerin:leise> Psst.\n[relaxd] Ruhig.",
   );
-  await page.getByTestId("script-check-run").click();
+  await pickMenuItem(page, "script-check-run");
   const card = page.getByTestId("script-finding");
   await expect(card).toContainText("Sprecher „Erzahlerin“ (2 Stellen)");
   const rec = card.getByTestId("script-finding-recommendation");
@@ -470,7 +477,7 @@ test("the check button runs even when the automatic check is off", async ({
   // Automatik aus: keine Unterstreichung, kein Panel, obwohl Befunde da sind.
   await expect(page.getByTestId("script-check")).toHaveCount(0);
   await expect(page.locator("[data-finding]")).toHaveCount(0);
-  await page.getByTestId("script-check-run").click();
+  await pickMenuItem(page, "script-check-run");
   await expect(page.getByTestId("script-check")).toContainText(
     "2 Befunde im Skript · 1 Hinweis",
   );
@@ -490,10 +497,10 @@ test("with automatic check on, the text is underlined before any click", async (
   const editor = page.locator("textarea").first();
   await editor.fill(SCRIPT);
   await expect(page.locator("[data-finding]")).toHaveCount(2);
-  await expect(page.getByTestId("script-check-badge")).toHaveText("2");
+  await expect(page.getByTestId("tts-action-menu-badge")).toHaveText("2");
   // Kein Panel, bis man es anfordert; Schliessen nimmt es wieder weg.
   await expect(page.getByTestId("script-check")).toHaveCount(0);
-  await page.getByTestId("script-check-run").click();
+  await pickMenuItem(page, "script-check-run");
   await expect(page.getByTestId("script-check")).toBeVisible();
   await page.getByTestId("script-check-close").click();
   await expect(page.getByTestId("script-check")).toHaveCount(0);
@@ -574,7 +581,7 @@ test("auto-tagging opens its dialog first", async ({ page }) => {
     .getByRole("button", { name: "Vorlesen", exact: true })
     .click();
   await page.locator("textarea").first().fill("Ein Satz.");
-  await page.getByTestId("autotag-open").click();
+  await pickMenuItem(page, "autotag-open");
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Auto-Tagging");
   await expect(dialog.getByText("Sparsam")).toBeVisible();
@@ -646,7 +653,7 @@ test("under Fish every bracket tag is valid and known ones are canonicalized", a
   );
   await page.waitForTimeout(300);
   await expect(page.locator("[data-finding]")).toHaveCount(0);
-  await expect(page.getByTestId("script-check-badge")).toHaveCount(0);
+  await expect(page.getByTestId("tts-action-menu-badge")).toHaveCount(0);
   // Vorlesen schickt bekannte Tags in englischer Form, freie unveraendert.
   await page
     .getByRole("button", { name: "Vorlesen", exact: true })
@@ -702,7 +709,7 @@ test("the script workshop generates a part and creates a page from it", async ({
     .getByRole("navigation")
     .getByRole("button", { name: "Vorlesen", exact: true })
     .click();
-  await page.getByTestId("workshop-open").click();
+  await pickMenuItem(page, "workshop-open");
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Skript-Werkstatt");
   await page.getByTestId("workshop-book-title").fill("Drachen");
@@ -726,7 +733,7 @@ test("a speaker spelled without umlaut is the same voice and gets a spelling hin
   await editor.fill(
     "<Erzaehlerin> Eins." + "\n" + "<Erzaehlerin> Zwei." + "\n" + "<Bob> Drei.",
   );
-  await page.getByTestId("script-check-run").click();
+  await pickMenuItem(page, "script-check-run");
   // <Erzaehlerin> trifft die Stimme "Erzählerin": kein Fehler (nur Bob ist
   // rot), aber ein Vorschlag, den Anzeigenamen einzusetzen.
   await page.waitForTimeout(300);
@@ -749,7 +756,7 @@ test("fixing the first spot by hand keeps the other findings", async ({
   await editor.fill(
     "<Bob> Eins." + "\n" + "<Bob> Zwei." + "\n" + "<Bob> Drei.",
   );
-  await page.getByTestId("script-check-run").click();
+  await pickMenuItem(page, "script-check-run");
   await expect(page.getByTestId("script-finding")).toContainText("(3 Stellen)");
   // Erste Stelle von Hand auf eine bekannte Stimme aendern.
   await editor.fill(
@@ -757,7 +764,7 @@ test("fixing the first spot by hand keeps the other findings", async ({
   );
   await expect(page.getByTestId("script-finding")).toContainText("(2 Stellen)");
   await expect(page.locator("[data-finding]")).toHaveCount(2);
-  await expect(page.getByTestId("script-check-badge")).toHaveText("2");
+  await expect(page.getByTestId("tts-action-menu-badge")).toHaveText("2");
 });
 
 test("the history list jumps several steps at once", async ({ page }) => {
@@ -808,7 +815,7 @@ test("choosing a Piper voice does not turn tags into errors", async ({
   await editor.fill("[Entspannt] Eins. [curious] Zwei. [soft tone] Drei.");
   await page.waitForTimeout(300);
   await expect(page.locator("[data-finding]")).toHaveCount(0);
-  await expect(page.getByTestId("script-check-badge")).toHaveCount(0);
+  await expect(page.getByTestId("tts-action-menu-badge")).toHaveCount(0);
 });
 
 test("the replace list offers every tag, searchable, suggestions first", async ({
@@ -816,7 +823,7 @@ test("the replace list offers every tag, searchable, suggestions first", async (
 }) => {
   const editor = await openEditorWithScript(page, "fish");
   await editor.fill("[müde] Gute Nacht.");
-  await page.getByTestId("script-check-run").click();
+  await pickMenuItem(page, "script-check-run");
   const card = page.getByTestId("script-finding");
   await expect(card).toContainText("„müde“");
   await card.getByTestId("script-finding-replacement").click();

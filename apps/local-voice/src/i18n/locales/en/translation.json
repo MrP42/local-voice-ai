@@ -546,6 +546,21 @@
         "none": "None"
       }
     },
+    "actions": {
+      "menu": "More actions",
+      "menuHint": "Workshop, clean up, check, auto-tagging",
+      "addHint": "Add a document, web page or file",
+      "dictateHint": "Speak instead of typing; the text is appended",
+      "dictateStopHint": "Ends the recording and appends the text",
+      "saveHint": "Save the text as an audio file",
+      "prewarmHint": "Generates changed sentences without playing",
+      "translateHint": "Create the translation in the second tab",
+      "summarizeHint": "Create a short version in the third tab",
+      "summaryOptions": "Adjust summary",
+      "summaryOptionsHint": "Choose length, detail and audience",
+      "targetLang": "Target language",
+      "targetLangHint": "Language to translate into"
+    },
     "writingRules": {
       "title": "Writing rules: speakers & tags",
       "tagsIntro": "Emotion and effect tags go in square brackets exactly where they should be heard:",

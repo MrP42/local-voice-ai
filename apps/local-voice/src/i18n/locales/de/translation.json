@@ -546,6 +546,21 @@
         "none": "Keine"
       }
     },
+    "actions": {
+      "menu": "Weitere Aktionen",
+      "menuHint": "Werkstatt, Aufbereiten, Prüfen, Auto-Tagging",
+      "addHint": "Dokument, Webseite oder Datei ergänzen",
+      "dictateHint": "Sprechen statt tippen; der Text kommt ans Ende",
+      "dictateStopHint": "Beendet die Aufnahme und fügt den Text an",
+      "saveHint": "Den Text als Audiodatei speichern",
+      "prewarmHint": "Erzeugt geänderte Sätze ohne Abspielen",
+      "translateHint": "Übersetzung im zweiten Reiter erzeugen",
+      "summarizeHint": "Kurzfassung im dritten Reiter erzeugen",
+      "summaryOptions": "Zusammenfassung anpassen",
+      "summaryOptionsHint": "Umfang, Detailgrad und Zielgruppe wählen",
+      "targetLang": "Zielsprache",
+      "targetLangHint": "Sprache, in die übersetzt wird"
+    },
     "writingRules": {
       "title": "Schreibregeln: Sprecher & Tags",
       "tagsIntro": "Emotions- und Effekt-Tags stehen in eckigen Klammern genau dort, wo sie zu hören sein sollen:",
