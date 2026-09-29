@@ -2134,6 +2134,81 @@
       "error": "Export failed: {{error}}",
       "pdfFallback": "Alternative: save as HTML and print the file from your browser."
     },
+    "people": {
+      "chipsLabel": "Participants",
+      "you": "me",
+      "role": {
+        "organizer": "Organizer",
+        "attendee": "Attendee",
+        "speaker": "Speaker"
+      },
+      "source": {
+        "calendar": "From the calendar",
+        "speaker": "From the transcript",
+        "manual": "Added by hand"
+      },
+      "popover": {
+        "company": "Company",
+        "email": "Email",
+        "noEmail": "No address known",
+        "meetingsWith_one": "{{count}} meeting with {{name}}",
+        "meetingsWith_other": "{{count}} meetings with {{name}}",
+        "meetingsFilterTitle": "Narrow the list to meetings with {{name}}",
+        "ask": "Ask",
+        "askTitle": "Ask across all meetings with {{name}}",
+        "manage": "Manage people …"
+      },
+      "filter": {
+        "group": "Person filter",
+        "chip": "Person: {{name}}",
+        "remove": "Remove person filter “{{name}}”"
+      },
+      "dialog": {
+        "title": "Manage people",
+        "description": "Rename people or merge two entries for the same person. The app recognises identical email addresses and names on its own; everything else is up to you.",
+        "search": "Search people",
+        "searchLabel": "Search people",
+        "empty": "No people yet. They come from the attendees of your calendar events and from named speakers.",
+        "noHits": "No matches.",
+        "meetings_one": "{{count}} meeting",
+        "meetings_other": "{{count}} meetings",
+        "self": "me",
+        "name": "Name",
+        "email": "Email",
+        "emailHint": "Leave empty to remove the address.",
+        "otherEmails": "Other addresses: {{list}}",
+        "save": "Save",
+        "saved": "Saved.",
+        "mergeTitle": "Merge with another person",
+        "mergeHint": "This person is absorbed by the one you choose: meetings, names and addresses move along.",
+        "mergeTarget": "Merge with",
+        "mergePick": "Choose a person …",
+        "mergeAction": "Merge …",
+        "mergeConfirm": "Merge “{{gone}}” into “{{keep}}”? This cannot be undone.",
+        "mergeDo": "Merge now",
+        "merged": "Merged.",
+        "cancel": "Cancel",
+        "back": "Back to list",
+        "close": "Close"
+      },
+      "errors": {
+        "notFound": "This person no longer exists.",
+        "nameInvalid": "Please enter a name.",
+        "emailInvalid": "That is not a valid email address.",
+        "emailTaken": "This address belongs to another person. Merge the two.",
+        "mergeInvalid": "A person cannot be merged with themselves.",
+        "failed": "That did not work."
+      },
+      "brief": {
+        "question": "Preparation for the meeting with {{names}}",
+        "button": "Prepare",
+        "title_one": "Prepare using {{count}} earlier meeting",
+        "title_other": "Prepare using {{count}} earlier meetings",
+        "saved": "Open the saved brief",
+        "none": "No earlier meetings with these attendees.",
+        "error": "The brief could not be opened."
+      }
+    },
     "followup": {
       "button": "Follow-up email",
       "buttonTitle": "Create an email draft from this meeting that you can review and edit",

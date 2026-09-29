@@ -1084,8 +1084,10 @@ test.describe("Chat über viele Besprechungen", () => {
         meeting_ids: null,
         folder_id: "f1",
         person: null,
+        person_id: null,
         from: null,
         to: null,
+        event_uid: null,
       },
     });
     await resolveAsk(

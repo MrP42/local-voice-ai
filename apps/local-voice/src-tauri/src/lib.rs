@@ -1770,6 +1770,15 @@ pub fn run(cli_args: CliArgs) {
             meeting_prompt::meeting_prompt_current,
             meeting_prompt::meeting_prompt_ready,
             meeting_prompt::meeting_prompt_dismiss,
+            // M5-P5d/P5e
+            commands::people::people_list,
+            commands::people::people_get,
+            commands::people::people_merge,
+            commands::people::people_update,
+            commands::people::meeting_participants,
+            commands::people::people_brief_info,
+            commands::people::people_brief_open,
+            commands::people::people_brief_pending,
             commands::tts::tts_speak_text,
             commands::tts::tts_speak_clipboard,
             commands::tts::tts_cancel,
@@ -1902,6 +1911,7 @@ pub fn run(cli_args: CliArgs) {
             // M5-P5b
             managers::calendar::service::CalendarSyncEvent,
             meeting_prompt::MeetingPromptEvent,
+            commands::people::BriefRequestEvent,
             managers::transcription::StreamTextEvent,
             managers::transcription::StreamPhaseEvent,
         ]);

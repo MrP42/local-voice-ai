@@ -7,6 +7,7 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 import {
   commands,
   events,
+  type BriefInfo,
   type Citation,
   type Meeting,
   type RecipeItem,
@@ -19,8 +20,21 @@ import { MeetingList } from "./MeetingList";
 import { MeetingDetail } from "./MeetingDetail";
 import { ChatPanel } from "./chat/ChatPanel";
 import { recipeTitleText } from "./chat/RecipeMenu";
+import { EMPTY_SCOPE } from "./chat/ScopeChips";
+import type { PersonRef } from "./people/PersonPopover";
 
 type JumpRequest = { citation: Citation; nonce: number };
+
+/** Was der Chat in der Seitenleiste beim Oeffnen eines Briefs tun soll (M5-P5e). */
+type BriefRun = {
+  recipe: {
+    id: string;
+    nonce: number;
+    values: Record<string, string>;
+    display: string;
+  } | null;
+  thread: { id: string; nonce: number } | null;
+};
 
 /** Sucht eine Besprechung seitenweise (es gibt keinen Einzelabruf). */
 const findMeeting = async (id: string): Promise<Meeting | null> => {
@@ -147,6 +161,71 @@ export const MeetingsSettings: React.FC = () => {
   // wenn ein Beleg die Besprechung daneben oeffnet.
   const [globalFilter, setGlobalFilter] = useState<ScopeFilter | null>(null);
   const [jump, setJump] = useState<JumpRequest | null>(null);
+  // M5-P5d: Personenfilter der Liste; M5-P5e: Brief zu einem Termin.
+  const [personFilter, setPersonFilter] = useState<PersonRef | null>(null);
+  const [briefRun, setBriefRun] = useState<BriefRun | null>(null);
+
+  /** Chat ueber viele Besprechungen oeffnen (ohne Brief-Auftrag). */
+  const openGlobal = useCallback((filter: ScopeFilter | null) => {
+    setBriefRun(null);
+    setGlobalFilter(filter);
+  }, []);
+
+  /**
+   * Brief zu einem Termin: mit gespeichertem Verlauf diesen oeffnen (zweiter
+   * Klick), sonst das Recipe mit den Teilnehmenden ausfuehren.
+   */
+  const openBrief = useCallback(
+    (info: BriefInfo) => {
+      const nonce = Date.now();
+      setGlobalFilter(info.filter);
+      setBriefRun(
+        info.thread_id
+          ? { recipe: null, thread: { id: info.thread_id, nonce } }
+          : {
+              thread: null,
+              recipe: {
+                id: info.recipe_id,
+                nonce,
+                values: { [info.recipe_var]: info.recipe_value },
+                display: t("meetings.people.brief.question", {
+                  names: info.recipe_value,
+                }),
+              },
+            },
+      );
+    },
+    [t],
+  );
+
+  // "Vorbereiten" im Hinweisfenster: das Backend merkt den Termin und meldet
+  // ihn; beim Start der Seite liegt er womoeglich schon bereit.
+  useEffect(() => {
+    const openPending = async () => {
+      let key: string | null = null;
+      try {
+        key = await commands.peopleBriefPending();
+      } catch {
+        return;
+      }
+      if (!key) return;
+      const result = await commands.peopleBriefInfo(key);
+      if (result.status !== "ok") {
+        toast.error(t("meetings.people.brief.error"));
+        return;
+      }
+      if (result.data.shared_meetings === 0) {
+        toast.info(t("meetings.people.brief.none"));
+        return;
+      }
+      openBrief(result.data);
+    };
+    void openPending();
+    const un = events.briefRequestEvent.listen(() => void openPending());
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [openBrief, t]);
 
   const openCitation = useCallback(
     async (citation: Citation) => {
@@ -174,7 +253,14 @@ export const MeetingsSettings: React.FC = () => {
         onBack={() => setSelected(null)}
         onMeetingChange={setSelected}
         jumpRequest={jump}
-        onChatOpen={() => setGlobalFilter(null)}
+        onChatOpen={() => openGlobal(null)}
+        onPersonFilter={(person) => {
+          setPersonFilter(person);
+          setSelected(null);
+        }}
+        onPersonAsk={(person) =>
+          openGlobal({ ...EMPTY_SCOPE, person_id: person.id })
+        }
       />
     </div>
   ) : (
@@ -183,7 +269,7 @@ export const MeetingsSettings: React.FC = () => {
       description={t("workspace.meetingsHint")}
       help="aufnahmen"
     >
-      <RecorderCard />
+      <RecorderCard onPrepare={openBrief} />
       {/* Notizblock links, Transkript rechts (ab 1024 px), sonst untereinander.
           Ist nur eines von beiden sichtbar, nimmt es die ganze Breite. */}
       <div className="flex flex-col gap-4 empty:hidden lg:flex-row lg:items-start [&>*]:min-w-0 lg:[&>*]:flex-1">
@@ -191,7 +277,12 @@ export const MeetingsSettings: React.FC = () => {
         <LiveTranscript />
       </div>
       <LiveChatRow onJump={(c) => void openCitation(c)} />
-      <MeetingList onSelect={setSelected} onAsk={setGlobalFilter} />
+      <MeetingList
+        onSelect={setSelected}
+        onAsk={openGlobal}
+        personFilter={personFilter}
+        onPersonFilterChange={setPersonFilter}
+      />
     </PageShell>
   );
 
@@ -203,9 +294,11 @@ export const MeetingsSettings: React.FC = () => {
           <ChatPanel
             scope={{ kind: "global", filter: globalFilter }}
             mode="global"
-            onClose={() => setGlobalFilter(null)}
+            onClose={() => openGlobal(null)}
             onJump={(c) => void openCitation(c)}
             onScopeChange={setGlobalFilter}
+            autoRecipe={briefRun?.recipe ?? null}
+            openThread={briefRun?.thread ?? null}
           />
         </aside>
       )}

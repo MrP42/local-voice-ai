@@ -11,6 +11,7 @@ pub mod meeting_search;
 pub mod meeting_speakers; // M3-P3c
 pub mod meetings;
 pub mod models;
+pub mod people; // M5-P5d
 pub mod pages;
 pub mod pages_package;
 pub mod transcription;

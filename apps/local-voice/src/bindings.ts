@@ -2437,6 +2437,92 @@ async meetingPromptDismiss(promptId: string, action: string) : Promise<Result<nu
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Alle Personen, die meisten Besprechungen zuerst; `query` filtert nach Name,
+ * Adresse oder Firma.
+ */
+async peopleList(query: string | null) : Promise<Result<PersonSummary[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_list", { query }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Person mit den juengsten Besprechungen (`person_not_found`, wenn es sie
+ * nicht gibt).
+ */
+async peopleGet(id: string) : Promise<Result<PersonDetail, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_get", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fuehrt `gone` in `keep` zusammen.
+ */
+async peopleMerge(keep: string, gone: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_merge", { keep, gone }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Benennt eine Person um; `email`: `None` = unveraendert, leer = entfernen.
+ */
+async peopleUpdate(id: string, name: string, email: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_update", { id, name, email }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Teilnehmende einer Besprechung (Kopfzeile des Details).
+ */
+async meetingParticipants(meetingId: string) : Promise<Result<Participant[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_participants", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async peopleBriefInfo(eventKey: string) : Promise<Result<BriefInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_brief_info", { eventKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Vorbereiten“ im Hinweisfenster: merkt den Termin, holt das Hauptfenster nach
+ * vorn und meldet es ihm. Der Wunsch bleibt gemerkt, bis das Hauptfenster ihn
+ * abholt (`people_brief_pending`): es kann gerade in einem anderen Bereich
+ * stehen oder die Besprechungsseite noch aufbauen. Das Hinweisfenster schliesst
+ * sich.
+ */
+async peopleBriefOpen(eventKey: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_brief_open", { eventKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der gemerkte Wunsch „Brief oeffnen“, einmalig.
+ */
+async peopleBriefPending() : Promise<string | null> {
+    return await TAURI_INVOKE("people_brief_pending");
+},
 async ttsSpeakText(text: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_speak_text", { text }) };
@@ -3562,6 +3648,7 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
+briefRequestEvent: BriefRequestEvent,
 calendarSyncEvent: CalendarSyncEvent,
 historyUpdatePayload: HistoryUpdatePayload,
 meetingChatEvent: MeetingChatEvent,
@@ -3574,6 +3661,7 @@ speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
 }>({
+briefRequestEvent: "brief-request-event",
 calendarSyncEvent: "calendar-sync-event",
 historyUpdatePayload: "history-update-payload",
 meetingChatEvent: "meeting-chat-event",
@@ -4077,6 +4165,35 @@ export type BookCharacter = { name: string;
  */
 voice_id: string | null; description: string }
 export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
+/**
+ * Was die Oberflaeche fuer den Knopf „Vorbereiten“ braucht.
+ */
+export type BriefInfo = { event_key: string; event_title: string; 
+/**
+ * Teilnehmende des Termins ohne mich (Anzeige).
+ */
+names: string[]; 
+/**
+ * Anzahl der fruehere Besprechungen mit gemeinsamen Teilnehmenden (0 =
+ * Knopf deaktiviert).
+ */
+shared_meetings: number; 
+/**
+ * Scope fuer `meeting_chat_ask`.
+ */
+filter: ScopeFilter; recipe_id: string; 
+/**
+ * Wert der Recipe-Variable `teilnehmende` (Namen als ein Text).
+ */
+recipe_var: string; recipe_value: string; 
+/**
+ * Der gespeicherte Brief-Verlauf dieses Termins (zweiter Klick).
+ */
+thread_id: string | null }
+/**
+ * Das Hauptfenster soll den Brief zu diesem Termin oeffnen.
+ */
+export type BriefRequestEvent = { event_key: string }
 /**
  * Budgetstand einer Verbindung im laufenden Kalendermonat.
  */
@@ -4623,7 +4740,11 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  * Filter der Listensuche. `source` ist die HERKUNFT der Besprechung
  * (`live` | `import` | `subtitle`), nicht die Chunk-Quelle.
  */
-export type MeetingFilter = { folder_id: string | null; from: number | null; to: number | null; source: string | null; has_notes: boolean | null }
+export type MeetingFilter = { folder_id: string | null; from: number | null; to: number | null; source: string | null; has_notes: boolean | null; 
+/**
+ * M5-P5d: nur Besprechungen, an denen diese Person (`humans.id`) teilnahm.
+ */
+person_id: string | null }
 /**
  * Fortschritt der Vektorstufe fuer die Einstellungszeile.
  */
@@ -4789,8 +4910,45 @@ modified_ms?: number;
  */
 preview?: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
+/**
+ * Eine teilnehmende Person einer Besprechung.
+ */
+export type Participant = { human_id: string; name: string; email: string | null; company: string | null; 
+/**
+ * `organizer`, `attendee` oder `speaker`.
+ */
+role: string; 
+/**
+ * `calendar`, `speaker` oder `manual`.
+ */
+source: string; is_self: boolean; meeting_count: number }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
+/**
+ * Eine Person mit allem fuer das Popover.
+ */
+export type PersonDetail = { id: string; name: string; email: string | null; company: string | null; is_self: boolean; meeting_count: number; 
+/**
+ * Weitere Adressen, die nach einem Zusammenfuehren zur Person gehoeren.
+ */
+other_emails: string[]; 
+/**
+ * Die juengsten Besprechungen mit der Person, neueste zuerst.
+ */
+recent_meetings: PersonMeeting[] }
+export type PersonMeeting = { id: string; title: string; started_at: number | null }
+/**
+ * Eine Person in der Liste („Personen verwalten“, Filter).
+ */
+export type PersonSummary = { id: string; name: string; email: string | null; company: string | null; 
+/**
+ * „Ich“: Kennzeichen an der Person oder Adresse aus „Meine E-Mail-Adressen“.
+ */
+is_self: boolean; 
+/**
+ * Lebende Besprechungen, an denen die Person teilnahm.
+ */
+meeting_count: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * Fortschritt eines Dokuments — Persistenz-Eintrag und Event-Payload.
@@ -4845,7 +5003,18 @@ export type ReferenceAnalysis = { quiet: boolean; suggested_tags: string[] }
  * Eingrenzung fuer Chat und Suche ueber viele Besprechungen (M4 §6). Alle
  * gesetzten Felder gelten zugleich (UND).
  */
-export type ScopeFilter = { meeting_ids: string[] | null; folder_id: string | null; person: string | null; from: number | null; to: number | null }
+export type ScopeFilter = { meeting_ids: string[] | null; folder_id: string | null; person: string | null; from: number | null; to: number | null; 
+/**
+ * M5-P5d: eine bekannte Person (`humans.id`) statt Freitext; trifft auf
+ * ihre Teilnahmen (`meeting_participants`).
+ */
+person_id: string | null; 
+/**
+ * M5-P5d: der Kalendertermin (Serien-UID), fuer den ein Vorbereitungs-Brief
+ * gefragt wurde. Grenzt nichts ein; der Chat-Verlauf traegt ihn im
+ * `scope_json`, damit ein zweiter Klick den gespeicherten Brief oeffnet.
+ */
+event_uid: string | null }
 export type ScriptTemplate = { id: string; name: string; body: string; builtin: boolean; 
 /**
  * Eingebaute Vorlage, deren Text der Nutzer geändert hat.

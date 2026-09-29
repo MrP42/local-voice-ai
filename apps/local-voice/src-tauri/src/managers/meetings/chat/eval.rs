@@ -796,6 +796,7 @@ pub fn build_request(q: &EvalQuestion, prepared: &Prepared) -> Result<ChatReques
                     person: person.clone(),
                     from: day(from, false)?,
                     to: day(to, true)?,
+                    ..ScopeFilter::default()
                 },
             }
         }

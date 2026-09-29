@@ -235,6 +235,7 @@ test.describe("Besprechungsliste: Suche, Filter, Ordner", () => {
       to: null,
       source: null,
       has_notes: null,
+      person_id: null,
     });
 
     // Zweite Tippserie: wieder genau ein Aufruf, mit dem ganzen Text.

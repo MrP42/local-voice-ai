@@ -427,6 +427,8 @@ fn list_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
             person: person.map(str::to_string),
             from,
             to,
+            person_id: None,
+            event_uid: None,
         })
         .map_err(|e| store_error(&e))?;
     let total = ids.len();

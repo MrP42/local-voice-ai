@@ -440,6 +440,19 @@ pub fn builtin_recipes() -> Vec<RecipeItem> {
              besprochen, was ist offen, was wurde zugesagt, und welche Themen sollte ich \
              ansprechen?",
         ),
+        // M5-P5e: Brief zu einem Kalendertermin. Die Teilnehmenden stehen als
+        // Text (nicht als `person`): der Scope kommt fertig vom Termin
+        // (`people::brief_scope`), ein Namensfilter wuerde ihn wieder leeren.
+        builtin(
+            "vorbereitung-termin",
+            "Vorbereitung auf den Termin mit {{teilnehmende}}",
+            Global,
+            false,
+            vec![var("teilnehmende", "Teilnehmende", Text)],
+            "Bereite mich auf den Termin mit {{teilnehmende}} vor: Was wurde in den früheren \
+             Besprechungen mit diesen Teilnehmenden besprochen, was ist offen, was wurde \
+             zugesagt, und welche Themen sollte ich ansprechen?",
+        ),
     ]
 }
 
@@ -772,7 +785,7 @@ mod tests {
     #[test]
     fn builtins_are_valid_and_the_follow_up_mail_demands_a_subject_line() {
         let all = builtin_recipes();
-        assert_eq!(all.len(), 7);
+        assert_eq!(all.len(), 8);
         for r in &all {
             validate_spec(&r.spec).unwrap_or_else(|e| panic!("{}: {e}", r.id));
             assert!(r.id.starts_with("builtin:"));
@@ -867,10 +880,10 @@ mod tests {
         let ids: Vec<&str> = list.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(
             ids.len(),
-            8,
-            "7 mitgelieferte + 1 eigenes, das kaputte fehlt: {ids:?}"
+            9,
+            "8 mitgelieferte + 1 eigenes, das kaputte fehlt: {ids:?}"
         );
-        assert!(ids[..7].iter().all(|i| i.starts_with("builtin:")));
-        assert_eq!(ids[7], own.id);
+        assert!(ids[..8].iter().all(|i| i.starts_with("builtin:")));
+        assert_eq!(ids[8], own.id);
     }
 }

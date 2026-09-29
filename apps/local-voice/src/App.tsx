@@ -143,6 +143,20 @@ function App() {
     return () => window.removeEventListener("lv-navigate", handler);
   }, [setCurrentSection]);
 
+  // "Vorbereiten" im Hinweisfenster (M5-P5e): das Hauptfenster kommt nach vorn
+  // (Backend), hier wechselt es zu den Aufnahmen. Den Brief oeffnet dort die
+  // Besprechungsseite selbst.
+  useEffect(() => {
+    const unlisten = listen("brief-request-event", () => {
+      window.dispatchEvent(
+        new CustomEvent("lv-navigate", { detail: { section: "meetings" } }),
+      );
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   // Der Geraete-Sync hat Einstellungen von einem anderen Geraet uebernommen:
   // den Store neu lesen, sonst zeigt die Oberflaeche den alten Stand.
   const refreshSettings = useSettingsStore((state) => state.refreshSettings);

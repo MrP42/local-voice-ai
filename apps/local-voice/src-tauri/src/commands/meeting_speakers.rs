@@ -71,6 +71,15 @@ fn store_err(e: anyhow::Error) -> String {
     e.to_string()
 }
 
+/// M5-P5d: benannte Sprecher werden Personen und Teilnehmende der Besprechung.
+/// Ein Fehler hier darf das Benennen nicht kippen (der Name ist gespeichert);
+/// er steht nur im Log, ohne Namen.
+fn sync_people(store: &MeetingStore, meeting_id: &str) {
+    if let Err(e) = crate::managers::people::sync_speaker_participants(store, meeting_id) {
+        log::warn!("speakers: people not synced: {e}");
+    }
+}
+
 /// Alle Sprecher der Besprechung: die in den Segmenten vorkommen und die mit
 /// einer Zeile in `speakers`, nach Kanal und Nummer.
 pub fn list_speakers(
@@ -135,6 +144,7 @@ pub fn rename_speaker(
     store
         .set_speaker_name(meeting_id, channel, speaker_index, name.as_deref())
         .map_err(store_err)?;
+    sync_people(store, meeting_id);
     list_speakers(store, meeting_id)?
         .into_iter()
         .find(|s| s.channel == channel && s.speaker_index == speaker_index)
@@ -244,6 +254,7 @@ pub async fn meeting_speaker_merge(
     store
         .merge_speakers(&meeting_id, channel, from, into)
         .map_err(store_err)?;
+    sync_people(&store, &meeting_id);
     changed(&app, &meeting_id);
     Ok(())
 }
@@ -450,6 +461,27 @@ mod tests {
         // Leer loescht den Namen.
         let s = rename_speaker(&f.store, &f.id, 1, 2, Some("   ")).unwrap();
         assert_eq!((s.label.as_str(), s.display_name), ("Gegenseite 2", None));
+    }
+
+    #[test]
+    fn naming_a_speaker_creates_a_person_and_a_participant() {
+        let f = fixture();
+        assert!(f.store.participants_of(&f.id, &[]).unwrap().is_empty());
+        let s = rename_speaker(&f.store, &f.id, 1, 2, Some("Berg, Anna")).unwrap();
+        let people = f.store.participants_of(&f.id, &[]).unwrap();
+        assert_eq!(people.len(), 1);
+        assert_eq!(people[0].name, "Anna Berg");
+        assert_eq!(people[0].role, "speaker");
+        assert_eq!(s.human_id.as_deref(), Some(people[0].human_id.as_str()));
+        // Zweiter Sprecher mit demselben Namen: dieselbe Person.
+        rename_speaker(&f.store, &f.id, 1, 1, Some("Anna Berg")).unwrap();
+        assert_eq!(f.store.participants_of(&f.id, &[]).unwrap().len(), 1);
+        assert_eq!(f.store.list_people(None, &[]).unwrap().len(), 1);
+        // Name weg: die Teilnahme entfaellt und der Sprecher verweist auf niemanden.
+        rename_speaker(&f.store, &f.id, 1, 2, None).unwrap();
+        rename_speaker(&f.store, &f.id, 1, 1, None).unwrap();
+        assert!(f.store.participants_of(&f.id, &[]).unwrap().is_empty());
+        assert_eq!(speaker(&f, 1, 2).human_id, None);
     }
 
     #[test]

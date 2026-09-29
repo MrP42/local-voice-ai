@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
-import { commands, events, type CalEvent, type HealthState } from "@/bindings";
+import {
+  commands,
+  events,
+  type BriefInfo,
+  type CalEvent,
+  type HealthState,
+} from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Button } from "../../ui/Button";
@@ -12,6 +18,7 @@ import Badge from "../../ui/Badge";
 import { translateMeetingError } from "./meetingErrors";
 import { MeetingChatNotice } from "./MeetingChatNotice";
 import { TemplatePicker } from "./notes/TemplatePicker";
+import { BriefButton } from "./people/BriefButton";
 import { flushAllNotes } from "./notes/useNotesAutosave";
 import {
   distinctAttendees,
@@ -90,7 +97,12 @@ type EventChoice = { event: CalEvent; mode: "auto" | "prompt" };
 
 const CALENDAR_REFRESH_MS = 60_000;
 
-export const RecorderCard: React.FC = () => {
+interface RecorderCardProps {
+  /** M5-P5e: "Vorbereiten" an einem Termin der Karte "Naechste Termine". */
+  onPrepare?: (info: BriefInfo) => void;
+}
+
+export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
   const { t, i18n } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
   const [title, setTitle] = useState("");
@@ -519,15 +531,24 @@ export const RecorderCard: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => startFromCard(event)}
-                        disabled={busy}
-                        data-testid="upcoming-start"
-                      >
-                        {t("meetings.calendar.upcoming.start")}
-                      </Button>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {onPrepare && (
+                          <BriefButton
+                            eventKey={event.key}
+                            onOpen={onPrepare}
+                            testId="upcoming-brief"
+                          />
+                        )}
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => startFromCard(event)}
+                          disabled={busy}
+                          data-testid="upcoming-start"
+                        >
+                          {t("meetings.calendar.upcoming.start")}
+                        </Button>
+                      </div>
                     </li>
                   ))}
                 </ul>

@@ -17,6 +17,7 @@ import {
   type Citation,
   type Meeting,
   type MeetingSpeaker,
+  type Participant,
   type StoredSegment,
 } from "@/bindings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -40,6 +41,9 @@ import { SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
 import { ChatPanel } from "./chat/ChatPanel";
 import { FollowupDialog } from "./FollowupDialog";
 import { MeetingExportDialog } from "./MeetingExportDialog";
+import { PeopleDialog } from "./people/PeopleDialog";
+import { PersonPopover, type PersonRef } from "./people/PersonPopover";
+import { orderParticipants } from "@/lib/meetingPeople";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -75,6 +79,10 @@ interface MeetingDetailProps {
   jumpRequest?: { citation: Citation; nonce: number } | null;
   /** M4-P4e: die eigene Chat-Seitenleiste geht auf (ein globaler Chat weicht). */
   onChatOpen?: () => void;
+  /** M5-P5d: Popover einer Person -> Liste auf ihre Besprechungen eingrenzen. */
+  onPersonFilter?: (person: PersonRef) => void;
+  /** M5-P5d: Popover einer Person -> Chat ueber alle Besprechungen mit ihr. */
+  onPersonAsk?: (person: PersonRef) => void;
 }
 
 export const MeetingDetail: React.FC<MeetingDetailProps> = ({
@@ -83,6 +91,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   onMeetingChange,
   jumpRequest,
   onChatOpen,
+  onPersonFilter,
+  onPersonAsk,
 }) => {
   const { t, i18n } = useTranslation();
   const meetingId = meeting.id;
@@ -278,6 +288,17 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     void loadSegments();
   }, [loadSegments]);
 
+  // M5-P5d: Teilnehmende (Kalender, benannte Sprecher) als Chips in der Kopfzeile.
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [peopleOpen, setPeopleOpen] = useState(false);
+  const loadParticipants = useCallback(async () => {
+    const result = await commands.meetingParticipants(meetingId);
+    if (result.status === "ok") setParticipants(result.data ?? []);
+  }, [meetingId]);
+  useEffect(() => {
+    void loadParticipants();
+  }, [loadParticipants]);
+
   // M4-P4e: Sprung aus einem globalen Chat erst, wenn die Segmente da sind.
   const handledJump = useRef<number | null>(null);
   useEffect(() => {
@@ -339,11 +360,13 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         }
       });
       void loadSpeakers();
+      // Benannte Sprecher sind Teilnehmende (M5-P5d).
+      void loadParticipants();
     });
     return () => {
       un.then((f) => f());
     };
-  }, [meetingId, loadSpeakers]);
+  }, [meetingId, loadSpeakers, loadParticipants]);
 
   /** Nach einer Änderung im Popover: Segmente und Sprecher frisch holen. */
   const onSpeakersChanged = useCallback(() => {
@@ -353,7 +376,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       }
     });
     void loadSpeakers();
-  }, [meetingId, loadSpeakers]);
+    void loadParticipants();
+  }, [meetingId, loadSpeakers, loadParticipants]);
 
   const saveTitle = async () => {
     const next = titleDraft.trim();
@@ -572,6 +596,25 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           </p>
         )}
         {titleError && <p className="text-sm text-red-400">{titleError}</p>}
+
+        {participants.length > 0 && (
+          <div
+            className="flex flex-wrap items-center gap-1.5"
+            role="group"
+            aria-label={t("meetings.people.chipsLabel")}
+            data-testid="participant-chips"
+          >
+            {orderParticipants(participants).map((participant) => (
+              <PersonPopover
+                key={participant.human_id}
+                participant={participant}
+                onFilter={(person) => onPersonFilter?.(person)}
+                onAsk={(person) => onPersonAsk?.(person)}
+                onManage={() => setPeopleOpen(true)}
+              />
+            ))}
+          </div>
+        )}
 
         {(meeting.mic_audio_path || meeting.system_audio_path) && (
           <AudioPlayerGroup>
@@ -934,6 +977,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         open={followupOpen}
         onOpenChange={setFollowupOpen}
         meetingId={meetingId}
+      />
+      <PeopleDialog
+        open={peopleOpen}
+        onOpenChange={setPeopleOpen}
+        onChanged={() => void loadParticipants()}
       />
     </div>
   );

@@ -250,3 +250,75 @@ test("Ein neuer Hinweis per Ereignis ersetzt den alten und beginnt wieder beim A
   );
   await expect(page.getByTestId("meeting-prompt")).toHaveCount(0);
 });
+
+// M5-P5e: "Vorbereiten" im Hinweisfenster.
+test("Vorbereiten im Hinweisfenster: ruft people_brief_open mit dem Termin", async ({
+  page,
+}) => {
+  await setup(page, payload(), () => {
+    (window as any).__brief = {
+      event_key: "ics-1:uid-1:1790589600000",
+      event_title: "Jour fixe Vertrieb",
+      names: ["Anna Berg"],
+      shared_meetings: 2,
+      filter: { meeting_ids: ["m2", "m1"], event_uid: "uid-1" },
+      recipe_id: "builtin:vorbereitung-termin",
+      recipe_var: "teilnehmende",
+      recipe_value: "Anna Berg",
+      thread_id: null,
+    };
+  });
+  const button = page.getByTestId("prompt-brief");
+  await expect(button).toBeEnabled();
+  await expect(button).toHaveText("Vorbereiten");
+  await button.click();
+  await expect
+    .poll(async () => (await calls(page, "people_brief_open")).length)
+    .toBe(1);
+  expect((await calls(page, "people_brief_open"))[0].args).toEqual({
+    eventKey: "ics-1:uid-1:1790589600000",
+  });
+  // Vorbereiten startet keine Aufnahme.
+  expect(await calls(page, "meetings_start_from_event")).toHaveLength(0);
+});
+
+test("Vorbereiten im Hinweisfenster: ohne gemeinsame Besprechungen deaktiviert", async ({
+  page,
+}) => {
+  await setup(page, payload(), () => {
+    (window as any).__brief = {
+      event_key: "ics-1:uid-1:1790589600000",
+      event_title: "Jour fixe Vertrieb",
+      names: ["Neu Person"],
+      shared_meetings: 0,
+      filter: { meeting_ids: [], event_uid: "uid-1" },
+      recipe_id: "builtin:vorbereitung-termin",
+      recipe_var: "teilnehmende",
+      recipe_value: "Neu Person",
+      thread_id: null,
+    };
+  });
+  const button = page.getByTestId("prompt-brief");
+  await expect(button).toBeDisabled();
+  await expect(button.locator("xpath=..")).toHaveAttribute(
+    "title",
+    "Keine früheren Besprechungen mit diesen Teilnehmenden.",
+  );
+  expect(await calls(page, "people_brief_open")).toHaveLength(0);
+});
+
+test("Vorbereiten fehlt beim Hinweis auf eine erkannte Anwendung ohne Termin", async ({
+  page,
+}) => {
+  await setup(
+    page,
+    payload({
+      kind: "detected",
+      event: null,
+      attendee_count: 0,
+      app_label: "Microsoft Teams",
+    }),
+  );
+  await expect(page.getByTestId("prompt-start")).toBeVisible();
+  await expect(page.getByTestId("prompt-brief")).toHaveCount(0);
+});
