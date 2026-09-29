@@ -23,3 +23,8 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beobachtet: Gemma 4 12B loest in der CUDA-Laufzeit "illegal memory access" aus; danach meldet is_serving den toten Server als laufend, alle Folgeaufrufe scheitern sofort.
 - Konsequenz: Paket P1h (Lebendpruefung + Neustart).
 - Status: offen
+
+## B5 — P4b/P4c: Chat nutzt noch LexicalOnly statt LlamaEmbedder (29.09. 15:00)
+- Beobachtet: commands/meeting_chat.rs (P4c) arbeitet mit dem Platzhalter-Embedder; P4b liefert LlamaEmbedder, hat den Tausch aber nicht vorgenommen.
+- Konsequenz: Tausch im Paket P4f (Eval AK8 braucht Vektoren).
+- Status: offen
