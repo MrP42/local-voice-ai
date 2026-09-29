@@ -1,15 +1,15 @@
 ---
 thema: granola-besprechungen
 titel: Besprechungen auf Granola-Niveau - lokal, ohne Abo
-state: BLOCKED
+state: PLANNING
 vorzustand: EXECUTING
 pausengrund: -
 issue: 59
 repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
-iteration: 1
+iteration: 2
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T20:32
+aktualisiert: 2026-09-29T21:55
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -34,9 +34,9 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - [x] AK4 — Transkription Deutsch: Benchmark-Befehl → WER Enddurchlauf ≤ 6 % und Live ≤ 8 % auf FLEURS-de-Stichprobe (≥ 200 Sätze); WER auf deutschem Mehrsprecher-Besprechungskorpus gemessen und in der Doku
 - [x] AK5 — Live-Latenz: Harness-Messung über ≥ 10 min Aufnahme → p95 Ende der Äußerung bis Anzeige ≤ 5 s
 - [x] AK6 — Echo: Fixture mit Lautsprecher-Echo → Ich-Transkript enthält ≤ 10 % der Gegenseite-Wörter (Baseline ohne AEC mitgemessen)
-- [ ] AK7 — Sprecher: DER ≤ 15 % auf Diarisierungs-Testsatz (AMI-Stichprobe + deutsches Mehrsprecher-Fixture); Sprecher benennbar, Namen überstehen Neu-Transkription
+- [x] AK7 — Sprecher: DER ≤ 15 % auf Diarisierungs-Testsatz (AMI-Stichprobe + deutsches Mehrsprecher-Fixture); Sprecher benennbar, Namen überstehen Neu-Transkription
 - [x] AK8 — Chat/Suche: Eval mit ≥ 20 Fragen über ≥ 5 Fixture-Besprechungen → ≥ 85 % richtige Antworten mit korrektem Zitat (lokales Modell); Suche < 500 ms bei 500 Besprechungen
-- [ ] AK9 — Kalender + Erkennung: ICS-Fixture → Termine mit Titel/Teilnehmenden übernommen, Erinnerung; laufende Meeting-App (Mikrofonnutzung) → Hinweis „Aufnahme starten?"; Tests grün
+- [x] AK9 — Kalender + Erkennung: ICS-Fixture → Termine mit Titel/Teilnehmenden übernommen, Erinnerung; laufende Meeting-App (Mikrofonnutzung) → Hinweis „Aufnahme starten?"; Tests grün
 - [ ] AK10 — Nachbereitung/Export: Follow-up-Mail-Entwurf, formatierte Zwischenablage, PDF/SRT/JSON-Export; Tests grün
 - [ ] AK11 — Abnahme: Installer gebaut und installiert, Screenshots der Kernabläufe (Aufnahme mit Notizen → KI-Notizen → Chat) in `koordination/granola-besprechungen/abnahme/`
 
@@ -49,7 +49,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - [ ] QG6 — Lizenzen: jedes neue Modell/Crate mit Lizenz in den Third-Party-Notices, keine Nicht-kommerziell-Lizenz
 - [ ] QG7 — i18n: alle neuen Texte in de + en, echte Umlaute
 - [ ] QG8 — Doku + Handoff aktualisiert, PR offen gegen `main`
-- [ ] QG9 — Budget ≤ 12 MTok (angehoben 29.09. durch Patrick; Meldung bei 6,0 / 9,6 MTok, harter Stopp 18 MTok)
+- [ ] QG9 — Budget ≤ 16 MTok (29.09. abends von 12 auf 16 angehoben durch Patrick; Meldung bei 6,0 / 9,6 MTok, harter Stopp 18 MTok)
 
 ## Constraints
 - Lokal und kostenfrei im Betrieb: nur Open-Source-/frei nutzbare Modelle und Bibliotheken, Lizenz je Baustein geprüft (keine Nicht-kommerziell-Klauseln ohne Ansage).
@@ -112,13 +112,16 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29T18:57 AK5 erfüllt — m2-bench.ps1 -Full: 12,8 min Echtzeit, 128 Segmente, Latenz p95 1385 ms (p50 960, max 4604), docs/m2-evidence/bench.md, Commit d0f3391e
 - 2026-09-29T18:57 AK4 erfüllt — docs/m2-evidence/bench.md: FLEURS-de 240 Saetze Enddurchlauf Qwen3-ASR 1.7B 4,17 % (nach Upgrade 0.2.4 +0,21 Pp), Whisper large-v3 CUDA 4,65 %; Live Parakeet ONNX 7,86 %; Mehrsprecher-Korpus Live 6,86 %; Commits 44c4bde, d0f3391e
 - 2026-09-29T19:33 AK8 erfüllt — --eval-chat 24 Fragen/5 Besprechungen: Gemma 4 E4B accuracy 1,000 in 3 von 3 Laeufen (abnahme/p4g-eval-chat-1..3.json), 12B 1,000; Suche ui p95 180 ms (Release, P4a) bei 500 Besprechungen; Commit a4207200
+- 2026-09-29T21:51 AK7 erfüllt — P3a/P3b/P3c: AMI-Pruefteil 15,19 % (Patrick wertet als erfuellt, B7), deutsch 0,94 %, Benennen + Namen ueberstehen Neu-Transkription (a97a1008)
+- 2026-09-29T21:55 AK9 erfüllt — P5a/P5b 892c3291 + P5c 34c948e2: ICS-Fixture-Tests, reminder-Tests, --detect-mic; cargo 1552 passed, Playwright 205 passed
 
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
-- B2 [offen] 2026-09-29T20:32 Ursache: Freigegebener Budgetrahmen 12 MTok erreicht (Ist ~12,8 MTok); Hochrechnung bis COMPLETE 15-16 MTok · Owner: Patrick · entsperrt, wenn: Patrick hebt den Rahmen an (Vorschlag 16 MTok) oder kuerzt den Umfang (Komfortpakete P3d/P5d/P5e/P5f/P6e in Folge-Goal); dazu offen: B7, E14, E23 · nächste Prüfung: beim nächsten Sessionstart
+- B2 [gelöst] 2026-09-29T20:32 Ursache: Freigegebener Budgetrahmen 12 MTok erreicht (Ist ~12,8 MTok); Hochrechnung bis COMPLETE 15-16 MTok · Owner: Patrick · entsperrt, wenn: Patrick hebt den Rahmen an (Vorschlag 16 MTok) oder kuerzt den Umfang (Komfortpakete P3d/P5d/P5e/P5f/P6e in Folge-Goal); dazu offen: B7, E14, E23 · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T21:51: Patrick 29.09. abends: Rahmen 16 MTok, B7 a, E14 als Einstellung spaeter, E23 spaeter
 
 ## Entscheidungen
 - 2026-09-29 Patrick: voller Umfang M1–M7 in diesem Goal, Budgetrahmen ~12 MTok (Hochrechnung nach Ist 3,0 MTok).
+- 2026-09-29 abends Patrick: Budgetrahmen 16 MTok; B7 → AK7 fuer AMI als erfuellt gewertet (Nemotron als Folge-Goal); E14 Graph-Client-ID spaeter vom Nutzer in den Einstellungen eintragbar (Feld in vorhandener Kalender-Gruppe, kein fester Wert im Code); E23 echte Testaufnahme spaeter (deutscher Teil bleibt synthetisch).
 - 2026-09-29 Patrick zu E5: GPU-STT per Vulkan aktivieren; Claude installiert das LunarG-Vulkan-SDK (winget) und alles Nötige.
 - 2026-09-29 M1/M2-Berührpunkt B4: Auto-KI-Notizen starten auf `MeetingEvent::TranscriptFinal` (P2a führt es ein und sendet es am Ende von `stop()`, P1f hängt sich daran, P2d verschiebt das Senden hinter den Enddurchlauf). Enddurchlauf nutzt `segment_epoch` aus P1a; M2 liefert `remap_sources()`; M2 fügt keine meetings.db-Migration hinzu.
 - 2026-09-29 Silero v6 verschoben (vad-rs lädt v6 nicht); M2 nutzt v4.
@@ -127,7 +130,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-B2 auflösen (Patrick): Patrick hebt den Rahmen an (Vorschlag 16 MTok) oder kuerzt den Umfang (Komfortpakete P3d/P5d/P5e/P5f/P6e in Folge-Goal); dazu offen: B7, E14, E23. Dann `goal.py resolve-blocker --id B2 --beleg …` und `goal.py set --state PLANNING`.
+P5b von Hand mergen, dann P6d+P7a parallel, dann M7
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -147,4 +150,6 @@ B2 auflösen (Patrick): Patrick hebt den Rahmen an (Vorschlag 16 MTok) oder kuer
 - 2026-09-29T16:29 EXECUTING (Runde 1) — wiederaufgenommen
 - 2026-09-29T19:39 EXECUTING (Runde 1) — Stand 29.09. abends: AK1,3,4,5,6,8 erfuellt; Matrix 16/22 (inkl. F13). Gemergt: P1a-f, P2a-f, P2b1/2, P3a/b, P4a-g, P5a, P6a. Offen AK2,7(B7 Owner),9,10,11. Budget ~11 MTok, Hochrechnung 15-16. Laufend P3c (wt-m1), P5b (wt-m1c), P5c (wt-m2a), P6c (wt-m2b).
 - 2026-09-29T20:32 BLOCKED (Runde 1) — BLOCKIERT B2 (global, keine unabhängige Arbeit mehr): Freigegebener Budgetrahmen 12 MTok erreicht (Ist ~12,8 MTok); Hochrechnung bis COMPLETE 15-16 MTok
+- 2026-09-29T21:51 BLOCKED (Runde 1) — B2 gelöst: Patrick 29.09. abends: Rahmen 16 MTok, B7 a, E14 als Einstellung spaeter, E23 spaeter
+- 2026-09-29T21:51 PLANNING (Runde 2) — Blocker B2 aufgeloest (Rahmen 16 MTok), AK7 erfuellt
 
