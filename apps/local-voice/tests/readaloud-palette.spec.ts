@@ -434,3 +434,117 @@ test("clicking a tag still inserts it into the text", async ({ page }) => {
   await tagButton.click();
   await expect(editor).toHaveValue(/\[[^\]]+\]/);
 });
+
+// P7 (Goal ui-vorlesen-kompakt): Palette folgt dem App-Standard und ist kompakt.
+test("palette filter row is one line, neutral, and uses a scale-conform legend", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const { details } = await openPaletteAlle(page);
+
+  // Einzeilig: alle Filter liegen auf gleicher Hoehe (A24).
+  const tabs = details.getByRole("tab");
+  expect(await tabs.count()).toBeGreaterThanOrEqual(10);
+  const tops = await tabs.evaluateAll((els) =>
+    els.map((el) => el.getBoundingClientRect().top),
+  );
+  expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(2);
+
+  // Aktiver Filter ist neutral, nicht gelb (A11).
+  const active = details.getByRole("tab", { name: "Alle" });
+  const colors = await active.evaluate((el) => {
+    const probe = document.createElement("span");
+    probe.style.backgroundColor = "var(--color-logo-primary)";
+    document.body.appendChild(probe);
+    const accent = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return { bg: getComputedStyle(el).backgroundColor, accent };
+  });
+  expect(colors.bg).not.toBe(colors.accent);
+
+  // Keine Schrift unter 11 px in der Palette (A14/A15), Legende mit
+  // Skalen-Zeilenhoehe.
+  const smallest = await details.evaluate((root) => {
+    let min = Infinity;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!node.textContent?.trim() || !node.parentElement) continue;
+      min = Math.min(
+        min,
+        parseFloat(getComputedStyle(node.parentElement).fontSize),
+      );
+    }
+    return min;
+  });
+  expect(smallest).toBeGreaterThanOrEqual(11);
+  const summarySize = await details
+    .locator("summary")
+    .evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+  expect(summarySize).toBeCloseTo(13.125, 1);
+  const legend = await details.getByTestId("tag-legend").evaluate((el) => {
+    const style = getComputedStyle(el);
+    return {
+      size: parseFloat(style.fontSize),
+      line: parseFloat(style.lineHeight),
+    };
+  });
+  expect(legend.line).toBeLessThanOrEqual(legend.size * 1.5);
+
+  // "Spezial" traegt nicht mehr das Sparkles-Symbol (A05).
+  const special = details.getByRole("tab", { name: "Spezial" });
+  await expect(special.locator("svg.lucide-sparkles")).toHaveCount(0);
+  await expect(special.locator("svg")).toHaveCount(1);
+});
+
+test("palette tags are compact and the favorite star has a 24px hit area", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const { details } = await openPaletteAlle(page);
+
+  // Zeilenabstand der Tags (A23): y-Spruenge zwischen den Zeilen.
+  const rowTops = await details
+    .locator("button[title]:not([aria-label])")
+    .evaluateAll((els) => {
+      const tops = els.map((el) => Math.round(el.getBoundingClientRect().top));
+      return [...new Set(tops)].sort((a, b) => a - b);
+    });
+  expect(rowTops.length).toBeGreaterThan(3);
+  const gaps = rowTops.slice(1).map((y, i) => y - rowTops[i]);
+  // Jeder Zeilensprung, der die Tag-Raster betrifft, bleibt kompakt.
+  expect(Math.min(...gaps)).toBeGreaterThanOrEqual(24);
+  expect(Math.max(...gaps.slice(0, 3))).toBeLessThanOrEqual(34);
+  const chip = details.locator("button[title]:not([aria-label])").first();
+  expect((await box(chip)).height).toBeGreaterThanOrEqual(24);
+
+  // Favoriten-Stern: Klickflaeche mindestens 24x24 (A12), Symbol >= 12 px.
+  const star = details
+    .getByRole("button", { name: /Favorit|favorite/i })
+    .first();
+  await star.scrollIntoViewIfNeeded();
+  const starBox = await box(star);
+  expect(starBox.width).toBeGreaterThanOrEqual(24);
+  expect(starBox.height).toBeGreaterThanOrEqual(24);
+  const icon = await box(star.locator("svg"));
+  expect(icon.width).toBeGreaterThanOrEqual(12);
+});
+
+for (const size of [
+  { width: 1920, height: 1050, file: "palette-alle-1920.png" },
+  { width: 1366, height: 768, file: "palette-alle-1366.png" },
+]) {
+  test(`p7 screenshot palette alle ${size.width}x${size.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(size);
+    await openPaletteAlle(page);
+    await page.screenshot({
+      path: `../../koordination/ui-vorlesen-kompakt/screens/p7/${size.file}`,
+      animations: "disabled",
+    });
+    await expect(
+      page.getByRole("tab", { name: "Alle" }),
+    ).toHaveAttribute("aria-selected", "true");
+  });
+}

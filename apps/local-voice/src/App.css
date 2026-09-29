@@ -746,7 +746,7 @@ body.lv-resizing * {
   min-height: 44px;
   align-content: center;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   border-radius: 8px;
 }

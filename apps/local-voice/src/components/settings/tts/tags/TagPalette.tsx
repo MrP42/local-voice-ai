@@ -84,6 +84,9 @@ const toCustomChipItem = (text: string): ChipItem => ({
   reliable: false,
 });
 
+/** Filterchip der Palette. Bewusst neutral (nicht gelb, keine Reiter-Optik):
+ *  Gelb gehoert der einen Hauptaktion "Abspielen". Die Rolle "tab" bleibt, weil
+ *  genau ein Filter aktiv ist. */
 const TabButton: React.FC<{
   active: boolean;
   icon: LucideIcon;
@@ -95,10 +98,10 @@ const TabButton: React.FC<{
     role="tab"
     aria-selected={active}
     onClick={onClick}
-    className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+    className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs whitespace-nowrap transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-text ${
       active
-        ? "bg-logo-primary text-on-accent"
-        : "text-text/60 hover:text-text hover:bg-mid-gray/15"
+        ? "bg-mid-gray/20 font-medium text-text"
+        : "text-text/60 hover:text-text"
     }`}
   >
     <Icon width={13} height={13} aria-hidden="true" />
@@ -342,7 +345,14 @@ export const TagPalette: React.FC<{
           <div
             role="tablist"
             aria-label={t("tts.tags.tabsAriaLabel")}
-            className="flex flex-wrap gap-1 px-2 pt-1"
+            // Einzeilig und waagrecht scrollend statt dreizeilig umbrechend
+            // (A24); die Bildlaufleiste bleibt unsichtbar, das Mausrad
+            // scrollt waagrecht mit.
+            onWheel={(event) => {
+              if (event.deltaY === 0) return;
+              event.currentTarget.scrollLeft += event.deltaY;
+            }}
+            className="flex flex-nowrap gap-1 overflow-x-auto px-2 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
             <TabButton
               active={activeTab === "favorites"}
@@ -380,7 +390,7 @@ export const TagPalette: React.FC<{
           {/* Legende: was die drei Farben bedeuten -- einmal, nicht als
               Tooltip auf jedem Chip. */}
           <p
-            className="px-2 pt-1 text-[11px] text-text/50"
+            className="px-2 pt-1 text-xs text-text/50"
             data-testid="tag-legend"
           >
             {t("tts.tags.legend", {
@@ -390,7 +400,7 @@ export const TagPalette: React.FC<{
               total: TAG_REGISTRY.length,
             })}
           </p>
-          <div className="flex flex-wrap gap-1 p-2">
+          <div className="flex flex-wrap gap-x-1 gap-y-0.5 p-2">
             {visibleTags.length === 0 ? (
               <p className="px-1 py-2 text-xs text-text/50">{emptyMessage}</p>
             ) : (
@@ -400,9 +410,10 @@ export const TagPalette: React.FC<{
                   favorites.includes(item.registryId);
                 return (
                   <div key={item.key} className="relative inline-flex">
-                    {/* p-3: der sichtbare Chip bleibt ~22px hoch, das Polster
-                        hebt die Klickflaeche auf ~46px — ueber der 44px-
-                        Mindestvorgabe fuer Touch-Ziele. */}
+                    {/* p-1: Am Desktop reicht eine kompakte Klickflaeche (die
+                        Pille bleibt ~20px hoch, mit Polster ~28px, ueber den
+                        24px des WCAG 2.5.8); p-3 (~46px fuer Touch) machte
+                        95 Tags zu 11 Zeilen a 47px. */}
                     <TagChip
                       label={item.label}
                       state={item.reliable ? "normal" : "unverified"}
@@ -417,7 +428,7 @@ export const TagPalette: React.FC<{
                               .filter(Boolean)
                               .join(" — ")
                       }
-                      className="p-3"
+                      className="p-1"
                     />
                     {item.registryId && (
                       <button
@@ -436,17 +447,22 @@ export const TagPalette: React.FC<{
                             ? t("tts.tags.favoriteRemove", { tag: item.label })
                             : t("tts.tags.favoriteAdd", { tag: item.label })
                         }
-                        className="absolute -top-1.5 -right-1.5 cursor-pointer rounded-full border border-mid-gray/30 bg-background p-0.5 text-text/40 transition-colors hover:text-logo-primary"
+                        className="group absolute -top-[12px] -right-[12px] flex size-[24px] cursor-pointer items-center justify-center text-text/40 transition-colors hover:text-logo-primary"
                       >
-                        <Star
-                          width={10}
-                          height={10}
-                          className={
-                            isFavorite
-                              ? "fill-logo-primary text-logo-primary"
-                              : undefined
-                          }
-                        />
+                        {/* Klickflaeche 24x24 px (WCAG 2.5.8; px statt rem, die Wurzelschrift
+                            ist 15 px), sichtbar bleibt
+                            der kleine runde Stern in der Chip-Ecke. */}
+                        <span className="rounded-full border border-mid-gray/30 bg-background p-0.5">
+                          <Star
+                            width={12}
+                            height={12}
+                            className={
+                              isFavorite
+                                ? "fill-logo-primary text-logo-primary"
+                                : undefined
+                            }
+                          />
+                        </span>
                       </button>
                     )}
                   </div>
