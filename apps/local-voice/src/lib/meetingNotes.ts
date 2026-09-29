@@ -4,7 +4,13 @@
 // Die Typen kommen aus `bindings.ts` (nur als Typ importiert, wird beim
 // Ausfuehren entfernt).
 
-import type { NoteBlock, NoteBlockKind, TemplateSpec } from "@/bindings";
+import type {
+  EnhancedEntry,
+  EnhancedNotes,
+  NoteBlock,
+  NoteBlockKind,
+  TemplateSpec,
+} from "@/bindings";
 
 /** Groesste Notizgroesse (JSON), die das Frontend noch speichert. */
 export const NOTES_MAX_BYTES = 200 * 1024;
@@ -277,3 +283,189 @@ export const validateSpecLocally = (
     return "template_invalid:tasks_sections";
   return null;
 };
+
+// ---------------------------------------------------------------------------
+// KI-Notizen (P1d)
+// ---------------------------------------------------------------------------
+
+/** Dokumentart und Format der KI-Notizen (`enhance.rs`: DOC_KIND, DOC_FORMAT). */
+export const ENHANCED_KIND = "enhanced_notes";
+export const ENHANCED_FORMAT = "enhanced@1";
+
+/** So viele Quellen zeigt ein Eintrag, der Rest steht hinter "+n". */
+export const MAX_VISIBLE_SOURCES = 3;
+
+/** Dauer der Markierung des Segments nach einem Quellsprung. */
+export const SOURCE_HIGHLIGHT_MS = 2000;
+
+/** Body eines KI-Notizen-Dokuments; `null` bei kaputtem oder fremdem Format. */
+export const parseEnhanced = (body: string): EnhancedNotes | null => {
+  try {
+    const value = JSON.parse(body) as Partial<EnhancedNotes> | null;
+    if (
+      value &&
+      value.format === ENHANCED_FORMAT &&
+      Array.isArray(value.sections)
+    ) {
+      return value as EnhancedNotes;
+    }
+  } catch {
+    // kaputter Body: wie ein fremdes Format behandeln
+  }
+  return null;
+};
+
+/**
+ * Quellverweise veraltet? Eine Neu-Transkription erhoeht die Epoche der
+ * Segmente; die Nummern der Notizen zeigen dann auf andere Woerter. Ist die
+ * aktuelle Epoche noch unbekannt (`null`), gilt nichts als veraltet.
+ */
+export const isStale = (
+  notes: EnhancedNotes,
+  currentEpoch: number | null,
+): boolean => currentEpoch !== null && notes.segment_epoch !== currentEpoch;
+
+/** KI-Text (grau) ist nur, was die KI schrieb und der Nutzer nicht angefasst hat. */
+export const isAiText = (entry: EnhancedEntry): boolean =>
+  entry.origin === "ai" && !entry.flags.edited;
+
+/** KI-Eintrag ohne gueltigen Beleg: bekommt das gelbe "ohne Beleg"-Zeichen. */
+export const lacksEvidence = (entry: EnhancedEntry): boolean =>
+  isAiText(entry) &&
+  (entry.flags.unsupported || entry.source_segment_ids.length === 0);
+
+/** Sichtbare Quellen und die Zahl der weiteren (`+n`). */
+export const splitSources = (
+  ids: number[],
+  max: number = MAX_VISIBLE_SOURCES,
+): { shown: number[]; rest: number[] } => ({
+  shown: ids.slice(0, max),
+  rest: ids.slice(max),
+});
+
+const ENHANCE_ERROR_CODES = [
+  "no_provider",
+  "no_model",
+  "memory_low",
+  "recording_active",
+  "enhance_busy",
+  "no_transcript",
+  "llm_failed",
+  "meeting_not_finished",
+  "meeting_not_found",
+  "template_not_found",
+  "document_not_found",
+  "not_enhanced_notes",
+  "stale_document",
+  "stale_sources",
+  "edit_invalid",
+  "instruction_invalid",
+  "store_failed",
+] as const;
+
+/** Code eines Fehlertexts der Form `<code>` oder `<code>: <grund>`; sonst `null`. */
+export const enhanceErrorCode = (error: string): string | null => {
+  const head = error.split(":")[0].trim();
+  return (ENHANCE_ERROR_CODES as readonly string[]).includes(head)
+    ? head
+    : null;
+};
+
+/**
+ * Fehler der KI-Notizen-Commands und `MeetingNotesEvent::failed` als
+ * i18n-Schluessel. Unbekanntes wird zum allgemeinen Fehler samt Rohtext.
+ */
+export const enhanceErrorText = (error: string): ErrorText => {
+  const code = enhanceErrorCode(error);
+  if (code) {
+    const detail = error.includes(":")
+      ? error.slice(error.indexOf(":") + 1).trim()
+      : "";
+    return { key: `meetings.enhanced.errors.${code}`, params: { detail } };
+  }
+  return { key: "meetings.enhanced.errors.generic", params: { error } };
+};
+
+/** Ab welchem Fehler der Nutzer in die Einstellungen der Sprachmodelle muss. */
+export const needsProviderSetup = (error: string): boolean => {
+  const code = enhanceErrorCode(error);
+  return code === "no_provider" || code === "no_model";
+};
+
+/** Kopie mit geaendertem Text eines Eintrags; er zaehlt dann als Nutzertext. */
+export const withEntryText = (
+  notes: EnhancedNotes,
+  entryId: string,
+  text: string,
+): EnhancedNotes => ({
+  ...notes,
+  sections: notes.sections.map((section) => ({
+    ...section,
+    entries: section.entries.map((entry) =>
+      entry.id === entryId
+        ? {
+            ...entry,
+            text,
+            flags: { ...entry.flags, edited: true },
+          }
+        : entry,
+    ),
+  })),
+});
+
+/** Neuer Nutzereintrag am Ende eines Abschnitts (die endgueltige ID vergibt das Backend). */
+export const withNewEntry = (
+  notes: EnhancedNotes,
+  sectionId: string,
+  id: string,
+  text: string,
+): EnhancedNotes => ({
+  ...notes,
+  sections: notes.sections.map((section) =>
+    section.id === sectionId
+      ? {
+          ...section,
+          entries: [
+            ...section.entries,
+            {
+              id,
+              origin: "user",
+              text,
+              note_id: null,
+              source_segment_ids: [],
+              assignee: null,
+              due: null,
+              flags: {
+                unsupported: false,
+                dropped_sources: 0,
+                placed_by_fallback: false,
+                edited: true,
+              },
+            },
+          ],
+        }
+      : section,
+  ),
+});
+
+/** Ohne Eintraege mit leerem Text (das Backend entfernt sie ohnehin). */
+export const withoutEmptyEntries = (notes: EnhancedNotes): EnhancedNotes => ({
+  ...notes,
+  sections: notes.sections.map((section) => ({
+    ...section,
+    entries: section.entries.filter((entry) => entry.text.trim() !== ""),
+  })),
+});
+
+export const hasEmptyEntry = (notes: EnhancedNotes): boolean =>
+  notes.sections.some((section) =>
+    section.entries.some((entry) => entry.text.trim() === ""),
+  );
+
+/** Alle Eintrags-IDs, in Reihenfolge (Vergleich vor/nach dem Speichern). */
+export const entryIds = (notes: EnhancedNotes): string[] =>
+  notes.sections.flatMap((section) => section.entries.map((e) => e.id));
+
+/** Dateiname-tauglicher Titel fuer den Export. */
+export const exportFileName = (title: string): string =>
+  `${title.replace(/[\\/:*?"<>|]/g, "_").trim() || "besprechung"}`;

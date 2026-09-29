@@ -68,6 +68,13 @@ test.beforeEach(async ({ page }) => {
     w.__importError = null;
     w.__notes = { blocks: [], revision: 0 };
     w.__conflictOnce = null;
+    w.__segments = [];
+    w.__documents = [];
+    w.__epoch = 1;
+    w.__items = [];
+    w.__staleOnce = null;
+    w.__enhanceError = null;
+    w.__freshBody = null;
     w.__templates = [
       {
         id: "builtin:allgemein",
@@ -169,8 +176,65 @@ test.beforeEach(async ({ page }) => {
             case "meetings_list":
               return w.__meetings;
             case "meetings_get_segments":
+              return w.__segments;
             case "meetings_get_documents":
-              return [];
+              return w.__documents;
+            // M1-P1d: KI-Notizen
+            case "meetings_segment_epoch":
+              return w.__epoch;
+            case "action_items_list":
+              return w.__items;
+            case "action_items_set_status":
+              w.__items = w.__items.map((i: any) =>
+                i.id === args.id
+                  ? { ...i, status: args.done ? "done" : "todo" }
+                  : i,
+              );
+              return null;
+            case "meeting_notes_update_enhanced": {
+              const doc = w.__documents.find(
+                (d: any) => d.id === args.documentId,
+              );
+              if (w.__staleOnce) {
+                doc.body = w.__staleOnce;
+                doc.updated_at += 5;
+                w.__staleOnce = null;
+                throw "stale_document";
+              }
+              doc.body = JSON.stringify(args.notes);
+              doc.updated_at += 1;
+              return doc.updated_at;
+            }
+            case "meeting_notes_enhance":
+            case "meeting_notes_apply_instruction": {
+              if (w.__enhanceError) throw w.__enhanceError;
+              const base =
+                w.__documents.find((d: any) => d.id === args.documentId) ??
+                w.__documents[0];
+              const body = base
+                ? JSON.parse(base.body)
+                : JSON.parse(w.__freshBody);
+              if (cmd === "meeting_notes_apply_instruction")
+                body.sections[0].entries[1].text = "Kunde prüft Wettbewerber";
+              const version = w.__documents.length + 1;
+              const doc = {
+                id: `d${version}`,
+                meeting_id: "m1",
+                kind: "enhanced_notes",
+                body_format: "enhanced@1",
+                body: JSON.stringify(body),
+                version,
+                created_at: 1790000900 + version,
+                template_id: null,
+                updated_at: 200 + version,
+              };
+              w.__documents = [...w.__documents, doc];
+              return doc;
+            }
+            case "meeting_notes_markdown":
+              return "# KI-Notizen\n";
+            case "meetings_export_document":
+              return null;
             case "meetings_minutes_file":
               return null;
             case "meetings_get_template":
@@ -946,4 +1010,438 @@ test("Vorlagen: ungueltige Eingabe wird vor dem Speichern abgefangen", async ({
     editor.getByText("Der Name muss 1 bis 60 Zeichen lang sein."),
   ).toBeVisible();
   expect(await calls(page, "meeting_templates_save")).toHaveLength(0);
+});
+
+// ---------------------------------------------------------------------------
+// KI-Notizen (M1-P1d): Ansicht, Quellen, Bearbeiten, Anweisung, Checkliste
+// ---------------------------------------------------------------------------
+
+test.describe("KI-Notizen", () => {
+  const flags = (unsupported = false, edited = false) => ({
+    unsupported,
+    dropped_sources: 0,
+    placed_by_fallback: false,
+    edited,
+  });
+  const entry = (
+    id: string,
+    origin: "ai" | "user",
+    text: string,
+    sources: number[],
+    extra: Record<string, unknown> = {},
+  ) => ({
+    id,
+    origin,
+    text,
+    note_id: origin === "user" ? "N2" : null,
+    source_segment_ids: sources,
+    assignee: null,
+    due: null,
+    flags: flags(origin === "ai" && sources.length === 0),
+    ...extra,
+  });
+  const notesBody = (secondText = "Kunde vergleicht mit dem Wettbewerber") => ({
+    format: "enhanced@1",
+    template_id: "builtin:vertrieb",
+    template_title: "Kundengespräch / Vertrieb",
+    segment_epoch: 1,
+    sections: [
+      {
+        id: "kernpunkte",
+        title: "Kernpunkte",
+        kind: "text",
+        entries: [
+          entry("E1", "user", "Preis zu hoch", [12]),
+          entry("E2", "ai", secondText, [12, 3, 5, 7]),
+          entry("E3", "ai", "Liefertermin ist noch offen", []),
+        ],
+      },
+      {
+        id: "aufgaben",
+        title: "Aufgaben",
+        kind: "tasks",
+        entries: [
+          entry("E4", "ai", "Angebot bis Freitag schicken", [12], {
+            assignee: "Patrick",
+            due: "Freitag",
+          }),
+        ],
+      },
+    ],
+    stats: {
+      user_notes_total: 1,
+      user_notes_by_model: 1,
+      user_notes_by_fallback: 0,
+      ai_entries: 3,
+      ai_entries_sourced: 2,
+      dropped_source_ids: 0,
+      chunks_total: 1,
+      chunks_failed: [],
+      single_pass: true,
+    },
+  });
+
+  type Setup = {
+    audio?: boolean;
+    epoch?: number;
+    withDocument?: boolean;
+  };
+
+  /** Besprechung m1 mit 15 Segmenten (Nr. 12 bei 03:15) und einer KI-Notizen-Version. */
+  const setup = async (page: Page, opts: Setup = {}) => {
+    const { audio = false, epoch = 1, withDocument = true } = opts;
+    await page.addInitScript(
+      ({ audio, epoch, withDocument, body }) => {
+        const w = window as any;
+        w.__played = [];
+        // Wiedergabe nur mitschreiben: Position beim play() = Sprungziel.
+        const times = new WeakMap<object, number>();
+        Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+          configurable: true,
+          get() {
+            return times.get(this) ?? 0;
+          },
+          set(v: number) {
+            times.set(this, v);
+          },
+        });
+        HTMLMediaElement.prototype.play = function () {
+          w.__played.push(times.get(this) ?? 0);
+          return Promise.resolve();
+        };
+        HTMLMediaElement.prototype.pause = function () {};
+        if (audio) w.__meetings[0].mic_audio_path = "C:/audio/m1-mic.wav";
+        w.__epoch = epoch;
+        w.__segments = Array.from({ length: 15 }, (_, i) => ({
+          segment_index: i,
+          text: i === 12 ? "Der Preis ist uns zu hoch." : `Satz Nummer ${i}.`,
+          start_ms: i === 12 ? 195_000 : i * 15_000,
+          end_ms: i === 12 ? 200_000 : i * 15_000 + 5_000,
+          channel: 0,
+          speaker_index: null,
+        }));
+        w.__freshBody = JSON.stringify(body);
+        w.__documents = withDocument
+          ? [
+              {
+                id: "d1",
+                meeting_id: "m1",
+                kind: "enhanced_notes",
+                body_format: "enhanced@1",
+                body: JSON.stringify(body),
+                version: 1,
+                created_at: 1790000700,
+                template_id: "builtin:vertrieb",
+                updated_at: 100,
+              },
+            ]
+          : [];
+        w.__items = [
+          {
+            id: "a1",
+            meeting_id: "m1",
+            text: "Angebot bis Freitag schicken",
+            status: "todo",
+            assignee_label: "Patrick",
+            document_id: "d1",
+            entry_id: "E4",
+            source_segment_ids: [12],
+            source: "ai",
+          },
+        ];
+      },
+      { audio, epoch, withDocument, body: notesBody() },
+    );
+  };
+
+  const openAiNotes = async (page: Page) => {
+    await openDetailNotes(page);
+    await page.getByRole("button", { name: "KI-Notizen", exact: true }).click();
+    const view = page.getByTestId("enhanced-notes");
+    await expect(view).toBeVisible();
+    return view;
+  };
+
+  const entryOf = (page: Page, id: string) =>
+    page.locator(`[data-testid=enhanced-entry][data-entry-id="${id}"]`);
+
+  test("KI-Notizen: Nutzertext normal, KI-Text grau, ohne Beleg, Quellen als mm:ss", async ({
+    page,
+  }) => {
+    await setup(page);
+    const view = await openAiNotes(page);
+    await expect(
+      view.getByRole("heading", { name: "Kernpunkte" }),
+    ).toBeVisible();
+    await expect(view.getByRole("heading", { name: "Aufgaben" })).toBeVisible();
+
+    const user = entryOf(page, "E1");
+    await expect(user).toHaveAttribute("data-origin", "user");
+    const userText = user.getByTestId("entry-text");
+    await expect(userText).toHaveClass(/(^|\s)text-text(\s|$)/);
+    await expect(userText).not.toHaveClass(/text-text\/60/);
+
+    const ai = entryOf(page, "E2");
+    await expect(ai).toHaveAttribute("data-origin", "ai");
+    await expect(ai.getByTestId("entry-text")).toHaveClass(/text-text\/60/);
+    // Hoechstens drei Chips, der Rest hinter "+1".
+    await expect(ai.locator("[data-source-id]")).toHaveCount(3);
+    await expect(ai.locator('[data-source-id="12"]')).toHaveText("03:15");
+    await expect(ai.getByTestId("source-more")).toHaveText("+1");
+    await ai.getByTestId("source-more").click();
+    await expect(ai.locator("[data-source-id]")).toHaveCount(4);
+
+    const noSource = entryOf(page, "E3");
+    await expect(noSource).toHaveAttribute("data-origin", "ai");
+    await expect(noSource.getByTestId("no-evidence")).toHaveText("ohne Beleg");
+    await expect(noSource.locator("[data-source-id]")).toHaveCount(0);
+    await expect(page.getByTestId("stale-hint")).toHaveCount(0);
+  });
+
+  test("KI-Notizen: Quell-Klick wechselt ins Transkript, markiert Segment 12 und spielt ab 195 s", async ({
+    page,
+  }) => {
+    await setup(page, { audio: true });
+    await openAiNotes(page);
+    await expect(page.getByTestId("audio-gone-hint")).toHaveCount(0);
+    await entryOf(page, "E1").locator('[data-source-id="12"]').click();
+
+    const row = page.locator('[data-segment-index="12"]');
+    await expect(row).toBeVisible();
+    await expect(row).toContainText("Der Preis ist uns zu hoch.");
+    await expect(row).toHaveAttribute("data-highlighted", "true");
+    // Tab Transkript ist aktiv: die KI-Notizen sind ausgeblendet.
+    await expect(page.getByTestId("enhanced-notes")).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__played))
+      .toEqual([195]);
+    // Die Markierung verschwindet nach rund 2 s wieder.
+    await expect(row).not.toHaveAttribute("data-highlighted", "true", {
+      timeout: 4000,
+    });
+  });
+
+  test("KI-Notizen: ohne Audio springt die Quelle nur ins Transkript", async ({
+    page,
+  }) => {
+    await setup(page, { audio: false });
+    await openAiNotes(page);
+    await expect(page.getByTestId("audio-gone-hint")).toContainText(
+      "Audio ist nicht mehr vorhanden",
+    );
+    await entryOf(page, "E2").locator('[data-source-id="12"]').click();
+    await expect(page.locator('[data-segment-index="12"]')).toHaveAttribute(
+      "data-highlighted",
+      "true",
+    );
+    expect(await page.evaluate(() => (window as any).__played)).toEqual([]);
+  });
+
+  test("KI-Notizen: Bearbeiten ruft meeting_notes_update_enhanced, Eintrag wird Nutzertext", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openAiNotes(page);
+    const ai = entryOf(page, "E2");
+    await ai.getByTestId("entry-text").click();
+    const editor = ai.getByTestId("entry-editor");
+    await expect(editor).toBeFocused();
+    await page.keyboard.type(" (geprüft)");
+    await page.keyboard.press("Enter"); // beendet das Bearbeiten -> sofort speichern
+    await expect
+      .poll(
+        async () => (await calls(page, "meeting_notes_update_enhanced")).length,
+      )
+      .toBe(1);
+    const args = (await calls(page, "meeting_notes_update_enhanced"))[0]
+      .args as any;
+    expect(args.documentId).toBe("d1");
+    expect(args.expectedUpdatedAt).toBe(100);
+    const saved = args.notes.sections[0].entries[1];
+    expect(saved.text).toBe("Kunde vergleicht mit dem Wettbewerber (geprüft)");
+    expect(saved.flags.edited).toBe(true);
+    // Nutzertext: nicht mehr grau.
+    await expect(ai).toHaveAttribute("data-origin", "user");
+    await expect(ai.getByTestId("entry-text")).not.toHaveClass(/text-text\/60/);
+    await expect(page.getByTestId("enhanced-status")).toHaveAttribute(
+      "data-status",
+      "saved",
+    );
+  });
+
+  test("KI-Notizen: stale_document laedt den Serverstand neu und meldet es", async ({
+    page,
+  }) => {
+    await setup(page);
+    await page.addInitScript((body) => {
+      (window as any).__staleOnce = JSON.stringify(body);
+    }, notesBody("Fremde Änderung aus dem zweiten Fenster"));
+    await openAiNotes(page);
+    const ai = entryOf(page, "E2");
+    await ai.getByTestId("entry-text").click();
+    await page.keyboard.type(" lokal");
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByText("zwischenzeitlich geändert", { exact: false }),
+    ).toBeVisible();
+    await expect(ai.getByTestId("entry-text")).toHaveText(
+      "Fremde Änderung aus dem zweiten Fenster",
+    );
+    expect(await calls(page, "meeting_notes_update_enhanced")).toHaveLength(1);
+    // Neu geladen: Dokumentliste zweimal gelesen (Start + nach dem Konflikt).
+    expect(
+      (await calls(page, "meetings_get_documents")).length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  test("KI-Notizen: Checkbox der Aufgabe ruft action_items_set_status", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openAiNotes(page);
+    const task = page.locator('[data-task-entry="E4"]');
+    await expect(task).toContainText("@Patrick · bis Freitag");
+    const box = task.getByRole("checkbox", { name: "Aufgabe erledigt" });
+    await expect(box).not.toBeChecked();
+    await box.check();
+    await expect
+      .poll(async () => (await calls(page, "action_items_set_status")).length)
+      .toBe(1);
+    expect((await calls(page, "action_items_set_status"))[0].args).toEqual({
+      id: "a1",
+      done: true,
+    });
+    await expect(box).toBeChecked();
+    await expect(entryOf(page, "E4").getByTestId("entry-text")).toHaveClass(
+      /line-through/,
+    );
+  });
+
+  test("KI-Notizen: Anweisung erzeugt eine neue Version", async ({ page }) => {
+    await setup(page);
+    await openAiNotes(page);
+    const input = page.getByRole("textbox", { name: "Anweisung an die KI" });
+    await input.fill("kürzer");
+    await page.getByRole("button", { name: "Anwenden" }).click();
+    await expect
+      .poll(
+        async () =>
+          (await calls(page, "meeting_notes_apply_instruction")).length,
+      )
+      .toBe(1);
+    expect(
+      (await calls(page, "meeting_notes_apply_instruction"))[0].args,
+    ).toEqual({ documentId: "d1", instruction: "kürzer" });
+    await expect(entryOf(page, "E2").getByTestId("entry-text")).toHaveText(
+      "Kunde prüft Wettbewerber",
+    );
+    await expect(input).toHaveValue("");
+    // Zwei Versionen: die Versionswahl erscheint und steht auf der neuesten.
+    await expect(page.getByTestId("version-picker")).toContainText("Version 2");
+  });
+
+  test("KI-Notizen: Fortschritt und failed-Code aus MeetingNotesEvent werden uebersetzt", async ({
+    page,
+  }) => {
+    await setup(page, { withDocument: false });
+    const view = await openAiNotes(page);
+    await expect(page.getByTestId("ai-notes-placeholder")).toBeVisible();
+    const emit = (payload: unknown) =>
+      page.evaluate(
+        (p) => (window as any).__emit("meeting-notes-event", p),
+        payload,
+      );
+    // Ereignis einer anderen Besprechung: ignoriert.
+    await emit({ kind: "progress", meeting_id: "m2", step: 1, total: 5 });
+    await expect(page.getByTestId("enhance-progress")).toHaveCount(0);
+    await emit({ kind: "progress", meeting_id: "m1", step: 2, total: 5 });
+    await expect(page.getByTestId("enhance-progress")).toHaveText(
+      "KI-Notizen werden erstellt … 2/5",
+    );
+    await emit({ kind: "failed", meeting_id: "m1", code: "memory_low" });
+    await expect(page.getByTestId("enhance-progress")).toHaveCount(0);
+    const error = view.getByTestId("enhance-error");
+    await expect(error).toHaveAttribute("data-code", "memory_low");
+    await expect(error).toContainText("Zu wenig freier Arbeitsspeicher");
+    await emit({ kind: "failed", meeting_id: "m1", code: "no_provider" });
+    await expect(error).toContainText(
+      "Es ist kein Sprachmodell-Anbieter eingerichtet.",
+    );
+    await expect(error).toContainText("Einstellungen → Sprachmodelle");
+  });
+
+  test("KI-Notizen: Erzeugen ruft meeting_notes_enhance, Fehler mit Code wird uebersetzt", async ({
+    page,
+  }) => {
+    await setup(page, { withDocument: false });
+    await page.addInitScript(() => {
+      (window as any).__enhanceError = "enhance_busy: laeuft schon";
+    });
+    await openAiNotes(page);
+    const generate = page.getByRole("button", { name: "KI-Notizen erzeugen" });
+    await generate.click();
+    await expect(page.getByTestId("enhance-error")).toContainText(
+      "Es läuft bereits ein KI-Notizen-Lauf.",
+    );
+    await page.evaluate(() => {
+      (window as any).__enhanceError = null;
+    });
+    await generate.click();
+    await expect(entryOf(page, "E1")).toBeVisible();
+    await expect(page.getByTestId("enhance-error")).toHaveCount(0);
+    const enhance = await calls(page, "meeting_notes_enhance");
+    expect(enhance).toHaveLength(2);
+    expect(enhance[1].args).toEqual({ meetingId: "m1", templateId: null });
+    await expect(
+      page.getByRole("button", { name: "KI-Notizen neu erzeugen" }),
+    ).toBeVisible();
+  });
+
+  test("KI-Notizen: veraltete Epoche sperrt die Spruenge und zeigt den Hinweis", async ({
+    page,
+  }) => {
+    await setup(page, { audio: true, epoch: 2 });
+    const view = await openAiNotes(page);
+    await expect(view).toHaveAttribute("data-stale", "true");
+    await expect(page.getByTestId("stale-hint")).toContainText(
+      "Quellen veraltet – neu erzeugen",
+    );
+    const chip = entryOf(page, "E1").locator('[data-source-id="12"]');
+    await expect(chip).toBeDisabled();
+    await expect(chip).toHaveText("--:--");
+    await chip.click({ force: true });
+    await expect(page.getByTestId("enhanced-notes")).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__played)).toEqual([]);
+  });
+
+  test("KI-Notizen: Export schreibt das Markdown ueber meetings_export_document", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openAiNotes(page);
+    await page.getByRole("button", { name: /^Exportieren – als Word/ }).click();
+    await expect(page.getByTestId("exported")).toBeVisible();
+    expect((await calls(page, "meeting_notes_markdown"))[0].args).toEqual({
+      documentId: "d1",
+    });
+    expect((await calls(page, "meetings_export_document"))[0].args).toEqual({
+      path: "C:\\Temp\\vorlage.lvtemplate.json",
+      body: "# KI-Notizen\n",
+    });
+  });
+
+  test("KI-Notizen: Ansicht (Screenshot)", async ({ page }) => {
+    await setup(page, { audio: true });
+    await openAiNotes(page);
+    await expect(entryOf(page, "E4")).toBeVisible();
+    const shot = path.resolve(
+      process.cwd(),
+      "../../koordination/granola-besprechungen/abnahme/p1d-ki-notizen.png",
+    );
+    await page.screenshot({
+      path: shot,
+      animations: "disabled",
+      fullPage: true,
+    });
+  });
 });

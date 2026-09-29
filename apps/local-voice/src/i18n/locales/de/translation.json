@@ -1448,7 +1448,8 @@
           "minutes": "Protokoll",
           "summary": "Zusammenfassung",
           "tagging": "Tags",
-          "translation": "Übersetzung"
+          "translation": "Übersetzung",
+          "enhanced_notes": "KI-Notizen"
         }
       }
     }
@@ -1783,6 +1784,63 @@
           "section_instruction_too_long": "Die Anweisung eines Abschnitts darf höchstens 500 Zeichen lang sein.",
           "tasks_sections": "Es ist höchstens ein Aufgabenlisten-Abschnitt erlaubt."
         }
+      }
+    },
+    "enhanced": {
+      "empty": "Noch keine KI-Notizen. Sie entstehen aus deinen Notizen und dem Transkript, sobald die Besprechung abgeschlossen ist.",
+      "generate": "KI-Notizen erzeugen",
+      "regenerate": "KI-Notizen neu erzeugen",
+      "export": "Exportieren – als Word (.docx), Text oder Markdown",
+      "exportSuffix": "KI-Notizen",
+      "exported": "Gespeichert: {{path}}",
+      "versionLabel": "Version {{version}} · {{date}}",
+      "progress": "KI-Notizen werden erstellt … {{step}}/{{total}}",
+      "working": "Die KI arbeitet …",
+      "providerHint": "Bitte unter Einstellungen → Sprachmodelle einrichten.",
+      "loadError": "Die KI-Notizen konnten nicht geladen werden: {{error}}",
+      "reloaded": "Die KI-Notizen wurden zwischenzeitlich geändert (anderes Fenster oder neuer Lauf) und neu geladen.",
+      "staleSources": "Quellen veraltet – neu erzeugen. Das Transkript wurde seit dem Erzeugen neu erstellt; die Quellverweise passen nicht mehr.",
+      "audioGone": "Das Audio ist nicht mehr vorhanden. Ein Klick auf eine Quelle springt nur ins Transkript.",
+      "oldVersion": "Ältere Version, nur zum Ansehen. Für Änderungen die neueste Version wählen.",
+      "chunksFailed": "{{failed}} von {{total}} Abschnitten des Transkripts konnten nicht ausgewertet werden. Die Notizen sind unvollständig; neu erzeugen kann helfen.",
+      "unreadable": "Diese Version der KI-Notizen lässt sich nicht lesen.",
+      "sectionEmpty": "Keine Einträge",
+      "addEntry": "Eintrag hinzufügen",
+      "newEntry": "Neuer Eintrag",
+      "editEntry": "Eintrag bearbeiten",
+      "editHint": "Klicken zum Bearbeiten – der Eintrag zählt danach als dein Text",
+      "noEvidence": "ohne Beleg",
+      "noEvidenceHint": "Für diesen Eintrag fand die KI keine Stelle im Transkript. Bitte selbst prüfen.",
+      "sourceJump": "Zur Stelle {{time}} im Transkript springen",
+      "sourceStale": "Quellen veraltet – neu erzeugen",
+      "sourceMore": "{{count}} weitere Quellen anzeigen",
+      "taskDone": "Aufgabe erledigt",
+      "due": "bis {{due}}",
+      "instruction": {
+        "label": "Anweisung an die KI",
+        "placeholder": "Anweisung an die KI, z. B. „kürzer“ oder „Namen korrigieren: Maier → Meyer“",
+        "apply": "Anwenden",
+        "hint": "Deine eigenen Notizen bleiben unverändert. Das Ergebnis wird eine neue Version."
+      },
+      "errors": {
+        "generic": "KI-Notizen: {{error}}",
+        "no_provider": "Es ist kein Sprachmodell-Anbieter eingerichtet.",
+        "no_model": "Für den Anbieter ist kein Modell ausgewählt.",
+        "memory_low": "Zu wenig freier Arbeitsspeicher, um das Sprachmodell zu starten. Bitte andere Programme schließen und erneut versuchen.",
+        "recording_active": "Während einer Aufnahme läuft das lokale Sprachmodell nicht. Bitte nach dem Stopp erneut versuchen oder einen entfernten Anbieter wählen.",
+        "enhance_busy": "Es läuft bereits ein KI-Notizen-Lauf. Bitte warten, bis er fertig ist.",
+        "no_transcript": "Es gibt noch kein Transkript. Deine eigenen Notizen bleiben nutzbar und exportierbar.",
+        "llm_failed": "Das Sprachmodell hat keine brauchbare Antwort geliefert. Bitte erneut versuchen.",
+        "meeting_not_finished": "Die Besprechung ist noch nicht abgeschlossen. KI-Notizen gibt es erst nach dem Stopp.",
+        "meeting_not_found": "Die Besprechung wurde nicht gefunden.",
+        "template_not_found": "Die gewählte Vorlage wurde nicht gefunden. Bitte eine andere Vorlage wählen.",
+        "document_not_found": "Diese Version der KI-Notizen gibt es nicht mehr.",
+        "not_enhanced_notes": "Dieses Dokument enthält keine KI-Notizen.",
+        "stale_document": "Die KI-Notizen wurden zwischenzeitlich geändert und neu geladen. Bitte die Änderung wiederholen.",
+        "stale_sources": "Die Quellen dieser Version sind veraltet, weil das Transkript neu erstellt wurde. Bitte KI-Notizen neu erzeugen.",
+        "edit_invalid": "Die Änderung konnte nicht gespeichert werden (ungültige Fassung).",
+        "instruction_invalid": "Die Anweisung ist ungültig: sie darf nicht leer und höchstens 500 Zeichen lang sein.",
+        "store_failed": "Das Speichern in der Datenbank ist fehlgeschlagen."
       }
     }
   },

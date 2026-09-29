@@ -199,6 +199,18 @@ pub async fn meeting_notes_markdown(
     enhance::markdown_for(&store, &document_id)
 }
 
+/// Aktuelle Segment-Epoche des Transkripts (M1, P1d). Die Oberflaeche
+/// vergleicht sie mit `EnhancedNotes::segment_epoch`: weicht sie ab (Neu-
+/// Transkription), sind die Quellverweise veraltet und Spruenge gesperrt.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_segment_epoch(
+    store: State<'_, Arc<MeetingStore>>,
+    meeting_id: String,
+) -> Result<u32, String> {
+    store.segment_epoch(&meeting_id).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

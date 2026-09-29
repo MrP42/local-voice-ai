@@ -1448,7 +1448,8 @@
           "minutes": "Minutes",
           "summary": "Summary",
           "tagging": "Tags",
-          "translation": "Translation"
+          "translation": "Translation",
+          "enhanced_notes": "AI notes"
         }
       }
     }
@@ -1783,6 +1784,63 @@
           "section_instruction_too_long": "A section instruction may be at most 500 characters long.",
           "tasks_sections": "At most one task list section is allowed."
         }
+      }
+    },
+    "enhanced": {
+      "empty": "No AI notes yet. They are built from your notes and the transcript once the meeting has finished.",
+      "generate": "Generate AI notes",
+      "regenerate": "Regenerate AI notes",
+      "export": "Export – as Word (.docx), text or Markdown",
+      "exportSuffix": "AI notes",
+      "exported": "Saved: {{path}}",
+      "versionLabel": "Version {{version}} · {{date}}",
+      "progress": "Creating AI notes … {{step}}/{{total}}",
+      "working": "The AI is working …",
+      "providerHint": "Please set one up under Settings → Language models.",
+      "loadError": "The AI notes could not be loaded: {{error}}",
+      "reloaded": "The AI notes were changed in the meantime (another window or a new run) and have been reloaded.",
+      "staleSources": "Sources outdated – regenerate. The transcript was rebuilt after these notes were created; the source references no longer match.",
+      "audioGone": "The audio is no longer available. Clicking a source only jumps to the transcript.",
+      "oldVersion": "Older version, view only. Pick the latest version to make changes.",
+      "chunksFailed": "{{failed}} of {{total}} parts of the transcript could not be processed. The notes are incomplete; regenerating may help.",
+      "unreadable": "This version of the AI notes cannot be read.",
+      "sectionEmpty": "No entries",
+      "addEntry": "Add entry",
+      "newEntry": "New entry",
+      "editEntry": "Edit entry",
+      "editHint": "Click to edit – the entry then counts as your own text",
+      "noEvidence": "no evidence",
+      "noEvidenceHint": "The AI found no passage in the transcript for this entry. Please check it yourself.",
+      "sourceJump": "Jump to {{time}} in the transcript",
+      "sourceStale": "Sources outdated – regenerate",
+      "sourceMore": "Show {{count}} more sources",
+      "taskDone": "Task done",
+      "due": "due {{due}}",
+      "instruction": {
+        "label": "Instruction for the AI",
+        "placeholder": "Instruction for the AI, e.g. “shorter” or “fix names: Maier → Meyer”",
+        "apply": "Apply",
+        "hint": "Your own notes stay unchanged. The result becomes a new version."
+      },
+      "errors": {
+        "generic": "AI notes: {{error}}",
+        "no_provider": "No language model provider is set up.",
+        "no_model": "No model is selected for the provider.",
+        "memory_low": "Not enough free memory to start the language model. Please close other programs and try again.",
+        "recording_active": "The local language model does not run during a recording. Please try again after stopping, or choose a remote provider.",
+        "enhance_busy": "An AI notes run is already in progress. Please wait for it to finish.",
+        "no_transcript": "There is no transcript yet. Your own notes stay usable and exportable.",
+        "llm_failed": "The language model did not return a usable answer. Please try again.",
+        "meeting_not_finished": "The meeting has not finished yet. AI notes are available after you stop.",
+        "meeting_not_found": "The meeting was not found.",
+        "template_not_found": "The selected template was not found. Please choose another template.",
+        "document_not_found": "This version of the AI notes no longer exists.",
+        "not_enhanced_notes": "This document does not contain AI notes.",
+        "stale_document": "The AI notes were changed in the meantime and have been reloaded. Please repeat your change.",
+        "stale_sources": "The sources of this version are outdated because the transcript was rebuilt. Please regenerate the AI notes.",
+        "edit_invalid": "The change could not be saved (invalid version).",
+        "instruction_invalid": "The instruction is invalid: it must not be empty and at most 500 characters long.",
+        "store_failed": "Saving to the database failed."
       }
     }
   },
