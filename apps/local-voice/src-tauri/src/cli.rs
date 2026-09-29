@@ -264,4 +264,22 @@ pub struct CliArgs {
     /// raw) to this directory, e.g. for a cross-check with another scorer.
     #[arg(long, value_name = "DIR")]
     pub rttm_out: Option<PathBuf>,
+
+    // M5-P5a
+    /// Read a calendar (ICS file or address) like the sync service does, expand
+    /// its series and print the events of the window, without touching the
+    /// database, then exit. Honours --json/--out. The address is never printed
+    /// (host only). Exit 0 read (warnings are listed), 1 read/parse error,
+    /// 2 bad arguments. Default zone: LVA_CALENDAR_TZ, else the Windows zone.
+    #[arg(long, value_name = "FILE_OR_URL")]
+    pub calendar_dump: Option<String>,
+
+    /// Window start for --calendar-dump: YYYY-MM-DD (00:00 UTC) or RFC 3339
+    /// (default: 30 days before now).
+    #[arg(long = "from", value_name = "DATE")]
+    pub cal_from: Option<String>,
+
+    /// Window end for --calendar-dump (default: 30 days after now).
+    #[arg(long = "to", value_name = "DATE")]
+    pub cal_to: Option<String>,
 }
