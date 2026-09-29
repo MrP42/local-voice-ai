@@ -521,10 +521,18 @@ const STREAM_FIRST_TOKEN_TIMEOUT: std::time::Duration = std::time::Duration::fro
 /// Eine SSE-Zeile laenger als das ist kein Token-Stream mehr.
 const SSE_MAX_LINE_BYTES: usize = 1024 * 1024;
 
+/// Fester Startwert fuer den lokalen Chat (mit `temperature` 0 ohnehin nur
+/// Absicherung, falls ein Server trotzdem sampelt).
+pub const CHAT_SEED: u32 = 42;
+
 /// Anfrage-Body fuer Chat mit oder ohne Streaming. Beim lokalen Server wird
 /// das Denken des Modells abgeschaltet (Qwen3/Qwen3.5: `enable_thinking=false`
-/// ueber `chat_template_kwargs`); entfernte Anbieter bekommen das Feld nicht,
-/// weil manche unbekannte Felder mit 400 ablehnen.
+/// ueber `chat_template_kwargs`) und die Antwort deterministisch gemacht
+/// (`temperature` 0, fester `seed`): dieselbe Frage mit denselben Auszuegen
+/// gibt dieselbe Antwort, und ein kleines Modell zitiert nicht mal so, mal so
+/// (P4g: Eval-Genauigkeit 0,58-0,71 je Lauf). Entfernte Anbieter bekommen
+/// diese Felder nicht, weil manche unbekannte Felder oder Werte mit 400
+/// ablehnen (Denkmodelle erlauben keine Temperatur).
 pub fn stream_request_body(
     model: &str,
     messages: &[StreamMessage],
@@ -538,6 +546,8 @@ pub fn stream_request_body(
     });
     if local {
         body["chat_template_kwargs"] = serde_json::json!({ "enable_thinking": false });
+        body["temperature"] = serde_json::json!(0);
+        body["seed"] = serde_json::json!(CHAT_SEED);
     }
     body
 }
@@ -969,9 +979,15 @@ mod stream_tests {
         assert_eq!(local["stream"], true);
         assert_eq!(local["chat_template_kwargs"]["enable_thinking"], false);
         assert_eq!(local["messages"][0]["role"], "user");
+        // Lokal deterministisch: Temperatur 0 und fester Startwert.
+        assert_eq!(local["temperature"], 0);
+        assert_eq!(local["seed"], CHAT_SEED);
         let remote = stream_request_body("m", &msgs, false, false);
         assert_eq!(remote["stream"], false);
         assert!(remote.get("chat_template_kwargs").is_none());
+        // Entfernte Anbieter bekommen keine Sampling-Felder.
+        assert!(remote.get("temperature").is_none());
+        assert!(remote.get("seed").is_none());
     }
 
     #[tokio::test]

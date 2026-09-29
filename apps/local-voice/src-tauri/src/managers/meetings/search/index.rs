@@ -1744,6 +1744,30 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn chat_word_search_finds_a_compound_by_its_parts() {
+        // P4g: "Budgetreserve" in der Frage, "Die Reserve betraegt ..." im Gespraech.
+        let (_d, s) = tmp_store();
+        let m = ready_meeting(&s, "Lenkungskreis", 1_000);
+        let ids = index_texts(
+            &s,
+            &m,
+            &[
+                "S0 00:00 Ich: Wir sprechen ueber das Wetter und den Urlaub.",
+                "S1 00:09 Ich: Die Reserve betraegt 150000 Euro fuer unvorhergesehene Kosten.",
+                "S2 00:19 Ich: Der Lenkungskreis tagt im Oktober.",
+            ],
+        );
+        let found = search_ids(&s, "Wie hoch ist die Budgetreserve?", &[&m]);
+        assert_eq!(found, vec![ids[1]], "nur der Reserve-Chunk, sonst nichts");
+        // Die umgekehrte Richtung: die Frage mit dem Teil findet auch das Kompositum
+        // (Praefix "reserve*" traf schon vorher "reserven"; hier: Teil im ganzen Wort).
+        let found = search_ids(&s, "Lenkungskreis", &[&m]);
+        assert_eq!(found, vec![ids[2]]);
+        // Ein Kompositum ohne Treffer bleibt ohne Treffer (keine Zufallsteile).
+        assert!(search_ids(&s, "Zauberstabhalterung", &[&m]).is_empty());
+    }
+
+    #[test]
     fn trigram_finds_compound_part() {
         let (_d, s) = tmp_store();
         let m = ready_meeting(&s, "Planung", 1_000);
