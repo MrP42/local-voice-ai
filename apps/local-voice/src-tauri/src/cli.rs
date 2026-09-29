@@ -227,4 +227,24 @@ pub struct CliArgs {
     /// Output via --json/--out. Exit 0 targets met, 3 missed, 1 error.
     #[arg(long, value_name = "DIR")]
     pub eval_notes: Option<PathBuf>,
+
+    // M3-P3a
+    /// Measure speaker diarization (DER, acceptance AK7) on every pair
+    /// <name>.wav + <name>.rttm in DIR and exit. --model picks the diarization
+    /// model (catalog id or GGUF path; default: the installed Sortformer).
+    /// Weighted DER per group by file prefix: ami_test_*, other ami_*, rest
+    /// (German). Output via --json/--out. Exit 0 targets met, 3 missed,
+    /// 1 error, 2 bad input or model missing.
+    #[arg(long, value_name = "DIR")]
+    pub eval_diarization: Option<PathBuf>,
+
+    /// --eval-diarization: collar in seconds around every reference boundary
+    /// (default 0.25).
+    #[arg(long, value_name = "S")]
+    pub collar: Option<f64>,
+
+    /// --eval-diarization: also write the hypothesis RTTMs (post-processed and
+    /// raw) to this directory, e.g. for a cross-check with another scorer.
+    #[arg(long, value_name = "DIR")]
+    pub rttm_out: Option<PathBuf>,
 }

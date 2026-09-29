@@ -1815,7 +1815,8 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.bench_search // M4-P4a
         || cli_args.simulate_meeting // M2-P2c2
         || cli_args.eval_notes.is_some() // M1-P1e
-        || cli_args.reindex_meetings; // M4-P4b
+        || cli_args.reindex_meetings // M4-P4b
+        || cli_args.eval_diarization.is_some(); // M3-P3a
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -2059,6 +2060,23 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_eval_notes(&app_handle, &args, &dir)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // M3-P3a: Sprechertrennung (DER, AK7) auf Paaren
+                // <name>.wav + <name>.rttm; braucht nur das Diarisierungsmodell.
+                if let Some(dir) = cli_args.eval_diarization.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_eval_diarization(&app_handle, &args, &dir)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -2509,6 +2527,74 @@ fn run_headless_eval_notes(app: &AppHandle, args: &CliArgs, dir: &std::path::Pat
             ) {
                 Ok(()) => eprintln!("wrote {}", path.display()),
                 Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
+    code
+}
+
+// M3-P3a: `--eval-diarization <dir> [--model id|pfad] [--collar s] [--rttm-out dir]`.
+// DER je Datei und gewichtet je Gruppe (de / ami_dev / ami_test). Ein Modell
+// zur Zeit (Diarisierer-Platz, RAM-Gate), das Modell wird einmal geladen und
+// am Ende entladen. `--out` wird erst in eine Nachbardatei geschrieben und
+// dann umbenannt. Exit 0 Ziele erfuellt, 3 verfehlt, 1 Fehler, 2 Eingabe/Modell.
+fn run_headless_eval_diarization(app: &AppHandle, args: &CliArgs, dir: &std::path::Path) -> i32 {
+    use managers::meetings::diarize::{self, der, DiarizeError};
+
+    let models_root = match crate::portable::app_data_dir(app) {
+        Ok(d) => d.join("models"),
+        Err(e) => {
+            eprintln!("error: no app data dir: {e}");
+            return 1;
+        }
+    };
+    let model_path = diarize::resolve_model_path(&models_root, args.model.as_deref());
+    managers::transcription::init_transcribe_backend();
+    let params = diarize::DiarizeParams::new(&model_path);
+    eprintln!(
+        "eval-diarization: Modell {} ({} Threads)",
+        model_path.display(),
+        params.threads
+    );
+    let (code, payload) = match diarize::Diarizer::load(&model_path, params.threads) {
+        Ok(mut diarizer) => {
+            let opts = der::EvalOptions {
+                collar_s: args.collar.unwrap_or(der::DEFAULT_COLLAR_S),
+                rttm_out: args.rttm_out.clone(),
+                model: model_path.display().to_string(),
+            };
+            der::run_eval(&mut diarizer, dir, &params, &opts, |p| {
+                managers::tts::voices::load_wav_mono_16k(p)
+            })
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            let code = if matches!(e, DiarizeError::ModelMissing(_) | DiarizeError::WrongModel(_)) {
+                2
+            } else {
+                1
+            };
+            (
+                code,
+                serde_json::json!({"mode": "eval_diarization", "error": e.to_string()}),
+            )
+        }
+    };
+
+    if args.json {
+        println!("{payload}");
+    } else {
+        for line in der::summary_lines(&payload) {
+            println!("{line}");
+        }
+    }
+    if let Some(path) = args.out.as_deref() {
+        let text = serde_json::to_string_pretty(&payload).unwrap_or_default();
+        match der::write_atomic(path, &text) {
+            Ok(()) => eprintln!("wrote {}", path.display()),
+            Err(e) => {
+                eprintln!("error: could not write {e}");
+                return 1;
             }
         }
     }

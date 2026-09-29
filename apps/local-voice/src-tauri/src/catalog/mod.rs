@@ -53,6 +53,9 @@ pub enum Purpose {
     /// M4-P4b: GGUF-Embedding-Modell fuer den zweiten Server (Besprechungs-
     /// suche). Getrennt von `LlmModel`, damit es nie als Chat-Modell erscheint.
     LlmEmbedding,
+    /// M3-P3a: Sprechertrennungs-Modell (Kategorie "Sprechertrennung",
+    /// `managers::meetings::diarize`). Nie im ASR-Katalog: es transkribiert nicht.
+    Diarization,
 }
 
 /// One model as written in `catalog.json`. Only the fields the descriptor needs
