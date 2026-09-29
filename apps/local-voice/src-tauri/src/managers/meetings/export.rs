@@ -10,8 +10,8 @@
 //! .docx-Datei ist ein ZIP-Archiv und kein Text.
 //!
 //! M6-P6a: dazu der Export einer ganzen Besprechung (`ExportBundle`) als
-//! Markdown, Text, Word, HTML, SRT/VTT und JSON sowie als formatierte
-//! Zwischenablage. Word und HTML teilen sich den Block-/Span-Parser unten.
+//! Markdown, Text, Word, HTML, PDF (`pdf.rs`), SRT/VTT und JSON sowie als
+//! formatierte Zwischenablage. Word, HTML und PDF teilen sich den Block-/Span-Parser unten.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
@@ -40,6 +40,8 @@ pub enum ExportFormat {
     Docx,
     /// Eigenständige HTML-Seite mit eigenem CSS.
     Html,
+    /// PDF (A4) über ein verstecktes WebView2-Fenster, siehe `pdf.rs`.
+    Pdf,
     /// Untertitel (nur Transkript), Sprecher als Präfix.
     Srt,
     /// WebVTT (nur Transkript), Sprecher als Präfix.
@@ -69,6 +71,7 @@ impl ExportFormat {
             "txt" => Some(Self::PlainText),
             "docx" | "doc" => Some(Self::Docx),
             "html" | "htm" => Some(Self::Html),
+            "pdf" => Some(Self::Pdf),
             "srt" => Some(Self::Srt),
             "vtt" => Some(Self::Vtt),
             "json" => Some(Self::Json),
@@ -92,6 +95,10 @@ pub fn write_document(path: &Path, markdown: &str) -> Result<(), String> {
         ExportFormat::Html => {
             let title = first_heading(markdown).unwrap_or_else(|| "Protokoll".to_string());
             write(&html_page(&title, &markdown_to_html(markdown)))
+        }
+        ExportFormat::Pdf => {
+            let title = first_heading(markdown).unwrap_or_else(|| "Protokoll".to_string());
+            super::pdf::write_pdf(path, &html_page(&title, &markdown_to_html(markdown)))
         }
         ExportFormat::Srt | ExportFormat::Vtt | ExportFormat::Json => Err(format!(
             "{} kann nur aus einer Besprechung exportiert werden",
@@ -1112,6 +1119,7 @@ pub fn write_export(
         ExportFormat::PlainText => write(markdown_to_text(&bundle_to_markdown(b, p))),
         ExportFormat::Docx => write_docx(path, &bundle_to_markdown(b, p)),
         ExportFormat::Html => write(render_meeting_html(b, p)),
+        ExportFormat::Pdf => super::pdf::write_pdf(path, &render_meeting_html(b, p)),
         ExportFormat::Srt => write(segments_to_srt(&b.segments, &|s| b.label(s))),
         ExportFormat::Vtt => write(segments_to_vtt(&b.segments, &|s| b.label(s))),
         ExportFormat::Json => write(
@@ -1256,7 +1264,7 @@ pub fn write_docx(path: &Path, markdown: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const SAMPLE: &str = "# Protokoll: Test\n\n**Datum:** 2026-08-20\n\n## Aufgaben\n\n- Rückmeldung geben (*Wer: Herr Wolf*)\n- Vertrag & Frist prüfen\n";
@@ -1403,7 +1411,7 @@ mod tests {
 
     /// Feste Besprechung für die Golden-Files: nichts hängt von Uhr, Zeitzone
     /// oder Datenbank ab.
-    fn nordlicht_bundle() -> ExportBundle {
+    pub(crate) fn nordlicht_bundle() -> ExportBundle {
         let mut edited = entry("E3", Origin::Ai, "Budget von Frau Berg freigegeben", &[3]);
         edited.flags.edited = true;
         let mut task = entry("E4", Origin::Ai, "Angebot an Nordlicht senden", &[2, 3]);
@@ -1632,6 +1640,8 @@ mod tests {
         for (name, format) in [
             ("a.html", ExportFormat::Html),
             ("a.HTM", ExportFormat::Html),
+            ("a.pdf", ExportFormat::Pdf),
+            ("a.PDF", ExportFormat::Pdf),
             ("a.srt", ExportFormat::Srt),
             ("a.vtt", ExportFormat::Vtt),
             ("a.json", ExportFormat::Json),
@@ -1646,8 +1656,31 @@ mod tests {
             ExportFormat::from_extension(".docx"),
             Some(ExportFormat::Docx)
         );
-        // PDF kommt mit P6b; unbekannt heißt hier: melden, nicht raten.
-        assert_eq!(ExportFormat::from_extension("pdf"), None);
+        assert_eq!(
+            ExportFormat::from_extension("pdf"),
+            Some(ExportFormat::Pdf)
+        );
+        // Unbekannt heißt hier: melden, nicht raten.
+        assert_eq!(ExportFormat::from_extension("xyz"), None);
+    }
+
+    #[test]
+    fn pdf_export_meldet_ein_fehlendes_ziel_mit_kennung_ohne_browserstart() {
+        let missing = std::env::temp_dir()
+            .join(format!("lva-export-{}-gibt-es-nicht", std::process::id()))
+            .join("m.pdf");
+        let error = write_export(
+            &missing,
+            ExportFormat::Pdf,
+            &nordlicht_bundle(),
+            &ExportParts::all(),
+        )
+        .unwrap_err();
+        assert!(error.starts_with("pdf_failed: "), "{error}");
+        // Dasselbe Ziel über den Markdown-Weg (Protokoll-Export im Dialog).
+        let error = write_document(&missing, "# Titel
+").unwrap_err();
+        assert!(error.starts_with("pdf_failed: "), "{error}");
     }
 
     #[test]

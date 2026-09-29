@@ -240,9 +240,14 @@ pub async fn meetings_import_file(
 // M6-P6a: Export einer ganzen Besprechung.
 
 /// Schreibt die Besprechung in eine vom Nutzer gewählte Datei; das Format
-/// ergibt sich aus der Endung (`md`, `txt`, `docx`, `html`, `srt`, `vtt`,
-/// `json`). `parts` wählt die Teile (SRT/VTT enthalten immer nur das
+/// ergibt sich aus der Endung (`md`, `txt`, `docx`, `html`, `pdf`, `srt`,
+/// `vtt`, `json`). `parts` wählt die Teile (SRT/VTT enthalten immer nur das
 /// Transkript). Audio wird nie exportiert.
+///
+/// `pdf` läuft über ein verstecktes WebView2-Fenster (`meetings::pdf`, höchstens
+/// 20 s). Ein Fehler beginnt mit `pdf_unavailable`, `pdf_timeout`,
+/// `pdf_low_memory` oder `pdf_failed`; daran erkennt die Oberfläche, dass sie
+/// „Drucken…" als Rückfall anbieten kann.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_export(

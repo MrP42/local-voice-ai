@@ -320,11 +320,13 @@ pub struct CliArgs {
 
     // M6-P6a
     /// Export one meeting to a file and exit: --export-meeting <ID> --format
-    /// md|txt|docx|html|srt|vtt|json --out <FILE>. Honours LVA_MEETINGS_DIR;
+    /// md|txt|docx|html|pdf|srt|vtt|json --out <FILE>. Honours LVA_MEETINGS_DIR;
     /// read-only (no model, no recording, no startup housekeeping). All parts
     /// are included; SRT/VTT hold the transcript only; audio is never
-    /// exported. Exit 0 ok, 1 error, 2 bad input (unknown meeting or format,
-    /// no --out).
+    /// exported. pdf renders through a hidden WebView2 window (Windows only,
+    /// 20 s limit, error text starts with pdf_unavailable|pdf_timeout|
+    /// pdf_low_memory|pdf_failed). Exit 0 ok, 1 error, 2 bad input (unknown
+    /// meeting or format, no --out).
     #[arg(long, value_name = "ID")]
     pub export_meeting: Option<String>,
 
