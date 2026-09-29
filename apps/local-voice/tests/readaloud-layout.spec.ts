@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import * as path from "node:path";
 
 // Vorlesen-Arbeitsflaeche: eine gestapelte Spalte rechts vom Editor
 // (Bedienung oben, Dateien/Hilfe darunter) oder zwei Spalten nebeneinander;
@@ -155,6 +156,42 @@ for (const [width, height] of [
       "aria-pressed",
       "false",
     );
+  });
+}
+
+// AK5 (Issue #61): gestapelt bleibt die Bedienung kompakt UND braucht keinen
+// eigenen Scrollbalken -- auch mit Text im Editor (dann sind Vorlesen, Speichern
+// usw. aktiv). Die Dateien beginnen erst unter der Bedienung.
+for (const [width, height] of [
+  [1920, 1050],
+  [1366, 768],
+] as const) {
+  test(`AK5: stacked controls stay short and do not scroll with text (${width}x${height})`, async ({
+    page,
+  }) => {
+    await openReadAloud(page, width, height);
+    await page
+      .locator("textarea")
+      .first()
+      .fill(
+        "Olga: Das ist ein Satz. Und noch ein zweiter Satz.\n\nNoch ein Absatz.",
+      );
+    await expect(page.getByTestId("layout-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    const controls = page.getByTestId("tts-controls");
+    const metrics = await controls.evaluate((el) => ({
+      height: el.getBoundingClientRect().height,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+      bottom: el.getBoundingClientRect().bottom,
+      innerHeight: window.innerHeight,
+    }));
+    expect(metrics.height).toBeLessThanOrEqual(metrics.innerHeight * 0.5);
+    expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.clientHeight + 1);
+    const files = await box(page, "tts-files");
+    expect(files.y).toBeGreaterThanOrEqual(metrics.bottom - 1);
   });
 }
 
@@ -326,14 +363,19 @@ test("handles are hidden in the wrapped layout (<= 1100 px)", async ({
 });
 
 test("screenshots: stacked and side by side", async ({ page }) => {
+  test.skip(
+    !process.env.SCREENS_DIR,
+    "nur mit SCREENS_DIR (Aufnahme, kein Verhaltenstest)",
+  );
+  const dir = path.resolve(process.env.SCREENS_DIR!);
   await openReadAloud(page);
   await page.screenshot({
-    path: "../../koordination/ui-vorlesen-kompakt/screens/p5/gestapelt.png",
+    path: path.join(dir, "gestapelt-1920.png"),
     animations: "disabled",
   });
   await page.getByTestId("layout-toggle").click();
   await page.screenshot({
-    path: "../../koordination/ui-vorlesen-kompakt/screens/p5/nebeneinander.png",
+    path: path.join(dir, "nebeneinander-1920.png"),
     animations: "disabled",
   });
 });

@@ -28,6 +28,7 @@
     "serverTitle": "Stimme & Wiedergabe",
     "description": "Lokale Sprachausgabe über Fish Speech auf der eigenen GPU. Der Server startet bei Bedarf und wird nach Leerlauf wieder gestoppt, um VRAM freizugeben.",
     "inputPlaceholder": "Text zum Vorlesen eingeben oder einfügen…",
+    "tabsLabel": "Textfassung",
     "tabOriginal": "Original",
     "tabTranslation": "Übersetzung",
     "tabSummary": "Zusammenfassung",
@@ -286,6 +287,7 @@
     },
     "files": {
       "title": "Dateien",
+      "tabsLabel": "Seitenleiste",
       "add": "Datei hinzufügen (wird kopiert)",
       "openFolder": "Ordner im Explorer zeigen",
       "refresh": "Aktualisieren",

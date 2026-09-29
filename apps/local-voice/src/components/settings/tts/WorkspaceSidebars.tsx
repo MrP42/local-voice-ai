@@ -517,6 +517,7 @@ export const FilesSidebar: React.FC<{
             ]}
             value={tab}
             onChange={onTabChange}
+            ariaLabel={t("tts.files.tabsLabel")}
           />
         ) : (
           <span className="text-xs font-semibold uppercase tracking-wide text-text/60">
