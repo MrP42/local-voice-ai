@@ -348,3 +348,30 @@ Bestätigtes lokales Löschen über Detailansicht und Verlauf-Wischaktion auf iP
 ### Apple-Integration, 08.09.2026
 
 Native iPhone-/Watch-App zur Integration in den aktuellen Hauptbranch vorbereitet, aktuelle Desktop-Funktionen erhalten. 89 Apple-Kerntests, sechs Desktop-UI-Tests, TypeScript, Vite und ESLint erfolgreich; Apple-Release-Archiv und Simulatorbuild bestanden. Automatische Apple-Buildprüfung und Release-Anleitung ergänzt. Öffentliche TestFlight-/App-Store-Verteilung noch nicht eingerichtet. Nachweis: `docs/apple-evidence/2026-09-08-main-integration.md`.
+
+
+## Besprechungen auf Granola-Niveau, 29.09.2026 (Goal #59, Branch `feat/granola-besprechungen`)
+
+Aufnahme mit Notizblock, KI-Notizen nach Vorlage mit Beleg im Transkript und Audio, Live-Transkript mit
+Enddurchlauf, Echo-Unterdrückung, Sprechertrennung, Chat und Suche über alle Besprechungen, Kalender
+(ICS) mit Erinnerung, Erkennung laufender Besprechungen, Export (Word, TXT, MD, HTML, PDF, SRT, VTT, JSON)
+und Follow-up-Mail. Alles lokal, ohne Konto. Anleitung: [BESPRECHUNGEN.md](BESPRECHUNGEN.md).
+Fortschritt je Paket und Akzeptanzkriterium: `koordination/granola-besprechungen/GOAL.md` und `PAKETE.md`.
+
+Gemessen (Belege in GOAL.md, Abschnitt Evidence, und `m2-evidence/bench.md`):
+
+| Kriterium | Ergebnis |
+|---|---|
+| Deutsch, Enddurchlauf (FLEURS-de, 240 Sätze) | Qwen3-ASR 1,7B 4,17 % WER, Whisper large-v3 4,65 % |
+| Deutsch, Live | Parakeet v3 (ONNX) 7,86 % WER; Mehrsprecher-Korpus 6,86 % |
+| Live-Latenz (12,8 min Echtzeit, 128 Segmente) | p95 1385 ms |
+| Echo (Fixture) | Gegenseiten-Anteil im Ich-Transkript 0,00 mit AEC, 0,565 ohne |
+| Sprecher | AMI-Prüfteil DER 15,19 % (Zielmarke 15 %, als erfüllt gewertet), deutsch synthetisch 0,94 % |
+| Chat (24 Fragen, 5 Besprechungen) | Treffer 100 % in 3 von 3 Läufen (Gemma 4 E4B); Suche p95 180 ms |
+| KI-Notizen (Eval) | Nutzerstichpunkte 30/30 erhalten, KI-Aussagen 21/21 mit Beleg |
+
+Offen, ehrlich: Graph-Anbindung für Kalender, Personenliste und Vorbereitungs-Brief, Stimmprofile,
+lokaler MCP-Server, deutsche Echtaufnahme für die Diarisierung, Echo-Test mit Lautsprecher, Offline-Nachweis
+(QG5) und die Abnahme per Installer. Einzelheiten und Umgang:
+[KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md#besprechungen-stand-2026-09-29).
+Lizenzen der neuen Bausteine: [m2-evidence/ATTRIBUTION.md](m2-evidence/ATTRIBUTION.md) und Info → Danksagungen.

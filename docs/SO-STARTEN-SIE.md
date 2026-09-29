@@ -3,6 +3,8 @@
 Kurzanleitung für den stabilisierten Stand vom 17.08.2026.
 Die Voice-AI-Funktionen vom 18.08.2026 (Vorlesen, Stimmen klonen, Übersetzung,
 Stimmwechsler) sind am Ende dieses Dokuments beschrieben.
+Die Besprechungsfunktionen (Notizen, KI-Notizen, Sprecher, Chat, Kalender, Export)
+stehen in [BESPRECHUNGEN.md](BESPRECHUNGEN.md).
 
 Seit dem 18.08.2026 heißt die App **Local Voice AI** (vormals „Sprechstift").
 Seit dem 19.08.2026 heißt auch die Programmdatei `local-voice-ai.exe`, und der

@@ -168,6 +168,35 @@ Aufbewahrungseinstellung, nicht dem Logging.
 will, löscht sie von Hand:
 `%LOCALAPPDATA%\de.wolffappliedai.localvoiceai\logs\handy.log`
 
+## Besprechungen (Stand 2026-09-29)
+
+Grenzen der Besprechungsfunktion (Goal #59, Anleitung in [BESPRECHUNGEN.md](BESPRECHUNGEN.md)).
+Zahlen stammen aus den Messläufen im Branch, Belege in `koordination/granola-besprechungen/`
+(GOAL.md, BEFUNDE.md) und `docs/m2-evidence/bench.md`.
+
+| Grenze | Stand | Umgang |
+|---|---|---|
+| **Sprechertrennung: AMI-DER 15,19 %** | Auf dem AMI-Prüfteil (ES2004a, IS1009a) liegt der DER knapp über der Zielmarke von 15 %; die Entwicklungsstücke kommen auf 14,72 %. Patrick wertet das Ziel als erfüllt (B7), es wurde bewusst nicht nachgetunt. | Sprecher lassen sich im Transkript benennen, zusammenführen und einzeln umhängen. Nemotron-3 (bis 8 Sprecher, im Spike 14,0 %) ist ein Folge-Goal. |
+| **Höchstens vier Sprecher je Kanal** | Sortformer 4spk vergibt Labels in Ankunftsreihenfolge. | Mehr Personen lassen sich nicht trennen; Segmente von Hand umhängen. |
+| **Deutsche Echtaufnahme für die Diarisierung fehlt** | Die 0,94 % DER auf Deutsch stammen aus synthetischen Szenen (SAPI-Stimmen). Eine echte Aufnahme mit 3 bis 5 Personen folgt (E23). | Bis dahin keine belastbare Zahl für echte deutsche Mehrsprecher-Besprechungen. |
+| **Wiedererkennen per Stimmprofil fehlt** | Paket P3d ist nicht enthalten; Sprecher werden je Besprechung neu benannt. | Namen überstehen nur die Neu-Transkription derselben Besprechung. |
+| **Echo-Test mit echtem Lautsprecher steht aus** | Die Echo-Unterdrückung ist an einer Fixture gemessen (Gegenseiten-Anteil im Ich-Transkript 0,00 mit, 0,565 ohne AEC). Ein Test mit Lautsprecher und Raum folgt in der Abnahme. | Mit Kopfhörer ist das Problem gegenstandslos; sonst Transkript prüfen. |
+| **Kalender nur per ICS-Adresse** | Google, Outlook, iCloud und Nextcloud über den veröffentlichten Link. Die Anbindung über Microsoft Graph folgt; die Client-ID trägt der Nutzer später in den Einstellungen ein (E14). | Veröffentlichte Outlook-Kalender aktualisieren sich beim Anbieter mit Verzögerung von Stunden. Ohne „Alle Details“ fehlen die Teilnehmenden. |
+| **Personen und Vorbereitungs-Brief fehlen** | Pakete P5d und P5e sind nicht enthalten (Personenliste, Kurzbrief vor dem Termin). | Suche und Chat nach Namen funktionieren über das Transkript. |
+| **Erkennung laufender Besprechungen nur Windows, nur Hinweis** | Liest das Nutzungsprotokoll des Mikrofons (Registry), nie das Mikrofon selbst; startet nie eine Aufnahme. | Auf anderen Systemen erscheint der Punkt als „nicht verfügbar“. |
+| **MCP-Server nicht enthalten** | Paket P6e (lokal, stdio, nur lesend, standardmäßig aus) war beim Schreiben dieser Zeilen noch in Arbeit. | [BESPRECHUNGEN.md](BESPRECHUNGEN.md#mcp-in-arbeit) nach dem Einbau anpassen. |
+| **Live-Transkript ist keine Endfassung** | Live: Parakeet v3, WER 7,86 % auf FLEURS-de (ONNX); die Umstellung auf die GGUF-Fassung (5,5 %) ist in Arbeit (P2g). Enddurchlauf: Qwen3-ASR 1,7B 4,17 %, Whisper large-v3 4,65 %. Gemessen an gelesener Sprache, nicht an spontaner Besprechung. | Der Enddurchlauf ersetzt das Live-Transkript. Ohne GPU dauert er lang (Qwen3-ASR auf der CPU rund 14 Minuten je Stunde Aufnahme); dann kann „Aus“ sinnvoller sein. |
+| **KI-Qualität hängt vom lokalen Modell ab** | Der lokale Kontext beträgt 8192 Token, lange Besprechungen laufen daher in Teilschritten. Chat-Eval: 24 Fragen über 5 synthetische Besprechungen, Gemma 4 E4B 100 %; keine Messung an echten Besprechungen. | Einträge „ohne Beleg“ sind markiert. Während einer Aufnahme antwortet der Chat mit lokalem Modell nur auf einem GPU-Backend, damit die Live-Verarbeitung nicht stockt. |
+| **PDF-Export nur Windows** | Das PDF entsteht über ein verstecktes WebView2-Fenster. | Ausweg: als HTML speichern und im Browser drucken. |
+| **Follow-up-Mail als .eml** | Outlook (klassisch) öffnet die Datei als Entwurf; das neue Outlook und Thunderbird eventuell nur zum Lesen. | „Kopieren“ oder „Im Mailprogramm öffnen“ nutzen. |
+| **System-Audio nur unter Windows** | Auf dem Mac läuft die Aufnahme nur über das Mikrofon; die Echo-Unterdrückung braucht den Windows-Systemton, die Erkennung das Windows-Nutzungsprotokoll. | Nicht angegangen; macOS soll nur nicht brechen. |
+| **Offline-Nachweis steht aus** | Der Besprechungspfad ist so gebaut, dass Netz nur für Modell-Downloads, ICS-Abruf und einen bewusst gewählten externen Anbieter nötig ist. Die Messung mit Aufzeichnung der Verbindungen (QG5) ist noch nicht gelaufen. | Siehe auch „Noch nicht implementiert“. |
+
+**Lizenzhinweise.** Die Danksagungen unter Info nennen die neuen Modelle und Bibliotheken mit Lizenz, die
+vollständige Liste steht in [m2-evidence/ATTRIBUTION.md](m2-evidence/ATTRIBUTION.md). Sortformer steht unter
+der NVIDIA Open Model License und wird geladen, nicht mitgeliefert. Im ASR-Katalog liegt seit früher ein
+Modell mit CC-BY-NC-4.0 (Canary 1B); es ist nicht vorgewählt und wird nicht für Besprechungen empfohlen.
+
 ## Noch nicht implementiert (Stand 2026-08-17)
 
 - Abnahme gegen Browser-Textfeld, Microsoft Word und VS Code. Verifiziert ist bisher
@@ -177,7 +206,7 @@ will, löscht sie von Hand:
   ungeschützten** Einfügepfad `clipboard::paste`. Nur der Abschluss-Einfügevorgang der
   Standard-Diktatstrecke ist abgesichert.
 - Regelbasierte Nachbearbeitung, Wörterbuch, Snippets, Formatierungsprofile
-- Windows-Installer, SBOM, Third-Party-Notices
+- Windows-Installer, SBOM, Third-Party-Notices (die Danksagungen unter Info und `m2-evidence/ATTRIBUTION.md` nennen seit dem 29.09.2026 die für Besprechungen hinzugekommenen Modelle und Bibliotheken; eine vollständige, maschinell erzeugte Liste aller Abhängigkeiten gibt es weiter nicht)
 - Benchmarks über die eine gemessene Transkription hinaus
 - Offline-Test mit Aufzeichnung der Netzwerkverbindungen
 

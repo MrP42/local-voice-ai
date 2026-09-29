@@ -7,6 +7,7 @@ Was hier liegt, in der Reihenfolge, in der man es braucht.
 | Datei | Inhalt |
 |---|---|
 | [SO-STARTEN-SIE.md](SO-STARTEN-SIE.md) | Installation, erste Schritte, Fish-Speech für das Vorlesen mit eigener Stimme |
+| [BESPRECHUNGEN.md](BESPRECHUNGEN.md) | Besprechungen: Aufnahme mit Notizen, KI-Notizen, Sprecher, Chat und Suche, Kalender, Export, Datenschutz |
 | [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md) | Was nicht geht oder nicht verifiziert ist — ehrlich gehalten |
 
 ## Für Entwickler
