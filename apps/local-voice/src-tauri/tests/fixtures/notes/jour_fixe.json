@@ -1,0 +1,590 @@
+{
+ "title": "Jour fixe Team Plattform",
+ "template_key": "jour_fixe",
+ "segments": [
+  {
+   "segment_index": 0,
+   "text": "Hallo zusammen, ich glaube, wir sind vollzählig. Jour fixe wie immer, erst die Runde, dann die offenen Punkte.",
+   "start_ms": 2000,
+   "end_ms": 9857,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 1,
+   "text": "Hier ist Jonas, ich fange an, wenn das okay ist.",
+   "start_ms": 22238,
+   "end_ms": 25666,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 2,
+   "text": "Gern, Jonas.",
+   "start_ms": 38047,
+   "end_ms": 39547,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 3,
+   "text": "Also, das Backend für den neuen Bestellexport ist fertig. Die Tests laufen durch, es fehlt nur noch das Review.",
+   "start_ms": 51928,
+   "end_ms": 59856,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 4,
+   "text": "Ich hatte das Review eigentlich bei Miriam angefragt, aber sie war die ganze Woche im Kundenprojekt.",
+   "start_ms": 72237,
+   "end_ms": 79379,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 5,
+   "text": "Miriam, schaffst du das Review diese Woche noch?",
+   "start_ms": 91760,
+   "end_ms": 95188,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 6,
+   "text": "Miriam hier. Bis Mittwoch ja, danach bin ich wieder zwei Tage beim Kunden in Bremen.",
+   "start_ms": 107569,
+   "end_ms": 113569,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 7,
+   "text": "Jonas, schick mir bitte den Link direkt, dann schaue ich morgen früh als Erstes drauf.",
+   "start_ms": 125950,
+   "end_ms": 132092,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 8,
+   "text": "Mach ich. Dann noch was: Der Export ist bei großen Bestellungen langsam, bei fünftausend Positionen dauert er fast vierzig Sekunden.",
+   "start_ms": 144473,
+   "end_ms": 153901,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 9,
+   "text": "Ist das ein Problem für den Kunden oder nur unschön?",
+   "start_ms": 166282,
+   "end_ms": 169996,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 10,
+   "text": "Das Lager exportiert zweimal am Tag, die warten nicht darauf. Ich würde es erst mal so lassen und später optimieren.",
+   "start_ms": 182377,
+   "end_ms": 190662,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 11,
+   "text": "Okay, dann nehmen wir das als bekannte Einschränkung in die Release-Notes auf. Danke, Jonas. Wer ist der Nächste?",
+   "start_ms": 203043,
+   "end_ms": 211114,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 12,
+   "text": "Tarek hier. Bei mir ging es die ganze Woche um die Umstellung der Anmeldung auf Single Sign-on.",
+   "start_ms": 223495,
+   "end_ms": 230280,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 13,
+   "text": "Technisch läuft es in der Testumgebung. Aber die IT des Kunden hat uns immer noch keine Zugangsdaten für die Produktivumgebung geschickt.",
+   "start_ms": 242661,
+   "end_ms": 252446,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 14,
+   "text": "Ich habe zweimal nachgefragt, zuletzt am Donnerstag. Ohne die Daten kann ich nicht weiter.",
+   "start_ms": 264827,
+   "end_ms": 271255,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 15,
+   "text": "Das ist dann ein echter Blocker. Wer ist beim Kunden zuständig?",
+   "start_ms": 283636,
+   "end_ms": 288136,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 16,
+   "text": "Ein Herr Seidel aus der IT. Der antwortet aber nur, wenn sein Chef ihn anstupst.",
+   "start_ms": 300517,
+   "end_ms": 306231,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 17,
+   "text": "Dann eskaliere ich das. Ich rufe heute Nachmittag bei Frau Lorenz an, die ist ja unsere Projektleiterin auf Kundenseite.",
+   "start_ms": 318612,
+   "end_ms": 327183,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 18,
+   "text": "Das wäre super. Wenn die Daten bis Mittwoch da sind, schaffe ich es noch bis zum Release.",
+   "start_ms": 339564,
+   "end_ms": 345921,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 19,
+   "text": "Und wenn nicht?",
+   "start_ms": 358302,
+   "end_ms": 359802,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 20,
+   "text": "Dann würde ich Single Sign-on aus dem Release rausnehmen und zwei Wochen später nachliefern. Der Rest hängt nicht daran.",
+   "start_ms": 372183,
+   "end_ms": 380754,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 21,
+   "text": "Gut, das ist ein sauberer Plan B. Nächste Runde, Sabine?",
+   "start_ms": 393135,
+   "end_ms": 397135,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 22,
+   "text": "Sabine hier. Ich habe die Supportfälle der letzten zwei Wochen ausgewertet. Es sind einundvierzig Tickets, deutlich mehr als sonst.",
+   "start_ms": 409516,
+   "end_ms": 418873,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 23,
+   "text": "Die Hälfte davon betrifft die neue Suchfunktion. Die Leute finden ihre Artikel nicht mehr, wenn sie mit der alten Artikelnummer suchen.",
+   "start_ms": 431254,
+   "end_ms": 440896,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 24,
+   "text": "Die alte Nummer war doch absichtlich rausgeflogen, oder?",
+   "start_ms": 453277,
+   "end_ms": 457277,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 25,
+   "text": "Ja, weil wir dachten, keiner nutzt sie mehr. Offensichtlich nutzen sie doch sehr viele, vor allem im Lager.",
+   "start_ms": 469658,
+   "end_ms": 477300,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 26,
+   "text": "Mein Vorschlag wäre, die alte Nummer wieder als Suchfeld aufzunehmen. Das ist laut Jonas ein halber Tag Arbeit.",
+   "start_ms": 489681,
+   "end_ms": 497609,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 27,
+   "text": "Jonas noch mal: Ja, ein halber Tag inklusive Test, wenn wir den Suchindex nicht umbauen müssen.",
+   "start_ms": 509990,
+   "end_ms": 516775,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 28,
+   "text": "Dann machen wir das. Das ist wenig Aufwand und nimmt richtig Druck aus dem Support.",
+   "start_ms": 529156,
+   "end_ms": 535084,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 29,
+   "text": "Jonas, übernimmst du das? Idealerweise noch vor dem Release.",
+   "start_ms": 547465,
+   "end_ms": 551750,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 30,
+   "text": "Ja, nehme ich. Ich mache es direkt nach dem Review des Exports.",
+   "start_ms": 564131,
+   "end_ms": 568631,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 31,
+   "text": "Sabine noch: Die restlichen Tickets sind gemischt, nichts, was heraussticht. Die Details habe ich im Wiki abgelegt.",
+   "start_ms": 581012,
+   "end_ms": 589226,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 32,
+   "text": "Danke dir, Sabine. Dann zu mir: Ich war die Woche vor allem mit der Planung für das nächste Quartal beschäftigt.",
+   "start_ms": 601607,
+   "end_ms": 609607,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 33,
+   "text": "Die Geschäftsführung möchte, dass wir im nächsten Quartal die mobile App angehen. Das bedeutet, dass wir jemanden mit Mobile-Erfahrung brauchen.",
+   "start_ms": 621988,
+   "end_ms": 632273,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 34,
+   "text": "Tarek hier. Ich habe früher zwei Jahre Android gemacht, das könnte ich mir vorstellen.",
+   "start_ms": 644654,
+   "end_ms": 650796,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 35,
+   "text": "Das ist gut zu wissen. Wir brauchen aber trotzdem Verstärkung, alleine schaffst du das neben dem Tagesgeschäft nicht.",
+   "start_ms": 663177,
+   "end_ms": 671534,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 36,
+   "text": "Ich habe mit der Personalabteilung gesprochen: Wir dürfen eine Stelle ausschreiben, Start frühestens im Januar.",
+   "start_ms": 683915,
+   "end_ms": 691843,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 37,
+   "text": "Miriam: Sollen wir bis dahin einen Freelancer holen? Das Budget dafür wäre doch da, oder?",
+   "start_ms": 704224,
+   "end_ms": 710581,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 38,
+   "text": "Das Budget wäre da, aber ich möchte erst die Stelle ausschreiben. Wenn wir bis Ende Oktober niemanden finden, holen wir einen Freelancer.",
+   "start_ms": 722962,
+   "end_ms": 732747,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 39,
+   "text": "Das halte ich als Entscheidung fest: erst Ausschreibung, Freelancer nur als Rückfall ab November.",
+   "start_ms": 745128,
+   "end_ms": 752056,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 40,
+   "text": "Klingt vernünftig. Wer schreibt die Stellenanzeige?",
+   "start_ms": 764437,
+   "end_ms": 768079,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 41,
+   "text": "Die schreibe ich, Tarek liest gegen, weil er die technischen Anforderungen besser kennt.",
+   "start_ms": 780460,
+   "end_ms": 786745,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 42,
+   "text": "Tarek: Ja, gern. Schick sie mir einfach, wenn der Entwurf steht.",
+   "start_ms": 799126,
+   "end_ms": 803697,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 43,
+   "text": "Dann zu den offenen Punkten. Erstens der Release-Termin. Wir hatten den fünfzehnten angepeilt. Hält das?",
+   "start_ms": 816078,
+   "end_ms": 823506,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 44,
+   "text": "Jonas: Von meiner Seite ja, wenn Miriam das Review bis Mittwoch schafft.",
+   "start_ms": 835887,
+   "end_ms": 841029,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 45,
+   "text": "Tarek: Ohne Zugangsdaten nur ohne Single Sign-on, wie gesagt.",
+   "start_ms": 853410,
+   "end_ms": 857767,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 46,
+   "text": "Dann bleiben wir beim fünfzehnten. Die Entscheidung über Single Sign-on treffen wir am Mittwoch im kurzen Abstimmungstermin.",
+   "start_ms": 870148,
+   "end_ms": 879005,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 47,
+   "text": "Zweitens die Urlaubsplanung für den Dezember. Bitte tragt euch bis Ende des Monats in den Teamkalender ein.",
+   "start_ms": 891386,
+   "end_ms": 899028,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 48,
+   "text": "Sabine: Gilt das auch für die Tage zwischen den Jahren? Da ist ja traditionell wenig los.",
+   "start_ms": 911409,
+   "end_ms": 917766,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 49,
+   "text": "Ja, auch die. Wir brauchen zwischen den Jahren mindestens eine Person im Bereitschaftsdienst, den Rest klären wir danach.",
+   "start_ms": 930147,
+   "end_ms": 938789,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 50,
+   "text": "Miriam: Ich kann die Bereitschaft übernehmen, ich fahre erst im Januar weg.",
+   "start_ms": 951170,
+   "end_ms": 956527,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 51,
+   "text": "Super, danke Miriam. Das trage ich so ein.",
+   "start_ms": 968908,
+   "end_ms": 971908,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 52,
+   "text": "Drittens: die Retrospektive. Die letzte ist ausgefallen, ich würde sie gern nächste Woche nachholen.",
+   "start_ms": 984289,
+   "end_ms": 991431,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 53,
+   "text": "Jonas: Bitte nicht am Montag, da ist das Lager-Update beim Kunden.",
+   "start_ms": 1003812,
+   "end_ms": 1008526,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 54,
+   "text": "Dann Dienstag um zehn. Ich schicke die Einladung heute noch raus.",
+   "start_ms": 1020907,
+   "end_ms": 1025549,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 55,
+   "text": "Tarek: Kurze Frage noch zum Testsystem: Es ist seit gestern extrem langsam. Weiß jemand, warum?",
+   "start_ms": 1037930,
+   "end_ms": 1044715,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 56,
+   "text": "Sabine: Ich glaube, da läuft seit gestern der Lasttest vom Kundenprojekt. Das sollte morgen fertig sein.",
+   "start_ms": 1057096,
+   "end_ms": 1064524,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 57,
+   "text": "Dann warten wir bis morgen. Wenn es danach immer noch langsam ist, meldest du dich bei mir, Tarek.",
+   "start_ms": 1076905,
+   "end_ms": 1083905,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 58,
+   "text": "Mach ich.",
+   "start_ms": 1096286,
+   "end_ms": 1097786,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 59,
+   "text": "Gibt es sonst noch etwas? Nein? Dann fasse ich kurz zusammen.",
+   "start_ms": 1110167,
+   "end_ms": 1114524,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 60,
+   "text": "Miriam macht das Review bis Mittwoch. Jonas baut danach die Suche nach der alten Artikelnummer ein.",
+   "start_ms": 1126905,
+   "end_ms": 1133976,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 61,
+   "text": "Ich eskaliere die Zugangsdaten heute bei Frau Lorenz, und am Mittwoch entscheiden wir über Single Sign-on.",
+   "start_ms": 1146357,
+   "end_ms": 1153928,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 62,
+   "text": "Ich schreibe die Stellenanzeige, Tarek liest gegen. Urlaub bitte bis Monatsende eintragen, Retro am Dienstag um zehn.",
+   "start_ms": 1166309,
+   "end_ms": 1174666,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 63,
+   "text": "Danke euch allen, bis nächste Woche.",
+   "start_ms": 1187047,
+   "end_ms": 1189618,
+   "channel": 0,
+   "speaker_index": null
+  }
+ ],
+ "notes": [
+  {
+   "id": "01K6EVALJF0000000000000001",
+   "kind": "heading",
+   "text": "Runde",
+   "at_ms": 26238,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALJF0000000000000002",
+   "kind": "bullet",
+   "text": "Export fertig, Review fehlt (Miriam bis Mi)",
+   "at_ms": 95760,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALJF0000000000000003",
+   "kind": "bullet",
+   "text": "Export bei 5000 Pos. ~40 s langsam -> Release-Notes",
+   "at_ms": 148473,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALJF0000000000000004",
+   "kind": "bullet",
+   "text": "SSO blockiert: Zugangsdaten Kunde fehlen",
+   "at_ms": 246661,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALJF0000000000000005",
+   "kind": "bullet",
+   "text": "41 Tickets, Hälfte Suche alte Artikelnummer",
+   "at_ms": 413516,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALJF0000000000000006",
+   "kind": "bullet",
+   "text": "Mobile App nächstes Quartal, Stelle ab Januar",
+   "at_ms": 625988,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALJF0000000000000007",
+   "kind": "heading",
+   "text": "Offene Punkte",
+   "at_ms": 820078,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALJF0000000000000008",
+   "kind": "bullet",
+   "text": "Release bleibt am 15., SSO-Entscheidung Mittwoch",
+   "at_ms": 874148,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALJF0000000000000009",
+   "kind": "bullet",
+   "text": "Retro Dienstag 10 Uhr",
+   "at_ms": 1024907,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALJF0000000000000010",
+   "kind": "todo",
+   "text": "Frau Lorenz anrufen wegen SSO-Zugangsdaten",
+   "at_ms": 322612,
+   "checked": false
+  }
+ ]
+}

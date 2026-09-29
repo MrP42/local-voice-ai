@@ -1,0 +1,544 @@
+{
+ "title": "Erstgespräch Brenner Haustechnik",
+ "template_key": "vertrieb",
+ "segments": [
+  {
+   "segment_index": 0,
+   "text": "Guten Morgen Herr Albrecht, schön, dass es heute klappt. Ich bin Lena Vogt von Wolkenfeld Software.",
+   "start_ms": 2000,
+   "end_ms": 9071,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 1,
+   "text": "Morgen Frau Vogt. Ja, passt gut, ich habe ungefähr eine halbe Stunde, dann muss ich auf die Baustelle.",
+   "start_ms": 11722,
+   "end_ms": 19007,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 2,
+   "text": "Dann legen wir direkt los. Sie hatten über das Kontaktformular angefragt, es ging um die Einsatzplanung für Ihre Monteure.",
+   "start_ms": 21658,
+   "end_ms": 30372,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 3,
+   "text": "Genau. Wir sind die Brenner Haustechnik, Heizung und Sanitär, und haben inzwischen achtundzwanzig Monteure im Außendienst.",
+   "start_ms": 33023,
+   "end_ms": 41737,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 4,
+   "text": "Die Planung läuft heute komplett über eine Excel-Liste und über Zuruf. Das macht unsere Disponentin, Frau Kraus, ganz allein.",
+   "start_ms": 44388,
+   "end_ms": 53316,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 5,
+   "text": "Wie viele Aufträge planen Sie denn ungefähr pro Woche?",
+   "start_ms": 55967,
+   "end_ms": 59824,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 6,
+   "text": "Im Winter sind es gut dreihundert Einsätze pro Woche, im Sommer eher hundertachtzig. Der Winter ist das Problem, da brennt es jeden Tag.",
+   "start_ms": 62475,
+   "end_ms": 72189,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 7,
+   "text": "Was läuft im Moment am schlechtesten, wenn Sie an die Wintermonate denken?",
+   "start_ms": 74840,
+   "end_ms": 80125,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 8,
+   "text": "Ganz klar die Notdienste. Wenn eine Heizung ausfällt, muss jemand in zwei Stunden da sein, und dann wirft das den ganzen Tagesplan um.",
+   "start_ms": 82776,
+   "end_ms": 92347,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 9,
+   "text": "Frau Kraus telefoniert dann zwanzig Minuten herum, bis sie weiß, wer in der Nähe ist und das passende Material im Wagen hat.",
+   "start_ms": 94998,
+   "end_ms": 103855,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 10,
+   "text": "Das hören wir oft. Unsere Planungstafel zeigt die Position der Fahrzeuge und schlägt den nächstgelegenen passenden Monteur vor.",
+   "start_ms": 106506,
+   "end_ms": 115577,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 11,
+   "text": "Das mit dem Material ist mir wichtig. Die Hälfte der Nachfahrten entsteht, weil ein Ersatzteil fehlt.",
+   "start_ms": 118228,
+   "end_ms": 125442,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 12,
+   "text": "Man kann für jedes Fahrzeug einen Lagerbestand pflegen. Die Monteure buchen die Entnahme in der App, dann stimmt der Bestand.",
+   "start_ms": 128093,
+   "end_ms": 137021,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 13,
+   "text": "Die Jungs buchen aber nichts, wenn es länger als zehn Sekunden dauert. Das muss wirklich einfach sein.",
+   "start_ms": 139672,
+   "end_ms": 146957,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 14,
+   "text": "Verstehe. Das Buchen geht per Scan des Barcodes auf der Verpackung, das sind zwei Tipper. Ich kann Ihnen das gleich zeigen.",
+   "start_ms": 149608,
+   "end_ms": 158393,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 15,
+   "text": "Gut. Und wie ist das mit unserer Warenwirtschaft? Wir haben Sanitas Office, das bleibt auch.",
+   "start_ms": 161044,
+   "end_ms": 167615,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 16,
+   "text": "Für Sanitas Office haben wir eine Standardschnittstelle. Aufträge und Kunden kommen von dort, Arbeitszeiten und Material gehen zurück.",
+   "start_ms": 170266,
+   "end_ms": 179837,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 17,
+   "text": "Das wäre schon mal ein großer Punkt. Heute tippt Frau Kraus die Stundenzettel abends noch einmal ab.",
+   "start_ms": 182488,
+   "end_ms": 189630,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 18,
+   "text": "Wie viel Zeit geht dafür drauf, grob geschätzt?",
+   "start_ms": 192281,
+   "end_ms": 195638,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 19,
+   "text": "Sie sagt selbst, jeden Abend etwa eine Stunde. Und Fehler gibt es trotzdem, dann stimmen die Rechnungen nicht.",
+   "start_ms": 198289,
+   "end_ms": 206146,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 20,
+   "text": "Das wäre mit der Schnittstelle weg. Die Stunden werden in der App erfasst und nach Freigabe übertragen.",
+   "start_ms": 208797,
+   "end_ms": 216154,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 21,
+   "text": "Wer gibt denn frei? Ich will nicht, dass jeder Monteur direkt in die Buchhaltung schreibt.",
+   "start_ms": 218805,
+   "end_ms": 225233,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 22,
+   "text": "Die Freigabe macht bei Ihnen dann die Disposition oder die Bauleitung, das lässt sich pro Rolle einstellen.",
+   "start_ms": 227884,
+   "end_ms": 235526,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 23,
+   "text": "Okay. Jetzt die Frage, die mein Chef sofort stellen wird: Was kostet das?",
+   "start_ms": 238177,
+   "end_ms": 243391,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 24,
+   "text": "Wir rechnen pro Nutzer und Monat. Für die Monteur-App sind es neunzehn Euro, für die Planungstafel neunundvierzig Euro pro Disponent.",
+   "start_ms": 246042,
+   "end_ms": 255542,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 25,
+   "text": "Die Einrichtung mit Schnittstelle und Schulung liegt einmalig bei etwa viertausendfünfhundert Euro.",
+   "start_ms": 258193,
+   "end_ms": 265264,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 26,
+   "text": "Hm. Achtundzwanzig Monteure mal neunzehn, das sind über fünfhundert Euro im Monat. Das ist schon eine Hausnummer.",
+   "start_ms": 267915,
+   "end_ms": 275986,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 27,
+   "text": "Wir hatten eigentlich mit weniger gerechnet. Einen festen Budgetrahmen gibt es aber noch nicht, das entscheidet Herr Brenner selbst.",
+   "start_ms": 278637,
+   "end_ms": 288065,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 28,
+   "text": "Herr Brenner ist der Geschäftsführer, richtig? Wäre er bei einem nächsten Termin dabei?",
+   "start_ms": 290716,
+   "end_ms": 296930,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 29,
+   "text": "Ja, er ist der Inhaber. Er will aber erst sehen, dass es sich rechnet, bevor er sich eine Stunde Zeit nimmt.",
+   "start_ms": 299581,
+   "end_ms": 307295,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 30,
+   "text": "Dann schlage ich vor, dass ich eine kleine Rechnung aufstelle: die eine Stunde Abtippen am Abend, die Nachfahrten, die Telefonate bei Notdiensten.",
+   "start_ms": 309946,
+   "end_ms": 320374,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 31,
+   "text": "Das wäre hilfreich. Die Nachfahrten kosten uns am meisten, pro Fahrt rechnen wir intern mit etwa fünfundachtzig Euro.",
+   "start_ms": 323025,
+   "end_ms": 331382,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 32,
+   "text": "Wie viele Nachfahrten wegen fehlendem Material haben Sie ungefähr im Monat?",
+   "start_ms": 334033,
+   "end_ms": 339390,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 33,
+   "text": "Im Winter bestimmt vierzig, im Sommer vielleicht zwanzig. Genau zählen wir das nicht.",
+   "start_ms": 342041,
+   "end_ms": 348112,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 34,
+   "text": "Dann nehme ich für die Rechnung dreißig im Schnitt an, das markiere ich als Schätzung.",
+   "start_ms": 350763,
+   "end_ms": 356905,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 35,
+   "text": "Einverstanden. Was mich noch beschäftigt: Die älteren Kollegen haben teilweise gar kein Smartphone, nur ein altes Tastenhandy.",
+   "start_ms": 359556,
+   "end_ms": 368556,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 36,
+   "text": "Wie viele betrifft das?",
+   "start_ms": 371207,
+   "end_ms": 372849,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 37,
+   "text": "Vier oder fünf. Die würden wir mit Firmenhandys ausstatten müssen.",
+   "start_ms": 375500,
+   "end_ms": 380214,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 38,
+   "text": "Die App läuft auf jedem Android-Gerät ab Version zehn, günstige Geräte reichen völlig. Wir haben auch Einführungen gemacht, wo genau das die größte Sorge war.",
+   "start_ms": 382865,
+   "end_ms": 394150,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 39,
+   "text": "Und wenn die Kollegen im Keller kein Netz haben? Das ist bei uns eher die Regel als die Ausnahme.",
+   "start_ms": 396801,
+   "end_ms": 403729,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 40,
+   "text": "Die App arbeitet offline und gleicht ab, sobald wieder Empfang da ist. Nur die Live-Position der Fahrzeuge braucht natürlich Netz.",
+   "start_ms": 406380,
+   "end_ms": 415665,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 41,
+   "text": "Gut, das ist wichtig. Wie lange dauert so eine Einführung bei einem Betrieb unserer Größe?",
+   "start_ms": 418316,
+   "end_ms": 424744,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 42,
+   "text": "Mit Schnittstelle rechnen wir mit sechs bis acht Wochen. Zwei Wochen davon laufen Planungstafel und Excel parallel.",
+   "start_ms": 427395,
+   "end_ms": 435609,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 43,
+   "text": "Vor dem Winter wäre ideal. Ab Mitte Oktober wird es bei uns richtig voll, da will ich keine Umstellung mehr.",
+   "start_ms": 438260,
+   "end_ms": 445974,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 44,
+   "text": "Wenn wir Anfang August starten, wären wir Ende September fertig. Das hängt aber an der Entscheidung bis Mitte Juli.",
+   "start_ms": 448625,
+   "end_ms": 456839,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 45,
+   "text": "Das ist knapp, aber machbar. Herr Brenner ist die erste Juliwoche im Urlaub, das muss ich noch sagen.",
+   "start_ms": 459490,
+   "end_ms": 466704,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 46,
+   "text": "Dann sollten wir den Termin mit ihm vorher oder direkt in der zweiten Juliwoche legen.",
+   "start_ms": 469355,
+   "end_ms": 475497,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 47,
+   "text": "Ich würde sagen, zweite Juliwoche. Vorher schaffe ich es nicht, alle Zahlen zusammenzubekommen.",
+   "start_ms": 478148,
+   "end_ms": 484933,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 48,
+   "text": "Einverstanden. Was brauchen Sie von mir bis dahin?",
+   "start_ms": 487584,
+   "end_ms": 491155,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 49,
+   "text": "Die Wirtschaftlichkeitsrechnung, ein Angebot für achtundzwanzig Monteure und zwei Disponenten, und eine Referenz aus unserer Branche.",
+   "start_ms": 493806,
+   "end_ms": 503306,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 50,
+   "text": "Eine Referenz habe ich: ein Sanitärbetrieb mit etwa dreißig Leuten in der Nähe von Kassel. Ich frage dort, ob Sie anrufen dürfen.",
+   "start_ms": 505957,
+   "end_ms": 515171,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 51,
+   "text": "Sehr gut. Und kann Frau Kraus das vorher ausprobieren? Die muss am Ende damit leben.",
+   "start_ms": 517822,
+   "end_ms": 523822,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 52,
+   "text": "Ich richte ihr einen Testzugang für vierzehn Tage ein, mit Beispieldaten. Wenn sie möchte, mache ich eine halbe Stunde Einweisung per Video.",
+   "start_ms": 526473,
+   "end_ms": 536473,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 53,
+   "text": "Das machen wir. Ich gebe Ihnen ihre E-Mail-Adresse nachher per Mail.",
+   "start_ms": 539124,
+   "end_ms": 543981,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 54,
+   "text": "Prima. Dann fasse ich zusammen: Ich schicke bis Freitag Angebot und Wirtschaftlichkeitsrechnung und kläre die Referenz.",
+   "start_ms": 546632,
+   "end_ms": 555132,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 55,
+   "text": "Sie schicken mir die Adresse von Frau Kraus, und wir suchen einen Termin mit Herrn Brenner in der zweiten Juliwoche.",
+   "start_ms": 557783,
+   "end_ms": 566068,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 56,
+   "text": "Genau so. Eine Sache noch: Der Preis pro Monteur muss runter, sonst wird das schwierig. Sehen Sie da Spielraum?",
+   "start_ms": 568719,
+   "end_ms": 576647,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 57,
+   "text": "Bei einer Laufzeit von vierundzwanzig Monaten kann ich über den Preis sprechen. Das nehme ich ins Angebot mit auf.",
+   "start_ms": 579298,
+   "end_ms": 587440,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 58,
+   "text": "Gut, dann warte ich das ab. Danke Ihnen, Frau Vogt.",
+   "start_ms": 590091,
+   "end_ms": 593733,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 59,
+   "text": "Ich danke Ihnen, Herr Albrecht. Bis bald.",
+   "start_ms": 596384,
+   "end_ms": 599312,
+   "channel": 0,
+   "speaker_index": null
+  }
+ ],
+ "notes": [
+  {
+   "id": "01K6EVALKG0000000000000001",
+   "kind": "bullet",
+   "text": "28 Monteure, Planung per Excel + Zuruf (Fr. Kraus)",
+   "at_ms": 48388,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALKG0000000000000002",
+   "kind": "bullet",
+   "text": "Notdienste werfen Tagesplan um",
+   "at_ms": 86776,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALKG0000000000000003",
+   "kind": "bullet",
+   "text": "Nachfahrten wg. fehlendem Material = größter Kostenblock",
+   "at_ms": 122228,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALKG0000000000000004",
+   "kind": "bullet",
+   "text": "Schnittstelle Sanitas Office Pflicht",
+   "at_ms": 165044,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALKG0000000000000005",
+   "kind": "bullet",
+   "text": "Preis zu hoch?! Chef entscheidet (Hr. Brenner)",
+   "at_ms": 282637,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALKG0000000000000006",
+   "kind": "bullet",
+   "text": "Offline im Keller muss gehen",
+   "at_ms": 400801,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALKG0000000000000007",
+   "kind": "bullet",
+   "text": "Go-Live vor Mitte Oktober",
+   "at_ms": 442260,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALKG0000000000000008",
+   "kind": "todo",
+   "text": "Angebot + ROI-Rechnung bis Freitag",
+   "at_ms": 550632,
+   "checked": false
+  }
+ ]
+}

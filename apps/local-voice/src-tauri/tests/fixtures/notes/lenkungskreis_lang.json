@@ -1,0 +1,1244 @@
+{
+ "title": "Lenkungskreis ERP-Einführung",
+ "template_key": "lenkungskreis",
+ "segments": [
+  {
+   "segment_index": 0,
+   "text": "Guten Tag zusammen, ich eröffne die Sitzung des Lenkungskreises zum ERP-Projekt. Mein Name ist Dr. Hartmann, ich leite die Sitzung wie immer.",
+   "start_ms": 2000,
+   "end_ms": 12071,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 1,
+   "text": "Anwesend sind Frau Petersen als Projektleiterin, Herr Okafor aus der IT, Frau Brandt aus dem Controlling und Herr Lindner für die Fertigung.",
+   "start_ms": 26190,
+   "end_ms": 36190,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 2,
+   "text": "Wir haben vier Punkte: den Projektstatus, die Entscheidung zur Datenmigration, den Go-Live-Termin und die Risiken, dazu Verschiedenes. Frau Petersen, bitte.",
+   "start_ms": 50309,
+   "end_ms": 61451,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 3,
+   "text": "Petersen: Danke. Kurz zum Stand. Wir sind im Monat sieben von zwölf. Die Module Einkauf und Vertrieb sind konfiguriert und im Test.",
+   "start_ms": 75570,
+   "end_ms": 84927,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 4,
+   "text": "Petersen: Das Modul Fertigung hängt etwa drei Wochen hinter dem Plan. Grund ist, dass die Stücklisten komplexer sind als in der Ausschreibung angenommen.",
+   "start_ms": 99046,
+   "end_ms": 109974,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 5,
+   "text": "Petersen: Wir haben bei der Analyse festgestellt, dass rund zwölftausend Stücklisten mehr als fünf Ebenen haben. Geplant waren wir mit maximal drei Ebenen.",
+   "start_ms": 124093,
+   "end_ms": 135164,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 6,
+   "text": "Lindner: Das kann ich bestätigen. Unsere Sondermaschinen haben teilweise acht Ebenen, das war vorher nie jemandem so klar.",
+   "start_ms": 149283,
+   "end_ms": 157997,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 7,
+   "text": "Hartmann: Was bedeutet das für den Aufwand?",
+   "start_ms": 172116,
+   "end_ms": 175187,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 8,
+   "text": "Petersen: Der Dienstleister schätzt zusätzlich fünfundvierzig Personentage für die Anpassung des Fertigungsmoduls.",
+   "start_ms": 189306,
+   "end_ms": 197448,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 9,
+   "text": "Brandt: Bei dem vereinbarten Tagessatz sind das knapp fünfundfünfzigtausend Euro. Das ist im bisherigen Budget nicht enthalten.",
+   "start_ms": 211567,
+   "end_ms": 220638,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 10,
+   "text": "Hartmann: Wie steht das Budget insgesamt?",
+   "start_ms": 234757,
+   "end_ms": 237685,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 11,
+   "text": "Brandt: Freigegeben sind eins Komma acht Millionen Euro. Verbraucht haben wir bisher eins Komma eins Millionen, also rund einundsechzig Prozent.",
+   "start_ms": 251804,
+   "end_ms": 262089,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 12,
+   "text": "Brandt: Bei achtundfünfzig Prozent der Zeit ist das leicht über Plan, aber noch im Rahmen. Die Reserve beträgt hundertfünfzigtausend Euro.",
+   "start_ms": 276208,
+   "end_ms": 286065,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 13,
+   "text": "Brandt: Wenn wir die fünfundfünfzigtausend aus der Reserve nehmen, bleiben noch fünfundneunzigtausend für den Rest der Laufzeit.",
+   "start_ms": 300184,
+   "end_ms": 309326,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 14,
+   "text": "Hartmann: Das ist mir für fünf Monate Restlaufzeit zu dünn. Gibt es Alternativen zur Anpassung?",
+   "start_ms": 323445,
+   "end_ms": 330230,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 15,
+   "text": "Petersen: Man könnte die tiefen Stücklisten vor der Migration flacher machen. Das wäre aber Arbeit in der Fertigung, nicht beim Dienstleister.",
+   "start_ms": 344349,
+   "end_ms": 354491,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 16,
+   "text": "Lindner: Das halte ich für unrealistisch. Wir haben dafür keine Leute, die Konstruktion ist ohnehin am Limit.",
+   "start_ms": 368610,
+   "end_ms": 376395,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 17,
+   "text": "Hartmann: Gut, dann halten wir fest: Die Anpassung des Fertigungsmoduls ist nötig. Über die Finanzierung sprechen wir gleich beim Budget.",
+   "start_ms": 390514,
+   "end_ms": 400299,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 18,
+   "text": "Petersen: Noch zum Test. Einkauf und Vertrieb haben im Integrationstest zusammen dreihundertzwölf Fehler gemeldet, davon sind zweihundertvierzig behoben.",
+   "start_ms": 414418,
+   "end_ms": 425346,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 19,
+   "text": "Petersen: Kritisch sind noch neun Fehler, alle im Bereich Preisfindung beim Vertrieb. Der Dienstleister will sie bis Ende des Monats beheben.",
+   "start_ms": 439465,
+   "end_ms": 449536,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 20,
+   "text": "Okafor: Ich möchte ergänzen, dass die Testumgebung in den letzten Wochen mehrfach ausgefallen ist. Das hat den Test zusätzlich gebremst.",
+   "start_ms": 463655,
+   "end_ms": 473369,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 21,
+   "text": "Okafor: Wir haben inzwischen mehr Speicher bereitgestellt, seit zehn Tagen läuft sie stabil.",
+   "start_ms": 487488,
+   "end_ms": 494059,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 22,
+   "text": "Hartmann: Danke. Dann kommen wir zum zweiten Punkt, der Datenmigration. Frau Petersen, stellen Sie bitte die beiden Optionen vor.",
+   "start_ms": 508178,
+   "end_ms": 517392,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 23,
+   "text": "Petersen: Option A ist die vollständige Migration. Wir übernehmen alle offenen und alle historischen Daten der letzten zehn Jahre ins neue System.",
+   "start_ms": 531511,
+   "end_ms": 541939,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 24,
+   "text": "Petersen: Vorteil: Alles ist an einem Ort, Auswertungen über lange Zeiträume sind direkt möglich. Nachteil: Der Aufwand ist hoch, und alte Daten sind oft unsauber.",
+   "start_ms": 556058,
+   "end_ms": 567700,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 25,
+   "text": "Petersen: Der Dienstleister schätzt für Option A siebzig Personentage für Bereinigung und Migration.",
+   "start_ms": 581819,
+   "end_ms": 588961,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 26,
+   "text": "Petersen: Option B ist die schlanke Migration. Wir übernehmen nur Stammdaten, offene Aufträge und die Bewegungen der letzten zwei Jahre.",
+   "start_ms": 603080,
+   "end_ms": 612794,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 27,
+   "text": "Petersen: Die älteren Daten bleiben im Altsystem, das wir für fünf Jahre nur lesend weiterbetreiben. Aufwand hier: fünfundzwanzig Personentage.",
+   "start_ms": 626913,
+   "end_ms": 637127,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 28,
+   "text": "Brandt: Der Lesebetrieb des Altsystems kostet uns aber auch Geld. Die Lizenz liegt bei rund achtzehntausend Euro im Jahr.",
+   "start_ms": 651246,
+   "end_ms": 659888,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 29,
+   "text": "Okafor: Dazu kommt der Betrieb des Servers. Den könnten wir aber virtualisieren, dann sind es vielleicht noch zweitausend Euro im Jahr zusätzlich.",
+   "start_ms": 674007,
+   "end_ms": 684435,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 30,
+   "text": "Hartmann: Also bei Option B über fünf Jahre rund hunderttausend Euro für das Altsystem. Und was kosten die fünfundvierzig Tage Unterschied?",
+   "start_ms": 698554,
+   "end_ms": 708482,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 31,
+   "text": "Brandt: Fünfundvierzig Personentage sind etwa fünfundfünfzigtausend Euro. Rein finanziell ist Option A also über fünf Jahre günstiger.",
+   "start_ms": 722601,
+   "end_ms": 732172,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 32,
+   "text": "Petersen: Das stimmt, aber Option A gefährdet den Termin. Die siebzig Tage fallen genau in die Phase, in der der Dienstleister auch das Fertigungsmodul anpasst.",
+   "start_ms": 746291,
+   "end_ms": 757719,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 33,
+   "text": "Lindner: Für die Fertigung ist wichtig, dass wir auf alte Aufträge zugreifen können. Wir bauen oft Ersatzteile für Maschinen, die fünfzehn Jahre alt sind.",
+   "start_ms": 771838,
+   "end_ms": 782838,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 34,
+   "text": "Lindner: Wenn die Zeichnungsnummern und Stücklisten dieser alten Aufträge nur im Altsystem liegen, müssen die Kollegen in zwei Systemen suchen.",
+   "start_ms": 796957,
+   "end_ms": 807171,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 35,
+   "text": "Okafor: Das ließe sich lösen. Wir können die Stücklisten alter Aufträge als Archiv ins Dokumentenmanagement übernehmen, verknüpft mit der Maschinennummer.",
+   "start_ms": 821290,
+   "end_ms": 832290,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 36,
+   "text": "Lindner: Wenn man das über die Maschinennummer findet, wäre das für uns in Ordnung.",
+   "start_ms": 846409,
+   "end_ms": 852337,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 37,
+   "text": "Okafor: Den Aufwand dafür schätze ich intern auf zehn Tage, das machen wir selbst, nicht der Dienstleister.",
+   "start_ms": 866456,
+   "end_ms": 874098,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 38,
+   "text": "Hartmann: Gut. Gibt es weitere Argumente für Option A?",
+   "start_ms": 888217,
+   "end_ms": 892074,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 39,
+   "text": "Brandt: Für das Controlling wäre eine lückenlose Historie schön, aber ehrlich gesagt nutzen wir Auswertungen über mehr als drei Jahre fast nie.",
+   "start_ms": 906193,
+   "end_ms": 916407,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 40,
+   "text": "Brandt: Für die Aufbewahrungspflichten reicht der Lesezugriff auf das Altsystem, das hat der Steuerberater bestätigt.",
+   "start_ms": 930526,
+   "end_ms": 938883,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 41,
+   "text": "Hartmann: Dann schlage ich vor, dass wir über Option B abstimmen, ergänzt um das Archiv der alten Stücklisten im Dokumentenmanagement.",
+   "start_ms": 953002,
+   "end_ms": 962573,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 42,
+   "text": "Hartmann: Wer ist dafür? Frau Petersen, Herr Okafor, Frau Brandt, Herr Lindner. Einstimmig, danke.",
+   "start_ms": 976692,
+   "end_ms": 983692,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 43,
+   "text": "Hartmann: Damit ist beschlossen: Datenmigration nach Option B, schlanke Migration mit zwei Jahren Bewegungsdaten, Altsystem fünf Jahre lesend.",
+   "start_ms": 997811,
+   "end_ms": 1007953,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 44,
+   "text": "Hartmann: Und ergänzend: Archiv der alten Stücklisten im Dokumentenmanagement, umgesetzt durch die IT. Herr Okafor, Sie übernehmen das?",
+   "start_ms": 1022072,
+   "end_ms": 1031714,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 45,
+   "text": "Okafor: Ja, ich übernehme das und melde bis zur nächsten Sitzung einen Plan mit Terminen.",
+   "start_ms": 1045833,
+   "end_ms": 1052190,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 46,
+   "text": "Petersen: Durch Option B sparen wir gegenüber der ursprünglichen Planung übrigens auch Aufwand, denn geplant waren fünfzig Tage Migration.",
+   "start_ms": 1066309,
+   "end_ms": 1076166,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 47,
+   "text": "Brandt: Das heißt, wir haben fünfundzwanzig Tage weniger Migration. Das sind rund dreißigtausend Euro, die wir für das Fertigungsmodul verwenden können.",
+   "start_ms": 1090285,
+   "end_ms": 1101142,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 48,
+   "text": "Hartmann: Dann bleiben aus der Reserve nur noch fünfundzwanzigtausend Euro für das Fertigungsmodul. Das finde ich deutlich vertretbarer.",
+   "start_ms": 1115261,
+   "end_ms": 1124975,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 49,
+   "text": "Hartmann: Frau Brandt, können Sie das bis zur nächsten Sitzung als aktualisierte Budgetplanung vorlegen?",
+   "start_ms": 1139094,
+   "end_ms": 1146522,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 50,
+   "text": "Brandt: Ja, das mache ich. Ich brauche von Frau Petersen dafür die finalen Schätzungen des Dienstleisters schriftlich.",
+   "start_ms": 1160641,
+   "end_ms": 1169069,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 51,
+   "text": "Petersen: Die fordere ich diese Woche an und leite sie weiter, sobald sie da sind.",
+   "start_ms": 1183188,
+   "end_ms": 1189045,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 52,
+   "text": "Hartmann: Dann zum dritten Punkt, dem Go-Live-Termin. Geplant ist der erste Januar. Frau Petersen, ist der noch zu halten?",
+   "start_ms": 1203164,
+   "end_ms": 1211878,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 53,
+   "text": "Petersen: Ehrlich gesagt wird es eng. Durch die drei Wochen Verzug in der Fertigung und die offenen Fehler in der Preisfindung haben wir keinen Puffer mehr.",
+   "start_ms": 1225997,
+   "end_ms": 1237139,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 54,
+   "text": "Petersen: Ich sehe zwei Möglichkeiten. Entweder wir bleiben beim ersten Januar und gehen mit höherem Risiko live, oder wir verschieben auf den ersten Februar.",
+   "start_ms": 1251258,
+   "end_ms": 1262543,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 55,
+   "text": "Brandt: Ein Go-Live zum Jahreswechsel hat für die Buchhaltung einen großen Vorteil: Wir starten mit einem sauberen Geschäftsjahr.",
+   "start_ms": 1276662,
+   "end_ms": 1285876,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 56,
+   "text": "Brandt: Bei einem Start im Februar müssten wir den Januar noch im Altsystem buchen und dann übertragen. Das ist machbar, aber zusätzliche Arbeit.",
+   "start_ms": 1299995,
+   "end_ms": 1310352,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 57,
+   "text": "Lindner: Für die Fertigung ist der Januar ungünstig. Im Dezember und Januar haben wir traditionell die meisten Auslieferungen vor dem Jahresende der Kunden.",
+   "start_ms": 1324471,
+   "end_ms": 1335613,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 58,
+   "text": "Lindner: Wenn das System in dieser Phase hakt, stehen die Maschinen im Versand. Mir wäre ein Start im Februar deutlich lieber.",
+   "start_ms": 1349732,
+   "end_ms": 1358732,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 59,
+   "text": "Okafor: Aus IT-Sicht ist der Februar ebenfalls besser. Wir haben dann Zeit für einen vollständigen Probelauf mit echten Daten im Dezember.",
+   "start_ms": 1372851,
+   "end_ms": 1382708,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 60,
+   "text": "Hartmann: Wie viel Mehrkosten verursacht eine Verschiebung um einen Monat?",
+   "start_ms": 1396827,
+   "end_ms": 1402112,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 61,
+   "text": "Petersen: Der Dienstleister würde den Monat zusätzlicher Begleitung mit etwa zwanzigtausend Euro berechnen. Intern entstehen vor allem Personalkosten.",
+   "start_ms": 1416231,
+   "end_ms": 1426945,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 62,
+   "text": "Brandt: Die zwanzigtausend würden das Budget weiter belasten. Wir wären dann bei fünfundvierzigtausend Euro aus der Reserve.",
+   "start_ms": 1441064,
+   "end_ms": 1449921,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 63,
+   "text": "Hartmann: Das ist immer noch weniger als ursprünglich befürchtet. Ich halte das Risiko eines Stillstands im Versand für schwerwiegender.",
+   "start_ms": 1464040,
+   "end_ms": 1473754,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 64,
+   "text": "Hartmann: Ich möchte die Entscheidung aber nicht ohne Rückmeldung der Geschäftsleitung treffen, weil der Termin gegenüber dem Aufsichtsrat kommuniziert wurde.",
+   "start_ms": 1487873,
+   "end_ms": 1499158,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 65,
+   "text": "Hartmann: Deshalb mein Vorschlag: Der Lenkungskreis empfiehlt die Verschiebung auf den ersten Februar, ich stimme das mit der Geschäftsleitung ab.",
+   "start_ms": 1513277,
+   "end_ms": 1523705,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 66,
+   "text": "Hartmann: Gibt es Gegenstimmen? Keine. Frau Brandt, Sie hätten den Januar bevorzugt, können Sie mit der Empfehlung leben?",
+   "start_ms": 1537824,
+   "end_ms": 1546466,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 67,
+   "text": "Brandt: Ja, wenn wir den Übertrag der Januarbuchungen sauber planen. Ich möchte das als Aufgabe im Projektplan sehen.",
+   "start_ms": 1560585,
+   "end_ms": 1568942,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 68,
+   "text": "Petersen: Nehme ich auf. Ich plane den Übertrag der Januarbuchungen mit der Buchhaltung zusammen.",
+   "start_ms": 1583061,
+   "end_ms": 1589989,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 69,
+   "text": "Hartmann: Gut. Dann halten wir fest: Empfehlung Go-Live am ersten Februar, Abstimmung mit der Geschäftsleitung durch mich bis Ende nächster Woche.",
+   "start_ms": 1604108,
+   "end_ms": 1614536,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 70,
+   "text": "Hartmann: Falls die Geschäftsleitung ablehnt, bleibt es beim ersten Januar, und wir treffen uns zu einer Sondersitzung zu den Risiken.",
+   "start_ms": 1628655,
+   "end_ms": 1638226,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 71,
+   "text": "Hartmann: Kommen wir zum vierten Punkt, den Risiken. Frau Petersen, Sie haben die Risikoliste aktualisiert.",
+   "start_ms": 1652345,
+   "end_ms": 1659987,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 72,
+   "text": "Petersen: Ja. Das größte Risiko sind die Schlüsselanwender. Mehrere von ihnen sind für die Schulungen nicht verfügbar, weil das Tagesgeschäft vorgeht.",
+   "start_ms": 1674106,
+   "end_ms": 1684820,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 73,
+   "text": "Petersen: Von zweiunddreißig Schlüsselanwendern haben bisher nur neunzehn die Grundschulung abgeschlossen.",
+   "start_ms": 1698939,
+   "end_ms": 1706510,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 74,
+   "text": "Lindner: In der Fertigung ist das besonders schlimm. Meine Meister sind im Moment jeden Tag an den Maschinen, weil zwei Kollegen krank sind.",
+   "start_ms": 1720629,
+   "end_ms": 1730629,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 75,
+   "text": "Hartmann: Was schlagen Sie vor?",
+   "start_ms": 1744748,
+   "end_ms": 1746962,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 76,
+   "text": "Petersen: Wir könnten die Schulungen auf halbe Tage aufteilen und teilweise am Samstag anbieten, gegen Freizeitausgleich.",
+   "start_ms": 1761081,
+   "end_ms": 1769723,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 77,
+   "text": "Lindner: Halbe Tage wären eine echte Hilfe. Samstage würde ich nur auf freiwilliger Basis machen, sonst gibt es Ärger mit dem Betriebsrat.",
+   "start_ms": 1783842,
+   "end_ms": 1793699,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 78,
+   "text": "Hartmann: Einverstanden. Der Betriebsrat muss bei Samstagsschulungen ohnehin zustimmen. Frau Petersen, klären Sie das bitte vorab mit dem Betriebsrat?",
+   "start_ms": 1807818,
+   "end_ms": 1818532,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 79,
+   "text": "Petersen: Ja, ich habe nächste Woche ohnehin einen Termin mit dem Betriebsratsvorsitzenden und nehme das mit.",
+   "start_ms": 1832651,
+   "end_ms": 1840436,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 80,
+   "text": "Petersen: Zweites Risiko ist der Dienstleister selbst. Unser Hauptberater wechselt zum Jahresende intern in ein anderes Projekt.",
+   "start_ms": 1854555,
+   "end_ms": 1863697,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 81,
+   "text": "Okafor: Das ist gefährlich. Er ist der Einzige, der unsere Anpassungen in der Preisfindung wirklich versteht.",
+   "start_ms": 1877816,
+   "end_ms": 1885601,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 82,
+   "text": "Hartmann: Haben wir vertraglich eine Handhabe?",
+   "start_ms": 1899720,
+   "end_ms": 1903005,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 83,
+   "text": "Brandt: Im Vertrag ist ein Schlüsselpersonal nicht namentlich festgelegt. Wir können nur auf eine ordentliche Übergabe bestehen.",
+   "start_ms": 1917124,
+   "end_ms": 1926266,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 84,
+   "text": "Hartmann: Dann verlangen wir, dass der Nachfolger ab sofort mitläuft, mindestens acht Wochen Überlappung. Ich schreibe das an die Geschäftsführung des Dienstleisters.",
+   "start_ms": 1940385,
+   "end_ms": 1952242,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 85,
+   "text": "Petersen: Drittes Risiko ist die Schnittstelle zum Lagerverwaltungssystem. Die ist neu programmiert und bisher nur mit Testdaten geprüft.",
+   "start_ms": 1966361,
+   "end_ms": 1976146,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 86,
+   "text": "Okafor: Wir wollen im Probelauf im Dezember genau diese Schnittstelle mit echten Buchungen eines ganzen Tages testen.",
+   "start_ms": 1990265,
+   "end_ms": 1998622,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 87,
+   "text": "Okafor: Wenn der Go-Live im Februar kommt, haben wir dafür genug Zeit. Beim Januar-Termin wäre der Test auf zwei Tage zusammengedrückt.",
+   "start_ms": 2012741,
+   "end_ms": 2022383,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 88,
+   "text": "Hartmann: Das ist ein weiteres Argument für den Februar, danke. Gibt es weitere Risiken, die heute neu sind?",
+   "start_ms": 2036502,
+   "end_ms": 2044216,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 89,
+   "text": "Lindner: Ein kleiner Punkt noch: Die Etikettendrucker in der Fertigung sind alt, ich weiß nicht, ob das neue System sie ansteuern kann.",
+   "start_ms": 2058335,
+   "end_ms": 2067977,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 90,
+   "text": "Okafor: Das prüfen wir. Wenn es nicht geht, brauchen wir neue Drucker, das wären etwa acht Stück zu je rund neunhundert Euro.",
+   "start_ms": 2082096,
+   "end_ms": 2091024,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 91,
+   "text": "Hartmann: Bitte bis zur nächsten Sitzung klären, Herr Okafor. Das Budget dafür käme aus dem IT-Budget, nicht aus dem Projekt.",
+   "start_ms": 2105143,
+   "end_ms": 2114071,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 92,
+   "text": "Brandt: Das ist mir wichtig, dass das sauber getrennt wird. Sonst verwischen wir die Projektkosten.",
+   "start_ms": 2128190,
+   "end_ms": 2135261,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 93,
+   "text": "Hartmann: Einverstanden. Bevor ich zusammenfasse, noch zwei Themen unter Verschiedenes: die Kommunikation an die Belegschaft und das Berichtswesen.",
+   "start_ms": 2149380,
+   "end_ms": 2159880,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 94,
+   "text": "Petersen: Zur Kommunikation. Bisher gab es eine Rundmail zum Projektstart und einen Artikel in der Mitarbeiterzeitung, seitdem nichts mehr.",
+   "start_ms": 2173999,
+   "end_ms": 2183927,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 95,
+   "text": "Petersen: In der Fertigung kursieren inzwischen Gerüchte, dass mit dem neuen System Stellen wegfallen sollen. Das ist nicht der Fall, aber es verunsichert.",
+   "start_ms": 2198046,
+   "end_ms": 2209117,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 96,
+   "text": "Lindner: Das höre ich auch. Zwei Meister haben mich direkt gefragt, ob die Arbeitsvorbereitung aufgelöst wird.",
+   "start_ms": 2223236,
+   "end_ms": 2231093,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 97,
+   "text": "Hartmann: Das müssen wir sofort ausräumen. Es gibt keinerlei Pläne für einen Stellenabbau im Zusammenhang mit dem Projekt.",
+   "start_ms": 2245212,
+   "end_ms": 2253926,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 98,
+   "text": "Petersen: Ich schlage eine Betriebsversammlung vor, gemeinsam mit dem Betriebsrat, mit einer kurzen Vorführung des neuen Systems.",
+   "start_ms": 2268045,
+   "end_ms": 2277259,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 99,
+   "text": "Lindner: Eine Vorführung wäre gut. Die Leute wollen sehen, wie ihr Arbeitsplatz später aussieht, nicht nur Folien.",
+   "start_ms": 2291378,
+   "end_ms": 2299520,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 100,
+   "text": "Okafor: Wir könnten dafür die Testumgebung nutzen. Einkauf und Vertrieb sind so weit, dass man einen Auftrag von Anfang bis Ende zeigen kann.",
+   "start_ms": 2313639,
+   "end_ms": 2323710,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 101,
+   "text": "Hartmann: Wann wäre die nächste Gelegenheit für eine Betriebsversammlung?",
+   "start_ms": 2337829,
+   "end_ms": 2343043,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 102,
+   "text": "Petersen: Die reguläre Betriebsversammlung ist Mitte November. Wir könnten dort einen Block von dreißig Minuten bekommen.",
+   "start_ms": 2357162,
+   "end_ms": 2365804,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 103,
+   "text": "Hartmann: Das ist mir zu spät, wenn die Gerüchte jetzt kursieren. Gibt es etwas Schnelleres?",
+   "start_ms": 2379923,
+   "end_ms": 2386494,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 104,
+   "text": "Lindner: In der Fertigung haben wir jeden Montag eine Schichtbesprechung. Da könnte Frau Petersen zehn Minuten sprechen.",
+   "start_ms": 2400613,
+   "end_ms": 2409184,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 105,
+   "text": "Petersen: Das mache ich gern, auch für die Spätschicht. Dann erreichen wir die meisten Kollegen schon nächste Woche.",
+   "start_ms": 2423303,
+   "end_ms": 2431588,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 106,
+   "text": "Hartmann: Gut, dann beides: kurzfristig die Schichtbesprechungen, und im November der Block in der Betriebsversammlung mit Vorführung.",
+   "start_ms": 2445707,
+   "end_ms": 2455278,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 107,
+   "text": "Brandt: Sollten wir auch einen regelmäßigen Newsletter machen? Einmal im Monat eine halbe Seite zum Stand würde schon helfen.",
+   "start_ms": 2469397,
+   "end_ms": 2478325,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 108,
+   "text": "Petersen: Das ist sinnvoll, aber jemand muss ihn schreiben. Im Projektteam haben wir dafür keine Kapazität.",
+   "start_ms": 2492444,
+   "end_ms": 2500086,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 109,
+   "text": "Hartmann: Ich frage die Unternehmenskommunikation, ob sie das übernehmen kann. Die Inhalte liefert das Projektteam in Stichpunkten zu.",
+   "start_ms": 2514205,
+   "end_ms": 2523776,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 110,
+   "text": "Petersen: Mit Stichpunkten kann ich leben. Das sind zehn Minuten im Monat.",
+   "start_ms": 2537895,
+   "end_ms": 2543180,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 111,
+   "text": "Hartmann: Dann zum Berichtswesen. Frau Brandt, Sie hatten angemerkt, dass Ihnen der Statusbericht nicht ausreicht.",
+   "start_ms": 2557299,
+   "end_ms": 2565441,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 112,
+   "text": "Brandt: Ja. Der Statusbericht zeigt Ampeln, aber keine Zahlen. Ich sehe nicht, wie viel Budget je Modul verbraucht ist.",
+   "start_ms": 2579560,
+   "end_ms": 2588060,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 113,
+   "text": "Brandt: Ich hätte gern eine Tabelle mit geplanten und verbrauchten Personentagen je Modul, monatlich aktualisiert.",
+   "start_ms": 2602179,
+   "end_ms": 2610321,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 114,
+   "text": "Petersen: Die Zahlen hat der Dienstleister, er liefert sie aber nur quartalsweise mit der Rechnung.",
+   "start_ms": 2624440,
+   "end_ms": 2631511,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 115,
+   "text": "Brandt: Dann sollten wir die monatliche Lieferung vertraglich einfordern. Ohne die Zahlen kann ich die Reserve nicht steuern.",
+   "start_ms": 2645630,
+   "end_ms": 2654558,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 116,
+   "text": "Hartmann: Das nehme ich in das Schreiben an die Geschäftsführung des Dienstleisters mit auf, zusammen mit der Übergabe des Hauptberaters.",
+   "start_ms": 2668677,
+   "end_ms": 2678462,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 117,
+   "text": "Okafor: Aus IT-Sicht würde ich gern die Anzahl offener Fehler je Modul im Bericht sehen, nicht nur die kritischen.",
+   "start_ms": 2692581,
+   "end_ms": 2700723,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 118,
+   "text": "Petersen: Das kann ich aus dem Fehlerverwaltungssystem ziehen, das ist kein großer Aufwand.",
+   "start_ms": 2714842,
+   "end_ms": 2721342,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 119,
+   "text": "Lindner: Und für die Fertigung wäre wichtig, den Stand der Stücklistenanpassung separat zu sehen. Da hängt für uns alles dran.",
+   "start_ms": 2735461,
+   "end_ms": 2744461,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 120,
+   "text": "Petersen: Einverstanden, ich nehme die Stücklistenanpassung als eigenen Arbeitspaket-Punkt in den Bericht auf.",
+   "start_ms": 2758580,
+   "end_ms": 2766437,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 121,
+   "text": "Hartmann: Dann erwarte ich zur nächsten Sitzung einen erweiterten Statusbericht mit Budget je Modul, Fehlern je Modul und dem Stand der Stücklisten.",
+   "start_ms": 2780556,
+   "end_ms": 2791127,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 122,
+   "text": "Petersen: Die Budgetzahlen je Modul hängen am Dienstleister. Wenn die nicht rechtzeitig kommen, liefere ich eine Schätzung und kennzeichne sie.",
+   "start_ms": 2805246,
+   "end_ms": 2815460,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 123,
+   "text": "Brandt: Eine gekennzeichnete Schätzung ist mir lieber als gar nichts.",
+   "start_ms": 2829579,
+   "end_ms": 2834507,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 124,
+   "text": "Hartmann: Gut. Eine letzte Frage von mir: Wie geht es mit der Abstimmung mit der Wirtschaftsprüfung weiter? Die wollten doch das Berechtigungskonzept sehen.",
+   "start_ms": 2848626,
+   "end_ms": 2859768,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 125,
+   "text": "Okafor: Das Berechtigungskonzept ist im Entwurf fertig. Es fehlt noch die Freigabe durch die Fachbereiche, vor allem durch den Einkauf.",
+   "start_ms": 2873887,
+   "end_ms": 2883529,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 126,
+   "text": "Okafor: Der Einkauf möchte, dass Bestellungen über zehntausend Euro nur mit Vier-Augen-Prinzip freigegeben werden. Das bauen wir gerade ein.",
+   "start_ms": 2897648,
+   "end_ms": 2907648,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 127,
+   "text": "Brandt: Die Wirtschaftsprüfer kommen im Januar zur Vorprüfung. Bis dahin sollte das Konzept freigegeben und im System abgebildet sein.",
+   "start_ms": 2921767,
+   "end_ms": 2931338,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 128,
+   "text": "Okafor: Das schaffen wir. Ich plane die Freigabe der Fachbereiche bis Ende November ein.",
+   "start_ms": 2945457,
+   "end_ms": 2951742,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 129,
+   "text": "Hartmann: Gut, dann nehme ich das als weiteren Termin in die Planung auf. Jetzt aber zur Zusammenfassung der Beschlüsse.",
+   "start_ms": 2965861,
+   "end_ms": 2974432,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 130,
+   "text": "Hartmann: Erstens: Das Fertigungsmodul wird für tiefe Stücklisten angepasst, finanziert aus der Einsparung der Migration und aus der Reserve.",
+   "start_ms": 2988551,
+   "end_ms": 2998622,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 131,
+   "text": "Hartmann: Zweitens: Datenmigration nach Option B mit Archiv der alten Stücklisten im Dokumentenmanagement.",
+   "start_ms": 3012741,
+   "end_ms": 3020312,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 132,
+   "text": "Hartmann: Drittens: Der Lenkungskreis empfiehlt den Go-Live am ersten Februar, die Abstimmung mit der Geschäftsleitung übernehme ich.",
+   "start_ms": 3034431,
+   "end_ms": 3043931,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 133,
+   "text": "Hartmann: Viertens: Schulungen der Schlüsselanwender in halben Tagen, Samstage nur freiwillig und nach Zustimmung des Betriebsrats.",
+   "start_ms": 3058050,
+   "end_ms": 3067407,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 134,
+   "text": "Hartmann: Und fünftens: Wir fordern vom Dienstleister eine Überlappung von acht Wochen beim Wechsel des Hauptberaters.",
+   "start_ms": 3081526,
+   "end_ms": 3089954,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 135,
+   "text": "Hartmann: Sechstens: Frau Petersen informiert ab nächster Woche in den Schichtbesprechungen, im November folgt die Vorführung in der Betriebsversammlung.",
+   "start_ms": 3104073,
+   "end_ms": 3115001,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 136,
+   "text": "Hartmann: Siebtens: Der Statusbericht wird um Budget und Fehler je Modul sowie den Stand der Stücklisten erweitert.",
+   "start_ms": 3129120,
+   "end_ms": 3137334,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 137,
+   "text": "Hartmann: Die Aufgaben: Frau Brandt legt die aktualisierte Budgetplanung vor, Frau Petersen fordert die Schätzungen an und plant den Januarübertrag.",
+   "start_ms": 3151453,
+   "end_ms": 3162024,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 138,
+   "text": "Hartmann: Herr Okafor legt den Plan für das Archiv vor und klärt die Etikettendrucker. Ich spreche mit der Geschäftsleitung und dem Dienstleister.",
+   "start_ms": 3176143,
+   "end_ms": 3186571,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 139,
+   "text": "Petersen: Und die Abstimmung mit dem Betriebsrat zu den Samstagsschulungen liegt bei mir.",
+   "start_ms": 3200690,
+   "end_ms": 3207047,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 140,
+   "text": "Hartmann: Richtig. Die nächste Sitzung ist in vier Wochen, am gleichen Wochentag um vierzehn Uhr. Gibt es noch etwas?",
+   "start_ms": 3221166,
+   "end_ms": 3229523,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 141,
+   "text": "Lindner: Nur ein Dank an das Projektteam. Die Zusammenarbeit mit der Fertigung ist deutlich besser geworden als am Anfang.",
+   "start_ms": 3243642,
+   "end_ms": 3252356,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 142,
+   "text": "Petersen: Das freut mich zu hören, danke.",
+   "start_ms": 3266475,
+   "end_ms": 3269403,
+   "channel": 2,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 143,
+   "text": "Hartmann: Dann schließe ich die Sitzung. Vielen Dank an alle.",
+   "start_ms": 3283522,
+   "end_ms": 3287879,
+   "channel": 2,
+   "speaker_index": null
+  }
+ ],
+ "notes": [
+  {
+   "id": "01K6EVALLK0000000000000001",
+   "kind": "heading",
+   "text": "Status",
+   "at_ms": 79570,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALLK0000000000000002",
+   "kind": "bullet",
+   "text": "Fertigung 3 Wochen Verzug – Stücklisten bis 8 Ebenen",
+   "at_ms": 128093,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALLK0000000000000003",
+   "kind": "bullet",
+   "text": "+45 PT ≈ 55 T€, nicht im Budget",
+   "at_ms": 215567,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALLK0000000000000004",
+   "kind": "bullet",
+   "text": "Budget: 1,1 von 1,8 Mio. verbraucht, Reserve 150 T€",
+   "at_ms": 280208,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALLK0000000000000005",
+   "kind": "heading",
+   "text": "Migration",
+   "at_ms": 535511,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALLK0000000000000006",
+   "kind": "bullet",
+   "text": "Beschluss: Option B + Archiv alte Stücklisten im DMS",
+   "at_ms": 1026072,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALLK0000000000000007",
+   "kind": "bullet",
+   "text": "Go-Live: Empfehlung 1. Februar, GL muss zustimmen",
+   "at_ms": 1632655,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALLK0000000000000008",
+   "kind": "bullet",
+   "text": "Nur 19 von 32 Key-Usern geschult",
+   "at_ms": 1724629,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALLK0000000000000009",
+   "kind": "bullet",
+   "text": "Hauptberater Dienstleister geht Jahresende -> 8 Wochen Übergabe",
+   "at_ms": 1903720,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALLK0000000000000010",
+   "kind": "todo",
+   "text": "Etikettendrucker prüfen (IT)",
+   "at_ms": 2109143,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALLK0000000000000011",
+   "kind": "bullet",
+   "text": "Aufsichtsrat kennt bisher nur den Januar-Termin",
+   "at_ms": null,
+   "checked": false
+  },
+  {
+   "id": "01K6EVALLK0000000000000012",
+   "kind": "todo",
+   "text": "Betriebsrat wegen Samstagsschulungen fragen",
+   "at_ms": null,
+   "checked": false
+  }
+ ]
+}

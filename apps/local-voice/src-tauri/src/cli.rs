@@ -35,6 +35,8 @@ pub struct CliArgs {
     pub transcribe_file: Option<PathBuf>,
 
     /// Model id to load for --transcribe-file (default: the selected model).
+    /// With --eval-notes: the local language model for this run only (catalog
+    /// id, e.g. llm-qwen3.5-9b-q4; default: the configured provider/model).
     #[arg(long)]
     pub model: Option<String>,
 
@@ -158,4 +160,14 @@ pub struct CliArgs {
     /// default size).
     #[arg(long, value_name = "DIR")]
     pub bench_dir: Option<PathBuf>,
+
+    // M1-P1e
+    /// Evaluate the AI meeting notes (acceptance AK3) on the synthetic
+    /// fixtures in DIR (tests/fixtures/notes) with the configured language
+    /// model and exit. Runs one fixture after the other in a sandbox store in
+    /// the temp directory (never the productive meetings.db) and stops the
+    /// local llama-server at the end. --model picks a local model for this run.
+    /// Output via --json/--out. Exit 0 targets met, 3 missed, 1 error.
+    #[arg(long, value_name = "DIR")]
+    pub eval_notes: Option<PathBuf>,
 }
