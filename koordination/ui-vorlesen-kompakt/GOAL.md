@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/ui-vorlesen-kompakt
 iteration: 1
 erstellt: 2026-09-29
-aktualisiert: 2026-09-29T12:22
+aktualisiert: 2026-09-29T12:34
 ---
 
 # Goal: Vorlesen-Oberflaeche: einheitlich, kompakt, anpassbar
@@ -37,7 +37,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - [x] AK2 — Einheitliche Aktionen: Playwright-Test `tests/readaloud-toolbar.spec.ts` → alle Aktionsknöpfe der Bedienspalte (`[data-testid^="tts-action-"]`) haben gleiche Höhe und Breite (±1 px), kein sichtbarer Beschriftungstext, jedes Symbol (`svg.lucide-*`-Klasse) kommt genau einmal vor; Auto-Tagging ist nicht mehr niedriger als der Rest.
 - [x] AK3 — Eine Zeile + Menü: im Reiter Original stehen in einer Zeile (gleiche `top` ±2 px) Hinzufügen (zuerst), Diktieren, Als Audio speichern, Änderungen vorab erzeugen, Menü; das Menü enthält Skript-Werkstatt, Text aufbereiten, Skript prüfen, Auto-Tagging und löst jede davon aus; der Fehlerzähler der Skriptprüfung ist am Menüknopf sichtbar. Übersetzung/Zusammenfassung zeigen ihre Aktion ebenfalls als Symbol.
 - [x] AK4 — Tooltip: Hover UND Tastaturfokus auf jeden Aktionsknopf zeigen Name + Kurzerklärung (`role="tooltip"`, per `aria-describedby` verbunden); `aria-label` trägt den Namen.
-- [ ] AK5 — Kompakt gestapelt: Viewport 1920×1050 und 1366×768 im Layout „gestapelt“ → Höhe des Bedienblocks `[data-testid="tts-controls"]` ≤ 50 % von `window.innerHeight`, Dateien/Hilfe liegen darunter in derselben Spalte; es gibt rechts vom Editor genau eine Spalte.
+- [x] AK5 — Kompakt gestapelt: Viewport 1920×1050 und 1366×768 im Layout „gestapelt“ → Höhe des Bedienblocks `[data-testid="tts-controls"]` ≤ 50 % von `window.innerHeight`, Dateien/Hilfe liegen darunter in derselben Spalte; es gibt rechts vom Editor genau eine Spalte.
 - [x] AK6 — Umschaltbar: Umschalter gestapelt/nebeneinander in der rechten Spalte; Wahl übersteht Neuladen (localStorage); „nebeneinander“ entspricht dem bisherigen Aufbau.
 - [x] AK7 — Ziehbare Spalten: Griffe zwischen Seitenliste|Editor und Editor|rechter Spalte (`role="separator"`, Pfeiltasten, Doppelklick = Standard) ändern die Breite in Grenzen; Breite übersteht Neuladen; Test belegt beides.
 - [x] AK8 — Dateiname: `tests/exportName.spec.ts` → neuer Name `<Stimme>[-<Zusatz>]_<JJJJ-MM-TT_HHMM>.<ext>` (z. B. `Patrick_2026-09-29_1736.wav`, `Skript_…` bei Skript-Stimmen, `-EN` im Reiter Übersetzung, `-Zusammenfassung`), Stamm ohne Zeitstempel ≤ 24 Zeichen, Windows-sicher; der Speichern-Dialog schlägt ihn vor.
@@ -93,6 +93,7 @@ Die Vorlesen-Seite hat rechts neben dem Text nur noch EINE Spalte: oben eine kom
 - 2026-09-29T12:22 AK2 erfüllt — readaloud-toolbar.spec.ts (a)(b): alle tts-action-Knoepfe 36x36 +-1 ohne Text, jede lucide-Klasse hoechstens einmal in allen 3 Reitern; Integration 110 passed/6 skipped, 2c9f6fd
 - 2026-09-29T12:22 AK3 erfüllt — readaloud-toolbar.spec.ts (c)(d)(f): add,dictate,save,prewarm,menu eine Zeile, add zuerst; Menue loest Werkstatt/Pruefen/Auto-Tag/tidy aus; Badge am Menue; Uebersetzen/Zusammenfassen als Symbol; screens/p2/menue-offen.png; 110 passed, 2c9f6fd
 - 2026-09-29T12:22 AK4 erfüllt — readaloud-toolbar.spec.ts (e): Tooltip bei Hover (400 ms) und Tastaturfokus, role=tooltip, aria-describedby, Esc schliesst; screens/p2/tooltip.png; 110 passed, 2c9f6fd
+- 2026-09-29T12:34 AK5 erfüllt — readaloud-layout.spec.ts AK5-Test (P8): gestapelt 1920x1050 und 1366x768 mit Text: tts-controls <= 0,5*innerHeight UND scrollHeight <= clientHeight+1, tts-files darunter; Bild p5/gestapelt nach P2: Bedienung ~175 px; 115 passed, c8176e0
 
 ## Blocker
 -
