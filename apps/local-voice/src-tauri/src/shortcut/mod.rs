@@ -607,6 +607,21 @@ pub fn change_meeting_default_template_setting(
     Ok(())
 }
 
+// M2-P2d: `auto` | `off` | Modell-ID; wirkt ab dem naechsten Stopp. Leer = `auto`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_final_model_setting(app: AppHandle, model: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    let model = model.trim();
+    settings.meeting_final_model = if model.is_empty() {
+        "auto".to_string()
+    } else {
+        model.to_string()
+    };
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 // M2-P2c2: wirkt ab der naechsten Aufnahme.
 #[tauri::command]
 #[specta::specta]

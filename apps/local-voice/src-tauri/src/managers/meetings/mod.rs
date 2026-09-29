@@ -1,7 +1,10 @@
+pub mod chat; // M4-P4c
 pub mod chunker;
+pub mod diarize; // M3-P3a
 pub mod dsp;
 pub mod echo;
 pub mod export;
+pub mod final_pass;
 pub mod hallucination;
 pub mod import;
 pub mod llm_call;

@@ -24,7 +24,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -526,6 +526,64 @@ pub fn simulate(
     }))
 }
 
+/// M2-P2d: Text je Kanal (0 = Ich, 1 = Gegenseite) in Segmentreihenfolge.
+fn channel_text(segments: &[super::store::StoredSegment], channel: u8) -> String {
+    segments
+        .iter()
+        .filter(|s| s.channel == channel)
+        .map(|s| s.text.trim())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// M2-P2d: der Enddurchlauf nach der Simulation, ueber denselben Job wie
+/// `stop()` (`final_pass::run_job` mit der App-Umgebung). `final_model` ist
+/// `auto`, `off` oder eine Modell-ID; der Plan prueft Installation, RAM und
+/// VRAM wie in der App. Ergebnis: Live- und Endstand fuer das JSON.
+pub fn final_pass_with_app(
+    app: &tauri::AppHandle,
+    store: Arc<MeetingStore>,
+    tm: Arc<crate::managers::transcription::TranscriptionManager>,
+    meeting_id: &str,
+    final_model: &str,
+) -> serde_json::Value {
+    use super::final_pass::{self, FinalChoice, JobSpec};
+    let live = store.transcript_snapshot(meeting_id).ok();
+    let plan = final_pass::plan_for_app(app, &FinalChoice::parse(final_model));
+    let _ = store.set_status(meeting_id, super::store::MeetingStatus::Processing);
+    let job = JobSpec {
+        meeting_id: meeting_id.to_string(),
+        catch_up_model: None,
+        plan: plan.clone(),
+        live_model: tm.get_current_model(),
+    };
+    let mut env = final_pass::AppEnv::new(app, Arc::clone(&tm), Arc::new(AtomicBool::new(false)));
+    let outcome = final_pass::run_job(&store, &job, &mut env);
+    let after = store.transcript_snapshot(meeting_id).ok();
+    let live_copy = store
+        .get_meeting(meeting_id)
+        .ok()
+        .flatten()
+        .and_then(|m| m.mic_audio_path)
+        .map(|p| Path::new(&p).with_file_name(final_pass::LIVE_TRANSCRIPT_FILE));
+    serde_json::json!({
+        "requested": final_model,
+        "plan": format!("{plan:?}"),
+        "model": outcome.model,
+        "live_epoch": live.as_ref().map(|s| s.epoch),
+        "revision_epoch": after.as_ref().map(|s| s.epoch),
+        "transcript_final_epoch": outcome.epoch,
+        "live_segments": live.as_ref().map(|s| s.segments.len()),
+        "segments": after.as_ref().map(|s| s.segments.len()),
+        "segments_with_words": after.as_ref().map(|s| s.segments.iter().filter(|x| x.words.is_some()).count()),
+        "ich_text": after.as_ref().map(|s| channel_text(&s.segments, 0)),
+        "gegen_text": after.as_ref().map(|s| channel_text(&s.segments, 1)),
+        "transcript_live_json": live_copy.as_ref().is_some_and(|p| p.exists()),
+        "report": outcome.report,
+        "status": store.get_meeting(meeting_id).ok().flatten().map(|m| m.status),
+    })
+}
+
 /// App-Anbindung fuer die CLI: echter Silero-VAD aus den Ressourcen, echte
 /// Transkription ueber den geladenen `TranscriptionManager`.
 pub fn simulate_with_app(
@@ -602,6 +660,7 @@ mod tests {
                     text: format!("wort{}", c.offset_ms),
                     start_ms: 0,
                     end_ms: c.samples.len() as u64 / 16,
+                    words: None,
                 }]
             },
         )
@@ -729,6 +788,7 @@ mod tests {
                     text: "Wort".into(),
                     start_ms: 0,
                     end_ms: 100,
+                    words: None,
                 }]
             },
         )

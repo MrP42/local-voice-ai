@@ -7,6 +7,9 @@
 //!   Volltextsuche, Ordner, Recipes und Chat-Verlaeufe.
 //! - `vectors`: int8-Vektorindex im RAM mit f32-Nachbewertung aus der DB.
 //! - `hybrid`: Reciprocal Rank Fusion aus Wort- und Vektorsuche.
+//! - `embed`: Vertrag `Embedder` und der echte `LlamaEmbedder` (P4b).
+//! - `indexer`: haelt den Index aktuell, lexikalisch sofort, Vektoren im
+//!   Hintergrund hinter Gates (P4b).
 //! - `bench`: Performance-Werkzeug (`--bench-search`) auf einer synthetischen
 //!   Sandbox-Datenbank im Temp-Verzeichnis.
 //!
@@ -20,6 +23,8 @@
 
 pub mod bench;
 pub mod chunking;
+pub mod embed;
 pub mod hybrid;
 pub mod index;
+pub mod indexer;
 pub mod vectors;

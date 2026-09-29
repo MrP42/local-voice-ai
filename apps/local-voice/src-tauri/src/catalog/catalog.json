@@ -5655,6 +5655,48 @@
           "url": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf"
         }
       ]
+    },
+    {
+      "id": "emb-bge-m3-q8",
+      "name": "BGE-M3 (Suche)",
+      "description": "Embedding-Modell für die semantische Suche in Besprechungen (1024 Dimensionen, mehrsprachig, MIT). Wird nur für den Such-Index gebraucht.",
+      "purpose": "llm-embedding",
+      "license": "MIT",
+      "tags": [
+        "suche",
+        "mehrsprachig"
+      ],
+      "files": [
+        {
+          "filename": "bge-m3-Q8_0.gguf",
+          "quant": "Q8_0",
+          "size_bytes": 634553760,
+          "sha256": "950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167",
+          "url": "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf"
+        }
+      ]
+    },
+    {
+      "id": "diar-sortformer-4spk-v2.1-q8",
+      "name": "Sortformer 4spk v2.1 (Sprechertrennung)",
+      "description": "Sprechertrennung für Besprechungen: erkennt bis zu vier Sprecher je Kanal (NVIDIA Streaming Sortformer, Q8). Lizenz: NVIDIA Open Model License, das Modell wird geladen, nicht mitgeliefert.",
+      "purpose": "diarization",
+      "category": "Sprechertrennung",
+      "license": "NVIDIA Open Model License",
+      "license_url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/",
+      "revision": "ae4afbb5c3d33b71cf2dbf600022b655ee706dd0",
+      "tags": [
+        "sprechertrennung"
+      ],
+      "files": [
+        {
+          "filename": "diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf",
+          "quant": "Q8_0",
+          "size_bytes": 139310336,
+          "sha256": "a5dacdc650790266c7a362e54e6bf51952015487edaa606c4e11632bc32442a9",
+          "url": "https://huggingface.co/handy-computer/diar_streaming_sortformer_4spk-v2.1-gguf/resolve/ae4afbb5c3d33b71cf2dbf600022b655ee706dd0/diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf"
+        }
+      ]
     }
   ]
 }

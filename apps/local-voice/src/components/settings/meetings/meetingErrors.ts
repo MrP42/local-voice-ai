@@ -24,6 +24,8 @@ const ERROR_KEY_MAP: Record<string, string> = {
   no_audio: "meetings.errors.noAudio",
   audio_missing: "meetings.errors.audioMissing",
   retranscribe_failed: "meetings.errors.retranscribeFailed",
+  // M2-P2d
+  final_pass_skipped: "meetings.errors.finalPassSkipped",
   transcription_failed: "meetings.errors.chunkTranscriptionFailed",
 };
 

@@ -1,30 +1,183 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ChevronRight, MessageSquare, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 import { PageShell } from "../../ui/PageShell";
-import type { Meeting } from "@/bindings";
+import { SettingsGroup } from "../../ui/SettingsGroup";
+import {
+  commands,
+  events,
+  type Citation,
+  type Meeting,
+  type RecipeItem,
+  type ScopeFilter,
+} from "@/bindings";
 import { RecorderCard } from "./RecorderCard";
 import { LiveTranscript } from "./LiveTranscript";
 import { LiveNotesPad } from "./notes/LiveNotesPad";
 import { MeetingList } from "./MeetingList";
 import { MeetingDetail } from "./MeetingDetail";
+import { ChatPanel } from "./chat/ChatPanel";
+import { recipeTitleText } from "./chat/RecipeMenu";
+
+type JumpRequest = { citation: Citation; nonce: number };
+
+/** Sucht eine Besprechung seitenweise (es gibt keinen Einzelabruf). */
+const findMeeting = async (id: string): Promise<Meeting | null> => {
+  const PAGE = 200;
+  for (let offset = 0; offset < 50 * PAGE; offset += PAGE) {
+    const result = await commands.meetingsList(offset, PAGE);
+    if (result.status !== "ok") return null;
+    const page = result.data ?? [];
+    const hit = page.find((m) => m.id === id);
+    if (hit) return hit;
+    if (page.length < PAGE) return null;
+  }
+  return null;
+};
+
+/**
+ * M4-P4e: eingeklappte Zeile "Frage zur laufenden Besprechung" unter dem
+ * Notizblock. Erscheint mit einer laufenden Aufnahme; die live-tauglichen
+ * Recipes ("Was habe ich verpasst?") fragen mit einem Klick.
+ */
+const LiveChatRow: React.FC<{ onJump: (citation: Citation) => void }> = ({
+  onJump,
+}) => {
+  const { t } = useTranslation();
+  const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [recipes, setRecipes] = useState<RecipeItem[]>([]);
+  const [auto, setAuto] = useState<{ id: string; nonce: number } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void commands.meetingsRecordingPosition().then((result) => {
+      if (!cancelled && result.status === "ok" && result.data) {
+        setMeetingId((prev) => prev ?? result.data!.meeting_id);
+        setRecording(true);
+      }
+    });
+    const un = events.meetingEvent.listen((e) => {
+      const payload = e.payload;
+      if (payload.kind !== "state") return;
+      setRecording(
+        payload.status === "recording" || payload.status === "paused",
+      );
+      if (payload.status === "recording") setMeetingId(payload.meeting_id);
+    });
+    return () => {
+      cancelled = true;
+      un.then((f) => f());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!meetingId) return;
+    void commands.chatRecipesList().then((result) => {
+      if (result.status !== "ok") return;
+      setRecipes(
+        (result.data ?? []).filter(
+          (r) => r.spec.live_ok && r.spec.scope !== "global",
+        ),
+      );
+    });
+  }, [meetingId]);
+
+  if (!meetingId || (!recording && !open)) return null;
+
+  return (
+    <SettingsGroup>
+      <div className="space-y-2 px-4 py-2" data-testid="live-chat-row">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            aria-label={
+              open
+                ? t("meetings.chat.live.collapse")
+                : t("meetings.chat.live.expand")
+            }
+            className="flex items-center gap-1.5 text-sm font-medium text-text/80 hover:text-text cursor-pointer"
+          >
+            <ChevronRight
+              width={14}
+              height={14}
+              aria-hidden="true"
+              className={`transition-transform ${open ? "rotate-90" : ""}`}
+            />
+            <MessageSquare width={14} height={14} aria-hidden="true" />
+            {t("meetings.chat.live.row")}
+          </button>
+          {!open &&
+            recipes.map((recipe) => (
+              <button
+                key={recipe.id}
+                type="button"
+                onClick={() => {
+                  setOpen(true);
+                  setAuto({ id: recipe.id, nonce: Date.now() });
+                }}
+                className="inline-flex items-center gap-1 rounded-full border border-mid-gray/40 px-2 py-0.5 text-xs text-text/70 hover:bg-mid-gray/15 hover:text-text cursor-pointer"
+              >
+                <Sparkles width={10} height={10} aria-hidden="true" />
+                {recipeTitleText(recipe)}
+              </button>
+            ))}
+        </div>
+        {open && (
+          <ChatPanel
+            scope={{ kind: "meeting", meeting_id: meetingId }}
+            mode={recording ? "live" : "meeting"}
+            onJump={onJump}
+            autoRecipe={auto}
+          />
+        )}
+      </div>
+    </SettingsGroup>
+  );
+};
 
 export const MeetingsSettings: React.FC = () => {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Meeting | null>(null);
+  // M4-P4e: Chat ueber viele Besprechungen als Seitenleiste; bleibt stehen,
+  // wenn ein Beleg die Besprechung daneben oeffnet.
+  const [globalFilter, setGlobalFilter] = useState<ScopeFilter | null>(null);
+  const [jump, setJump] = useState<JumpRequest | null>(null);
 
-  if (selected) {
-    return (
-      <div className="w-full space-y-4">
-        <MeetingDetail
-          meeting={selected}
-          onBack={() => setSelected(null)}
-          onMeetingChange={setSelected}
-        />
-      </div>
-    );
-  }
+  const openCitation = useCallback(
+    async (citation: Citation) => {
+      const request = { citation, nonce: Date.now() };
+      if (selected?.id === citation.meeting_id) {
+        setJump(request);
+        return;
+      }
+      const meeting = await findMeeting(citation.meeting_id);
+      if (!meeting) {
+        toast.error(t("meetings.chat.citation.deleted"));
+        return;
+      }
+      setSelected(meeting);
+      setJump(request);
+    },
+    [selected, t],
+  );
 
-  return (
+  const content = selected ? (
+    <div className="w-full space-y-4">
+      <MeetingDetail
+        key={selected.id}
+        meeting={selected}
+        onBack={() => setSelected(null)}
+        onMeetingChange={setSelected}
+        jumpRequest={jump}
+        onChatOpen={() => setGlobalFilter(null)}
+      />
+    </div>
+  ) : (
     <PageShell
       title={t("workspace.recordings")}
       description={t("workspace.meetingsHint")}
@@ -37,7 +190,25 @@ export const MeetingsSettings: React.FC = () => {
         <LiveNotesPad />
         <LiveTranscript />
       </div>
-      <MeetingList onSelect={setSelected} />
+      <LiveChatRow onJump={(c) => void openCitation(c)} />
+      <MeetingList onSelect={setSelected} onAsk={setGlobalFilter} />
     </PageShell>
+  );
+
+  return (
+    <div className="flex w-full flex-col gap-4 lg:flex-row lg:items-start">
+      <div className="min-w-0 flex-1">{content}</div>
+      {globalFilter && (
+        <aside className="w-full shrink-0 lg:sticky lg:top-0 lg:w-96">
+          <ChatPanel
+            scope={{ kind: "global", filter: globalFilter }}
+            mode="global"
+            onClose={() => setGlobalFilter(null)}
+            onJump={(c) => void openCitation(c)}
+            onScopeChange={setGlobalFilter}
+          />
+        </aside>
+      )}
+    </div>
   );
 };

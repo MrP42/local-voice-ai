@@ -647,23 +647,26 @@ impl TranscriptionManager {
                 // --device-index flag) hard-select that registered device;
                 // otherwise re-read the persisted accelerator preference (so an
                 // accelerator change marked for reload takes effect here).
-                let (backend, gpu_device) = match device_index {
+                let (backend, device) = match device_index {
                     Some(index) => resolve_device_index(index).inspect_err(|e| {
                         emit_loading_failed(&e.to_string());
                     })?,
                     None => {
                         let settings = get_settings(&self.app_handle);
                         let accelerator = settings.transcribe_accelerator;
-                        (
-                            select_transcribe_backend(accelerator),
-                            resolve_gpu_device(accelerator, settings.transcribe_gpu_device),
-                        )
+                        let device =
+                            resolve_gpu_device(accelerator, settings.transcribe_gpu_device);
+                        // transcribe-cpp 0.2.4: an explicit device must match a
+                        // non-Auto backend, so take the backend from the device.
+                        let backend = device
+                            .as_ref()
+                            .and_then(|d| backend_for_device_kind(&d.kind))
+                            .unwrap_or_else(|| select_transcribe_backend(accelerator));
+                        (backend, device)
                     }
                 };
-                let model_options = ModelOptions {
-                    backend,
-                    gpu_device,
-                };
+                let gpu_device = device.as_ref().and_then(|d| d.index);
+                let model_options = ModelOptions { backend, device };
                 let model = Model::load_with(&model_path, &model_options).map_err(|e| {
                     let error_msg = format!("Failed to load whisper model {}: {}", model_id, e);
                     emit_loading_failed(&error_msg);
@@ -693,7 +696,7 @@ impl TranscriptionManager {
                     caps.languages.clone(),
                 );
                 info!(
-                    "Loaded whisper model '{}' (requested {:?}, gpu_device {}, bound backend '{}', \
+                    "Loaded whisper model '{}' (requested {:?}, gpu_device {:?}, bound backend '{}', \
                      supports_streaming={}, supports_translate={}, supports_language_detect={})",
                     model_id,
                     backend,
@@ -2055,7 +2058,7 @@ impl TranscriptionManager {
 
                             session
                                 .run(&audio, &run_options)
-                                .map(|t| segments_from_result(&t.text, None, audio_ms))
+                                .map(|t| segments_from_transcript(&t, audio_ms))
                                 .map_err(|e| {
                                     anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
                                 })
@@ -2302,6 +2305,59 @@ pub struct TimedSegment {
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
+    /// M2-P2d: word timings (relative to the clip like `start_ms`), when the
+    /// engine produced them (transcribe-cpp word rows). `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<WordTime>>,
+}
+
+/// M2-P2d: one word with its time span in milliseconds. In a
+/// `TimedSegment` relative to the clip, in a stored meeting segment on the
+/// channel timeline (basis for M3's word-to-speaker assignment).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct WordTime {
+    pub text: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+}
+
+/// M2-P2d: the word rows of a transcribe-cpp result as clip-relative
+/// `WordTime`s. Blank words are dropped, times are clamped into the clip
+/// (engines occasionally overshoot the end by a frame), and `None` means
+/// "no word timing" (the engine produced none), never an empty list.
+pub fn words_from_rows(rows: &[(String, i64, i64)], audio_ms: u64) -> Option<Vec<WordTime>> {
+    let clamp = |t: i64| (t.max(0) as u64).min(audio_ms);
+    let words: Vec<WordTime> = rows
+        .iter()
+        .filter_map(|(text, t0, t1)| {
+            let text = text.trim();
+            if text.is_empty() {
+                return None;
+            }
+            let start_ms = clamp(*t0);
+            Some(WordTime {
+                text: text.to_string(),
+                start_ms,
+                end_ms: clamp(*t1).max(start_ms),
+            })
+        })
+        .collect();
+    (!words.is_empty()).then_some(words)
+}
+
+/// transcribe-cpp result -> segments: the text as one clip-spanning segment
+/// (unchanged meeting behaviour), plus the engine's word rows when present.
+fn segments_from_transcript(t: &transcribe_cpp::Transcript, audio_ms: u64) -> Vec<TimedSegment> {
+    let mut out = segments_from_result(&t.text, None, audio_ms);
+    if let Some(first) = out.first_mut() {
+        let rows: Vec<(String, i64, i64)> = t
+            .words
+            .iter()
+            .map(|w| (w.text.clone(), w.t0_ms, w.t1_ms))
+            .collect();
+        first.words = words_from_rows(&rows, audio_ms);
+    }
+    out
 }
 
 /// Pure conversion from an engine's raw transcription output to
@@ -2325,6 +2381,7 @@ pub fn segments_from_result(
                     start_ms: (s.start * 1000.0).round() as u64,
                     end_ms: (s.end * 1000.0).round() as u64,
                     text,
+                    words: None,
                 })
             })
             .collect();
@@ -2341,6 +2398,7 @@ pub fn segments_from_result(
         start_ms: 0,
         end_ms: audio_ms,
         text: text.to_string(),
+        words: None,
     }]
 }
 
@@ -2574,35 +2632,43 @@ pub fn describe_compute_devices() -> Vec<String> {
         .collect()
 }
 
-/// Resolve a `--list-devices` registry index to the (backend, gpu_device) pair
+/// The transcribe-cpp backend that hosts a device of this `kind`, or `None`
+/// for kinds that cannot host a model.
+fn backend_for_device_kind(kind: &str) -> Option<Backend> {
+    match kind {
+        "cpu" => Some(Backend::Cpu),
+        "metal" => Some(Backend::Metal),
+        "cuda" => Some(Backend::Cuda),
+        "vulkan" => Some(Backend::Vulkan),
+        _ => None,
+    }
+}
+
+/// Resolve a `--list-devices` registry index to the (backend, device) pair
 /// for a transcribe-cpp model load (the `--device-index` flag). The
 /// backend is set explicitly from the device's kind, so there's no "index 0 =
 /// auto" ambiguity. Errors if the index isn't a registered, loadable device.
-fn resolve_device_index(index: usize) -> Result<(Backend, i32)> {
+fn resolve_device_index(index: usize) -> Result<(Backend, Option<transcribe_cpp::Device>)> {
     let device = transcribe_compute_devices()
         .into_iter()
         .find(|d| d.index == Some(index))
         .ok_or_else(|| {
             anyhow::anyhow!("No compute device with index {index} (see --list-devices)")
         })?;
-    let backend = match device.kind.as_str() {
-        "cpu" => Backend::Cpu,
-        "metal" => Backend::Metal,
-        "cuda" => Backend::Cuda,
-        "vulkan" => Backend::Vulkan,
-        other => {
-            return Err(anyhow::anyhow!(
-                "Device index {index} has kind '{other}', which cannot host a model"
-            ))
-        }
-    };
-    // gpu_device is a registry index used only by GPU backends; CPU ignores it.
-    let gpu_device = if matches!(backend, Backend::Cpu) {
-        0
+    let backend = backend_for_device_kind(&device.kind).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Device index {index} has kind '{}', which cannot host a model",
+            device.kind
+        )
+    })?;
+    // transcribe-cpp 0.2.4 selects the exact device by handle; for CPU the
+    // backend's automatic policy is enough (as the old index 0 was).
+    let device = if matches!(backend, Backend::Cpu) {
+        None
     } else {
-        index as i32
+        Some(device)
     };
-    Ok((backend, gpu_device))
+    Ok((backend, device))
 }
 
 /// Map Handy's whisper accelerator setting to a transcribe-cpp [`Backend`].
@@ -2636,34 +2702,34 @@ fn select_transcribe_backend(setting: TranscribeAcceleratorSetting) -> Backend {
     }
 }
 
-/// Resolve the user's stored GPU device choice into a [`ModelOptions::gpu_device`]
-/// registry index for the next model load.
+/// Resolve the user's stored GPU device choice into a [`ModelOptions::device`]
+/// for the next model load.
 ///
 /// Settings store a registry index into [`transcribe_cpp::devices`] (`-1` is the
-/// UI's auto/CPU sentinel); transcribe-cpp treats `0` as "auto / first match" and
-/// rejects an out-of-range or non-GPU index. So an explicit selection is honored
-/// only when the user chose the GPU accelerator and the stored index still
-/// resolves to a registered GPU device — otherwise fall back to `0` so a stale
-/// selection can never fail the load.
-fn resolve_gpu_device(setting: TranscribeAcceleratorSetting, gpu_device: i32) -> i32 {
+/// UI's auto/CPU sentinel, `0` the old "auto / first match"). An explicit
+/// selection is honored only when the user chose the GPU accelerator and the
+/// stored index still resolves to a registered GPU device — otherwise `None`
+/// (the backend's automatic policy) so a stale selection can never fail the load.
+fn resolve_gpu_device(
+    setting: TranscribeAcceleratorSetting,
+    gpu_device: i32,
+) -> Option<transcribe_cpp::Device> {
     if transcribe_gpu_disabled_for_host()
         || setting != TranscribeAcceleratorSetting::Gpu
         || gpu_device <= 0
     {
-        return 0;
+        return None;
     }
-    let still_valid = transcribe_compute_devices()
-        .iter()
-        .any(|d| d.index == Some(gpu_device as usize) && is_transcribe_gpu_device(d));
-    if still_valid {
-        gpu_device
-    } else {
+    let found = transcribe_compute_devices()
+        .into_iter()
+        .find(|d| d.index == Some(gpu_device as usize) && is_transcribe_gpu_device(d));
+    if found.is_none() {
         warn!(
             "Stored transcribe GPU device index {} is no longer available; using auto",
             gpu_device
         );
-        0
     }
+    found
 }
 
 /// Apply the user's ORT accelerator preference to the transcribe-rs global.
@@ -2735,6 +2801,25 @@ fn transcribe_compute_devices() -> Vec<transcribe_cpp::Device> {
     devices
         .into_iter()
         .filter(|device| transcribe_device_allowed(&device.kind, gpu_disabled))
+        .collect()
+}
+
+/// M2-P2d: the GPU devices transcribe-cpp may use, with a FRESH memory
+/// snapshot: (description, free MB; 0 = not reported by the backend). Empty
+/// on a CPU-only build or host. Unlike `cached_gpu_devices` this re-queries,
+/// because the final pass decides on free VRAM right before loading.
+pub fn transcribe_gpu_memory() -> Vec<(String, u64)> {
+    transcribe_compute_devices()
+        .into_iter()
+        .filter(is_transcribe_gpu_device)
+        .map(|d| {
+            let name = if d.description.is_empty() {
+                d.name
+            } else {
+                d.description
+            };
+            (name, d.memory_free / (1024 * 1024))
+        })
         .collect()
 }
 
@@ -2830,6 +2915,52 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!((out[0].start_ms, out[0].end_ms), (0, 9_150));
         assert_eq!(out[0].text, "Ganzer Text.");
+    }
+
+    // M2-P2d
+    #[test]
+    fn word_rows_become_clamped_word_times_and_blank_rows_vanish() {
+        let rows = vec![
+            (" Guten".to_string(), 120, 480),
+            ("  ".to_string(), 480, 500),
+            ("Morgen".to_string(), 520, 3_100), // ueber das Clipende hinaus
+            ("x".to_string(), -40, -10),        // vor dem Anfang
+        ];
+        let words = words_from_rows(&rows, 3_000).unwrap();
+        assert_eq!(
+            words,
+            vec![
+                WordTime { text: "Guten".into(), start_ms: 120, end_ms: 480 },
+                WordTime { text: "Morgen".into(), start_ms: 520, end_ms: 3_000 },
+                WordTime { text: "x".into(), start_ms: 0, end_ms: 0 },
+            ]
+        );
+        assert_eq!(words_from_rows(&[], 1_000), None, "keine Wortzeiten, nie leere Liste");
+        assert_eq!(words_from_rows(&[(" ".into(), 0, 5)], 1_000), None);
+    }
+
+    #[test]
+    fn a_transcript_without_word_rows_stays_one_segment_without_words() {
+        let t = transcribe_cpp::Transcript {
+            text: " Hallo Welt ".into(),
+            ..Default::default()
+        };
+        let out = segments_from_transcript(&t, 2_000);
+        assert_eq!(out.len(), 1);
+        assert_eq!((out[0].start_ms, out[0].end_ms), (0, 2_000));
+        assert!(out[0].words.is_none());
+        let with_words = transcribe_cpp::Transcript {
+            text: "Hallo".into(),
+            words: vec![transcribe_cpp::Word {
+                t0_ms: 100,
+                t1_ms: 600,
+                text: "Hallo".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let out = segments_from_transcript(&with_words, 2_000);
+        assert_eq!(out[0].words.as_ref().unwrap()[0].end_ms, 600);
     }
 
     #[test]

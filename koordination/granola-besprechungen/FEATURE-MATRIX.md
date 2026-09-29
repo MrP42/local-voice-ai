@@ -18,10 +18,10 @@ Quelle Granola: [recherche/granola-analyse.md](recherche/granola-analyse.md) · 
 | F08 | Enhanced Notes: eigene Notizen + Transkript verschmelzen, Nutzertext schwarz / KI grau, Lupe zur Quelle | Kern | Protokoll ohne Nutzernotizen | gleich + **besser:** Quelle springt ins Transkript **und ins Audio**; keine Aussage ohne Beleg im Transkript | M1 | besser | P1b 58fa7bd + P1d + P1e 2ec9c328: Nutzertext byte-genau, KI grau, Quelle → Transkript UND Audio; Eval 30/30, 21/21 |
 | F09 | Vorlagen (29 vorgefertigt, eigene, teilbar) | Kern | Abschnitte hart codiert | mitgelieferte deutsche Vorlagen (≥ 8), eigene anlegen/bearbeiten, Export/Import als Datei | M1 | gleichwertig | P1a 13fa4d3 (8 deutsche Vorlagen) + P1c (eigene, Export/Import .lvtemplate.json) |
 | F10 | Notizen bearbeiten und per Anweisung ändern; Action-Item-Checkliste | Kern | Protokoll nur Vorschau; Aufgaben nur im Text | Editor für Notizen/Protokoll, „Anweisung anwenden", Aufgaben abhakbar | M1 | gleichwertig | P1d: Bearbeiten, Anweisung anwenden, Aufgaben-Checkliste; Playwright -g KI-Notizen |
-| F11 | Chat je Besprechung (auch live) mit Inline-Zitaten | Kern | fehlt | lokal, Zitate mit Sprung zu Transkript/Audio | M4 | offen | |
+| F11 | Chat je Besprechung (auch live) mit Inline-Zitaten | Kern | fehlt | lokal, Zitate mit Sprung zu Transkript/Audio | M4 | gleichwertig | P4c 5ed9138 + P4e b23878ba: Chat je Besprechung/live, Zitate → Transkript+Audio; Qualitätsbeleg folgt mit P4f (AK8) |
 | F12 | Chat über alle Besprechungen / Ordner / Person | Kern | fehlt | lokale Hybrid-Suche (Volltext + Embeddings), Antworten mit Zitaten | M4 | offen | |
 | F13 | Recipes (gespeicherte Chat-Prompts) | Komfort | fehlt | gespeicherte Prompts, **besser:** mit Variablen | M4 | offen | |
-| F14 | Ordner/Spaces, Suche | Kern | Liste ohne Suche | Ordner, Volltextsuche, Filter | M4 | offen | |
+| F14 | Ordner/Spaces, Suche | Kern | Liste ohne Suche | Ordner, Volltextsuche, Filter | M4 | gleichwertig | P4a 0c20b01 + P4d be9cb4e: Ordner n:m, Volltext (FTS5), Filter; Suche p95 180 ms bei 100k Chunks |
 | F15 | Kalender Google/Outlook: Titel, Teilnehmer, Erinnerung 1 min vorher | Kern | fehlt | lokal ohne Abo: ICS-Abo und/oder Outlook-Desktop; Titel/Teilnehmer übernehmen, Erinnerung | M5 | offen | |
 | F16 | Ad-hoc-Erkennung über Mikrofonnutzung | Kern | fehlt | Erkennung laufender Meeting-Apps → Hinweis „Aufnahme starten?" | M5 | offen | |
 | F17 | People/Companies aus Kalender | Komfort | fehlt | Personenliste aus Teilnehmern und Sprechernamen, Besprechungen je Person | M5 | offen | |

@@ -156,6 +156,28 @@ impl LlmRuntimeManager {
         Some(self.models_dir().join(&file.filename))
     }
 
+    /// M4-P4b: Pfad des Embedding-Modells (Katalogzweck `llm-embedding`). Es
+    /// liegt neben den Sprachmodellen, erscheint aber NICHT in deren Liste --
+    /// als Chat-Modell ist es unbrauchbar.
+    pub fn embedding_model_path(&self, model_id: &str) -> Option<PathBuf> {
+        let entry = catalog::tts_entries(Purpose::LlmEmbedding)
+            .into_iter()
+            .find(|e| e.id == model_id)?;
+        let file = entry.files.first()?;
+        Some(self.models_dir().join(&file.filename))
+    }
+
+    /// M4-P4b: eigene Logdatei des Embedding-Servers (die des Chat-Servers
+    /// wird bei jedem Start ueberschrieben).
+    pub fn embed_log_path(&self) -> PathBuf {
+        self.base_dir.join("embed-server.log")
+    }
+
+    /// M4-P4b: laeuft der Download dieses Eintrags gerade?
+    pub fn is_downloading_id(&self, id: &str) -> bool {
+        self.is_downloading(id)
+    }
+
     /// Dateigroesse und Quelle eines Modells laut Katalog (fuer die
     /// Speicherprognose, auch vor dem Download).
     pub fn model_source(&self, model_id: &str) -> Option<(u64, String)> {
@@ -354,6 +376,9 @@ impl LlmRuntimeManager {
         }
         catalog::tts_entries(Purpose::LlmModel)
             .into_iter()
+            // M4-P4b: das Embedding-Modell laedt, prueft und loescht sich wie
+            // ein Sprachmodell (gleicher Ordner, gleiche Pruefsumme).
+            .chain(catalog::tts_entries(Purpose::LlmEmbedding))
             .find(|e| e.id == id)
             .map(|e| (e, LlmDownloadKind::Model))
     }

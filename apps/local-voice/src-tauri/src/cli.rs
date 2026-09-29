@@ -160,6 +160,13 @@ pub struct CliArgs {
     #[arg(long, value_name = "MS")]
     pub system_delay_ms: Option<u64>,
 
+    /// M2-P2d: after --simulate-meeting, run the final pass with this model
+    /// (`auto`, `off` or a model id; same job as after a real stop) and add
+    /// its result as `final` (live/final epoch, transcript per channel,
+    /// timings) to the JSON.
+    #[arg(long, value_name = "ID")]
+    pub final_model: Option<String>,
+
     /// Reference text of the far end (system track) for ich_far_word_leak.
     #[arg(long, value_name = "FILE")]
     pub far_text: Option<PathBuf>,
@@ -215,6 +222,20 @@ pub struct CliArgs {
     #[arg(long, value_name = "DIR")]
     pub bench_dir: Option<PathBuf>,
 
+    // M4-P4b
+    /// Rebuild the meeting search index (chunks, full-text, vectors through
+    /// the embedding server, which is stopped at the end) and exit. Honours
+    /// LVA_MEETINGS_DIR. Output via --json/--out. Exit code 0 ok (lexical only
+    /// without the embedding model), 1 error, 3 when vectors are incomplete.
+    #[arg(long)]
+    pub reindex_meetings: bool,
+
+    /// With --reindex-meetings: first import every meeting fixture (*.json
+    /// with title, segments, notes) from this directory. Only allowed with
+    /// LVA_MEETINGS_DIR set (sandbox), never on the productive database.
+    #[arg(long, value_name = "DIR", hide = true)]
+    pub seed_meetings: Option<PathBuf>,
+
     // M1-P1e
     /// Evaluate the AI meeting notes (acceptance AK3) on the synthetic
     /// fixtures in DIR (tests/fixtures/notes) with the configured language
@@ -224,4 +245,24 @@ pub struct CliArgs {
     /// Output via --json/--out. Exit 0 targets met, 3 missed, 1 error.
     #[arg(long, value_name = "DIR")]
     pub eval_notes: Option<PathBuf>,
+
+    // M3-P3a
+    /// Measure speaker diarization (DER, acceptance AK7) on every pair
+    /// <name>.wav + <name>.rttm in DIR and exit. --model picks the diarization
+    /// model (catalog id or GGUF path; default: the installed Sortformer).
+    /// Weighted DER per group by file prefix: ami_test_*, other ami_*, rest
+    /// (German). Output via --json/--out. Exit 0 targets met, 3 missed,
+    /// 1 error, 2 bad input or model missing.
+    #[arg(long, value_name = "DIR")]
+    pub eval_diarization: Option<PathBuf>,
+
+    /// --eval-diarization: collar in seconds around every reference boundary
+    /// (default 0.25).
+    #[arg(long, value_name = "S")]
+    pub collar: Option<f64>,
+
+    /// --eval-diarization: also write the hypothesis RTTMs (post-processed and
+    /// raw) to this directory, e.g. for a cross-check with another scorer.
+    #[arg(long, value_name = "DIR")]
+    pub rttm_out: Option<PathBuf>,
 }

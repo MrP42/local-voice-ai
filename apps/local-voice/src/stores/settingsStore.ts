@@ -238,11 +238,17 @@ const settingUpdaters: {
     commands.changeMeetingDefaultTemplateSetting(
       (value as string | null) ?? null,
     ),
+  // M4-P4b
+  meeting_semantic_search: (value) =>
+    commands.changeMeetingSemanticSearchSetting(value as boolean),
   // M2-P2c2
   meeting_echo_cancellation: (value) =>
     commands.changeMeetingEchoCancellationSetting(
       value as MeetingEchoCancellation,
     ),
+  // M2-P2d
+  meeting_final_model: (value) =>
+    commands.changeMeetingFinalModelSetting((value as string) || "auto"),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

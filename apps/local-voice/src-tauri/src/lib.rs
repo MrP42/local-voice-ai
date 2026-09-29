@@ -242,6 +242,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         process_guard::spawn_memory_watchdog(move |free_mb| {
             tts.stop_server();
             llm.stop();
+            // M4-P4b: auch der zweite llama-server (Embedding-Modus).
+            managers::llm::stop_embedding();
             log::error!("memory watchdog stopped TTS and LLM servers at {free_mb} MB free");
             crate::utils::show_transient_notice(&notify, "guard.memoryLow");
         });
@@ -323,11 +325,15 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         {
             log::warn!("meetings: startup retention purge failed: {e}");
         }
+        let index_store = store.clone(); // M4-P4b
         app_handle.manage(store);
         app_handle.manage(recorder);
         // M1-P1f: KI-Notizen starten nach `TranscriptFinal` (Einstellung
         // `meeting_auto_enhance`); das Backend entscheidet, kein Fenster noetig.
         commands::meeting_enhance::register_auto_enhance(app_handle);
+        // M4-P4b: Such-Index. Lexikalisch sofort, Vektoren im Hintergrund
+        // hinter Gates; Nachholen beim Start, Ausloeser ueber MeetingEvent.
+        managers::meetings::search::indexer::start_for_app(app_handle, index_store);
     }
 
     // Note: Shortcuts are NOT initialized here.
@@ -775,6 +781,9 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         Arc::clone(&tm),
     ));
     recorder.recover_orphans();
+    // M2-P2d: Nachholen/Enddurchlauf laufen im Hintergrund; dieser Prozess
+    // endet sonst, bevor die Besprechung `ready` ist.
+    recorder.wait_final_jobs();
     match retention::purge_due_audio(&store, chrono::Utc::now().timestamp()) {
         Ok(deleted) => eprintln!("meetings: startup retention purge deleted {deleted} file(s)"),
         Err(e) => eprintln!("warning: startup retention purge failed: {e}"),
@@ -1021,6 +1030,19 @@ fn run_simulate_opts(
             payload["load_ms"] = serde_json::json!(load_ms);
             payload["scenes"] = serde_json::json!(args.scene); // M2-P2b2
             payload["reference_utterances"] = serde_json::json!(utterances);
+            // M2-P2d: Enddurchlauf auf derselben Besprechung.
+            if let (Some(final_model), Some(id)) =
+                (args.final_model.as_deref(), payload["meeting_id"].as_str())
+            {
+                let id = id.to_string();
+                payload["final"] = managers::meetings::simulate::final_pass_with_app(
+                    app,
+                    Arc::clone(store),
+                    Arc::clone(tm),
+                    &id,
+                    final_model,
+                );
+            }
             emit_headless_payload(&payload, args.out.as_deref());
             0
         }
@@ -1187,6 +1209,7 @@ fn make_orphan_meeting(
         end_ms: 3_000,
         channel: 0,
         speaker_index: None,
+        words: None,
     };
     if let Err(e) = store.append_delta(
         &meeting.id,
@@ -1584,6 +1607,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_meeting_auto_enhance_setting,
             shortcut::change_meeting_default_template_setting,
             shortcut::change_meeting_echo_cancellation_setting,
+            shortcut::change_meeting_final_model_setting,
             shortcut::handy_keys::start_handy_keys_recording,
             shortcut::handy_keys::stop_handy_keys_recording,
             trigger_update_check,
@@ -1681,6 +1705,20 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_search::meeting_folders_delete,
             commands::meeting_search::meetings_set_folders,
             commands::meeting_search::meetings_get_folders,
+            // M4-P4b: Index-Status, Embedding-Modell, Einstellung
+            commands::meeting_search::meeting_index_status,
+            commands::meeting_search::meeting_embedding_model_download,
+            commands::meeting_search::change_meeting_semantic_search_setting,
+            // M4-P4c: Chat-Motor
+            commands::meeting_chat::meeting_chat_ask,
+            commands::meeting_chat::meeting_chat_cancel,
+            commands::meeting_chat::meeting_chat_threads,
+            commands::meeting_chat::meeting_chat_thread,
+            commands::meeting_chat::meeting_chat_thread_delete,
+            commands::meeting_chat::chat_recipes_list,
+            commands::meeting_chat::chat_recipes_save,
+            commands::meeting_chat::chat_recipes_delete,
+            commands::meeting_chat::chat_recipes_duplicate,
             commands::tts::tts_speak_text,
             commands::tts::tts_speak_clipboard,
             commands::tts::tts_cancel,
@@ -1802,6 +1840,10 @@ pub fn run(cli_args: CliArgs) {
             managers::meetings::recorder::MeetingEvent,
             // M1-P1b
             commands::meeting_enhance::MeetingNotesEvent,
+            // M4-P4b
+            managers::meetings::search::indexer::MeetingIndexEvent,
+            // M4-P4c
+            commands::meeting_chat::MeetingChatEvent,
             managers::transcription::StreamTextEvent,
             managers::transcription::StreamPhaseEvent,
         ]);
@@ -1827,7 +1869,9 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.make_orphan.is_some()
         || cli_args.bench_search // M4-P4a
         || cli_args.simulate_meeting // M2-P2c2
-        || cli_args.eval_notes.is_some(); // M1-P1e
+        || cli_args.eval_notes.is_some() // M1-P1e
+        || cli_args.reindex_meetings // M4-P4b
+        || cli_args.eval_diarization.is_some(); // M3-P3a
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -2043,6 +2087,26 @@ pub fn run(cli_args: CliArgs) {
                     return Ok(());
                 }
 
+                // M4-P4b: Such-Index neu aufbauen (lexikalisch + Vektoren) und
+                // den Embedding-Server am Ende beenden. Braucht kein Mikrofon
+                // und kein Sprachmodell fuer die Transkription.
+                if cli_args.reindex_meetings {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_reindex_meetings(&app_handle, &args)
+                        });
+                        // Nie einen Kindprozess zuruecklassen, auch nach Panik.
+                        managers::llm::stop_embedding();
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
                 // M1-P1e: KI-Notizen-Eval (AK3) auf synthetischen Fixtures in
                 // einem Sandbox-Store; braucht nur das Sprachmodell.
                 if let Some(dir) = cli_args.eval_notes.clone() {
@@ -2051,6 +2115,23 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_eval_notes(&app_handle, &args, &dir)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // M3-P3a: Sprechertrennung (DER, AK7) auf Paaren
+                // <name>.wav + <name>.rttm; braucht nur das Diarisierungsmodell.
+                if let Some(dir) = cli_args.eval_diarization.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_eval_diarization(&app_handle, &args, &dir)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -2277,6 +2358,8 @@ pub fn run(cli_args: CliArgs) {
                 if let Some(llm) = app.try_state::<Arc<managers::llm::LocalLlmServer>>() {
                     llm.stop();
                 }
+                // M4-P4b: der Embedding-Server ebenso.
+                managers::llm::stop_embedding();
                 // Kein Serverprozess ueberlebt die Anwendung — auch keiner,
                 // den wir nur adoptiert haben. Er haelt rund 17 GB VRAM, und
                 // nach dem Ende der App gibt es niemanden mehr, der ihn
@@ -2308,6 +2391,137 @@ fn run_headless_bench_search(args: &CliArgs) -> i32 {
     }
     emit_headless_payload(&payload, args.out.as_deref());
     code
+}
+
+// M4-P4b: `--reindex-meetings [--seed-meetings DIR]`. Baut den Such-Index der
+// Besprechungen (`LVA_MEETINGS_DIR` wird beachtet) neu auf: Chunks und FTS
+// sofort, dann Vektoren ueber den Embedding-Server, der am Ende beendet wird.
+// Ausgabe wie die anderen Headless-Laeufe: JSON auf stdout und mit `--out` in
+// eine Datei. Exit 0 fertig (ohne Modell nur lexikalisch), 1 Fehler, 2 falscher
+// Aufruf, 3 Modell vorhanden, aber nicht alle Chunks eingebettet.
+fn run_headless_reindex_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
+    crate::selftest::begin_headless_run();
+    use managers::meetings::search::{embed::LlamaEmbedder, indexer, vectors::global_cache};
+    use managers::meetings::store::MeetingStore;
+
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if args.seed_meetings.is_some() && sandbox.is_none() {
+        eprintln!(
+            "error: --seed-meetings writes test meetings and requires {} (sandbox)",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let store = match MeetingStore::new(app) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    eprintln!("DB={}", store.db_path().display());
+    let mut seeded = 0usize;
+    if let Some(dir) = args.seed_meetings.as_deref() {
+        match seed_meetings_from_fixtures(&store, dir) {
+            Ok(n) => seeded = n,
+            Err(e) => {
+                eprintln!("error: --seed-meetings failed: {e}");
+                return 1;
+            }
+        }
+    }
+    let runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: llm runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    managers::llm::install_globals(runtime, Arc::new(managers::llm::LocalLlmServer::new()));
+    // Auch headless gilt der Speicherwaechter: faellt der freie RAM unter die
+    // Notgrenze, wird der Embedding-Server beendet (die Charge scheitert dann
+    // mit einem Code, nichts Halbes wird gespeichert).
+    process_guard::spawn_memory_watchdog(|free_mb| {
+        managers::llm::stop_embedding();
+        eprintln!("memory watchdog stopped the embedding server at {free_mb} MB free");
+    });
+    let embed = Arc::new(LlamaEmbedder::new(managers::llm::EMBED_MODEL_ID));
+    let report = indexer::reindex_all(store.clone(), embed, global_cache(), true, &|| {
+        managers::llm::embedding_pid()
+    });
+    managers::llm::stop_embedding();
+    match report {
+        Ok(report) => {
+            let mut payload = serde_json::to_value(&report).unwrap_or_default();
+            payload["mode"] = serde_json::json!("reindex_meetings");
+            payload["seeded"] = serde_json::json!(seeded);
+            payload["db"] = serde_json::json!(store.db_path().display().to_string());
+            payload["embed_server_running"] =
+                serde_json::json!(managers::llm::embedding_running());
+            emit_headless_payload(&payload, args.out.as_deref());
+            if report.model_ready && report.vectors != report.chunks {
+                3
+            } else {
+                0
+            }
+        }
+        Err(e) => {
+            eprintln!("error: reindex failed: {e}");
+            1
+        }
+    }
+}
+
+/// Eine Besprechungs-Fixture (Format der M1-Eval, `tests/fixtures/notes`).
+#[derive(serde::Deserialize)]
+struct MeetingFixture {
+    title: String,
+    segments: Vec<managers::meetings::store::StoredSegment>,
+    #[serde(default)]
+    notes: Vec<managers::meetings::notes::model::NoteBlock>,
+}
+
+/// Legt je `*.json` in `dir` eine fertige Besprechung (Import) an. Nur fuer
+/// die Sandbox (`LVA_MEETINGS_DIR`), siehe `run_headless_reindex_meetings`.
+fn seed_meetings_from_fixtures(
+    store: &managers::meetings::store::MeetingStore,
+    dir: &std::path::Path,
+) -> anyhow::Result<usize> {
+    use managers::meetings::store::{MeetingSource, MeetingStatus, TranscriptDelta};
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    files.sort();
+    let mut count = 0usize;
+    for file in files {
+        let fixture: MeetingFixture = match serde_json::from_str(&std::fs::read_to_string(&file)?) {
+            Ok(f) => f,
+            Err(_) => {
+                eprintln!("seed: {} ist keine Besprechungs-Fixture, uebersprungen", file.display());
+                continue;
+            }
+        };
+        let meeting = store.create_meeting(
+            &fixture.title,
+            MeetingSource::Import,
+            Some(chrono::Utc::now().timestamp()),
+        )?;
+        store.append_delta(
+            &meeting.id,
+            &TranscriptDelta {
+                new_segments: fixture.segments,
+            },
+        )?;
+        if !fixture.notes.is_empty() {
+            store.save_notes(&meeting.id, &fixture.notes, 0)?;
+        }
+        store.set_status(&meeting.id, MeetingStatus::Ready)?;
+        count += 1;
+    }
+    Ok(count)
 }
 
 // M1-P1e: `--eval-notes <dir>`. KI-Notizen gegen die synthetischen Fixtures,
@@ -2368,6 +2582,74 @@ fn run_headless_eval_notes(app: &AppHandle, args: &CliArgs, dir: &std::path::Pat
             ) {
                 Ok(()) => eprintln!("wrote {}", path.display()),
                 Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
+    code
+}
+
+// M3-P3a: `--eval-diarization <dir> [--model id|pfad] [--collar s] [--rttm-out dir]`.
+// DER je Datei und gewichtet je Gruppe (de / ami_dev / ami_test). Ein Modell
+// zur Zeit (Diarisierer-Platz, RAM-Gate), das Modell wird einmal geladen und
+// am Ende entladen. `--out` wird erst in eine Nachbardatei geschrieben und
+// dann umbenannt. Exit 0 Ziele erfuellt, 3 verfehlt, 1 Fehler, 2 Eingabe/Modell.
+fn run_headless_eval_diarization(app: &AppHandle, args: &CliArgs, dir: &std::path::Path) -> i32 {
+    use managers::meetings::diarize::{self, der, DiarizeError};
+
+    let models_root = match crate::portable::app_data_dir(app) {
+        Ok(d) => d.join("models"),
+        Err(e) => {
+            eprintln!("error: no app data dir: {e}");
+            return 1;
+        }
+    };
+    let model_path = diarize::resolve_model_path(&models_root, args.model.as_deref());
+    managers::transcription::init_transcribe_backend();
+    let params = diarize::DiarizeParams::new(&model_path);
+    eprintln!(
+        "eval-diarization: Modell {} ({} Threads)",
+        model_path.display(),
+        params.threads
+    );
+    let (code, payload) = match diarize::Diarizer::load(&model_path, params.threads) {
+        Ok(mut diarizer) => {
+            let opts = der::EvalOptions {
+                collar_s: args.collar.unwrap_or(der::DEFAULT_COLLAR_S),
+                rttm_out: args.rttm_out.clone(),
+                model: model_path.display().to_string(),
+            };
+            der::run_eval(&mut diarizer, dir, &params, &opts, |p| {
+                managers::tts::voices::load_wav_mono_16k(p)
+            })
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            let code = if matches!(e, DiarizeError::ModelMissing(_) | DiarizeError::WrongModel(_)) {
+                2
+            } else {
+                1
+            };
+            (
+                code,
+                serde_json::json!({"mode": "eval_diarization", "error": e.to_string()}),
+            )
+        }
+    };
+
+    if args.json {
+        println!("{payload}");
+    } else {
+        for line in der::summary_lines(&payload) {
+            println!("{line}");
+        }
+    }
+    if let Some(path) = args.out.as_deref() {
+        let text = serde_json::to_string_pretty(&payload).unwrap_or_default();
+        match der::write_atomic(path, &text) {
+            Ok(()) => eprintln!("wrote {}", path.display()),
+            Err(e) => {
+                eprintln!("error: could not write {e}");
+                return 1;
             }
         }
     }

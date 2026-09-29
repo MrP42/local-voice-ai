@@ -79,6 +79,102 @@ async meetingsSegmentEpoch(meetingId: string) : Promise<Result<number, string>> 
 }
 },
 /**
+ * Stellt eine Frage an eine Besprechung (auch waehrend der Aufnahme) oder an
+ * viele. Antworttext kommt vorab als `MeetingChatEvent::Delta`; das Ergebnis
+ * ist die fertige Antwort mit Zitaten und Abdeckung (gespeichert im
+ * Verlauf). Fehler: `<code>` oder `<code>: <art>` und `MeetingChatEvent::Failed`.
+ */
+async meetingChatAsk(req: ChatRequest) : Promise<Result<ChatAnswer, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_ask", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht einen laufenden Chat ab (nichts wird gespeichert). `false`, wenn
+ * zu dieser Anfrage kein Lauf (mehr) existiert.
+ */
+async meetingChatCancel(requestId: string) : Promise<boolean> {
+    return await TAURI_INVOKE("meeting_chat_cancel", { requestId });
+},
+/**
+ * Verlaeufe eines Scopes (Besprechung oder global), zuletzt benutzte zuerst.
+ */
+async meetingChatThreads(scope: ChatScope) : Promise<Result<ChatThread[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_threads", { scope }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nachrichten eines Verlaufs mit Zitaten und Abdeckung.
+ */
+async meetingChatThread(threadId: string) : Promise<Result<ChatMessage[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_thread", { threadId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Loescht einen Verlauf (Nachrichten hart).
+ */
+async meetingChatThreadDelete(threadId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_thread_delete", { threadId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mitgelieferte Recipes zuerst, dann die eigenen.
+ */
+async chatRecipesList() : Promise<Result<RecipeItem[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt ein eigenes Recipe an (`id = None`) oder aendert eins. Fehler:
+ * `recipe_invalid:<grund>`, `recipe_readonly`, `recipe_not_found`.
+ */
+async chatRecipesSave(id: string | null, title: string, spec: RecipeSpec) : Promise<Result<RecipeItem, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_save", { id, title, spec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chatRecipesDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopie eines (auch mitgelieferten) Recipes als eigenes, Titel mit "(Kopie)".
+ */
+async chatRecipesDuplicate(id: string) : Promise<Result<RecipeItem, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_duplicate", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Listensuche (M4-P4d): ohne Suchterme eine reine Filterliste, sonst
  * Besprechungen mit Treffern im Such-Index samt Snippet (`<mark>`).
  */
@@ -1131,6 +1227,14 @@ async changeMeetingDefaultTemplateSetting(templateId: string | null) : Promise<R
 async changeMeetingEchoCancellationSetting(mode: MeetingEchoCancellation) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_meeting_echo_cancellation_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMeetingFinalModelSetting(model: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_final_model_setting", { model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2825,6 +2929,38 @@ async ttsRenameVoiceId(oldId: string, newDisplayName: string) : Promise<Result<s
     else return { status: "error", error: e  as any };
 }
 },
+async meetingIndexStatus() : Promise<Result<IndexStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_index_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laedt das Embedding-Modell (635 MB) -- nur auf Knopfdruck (E6). Danach
+ * holt der Indexer die Vektoren im Hintergrund nach.
+ */
+async meetingEmbeddingModelDownload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_embedding_model_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_semantic_search`. Ausschalten beendet einen laufenden
+ * Embedding-Server sofort; Einschalten stoesst das Nachholen an.
+ */
+async changeMeetingSemanticSearchSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_semantic_search_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Stub implementation for non-macOS platforms
  * Always returns false since laptop detection is macOS-specific
@@ -2844,13 +2980,17 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 export const events = __makeEvents__<{
 historyUpdatePayload: HistoryUpdatePayload,
+meetingChatEvent: MeetingChatEvent,
 meetingEvent: MeetingEvent,
+meetingIndexEvent: MeetingIndexEvent,
 meetingNotesEvent: MeetingNotesEvent,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
 }>({
 historyUpdatePayload: "history-update-payload",
+meetingChatEvent: "meeting-chat-event",
 meetingEvent: "meeting-event",
+meetingIndexEvent: "meeting-index-event",
 meetingNotesEvent: "meeting-notes-event",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event"
@@ -3133,7 +3273,20 @@ meeting_default_template_id?: string | null;
  * M2-P2c2: Echo-Unterdrückung der Ich-Spur (`auto` | `on` | `off`). Ohne
  * den Schlüssel (ältere settings.json) gilt `auto`.
  */
-meeting_echo_cancellation?: MeetingEchoCancellation }
+meeting_echo_cancellation?: MeetingEchoCancellation; 
+/**
+ * M4-P4b (E6): semantische Suche in Besprechungen (Vektoren ueber das
+ * Embedding-Modell BGE-M3). Wirkt erst, wenn das Modell per Knopf
+ * heruntergeladen ist; ohne den Schluessel gilt `true`.
+ */
+meeting_semantic_search?: boolean; 
+/**
+ * M2-P2d: Enddurchlauf nach dem Stopp: `auto` (mit GPU Whisper large-v3
+ * bzw. Qwen3-ASR 1.7B, nur CPU: Live-Transkript = Endtranskript), `off`
+ * oder eine Modell-ID (laeuft auch auf der CPU). Ohne den Schluessel
+ * (aeltere settings.json) gilt `auto`.
+ */
+meeting_final_model?: string }
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
  * Verknuepfung mit der `humans`-Tabelle folgt in M9.
@@ -3155,6 +3308,40 @@ entry_id: string | null; source_segment_ids: number[];
  * `ai` | `user` | `manual`
  */
 source: string }
+/**
+ * Stand des Such-Index fuer die Einstellungszeile "Semantische Suche".
+ * Besprechungen: `total` fertige, davon `lexical_done` mit Stichwortindex
+ * (inkl. eingebetteter) und `embedded` mit allen Vektoren.
+ */
+export type IndexStatus = { total: number; pending: number; lexical_done: number; embedded: number; chunks: number; vectors: number; 
+/**
+ * Embedding-Modell heruntergeladen.
+ */
+model_ready: boolean; 
+/**
+ * Download laeuft.
+ */
+downloading: boolean; 
+/**
+ * Einstellung `meeting_semantic_search`.
+ */
+enabled: boolean; 
+/**
+ * Der Indexer hat Arbeit (Queue, Entprellung oder fehlende Vektoren).
+ */
+running: boolean; 
+/**
+ * Der Embedding-Server laeuft gerade.
+ */
+server_running: boolean; 
+/**
+ * Code des letzten Fehlers der Vektorstufe (`memory_low`, `no_model`, ...).
+ */
+last_error: string | null }
+/**
+ * Fortschritt der Vektorstufe fuer die Einstellungszeile.
+ */
+export type MeetingIndexEvent = { kind: "progress"; done: number; total: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
@@ -3187,7 +3374,134 @@ file: string; created_at: number;
  * vorgetaeuschte Nachvollziehbarkeit.
  */
 source: CandidateSource }
+export type ChatAnswer = { thread_id: string; message_id: string; 
+/**
+ * Antworttext mit `[1]`, `[2]` ... (leer bei `not_found`).
+ */
+text: string; citations: Citation[]; coverage: Coverage; 
+/**
+ * Das Modell fand in den Auszuegen keinen Beleg (UI zeigt den i18n-Text).
+ */
+not_found: boolean; 
+/**
+ * Antwort ohne ein einziges gueltiges Zitat (UI-Hinweis "ohne Beleg").
+ */
+uncited: boolean; 
+/**
+ * Lokales Modell (sonst gingen Auszuege an einen externen Anbieter).
+ */
+provider_local: boolean }
+/**
+ * Eine gespeicherte Nachricht, fuer die UI aufbereitet
+ * (`meeting_chat_thread`). Unlesbares JSON einer Zeile kostet deren Zitate,
+ * nicht den Verlauf.
+ */
+export type ChatMessage = { id: string; 
+/**
+ * `user` | `assistant`
+ */
+role: string; text: string; citations: Citation[]; coverage: Coverage | null; not_found: boolean; uncited: boolean; created_at: number }
+export type ChatRequest = { 
+/**
+ * Von der UI vergeben; Schluessel fuer Deltas und `meeting_chat_cancel`.
+ */
+request_id: string; 
+/**
+ * `None` = neuer Verlauf.
+ */
+thread_id: string | null; scope: ChatScope; 
+/**
+ * Freitext; darf leer sein, wenn ein Recipe gewaehlt ist (dann ergaenzt er es).
+ */
+question: string; recipe: RecipeCall | null }
+/**
+ * Worauf sich ein Chat bezieht: eine Besprechung (auch waehrend der
+ * Aufnahme) oder viele (alle / Ordner / Person / Zeitraum / Auswahl).
+ */
+export type ChatScope = { kind: "meeting"; meeting_id: string } | { kind: "global"; filter: ScopeFilter }
+/**
+ * Phase eines Laufs fuer `MeetingChatEvent::Stage`.
+ */
+export type ChatStage = "searching" | "reading" | "answering"
 export type ChunkSource = "title" | "transcript" | "user_notes" | "ai_notes"
+/**
+ * Ein Beleg in der Antwort. `n` ist die Anzeige-Nummer (`[n]` im Text).
+ * Transkript: `segment_index` + `start_ms` (Epoche `epoch`); Notizen:
+ * `ref_key` (NoteBlock-ID bzw. KI-Notizen-Eintrag "E7").
+ */
+export type Citation = { n: number; meeting_id: string; meeting_title: string; started_at: number | null; source: ChunkSource; epoch: number; segment_index: number | null; start_ms: number | null; ref_key: string | null; 
+/**
+ * Hoechstens 200 Zeichen aus der belegten Stelle.
+ */
+quote: string }
+/**
+ * Was der Chat gesehen hat (deterministisch; die UI formt daraus die graue
+ * Abdeckungszeile).
+ */
+export type Coverage = { meetings_in_scope: number; meetings_with_hits: number; meetings_read: number; excerpts_read: number; 
+/**
+ * Ohne Vektoren gesucht (nur Stichwortsuche).
+ */
+lexical_only: boolean; 
+/**
+ * LLM-Runden (0 = ohne Treffer gar nicht gefragt, 2 = mit Wiederholung).
+ */
+rounds: number; 
+/**
+ * Es gab mehr passende Stellen, als ins Budget passten.
+ */
+truncated: boolean; 
+/**
+ * Waehrend der Aufnahme gefragt (Live-Auszuege ohne Index).
+ */
+live: boolean; 
+/**
+ * Zitate auf unbekannte Auszugs-IDs, verworfen.
+ */
+dropped_citations: number; 
+/**
+ * Lokales Modell auf CPU: kleineres Budget ("CPU: weniger Auszuege gelesen").
+ */
+cpu_limited: boolean }
+/**
+ * Aufruf eines Recipes: ID (`builtin:<key>` oder eigene) und Werte der
+ * Variablen nach Name. Werte fuer `folder` sind Ordner-IDs, fuer `meeting`
+ * Besprechungs-IDs, fuer `date_*` `JJJJ-MM-TT`.
+ */
+export type RecipeCall = { recipe_id: string; values?: Partial<{ [key in string]: string }> }
+/**
+ * Recipe fuer die UI (`chat_recipes_list`).
+ */
+export type RecipeItem = { id: string; title: string; builtin: boolean; spec: RecipeSpec; updated_at: number }
+export type RecipeScope = "meeting" | "global" | "any"
+export type RecipeSpec = { 
+/**
+ * Immer 1.
+ */
+version: number; prompt: string; variables?: RecipeVar[]; scope: RecipeScope; 
+/**
+ * Auch waehrend der Aufnahme anbietbar.
+ */
+live_ok?: boolean }
+export type RecipeVar = { 
+/**
+ * `[a-z_]{1,24}`, im Prompt als `{{name}}`.
+ */
+name: string; label: string; kind: RecipeVarKind; required?: boolean; default?: string | null }
+export type RecipeVarKind = "text" | "person" | "folder" | "date_from" | "date_to" | "meeting"
+/**
+ * Eingrenzung fuer Chat und Suche ueber viele Besprechungen (M4 §6). Alle
+ * gesetzten Felder gelten zugleich (UND).
+ */
+export type ScopeFilter = { meeting_ids: string[] | null; folder_id: string | null; person: string | null; from: number | null; to: number | null }
+export type ChatThread = { id: string; scope_json: string; meeting_id: string | null; title: string | null; message_count: number; created_at: number; updated_at: number }
+/**
+ * Ereignis eines Chat-Laufs. `delta`: sichtbarer Antworttext in Stuecken
+ * (Zitat-Marker gefiltert; die Endantwort von `meeting_chat_ask` ersetzt
+ * ihn). `stage`: Phase und Runde (Runde 2 = Wiederholung, der bisherige
+ * Text wird verworfen). `failed.code` ist einer von `chat::EVENT_CODES`.
+ */
+export type MeetingChatEvent = { kind: "delta"; request_id: string; text: string } | { kind: "stage"; request_id: string; stage: ChatStage; round: number } | { kind: "failed"; request_id: string; code: string }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
 export type EngineType = 
@@ -3332,10 +3646,12 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  */
 { kind: "reset"; meeting_id: string } | 
 /**
- * The live transcript is complete and stored (sent at the end of `stop()`).
+ * The transcript is final and stored: after the final pass (P2d), or at
+ * once when the live transcript stays (setting `off`, CPU only, skipped).
  * `epoch` is the generation of the segments (`segment_epoch`); `model` the
- * engine that produced them. Consumers that build on the transcript (AI
- * notes) start here, not at `stop()`.
+ * engine that produced them, `None` when the final pass was skipped by an
+ * error. Consumers that build on the transcript (AI notes, index) start
+ * here, not at `stop()`.
  */
 { kind: "transcript_final"; meeting_id: string; epoch: number; model: string | null }
 /**
@@ -3489,7 +3805,20 @@ export type SectionKind = "text" | "tasks"
 export type SecretMap = Partial<{ [key in string]: string }>
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
-export type StoredSegment = { segment_index: number; text: string; start_ms: number; end_ms: number; channel: number; speaker_index: number | null }
+export type StoredSegment = { segment_index: number; text: string; start_ms: number; end_ms: number; channel: number; speaker_index: number | null;
+/**
+ * M2-P2d: Wortzeiten auf der Kanal-Achse, wenn die Engine sie liefert
+ * (Grundlage fuer M3). Fehlt in allen aelteren `segments_json` und wird
+ * dann nicht geschrieben: alte Zeilen laden und bleiben unveraendert,
+ * keine Migration.
+ */
+words?: WordTime[] | null }
+/**
+ * M2-P2d: one word with its time span in milliseconds. In a
+ * `TimedSegment` relative to the clip, in a stored meeting segment on the
+ * channel timeline (basis for M3's word-to-speaker assignment).
+ */
+export type WordTime = { text: string; start_ms: number; end_ms: number }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */

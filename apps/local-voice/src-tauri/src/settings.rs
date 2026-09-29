@@ -804,10 +804,25 @@ pub struct AppSettings {
     /// Standardvorlage (`builtin:allgemein`).
     #[serde(default)]
     pub meeting_default_template_id: Option<String>,
+    /// M4-P4b (E6): semantische Suche in Besprechungen (Vektoren ueber das
+    /// Embedding-Modell BGE-M3). Wirkt erst, wenn das Modell per Knopf
+    /// heruntergeladen ist; ohne den Schluessel gilt `true`.
+    #[serde(default = "default_true")]
+    pub meeting_semantic_search: bool,
     /// M2-P2c2: Echo-Unterdrückung der Ich-Spur (`auto` | `on` | `off`). Ohne
     /// den Schlüssel (ältere settings.json) gilt `auto`.
     #[serde(default)]
     pub meeting_echo_cancellation: MeetingEchoCancellation,
+    /// M2-P2d: Enddurchlauf nach dem Stopp: `auto` (mit GPU Whisper large-v3
+    /// bzw. Qwen3-ASR 1.7B, nur CPU: Live-Transkript = Endtranskript), `off`
+    /// oder eine Modell-ID (laeuft auch auf der CPU). Ohne den Schluessel
+    /// (aeltere settings.json) gilt `auto`.
+    #[serde(default = "default_meeting_final_model")]
+    pub meeting_final_model: String,
+}
+
+fn default_meeting_final_model() -> String {
+    "auto".to_string()
 }
 
 fn default_meeting_language() -> String {
@@ -1554,7 +1569,9 @@ pub fn get_default_settings() -> AppSettings {
         meeting_capture_system: true,
         meeting_auto_enhance: true,
         meeting_default_template_id: None,
+        meeting_semantic_search: true,
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,
+        meeting_final_model: default_meeting_final_model(),
     }
 }
 
@@ -2655,6 +2672,21 @@ mod tests {
         assert_eq!(parsed.meeting_default_template_id, None);
     }
 
+    /// M4-P4b: eine settings.json ohne den Schluessel schaltet die semantische
+    /// Suche ein (sie wirkt ohnehin erst mit geladenem Modell); ein explizites
+    /// `false` bleibt.
+    #[test]
+    fn meeting_semantic_search_defaults_on_and_keeps_a_choice() {
+        assert!(get_default_settings().meeting_semantic_search);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(old.meeting_semantic_search);
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_semantic_search": false }))
+                .unwrap();
+        assert!(!off.meeting_semantic_search);
+    }
+
     #[test]
     fn meeting_p1f_fields_keep_an_explicit_choice() {
         let json = serde_json::json!({
@@ -2685,6 +2717,18 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "meeting_echo_cancellation": "off" }))
                 .unwrap();
         assert_eq!(off.meeting_echo_cancellation, MeetingEchoCancellation::Off);
+    }
+
+    // M2-P2d
+    #[test]
+    fn final_model_defaults_to_auto_and_old_files_load() {
+        assert_eq!(get_default_settings().meeting_final_model, "auto");
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_final_model, "auto");
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_final_model": "off" })).unwrap();
+        assert_eq!(off.meeting_final_model, "off");
     }
 
     #[test]

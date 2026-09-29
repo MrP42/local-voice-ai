@@ -490,3 +490,668 @@ pub async fn ollama_unload(base_url: &str, model: &str) {
         Err(e) => log::warn!("Ollama unload failed: {e}"),
     }
 }
+
+// ------------------------------------------------ Streaming (M4, P4c Chat) --
+
+/// Eine Nachricht fuer `send_chat_completion_stream` (`role` = `system` |
+/// `user` | `assistant`).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct StreamMessage {
+    pub role: String,
+    pub content: String,
+}
+
+impl StreamMessage {
+    pub fn new(role: &str, content: impl Into<String>) -> Self {
+        Self {
+            role: role.to_string(),
+            content: content.into(),
+        }
+    }
+}
+
+/// Mehr Antworttext nimmt der Stream nicht an: ein Modell in einer
+/// Wiederholungsschleife soll weder den Speicher noch die Oberflaeche fluten.
+/// Beim Erreichen wird die Verbindung geschlossen (der Server bricht dann ab).
+pub const STREAM_MAX_CHARS: usize = 32 * 1024;
+/// Laengste Pause zwischen zwei Stream-Stuecken, sobald Text fliesst. Vor dem
+/// ersten Token gilt `STREAM_FIRST_TOKEN_TIMEOUT` (Prefill auf CPU dauert).
+const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const STREAM_FIRST_TOKEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+/// Eine SSE-Zeile laenger als das ist kein Token-Stream mehr.
+const SSE_MAX_LINE_BYTES: usize = 1024 * 1024;
+
+/// Anfrage-Body fuer Chat mit oder ohne Streaming. Beim lokalen Server wird
+/// das Denken des Modells abgeschaltet (Qwen3/Qwen3.5: `enable_thinking=false`
+/// ueber `chat_template_kwargs`); entfernte Anbieter bekommen das Feld nicht,
+/// weil manche unbekannte Felder mit 400 ablehnen.
+pub fn stream_request_body(
+    model: &str,
+    messages: &[StreamMessage],
+    stream: bool,
+    local: bool,
+) -> Value {
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+    });
+    if local {
+        body["chat_template_kwargs"] = serde_json::json!({ "enable_thinking": false });
+    }
+    body
+}
+
+/// Ein Ereignis aus dem SSE-Strom eines OpenAI-kompatiblen Servers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SseEvent {
+    Delta(String),
+    Usage(TokenUsage),
+    Done,
+    /// Der Server meldet einen Fehler im Strom (`{"error": ...}`); nur der
+    /// Typ/Code, nie der Text der Anfrage.
+    Error(String),
+}
+
+/// Zerlegt SSE-Bytes in Ereignisse. Puffert bis zum Zeilenende, damit ein
+/// UTF-8-Zeichen, das auf zwei Netzwerkpakete verteilt ist, heil bleibt (ein
+/// `\n` kommt in UTF-8 nie mitten in einem Zeichen vor).
+#[derive(Default)]
+pub struct SseDecoder {
+    buf: Vec<u8>,
+}
+
+impl SseDecoder {
+    pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<SseEvent>, String> {
+        self.buf.extend_from_slice(bytes);
+        let mut events = Vec::new();
+        while let Some(pos) = self.buf.iter().position(|b| *b == b'\n') {
+            let line: Vec<u8> = self.buf.drain(..=pos).collect();
+            let line = String::from_utf8_lossy(&line);
+            if let Some(event) = parse_sse_line(line.trim_end_matches(['\r', '\n'])) {
+                events.push(event);
+            }
+        }
+        if self.buf.len() > SSE_MAX_LINE_BYTES {
+            return Err("SSE-Zeile zu lang".to_string());
+        }
+        Ok(events)
+    }
+
+    /// Rest ohne abschliessenden Zeilenumbruch (Server schliesst direkt nach
+    /// dem letzten `data:`).
+    pub fn finish(&mut self) -> Vec<SseEvent> {
+        let rest = std::mem::take(&mut self.buf);
+        let line = String::from_utf8_lossy(&rest);
+        parse_sse_line(line.trim_end_matches(['\r', '\n']))
+            .into_iter()
+            .collect()
+    }
+}
+
+fn parse_sse_line(line: &str) -> Option<SseEvent> {
+    let payload = line.strip_prefix("data:")?.trim();
+    if payload.is_empty() {
+        return None;
+    }
+    if payload == "[DONE]" {
+        return Some(SseEvent::Done);
+    }
+    let value: Value = serde_json::from_str(payload).ok()?;
+    if let Some(error) = value.get("error") {
+        let code = error
+            .get("type")
+            .or_else(|| error.get("code"))
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "unbekannt".to_string());
+        return Some(SseEvent::Error(code));
+    }
+    if let Some(content) = value
+        .pointer("/choices/0/delta/content")
+        .and_then(|c| c.as_str())
+    {
+        if !content.is_empty() {
+            return Some(SseEvent::Delta(content.to_string()));
+        }
+    }
+    if let Some(usage) = value.get("usage").filter(|u| u.is_object()) {
+        let count = |key: &str| usage.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+        return Some(SseEvent::Usage(TokenUsage {
+            prompt_tokens: count("prompt_tokens"),
+            completion_tokens: count("completion_tokens"),
+        }));
+    }
+    None
+}
+
+/// Chat-Anfrage mit Streaming (SSE, `stream: true`). `on_delta` bekommt jedes
+/// Textstueck in Reihenfolge; das Ergebnis ist der ganze Text.
+///
+/// Rueckfall: lehnt der Anbieter Streaming ab (Fehlerstatus) oder bricht der
+/// Strom VOR dem ersten Token ab, wird die Anfrage einmal ohne Streaming
+/// gestellt und die ganze Antwort als ein Stueck gemeldet. Schickt der Server
+/// trotz `stream: true` eine ganze JSON-Antwort, wird sie genauso genommen.
+/// Nach dem ersten Token ist ein Abbruch ein Fehler (der Text war schon zu
+/// sehen). Den Abbruch durch den Nutzer macht der Aufrufer, indem er das
+/// Future fallen laesst: die Verbindung schliesst, der Server hoert auf.
+///
+/// Gebucht wird wie bei `send_chat_completion_with_schema`: jeder Aufruf,
+/// auch ein gescheiterter (dann mit null Token). Kein Prompt- oder
+/// Antworttext im Log.
+pub async fn send_chat_completion_stream(
+    purpose: Purpose,
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    messages: Vec<StreamMessage>,
+    on_delta: &(dyn Fn(&str) + Send + Sync),
+) -> Result<String, String> {
+    usage::check_budget(provider, model)?;
+    let started = std::time::Instant::now();
+    let (result, tokens) = match stream_inner(provider, api_key, model, messages, on_delta).await {
+        Ok((content, tokens)) => (Ok(content), tokens),
+        Err(e) => (Err(e), TokenUsage::default()),
+    };
+    let elapsed = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
+    usage::record_call(
+        purpose,
+        provider,
+        model,
+        tokens,
+        elapsed,
+        result.as_ref().map(|_| ()).map_err(|e| e.clone()),
+    );
+    result
+}
+
+async fn stream_inner(
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    messages: Vec<StreamMessage>,
+    on_delta: &(dyn Fn(&str) + Send + Sync),
+) -> Result<(String, TokenUsage), String> {
+    use futures_util::StreamExt;
+
+    let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;
+    let url = format!("{}/chat/completions", resolved.trim_end_matches('/'));
+    debug!("Sending streaming chat completion request to: {}", url);
+    let client = create_client(provider, &api_key)?;
+    let local = crate::managers::llm::is_local(provider);
+    let fallback_body = stream_request_body(model, &messages, false, local);
+
+    let response = client
+        .post(&url)
+        .json(&stream_request_body(model, &messages, true, local))
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        log::info!("Streaming abgelehnt ({status}), Anfrage ohne Streaming");
+        return complete_once(&client, &url, &fallback_body, on_delta).await;
+    }
+    let is_sse = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.contains("text/event-stream"));
+    if !is_sse {
+        // Der Server hat `stream` ignoriert und eine ganze Antwort geschickt.
+        let completion: ChatCompletionResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse API response: {}", e))?;
+        return Ok(deliver_whole(completion, on_delta));
+    }
+
+    let mut decoder = SseDecoder::default();
+    let mut text = String::new();
+    let mut text_chars = 0usize;
+    let mut tokens = TokenUsage::default();
+    let mut stream = response.bytes_stream();
+    'read: loop {
+        let wait = if text.is_empty() {
+            STREAM_FIRST_TOKEN_TIMEOUT
+        } else {
+            STREAM_IDLE_TIMEOUT
+        };
+        let (events, ended) = match tokio::time::timeout(wait, stream.next()).await {
+            Err(_) => return Err("Stream: Zeitlimit ohne neue Daten".to_string()),
+            Ok(None) => (decoder.finish(), true),
+            Ok(Some(Err(e))) => {
+                if text.is_empty() {
+                    log::info!("Stream vor dem ersten Token abgebrochen, Anfrage ohne Streaming");
+                    return complete_once(&client, &url, &fallback_body, on_delta).await;
+                }
+                return Err(format!("Stream abgebrochen: {e}"));
+            }
+            Ok(Some(Ok(bytes))) => (decoder.push(&bytes)?, false),
+        };
+        for event in events {
+            match event {
+                SseEvent::Delta(delta) => {
+                    let delta_chars = delta.chars().count();
+                    if text_chars + delta_chars > STREAM_MAX_CHARS {
+                        log::warn!(
+                            "Stream: Antwort ueber {STREAM_MAX_CHARS} Zeichen, abgeschnitten"
+                        );
+                        break 'read;
+                    }
+                    text_chars += delta_chars;
+                    text.push_str(&delta);
+                    on_delta(&delta);
+                }
+                SseEvent::Usage(u) => tokens = u,
+                SseEvent::Done => break 'read,
+                SseEvent::Error(code) => {
+                    return Err(format!("Stream-Fehler vom Server ({code})"));
+                }
+            }
+        }
+        if ended {
+            break;
+        }
+    }
+    Ok((text, tokens))
+}
+
+fn deliver_whole(
+    completion: ChatCompletionResponse,
+    on_delta: &(dyn Fn(&str) + Send + Sync),
+) -> (String, TokenUsage) {
+    let text: String = completion
+        .choices
+        .first()
+        .and_then(|c| c.message.content.clone())
+        .unwrap_or_default()
+        .chars()
+        .take(STREAM_MAX_CHARS)
+        .collect();
+    if !text.is_empty() {
+        on_delta(&text);
+    }
+    (text, TokenUsage::from(completion.usage))
+}
+
+/// Rueckfall ohne Streaming: dieselben Nachrichten, `stream: false`.
+async fn complete_once(
+    client: &reqwest::Client,
+    url: &str,
+    body: &Value,
+    on_delta: &(dyn Fn(&str) + Send + Sync),
+) -> Result<(String, TokenUsage), String> {
+    let response = client
+        .post(url)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
+    let status = response.status();
+    if !status.is_success() {
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Failed to read error response".to_string());
+        return Err(format!(
+            "API request failed with status {}: {}",
+            status, error_text
+        ));
+    }
+    let completion: ChatCompletionResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse API response: {}", e))?;
+    Ok(deliver_whole(completion, on_delta))
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    fn provider(port: u16) -> PostProcessProvider {
+        PostProcessProvider {
+            id: "custom".into(),
+            label: "Test".into(),
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            allow_base_url_edit: true,
+            models_endpoint: None,
+            supports_structured_output: false,
+        }
+    }
+
+    /// Antwort des Roh-Mocks: Status, Content-Type und Stuecke, die mit einer
+    /// kleinen Pause einzeln geschrieben werden (Body endet mit dem Schliessen).
+    struct RawReply {
+        status: u16,
+        content_type: &'static str,
+        chunks: Vec<Vec<u8>>,
+    }
+
+    /// Mock-Server: `handler(n, body)` bekommt die laufende Nummer der Anfrage
+    /// und ihren Body.
+    async fn spawn_raw_mock(
+        handler: impl Fn(usize, &str) -> RawReply + Send + Sync + 'static,
+    ) -> u16 {
+        let handler = Arc::new(handler);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                let handler = Arc::clone(&handler);
+                let n = counter.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 1 << 20];
+                    let mut read = 0usize;
+                    let body = loop {
+                        let got = sock.read(&mut buf[read..]).await.unwrap_or(0);
+                        if got == 0 {
+                            return;
+                        }
+                        read += got;
+                        let text = String::from_utf8_lossy(&buf[..read]).to_string();
+                        if let Some(end) = text.find("\r\n\r\n") {
+                            let len = text[..end]
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_ascii_lowercase()
+                                        .strip_prefix("content-length: ")
+                                        .map(|v| v.trim().to_string())
+                                })
+                                .and_then(|v| v.parse::<usize>().ok())
+                                .unwrap_or(0);
+                            if read >= end + 4 + len {
+                                break String::from_utf8_lossy(&buf[end + 4..end + 4 + len])
+                                    .to_string();
+                            }
+                        }
+                    };
+                    let reply = handler(n, &body);
+                    let head = format!(
+                        "HTTP/1.1 {} Mock\r\nContent-Type: {}\r\nConnection: close\r\n\r\n",
+                        reply.status, reply.content_type
+                    );
+                    let _ = sock.write_all(head.as_bytes()).await;
+                    for chunk in reply.chunks {
+                        let _ = sock.write_all(&chunk).await;
+                        let _ = sock.flush().await;
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    }
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        port
+    }
+
+    fn sse(parts: &[&str]) -> Vec<Vec<u8>> {
+        parts
+            .iter()
+            .map(|p| {
+                format!(
+                    "data: {}\n\n",
+                    serde_json::json!({"choices": [{"delta": {"content": p}}]})
+                )
+                .into_bytes()
+            })
+            .collect()
+    }
+
+    fn collect() -> (Arc<Mutex<Vec<String>>>, impl Fn(&str) + Send + Sync) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        (seen, move |d: &str| {
+            sink.lock().unwrap().push(d.to_string())
+        })
+    }
+
+    #[test]
+    fn sse_decoder_keeps_split_lines_and_split_utf8_intact() {
+        let line = format!(
+            "data: {}\n\n",
+            serde_json::json!({"choices": [{"delta": {"content": "Grüße"}}]})
+        );
+        let bytes = line.as_bytes();
+        // Mitten im "ü" (2 Byte) teilen.
+        let cut = line.find('ü').unwrap() + 1;
+        let mut dec = SseDecoder::default();
+        assert!(dec.push(&bytes[..cut]).unwrap().is_empty());
+        let events = dec.push(&bytes[cut..]).unwrap();
+        assert_eq!(events, vec![SseEvent::Delta("Grüße".into())]);
+    }
+
+    #[test]
+    fn sse_decoder_reads_usage_done_errors_and_ignores_noise() {
+        let mut dec = SseDecoder::default();
+        let input = concat!(
+            ": keep-alive\r\n",
+            "event: message\r\n",
+            "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\r\n\r\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"A\"}}]}\r\n\r\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3}}\n\n",
+            "data: [DONE]\n\n",
+            "data: {\"error\":{\"type\":\"server_error\",\"message\":\"geheim\"}}\n",
+        );
+        let events = dec.push(input.as_bytes()).unwrap();
+        assert_eq!(
+            events,
+            vec![
+                SseEvent::Delta("A".into()),
+                SseEvent::Usage(TokenUsage {
+                    prompt_tokens: 12,
+                    completion_tokens: 3
+                }),
+                SseEvent::Done,
+                SseEvent::Error("\"server_error\"".into()),
+            ]
+        );
+        // Letzte Zeile ohne Umbruch kommt mit `finish`.
+        assert!(dec.push(b"data: [DONE]").unwrap().is_empty());
+        assert_eq!(dec.finish(), vec![SseEvent::Done]);
+        // Riesige Zeile ohne Umbruch: Fehler statt unbegrenztem Puffer.
+        let mut dec = SseDecoder::default();
+        assert!(dec.push(&vec![b'x'; SSE_MAX_LINE_BYTES + 1]).is_err());
+    }
+
+    #[test]
+    fn the_local_body_turns_thinking_off_and_the_remote_body_does_not() {
+        let msgs = vec![StreamMessage::new("user", "Frage")];
+        let local = stream_request_body("m", &msgs, true, true);
+        assert_eq!(local["stream"], true);
+        assert_eq!(local["chat_template_kwargs"]["enable_thinking"], false);
+        assert_eq!(local["messages"][0]["role"], "user");
+        let remote = stream_request_body("m", &msgs, false, false);
+        assert_eq!(remote["stream"], false);
+        assert!(remote.get("chat_template_kwargs").is_none());
+    }
+
+    #[tokio::test]
+    async fn stream_delivers_deltas_in_order_and_returns_the_whole_text() {
+        let port = spawn_raw_mock(|_, body| {
+            assert!(body.contains("\"stream\":true"), "Streaming angefragt");
+            let mut chunks = sse(&["Das ", "Budget ", "steht [Q1]."]);
+            chunks.push(b"data: [DONE]\n\n".to_vec());
+            RawReply {
+                status: 200,
+                content_type: "text/event-stream",
+                chunks,
+            }
+        })
+        .await;
+        let (seen, on_delta) = collect();
+        let text = send_chat_completion_stream(
+            Purpose::Chat,
+            &provider(port),
+            String::new(),
+            "m",
+            vec![StreamMessage::new("user", "x")],
+            &on_delta,
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "Das Budget steht [Q1].");
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["Das ", "Budget ", "steht [Q1]."]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stream_without_done_ends_with_the_connection() {
+        let port = spawn_raw_mock(|_, _| RawReply {
+            status: 200,
+            content_type: "text/event-stream",
+            chunks: sse(&["Ende ", "ohne DONE"]),
+        })
+        .await;
+        let (_seen, on_delta) = collect();
+        let text = send_chat_completion_stream(
+            Purpose::Chat,
+            &provider(port),
+            String::new(),
+            "m",
+            vec![StreamMessage::new("user", "x")],
+            &on_delta,
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "Ende ohne DONE");
+    }
+
+    #[tokio::test]
+    async fn a_plain_json_answer_counts_as_one_delta() {
+        let port = spawn_raw_mock(|_, _| RawReply {
+            status: 200,
+            content_type: "application/json",
+            chunks: vec![serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": "Alles auf einmal"}}]
+            })
+            .to_string()
+            .into_bytes()],
+        })
+        .await;
+        let (seen, on_delta) = collect();
+        let text = send_chat_completion_stream(
+            Purpose::Chat,
+            &provider(port),
+            String::new(),
+            "m",
+            vec![StreamMessage::new("user", "x")],
+            &on_delta,
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "Alles auf einmal");
+        assert_eq!(*seen.lock().unwrap(), vec!["Alles auf einmal"]);
+    }
+
+    #[tokio::test]
+    async fn a_refused_stream_falls_back_to_one_non_streaming_request() {
+        let port = spawn_raw_mock(|n, body| {
+            if n == 0 {
+                assert!(body.contains("\"stream\":true"));
+                RawReply {
+                    status: 400,
+                    content_type: "text/plain",
+                    chunks: vec![b"stream not supported".to_vec()],
+                }
+            } else {
+                assert!(
+                    body.contains("\"stream\":false"),
+                    "Rueckfall ohne Streaming"
+                );
+                RawReply {
+                    status: 200,
+                    content_type: "application/json",
+                    chunks: vec![serde_json::json!({
+                        "choices": [{"message": {"content": "Rueckfall"}}],
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 1}
+                    })
+                    .to_string()
+                    .into_bytes()],
+                }
+            }
+        })
+        .await;
+        let (seen, on_delta) = collect();
+        let text = send_chat_completion_stream(
+            Purpose::Chat,
+            &provider(port),
+            String::new(),
+            "m",
+            vec![StreamMessage::new("user", "x")],
+            &on_delta,
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "Rueckfall");
+        assert_eq!(*seen.lock().unwrap(), vec!["Rueckfall"]);
+    }
+
+    #[tokio::test]
+    async fn an_error_after_the_first_token_is_a_failure_not_a_second_request() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&requests);
+        let port = spawn_raw_mock(move |_, _| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            let mut chunks = sse(&["Teil "]);
+            chunks.push(b"data: {\"error\":{\"type\":\"server_error\"}}\n\n".to_vec());
+            RawReply {
+                status: 200,
+                content_type: "text/event-stream",
+                chunks,
+            }
+        })
+        .await;
+        let (seen, on_delta) = collect();
+        let err = send_chat_completion_stream(
+            Purpose::Chat,
+            &provider(port),
+            String::new(),
+            "m",
+            vec![StreamMessage::new("user", "x")],
+            &on_delta,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("server_error"), "war: {err}");
+        assert_eq!(*seen.lock().unwrap(), vec!["Teil "]);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_runaway_answer_is_cut_at_the_limit() {
+        let port = spawn_raw_mock(|_, _| {
+            let piece = "x".repeat(4096);
+            let parts: Vec<&str> = (0..12).map(|_| piece.as_str()).collect();
+            RawReply {
+                status: 200,
+                content_type: "text/event-stream",
+                chunks: sse(&parts),
+            }
+        })
+        .await;
+        let (_seen, on_delta) = collect();
+        let text = send_chat_completion_stream(
+            Purpose::Chat,
+            &provider(port),
+            String::new(),
+            "m",
+            vec![StreamMessage::new("user", "x")],
+            &on_delta,
+        )
+        .await
+        .unwrap();
+        assert!(text.chars().count() <= STREAM_MAX_CHARS);
+        assert!(text.chars().count() >= STREAM_MAX_CHARS - 4096);
+    }
+}

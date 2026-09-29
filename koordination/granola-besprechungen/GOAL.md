@@ -88,6 +88,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - E8 Chats werden gespeichert (Threads je Scope) — Vorschlag: ja.
 - E9 Ordner flach, eine Besprechung in mehreren Ordnern (n:m) — Vorschlag: ja.
 - E10–E17 (Entwurf M5/M6 §11): Erkennung Standard „Meeting-Apps“ nur als Hinweis; Erinnerung 1 min nur bei ≥ 2 Teilnehmenden oder Join-URL; Geheimnisse DPAPI-verschlüsselt, nie im Sync; MCP standardmäßig aus mit Warnung; Graph-Client-ID registriert Patrick in Entra (P5f danach); PDF über WebView2; Briefs nur per Knopf; kein Massenexport in M6 — Vorschlag jeweils: ja.
+- E18–E23 (Entwurf M3 §7): Sortformer 4spk jetzt, Nemotron später; transcribe-cpp 0.2.4 app-weit mit WER-Regressionstor; Diarisierung Standard an, Wiedererkennen Standard aus mit Einwilligung je Person; AK7 auf AMI knapp → Bericht abwarten, nicht nachtunen; Lizenzhinweise NVIDIA Open Model/OpenMDW in „Über“; E23 echte deutsche Testaufnahme 3–5 Personen von Patrick (sonst deutscher AK7-Teil synthetisch) — Vorschlag jeweils: ja.
 - R9 Lokaler Kontext fest 8192 Token → Map-Reduce als Normalfall; misst P1e unter 95 % Belegquote, folgt Paket P1g (Kontext je VRAM größer, `ensure_local`).
 
 ## Meilensteine

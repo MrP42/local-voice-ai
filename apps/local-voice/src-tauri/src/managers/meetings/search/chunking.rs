@@ -687,6 +687,7 @@ mod tests {
             end_ms,
             channel,
             speaker_index: None,
+            words: None,
         }
     }
 

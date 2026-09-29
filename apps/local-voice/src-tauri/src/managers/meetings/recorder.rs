@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Manager};
@@ -20,12 +20,12 @@ use tauri_specta::Event;
 
 use super::chunker::Chunk;
 use super::dsp::{
-    transcript_final_event, ChannelFeed, DspConfig, DspControl, DspNotice, EchoSetup,
-    LivePipeline, MeetingTimeline, PcmSink, VadFactory, WavFileSink,
+    ChannelFeed, DspConfig, DspControl, DspNotice, EchoSetup, LivePipeline, MeetingTimeline,
+    PcmSink, VadFactory, WavFileSink,
 };
+use super::final_pass::{self, FinalChoice, FinalPlan, JobSpec, KeepReason};
 use super::mic_capture::MeetingMicCapture;
 use super::store::{Meeting, MeetingSource, MeetingStatus, MeetingStore, StoredSegment};
-use crate::audio_toolkit::audio::wav_writer::repair_orphan_wav;
 use crate::audio_toolkit::audio::{LoopbackCapture, StreamingWavWriter};
 use crate::managers::transcription::TranscriptionManager;
 
@@ -121,10 +121,12 @@ pub enum MeetingEvent {
     /// new run's segments, which restart at index 0, would append to the old.
     #[serde(rename = "reset")]
     Reset { meeting_id: String },
-    /// The live transcript is complete and stored (sent at the end of `stop()`).
+    /// The transcript is final and stored: after the final pass (P2d), or at
+    /// once when the live transcript stays (setting `off`, CPU only, skipped).
     /// `epoch` is the generation of the segments (`segment_epoch`); `model` the
-    /// engine that produced them. Consumers that build on the transcript (AI
-    /// notes) start here, not at `stop()`.
+    /// engine that produced them, `None` when the final pass was skipped by an
+    /// error. Consumers that build on the transcript (AI notes, index) start
+    /// here, not at `stop()`.
     #[serde(rename = "transcript_final")]
     TranscriptFinal {
         meeting_id: String,
@@ -242,6 +244,28 @@ struct RecordingSession {
     pipeline: Option<LivePipeline>,
 }
 
+/// M2-P2d: der laufende Enddurchlauf-/Recovery-Thread.
+struct FinalJobHandle {
+    cancel: Arc<AtomicBool>,
+    handle: std::thread::JoinHandle<()>,
+}
+
+/// Setzt `starting` fuer die Dauer von `start()` (auch bei jedem Fehlerweg).
+struct StartingFlag<'a>(&'a AtomicBool);
+
+impl<'a> StartingFlag<'a> {
+    fn set(flag: &'a AtomicBool) -> Self {
+        flag.store(true, Ordering::Release);
+        Self(flag)
+    }
+}
+
+impl Drop for StartingFlag<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -256,6 +280,12 @@ pub struct MeetingRecorderManager {
     /// `Recording` once the captures are up, so without this a double-click
     /// could get two starts past `may_start` and leave one orphaned.
     start_guard: Mutex<()>,
+    /// M2-P2d: Enddurchlauf bzw. Recovery im Hintergrund (hoechstens einer).
+    final_job: Mutex<Option<FinalJobHandle>>,
+    /// M2-P2d: `start()` laeuft. Zaehlt als "Aufnahme aktiv", damit ein
+    /// `TranscriptFinal` des eben abgebrochenen Enddurchlaufs keine lokalen
+    /// KI-Notizen neben der neuen Aufnahme startet.
+    starting: AtomicBool,
 }
 
 impl MeetingRecorderManager {
@@ -271,11 +301,104 @@ impl MeetingRecorderManager {
             state: Mutex::new(MeetingRunState::Idle),
             session: Mutex::new(None),
             start_guard: Mutex::new(()),
+            final_job: Mutex::new(None),
+            starting: AtomicBool::new(false),
         }
     }
 
     pub fn is_recording(&self) -> bool {
-        !may_start(&self.state.lock().unwrap())
+        self.starting.load(Ordering::Acquire) || !may_start(&self.state.lock().unwrap())
+    }
+
+    /// M2-P2d: startet Enddurchlauf-/Recovery-Auftraege in EINEM Thread, der
+    /// sie nacheinander abarbeitet (eine Engine, nie zwei grosse Modelle).
+    /// Laeuft noch ein frueherer Thread, wartet der neue auf ihn und teilt
+    /// seinen Abbruch-Merker. Danach kommt das Diktatmodell zurueck
+    /// (Muster `stop()`), ausser eine neue Aufnahme hat abgebrochen.
+    fn spawn_final_jobs(&self, jobs: Vec<JobSpec>) {
+        if jobs.is_empty() {
+            return;
+        }
+        let mut slot = self.final_job.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = slot.take();
+        let cancel = match &previous {
+            Some(p) if !p.handle.is_finished() => Arc::clone(&p.cancel),
+            _ => Arc::new(AtomicBool::new(false)),
+        };
+        let app = self.app.clone();
+        let store = Arc::clone(&self.store);
+        let tm = Arc::clone(&self.transcription);
+        let job_cancel = Arc::clone(&cancel);
+        let thread_jobs = jobs.clone();
+        let spawned = std::thread::Builder::new()
+            .name("meeting-final-pass".to_string())
+            .spawn(move || {
+                if let Some(previous) = previous {
+                    let _ = previous.handle.join();
+                }
+                let mut env = final_pass::AppEnv::new(&app, Arc::clone(&tm), Arc::clone(&job_cancel));
+                for job in &thread_jobs {
+                    final_pass::run_job(&store, job, &mut env);
+                }
+                if !job_cancel.load(Ordering::Relaxed) {
+                    let dictation_model = crate::settings::get_settings(&app).selected_model;
+                    tm.initiate_model_load_target(&dictation_model);
+                }
+            });
+        match spawned {
+            Ok(handle) => *slot = Some(FinalJobHandle { cancel, handle }),
+            Err(e) => {
+                drop(slot);
+                // Ohne Thread kein Enddurchlauf, aber auch kein haengendes
+                // `processing`: jede Besprechung wird hier abgeschlossen.
+                warn!("meetings: final pass thread not started ({e}) - live transcripts stay");
+                let mut env = final_pass::AppEnv::new(
+                    &self.app,
+                    Arc::clone(&self.transcription),
+                    Arc::new(AtomicBool::new(false)),
+                );
+                for mut job in jobs {
+                    job.plan = FinalPlan::Keep(KeepReason::LoadFailed);
+                    job.catch_up_model = None;
+                    final_pass::run_job(&self.store, &job, &mut env);
+                }
+            }
+        }
+    }
+
+    /// M2-P2d: eine neue Aufnahme braucht die Engine. Der Enddurchlauf hoert
+    /// nach dem laufenden Segment auf (das Live-Transkript bleibt, die
+    /// Besprechung wird `ready`), und erst dann geht es weiter.
+    fn cancel_final_jobs(&self) {
+        let job = self
+            .final_job
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(job) = job {
+            if !job.handle.is_finished() {
+                info!("meetings: a new recording cancels the running final pass");
+            }
+            job.cancel.store(true, Ordering::Relaxed);
+            if job.handle.join().is_err() {
+                error!("meetings: final pass thread panicked");
+            }
+        }
+    }
+
+    /// M2-P2d: wartet auf den Enddurchlauf-/Recovery-Thread (Headless-Laeufe,
+    /// deren Prozess sonst vor dem Ende des Auftrags endete).
+    pub fn wait_final_jobs(&self) {
+        let job = self
+            .final_job
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(job) = job {
+            if job.handle.join().is_err() {
+                error!("meetings: final pass thread panicked");
+            }
+        }
     }
 
     /// Starts a live meeting: creates the row, the folder and both WAV
@@ -296,6 +419,7 @@ impl MeetingRecorderManager {
                 return Err("already_recording".to_string());
             }
         }
+        let _starting = StartingFlag::set(&self.starting);
 
         // A dictation and a meeting would fight over the microphone and the
         // overlay; the meeting yields to the dictation already in progress
@@ -308,6 +432,9 @@ impl MeetingRecorderManager {
                 return Err("dictation_active".to_string());
             }
         }
+
+        // M2-P2d: ein laufender Enddurchlauf gibt die Engine vorher frei.
+        self.cancel_final_jobs();
 
         let consent_at = chrono::Utc::now().timestamp();
         let meeting = self
@@ -596,8 +723,12 @@ impl MeetingRecorderManager {
     }
 
     /// Stops capture, drains the tail chunks (status `processing` while that
-    /// runs), finalizes both WAVs and marks the meeting `ready`. Blocking —
-    /// call it off the UI thread.
+    /// runs) and finalizes both WAVs. Then the final pass (P2d): when it runs,
+    /// the meeting stays `processing` and a background job replaces the live
+    /// transcript, marks it `ready` and sends `TranscriptFinal`; when the live
+    /// transcript stays (setting `off`, CPU only, no model, not enough memory),
+    /// that happens here at once. Returns as soon as the live worker is empty.
+    /// Blocking — call it off the UI thread.
     pub fn stop(&self) -> Result<String, String> {
         let session = self
             .session
@@ -662,11 +793,20 @@ impl MeetingRecorderManager {
         // dictation model is restored below.
         let live_model = self.transcription.get_current_model();
 
-        // Restore the dictation model so the next hotkey dictation does not
-        // silently run on the meeting model (no-op when they are the same).
-        let dictation_model = crate::settings::get_settings(&self.app).selected_model;
-        self.transcription
-            .initiate_model_load_target(&dictation_model);
+        // M2-P2d: which model runs the final pass, if any (setting, GPU, RAM,
+        // VRAM). Only when none does, the dictation model comes back right
+        // away; otherwise the job restores it after the final model.
+        let settings = crate::settings::get_settings(&self.app);
+        let plan = final_pass::plan_for_app(
+            &self.app,
+            &FinalChoice::parse(&settings.meeting_final_model),
+        );
+        if matches!(plan, FinalPlan::Keep(_)) {
+            // Restore the dictation model so the next hotkey dictation does not
+            // silently run on the meeting model (no-op when they are the same).
+            self.transcription
+                .initiate_model_load_target(&settings.selected_model);
+        }
 
         let mic_ms = finalize_sink(&mic_sink).unwrap_or(0);
         let system_ms = system_sink.as_ref().and_then(finalize_sink).unwrap_or(0);
@@ -693,22 +833,41 @@ impl MeetingRecorderManager {
         if let Err(e) = self.store.set_retention_until(&meeting_id, until) {
             warn!("meetings: retention_until not stored: {e}");
         }
-        if let Err(e) = self.store.set_status(&meeting_id, MeetingStatus::Ready) {
-            warn!("meetings: status 'ready' not stored: {e}");
+        info!("meetings: recording stopped ({meeting_id}, {duration_ms} ms, final pass {plan:?})");
+        // `ready` + `TranscriptFinal` come from the job: at once when the live
+        // transcript stays, after the final pass otherwise.
+        let job = JobSpec {
+            meeting_id: meeting_id.clone(),
+            catch_up_model: None,
+            plan,
+            live_model,
+        };
+        if matches!(job.plan, FinalPlan::Keep(_)) {
+            let mut env = final_pass::AppEnv::new(
+                &self.app,
+                Arc::clone(&self.transcription),
+                Arc::new(AtomicBool::new(false)),
+            );
+            final_pass::run_job(&self.store, &job, &mut env);
+        } else {
+            self.spawn_final_jobs(vec![job]);
         }
-        self.emit_state(&meeting_id, "ready", false);
-        // Every live segment is stored: consumers may build on the transcript now.
-        // P2d moves this behind the final pass.
-        let _ = transcript_final_event(&self.store, &meeting_id, live_model).emit(&self.app);
-        info!("meetings: recording stopped ({meeting_id}, {duration_ms} ms)");
         Ok(meeting_id)
     }
 
-    /// App start: a meeting still marked `recording` means the app died mid
-    /// recording. Its WAV headers claim zero length, so repair them from the
-    /// file size and hand the meeting back to the user as `ready` (segments
-    /// are already durable — every delta was committed as it arrived).
+    /// App start: a meeting still marked `recording` or `processing` means the
+    /// app died mid recording or mid final pass. Its WAV headers may claim
+    /// zero length, so repair them from the file size, store the real
+    /// `duration_ms`, and hand the meeting to a background job (status
+    /// `processing`): it transcribes each channel's rest after the last stored
+    /// segment, runs the final pass when one applies, then marks it `ready`
+    /// and sends `TranscriptFinal` (M2-P2d, concept 3.6). Stored segments are
+    /// durable — every delta was committed as it arrived.
     pub fn recover_orphans(&self) {
+        let settings = crate::settings::get_settings(&self.app);
+        let choice = FinalChoice::parse(&settings.meeting_final_model);
+        let catch_up_model = TranscriptionManager::meeting_model_target(&settings);
+        let mut jobs: Vec<JobSpec> = Vec::new();
         let mut offset = 0u32;
         let mut recovered: Vec<String> = Vec::new();
         loop {
@@ -721,37 +880,25 @@ impl MeetingRecorderManager {
             };
             let page_len = page.len() as u32;
             for meeting in page {
-                if meeting.status != "recording" {
+                if meeting.status != "recording" && meeting.status != "processing" {
                     continue;
                 }
-                // M2-P2c2: auch die entechote Kopie (mic_aec.wav), sonst bliebe
-                // ihr Header auf dem Stand der letzten Sekunde vor dem Absturz.
-                let derived: Vec<String> = meeting
-                    .mic_audio_path
-                    .as_deref()
-                    .map(super::derived_audio_paths)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|p| std::path::Path::new(p).exists())
-                    .collect();
-                for path in [
-                    meeting.mic_audio_path.clone(),
-                    meeting.system_audio_path.clone(),
-                ]
-                .into_iter()
-                .flatten()
-                .chain(derived)
-                {
-                    match repair_orphan_wav(std::path::Path::new(&path)) {
-                        Ok(Some(ms)) => debug!("meetings: repaired orphan wav ({ms} ms)"),
-                        Ok(None) => {}
-                        Err(e) => warn!("meetings: orphan wav repair failed: {e}"),
-                    }
-                }
-                if let Err(e) = self.store.set_status(&meeting.id, MeetingStatus::Ready) {
+                // WAV-Header reparieren, echte Dauer, Status `processing`.
+                if let Err(e) = final_pass::prepare_orphan(&self.store, &meeting) {
                     warn!("meetings: orphan status not stored: {e}");
                     continue;
                 }
+                let plan = if meeting.source == "live" {
+                    final_pass::plan_for_app(&self.app, &choice)
+                } else {
+                    FinalPlan::Keep(KeepReason::NotLive)
+                };
+                jobs.push(JobSpec {
+                    meeting_id: meeting.id.clone(),
+                    catch_up_model: Some(catch_up_model.clone()),
+                    plan,
+                    live_model: None,
+                });
                 recovered.push(meeting.id);
             }
             if page_len < RECOVERY_PAGE {
@@ -766,6 +913,7 @@ impl MeetingRecorderManager {
                 recovered
             );
         }
+        self.spawn_final_jobs(jobs);
     }
 
     /// Spec A1: while a meeting records, the machine must show it — tray icon

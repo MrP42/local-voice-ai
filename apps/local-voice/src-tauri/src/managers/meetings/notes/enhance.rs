@@ -211,6 +211,12 @@ impl Drop for EnhanceGuard<'_> {
     }
 }
 
+/// M4-P4b: laeuft gerade ein KI-Notizen-Lauf? Gate des Such-Indexers (die
+/// Vektorstufe wartet, damit beide nicht um Speicher und GPU konkurrieren).
+pub fn enhance_running() -> bool {
+    RUNNING.load(Ordering::Acquire)
+}
+
 /// Aufnahme laeuft und der Anbieter ist lokal: STT und LLM konkurrieren um
 /// dieselbe Maschine (schuetzt die Latenz der Aufnahme). Entfernte Anbieter
 /// sind erlaubt. Die Command-Schicht ruft das vor dem Lauf.
@@ -1785,6 +1791,7 @@ mod tests {
             end_ms: u64::from(index) * 5_000 + 4_000,
             channel: (index % 2) as u8,
             speaker_index: None,
+            words: None,
         }
     }
 

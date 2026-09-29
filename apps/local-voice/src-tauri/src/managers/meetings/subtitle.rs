@@ -68,6 +68,7 @@ pub fn parse_subtitles(content: &str) -> Result<Vec<StoredSegment>, String> {
                 end_ms,
                 channel: 2,
                 speaker_index: None,
+                words: None,
             });
             continue;
         }

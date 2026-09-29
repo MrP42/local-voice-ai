@@ -50,6 +50,12 @@ pub enum Purpose {
     LlmRuntime,
     /// GGUF-Sprachmodell fuer den lokalen Server.
     LlmModel,
+    /// M4-P4b: GGUF-Embedding-Modell fuer den zweiten Server (Besprechungs-
+    /// suche). Getrennt von `LlmModel`, damit es nie als Chat-Modell erscheint.
+    LlmEmbedding,
+    /// M3-P3a: Sprechertrennungs-Modell (Kategorie "Sprechertrennung",
+    /// `managers::meetings::diarize`). Nie im ASR-Katalog: es transkribiert nicht.
+    Diarization,
 }
 
 /// One model as written in `catalog.json`. Only the fields the descriptor needs
@@ -406,6 +412,29 @@ mod tests {
             CATALOG.iter().all(|d| !d.id.starts_with("llm-")),
             "Sprachmodell-Eintraege gehoeren nicht in den ASR-Katalog"
         );
+    }
+
+    /// M4-P4b: das Embedding-Modell hat einen eigenen Zweck -- es darf weder
+    /// als Sprachmodell (Chat) noch im ASR-Katalog auftauchen -- und traegt
+    /// Groesse und Pruefsumme laut M4-Spike.
+    #[test]
+    fn the_embedding_model_has_its_own_purpose_and_a_checksum() {
+        let entries = tts_entries(Purpose::LlmEmbedding);
+        let bge = entries
+            .iter()
+            .find(|e| e.id == "emb-bge-m3-q8")
+            .expect("emb-bge-m3-q8 im Katalog");
+        let file = &bge.files[0];
+        assert_eq!(file.size_bytes, 634_553_760);
+        assert_eq!(
+            file.sha256.as_deref(),
+            Some("950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167")
+        );
+        assert!(file.url.starts_with("https://huggingface.co/gpustack/bge-m3-GGUF/"));
+        assert!(tts_entries(Purpose::LlmModel)
+            .iter()
+            .all(|e| e.id != "emb-bge-m3-q8"));
+        assert!(CATALOG.iter().all(|d| d.id != "emb-bge-m3-q8"));
     }
 
     #[test]
