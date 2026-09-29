@@ -1483,7 +1483,10 @@ export const TtsSettings = () => {
                 {lastError}
               </p>
             )}
-            <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2">
+            {/* overflow-y-auto: reicht der Platz selbst dann nicht (kleines
+              Fenster, Korrekturpanel offen), scrollt die Spalte, statt dass
+              der Editor unter seine Mindesthoehe gedrueckt wird. */}
+            <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto">
               {/* Zwei Reiter, ein Feld. Das Original wird nie ueberschrieben —
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
@@ -1541,7 +1544,7 @@ export const TtsSettings = () => {
                   />
                 </div>
               )}
-              <div className="tts-editor__fill flex-1 min-h-0">
+              <div className="tts-editor__fill flex-1 min-h-[160px]">
                 {tab === "original" ? (
                   <TtsChipEditor
                     value={text}
@@ -1596,7 +1599,7 @@ export const TtsSettings = () => {
               {/* Ausdruck & Sprechstil direkt unter dem Text: die Palette fuegt
                 an der Cursorposition ein, deshalb gehoert sie zum Feld, nicht
                 in die Bedienspalte (Entscheidung Patrick 14.09. abends). */}
-              <details className="workspace-disclosure">
+              <details className="workspace-disclosure workspace-disclosure--scroll">
                 <summary>{t("workspace.voiceStyle")}</summary>
                 <div className="space-y-3 pt-2">
                   <TagPalette

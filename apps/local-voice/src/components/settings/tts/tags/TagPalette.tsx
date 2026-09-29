@@ -298,44 +298,47 @@ export const TagPalette: React.FC<{
 
   return (
     <div className="rounded-lg border border-mid-gray/20">
-      <div className="flex items-center gap-2 px-2 py-1.5">
-        <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-text/50">
-          {t("tts.tags.title")}
-        </span>
-        {isOpen && (
-          <div className="relative min-w-0 flex-1">
-            <Search
-              width={14}
-              height={14}
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-text/40"
-            />
-            <Input
-              type="text"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("tts.tags.searchPlaceholder")}
-              className="w-full pl-7"
-            />
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={() => setIsOpenRaw(isOpen ? "0" : "1")}
-          title={isOpen ? t("tts.tags.collapse") : t("tts.tags.expand")}
-          aria-label={isOpen ? t("tts.tags.collapse") : t("tts.tags.expand")}
-          className="shrink-0 cursor-pointer rounded-md p-1 text-text/50 transition-colors hover:bg-mid-gray/20 hover:text-text"
-        >
-          {isOpen ? (
-            <ChevronUp width={16} height={16} />
-          ) : (
-            <ChevronDown width={16} height={16} />
+      {/* Kopf (Titel, Suche) und Filterreiter kleben oben, wenn die Palette
+          in einem scrollenden Klappbereich liegt: 44px tiefer als die
+          Ueberschrift des Klappbereichs (sie ist selbst 44px hoch). */}
+      <div className="sticky top-11 z-[1] rounded-t-lg bg-background pb-1">
+        <div className="flex items-center gap-2 px-2 py-1.5">
+          <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-text/50">
+            {t("tts.tags.title")}
+          </span>
+          {isOpen && (
+            <div className="relative min-w-0 flex-1">
+              <Search
+                width={14}
+                height={14}
+                aria-hidden="true"
+                className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-text/40"
+              />
+              <Input
+                type="text"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("tts.tags.searchPlaceholder")}
+                className="w-full pl-7"
+              />
+            </div>
           )}
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={() => setIsOpenRaw(isOpen ? "0" : "1")}
+            title={isOpen ? t("tts.tags.collapse") : t("tts.tags.expand")}
+            aria-label={isOpen ? t("tts.tags.collapse") : t("tts.tags.expand")}
+            className="shrink-0 cursor-pointer rounded-md p-1 text-text/50 transition-colors hover:bg-mid-gray/20 hover:text-text"
+          >
+            {isOpen ? (
+              <ChevronUp width={16} height={16} />
+            ) : (
+              <ChevronDown width={16} height={16} />
+            )}
+          </button>
+        </div>
 
-      {isOpen && (
-        <>
+        {isOpen && (
           <div
             role="tablist"
             aria-label={t("tts.tags.tabsAriaLabel")}
@@ -369,7 +372,11 @@ export const TagPalette: React.FC<{
               />
             ))}
           </div>
+        )}
+      </div>
 
+      {isOpen && (
+        <>
           {/* Legende: was die drei Farben bedeuten -- einmal, nicht als
               Tooltip auf jedem Chip. */}
           <p
