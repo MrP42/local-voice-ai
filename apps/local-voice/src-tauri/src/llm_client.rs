@@ -127,6 +127,10 @@ impl From<Option<UsageBlock>> for TokenUsage {
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     message: ChatMessageResponse,
+    /// `length`: der Server hat die Antwort abgebrochen (Kontext oder
+    /// Ausgabegrenze voll). Fehlt bei manchen Anbietern.
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +210,16 @@ pub async fn send_chat_completion(
     .await
 }
 
+/// Antwort eines Chat-Aufrufs samt dem Hinweis, ob der Server sie abgeschnitten
+/// hat (`finish_reason == "length"`). Ein abgeschnittenes JSON ist nie gueltig;
+/// wer es weiss, kann den Prompt verkleinern statt denselben noch einmal zu
+/// senden (P1i, Befund B11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatReply {
+    pub content: Option<String>,
+    pub truncated: bool,
+}
+
 /// Send a chat completion request with structured output support
 /// When json_schema is provided, uses structured outputs mode
 /// system_prompt is used as the system message when provided
@@ -226,6 +240,35 @@ pub async fn send_chat_completion_with_schema(
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
 ) -> Result<Option<String>, String> {
+    send_chat_completion_checked(
+        purpose,
+        provider,
+        api_key,
+        model,
+        user_content,
+        system_prompt,
+        json_schema,
+        reasoning_effort,
+        reasoning,
+    )
+    .await
+    .map(|reply| reply.content)
+}
+
+/// Wie [`send_chat_completion_with_schema`], liefert aber auch, ob die Antwort
+/// abgeschnitten wurde.
+#[allow(clippy::too_many_arguments)]
+pub async fn send_chat_completion_checked(
+    purpose: Purpose,
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    user_content: String,
+    system_prompt: Option<String>,
+    json_schema: Option<Value>,
+    reasoning_effort: Option<String>,
+    reasoning: Option<ReasoningConfig>,
+) -> Result<ChatReply, String> {
     // Hartes Budget: die Verweigerung ist bewusst ungebucht -- es wurde ja
     // nichts verbraucht.
     usage::check_budget(provider, model)?;
@@ -243,7 +286,7 @@ pub async fn send_chat_completion_with_schema(
     )
     .await
     {
-        Ok((content, tokens)) => (Ok(content), tokens),
+        Ok((reply, tokens)) => (Ok(reply), tokens),
         Err(e) => (Err(e), TokenUsage::default()),
     };
     let elapsed = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
@@ -271,7 +314,7 @@ async fn send_inner(
     json_schema: Option<Value>,
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
-) -> Result<(Option<String>, TokenUsage), String> {
+) -> Result<(ChatReply, TokenUsage), String> {
     // Fuer den lokalen Anbieter ist die Adresse erst bekannt, wenn der
     // Server laeuft -- und der wird hier bei Bedarf gestartet.
     let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;
@@ -347,11 +390,18 @@ async fn send_inner(
         .map_err(|e| format!("Failed to parse API response: {}", e))?;
 
     let tokens = TokenUsage::from(completion.usage);
-    let content = completion
-        .choices
-        .first()
-        .and_then(|choice| choice.message.content.clone());
-    Ok((clean_local_content(local, content), tokens))
+    let first = completion.choices.first();
+    let content = first.and_then(|choice| choice.message.content.clone());
+    let truncated = first
+        .and_then(|choice| choice.finish_reason.as_deref())
+        .is_some_and(|reason| reason == "length");
+    Ok((
+        ChatReply {
+            content: clean_local_content(local, content),
+            truncated,
+        },
+        tokens,
+    ))
 }
 
 /// Fetch available models from an OpenAI-compatible API

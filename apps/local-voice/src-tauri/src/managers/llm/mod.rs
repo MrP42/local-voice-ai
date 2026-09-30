@@ -184,6 +184,46 @@ pub async fn context_for_model(model_id: &str) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
+// P1i: Token exakt messen (`/tokenize` des llama-servers)
+// ---------------------------------------------------------------------------
+
+/// Wurzeladresse des lokalen Servers fuer `model_id` (ohne `/v1`), der dafuer
+/// bei Bedarf gestartet wird. `None`, wenn er nicht bereit wird -- der Aufrufer
+/// faellt dann auf eine Schaetzung zurueck; den Fehler selbst meldet der erste
+/// echte Aufruf (RAM-Gate, Absturz) mit dem richtigen Code.
+pub async fn local_server_root(model_id: &str) -> Option<String> {
+    let base = ensure_local(model_id).await.ok()?;
+    Some(base.trim_end_matches('/').trim_end_matches("/v1").to_string())
+}
+
+/// Wartezeit fuer `/tokenize`: ein Aufruf dauert Millisekunden. Haengt der
+/// Server, faellt der Aufrufer auf die Schaetzung zurueck, statt zu warten.
+const TOKENIZE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Anzahl Token von `text` laut `/tokenize` des Servers unter `root`. `None`
+/// bei jedem Problem (Server ohne Endpunkt, Zeitueberschreitung, unbrauchbare
+/// Antwort, nicht leerer Text mit null Token): eine falsche Messung ist
+/// schlimmer als keine.
+pub async fn tokenize_count(root: &str, text: &str) -> Option<usize> {
+    if text.is_empty() {
+        return Some(0);
+    }
+    let client = reqwest::Client::builder().timeout(TOKENIZE_TIMEOUT).build().ok()?;
+    let response = client
+        .post(format!("{}/tokenize", root.trim_end_matches('/')))
+        .json(&serde_json::json!({ "content": text, "add_special": false }))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = response.json().await.ok()?;
+    let count = body.get("tokens")?.as_array()?.len();
+    (count > 0).then_some(count)
+}
+
+// ---------------------------------------------------------------------------
 // M4-P4b: zweiter Server im Embedding-Modus (BGE-M3, M4 D3)
 // ---------------------------------------------------------------------------
 //
@@ -396,6 +436,63 @@ pub(crate) mod tests {
         let p = provider("local", "http://127.0.0.1:0/v1");
         let err = resolve_base_url(&p, "llm-qwen3-4b-q4").await.unwrap_err();
         assert!(err.contains("nicht initialisiert") || err.contains("nicht geladen"), "{err}");
+    }
+
+
+    // ---- P1i: /tokenize ---------------------------------------------------
+
+    use crate::managers::meetings::llm_call::test_support::{spawn_llm_mock_with, MockReply};
+
+    /// Ein Server, der wie llama-server auf `/tokenize` antwortet: ein Token je
+    /// drei Zeichen.
+    async fn tokenize_mock() -> String {
+        let port = spawn_llm_mock_with(|body| {
+            let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+            let text = v["content"].as_str().unwrap_or("");
+            let tokens: Vec<u32> = (0..text.chars().count().div_ceil(3) as u32).collect();
+            MockReply::Body(serde_json::json!({ "tokens": tokens }).to_string())
+        })
+        .await;
+        format!("http://127.0.0.1:{port}")
+    }
+
+    #[tokio::test]
+    async fn tokenize_count_reads_the_token_array_of_the_server() {
+        let root = tokenize_mock().await;
+        assert_eq!(tokenize_count(&root, "abcdefghi").await, Some(3));
+        assert_eq!(tokenize_count(&format!("{root}/"), "abcd").await, Some(2), "Schraegstrich am Ende");
+        assert_eq!(tokenize_count(&root, "").await, Some(0), "leerer Text braucht keinen Aufruf");
+    }
+
+    /// Kein Endpunkt, kaputte Antwort, toter Server, null Token fuer echten
+    /// Text: immer `None`, nie eine erfundene Zahl.
+    #[tokio::test]
+    async fn tokenize_count_gives_up_instead_of_guessing() {
+        let not_found = spawn_llm_mock_with(|_| MockReply::Status(404)).await;
+        assert_eq!(tokenize_count(&format!("http://127.0.0.1:{not_found}"), "text").await, None);
+
+        let garbage = spawn_llm_mock_with(|_| MockReply::Body("kein json".into())).await;
+        assert_eq!(tokenize_count(&format!("http://127.0.0.1:{garbage}"), "text").await, None);
+
+        let no_tokens = spawn_llm_mock_with(|_| MockReply::Body(r#"{"tokens":[]}"#.into())).await;
+        assert_eq!(tokenize_count(&format!("http://127.0.0.1:{no_tokens}"), "text").await, None);
+
+        let wrong_shape = spawn_llm_mock_with(|_| MockReply::Body(r#"{"tokens":"x"}"#.into())).await;
+        assert_eq!(tokenize_count(&format!("http://127.0.0.1:{wrong_shape}"), "text").await, None);
+
+        // Nichts lauscht auf dem Port (Server abgestuerzt).
+        let dead = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        assert_eq!(tokenize_count(&format!("http://127.0.0.1:{dead}"), "text").await, None);
+    }
+
+    /// Ohne Laufzeit startet kein Server: die Wurzel gibt es nicht, der Aufrufer
+    /// schaetzt.
+    #[tokio::test]
+    async fn the_server_root_is_missing_without_a_runtime() {
+        assert_eq!(local_server_root("llm-qwen3-4b-q4").await, None);
     }
 
     // ---- M4-P4b ----------------------------------------------------------

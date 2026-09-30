@@ -1444,11 +1444,19 @@ test.describe("KI-Notizen", () => {
     audio?: boolean;
     epoch?: number;
     withDocument?: boolean;
+    /** P1i: Nummern der Transkriptteile, die auch nach dem Halbieren nicht auswertbar waren. */
+    failedChunks?: number[];
   };
 
   /** Besprechung m1 mit 15 Segmenten (Nr. 12 bei 03:15) und einer KI-Notizen-Version. */
   const setup = async (page: Page, opts: Setup = {}) => {
-    const { audio = false, epoch = 1, withDocument = true } = opts;
+    const { audio = false, epoch = 1, withDocument = true, failedChunks } = opts;
+    const notes = notesBody();
+    if (failedChunks) {
+      notes.stats.single_pass = false;
+      notes.stats.chunks_total = 6;
+      notes.stats.chunks_failed = failedChunks;
+    }
     await page.addInitScript(
       ({ audio, epoch, withDocument, body }) => {
         const w = window as any;
@@ -1509,7 +1517,7 @@ test.describe("KI-Notizen", () => {
           },
         ];
       },
-      { audio, epoch, withDocument, body: notesBody() },
+      { audio, epoch, withDocument, body: notes },
     );
   };
 
@@ -1555,6 +1563,27 @@ test.describe("KI-Notizen", () => {
     await expect(noSource.getByTestId("no-evidence")).toHaveText("ohne Beleg");
     await expect(noSource.locator("[data-source-id]")).toHaveCount(0);
     await expect(page.getByTestId("stale-hint")).toHaveCount(0);
+  });
+
+  // P1i (B11): ein Transkriptteil, der auch nach dem Halbieren nicht ausgewertet
+  // werden konnte, macht die Notizen "unvollstaendig" -- die Oberflaeche sagt es.
+  test("KI-Notizen: nicht ausgewertete Transkriptteile werden als unvollständig gewarnt", async ({
+    page,
+  }) => {
+    await setup(page, { failedChunks: [2, 3] });
+    await openAiNotes(page);
+    const warning = page.getByText(
+      "2 von 6 Abschnitten des Transkripts konnten nicht ausgewertet werden. Die Notizen sind unvollständig",
+    );
+    await expect(warning).toBeVisible();
+  });
+
+  test("KI-Notizen: vollständige Notizen zeigen keine Unvollständig-Warnung", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openAiNotes(page);
+    await expect(page.getByText("konnten nicht ausgewertet werden")).toHaveCount(0);
   });
 
   test("KI-Notizen: Quell-Klick wechselt ins Transkript, markiert Segment 12 und spielt ab 195 s", async ({

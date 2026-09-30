@@ -1134,6 +1134,14 @@ fn simulate_notes(
     ));
     let ms = started.elapsed().as_millis() as u64;
     llm_server.stop();
+    // P1i: `ok` allein sagt nicht, ob die Notizen das ganze Transkript abdecken.
+    // Teile (nach dem Halbieren), die nicht auswertbar waren, stehen hier;
+    // `incomplete` ist genau das Kennzeichen, das die Oberflaeche als Warnung zeigt.
+    let stats = result
+        .as_ref()
+        .ok()
+        .and_then(|doc| enhance::parse_enhanced(doc).ok())
+        .map(|notes| notes.stats);
     serde_json::json!({
         "ran": true,
         "ok": result.is_ok(),
@@ -1143,6 +1151,10 @@ fn simulate_notes(
         "steps": steps.load(std::sync::atomic::Ordering::Relaxed),
         "error_code": result.as_ref().err().map(|e| enhance::event_code(e)),
         "document_id": result.as_ref().ok().map(|d| d.id.clone()),
+        "single_pass": stats.as_ref().map(|s| s.single_pass),
+        "chunks_total": stats.as_ref().map(|s| s.chunks_total),
+        "chunks_failed": stats.as_ref().map(|s| s.chunks_failed.clone()),
+        "incomplete": stats.as_ref().map(|s| !s.chunks_failed.is_empty()),
     })
 }
 

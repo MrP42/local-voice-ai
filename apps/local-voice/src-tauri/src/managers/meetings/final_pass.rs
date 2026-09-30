@@ -82,18 +82,20 @@ const SAMPLES_PER_MS: u64 = 16;
 /// Wie oft ein Segment versucht wird, bevor der Enddurchlauf aufgibt.
 const TRANSCRIBE_ATTEMPTS: u32 = 3;
 
-/// Endmodelle fuer `auto` mit GPU, in dieser Reihenfolge (Befund B1):
-/// Whisper large-v3 (4,65 % WER, RTF ~20 auf der 4090), sonst Qwen3-ASR 1.7B.
+/// Endmodelle fuer `auto` mit GPU, in dieser Reihenfolge (Befund B1, B11):
+/// Qwen3-ASR 1.7B (WER 4,17 %, RTF ~61 auf der 4090), sonst Whisper large-v3
+/// (4,65 %, RTF ~40). Qwen3-ASR zuerst: schneller (60 Minuten ~35 s frueher
+/// fertig, QG3) und nach bench.md nicht schlechter.
 /// (Repo-Praefix, bevorzugte Datei): jede Quantisierung des Repos zaehlt,
 /// die bevorzugte zuerst.
 pub const AUTO_GPU_CANDIDATES: &[(&str, &str)] = &[
     (
-        "handy-computer/whisper-large-v3-gguf/",
-        "whisper-large-v3-Q5_K_M.gguf",
-    ),
-    (
         "handy-computer/Qwen3-ASR-1.7B-gguf/",
         "Qwen3-ASR-1.7B-Q5_K_M.gguf",
+    ),
+    (
+        "handy-computer/whisper-large-v3-gguf/",
+        "whisper-large-v3-Q5_K_M.gguf",
     ),
 ];
 
@@ -220,7 +222,7 @@ fn auto_candidate(installed: &[(String, u64)]) -> Option<&(String, u64)> {
 ///
 /// - `off` -> Keep(Off).
 /// - `auto` ohne GPU -> Keep(CpuOnly): Live = Ende, kein zweiter Lauf.
-/// - `auto` mit GPU -> Whisper large-v3, sonst Qwen3-ASR 1.7B; keins -> Keep(NoModel).
+/// - `auto` mit GPU -> Qwen3-ASR 1.7B, sonst Whisper large-v3; keins -> Keep(NoModel).
 /// - Modell-ID -> dieses Modell, auch nur auf der CPU (bewusste Wahl).
 ///
 /// Dann die Speicher-Tore: RAM (Bedarf + Systemreserve) und, wenn eine GPU
@@ -1530,24 +1532,29 @@ mod tests {
         assert_eq!(FinalChoice::parse(QWEN), FinalChoice::Model(QWEN.into()));
     }
 
+    /// P1i (B11): `auto` mit GPU nimmt Qwen3-ASR 1.7B vor Whisper large-v3. Auf der
+    /// RTX 4090 ist es schneller (RTF 61 statt 40, bei 60 Minuten ~35 s) und nicht
+    /// schlechter (FLEURS-de WER 4,17 % gegen 4,65 %, bench.md). Whisper bleibt der
+    /// Rueckfall, wenn Qwen3-ASR nicht installiert ist.
     #[test]
-    fn auto_with_a_gpu_prefers_large_v3_then_qwen() {
+    fn auto_with_a_gpu_prefers_qwen_then_large_v3() {
         let all = installed(&[TURBO, QWEN, LARGE]);
         assert_eq!(
             plan_final_pass(&FinalChoice::Auto, &gpu(), &all),
-            FinalPlan::Run {
-                model_id: LARGE.into(),
-                max_segment_ms: 25_000
-            }
-        );
-        let no_large = installed(&[TURBO, QWEN]);
-        assert_eq!(
-            plan_final_pass(&FinalChoice::Auto, &gpu(), &no_large),
             FinalPlan::Run {
                 model_id: QWEN.into(),
                 max_segment_ms: 18_000
             },
             "Qwen nur mit Segmenten <= 18 s"
+        );
+        let no_qwen = installed(&[TURBO, LARGE]);
+        assert_eq!(
+            plan_final_pass(&FinalChoice::Auto, &gpu(), &no_qwen),
+            FinalPlan::Run {
+                model_id: LARGE.into(),
+                max_segment_ms: 25_000
+            },
+            "ohne Qwen3-ASR bleibt Whisper large-v3"
         );
         // Eine andere Quantisierung desselben Repos zaehlt, turbo nicht.
         let q8 = installed(&[TURBO, "handy-computer/whisper-large-v3-gguf/whisper-large-v3-Q8_0.gguf"]);
@@ -1555,10 +1562,23 @@ mod tests {
             plan_final_pass(&FinalChoice::Auto, &gpu(), &q8),
             FinalPlan::Run { model_id, .. } if model_id.ends_with("large-v3-Q8_0.gguf")
         ));
+        let qwen_q8 = installed(&[LARGE, "handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q8_0.gguf"]);
+        assert!(matches!(
+            plan_final_pass(&FinalChoice::Auto, &gpu(), &qwen_q8),
+            FinalPlan::Run { model_id, .. } if model_id.ends_with("Qwen3-ASR-1.7B-Q8_0.gguf")
+        ), "jede Quantisierung des Qwen-Repos zaehlt");
         assert_eq!(
             plan_final_pass(&FinalChoice::Auto, &gpu(), &installed(&[TURBO])),
             FinalPlan::Keep(KeepReason::NoModel)
         );
+    }
+
+    /// Die Reihenfolge steht in der Konstanten, nicht nur im Test: Qwen zuerst.
+    #[test]
+    fn the_auto_candidate_list_starts_with_qwen3_asr() {
+        assert!(AUTO_GPU_CANDIDATES[0].0.contains("Qwen3-ASR"));
+        assert!(AUTO_GPU_CANDIDATES[1].0.contains("whisper-large-v3"));
+        assert_eq!(AUTO_GPU_CANDIDATES.len(), 2);
     }
 
     #[test]

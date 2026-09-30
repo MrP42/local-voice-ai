@@ -377,16 +377,10 @@ async fn usage_since(after_id: i64) -> UsageTotals {
 /// Token eines Texts ueber `/tokenize` des laufenden lokalen Servers: misst
 /// genau die Groesse, die `single_pass_budget_chars_for` in Zeichen schaetzt.
 async fn count_tokens(model: &str, text: &str) -> Option<u64> {
-    let base = crate::managers::llm::ensure_local(model).await.ok()?;
-    let root = base.trim_end_matches('/').trim_end_matches("/v1");
-    let response = reqwest::Client::new()
-        .post(format!("{root}/tokenize"))
-        .json(&json!({ "content": text }))
-        .send()
+    let root = crate::managers::llm::local_server_root(model).await?;
+    crate::managers::llm::tokenize_count(&root, text)
         .await
-        .ok()?;
-    let body: Value = response.json().await.ok()?;
-    body.get("tokens")?.as_array().map(|t| t.len() as u64)
+        .map(|count| count as u64)
 }
 
 fn round3(value: f64) -> f64 {
@@ -439,6 +433,7 @@ pub async fn run_cli(settings: AppSettings, dir: &Path, sandbox: &Path) -> (i32,
         None
     };
     let budget = single_pass_budget_chars_for(
+        &model,
         context_tokens.unwrap_or(crate::managers::llm::DEFAULT_CONTEXT_TOKENS),
         local,
     );
@@ -556,7 +551,7 @@ pub async fn run_cli(settings: AppSettings, dir: &Path, sandbox: &Path) -> (i32,
         "local": local,
         "context_tokens": context_tokens,
         "single_pass_budget_chars": budget,
-        "chars_per_token_assumed": 3.35,
+        "chars_per_token_assumed": super::budget::chars_per_token_x100(&model) as f64 / 100.0,
         "targets": {
             "user_preserved_ratio": USER_PRESERVED_TARGET,
             "ai_sourced_ratio": AI_SOURCED_TARGET,
@@ -918,7 +913,11 @@ mod tests {
         // Waehlt der Serverstart je VRAM einen groesseren (P1g), laeuft die
         // Fixture live im Einzeldurchlauf; Map-Reduce decken die Stub-Tests ab
         // (oder `LVA_LLM_CONTEXT_TOKENS=8192` beim Eval-Lauf).
-        let budget = single_pass_budget_chars_for(crate::managers::llm::DEFAULT_CONTEXT_TOKENS, true);
+        let budget = single_pass_budget_chars_for(
+            "llm-gemma4-e4b-q4",
+            crate::managers::llm::DEFAULT_CONTEXT_TOKENS,
+            true,
+        );
         let payload = render_notes_for_prompt(&lk.notes).chars().count()
             + render_segments_for_prompt(&sorted_segments(&lk.segments))
                 .chars()

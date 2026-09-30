@@ -118,10 +118,18 @@ $summary = [ordered]@{
     notes             = $sim.notes
     notes_invalid_json_answers = @(Select-String -Path $simLog -Pattern 'Antwort war kein g.+ltiges JSON \(Versuch').Count
     notes_blocks_dropped = @(Select-String -Path $simLog -Pattern 'nicht ausgewertet').Count
+    # P1i (B11): answers the server cut off (finish_reason length) and blocks that had to be halved
+    notes_truncated_answers = @(Select-String -Path $simLog -Pattern 'vom Server abgeschnitten').Count
+    notes_blocks_split = @(Select-String -Path $simLog -Pattern 'Block \S+ halbiert').Count
+    notes_incomplete  = if ($sim.notes -and $sim.notes.ran) { $sim.notes.incomplete } else { $null }
     stop_to_notes_ms  = if ($withNotes) { $stopToNotes } else { $null }
     status_after      = $sim.final.status
     qg3_limit_ms      = 180000
-    qg3_pass          = if ($gpu -and $withNotes) { ($sim.notes.ok -eq $true) -and ($stopToNotes -le 180000) } else { $null }
+    qg3_pass          = if ($gpu -and $withNotes) {
+        ($sim.notes.ok -eq $true) -and ($stopToNotes -le 180000) -and ($sim.notes.incomplete -ne $true) `
+            -and (@(Select-String -Path $simLog -Pattern 'vom Server abgeschnitten').Count -eq 0) `
+            -and (@(Select-String -Path $simLog -Pattern 'nicht ausgewertet').Count -eq 0)
+    } else { $null }
     run               = $run
     sim_json          = $simJson
     system_note       = 'job object: below-normal priority, memory cap, CPU hard cap; a parallel cargo build (P5f) was running'

@@ -849,7 +849,34 @@ impl TranscriptionManager {
     pub fn initiate_meeting_model_load(&self, settings: &AppSettings) {
         let choice = self.meeting_model_choice(settings);
         let fallback = choice.load_fallback(settings);
-        self.initiate_model_load_target_with_fallback(choice.id(), fallback.as_deref());
+        // P1i: nur das Live-Modell der Besprechung geht durch das RAM-Tor; das
+        // Wiederherstellen des Diktatmodells und die Neu-Transkription nicht.
+        self.initiate_model_load_inner(choice.id(), fallback.as_deref(), true);
+    }
+
+    /// Groesse eines Modells in MB laut Katalog (0, wenn unbekannt).
+    fn model_size_mb(&self, model_id: &str) -> u64 {
+        self.model_manager
+            .get_model_info(model_id)
+            .map(|info| info.size_mb)
+            .unwrap_or(0)
+    }
+
+    /// RAM-Tor fuers Live-Modell (`plan_live_load`) mit den Zahlen dieses Rechners.
+    fn live_load_plan(&self, target: &str, fallback: Option<&str>) -> LiveLoadPlan {
+        let reclaimable = self
+            .get_current_model()
+            .filter(|current| current != target)
+            .map(|current| self.model_size_mb(&current))
+            .unwrap_or(0);
+        plan_live_load(
+            self.model_size_mb(target),
+            fallback
+                .filter(|f| *f != target)
+                .map(|f| (f, self.model_size_mb(f))),
+            crate::process_guard::available_ram_mb(),
+            reclaimable,
+        )
     }
 
     /// Like `initiate_model_load`, but for an explicit target: swaps the
@@ -867,6 +894,12 @@ impl TranscriptionManager {
     /// [`Self::initiate_model_load_target`] plus an optional second model that
     /// is loaded when the first fails to load.
     pub fn initiate_model_load_target_with_fallback(&self, model_id: &str, fallback: Option<&str>) {
+        self.initiate_model_load_inner(model_id, fallback, false);
+    }
+
+    /// Kern von `initiate_model_load_target_with_fallback`; `ram_gate` schaltet
+    /// das RAM-Tor vor dem Laden ein (Live-Modell der Besprechung, P1i).
+    fn initiate_model_load_inner(&self, model_id: &str, fallback: Option<&str>, ram_gate: bool) {
         let mut is_loading = self.is_loading.lock().unwrap();
         if *is_loading {
             return;
@@ -893,12 +926,55 @@ impl TranscriptionManager {
                     .reload_model_on_next_use
                     .store(false, Ordering::Release);
             }
-            if let Err(e) = self_clone.load_model(&target) {
-                error!("Failed to load model: {}", e);
-                if let Some(fallback) = fallback.filter(|f| *f != target) {
-                    warn!("meetings: Rueckfall auf Modell '{fallback}'");
-                    if let Err(e) = self_clone.load_model(&fallback) {
-                        error!("Failed to load fallback model: {}", e);
+            let (target, fallback, skip_if_loaded) = if ram_gate {
+                match self_clone.live_load_plan(&target, fallback.as_deref()) {
+                    LiveLoadPlan::Target => (Some(target), fallback, false),
+                    LiveLoadPlan::Fallback(id) => {
+                        warn!(
+                            "meetings: Live-Modell '{target}' passt nicht in den freien Arbeitsspeicher, Rueckfall auf '{id}'"
+                        );
+                        (Some(id), None, true)
+                    }
+                    LiveLoadPlan::Refuse { need_mb, free_mb } => {
+                        // Nichts laden: ein geladenes Modell bleibt, die Aufnahme
+                        // laeuft damit weiter (oder meldet, dass keins geladen ist).
+                        let message = crate::process_guard::check_ram_for_start(
+                            need_mb.saturating_sub(crate::process_guard::RAM_RESERVE_MB),
+                        )
+                            .err()
+                            .unwrap_or_else(|| {
+                                format!("Zu wenig freier Arbeitsspeicher: {free_mb} MB frei, gebraucht {need_mb} MB")
+                            });
+                        warn!("meetings: Live-Modell '{target}' nicht geladen, RAM-Tor: {message}");
+                        let _ = self_clone.app_handle.emit(
+                            "model-state-changed",
+                            ModelStateEvent {
+                                event_type: "loading_failed".to_string(),
+                                model_id: Some(target),
+                                model_name: None,
+                                error: Some(message),
+                            },
+                        );
+                        (None, None, false)
+                    }
+                }
+            } else {
+                (Some(target), fallback, false)
+            };
+            if let Some(target) = target {
+                // Der Rueckfall des Tors kann das schon geladene Modell sein.
+                let already = skip_if_loaded
+                    && self_clone.is_model_loaded()
+                    && self_clone.get_current_model().as_deref() == Some(target.as_str());
+                if !already {
+                    if let Err(e) = self_clone.load_model(&target) {
+                        error!("Failed to load model: {}", e);
+                        if let Some(fallback) = fallback.filter(|f| *f != target) {
+                            warn!("meetings: Rueckfall auf Modell '{fallback}'");
+                            if let Err(e) = self_clone.load_model(&fallback) {
+                                error!("Failed to load fallback model: {}", e);
+                            }
+                        }
                     }
                 }
             }
@@ -2377,6 +2453,51 @@ impl MeetingModelChoice {
     }
 }
 
+/// Was vor dem Laden des Live-Modells einer Besprechung passiert (P1i).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LiveLoadPlan {
+    /// Das gewaehlte Modell laden.
+    Target,
+    /// Das gewaehlte Modell passt nicht in den freien RAM, der Rueckfall schon.
+    Fallback(String),
+    /// Weder das Modell noch ein Rueckfall passen: nichts laden. Ein schon
+    /// geladenes Modell bleibt, wie es ist (die Aufnahme laeuft damit weiter).
+    Refuse { need_mb: u64, free_mb: u64 },
+}
+
+/// RAM-Tor fuers Live-Modell (wie fuer das End-Modell und die anderen
+/// Modellstarts: Bedarf = `final_pass::ram_need_mb`, dazu die Systemreserve).
+/// `free_ram_mb == 0` heisst nicht messbar und blockiert nie.
+/// `reclaimable_mb`: Speicher des Modells, das `load_model` vor dem neuen
+/// freigibt. `fallback`: (Modell-ID, Groesse in MB) des Ersatzes.
+pub fn plan_live_load(
+    target_size_mb: u64,
+    fallback: Option<(&str, u64)>,
+    free_ram_mb: u64,
+    reclaimable_mb: u64,
+) -> LiveLoadPlan {
+    if free_ram_mb == 0 {
+        return LiveLoadPlan::Target;
+    }
+    let available = free_ram_mb.saturating_add(reclaimable_mb);
+    let need = |size_mb: u64| {
+        crate::managers::meetings::final_pass::ram_need_mb(size_mb)
+            + crate::process_guard::RAM_RESERVE_MB
+    };
+    if available >= need(target_size_mb) {
+        return LiveLoadPlan::Target;
+    }
+    if let Some((id, size_mb)) = fallback {
+        if available >= need(size_mb) {
+            return LiveLoadPlan::Fallback(id.to_string());
+        }
+    }
+    LiveLoadPlan::Refuse {
+        need_mb: need(target_size_mb),
+        free_mb: free_ram_mb,
+    }
+}
+
 /// Reine Regel fuer das Besprechungsmodell: die Nutzerwahl (`meeting_model`,
 /// leer/Leerraum = nicht gesetzt) gewinnt immer; ohne Wahl gilt das Standard-GGUF,
 /// wenn installiert, sonst das Diktatmodell (Verhalten vor P2g). Diktat selbst
@@ -3149,6 +3270,68 @@ mod tests {
             MEETING_DEFAULT_MODEL_ID,
             "leer + installiert = Standard"
         );
+    }
+
+    // ---- P1i: RAM-Tor fuers Live-Modell der Besprechung -----------------------
+
+    const RESERVE: u64 = crate::process_guard::RAM_RESERVE_MB;
+
+    fn need(size_mb: u64) -> u64 {
+        crate::managers::meetings::final_pass::ram_need_mb(size_mb) + RESERVE
+    }
+
+    #[test]
+    fn the_live_model_loads_when_the_ram_gate_is_open() {
+        // Genau auf der Grenze (Bedarf + Systemreserve): laden.
+        assert_eq!(plan_live_load(1_500, None, need(1_500), 0), LiveLoadPlan::Target);
+        assert_eq!(plan_live_load(1_500, Some(("diktat", 600)), 64_000, 0), LiveLoadPlan::Target);
+    }
+
+    #[test]
+    fn an_unmeasurable_ram_never_blocks_the_live_model() {
+        // Wie `check_ram_for_start`: 0 heisst "nicht messbar".
+        assert_eq!(plan_live_load(50_000, None, 0, 0), LiveLoadPlan::Target);
+    }
+
+    #[test]
+    fn a_live_model_that_does_not_fit_falls_back_to_the_smaller_dictation_model() {
+        // Ein Byte unter der Grenze: das Standardmodell nicht, das kleine Diktatmodell schon.
+        let free = need(1_500) - 1;
+        assert_eq!(
+            plan_live_load(1_500, Some(("diktat", 400)), free, 0),
+            LiveLoadPlan::Fallback("diktat".to_string())
+        );
+        // Ohne Rueckfall (ausdrueckliche Wahl) oder mit zu grossem Rueckfall: nichts laden.
+        assert_eq!(
+            plan_live_load(1_500, None, free, 0),
+            LiveLoadPlan::Refuse { need_mb: need(1_500), free_mb: free }
+        );
+        assert!(matches!(
+            plan_live_load(1_500, Some(("gross", 3_000)), free, 0),
+            LiveLoadPlan::Refuse { .. }
+        ));
+    }
+
+    /// `load_model` gibt das alte Modell vor dem neuen frei: sein Speicher
+    /// zaehlt zum Verfuegbaren (sonst wuerde ein Wechsel bei knappem RAM ohne
+    /// Grund abgelehnt).
+    #[test]
+    fn the_memory_of_the_model_being_replaced_counts_as_available() {
+        let free = need(1_500) - 500;
+        assert!(matches!(plan_live_load(1_500, None, free, 0), LiveLoadPlan::Refuse { .. }));
+        assert_eq!(plan_live_load(1_500, None, free, 500), LiveLoadPlan::Target);
+        assert!(matches!(plan_live_load(1_500, None, free, 499), LiveLoadPlan::Refuse { .. }));
+    }
+
+    /// Ist nur die Grenze der Modellgroesse unbekannt (Modell nicht im Katalog, 0 MB),
+    /// gilt der Mindestbedarf des Gates, nicht "kostenlos".
+    #[test]
+    fn a_model_of_unknown_size_still_needs_the_minimum() {
+        assert!(matches!(
+            plan_live_load(0, None, RESERVE + 100, 0),
+            LiveLoadPlan::Refuse { .. }
+        ));
+        assert_eq!(plan_live_load(0, None, need(0), 0), LiveLoadPlan::Target);
     }
 
     #[test]
