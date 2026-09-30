@@ -7,6 +7,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 
 | ID | M | Paket | Abnahmekriterium | Status | Commit |
 |---|---|---|---|---|---|
+| A1 | 1 | Register-Kern + Provenienz (Backend) — lv-coder-xhigh | AK1: --lib integrations:: provenance:: >= 30 Tests, Migration idempotent, Provenienz an Protokoll/KI-Notizen/Follow-up/STT | in_arbeit | |
 
 ## Paketschnitt (Vorschlag)
 | Paket | Bündel | Scope | Akzeptanztest | Abh. | Worker |

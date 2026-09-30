@@ -7,3 +7,4 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 
 | ID | M | Paket | Abnahmekriterium | Status | Commit |
 |---|---|---|---|---|---|
+| U1 | M1 | UI-Audit + Klick-Prototyp mit 2 Varianten + Empfehlung — lv-architect | UI-AUDIT.md, prototyp/aufnahmen-prototyp.html, Screenshots ist-*; Patrick wählt Variante (AK1) | in_arbeit | |
