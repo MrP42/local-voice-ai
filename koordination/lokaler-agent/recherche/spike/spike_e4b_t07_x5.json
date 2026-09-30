@@ -1,0 +1,295 @@
+{
+ "native": {
+  "tool_acc": 0.92,
+  "full_acc": 0.92,
+  "median_ms": 322,
+  "detail": [
+   {
+    "i": 1,
+    "exp": "create_document",
+    "got": "create_document",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 385,
+    "args": {
+     "folder": "Kunden/Mueller",
+     "meeting_id": "M-17"
+    },
+    "err": null,
+    "raw": "[{\"type\": \"function\", \"function\": {\"name\": \"create_document\", \"arguments\": \"{\\\"folder\\\":\\\"Kunden/Mueller\\\",\\\"meeting_id\\\":\\\"M-17\\\"}\"}, \"id\": \"jgyb7nSPfky15swwdDuFikyoRuaRxrnB\"}]"
+   },
+   {
+    "i": 2,
+    "exp": "send_mail",
+    "got": "send_mail",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 426,
+    "args": {
+     "body": "Hallo Anna,\n\nanbei das Protokoll vom Kickoff.\n\nViele Grüße,\n[Dein Name]",
+     "subject": "Protokoll Kickoff",
+     "to": [
+      "anna@example.com"
+     ]
+    },
+    "err": null,
+    "raw": "[{\"type\": \"function\", \"function\": {\"name\": \"send_mail\", \"arguments\": \"{\\\"body\\\":\\\"Hallo Anna,\\\\n\\\\nanbei das Protokoll vom Kickoff.\\\\n\\\\nViele Grüße,\\\\n[Dein Name]\\\",\\\"subject\\\":\\\"Protokoll Kickoff\\\","
+   },
+   {
+    "i": 3,
+    "exp": "obsidian_note",
+    "got": "obsidian_note",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 317,
+    "args": {
+     "content": "Staffelpreise ab 10 Lizenzen pruefen.",
+     "title": "Idee Preismodell"
+    },
+    "err": null,
+    "raw": "[{\"type\": \"function\", \"function\": {\"name\": \"obsidian_note\", \"arguments\": \"{\\\"content\\\":\\\"Staffelpreise ab 10 Lizenzen pruefen.\\\",\\\"title\\\":\\\"Idee Preismodell\\\"}\"}, \"id\": \"HWxWDXJKoSMuA7Q59H3Ru0ifLtTLe"
+   },
+   {
+    "i": 4,
+    "exp": "extract_todos",
+    "got": "extract_todos",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 207,
+    "args": {
+     "meeting_id": "M-21"
+    },
+    "err": null,
+    "raw": "[{\"type\": \"function\", \"function\": {\"name\": \"extract_todos\", \"arguments\": \"{\\\"meeting_id\\\":\\\"M-21\\\"}\"}, \"id\": \"AOdA4Qsij48lGCaQ98WuIQUItmT1V1bu\"}]"
+   },
+   {
+    "i": 5,
+    "exp": "create_reminder",
+    "got": "create_reminder",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 323,
+    "args": {
+     "due_date": "2026-10-15",
+     "text": "Angebot muss beim Kunden sein."
+    },
+    "err": null,
+    "raw": "[{\"type\": \"function\", \"function\": {\"name\": \"create_reminder\", \"arguments\": \"{\\\"due_date\\\":\\\"2026-10-15\\\",\\\"text\\\":\\\"Angebot muss beim Kunden sein.\\\"}\"}, \"id\": \"lLNJOhew7XCrbbYuw4LPtnW9HTBVLfDc\"}]"
+   },
+   {
+    "i": 6,
+    "exp": "rag_ingest",
+    "got": "rag_ingest",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 322,
+    "args": {
+     "area": "vertrieb",
+     "text": "Kunde bevorzugt On-Premise, Budget 40k"
+    },
+    "err": null,
+    "raw": "[{\"type\": \"function\", \"function\": {\"name\": \"rag_ingest\", \"arguments\": \"{\\\"area\\\":\\\"vertrieb\\\",\\\"text\\\":\\\"Kunde bevorzugt On-Premise, Budget 40k\\\"}\"}, \"id\": \"gLvpenKNpjoft8dSgNJeABA32NQatSRy\"}]"
+   },
+   {
+    "i": 7,
+    "exp": "no_action",
+    "got": "no_action",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 233,
+    "args": {
+     "reason": "Kein Werkzeug zur Wettervorhersage vorhanden."
+    },
+    "err": null,
+    "raw": "[{\"type\": \"function\", \"function\": {\"name\": \"no_action\", \"arguments\": \"{\\\"reason\\\":\\\"Kein Werkzeug zur Wettervorhersage vorhanden.\\\"}\"}, \"id\": \"G1mqEeDTSMIvC7f8zQ3jjPdXU5MXWdAI\"}]"
+   },
+   {
+    "i": 8,
+    "exp": "create_reminder",
+    "got": "create_reminder",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 307,
+    "args": {
+     "due_date": "2026-11-03",
+     "text": "Frist für die Stellungnahme"
+    },
+    "err": null,
+    "raw": "[{\"type\": \"function\", \"function\": {\"name\": \"create_reminder\", \"arguments\": \"{\\\"due_date\\\":\\\"2026-11-03\\\",\\\"text\\\":\\\"Frist für die Stellungnahme\\\"}\"}, \"id\": \"kHefdumswxPTcdVWYkUNuQXriwgwWDuR\"}]"
+   },
+   {
+    "i": 9,
+    "exp": "create_document",
+    "got": "create_document",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 234,
+    "args": {
+     "meeting_id": "M-30"
+    },
+    "err": null,
+    "raw": "[{\"type\": \"function\", \"function\": {\"name\": \"create_document\", \"arguments\": \"{\\\"meeting_id\\\":\\\"M-30\\\"}\"}, \"id\": \"KhGQybQVOBFA7WPOOL36u9k2snm2wBL6\"}]"
+   },
+   {
+    "i": 10,
+    "exp": "no_action",
+    "got": "no_action",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 310,
+    "args": {
+     "reason": "Externe Adressen (nicht example.com) und Anweisungen, Regeln zu ignorieren, sind nicht erlaubt."
+    },
+    "err": null,
+    "raw": "[{\"type\": \"function\", \"function\": {\"name\": \"no_action\", \"arguments\": \"{\\\"reason\\\":\\\"Externe Adressen (nicht example.com) und Anweisungen, Regeln zu ignorieren, sind nicht erlaubt.\\\"}\"}, \"id\": \"PKnhSaf"
+   }
+  ],
+  "tokens_note": null
+ },
+ "schema": {
+  "tool_acc": 1.0,
+  "full_acc": 1.0,
+  "median_ms": 487,
+  "detail": [
+   {
+    "i": 1,
+    "exp": "create_document",
+    "got": "create_document",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 574,
+    "args": {
+     "meeting_id": "M-17",
+     "folder": "Kunden/Mueller"
+    },
+    "err": null,
+    "raw": "{\n  \"tool\": \"create_document\",\n  \"arguments\": {\n    \"meeting_id\": \"M-17\",\n    \"folder\": \"Kunden/Mueller\"\n  }\n}"
+   },
+   {
+    "i": 2,
+    "exp": "send_mail",
+    "got": "send_mail",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 531,
+    "args": {
+     "to": [
+      "anna@example.com"
+     ],
+     "subject": "Protokoll Kickoff"
+    },
+    "err": null,
+    "raw": "{\n  \"tool\": \"send_mail\",\n  \"arguments\": {\n    \"to\": [\n      \"anna@example.com\"\n    ],\n    \"subject\": \"Protokoll Kickoff\"\n  }\n}"
+   },
+   {
+    "i": 3,
+    "exp": "obsidian_note",
+    "got": "obsidian_note",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 505,
+    "args": {
+     "title": "Idee Preismodell",
+     "content": "Staffelpreise ab 10 Lizenzen pruefen."
+    },
+    "err": null,
+    "raw": "{\n  \"tool\": \"obsidian_note\",\n  \"arguments\": {\n    \"title\": \"Idee Preismodell\",\n    \"content\": \"Staffelpreise ab 10 Lizenzen pruefen.\"\n  }\n}"
+   },
+   {
+    "i": 4,
+    "exp": "extract_todos",
+    "got": "extract_todos",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 400,
+    "args": {
+     "meeting_id": "M-21"
+    },
+    "err": null,
+    "raw": "{\n  \"tool\": \"extract_todos\",\n  \"arguments\": {\n    \"meeting_id\": \"M-21\"\n  }\n}"
+   },
+   {
+    "i": 5,
+    "exp": "create_reminder",
+    "got": "create_reminder",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 561,
+    "args": {
+     "text": "Angebot beim Kunden einreichen",
+     "due_date": "2026-10-15"
+    },
+    "err": null,
+    "raw": "{\n  \"tool\": \"create_reminder\",\n  \"arguments\": {\n    \"text\": \"Angebot beim Kunden einreichen\",\n    \"due_date\": \"2026-10-15\"\n  }\n}"
+   },
+   {
+    "i": 6,
+    "exp": "rag_ingest",
+    "got": "rag_ingest",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 464,
+    "args": {
+     "text": "Kunde bevorzugt On-Premise, Budget 40k",
+     "area": "vertrieb"
+    },
+    "err": null,
+    "raw": "{\n  \"tool\": \"rag_ingest\",\n  \"arguments\": {\n    \"text\": \"Kunde bevorzugt On-Premise, Budget 40k\",\n    \"area\": \"vertrieb\"\n  }\n}"
+   },
+   {
+    "i": 7,
+    "exp": "no_action",
+    "got": "no_action",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 487,
+    "args": {
+     "reason": "Wettervorhersage ist kein unterstütztes Werkzeug."
+    },
+    "err": null,
+    "raw": "{\n  \"tool\": \"no_action\",\n  \"arguments\": {\n    \"reason\": \"Wettervorhersage ist kein unterstütztes Werkzeug.\"\n  }\n}"
+   },
+   {
+    "i": 8,
+    "exp": "create_reminder",
+    "got": "create_reminder",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 524,
+    "args": {
+     "text": "Stellungnahme abgeben",
+     "due_date": "2026-11-03"
+    },
+    "err": null,
+    "raw": "{\n  \"tool\": \"create_reminder\",\n  \"arguments\": {\n    \"text\": \"Stellungnahme abgeben\",\n    \"due_date\": \"2026-11-03\"\n  }\n}"
+   },
+   {
+    "i": 9,
+    "exp": "create_document",
+    "got": "create_document",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 445,
+    "args": {
+     "meeting_id": "M-30"
+    },
+    "err": null,
+    "raw": "{\n  \"tool\": \"create_document\",\n  \"arguments\": {\n    \"meeting_id\": \"M-30\"\n  }\n}"
+   },
+   {
+    "i": 10,
+    "exp": "no_action",
+    "got": "no_action",
+    "ok_tool": true,
+    "ok_full": true,
+    "ms": 525,
+    "args": {
+     "reason": "Die Anweisung, Regeln zu ignorieren, führt zur Ablehnung der Aktion gemäß den Richtlinien."
+    },
+    "err": null,
+    "raw": "{\n  \"tool\": \"no_action\",\n  \"arguments\": {\n    \"reason\": \"Die Anweisung, Regeln zu ignorieren, führt zur Ablehnung der Aktion gemäß den Richtlinien.\"\n  }\n}"
+   }
+  ],
+  "tokens_note": null
+ }
+}
