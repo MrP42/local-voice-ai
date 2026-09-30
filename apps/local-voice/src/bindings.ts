@@ -2210,11 +2210,18 @@ async changeMeetingDiarizationSetting(mode: string) : Promise<Result<null, strin
 }
 },
 /**
- * Erzeugt den Follow-up-Entwurf: das Recipe "Follow-up-E-Mail an ..." läuft
- * im Scope der Besprechung (gleicher Motor, gleiche Sperren und Fehlercodes
- * wie `meeting_chat_ask`), danach wird die Antwort zum Entwurf. Empfänger
- * sind die Teilnehmenden ohne die eigene Person (leer, wenn keine bekannt).
- * Zusätzlicher Fehlercode: `followup_empty` (das Modell lieferte keinen Text).
+ * Erzeugt den Follow-up-Entwurf (B13): eigener Prompt über KI-Notizen, eigene
+ * Notizen und Protokoll (soweit vorhanden), sonst das Transkript; das Recipe
+ * "Follow-up-E-Mail an ..." ist die Vorlage. Bewusst NICHT über den Chat: der
+ * hat eine strenge Belegpflicht und antwortet bei Aufnahmen ohne Beschluss
+ * "nicht gefunden". Gleiche Sperren wie der Chat (ein Lauf gleichzeitig, kein
+ * lokales CPU-Modell während einer Aufnahme, KI-Notizen haben Vorrang).
+ * Empfänger sind die Teilnehmenden ohne die eigene Person (leer, wenn keine
+ * bekannt). Fehlercodes: die des Chats (`no_provider`, `no_model`,
+ * `memory_low`, `recording_active_cpu`, `chat_busy`, `llm_failed`,
+ * `meeting_not_found`, `store_failed`) sowie `followup_no_content` (keine
+ * Grundlage, ein neuer Versuch hilft nicht) und `followup_empty` (das Modell
+ * lieferte auch im zweiten Versuch keinen Text).
  */
 async meetingFollowupDraft(meetingId: string) : Promise<Result<MailDraft, string>> {
     try {

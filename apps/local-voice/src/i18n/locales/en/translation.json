@@ -1526,7 +1526,8 @@
           "summary": "Summary",
           "tagging": "Tags",
           "translation": "Translation",
-          "enhanced_notes": "AI notes"
+          "enhanced_notes": "AI notes",
+          "followup": "Follow-up e-mail"
         }
       }
     }
@@ -2280,7 +2281,8 @@
       "mailtoClipped": "The text was too long for the mail link and is on the clipboard – paste it in the email app with Ctrl+V.",
       "emlSaved": "Saved: {{path}}",
       "errors": {
-        "followup_empty": "The language model returned no text. Please try again.",
+        "followup_empty": "The language model returned no text even on the second try. Another language model in the settings may help.",
+        "followup_no_content": "No content found for a follow-up – the recording contains no meeting points.",
         "mailto_failed": "The email app could not be opened. Copy the text instead and paste it there.",
         "clipboard_failed": "The clipboard is not available right now.",
         "write_failed": "The file could not be saved.",

@@ -21,8 +21,18 @@ export const emlFileName = (subject: string): string => {
 /** Fehlercodes von `meeting_followup_*`, die einen eigenen Text haben. */
 export const FOLLOWUP_ERROR_CODES = [
   "followup_empty",
+  "followup_no_content",
   "mailto_failed",
   "clipboard_failed",
   "write_failed",
   "path_missing",
 ] as const;
+
+/**
+ * Fehler, bei denen ein neuer Versuch nichts ändert (keine Grundlage für die
+ * Mail): der Dialog bietet dann kein „Erneut versuchen“ an.
+ */
+export const FOLLOWUP_FINAL_ERRORS: readonly string[] = ["followup_no_content"];
+
+export const isFinalFollowupError = (code: string): boolean =>
+  FOLLOWUP_FINAL_ERRORS.includes(code);

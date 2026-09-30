@@ -12,6 +12,7 @@ import { chatErrorCode, chatErrorKey } from "@/lib/meetingChat";
 import {
   emlFileName,
   FOLLOWUP_ERROR_CODES,
+  isFinalFollowupError,
   parseAddresses,
 } from "@/lib/meetingFollowup";
 import { useSettings } from "../../../hooks/useSettings";
@@ -46,8 +47,9 @@ interface FollowupDialogProps {
 }
 
 /**
- * M6-P6c: Follow-up-Mail. Erzeugt über das Recipe „Follow-up-E-Mail“ (Chat,
- * Scope der Besprechung) einen Entwurf; An, Betreff und Text sind
+ * M6-P6c: Follow-up-Mail. Erzeugt einen Entwurf aus Notizen, Protokoll oder
+ * Transkript der Besprechung (Recipe „Follow-up-E-Mail“ als Vorlage, ohne die
+ * Belegpflicht des Chats, B13); An, Betreff und Text sind
  * bearbeitbar. Ausgänge: Kopieren (HTML + Text), Mailprogramm (`mailto:`),
  * .eml-Datei. Externer Anbieter: gelbe Leiste, der Entwurf entsteht erst
  * nach einem Klick auf „Entwurf erzeugen“.
@@ -71,6 +73,8 @@ export const FollowupDialog: React.FC<FollowupDialogProps> = ({
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Kein neuer Versuch sinnvoll (z. B. keine Grundlage für die Mail).
+  const [errorFinal, setErrorFinal] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
   const [copyHighlight, setCopyHighlight] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -81,6 +85,7 @@ export const FollowupDialog: React.FC<FollowupDialogProps> = ({
     const epoch = ++epochRef.current;
     setPhase("loading");
     setError(null);
+    setErrorFinal(false);
     setStatus(null);
     setCopyHighlight(false);
     let result: Awaited<ReturnType<typeof commands.meetingFollowupDraft>>;
@@ -92,6 +97,7 @@ export const FollowupDialog: React.FC<FollowupDialogProps> = ({
     if (epoch !== epochRef.current) return;
     if (result.status === "error") {
       setError(errorText(t, result.error));
+      setErrorFinal(isFinalFollowupError(chatErrorCode(result.error)));
       setPhase("error");
       return;
     }
@@ -285,9 +291,11 @@ export const FollowupDialog: React.FC<FollowupDialogProps> = ({
             >
               {error}
             </p>
-            <Button variant="secondary" onClick={() => void generate()}>
-              {t("meetings.followup.retry")}
-            </Button>
+            {!errorFinal && (
+              <Button variant="secondary" onClick={() => void generate()}>
+                {t("meetings.followup.retry")}
+              </Button>
+            )}
           </div>
         )}
 
