@@ -1,7 +1,7 @@
 ---
 thema: integrationen
 titel: Integrationen: Register fuer Kalender, Mail, Speicher, Wissen und Agenten (MCP/CLI lesend+schreibend)
-state: DISCOVERY
+state: READY
 vorzustand: -
 pausengrund: -
 issue: 66
@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/integrationen
 iteration: 0
 erstellt: 2026-09-30
-aktualisiert: 2026-09-30T17:25
+aktualisiert: 2026-09-30T19:27
 ---
 
 # Goal: Integrationen: Register fuer Kalender, Mail, Speicher, Wissen und Agenten (MCP/CLI lesend+schreibend)
@@ -130,6 +130,7 @@ Pakete und Bündel: `vorschlag.md` → Paketschnitt; Budget: 8 Pakete × ~275 kT
 -
 
 ## Entscheidungen
+- 2026-09-30 Patrick: alle Owner-Entscheidungen wie in vorschlag.md empfohlen: E1 YouTube = offizieller eingebetteter Player als Standard, yt-dlp nur als selbst installiertes Werkzeug hinter Schalter „privat“ (Standard aus, nicht im Installer); E2 Register + Provenienz in meetings.db; E3 schreibende Fähigkeiten „fragen“, externe Agenten „aus“, Aufnahme nie ohne Einwilligungsdialog. Jetzt umsetzen: Bündel 1 (A1–A3, ~1,0 MTok) im gemeinsamen Rahmen 3,5 MTok mit #64; A1 parallel zu #64-M1, A2/A3 nach #64-M2.
 - 2026-09-30 Patrick: neue Seite „Integrationen“ zwischen Modelle und Einstellungen; Register ohne Mengengrenze, Richtung/Rechte je Verbindung, RAG + Obsidian als Schwerpunkt, MCP/CLI auch steuernd. Erste Integration: YouTube (#65) inkl. Werbefrei-Wiedergabe, Untertitel vs. Transkript, Zusammenführen, Zusammenfassung; Herkunft/Audit (Modell, Tokens, Quellen, Konfidenz) per Rechtsklick.
 
 ## Nächste empfohlene Aktion
@@ -138,4 +139,5 @@ Owner-Entscheidungen von Patrick einholen, dann `goal.py set --state READY`.
 ## Verlauf
 - 2026-09-30T17:01 DISCOVERY — Goal State angelegt
 - 2026-09-30T17:25 DISCOVERY (Runde 0) — Metadaten: issue=66
+- 2026-09-30T19:27 READY (Runde 0) — Owner-Entscheidungen 30.09. eingetragen, Rahmen 3,5 MTok gemeinsam
 

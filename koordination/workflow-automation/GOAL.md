@@ -135,6 +135,7 @@ Pakete und Bündel: `vorschlag.md` → Paketschnitt; Budget: 8 × ~275 kTok = 2,
 -
 
 ## Entscheidungen
+- 2026-09-30 Patrick: alle Owner-Entscheidungen wie empfohlen (eigene Rust-Engine, n8n nur Brücke; Auto-Aufnahme erst nach Bestätigungsklick; Mails automatisch nur an Patrick, an Teilnehmende nach Freigabe; Faktencheck später per SearXNG). Start nach #66; Budget wird dann freigegeben.
 - 2026-09-30 Patrick: Workflow-Modul für Termine (aufzeichnen → Transkript → Protokoll → Mail je Kalender), OneDrive-Eingangsordner → Word-Protokoll, YouTube-Kanal → Zusammenfassung → Relevanz → Wissensbasis ohne Dubletten, Widersprüche, Dashboard, optional Faktencheck mit Konfidenz (#65).
 
 ## Nächste empfohlene Aktion

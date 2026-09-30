@@ -109,6 +109,7 @@ Pakete und Bündel: `vorschlag.md` → Paketschnitt; Budget: 5 × ~275 kTok = 1,
 -
 
 ## Entscheidungen
+- 2026-09-30 Patrick: alle Owner-Entscheidungen wie empfohlen (E2B/Qwen3.5-4B nur zur Messung laden; Werkzeugwahl erst nach bestandener Messung C1; Vault-Schreiben die ersten zwei Wochen „fragen“). Start nach #67; Budget wird dann freigegeben.
 - 2026-09-30 Patrick: prüfen, ob Gemma 4 E2B/E4B als Agent mit Werkzeugen (Dokument, Mail, To-dos, Fristen → Mitteilung, Wissen nach Obsidian/RAG) taugt; feste Routinen + begrenzte Agentik.
 
 ## Nächste empfohlene Aktion

@@ -1,7 +1,7 @@
 ---
 thema: aufnahmen-ui
 titel: Aufnahmen-Oberflaeche: Spalten, Sessions, eine Scrollbar
-state: DISCOVERY
+state: READY
 vorzustand: -
 pausengrund: -
 issue: 64
@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/aufnahmen-ui
 iteration: 0
 erstellt: 2026-09-30
-aktualisiert: 2026-09-30T16:42
+aktualisiert: 2026-09-30T19:27
 ---
 
 # Goal: Aufnahmen-Oberflaeche: Spalten, Sessions, eine Scrollbar
@@ -91,6 +91,7 @@ Die Seite „Aufnahmen“ arbeitet wie das Vorlesen-Modul in Spalten: links Sess
 -
 
 ## Entscheidungen
+- 2026-09-30 Patrick: R2 ja (Sessions = oberste Ebene der M4-Ordner), R3 Budget – gemeinsam mit YouTube-Bündel 1 aus #66 zusammen 3,5 MTok (Aufnahmen-UI ~2,5); R1 (Anordnung) wählt Patrick am Klick-Prototyp (AK1). Zusätzlich B17 aus #59: Neu-Transkription tauscht die Fassung erst am Ende.
 - 2026-09-30 Patrick: nächstes Goal nach Granola = Aufnahmen-Oberfläche nach Vorbild Vorlesen (Spalten, Sessions/Ordner, kompakte Details, eine Scrollbar, responsive, persistent).
 
 ## Nächste empfohlene Aktion
@@ -99,4 +100,5 @@ Nach Merge von Granola-Runde 3: Branch auf `feat/granola-besprechungen` nachzieh
 ## Verlauf
 - 2026-09-30T16:41 DISCOVERY — Goal State angelegt
 - 2026-09-30T16:42 DISCOVERY (Runde 0) — Metadaten: issue=64
+- 2026-09-30T19:27 READY (Runde 0) — Owner-Entscheidungen 30.09. eingetragen, Rahmen 3,5 MTok gemeinsam
 
