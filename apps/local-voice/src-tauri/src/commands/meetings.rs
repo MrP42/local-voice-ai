@@ -9,6 +9,7 @@ use tauri::State;
 
 use crate::managers::meetings::import::import_media_file;
 use crate::managers::meetings::job;
+use crate::managers::meetings::queue::{self, ImportQueue};
 use crate::managers::meetings::minutes::latest_minutes_file;
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 use crate::managers::meetings::retention::delete_audio_files;
@@ -159,11 +160,15 @@ pub async fn meetings_get_documents(
 pub async fn meetings_delete(
     app: tauri::AppHandle,
     store: State<'_, Arc<MeetingStore>>,
+    queue: State<'_, Arc<ImportQueue>>,
     meeting_id: String,
 ) -> Result<(), String> {
     // P8a: eine laufende Verarbeitung (Import, Enddurchlauf, Notizen ...) endet,
     // bevor ihre Audiodateien verschwinden. Ohne Auftrag ist das ein leerer Aufruf.
     let _ = job::global().stop(&meeting_id);
+    // U7: aus der Warteschlange nehmen (ein laufender Import endet, ein wartender
+    // wird nie mehr gestartet).
+    queue.forget(&meeting_id);
     let paths = store
         .soft_delete_meeting(&meeting_id)
         .map_err(|e| e.to_string())?;
@@ -222,28 +227,39 @@ pub async fn meetings_export_document(path: String, body: String) -> Result<(), 
 }
 
 /// Imports a local audio/video file or a VTT/SRT subtitle file as a new
-/// meeting. Audio/video decoding and transcription can take a while, hence
-/// this stays `async` end to end rather than blocking the command task
-/// (`import_media_file` itself moves the heavy work to `spawn_blocking`).
+/// meeting.
+///
+/// U7: Audio und Video werden in die Import-Warteschlange gestellt und der
+/// Befehl kehrt SOFORT mit der ID der neuen Besprechung (Status `queued`)
+/// zurueck, statt bis zum Ende der Transkription zu laufen: weitere Dateien
+/// lassen sich jederzeit hinzufuegen, sie laufen in der Reihenfolge des
+/// Hinzufuegens. Untertitel (VTT/SRT) brauchen keine Transkription und sind
+/// sofort fertig. Fortschritt, Position und Ende kommen ueber
+/// `MeetingEvent::Progress`/`State` und `ImportQueueEvent`.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_import_file(
     app: tauri::AppHandle,
     store: State<'_, Arc<MeetingStore>>,
     transcription: State<'_, Arc<TranscriptionManager>>,
+    queue: State<'_, Arc<ImportQueue>>,
     path: String,
     consent_confirmed: bool,
 ) -> Result<String, String> {
-    let store = Arc::clone(&store);
-    let transcription = Arc::clone(&transcription);
-    import_media_file(
-        &app,
-        store,
-        transcription,
-        PathBuf::from(path),
-        consent_confirmed,
-    )
-    .await
+    let path = PathBuf::from(path);
+    if queue::is_subtitle(&path) {
+        let store = Arc::clone(&store);
+        let transcription = Arc::clone(&transcription);
+        return import_media_file(&app, store, transcription, path, consent_confirmed).await;
+    }
+    let consent_at = consent_confirmed.then(|| chrono::Utc::now().timestamp());
+    let source = path
+        .to_str()
+        .ok_or_else(|| "import_path_invalid".to_string())?
+        .to_string();
+    queue
+        .enqueue(&queue::title_from_path(&path), &source, consent_at)
+        .map(|meeting| meeting.id)
 }
 
 // M6-P6a: Export einer ganzen Besprechung.

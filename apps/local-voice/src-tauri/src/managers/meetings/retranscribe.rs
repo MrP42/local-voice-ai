@@ -54,7 +54,7 @@ pub async fn retranscribe_meeting(
 
     // P8a: was gerade aufgenommen oder verarbeitet wird, fasst niemand an
     // (ein zweiter Lauf schriebe gleichzeitig ins selbe Transkript).
-    if matches!(meeting.status.as_str(), "recording" | "processing") {
+    if matches!(meeting.status.as_str(), "recording" | "processing" | "queued") {
         return Err("meeting_busy".to_string());
     }
 

@@ -24,7 +24,15 @@ Besprechungen aufnehmen oder Dateien importieren, mitschreiben, transkribieren u
 
 ## Importieren
 
-Audio- und Videodateien sowie Untertitel (VTT, SRT) importierst du mit dem Symbol **Datei importieren** in der Bedienung oder indem du sie auf die Arbeitsfläche ziehst. Sie landen im gewählten Projekt und werden wie eine Aufnahme transkribiert.
+Audio- und Videodateien sowie Untertitel (VTT, SRT) importierst du mit dem Symbol **Datei importieren** in der Bedienung oder indem du sie auf die Arbeitsfläche ziehst; mehrere Dateien auf einmal gehen auch. Sie landen im gewählten Projekt und werden wie eine Aufnahme transkribiert.
+
+### Warteschlange
+
+- Weitere Dateien kannst du **jederzeit** hinzufügen, auch während eine andere noch transkribiert wird. Jede bekommt sofort ihre Besprechung mit dem Status **Wartet** und ihrem **Platz** („Platz 2 von 3“, in der Liste und im Kopf). Die Dateien laufen in der Reihenfolge, in der du sie hinzugefügt hast.
+- Eine wartende Datei ziehst du im Kontextmenü (rechte Maustaste) oder in der Bedienspalte **nach vorn** oder nimmst sie **aus der Warteschlange**; sie gilt dann als abgebrochen, und **Wieder einreihen** stellt sie hinten an. Eine laufende Datei stoppst du wie bisher.
+- Die Warteschlange bleibt über einen Neustart erhalten. Wurde eine Datei gelöscht oder verschoben, bevor sie an der Reihe war, meldet die Besprechung das, und es geht mit der nächsten weiter.
+- **Eine Aufnahme hat immer Vorrang:** Solange sie läuft, beginnt keine neue Datei, und laufende Importe halten am nächsten Block an. Danach geht es von selbst weiter.
+- Unter Einstellungen, Diktat, Besprechungen steht **Gleichzeitige Transkriptionen** (1, 2 oder 3; Standard 1). Jede weitere Transkription lädt das Modell noch einmal und braucht deshalb Platz: Reichen Arbeitsspeicher (und bei Grafikkarten-Modellen Grafikspeicher) nicht, wartet die nächste Datei mit dem Hinweis „Wartet auf Arbeitsspeicher“. Der Rechner wird dabei nie ausgelastet bis zum Stillstand; bei Zweifel bleibt es bei einer.
 
 ## Notizen, KI-Notizen und Protokoll
 
@@ -40,6 +48,8 @@ Während eine Besprechung verarbeitet wird, zeigt ein Fortschrittsbalken Phase, 
 ## Menü ☰ und Details
 
 Seltene Aktionen stehen im Menü ☰: Neu transkribieren, KI-Notizen und Protokoll neu erzeugen, Vorlage wechseln, in Projekt verschieben, Umbenennen, Details und Löschen. **Details** zeigt Status, Quelle, Dauer, Einwilligung, Modell und Aufbewahrung auf einen Blick.
+
+Mit **Bearbeiten** im Details-Dialog änderst du **Titel**, **Beschreibung** (mehrzeilig), **Datum und Uhrzeit**, die **Teilnehmenden** (aus den vorhandenen Personen) und die **Projekte**. Gespeichert wird alles oder nichts; Dateiname und Quelle bleiben, wie sie sind. Die Beschreibung ist durchsuchbar und steht dem Chat, den KI-Notizen, dem Protokoll und dem lokalen MCP-Server als Hintergrund zur Verfügung.
 
 ## Kleines Fenster
 

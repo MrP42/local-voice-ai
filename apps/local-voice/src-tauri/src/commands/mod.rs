@@ -9,6 +9,7 @@ pub mod meeting_notes;
 pub mod meeting_enhance;
 pub mod meeting_jobs; // P8a
 pub mod meeting_minutes; // P1k
+pub mod meeting_queue; // U7
 pub mod meeting_search;
 pub mod meeting_speakers; // M3-P3c
 pub mod meetings;

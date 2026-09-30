@@ -149,6 +149,8 @@ pub enum VectorStep {
 struct Snapshot {
     meeting_id: String,
     title: String,
+    /// U7: Beschreibung (leer = keine).
+    description: String,
     status: String,
     started_at: Option<i64>,
     folders: Vec<String>,
@@ -165,12 +167,19 @@ impl MeetingStore {
     fn index_snapshot(&self, meeting_id: &str) -> Result<Option<Snapshot>> {
         let mut conn = self.get_connection()?;
         let tx = conn.transaction()?;
-        let Some((title, status, started_at)) = tx
+        let Some((title, description, status, started_at)) = tx
             .query_row(
-                "SELECT title, status, COALESCE(started_at, created_at) FROM meetings
-                 WHERE id = ?1 AND deleted_at IS NULL",
+                "SELECT title, COALESCE(description, ''), status, COALESCE(started_at, created_at)
+                 FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
                 params![meeting_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get(2)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get(3)?,
+                    ))
+                },
             )
             .optional()?
         else {
@@ -239,6 +248,7 @@ impl MeetingStore {
         Ok(Some(Snapshot {
             meeting_id: meeting_id.to_string(),
             title,
+            description,
             status,
             started_at,
             folders,
@@ -285,6 +295,17 @@ impl MeetingStore {
             |row| row.get(0),
         )?;
         Ok(n.max(0) as u32)
+    }
+}
+
+/// Schluessel des Index-Kopfes (`IndexState.title`): der Titel, bei einer
+/// Beschreibung dazu ein Trennzeichen und die Beschreibung. Ohne Beschreibung
+/// ist er der Titel selbst, wie vor U7 (kein Neuaufbau aller Indizes beim Update).
+fn head_key(title: &str, description: &str) -> String {
+    if description.trim().is_empty() {
+        title.to_string()
+    } else {
+        format!("{title}\u{1e}{}", description.trim())
     }
 }
 
@@ -510,12 +531,16 @@ impl IndexerCore {
             Some((id, at, _)) => (Some(id.clone()), Some(*at)),
             None => (None, None),
         };
+        // U7: Titel und Beschreibung bilden zusammen den "Kopf" des Index; aendert
+        // sich einer von beiden, wird alles neu aufgebaut (die Kopfzeile steckt in
+        // jedem Einbettungstext).
+        let head_key = head_key(&snap.title, &snap.description);
         let full = match &prev {
             None => true,
             Some(p) => {
                 p.status == STATUS_PENDING
                     || p.status == STATUS_ERROR
-                    || p.title.as_deref() != Some(snap.title.as_str())
+                    || p.title.as_deref() != Some(head_key.as_str())
             }
         };
         let mut sources: Vec<ChunkSource> = Vec::new();
@@ -542,6 +567,7 @@ impl IndexerCore {
 
         let head = ChunkHead {
             title: snap.title.clone(),
+            description: snap.description.clone(),
             started_at: snap.started_at,
             folder_names: snap.folders.clone(),
         };
@@ -572,7 +598,7 @@ impl IndexerCore {
             notes_revision: Some(snap.notes_revision),
             enhanced_doc_id: doc_id,
             enhanced_updated_at: doc_updated,
-            title: Some(snap.title.clone()),
+            title: Some(head_key),
             embed_model: None,
             embedded_at: None,
             status: STATUS_LEXICAL.to_string(),
@@ -1482,6 +1508,64 @@ mod tests {
         r.core.handle(IndexJob::Meeting(m.id.clone()), t0);
         assert_eq!(r.core.run_lexical(t0), 0);
         assert_eq!(chunks(&r.store), before);
+    }
+
+    /// U7: die Beschreibung ist durchsuchbar; jede Aenderung baut den Index neu.
+    #[test]
+    fn the_description_is_searchable_and_every_change_rebuilds_the_index() {
+        use crate::managers::meetings::metadata::MetadataEdit;
+        use crate::managers::meetings::search::index::MeetingFilter;
+        let mut r = rig();
+        let m = meeting_with_content(&r.store, "Kundentermin Meyer");
+        let t0 = Instant::now();
+        r.core.handle(IndexJob::Meeting(m.id.clone()), t0);
+        assert_eq!(r.core.run_lexical(t0), 1);
+        let find = |r: &Rig, query: &str| {
+            r.store
+                .search_meetings(query, &MeetingFilter::default(), 0, 25)
+                .unwrap()
+        };
+        assert_eq!(find(&r, "Lindner").total, 0, "noch keine Beschreibung");
+
+        let describe = |r: &Rig, text: &str| {
+            r.store
+                .update_metadata(
+                    &m.id,
+                    &MetadataEdit {
+                        description: Some(text.into()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        };
+        describe(&r, "Thema: Zeppelinstrasse 12
+Ansprechpartnerin Frau Lindner");
+        r.core.handle(IndexJob::Meeting(m.id.clone()), t0);
+        assert_eq!(r.core.run_lexical(t0), 1, "die Beschreibung aendert den Kopf: Neuaufbau");
+        let page = find(&r, "lindner");
+        assert_eq!(page.total, 1, "die Beschreibung ist durchsuchbar (Teilwort, Kleinschreibung)");
+        assert_eq!(page.items[0].meeting.id, m.id);
+        assert_eq!(page.items[0].hit_source, Some(ChunkSource::Title), "Treffer steht im Kopf-Chunk");
+        assert_eq!(find(&r, "zeppelinstrasse").total, 1);
+        assert_eq!(find(&r, "budget").total, 1, "das Transkript bleibt auffindbar");
+
+        // Ohne Aenderung nichts Neues.
+        r.core.handle(IndexJob::Meeting(m.id.clone()), t0);
+        assert_eq!(r.core.run_lexical(t0), 0);
+
+        // Anderer Text: der alte Begriff verschwindet, der neue ist da.
+        describe(&r, "Jetzt geht es um die Lieferung");
+        r.core.handle(IndexJob::Meeting(m.id.clone()), t0);
+        assert_eq!(r.core.run_lexical(t0), 1);
+        assert_eq!(find(&r, "lindner").total, 0);
+        assert_eq!(find(&r, "lieferung").total, 1);
+
+        // Leere Beschreibung: zurueck auf den Stand ohne Beschreibung.
+        describe(&r, "");
+        r.core.handle(IndexJob::Meeting(m.id.clone()), t0);
+        assert_eq!(r.core.run_lexical(t0), 1);
+        assert_eq!(find(&r, "lieferung").total, 0);
+        assert_eq!(find(&r, "meyer").total, 1, "der Titel bleibt");
     }
 
     #[test]

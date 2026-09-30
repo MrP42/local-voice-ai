@@ -1491,6 +1491,7 @@ pub(crate) mod tests {
                 consent_confirmed_at: Some(1_790_000_000),
                 audio_retention_until: None,
                 source_path: None,
+                description: None,
                 created_at: 1_790_000_000,
                 deleted_at: None,
             },

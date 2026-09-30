@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::managers::meetings::job::{self, JobProgress};
+use crate::managers::meetings::queue::ImportQueue;
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 
 /// Stand aller laufenden Verarbeitungen. Die Oberflaeche fragt beim Oeffnen
@@ -47,13 +48,19 @@ pub async fn meetings_job_stop(meeting_id: String) -> Result<(), String> {
 }
 
 /// "Fortsetzen" einer gestoppten Verarbeitung (Status `cancelled`): holt den
-/// Rest nach (wie die Wiederherstellung nach einem Absturz).
+/// Rest nach (wie die Wiederherstellung nach einem Absturz). U7: eine aus der
+/// Warteschlange genommene Datei, die noch kein Audio hat, wird dagegen wieder
+/// hinten eingereiht.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_continue(
     recorder: State<'_, Arc<MeetingRecorderManager>>,
+    queue: State<'_, Arc<ImportQueue>>,
     meeting_id: String,
 ) -> Result<(), String> {
+    if queue.requeue(&meeting_id)? {
+        return Ok(());
+    }
     let recorder = Arc::clone(&recorder);
     tauri::async_runtime::spawn_blocking(move || recorder.continue_processing(&meeting_id))
         .await

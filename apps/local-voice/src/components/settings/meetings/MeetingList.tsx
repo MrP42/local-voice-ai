@@ -27,6 +27,9 @@ import type { PersonRef } from "./people/PersonPopover";
 import { FolderPickerDialog } from "./search/FolderPickerDialog";
 import { JobBar } from "./JobProgress";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
+import { useImportQueue } from "@/hooks/useImportQueue";
+import { heldForRecording, queuePlace } from "@/lib/meetingQueue";
+import { QueueChip } from "./QueueStatus";
 import { notifyMeetingsChanged, useMeetingsChanged } from "@/lib/meetingsBus";
 import type { BriefInfo } from "@/bindings";
 import { ProjectRow } from "./projects/ProjectRow";
@@ -118,6 +121,8 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   const { t, i18n } = useTranslation();
   // P8a: laufende Verarbeitungen (Fortschritt, Restdauer) statt nur "Wird verarbeitet".
   const progressMap = useMeetingProgress();
+  // U7: Import-Warteschlange (Platz, warum sie steht).
+  const queue = useImportQueue();
   // Ohne Suche/Filter tragen die Eintraege kein Snippet.
   const [items, setItems] = useState<MeetingSearchItem[]>([]);
   const [total, setTotal] = useState<number | null>(null);
@@ -443,6 +448,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     }).format(date);
     const isSelected = selected?.id === meeting.id;
     const progress = progressMap[meeting.id];
+    const place =
+      meeting.status === "queued" ? queuePlace(queue, meeting.id) : null;
+    const held = heldForRecording(queue, meeting.id);
     const label = t("meetings.chat.list.selectRow", { title: meeting.title });
     return (
       <div
@@ -525,23 +533,32 @@ export const MeetingList: React.FC<MeetingListProps> = ({
               </>
             )}
           </span>
-          {!(
-            progress &&
-            (meeting.status === "processing" || meeting.status === "recording")
-          ) && (
-            <span
-              className={`inline-flex items-center rounded-full px-2 text-[11px] font-medium ${statusChipClass(meeting.status)}`}
-            >
-              {t(`meetings.status.${meeting.status}`, {
-                defaultValue: meeting.status,
-              })}
-            </span>
+          {place ? (
+            <QueueChip place={place} />
+          ) : (
+            !(
+              progress &&
+              (meeting.status === "processing" ||
+                meeting.status === "recording")
+            ) && (
+              <span
+                className={`inline-flex items-center rounded-full px-2 text-[11px] font-medium ${statusChipClass(meeting.status)}`}
+              >
+                {t(`meetings.status.${meeting.status}`, {
+                  defaultValue: meeting.status,
+                })}
+              </span>
+            )
           )}
         </div>
         {progress &&
           (meeting.status === "processing" ||
             meeting.status === "recording") && (
-            <JobBar progress={progress} className="mt-1 w-full" />
+            <JobBar
+              progress={progress}
+              heldForRecording={held}
+              className="mt-1 w-full"
+            />
           )}
         {snippet && <SearchSnippet snippet={snippet} />}
       </div>
@@ -822,6 +839,24 @@ export const MeetingList: React.FC<MeetingListProps> = ({
           label={rowMenu.meeting.title}
           onClose={() => setRowMenu(null)}
           items={[
+            // U7: eine wartende Datei umreihen oder herausnehmen.
+            ...(() => {
+              const place = queuePlace(queue, rowMenu.meeting.id);
+              const id = rowMenu.meeting.id;
+              return rowMenu.meeting.status === "queued" && place
+                ? [
+                    {
+                      label: t("meetings.queue.toFront"),
+                      disabled: place.position === 1,
+                      onSelect: () => void commands.meetingsQueueToFront(id),
+                    },
+                    {
+                      label: t("meetings.queue.remove"),
+                      onSelect: () => void commands.meetingsQueueRemove(id),
+                    },
+                  ]
+                : [];
+            })(),
             {
               label: t("meetings.projects.moveTo"),
               onSelect: () => setPickerTarget(rowMenu.meeting),

@@ -59,6 +59,9 @@ impl ChunkSource {
 #[derive(Clone, Debug, Default)]
 pub struct ChunkHead {
     pub title: String,
+    /// U7: die Beschreibung der Besprechung (leer = keine). Sie steht im
+    /// Titelchunk, damit Stichwort- und semantische Suche sie finden.
+    pub description: String,
     pub started_at: Option<i64>,
     pub folder_names: Vec<String>,
 }
@@ -138,6 +141,16 @@ pub fn embed_text_for(
         if !folders.is_empty() {
             header.push_str("\nOrdner: ");
             header.push_str(&folders.join(", "));
+        }
+        // U7: der Titelchunk traegt nach der ersten Zeile (dem Titel) die Beschreibung.
+        let description = text
+            .trim()
+            .strip_prefix(title.trim())
+            .map(str::trim)
+            .unwrap_or_default();
+        if !description.is_empty() {
+            header.push_str("\nBeschreibung: ");
+            header.push_str(description);
         }
         return header;
     }
@@ -335,12 +348,26 @@ pub fn chunk_transcript_with(
 // ---------------------------------------------------------------------------
 
 /// Der Titel als eigener kleiner Chunk, damit Titelsuche und Titeltreffer im
-/// Chat ohne Sonderweg funktionieren.
+/// Chat ohne Sonderweg funktionieren. U7: steht eine Beschreibung da, folgt sie
+/// dem Titel (Zeilenumbrueche bleiben, Leerraum je Zeile vereinheitlicht): so
+/// findet die Suche die Besprechung auch ueber ihre Beschreibung.
 pub fn chunk_title(head: &ChunkHead) -> Option<ChunkDraft> {
     let title = normalize_ws(&head.title);
     if title.is_empty() {
         return None;
     }
+    let description = head
+        .description
+        .lines()
+        .map(normalize_ws)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text = if description.is_empty() {
+        title.clone()
+    } else {
+        format!("{title}\n{description}")
+    };
     Some(ChunkDraft {
         source: ChunkSource::Title,
         epoch: 0,
@@ -355,9 +382,9 @@ pub fn chunk_title(head: &ChunkHead) -> Option<ChunkDraft> {
             &title,
             head.started_at,
             &head.folder_names,
-            &title,
+            &text,
         ),
-        text: title,
+        text,
     })
 }
 
@@ -774,6 +801,7 @@ mod tests {
     fn head() -> ChunkHead {
         ChunkHead {
             title: "Kundengespräch Nordlicht".into(),
+            description: String::new(),
             // 12.09.2026 12:00 UTC: in jeder Zeitzone derselbe Kalendertag.
             started_at: Some(1_789_214_400),
             folder_names: vec!["Vertrieb".into()],
@@ -968,6 +996,41 @@ mod tests {
             "Besprechung: Kundengespräch Nordlicht, 12.09.2026\nOrdner: Vertrieb"
         );
         assert!(chunk_title(&ChunkHead::default()).is_none());
+    }
+
+    /// U7: die Beschreibung steht im Titelchunk (Suche) und im Einbettungstext.
+    #[test]
+    fn the_description_follows_the_title_in_the_title_chunk() {
+        let mut h = head();
+        h.description = "  Quartalsplanung  mit dem Vertrieb \r\n\n Budget und Zeitplan  ".into();
+        let c = chunk_title(&h).unwrap();
+        assert_eq!(
+            c.text,
+            "Kundengespräch Nordlicht\nQuartalsplanung mit dem Vertrieb\nBudget und Zeitplan",
+            "Zeilenumbrueche bleiben, Leerraum und Leerzeilen nicht"
+        );
+        assert_eq!(c.source, ChunkSource::Title);
+        assert_eq!(
+            c.embed_text,
+            "Besprechung: Kundengespräch Nordlicht, 12.09.2026\nOrdner: Vertrieb\n\
+             Beschreibung: Quartalsplanung mit dem Vertrieb\nBudget und Zeitplan"
+        );
+        // Ohne Beschreibung bleibt alles wie vor U7.
+        h.description = "  \n ".into();
+        let plain = chunk_title(&h).unwrap();
+        assert_eq!(plain.text, "Kundengespräch Nordlicht");
+        assert!(!plain.embed_text.contains("Beschreibung"));
+        // Der Store baut den Einbettungstext spaeter aus Titel und Chunktext neu auf.
+        assert_eq!(
+            embed_text_for(
+                ChunkSource::Title,
+                "Kundengespräch Nordlicht",
+                h.started_at,
+                &h.folder_names,
+                &c.text
+            ),
+            c.embed_text
+        );
     }
 
     fn nb(id: &str, kind: NoteBlockKind, text: &str, at_ms: Option<u64>) -> NoteBlock {

@@ -64,6 +64,10 @@ pub fn duration_label(ms: u64) -> String {
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct MeetingHead {
     pub title: String,
+    /// U7: Beschreibung der Besprechung, vom Nutzer geschrieben (leer = keine).
+    /// Kontext fuer das Modell, kein Fakt: sie steht als solcher im Prompt.
+    #[serde(default)]
+    pub description: String,
     pub date_iso: String,
     pub duration_ms: u64,
     pub shares: Vec<SpeakerShare>,
@@ -95,6 +99,13 @@ pub fn head_facts_block(head: &MeetingHead) -> String {
         head.date_iso,
         duration_label(head.duration_ms),
     );
+    let description = prompt_description(&head.description);
+    if !description.is_empty() {
+        block.push_str(&format!(
+            "Description (written by the user; background context only, not a source for \
+             quotes or decisions): {description}\n"
+        ));
+    }
     if head.mixed_channel {
         // Eine Mischaufnahme kann beliebig viele Personen enthalten. Dem
         // Modell hier „ein Sprecher" als Fakt zu geben, würde ein Meeting mit
@@ -118,6 +129,21 @@ pub fn head_facts_block(head: &MeetingHead) -> String {
         }
     }
     block
+}
+
+/// Laengste Beschreibung im Prompt (Zeichen): genug fuer Thema, Beteiligte und
+/// Ziel, nicht genug, um ein Transkript zu verdraengen.
+pub const PROMPT_DESCRIPTION_CHARS: usize = 600;
+
+/// Die Beschreibung fuer den Prompt: eine Zeile, Leerraum vereinheitlicht, auf
+/// [`PROMPT_DESCRIPTION_CHARS`] Zeichen gekuerzt (mit "...").
+pub fn prompt_description(description: &str) -> String {
+    let one_line = description.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.chars().count() <= PROMPT_DESCRIPTION_CHARS {
+        return one_line;
+    }
+    let clipped: String = one_line.chars().take(PROMPT_DESCRIPTION_CHARS).collect();
+    format!("{}...", clipped.trim_end())
 }
 
 /// Kopfdaten aus den Store-Fakten. `date_iso` bevorzugt den Start der
@@ -163,6 +189,7 @@ pub fn build_head_with(
 
     MeetingHead {
         title: meeting.title.clone(),
+        description: meeting.description.clone().unwrap_or_default(),
         date_iso,
         duration_ms,
         single_speaker: shares.len() <= 1,
@@ -622,6 +649,70 @@ mod tests {
 
     fn never(_: &Answer) -> Option<SemanticRetry> {
         None
+    }
+
+    fn head_with(description: &str) -> MeetingHead {
+        MeetingHead {
+            title: "Kick-off".into(),
+            description: description.into(),
+            date_iso: "2026-09-30".into(),
+            duration_ms: 600_000,
+            shares: vec![],
+            single_speaker: true,
+            mixed_channel: false,
+        }
+    }
+
+    /// U7: die Beschreibung ist Kontext fuer KI-Notizen, Protokoll und
+    /// Follow-up (sie stehen alle auf `head_facts_block`).
+    #[test]
+    fn the_description_reaches_the_model_as_background_context() {
+        let block = head_facts_block(&head_with("Thema: Angebot Nordlicht
+
+  Beteiligt: Vertrieb"));
+        assert!(
+            block.contains("Description (written by the user; background context only"),
+            "{block}"
+        );
+        assert!(
+            block.contains("Thema: Angebot Nordlicht Beteiligt: Vertrieb"),
+            "eine Zeile, Leerraum vereinheitlicht: {block}"
+        );
+        // Ohne Beschreibung bleibt der Block wie vor U7.
+        let plain = head_facts_block(&head_with("  
+ "));
+        assert!(!plain.contains("Description"), "{plain}");
+    }
+
+    #[test]
+    fn a_long_description_is_clipped_for_the_prompt() {
+        let long = "wort ".repeat(400);
+        let clipped = prompt_description(&long);
+        assert!(clipped.chars().count() <= PROMPT_DESCRIPTION_CHARS + 3);
+        assert!(clipped.ends_with("..."));
+        assert_eq!(prompt_description("kurz"), "kurz");
+    }
+
+    #[test]
+    fn build_head_takes_the_description_from_the_meeting() {
+        use crate::managers::meetings::search::index::tests::tmp_store;
+        use crate::managers::meetings::store::MeetingSource;
+        let (_dir, store) = tmp_store();
+        let meeting = store
+            .create_meeting("Kick-off", MeetingSource::Import, Some(1))
+            .unwrap();
+        assert_eq!(build_head(&meeting, &[]).description, "");
+        store
+            .update_metadata(
+                &meeting.id,
+                &crate::managers::meetings::metadata::MetadataEdit {
+                    description: Some("Angebot Nordlicht".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let meeting = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(build_head(&meeting, &[]).description, "Angebot Nordlicht");
     }
 
     #[test]

@@ -1689,7 +1689,9 @@ async meetingsJobStop(meetingId: string) : Promise<Result<null, string>> {
 },
 /**
  * "Fortsetzen" einer gestoppten Verarbeitung (Status `cancelled`): holt den
- * Rest nach (wie die Wiederherstellung nach einem Absturz).
+ * Rest nach (wie die Wiederherstellung nach einem Absturz). U7: eine aus der
+ * Warteschlange genommene Datei, die noch kein Audio hat, wird dagegen wieder
+ * hinten eingereiht.
  */
 async meetingsContinue(meetingId: string) : Promise<Result<null, string>> {
     try {
@@ -1721,13 +1723,84 @@ async meetingsDelete(meetingId: string) : Promise<Result<null, string>> {
 },
 /**
  * Imports a local audio/video file or a VTT/SRT subtitle file as a new
- * meeting. Audio/video decoding and transcription can take a while, hence
- * this stays `async` end to end rather than blocking the command task
- * (`import_media_file` itself moves the heavy work to `spawn_blocking`).
+ * meeting.
+ * 
+ * U7: Audio und Video werden in die Import-Warteschlange gestellt und der
+ * Befehl kehrt SOFORT mit der ID der neuen Besprechung (Status `queued`)
+ * zurueck, statt bis zum Ende der Transkription zu laufen: weitere Dateien
+ * lassen sich jederzeit hinzufuegen, sie laufen in der Reihenfolge des
+ * Hinzufuegens. Untertitel (VTT/SRT) brauchen keine Transkription und sind
+ * sofort fertig. Fortschritt, Position und Ende kommen ueber
+ * `MeetingEvent::Progress`/`State` und `ImportQueueEvent`.
  */
 async meetingsImportFile(path: string, consentConfirmed: boolean) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_import_file", { path, consentConfirmed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Stand der Warteschlange (Hydrierung der Oberflaeche; danach halten ihn
+ * die `ImportQueueEvent` aktuell).
+ */
+async meetingsQueueList() : Promise<Result<QueueSnapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_queue_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nimmt eine WARTENDE Datei aus der Warteschlange (Besprechung `cancelled`,
+ * "Fortsetzen" reiht sie wieder ein) oder stoppt die LAUFENDE (wie der
+ * Stopp-Knopf). `not_in_queue`, wenn sie weder wartet noch laeuft.
+ */
+async meetingsQueueRemove(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_queue_remove", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zieht eine wartende Datei an die erste Stelle der wartenden (`not_queued`,
+ * wenn sie nicht wartet).
+ */
+async meetingsQueueToFront(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_queue_to_front", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bearbeitet Titel, Beschreibung, Datum, Teilnehmende und Projekte in einem
+ * Schritt (alles oder nichts) und liefert die aktuelle Besprechung. Der
+ * Such-Index wird neu angestossen: die Beschreibung ist durchsuchbar.
+ */
+async meetingsUpdateMetadata(meetingId: string, edit: MetadataEdit) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_update_metadata", { meetingId, edit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_import_parallel`: 1, 2 oder 3 gleichzeitige
+ * Transkriptionen (Werte ausserhalb zaehlen als der naechste gueltige). Wirkt
+ * ab der naechsten Datei; laufende Laeufe werden nie abgebrochen. Mehr als 1
+ * nur, solange Arbeitsspeicher (und Grafikspeicher) fuer die weitere Engine
+ * reichen, sonst wartet die Datei.
+ */
+async changeMeetingImportParallelSetting(value: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_import_parallel_setting", { value }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3851,6 +3924,7 @@ export const events = __makeEvents__<{
 briefRequestEvent: BriefRequestEvent,
 calendarSyncEvent: CalendarSyncEvent,
 historyUpdatePayload: HistoryUpdatePayload,
+importQueueEvent: ImportQueueEvent,
 meetingChatEvent: MeetingChatEvent,
 meetingDetectEvent: MeetingDetectEvent,
 meetingEvent: MeetingEvent,
@@ -3865,6 +3939,7 @@ streamTextEvent: StreamTextEvent
 briefRequestEvent: "brief-request-event",
 calendarSyncEvent: "calendar-sync-event",
 historyUpdatePayload: "history-update-payload",
+importQueueEvent: "import-queue-event",
 meetingChatEvent: "meeting-chat-event",
 meetingDetectEvent: "meeting-detect-event",
 meetingEvent: "meeting-event",
@@ -4230,6 +4305,15 @@ meeting_final_model?: string;
  * settings.json) gilt `auto`; jeder andere Wert als `off` zaehlt als `auto`.
  */
 meeting_diarization?: string; 
+/**
+ * U7: wie viele Dateien der Import-Warteschlange gleichzeitig transkribiert
+ * werden: 1 (Standard), 2 oder 3. Mehr als eine nur, solange Arbeitsspeicher
+ * (und bei GPU-Modellen Grafikspeicher) fuer die weitere Engine reichen;
+ * sonst wartet die naechste Datei. Ohne den Schluessel (aeltere
+ * settings.json) gilt 1; Werte ausserhalb 1 bis 3 zaehlen als der naechste
+ * gueltige.
+ */
+meeting_import_parallel?: number; 
 /**
  * M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
  * Mikrofonnutzung: `off` | `meeting_apps` (Standard) | `all_apps`. Nur ein
@@ -4781,6 +4865,11 @@ export type ImplementationChangeResult = { success: boolean;
  * List of binding IDs that were reset to defaults due to incompatibility
  */
 reset_bindings: string[] }
+/**
+ * Jede Aenderung der Warteschlange geht als Ereignis mit dem vollen Stand
+ * hinaus (verlustfrei: ein verpasstes Ereignis wird vom naechsten ersetzt).
+ */
+export type ImportQueueEvent = { snapshot: QueueSnapshot }
 export type ImportedVoice = { id: string; transcript: string }
 /**
  * Stand des Such-Index fuer die Einstellungszeile "Semantische Suche".
@@ -4942,7 +5031,12 @@ export type Meeting = { id: string; title: string; status: string; source: strin
  * recordings. Kept separately from `title` because the title is
  * user-editable (M9) and must be allowed to diverge from the file name.
  */
-source_path: string | null; created_at: number; deleted_at: number | null }
+source_path: string | null; 
+/**
+ * U7: freie Beschreibung (mehrzeilig), vom Nutzer gepflegt. Durchsuchbar
+ * (Such-Index) und Kontext fuer Chat, KI-Notizen und MCP.
+ */
+description: string | null; created_at: number; deleted_at: number | null }
 /**
  * How long a meeting's audio survives after the meeting ends.
  */
@@ -5146,6 +5240,23 @@ from_metadata: boolean }
 export type MemoryFile = { kind: string; text: string }
 export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
 /**
+ * Was geaendert werden soll. `None` = unveraendert; eine leere Beschreibung
+ * loescht sie; `participant_ids` und `folder_ids` ersetzen die Menge.
+ */
+export type MetadataEdit = { title: string | null; description: string | null; 
+/**
+ * Beginn in Unix-Sekunden.
+ */
+started_at: number | null; 
+/**
+ * Personen (`humans.id`), die teilgenommen haben.
+ */
+participant_ids: string[] | null; 
+/**
+ * Projekte (Ordner-IDs).
+ */
+folder_ids: string[] | null }
+/**
  * Ereignis eines Protokoll-Laufs. `code` von `Failed` ist einer der Codes aus
  * `minutes::ALL_CODES`; die Oberflaeche uebersetzt ihn. Ein abgewiesener zweiter
  * Start (`minutes_busy`) sendet KEIN Ereignis: der laufende Lauf gehoert dem
@@ -5321,6 +5432,32 @@ is_self: boolean;
  */
 meeting_count: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+/**
+ * Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
+ * Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).
+ */
+export type QueueSnapshot = { 
+/**
+ * Wartende Besprechungen, die naechste zuerst.
+ */
+waiting: string[]; 
+/**
+ * Laufende Besprechungen (die Reihenfolge des Starts).
+ */
+running: string[]; 
+/**
+ * Davon wegen einer Aufnahme angehalten.
+ */
+held: string[]; 
+/**
+ * Eingestellte Zahl gleichzeitiger Laeufe.
+ */
+limit: number; 
+/**
+ * Warum die wartenden nicht beginnen; `None`, wenn nichts wartet oder der
+ * naechste gleich beginnt.
+ */
+blocked: WaitReason | null }
 /**
  * Fortschritt eines Dokuments — Persistenz-Eintrag und Event-Payload.
  */
@@ -5635,6 +5772,23 @@ id: string; name: string; tags?: string[];
  * [`super::voices::style_dir`].
  */
 reference?: string | null }
+/**
+ * Warum die wartenden Dateien nicht beginnen.
+ */
+export type WaitReason = 
+/**
+ * Alle erlaubten Plaetze sind belegt (eine Transkription laeuft).
+ */
+"slot" | 
+/**
+ * Fuer einen weiteren gleichzeitigen Lauf reicht der Arbeitsspeicher (oder
+ * Grafikspeicher) nicht: "wartet auf Arbeitsspeicher".
+ */
+"memory" | 
+/**
+ * Eine Live-Aufnahme laeuft und hat Vorrang.
+ */
+"recording"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 /**
  * M2-P2d: one word with its time span in milliseconds. In a

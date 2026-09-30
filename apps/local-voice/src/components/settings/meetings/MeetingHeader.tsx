@@ -15,6 +15,7 @@ import {
   type LiveProgress,
 } from "@/lib/meetingJobs";
 import { orderParticipants } from "@/lib/meetingPeople";
+import type { QueuePlace } from "@/lib/meetingQueue";
 import { IconAction } from "../../ui/IconAction";
 import { Input } from "../../ui/Input";
 import { TabList, type TabListItem } from "../../ui/TabList";
@@ -35,8 +36,32 @@ const CHIP =
 export const StatusChip: React.FC<{
   meeting: Pick<Meeting, "status">;
   progress?: LiveProgress;
-}> = ({ meeting, progress }) => {
+  /** U7: Platz in der Import-Warteschlange (nur bei Status `queued`). */
+  queue?: QueuePlace | null;
+}> = ({ meeting, progress, queue }) => {
   const { t } = useTranslation();
+  if (meeting.status === "queued" && !progress) {
+    return (
+      <span
+        className={`${CHIP} border-mid-gray/40 bg-mid-gray/10`}
+        data-testid="status-chip"
+        data-state="queued"
+        data-position={queue?.position}
+        title={
+          queue?.reason ? t(`meetings.queue.reason.${queue.reason}`) : undefined
+        }
+      >
+        <span className="truncate">
+          {queue
+            ? t("meetings.queue.place", {
+                position: queue.position,
+                total: queue.total,
+              })
+            : t("meetings.status.queued")}
+        </span>
+      </span>
+    );
+  }
   if (progress) {
     const percent = percentOf(progress);
     const indeterminate = isIndeterminate(progress);
@@ -123,6 +148,8 @@ interface MeetingHeaderProps {
   onRename: (title: string) => Promise<string | null>;
   /** Erhöht sich, wenn das Menü "Umbenennen" wählt (oder F2 gedrückt wird). */
   renameNonce: number;
+  /** U7: Platz in der Import-Warteschlange, solange die Besprechung wartet. */
+  queue?: QueuePlace | null;
   onOpenDetails: () => void;
   onOpenProjects: () => void;
   onManagePeople: () => void;
@@ -153,6 +180,7 @@ const dateFormatter = (language: string) =>
 export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
   meeting,
   progress,
+  queue,
   participants,
   projectNames,
   onRename,
@@ -319,7 +347,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
         data-testid="rec-detail-chips"
         className="flex h-7 items-center gap-1.5 overflow-hidden py-0.5"
       >
-        <StatusChip meeting={meeting} progress={progress} />
+        <StatusChip meeting={meeting} progress={progress} queue={queue} />
         <span className={CHIP} title={sourceFull} data-testid="source-chip">
           <SourceIcon width={12} height={12} aria-hidden="true" />
           <span className="hidden @[34rem]:inline">{sourceLabel}</span>

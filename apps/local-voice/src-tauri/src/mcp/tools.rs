@@ -366,6 +366,8 @@ fn meeting_json(m: &Meeting) -> Value {
     json!({
         "id": m.id,
         "title": m.title,
+        // U7: die vom Nutzer gepflegte Beschreibung (Kontext); `null` ohne.
+        "description": m.description.as_deref().map(str::trim).filter(|d| !d.is_empty()),
         "date": iso(m.started_at.unwrap_or(m.created_at)),
         "duration_seconds": m.duration_ms.map(|ms| ms / 1_000),
         "source": m.source,
@@ -643,11 +645,21 @@ fn get_meeting(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
         String::new()
     };
     let mut text = format!(
-        "ID: {} · Quelle: {} · Sprache: {}\n\n",
+        "ID: {} · Quelle: {} · Sprache: {}\n",
         meeting.id,
         meeting.source,
         meeting.language.as_deref().unwrap_or("unbekannt")
     );
+    // U7: die vom Nutzer gepflegte Beschreibung als Kontext (mehrzeilig, unverkuerzt).
+    if let Some(description) = meeting
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+    {
+        text.push_str(&format!("Beschreibung: {description}\n"));
+    }
+    text.push('\n');
     let markdown = bundle_to_markdown(
         &bundle,
         &ExportParts {

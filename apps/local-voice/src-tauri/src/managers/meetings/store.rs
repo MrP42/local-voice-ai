@@ -22,7 +22,7 @@ use super::notes::templates::{self, builtin_id, builtin_templates, is_builtin_id
 /// Database migrations for the meetings store. One migration creates every
 /// table for M8; later milestones (M9/M10) add migrations rather than
 /// editing this one, matching the pattern in `history.rs`.
-static MIGRATIONS: &[M] = &[
+pub(super) static MIGRATIONS: &[M] = &[
     M::up(
     "CREATE TABLE meetings (
       id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL,
@@ -92,6 +92,11 @@ static MIGRATIONS: &[M] = &[
     // M5 (Kalender-Cache, Verknuepfungen, Personen). Nur CREATE und ADD COLUMN
     // mit Defaults: vorhandene Zeilen bleiben unberuehrt.
     M::up(CALENDAR_MIGRATION),
+    // U7 (Import-Warteschlange, Beschreibung). Nur ALTER ... ADD COLUMN und
+    // CREATE: vorhandene Zeilen bleiben unveraendert. Der SQL-Text steht in
+    // `queue_store.rs`, damit dieser Schritt beim Zusammenfuehren mit anderen
+    // Zweigen nur aus dieser einen Zeile besteht.
+    M::up(super::queue_store::QUEUE_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
@@ -281,6 +286,9 @@ pub struct Meeting {
     /// recordings. Kept separately from `title` because the title is
     /// user-editable (M9) and must be allowed to diverge from the file name.
     pub source_path: Option<String>,
+    /// U7: freie Beschreibung (mehrzeilig), vom Nutzer gepflegt. Durchsuchbar
+    /// (Such-Index) und Kontext fuer Chat, KI-Notizen und MCP.
+    pub description: Option<String>,
     pub created_at: i64,
     pub deleted_at: Option<i64>,
 }
@@ -839,6 +847,7 @@ impl MeetingStore {
             consent_confirmed_at: row.get("consent_confirmed_at")?,
             audio_retention_until: row.get("audio_retention_until")?,
             source_path: row.get("source_path")?,
+            description: row.get("description")?,
             created_at: row.get("created_at")?,
             deleted_at: row.get("deleted_at")?,
         })
@@ -878,6 +887,7 @@ impl MeetingStore {
             consent_confirmed_at,
             audio_retention_until: None,
             source_path: None,
+            description: None,
             created_at: now,
             deleted_at: None,
         })
@@ -1503,7 +1513,7 @@ impl MeetingStore {
         let mut stmt = conn.prepare(
             "SELECT id, title, status, source, started_at, ended_at, language,
                     mic_audio_path, system_audio_path, duration_ms, consent_confirmed_at,
-                    audio_retention_until, source_path, created_at, deleted_at
+                    audio_retention_until, source_path, description, created_at, deleted_at
              FROM meetings
              WHERE deleted_at IS NULL
                AND audio_retention_until IS NOT NULL
@@ -1521,7 +1531,7 @@ impl MeetingStore {
             .query_row(
                 "SELECT id, title, status, source, started_at, ended_at, language,
                         mic_audio_path, system_audio_path, duration_ms, consent_confirmed_at,
-                        audio_retention_until, source_path, created_at, deleted_at
+                        audio_retention_until, source_path, description, created_at, deleted_at
                  FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
                 Self::map_meeting,
@@ -1535,7 +1545,7 @@ impl MeetingStore {
         let mut stmt = conn.prepare(
             "SELECT id, title, status, source, started_at, ended_at, language,
                     mic_audio_path, system_audio_path, duration_ms, consent_confirmed_at,
-                    audio_retention_until, source_path, created_at, deleted_at
+                    audio_retention_until, source_path, description, created_at, deleted_at
              FROM meetings WHERE deleted_at IS NULL
              ORDER BY created_at DESC
              LIMIT ?1 OFFSET ?2",

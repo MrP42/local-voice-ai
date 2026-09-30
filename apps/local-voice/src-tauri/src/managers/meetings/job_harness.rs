@@ -232,6 +232,23 @@ pub fn attach_event_log(app: &tauri::AppHandle, log: Arc<EventLog>) {
     });
 }
 
+/// U7: haengt die Zustaende der Import-Warteschlange (wartend, laufend,
+/// angehalten, warum nicht) an dieselbe Logdatei.
+pub fn attach_queue_log(app: &tauri::AppHandle, log: Arc<EventLog>) {
+    use super::queue::ImportQueueEvent;
+    ImportQueueEvent::listen_any(app, move |event| {
+        let snapshot = &event.payload.snapshot;
+        log.write(json!({
+            "kind": "queue",
+            "waiting": snapshot.waiting,
+            "running": snapshot.running,
+            "held": snapshot.held,
+            "limit": snapshot.limit,
+            "blocked": snapshot.blocked,
+        }));
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

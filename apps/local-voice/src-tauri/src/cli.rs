@@ -127,6 +127,22 @@ pub struct CliArgs {
     #[arg(long, value_name = "SCRIPT", hide = true)]
     pub job_script: Option<String>,
 
+    /// U7 test hook (headless): put these files into the import queue in the
+    /// order given, wait until the queue is empty and print one JSON object
+    /// (per meeting: status, segments; plus the order in which the runs began
+    /// and ended). Like the UI import, but without a window. Sandbox only
+    /// (LVA_MEETINGS_DIR must be set). Combine with --queue-parallel and
+    /// --job-events (queue states are written to that file too).
+    #[arg(long, value_name = "FILE", num_args = 1.., hide = true)]
+    pub import_queue: Vec<PathBuf>,
+
+    /// U7: with --import-queue, how many files run at the same time in THIS run
+    /// (1 to 3). Overrides the setting without writing it. A second and third
+    /// run load their own engine, and only while memory allows (set
+    /// LVA_TEST_FREE_RAM_MB to simulate a tight machine).
+    #[arg(long, value_name = "N", hide = true)]
+    pub queue_parallel: Option<u32>,
+
     /// P8a: write every meeting event of a headless run (state, progress,
     /// job end, script steps) as one JSON line to this file. Evidence for
     /// progress events and for pause/stop taking effect.

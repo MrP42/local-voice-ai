@@ -15,10 +15,19 @@ import { installRecMock } from "./recLayoutMock";
  *   `meetings_get_segments` liefert den Stand der Datenbank zum Zeitpunkt des
  *   AUFRUFS; `holdSegments()` haelt die Antwort zurueck, bis `releaseSegments()`
  *   kommt (Ereignisse waehrend des Ladens).
- * - `meetings_import_file` legt eine Besprechung mit `source_path` an, meldet
- *   "processing" und kehrt erst zurueck, wenn `releaseImport()` kommt (bei
- *   `holdImport()`), sonst sofort: wie der echte Befehl, der bis zum Ende der
- *   Verarbeitung laeuft.
+ * - `meetings_import_file` (U7, Warteschlange) legt eine Besprechung mit
+ *   `source_path` an (Status "queued") und kehrt SOFORT mit ihrer ID zurueck,
+ *   wie der echte Befehl. Die Warteschlange der Attrappe beginnt die naechste
+ *   Datei, sobald ein Platz frei ist (`limit`, Standard 1) und meldet
+ *   `state` (processing/ready) und den Stand als `import-queue-event`. Ohne
+ *   `holdImport()` endet jeder Lauf nach 30 ms; mit `holdImport()` laeuft er,
+ *   bis `finishImport(id)` oder `releaseImport()` kommt.
+ * - Warteschlangen-Befehle: `meetings_queue_list/remove/to_front`;
+ *   `setQueueLimit`, `setQueueMemory` ("wartet auf Arbeitsspeicher") und
+ *   `setQueueRecording` (Aufnahme-Vorrang) stellen die Lage nach.
+ * - `meetings_update_metadata` schreibt Titel, Beschreibung, Datum,
+ *   Teilnehmende und Projekte in die Attrappe (mit `persist`: ueber ein Neuladen
+ *   der Seite hinweg, per sessionStorage) und kennt Fehler (`__metaError`).
  * - Ordner: Zaehler, Loeschen und das Filtern der Suche nach Projekt.
  */
 
@@ -31,12 +40,39 @@ export const seg = (index: number, text: string, channel = index % 2) => ({
   speaker_index: null,
 });
 
+export const PEOPLE = [
+  {
+    id: "h-anna",
+    name: "Anna Berg",
+    email: "anna@firma.de",
+    company: "Firma GmbH",
+    is_self: false,
+    meeting_count: 4,
+  },
+  {
+    id: "h-ben",
+    name: "Ben Koch",
+    email: "ben@kunde.de",
+    company: "Kunde AG",
+    is_self: false,
+    meeting_count: 2,
+  },
+  {
+    id: "h-cem",
+    name: "Cem Aydin",
+    email: null,
+    company: null,
+    is_self: false,
+    meeting_count: 1,
+  },
+];
+
 export const installLiveMock = async (
   page: Page,
-  options: { recording?: boolean } = {},
+  options: { recording?: boolean; persist?: boolean } = {},
 ) => {
   await installRecMock(page, options);
-  await page.addInitScript(() => {
+  await page.addInitScript((persistState) => {
     const w = window as any;
     const inner = w.__TAURI_INTERNALS__.invoke;
     w.__db = {};
@@ -54,6 +90,109 @@ export const installLiveMock = async (
     };
     w.__holdImport = () => (w.__importHold = true);
     const emit = (payload: unknown) => w.__emit("meeting-event", payload);
+
+    // U7: Warteschlange der Attrappe (ein Platz, `limit` Plaetze).
+    w.__queue = {
+      waiting: [] as string[],
+      running: [] as string[],
+      held: [] as string[],
+      limit: 1,
+      memory: false,
+      recording: false,
+    };
+    w.__queueSnapshot = () => {
+      const q = w.__queue;
+      let blocked: string | null = null;
+      if (q.waiting.length > 0) {
+        blocked = q.recording
+          ? "recording"
+          : q.running.length > 0 && q.running.length < q.limit && q.memory
+            ? "memory"
+            : q.running.length >= q.limit
+              ? "slot"
+              : null;
+      }
+      return {
+        waiting: [...q.waiting],
+        running: [...q.running],
+        held: [...q.held],
+        limit: q.limit,
+        blocked,
+      };
+    };
+    w.__queuePublish = () =>
+      w.__emit("import-queue-event", { snapshot: w.__queueSnapshot() });
+    w.__queueSetStatus = (id: string, status: string) => {
+      w.__meetings = w.__meetings.map((m: any) =>
+        m.id === id ? { ...m, status } : m,
+      );
+      emit({ kind: "state", meeting_id: id, status, paused: false });
+    };
+    w.__finishImport = (id: string) => {
+      const q = w.__queue;
+      if (!q.running.includes(id)) return;
+      q.running = q.running.filter((x: string) => x !== id);
+      q.held = q.held.filter((x: string) => x !== id);
+      w.__queueSetStatus(id, "ready");
+      w.__queueStart();
+    };
+    w.__queueStart = () => {
+      const q = w.__queue;
+      while (
+        q.waiting.length > 0 &&
+        !q.recording &&
+        q.running.length < q.limit &&
+        (q.running.length === 0 || !q.memory)
+      ) {
+        const id = q.waiting.shift() as string;
+        q.running.push(id);
+        w.__queueSetStatus(id, "processing");
+        if (!w.__importHold) setTimeout(() => w.__finishImport(id), 30);
+      }
+      w.__queuePublish();
+    };
+    w.__releaseImport = () => {
+      w.__importHold = false;
+      [...w.__queue.running].forEach((id: string) => w.__finishImport(id));
+    };
+    w.__setQueueRecording = (on: boolean) => {
+      const q = w.__queue;
+      q.recording = on;
+      q.held = on ? [...q.running] : [];
+      if (on) w.__queuePublish();
+      else w.__queueStart();
+    };
+
+    // U7: Metadaten ueber ein Neuladen hinweg (sessionStorage), wenn verlangt.
+    w.__people = [];
+    w.__persist = () => {
+      if (!persistState) return;
+      try {
+        sessionStorage.setItem(
+          "__u7_state",
+          JSON.stringify({
+            meetings: w.__meetings,
+            participants: w.__participants,
+            folderMap: w.__folderMap,
+          }),
+        );
+      } catch {
+        /* ohne Speicher laeuft die Attrappe ohne Neuladen-Test */
+      }
+    };
+    if (persistState) {
+      try {
+        const saved = sessionStorage.getItem("__u7_state");
+        if (saved) {
+          const state = JSON.parse(saved);
+          w.__meetings = state.meetings;
+          w.__participants = state.participants;
+          w.__folderMap = state.folderMap;
+        }
+      } catch {
+        /* kein gespeicherter Stand */
+      }
+    }
     const live = (id: string) => w.__folders.some((f: any) => f.id === id);
     const assigned = (id: string) => (w.__folderMap[id] ?? []).filter(live);
 
@@ -111,7 +250,13 @@ export const installLiveMock = async (
           return "m-neu";
         }
         case "meetings_get_segments": {
-          if (!(args.meetingId in w.__db) && args.meetingId !== "m-neu") break;
+          // Neu importierte Besprechungen (m-imp*) haben keine Segmente, bis der Test welche meldet.
+          if (
+            !(args.meetingId in w.__db) &&
+            args.meetingId !== "m-neu" &&
+            !String(args.meetingId).startsWith("m-imp")
+          )
+            break;
           w.__calls.push({ cmd, args });
           const snapshot = [...(w.__db[args.meetingId] ?? [])];
           const gate = w.__segmentsGate;
@@ -129,9 +274,10 @@ export const installLiveMock = async (
             ...w.__meetings[0],
             id,
             title: stem,
-            status: "processing",
+            status: "queued",
             source: "import",
             source_path: args.path,
+            description: null,
             ended_at: null,
             duration_ms: null,
             started_at: Math.floor(Date.now() / 1000),
@@ -139,34 +285,110 @@ export const installLiveMock = async (
             system_audio_path: null,
           };
           w.__meetings = [created, ...w.__meetings];
-          setTimeout(
-            () =>
-              emit({
-                kind: "state",
-                meeting_id: id,
-                status: "processing",
-                paused: false,
-              }),
-            10,
-          );
-          if (w.__importHold) {
-            await new Promise<void>((resolve) => {
-              w.__releaseImport = () => {
-                w.__importHold = false;
-                resolve();
-              };
-            });
-          }
-          w.__meetings = w.__meetings.map((m: any) =>
-            m.id === id ? { ...m, status: "ready" } : m,
-          );
-          emit({
-            kind: "state",
-            meeting_id: id,
-            status: "ready",
-            paused: false,
-          });
+          w.__queue.waiting.push(id);
+          // Wie das Backend: die Besprechung gibt es sofort, der Verteiler beginnt kurz darauf.
+          setTimeout(() => w.__queueStart(), 10);
           return id;
+        }
+        case "meetings_continue": {
+          // U7: eine aus der Warteschlange genommene Datei ohne Audio wird hinten wieder eingereiht.
+          w.__calls.push({ cmd, args });
+          const m = w.__meetings.find((x: any) => x.id === args.meetingId);
+          if (!m || m.status !== "cancelled") throw "not_cancelled";
+          w.__queue.waiting.push(m.id);
+          w.__queueSetStatus(m.id, "queued");
+          setTimeout(() => w.__queueStart(), 10);
+          return null;
+        }
+        case "meetings_job_stop": {
+          // Stopp eines laufenden Imports: Endzustand "cancelled", die naechste Datei beginnt.
+          w.__calls.push({ cmd, args });
+          const q = w.__queue;
+          if (!q.running.includes(args.meetingId)) throw "no_job";
+          q.running = q.running.filter((x: string) => x !== args.meetingId);
+          q.held = q.held.filter((x: string) => x !== args.meetingId);
+          w.__queueSetStatus(args.meetingId, "cancelled");
+          emit({
+            kind: "job_ended",
+            meeting_id: args.meetingId,
+            phase: "transcription",
+            stopped: true,
+          });
+          w.__queueStart();
+          return null;
+        }
+        case "meetings_queue_list":
+          return w.__queueSnapshot();
+        case "meetings_queue_remove": {
+          w.__calls.push({ cmd, args });
+          const q = w.__queue;
+          const id = args.meetingId as string;
+          if (q.waiting.includes(id)) {
+            q.waiting = q.waiting.filter((x: string) => x !== id);
+            w.__queueSetStatus(id, "cancelled");
+            w.__queuePublish();
+            return null;
+          }
+          if (q.running.includes(id)) {
+            q.running = q.running.filter((x: string) => x !== id);
+            w.__queueSetStatus(id, "cancelled");
+            w.__queueStart();
+            return null;
+          }
+          throw "not_in_queue";
+        }
+        case "meetings_queue_to_front": {
+          w.__calls.push({ cmd, args });
+          const q = w.__queue;
+          const id = args.meetingId as string;
+          if (!q.waiting.includes(id)) throw "not_queued";
+          q.waiting = [id, ...q.waiting.filter((x: string) => x !== id)];
+          w.__queuePublish();
+          return null;
+        }
+        case "people_list":
+          return w.__people ?? [];
+        case "meetings_update_metadata": {
+          w.__calls.push({ cmd, args });
+          if (w.__metaError) throw w.__metaError;
+          const edit = args.edit;
+          const current = w.__meetings.find(
+            (m: any) => m.id === args.meetingId,
+          );
+          if (!current) throw "meeting_not_found";
+          if (edit.title !== null && edit.title.trim() === "")
+            throw "title_empty";
+          const next = { ...current };
+          if (edit.title !== null) next.title = edit.title.trim();
+          if (edit.description !== null) {
+            next.description = edit.description.trim() || null;
+          }
+          if (edit.started_at !== null) next.started_at = edit.started_at;
+          w.__meetings = w.__meetings.map((m: any) =>
+            m.id === next.id ? next : m,
+          );
+          if (edit.participant_ids !== null) {
+            w.__participants[next.id] = edit.participant_ids.map(
+              (pid: string) => {
+                const p = (w.__people ?? []).find((x: any) => x.id === pid);
+                return {
+                  human_id: pid,
+                  name: p?.name ?? pid,
+                  email: p?.email ?? null,
+                  company: p?.company ?? null,
+                  role: "attendee",
+                  source: "manual",
+                  is_self: false,
+                  meeting_count: 1,
+                };
+              },
+            );
+          }
+          if (edit.folder_ids !== null) {
+            w.__folderMap[next.id] = edit.folder_ids;
+          }
+          w.__persist();
+          return next;
         }
         case "meeting_folders_list":
           return w.__folders.map((f: any) => ({
@@ -207,7 +429,7 @@ export const installLiveMock = async (
       }
       return inner(cmd, args);
     };
-  });
+  }, options.persist ?? false);
 };
 
 /** Segmente "speichern" und melden, wie das Backend es tut. */
@@ -280,4 +502,37 @@ export const startRecording = async (page: Page) => {
     .click();
   await page.getByTestId("start-dialog").waitFor();
   await confirmStartDialog(page);
+};
+
+/** Einen laufenden Import beenden (Status "ready"); die naechste Datei beginnt. */
+export const finishImport = (page: Page, id: string) =>
+  page.evaluate((i) => (window as any).__finishImport(i), id);
+
+/** Zahl gleichzeitiger Laeufe der Attrappe (Einstellung). */
+export const setQueueLimit = (page: Page, limit: number) =>
+  page.evaluate((n) => {
+    const w = window as any;
+    w.__queue.limit = n;
+    w.__queueStart();
+  }, limit);
+
+/** Kein Speicher fuer einen weiteren gleichzeitigen Lauf ("wartet auf Arbeitsspeicher"). */
+export const setQueueMemory = (page: Page, blocked: boolean) =>
+  page.evaluate((on) => {
+    const w = window as any;
+    w.__queue.memory = on;
+    w.__queueStart();
+  }, blocked);
+
+/** Eine Aufnahme laeuft: die Warteschlange haelt an (und setzt danach fort). */
+export const setQueueRecording = (page: Page, on: boolean) =>
+  page.evaluate((v) => (window as any).__setQueueRecording(v), on);
+
+/** Personen der Attrappe (Teilnehmenden-Auswahl). */
+export const setPeople = (page: Page, people: typeof PEOPLE) =>
+  page.evaluate((list) => ((window as any).__people = list), people);
+
+/** Beim Neuladen bleibt der Stand der Attrappe erhalten (`persist`): Hilfe fuer "nach Neuladen". */
+export const reloadKeepingMock = async (page: Page) => {
+  await page.reload();
 };

@@ -473,6 +473,17 @@ impl MeetingRecorderManager {
         }
     }
 
+    /// U7: laeuft der Enddurchlauf-/Recovery-Thread noch? Die Import-Warteschlange
+    /// beginnt dann nicht auf der gemeinsamen Engine (auch nicht in der Luecke,
+    /// bevor sein Auftrag im Verzeichnis steht).
+    pub fn final_jobs_active(&self) -> bool {
+        self.final_job
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|job| !job.handle.is_finished())
+    }
+
     /// M2-P2d: wartet auf den Enddurchlauf-/Recovery-Thread (Headless-Laeufe,
     /// deren Prozess sonst vor dem Ende des Auftrags endete).
     pub fn wait_final_jobs(&self) {
@@ -1401,6 +1412,7 @@ mod tests {
             consent_confirmed_at: None,
             audio_retention_until: None,
             source_path: None,
+            description: None,
             created_at: 0,
             deleted_at: None,
         }

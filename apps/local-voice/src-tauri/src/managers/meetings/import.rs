@@ -197,8 +197,9 @@ enum ImportEnd {
 
 /// The blocking body: decode, copy the WAV, transcribe in chunks, finish with
 /// `ready` or `failed` (or, when the user stopped, `cancelled`) — always one
-/// of them, plus the matching event.
-fn run_import(
+/// of them, plus the matching event. U7: `pub(super)`, die Warteschlange
+/// (`queue.rs`) ruft sie fuer jede wartende Datei.
+pub(super) fn run_import(
     app: &tauri::AppHandle,
     store: &Arc<MeetingStore>,
     tm: &Arc<TranscriptionManager>,
@@ -334,9 +335,14 @@ fn run_import(
     };
 
     // Restore the dictation model (no-op when meeting and dictation model
-    // are the same) — mirrors the live recorder's stop().
-    let dictation_model = crate::settings::get_settings(app).selected_model;
-    tm.initiate_model_load_target(&dictation_model);
+    // are the same) — mirrors the live recorder's stop(). U7: wartet schon die
+    // naechste Datei der Warteschlange, bleibt das Besprechungsmodell geladen
+    // (sonst kostete jede Datei zwei Modellwechsel); das Diktatmodell kommt mit
+    // der letzten zurueck.
+    if !super::queue::more_waiting() {
+        let dictation_model = crate::settings::get_settings(app).selected_model;
+        tm.initiate_model_load_target(&dictation_model);
+    }
 
     result
 }

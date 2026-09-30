@@ -12,10 +12,13 @@ pub mod job; // P8a
 pub mod job_harness; // P8a: Pruefhaken fuer den Headless-Lauf
 pub mod llm_call;
 pub mod mail; // M6-P6c
+pub mod metadata; // U7
 pub mod mic_capture;
 pub mod minutes;
 pub mod notes;
 pub mod pdf; // M6-P6b
+pub mod queue; // U7
+pub mod queue_store; // U7
 pub mod recorder;
 pub mod retention;
 pub mod retranscribe;

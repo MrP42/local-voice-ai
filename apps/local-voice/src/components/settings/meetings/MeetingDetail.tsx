@@ -49,8 +49,11 @@ import { MeetingExportDialog } from "./MeetingExportDialog";
 import { PeopleDialog } from "./people/PeopleDialog";
 import type { PersonRef } from "./people/PersonPopover";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
+import { useImportQueue } from "@/hooks/useImportQueue";
+import { heldForRecording, queuePlace } from "@/lib/meetingQueue";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { JobPanel } from "./JobProgress";
+import { QueuePanel } from "./QueueStatus";
 import { audioTranscriptPlayer } from "./transcriptPlayer";
 
 const formatMmSs = (ms: number) => {
@@ -165,6 +168,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // P8a: laufende Verarbeitung dieser Besprechung (Fortschritt, Pause, Stopp).
   const progressMap = useMeetingProgress();
   const jobProgress = progressMap[meetingId];
+  // U7: Import-Warteschlange: Platz solange die Besprechung wartet, und ob ihr
+  // laufender Import wegen einer Aufnahme angehalten ist.
+  const importQueue = useImportQueue();
+  const queuePosition =
+    meeting.status === "queued" ? queuePlace(importQueue, meetingId) : null;
+  const held = heldForRecording(importQueue, meetingId);
   // Nur das Transkript waechst mit: Notizen und Protokoll aendern es nicht.
   const transcribing =
     meeting.status === "processing" ||
@@ -718,7 +727,10 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       hasSegments={segments.length > 0}
       hasAudio={hasAudio}
       busy={
-        live || meeting.status === "processing" || jobProgress !== undefined
+        live ||
+        meeting.status === "processing" ||
+        meeting.status === "queued" ||
+        jobProgress !== undefined
       }
       live={live}
       chatOpen={chatOpen}
@@ -741,12 +753,24 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     />
   );
 
+  // U7: aus der Warteschlange genommen, bevor sie begann: nur die Quelldatei ist
+  // da, "Fortsetzen" stellt sie wieder hinten an.
+  const notStarted =
+    meeting.status === "cancelled" &&
+    meeting.source === "import" &&
+    !!meeting.source_path &&
+    !meeting.mic_audio_path &&
+    !meeting.system_audio_path &&
+    !loading &&
+    segments.length === 0;
+
   /** Kopf der Besprechung und die Reiter der Arbeitsflaeche (Mitte). */
   const contentPart = (
     <>
       <MeetingHeader
         meeting={meeting}
         progress={jobProgress}
+        queue={queuePosition}
         participants={participants}
         projectNames={projectNames}
         onRename={renameTo}
@@ -771,12 +795,18 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           className="space-y-2 rounded-md border border-mid-gray/20 px-3 py-2"
         >
           <p className="text-sm font-medium">
-            {t("meetings.progress.cancelledTitle")}
+            {notStarted
+              ? t("meetings.queue.removedTitle")
+              : t("meetings.progress.cancelledTitle")}
           </p>
           <p className="text-xs text-text/70">
-            {t("meetings.progress.cancelledBody", { count: segments.length })}
+            {notStarted
+              ? t("meetings.queue.removedBody")
+              : t("meetings.progress.cancelledBody", {
+                  count: segments.length,
+                })}
           </p>
-          {hasAudio && (
+          {(hasAudio || notStarted) && (
             <Button
               size="sm"
               variant="secondary"
@@ -784,7 +814,9 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
               onClick={() => void continueProcessing()}
               disabled={continuing}
             >
-              {t("meetings.progress.continue")}
+              {notStarted
+                ? t("meetings.queue.requeue")
+                : t("meetings.progress.continue")}
             </Button>
           )}
           {continueError && (
@@ -860,7 +892,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         </AudioPlayerGroup>
       )}
 
-      {jobProgress && <JobPanel progress={jobProgress} />}
+      {jobProgress && (
+        <JobPanel progress={jobProgress} heldForRecording={held} />
+      )}
+      {!jobProgress && queuePosition && (
+        <QueuePanel meetingId={meetingId} place={queuePosition} />
+      )}
 
       {!compact && actions(false)}
     </>
@@ -1069,8 +1106,20 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         onOpenChange={setDetailsOpen}
         meeting={meeting}
         progress={jobProgress}
+        queue={queuePosition}
         segmentCount={segments.length}
         projectNames={projectNames}
+        participants={participants}
+        folders={allFolders}
+        folderIds={meetingFolderIds}
+        onSaved={(saved) => {
+          // U7: neue Metadaten uebernehmen, Teilnehmende und Projekte neu lesen,
+          // die Liste (Titel, Datum, Suche) neu laden.
+          onMeetingChange(saved);
+          void loadParticipants();
+          void loadFolders();
+          notifyMeetingsChanged();
+        }}
       />
       <RetranscribeDialog
         open={retranscribeOpen}
