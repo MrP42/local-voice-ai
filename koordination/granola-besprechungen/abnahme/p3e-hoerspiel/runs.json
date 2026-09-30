@@ -1,0 +1,84 @@
+{
+ "runs-eval.json": {
+  "exe": {
+   "source_exe": "C:\\Users\\wolff\\local-voice-project\\apps\\local-voice\\src-tauri\\target\\release\\local-voice-ai.exe",
+   "source_exe_mtime": "2026-09-30T15:50:43",
+   "source_exe_bytes": 67436032,
+   "app_exe": "C:\\Users\\wolff\\lva-spikes\\p3e\\app\\local-voice-ai.exe"
+  },
+  "eval": {
+   "args": "--eval-diarization C:\\Users\\wolff\\lva-spikes\\p3e\\diar --rttm-out C:\\Users\\wolff\\lva-spikes\\p3e\\out --out C:\\Users\\wolff\\lva-spikes\\p3e\\out\\eval-diarization.json",
+   "env": {
+    "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\lva-spikes\\p3e\\meetings-eval"
+   },
+   "exit_code": 3,
+   "timed_out": false,
+   "wall_ms": 16009,
+   "peak_job_mb": 1108,
+   "free_mb_start": 30951,
+   "leftovers": [],
+   "log": "C:\\Users\\wolff\\lva-spikes\\p3e\\out\\eval-diarization.log",
+   "started": "2026-09-30T16:37:17"
+  }
+ },
+ "runs-import.json": {
+  "exe": {
+   "source_exe": "C:\\Users\\wolff\\local-voice-project\\apps\\local-voice\\src-tauri\\target\\release\\local-voice-ai.exe",
+   "source_exe_mtime": "2026-09-30T15:50:43",
+   "source_exe_bytes": 67436032,
+   "app_exe": "C:\\Users\\wolff\\lva-spikes\\p3e\\app\\local-voice-ai.exe"
+  },
+  "import": {
+   "args": "--import-meeting C:\\Users\\wolff\\OneDrive - Ingenieurb\u00fcro Wolff\\Desktop\\Emilia,-Sofie-und-Mara-und-das-Tal-der-drei-Wege_2026-09-15_2031.mp3 --model parakeet-tdt-0.6b-v3 --out C:\\Users\\wolff\\lva-spikes\\p3e\\out\\import.json",
+   "env": {
+    "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\lva-spikes\\p3e\\meetings"
+   },
+   "exit_code": 0,
+   "timed_out": false,
+   "wall_ms": 164880,
+   "peak_job_mb": 1804,
+   "free_mb_start": 31498,
+   "leftovers": [],
+   "log": "C:\\Users\\wolff\\lva-spikes\\p3e\\out\\import.log",
+   "started": "2026-09-30T16:39:23"
+  }
+ },
+ "runs-eval-excerpts.json": {
+  "exe": {
+   "source_exe": "C:\\Users\\wolff\\local-voice-project\\apps\\local-voice\\src-tauri\\target\\release\\local-voice-ai.exe",
+   "source_exe_mtime": "2026-09-30T15:50:43",
+   "source_exe_bytes": 67436032,
+   "app_exe": "C:\\Users\\wolff\\lva-spikes\\p3e\\app\\local-voice-ai.exe"
+  },
+  "eval-excerpts": {
+   "args": "--eval-diarization C:/Users/wolff/lva-spikes/p3e/diar-excerpts --rttm-out C:\\Users\\wolff\\lva-spikes\\p3e\\out --out C:\\Users\\wolff\\lva-spikes\\p3e\\out\\eval-excerpts.json",
+   "env": {
+    "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\lva-spikes\\p3e\\meetings-eval"
+   },
+   "exit_code": 3,
+   "timed_out": false,
+   "wall_ms": 2132,
+   "peak_job_mb": 1043,
+   "free_mb_start": 28742,
+   "leftovers": [],
+   "log": "C:\\Users\\wolff\\lva-spikes\\p3e\\out\\eval-excerpts.log",
+   "started": "2026-09-30T16:43:37"
+  }
+ },
+ "nemotron": {
+  "args": "C:\\Users\\wolff\\lva-spikes\\m3\\run_nemotron.py C:/Users/wolff/lva-spikes/p3e/out/nemotron C:/Users/wolff/lva-spikes/p3e/diar-excerpts/hoerspiel_x120_300.wav C:/Users/wolff/lva-spikes/p3e/diar-excerpts/hoerspiel_x300_480.wav C:/Users/wolff/lva-spikes/p3e/diar-excerpts/hoerspiel_x900_1080.wav C:/Users/wolff/lva-spikes/p3e/diar/hoerspiel.wav",
+  "env": {
+   "NTHREADS": 4,
+   "HF_HUB_OFFLINE": "1",
+   "PYTHONIOENCODING": "utf-8"
+  },
+  "exit_code": 0,
+  "timed_out": false,
+  "wall_ms": 50984,
+  "peak_job_mb": 3518,
+  "free_mb_start": 30918,
+  "leftovers": [],
+  "log": "C:\\Users\\wolff\\lva-spikes\\p3e\\out\\nemotron\\nemotron.log",
+  "started": "2026-09-30T16:45:22"
+ }
+}

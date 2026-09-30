@@ -1,0 +1,48 @@
+{
+  "backend": "Vulkan0",
+  "collar_s": 0.25,
+  "failed": 0,
+  "files": [
+    {
+      "audio_s": 1119.03,
+      "conf": 30.79,
+      "der": 33.84,
+      "der_raw": 33.23,
+      "fa": 1.52,
+      "file": "hoerspiel",
+      "group": "de",
+      "hyp_speakers": 4,
+      "hyp_speakers_raw": 4,
+      "miss": 1.53,
+      "ms": 14142,
+      "ref_speakers": 7,
+      "ref_speech_s": 793.61,
+      "rtf": 79.13,
+      "turns": 157
+    }
+  ],
+  "mode": "eval_diarization",
+  "model": "C:\\Users\\wolff\\lva-spikes\\p3e\\app\\Data\\models\\diarization\\diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf",
+  "params": {
+    "gap_ms": 1000,
+    "pad_ms": 100,
+    "preset": "VeryHighLatency",
+    "threads": 16
+  },
+  "rtf": {
+    "de": 79.13
+  },
+  "skipped_without_rttm": [],
+  "targets": {
+    "ami_test_max_pct": 15.0,
+    "ami_test_ok": true,
+    "de_max_pct": 5.0,
+    "de_ok": false
+  },
+  "weighted_der": {
+    "de": 33.84
+  },
+  "weighted_der_raw": {
+    "de": 33.23
+  }
+}
