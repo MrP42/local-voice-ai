@@ -2754,9 +2754,11 @@
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",
+    "ramApp": "RAM {{used}} / {{total}} GB (App {{app}})",
     "gpu": "GPU {{used}} / {{total}} GB",
+    "gpuApp": "GPU {{used}} / {{total}} GB (App {{app}})",
     "gpuShared": "GPU (gemeinsam) {{used}} / {{total}} GB",
-    "hint": "RAM: verwendet / gesamt. GPU: belegt / Budget des Treibers — kein „freier VRAM“."
+    "hint": "RAM: verwendet / gesamt. GPU: belegt / Budget des Treibers — kein „freier VRAM“. App = Local Voice AI inkl. Modell-Server und Webansicht."
   },
   "help": {
     "title": "Hilfe",

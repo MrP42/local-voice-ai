@@ -2754,9 +2754,11 @@
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",
+    "ramApp": "RAM {{used}} / {{total}} GB (App {{app}})",
     "gpu": "GPU {{used}} / {{total}} GB",
+    "gpuApp": "GPU {{used}} / {{total}} GB (App {{app}})",
     "gpuShared": "GPU (shared) {{used}} / {{total}} GB",
-    "hint": "RAM: used / total. GPU: in use / driver budget — not “free VRAM”."
+    "hint": "RAM: used / total. GPU: in use / driver budget — not “free VRAM”. App = Local Voice AI incl. model servers and web view."
   },
   "help": {
     "title": "Help",

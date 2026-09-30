@@ -371,8 +371,10 @@ async llmLocalActivate(modelId: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * RAM und GPU-Speicherbudget fuer die Fussleiste. Auf einem
- * Blocking-Thread: DXGI ist schnell, aber nicht async.
+ * RAM und GPU-Speicherbudget fuer die Fussleiste, dazu der Anteil der App
+ * (samt Kindprozessen). Auf einem Blocking-Thread: DXGI und die
+ * Prozessliste sind schnell, aber nicht async; die App-Messung ist auf eine
+ * je 5 s gedrosselt.
  */
 async systemMemory() : Promise<Result<SystemMemory, string>> {
     try {
@@ -5487,7 +5489,19 @@ export type SystemMemory = { ram_total_mb: number; ram_used_mb: number;
  * Leer, wenn kein Adapter messbar ist. Software-Adapter (Microsoft
  * Basic Render Driver) sind herausgefiltert.
  */
-gpus: GpuMemory[] }
+gpus: GpuMemory[]; 
+/**
+ * Anteil der App (Local Voice AI samt Kindprozessen wie llama-server)
+ * am RAM, Arbeitssatz in MiB. 0 in `system_memory()`; gefuellt von
+ * `system_memory_with_app()`.
+ */
+app_ram_mb: number; 
+/**
+ * Anteil der App am dedizierten GPU-Speicher der ersten Karte in MiB.
+ * `None`: nicht messbar (kein Windows-Leistungsindikator, keine
+ * dedizierte Karte) -- dann zeigt die Oberflaeche keine Zahl.
+ */
+app_gpu_mb: number | null }
 export type TagInsertion = { offset_in_original: number; offset_chars: number; tag: string }
 /**
  * Vorlage samt Metadaten, wie sie an die UI geht. `builtin` = mitgeliefert

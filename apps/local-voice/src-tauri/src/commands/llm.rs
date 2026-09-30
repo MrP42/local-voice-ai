@@ -306,12 +306,14 @@ pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String
     Ok(())
 }
 
-/// RAM und GPU-Speicherbudget fuer die Fussleiste. Auf einem
-/// Blocking-Thread: DXGI ist schnell, aber nicht async.
+/// RAM und GPU-Speicherbudget fuer die Fussleiste, dazu der Anteil der App
+/// (samt Kindprozessen). Auf einem Blocking-Thread: DXGI und die
+/// Prozessliste sind schnell, aber nicht async; die App-Messung ist auf eine
+/// je 5 s gedrosselt.
 #[tauri::command]
 #[specta::specta]
 pub async fn system_memory(_app: AppHandle) -> Result<crate::managers::llm::SystemMemory, String> {
-    tokio::task::spawn_blocking(crate::managers::llm::resources::system_memory)
+    tokio::task::spawn_blocking(crate::managers::llm::resources::system_memory_with_app)
         .await
         .map_err(|e| e.to_string())
 }

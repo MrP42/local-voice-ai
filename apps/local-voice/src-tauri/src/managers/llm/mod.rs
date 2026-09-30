@@ -6,6 +6,7 @@
 //! (`managers::tts::models`): Katalogeintrag je Plattform, Download mit
 //! Pruefsumme, entpacken, aufloesen.
 
+pub mod app_usage;
 pub mod context;
 pub mod estimate;
 pub mod resources;
@@ -101,6 +102,7 @@ pub async fn ensure_local(model_id: &str) -> Result<String, String> {
     // P1h: nur ein lebender Prozess UND antwortender Port zaehlt als bereit.
     // Sonst weiter zu `ensure`, das einen Absturz abraeumt, hoechstens einmal
     // pro Minute neu startet und sonst `server_crashed: ...` meldet.
+    touch_local();
     if let Some(port) = server.live_port(model_id).await {
         return Ok(format!("http://127.0.0.1:{port}/v1"));
     }
@@ -132,6 +134,99 @@ pub async fn ensure_local(model_id: &str) -> Result<String, String> {
         set_active_context(model_id, context_tokens);
     }
     Ok(format!("http://127.0.0.1:{port}/v1"))
+}
+
+// ---------------------------------------------------------------------------
+// Leerlauf-Stopp des Chat-Servers: das Modell gibt RAM und VRAM wieder frei
+// ---------------------------------------------------------------------------
+
+/// Zeitpunkt der letzten Anfrage an den Chat-Server (ms seit Unix-Epoche).
+static LOCAL_LAST_USE_MS: AtomicU64 = AtomicU64::new(0);
+
+fn touch_local() {
+    LOCAL_LAST_USE_MS.store(now_ms(), Ordering::Release);
+}
+
+/// Mindestens so lange bleibt der Chat-Server nach der letzten Anfrage
+/// geladen: zwischen zwei Anfragen einer Sitzung (Notizen in Teilen,
+/// Nachfragen) soll er nicht jedes Mal neu starten.
+pub const LOCAL_MIN_IDLE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Leerlauf-Grenze aus der Einstellung "Modelle entladen nach" (Sekunden;
+/// `None` = nie). Nie unter [`LOCAL_MIN_IDLE`]: "sofort" und die
+/// 15-Sekunden-Stufe des Debug-Modus sind fuer das Diktatmodell gedacht, ein
+/// Sprachmodell-Start dauert zu lange dafuer.
+pub fn local_idle_limit(unload_secs: Option<u64>) -> Option<std::time::Duration> {
+    unload_secs.map(|s| std::time::Duration::from_secs(s).max(LOCAL_MIN_IDLE))
+}
+
+/// Darf der Chat-Server jetzt wegen Leerlauf beendet werden? Nur wenn eine
+/// Grenze gilt, die letzte Anfrage lange genug her ist und der Server nicht
+/// gerade rechnet.
+pub fn local_idle_expired(
+    idle: std::time::Duration,
+    limit: Option<std::time::Duration>,
+    busy: bool,
+) -> bool {
+    !busy && limit.is_some_and(|l| idle >= l)
+}
+
+/// Rechnet der Server gerade? `/slots` des llama-servers: ein Slot mit
+/// `is_processing` heisst "ja". Kein Endpunkt oder unlesbare Antwort zaehlt
+/// als "nein" -- dann entscheidet allein die Zeit seit der letzten Anfrage.
+pub fn slots_busy(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .is_some_and(|slots| {
+            slots.iter().any(|s| {
+                s.get("is_processing").and_then(|b| b.as_bool()).unwrap_or(false)
+                    || s.get("state").and_then(|b| b.as_u64()).is_some_and(|n| n != 0)
+            })
+        })
+}
+
+/// Beendet den Chat-Server, wenn er `limit` lang nicht benutzt wurde und
+/// nicht rechnet -- RAM und VRAM des Modells werden frei, auch wenn die App
+/// nach "Schliessen" im Infobereich weiterlaeuft. Der naechste Aufruf startet
+/// ihn neu (`ensure_local`). Liefert, ob gestoppt wurde.
+pub async fn stop_local_if_idle(limit: Option<std::time::Duration>) -> bool {
+    let Some(server) = SERVER.get() else { return false };
+    if limit.is_none() || !server.has_process() {
+        return false;
+    }
+    let last = LOCAL_LAST_USE_MS.load(Ordering::Acquire);
+    let idle = std::time::Duration::from_millis(now_ms().saturating_sub(last));
+    // Schnellweg ohne Netz: noch nicht lange genug her.
+    if !local_idle_expired(idle, limit, false) {
+        return false;
+    }
+    let busy = match server.status().port {
+        Some(port) => match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+        {
+            Ok(client) => match client.get(format!("http://127.0.0.1:{port}/slots")).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    slots_busy(&resp.text().await.unwrap_or_default())
+                }
+                _ => false,
+            },
+            Err(_) => false,
+        },
+        None => false,
+    };
+    if busy {
+        touch_local();
+        return false;
+    }
+    log::info!(
+        "Chat-Server: {} s ohne Anfrage, wird beendet (RAM/VRAM frei)",
+        idle.as_secs()
+    );
+    let server = server.clone();
+    let _ = tokio::task::spawn_blocking(move || server.stop()).await;
+    true
 }
 
 /// Kontext fuer einen Start, je freiem Grafikspeicher (`context`). Fehler beim
@@ -572,5 +667,52 @@ pub(crate) mod tests {
         assert!(EMBED_LAST_USE_MS.load(Ordering::Acquire) > 0);
         // Mit laufender Anfrage stoppt der Leerlauf-Stopp nie.
         assert!(!stop_embedding_if_idle(std::time::Duration::ZERO));
+    }
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn idle_limit_follows_the_unload_setting_but_never_undercuts_two_minutes() {
+        assert_eq!(local_idle_limit(None), None, "Nie entladen = nie stoppen");
+        assert_eq!(local_idle_limit(Some(0)), Some(LOCAL_MIN_IDLE), "\"sofort\" gilt nicht fuer das Sprachmodell");
+        assert_eq!(local_idle_limit(Some(15)), Some(LOCAL_MIN_IDLE));
+        assert_eq!(local_idle_limit(Some(300)), Some(Duration::from_secs(300)));
+        assert_eq!(local_idle_limit(Some(3600)), Some(Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn idle_stop_needs_a_limit_enough_idle_time_and_no_running_request() {
+        let limit = Some(Duration::from_secs(300));
+        assert!(local_idle_expired(Duration::from_secs(300), limit, false));
+        assert!(local_idle_expired(Duration::from_secs(4000), limit, false));
+        assert!(!local_idle_expired(Duration::from_secs(299), limit, false));
+        // Rechnet der Server, wird er nie weggenommen, egal wie lange es her ist.
+        assert!(!local_idle_expired(Duration::from_secs(4000), limit, true));
+        // Ohne Grenze nie.
+        assert!(!local_idle_expired(Duration::from_secs(99_999), None, false));
+    }
+
+    #[test]
+    fn slots_report_is_read_defensively() {
+        assert!(slots_busy(r#"[{"id":0,"is_processing":false},{"id":1,"is_processing":true}]"#));
+        assert!(!slots_busy(r#"[{"id":0,"is_processing":false},{"id":1,"is_processing":false}]"#));
+        assert!(slots_busy(r#"[{"id":0,"state":1}]"#));
+        assert!(!slots_busy(r#"[{"id":0,"state":0}]"#));
+        // Kein Endpunkt / Fehlertext / leer: nicht "beschaeftigt" (Zeit entscheidet).
+        assert!(!slots_busy(""));
+        assert!(!slots_busy("not json"));
+        assert!(!slots_busy(r#"{"error":"slots disabled"}"#));
+        assert!(!slots_busy("[]"));
+    }
+
+    #[test]
+    fn touching_moves_the_last_use_forward() {
+        LOCAL_LAST_USE_MS.store(0, Ordering::Release);
+        touch_local();
+        assert!(LOCAL_LAST_USE_MS.load(Ordering::Acquire) > 0);
     }
 }

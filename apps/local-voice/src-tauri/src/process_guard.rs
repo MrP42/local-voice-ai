@@ -336,6 +336,53 @@ mod tests {
         assert!(!out.status.success());
     }
 
+    /// Beweis fuer "kein Kindprozess ueberlebt die App": wird das Job-Objekt
+    /// geschlossen (Drop, App-Ende, Absturz), sterben Kind UND Enkel. Das
+    /// Kind ist `cmd`, der Enkel ein `ping` -- wie llama-server oder
+    /// Fish-Speech mit ihren Worker-Prozessen.
+    #[test]
+    #[cfg(windows)]
+    fn closing_the_job_kills_child_and_grandchild() {
+        use crate::managers::llm::app_usage::{process_rows, tree_pids};
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "ping -n 120 127.0.0.1 >nul"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("cmd");
+        let guard = ProcessGuard::attach(&child, None, 50).expect("Job-Objekt");
+        // Warten, bis cmd den Enkel gestartet hat.
+        let mut grandchildren = Vec::new();
+        for _ in 0..50 {
+            let pids = tree_pids(child.id(), &process_rows());
+            grandchildren = pids.into_iter().filter(|p| *p != child.id()).collect();
+            if !grandchildren.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(!grandchildren.is_empty(), "cmd hat keinen Enkel gestartet");
+        assert!(child.try_wait().unwrap().is_none(), "Kind lebt vor dem Schliessen");
+
+        drop(guard); // KILL_ON_JOB_CLOSE
+
+        let mut dead = false;
+        for _ in 0..50 {
+            if child.try_wait().unwrap().is_some() {
+                dead = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(dead, "das Kind lebt nach dem Schliessen des Job-Objekts");
+        std::thread::sleep(Duration::from_millis(300));
+        let alive: Vec<u32> = process_rows()
+            .iter()
+            .map(|r| r.pid)
+            .filter(|p| grandchildren.contains(p))
+            .collect();
+        assert!(alive.is_empty(), "Enkel leben noch: {alive:?}");
+    }
+
     #[test]
     fn session_is_not_ending_during_a_test_run() {
         // Waehrend eines Testlaufs faehrt Windows nicht herunter. Meldete die
