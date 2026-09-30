@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/integrationen
 iteration: 1
 erstellt: 2026-09-30
-aktualisiert: 2026-09-30T20:15
+aktualisiert: 2026-09-30T22:10
 ---
 
 # Goal: Integrationen: Register fuer Kalender, Mail, Speicher, Wissen und Agenten (MCP/CLI lesend+schreibend)
@@ -52,7 +52,7 @@ Agenten steuern die App über MCP und `local-voice-ai.exe ctl` nur im Rahmen die
 
 ## Akzeptanzkriterien
 - [x] AK1 — Fundament: `cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml --lib integrations:: provenance::` → ≥ 30 Tests grün, u. a. Migrationstest (Fixture mit 2 `calendar_sources` → 2 Integrationen gleicher ID, zweiter Start ohne Dubletten) und Provenienz: Protokoll-Erzeugung legt einen Eintrag mit Modell, Token, Dauer, `usage_event_id` an; alte Dokumente liefern Herkunft aus `generation_metadata_json`.
-- [ ] AK2 — YouTube-Quelle: Playwright `youtube-source.spec.ts` → Link `https://www.youtube.com/watch?v=…` (auch `youtu.be/…`, `shorts/…`) in Aufnahmen einfügen erzeugt eine Besprechung mit Quelle „YouTube“, Titel und Kanal; ungültige/Playlist-Links → verständliche Meldung; Rust-Test für Link-Normalisierung (≥ 10 Fälle).
+- [x] AK2 — YouTube-Quelle: Playwright `youtube-source.spec.ts` → Link `https://www.youtube.com/watch?v=…` (auch `youtu.be/…`, `shorts/…`) in Aufnahmen einfügen erzeugt eine Besprechung mit Quelle „YouTube“, Titel und Kanal; ungültige/Playlist-Links → verständliche Meldung; Rust-Test für Link-Normalisierung (≥ 10 Fälle).
 - [ ] AK3 — Ansehen: Installer, echtes Video → Player in der Inhaltsspalte spielt ab, Position springt beim Klick auf ein Transkript-Segment; kein verschachteltes iframe, keine Veränderung der Werbung (Code-Review-Punkt).
 - [ ] AK4 — Untertitel + eigene Transkription: für ein Video mit Untertiteln liegen beide Fassungen an derselben Besprechung (Quelle je Fassung sichtbar); ohne Untertitel → nur eigene Fassung mit Hinweis; Sprachauswahl bei mehreren Spuren (Rust-Tests gegen Fixture-VTT, manuell 1 Video).
 - [ ] AK5 — Vergleich/Zusammenführen: Playwright → Diff-Ansicht markiert Einfügungen/Löschungen wortweise; „Fassung wählen“ setzt das aktive Transkript; „Zusammenführen“ erzeugt eine dritte Fassung mit Provenienz (Quellen = beide Fassungen, Modell, Token); Rust-Test: Zusammenführung verwirft Ausgaben, die das Schema verletzen oder > 20 % Text erfinden (Längen-/Überdeckungsprüfung).
@@ -125,6 +125,7 @@ Pakete und Bündel: `vorschlag.md` → Paketschnitt; Budget: 8 Pakete × ~275 kT
 
 ## Evidence
 - 2026-09-30T20:15 AK1 erfüllt — A1 20f0e763: cargo test --lib -- integrations:: provenance:: 153 passed; Migrationstest idempotent; Protokoll-Provenienz mit usage_event_id
+- 2026-09-30T22:10 AK2 erfüllt — A2: youtube-source 20 passed, Link-Normalisierung >40 Faelle, echter oEmbed-Abruf
 
 ## Blocker
 -

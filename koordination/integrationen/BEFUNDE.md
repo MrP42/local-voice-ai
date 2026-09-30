@@ -13,3 +13,8 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Konsequenz: Paket A1n.
 - Status: erledigt (A1n 262210d3, je Fund rot-vor-grün-Test)
 
+## B3 — Merge A2+U5: search::index unfiled_filter-Test einmal rot im Gesamtlauf (30.09.)
+- Beobachtet: `unfiled_filter_lists_meetings_without_a_living_folder` 1x rot in voller Suite, danach 2x Suite grün, einzeln 3x grün.
+- Konsequenz: beobachten; beim zweiten Auftreten Ursache (Zeit/Isolation) beheben.
+- Status: erledigt (beobachtet)
+
