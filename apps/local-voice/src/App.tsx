@@ -371,7 +371,7 @@ function App() {
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             <main
               id="workspace-content"
-              className={`flex-1 workspace-main ${currentSection === "tts" ? "workspace-main--fill" : ""}`}
+              className={`flex-1 workspace-main ${currentSection === "tts" || currentSection === "meetings" ? "workspace-main--fill" : ""} ${currentSection === "meetings" ? "workspace-main--fixed" : ""}`}
               aria-label={t(SECTIONS_CONFIG[currentSection].labelKey)}
             >
               {/* Fluid: the content uses whatever width the window offers, up
@@ -380,7 +380,13 @@ function App() {
                   the column itself). */}
               <div
                 className={`flex flex-col w-full mx-auto p-3 sm:p-4 gap-4 min-w-0 ${
-                  currentSection === "tts" ? "workspace-content--fill" : ""
+                  currentSection === "tts" || currentSection === "meetings"
+                    ? "workspace-content--fill"
+                    : ""
+                } ${
+                  currentSection === "meetings"
+                    ? "workspace-content--fixed"
+                    : ""
                 } ${
                   // Vorlesen ist eine dreispaltige Arbeitsflaeche (Seiten,
                   // Inhalt, Dateien) — der Lese-Deckel wuerde dort die MITTE

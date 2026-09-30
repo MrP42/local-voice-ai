@@ -1,0 +1,44 @@
+{
+  "viewport": {
+    "w": 1366,
+    "h": 768
+  },
+  "document": {
+    "scrollHeight": 768,
+    "innerHeight": 768
+  },
+  "main": {
+    "scrollHeight": 1231,
+    "clientHeight": 716,
+    "pageScrolls": true
+  },
+  "scrollables": [
+    {
+      "el": "workspace-content",
+      "cls": "flex-1 workspace-main ",
+      "scrollHeight": 1231,
+      "clientHeight": 716,
+      "top": 0,
+      "height": 716
+    },
+    {
+      "el": "",
+      "cls": "px-4 py-3 space-y-2 max-h-80 overflow-y-auto",
+      "scrollHeight": 465,
+      "clientHeight": 300,
+      "top": 313,
+      "height": 300
+    }
+  ],
+  "tabTop": null,
+  "boxes": {
+    "jobPanel": null,
+    "transcript": null,
+    "notesPad": {
+      "top": 313,
+      "left": 212,
+      "width": 561,
+      "height": 260
+    }
+  }
+}

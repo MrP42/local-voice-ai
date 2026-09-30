@@ -22,6 +22,8 @@ interface TemplatePickerProps {
   allowAuto?: boolean;
   /** Was die Automatik zuletzt gewaehlt hat (nur bei "Automatisch" gezeigt). */
   autoInfo?: AutoTemplateInfo | null;
+  /** Auswahlliste an `body` haengen (in Dialogen, sonst schneidet sie der Dialog ab). */
+  menuPortal?: boolean;
 }
 
 /**
@@ -38,6 +40,7 @@ export const TemplatePicker: React.FC<TemplatePickerProps> = ({
   className = "",
   allowAuto = false,
   autoInfo = null,
+  menuPortal = false,
 }) => {
   const { t } = useTranslation();
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
@@ -83,6 +86,7 @@ export const TemplatePicker: React.FC<TemplatePickerProps> = ({
           options={options}
           isClearable={false}
           disabled={disabled}
+          menuPortal={menuPortal}
           placeholder={t("meetings.templates.label")}
           onChange={(id) => {
             if (id) onChange(id);
@@ -163,7 +167,9 @@ export const MeetingTemplatePicker: React.FC<{
   disabled?: boolean;
   /** Meldet die gemerkte Wahl (beim Laden und bei jeder Aenderung). */
   onValueChange?: (value: string | null) => void;
-}> = ({ meetingId, className, disabled, onValueChange }) => {
+  /** Auswahlliste an `body` haengen (in Dialogen). */
+  menuPortal?: boolean;
+}> = ({ meetingId, className, disabled, onValueChange, menuPortal }) => {
   const [value, setValue] = useState<string | null>(null);
   const [autoInfo, setAutoInfo] = useState<AutoTemplateInfo | null>(null);
 
@@ -221,6 +227,7 @@ export const MeetingTemplatePicker: React.FC<{
       disabled={disabled}
       allowAuto
       autoInfo={autoInfo}
+      menuPortal={menuPortal}
       onChange={(id) => {
         setValue(id);
         onValueChange?.(id);

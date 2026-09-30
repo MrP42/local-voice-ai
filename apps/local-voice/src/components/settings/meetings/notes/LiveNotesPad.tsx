@@ -14,7 +14,10 @@ import { recordingStamper, useNotesAutosave } from "./useNotesAutosave";
  * die Aufnahme laeuft. Gespeichert wird entprellt und sofort bei Blur, beim
  * Verdecken des Fensters und beim Ende der Aufnahme.
  */
-export const LiveNotesPad: React.FC = () => {
+export const LiveNotesPad: React.FC<{
+  /** Was stehen bleibt, solange keine Aufnahme laeuft. */
+  fallback?: React.ReactNode;
+}> = ({ fallback = null }) => {
   const { t } = useTranslation();
   const [meetingId, setMeetingId] = useState<string | null>(null);
   // Die Vorlagenwahl der laufenden Besprechung; davor waehlt die Aufnahmekarte
@@ -56,7 +59,7 @@ export const LiveNotesPad: React.FC = () => {
     [meetingId],
   );
 
-  if (!meetingId) return null;
+  if (!meetingId) return <>{fallback}</>;
 
   return (
     <SettingsGroup>
@@ -72,7 +75,9 @@ export const LiveNotesPad: React.FC = () => {
           </p>
         </div>
         {recording && <MeetingTemplatePicker meetingId={meetingId} />}
-        <div className="max-h-80 min-h-[8rem] overflow-y-auto">
+        {/* Keine eigene Scrollflaeche: der Notizblock waechst mit dem Text, die
+            Arbeitsflaeche der Seite scrollt (eine Scrollbar je Bereich). */}
+        <div className="min-h-[8rem]">
           {autosave.loaded && (
             <NoteBlocksEditor
               blocks={autosave.blocks}

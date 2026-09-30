@@ -5,42 +5,46 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   commands,
   events,
-  type Folder,
   type Meeting,
   type MeetingSearchItem,
   type ScopeFilter,
 } from "@/bindings";
-import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { Alert } from "../../ui/Alert";
-import Badge from "../../ui/Badge";
+import { IconAction } from "../../ui/IconAction";
+import { ActionMenu } from "../../ui/ActionMenu";
 import {
+  Check,
   CheckSquare,
-  FolderInput,
+  Menu,
   MessageSquare,
-  Trash2,
+  Plus,
   Upload,
   X,
 } from "lucide-react";
 import { translateMeetingError } from "./meetingErrors";
 import { SearchBar, SearchSnippet } from "./search/SearchBar";
-import {
-  EMPTY_FILTER,
-  FilterChips,
-  type ListFilter,
-} from "./search/FilterChips";
-import { ContextMenu, FolderChips } from "./search/FolderChips";
+import { EMPTY_FILTER, type ListFilter } from "./search/FilterChips";
+import { ContextMenu } from "./search/FolderChips";
 import type { PersonRef } from "./people/PersonPopover";
 import { FolderPickerDialog } from "./search/FolderPickerDialog";
 import { JobBar } from "./JobProgress";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
+import { notifyMeetingsChanged, useMeetingsChanged } from "@/lib/meetingsBus";
+import { ProjectRow } from "./projects/ProjectRow";
+import { ProjectFilter, activeFilterCount } from "./projects/ProjectFilter";
+import { NextUp } from "./projects/NextUp";
+import type { ProjectsApi } from "./projects/useProjects";
+import type { useMeetingDrag } from "./projects/useMeetingDrag";
+import { ALL_PROJECTS, NO_PROJECT } from "./projects/projectModel";
 
 const PAGE_SIZE = 25;
 const DAY_SECONDS = 86_400;
@@ -69,16 +73,14 @@ const hasImportExtension = (path: string) => {
 // forward slash, so a C:\... path came back whole.
 const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
-const statusBadgeVariant = (
-  status: string,
-): "primary" | "success" | "secondary" => {
+const statusChipClass = (status: string) => {
   switch (status) {
     case "ready":
-      return "success";
+      return "bg-green-500/20 text-green-400";
     case "recording":
-      return "primary";
+      return "bg-logo-primary text-on-accent";
     default:
-      return "secondary";
+      return "bg-mid-gray/20 text-text/70";
   }
 };
 
@@ -90,8 +92,28 @@ const formatDuration = (durationMs: number | null) => {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 };
 
+/** Menue an der Zeile statt an der Maus, wenn es die Kontexttaste ausloest. */
+const menuPoint = (e: React.MouseEvent<HTMLElement>) => {
+  if (e.clientX === 0 && e.clientY === 0) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return { x: rect.left + 16, y: rect.bottom };
+  }
+  return { x: e.clientX, y: e.clientY };
+};
+
+type MeetingDragApi = ReturnType<typeof useMeetingDrag>;
+
 interface MeetingListProps {
+  projects: ProjectsApi;
+  drag: MeetingDragApi;
+  /** Platz im Kopf der Projekte-Spalte fuer die Symbolknoepfe (Portal). */
+  actionsEl: HTMLElement | null;
   onSelect: (meeting: Meeting) => void;
+  /** Die gewaehlte Besprechung: wird hervorgehoben, ihre Aenderungen (Titel,
+      Status) landen sofort in der Zeile. */
+  selected?: Meeting | null;
+  /** Eine Besprechung wurde geloescht (die gewaehlte braucht dann Ersatz). */
+  onDeleted?: (id: string) => void;
   /** M4-P4e: Chat ueber viele Besprechungen oeffnen (Scope vorbelegt). */
   onAsk?: (filter: ScopeFilter) => void;
   /** M5-P5d: Filter "Person: Anna Berg" (kommt aus dem Popover der Detailansicht). */
@@ -99,8 +121,20 @@ interface MeetingListProps {
   onPersonFilterChange?: (person: PersonRef | null) => void;
 }
 
+/**
+ * Projekte-Spalte der Aufnahmen-Seite (Variante B): "Alle Aufnahmen", die
+ * Projekte (= Ordner der obersten Ebene) und "Ohne Projekt"; unter der
+ * gewaehlten Zeile stehen ihre Besprechungen. Suche und Filter wirken
+ * innerhalb der Auswahl. Besprechungen lassen sich auf ein Projekt ziehen
+ * (Strg = hinzufuegen, n:m) oder ueber das Kontextmenue zuordnen.
+ */
 export const MeetingList: React.FC<MeetingListProps> = ({
+  projects,
+  drag,
+  actionsEl,
   onSelect,
+  selected = null,
+  onDeleted,
   onAsk,
   personFilter = null,
   onPersonFilterChange,
@@ -110,6 +144,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   const progressMap = useMeetingProgress();
   // Ohne Suche/Filter tragen die Eintraege kein Snippet.
   const [items, setItems] = useState<MeetingSearchItem[]>([]);
+  const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -127,11 +162,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   // einer ueberholten Suche darf die aktuelle Liste nicht ueberschreiben.
   const requestRef = useRef(0);
 
-  // M4-P4d: Suche, Filter, Ordner
+  // M4-P4d: Suche, Filter
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ListFilter>(EMPTY_FILTER);
-  const [folderId, setFolderId] = useState<string | null>(null);
-  const [folders, setFolders] = useState<Folder[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [pickerTarget, setPickerTarget] = useState<Meeting | null>(null);
   const [rowMenu, setRowMenu] = useState<{
@@ -146,10 +179,40 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
+
+  // Projekte: Auswahl, Aufklappen, Anlegen, Umbenennen, Menue, Loeschen.
+  const { folders, counts, selection } = projects;
+  const [listOpen, setListOpen] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [projectMenu, setProjectMenu] = useState<{
+    x: number;
+    y: number;
+    id: string;
+  } | null>(null);
+  const [deleteProject, setDeleteProject] = useState<string | null>(null);
+
+  // Wechselt die Auswahl (auch von aussen: Projekt geloescht, Leiste), steht
+  // die Liste der neuen Zeile offen.
+  useEffect(() => {
+    setListOpen(true);
+  }, [selection]);
+
+  const folderId =
+    selection === ALL_PROJECTS || selection === NO_PROJECT ? null : selection;
+  const unfiled = selection === NO_PROJECT;
+  const selectionName =
+    selection === ALL_PROJECTS
+      ? t("meetings.projects.all")
+      : selection === NO_PROJECT
+        ? t("meetings.projects.none")
+        : (folders.find((f) => f.id === selection)?.name ?? "");
+
   const personId = personFilter?.id ?? null;
   const filtered =
     query !== "" ||
     folderId !== null ||
+    unfiled ||
     personId !== null ||
     filter.rangeDays !== null ||
     filter.source !== null ||
@@ -174,6 +237,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         let pageItems: MeetingSearchItem[];
         let more: boolean;
         let cut = false;
+        let count: number | null = null;
         if (!filtered) {
           // Ohne Suchtext und Filter: die bisherige Liste (25er-Seiten).
           const result = await commands.meetingsList(offset, PAGE_SIZE);
@@ -204,6 +268,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
               source: filter.source,
               has_notes: filter.hasNotes ? true : null,
               person_id: personId,
+              unfiled: unfiled ? true : null,
             },
             offset,
             PAGE_SIZE,
@@ -219,6 +284,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
             return;
           }
           pageItems = result.data?.items ?? [];
+          count = result.data?.total ?? null;
           more =
             pageItems.length > 0 &&
             offset + pageItems.length < (result.data?.total ?? 0);
@@ -228,6 +294,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         setItems((prev) => (isFirstPage ? pageItems : [...prev, ...pageItems]));
         setHasMore(more);
         setTruncated(cut);
+        setTotal(count);
       } finally {
         if (request === requestRef.current) {
           setLoading(false);
@@ -239,6 +306,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
       filtered,
       query,
       folderId,
+      unfiled,
       personId,
       fromTs,
       filter.source,
@@ -251,22 +319,12 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     void loadPage(0);
   }, [loadPage]);
 
-  // Andere Specs/aeltere Backends liefern hier `null`: dann eben keine Ordner.
-  const loadFolders = useCallback(async () => {
-    const result = await commands.meetingFoldersList();
-    if (result.status === "ok") setFolders(result.data ?? []);
-  }, []);
-
-  useEffect(() => {
-    void loadFolders();
-  }, [loadFolders]);
-
-  // Ein geloeschter Ordner darf nicht als aktiver Filter stehen bleiben.
-  useEffect(() => {
-    if (folderId !== null && !folders.some((f) => f.id === folderId)) {
-      setFolderId(null);
-    }
-  }, [folders, folderId]);
+  // Die Liste hat sich geaendert (Zuordnung, Loeschen, Import an anderer
+  // Stelle): die Besprechung kann aus der gewaehlten Liste gefallen oder
+  // hinzugekommen sein. Die Projekte laden sich selbst neu.
+  const loadPageRef = useRef(loadPage);
+  loadPageRef.current = loadPage;
+  useMeetingsChanged(() => void loadPageRef.current(0));
 
   // Refresh from the current recording/import/generation lifecycle. The
   // import path in particular emits no state events at all — its command
@@ -274,12 +332,16 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   // paths; import success triggers its own explicit reload below.
   useEffect(() => {
     const un = events.meetingEvent.listen((e) => {
-      if (e.payload.kind === "state") void loadPage(0);
+      if (e.payload.kind === "state") {
+        void loadPage(0);
+        void projects.reload();
+      }
     });
     return () => {
       un.then((f) => f());
     };
-  }, [loadPage]);
+    // `projects.reload` ist stabil; der Hook liefert ein neues Objekt je Aenderung.
+  }, [loadPage, projects.reload]);
 
   useEffect(() => {
     if (loading) return;
@@ -305,18 +367,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
       filters: [
         {
           name: "Media",
-          extensions: [
-            "wav",
-            "mp3",
-            "m4a",
-            "mp4",
-            "mkv",
-            "mov",
-            "flac",
-            "ogg",
-            "vtt",
-            "srt",
-          ],
+          extensions: IMPORT_EXTENSIONS,
         },
       ],
     });
@@ -366,16 +417,33 @@ export const MeetingList: React.FC<MeetingListProps> = ({
       // Refresh after every file so long batches show progress in the list.
       // (The synchronous VTT/SRT path emits no state events — the command
       // return is its only signal.)
-      void loadPage(0);
+      notifyMeetingsChanged();
     }
     setImporting(false);
     if (lastError) setImportError(lastError);
   };
 
+  // Titel und Status der gewaehlten Besprechung kommen aus der Detailansicht
+  // (Umbenennen, Verarbeitung fertig): die Zeile zieht sofort nach.
+  useEffect(() => {
+    if (!selected) return;
+    setItems((prev) =>
+      prev.some((item) => item.meeting === selected) ||
+      !prev.some((item) => item.meeting.id === selected.id)
+        ? prev
+        : prev.map((item) =>
+            item.meeting.id === selected.id
+              ? { ...item, meeting: selected }
+              : item,
+          ),
+    );
+  }, [selected]);
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     const id = deleteTarget.id;
     setDeleteTarget(null);
+    onDeleted?.(id);
     setDeleteError(null);
     setItems((prev) => prev.filter((item) => item.meeting.id !== id));
     const result = await commands.meetingsDelete(id);
@@ -383,15 +451,37 @@ export const MeetingList: React.FC<MeetingListProps> = ({
       setDeleteError(t("meetings.errors.deleteFailed"));
       void loadPage(0);
     }
-    // Die Ordnerzaehler zaehlen nur lebende Besprechungen.
-    void loadFolders();
+    // Die Zaehler zaehlen nur lebende Besprechungen.
+    notifyMeetingsChanged();
   };
 
-  // Ordner und Zeitraum der Liste gelten auch fuer den Chat; Quelle und
-  // "mit Notizen" kennt der Chat-Scope nicht.
-  const askAll = () =>
+  // Projekt und Zeitraum der Liste gelten auch fuer den Chat; Quelle und
+  // "mit Notizen" kennt der Chat-Scope nicht. "Ohne Projekt" kennt er auch
+  // nicht: dort gehen die IDs der Besprechungen mit.
+  const askAll = async () => {
+    let meetingIds: string[] | null = null;
+    if (unfiled) {
+      const result = await commands.meetingsSearch(
+        "",
+        {
+          folder_id: null,
+          from: fromTs,
+          to: null,
+          source: null,
+          has_notes: null,
+          person_id: personId,
+          unfiled: true,
+        },
+        0,
+        100,
+      );
+      meetingIds =
+        result.status === "ok" && result.data
+          ? result.data.items.map((item) => item.meeting.id)
+          : [];
+    }
     onAsk?.({
-      meeting_ids: null,
+      meeting_ids: meetingIds,
       folder_id: folderId,
       person: null,
       person_id: personId,
@@ -399,6 +489,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
       to: null,
       event_uid: null,
     });
+  };
 
   const askSelection = () => {
     // In Listenreihenfolge, nicht in Klickreihenfolge.
@@ -416,245 +507,426 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     });
   };
 
-  const afterFoldersChanged = () => {
-    void loadFolders();
-    // Im Ordnerfilter kann die Besprechung gerade herausgefallen sein.
-    if (folderId !== null) void loadPage(0);
+  const activate = (id: string) => {
+    if (selection === id) {
+      setListOpen((o) => !o);
+      return;
+    }
+    projects.select(id);
+    setListOpen(true);
   };
 
-  return (
-    <SettingsGroup title={t("meetings.list.title")}>
+  const searching = query !== "";
+  const dropId = drag.drag?.target ?? null;
+  const dragging = drag.drag !== null;
+
+  const meetingRow = (
+    { meeting, snippet, hit_source }: MeetingSearchItem,
+    nested: boolean,
+  ) => {
+    const timestamp = meeting.started_at ?? meeting.created_at;
+    const date = new Date(timestamp * 1000);
+    const dateLabel = new Intl.DateTimeFormat(i18n.language, {
+      year:
+        date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+    const isSelected = selected?.id === meeting.id;
+    const progress = progressMap[meeting.id];
+    const label = t("meetings.chat.list.selectRow", { title: meeting.title });
+    return (
       <div
-        className={`px-4 py-3 space-y-3 rounded-md transition-colors ${
-          isDragOver
-            ? "outline-2 outline-dashed outline-logo-primary bg-logo-primary/5"
-            : ""
+        key={meeting.id}
+        role={selecting ? "checkbox" : "button"}
+        aria-checked={selecting ? selectedIds.includes(meeting.id) : undefined}
+        aria-label={selecting ? label : undefined}
+        tabIndex={0}
+        data-meeting-id={meeting.id}
+        data-testid="meeting-row"
+        aria-current={isSelected ? "true" : undefined}
+        className={`my-px cursor-pointer select-none rounded-lg border px-2 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/60 ${
+          nested ? "ms-5" : ""
+        } ${
+          dragging && drag.drag?.meeting.id === meeting.id
+            ? "border-logo-primary/60 opacity-50"
+            : isSelected
+              ? "border-transparent bg-logo-primary/15"
+              : "border-transparent hover:bg-mid-gray/10"
         }`}
+        onPointerDown={(e) => {
+          if (!selecting) drag.start(e, meeting);
+        }}
+        onClick={() => {
+          if (drag.consumeClick()) return;
+          if (selecting) toggleSelected(meeting.id);
+          else onSelect(meeting);
+        }}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (selecting) toggleSelected(meeting.id);
+            else onSelect(meeting);
+          }
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setRowMenu({ ...menuPoint(e), meeting });
+        }}
       >
-        <div className="flex justify-between items-center gap-2">
-          <p className="text-sm text-text/70">{t("meetings.list.title")}</p>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {onAsk && (
+        <div className="flex items-center gap-1.5">
+          {selecting && (
+            <span
+              aria-hidden="true"
+              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                selectedIds.includes(meeting.id)
+                  ? "border-logo-primary bg-logo-primary text-on-accent"
+                  : "border-mid-gray/60"
+              }`}
+            >
+              {selectedIds.includes(meeting.id) && (
+                <Check width={12} height={12} />
+              )}
+            </span>
+          )}
+          <p className="min-w-0 flex-1 truncate text-sm font-medium">
+            {meeting.title}
+          </p>
+        </div>
+        {/* The file an import came from, kept visible even after the title
+            was renamed away from it. */}
+        {meeting.source_path && (
+          <p
+            className="truncate text-xs text-text/50"
+            title={meeting.source_path}
+          >
+            {baseName(meeting.source_path)}
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-text/60">
+          <span>
+            {dateLabel} · {formatDuration(meeting.duration_ms)}
+            {hit_source && (
               <>
-                <Button variant="secondary" size="sm" onClick={askAll}>
-                  <MessageSquare width={14} height={14} />
-                  {t("meetings.chat.list.askAll")}
-                </Button>
-                <Button
-                  variant={selecting ? "primary-soft" : "secondary"}
-                  size="sm"
-                  aria-pressed={selecting}
-                  onClick={() => {
-                    setSelecting((on) => !on);
-                    setSelectedIds([]);
-                  }}
-                >
-                  <CheckSquare width={14} height={14} />
-                  {selecting
-                    ? t("meetings.chat.list.selectDone")
-                    : t("meetings.chat.list.select")}
-                </Button>
+                {" · "}
+                {t("meetings.search.hitIn", {
+                  source: t(`meetings.search.hitSource.${hit_source}`),
+                })}
               </>
             )}
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={pickImportFile}
-              disabled={importing}
+          </span>
+          {!(
+            progress &&
+            (meeting.status === "processing" || meeting.status === "recording")
+          ) && (
+            <span
+              className={`inline-flex items-center rounded-full px-2 text-[11px] font-medium ${statusChipClass(meeting.status)}`}
             >
-              <Upload width={14} height={14} />
-              {t("meetings.list.import")}
-            </Button>
-          </div>
-        </div>
-        {selecting && (
-          <div className="flex items-center justify-between gap-2 rounded-md bg-logo-primary/10 px-3 py-1.5">
-            <span className="text-sm">
-              {t("meetings.chat.list.selected", { count: selectedIds.length })}
+              {t(`meetings.status.${meeting.status}`, {
+                defaultValue: meeting.status,
+              })}
             </span>
-            <Button
-              size="sm"
-              onClick={askSelection}
-              disabled={selectedIds.length === 0}
-            >
-              <MessageSquare width={14} height={14} />
-              {t("meetings.chat.list.askSelection")}
-            </Button>
-          </div>
-        )}
-        <div className="space-y-2">
-          <SearchBar onSearch={setQuery} />
-          <FolderChips
-            folders={folders}
-            activeId={folderId}
-            onSelect={setFolderId}
-            onChanged={afterFoldersChanged}
-          />
-          <FilterChips value={filter} onChange={setFilter} />
-          {personFilter && (
-            <div
-              className="flex flex-wrap items-center gap-1.5"
-              role="group"
-              aria-label={t("meetings.people.filter.group")}
-            >
-              <span
-                className="inline-flex items-center gap-1 rounded-full border border-logo-primary bg-logo-primary/20 px-2.5 py-0.5 text-xs text-text"
-                data-testid="person-filter-chip"
-              >
-                {t("meetings.people.filter.chip", { name: personFilter.name })}
-                <button
-                  type="button"
-                  onClick={() => onPersonFilterChange?.(null)}
-                  aria-label={t("meetings.people.filter.remove", {
-                    name: personFilter.name,
-                  })}
-                  title={t("meetings.people.filter.remove", {
-                    name: personFilter.name,
-                  })}
-                  className="rounded-full p-0.5 text-text/60 hover:bg-mid-gray/20 hover:text-text cursor-pointer"
-                  data-testid="person-filter-remove"
-                >
-                  <X width={10} height={10} aria-hidden="true" />
-                </button>
-              </span>
-            </div>
           )}
         </div>
-        {isDragOver && (
-          <p className="text-sm text-logo-primary font-medium text-center">
-            {t("meetings.list.dropHint")}
+        {progress &&
+          (meeting.status === "processing" ||
+            meeting.status === "recording") && (
+            <JobBar progress={progress} className="mt-1 w-full" />
+          )}
+        {snippet && <SearchSnippet snippet={snippet} />}
+      </div>
+    );
+  };
+
+  const meetingsBlock = (nested: boolean) => {
+    if (loading) {
+      return (
+        <p className="px-2 py-2 text-sm text-text/60">
+          {t("meetings.list.loading")}
+        </p>
+      );
+    }
+    if (items.length === 0) {
+      return (
+        <p className="px-2 py-2 text-sm text-text/60">
+          {searching
+            ? t("meetings.search.noResults")
+            : filtered && (folderId === null || activeFilterCount(filter) > 0)
+              ? t("meetings.search.noFilterResults")
+              : folderId !== null
+                ? t("meetings.projects.emptyProject")
+                : t("meetings.list.empty")}
+        </p>
+      );
+    }
+    return (
+      <div role="list" aria-label={selectionName}>
+        {truncated && (
+          <p className="px-2 py-1 text-xs text-text/60">
+            {t("meetings.search.truncated")}
           </p>
         )}
-        {listError && <Alert variant="error">{listError}</Alert>}
-        {importError && <Alert variant="error">{importError}</Alert>}
-        {deleteError && <Alert variant="error">{deleteError}</Alert>}
-
-        {loading ? (
-          <p className="text-sm text-text/60 text-center py-3">
-            {t("meetings.list.loading")}
-          </p>
-        ) : items.length === 0 ? (
-          <p className="text-sm text-text/60 text-center py-3">
-            {query !== ""
-              ? t("meetings.search.noResults")
-              : filtered
-                ? t("meetings.search.noFilterResults")
-                : t("meetings.list.empty")}
-          </p>
-        ) : (
-          <div className="divide-y divide-mid-gray/20">
-            {truncated && (
-              <p className="text-xs text-text/60 py-1">
-                {t("meetings.search.truncated")}
-              </p>
-            )}
-            {items.map(({ meeting, snippet, hit_source }) => {
-              const timestamp = meeting.started_at ?? meeting.created_at;
-              const dateLabel = new Intl.DateTimeFormat(i18n.language, {
-                year: "numeric",
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              }).format(new Date(timestamp * 1000));
-
-              return (
-                <div
-                  key={meeting.id}
-                  className="flex items-center justify-between gap-2 py-2 cursor-pointer hover:bg-mid-gray/10 rounded-md px-1"
-                  data-meeting-id={meeting.id}
-                  onClick={() =>
-                    selecting ? toggleSelected(meeting.id) : onSelect(meeting)
-                  }
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setRowMenu({ x: e.clientX, y: e.clientY, meeting });
-                  }}
-                >
-                  {selecting && (
-                    <input
-                      type="checkbox"
-                      className="shrink-0 cursor-pointer"
-                      aria-label={t("meetings.chat.list.selectRow", {
-                        title: meeting.title,
-                      })}
-                      checked={selectedIds.includes(meeting.id)}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={() => toggleSelected(meeting.id)}
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">
-                      {meeting.title}
-                    </p>
-                    {/* The file an import came from, kept visible even after
-                        the title was renamed away from it. */}
-                    {meeting.source_path && (
-                      <p
-                        className="text-xs text-text/50 truncate"
-                        title={meeting.source_path}
-                      >
-                        {baseName(meeting.source_path)}
-                      </p>
-                    )}
-                    <p className="text-xs text-text/60">
-                      {dateLabel} · {formatDuration(meeting.duration_ms)}
-                      {hit_source && (
-                        <>
-                          {" · "}
-                          {t("meetings.search.hitIn", {
-                            source: t(
-                              `meetings.search.hitSource.${hit_source}`,
-                            ),
-                          })}
-                        </>
-                      )}
-                    </p>
-                    {snippet && <SearchSnippet snippet={snippet} />}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {progressMap[meeting.id] &&
-                    (meeting.status === "processing" ||
-                      meeting.status === "recording") ? (
-                      <JobBar progress={progressMap[meeting.id]} />
-                    ) : (
-                      <Badge variant={statusBadgeVariant(meeting.status)}>
-                        {t(`meetings.status.${meeting.status}`, {
-                          defaultValue: meeting.status,
-                        })}
-                      </Badge>
-                    )}
-                    <button
-                      type="button"
-                      className="p-1.5 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/15 cursor-pointer"
-                      title={t("meetings.folders.moveTo")}
-                      aria-label={t("meetings.folders.moveTo")}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPickerTarget(meeting);
-                      }}
-                    >
-                      <FolderInput width={16} height={16} />
-                    </button>
-                    <button
-                      type="button"
-                      className="p-1.5 rounded-md text-text/50 hover:text-red-400 hover:bg-red-500/10 cursor-pointer"
-                      title={t("meetings.list.deleteButton")}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleteTarget(meeting);
-                      }}
-                    >
-                      <Trash2 width={16} height={16} />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+        {items.map((item) => (
+          <div role="listitem" key={item.meeting.id}>
+            {meetingRow(item, nested)}
           </div>
+        ))}
+      </div>
+    );
+  };
+
+  const projectMenuTarget = projectMenu
+    ? folders.find((f) => f.id === projectMenu.id)
+    : undefined;
+  const projectMenuIndex = projectMenuTarget
+    ? folders.indexOf(projectMenuTarget)
+    : -1;
+  const deleteProjectTarget = deleteProject
+    ? folders.find((f) => f.id === deleteProject)
+    : undefined;
+
+  const actions = (
+    <>
+      <IconAction
+        size="sm"
+        icon={Plus}
+        label={t("meetings.projects.new")}
+        description={t("meetings.projects.newHint")}
+        testId="projects-add"
+        onClick={() => {
+          setRenamingId(null);
+          setCreating(true);
+        }}
+      />
+      {onAsk && (
+        <IconAction
+          size="sm"
+          icon={MessageSquare}
+          label={t("meetings.chat.list.askAll")}
+          description={t("meetings.projects.askHint")}
+          testId="projects-ask"
+          onClick={() => void askAll()}
+        />
+      )}
+      <ActionMenu
+        trigger={{
+          icon: Menu,
+          label: t("meetings.projects.more"),
+          description: t("meetings.projects.moreHint"),
+          testId: "projects-more",
+          size: "sm",
+        }}
+        menuLabel={t("meetings.projects.more")}
+        align="end"
+        widthClass="w-56"
+        items={[
+          {
+            id: "import",
+            label: t("meetings.list.import"),
+            icon: Upload,
+            disabled: importing,
+            testId: "projects-import",
+            onSelect: () => void pickImportFile(),
+          },
+          ...(onAsk
+            ? [
+                {
+                  id: "select",
+                  label: selecting
+                    ? t("meetings.chat.list.selectDone")
+                    : t("meetings.chat.list.select"),
+                  icon: CheckSquare,
+                  testId: "projects-select",
+                  onSelect: () => {
+                    setSelecting((on) => !on);
+                    setSelectedIds([]);
+                  },
+                },
+              ]
+            : []),
+        ]}
+      />
+    </>
+  );
+
+  return (
+    <div
+      className={`flex h-full min-h-0 flex-col gap-2 rounded-md transition-colors ${
+        isDragOver
+          ? "outline-2 outline-dashed outline-logo-primary bg-logo-primary/5"
+          : ""
+      }`}
+    >
+      {actionsEl && createPortal(actions, actionsEl)}
+
+      <div className="flex shrink-0 items-center gap-1.5">
+        <SearchBar
+          onSearch={setQuery}
+          placeholder={t("meetings.projects.searchIn", {
+            name: selectionName,
+          })}
+        />
+        <ProjectFilter value={filter} onChange={setFilter} />
+      </div>
+
+      {selecting && (
+        <div className="flex shrink-0 items-center justify-between gap-2 rounded-md bg-logo-primary/10 px-3 py-1.5">
+          <span className="text-sm">
+            {t("meetings.chat.list.selected", { count: selectedIds.length })}
+          </span>
+          <Button
+            size="sm"
+            onClick={askSelection}
+            disabled={selectedIds.length === 0}
+          >
+            <MessageSquare width={14} height={14} />
+            {t("meetings.chat.list.askSelection")}
+          </Button>
+        </div>
+      )}
+      {personFilter && (
+        <div
+          className="flex shrink-0 flex-wrap items-center gap-1.5"
+          role="group"
+          aria-label={t("meetings.people.filter.group")}
+        >
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-logo-primary bg-logo-primary/20 px-2.5 py-0.5 text-xs text-text"
+            data-testid="person-filter-chip"
+          >
+            {t("meetings.people.filter.chip", { name: personFilter.name })}
+            <button
+              type="button"
+              onClick={() => onPersonFilterChange?.(null)}
+              aria-label={t("meetings.people.filter.remove", {
+                name: personFilter.name,
+              })}
+              title={t("meetings.people.filter.remove", {
+                name: personFilter.name,
+              })}
+              className="rounded-full p-0.5 text-text/60 hover:bg-mid-gray/20 hover:text-text cursor-pointer"
+              data-testid="person-filter-remove"
+            >
+              <X width={10} height={10} aria-hidden="true" />
+            </button>
+          </span>
+        </div>
+      )}
+      {isDragOver && (
+        <p className="shrink-0 text-center text-sm font-medium text-logo-primary">
+          {t("meetings.list.dropHint")}
+        </p>
+      )}
+      {listError && <Alert variant="error">{listError}</Alert>}
+      {importError && <Alert variant="error">{importError}</Alert>}
+      {deleteError && <Alert variant="error">{deleteError}</Alert>}
+
+      <div
+        data-testid="projects-scroll"
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
+      >
+        {searching ? (
+          <>
+            <p
+              className="px-2 pb-1 text-xs text-text/60"
+              data-testid="search-scope"
+            >
+              {t("meetings.projects.hitsIn", {
+                count: total ?? items.length,
+                name: selectionName,
+              })}
+            </p>
+            {meetingsBlock(false)}
+          </>
+        ) : (
+          <nav aria-label={t("meetings.projects.title")}>
+            <ProjectRow
+              id={ALL_PROJECTS}
+              kind="all"
+              name={t("meetings.projects.all")}
+              count={counts.all}
+              selected={selection === ALL_PROJECTS}
+              open={listOpen}
+              dropTarget={false}
+              dropActive={false}
+              onActivate={() => activate(ALL_PROJECTS)}
+            />
+            {selection === ALL_PROJECTS && listOpen && meetingsBlock(true)}
+            {folders.map((folder) => (
+              <React.Fragment key={folder.id}>
+                <ProjectRow
+                  id={folder.id}
+                  kind="project"
+                  name={folder.name}
+                  count={folder.meeting_count}
+                  selected={selection === folder.id}
+                  open={listOpen}
+                  dropTarget
+                  dropActive={dragging && dropId === folder.id}
+                  editing={renamingId === folder.id}
+                  onActivate={() => activate(folder.id)}
+                  onRenameStart={() => {
+                    setCreating(false);
+                    setRenamingId(folder.id);
+                  }}
+                  onCommit={async (name) => {
+                    const failed = await projects.rename(folder.id, name);
+                    if (!failed) setRenamingId(null);
+                    return failed;
+                  }}
+                  onCancel={() => setRenamingId(null)}
+                  onMove={(dir) => void projects.move(folder.id, dir)}
+                  onContextMenu={(x, y) =>
+                    setProjectMenu({ x, y, id: folder.id })
+                  }
+                />
+                {selection === folder.id && listOpen && meetingsBlock(true)}
+              </React.Fragment>
+            ))}
+            {creating && (
+              <ProjectRow
+                id="__new"
+                kind="project"
+                name=""
+                count={null}
+                selected={false}
+                open={false}
+                dropTarget={false}
+                dropActive={false}
+                editing
+                onActivate={() => {}}
+                onCommit={async (name) => {
+                  const failed = await projects.create(name);
+                  if (!failed) {
+                    setCreating(false);
+                    setListOpen(true);
+                  }
+                  return failed;
+                }}
+                onCancel={() => setCreating(false)}
+              />
+            )}
+            <ProjectRow
+              id={NO_PROJECT}
+              kind="none"
+              name={t("meetings.projects.none")}
+              count={counts.none}
+              selected={selection === NO_PROJECT}
+              open={listOpen}
+              dropTarget
+              dropActive={dragging && dropId === NO_PROJECT}
+              onActivate={() => activate(NO_PROJECT)}
+            />
+            {selection === NO_PROJECT && listOpen && meetingsBlock(true)}
+          </nav>
         )}
         <div ref={sentinelRef} className="h-1" />
       </div>
+
+      <NextUp />
 
       {rowMenu && (
         <ContextMenu
@@ -664,7 +936,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
           onClose={() => setRowMenu(null)}
           items={[
             {
-              label: t("meetings.folders.moveTo"),
+              label: t("meetings.projects.moveTo"),
               onSelect: () => setPickerTarget(rowMenu.meeting),
             },
             {
@@ -676,12 +948,84 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         />
       )}
 
+      {projectMenu && projectMenuTarget && (
+        <ContextMenu
+          x={projectMenu.x}
+          y={projectMenu.y}
+          label={projectMenuTarget.name}
+          onClose={() => setProjectMenu(null)}
+          items={[
+            {
+              label: t("meetings.projects.rename"),
+              onSelect: () => {
+                setCreating(false);
+                setRenamingId(projectMenuTarget.id);
+              },
+            },
+            ...(projectMenuIndex > 0
+              ? [
+                  {
+                    label: t("meetings.projects.moveUp"),
+                    onSelect: () =>
+                      void projects.move(projectMenuTarget.id, -1),
+                  },
+                ]
+              : []),
+            ...(projectMenuIndex < folders.length - 1
+              ? [
+                  {
+                    label: t("meetings.projects.moveDown"),
+                    onSelect: () => void projects.move(projectMenuTarget.id, 1),
+                  },
+                ]
+              : []),
+            {
+              label: t("meetings.projects.delete"),
+              danger: true,
+              onSelect: () => setDeleteProject(projectMenuTarget.id),
+            },
+          ]}
+        />
+      )}
+
       <FolderPickerDialog
         meeting={pickerTarget}
         folders={folders}
         onClose={() => setPickerTarget(null)}
-        onSaved={afterFoldersChanged}
+        onSaved={notifyMeetingsChanged}
       />
+
+      <Dialog
+        open={deleteProjectTarget !== undefined}
+        onOpenChange={(o) => {
+          if (!o) setDeleteProject(null);
+        }}
+        title={t("meetings.projects.deleteTitle")}
+        closeLabel={t("meetings.folders.cancel")}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeleteProject(null)}>
+              {t("meetings.folders.cancel")}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                const id = deleteProject;
+                setDeleteProject(null);
+                if (id) void projects.remove(id);
+              }}
+            >
+              {t("meetings.projects.delete")}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-text/80">
+          {t("meetings.projects.deleteBody", {
+            name: deleteProjectTarget?.name ?? "",
+          })}
+        </p>
+      </Dialog>
 
       <Dialog
         open={deleteTarget !== null}
@@ -740,6 +1084,6 @@ export const MeetingList: React.FC<MeetingListProps> = ({
           </ul>
         )}
       </Dialog>
-    </SettingsGroup>
+    </div>
   );
 };

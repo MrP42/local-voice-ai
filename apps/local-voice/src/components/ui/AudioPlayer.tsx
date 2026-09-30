@@ -117,6 +117,9 @@ interface AudioPlayerProps {
   onLoadRequest?: () => Promise<string | null>;
   className?: string;
   autoPlay?: boolean;
+  /** Schmale Spalte: Transport, Lautstärke und Tempo oben, der Zeitstrahl
+   *  darunter über die volle Breite (statt alles in einer Zeile). */
+  compact?: boolean;
 }
 
 interface AudioPlayerGroupContextValue {
@@ -157,6 +160,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   onLoadRequest,
   className = "",
   autoPlay = false,
+  compact = false,
 }) => {
   const group = useContext(AudioPlayerGroupContext);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -490,7 +494,11 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const progressPercent = getProgressPercent();
 
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
+    <div
+      className={`flex items-center ${
+        compact ? "flex-wrap gap-x-2 gap-y-1" : "gap-3"
+      } ${className}`}
+    >
       <audio ref={audioRef} src={src ?? undefined} preload="metadata" />
 
       {/* Transport per design system: round glyph buttons, exactly one
@@ -531,7 +539,11 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         </button>
       </div>
 
-      <div className="flex-1 flex items-center gap-2">
+      <div
+        className={`flex items-center gap-2 ${
+          compact ? "order-last basis-full" : "flex-1"
+        }`}
+      >
         <span className="text-xs text-text/60 min-w-[30px] tabular-nums">
           {formatTime(currentTime)}
         </span>
@@ -558,6 +570,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         </span>
       </div>
 
+      {compact && <span className="flex-1" aria-hidden="true" />}
       <div className="relative" ref={volumeRef}>
         <button
           type="button"

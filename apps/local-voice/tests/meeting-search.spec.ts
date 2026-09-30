@@ -205,7 +205,18 @@ const openRecordings = async (page: Page) => {
 const searchbox = (page: Page) =>
   page.getByRole("searchbox", { name: "Besprechungen durchsuchen" });
 
-const folderGroup = (page: Page) => page.getByRole("group", { name: "Ordner" });
+/** Projekte-Spalte (Projekte = Ordner der obersten Ebene). */
+const projectRow = (page: Page, name: string | RegExp) =>
+  page
+    .getByTestId("rec-sessions")
+    .getByTestId("project-row")
+    .filter({ hasText: name });
+
+/** Filter-Popover hinter dem Symbol neben der Suche oeffnen. */
+const openFilter = async (page: Page) => {
+  await page.getByTestId("projects-filter").click();
+  return page.getByTestId("projects-filter-popover");
+};
 
 test.describe("Besprechungsliste: Suche, Filter, Ordner", () => {
   test("ohne Suchtext bleibt die bisherige Liste", async ({ page }) => {
@@ -236,6 +247,7 @@ test.describe("Besprechungsliste: Suche, Filter, Ordner", () => {
       source: null,
       has_notes: null,
       person_id: null,
+      unfiled: null,
     });
 
     // Zweite Tippserie: wieder genau ein Aufruf, mit dem ganzen Text.
@@ -273,28 +285,25 @@ test.describe("Besprechungsliste: Suche, Filter, Ordner", () => {
     await expect(page.getByText("Teamrunde")).toHaveCount(0);
   });
 
-  test("Ordner-Chip setzt folder_id, „Alle“ hebt ihn auf", async ({ page }) => {
+  test("Projektzeile setzt folder_id, „Alle Aufnahmen“ hebt es auf", async ({
+    page,
+  }) => {
     await openRecordings(page);
-    await folderGroup(page)
-      .getByRole("button", { name: /Vertrieb/ })
-      .click();
+    await projectRow(page, "Vertrieb").click();
     await expect(page.getByText("Teamrunde")).toHaveCount(0);
     const search = await calls(page, "meetings_search");
     expect(search.at(-1)!.args.filter.folder_id).toBe("f1");
     expect(search.at(-1)!.args.query).toBe("");
-    await expect(
-      folderGroup(page).getByRole("button", { name: /Vertrieb/ }),
-    ).toHaveAttribute("aria-pressed", "true");
+    await expect(projectRow(page, "Vertrieb")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
 
-    await folderGroup(page)
-      .getByRole("button", { name: "Alle", exact: true })
-      .click();
+    await projectRow(page, "Alle Aufnahmen").click();
     await expect(page.getByText("Teamrunde")).toBeVisible();
 
-    // Ordner und Suche zusammen.
-    await folderGroup(page)
-      .getByRole("button", { name: /Vertrieb/ })
-      .click();
+    // Projekt und Suche zusammen.
+    await projectRow(page, "Vertrieb").click();
     await searchbox(page).fill("Budget");
     await expect(page.getByTestId("meeting-search-snippet")).toBeVisible();
     const last = (await calls(page, "meetings_search")).at(-1)!;
@@ -307,9 +316,10 @@ test.describe("Besprechungsliste: Suche, Filter, Ordner", () => {
   }) => {
     await openRecordings(page);
     const now = Math.floor(Date.now() / 1000);
-    await page.getByRole("button", { name: "7 Tage" }).click();
-    await page.getByRole("button", { name: "Import", exact: true }).click();
-    await page.getByRole("button", { name: "Mit Notizen" }).click();
+    const popover = await openFilter(page);
+    await popover.getByRole("button", { name: "7 Tage" }).click();
+    await popover.getByRole("button", { name: "Import", exact: true }).click();
+    await popover.getByRole("button", { name: "Mit Notizen" }).click();
     await expect(page.getByText("Kundentermin Meyer")).toHaveCount(0);
     const last = (await calls(page, "meetings_search")).at(-1)!;
     expect(last.args.filter.source).toBe("import");
@@ -318,19 +328,19 @@ test.describe("Besprechungsliste: Suche, Filter, Ordner", () => {
       120,
     );
     // Zweiter Klick hebt den Chip auf.
-    await page.getByRole("button", { name: "Import", exact: true }).click();
+    await popover.getByRole("button", { name: "Import", exact: true }).click();
     const after = (await calls(page, "meetings_search")).at(-1)!;
     expect(after.args.filter.source).toBeNull();
   });
 
-  test("Kontextmenü „In Ordner …“: Mehrfachwahl ruft meetings_set_folders", async ({
+  test("Kontextmenü „In Projekt verschieben …“: Mehrfachwahl ruft meetings_set_folders", async ({
     page,
   }) => {
     await openRecordings(page);
     await page
       .locator("[data-meeting-id=m1]")
       .click({ button: "right", position: { x: 20, y: 10 } });
-    const item = page.getByRole("menuitem", { name: "In Ordner …" });
+    const item = page.getByRole("menuitem", { name: "In Projekt verschieben …" });
     await expect(item).toBeVisible();
     await item.evaluate((el) => (el as HTMLElement).click());
 
@@ -355,16 +365,18 @@ test.describe("Besprechungsliste: Suche, Filter, Ordner", () => {
     );
   });
 
-  test("Ordner-Knopf der Zeile öffnet dieselbe Auswahl; neuer Ordner im Dialog", async ({
+  test("Zuordnungsdialog: neues Projekt direkt im Dialog anlegen", async ({
     page,
   }) => {
     await openRecordings(page);
     await page
       .locator("[data-meeting-id=m2]")
-      .getByRole("button", { name: "In Ordner …" })
-      .click();
+      .click({ button: "right", position: { x: 20, y: 10 } });
+    await page
+      .getByRole("menuitem", { name: "In Projekt verschieben …" })
+      .evaluate((el) => (el as HTMLElement).click());
     const dialog = page.getByRole("dialog");
-    await dialog.getByRole("textbox", { name: "Neuer Ordner" }).fill("Kunden");
+    await dialog.getByRole("textbox", { name: "Neues Projekt" }).fill("Kunden");
     await dialog.getByRole("button", { name: "Anlegen" }).click();
     await expect(
       dialog.getByRole("checkbox", { name: "Kunden" }),
@@ -372,65 +384,58 @@ test.describe("Besprechungsliste: Suche, Filter, Ordner", () => {
     await dialog.getByRole("button", { name: "Speichern" }).click();
     const set = (await calls(page, "meetings_set_folders")).at(-1)!;
     expect(set.args).toEqual({ meetingId: "m2", folderIds: ["f3"] });
-    await expect(
-      folderGroup(page).getByRole("button", { name: /Kunden/ }),
-    ).toBeVisible();
+    await expect(projectRow(page, "Kunden")).toBeVisible();
   });
 
-  test("Ordner anlegen, umbenennen, löschen – Besprechungen bleiben", async ({
+  test("Projekt anlegen, umbenennen, löschen – Besprechungen bleiben", async ({
     page,
   }) => {
     await openRecordings(page);
-    await folderGroup(page)
-      .getByRole("button", { name: "Ordner anlegen" })
-      .click();
-    let dialog = page.getByRole("dialog");
-    await dialog.getByRole("textbox").fill("Strategie");
-    await dialog.getByRole("button", { name: "Anlegen" }).click();
-    await expect(dialog).toHaveCount(0);
+    await page.getByTestId("projects-add").click();
+    const name = page
+      .getByTestId("rec-sessions")
+      .getByRole("textbox", { name: "Name des Projekts" });
+    await name.fill("Strategie");
+    await name.press("Enter");
     const created = (await calls(page, "meeting_folders_save")).at(-1)!;
     expect(created.args).toEqual({ id: null, name: "Strategie", color: null });
-    const chip = folderGroup(page).getByRole("button", { name: /Strategie/ });
-    await expect(chip).toBeVisible();
+    const row = projectRow(page, "Strategie");
+    await expect(row).toBeVisible();
 
-    // Umbenennen per Kontextmenü des Chips.
-    await chip.click({ button: "right" });
+    // Umbenennen per Kontextmenü der Zeile.
+    await row.click({ button: "right" });
     await page
       .getByRole("menuitem", { name: "Umbenennen" })
       .evaluate((el) => (el as HTMLElement).click());
-    dialog = page.getByRole("dialog");
-    await expect(dialog.getByRole("textbox")).toHaveValue("Strategie");
-    await dialog.getByRole("textbox").fill("Strategie 2027");
-    await dialog.getByRole("button", { name: "Speichern" }).click();
+    await expect(name).toHaveValue("Strategie");
+    await name.fill("Strategie 2027");
+    await name.press("Enter");
     const renamed = (await calls(page, "meeting_folders_save")).at(-1)!;
     expect(renamed.args).toEqual({
       id: "f3",
       name: "Strategie 2027",
       color: null,
     });
-    const renamedChip = folderGroup(page).getByRole("button", {
-      name: /Strategie 2027/,
-    });
-    await expect(renamedChip).toBeVisible();
+    const renamedRow = projectRow(page, /Strategie 2027/);
+    await expect(renamedRow).toBeVisible();
 
-    // Aktiver Ordner wird gelöscht: Filter fällt zurück auf „Alle“.
-    await renamedChip.click();
-    await renamedChip.click({ button: "right" });
+    // Das gewählte Projekt wird gelöscht: die Auswahl fällt auf „Alle Aufnahmen“.
+    await renamedRow.click();
+    await renamedRow.click({ button: "right" });
     await page
       .getByRole("menuitem", { name: "Löschen" })
       .evaluate((el) => (el as HTMLElement).click());
-    dialog = page.getByRole("dialog");
+    const dialog = page.getByRole("dialog");
     await expect(dialog).toContainText("Die Besprechungen darin bleiben");
     await dialog.getByRole("button", { name: "Löschen" }).click();
     expect((await calls(page, "meeting_folders_delete")).at(-1)!.args).toEqual({
       id: "f3",
     });
-    await expect(
-      folderGroup(page).getByRole("button", { name: /Strategie/ }),
-    ).toHaveCount(0);
-    await expect(
-      folderGroup(page).getByRole("button", { name: "Alle", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
+    await expect(projectRow(page, /Strategie/)).toHaveCount(0);
+    await expect(projectRow(page, "Alle Aufnahmen")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
     await expect(page.getByText("Kundentermin Meyer")).toBeVisible();
     await expect(page.getByText("Teamrunde")).toBeVisible();
   });
@@ -442,11 +447,8 @@ test.describe("Besprechungsliste: Suche, Filter, Ordner", () => {
       (window as any).__nullFolders = true;
     });
     await openRecordings(page);
-    await expect(
-      folderGroup(page).getByRole("button", { name: "Alle", exact: true }),
-    ).toBeVisible();
-    await expect(
-      folderGroup(page).getByRole("button", { name: /Vertrieb/ }),
-    ).toHaveCount(0);
+    await expect(projectRow(page, "Alle Aufnahmen")).toBeVisible();
+    await expect(projectRow(page, /Vertrieb/)).toHaveCount(0);
+    await expect(page.getByText("Teamrunde")).toBeVisible();
   });
 });

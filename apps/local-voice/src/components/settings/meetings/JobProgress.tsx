@@ -17,6 +17,7 @@ import {
 import { Alert } from "../../ui/Alert";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
+import { IconAction } from "../../ui/IconAction";
 
 /** Text der Restdauer; `null` zeigt nichts (pausiert). */
 const useEtaLabel = (progress: LiveProgress, now: number) => {
@@ -128,9 +129,9 @@ interface JobPanelProps {
 }
 
 /**
- * Statusbereich einer laufenden Verarbeitung in der Detailansicht: Phase,
- * Balken mit Prozent, Laufzeit, geschaetzte Restdauer, dazu Pausieren /
- * Fortsetzen und Stoppen (mit Rueckfrage im Dialog). Alles Sichtbare kommt aus
+ * Statuszeile einer laufenden Verarbeitung in der Bedienspalte: Phase, Balken
+ * mit Prozent, Pausieren / Fortsetzen und Stoppen als Symbole (Stoppen mit
+ * Rueckfrage im Dialog), darunter Menge, Laufzeit und geschaetzte Restdauer. Alles Sichtbare kommt aus
  * dem Backend-Zustand, nicht aus lokalem Wissen: beim Reiterwechsel oder Neu-
  * Oeffnen sieht man denselben Stand.
  */
@@ -179,25 +180,70 @@ export const JobPanel: React.FC<JobPanelProps> = ({ progress }) => {
       data-testid="job-panel"
       data-phase={progress.phase}
       data-state={progress.state}
-      className="space-y-2 rounded-md border border-mid-gray/20 px-3 py-2"
+      className="space-y-1 rounded-md border border-mid-gray/20 px-2.5 py-1.5"
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium" data-testid="job-phase">
+      {/* Eine Zeile: Phase, Balken, Prozent, Pause und Stopp als Symbole. */}
+      <div className="flex items-center gap-2">
+        <span
+          className="max-w-[45%] shrink-0 truncate text-sm font-medium"
+          data-testid="job-phase"
+        >
           {t(`meetings.progress.phase.${progress.phase}`)}
         </span>
         {statusText && (
-          <span className="text-xs text-text/60" data-testid="job-state">
+          <span
+            className="shrink-0 truncate text-xs text-text/60"
+            data-testid="job-state"
+          >
             {statusText}
           </span>
         )}
-      </div>
-      <Bar progress={progress} />
-      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs tabular-nums text-text/70">
+        <div className="min-w-[2rem] flex-1">
+          <Bar progress={progress} thin />
+        </div>
         {!indeterminate && percent !== null && (
-          <span data-testid="job-percent">
+          <span
+            className="shrink-0 text-xs tabular-nums text-text/70"
+            data-testid="job-percent"
+          >
             {t("meetings.progress.percent", { percent })}
           </span>
         )}
+        <IconAction
+          icon={holding ? Play : Pause}
+          label={
+            holding
+              ? t("meetings.progress.resume")
+              : t("meetings.progress.pause")
+          }
+          description={
+            !holding && !progress.pausable && !stopping
+              ? t("meetings.progress.notPausable")
+              : holding
+                ? t("meetings.recorder.resumeHint")
+                : t("meetings.progress.pauseHint")
+          }
+          testId={holding ? "job-resume" : "job-pause"}
+          disabled={pauseDisabled}
+          onClick={() =>
+            void run(() =>
+              holding
+                ? commands.meetingsJobResume(meetingId)
+                : commands.meetingsJobPause(meetingId),
+            )
+          }
+        />
+        <IconAction
+          icon={Square}
+          label={t("meetings.progress.stop")}
+          description={t("meetings.progress.stopHint")}
+          testId="job-stop"
+          iconClassName="text-red-500"
+          disabled={busy || stopping}
+          onClick={() => setConfirmStop(true)}
+        />
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] tabular-nums text-text/60">
         {progress.total > 0 &&
           (countsAudio(progress) ? (
             <span data-testid="job-amount">
@@ -220,45 +266,6 @@ export const JobPanel: React.FC<JobPanelProps> = ({ progress }) => {
           })}
         </span>
         {eta && <span data-testid="job-eta">{eta}</span>}
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant="secondary"
-          data-testid={holding ? "job-resume" : "job-pause"}
-          disabled={pauseDisabled}
-          title={
-            !holding && !progress.pausable && !stopping
-              ? t("meetings.progress.notPausable")
-              : undefined
-          }
-          onClick={() =>
-            void run(() =>
-              holding
-                ? commands.meetingsJobResume(meetingId)
-                : commands.meetingsJobPause(meetingId),
-            )
-          }
-        >
-          {holding ? (
-            <Play width={14} height={14} aria-hidden="true" />
-          ) : (
-            <Pause width={14} height={14} aria-hidden="true" />
-          )}
-          {holding
-            ? t("meetings.progress.resume")
-            : t("meetings.progress.pause")}
-        </Button>
-        <Button
-          size="sm"
-          variant="danger-ghost"
-          data-testid="job-stop"
-          disabled={busy || stopping}
-          onClick={() => setConfirmStop(true)}
-        >
-          <Square width={14} height={14} aria-hidden="true" />
-          {t("meetings.progress.stop")}
-        </Button>
       </div>
       {error && (
         <div data-testid="job-error">

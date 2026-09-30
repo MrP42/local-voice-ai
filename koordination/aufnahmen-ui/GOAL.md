@@ -1,15 +1,15 @@
 ---
 thema: aufnahmen-ui
 titel: Aufnahmen-Oberflaeche: Spalten, Sessions, eine Scrollbar
-state: EXECUTING
+state: READY
 vorzustand: -
 pausengrund: -
 issue: 64
 repo: MrP42/local-voice-ai
 branch: feat/aufnahmen-ui
-iteration: 1
+iteration: 0
 erstellt: 2026-09-30
-aktualisiert: 2026-09-30T19:28
+aktualisiert: 2026-09-30T21:00
 ---
 
 # Goal: Aufnahmen-Oberflaeche: Spalten, Sessions, eine Scrollbar
@@ -35,11 +35,11 @@ Die Seite „Aufnahmen“ arbeitet wie das Vorlesen-Modul in Spalten: links Sess
 - Mobile Apps.
 
 ## Akzeptanzkriterien
-- [ ] AK1 — Audit + Entwurf: `koordination/aufnahmen-ui/UI-AUDIT.md` (Element · Ist · Soll · Fundstelle · Schwere) und ein Entwurf mit mindestens zwei Spaltenvarianten als Screenshot/Artefakt; Patrick hat eine Variante gewählt (Entscheidung in GOAL.md).
+- [x] AK1 — Audit + Entwurf: `koordination/aufnahmen-ui/UI-AUDIT.md` (Element · Ist · Soll · Fundstelle · Schwere) und ein Entwurf mit mindestens zwei Spaltenvarianten als Screenshot/Artefakt; Patrick hat eine Variante gewählt (Entscheidung in GOAL.md).
 - [ ] AK2 — Spalten: Playwright → Seite Aufnahmen hat drei Bereiche (`data-testid="rec-sessions"`, `rec-content`, `rec-controls`); Griffe (`role="separator"`, Pfeiltasten, Doppelklick = Standard) ändern die Breite in Grenzen; ein-/ausklappbar; Zustand übersteht Neuladen.
-- [ ] AK3 — Sessions: anlegen, umbenennen, löschen (mit Rückfrage, Besprechungen bleiben erhalten), Besprechung per Ziehen und per Menü verschieben; Filter/Suche wirken innerhalb der gewählten Session; Datenmodell nutzt die vorhandenen Ordner (Migrationstest).
-- [ ] AK4 — Eine Scrollbar: Viewports 1920×1050, 1366×768, 900×700, 480×800 → `document.scrollingElement.scrollHeight <= innerHeight + 1`; innerhalb jeder Spalte höchstens eine scrollbare Fläche entlang eines Wegs (Playwright prüft verschachtelte `overflow:auto` mit Überlauf).
-- [ ] AK5 — Kompakt: Detailkopf (Titel, Status-Chips, Symbolzeile) ≤ 120 px hoch bei 1366×768; Vollinfo per Dialog; „Neu transkribieren“ im Menü; Tooltips mit Name + Kurzerklärung (Maus und Tastatur).
+- [x] AK3 — Sessions: anlegen, umbenennen, löschen (mit Rückfrage, Besprechungen bleiben erhalten), Besprechung per Ziehen und per Menü verschieben; Filter/Suche wirken innerhalb der gewählten Session; Datenmodell nutzt die vorhandenen Ordner (Migrationstest).
+- [x] AK4 — Eine Scrollbar: Viewports 1920×1050, 1366×768, 900×700, 480×800 → `document.scrollingElement.scrollHeight <= innerHeight + 1`; innerhalb jeder Spalte höchstens eine scrollbare Fläche entlang eines Wegs (Playwright prüft verschachtelte `overflow:auto` mit Überlauf).
+- [x] AK5 — Kompakt: Detailkopf (Titel, Status-Chips, Symbolzeile) ≤ 120 px hoch bei 1366×768; Vollinfo per Dialog; „Neu transkribieren“ im Menü; Tooltips mit Name + Kurzerklärung (Maus und Tastatur).
 - [ ] AK6 — Live im kleinen Fenster: bei 480×800 lässt sich Aufnahme starten, eine Notiz tippen und das Live-Transkript sehen, ohne zu scrollen oder die Seite zu wechseln (Playwright-Ablauf).
 - [ ] AK7 — Import: Datei in die Inhaltsspalte ziehen oder über die Bedienspalte wählen → Import startet in der aktuellen Session, Fortschritt (P8a) sichtbar an der erwarteten Stelle.
 - [ ] AK8 — Persistenz: Breiten, Klappzustand, gewählte Session, Reiter und Layout überstehen Neuladen, Seitenwechsel und App-Neustart (localStorage bzw. Settings) – Playwright.
@@ -85,12 +85,17 @@ Die Seite „Aufnahmen“ arbeitet wie das Vorlesen-Modul in Spalten: links Sess
 | M6 | Tests, Hilfe, Installer, Abnahme | offen |
 
 ## Evidence
--
+- 2026-09-30T20:00 AK1 erfüllt — U1 c3e6e4ec: UI-AUDIT.md (34 Zeilen), Prototyp A/B https://claude.ai/artifact/3RaBLbuyHDX1WnQtAvMQJS, Patrick waehlt B (30.09.)
+- 2026-09-30T20:26 AK4 erfüllt — U2 94dd0569: meeting-layout.spec 30 passed, 4 Viewports ohne Seiten-Scroll, keine verschachtelten Scrollflaechen
+- 2026-09-30T21:00 AK3 erfüllt — U3 89f39ae5: meeting-projects 30 passed, Migrationstest folders
+- 2026-09-30T21:00 AK5 erfüllt — U4 89f39ae5: meeting-header 32 passed, Kopf 95 px bei 1366
 
 ## Blocker
 -
 
 ## Entscheidungen
+- 2026-09-30 Patrick: Die Ordner heißen in der Oberfläche „Projekte“ (en „Projects“), nicht „Sessions“; im Goal-Text bleibt „Sessions“ als Arbeitsbegriff, `data-testid="rec-sessions"` bleibt.
+- 2026-09-30 Patrick am Prototyp (https://claude.ai/artifact/3RaBLbuyHDX1WnQtAvMQJS): R1 = Variante B (Sessions | Notizen/KI-Notizen/Protokoll | rechts Bedienung + Transkript/Fragen); Besprechung in mehreren Sessions (Ziehen verschiebt, Strg+Ziehen fügt hinzu); Sessions eine Ebene; Aufnahme-Optionen in den Einwilligungs-Startdialog; Kalender als „Als Nächstes“ unten in der Sessions-Spalte.
 - 2026-09-30 Patrick: R2 ja (Sessions = oberste Ebene der M4-Ordner), R3 Budget – gemeinsam mit YouTube-Bündel 1 aus #66 zusammen 3,5 MTok (Aufnahmen-UI ~2,5); R1 (Anordnung) wählt Patrick am Klick-Prototyp (AK1). Zusätzlich B17 aus #59: Neu-Transkription tauscht die Fassung erst am Ende.
 - 2026-09-30 Patrick: nächstes Goal nach Granola = Aufnahmen-Oberfläche nach Vorbild Vorlesen (Spalten, Sessions/Ordner, kompakte Details, eine Scrollbar, responsive, persistent).
 
@@ -101,6 +106,4 @@ Nach Merge von Granola-Runde 3: Branch auf `feat/granola-besprechungen` nachzieh
 - 2026-09-30T16:41 DISCOVERY — Goal State angelegt
 - 2026-09-30T16:42 DISCOVERY (Runde 0) — Metadaten: issue=64
 - 2026-09-30T19:27 READY (Runde 0) — Owner-Entscheidungen 30.09. eingetragen, Rahmen 3,5 MTok gemeinsam
-- 2026-09-30T19:28 PLANNING (Runde 1) — Pakete geplant
-- 2026-09-30T19:28 EXECUTING (Runde 1) — U1 (wt-aui) und A1 (wt-int) laufen parallel; Rahmen 3,5 MTok gemeinsam
 

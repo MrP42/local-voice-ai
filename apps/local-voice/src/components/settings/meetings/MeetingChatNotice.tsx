@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Copy } from "lucide-react";
+import { toast } from "sonner";
 import type { PostProcessProvider } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { Button } from "../../ui/Button";
+import { IconAction } from "../../ui/IconAction";
 
 /** Platzhalter-Adresse des lokalen Servers (`managers::llm::LOCAL_PLACEHOLDER_URL`). */
 const LOCAL_PLACEHOLDER_URL = "http://127.0.0.1:0/v1";
@@ -39,6 +41,8 @@ export const useChatNoticeText = (): string => {
 interface MeetingChatNoticeProps {
   /** Praefix fuer `data-testid` (Aufnahmekarte und Einwilligungsdialog). */
   testId: string;
+  /** Nur ein Symbolknopf (laufende Aufnahme): der Text steht im Tooltip. */
+  compact?: boolean;
 }
 
 /**
@@ -48,6 +52,7 @@ interface MeetingChatNoticeProps {
  */
 export const MeetingChatNotice: React.FC<MeetingChatNoticeProps> = ({
   testId,
+  compact = false,
 }) => {
   const { t } = useTranslation();
   const text = useChatNoticeText();
@@ -67,10 +72,39 @@ export const MeetingChatNotice: React.FC<MeetingChatNoticeProps> = ({
       setState("copied");
     } catch {
       setState("error");
+      // Der Symbolknopf hat keine Textzeile: Misserfolg als Meldung zeigen.
+      if (compact) toast.error(t("meetings.record.chatNotice.copyError"));
     }
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setState("idle"), 2500);
   };
+
+  if (compact) {
+    return (
+      <span className="inline-flex" data-testid={`${testId}-chat-notice`}>
+        <span
+          className="sr-only select-text"
+          data-testid={`${testId}-chat-notice-text`}
+        >
+          {text}
+        </span>
+        <IconAction
+          icon={state === "copied" ? Check : Copy}
+          label={
+            state === "copied"
+              ? t("meetings.recorder.noticeCopied")
+              : t("meetings.recorder.noticeName")
+          }
+          description={text}
+          testId={`${testId}-chat-notice-copy`}
+          onClick={() => void copy()}
+        />
+        <span role="status" aria-live="polite" className="sr-only">
+          {state === "error" ? t("meetings.record.chatNotice.copyError") : ""}
+        </span>
+      </span>
+    );
+  }
 
   return (
     <div

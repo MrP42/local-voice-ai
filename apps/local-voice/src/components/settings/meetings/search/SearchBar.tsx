@@ -9,9 +9,14 @@ export const SEARCH_DEBOUNCE_MS = 250;
 interface SearchBarProps {
   /** Bekommt den getrimmten Suchtext, entprellt. */
   onSearch: (query: string) => void;
+  /** Platzhalter; Standard ist der allgemeine Suchtext. */
+  placeholder?: string;
 }
 
-export const SearchBar: React.FC<SearchBarProps> = ({ onSearch }) => {
+export const SearchBar: React.FC<SearchBarProps> = ({
+  onSearch,
+  placeholder,
+}) => {
   const { t } = useTranslation();
   const [text, setText] = useState("");
   // Der Rueckruf darf die Entprellung nicht neu starten, nur weil der
@@ -46,7 +51,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch }) => {
             setText("");
           }
         }}
-        placeholder={t("meetings.search.placeholder")}
+        placeholder={placeholder ?? t("meetings.search.placeholder")}
         aria-label={t("meetings.search.label")}
         variant="compact"
         className="w-full ps-8 pe-8 font-normal"

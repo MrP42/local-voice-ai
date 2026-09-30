@@ -1,9 +1,16 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronRight, MessageSquare, Sparkles } from "lucide-react";
+import {
+  ChevronRight,
+  MessageSquare,
+  PanelLeftOpen,
+  Sparkles,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageShell } from "../../ui/PageShell";
 import { SettingsGroup } from "../../ui/SettingsGroup";
+import { usePersistentState } from "../../../hooks/usePersistentState";
+import { useRecordingActive } from "../../../hooks/useRecordingActive";
 import {
   commands,
   events,
@@ -18,6 +25,12 @@ import { LiveTranscript } from "./LiveTranscript";
 import { LiveNotesPad } from "./notes/LiveNotesPad";
 import { MeetingList } from "./MeetingList";
 import { MeetingDetail } from "./MeetingDetail";
+import { RecWorkspace, isRightTab, type RightTab } from "./RecWorkspace";
+import { useProjects } from "./projects/useProjects";
+import { useMeetingDrag } from "./projects/useMeetingDrag";
+import { ProjectsRail } from "./projects/ProjectsRail";
+import { DragGhost } from "./projects/DragGhost";
+import { useRecLayout } from "./useRecLayout";
 import { ChatPanel } from "./chat/ChatPanel";
 import { recipeTitleText } from "./chat/RecipeMenu";
 import { EMPTY_SCOPE } from "./chat/ScopeChips";
@@ -157,19 +170,80 @@ const LiveChatRow: React.FC<{ onJump: (citation: Citation) => void }> = ({
 export const MeetingsSettings: React.FC = () => {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Meeting | null>(null);
-  // M4-P4e: Chat ueber viele Besprechungen als Seitenleiste; bleibt stehen,
-  // wenn ein Beleg die Besprechung daneben oeffnet.
+  // Die gewaehlte Besprechung bleibt ueber Neuladen, Seitenwechsel und
+  // Neustart (nur die ID; der Datensatz kommt frisch aus dem Backend).
+  const [selectedId, setSelectedId] = usePersistentState<string>(
+    "meetings.selected",
+    "",
+  );
+  const select = useCallback(
+    (meeting: Meeting | null) => {
+      setSelected(meeting);
+      setSelectedId(meeting?.id ?? "");
+    },
+    [setSelectedId],
+  );
+  // Chat ueber viele Besprechungen: steht im Reiter "Fragen" der rechten
+  // Spalte und bleibt stehen, wenn ein Beleg die Besprechung daneben oeffnet.
   const [globalFilter, setGlobalFilter] = useState<ScopeFilter | null>(null);
   const [jump, setJump] = useState<JumpRequest | null>(null);
   // M5-P5d: Personenfilter der Liste; M5-P5e: Brief zu einem Termin.
   const [personFilter, setPersonFilter] = useState<PersonRef | null>(null);
   const [briefRun, setBriefRun] = useState<BriefRun | null>(null);
+  const [rightTab, setRightTab] = usePersistentState<RightTab>(
+    "meetings.rightTab",
+    "transcript",
+    isRightTab,
+  );
+  const recording = useRecordingActive();
+  const layout = useRecLayout(recording.active);
+  // Projekte (= Ordner) und das Ziehen von Besprechungen darauf.
+  const projects = useProjects();
+  const drag = useMeetingDrag((meeting, target, additive) => {
+    void projects.assign(
+      meeting,
+      projects.selection,
+      target,
+      additive ? "add" : "move",
+    );
+  });
+  const [projectsActionsEl, setProjectsActionsEl] =
+    useState<HTMLDivElement | null>(null);
+
+  // Die Bereiche, in die die Detailansicht ihre Teile legt.
+  const [contentEl, setContentEl] = useState<HTMLDivElement | null>(null);
+  const [controlsEl, setControlsEl] = useState<HTMLDivElement | null>(null);
+  const [transcriptEl, setTranscriptEl] = useState<HTMLDivElement | null>(null);
+
+  // Gemerkte Besprechung beim Start laden; gibt es sie nicht mehr, vergessen.
+  useEffect(() => {
+    if (!selectedId || selected) return;
+    let cancelled = false;
+    void findMeeting(selectedId).then((meeting) => {
+      if (cancelled) return;
+      if (meeting) setSelected(meeting);
+      else setSelectedId("");
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Nur beim Einhaengen: spaetere Auswahlen setzen `selected` selbst.
+  }, []);
+
+  // Eine neue Aufnahme zeigt ihren Notizblock in der Arbeitsflaeche.
+  useEffect(() => {
+    if (recording.meetingId) select(null);
+  }, [recording.meetingId, select]);
 
   /** Chat ueber viele Besprechungen oeffnen (ohne Brief-Auftrag). */
-  const openGlobal = useCallback((filter: ScopeFilter | null) => {
-    setBriefRun(null);
-    setGlobalFilter(filter);
-  }, []);
+  const openGlobal = useCallback(
+    (filter: ScopeFilter | null) => {
+      setBriefRun(null);
+      setGlobalFilter(filter);
+      if (filter) setRightTab("chat");
+    },
+    [setRightTab],
+  );
 
   /**
    * Brief zu einem Termin: mit gespeichertem Verlauf diesen oeffnen (zweiter
@@ -179,6 +253,7 @@ export const MeetingsSettings: React.FC = () => {
     (info: BriefInfo) => {
       const nonce = Date.now();
       setGlobalFilter(info.filter);
+      setRightTab("chat");
       setBriefRun(
         info.thread_id
           ? { recipe: null, thread: { id: info.thread_id, nonce } }
@@ -195,7 +270,7 @@ export const MeetingsSettings: React.FC = () => {
             },
       );
     },
-    [t],
+    [t, setRightTab],
   );
 
   // "Vorbereiten" im Hinweisfenster: das Backend merkt den Termin und meldet
@@ -239,69 +314,153 @@ export const MeetingsSettings: React.FC = () => {
         toast.error(t("meetings.chat.citation.deleted"));
         return;
       }
-      setSelected(meeting);
+      select(meeting);
       setJump(request);
     },
-    [selected, t],
+    [selected, t, select],
   );
 
-  const content = selected ? (
-    <div className="w-full space-y-4">
-      <MeetingDetail
-        key={selected.id}
-        meeting={selected}
-        onBack={() => setSelected(null)}
-        onMeetingChange={setSelected}
-        jumpRequest={jump}
-        onChatOpen={() => openGlobal(null)}
-        onPersonFilter={(person) => {
-          setPersonFilter(person);
-          setSelected(null);
-        }}
-        onPersonAsk={(person) =>
-          openGlobal({ ...EMPTY_SCOPE, person_id: person.id })
-        }
-      />
-    </div>
+  const chatOpen = rightTab === "chat" && globalFilter === null;
+  const toggleChat = useCallback(() => {
+    if (chatOpen) {
+      setRightTab("transcript");
+      return;
+    }
+    // Ein globaler Chat weicht dem Chat dieser Besprechung.
+    openGlobal(null);
+    setRightTab("chat");
+  }, [chatOpen, openGlobal, setRightTab]);
+
+  const hint = (text: string) => (
+    <p className="p-3 text-sm text-text/60">{text}</p>
+  );
+
+  const chatBody = globalFilter ? (
+    <ChatPanel
+      fill
+      scope={{ kind: "global", filter: globalFilter }}
+      mode="global"
+      onClose={() => {
+        openGlobal(null);
+        setRightTab("transcript");
+      }}
+      onJump={(c) => void openCitation(c)}
+      onScopeChange={setGlobalFilter}
+      autoRecipe={briefRun?.recipe ?? null}
+      openThread={briefRun?.thread ?? null}
+    />
+  ) : selected ? (
+    <ChatPanel
+      fill
+      key={selected.id}
+      scope={{ kind: "meeting", meeting_id: selected.id }}
+      mode="meeting"
+      onClose={() => setRightTab("transcript")}
+      onJump={(c) => void openCitation(c)}
+    />
   ) : (
-    <PageShell
-      title={t("workspace.recordings")}
-      description={t("workspace.meetingsHint")}
-      help="aufnahmen"
-    >
-      <RecorderCard onPrepare={openBrief} />
-      {/* Notizblock links, Transkript rechts (ab 1024 px), sonst untereinander.
-          Ist nur eines von beiden sichtbar, nimmt es die ganze Breite. */}
-      <div className="flex flex-col gap-4 empty:hidden lg:flex-row lg:items-start [&>*]:min-w-0 lg:[&>*]:flex-1">
-        <LiveNotesPad />
-        <LiveTranscript />
-      </div>
-      <LiveChatRow onJump={(c) => void openCitation(c)} />
-      <MeetingList
-        onSelect={setSelected}
-        onAsk={openGlobal}
-        personFilter={personFilter}
-        onPersonFilterChange={setPersonFilter}
-      />
-    </PageShell>
+    hint(t("meetings.layout.emptyChat"))
   );
 
   return (
-    <div className="flex w-full flex-col gap-4 lg:flex-row lg:items-start">
-      <div className="min-w-0 flex-1">{content}</div>
-      {globalFilter && (
-        <aside className="w-full shrink-0 lg:sticky lg:top-0 lg:w-96">
-          <ChatPanel
-            scope={{ kind: "global", filter: globalFilter }}
-            mode="global"
-            onClose={() => openGlobal(null)}
-            onJump={(c) => void openCitation(c)}
-            onScopeChange={setGlobalFilter}
-            autoRecipe={briefRun?.recipe ?? null}
-            openThread={briefRun?.thread ?? null}
+    <PageShell
+      fill
+      title={t("workspace.recordings")}
+      description={
+        layout.mode === "narrow" ? undefined : t("workspace.meetingsHint")
+      }
+      help="aufnahmen"
+      actions={
+        layout.mode === "narrow" ? (
+          <button
+            type="button"
+            onClick={() => layout.drawer.setOpen(true)}
+            title={t("meetings.projects.open")}
+            aria-label={t("meetings.projects.open")}
+            data-testid="sessions-open"
+            className="p-1.5 rounded-md text-text/60 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
+          >
+            <PanelLeftOpen width={20} height={20} aria-hidden="true" />
+          </button>
+        ) : undefined
+      }
+    >
+      <RecWorkspace
+        layout={layout}
+        projectsActionsRef={setProjectsActionsEl}
+        projectsRail={(open) => (
+          <ProjectsRail
+            folders={projects.folders}
+            counts={projects.counts}
+            selection={projects.selection}
+            onPick={(id) => {
+              projects.select(id);
+              open();
+            }}
           />
-        </aside>
+        )}
+        projectsBody={
+          <MeetingList
+            projects={projects}
+            drag={drag}
+            actionsEl={projectsActionsEl}
+            onSelect={(meeting) => {
+              select(meeting);
+              layout.drawer.setOpen(false);
+            }}
+            selected={selected}
+            onDeleted={(id) => {
+              if (selected?.id === id) select(null);
+            }}
+            onAsk={openGlobal}
+            personFilter={personFilter}
+            onPersonFilterChange={setPersonFilter}
+          />
+        }
+        detailActive={selected !== null}
+        slotRefs={{
+          content: setContentEl,
+          controls: setControlsEl,
+          transcript: setTranscriptEl,
+        }}
+        idleContent={
+          <div className="space-y-3 p-3">
+            <LiveNotesPad fallback={hint(t("meetings.layout.emptyContent"))} />
+            <LiveChatRow onJump={(c) => void openCitation(c)} />
+          </div>
+        }
+        controls={<RecorderCard onPrepare={openBrief} />}
+        rightTab={rightTab}
+        onRightTab={setRightTab}
+        idleTranscript={
+          <LiveTranscript
+            fallback={hint(t("meetings.layout.emptyTranscript"))}
+          />
+        }
+        chatBody={chatBody}
+      />
+      <DragGhost drag={drag.drag} />
+      {selected && (
+        <MeetingDetail
+          key={selected.id}
+          meeting={selected}
+          slots={{
+            content: contentEl,
+            controls: controlsEl,
+            transcript: transcriptEl,
+          }}
+          onShowTranscript={() => setRightTab("transcript")}
+          chatOpen={chatOpen}
+          onChatToggle={toggleChat}
+          onMeetingChange={setSelected}
+          onDeleted={() => select(null)}
+          jumpRequest={jump}
+          onPersonFilter={setPersonFilter}
+          onPersonAsk={(person) =>
+            openGlobal({ ...EMPTY_SCOPE, person_id: person.id })
+          }
+        />
       )}
-    </div>
+    </PageShell>
   );
 };

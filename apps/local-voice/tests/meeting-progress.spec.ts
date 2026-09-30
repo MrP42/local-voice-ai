@@ -230,14 +230,16 @@ const openList = async (page: Page) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto("/");
   await page.getByRole("button", { name: "Aufnahmen", exact: true }).click();
+  // Die Liste steht immer links; eine gemerkte Auswahl zeigt den Titel auch
+  // in der Arbeitsflaeche (daher der erste Treffer).
   await expect(
-    page.getByText("Jour Fixe Vertrieb", { exact: true }),
+    page.getByText("Jour Fixe Vertrieb", { exact: true }).first(),
   ).toBeVisible();
 };
 
 const openDetail = async (page: Page) => {
   await openList(page);
-  await page.getByText("Jour Fixe Vertrieb", { exact: true }).click();
+  await page.getByText("Jour Fixe Vertrieb", { exact: true }).first().click();
   await expect(page.locator('[data-segment-index="0"]')).toBeVisible();
 };
 
@@ -372,7 +374,10 @@ test.describe("Statusbereich der Detailansicht", () => {
     );
     const pause = page.getByTestId("job-pause");
     await expect(pause).toBeDisabled();
-    await expect(pause).toHaveAttribute("title", /nicht pausieren/);
+    // Der Grund steht im Tooltip (Name + Kurzerklaerung), auch am gesperrten Knopf.
+    const box = (await pause.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.getByRole("tooltip")).toContainText(/nicht pausieren/);
     // Stoppen geht in jeder Phase.
     await expect(page.getByTestId("job-stop")).toBeEnabled();
   });
@@ -410,7 +415,7 @@ test.describe("Statusbereich der Detailansicht", () => {
     await expect(page.getByTestId("job-pause")).toBeDisabled();
     await expect(page.getByTestId("job-stop")).toBeEnabled();
 
-    await page.getByRole("button", { name: "Protokoll", exact: true }).click();
+    await page.getByRole("tab", { name: "Protokoll", exact: true }).click();
     const generate = page.getByRole("button", {
       name: "Erzeugen",
       exact: true,
@@ -419,9 +424,9 @@ test.describe("Statusbereich der Detailansicht", () => {
     await expect(page.getByTestId("minutes-running")).toBeVisible();
 
     // Reiter weg und zurück: der Laufzustand ist nicht verloren, der Knopf bleibt gesperrt.
-    await page.getByRole("button", { name: "Transkript", exact: true }).click();
+    await page.getByRole("tab", { name: "Notizen", exact: true }).click();
     await expect(panel(page)).toBeVisible();
-    await page.getByRole("button", { name: "Protokoll", exact: true }).click();
+    await page.getByRole("tab", { name: "Protokoll", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Erzeugen", exact: true }),
     ).toBeDisabled();
@@ -496,8 +501,8 @@ test.describe("Statusbereich der Detailansicht", () => {
     await setMeetingsLater(page, { status: "ready" });
     await openDetail(page);
     await expect(page.getByTestId("job-phase")).toHaveText("KI-Notizen");
-    await page.getByRole("button", { name: "Notizen", exact: true }).click();
-    await page.getByRole("button", { name: "KI-Notizen", exact: true }).click();
+    await page.getByRole("tab", { name: "Notizen", exact: true }).click();
+    await page.getByRole("tab", { name: "KI-Notizen", exact: true }).click();
     await expect(
       page.getByRole("button", { name: /KI-Notizen (neu )?erzeugen/ }),
     ).toBeDisabled();
@@ -523,7 +528,8 @@ test.describe("Pause und Fortsetzen", () => {
     await emit(page, progress());
     const pause = page.getByTestId("job-pause");
     await expect(pause).toBeEnabled();
-    await expect(pause).toHaveText("Pausieren");
+    // Symbolknopf: der Name steht im aria-label.
+    await expect(pause).toHaveAttribute("aria-label", "Pausieren");
 
     await pause.click();
     expect(await calls(page, "meetings_job_pause")).toEqual([
@@ -534,7 +540,10 @@ test.describe("Pause und Fortsetzen", () => {
     await expect(page.getByTestId("job-state")).toHaveText(
       "Pause wird eingelegt …",
     );
-    await expect(page.getByTestId("job-resume")).toHaveText("Fortsetzen");
+    await expect(page.getByTestId("job-resume")).toHaveAttribute(
+      "aria-label",
+      "Fortsetzen",
+    );
     await emit(page, progress({ state: "paused" }));
     await expect(page.getByTestId("job-state")).toHaveText("Pausiert");
     await expect(page.getByTestId("job-eta")).toHaveCount(0);
@@ -544,7 +553,10 @@ test.describe("Pause und Fortsetzen", () => {
       { cmd: "meetings_job_resume", args: { meetingId: "m1" } },
     ]);
     await emit(page, progress({ state: "running" }));
-    await expect(page.getByTestId("job-pause")).toHaveText("Pausieren");
+    await expect(page.getByTestId("job-pause")).toHaveAttribute(
+      "aria-label",
+      "Pausieren",
+    );
     await expect(page.getByTestId("job-state")).toHaveCount(0);
   });
 

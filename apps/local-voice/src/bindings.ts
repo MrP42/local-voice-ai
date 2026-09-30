@@ -2076,6 +2076,28 @@ async meetingFoldersDelete(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Ordnet die Ordner (Projekte) neu; `ids` stehen vorn, der Rest folgt.
+ */
+async meetingFoldersReorder(ids: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_folders_reorder", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zaehler der Projekte-Spalte: alle Besprechungen und die ohne Projekt.
+ */
+async meetingFoldersCounts() : Promise<Result<FolderCounts, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_folders_counts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Setzt die Ordner einer Besprechung auf genau `folder_ids` (n:m).
  */
 async meetingsSetFolders(meetingId: string, folderIds: string[]) : Promise<Result<null, string>> {
@@ -4727,6 +4749,11 @@ export type FitVerdict =
 "unknown"
 export type Folder = { id: string; name: string; color: string | null; sort: number; meeting_count: number; created_at: number; updated_at: number }
 /**
+ * Zaehler der Projekte-Spalte neben den Ordnern: alle lebenden Besprechungen
+ * und die ohne lebenden Ordner ("Ohne Projekt").
+ */
+export type FolderCounts = { all: number; unfiled: number }
+/**
  * Ausgang eines Follow-up-Entwurfs für `meeting_followup_open`.
  */
 export type FollowupMode = 
@@ -5059,7 +5086,12 @@ export type MeetingFilter = { folder_id: string | null; from: number | null; to:
 /**
  * M5-P5d: nur Besprechungen, an denen diese Person (`humans.id`) teilnahm.
  */
-person_id: string | null }
+person_id: string | null; 
+/**
+ * U3 (Projekte): nur Besprechungen ohne lebenden Ordner ("Ohne Projekt").
+ * Hat Vorrang vor `folder_id`.
+ */
+unfiled: boolean | null }
 /**
  * Fortschritt der Vektorstufe fuer die Einstellungszeile.
  */

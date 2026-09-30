@@ -9,6 +9,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 |---|---|---|---|---|---|
 | A1 | 1 | Register-Kern + Provenienz (Backend) — lv-coder-xhigh | AK1: --lib integrations:: provenance:: >= 30 Tests, Migration idempotent, Provenienz an Protokoll/KI-Notizen/Follow-up/STT | abgenommen | 20f0e763 |
 | A1n | 1 | Härtung Rechtekern nach Review (B2) — lv-coder-xhigh | je Fund ein Test, integrations::/provenance:: + volle Suite grün | abgenommen | 262210d3 |
+| A2 | 1 | YouTube-Quelle: Link-Normalisierung (watch, youtu.be, shorts), oEmbed-Metadaten, Besprechung mit Quelle youtube im gewählten Projekt, offizieller eingebetteter Player in der Inhaltsspalte mit Zeitsprung über transcriptPlayer, Schalter „privat“ für selbst installiertes yt-dlp (Standard aus), Link-Knopf aktiv — lv-coder-xhigh | AK2, AK3 (Playwright youtube-source; Player-Sprung) | in_arbeit | |
 
 ## Paketschnitt (Vorschlag)
 | Paket | Bündel | Scope | Akzeptanztest | Abh. | Worker |

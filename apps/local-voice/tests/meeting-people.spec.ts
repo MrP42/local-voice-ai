@@ -602,14 +602,16 @@ test.describe("Personen", () => {
     await openDetail(page);
     await chip(page, "Bernd Alt").click();
     await page.getByTestId("person-meetings").click();
-    // Zurueck in der Liste, mit dem Chip "Person: Bernd Alt".
+    // Die Liste links zeigt den Chip "Person: Bernd Alt"; die Detailansicht
+    // bleibt daneben offen.
+    const list = page.getByTestId("rec-sessions");
     await expect(page.getByTestId("person-filter-chip")).toContainText(
       "Person: Bernd Alt",
     );
     await expect(
-      page.getByText("Kundentermin Meyer", { exact: true }),
+      list.getByText("Kundentermin Meyer", { exact: true }),
     ).toBeVisible();
-    await expect(page.getByText("Teamrunde", { exact: true })).toHaveCount(0);
+    await expect(list.getByText("Teamrunde", { exact: true })).toHaveCount(0);
     const search = await calls(page, "meetings_search");
     expect(search[search.length - 1].args.filter).toMatchObject({
       person_id: "h2",
@@ -617,7 +619,7 @@ test.describe("Personen", () => {
     // Chip entfernen: alle Besprechungen wieder.
     await page.getByTestId("person-filter-remove").click();
     await expect(page.getByTestId("person-filter-chip")).toHaveCount(0);
-    await expect(page.getByText("Teamrunde", { exact: true })).toBeVisible();
+    await expect(list.getByText("Teamrunde", { exact: true })).toBeVisible();
   });
 
   test("„Fragen“ öffnet den Chat über diese Person (person_id im Scope)", async ({

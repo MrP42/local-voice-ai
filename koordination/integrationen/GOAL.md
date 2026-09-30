@@ -130,6 +130,7 @@ Pakete und Bündel: `vorschlag.md` → Paketschnitt; Budget: 8 Pakete × ~275 kT
 -
 
 ## Entscheidungen
+- 2026-09-30 Patrick: gemeinsamer Rahmen Aufnahmen-UI + YouTube-Bündel auf 4,3 MTok angehoben (80-%-Meldung bei ~2,75).
 - 2026-09-30 Patrick: alle Owner-Entscheidungen wie in vorschlag.md empfohlen: E1 YouTube = offizieller eingebetteter Player als Standard, yt-dlp nur als selbst installiertes Werkzeug hinter Schalter „privat“ (Standard aus, nicht im Installer); E2 Register + Provenienz in meetings.db; E3 schreibende Fähigkeiten „fragen“, externe Agenten „aus“, Aufnahme nie ohne Einwilligungsdialog. Jetzt umsetzen: Bündel 1 (A1–A3, ~1,0 MTok) im gemeinsamen Rahmen 3,5 MTok mit #64; A1 parallel zu #64-M1, A2/A3 nach #64-M2.
 - 2026-09-30 Patrick: neue Seite „Integrationen“ zwischen Modelle und Einstellungen; Register ohne Mengengrenze, Richtung/Rechte je Verbindung, RAG + Obsidian als Schwerpunkt, MCP/CLI auch steuernd. Erste Integration: YouTube (#65) inkl. Werbefrei-Wiedergabe, Untertitel vs. Transkript, Zusammenführen, Zusammenfassung; Herkunft/Audit (Modell, Tokens, Quellen, Konfidenz) per Rechtsklick.
 

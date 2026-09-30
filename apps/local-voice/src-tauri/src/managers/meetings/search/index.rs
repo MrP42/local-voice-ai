@@ -108,6 +108,9 @@ pub struct MeetingFilter {
     pub has_notes: Option<bool>,
     /// M5-P5d: nur Besprechungen, an denen diese Person (`humans.id`) teilnahm.
     pub person_id: Option<String>,
+    /// U3 (Projekte): nur Besprechungen ohne lebenden Ordner ("Ohne Projekt").
+    /// Hat Vorrang vor `folder_id`.
+    pub unfiled: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -144,6 +147,14 @@ pub struct ScopeFilter {
     /// gefragt wurde. Grenzt nichts ein; der Chat-Verlauf traegt ihn im
     /// `scope_json`, damit ein zweiter Klick den gespeicherten Brief oeffnet.
     pub event_uid: Option<String>,
+}
+
+/// Zaehler der Projekte-Spalte neben den Ordnern: alle lebenden Besprechungen
+/// und die ohne lebenden Ordner ("Ohne Projekt").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct FolderCounts {
+    pub all: u32,
+    pub unfiled: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -278,6 +289,7 @@ fn map_chunk_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChunkRow> {
 /// `AND ...`-Fragmente.
 fn meeting_constraints(
     folder_id: Option<&str>,
+    unfiled: bool,
     person_id: Option<&str>,
     from: Option<i64>,
     to: Option<i64>,
@@ -286,7 +298,13 @@ fn meeting_constraints(
     params: &mut Vec<Value>,
 ) -> String {
     let mut sql = String::new();
-    if let Some(folder_id) = folder_id {
+    if unfiled {
+        sql.push_str(
+            " AND m.id NOT IN (SELECT fi.meeting_id FROM meeting_folder_items fi
+                               JOIN meeting_folders f ON f.id = fi.folder_id
+                                AND f.deleted_at IS NULL)",
+        );
+    } else if let Some(folder_id) = folder_id {
         params.push(Value::Text(folder_id.to_string()));
         sql.push_str(&format!(
             " AND m.id IN (SELECT fi.meeting_id FROM meeting_folder_items fi
@@ -812,6 +830,7 @@ impl MeetingStore {
         let mut params: Vec<Value> = vec![Value::Text(primary.clone())];
         let constraints = meeting_constraints(
             filter.folder_id.as_deref(),
+            filter.unfiled == Some(true),
             filter.person_id.as_deref(),
             filter.from,
             filter.to,
@@ -909,6 +928,7 @@ impl MeetingStore {
         let mut params: Vec<Value> = Vec::new();
         let constraints = meeting_constraints(
             filter.folder_id.as_deref(),
+            filter.unfiled == Some(true),
             filter.person_id.as_deref(),
             filter.from,
             filter.to,
@@ -995,6 +1015,7 @@ impl MeetingStore {
         );
         sql.push_str(&meeting_constraints(
             scope.folder_id.as_deref(),
+            false,
             scope
                 .person_id
                 .as_deref()
@@ -1130,6 +1151,28 @@ impl MeetingStore {
         Ok(folders)
     }
 
+    /// Zaehler fuer "Alle Aufnahmen" und "Ohne Projekt".
+    pub fn folder_counts(&self) -> Result<FolderCounts> {
+        let conn = self.get_connection()?;
+        let all: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM meetings m WHERE m.deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        let mut params: Vec<Value> = Vec::new();
+        let constraints =
+            meeting_constraints(None, true, None, None, None, None, false, &mut params);
+        let unfiled: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM meetings m WHERE m.deleted_at IS NULL{constraints}"),
+            params_from_iter(params.iter()),
+            |row| row.get(0),
+        )?;
+        Ok(FolderCounts {
+            all: all as u32,
+            unfiled: unfiled as u32,
+        })
+    }
+
     /// Legt einen Ordner an (`id = None`) oder benennt/faerbt einen um. Der
     /// Name ist getrimmt 1 bis 60 Zeichen ohne Steuerzeichen und unter den
     /// lebenden Ordnern eindeutig (ohne Beachtung der Gross-/Kleinschreibung):
@@ -1209,6 +1252,49 @@ impl MeetingStore {
             "DELETE FROM meeting_folder_items WHERE folder_id = ?1",
             params![id],
         )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Ordnet die lebenden Ordner neu: `ids` stehen vorn in dieser Reihenfolge
+    /// (doppelte zaehlen einmal), die nicht genannten folgen in ihrer bisherigen
+    /// Reihenfolge. Danach steht `sort` lueckenlos als 1..n. Eine unbekannte oder
+    /// geloeschte ID ist `folder_not_found`; dann bleibt alles wie es war.
+    pub fn folders_reorder(&self, ids: &[String]) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let tx = Self::write_tx(&mut conn)?;
+        let current: Vec<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT id FROM meeting_folders WHERE deleted_at IS NULL
+                 ORDER BY sort, name COLLATE NOCASE, id",
+            )?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+        let mut order: Vec<&str> = Vec::with_capacity(current.len());
+        for id in ids {
+            if !current.contains(id) {
+                return Err(anyhow!("folder_not_found"));
+            }
+            if !order.contains(&id.as_str()) {
+                order.push(id);
+            }
+        }
+        for id in &current {
+            if !order.contains(&id.as_str()) {
+                order.push(id);
+            }
+        }
+        let now = Utc::now().timestamp();
+        for (index, id) in order.iter().enumerate() {
+            tx.execute(
+                "UPDATE meeting_folders SET sort = ?1, updated_at = ?2
+                 WHERE id = ?3 AND sort <> ?1",
+                params![index as i64 + 1, now, id],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -3189,6 +3275,110 @@ pub(crate) mod tests {
         assert!(s.set_meeting_folders("fremd", &[f.id]).is_err());
         s.set_meeting_folders(&m.id, &[]).unwrap();
         assert!(s.meeting_folder_ids(&m.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn folders_are_reordered_stably_and_unknown_ids_change_nothing() {
+        let (_d, s) = tmp_store();
+        let a = s.folder_save(None, "Alpha", None).unwrap();
+        let b = s.folder_save(None, "Beta", None).unwrap();
+        let c = s.folder_save(None, "Gamma", None).unwrap();
+        let names = |s: &MeetingStore| {
+            s.folders_list()
+                .unwrap()
+                .into_iter()
+                .map(|f| f.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&s), ["Alpha", "Beta", "Gamma"]);
+
+        // Vollstaendige Liste, Teilliste (Rest folgt in bisheriger Reihenfolge),
+        // doppelte IDs zaehlen einmal.
+        s.folders_reorder(&[c.id.clone(), a.id.clone(), b.id.clone()])
+            .unwrap();
+        assert_eq!(names(&s), ["Gamma", "Alpha", "Beta"]);
+        s.folders_reorder(&[b.id.clone(), b.id.clone()]).unwrap();
+        assert_eq!(names(&s), ["Beta", "Gamma", "Alpha"]);
+        // Die Reihenfolge steht danach lueckenlos als 1..n im sort-Feld.
+        let sorts: Vec<i64> = s.folders_list().unwrap().iter().map(|f| f.sort).collect();
+        assert_eq!(sorts, [1, 2, 3]);
+
+        // Unbekannte ID: Fehler, nichts geaendert.
+        assert_eq!(
+            s.folders_reorder(&[a.id.clone(), "gibt-es-nicht".into()])
+                .unwrap_err()
+                .to_string(),
+            "folder_not_found"
+        );
+        assert_eq!(names(&s), ["Beta", "Gamma", "Alpha"]);
+
+        // Geloeschte Ordner zaehlen nicht mit; ein neuer landet hinten.
+        s.folder_delete(&b.id).unwrap();
+        assert_eq!(
+            s.folders_reorder(&[b.id.clone()])
+                .unwrap_err()
+                .to_string(),
+            "folder_not_found"
+        );
+        let d = s.folder_save(None, "Delta", None).unwrap();
+        assert_eq!(names(&s), ["Gamma", "Alpha", "Delta"]);
+        assert!(d.sort > c.sort.max(a.sort));
+    }
+
+    #[test]
+    fn unfiled_filter_lists_meetings_without_a_living_folder() {
+        let (_d, s) = tmp_store();
+        let filed = ready_meeting(&s, "Mit Projekt", 3_000);
+        let loose = ready_meeting(&s, "Ohne Projekt", 2_000);
+        let orphan = ready_meeting(&s, "Projekt geloescht", 1_000);
+        for m in [&filed, &loose, &orphan] {
+            index_texts(&s, m, &["Das Angebot liegt vor."]);
+        }
+        let f = s.folder_save(None, "Kunden", None).unwrap();
+        let gone = s.folder_save(None, "Alt", None).unwrap();
+        s.set_meeting_folders(&filed.id, &[f.id.clone()]).unwrap();
+        s.set_meeting_folders(&orphan.id, &[gone.id.clone()]).unwrap();
+        s.folder_delete(&gone.id).unwrap();
+
+        let unfiled = MeetingFilter {
+            unfiled: Some(true),
+            ..Default::default()
+        };
+        let page = s.search_meetings("", &unfiled, 0, 25).unwrap();
+        assert_eq!(meeting_titles(&page), vec!["Ohne Projekt", "Projekt geloescht"]);
+        assert_eq!(page.total, 2);
+        // Auch mit Suchtext (Such-Index-Pfad) und als Zaehler fuer die Liste.
+        assert_eq!(
+            meeting_titles(&s.search_meetings("Angebot", &unfiled, 0, 25).unwrap()),
+            vec!["Ohne Projekt", "Projekt geloescht"]
+        );
+        // Ohne das Feld (oder mit false) bleibt alles wie zuvor.
+        let all = s
+            .search_meetings("", &MeetingFilter::default(), 0, 25)
+            .unwrap();
+        assert_eq!(all.total, 3);
+        let off = MeetingFilter {
+            unfiled: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(s.search_meetings("", &off, 0, 25).unwrap().total, 3);
+        // Zaehler der Spalte: alle lebenden / ohne lebenden Ordner.
+        assert_eq!(
+            s.folder_counts().unwrap(),
+            FolderCounts { all: 3, unfiled: 2 }
+        );
+        // In mehreren Projekten: nicht "ohne".
+        s.set_meeting_folders(&loose.id, &[f.id.clone()]).unwrap();
+        assert_eq!(s.search_meetings("", &unfiled, 0, 25).unwrap().total, 1);
+        assert_eq!(
+            s.folder_counts().unwrap(),
+            FolderCounts { all: 3, unfiled: 1 }
+        );
+        s.soft_delete_meeting(&orphan.id).unwrap();
+        assert_eq!(
+            s.folder_counts().unwrap(),
+            FolderCounts { all: 2, unfiled: 0 }
+        );
     }
 
     // ---- Recipes ---------------------------------------------------------

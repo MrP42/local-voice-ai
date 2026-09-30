@@ -220,6 +220,14 @@ test.beforeEach(async ({ page }) => {
               ];
               return w.__documents[w.__documents.length - 1];
             }
+            case "meeting_notes_get":
+              // Die Notizen sind der erste Reiter der Arbeitsflaeche.
+              return {
+                meeting_id: args.meetingId,
+                blocks: [],
+                revision: 0,
+                updated_at: 0,
+              };
             case "meeting_templates_list":
               return w.__templates;
             case "plugin:dialog|save":
@@ -272,7 +280,7 @@ const openRecordings = async (page: Page) => {
 const openMinutes = async (page: Page) => {
   await openRecordings(page);
   await page.getByText("Kundentermin Meyer", { exact: true }).click();
-  await page.getByRole("button", { name: "Protokoll", exact: true }).click();
+  await page.getByRole("tab", { name: "Protokoll", exact: true }).click();
 };
 
 const generateButton = (page: Page) =>
@@ -476,9 +484,9 @@ test("Protokoll: Reiterwechsel waehrend des Laufs behaelt Sperre und Fortschritt
   ).toBeVisible();
 
   // Reiter verlassen und zurueck: das Backend laeuft weiter, der Reiter fragt nach.
-  await page.getByRole("button", { name: "Transkript", exact: true }).click();
+  await page.getByRole("tab", { name: "Notizen", exact: true }).click();
   await expect(page.getByTestId("minutes-running")).toHaveCount(0);
-  await page.getByRole("button", { name: "Protokoll", exact: true }).click();
+  await page.getByRole("tab", { name: "Protokoll", exact: true }).click();
   await expect(page.getByTestId("minutes-running")).toBeVisible();
   await expect(generateButton(page)).toBeDisabled();
   // Der Zustand kam vom Backend, mit dem Stand des Laufs: Schritt 1 von 4 = 25 %.
@@ -687,17 +695,22 @@ test("Protokoll: ein vollständiges Protokoll zeigt keine Warnung", async ({
 // ---------------------------------------------------------------------------
 
 test.describe("Automatisch bei neuen Aufnahmen", () => {
-  const startNow = async (page: Page) => {
+  // Die Vorlagenwahl steht seit M4 im Startdialog.
+  const openStart = async (page: Page) => {
     await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    await expect(page.getByTestId("record-template")).toBeVisible();
+  };
+  const startNow = async (page: Page) => {
     await page
       .getByRole("button", { name: "Alle Beteiligten haben zugestimmt" })
       .click();
   };
 
-  test("Die Aufnahme-Karte bietet Automatisch, die Wahl geht an die Besprechung", async ({
+  test("Der Startdialog bietet Automatisch, die Wahl geht an die Besprechung", async ({
     page,
   }) => {
     await openRecordings(page);
+    await openStart(page);
     const picker = page.getByTestId("record-template");
     await picker.locator(".app-select__control").click();
     await page
@@ -722,6 +735,7 @@ test.describe("Automatisch bei neuen Aufnahmen", () => {
       (window as any).__settings.meeting_default_template_id = "auto";
     });
     await openRecordings(page);
+    await openStart(page);
     await expect(
       page.getByTestId("record-template").locator(".app-select__single-value"),
     ).toHaveText("Automatisch (nach Inhalt)");

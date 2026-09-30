@@ -1,0 +1,22 @@
+{
+  "viewport": {
+    "w": 1366,
+    "h": 768
+  },
+  "document": {
+    "scrollHeight": 768,
+    "innerHeight": 768
+  },
+  "main": {
+    "scrollHeight": 716,
+    "clientHeight": 716,
+    "pageScrolls": false
+  },
+  "scrollables": [],
+  "tabTop": 454,
+  "boxes": {
+    "jobPanel": null,
+    "transcript": null,
+    "notesPad": null
+  }
+}

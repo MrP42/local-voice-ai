@@ -5551,6 +5551,74 @@ mod tests {
         );
     }
 
+    /// U3: die Projekte der Aufnahmen-Oberflaeche SIND die vorhandenen M4-Ordner.
+    /// Eine Datenbank vom M4-Stand (mit Ordnern, die gleiches `sort` tragen, wie
+    /// es ein aelterer Schreibweg erzeugen konnte) liefert nach dem Oeffnen alle
+    /// Ordner genau einmal in stabiler Reihenfolge; Umordnen nummeriert lueckenlos
+    /// durch und laesst Namen, Zuordnungen und Besprechungen unberuehrt. Ein
+    /// Schema-Schritt ist dafuer nicht noetig: `sort` gibt es seit Index 3.
+    #[test]
+    fn existing_folders_are_the_projects_without_duplicates_and_with_stable_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        create_m4_db(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            // F1 (Kunden, sort 1) steht schon drin; zwei weitere mit gleichem sort.
+            conn.execute_batch(
+                r#"
+                INSERT INTO meeting_folders (id, name, color, sort, parent_id, created_at, updated_at)
+                VALUES ('F2', 'Privat', NULL, 1, NULL, 1755600001, 1755600001),
+                       ('F3', 'Arbeit', NULL, 1, NULL, 1755600002, 1755600002);
+                INSERT INTO meeting_folder_items (folder_id, meeting_id, added_at)
+                VALUES ('F2', 'M1', 1755600101);
+                "#,
+            )
+            .unwrap();
+        }
+
+        let s = MeetingStore::open_at(&path).unwrap();
+        let ids = |s: &MeetingStore| {
+            s.folders_list()
+                .unwrap()
+                .into_iter()
+                .map(|f| f.id)
+                .collect::<Vec<_>>()
+        };
+        let first = ids(&s);
+        assert_eq!(first.len(), 3, "alle Ordner sind Projekte, keiner doppelt");
+        let mut dedup = first.clone();
+        dedup.sort();
+        dedup.dedup();
+        assert_eq!(dedup.len(), 3);
+        // Gleiches sort: nach Name (ohne Gross/Klein), dann ID.
+        assert_eq!(first, ["F3", "F1", "F2"]);
+        // Erneutes Oeffnen aendert nichts (stabil).
+        drop(s);
+        let s = MeetingStore::open_at(&path).unwrap();
+        assert_eq!(ids(&s), first);
+
+        // Umordnen vergibt 1..n; Zuordnungen bleiben.
+        s.folders_reorder(&["F2".to_string()]).unwrap();
+        let listed = s.folders_list().unwrap();
+        assert_eq!(
+            listed.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(),
+            ["F2", "F3", "F1"]
+        );
+        assert_eq!(listed.iter().map(|f| f.sort).collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(
+            s.meeting_folder_ids("M1").unwrap(),
+            vec!["F2".to_string(), "F1".to_string()]
+        );
+        assert_eq!(
+            listed
+                .iter()
+                .map(|f| (f.id.as_str(), f.meeting_count))
+                .collect::<Vec<_>>(),
+            [("F2", 1), ("F3", 0), ("F1", 1)]
+        );
+    }
+
     #[test]
     fn migration_4_is_all_or_nothing_when_it_fails_midway() {
         let dir = tempfile::tempdir().unwrap();

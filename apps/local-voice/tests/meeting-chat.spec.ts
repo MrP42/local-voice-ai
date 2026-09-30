@@ -589,10 +589,12 @@ test.describe("Chat in der Besprechung", () => {
     await expect(panel(page)).toHaveCount(0);
     await page.keyboard.press("Control+j");
     await expect(panel(page)).toBeVisible();
+    // Der Chat steht im Reiter "Fragen" rechts; das Transkript ist ein
+    // Reiter daneben und bleibt mit seinem Zustand eingehaengt.
     await expect(
-      page.getByRole("button", { name: "Transkript", exact: true }),
+      page.getByRole("tab", { name: "Transkript", exact: true }),
     ).toBeVisible();
-    await expect(page.locator('[data-segment-index="12"]')).toBeVisible();
+    await expect(page.locator('[data-segment-index="12"]')).toBeAttached();
 
     await questionBox(page).fill("Was hält der Kunde vom Preis?");
     await questionBox(page).press("Enter");
@@ -676,7 +678,11 @@ test.describe("Chat in der Besprechung", () => {
     await page.getByRole("button", { name: "Fragen", exact: true }).click();
     await expect(panel(page)).toBeVisible();
     await panel(page).getByRole("button", { name: "Chat schließen" }).click();
-    await expect(panel(page)).toHaveCount(0);
+    // Zurueck auf den Reiter Transkript: der Chat bleibt nur verborgen.
+    await expect(panel(page)).toBeHidden();
+    await expect(
+      page.getByRole("tab", { name: "Transkript", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 
   test("Zitat-Chip: Tooltip, Sprung ins Transkript, Segment markiert, playAt ab 195 s", async ({
@@ -685,7 +691,7 @@ test.describe("Chat in der Besprechung", () => {
     await withAudio(page);
     await openDetail(page);
     // Vom Notizen-Tab aus: der Sprung muss den Tab wechseln.
-    await page.getByRole("button", { name: "Notizen", exact: true }).click();
+    await page.getByRole("tab", { name: "Notizen", exact: true }).click();
     await page.keyboard.press("Control+j");
     await questionBox(page).fill("Preis?");
     await questionBox(page).press("Enter");
@@ -708,7 +714,12 @@ test.describe("Chat in der Besprechung", () => {
     await expect
       .poll(() => page.evaluate(() => (window as any).__played))
       .toEqual([195]);
-    await expect(panel(page)).toBeVisible();
+    // Das Transkript steht im selben Bereich wie der Chat: der Chat bleibt
+    // mit seinen Nachrichten eingehaengt, nur der Reiter wechselt.
+    await expect(panel(page)).toBeAttached();
+    await expect(
+      page.getByRole("tab", { name: "Transkript", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 
   test("Notizen-Zitat öffnet den Tab Notizen und markiert den Block", async ({
@@ -736,8 +747,8 @@ test.describe("Chat in der Besprechung", () => {
     );
     await panel(page).getByTestId("citation-chip").first().click();
     await expect(
-      page.getByRole("button", { name: "Meine Notizen", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
+      page.getByRole("tab", { name: "Notizen", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
     await expect(page.locator('[data-block-id="B1"]')).toHaveAttribute(
       "data-highlighted",
       "true",
@@ -1065,8 +1076,9 @@ test.describe("Chat über viele Besprechungen", () => {
   }) => {
     await openRecordings(page);
     await page
-      .getByRole("group", { name: "Ordner" })
-      .getByRole("button", { name: /Vertrieb/ })
+      .getByTestId("rec-sessions")
+      .getByTestId("project-row")
+      .filter({ hasText: "Vertrieb" })
       .click();
     await expect(page.getByText("Teamrunde")).toHaveCount(0);
     await page
@@ -1151,11 +1163,12 @@ test.describe("Chat über viele Besprechungen", () => {
   }) => {
     await withAudio(page);
     await openRecordings(page);
-    await page.getByRole("button", { name: "Auswählen", exact: true }).click();
+    await page.getByTestId("projects-more").click();
+    await page.getByRole("menuitem", { name: "Auswählen", exact: true }).click();
     await page
       .getByRole("checkbox", { name: "Kundentermin Meyer auswählen" })
-      .check();
-    await page.getByRole("checkbox", { name: "Teamrunde auswählen" }).check();
+      .click();
+    await page.getByRole("checkbox", { name: "Teamrunde auswählen" }).click();
     await expect(page.getByText("2 ausgewählt")).toBeVisible();
     await page.getByRole("button", { name: "Auswahl fragen" }).click();
     const chips = panel(page).getByRole("group", { name: "Eingrenzung" });
@@ -1174,7 +1187,8 @@ test.describe("Chat über viele Besprechungen", () => {
       }),
     );
     await panel(page).getByTestId("citation-chip").first().click();
-    // Die Detailansicht der Besprechung m2 ist offen, der Chat bleibt daneben.
+    // Die Detailansicht der Besprechung m2 ist offen; der Chat bleibt mit
+    // seinen Nachrichten eingehaengt und steht im Reiter "Fragen" bereit.
     await expect(
       page.getByRole("heading", { name: "Teamrunde" }),
     ).toBeVisible();
@@ -1185,6 +1199,8 @@ test.describe("Chat über viele Besprechungen", () => {
     await expect
       .poll(() => page.evaluate(() => (window as any).__played))
       .toEqual([195]);
+    await expect(panel(page)).toBeAttached();
+    await page.getByRole("tab", { name: "Fragen", exact: true }).click();
     await expect(panel(page)).toBeVisible();
     await expect(panel(page).getByText("Was ist offen?")).toBeVisible();
   });
