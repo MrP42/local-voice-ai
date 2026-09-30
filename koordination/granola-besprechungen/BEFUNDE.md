@@ -67,7 +67,7 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beobachtet: gleiches Muster wie B11 im älteren Protokoll-Pfad (vor dem Goal vorhanden, nicht die KI-Notizen); ask_json gibt bei Abschneiden auf.
 - Nebenbefund: Qwen3.5-9B im QG3-Lauf 186,1 s (> 180 s); das Gate gilt für das Standardmodell Gemma (156,6 s).
 - Konsequenz: Folge-Goal (Protokoll-Pfad auf die P1i-Blocklogik umstellen); in docs/KNOWN-LIMITATIONS.md vermerkt.
-- Status: erledigt (in Folge-Goal verschoben, dokumentiert; KI-Notizen als Kernpfad sind behoben)
+- Status: offen (30.09.: Patrick holt es in Runde 3 -> P1k)
 
 ## B13 — Abnahme 0.20.8: Follow-up-Mail meldet „Sprachmodell hat keinen Text geliefert“ (30.09.)
 - Beobachtet: Import „Die drei Schwestern …“ (Märchen); Log: Chat-Runden 1/2 „Antwort 10 Zeichen, kein Beleg: true“ -> followup_empty. Der Entwurf läuft über den Chat mit strenger Belegpflicht; ohne Treffer gibt es keinen Text, die Meldung ist irreführend.
