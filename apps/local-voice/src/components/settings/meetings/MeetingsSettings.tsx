@@ -74,6 +74,7 @@ const liveStub = (id: string, title: string): Meeting => {
     audio_retention_until: null,
     created_at: now,
     source_path: null,
+    description: null,
     deleted_at: null,
   };
 };

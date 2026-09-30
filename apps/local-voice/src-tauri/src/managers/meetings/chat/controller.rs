@@ -21,7 +21,7 @@ use futures_util::future::BoxFuture;
 
 use super::citations::{postprocess, DeltaFilter};
 use super::context::{
-    bm25_rank, budget_chars, card_summary, context_budget_tokens, enhanced_excerpts,
+    bm25_rank, budget_chars, card_summary, clip_chars, context_budget_tokens, enhanced_excerpts,
     history_budget_chars, notes_excerpts, number_excerpts, order_for_reading, pack, pack_dynamic,
     rank_meetings, total_cost, transcript_blocks_with, Excerpt, ExcerptPlan, MeetingCard, MeetingRef,
     SEARCH_TOP, SECOND_ROUND_LAST_RANK, SHORTLIST,
@@ -311,7 +311,7 @@ pub async fn ask(
                 label: String::new(),
                 meeting: snapshot.meeting.clone(),
                 folders: Vec::new(),
-                summary: String::new(),
+                summary: description_part(&store, &snapshot.meeting.id),
             }];
             let mut plan = live_plan(
                 snapshot,
@@ -574,17 +574,40 @@ fn folder_names(
         .collect()
 }
 
+/// U7: "Beschreibung: ..." (hoechstens 200 Zeichen, eine Zeile) fuer die Karte
+/// einer Besprechung; leer, wenn sie keine hat. Die Karte ist der Kontext, den
+/// das Modell ueber jede Besprechung im Suchbereich sieht.
+fn description_part(store: &MeetingStore, meeting_id: &str) -> String {
+    store
+        .description_of(meeting_id)
+        .ok()
+        .flatten()
+        .map(|d| {
+            let one_line = d.split_whitespace().collect::<Vec<_>>().join(" ");
+            format!("Beschreibung: {}", clip_chars(&one_line, 200))
+        })
+        .unwrap_or_default()
+}
+
 fn card_for(
     store: &MeetingStore,
     meeting: MeetingRef,
     folders: &HashMap<String, String>,
 ) -> MeetingCard {
+    let summary = [
+        description_part(store, &meeting.id),
+        latest_enhanced(store, &meeting.id)
+            .map(|n| card_summary(&n))
+            .unwrap_or_default(),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" · ");
     MeetingCard {
         label: String::new(),
         folders: folder_names(store, &meeting.id, folders),
-        summary: latest_enhanced(store, &meeting.id)
-            .map(|n| card_summary(&n))
-            .unwrap_or_default(),
+        summary,
         meeting,
     }
 }
@@ -931,6 +954,43 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     // ---- Hilfen -----------------------------------------------------------
+
+    /// U7: die Beschreibung steht auf der Karte, die das Modell ueber jede
+    /// Besprechung sieht (vor der Kurzfassung der KI-Notizen).
+    #[test]
+    fn the_card_of_a_meeting_carries_its_description() {
+        use crate::managers::meetings::metadata::MetadataEdit;
+        let (_dir, store) = tmp_store();
+        let m = ready_meeting(&store, "Kick-off", 1_750_000_000);
+        let reference = || meeting_ref(&store, &m.id).unwrap();
+        let folders = HashMap::new();
+        let plain = card_line(&card_for(&store, reference(), &folders));
+        assert!(!plain.contains("Beschreibung"), "{plain}");
+        store
+            .update_metadata(
+                &m.id,
+                &MetadataEdit {
+                    description: Some("Angebot Nordlicht\nmit dem Vertrieb".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let line = card_line(&card_for(&store, reference(), &folders));
+        assert!(line.contains("Beschreibung: Angebot Nordlicht mit dem Vertrieb"), "{line}");
+        // Lange Beschreibungen werden fuer die Karte gekuerzt.
+        store
+            .update_metadata(
+                &m.id,
+                &MetadataEdit {
+                    description: Some("wort ".repeat(200)),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let long = description_part(&store, &m.id);
+        assert!(long.chars().count() <= "Beschreibung: ".chars().count() + 200, "{long}");
+        assert!(long.ends_with('…'));
+    }
 
     fn env() -> ChatEnv {
         ChatEnv {

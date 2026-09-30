@@ -85,16 +85,21 @@ const Bar: React.FC<{ progress: LiveProgress; thin?: boolean }> = ({
 export const JobBar: React.FC<{
   progress: LiveProgress;
   className?: string;
-}> = ({ progress, className = "w-44" }) => {
+  /** U7: die Warteschlange hat den Import wegen einer Aufnahme angehalten. */
+  heldForRecording?: boolean;
+}> = ({ progress, className = "w-44", heldForRecording = false }) => {
   const { t } = useTranslation();
   const now = useNow(progress.state !== "paused");
   const eta = useEtaLabel(progress, now);
   const percent = percentOf(progress);
   const indeterminate = isIndeterminate(progress);
+  const paused = progress.state === "paused" || progress.state === "pausing";
   const stateNote =
     progress.state === "running"
       ? null
-      : t(`meetings.progress.state.${progress.state}`);
+      : heldForRecording && paused
+        ? t("meetings.queue.heldForRecording")
+        : t(`meetings.progress.state.${progress.state}`);
   return (
     <div
       data-testid="job-bar"
@@ -126,6 +131,8 @@ export const JobBar: React.FC<{
 
 interface JobPanelProps {
   progress: LiveProgress;
+  /** U7: die Warteschlange hat den Import wegen einer Aufnahme angehalten. */
+  heldForRecording?: boolean;
 }
 
 /**
@@ -135,7 +142,10 @@ interface JobPanelProps {
  * dem Backend-Zustand, nicht aus lokalem Wissen: beim Reiterwechsel oder Neu-
  * Oeffnen sieht man denselben Stand.
  */
-export const JobPanel: React.FC<JobPanelProps> = ({ progress }) => {
+export const JobPanel: React.FC<JobPanelProps> = ({
+  progress,
+  heldForRecording = false,
+}) => {
   const { t } = useTranslation();
   const now = useNow(progress.state !== "paused");
   const eta = useEtaLabel(progress, now);
@@ -173,7 +183,9 @@ export const JobPanel: React.FC<JobPanelProps> = ({ progress }) => {
   const statusText =
     progress.state === "running"
       ? null
-      : t(`meetings.progress.state.${progress.state}`);
+      : heldForRecording && holding
+        ? t("meetings.queue.heldForRecording")
+        : t(`meetings.progress.state.${progress.state}`);
 
   return (
     <div

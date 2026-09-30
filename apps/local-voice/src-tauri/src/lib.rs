@@ -318,6 +318,19 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             store.clone(),
             transcription_manager.clone(),
         ));
+        // U7: die Import-Warteschlange zuerst wiederherstellen: ein Import, der
+        // beim Absturz noch vor dem ersten Audio lag, wartet wieder (und ist dann
+        // keine Waise); einer mit Audio geht an die Wiederherstellung unten.
+        match store.queue_recover() {
+            Ok(report) if report != Default::default() => log::info!(
+                "meetings: import queue recovered: {} requeued, {} handed to recovery, {} dropped",
+                report.requeued.len(),
+                report.handed_to_recovery.len(),
+                report.dropped
+            ),
+            Ok(_) => {}
+            Err(e) => log::warn!("meetings: import queue recovery failed: {e}"),
+        }
         // A meeting still marked 'recording' means the app died mid recording:
         // repair the WAV headers and hand the meeting back as 'ready'.
         recorder.recover_orphans();
@@ -332,6 +345,21 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         }
         let index_store = store.clone(); // M4-P4b
         let calendar_store = store.clone(); // M5-P5b
+        // U7: die Import-Warteschlange (Aufnahme hat Vorrang, Enddurchlauf und
+        // Wiederherstellung halten die gemeinsame Engine).
+        let queue = {
+            let recording = recorder.clone();
+            let finishing = recorder.clone();
+            Arc::new(managers::meetings::queue::ImportQueue::for_app(
+                app_handle,
+                store.clone(),
+                transcription_manager.clone(),
+                Arc::new(move || recording.is_recording()),
+                Arc::new(move || finishing.final_jobs_active()),
+                None,
+            ))
+        };
+        app_handle.manage(queue);
         app_handle.manage(store);
         app_handle.manage(recorder);
         // M1-P1f: KI-Notizen starten nach `TranscriptFinal` (Einstellung
@@ -778,13 +806,15 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
     }
 
     // P8a: die Steuerhaken (Skript, Fortsetzen) laufen nur in der Sandbox.
-    if (args.job_script.is_some() || args.continue_meeting.is_some())
+    if (args.job_script.is_some()
+        || args.continue_meeting.is_some()
+        || !args.import_queue.is_empty())
         && std::env::var(managers::meetings::MEETINGS_DIR_ENV)
             .map(|v| v.trim().is_empty())
             .unwrap_or(true)
     {
         eprintln!(
-            "error: --job-script / --continue-meeting only run in a sandbox: set {}=<empty temp dir>",
+            "error: --job-script / --continue-meeting / --import-queue only run in a sandbox: set {}=<empty temp dir>",
             managers::meetings::MEETINGS_DIR_ENV
         );
         return 2;
@@ -804,6 +834,7 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
     {
         Some(Ok(log)) => {
             managers::meetings::job_harness::attach_event_log(app, Arc::clone(&log));
+            managers::meetings::job_harness::attach_queue_log(app, Arc::clone(&log)); // U7
             Some(log)
         }
         Some(Err(e)) => {
@@ -881,6 +912,11 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
 
     if args.simulate_meeting {
         return run_simulate_meeting(app, &store, &tm, args);
+    }
+
+    // U7: die Import-Warteschlange wie in der App, ohne Fenster.
+    if !args.import_queue.is_empty() {
+        return run_headless_import_queue(app, &store, &tm, &recorder, args);
     }
 
     // P8a: "Fortsetzen" eines gestoppten Imports, wie der Knopf es ausloest.
@@ -1257,6 +1293,96 @@ fn dump_meeting(
 /// the harness asserts on, including the derived numbers (segment count,
 /// first/last segment times, the set of channels used), so those derivations
 /// live in one place instead of being re-done in PowerShell.
+/// U7: `--import-queue`: die Dateien in der angegebenen Reihenfolge in die
+/// Warteschlange stellen (wie das Symbol und die Ablage der Oberflaeche), warten,
+/// bis sie leer ist, und je Besprechung den Stand ausgeben. Die Reihenfolge und
+/// Gleichzeitigkeit der Laeufe steht in der Logdatei (`--job-events`: Zustand,
+/// Fortschritt und Warteschlange mit Zeit seit dem Start).
+fn run_headless_import_queue(
+    app: &AppHandle,
+    store: &Arc<managers::meetings::store::MeetingStore>,
+    tm: &Arc<TranscriptionManager>,
+    recorder: &Arc<managers::meetings::recorder::MeetingRecorderManager>,
+    args: &CliArgs,
+) -> i32 {
+    use managers::meetings::queue::{self, ImportQueue};
+
+    for path in &args.import_queue {
+        if !path.is_file() {
+            eprintln!("error: no such file: {}", path.display());
+            return 2;
+        }
+    }
+    // Die gemeinsame Engine laedt der Aufruf wie bei --import-meeting; weitere
+    // Laeufe laden ihre eigene (Speicher-Tor der Warteschlange).
+    let model_id = args
+        .model
+        .clone()
+        .unwrap_or_else(|| tm.meeting_model_target(&get_settings(app)));
+    if model_id.is_empty() {
+        eprintln!("error: no model selected (pass --model or pick one in the app)");
+        return 2;
+    }
+    let load_start = std::time::Instant::now();
+    if let Err(e) = tm.load_model_with_device(&model_id, args.device_index) {
+        eprintln!("error: load_model('{model_id}') failed: {e}");
+        return 1;
+    }
+    println!("MODEL={model_id}");
+    println!("LOAD_MS={}", load_start.elapsed().as_millis());
+
+    let (recording, finishing) = (recorder.clone(), recorder.clone());
+    let queue = ImportQueue::for_app(
+        app,
+        Arc::clone(store),
+        Arc::clone(tm),
+        Arc::new(move || recording.is_recording()),
+        Arc::new(move || finishing.final_jobs_active()),
+        args.queue_parallel.map(|n| queue::clamp_limit(n)),
+    );
+    let started = std::time::Instant::now();
+    let consent_at = Some(chrono::Utc::now().timestamp());
+    let mut ids: Vec<String> = Vec::new();
+    for path in &args.import_queue {
+        let Some(source) = path.to_str() else {
+            eprintln!("error: path is not valid UTF-8: {}", path.display());
+            return 2;
+        };
+        match queue.enqueue(&queue::title_from_path(path), source, consent_at) {
+            Ok(meeting) => {
+                println!("QUEUED={} {}", meeting.id, path.display());
+                ids.push(meeting.id);
+            }
+            Err(e) => {
+                eprintln!("error: enqueue failed: {e}");
+                return 1;
+            }
+        }
+    }
+    let idle = queue.wait_idle(std::time::Duration::from_secs(45 * 60));
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    println!("QUEUE_MS={elapsed_ms}");
+    let meetings: Vec<serde_json::Value> = ids
+        .iter()
+        .map(|id| meeting_payload(store, id).unwrap_or_else(|| serde_json::json!({ "id": id })))
+        .collect();
+    let payload = serde_json::json!({
+        "model": model_id,
+        "parallel": args.queue_parallel,
+        "order": ids,
+        "idle": idle,
+        "queue_ms": elapsed_ms,
+        "db": store.db_path().display().to_string(),
+        "meetings": meetings,
+    });
+    emit_headless_payload(&payload, args.out.as_deref());
+    if idle && meetings.iter().all(|m| m["status"] == "ready") {
+        0
+    } else {
+        1
+    }
+}
+
 fn meeting_payload(
     store: &Arc<managers::meetings::store::MeetingStore>,
     id: &str,
@@ -1862,6 +1988,12 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::meetings_get_documents,
             commands::meetings::meetings_delete,
             commands::meetings::meetings_import_file,
+            // U7
+            commands::meeting_queue::meetings_queue_list,
+            commands::meeting_queue::meetings_queue_remove,
+            commands::meeting_queue::meetings_queue_to_front,
+            commands::meeting_queue::meetings_update_metadata,
+            commands::meeting_queue::change_meeting_import_parallel_setting,
             commands::meetings::meetings_generate_minutes,
             commands::meetings::meetings_minutes_file,
             // P1k
@@ -2097,6 +2229,8 @@ pub fn run(cli_args: CliArgs) {
         .events(collect_events![
             managers::history::HistoryUpdatePayload,
             managers::meetings::recorder::MeetingEvent,
+            // U7
+            managers::meetings::queue::ImportQueueEvent,
             // M1-P1b
             commands::meeting_enhance::MeetingNotesEvent,
             // P1k
@@ -2134,6 +2268,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.list_models
         || cli_args.tts_test
         || cli_args.import_meeting.is_some()
+        || !cli_args.import_queue.is_empty() // U7
         || cli_args.dump_meeting.is_some()
         || cli_args.continue_meeting.is_some() // P8a
         || cli_args.make_orphan.is_some()
@@ -2565,6 +2700,7 @@ pub fn run(cli_args: CliArgs) {
                 let handle = app_handle.clone();
                 let args = cli_args.clone();
                 let meetings_mode = args.import_meeting.is_some()
+                    || !args.import_queue.is_empty() // U7
                     || args.dump_meeting.is_some()
                     || args.continue_meeting.is_some()
                     || args.make_orphan.is_some()

@@ -1109,6 +1109,42 @@ mod tests {
         }
     }
 
+    /// U7: die Beschreibung ist Kontext fuer den KI-Client: in `get_meeting` und in
+    /// den Listen, nur wo es eine gibt.
+    #[test]
+    fn the_description_is_context_in_get_meeting_and_in_the_lists() {
+        use crate::managers::meetings::metadata::MetadataEdit;
+        let fx = Fx::new();
+        let (before, _) = fx.tool("get_meeting", json!({ "id": fx.a }));
+        assert!(!before.contains("Beschreibung:"), "{before}");
+        fx.store
+            .update_metadata(
+                &fx.a,
+                &MetadataEdit {
+                    description: Some("Thema: Budget 2027\nTeilnehmer: Vertrieb".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let (text, is_error) = fx.tool("get_meeting", json!({ "id": fx.a }));
+        assert!(!is_error, "{text}");
+        assert!(
+            text.contains("Beschreibung: Thema: Budget 2027\nTeilnehmer: Vertrieb"),
+            "{text}"
+        );
+        let list = fx.tool_json("list_meetings", json!({}));
+        let meetings = list["meetings"].as_array().unwrap();
+        let mine = meetings.iter().find(|m| m["id"] == fx.a.as_str()).unwrap();
+        assert_eq!(mine["description"], "Thema: Budget 2027\nTeilnehmer: Vertrieb");
+        assert!(
+            meetings
+                .iter()
+                .filter(|m| m["id"] != fx.a.as_str())
+                .all(|m| m["description"].is_null()),
+            "ohne Beschreibung: null"
+        );
+    }
+
     #[test]
     fn get_meeting_honours_parts_and_refuses_unknown_deleted_or_unfinished() {
         let fx = Fx::new();

@@ -39,6 +39,7 @@ const meeting = (
   audio_retention_until: null,
   created_at: T0,
   source_path: null,
+  description: null,
   deleted_at: null,
   ...over,
 });

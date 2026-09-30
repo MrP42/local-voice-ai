@@ -24,7 +24,15 @@ Record meetings or import files, take notes live, transcribe them and condense e
 
 ## Importing
 
-Import audio and video files as well as subtitles (VTT, SRT) with the **Import file** icon in the controls, or drop them onto the workspace. They land in the selected project and are transcribed like a recording.
+Import audio and video files as well as subtitles (VTT, SRT) with the **Import file** icon in the controls, or drop them onto the workspace; several files at once work too. They land in the selected project and are transcribed like a recording.
+
+### Queue
+
+- You can add more files **at any time**, even while another one is still being transcribed. Each one gets its meeting at once, with the status **Waiting** and its **place** ("place 2 of 3", in the list and in the header). Files run in the order you added them.
+- Move a waiting file **to the front** from the context menu (right mouse button) or the controls column, or **remove it from the queue**; it then counts as cancelled, and **Queue again** puts it at the end. A running file is stopped as before.
+- The queue survives a restart. If a file was deleted or moved before its turn, the meeting reports it and the queue carries on with the next one.
+- **A recording always takes priority:** while it runs, no new file starts and running imports pause at the next block. Afterwards the queue continues by itself.
+- Settings, Dictation, Meetings has **Simultaneous transcriptions** (1, 2 or 3; default 1). Every additional transcription loads the model again and needs room: if memory (and, for GPU models, graphics memory) is short, the next file waits with the note "Waiting for memory". The machine is never driven to a standstill; when in doubt it stays at one.
 
 ## Notes, AI notes and minutes
 
@@ -40,6 +48,8 @@ While a meeting is processed, a progress bar shows the phase, percentage and tim
 ## Menu ☰ and details
 
 Rarely used actions live in the menu ☰: re-transcribe, regenerate AI notes and minutes, change template, move to project, rename, details and delete. **Details** shows status, source, duration, consent, model and retention at a glance.
+
+**Edit** in the details dialog changes the **title**, the **description** (multi-line), **date and time**, the **participants** (from the existing people) and the **projects**. Saving is all or nothing; file name and source stay as they are. The description is searchable and available to chat, AI notes, minutes and the local MCP server as background.
 
 ## Small window
 

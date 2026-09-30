@@ -1,12 +1,14 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Meeting } from "@/bindings";
+import type { Folder, Meeting, Participant } from "@/bindings";
 import type { LiveProgress } from "@/lib/meetingJobs";
 import { useModelStore } from "@/stores/modelStore";
 import { useSettings } from "../../../hooks/useSettings";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { StatusChip } from "./MeetingHeader";
+import { MeetingMetadataForm } from "./MeetingMetadataForm";
+import type { QueuePlace } from "@/lib/meetingQueue";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -29,12 +31,22 @@ interface MeetingDetailsDialogProps {
   progress?: LiveProgress;
   segmentCount: number;
   projectNames: string[];
+  /** U7: Platz in der Import-Warteschlange, solange die Besprechung wartet. */
+  queue?: QueuePlace | null;
+  /** U7 (Bearbeiten): Teilnehmende, alle Projekte, Projekte der Besprechung. */
+  participants?: Participant[];
+  folders?: Folder[];
+  folderIds?: string[];
+  /** U7: die Metadaten wurden gespeichert (aktuelle Besprechung). */
+  onSaved?: (meeting: Meeting) => void;
 }
 
 /**
  * Vollinfo zur Besprechung: alles, was der kompakte Kopf nur andeutet (Status,
  * Quelle und Datei, Spuren, Beginn, Dauer, Sprache, Modell, Einwilligung,
- * Löschdatum des Audios, Segmente).
+ * Löschdatum des Audios, Segmente). U7: "Bearbeiten" ändert Titel,
+ * Beschreibung, Datum, Teilnehmende und Projekte (`MeetingMetadataForm`);
+ * Quelle und Dateiname bleiben, wie sie sind.
  */
 export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
   open,
@@ -43,10 +55,21 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
   progress,
   segmentCount,
   projectNames,
+  queue,
+  participants = [],
+  folders = [],
+  folderIds = [],
+  onSaved,
 }) => {
   const { t, i18n } = useTranslation();
   const { getSetting } = useSettings();
   const { models, loadModels } = useModelStore();
+  const [editing, setEditing] = useState(false);
+
+  // Ein neu geoeffneter Dialog beginnt immer in der Ansicht.
+  useEffect(() => {
+    if (!open) setEditing(false);
+  }, [open]);
 
   useEffect(() => {
     if (open && models.length === 0) void loadModels();
@@ -91,9 +114,22 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
       value: meeting.title,
     },
     {
+      key: "description",
+      label: t("meetings.detailsDialog.description"),
+      value: meeting.description?.trim() ? (
+        <span className="whitespace-pre-wrap break-words">
+          {meeting.description}
+        </span>
+      ) : (
+        <span className="text-text/50">
+          {t("meetings.detailsDialog.noDescription")}
+        </span>
+      ),
+    },
+    {
       key: "status",
       label: t("meetings.meta.status"),
-      value: <StatusChip meeting={meeting} progress={progress} />,
+      value: <StatusChip meeting={meeting} progress={progress} queue={queue} />,
     },
     {
       key: "source",
@@ -122,6 +158,18 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
         tracks.length > 0
           ? tracks.join(" + ")
           : t("meetings.detailsDialog.trackNone"),
+    },
+    {
+      key: "people",
+      label: t("meetings.detailsDialog.people"),
+      value:
+        participants.length > 0 ? (
+          participants.map((p) => p.name).join(", ")
+        ) : (
+          <span className="text-text/50">
+            {t("meetings.detailsDialog.noPeople")}
+          </span>
+        ),
     },
     {
       key: "projects",
@@ -188,24 +236,75 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
       title={t("meetings.detailsDialog.title")}
       closeLabel={t("meetings.detailsDialog.close")}
       footer={
-        <Button onClick={() => onOpenChange(false)}>
-          {t("meetings.detailsDialog.close")}
-        </Button>
+        editing ? undefined : (
+          <>
+            {onSaved && (
+              <Button
+                variant="secondary"
+                data-testid="details-edit"
+                onClick={() => setEditing(true)}
+              >
+                {t("meetings.metadata.edit")}
+              </Button>
+            )}
+            <Button onClick={() => onOpenChange(false)}>
+              {t("meetings.detailsDialog.close")}
+            </Button>
+          </>
+        )
       }
     >
-      <dl
-        className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-4 gap-y-1.5 text-sm"
-        data-testid="meeting-details"
-      >
-        {rows.map((row) => (
-          <React.Fragment key={row.key}>
-            <dt className="text-text/60">{row.label}</dt>
-            <dd data-testid={`details-${row.key}`} className="min-w-0">
-              {row.value}
+      {editing && onSaved ? (
+        <div className="space-y-3">
+          {/* Quelle und Dateiname bleiben sichtbar und unveraendert. */}
+          <dl
+            className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-4 gap-y-1.5 text-sm"
+            data-testid="meeting-details-fixed"
+          >
+            <dt className="text-text/60">{t("meetings.meta.source")}</dt>
+            <dd data-testid="details-source">
+              {t(`meetings.meta.sourceKind.${meeting.source}`, {
+                defaultValue: meeting.source,
+              })}
             </dd>
-          </React.Fragment>
-        ))}
-      </dl>
+            {file && (
+              <>
+                <dt className="text-text/60">
+                  {t("meetings.detailsDialog.file")}
+                </dt>
+                <dd data-testid="details-file" className="min-w-0 break-all">
+                  <span title={file}>{fileBaseName(file)}</span>
+                </dd>
+              </>
+            )}
+          </dl>
+          <MeetingMetadataForm
+            meeting={meeting}
+            participants={participants}
+            folders={folders}
+            folderIds={folderIds}
+            onCancel={() => setEditing(false)}
+            onSaved={(saved) => {
+              setEditing(false);
+              onSaved(saved);
+            }}
+          />
+        </div>
+      ) : (
+        <dl
+          className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-4 gap-y-1.5 text-sm"
+          data-testid="meeting-details"
+        >
+          {rows.map((row) => (
+            <React.Fragment key={row.key}>
+              <dt className="text-text/60">{row.label}</dt>
+              <dd data-testid={`details-${row.key}`} className="min-w-0">
+                {row.value}
+              </dd>
+            </React.Fragment>
+          ))}
+        </dl>
+      )}
     </Dialog>
   );
 };

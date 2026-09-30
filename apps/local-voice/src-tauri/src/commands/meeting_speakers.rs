@@ -648,6 +648,7 @@ mod tests {
         let segments = f.store.get_segments(&f.id).unwrap();
         let head = ChunkHead {
             title: "t".into(),
+            description: String::new(),
             started_at: None,
             folder_names: Vec::new(),
         };

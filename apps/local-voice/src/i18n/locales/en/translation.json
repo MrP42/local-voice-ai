@@ -1907,6 +1907,8 @@
       "notFound": "This meeting no longer exists.",
       "noAudio": "No recording stored for this meeting — there is nothing to transcribe again.",
       "audioMissing": "The recording is no longer on disk (retention period expired).",
+      "importSourceMissing": "The file was deleted or moved before its turn came.",
+      "importPathInvalid": "The file path contains characters that are not supported.",
       "retranscribeFailed": "Re-transcription failed. The transcript was left unchanged.",
       "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, or cancelled).",
       "finalPassStopped": "Post-processing stopped – the live transcript stays valid.",
@@ -1963,7 +1965,29 @@
       "processing": "Processing",
       "ready": "Ready",
       "failed": "Failed",
-      "cancelled": "Cancelled"
+      "cancelled": "Cancelled",
+      "queued": "Waiting"
+    },
+    "queue": {
+      "place": "Waiting · place {{position}} of {{total}}",
+      "toFront": "Move to front",
+      "toFrontHint": "Transcribe this file next",
+      "remove": "Remove from the queue",
+      "removeHint": "Cancel – the file stays untouched, “Continue” queues it again",
+      "removedTitle": "Removed from the queue",
+      "removedBody": "This file has not been transcribed yet. You can put it back at the end of the queue.",
+      "requeue": "Queue again",
+      "startsSoon": "Starts shortly.",
+      "heldForRecording": "Paused – a recording is running",
+      "reason": {
+        "slot": "Another transcription is running. This file is next after it.",
+        "memory": "Waiting for memory: there is not enough free for another simultaneous transcription.",
+        "recording": "A recording is running and takes priority. The queue continues afterwards."
+      },
+      "errors": {
+        "notInQueue": "The file is no longer in the queue.",
+        "notQueued": "The file is no longer waiting."
+      }
     },
     "progress": {
       "percent": "{{percent}}%",
@@ -2075,7 +2099,12 @@
       "finalTitle": "Final pass after stopping",
       "finalDescription": "After stopping, a more accurate model rewrites the whole transcript; AI notes are created only afterwards. Automatic: with a graphics card Whisper Large v3 (otherwise Qwen3-ASR 1.7B), without one the live transcript stays. A model picked explicitly also runs without a graphics card; an hour of meeting then takes about a quarter of an hour.",
       "finalAuto": "Automatic (recommended)",
-      "finalOff": "Off – keep the live transcript"
+      "finalOff": "Off – keep the live transcript",
+      "parallelTitle": "Simultaneous transcriptions",
+      "parallelDescription": "How many files are transcribed at the same time. More than one only while memory (and graphics memory) suffice for each additional one – each loads the model again. Otherwise the next file waits (“waiting for memory”). A running recording always takes priority: the queue pauses then.",
+      "parallel1": "1 (default)",
+      "parallel2": "2",
+      "parallel3": "3"
     },
     "header": {
       "renameName": "Rename",
@@ -2110,7 +2139,40 @@
       "model": "Model",
       "modelNote": "{{name}} (current setting)",
       "modelDefault": "Configured meeting model",
-      "retentionNever": "never (setting “Keep”)"
+      "retentionNever": "never (setting “Keep”)",
+      "description": "Description",
+      "noDescription": "No description",
+      "people": "Participants",
+      "noPeople": "No participants recorded"
+    },
+    "metadata": {
+      "edit": "Edit",
+      "save": "Save",
+      "saving": "Saving …",
+      "cancel": "Cancel",
+      "title": "Title",
+      "description": "Description",
+      "descriptionPlaceholder": "What is it about? Topic, people, goal – searchable and context for chat, AI notes and MCP.",
+      "descriptionCount": "{{count}} of {{max}} characters",
+      "datetime": "Date and time",
+      "participants": "Participants",
+      "participantsSearch": "Search for a person",
+      "participantsNone": "No person selected",
+      "noPeopleFound": "No person found.",
+      "removePerson": "Remove {{name}}",
+      "projects": "Projects",
+      "noProjectsYet": "There are no projects yet.",
+      "fixedHint": "Source and file name cannot be changed.",
+      "errors": {
+        "meetingNotFound": "The meeting no longer exists.",
+        "titleEmpty": "The title must not be empty.",
+        "titleTooLong": "The title is too long.",
+        "descriptionTooLong": "The description is too long.",
+        "dateInvalid": "The date is invalid.",
+        "personNotFound": "One of the people no longer exists.",
+        "folderNotFound": "One of the projects no longer exists.",
+        "unknown": "The changes could not be saved."
+      }
     },
     "actions": {
       "group": "Actions",
@@ -2443,7 +2505,7 @@
       "hasNotes": "With notes",
       "hitIn": "Match in: {{source}}",
       "hitSource": {
-        "title": "Title",
+        "title": "Title or description",
         "transcript": "Transcript",
         "user_notes": "My notes",
         "ai_notes": "AI notes"

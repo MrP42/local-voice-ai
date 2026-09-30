@@ -580,6 +580,7 @@ mod tests {
     fn head() -> MeetingHead {
         MeetingHead {
             title: "Die drei Schwestern".into(),
+            description: String::new(),
             date_iso: "2026-09-30".into(),
             duration_ms: 600_000,
             shares: vec![],

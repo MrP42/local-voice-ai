@@ -1907,6 +1907,8 @@
       "notFound": "Diese Besprechung existiert nicht mehr.",
       "noAudio": "Zu dieser Besprechung ist keine Aufzeichnung gespeichert — es gibt nichts, was neu transkribiert werden könnte.",
       "audioMissing": "Die Aufzeichnung liegt nicht mehr auf der Platte (Aufbewahrungsfrist abgelaufen).",
+      "importSourceMissing": "Die Datei wurde gelöscht oder verschoben, bevor sie an der Reihe war.",
+      "importPathInvalid": "Der Dateipfad enthält Zeichen, die nicht unterstützt werden.",
       "retranscribeFailed": "Die Neu-Transkription ist fehlgeschlagen. Das Transkript blieb unverändert.",
       "finalPassSkipped": "Enddurchlauf übersprungen – das Live-Transkript bleibt gültig (Modell fehlt, zu wenig Speicher oder abgebrochen).",
       "finalPassStopped": "Nachbearbeitung gestoppt – das Live-Transkript bleibt gültig.",
@@ -1963,7 +1965,29 @@
       "processing": "Wird verarbeitet",
       "ready": "Fertig",
       "failed": "Fehlgeschlagen",
-      "cancelled": "Abgebrochen"
+      "cancelled": "Abgebrochen",
+      "queued": "Wartet"
+    },
+    "queue": {
+      "place": "Wartet · Platz {{position}} von {{total}}",
+      "toFront": "Nach vorn ziehen",
+      "toFrontHint": "Diese Datei als Nächste transkribieren",
+      "remove": "Aus der Warteschlange nehmen",
+      "removeHint": "Abbrechen – die Datei bleibt unberührt, „Fortsetzen“ reiht sie wieder ein",
+      "removedTitle": "Aus der Warteschlange genommen",
+      "removedBody": "Diese Datei wurde noch nicht transkribiert. Du kannst sie wieder hinten in der Warteschlange einreihen.",
+      "requeue": "Wieder einreihen",
+      "startsSoon": "Beginnt gleich.",
+      "heldForRecording": "Angehalten – eine Aufnahme läuft",
+      "reason": {
+        "slot": "Eine andere Transkription läuft. Diese Datei ist danach dran.",
+        "memory": "Wartet auf Arbeitsspeicher: für eine weitere gleichzeitige Transkription ist nicht genug frei.",
+        "recording": "Eine Aufnahme läuft und hat Vorrang. Danach geht es automatisch weiter."
+      },
+      "errors": {
+        "notInQueue": "Die Datei steht nicht mehr in der Warteschlange.",
+        "notQueued": "Die Datei wartet nicht mehr."
+      }
     },
     "progress": {
       "percent": "{{percent}} %",
@@ -2075,7 +2099,12 @@
       "finalTitle": "Enddurchlauf nach dem Stopp",
       "finalDescription": "Nach dem Stopp schreibt ein genaueres Modell das ganze Transkript neu; KI-Notizen entstehen erst danach. Automatisch: mit Grafikkarte Whisper Large v3 (sonst Qwen3-ASR 1.7B), ohne Grafikkarte bleibt das Live-Transkript. Ein fest gewähltes Modell läuft auch ohne Grafikkarte, dann dauert eine Stunde Besprechung etwa eine Viertelstunde.",
       "finalAuto": "Automatisch (empfohlen)",
-      "finalOff": "Aus – Live-Transkript behalten"
+      "finalOff": "Aus – Live-Transkript behalten",
+      "parallelTitle": "Gleichzeitige Transkriptionen",
+      "parallelDescription": "Wie viele Dateien gleichzeitig transkribiert werden. Mehr als eine nur, wenn Arbeitsspeicher (und Grafikspeicher) für jede weitere reichen – jede lädt das Modell noch einmal. Sonst wartet die nächste Datei („wartet auf Arbeitsspeicher“). Eine laufende Aufnahme hat immer Vorrang: dann pausiert die Warteschlange.",
+      "parallel1": "1 (Standard)",
+      "parallel2": "2",
+      "parallel3": "3"
     },
     "header": {
       "renameName": "Umbenennen",
@@ -2110,7 +2139,40 @@
       "model": "Modell",
       "modelNote": "{{name}} (aktuelle Einstellung)",
       "modelDefault": "Eingestelltes Besprechungsmodell",
-      "retentionNever": "nie (Einstellung „Behalten“)"
+      "retentionNever": "nie (Einstellung „Behalten“)",
+      "description": "Beschreibung",
+      "noDescription": "Keine Beschreibung",
+      "people": "Teilnehmende",
+      "noPeople": "Keine Teilnehmenden erfasst"
+    },
+    "metadata": {
+      "edit": "Bearbeiten",
+      "save": "Speichern",
+      "saving": "Speichern …",
+      "cancel": "Abbrechen",
+      "title": "Titel",
+      "description": "Beschreibung",
+      "descriptionPlaceholder": "Worum geht es? Thema, Beteiligte, Ziel – durchsuchbar und Kontext für Chat, KI-Notizen und MCP.",
+      "descriptionCount": "{{count}} von {{max}} Zeichen",
+      "datetime": "Datum und Uhrzeit",
+      "participants": "Teilnehmende",
+      "participantsSearch": "Person suchen",
+      "participantsNone": "Keine Person ausgewählt",
+      "noPeopleFound": "Keine Person gefunden.",
+      "removePerson": "{{name}} entfernen",
+      "projects": "Projekte",
+      "noProjectsYet": "Es gibt noch keine Projekte.",
+      "fixedHint": "Quelle und Dateiname lassen sich nicht ändern.",
+      "errors": {
+        "meetingNotFound": "Die Besprechung gibt es nicht mehr.",
+        "titleEmpty": "Der Titel darf nicht leer sein.",
+        "titleTooLong": "Der Titel ist zu lang.",
+        "descriptionTooLong": "Die Beschreibung ist zu lang.",
+        "dateInvalid": "Das Datum ist ungültig.",
+        "personNotFound": "Eine der Personen gibt es nicht mehr.",
+        "folderNotFound": "Eines der Projekte gibt es nicht mehr.",
+        "unknown": "Die Änderungen konnten nicht gespeichert werden."
+      }
     },
     "actions": {
       "group": "Aktionen",
@@ -2443,7 +2505,7 @@
       "hasNotes": "Mit Notizen",
       "hitIn": "Treffer in: {{source}}",
       "hitSource": {
-        "title": "Titel",
+        "title": "Titel oder Beschreibung",
         "transcript": "Transkript",
         "user_notes": "Meine Notizen",
         "ai_notes": "KI-Notizen"

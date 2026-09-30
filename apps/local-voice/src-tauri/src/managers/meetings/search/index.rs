@@ -44,7 +44,7 @@ pub const STATUS_ERROR: &str = "error";
 
 const MEETING_COLUMNS: &str = "m.id, m.title, m.status, m.source, m.started_at, m.ended_at, \
      m.language, m.mic_audio_path, m.system_audio_path, m.duration_ms, m.consent_confirmed_at, \
-     m.audio_retention_until, m.source_path, m.created_at, m.deleted_at";
+     m.audio_retention_until, m.source_path, m.description, m.created_at, m.deleted_at";
 
 // ---------------------------------------------------------------------------
 // Typen

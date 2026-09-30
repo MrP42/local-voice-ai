@@ -29,8 +29,33 @@ Drei Spalten, jede scrollt für sich; Breiten, Auswahl und Reiter bleiben über 
    (Einstellungen → Diktat → Besprechungen → Enddurchlauf; „Aus“ behält das Live-Transkript).
 
 Während einer Aufnahme ist das Diktat gesperrt. Dateien (Audio, Video, VTT, SRT) importieren Sie mit dem Symbol
-**Datei importieren** oder indem Sie sie auf die Arbeitsfläche ziehen; sie landen im gewählten Projekt.
-Bei laufender Verarbeitung: **Pausieren** gibt den Rechner frei, **Stoppen** behält das bisherige Transkript.
+**Datei importieren** (auch mehrere auf einmal) oder indem Sie sie auf die Arbeitsfläche ziehen; sie landen im
+gewählten Projekt. Bei laufender Verarbeitung: **Pausieren** gibt den Rechner frei, **Stoppen** behält das bisherige Transkript.
+
+### Import-Warteschlange und gleichzeitige Transkriptionen
+
+- Weitere Dateien lassen sich **jederzeit** hinzufügen. Jede bekommt sofort ihre Besprechung (Status **Wartet**, Platz in
+  Liste und Kopf) und läuft in der Reihenfolge des Hinzufügens. Wartende ziehen Sie nach vorn oder nehmen sie heraus
+  (Kontextmenü oder Bedienspalte; herausgenommen = abgebrochen, **Wieder einreihen** stellt sie hinten an); eine laufende stoppen Sie wie bisher.
+- Die Warteschlange steht in der Datenbank und übersteht einen Neustart. Lief eine Datei beim Absturz noch vor dem ersten
+  Audio (Dekodieren), wartet sie wieder an ihrer Stelle; hatte sie schon Audio und Teiltranskript, holt die
+  Wiederherstellung nach einem Absturz den Rest nach. Eine Datei, die vor ihrem Start gelöscht wurde, scheitert sichtbar
+  („Die Datei wurde gelöscht oder verschoben …“), die Warteschlange läuft weiter.
+- **Aufnahme hat Vorrang:** Während einer Live-Aufnahme beginnt nichts Neues, laufende Importe halten am nächsten Block an
+  und setzen danach fort. Die gemeinsame Engine gehört in dieser Zeit der Aufnahme, und eine zweite würde Rechenzeit und
+  Grafikspeicher nehmen, die das Mitschreiben in Echtzeit braucht.
+- **Gleichzeitige Transkriptionen** (Einstellungen → Diktat → Besprechungen, 1 bis 3, Standard 1): transcribe.cpp erlaubt je
+  Modell nur einen laufenden Aufruf, echte Gleichzeitigkeit braucht ein **eigenes Modell je Lauf** und damit das Modell noch
+  einmal im Speicher. Ein weiterer Lauf beginnt nur, wenn RAM (Modellgröße × 1,5 + 512 MB, plus 6 GB Systemreserve) und bei
+  GPU-Modellen der freie Grafikspeicher (Modell × 1,25 + 1 GB) reichen; sonst wartet die Datei („Wartet auf Arbeitsspeicher“).
+  Es lädt immer nur eine weitere Engine zugleich. Laufende Läufe werden nie abgebrochen, auch nicht bei knappem Speicher.
+
+### Metadaten bearbeiten
+
+**Details → Bearbeiten** ändert Titel, **Beschreibung** (mehrzeilig, bis 4 000 Zeichen), Datum und Uhrzeit, Teilnehmende (vorhandene
+Personen) und Projekte in einem Schritt (alles oder nichts). Dateiname und Quelle bleiben unverändert. Die Beschreibung
+ist durchsuchbar (Suche zeigt „Treffer in: Titel oder Beschreibung“) und Hintergrund für Chat (Karte der Besprechung),
+KI-Notizen, Protokoll, Follow-up und den lokalen MCP-Server (`list_meetings`, `get_meeting`).
 
 ## KI-Notizen und Vorlagen
 

@@ -255,6 +255,9 @@ const settingUpdaters: {
     commands.changeMeetingDetectModeSetting(value as DetectMode),
   meeting_detect_ignored_apps: (value) =>
     commands.changeMeetingDetectIgnoredAppsSetting((value as string[]) ?? []),
+  // U7
+  meeting_import_parallel: (value) =>
+    commands.changeMeetingImportParallelSetting(value as number),
   // M3-P3c
   meeting_diarization: (value) =>
     commands.changeMeetingDiarizationSetting((value as string) || "auto"),

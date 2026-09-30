@@ -83,7 +83,23 @@ fn new_variant(f: &Fx, kind: &'static str, texts: &[&str], activate: bool) -> Ne
 
 #[test]
 fn migration_6_is_the_next_index_after_the_register() {
-    assert_eq!(MIGRATIONS.len(), 7, "A1 endet bei Index 5, A3 ist Index 6");
+    // A1 endet bei Index 5, A3 ist Index 6, U7 (Warteschlange) folgt als Index 7.
+    assert_eq!(MIGRATIONS.len(), 8, "A1 = 5, A3 = 6, U7 = 7");
+    let mut c = Connection::open_in_memory().unwrap();
+    Migrations::new(MIGRATIONS[..7].to_vec())
+        .to_latest(&mut c)
+        .unwrap();
+    let has = |table: &str| -> bool {
+        c.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![table],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+            == 1
+    };
+    assert!(has("transcript_variants"), "Index 6 legt die Fassungen an");
+    assert!(!has("import_queue"), "die Warteschlange folgt erst mit Index 7");
 }
 
 fn old_db(path: &std::path::Path) -> Connection {

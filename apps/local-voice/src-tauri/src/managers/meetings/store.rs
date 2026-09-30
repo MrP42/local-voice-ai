@@ -99,6 +99,11 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // A3 (Transkript-Fassungen, B17). Nur CREATE plus eine Rueckfuellung: jedes
     // vorhandene Transkript wird Fassung 1 (aktiv). Naeheres in `variants.rs`.
     M::up(super::variants::VARIANTS_MIGRATION),
+    // U7 (Import-Warteschlange, Beschreibung). Nur ALTER ... ADD COLUMN und
+    // CREATE: vorhandene Zeilen bleiben unveraendert. Der SQL-Text steht in
+    // `queue_store.rs`, damit dieser Schritt beim Zusammenfuehren mit anderen
+    // Zweigen nur aus dieser einen Zeile besteht.
+    M::up(super::queue_store::QUEUE_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
@@ -291,6 +296,9 @@ pub struct Meeting {
     /// recordings. Kept separately from `title` because the title is
     /// user-editable (M9) and must be allowed to diverge from the file name.
     pub source_path: Option<String>,
+    /// U7: freie Beschreibung (mehrzeilig), vom Nutzer gepflegt. Durchsuchbar
+    /// (Such-Index) und Kontext fuer Chat, KI-Notizen und MCP.
+    pub description: Option<String>,
     pub created_at: i64,
     pub deleted_at: Option<i64>,
 }
@@ -927,6 +935,7 @@ impl MeetingStore {
             consent_confirmed_at: row.get("consent_confirmed_at")?,
             audio_retention_until: row.get("audio_retention_until")?,
             source_path: row.get("source_path")?,
+            description: row.get("description")?,
             created_at: row.get("created_at")?,
             deleted_at: row.get("deleted_at")?,
         })
@@ -968,6 +977,7 @@ impl MeetingStore {
             consent_confirmed_at,
             audio_retention_until: None,
             source_path: None,
+            description: None,
             created_at: now,
             deleted_at: None,
         })
@@ -1593,7 +1603,7 @@ impl MeetingStore {
         let mut stmt = conn.prepare(
             "SELECT id, title, status, source, started_at, ended_at, language,
                     mic_audio_path, system_audio_path, duration_ms, consent_confirmed_at,
-                    audio_retention_until, source_path, created_at, deleted_at
+                    audio_retention_until, source_path, description, created_at, deleted_at
              FROM meetings
              WHERE deleted_at IS NULL
                AND audio_retention_until IS NOT NULL
@@ -1611,7 +1621,7 @@ impl MeetingStore {
             .query_row(
                 "SELECT id, title, status, source, started_at, ended_at, language,
                         mic_audio_path, system_audio_path, duration_ms, consent_confirmed_at,
-                        audio_retention_until, source_path, created_at, deleted_at
+                        audio_retention_until, source_path, description, created_at, deleted_at
                  FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
                 Self::map_meeting,
@@ -1625,7 +1635,7 @@ impl MeetingStore {
         let mut stmt = conn.prepare(
             "SELECT id, title, status, source, started_at, ended_at, language,
                     mic_audio_path, system_audio_path, duration_ms, consent_confirmed_at,
-                    audio_retention_until, source_path, created_at, deleted_at
+                    audio_retention_until, source_path, description, created_at, deleted_at
              FROM meetings WHERE deleted_at IS NULL
              ORDER BY created_at DESC
              LIMIT ?1 OFFSET ?2",

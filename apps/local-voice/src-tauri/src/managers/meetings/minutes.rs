@@ -1814,6 +1814,7 @@ mod tests {
     fn head(single: bool) -> MinutesHead {
         MinutesHead {
             title: "Jour fixe".into(),
+            description: String::new(),
             date_iso: "2026-08-19".into(),
             duration_ms: 1_800_000,
             shares: vec![
@@ -1840,6 +1841,7 @@ mod tests {
     fn mixed_import_head() -> MinutesHead {
         MinutesHead {
             title: "Aufzeichnung Kundencall".into(),
+            description: String::new(),
             date_iso: "2026-08-19".into(),
             duration_ms: 1_800_000,
             shares: vec![SpeakerShare {
@@ -2253,6 +2255,7 @@ mod tests {
             consent_confirmed_at: None,
             audio_retention_until: None,
             source_path: None,
+            description: None,
             created_at: 1_755_600_000,
             deleted_at: None,
         };

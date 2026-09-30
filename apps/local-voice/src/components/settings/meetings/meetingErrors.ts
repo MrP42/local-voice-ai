@@ -35,7 +35,29 @@ const ERROR_KEY_MAP: Record<string, string> = {
   job_stopping: "meetings.progress.errors.stopping",
   not_cancelled: "meetings.progress.errors.notCancelled",
   transcription_failed: "meetings.errors.chunkTranscriptionFailed",
+  // U7
+  import_source_missing: "meetings.errors.importSourceMissing",
+  import_path_invalid: "meetings.errors.importPathInvalid",
+  import_panicked: "meetings.errors.importFailed",
+  not_in_queue: "meetings.queue.errors.notInQueue",
+  not_queued: "meetings.queue.errors.notQueued",
 };
+
+/** U7: Fehlercodes beim Bearbeiten der Metadaten als i18n-Schluessel. */
+const METADATA_ERROR_KEYS: Record<string, string> = {
+  meeting_not_found: "meetings.metadata.errors.meetingNotFound",
+  title_empty: "meetings.metadata.errors.titleEmpty",
+  title_too_long: "meetings.metadata.errors.titleTooLong",
+  description_too_long: "meetings.metadata.errors.descriptionTooLong",
+  date_invalid: "meetings.metadata.errors.dateInvalid",
+  person_not_found: "meetings.metadata.errors.personNotFound",
+  folder_not_found: "meetings.metadata.errors.folderNotFound",
+};
+
+/** i18n-Schluessel eines Fehlers beim Bearbeiten der Metadaten (sonst ein allgemeiner). */
+export const metadataErrorKey = (code: string): string =>
+  METADATA_ERROR_KEYS[code.split(":")[0].trim()] ??
+  "meetings.metadata.errors.unknown";
 
 /**
  * Translates a raw backend error/status code into a user-facing message.

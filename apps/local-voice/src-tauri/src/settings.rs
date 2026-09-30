@@ -825,6 +825,14 @@ pub struct AppSettings {
     /// settings.json) gilt `auto`; jeder andere Wert als `off` zaehlt als `auto`.
     #[serde(default = "default_meeting_diarization")]
     pub meeting_diarization: String,
+    /// U7: wie viele Dateien der Import-Warteschlange gleichzeitig transkribiert
+    /// werden: 1 (Standard), 2 oder 3. Mehr als eine nur, solange Arbeitsspeicher
+    /// (und bei GPU-Modellen Grafikspeicher) fuer die weitere Engine reichen;
+    /// sonst wartet die naechste Datei. Ohne den Schluessel (aeltere
+    /// settings.json) gilt 1; Werte ausserhalb 1 bis 3 zaehlen als der naechste
+    /// gueltige.
+    #[serde(default = "default_meeting_import_parallel")]
+    pub meeting_import_parallel: u32,
     /// M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
     /// Mikrofonnutzung: `off` | `meeting_apps` (Standard) | `all_apps`. Nur ein
     /// Hinweis, nie ein automatischer Start.
@@ -889,6 +897,10 @@ fn default_meeting_final_model() -> String {
 
 fn default_meeting_diarization() -> String {
     "auto".to_string()
+}
+
+fn default_meeting_import_parallel() -> u32 {
+    1
 }
 
 /// M3-P3b: ist die Sprechertrennung eingeschaltet (`meeting_diarization`)?
@@ -1644,6 +1656,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,
         meeting_final_model: default_meeting_final_model(),
         meeting_diarization: default_meeting_diarization(),
+        meeting_import_parallel: default_meeting_import_parallel(),
         meeting_detect_mode: crate::managers::meeting_detect::DetectMode::default(),
         meeting_detect_ignored_apps: Vec::new(),
         meeting_self_emails: Vec::new(),
@@ -2936,6 +2949,18 @@ mod tests {
         let off: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_final_model": "off" })).unwrap();
         assert_eq!(off.meeting_final_model, "off");
+    }
+
+    // U7
+    #[test]
+    fn import_parallelism_defaults_to_one_and_old_files_load() {
+        assert_eq!(get_default_settings().meeting_import_parallel, 1);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_import_parallel, 1, "aeltere settings.json: ein Lauf");
+        let two: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_import_parallel": 2 })).unwrap();
+        assert_eq!(two.meeting_import_parallel, 2);
     }
 
     // M3-P3b

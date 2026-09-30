@@ -22,7 +22,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_specta::Event;
 use transcribe_cpp::{
     Backend, Feature, Model, ModelOptions, ParakeetStreamOptions, RunExtension, RunOptions,
-    Session, StreamExtension, StreamOptions, Task, WhisperRunOptions,
+    Session, SessionOptions, StreamExtension, StreamOptions, Task, WhisperRunOptions,
 };
 use transcribe_rs::{
     onnx::{
@@ -234,6 +234,72 @@ enum LoadedEngine {
     GigaAM(GigaAMModel),
     Canary(CanaryModel),
     Cohere(CohereModel),
+}
+
+/// U7: eine EIGENE Engine fuer einen weiteren gleichzeitigen Import der
+/// Warteschlange (`meetings::queue`). transcribe-cpp 0.2.4 erlaubt auf einem
+/// `Model` hoechstens einen laufenden Aufruf ueber alle Sitzungen; echte
+/// Gleichzeitigkeit braucht ein eigenes `Model` (und damit das Modell noch
+/// einmal im Speicher). Darum steht das Speicher-Tor der Warteschlange davor.
+pub struct ExtraEngine {
+    /// `None`, solange ein Aufruf die Engine gerade benutzt (oder nach einer
+    /// Panik in der Engine: dann ist sie verworfen).
+    engine: Option<LoadedEngine>,
+    model_id: String,
+}
+
+thread_local! {
+    /// U7: die eigene Engine des Import-Threads, der sie gebunden hat. Wer sie
+    /// hat, transkribiert mit ihr statt mit der gemeinsamen Engine
+    /// (`transcribe_segments`); das Laden und Wiederherstellen von Modellen
+    /// (`initiate_model_load_inner`) fasst die gemeinsame Engine dann nicht an.
+    static BOUND_ENGINE: std::cell::RefCell<Option<ExtraEngine>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Haelt die gebundene Engine; beim Loeschen wird sie freigegeben (und damit
+/// ihr Speicher), auch nach einer Panik im Import. Gilt nur im Thread, der sie
+/// erzeugt hat.
+pub struct ExtraEngineBinding {
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+/// Bindet `engine` an den aktuellen Thread, bis die Rueckgabe faellt.
+pub fn bind_extra_engine(engine: ExtraEngine) -> ExtraEngineBinding {
+    BOUND_ENGINE.with(|bound| *bound.borrow_mut() = Some(engine));
+    ExtraEngineBinding {
+        _not_send: std::marker::PhantomData,
+    }
+}
+
+impl Drop for ExtraEngineBinding {
+    fn drop(&mut self) {
+        // Try-Variante: waehrend des Thread-Endes kann der Schluessel schon weg sein.
+        let _ = BOUND_ENGINE.try_with(|bound| {
+            bound.borrow_mut().take();
+        });
+    }
+}
+
+/// Hat dieser Thread eine eigene Engine gebunden?
+pub fn extra_engine_bound() -> bool {
+    BOUND_ENGINE.with(|bound| bound.borrow().is_some())
+}
+
+fn take_bound_engine() -> Option<LoadedEngine> {
+    BOUND_ENGINE.with(|bound| bound.borrow_mut().as_mut().and_then(|e| e.engine.take()))
+}
+
+fn put_back_bound_engine(engine: LoadedEngine) {
+    BOUND_ENGINE.with(|bound| {
+        if let Some(extra) = bound.borrow_mut().as_mut() {
+            extra.engine = Some(engine);
+        }
+    });
+}
+
+fn bound_model_id() -> Option<String> {
+    BOUND_ENGINE.with(|bound| bound.borrow().as_ref().map(|e| e.model_id.clone()))
 }
 
 /// RAII guard that clears the `is_loading` flag and notifies waiters on drop.
@@ -640,6 +706,62 @@ impl TranscriptionManager {
             );
         };
 
+        let loaded_engine = self.build_engine(
+            model_id,
+            &model_info,
+            &model_path,
+            device_index,
+            None,
+            &emit_loading_failed,
+        )?;
+
+        // Update the current engine and model ID
+        {
+            let mut engine = self.lock_engine();
+            *engine = Some(loaded_engine);
+        }
+        {
+            let mut current_model = self.current_model_id.lock().unwrap();
+            *current_model = Some(model_id.to_string());
+        }
+
+        // Reset idle timer so the watcher doesn't immediately unload a just-loaded model
+        self.touch_activity();
+
+        // Emit loading completed event
+        let _ = self.app_handle.emit(
+            "model-state-changed",
+            ModelStateEvent {
+                event_type: "loading_completed".to_string(),
+                model_id: Some(model_id.to_string()),
+                model_name: Some(model_info.name.clone()),
+                error: None,
+            },
+        );
+
+        let load_duration = load_start.elapsed();
+        debug!(
+            "Successfully loaded transcription model: {} (took {}ms)",
+            model_id,
+            load_duration.as_millis()
+        );
+        Ok(())
+    }
+
+    /// Builds the native engine for `model_id`: no registry events, no swap of
+    /// the shared engine. Shared by the normal model load and by the extra
+    /// engines of the meeting import queue (U7). `n_threads` (transcribe-cpp
+    /// only) caps the CPU threads of the session; `None` keeps the library
+    /// default. `emit_loading_failed` reports a failure before it is returned.
+    fn build_engine(
+        &self,
+        model_id: &str,
+        model_info: &crate::managers::model::ModelInfo,
+        model_path: &std::path::Path,
+        device_index: Option<usize>,
+        n_threads: Option<i32>,
+        emit_loading_failed: &dyn Fn(&str),
+    ) -> Result<LoadedEngine> {
         let loaded_engine = match model_info.engine_type {
             EngineType::TranscribeCpp => {
                 // The whisper backend is chosen at load time (transcribe-cpp has
@@ -675,7 +797,14 @@ impl TranscriptionManager {
                 // The bound backend may differ from the request (e.g. CPU
                 // fallback under Auto); log what actually loaded.
                 let bound_backend = model.backend();
-                let session = model.session().map_err(|e| {
+                let session = match n_threads {
+                    Some(n) => model.session_with(&SessionOptions {
+                        n_threads: n,
+                        ..Default::default()
+                    }),
+                    None => model.session(),
+                }
+                .map_err(|e| {
                     let error_msg = format!(
                         "Failed to create session for whisper model {}: {}",
                         model_id, e
@@ -778,38 +907,53 @@ impl TranscriptionManager {
                 LoadedEngine::Cohere(engine)
             }
         };
+        Ok(loaded_engine)
+    }
 
-        // Update the current engine and model ID
-        {
-            let mut engine = self.lock_engine();
-            *engine = Some(loaded_engine);
+    /// U7: laedt eine EIGENE Engine fuer `model_id` (weiterer gleichzeitiger
+    /// Import). Beruehrt weder die gemeinsame Engine noch die Modell-Ereignisse
+    /// der Oberflaeche; `n_threads` begrenzt die CPU-Threads der Sitzung
+    /// (transcribe-cpp). Blockiert bis zum Ende des Ladens, der Aufrufer prueft
+    /// vorher das Speicher-Tor.
+    pub fn load_extra_engine(&self, model_id: &str, n_threads: i32) -> Result<ExtraEngine> {
+        let model_info = self
+            .model_manager
+            .get_model_info(model_id)
+            .ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;
+        if !model_info.is_downloaded {
+            return Err(anyhow::anyhow!("Model not downloaded"));
         }
-        {
-            let mut current_model = self.current_model_id.lock().unwrap();
-            *current_model = Some(model_id.to_string());
-        }
-
-        // Reset idle timer so the watcher doesn't immediately unload a just-loaded model
-        self.touch_activity();
-
-        // Emit loading completed event
-        let _ = self.app_handle.emit(
-            "model-state-changed",
-            ModelStateEvent {
-                event_type: "loading_completed".to_string(),
-                model_id: Some(model_id.to_string()),
-                model_name: Some(model_info.name.clone()),
-                error: None,
-            },
-        );
-
-        let load_duration = load_start.elapsed();
-        debug!(
-            "Successfully loaded transcription model: {} (took {}ms)",
+        let model_path = self.model_manager.get_model_path(model_id)?;
+        let started = std::time::Instant::now();
+        let engine = self.build_engine(
             model_id,
-            load_duration.as_millis()
+            &model_info,
+            &model_path,
+            None,
+            Some(n_threads.max(1)),
+            &|_| {},
+        )?;
+        info!(
+            "meetings: extra engine '{}' loaded in {} ms ({} CPU threads)",
+            model_id,
+            started.elapsed().as_millis(),
+            n_threads
         );
-        Ok(())
+        Ok(ExtraEngine {
+            engine: Some(engine),
+            model_id: model_id.to_string(),
+        })
+    }
+
+    /// U7: Groesse (MB, Katalog) des Besprechungsmodells und ob es auf der GPU
+    /// laufen kann (transcribe-cpp): Eingabe fuer das Speicher-Tor der Warteschlange.
+    pub fn meeting_model_footprint(&self, settings: &AppSettings) -> (u64, bool) {
+        let id = self.meeting_model_target(settings);
+        let info = self.model_manager.get_model_info(&id);
+        let gpu_model = info
+            .as_ref()
+            .is_some_and(|i| matches!(i.engine_type, EngineType::TranscribeCpp));
+        (info.map(|i| i.size_mb).unwrap_or(0), gpu_model)
     }
 
     /// The model meetings should transcribe with, see [`choose_meeting_model`].
@@ -900,6 +1044,12 @@ impl TranscriptionManager {
     /// Kern von `initiate_model_load_target_with_fallback`; `ram_gate` schaltet
     /// das RAM-Tor vor dem Laden ein (Live-Modell der Besprechung, P1i).
     fn initiate_model_load_inner(&self, model_id: &str, fallback: Option<&str>, ram_gate: bool) {
+        // U7: ein Import mit eigener Engine laedt, tauscht und stellt nichts an
+        // der gemeinsamen Engine um (sie gehoert Diktat, Aufnahme und dem ersten
+        // Import der Warteschlange).
+        if extra_engine_bound() {
+            return;
+        }
         let mut is_loading = self.is_loading.lock().unwrap();
         if *is_loading {
             return;
@@ -2067,8 +2217,11 @@ impl TranscriptionManager {
 
         let audio_ms = (audio_len as u64 * 1000) / 16_000;
 
+        // U7: ein Import mit eigener Engine (Warteschlange) rechnet mit ihr.
+        let bound = extra_engine_bound();
+
         // Check if model is loaded, if not try to load it
-        {
+        if !bound {
             // If the model is loading, wait for it to complete.
             let mut is_loading = self.is_loading.lock().unwrap();
             while *is_loading {
@@ -2082,9 +2235,12 @@ impl TranscriptionManager {
         }
 
         let settings = get_settings(&self.app_handle);
-        let active_model = self
-            .get_current_model()
-            .unwrap_or_else(|| settings.selected_model.clone());
+        let active_model = if bound {
+            bound_model_id().unwrap_or_else(|| settings.selected_model.clone())
+        } else {
+            self.get_current_model()
+                .unwrap_or_else(|| settings.selected_model.clone())
+        };
         // Meetings use their own language intent and never translate — see
         // meeting_transcription_prefs() for the ruling behind this.
         let (meeting_language, meeting_translate) = meeting_transcription_prefs(&settings);
@@ -2107,22 +2263,33 @@ impl TranscriptionManager {
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
         // which would make the app hang indefinitely on subsequent operations.
         let result = {
-            let mut engine_guard = self.lock_engine();
-
             // Take the engine out so we own it during transcription.
             // If the engine panics, we simply don't put it back (effectively unloading it)
             // instead of poisoning the mutex.
-            let mut engine = match engine_guard.take() {
-                Some(e) => e,
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "Model failed to load after auto-load attempt. Please check your model settings."
-                    ));
+            let mut engine = if bound {
+                // U7: die eigene Engine dieses Threads (kein Mutex, nur ein Nutzer).
+                match take_bound_engine() {
+                    Some(e) => e,
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "The extra transcription engine is gone (an earlier run crashed it)."
+                        ));
+                    }
                 }
+            } else {
+                let mut engine_guard = self.lock_engine();
+                let engine = match engine_guard.take() {
+                    Some(e) => e,
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "Model failed to load after auto-load attempt. Please check your model settings."
+                        ));
+                    }
+                };
+                // Release the lock before transcribing — no mutex held during the engine call
+                drop(engine_guard);
+                engine
             };
-
-            // Release the lock before transcribing — no mutex held during the engine call
-            drop(engine_guard);
 
             // Probe live transcribe-cpp capabilities once, same as transcribe() above —
             // language/translate/custom-word wiring below depends on them.
@@ -2266,13 +2433,29 @@ impl TranscriptionManager {
                 Ok(inner_result) => {
                     // Success or normal error: return the engine unless a model
                     // switch/unload invalidated it while it was in use.
-                    self.return_engine(engine, &active_model);
+                    if bound {
+                        put_back_bound_engine(engine);
+                    } else {
+                        self.return_engine(engine, &active_model);
+                    }
                     inner_result?
                 }
                 Err(panic_payload) => {
                     // Engine panicked — do NOT put it back (it's in an unknown state).
                     // The engine is dropped here, effectively unloading it.
                     let panic_msg = panic_payload_message(panic_payload.as_ref());
+                    if bound {
+                        // U7: nur die eigene Engine ist weg; die gemeinsame (und die
+                        // Anzeige "Modell entladen") bleibt unberuehrt.
+                        error!(
+                            "Extra transcription engine panicked: {}. It has been dropped.",
+                            panic_msg
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Extra transcription engine panicked: {}.",
+                            panic_msg
+                        ));
+                    }
                     error!(
                         "Transcription engine panicked: {}. Model has been unloaded.",
                         panic_msg
@@ -2305,7 +2488,11 @@ impl TranscriptionManager {
             }
         };
 
-        self.maybe_unload_immediately("transcription");
+        // U7: die eigene Engine bleibt bis zum Ende des Imports; "sofort
+        // entladen" gilt der gemeinsamen Engine.
+        if !bound {
+            self.maybe_unload_immediately("transcription");
+        }
 
         Ok(result)
     }
@@ -3278,6 +3465,45 @@ mod tests {
 
     fn need(size_mb: u64) -> u64 {
         crate::managers::meetings::final_pass::ram_need_mb(size_mb) + RESERVE
+    }
+
+    // ---- U7: eigene Engine fuer weitere gleichzeitige Importe -------------------
+
+    #[test]
+    fn an_extra_engine_belongs_to_the_thread_that_bound_it() {
+        assert!(!extra_engine_bound(), "ohne Bindung rechnet jeder mit der gemeinsamen Engine");
+        let binding = bind_extra_engine(ExtraEngine {
+            engine: None,
+            model_id: "eigenes-modell".into(),
+        });
+        assert!(extra_engine_bound());
+        assert_eq!(bound_model_id().as_deref(), Some("eigenes-modell"));
+        // Ein anderer Thread (Diktat, Aufnahme, der erste Import) sieht nichts davon.
+        std::thread::spawn(|| assert!(!extra_engine_bound()))
+            .join()
+            .unwrap();
+        // Eine Engine, die es nicht mehr gibt (Panik im Lauf), wird nicht erfunden.
+        assert!(take_bound_engine().is_none());
+        drop(binding);
+        assert!(!extra_engine_bound(), "mit der Bindung ist auch die Engine frei");
+        assert_eq!(bound_model_id(), None);
+    }
+
+    #[test]
+    fn rebinding_replaces_the_previous_engine() {
+        let first = bind_extra_engine(ExtraEngine {
+            engine: None,
+            model_id: "a".into(),
+        });
+        let second = bind_extra_engine(ExtraEngine {
+            engine: None,
+            model_id: "b".into(),
+        });
+        assert_eq!(bound_model_id().as_deref(), Some("b"));
+        drop(second);
+        assert!(!extra_engine_bound());
+        drop(first);
+        assert!(!extra_engine_bound());
     }
 
     #[test]

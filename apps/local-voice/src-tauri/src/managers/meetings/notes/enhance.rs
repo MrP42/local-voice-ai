@@ -2605,6 +2605,7 @@ mod tests {
         let (_, _, spec) = builtin_templates().into_iter().next().unwrap();
         let head = MeetingHead {
             title: "Jour fixe".into(),
+            description: String::new(),
             date_iso: "2026-08-19".into(),
             duration_ms: 60_000,
             shares: vec![],
@@ -3919,6 +3920,7 @@ mod tests {
         let (_, _, spec) = builtin_templates().into_iter().next().unwrap();
         let head = MeetingHead {
             title: "T".into(),
+            description: String::new(),
             date_iso: "2026-09-30".into(),
             duration_ms: 60_000,
             shares: vec![],

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { toast } from "sonner";
-import { commands, events, type Meeting } from "@/bindings";
+import { commands, type Meeting } from "@/bindings";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
@@ -31,95 +31,38 @@ const hasImportExtension = (path: string) => {
 
 const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
-/** Wie oft und wie schnell nach der neuen Besprechung gesucht wird. */
-const CLAIM_POLL_MS = 500;
+/** So viele Besprechungen sieht die Suche nach der neuen (sie steht ganz vorn). */
 const LIST_PAGE = 50;
 
-const idsOfRecent = async (): Promise<Set<string> | null> => {
-  const result = await commands.meetingsList(0, 200);
-  return result.status === "ok" ? new Set(result.data.map((m) => m.id)) : null;
-};
-
 /**
- * Importiert eine Datei und haengt die neue Besprechung an `projectId`.
+ * Stellt eine Datei in die Import-Warteschlange und haengt die neue Besprechung
+ * an `projectId`.
  *
- * Der Befehl kehrt erst am Ende der Verarbeitung zurueck (bei einer langen
- * Aufnahme Stunden spaeter), die Besprechung entsteht aber sofort. Damit sie
- * gleich im richtigen Projekt steht und ihr Fortschritt dort zu sehen ist,
- * wird sie waehrend des Laufs gesucht: die Zeile mit `source_path` = Datei, die
- * es vor dem Start noch nicht gab (Menge der bekannten IDs). Nie "die erste
- * Verarbeitung, die ich sehe": gleichzeitig kann eine Aufnahme enden oder eine
- * Neu-Transkription laufen. Gelingt der Schnappschuss der bekannten IDs nicht,
- * wird erst mit der Rueckgabe (exakte ID) zugeordnet. `error` ist der Rohtext
- * des Backends; uebersetzt wird beim Anzeigen.
+ * Der Befehl kehrt sofort zurueck: die Besprechung gibt es schon (Status
+ * "wartet", oder "laeuft", wenn sonst nichts dran ist), ihre ID ist die
+ * Rueckgabe. Die Verarbeitung laeuft im Backend in der Reihenfolge des
+ * Hinzufuegens; Platz und Fortschritt kommen ueber Ereignisse. `error` ist der
+ * Rohtext des Backends; uebersetzt wird beim Anzeigen.
  */
 export async function importIntoProject(
   path: string,
   projectId: string | null,
   onCreated: (meeting: Meeting) => void,
 ): Promise<{ error: string | null }> {
-  const known = await idsOfRecent();
-  const assign = async (meeting: Meeting) => {
-    if (projectId) {
-      await commands.meetingsSetFolders(meeting.id, [projectId]);
-    }
-    notifyMeetingsChanged();
-    onCreated(meeting);
-  };
-
-  let claimed = false;
-  let searching = false;
-  const claim = async () => {
-    if (claimed || searching || known === null) return;
-    searching = true;
-    try {
-      const result = await commands.meetingsList(0, LIST_PAGE);
-      if (result.status !== "ok" || claimed) return;
-      const hit = result.data.find(
-        (m) => m.source_path === path && !known.has(m.id),
-      );
-      if (hit) {
-        claimed = true;
-        await assign(hit);
-      }
-    } finally {
-      searching = false;
-    }
-  };
-
-  const listening = events.meetingEvent.listen((e) => {
-    if (e.payload.kind === "state" || e.payload.kind === "progress") {
-      void claim();
-    }
-  });
-  const timer = window.setInterval(() => void claim(), CLAIM_POLL_MS);
-  try {
-    const result = await commands.meetingsImportFile(path, true);
-    if (result.status === "error") {
-      return { error: result.error };
-    }
-    if (!claimed) {
-      // Untertitel (sofort fertig) oder Suche ohne Treffer: die Rueckgabe ist die ID.
-      const list = await commands.meetingsList(0, 200);
-      const hit =
-        list.status === "ok"
-          ? list.data.find((m) => m.id === result.data)
-          : undefined;
-      // Wieder pruefen: die Suche waehrend des Laufs kann inzwischen gewonnen haben.
-      if (!claimed) {
-        if (hit) {
-          claimed = true;
-          await assign(hit);
-        } else {
-          notifyMeetingsChanged();
-        }
-      }
-    }
-    return { error: null };
-  } finally {
-    window.clearInterval(timer);
-    void listening.then((un) => un());
+  const result = await commands.meetingsImportFile(path, true);
+  if (result.status === "error") {
+    return { error: result.error };
   }
+  const id = result.data;
+  if (projectId) {
+    await commands.meetingsSetFolders(id, [projectId]);
+  }
+  notifyMeetingsChanged();
+  const list = await commands.meetingsList(0, LIST_PAGE);
+  const meeting =
+    list.status === "ok" ? list.data.find((m) => m.id === id) : undefined;
+  if (meeting) onCreated(meeting);
+  return { error: null };
 }
 
 interface ImportRequest {
@@ -133,7 +76,8 @@ interface ImportRequest {
  * Datei auf der Arbeitsflaeche fuehren beide hierher. Erst die Einwilligung
  * (dass die Datei existiert, belegt keine), dann der Import in das links
  * gewaehlte Projekt. `onCreated` meldet die neue Besprechung, sobald sie
- * existiert (Auswahl, Fortschritt).
+ * existiert (Auswahl, Fortschritt). U7: nichts sperrt weitere Importe; jede
+ * Datei kommt in die Warteschlange und der Dialog steht sofort wieder offen.
  */
 export function useMeetingImport(onCreated: (meeting: Meeting) => void) {
   const { t } = useTranslation();
@@ -163,11 +107,17 @@ export function useMeetingImport(onCreated: (meeting: Meeting) => void) {
   }, []);
 
   const pick = useCallback(async () => {
+    // Mehrere Dateien auf einmal: sie laufen in der gewaehlten Reihenfolge.
     const picked = await open({
-      multiple: false,
+      multiple: true,
       filters: [{ name: "Media", extensions: IMPORT_EXTENSIONS }],
     });
-    if (typeof picked === "string") await ask([picked]);
+    const paths = Array.isArray(picked)
+      ? picked
+      : typeof picked === "string"
+        ? [picked]
+        : [];
+    if (paths.length > 0) await ask(paths);
   }, [ask]);
 
   const confirm = async () => {
@@ -203,11 +153,7 @@ export function useMeetingImport(onCreated: (meeting: Meeting) => void) {
           <Button variant="secondary" onClick={() => setRequest(null)}>
             {t("meetings.consent.cancel")}
           </Button>
-          <Button
-            onClick={() => void confirm()}
-            disabled={busy}
-            data-testid="import-confirm"
-          >
+          <Button onClick={() => void confirm()} data-testid="import-confirm">
             {t("meetings.consent.confirm")}
           </Button>
         </>
