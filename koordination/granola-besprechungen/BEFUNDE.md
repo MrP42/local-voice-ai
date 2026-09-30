@@ -73,7 +73,7 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beobachtet: Import „Die drei Schwestern …“ (Märchen); Log: Chat-Runden 1/2 „Antwort 10 Zeichen, kein Beleg: true“ -> followup_empty. Der Entwurf läuft über den Chat mit strenger Belegpflicht; ohne Treffer gibt es keinen Text, die Meldung ist irreführend.
 - Beleg: handy.log 30.09. 14:22–14:23, Screenshot Patrick.
 - Konsequenz: Paket P6f.
-- Status: offen
+- Status: erledigt (P6f 1878c045: Maerchen-Aufnahme liefert Entwurf in 7,5 s; ohne Inhalt klare Meldung ohne Endlos-Retry)
 
 ## B14 — Abnahme 0.20.8: Protokoll-Erzeugung verliert Laufzustand beim Reiterwechsel (30.09.)
 - Beobachtet (Patrick): „Erzeugen“ -> „Protokoll wird erzeugt“; Reiter wechseln und zurück -> Hinweis weg, Knopf wieder klickbar, paralleler zweiter Start möglich. Kein Fortschritt, keine Steuerung.
@@ -85,4 +85,9 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beleg: abnahme/p3e-hoerspiel.md.
 - Konsequenz: AK7 (AMI + deutsches Fixture) formal unberührt; Grenze in KNOWN-LIMITATIONS. Lösungsansatz Nachschritt mit Stimm-Embeddings (ERes2Net trennt die Schwestern mit Labels zu 97,5 %) -> Folge-Goal zusammen mit P3d.
 - Status: erledigt (dokumentiert, Lösung im Folge-Goal P3d)
+
+## B16 — Merge P6f: search::bench-Test kippt unter paralleler Build-Last (30.09.)
+- Beobachtet: `the_cli_wrapper_reports_success_as_exit_code_zero` einmal rot während 3 Worker bauten; einzeln 2x grün (0,44 s).
+- Konsequenz: Zeitgrenze des Tests beobachten; bei zweitem Auftreten Grenze lastfest machen.
+- Status: erledigt (beobachtet, einzeln grün)
 
