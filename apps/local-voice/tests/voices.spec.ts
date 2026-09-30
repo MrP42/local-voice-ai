@@ -292,6 +292,8 @@ test("a generated recording can be played from the file list", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  // Erster Start zeigt "Hilfe"; die Dateizeilen brauchen den Reiter "Dateien".
+  await page.getByRole("tab", { name: "Dateien", exact: true }).click();
 
   const audioRow = page
     .locator("div", { hasText: /^Der-Sturm_2026-09-08_1405\.wav/ })
@@ -315,6 +317,8 @@ test("a recording carries its origin and hands the text back to the editor", asy
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  // Erster Start zeigt "Hilfe"; die Dateizeilen brauchen den Reiter "Dateien".
+  await page.getByRole("tab", { name: "Dateien", exact: true }).click();
 
   const filesArea = page.locator(".tts-workspace__files");
   await filesArea.getByRole("button", { name: "Anhören" }).click();
@@ -339,6 +343,8 @@ test("the spoken line is highlighted while the recording plays", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  // Erster Start zeigt "Hilfe"; die Dateizeilen brauchen den Reiter "Dateien".
+  await page.getByRole("tab", { name: "Dateien", exact: true }).click();
 
   const filesArea = page.locator(".tts-workspace__files");
   await filesArea.getByRole("button", { name: "Anhören" }).click();
@@ -502,7 +508,7 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
   // Uebersetzung bekommt die Piper-Stimme ...
-  await page.getByRole("button", { name: "Übersetzung", exact: true }).click();
+  await page.getByRole("tab", { name: "Übersetzung", exact: true }).click();
   await page.getByTestId("voice-select").click();
   await page.getByText("Thorsten · Deutsch · MQ · Piper").click();
   await expect
@@ -513,7 +519,7 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
     )
     .toBe("piper");
   // ... das Original bleibt bei der Standardstimme: Umschalten schaltet die Engine zurueck.
-  await page.getByRole("button", { name: "Original", exact: true }).click();
+  await page.getByRole("tab", { name: "Original", exact: true }).click();
   await page.getByTestId("voice-select").click();
   await page.getByText("Skript mit Sprechern").click();
   await expect
@@ -523,7 +529,7 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
       ),
     )
     .toBe("fish");
-  await page.getByRole("button", { name: "Übersetzung", exact: true }).click();
+  await page.getByRole("tab", { name: "Übersetzung", exact: true }).click();
   await expect
     .poll(() =>
       page.evaluate(
@@ -547,7 +553,7 @@ test("the voice list links to voice management under settings", async ({
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
   await page.getByTestId("voice-select").click();
-  await page.getByText("Stimmen verwalten …").click();
+  await page.getByRole("option", { name: "Stimmen verwalten …" }).click();
   await expect(
     page.getByRole("tab", { name: "Vorlesen", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -561,7 +567,9 @@ test("clean up rewrites the original text and offers undo", async ({
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
   const editor = page.locator("textarea").first();
   await editor.fill("Seite 3\nText mit Sil-\nbentrennung.");
-  await page.getByRole("button", { name: "Text aufbereiten" }).click();
+  // Aufbereiten wohnt seit der kompakten Bedienspalte im Menue (Hamburger).
+  await page.getByTestId("tts-action-menu").click();
+  await page.getByRole("menuitem", { name: "Text aufbereiten" }).click();
   await expect(editor).toHaveValue("Sauberer Text ohne Seitenzahlen.");
   // Der Undo-Toast UND der Historie-Knopf heissen "Rueckgaengig" -- hier
   // zaehlt der Toast; die Historie deckt denselben Schritt ohnehin ab.

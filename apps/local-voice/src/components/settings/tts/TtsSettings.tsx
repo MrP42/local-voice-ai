@@ -14,8 +14,7 @@ import { defaultAutoTagOptions } from "./tags/AutoTagDialog";
 import { canonicalizeTags, canonicalizeTagsAt } from "@/lib/tags/registry";
 import { useTagLanguage } from "./tags/tagLanguage";
 import { ScriptWorkshopDialog } from "./books/ScriptWorkshopDialog";
-import { BookOpen } from "lucide-react";
-import { exportFileName } from "@/lib/utils/exportName";
+import { audioExportName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
 import {
@@ -24,6 +23,8 @@ import {
   isRightTab,
   type RightTab,
 } from "./WorkspaceSidebars";
+import { ResizeHandle } from "../../ui/ResizeHandle";
+import { useWorkspaceLayout } from "./useWorkspaceLayout";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { PageShell } from "../../ui/PageShell";
 import { SettingContainer } from "../../ui/SettingContainer";
@@ -33,6 +34,7 @@ import { Dialog } from "../../ui/Dialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
+import { TabList } from "../../ui/TabList";
 import {
   TtsChipEditor,
   type ChipEditorFinding,
@@ -49,7 +51,9 @@ import {
 import { useTagProvider } from "./tags/tagProvider";
 import { useSpeakerProvider, useSpeakers } from "./speakers";
 import { TagPalette } from "./tags";
-import { AutoTagBar, resolveSuggestion } from "./tags/AutoTagBar";
+import { resolveSuggestion } from "./tags/AutoTagBar";
+import { ReadAloudActions } from "./ReadAloudActions";
+import { TooltipTrigger } from "../../ui/TooltipTrigger";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
 import {
@@ -58,21 +62,7 @@ import {
 } from "../../../lib/constants/languages";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
-import {
-  BrainCircuit,
-  HelpCircle,
-  Download,
-  FilePlus2,
-  FileText,
-  Languages,
-  Link,
-  Mic,
-  Sparkles,
-  Plus,
-  Server,
-  Upload,
-  SpellCheck,
-} from "lucide-react";
+import { BrainCircuit, HelpCircle, Server } from "lucide-react";
 
 /// Abspieltempo der Transportleiste. Bewusst grob gestuft: feiner regelt der
 /// Schieber in den Einstellungen, hier will man im Hoeren einmal schneller
@@ -181,11 +171,16 @@ export const TtsSettings = () => {
   );
   // Rechte Leiste: Dateien oder Hilfe. Die Hilfe ist ein Reiter derselben
   // Leiste, kein Fenster — sie soll neben dem Text stehen, nicht davor.
+  // Erster Start: Hilfe, damit niemand die Leiste fuer eine leere
+  // Dateiliste haelt. Ein gespeicherter Reiter hat immer Vorrang.
   const [rightTab, setRightTab] = usePersistentState<RightTab>(
     "tts.rightTab",
-    "files",
+    "help",
     isRightTab,
   );
+  // Anordnung rechts vom Editor (gestapelt oder nebeneinander) und die
+  // per Ziehgriff verstellbaren Breiten; alles bleibt ueber Neustarts.
+  const ws = useWorkspaceLayout(pagesCollapsed === "1", filesCollapsed === "1");
   /** Erst nach dem Laden einer Seite darf gespeichert werden — sonst
    *  ueberschriebe der leere Anfangszustand den echten. */
   const pageLoaded = useRef(false);
@@ -217,8 +212,6 @@ export const TtsSettings = () => {
   );
   const [sourceUrl, setSourceUrl] = useState<string>("");
   const [loadingSource, setLoadingSource] = useState(false);
-  /** Plus-Menue fuer Quellen (Dokument, Webseite, Projektdatei). */
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
   const [workshopOpen, setWorkshopOpen] = useState(false);
   /** Welcher Reiter offen ist. Das Original bleibt immer erhalten. */
@@ -737,16 +730,36 @@ export const TtsSettings = () => {
    * sounds like what you heard.
    */
   /**
-   * Dateiname des naechsten Exports, aus Titel des Arbeitsblatts und
-   * Zeitpunkt. Die Namensbildung selbst steht in `exportName.ts` — dort ist
-   * sie ohne Oberflaeche pruefbar.
+   * Dateiname des naechsten Exports: `<Stimme>[-Zusatz]_<Zeitstempel>.<ext>`.
+   * Nicht der Seitentitel — der ist lang und verdraengt in der Dateileiste
+   * den Zeitstempel; die Seite kennt man ohnehin am Projektordner. Die
+   * Namensbildung selbst steht in `exportName.ts`, ohne Oberflaeche pruefbar.
    */
-  const nextExportName = (ext: string) =>
-    exportFileName(
-      pages.find((page) => page.id === activePage)?.title,
-      t("tts.export.untitled"),
+  const nextExportName = (ext: string) => {
+    let voice: string;
+    if (voiceValue === "@default") {
+      voice = t("tts.export.scriptStem");
+    } else if (voiceValue.startsWith("piper:")) {
+      const piper = piperVoices.find((v) => `piper:${v.id}` === voiceValue);
+      // Nur der Name: Sprache und Qualitaet der Auswahl-Beschriftung gehoeren
+      // nicht in einen Dateinamen.
+      voice = piper ? piperVoiceLabel(piper).split(" · ")[0] : "";
+    } else {
+      voice = speakers.find((sp) => sp.id === voiceValue)?.displayName ?? "";
+    }
+    const suffix =
+      tab === "translation"
+        ? targetLangCode(targetLang).toUpperCase()
+        : tab === "summary"
+          ? t("tts.export.summaryStem")
+          : "";
+    return audioExportName({
+      voice,
+      suffix,
+      fallback: t("tts.export.untitled"),
       ext,
-    );
+    });
+  };
 
   const saveSpokenAudio = async () => {
     if (freshFindings().length > 0) {
@@ -1451,7 +1464,10 @@ export const TtsSettings = () => {
       {/* Volle Hoehe: Seiten links, Text in der Mitte, Bedienung rechts vom
         Text, Dateien/Hilfe ganz rechts. Nur die Spalten scrollen, der Kopf
         und der Rahmen stehen (Entscheidung Patrick 14.09. abends). */}
-      <div className="tts-workspace tts-workspace--fill w-full flex gap-4 items-stretch">
+      <div
+        ref={ws.ref}
+        className="tts-workspace tts-workspace--fill w-full flex gap-4 items-stretch"
+      >
         <PagesSidebar
           pages={pages}
           activeId={activePage}
@@ -1459,7 +1475,20 @@ export const TtsSettings = () => {
           onToggle={() => setPagesCollapsed(pagesCollapsed === "1" ? "0" : "1")}
           onSelect={setActivePage}
           onChanged={() => void reloadPages()}
+          width={ws.pages.width}
         />
+        {pagesCollapsed !== "1" && (
+          <ResizeHandle
+            testId="resize-pages"
+            label={t("tts.layout.resizePages")}
+            direction={1}
+            value={ws.pages.width}
+            min={ws.pages.min}
+            max={ws.pages.max}
+            defaultValue={ws.pages.def}
+            onChange={ws.pages.set}
+          />
+        )}
         <div className="flex-1 min-w-0 min-h-0 flex gap-4">
           <div className="tts-editor flex-1 min-w-0 min-h-0 flex flex-col rounded-lg border border-mid-gray/20 bg-background overflow-hidden">
             {truncated && (
@@ -1483,45 +1512,24 @@ export const TtsSettings = () => {
                 {lastError}
               </p>
             )}
-            <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2">
+            {/* overflow-y-auto: reicht der Platz selbst dann nicht (kleines
+              Fenster, Korrekturpanel offen), scrollt die Spalte, statt dass
+              der Editor unter seine Mindesthoehe gedrueckt wird. */}
+            <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto">
               {/* Zwei Reiter, ein Feld. Das Original wird nie ueberschrieben —
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
-              <div className="flex items-center gap-1 border-b border-mid-gray/20">
-                <button
-                  type="button"
-                  onClick={() => setTab("original")}
-                  className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
-                    tab === "original"
-                      ? "border-logo-primary text-text"
-                      : "border-transparent text-text/50 hover:text-text/80"
-                  }`}
-                >
-                  {t("tts.tabOriginal")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTab("translation")}
-                  className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
-                    tab === "translation"
-                      ? "border-logo-primary text-text"
-                      : "border-transparent text-text/50 hover:text-text/80"
-                  }`}
-                >
-                  {t("tts.tabTranslation")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTab("summary")}
-                  className={`px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors cursor-pointer ${
-                    tab === "summary"
-                      ? "border-logo-primary text-text"
-                      : "border-transparent text-text/50 hover:text-text/80"
-                  }`}
-                >
-                  {t("tts.tabSummary")}
-                </button>
-              </div>
+              <TabList
+                tabs={[
+                  { id: "original", label: t("tts.tabOriginal") },
+                  { id: "translation", label: t("tts.tabTranslation") },
+                  { id: "summary", label: t("tts.tabSummary") },
+                ]}
+                value={tab}
+                onChange={setTab}
+                ariaLabel={t("tts.tabsLabel")}
+                className="border-b border-mid-gray/20"
+              />
 
               {/* Der Chip-Editor ist Drop-in für die frühere Textarea: die
                 native textarea darin bleibt die einzige Wahrheit, Tags
@@ -1541,7 +1549,7 @@ export const TtsSettings = () => {
                   />
                 </div>
               )}
-              <div className="tts-editor__fill flex-1 min-h-0">
+              <div className="tts-editor__fill flex-1 min-h-[160px]">
                 {tab === "original" ? (
                   <TtsChipEditor
                     value={text}
@@ -1596,7 +1604,7 @@ export const TtsSettings = () => {
               {/* Ausdruck & Sprechstil direkt unter dem Text: die Palette fuegt
                 an der Cursorposition ein, deshalb gehoert sie zum Feld, nicht
                 in die Bedienspalte (Entscheidung Patrick 14.09. abends). */}
-              <details className="workspace-disclosure">
+              <details className="workspace-disclosure workspace-disclosure--scroll">
                 <summary>{t("workspace.voiceStyle")}</summary>
                 <div className="space-y-3 pt-2">
                   <TagPalette
@@ -1616,606 +1624,371 @@ export const TtsSettings = () => {
           {/* Bedienung rechts vom Text: Transport, Tempo, Stimme, Speichern,
             aktueller Satz, Ausdruck & Sprechstil, Schreibregeln. Scrollt fuer
             sich, wenn die Klappen offen sind. */}
-          <aside
-            className="tts-controls w-72 shrink-0 min-h-0 overflow-y-auto space-y-3 pe-1"
-            aria-label={t("tts.controls")}
+          {/* Rechte Spalte: gestapelt sind Bedienung und Dateien EINE Spalte
+            (Griff davor, Breite ws.right); nebeneinander loest sich der
+            Rahmen auf (display: contents) und die beiden stehen wie frueher
+            als Geschwister neben dem Editor, der Griff sitzt vor den Dateien. */}
+          {ws.stacked && (
+            <ResizeHandle
+              testId="resize-right"
+              label={t("tts.layout.resizeRight")}
+              direction={-1}
+              value={ws.right.width}
+              min={ws.right.min}
+              max={ws.right.max}
+              defaultValue={ws.right.def}
+              onChange={ws.right.set}
+            />
+          )}
+          <div
+            data-testid="tts-right-column"
+            className={ws.stacked ? "tts-right-column--stacked" : "contents"}
+            style={
+              ws.stacked
+                ? ({ "--tts-w": `${ws.right.width}px` } as React.CSSProperties)
+                : undefined
+            }
           >
-            <div className="flex gap-2 items-center flex-wrap">
-              {/* Transport per design system: round glyph buttons, exactly one
+            <aside
+              data-testid="tts-controls"
+              className={`tts-controls shrink-0 min-h-0 overflow-y-auto space-y-3 pe-1 ${
+                ws.stacked ? "tts-controls--stacked" : "w-72"
+              }`}
+              aria-label={t("tts.controls")}
+            >
+              <div className="flex gap-2 items-center flex-wrap">
+                {/* Transport per design system: round glyph buttons, exactly one
                 primary. Reading aloud is playback, so it gets the same family
                 as every audio player in the app — not text buttons. */}
-              {/* Vollstaendige Transportzeile nach Katalog: von der Mitte nach
+                {/* Vollstaendige Transportzeile nach Katalog: von der Mitte nach
                 aussen — Hauptschalter, daneben die Satzspruenge; hinter dem
                 Trenner die Aktionen, die die Wiedergabe nicht fortbewegen.
                 Statt ±15 s stehen hier Saetze: vorgelesener Text ist satzweise
                 aufgebaut, eine Sekundenmarke gibt es darin nicht. */}
-              <div className="mediabar mediabar--start">
-                <button
-                  type="button"
-                  className="mbtn"
-                  onClick={() => seekSentence(-1)}
-                  disabled={!canResume && !speaking}
-                  aria-label={t("tts.previousSentence")}
-                >
-                  <Glyph name="prev" />
-                </button>
-                <button
-                  type="button"
-                  className="mbtn mbtn--primary mbtn--lg"
-                  onClick={speaking ? pauseSpeaking : speak}
-                  disabled={!speaking && spokenText.trim().length === 0}
-                  aria-label={speaking ? t("tts.pause") : t("tts.speak")}
-                >
-                  <Glyph name={speaking ? "pause" : "play"} />
-                </button>
-                <button
-                  type="button"
-                  className="mbtn"
-                  onClick={() => seekSentence(1)}
-                  disabled={!canResume && !speaking}
-                  aria-label={t("tts.nextSentence")}
-                >
-                  <Glyph name="next" />
-                </button>
-                <span className="mediabar__sep" />
-                <button
-                  type="button"
-                  className="mbtn"
-                  onClick={stopSpeaking}
-                  aria-label={t("tts.stop")}
-                >
-                  <Glyph name="stop" />
-                </button>
-                <span className="mediabar__sep" />
-                {/* Tempo als schlanker Wert hinter dem letzten Trenner: immer
-                    sichtbar, ein Klick oeffnet die Stufen. Tempo entsteht per
-                    Resampling und zieht die Tonhoehe mit -- Bereich bewusst eng. */}
-                <div className="relative">
+                <div className="mediabar mediabar--start">
                   <button
                     type="button"
-                    className="mbtn mbtn--text"
-                    onClick={() => setSpeedOpen((o) => !o)}
-                    title={t("tts.settings.speedDescription")}
-                    aria-label={t("tts.settings.speed")}
-                    aria-haspopup="listbox"
-                    aria-expanded={speedOpen}
+                    className="mbtn"
+                    onClick={() => seekSentence(-1)}
+                    disabled={!canResume && !speaking}
+                    aria-label={t("tts.previousSentence")}
                   >
-                    {speedLabel(getSetting("tts_speed") ?? 1.0)}
+                    <Glyph name="prev" />
                   </button>
-                  {speedOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-30"
-                        onClick={() => setSpeedOpen(false)}
-                      />
-                      <div
-                        role="listbox"
-                        aria-label={t("tts.settings.speed")}
-                        className="absolute left-0 top-full mt-1 w-24 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
-                      >
-                        {SPEEDS.map((value) => (
-                          <button
-                            key={value}
-                            type="button"
-                            role="option"
-                            aria-selected={
-                              (getSetting("tts_speed") ?? 1.0) === value
-                            }
-                            onClick={() => {
-                              void updateSetting("tts_speed", value);
-                              setSpeedOpen(false);
-                            }}
-                            className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
-                              (getSetting("tts_speed") ?? 1.0) === value
-                                ? "text-text font-medium"
-                                : "text-text/80"
-                            }`}
-                          >
-                            {speedLabel(value)}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
+                  <button
+                    type="button"
+                    className="mbtn mbtn--primary mbtn--lg"
+                    onClick={speaking ? pauseSpeaking : speak}
+                    disabled={!speaking && spokenText.trim().length === 0}
+                    aria-label={speaking ? t("tts.pause") : t("tts.speak")}
+                  >
+                    <Glyph name={speaking ? "pause" : "play"} />
+                  </button>
+                  <button
+                    type="button"
+                    className="mbtn"
+                    onClick={() => seekSentence(1)}
+                    disabled={!canResume && !speaking}
+                    aria-label={t("tts.nextSentence")}
+                  >
+                    <Glyph name="next" />
+                  </button>
+                  <span className="mediabar__sep" />
+                  <button
+                    type="button"
+                    className="mbtn"
+                    onClick={stopSpeaking}
+                    aria-label={t("tts.stop")}
+                  >
+                    <Glyph name="stop" />
+                  </button>
+                  <span className="mediabar__sep" />
+                  {/* Tempo als schlanker Wert hinter dem letzten Trenner: immer
+                    sichtbar, ein Klick oeffnet die Stufen. Tempo entsteht per
+                    Resampling und zieht die Tonhoehe mit -- Bereich bewusst eng. */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      className="mbtn mbtn--text"
+                      onClick={() => setSpeedOpen((o) => !o)}
+                      title={t("tts.settings.speedDescription")}
+                      aria-label={t("tts.settings.speed")}
+                      aria-haspopup="listbox"
+                      aria-expanded={speedOpen}
+                    >
+                      {speedLabel(getSetting("tts_speed") ?? 1.0)}
+                    </button>
+                    {speedOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-30"
+                          onClick={() => setSpeedOpen(false)}
+                        />
+                        <div
+                          role="listbox"
+                          aria-label={t("tts.settings.speed")}
+                          className="absolute left-0 top-full mt-1 w-24 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
+                        >
+                          {SPEEDS.map((value) => (
+                            <button
+                              key={value}
+                              type="button"
+                              role="option"
+                              aria-selected={
+                                (getSetting("tts_speed") ?? 1.0) === value
+                              }
+                              onClick={() => {
+                                void updateSetting("tts_speed", value);
+                                setSpeedOpen(false);
+                              }}
+                              className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
+                                (getSetting("tts_speed") ?? 1.0) === value
+                                  ? "text-text font-medium"
+                                  : "text-text/80"
+                              }`}
+                            >
+                              {speedLabel(value)}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
-              </div>
-              {/* Die Stimme dort, wo man sie wechselt: beim Hoeren. Wechsel
+                {/* Die Stimme dort, wo man sie wechselt: beim Hoeren. Wechsel
                   wirkt sofort — eine laufende Wiedergabe stellt am aktuellen
                   Satz um. Leerer Wert = Standardstimme (Seed). Verwaltung
                   (aufnehmen, importieren, loeschen) unten bei den
                   Einstellungen. */}
-              <div
-                className="w-full"
-                title={t("tts.voices.title")}
-                data-testid="voice-select"
-              >
-                {/* Kennwert statt leerem Text fuer die Standardstimme:
+                {/* Die Wahl in Worten: mit Sprechern oder alles in einer
+                  Stimme. Kein Dauertext mehr in der schmalen Spalte, sondern
+                  Tooltip beim Ueberfahren/Fokussieren und Beschreibung fuer
+                  Screenreader (aria-describedby) -- sonst wundert man sich,
+                  warum die Marker nicht mehr umschalten. */}
+                <TooltipTrigger
+                  className="block w-full"
+                  tooltipId="voice-mode-tip"
+                  width={300}
+                  content={
+                    <div className="text-xs">
+                      {voiceValue === "@default"
+                        ? t("tts.voices.scriptVoicesHint")
+                        : t("tts.voices.singleVoiceHint")}
+                    </div>
+                  }
+                >
+                  <div
+                    className="w-full"
+                    role="group"
+                    aria-label={t("tts.voices.title")}
+                    aria-describedby="voice-mode-hint"
+                    data-testid="voice-select"
+                  >
+                    {/* Kennwert statt leerem Text fuer die Standardstimme:
                       "" gilt der Select-Komponente als "nichts gewaehlt" und
                       zeigte den Platzhalter "Select…" statt des Namens.
                       Piper-Stimmen stehen in derselben Liste (Wert
                       "piper:<id>"): wer eine waehlt, schaltet damit die
                       Engine um — die Engine-Einstellung im Reiter Vorlesen
                       bleibt als zweiter Weg bestehen. */}
-                <Select
-                  value={voiceValue}
-                  options={[
-                    {
-                      value: "@default",
-                      label: t("tts.voices.scriptVoices"),
-                    },
-                    // Anzeigename statt technischer Kennung.
-                    ...voices.map((id) => ({
-                      value: id,
-                      label:
-                        speakers.find((sp) => sp.id === id)?.displayName ?? id,
-                    })),
-                    ...piperVoices.map((voice) => ({
-                      value: `piper:${voice.id}`,
-                      label: t("tts.voices.piperOption", {
-                        name: piperVoiceLabel(voice),
-                      }),
-                    })),
-                    // Kein Wert, ein Sprung: zur Stimmenverwaltung unter
-                    // Einstellungen -> Vorlesen.
-                    { value: "@manage", label: t("tts.voices.manage") },
-                  ]}
-                  onChange={(value) => {
-                    if (!value) return;
-                    if (value === "@manage") {
-                      window.localStorage.setItem(
-                        "lva.ui.settings.tab",
-                        "readaloud",
-                      );
-                      window.dispatchEvent(
-                        new CustomEvent("lv-navigate", {
-                          detail: { section: "settings" },
-                        }),
-                      );
-                      return;
-                    }
-                    applyVoiceValue(value);
-                    setTabVoices((current) => ({ ...current, [tab]: value }));
-                  }}
-                  isClearable={false}
-                />
-                {/* Was die Wahl bewirkt: mit Sprechern oder alles in einer
-                    Stimme -- sonst wundert man sich, warum die Marker
-                    nicht mehr umschalten. */}
-                <p
-                  className="mt-1 text-xs text-text/50"
-                  data-testid="voice-mode-hint"
-                >
-                  {voiceValue === "@default"
-                    ? t("tts.voices.scriptVoicesHint")
-                    : t("tts.voices.singleVoiceHint")}
-                </p>
-              </div>
-              {/* Nur das Symbol: die Zeile ist eine Transportleiste, und ein
-                Wort neben lauter Glyphen zieht das Auge auf die unwichtigste
-                Schaltflaeche. Beschriftung wandert in title + aria-label. */}
-              <Button
-                variant="secondary"
-                className="w-full justify-start"
-                onClick={saveSpokenAudio}
-                disabled={saving || spokenText.trim().length === 0}
-                title={saving ? t("tts.savingAudio") : t("tts.saveAudio")}
-                aria-label={saving ? t("tts.savingAudio") : t("tts.saveAudio")}
-              >
-                <Download width={16} height={16} />
-                {saving ? t("tts.savingAudio") : t("tts.saveAudio")}
-              </Button>
-              {saving && (
-                <div className="flex items-center gap-2">
-                  <div className="w-32 h-1.5 rounded-full bg-mid-gray/20 overflow-hidden">
-                    <div
-                      className="h-full bg-logo-primary transition-[width] duration-200"
-                      style={{
-                        width: exportProgress?.total
-                          ? `${(exportProgress.position / exportProgress.total) * 100}%`
-                          : "0%",
-                      }}
-                    />
-                  </div>
-                  <span className="text-xs text-text/60 tabular-nums">
-                    {exportProgress?.total
-                      ? `${t("tts.sentenceProgress", {
-                          position: exportProgress.position,
-                          total: exportProgress.total,
-                        })} · ${
-                          exportEta === null
-                            ? t("tts.exportEtaComputing")
-                            : t("tts.exportEta", {
-                                time: formatEta(exportEta),
-                              })
-                        }`
-                      : t("tts.savingAudio")}
-                  </span>
-                  <button
-                    type="button"
-                    className="mbtn mbtn--sm"
-                    onClick={cancelExport}
-                    aria-label={t("tts.cancelExport")}
-                  >
-                    <Glyph name="stop" />
-                  </button>
-                </div>
-              )}
-              {/* Aenderungen vorab erzeugen: fuellt den Satz-Cache im
-                  Hintergrund -- auch waehrend des Vorlesens -- damit kein
-                  Satz beim Abspielen auf die Engine wartet. */}
-              <Button
-                variant="secondary"
-                className="w-full justify-start"
-                onClick={() => void startPrewarm()}
-                disabled={prewarm !== null || spokenText.trim().length === 0}
-                title={t("tts.prewarm.hint")}
-                data-testid="prewarm-run"
-              >
-                <Sparkles
-                  width={16}
-                  height={16}
-                  className={prewarm ? "animate-pulse" : undefined}
-                />
-                {prewarm ? t("tts.prewarm.running") : t("tts.prewarm.run")}
-              </Button>
-              {prewarm && (
-                <div className="flex items-center gap-2">
-                  <div className="w-32 h-1.5 rounded-full bg-mid-gray/20 overflow-hidden">
-                    <div
-                      className="h-full bg-logo-primary transition-[width] duration-200"
-                      style={{
-                        width: prewarm.total
-                          ? `${(prewarm.done / prewarm.total) * 100}%`
-                          : "0%",
-                      }}
-                    />
-                  </div>
-                  <span className="text-xs text-text/60">
-                    {prewarm.total
-                      ? t("tts.prewarm.progress", {
-                          done: prewarm.done,
-                          total: prewarm.total,
-                        })
-                      : t("tts.prewarm.starting")}
-                  </span>
-                  <button
-                    type="button"
-                    className="mbtn mbtn--sm"
-                    onClick={() => void commands.ttsPrewarmCancel()}
-                    aria-label={t("tts.prewarm.cancel")}
-                  >
-                    <Glyph name="stop" />
-                  </button>
-                </div>
-              )}
-              {speakProgress && (
-                <span className="text-xs text-text/60">
-                  {t("tts.sentenceProgress", {
-                    position: speakProgress.position,
-                    total: speakProgress.total,
-                  })}
-                </span>
-              )}
-            </div>
-            {/* Je Reiter nur die Aktionen, die er braucht — und die Quellen
-                gebuendelt hinter EINEM Plus (Dokument, Webseite,
-                Projektdatei), wie man es aus KI-Apps kennt. Kein Knopf tut
-                zwei Dinge; es steht nur nichts mehr da, was der offene
-                Reiter nicht braucht. */}
-            <div className="flex flex-col gap-2 items-stretch border-t border-mid-gray/20 pt-3">
-              {tab === "original" && (
-                <>
-                  {/* Skript-Werkstatt: Buecher, Figuren mit festen Stimmen,
-                      Gedaechtnis und KI-gestuetzte Skripterzeugung. */}
-                  <Button
-                    variant="secondary"
-                    onClick={() => setWorkshopOpen(true)}
-                    className="w-full justify-start"
-                    title={t("tts.workshop.hint")}
-                    data-testid="workshop-open"
-                  >
-                    <BookOpen width={16} height={16} />
-                    {t("tts.workshop.open")}
-                  </Button>
-                  <div className="relative">
-                    <Button
-                      variant="secondary"
-                      onClick={() => setAddMenuOpen((o) => !o)}
-                      title={t("tts.add.title")}
-                      aria-label={t("tts.add.title")}
-                      aria-expanded={addMenuOpen}
-                      className="w-full justify-start"
-                    >
-                      <Plus width={16} height={16} />
-                      {t("tts.add.short")}
-                    </Button>
-                    {addMenuOpen && (
-                      <>
-                        {/* Unsichtbarer Fang fuer den Klick daneben. */}
-                        <div
-                          className="fixed inset-0 z-30"
-                          onClick={() => setAddMenuOpen(false)}
-                        />
-                        <div className="absolute left-0 top-full mt-1 w-64 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1">
-                          <button
-                            type="button"
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text cursor-pointer text-start"
-                            onClick={() => {
-                              setAddMenuOpen(false);
-                              void loadDocument();
-                            }}
-                          >
-                            <Upload width={15} height={15} />
-                            {t("tts.add.document")}
-                          </button>
-                          <button
-                            type="button"
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text cursor-pointer text-start"
-                            onClick={() => {
-                              setAddMenuOpen(false);
-                              setUrlDialogOpen(true);
-                            }}
-                          >
-                            <Link width={15} height={15} />
-                            {t("tts.add.url")}
-                          </button>
-                          <button
-                            type="button"
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text cursor-pointer text-start"
-                            onClick={() => {
-                              setAddMenuOpen(false);
-                              void addFileToProject();
-                            }}
-                          >
-                            <FilePlus2 width={15} height={15} />
-                            {t("tts.add.projectFile")}
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                  <Button
-                    variant="secondary"
-                    className="w-full justify-start"
-                    onClick={toggleDictation}
-                    title={
-                      dictating ? t("tts.dictateStop") : t("tts.dictateHint")
-                    }
-                    aria-label={
-                      dictating ? t("tts.dictateStop") : t("tts.dictate")
-                    }
-                  >
-                    <Mic
-                      width={16}
-                      height={16}
-                      className={
-                        dictating ? "text-red-400 animate-pulse" : undefined
-                      }
-                    />
-                    {dictating ? t("tts.dictateStop") : t("tts.dictate")}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    className="w-full justify-start"
-                    onClick={() => void tidyText()}
-                    disabled={tidying || !text.trim()}
-                    title={tidying ? t("tts.tidying") : t("tts.tidyHint")}
-                    aria-label={tidying ? t("tts.tidying") : t("tts.tidy")}
-                  >
-                    <Sparkles
-                      width={16}
-                      height={16}
-                      className={tidying ? "animate-pulse" : undefined}
-                    />
-                    {t("tts.tidy")}
-                  </Button>
-                  {/* Skript pruefen: jederzeit, nicht erst beim Vorlesen —
-                      auch bei abgeschaltetem Automatik-Schalter. */}
-                  <Button
-                    variant="secondary"
-                    onClick={runScriptCheck}
-                    disabled={spokenText.trim().length === 0}
-                    className="w-full justify-start"
-                    title={t("tts.scriptCheck.runHint")}
-                    data-testid="script-check-run"
-                  >
-                    <SpellCheck
-                      width={16}
-                      height={16}
-                      className={errorCount > 0 ? "text-red-500" : undefined}
-                    />
-                    {t("tts.scriptCheck.run")}
-                    {errorCount > 0 && (
-                      <span
-                        data-testid="script-check-badge"
-                        className="ml-auto rounded-full bg-red-500/20 px-1.5 text-xs text-red-500"
-                      >
-                        {errorCount}
-                      </span>
-                    )}
-                  </Button>
-                  {/* Auto-Tagging gehoert zu den Textwerkzeugen: hier in der
-                      Bedienspalte, gestapelt (Knopf, Anbieter, Geraet). */}
-                  <div className="tts-controls__autotag">
-                    {/* Auto-Tagging (Paket C-T4): nur im Original-Reiter — die
-                Vorschläge hängen am dortigen Text und dessen Editor-Chips. */}
-                    {tab === "original" && (
-                      <AutoTagBar
-                        showSettings={false}
-                        text={text}
-                        suggestions={tagSuggestions}
-                        sourceText={tagSuggestionsSourceText}
-                        onSuggestionsChange={changeTagSuggestions}
-                        onApplyText={applyAutoTagText}
-                        options={
-                          autoTagOptions ??
-                          (getSetting(
-                            "tts_autotag_last",
-                          ) as AutoTagOptions | null) ??
-                          defaultAutoTagOptions()
+                    <Select
+                      menuPortal
+                      value={voiceValue}
+                      options={[
+                        {
+                          value: "@default",
+                          label: t("tts.voices.scriptVoices"),
+                        },
+                        // Anzeigename statt technischer Kennung.
+                        ...voices.map((id) => ({
+                          value: id,
+                          label:
+                            speakers.find((sp) => sp.id === id)?.displayName ??
+                            id,
+                        })),
+                        ...piperVoices.map((voice) => ({
+                          value: `piper:${voice.id}`,
+                          label: t("tts.voices.piperOption", {
+                            name: piperVoiceLabel(voice),
+                          }),
+                        })),
+                        // Piper ist aktiv, aber die Stimme fehlt (keine gewählt
+                        // oder nicht mehr in der Liste): sonst zeigte das Select
+                        // den Rohwert "piper:". Nicht wählbar, nur Beschriftung.
+                        ...(voiceValue.startsWith("piper:") &&
+                        !piperVoices.some((v) => `piper:${v.id}` === voiceValue)
+                          ? [
+                              {
+                                value: voiceValue,
+                                label:
+                                  voiceValue === "piper:"
+                                    ? t("tts.voices.piperNoVoice")
+                                    : t("tts.voices.piperVoiceMissing", {
+                                        id: voiceValue.slice(6),
+                                      }),
+                                isDisabled: true,
+                              },
+                            ]
+                          : []),
+                        // Kein Wert, ein Sprung: zur Stimmenverwaltung unter
+                        // Einstellungen -> Vorlesen.
+                        { value: "@manage", label: t("tts.voices.manage") },
+                      ]}
+                      onChange={(value) => {
+                        if (!value) return;
+                        if (value === "@manage") {
+                          window.localStorage.setItem(
+                            "lva.ui.settings.tab",
+                            "readaloud",
+                          );
+                          window.dispatchEvent(
+                            new CustomEvent("lv-navigate", {
+                              detail: { section: "settings" },
+                            }),
+                          );
+                          return;
                         }
-                        onOptionsChange={setAutoTagOptions}
-                        uiLang={uiLang}
-                      />
-                    )}
-                  </div>
-                </>
-              )}
-              {tab === "translation" && (
-                <>
-                  <div className="w-full">
-                    <Select
-                      value={targetLang}
-                      options={TTS_TARGET_LANGS}
-                      onChange={(value) =>
-                        value && updateSetting("tts_translate_lang", value)
-                      }
+                        applyVoiceValue(value);
+                        setTabVoices((current) => ({
+                          ...current,
+                          [tab]: value,
+                        }));
+                      }}
                       isClearable={false}
                     />
+                    <p
+                      id="voice-mode-hint"
+                      className="sr-only"
+                      data-testid="voice-mode-hint"
+                    >
+                      {voiceValue === "@default"
+                        ? t("tts.voices.scriptVoicesHint")
+                        : t("tts.voices.singleVoiceHint")}
+                    </p>
                   </div>
-                  <Button
-                    variant="secondary"
-                    className="w-full justify-start"
-                    onClick={translateText}
-                    disabled={translating || !text.trim()}
-                    title={
-                      translating
-                        ? t("tts.translating")
-                        : t("tts.translateAction")
-                    }
-                    aria-label={t("tts.translateAction")}
-                  >
-                    <Languages width={16} height={16} />
-                    {t("tts.translateShort")}
-                  </Button>
-                </>
-              )}
-            </div>
-
-            {/* Wie zusammengefasst wird — wirkt beim naechsten Klick auf
-              "Zusammenfassen". Nur im Zusammenfassungs-Reiter sichtbar, wo
-              die Frage sich stellt. */}
-            {tab === "summary" && (
-              <div className="flex flex-col gap-2 items-stretch">
-                <label className="flex flex-col gap-1 text-sm">
-                  {t("tts.summary.length")}
-                  <div className="w-full">
-                    <Select
-                      value={sumLength}
-                      isClearable={false}
-                      options={[
-                        {
-                          value: "kurz",
-                          label: t("tts.summary.lengths.short"),
-                        },
-                        {
-                          value: "mittel",
-                          label: t("tts.summary.lengths.medium"),
-                        },
-                        { value: "lang", label: t("tts.summary.lengths.long") },
-                      ]}
-                      onChange={(value) => value && setSumLength(value)}
-                    />
-                  </div>
-                </label>
-                <label className="flex flex-col gap-1 text-sm">
-                  {t("tts.summary.detail")}
-                  <div className="w-full">
-                    <Select
-                      value={sumDetail}
-                      isClearable={false}
-                      options={[
-                        {
-                          value: "ueberblick",
-                          label: t("tts.summary.details.overview"),
-                        },
-                        {
-                          value: "ausgewogen",
-                          label: t("tts.summary.details.balanced"),
-                        },
-                        {
-                          value: "detailliert",
-                          label: t("tts.summary.details.deep"),
-                        },
-                      ]}
-                      onChange={(value) => value && setSumDetail(value)}
-                    />
-                  </div>
-                </label>
-                <label className="flex flex-col gap-1 text-sm">
-                  {t("tts.summary.audience")}
-                  <div className="w-full">
-                    <Select
-                      value={sumAudience}
-                      isClearable={false}
-                      options={[
-                        {
-                          value: "allgemein",
-                          label: t("tts.summary.audiences.general"),
-                        },
-                        {
-                          value: "fachpublikum",
-                          label: t("tts.summary.audiences.expert"),
-                        },
-                        {
-                          value: "management",
-                          label: t("tts.summary.audiences.management"),
-                        },
-                      ]}
-                      onChange={(value) => value && setSumAudience(value)}
-                    />
-                  </div>
-                </label>
-                <Button
-                  variant="secondary"
-                  className="w-full justify-start"
-                  onClick={summarize}
-                  disabled={summarizing || !text.trim()}
-                  title={
-                    summarizing ? t("tts.summarizing") : t("tts.summarizeHint")
-                  }
-                  aria-label={t("tts.summarize")}
-                >
-                  <FileText width={16} height={16} />
-                  {t("tts.summarize")}
-                </Button>
+                </TooltipTrigger>
               </div>
-            )}
-            {/* Sprecherwechsel und Tags sind Schreibregeln, keine
+              <ReadAloudActions
+                tab={tab}
+                hasText={text.trim().length > 0}
+                hasSpokenText={spokenText.trim().length > 0}
+                onLoadDocument={() => void loadDocument()}
+                onLoadUrl={() => setUrlDialogOpen(true)}
+                onAddProjectFile={() => void addFileToProject()}
+                dictating={dictating}
+                onToggleDictation={toggleDictation}
+                saving={saving}
+                onSave={saveSpokenAudio}
+                exportProgress={exportProgress}
+                exportEta={exportEta}
+                formatEta={formatEta}
+                onCancelExport={cancelExport}
+                prewarm={prewarm}
+                onPrewarm={() => void startPrewarm()}
+                onCancelPrewarm={() => void commands.ttsPrewarmCancel()}
+                speakProgress={speakProgress}
+                onOpenWorkshop={() => setWorkshopOpen(true)}
+                tidying={tidying}
+                onTidy={() => void tidyText()}
+                errorCount={errorCount}
+                onCheckScript={runScriptCheck}
+                autoTag={{
+                  text,
+                  suggestions: tagSuggestions,
+                  sourceText: tagSuggestionsSourceText,
+                  onSuggestionsChange: changeTagSuggestions,
+                  onApplyText: applyAutoTagText,
+                  options:
+                    autoTagOptions ??
+                    (getSetting("tts_autotag_last") as AutoTagOptions | null) ??
+                    defaultAutoTagOptions(),
+                  onOptionsChange: setAutoTagOptions,
+                  uiLang,
+                }}
+                targetLang={targetLang}
+                onTargetLangChange={(value) =>
+                  void updateSetting("tts_translate_lang", value)
+                }
+                translating={translating}
+                onTranslate={translateText}
+                summarizing={summarizing}
+                onSummarize={summarize}
+                sumLength={sumLength}
+                onSumLengthChange={setSumLength}
+                sumDetail={sumDetail}
+                onSumDetailChange={setSumDetail}
+                sumAudience={sumAudience}
+                onSumAudienceChange={setSumAudience}
+              />
+              {/* Sprecherwechsel und Tags sind Schreibregeln, keine
               Einstellungen — der aufklappbare Block steht deshalb bei dem
               Feld, in das man sie tippt. */}
-            <details className="text-xs text-text/50">
-              <summary className="cursor-pointer select-none transition-colors hover:text-text/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary rounded-sm">
-                {t("tts.writingRules.title")}
-              </summary>
-              <div className="mt-1 space-y-1 ps-4">
-                <p>{t("tts.dialogHint")}</p>
-                <p>{t("tts.writingRules.tagsIntro")}</p>
-                <ul className="list-disc space-y-0.5 ps-4">
-                  <li>
-                    <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                      {t("tts.writingRules.example1")}
-                    </code>
-                  </li>
-                  <li>
-                    <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                      {t("tts.writingRules.example2")}
-                    </code>
-                  </li>
-                  <li>
-                    <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                      {t("tts.writingRules.example3")}
-                    </code>
-                  </li>
-                </ul>
-              </div>
-            </details>
-            {speaking && currentSentence && (
-              <p className="text-sm italic text-text/70 border-s-2 border-logo-primary ps-2">
-                {currentSentence}
-              </p>
+              <details className="text-xs text-text/60">
+                <summary className="cursor-pointer select-none rounded-lg py-1 text-sm font-medium text-text/60 transition-colors hover:text-text/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-text">
+                  {t("tts.writingRules.title")}
+                </summary>
+                <div className="mt-1 space-y-1 ps-4">
+                  <p>{t("tts.dialogHint")}</p>
+                  <p>{t("tts.writingRules.tagsIntro")}</p>
+                  <ul className="list-disc space-y-0.5 ps-4">
+                    <li>
+                      <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                        {t("tts.writingRules.example1")}
+                      </code>
+                    </li>
+                    <li>
+                      <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                        {t("tts.writingRules.example2")}
+                      </code>
+                    </li>
+                    <li>
+                      <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                        {t("tts.writingRules.example3")}
+                      </code>
+                    </li>
+                  </ul>
+                </div>
+              </details>
+              {speaking && currentSentence && (
+                <p className="text-sm italic text-text/70 border-s-2 border-logo-primary ps-2">
+                  {currentSentence}
+                </p>
+              )}
+            </aside>
+            {!ws.stacked && filesCollapsed !== "1" && (
+              <ResizeHandle
+                testId="resize-right"
+                label={t("tts.layout.resizeFiles")}
+                direction={-1}
+                value={ws.right.width}
+                min={ws.right.min}
+                max={ws.right.max}
+                defaultValue={ws.right.def}
+                onChange={ws.right.set}
+              />
             )}
-          </aside>
+            <FilesSidebar
+              pageId={activePage}
+              collapsed={filesCollapsed === "1"}
+              onToggle={() =>
+                setFilesCollapsed(filesCollapsed === "1" ? "0" : "1")
+              }
+              tab={rightTab}
+              onTabChange={setRightTab}
+              helpSection="vorlesen"
+              width={ws.right.width}
+              stacked={ws.stacked}
+              onLayoutToggle={ws.toggleLayout}
+              /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
+             falsche Zeile aendern und erneut erzeugen. Die unveraenderten
+             Saetze kommen dann aus dem Satz-Cache, nur die geaenderten gehen
+             durch die Engine — ein Hoerspiel muss dafuer nicht neu entstehen. */
+              onUseText={(value) => {
+                setTab("original");
+                setText(value);
+              }}
+            />
+          </div>
 
           <Dialog
             open={checkDialog !== null}
@@ -2407,22 +2180,6 @@ export const TtsSettings = () => {
             </p>
           </Dialog>
         </div>
-        <FilesSidebar
-          pageId={activePage}
-          collapsed={filesCollapsed === "1"}
-          onToggle={() => setFilesCollapsed(filesCollapsed === "1" ? "0" : "1")}
-          tab={rightTab}
-          onTabChange={setRightTab}
-          helpSection="vorlesen"
-          /* Der Text einer erzeugten Aufnahme zurueck in den Editor: die eine
-           falsche Zeile aendern und erneut erzeugen. Die unveraenderten
-           Saetze kommen dann aus dem Satz-Cache, nur die geaenderten gehen
-           durch die Engine — ein Hoerspiel muss dafuer nicht neu entstehen. */
-          onUseText={(value) => {
-            setTab("original");
-            setText(value);
-          }}
-        />
       </div>
     </PageShell>
   );

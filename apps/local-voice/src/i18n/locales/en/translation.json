@@ -28,6 +28,7 @@
     "serverTitle": "Voice & playback",
     "description": "Local text-to-speech via Fish Speech on your own GPU. The server starts on demand and is stopped again after idle time to free VRAM.",
     "inputPlaceholder": "Type or paste text to read aloud…",
+    "tabsLabel": "Text version",
     "tabOriginal": "Original",
     "tabTranslation": "Translation",
     "tabSummary": "Summary",
@@ -173,6 +174,8 @@
       "previewSentence": "Every preview speaks the same sentence so that voices, not recordings, are compared.",
       "previewNeedsEngine": "No sample yet — creating one starts the speech engine once.",
       "piperOption": "{{name}} · Piper",
+      "piperNoVoice": "Piper – no voice selected",
+      "piperVoiceMissing": "Piper – voice “{{id}}” unavailable",
       "manage": "Manage voices …",
       "umlautSuggestion": "Display name with umlauts: use “{{name}}”",
       "scriptVoices": "Script with speakers",
@@ -286,6 +289,7 @@
     },
     "files": {
       "title": "Files",
+      "tabsLabel": "Side panel",
       "add": "Add file (copied in)",
       "openFolder": "Show folder in Explorer",
       "refresh": "Refresh",
@@ -300,6 +304,12 @@
       "listen": "Listen",
       "useText": "Use this text",
       "defaultVoice": "Default voice"
+    },
+    "layout": {
+      "sideBySide": "Show controls and files side by side",
+      "resizePages": "Resize page list",
+      "resizeRight": "Resize right column",
+      "resizeFiles": "Resize file list"
     },
     "translateAction": "Translate — writes the translation into the second tab, plays nothing",
     "summarizeHint": "Summarize — always summarizes the original and writes the summary into the third tab, plays nothing",
@@ -546,6 +556,21 @@
         "none": "None"
       }
     },
+    "actions": {
+      "menu": "More actions",
+      "menuHint": "Workshop, clean up, check, auto-tagging",
+      "addHint": "Add a document, web page or file",
+      "dictateHint": "Speak instead of typing; the text is appended",
+      "dictateStopHint": "Ends the recording and appends the text",
+      "saveHint": "Save the text as an audio file",
+      "prewarmHint": "Generates changed sentences without playing",
+      "translateHint": "Create the translation in the second tab",
+      "summarizeHint": "Create a short version in the third tab",
+      "summaryOptions": "Adjust summary",
+      "summaryOptionsHint": "Choose length, detail and audience",
+      "targetLang": "Target language",
+      "targetLangHint": "Language to translate into"
+    },
     "writingRules": {
       "title": "Writing rules: speakers & tags",
       "tagsIntro": "Emotion and effect tags go in square brackets exactly where they should be heard:",
@@ -556,7 +581,9 @@
     "serverStartTitle": "Start the Fish Speech server?",
     "serverStartBody": "The server loads the speech model into graphics memory — roughly 17 GB — and takes up to two minutes depending on your settings. While it runs, translation computes on the CPU. Stop it via the same icon, or it stops itself after the configured idle time.",
     "export": {
-      "untitled": "Read-aloud"
+      "untitled": "Read-aloud",
+      "scriptStem": "Script",
+      "summaryStem": "Summary"
     },
     "tidy": "Clean up text",
     "tidyHint": "Clean up the text for reading – removes page numbers, headers, hyphenation and line breaks, nothing is shortened",

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { LucideIcon } from "lucide-react";
@@ -84,6 +84,9 @@ const toCustomChipItem = (text: string): ChipItem => ({
   reliable: false,
 });
 
+/** Filterchip der Palette. Bewusst neutral (nicht gelb, keine Reiter-Optik):
+ *  Gelb gehoert der einen Hauptaktion "Abspielen". Die Rolle "tab" bleibt, weil
+ *  genau ein Filter aktiv ist. */
 const TabButton: React.FC<{
   active: boolean;
   icon: LucideIcon;
@@ -95,16 +98,87 @@ const TabButton: React.FC<{
     role="tab"
     aria-selected={active}
     onClick={onClick}
-    className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+    className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs whitespace-nowrap transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-text ${
       active
-        ? "bg-logo-primary text-on-accent"
-        : "text-text/60 hover:text-text hover:bg-mid-gray/15"
+        ? "bg-mid-gray/20 font-medium text-text"
+        : "text-text/60 hover:text-text"
     }`}
   >
     <Icon width={13} height={13} aria-hidden="true" />
     {label}
   </button>
 );
+
+/**
+ * Einzeilige, waagrecht scrollende Filterleiste mit weichem Verlauf am linken
+ * und rechten Rand, solange dort noch Reiter verborgen sind. Die Verläufe sind
+ * absolut über der Leiste (kein Layoutsprung) und schlucken keine Klicks; sie
+ * blenden nur per Deckkraft ein und aus.
+ */
+const TabStrip: React.FC<{
+  label: string;
+  children: React.ReactNode;
+}> = ({ label, children }) => {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState({ start: false, end: false });
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const update = () => {
+      // 1 px Toleranz: Bruchpixel beim Skalieren.
+      const start = list.scrollLeft > 1;
+      const end = list.scrollLeft + list.clientWidth < list.scrollWidth - 1;
+      setMore((old) =>
+        old.start === start && old.end === end ? old : { start, end },
+      );
+    };
+    update();
+    list.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(list);
+    return () => {
+      list.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, []);
+
+  const fade =
+    "pointer-events-none absolute inset-y-0 z-[1] w-8 transition-opacity duration-150 motion-reduce:transition-none";
+  return (
+    <div className="relative">
+      <div
+        ref={listRef}
+        role="tablist"
+        aria-label={label}
+        // Einzeilig und waagrecht scrollend statt dreizeilig umbrechend
+        // (A24); die Bildlaufleiste bleibt unsichtbar, das Mausrad
+        // scrollt waagrecht mit.
+        onWheel={(event) => {
+          if (event.deltaY === 0) return;
+          event.currentTarget.scrollLeft += event.deltaY;
+        }}
+        className="flex flex-nowrap gap-1 overflow-x-auto px-2 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {children}
+      </div>
+      <div
+        aria-hidden="true"
+        data-testid="tag-tabs-fade-start"
+        className={`${fade} left-0 bg-[linear-gradient(to_right,var(--color-background),transparent)] ${
+          more.start ? "opacity-100" : "opacity-0"
+        }`}
+      />
+      <div
+        aria-hidden="true"
+        data-testid="tag-tabs-fade-end"
+        className={`${fade} right-0 bg-[linear-gradient(to_left,var(--color-background),transparent)] ${
+          more.end ? "opacity-100" : "opacity-0"
+        }`}
+      />
+    </div>
+  );
+};
 
 /**
  * Die Tag-Palette: Suche, Favoriten/Zuletzt/Kategorien-Reiter, ein Chip-Grid
@@ -298,49 +372,48 @@ export const TagPalette: React.FC<{
 
   return (
     <div className="rounded-lg border border-mid-gray/20">
-      <div className="flex items-center gap-2 px-2 py-1.5">
-        <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-text/50">
-          {t("tts.tags.title")}
-        </span>
-        {isOpen && (
-          <div className="relative min-w-0 flex-1">
-            <Search
-              width={14}
-              height={14}
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-text/40"
-            />
-            <Input
-              type="text"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("tts.tags.searchPlaceholder")}
-              className="w-full pl-7"
-            />
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={() => setIsOpenRaw(isOpen ? "0" : "1")}
-          title={isOpen ? t("tts.tags.collapse") : t("tts.tags.expand")}
-          aria-label={isOpen ? t("tts.tags.collapse") : t("tts.tags.expand")}
-          className="shrink-0 cursor-pointer rounded-md p-1 text-text/50 transition-colors hover:bg-mid-gray/20 hover:text-text"
-        >
-          {isOpen ? (
-            <ChevronUp width={16} height={16} />
-          ) : (
-            <ChevronDown width={16} height={16} />
+      {/* Kopf (Titel, Suche) und Filterreiter kleben oben, wenn die Palette
+          in einem scrollenden Klappbereich liegt: 44px tiefer als die
+          Ueberschrift des Klappbereichs (sie ist selbst 44px hoch). */}
+      <div className="sticky top-11 z-[1] rounded-t-lg bg-background pb-1">
+        <div className="flex items-center gap-2 px-2 py-1.5">
+          <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-text/50">
+            {t("tts.tags.title")}
+          </span>
+          {isOpen && (
+            <div className="relative min-w-0 flex-1">
+              <Search
+                width={14}
+                height={14}
+                aria-hidden="true"
+                className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-text/40"
+              />
+              <Input
+                type="text"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("tts.tags.searchPlaceholder")}
+                className="w-full pl-7"
+              />
+            </div>
           )}
-        </button>
-      </div>
-
-      {isOpen && (
-        <>
-          <div
-            role="tablist"
-            aria-label={t("tts.tags.tabsAriaLabel")}
-            className="flex flex-wrap gap-1 px-2 pt-1"
+          <button
+            type="button"
+            onClick={() => setIsOpenRaw(isOpen ? "0" : "1")}
+            title={isOpen ? t("tts.tags.collapse") : t("tts.tags.expand")}
+            aria-label={isOpen ? t("tts.tags.collapse") : t("tts.tags.expand")}
+            className="shrink-0 cursor-pointer rounded-md p-1 text-text/50 transition-colors hover:bg-mid-gray/20 hover:text-text"
           >
+            {isOpen ? (
+              <ChevronUp width={16} height={16} />
+            ) : (
+              <ChevronDown width={16} height={16} />
+            )}
+          </button>
+        </div>
+
+        {isOpen && (
+          <TabStrip label={t("tts.tags.tabsAriaLabel")}>
             <TabButton
               active={activeTab === "favorites"}
               icon={Star}
@@ -368,12 +441,16 @@ export const TagPalette: React.FC<{
                 onClick={() => setActiveTabRaw(category.id)}
               />
             ))}
-          </div>
+          </TabStrip>
+        )}
+      </div>
 
+      {isOpen && (
+        <>
           {/* Legende: was die drei Farben bedeuten -- einmal, nicht als
               Tooltip auf jedem Chip. */}
           <p
-            className="px-2 pt-1 text-[11px] text-text/50"
+            className="px-2 pt-1 text-xs text-text/50"
             data-testid="tag-legend"
           >
             {t("tts.tags.legend", {
@@ -383,7 +460,7 @@ export const TagPalette: React.FC<{
               total: TAG_REGISTRY.length,
             })}
           </p>
-          <div className="flex flex-wrap gap-1 p-2">
+          <div className="flex flex-wrap gap-x-1 gap-y-0.5 p-2">
             {visibleTags.length === 0 ? (
               <p className="px-1 py-2 text-xs text-text/50">{emptyMessage}</p>
             ) : (
@@ -393,9 +470,10 @@ export const TagPalette: React.FC<{
                   favorites.includes(item.registryId);
                 return (
                   <div key={item.key} className="relative inline-flex">
-                    {/* p-3: der sichtbare Chip bleibt ~22px hoch, das Polster
-                        hebt die Klickflaeche auf ~46px — ueber der 44px-
-                        Mindestvorgabe fuer Touch-Ziele. */}
+                    {/* p-1: Am Desktop reicht eine kompakte Klickflaeche (die
+                        Pille bleibt ~20px hoch, mit Polster ~28px, ueber den
+                        24px des WCAG 2.5.8); p-3 (~46px fuer Touch) machte
+                        95 Tags zu 11 Zeilen a 47px. */}
                     <TagChip
                       label={item.label}
                       state={item.reliable ? "normal" : "unverified"}
@@ -410,7 +488,7 @@ export const TagPalette: React.FC<{
                               .filter(Boolean)
                               .join(" — ")
                       }
-                      className="p-3"
+                      className="p-1"
                     />
                     {item.registryId && (
                       <button
@@ -429,17 +507,22 @@ export const TagPalette: React.FC<{
                             ? t("tts.tags.favoriteRemove", { tag: item.label })
                             : t("tts.tags.favoriteAdd", { tag: item.label })
                         }
-                        className="absolute -top-1.5 -right-1.5 cursor-pointer rounded-full border border-mid-gray/30 bg-background p-0.5 text-text/40 transition-colors hover:text-logo-primary"
+                        className="group absolute -top-[12px] -right-[12px] flex size-[24px] cursor-pointer items-center justify-center text-text/40 transition-colors hover:text-logo-primary"
                       >
-                        <Star
-                          width={10}
-                          height={10}
-                          className={
-                            isFavorite
-                              ? "fill-logo-primary text-logo-primary"
-                              : undefined
-                          }
-                        />
+                        {/* Klickflaeche 24x24 px (WCAG 2.5.8; px statt rem, die Wurzelschrift
+                            ist 15 px), sichtbar bleibt
+                            der kleine runde Stern in der Chip-Ecke. */}
+                        <span className="rounded-full border border-mid-gray/30 bg-background p-0.5">
+                          <Star
+                            width={12}
+                            height={12}
+                            className={
+                              isFavorite
+                                ? "fill-logo-primary text-logo-primary"
+                                : undefined
+                            }
+                          />
+                        </span>
                       </button>
                     )}
                   </div>

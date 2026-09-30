@@ -617,6 +617,80 @@ textarea:focus::-webkit-resizer {
   }
 }
 
+/* Vorlesen: Breiten der verstellbaren Spalten kommen als --tts-w vom
+   Layout-Hook (Ziehgriffe, persistent). Die Voreinstellung entspricht den
+   Standardbreiten des Hooks (Pixel statt rem). */
+.tts-workspace__pages {
+  width: var(--tts-w, 208px);
+}
+.tts-workspace__files {
+  width: var(--tts-w, 240px);
+}
+/* Gestapelt: Bedienung oben (natuerliche Hoehe, hoechstens die Haelfte der
+   Spalte, sonst eigener Scroll), Dateien/Hilfe fuellen den Rest und scrollen
+   selbst. */
+.tts-right-column--stacked {
+  width: var(--tts-w, 320px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  min-height: 0;
+}
+.tts-controls--stacked {
+  width: 100%;
+  max-height: 50%;
+}
+.tts-right-column--stacked > .tts-workspace__files {
+  width: 100%;
+  flex: 1 1 0;
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-mid-gray) 20%, transparent);
+  padding-top: 0.5rem;
+}
+
+/* Ziehgriff zwischen zwei Spalten: 12 px Griffflaeche, die mit negativem Rand
+   in die 16 px Luecke der Spalten faellt -- das Layout bleibt so breit wie
+   ohne Griff. Sichtbar wird nur eine duenne Linie bei Hover/Fokus/Ziehen. */
+.tts-resize {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 12px;
+  margin-inline: -14px;
+  align-self: stretch;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.tts-resize::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 5px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color 120ms;
+}
+.tts-resize:hover::after,
+.tts-resize:focus-visible::after,
+.tts-resize[data-dragging="true"]::after {
+  background: var(--color-logo-primary);
+}
+/* Waehrend des Ziehens: keine Textauswahl, Zeiger bleibt ein Spaltenzeiger,
+   auch wenn er ueber dem Editor steht. */
+body.lv-resizing,
+body.lv-resizing * {
+  user-select: none;
+  cursor: col-resize !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tts-resize::after {
+    transition: none;
+  }
+}
+
 /* File/page tools become full-width shelves when three columns cannot fit. */
 @media (max-width: 1100px) {
   .tts-workspace {
@@ -641,6 +715,19 @@ textarea:focus::-webkit-resizer {
   .tts-workspace__files {
     order: 3;
   }
+  /* Umbruch-Layout: keine Ziehgriffe, die rechte Spalte fuellt die Breite. */
+  .tts-resize {
+    display: none;
+  }
+  .tts-right-column--stacked {
+    width: 100%;
+  }
+  .tts-controls--stacked {
+    max-height: none;
+  }
+  .tts-right-column--stacked > .tts-workspace__files {
+    flex: none;
+  }
 }
 
 .workspace-status > div > div:first-child button {
@@ -659,13 +746,31 @@ textarea:focus::-webkit-resizer {
   min-height: 44px;
   align-content: center;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   border-radius: 8px;
 }
 .workspace-disclosure > summary:focus-visible {
   outline: 2px solid var(--color-text);
   outline-offset: 2px;
+}
+
+/* Klappbereich unter dem Editor (Ausdruck & Sprechstil): hoehenbegrenzt und
+   in sich scrollend. Ohne Deckel wuchs er mit den ~95 Tags von "Alle" und
+   drueckte den Editor (min-h-0) unter die textarea-Mindesthoehe -- die Suche
+   lag dann ueber dem Text. Die Ueberschrift klebt oben, damit der Bereich
+   auch mitten im Scrollen zuklappbar bleibt. */
+.workspace-disclosure--scroll {
+  flex: 0 1 auto;
+  max-height: 40%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.workspace-disclosure--scroll > summary {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-background);
 }
 
 /* Arbeitsflaechen mit fester Hoehe (Vorlesen): der Hauptbereich scrollt
@@ -733,7 +838,7 @@ textarea:focus::-webkit-resizer {
   min-width: 2.5rem;
   padding: 0 0.6rem;
   border-radius: 999px;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--color-text) 80%, transparent);
 }
@@ -752,4 +857,18 @@ textarea:focus::-webkit-resizer {
 }
 .tts-controls .mbtn {
   --_mb-size: 2.25rem;
+}
+
+/* Aktionszeile der Bedienspalte: das Zielsprache-Feld steht neben 36-px-
+   Symbolknoepfen und soll dieselbe Hoehe haben (Select setzt sonst 40 px). */
+.tts-actions__lang .app-select__control {
+  height: 36px;
+  min-height: 36px;
+}
+.tts-actions__lang .app-select__value-container {
+  padding-block: 0;
+}
+.tts-actions__lang .app-select__input-container {
+  margin-block: 0;
+  padding-block: 0;
 }

@@ -28,6 +28,7 @@
     "serverTitle": "Stimme & Wiedergabe",
     "description": "Lokale Sprachausgabe über Fish Speech auf der eigenen GPU. Der Server startet bei Bedarf und wird nach Leerlauf wieder gestoppt, um VRAM freizugeben.",
     "inputPlaceholder": "Text zum Vorlesen eingeben oder einfügen…",
+    "tabsLabel": "Textfassung",
     "tabOriginal": "Original",
     "tabTranslation": "Übersetzung",
     "tabSummary": "Zusammenfassung",
@@ -173,6 +174,8 @@
       "previewSentence": "Alle Hörproben sprechen denselben Satz: „Guten Tag. So klingt diese Stimme: ein kurzer Satz, damit Sie Klangfarbe, Tempo und Betonung vergleichen können.“",
       "previewNeedsEngine": "Noch keine Hörprobe — Erzeugen startet einmalig die Sprach-Engine.",
       "piperOption": "{{name}} · Piper",
+      "piperNoVoice": "Piper – keine Stimme gewählt",
+      "piperVoiceMissing": "Piper – Stimme „{{id}}“ nicht verfügbar",
       "manage": "Stimmen verwalten …",
       "umlautSuggestion": "Anzeigename mit Umlauten: „{{name}}“ übernehmen",
       "scriptVoices": "Skript mit Sprechern",
@@ -286,6 +289,7 @@
     },
     "files": {
       "title": "Dateien",
+      "tabsLabel": "Seitenleiste",
       "add": "Datei hinzufügen (wird kopiert)",
       "openFolder": "Ordner im Explorer zeigen",
       "refresh": "Aktualisieren",
@@ -300,6 +304,12 @@
       "listen": "Anhören",
       "useText": "Text übernehmen",
       "defaultVoice": "Standardstimme"
+    },
+    "layout": {
+      "sideBySide": "Bedienung und Dateien nebeneinander anzeigen",
+      "resizePages": "Breite der Seitenliste ändern",
+      "resizeRight": "Breite der rechten Spalte ändern",
+      "resizeFiles": "Breite der Dateileiste ändern"
     },
     "translateAction": "Übersetzen — erzeugt die Übersetzung im zweiten Reiter, spielt nichts ab",
     "summarizeHint": "Zusammenfassen – fasst immer das Original zusammen und legt das Ergebnis in den dritten Reiter, spielt nichts ab",
@@ -546,6 +556,21 @@
         "none": "Keine"
       }
     },
+    "actions": {
+      "menu": "Weitere Aktionen",
+      "menuHint": "Werkstatt, Aufbereiten, Prüfen, Auto-Tagging",
+      "addHint": "Dokument, Webseite oder Datei ergänzen",
+      "dictateHint": "Sprechen statt tippen; der Text kommt ans Ende",
+      "dictateStopHint": "Beendet die Aufnahme und fügt den Text an",
+      "saveHint": "Den Text als Audiodatei speichern",
+      "prewarmHint": "Erzeugt geänderte Sätze ohne Abspielen",
+      "translateHint": "Übersetzung im zweiten Reiter erzeugen",
+      "summarizeHint": "Kurzfassung im dritten Reiter erzeugen",
+      "summaryOptions": "Zusammenfassung anpassen",
+      "summaryOptionsHint": "Umfang, Detailgrad und Zielgruppe wählen",
+      "targetLang": "Zielsprache",
+      "targetLangHint": "Sprache, in die übersetzt wird"
+    },
     "writingRules": {
       "title": "Schreibregeln: Sprecher & Tags",
       "tagsIntro": "Emotions- und Effekt-Tags stehen in eckigen Klammern genau dort, wo sie zu hören sein sollen:",
@@ -556,7 +581,9 @@
     "serverStartTitle": "Fish-Speech-Server starten?",
     "serverStartBody": "Der Server lädt das Sprachmodell in den Grafikspeicher — rund 17 GB — und braucht dafür je nach Einstellung bis zu zwei Minuten. Solange er läuft, rechnet die Übersetzung auf der CPU. Beendet wird er über dasselbe Symbol oder von selbst nach der eingestellten Leerlaufzeit.",
     "export": {
-      "untitled": "Vorlesen"
+      "untitled": "Vorlesen",
+      "scriptStem": "Skript",
+      "summaryStem": "Zusammenfassung"
     },
     "tidy": "Text aufbereiten",
     "tidyHint": "Text fürs Vorlesen aufbereiten – Seitenzahlen, Kopfzeilen, Trennungen und Umbrüche raus, nichts wird gekürzt",

@@ -24,6 +24,11 @@ type BaseProps = {
   onChange: (value: string | null, action: ActionMeta<SelectOption>) => void;
   onBlur?: () => void;
   className?: string;
+  /** Liste als schwebende Ebene an `document.body` statt im Elternelement:
+   *  nötig in scrollenden/abschneidenden Containern (Bedienspalte der
+   *  Vorlesen-Seite), sonst verdrängt oder verdeckt die Liste dort andere
+   *  Inhalte. Standard: aus. */
+  menuPortal?: boolean;
   formatCreateLabel?: (input: string) => string;
 };
 
@@ -93,6 +98,9 @@ const selectStyles: StylesConfig<SelectOption, false> = {
       color: "var(--color-logo-primary)",
     },
   }),
+  // Nur mit `menuPortal` wirksam. Über allem, was die App als Ebene nutzt
+  // (Menü/Popover z-40 in ActionMenu), damit die Liste dort nie verdeckt wird.
+  menuPortal: (base) => ({ ...base, zIndex: 60 }),
   menu: (provided) => ({
     ...provided,
     zIndex: 30,
@@ -130,6 +138,7 @@ export const Select: React.FC<SelectProps> = React.memo(
     onChange,
     onBlur,
     className = "",
+    menuPortal = false,
     isCreatable,
     formatCreateLabel,
     onCreateOption,
@@ -160,6 +169,16 @@ export const Select: React.FC<SelectProps> = React.memo(
       onBlur,
       isClearable,
       styles: selectStyles,
+      // Portal + fixed: die Liste richtet sich am Fenster aus und flippt bei
+      // Platzmangel; Scrollen der Seite soll sie nicht verschieben.
+      ...(menuPortal && typeof document !== "undefined"
+        ? {
+            menuPortalTarget: document.body,
+            menuPosition: "fixed" as const,
+            menuPlacement: "auto" as const,
+            menuShouldScrollIntoView: false,
+          }
+        : {}),
     };
 
     if (isCreatable) {
