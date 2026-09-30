@@ -1015,6 +1015,34 @@ fn final_pass(
         step.applied = turns.is_some();
     }
     report.segments = fresh.len();
+    // A1: Herkunft des Endtranskripts (Modell, Dauer, Quelle). Nie ein Grund,
+    // den Enddurchlauf zu verwerfen: ohne Eintrag liefert `provenance::get` Modell
+    // und Anbieter aus der Transkriptzeile.
+    crate::managers::provenance::generation::record_stt(
+        store,
+        crate::managers::provenance::generation::SttRun {
+            meeting_id: &meeting.id,
+            operation: "stt",
+            actor_kind: crate::managers::provenance::ActorKind::Auto,
+            model_id,
+            revision: Some(snapshot.revision + 1),
+            duration_ms: report.load_ms + report.transcribe_ms,
+            sources: vec![crate::managers::provenance::SourceRef::new(
+                "audio",
+                &meeting.id,
+                Some(&meeting.title),
+            )],
+            params: serde_json::json!({
+                "audio_ms": report.audio_ms,
+                "blocks": report.blocks,
+                "segments": fresh.len(),
+                "granularity": granularity,
+                "epoch": epoch,
+                "live_epoch": report.live_epoch,
+                "speakers_applied": turns.is_some(),
+            }),
+        },
+    );
     env.emit(MeetingEvent::Reset {
         meeting_id: meeting.id.clone(),
     });
@@ -2251,6 +2279,58 @@ mod tests {
         assert_eq!(meta[REPORT_KEY]["segments"], 4);
         assert_eq!(meta[REPORT_KEY]["with_words"], true);
         assert_eq!(env.loads, vec![LARGE.to_string()]);
+    }
+
+    /// A1: der Enddurchlauf legt die Herkunft des neuen Transkripts an.
+    #[test]
+    fn the_final_pass_records_model_duration_and_source_of_the_new_transcript() {
+        use crate::managers::provenance::{self, ActorKind, Locality, ProvenanceOrigin, SubjectKind};
+        let f = fixture(true, MeetingStatus::Processing);
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+
+        let conn = f.store.get_connection().unwrap();
+        let entries = provenance::get(&conn, SubjectKind::Transcript, &f.id).unwrap();
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        assert_eq!(e.origin, ProvenanceOrigin::Recorded);
+        assert_eq!(e.operation, "stt");
+        assert_eq!(e.actor_kind, Some(ActorKind::Auto));
+        assert_eq!(e.model_id.as_deref(), Some(LARGE));
+        assert_eq!(e.locality, Some(Locality::Local));
+        assert!(e.duration_ms.is_some());
+        let revision: i64 = conn
+            .query_row(
+                "SELECT content_revision FROM transcripts WHERE meeting_id = ?1",
+                rusqlite::params![f.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(e.subject_revision, Some(revision), "Revision des neuen Transkripts");
+        assert_eq!((e.sources[0].kind.as_str(), e.sources[0].reference.as_str()), ("audio", f.id.as_str()));
+        let params: serde_json::Value = serde_json::from_str(e.params_json.as_deref().unwrap()).unwrap();
+        assert_eq!(params["segments"], 4);
+        assert_eq!(params["live_epoch"], 0);
+        assert_eq!(params["epoch"], 1);
+    }
+
+    /// A1: ein gescheiterter Enddurchlauf (Live-Transkript bleibt) schreibt keine
+    /// Herkunft fuer ein Transkript, das es nicht gibt; die Zeile liefert weiter
+    /// Modell und Anbieter des Live-Transkripts.
+    #[test]
+    fn a_failed_final_pass_records_nothing_and_the_live_model_still_shows() {
+        use crate::managers::provenance::{self, ProvenanceOrigin, SubjectKind};
+        let f = fixture(true, MeetingStatus::Processing);
+        let mut env = FakeEnv::new();
+        env.fail_transcribe = true;
+        run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        let conn = f.store.get_connection().unwrap();
+        assert!(provenance::list(&conn, SubjectKind::Transcript, &f.id).unwrap().is_empty());
+        let shown = provenance::get(&conn, SubjectKind::Transcript, &f.id).unwrap();
+        if let Some(e) = shown.first() {
+            assert_eq!(e.origin, ProvenanceOrigin::Derived);
+            assert_ne!(e.model_id.as_deref(), Some(LARGE), "das grosse Modell lief nie");
+        }
     }
 
     #[test]

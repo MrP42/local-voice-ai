@@ -101,6 +101,7 @@ fn import_subtitle_file(
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Untertiteldatei nicht lesbar: {e}"))?;
     let segments = parse_subtitles(&content)?;
+    let segment_count = segments.len();
 
     let meeting = store
         .create_meeting(title, MeetingSource::Subtitle, consent_confirmed_at)
@@ -123,6 +124,15 @@ fn import_subtitle_file(
         .set_status(&meeting.id, MeetingStatus::Ready)
         .map_err(|e| format!("status_ready_failed: {e}"))?;
 
+    // A1: Herkunft des Transkripts (Quelle: die Untertiteldatei, kein Modell).
+    crate::managers::provenance::generation::record_subtitle_import(
+        store,
+        &meeting.id,
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Untertitel"),
+        segment_count,
+    );
     info!("meetings: subtitle import ready ({})", meeting.id);
     Ok(meeting.id)
 }
@@ -206,6 +216,7 @@ fn run_import(
     path: &Path,
     job: &Arc<JobHandle>,
 ) -> Result<(), String> {
+    let import_started = std::time::Instant::now();
     let outcome = (|| -> Result<ImportEnd, String> {
         job.begin_phase(JobPhase::Prepare, 0);
         // Kick the model load FIRST (non-blocking) so it warms up while ffmpeg
@@ -276,6 +287,9 @@ fn run_import(
     let result = match outcome {
         Ok(ImportEnd::Done { duration_ms }) => {
             mark_import_ready(store, meeting_id)?;
+            // A1: Herkunft des Transkripts (Modell, Dauer, Quelldatei). Das
+            // tatsaechlich geladene Modell zaehlt (ein Ausweichmodell eingeschlossen).
+            record_import_provenance(app, store, tm, meeting_id, path, duration_ms, import_started);
             // Imports have no separate "recording ended" moment, so `now`
             // stands in for `ended_at` here too (mirrors the live recorder's
             // `stop()`) — and is persisted so later recomputations (minutes
@@ -339,6 +353,45 @@ fn run_import(
     tm.initiate_model_load_target(&dictation_model);
 
     result
+}
+
+/// A1: schreibt die Provenienz eines fertigen Imports. Nie ein Fehler nach
+/// aussen: das Transkript steht schon.
+fn record_import_provenance(
+    app: &tauri::AppHandle,
+    store: &Arc<MeetingStore>,
+    tm: &Arc<TranscriptionManager>,
+    meeting_id: &str,
+    path: &Path,
+    audio_ms: u64,
+    started: std::time::Instant,
+) {
+    let model = tm.get_current_model().unwrap_or_else(|| {
+        let settings = crate::settings::get_settings(app);
+        settings.meeting_model.unwrap_or(settings.selected_model)
+    });
+    let file = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Import")
+        .to_string();
+    crate::managers::provenance::generation::record_stt(
+        store,
+        crate::managers::provenance::generation::SttRun {
+            meeting_id,
+            operation: "import",
+            actor_kind: crate::managers::provenance::ActorKind::User,
+            model_id: &model,
+            revision: None,
+            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            sources: vec![crate::managers::provenance::SourceRef::new(
+                "import",
+                &file,
+                Some(&file),
+            )],
+            params: serde_json::json!({ "audio_ms": audio_ms }),
+        },
+    );
 }
 
 /// P8a: Endzustand nach einem Stopp durch den Nutzer: `cancelled`, mit
@@ -760,6 +813,44 @@ fn emit_error(app: &tauri::AppHandle, meeting_id: &str, message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A1: ein Untertitel-Import legt die Herkunft des Transkripts an (Quelle:
+    /// die Datei, kein Modell) und bleibt ohne sie gueltig.
+    #[test]
+    fn a_subtitle_import_records_where_the_transcript_came_from() {
+        use crate::managers::provenance::{self, ActorKind, SubjectKind};
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
+        let vtt = dir.path().join("interview.vtt");
+        std::fs::write(
+            &vtt,
+            "WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+Guten Tag.
+
+00:00:02.500 --> 00:00:05.000
+Willkommen zum Gespräch.
+",
+        )
+        .unwrap();
+        let id = import_subtitle_file(&store, "interview", &vtt, None).unwrap();
+
+        let conn = store.get_connection().unwrap();
+        let entries = provenance::list(&conn, SubjectKind::Transcript, &id).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].operation, "subtitles_import");
+        assert_eq!(entries[0].actor_kind, Some(ActorKind::User));
+        assert_eq!(entries[0].model_id, None, "kein Modell: die Untertitel kommen fertig");
+        assert_eq!(entries[0].sources[0].kind, "subtitle");
+        assert_eq!(entries[0].sources[0].reference, "interview.vtt");
+        assert!(entries[0].params_json.as_deref().unwrap().contains("\"segments\":2"));
+
+        // Ist die Tabelle unbrauchbar, scheitert der Import nicht.
+        conn.execute_batch("DROP TABLE provenance").unwrap();
+        let second = import_subtitle_file(&store, "noch einmal", &vtt, None).unwrap();
+        assert_eq!(store.get_segments(&second).unwrap().len(), 2);
+    }
 
     #[test]
     fn gap_placeholder_names_the_time_span() {

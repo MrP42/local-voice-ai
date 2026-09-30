@@ -237,6 +237,7 @@ fn run_retranscribe(
         });
     }
     let total_ms: u64 = tracks.iter().map(|(s, _)| s.len() as u64 / 16).sum();
+    let started = std::time::Instant::now();
 
     let result = (move || -> Result<RetranscribeEnd, String> {
         store
@@ -276,6 +277,22 @@ fn run_retranscribe(
         // bekommen dieselben Sprecher, nur fehlende Turns werden neu berechnet.
         drop(tracks);
         run_speaker_step(app, store, meeting_id, Some(job));
+        // A1: Herkunft des neuen Transkripts (Modell, Dauer, Quelle).
+        crate::managers::provenance::generation::record_stt(
+            store,
+            crate::managers::provenance::generation::SttRun {
+                meeting_id,
+                operation: "retranscribe",
+                actor_kind: crate::managers::provenance::ActorKind::User,
+                model_id: target,
+                revision: None,
+                duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                sources: vec![crate::managers::provenance::SourceRef::new(
+                    "audio", meeting_id, None,
+                )],
+                params: serde_json::json!({ "audio_ms": total_ms }),
+            },
+        );
         Ok(RetranscribeEnd::Completed)
     })();
 

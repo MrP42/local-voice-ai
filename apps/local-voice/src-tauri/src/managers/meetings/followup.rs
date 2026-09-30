@@ -37,6 +37,8 @@ use super::mail::{draft_from_answer, MailDraft};
 use super::notes::enhance::{enhanced_to_markdown, single_pass_budget_chars};
 use super::notes::model::{NoteBlock, NoteBlockKind};
 use super::store::MeetingStore;
+use crate::managers::provenance::generation::{record_generation, Fallback, Generation};
+use crate::managers::provenance::{ActorKind, SourceRef, SubjectKind};
 use crate::managers::usage::Purpose;
 use crate::settings::AppSettings;
 
@@ -386,6 +388,10 @@ pub struct RunLimits {
 }
 
 /// Erzeugt den Entwurf (ohne Guard und Zeitlimit, siehe `draft_guarded`).
+///
+/// A1: der Lauf steht in einem Erfassungsbereich (`usage::with_capture`); nach
+/// einem Entwurf schreibt `draft_captured` dessen Provenienz (Inhaltsart
+/// `export`, Kennung `followup:<Besprechung>`).
 pub async fn draft(
     settings: &AppSettings,
     store: Arc<MeetingStore>,
@@ -394,6 +400,31 @@ pub async fn draft(
     to: Vec<String>,
     limits: RunLimits,
 ) -> Result<MailDraft, ChatError> {
+    crate::managers::usage::with_capture(draft_captured(
+        settings,
+        store,
+        meeting_id,
+        addressee,
+        to,
+        limits,
+    ))
+    .await
+}
+
+/// Kennung des Inhalts, an dem die Provenienz eines Follow-up-Entwurfs haengt.
+pub fn provenance_subject(meeting_id: &str) -> String {
+    format!("followup:{meeting_id}")
+}
+
+async fn draft_captured(
+    settings: &AppSettings,
+    store: Arc<MeetingStore>,
+    meeting_id: &str,
+    addressee: &str,
+    to: Vec<String>,
+    limits: RunLimits,
+) -> Result<MailDraft, ChatError> {
+    let started = std::time::Instant::now();
     let sources = {
         let store = Arc::clone(&store);
         let id = meeting_id.to_string();
@@ -457,7 +488,37 @@ pub async fn draft(
             }
         };
         match interpret_reply(reply.content.as_deref(), &sources.title, to.clone()) {
-            Reply::Draft(draft) => return Ok(draft),
+            Reply::Draft(draft) => {
+                // A1: Herkunft des Entwurfs; ein Fehler hier kostet den Entwurf nie.
+                let subject = provenance_subject(meeting_id);
+                record_generation(
+                    &store,
+                    Generation {
+                        subject_kind: SubjectKind::Export,
+                        subject_id: &subject,
+                        subject_revision: None,
+                        operation: "followup",
+                        actor_kind: ActorKind::User,
+                        actor_ref: None,
+                        started,
+                        sources: vec![SourceRef::new(
+                            "meeting",
+                            meeting_id,
+                            Some(&sources.title),
+                        )],
+                        params: serde_json::json!({
+                            "digest_source": format!("{:?}", prompt.source),
+                            "clipped": prompt.clipped,
+                            "payload_chars": prompt.payload_chars,
+                        }),
+                        fallback: Some(Fallback {
+                            provider: &provider,
+                            model: &model,
+                        }),
+                    },
+                );
+                return Ok(draft);
+            }
             Reply::NoContent => return Err(ChatError::code_only(CODE_NO_CONTENT)),
             Reply::Empty if !empty_retried => {
                 empty_retried = true;

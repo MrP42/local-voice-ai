@@ -404,4 +404,16 @@ pub struct CliArgs {
     /// 2 bad input (no sandbox, unknown meeting).
     #[arg(long, value_name = "ID")]
     pub followup_draft: Option<String>,
+
+    // A1 (Goal Integrationen)
+    /// Print the integrations register as JSON and exit: every integration with
+    /// its direction, stored grants and the EFFECTIVE mode per capability and
+    /// caller, the state of its secrets (present/missing/broken, never the
+    /// content), counts of audit entries, pending approvals and provenance rows,
+    /// and the calendar sources it mirrors. SANDBOX ONLY: requires
+    /// LVA_MEETINGS_DIR, so it can never read the productive meetings.db (it
+    /// opens, and therefore migrates, that sandbox store). Honours --json/--out.
+    /// Exit 0 ok, 1 error, 2 no sandbox.
+    #[arg(long)]
+    pub integrations_dump: bool,
 }

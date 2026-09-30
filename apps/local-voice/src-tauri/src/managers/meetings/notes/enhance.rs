@@ -43,6 +43,8 @@ use crate::managers::meetings::llm_call::{
 };
 use crate::managers::meetings::speakers::SpeakerDirectory;
 use crate::managers::meetings::store::{MeetingDocument, MeetingStore, StoredSegment};
+use crate::managers::provenance::generation::{record_generation, Fallback, Generation};
+use crate::managers::provenance::{ActorKind, SourceRef, SubjectKind};
 use crate::managers::usage::Purpose;
 use crate::settings::AppSettings;
 
@@ -1423,6 +1425,7 @@ async fn run_enhance(
     limits: RunLimits,
     progress: Progress<'_>,
 ) -> Result<MeetingDocument, EnhanceError> {
+    let started = std::time::Instant::now();
     let meeting = store
         .get_meeting(meeting_id)
         .map_err(store_err)?
@@ -1546,6 +1549,7 @@ async fn run_enhance(
         sections,
         stats,
     };
+    let chunks_failed_count = notes.stats.chunks_failed.len();
     let metadata = json!({
         "mode": "enhance",
         "model": model,
@@ -1562,7 +1566,43 @@ async fn run_enhance(
             "outcome": d.outcome,
         })),
     });
-    persist(&store, meeting_id, &notes, &ctx.blocks, metadata)
+    let document = persist(&store, meeting_id, &notes, &ctx.blocks, metadata)?;
+    // A1: Herkunft der KI-Notizen. Scheitert das Schreiben, bleibt das Dokument
+    // gueltig; die Herkunft liefert dann `generation_metadata_json`.
+    let mut sources = vec![SourceRef::new(
+        "transcript",
+        meeting_id,
+        Some(&meeting.title),
+    )];
+    if !ctx.blocks.is_empty() {
+        sources.push(SourceRef::new("notes", meeting_id, None));
+    }
+    record_generation(
+        &store,
+        Generation {
+            subject_kind: SubjectKind::Document,
+            subject_id: &document.id,
+            subject_revision: Some(i64::from(document.version)),
+            operation: "notes",
+            actor_kind: ActorKind::User,
+            actor_ref: None,
+            started,
+            sources,
+            params: json!({
+                "template_id": info.id,
+                "auto_template": auto.is_some(),
+                "single_pass": single,
+                "chunks_total": chunks_total,
+                "chunks_failed": chunks_failed_count,
+                "segment_epoch": epoch,
+            }),
+            fallback: Some(Fallback {
+                provider: &provider,
+                model: &model,
+            }),
+        },
+    );
+    Ok(document)
 }
 
 async fn enhance_guarded(
@@ -1579,7 +1619,15 @@ async fn enhance_guarded(
     // es ein gewoehnliches `tokio::time::timeout`).
     match crate::managers::meetings::job::timeout_excluding_pauses(
         limits.timeout,
-        run_enhance(settings, store, meeting_id, template_id, limits, progress),
+        // A1: Erfassungsbereich fuer die Provenienz der KI-Notizen.
+        crate::managers::usage::with_capture(run_enhance(
+            settings,
+            store,
+            meeting_id,
+            template_id,
+            limits,
+            progress,
+        )),
     )
     .await
     {

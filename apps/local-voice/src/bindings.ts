@@ -1829,6 +1829,24 @@ async meetingsExportDocument(path: string, body: string) : Promise<Result<null, 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Herkunft eines Inhalts: Modell, Anbieter (lokal/entfernt), Token, Dauer,
+ * Zeitpunkt, Quellen, Konfidenz und Ausloeser. `content_type` ist die Art
+ * (`transcript`, `document`, ...), `id` die Kennung des Inhalts: bei
+ * `transcript` die Besprechung, bei `document` die Dokument-ID.
+ * 
+ * Gibt es keinen gespeicherten Eintrag (Inhalt aus der Zeit vor der
+ * Provenienz), wird die Herkunft aus den alten Daten abgeleitet
+ * (`origin: "derived"`); ist auch das nicht moeglich, ist die Liste leer.
+ */
+async provenanceGet(contentType: SubjectKind, id: string) : Promise<Result<ProvenanceEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("provenance_get", { contentType, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingNotesGet(meetingId: string) : Promise<Result<MeetingNotes, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_notes_get", { meetingId }) };
@@ -3883,6 +3901,18 @@ entry_id: string | null; source_segment_ids: number[];
  */
 source: string }
 /**
+ * Wer den Inhalt ausgeloest hat (Spalte `provenance.actor_kind`).
+ */
+export type ActorKind = 
+/**
+ * Der Nutzer per Knopfdruck.
+ */
+"user" | 
+/**
+ * Die App von selbst (Enddurchlauf, Automatik nach der Aufnahme).
+ */
+"auto" | "workflow" | "agent_external" | "agent_local"
+/**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
  * its `get_default_settings()` value when missing from a stored settings
@@ -4894,6 +4924,10 @@ export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
  */
 export type LocalLlmStatus = { phase: LocalLlmPhase; model_id: string | null; backend: string | null; port: number | null; message: string | null }
 export type LocalUpdate = { version: string; path: string; file_name: string }
+/**
+ * Lief das Modell auf diesem Rechner oder bei einem entfernten Anbieter?
+ */
+export type Locality = "local" | "remote"
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 /**
  * Ein bearbeitbarer Mailentwurf. `body_html` wird beim Kopieren und Speichern
@@ -5290,6 +5324,37 @@ is_self: boolean;
 meeting_count: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
+ * Ein Eintrag, wie die Oberflaeche ihn zeigt.
+ */
+export type ProvenanceEntry = { id: string; subject_kind: SubjectKind; subject_id: string; subject_revision: number | null; 
+/**
+ * Millisekunden UTC.
+ */
+created_at: number; operation: string; 
+/**
+ * `None` bei rekonstruierten Eintraegen: aus alten Daten ist der
+ * Ausloeser nicht ablesbar.
+ */
+actor_kind: ActorKind | null; actor_ref: string | null; provider: string | null; locality: Locality | null; model_id: string | null; model_label: string | null; usage_event_id: number | null; 
+/**
+ * Token ein (Prompt). `None`, wenn der Anbieter keine meldet.
+ */
+prompt_tokens: number | null; 
+/**
+ * Token aus (Antwort).
+ */
+completion_tokens: number | null; duration_ms: number | null; sources: SourceRef[]; confidence: number | null; 
+/**
+ * Weitere Angaben als JSON-Text (Objekt) oder `None`.
+ */
+params_json: string | null; origin: ProvenanceOrigin }
+/**
+ * Woher ein Eintrag stammt: `Recorded` wurde bei der Erzeugung geschrieben,
+ * `Derived` ist aus aelteren Daten (`generation_metadata_json`, Kopfzeile des
+ * Transkripts) rekonstruiert und traegt nur, was dort stand.
+ */
+export type ProvenanceOrigin = "recorded" | "derived"
+/**
  * Fortschritt eines Dokuments — Persistenz-Eintrag und Event-Payload.
  */
 export type ReadingInfo = { 
@@ -5364,6 +5429,12 @@ export type SectionKind = "text" | "tasks"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
+ * Eine Quelle des Inhalts. `kind`: `transcript`, `meeting`, `notes`, `audio`,
+ * `subtitle`, `youtube`, `rag`, `vault`, `web` (frei erweiterbar, nur
+ * Kleinbuchstaben, Ziffern und `_`).
+ */
+export type SourceRef = { kind: string; ref: string; title: string | null; url: string | null }
+/**
  * Namen, Zusammenfuehrungen oder Zuordnungen haben sich geaendert: offene
  * Ansichten laden Segmente und Sprecher neu.
  */
@@ -5424,6 +5495,44 @@ export type Strength =
  * Für hörbar verrauschte Aufnahmen. Kann die Stimme etwas verfärben.
  */
 "strong"
+/**
+ * Art des erzeugten Inhalts (Spalte `provenance.subject_kind`). Die Liste ist
+ * fest und steht zusaetzlich als CHECK in der Migration.
+ */
+export type SubjectKind = 
+/**
+ * Transkript einer Besprechung; `subject_id` ist die Besprechungs-ID (je
+ * Besprechung gibt es genau ein aktives Transkript).
+ */
+"transcript" | 
+/**
+ * Fassung eines Transkripts (Untertitel, STT, Zusammenfuehrung; A3).
+ */
+"transcript_variant" | 
+/**
+ * Dokument einer Besprechung: Protokoll, KI-Notizen (`meeting_documents.id`).
+ */
+"document" | 
+/**
+ * Zusammenfassung (Video, Buch, A3).
+ */
+"summary" | 
+/**
+ * Notiz im Wissensspeicher / Vault (A6).
+ */
+"knowledge_note" | 
+/**
+ * Erzeugtes Audio (Vorlesen).
+ */
+"tts_audio" | 
+/**
+ * Ausgabe nach aussen: Follow-up-Entwurf, Export, Mail.
+ */
+"export" | 
+/**
+ * Ergebnis eines Workflow-Laufs (Goal B).
+ */
+"run_output"
 export type SummaryOptions = { 
 /**
  * "kurz" (~150 Wörter) | "mittel" (~400) | "lang" (~900)

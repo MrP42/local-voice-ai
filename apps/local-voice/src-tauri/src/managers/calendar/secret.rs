@@ -17,6 +17,15 @@
 //! - Keine Fehlermeldung enthaelt Klartext oder Adresse.
 //! - Nicht unter Windows: `secret_put` meldet Fehler (macOS-Keychain folgt bei
 //!   Bedarf); es wird nie unverschluesselt gespeichert.
+//!
+//! Namensraeume (A1, Register „Integrationen“): `Namespace::Calendar` ist der
+//! bisherige Raum (Datei `<id>.bin`, Zusatzgeheimnis `calendar-secret@1:<id>`)
+//! und bleibt Byte fuer Byte unveraendert: bestehende Kalenderquellen brauchen
+//! keinen Neu-Login. `Namespace::Integration` legt Geheimnisse je Integration
+//! und Fach (`slot`) als `int-<id>-<slot>.bin` mit EIGENEM Zusatzgeheimnis
+//! (`integration-secret@1:`) ab: eine `.bin` laesst sich weder in den anderen
+//! Raum noch unter einen anderen Namen kopieren. Die Vorsilbe `int-` ist dem
+//! Integrationsraum vorbehalten.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -27,6 +36,9 @@ use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 4] = b"LVS1";
 const ENTROPY_PREFIX: &str = "local-voice-ai/calendar-secret@1:";
+const ENTROPY_PREFIX_INTEGRATION: &str = "local-voice-ai/integration-secret@1:";
+/// Dateivorsilbe des Integrationsraums; fuer den Kalenderraum gesperrt.
+pub const INTEGRATION_FILE_PREFIX: &str = "int-";
 const MAX_NAME_LEN: usize = 64;
 /// Ein Geheimnis ist eine Adresse oder ein Token; mehr ist ein Fehler.
 const MAX_SECRET_BYTES: usize = 64 * 1024;
@@ -98,12 +110,27 @@ fn entropy_for(name: &str) -> Vec<u8> {
     format!("{ENTROPY_PREFIX}{name}").into_bytes()
 }
 
+fn entropy_for_ns(ns: Namespace, name: &str) -> Vec<u8> {
+    match ns {
+        Namespace::Calendar => entropy_for(name),
+        Namespace::Integration => format!("{ENTROPY_PREFIX_INTEGRATION}{name}").into_bytes(),
+    }
+}
+
 pub(crate) fn put_in(dir: &Path, name: &str, data: &[u8]) -> Result<(), String> {
+    // Der Kalenderraum darf nie in den Integrationsraum schreiben.
+    if name.starts_with(INTEGRATION_FILE_PREFIX) {
+        return Err("Ungültiger Name für ein Geheimnis.".to_string());
+    }
+    put_raw(dir, name, &entropy_for(name), data)
+}
+
+fn put_raw(dir: &Path, name: &str, entropy: &[u8], data: &[u8]) -> Result<(), String> {
     let target = secret_path(dir, name)?;
     if data.is_empty() || data.len() > MAX_SECRET_BYTES {
         return Err("Das Geheimnis ist leer oder zu groß.".to_string());
     }
-    let blob = dpapi::protect(data, &entropy_for(name))?;
+    let blob = dpapi::protect(data, entropy)?;
     std::fs::create_dir_all(dir)
         .map_err(|e| format!("Ordner für Geheimnisse nicht anlegbar: {e}"))?;
 
@@ -130,6 +157,14 @@ pub(crate) fn put_in(dir: &Path, name: &str, data: &[u8]) -> Result<(), String> 
 }
 
 pub(crate) fn get_in(dir: &Path, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+    get_raw(dir, name, &entropy_for(name))
+}
+
+fn get_raw(
+    dir: &Path,
+    name: &str,
+    entropy: &[u8],
+) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
     let path = secret_path(dir, name)?;
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
@@ -139,13 +174,186 @@ pub(crate) fn get_in(dir: &Path, name: &str) -> Result<Option<Zeroizing<Vec<u8>>
     let Some(blob) = bytes.strip_prefix(MAGIC.as_slice()) else {
         return Err("Das Geheimnis ist beschädigt: Adresse neu eingeben.".to_string());
     };
-    dpapi::unprotect(blob, &entropy_for(name)).map(Some)
+    dpapi::unprotect(blob, entropy).map(Some)
 }
 
 pub(crate) fn delete_in(dir: &Path, name: &str) {
     if let Ok(path) = secret_path(dir, name) {
         let _ = std::fs::remove_file(path);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Namensraeume (A1)
+// ---------------------------------------------------------------------------
+
+/// Raum eines Geheimnisses (siehe Moduldoku).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Namespace {
+    /// Bisheriger Raum der Kalenderquellen: Dateiname = Quell-ID.
+    Calendar,
+    /// Geheimnisse der Integrationen: `int-<id>-<slot>`.
+    Integration,
+}
+
+/// Verweis auf ein Geheimnis: Raum, Integrations-/Quell-ID und Fach. Ein
+/// Integrations-Geheimnis hat mehrere Faecher (`token`, `password`, ...); im
+/// Kalenderraum gibt es je ID genau eines (`main`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SecretRef {
+    pub ns: Namespace,
+    pub id: String,
+    pub slot: String,
+}
+
+/// Zustand eines Geheimnisses, ohne den Inhalt preiszugeben.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SecretStatus {
+    Present,
+    Missing,
+    /// Vorhanden, aber nicht entschluesselbar (anderer Benutzer, beschaedigt).
+    /// Der Text ist eine Klartextmeldung ohne Geheimnis.
+    Broken(String),
+}
+
+fn valid_slot(slot: &str) -> bool {
+    !slot.is_empty()
+        && slot.len() <= 16
+        && slot
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+impl SecretRef {
+    /// Geheimnis einer Kalenderquelle (bisheriger Name, kein Neu-Login).
+    pub fn calendar(source_id: &str) -> Self {
+        Self {
+            ns: Namespace::Calendar,
+            id: source_id.to_string(),
+            slot: "main".to_string(),
+        }
+    }
+
+    /// Geheimnis einer Integration (z. B. Fach `token`, `password`).
+    pub fn integration(integration_id: &str, slot: &str) -> Self {
+        Self {
+            ns: Namespace::Integration,
+            id: integration_id.to_string(),
+            slot: slot.to_string(),
+        }
+    }
+
+    /// Dateiname (ohne `.bin`). Fehler bei einer ID oder einem Fach, die den
+    /// Namensraum verlassen koennten.
+    pub fn name(&self) -> Result<String, String> {
+        let bad = || Err("Ungültiger Name für ein Geheimnis.".to_string());
+        match self.ns {
+            Namespace::Calendar => {
+                if self.slot != "main"
+                    || !valid_name(&self.id)
+                    || self.id.starts_with(INTEGRATION_FILE_PREFIX)
+                {
+                    return bad();
+                }
+                Ok(self.id.clone())
+            }
+            Namespace::Integration => {
+                if !valid_slot(&self.slot) || !valid_name(&self.id) {
+                    return bad();
+                }
+                let name = format!("{INTEGRATION_FILE_PREFIX}{}-{}", self.id, self.slot);
+                if !valid_name(&name) {
+                    return bad();
+                }
+                Ok(name)
+            }
+        }
+    }
+}
+
+pub fn secret_put_ref(r: &SecretRef, data: &[u8]) -> Result<(), String> {
+    put_ref_in(&current_dir()?, r, data)
+}
+
+pub fn secret_get_ref(r: &SecretRef) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+    get_ref_in(&current_dir()?, r)
+}
+
+pub fn secret_delete_ref(r: &SecretRef) {
+    if let Ok(dir) = current_dir() {
+        delete_ref_in(&dir, r);
+    }
+}
+
+pub fn secret_status_ref(r: &SecretRef) -> SecretStatus {
+    match current_dir() {
+        Ok(dir) => status_ref_in(&dir, r),
+        Err(e) => SecretStatus::Broken(e),
+    }
+}
+
+/// Loescht alle Faecher einer Integration im globalen Speicher.
+pub fn secret_delete_all_for_integration(integration_id: &str) -> usize {
+    match current_dir() {
+        Ok(dir) => delete_all_for_integration_in(&dir, integration_id),
+        Err(_) => 0,
+    }
+}
+
+pub(crate) fn put_ref_in(dir: &Path, r: &SecretRef, data: &[u8]) -> Result<(), String> {
+    let name = r.name()?;
+    put_raw(dir, &name, &entropy_for_ns(r.ns, &name), data)
+}
+
+pub(crate) fn get_ref_in(
+    dir: &Path,
+    r: &SecretRef,
+) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+    let name = r.name()?;
+    get_raw(dir, &name, &entropy_for_ns(r.ns, &name))
+}
+
+pub(crate) fn delete_ref_in(dir: &Path, r: &SecretRef) {
+    if let Ok(name) = r.name() {
+        delete_in(dir, &name);
+    }
+}
+
+/// `Present`, `Missing` oder `Broken(Klartextmeldung)`; der Inhalt verlaesst
+/// diese Funktion nie.
+pub(crate) fn status_ref_in(dir: &Path, r: &SecretRef) -> SecretStatus {
+    match get_ref_in(dir, r) {
+        Ok(Some(_)) => SecretStatus::Present,
+        Ok(None) => SecretStatus::Missing,
+        Err(e) => SecretStatus::Broken(e),
+    }
+}
+
+/// Loescht ALLE Faecher einer Integration (`int-<id>-*.bin`) und liefert die
+/// Zahl der entfernten Dateien. Ein Fach mit `-` im Namen gehoert einer
+/// anderen ID (`int-a-b-token` ist ID `a-b`, nicht ID `a`) und bleibt stehen.
+pub(crate) fn delete_all_for_integration_in(dir: &Path, integration_id: &str) -> usize {
+    if !valid_name(integration_id) {
+        return 0;
+    }
+    let prefix = format!("{INTEGRATION_FILE_PREFIX}{integration_id}-");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let file = entry.file_name().to_string_lossy().into_owned();
+        let Some(stem) = file.strip_suffix(".bin") else {
+            continue;
+        };
+        let Some(slot) = stem.strip_prefix(&prefix) else {
+            continue;
+        };
+        if valid_slot(slot) && std::fs::remove_file(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 #[cfg(windows)]

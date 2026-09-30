@@ -1871,6 +1871,7 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_minutes::meetings_get_auto_template,
             commands::meetings::meetings_export_document,
             // M1-P1c
+            commands::provenance::provenance_get, // A1
             commands::meeting_notes::meeting_notes_get,
             commands::meeting_notes::meeting_notes_save,
             commands::meeting_notes::meetings_recording_position,
@@ -2129,6 +2130,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.export_meeting.is_some() // M6-P6a
         || cli_args.followup_draft.is_some() // P6f
         || cli_args.calendar_dump.is_some() // M5-P5a
+        || cli_args.integrations_dump // A1
         || cli_args.detect_mic; // M5-P5c
 
     #[allow(unused_mut)]
@@ -2335,6 +2337,22 @@ pub fn run(cli_args: CliArgs) {
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| run_headless_calendar_dump(&args));
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // A1: Stand des Integrations-Registers als JSON (nur Sandbox).
+                if cli_args.integrations_dump {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_integrations_dump(&app_handle, &args)
+                        });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2764,6 +2782,65 @@ fn run_headless_calendar_dump(args: &CliArgs) -> i32 {
         }
     }
     code
+}
+
+// A1: `--integrations-dump [--json] [--out F]`. Nur mit Sandbox
+// (`LVA_MEETINGS_DIR`): der Aufruf oeffnet und migriert den Store dort und liest
+// nie die produktive Datenbank. Geheimnisse erscheinen nur als Zustand.
+fn run_headless_integrations_dump(app: &AppHandle, args: &CliArgs) -> i32 {
+    use managers::meetings::store::MeetingStore;
+
+    crate::selftest::begin_headless_run();
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if sandbox.is_none() {
+        eprintln!(
+            "error: --integrations-dump requires {} (sandbox); it never reads the productive store",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let store = match MeetingStore::new(app) {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    let conn = match store.get_connection() {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    };
+    let secrets_dir = managers::calendar::secret::secrets_dir_for(app).ok();
+    let payload = match managers::integrations::dump::build(
+        &conn,
+        secrets_dir.as_deref(),
+        Some(store.db_path()),
+    ) {
+        Ok(payload) => payload,
+        Err(e) => {
+            eprintln!("error: integrations-dump failed: {e}");
+            return 1;
+        }
+    };
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        println!("{}", managers::integrations::dump::format_table(&payload));
+        if let Some(path) = args.out.as_deref() {
+            if let Err(e) = std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                eprintln!("error: could not write {}: {}", path.display(), e);
+            }
+        }
+    }
+    0
 }
 
 // M5-P5c: `--detect-mic --seconds N [--all-apps] [--json] [--out F]`. Beobachtet

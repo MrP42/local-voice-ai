@@ -1344,6 +1344,7 @@ async fn run_minutes(
     guard: &MinutesRunGuard,
     on_progress: ProgressFn<'_>,
 ) -> Result<MeetingDocument, MinutesError> {
+    let started = std::time::Instant::now();
     let meeting = store
         .get_meeting(meeting_id)
         .map_err(store_err)?
@@ -1514,6 +1515,37 @@ async fn run_minutes(
             Some(&metadata.to_string()),
         )
         .map_err(store_err)?;
+    // A1: Herkunft des Protokolls (Modell, Token, Dauer, Ereignis im Ledger).
+    // Scheitert das Schreiben, bleibt das Protokoll gueltig; die Herkunft
+    // liefert dann `generation_metadata_json` (Rueckfall in `provenance::get`).
+    crate::managers::provenance::generation::record_generation(
+        &store,
+        crate::managers::provenance::generation::Generation {
+            subject_kind: crate::managers::provenance::SubjectKind::Document,
+            subject_id: &document_id,
+            subject_revision: None,
+            operation: "minutes",
+            actor_kind: crate::managers::provenance::ActorKind::User,
+            actor_ref: None,
+            started,
+            sources: vec![crate::managers::provenance::SourceRef::new(
+                "transcript",
+                meeting_id,
+                Some(&meeting.title),
+            )],
+            params: json!({
+                "template_id": info.id,
+                "auto_template": auto.is_some(),
+                "single_pass": blocks.is_none(),
+                "chunks_total": blocks.as_ref().map(|b| b.chunks_total).unwrap_or(1),
+                "chunks_failed": blocks.as_ref().map(|b| b.chunks_failed.len()).unwrap_or(0),
+            }),
+            fallback: Some(crate::managers::provenance::generation::Fallback {
+                provider: &provider,
+                model: &model,
+            }),
+        },
+    );
     info!(
         "Protokoll: {} Abschnitte, {} Eintraege, {} Luecken",
         sections.len(),
@@ -1541,9 +1573,12 @@ pub(crate) async fn generate_guarded(
     on_progress: ProgressFn<'_>,
 ) -> Result<MeetingDocument, MinutesError> {
     let guard = MinutesRunGuard::acquire(meeting_id)?;
+    // A1: alle Modellaufrufe dieses Laufs (Vorlagenwahl, Schreiben, Bloecke)
+    // landen in einem Erfassungsbereich; `run_minutes` schreibt daraus die
+    // Provenienz des Protokolls.
     match tokio::time::timeout(
         limits.timeout,
-        run_minutes(
+        crate::managers::usage::with_capture(run_minutes(
             settings,
             store,
             meeting_id,
@@ -1551,7 +1586,7 @@ pub(crate) async fn generate_guarded(
             limits,
             &guard,
             on_progress,
-        ),
+        )),
     )
     .await
     {

@@ -297,7 +297,8 @@ pub async fn send_chat_completion_checked(
         tokens,
         elapsed,
         result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-    );
+    )
+    .await;
     result
 }
 
@@ -523,7 +524,8 @@ pub async fn send_ollama_native(
         tokens,
         elapsed,
         result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-    );
+    )
+    .await;
     result
 }
 
@@ -777,7 +779,8 @@ pub async fn send_chat_completion_stream(
         tokens,
         elapsed,
         result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-    );
+    )
+    .await;
     result
 }
 

@@ -22,7 +22,7 @@ use super::notes::templates::{self, builtin_id, builtin_templates, is_builtin_id
 /// Database migrations for the meetings store. One migration creates every
 /// table for M8; later milestones (M9/M10) add migrations rather than
 /// editing this one, matching the pattern in `history.rs`.
-static MIGRATIONS: &[M] = &[
+pub(crate) static MIGRATIONS: &[M] = &[
     M::up(
     "CREATE TABLE meetings (
       id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL,
@@ -92,6 +92,10 @@ static MIGRATIONS: &[M] = &[
     // M5 (Kalender-Cache, Verknuepfungen, Personen). Nur CREATE und ADD COLUMN
     // mit Defaults: vorhandene Zeilen bleiben unberuehrt.
     M::up(CALENDAR_MIGRATION),
+    // A1 (Register der Integrationen, Rechte, Audit, Freigaben, Provenienz).
+    // Nur CREATE plus eine Rueckfuellung aus `calendar_sources`; Trigger halten
+    // den Spiegel aktuell. Naeheres in `managers/integrations/schema.rs`.
+    M::up(crate::managers::integrations::schema::INTEGRATIONS_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
@@ -575,6 +579,56 @@ pub struct MeetingTemplate {
     pub pinned: bool,
 }
 
+/// A1 (R6): Sicherung des Standes VOR einer ausstehenden Migration. Nur fuer eine
+/// bestehende, nicht leere Datenbank, die noch migriert werden muss; der Name
+/// nennt die Schema-Version davor (`meetings.db.bak-v5`). Eine vorhandene
+/// Sicherung wird nie ueberschrieben: sie haelt den aeltesten Stand vor dem
+/// Schritt. Erst in eine Temp-Datei schreiben (`VACUUM INTO`, konsistent auch
+/// neben einem laufenden Schreiber), dann atomar umbenennen -- ein Abbruch laesst
+/// nie eine halbe Sicherung unter dem endgueltigen Namen zurueck.
+pub(crate) fn backup_before_migration(db_path: &Path) -> Result<Option<PathBuf>> {
+    let len = match std::fs::metadata(db_path) {
+        Ok(meta) => meta.len(),
+        Err(_) => return Ok(None),
+    };
+    if len == 0 {
+        return Ok(None);
+    }
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version == 0 || version >= MIGRATIONS.len() as i64 {
+        return Ok(None);
+    }
+    let name = db_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow!("database path without a file name"))?;
+    let target = db_path.with_file_name(format!("{name}.bak-v{version}"));
+    if target.exists() {
+        return Ok(None);
+    }
+    let tmp = db_path.with_file_name(format!("{name}.bak-v{version}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let tmp_text = tmp
+        .to_str()
+        .ok_or_else(|| anyhow!("backup path is not valid UTF-8"))?
+        .to_string();
+    let written = conn.execute("VACUUM INTO ?1", params![tmp_text]);
+    drop(conn);
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
+    if let Err(e) = std::fs::rename(&tmp, &target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
+    Ok(Some(target))
+}
+
 pub struct MeetingStore {
     db_path: PathBuf,
     /// M6-P6e: `Some(Wartezeit)` = nur lesend geoeffnet (`open_read_only`,
@@ -651,11 +705,25 @@ impl MeetingStore {
         if let Err(e) = store.seed_builtin_templates() {
             warn!("Could not seed the bundled meeting templates: {e}");
         }
+        // A1: Kalenderquellen im Register nachziehen (Sicherheitsnetz neben den
+        // Triggern; idempotent). Ein Fehler sperrt niemanden aus: der naechste
+        // Start versucht es erneut.
+        if let Err(e) = store.reconcile_integrations() {
+            warn!("Could not reconcile the calendar sources with the integrations register: {e}");
+        }
         Ok(store)
     }
 
     fn init_database(&self) -> Result<()> {
         info!("Initializing meetings database at {:?}", self.db_path);
+        // A1: vor einer ausstehenden Migration eine Sicherung des alten Standes.
+        // Ein Fehler hier sperrt nichts: die Migration selbst ist eine
+        // Transaktion und rollt bei Abbruch zurueck.
+        match backup_before_migration(&self.db_path) {
+            Ok(Some(path)) => info!("Meetings database backed up to {path:?} before migrating"),
+            Ok(None) => {}
+            Err(e) => warn!("Could not back up the meetings database before migrating: {e}"),
+        }
         let mut conn = Connection::open(&self.db_path)?;
 
         let migrations = Migrations::new(MIGRATIONS.to_vec());
@@ -698,6 +766,20 @@ impl MeetingStore {
             )?;
         }
         tx.commit()?;
+        Ok(())
+    }
+
+    /// A1: gleicht das Register der Integrationen mit `calendar_sources` ab.
+    fn reconcile_integrations(&self) -> Result<()> {
+        let conn = self.get_connection()?;
+        let report = crate::managers::integrations::adopt::reconcile(&conn)
+            .map_err(|e| anyhow!("{e}"))?;
+        if report.changed() > 0 {
+            info!(
+                "integrations: {} adopted, {} updated, {} removed",
+                report.inserted, report.updated, report.removed
+            );
+        }
         Ok(())
     }
 
