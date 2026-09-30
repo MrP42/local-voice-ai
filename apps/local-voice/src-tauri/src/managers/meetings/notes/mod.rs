@@ -12,6 +12,7 @@
 #![allow(dead_code)]
 
 pub mod assemble;
+pub mod budget;
 pub mod enhance;
 pub mod eval;
 pub mod model;

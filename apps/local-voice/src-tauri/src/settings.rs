@@ -813,8 +813,8 @@ pub struct AppSettings {
     /// den Schlüssel (ältere settings.json) gilt `auto`.
     #[serde(default)]
     pub meeting_echo_cancellation: MeetingEchoCancellation,
-    /// M2-P2d: Enddurchlauf nach dem Stopp: `auto` (mit GPU Whisper large-v3
-    /// bzw. Qwen3-ASR 1.7B, nur CPU: Live-Transkript = Endtranskript), `off`
+    /// M2-P2d: Enddurchlauf nach dem Stopp: `auto` (mit GPU Qwen3-ASR 1.7B
+    /// bzw. Whisper large-v3, nur CPU: Live-Transkript = Endtranskript), `off`
     /// oder eine Modell-ID (laeuft auch auf der CPU). Ohne den Schluessel
     /// (aeltere settings.json) gilt `auto`.
     #[serde(default = "default_meeting_final_model")]

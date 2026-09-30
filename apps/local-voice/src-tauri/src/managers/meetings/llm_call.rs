@@ -276,6 +276,36 @@ pub fn should_retry(err: &str, free_mb: u64) -> bool {
     true
 }
 
+// -- Abgeschnittene und ungueltige Antworten (P1i, B11) ------------------------
+
+/// Kennzeichen einer vom Server abgeschnittenen Antwort (`finish_reason:
+/// length`) in der Fehlermeldung von `ask_json`.
+pub const TRUNCATED_MARKER: &str = "Antwort abgeschnitten";
+
+/// Kennzeichen einer ungueltigen Antwort in der Fehlermeldung von `ask_json`.
+const INVALID_MARKER: &str = "kein gültiges JSON";
+
+/// Hat der Server die Antwort abgeschnitten, oder war schon der Prompt zu gross
+/// (llama-server: HTTP 400 `exceed_context_size_error`)? Beides heisst: derselbe
+/// Prompt scheitert wieder, ein kleinerer nicht.
+pub fn is_truncation_error(err: &str) -> bool {
+    err.contains(TRUNCATED_MARKER)
+        || err.contains("exceed_context_size")
+        || err.contains("exceeds the available context size")
+}
+
+/// Lohnt es, den Block zu halbieren und die Haelften einzeln zu fragen?
+/// Abgeschnittene und ungueltige Antworten (die Antwort war zu lang oder das
+/// Modell ist bei diesem Umfang aus dem Tritt geraten). Nie bei RAM-Fehlern,
+/// einem abgestuerzten Server oder Transportfehlern: kleinere Bloecke helfen
+/// dort nicht, sie kosten nur Zeit.
+pub fn is_splittable_error(err: &str) -> bool {
+    if is_memory_error(err) || crate::managers::llm::is_server_crashed(err) {
+        return false;
+    }
+    is_truncation_error(err) || err.contains(INVALID_MARKER)
+}
+
 // -- Abfragen ---------------------------------------------------------------
 
 pub struct AskOptions<'a> {
@@ -316,7 +346,7 @@ pub async fn ask_json<T: DeserializeOwned>(
     let mut prompt = user_prompt.to_string();
     let mut last_error = String::new();
     for attempt in 0..JSON_ATTEMPTS {
-        let response = crate::llm_client::send_chat_completion_with_schema(
+        let reply = crate::llm_client::send_chat_completion_checked(
             opts.purpose,
             &provider,
             api_key.clone(),
@@ -328,8 +358,11 @@ pub async fn ask_json<T: DeserializeOwned>(
             None,
         )
         .await
-        .map_err(|e| format!("{}-Erzeugung fehlgeschlagen: {e}", opts.noun))?
-        .ok_or_else(|| format!("{}-Antwort ohne Inhalt", opts.noun))?;
+        .map_err(|e| format!("{}-Erzeugung fehlgeschlagen: {e}", opts.noun))?;
+        let truncated = reply.truncated;
+        let response = reply
+            .content
+            .ok_or_else(|| format!("{}-Antwort ohne Inhalt", opts.noun))?;
 
         match serde_json::from_str::<T>(strip_code_fence(&response)) {
             Ok(value) => {
@@ -353,6 +386,20 @@ pub async fn ask_json<T: DeserializeOwned>(
                     }
                     None => return Ok(value),
                 }
+            }
+            Err(_) if truncated => {
+                // Abgeschnitten: derselbe Prompt (mit Fehlerhinweis sogar ein
+                // laengerer) endet wieder am Kontextende. Nicht wiederholen,
+                // der Aufrufer verkleinert den Prompt (B11: vier Versuche
+                // kosteten 38 s und der Block ging verloren).
+                log::warn!(
+                    "{}-Antwort vom Server abgeschnitten (Kontext voll) -- kein Retry mit demselben Prompt",
+                    opts.noun
+                );
+                return Err(format!(
+                    "{}-{TRUNCATED_MARKER} (Kontext voll)",
+                    opts.noun
+                ));
             }
             Err(e) => {
                 let full = e.to_string();
@@ -437,6 +484,9 @@ pub(crate) mod test_support {
         Body(String),
         /// Fehlerstatus (z. B. 500) mit kurzem Text.
         Status(u16),
+        /// Fehlerstatus mit eigenem Body (z. B. llama-server: 400 "exceeds the
+        /// available context size").
+        StatusBody(u16, String),
         /// Antwortet nie (haengender Server): Verbindung bleibt offen.
         Hang,
     }
@@ -445,6 +495,18 @@ pub(crate) mod test_support {
     pub fn chat_body(content: &str) -> String {
         serde_json::json!({
             "choices": [{ "message": { "role": "assistant", "content": content } }]
+        })
+        .to_string()
+    }
+
+    /// Wie `chat_body`, mit `finish_reason: "length"`: der Server hat die
+    /// Antwort abgeschnitten (Kontext voll).
+    pub fn chat_body_truncated(content: &str) -> String {
+        serde_json::json!({
+            "choices": [{
+                "message": { "role": "assistant", "content": content },
+                "finish_reason": "length"
+            }]
         })
         .to_string()
     }
@@ -496,6 +558,9 @@ pub(crate) mod test_support {
                                     MockReply::Body(body) => ("200 OK".to_string(), body),
                                     MockReply::Status(code) => {
                                         (format!("{code} Mock Error"), "mock failure".to_string())
+                                    }
+                                    MockReply::StatusBody(code, body) => {
+                                        (format!("{code} Mock Error"), body)
                                     }
                                     MockReply::Hang => std::future::pending().await,
                                 };
@@ -828,6 +893,114 @@ mod tests {
             err.starts_with("Test-Erzeugung fehlgeschlagen"),
             "war: {err}"
         );
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    // -- P1i: abgeschnittene Antworten ------------------------------------------
+
+    #[test]
+    fn only_truncated_or_invalid_answers_are_worth_splitting() {
+        let truncated = format!("Test-{TRUNCATED_MARKER} (Kontext voll)");
+        let invalid = "Test-Antwort war kein gültiges JSON: Eof-Fehler in Zeile 94, Spalte 23";
+        let too_big = "Test-Erzeugung fehlgeschlagen: API request failed with status 400 Bad Request:                        {\"error\":{\"type\":\"exceed_context_size_error\"}}";
+        let ram = "Zu wenig freier Arbeitsspeicher: 1.0 GB frei";
+        let crashed = "server_crashed: Das lokale Sprachmodell ist abgestuerzt.";
+        let transport = "Test-Erzeugung fehlgeschlagen: HTTP request failed: connection refused";
+        // (Fehler, Abschneiden/Kontext, Halbieren lohnt)
+        let table: [(&str, bool, bool); 7] = [
+            (truncated.as_str(), true, true),
+            (invalid, false, true),
+            (too_big, true, true),
+            (ram, false, false),
+            (crashed, false, false),
+            (transport, false, false),
+            ("Test-Antwort ohne Inhalt", false, false),
+        ];
+        for (err, is_trunc, splittable) in table {
+            assert_eq!(is_truncation_error(err), is_trunc, "Abschneiden: {err}");
+            assert_eq!(is_splittable_error(err), splittable, "Halbieren: {err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_truncated_answer_is_not_asked_again_with_the_same_prompt() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&requests);
+        // Halbes JSON, `finish_reason: length`: so sah B11 aus.
+        let port = spawn_llm_mock_with(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            MockReply::Body(chat_body_truncated(r#"{"text":"halber Sat"#))
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        let err = ask_json::<Answer>(&settings, &opts(false), "sys", &schema, "prompt", &never)
+            .await
+            .unwrap_err();
+        assert!(is_truncation_error(&err), "war: {err}");
+        assert!(is_splittable_error(&err));
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "kein Retry mit dem (laengeren) Fehler-Prompt"
+        );
+    }
+
+    /// Ohne den Hinweis des Servers bleibt es beim bisherigen Verhalten:
+    /// ungueltiges JSON wird einmal mit dem Fehlertext wiederholt.
+    #[tokio::test]
+    async fn invalid_json_without_the_truncation_flag_keeps_the_single_retry() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&requests);
+        let port = spawn_llm_mock_with(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            MockReply::Body(chat_body(r#"{"text":"halber Sat"#))
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        let err = ask_json::<Answer>(&settings, &opts(false), "sys", &schema, "prompt", &never)
+            .await
+            .unwrap_err();
+        assert!(!is_truncation_error(&err), "war: {err}");
+        assert!(is_splittable_error(&err), "ungueltig lohnt das Halbieren");
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+    }
+
+    /// Ist das JSON trotz `finish_reason: length` vollstaendig (die Antwort endete
+    /// genau am Limit), gilt sie: nichts wegwerfen, was lesbar ist.
+    #[tokio::test]
+    async fn a_complete_answer_is_accepted_even_when_the_server_reports_length() {
+        let port = spawn_llm_mock_with(|_| {
+            MockReply::Body(chat_body_truncated(r#"{"text":"vollstaendig"}"#))
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        let answer = ask_json::<Answer>(&settings, &opts(false), "sys", &schema, "prompt", &never)
+            .await
+            .unwrap();
+        assert_eq!(answer.text, "vollstaendig");
+    }
+
+    /// Passt schon der Prompt nicht (HTTP 400), ist das ein Transportfehler ohne
+    /// Retry in `ask_json`, aber als zu-gross erkennbar.
+    #[tokio::test]
+    async fn an_oversized_prompt_is_reported_as_a_truncation_class_error() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&requests);
+        let port = spawn_llm_mock_with(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            MockReply::StatusBody(
+                400,
+                r#"{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error"}}"#
+                    .to_string(),
+            )
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        let err = ask_json::<Answer>(&settings, &opts(false), "sys", &schema, "p", &never)
+            .await
+            .unwrap_err();
+        assert!(is_truncation_error(&err), "war: {err}");
+        assert!(is_splittable_error(&err));
         assert_eq!(requests.load(Ordering::SeqCst), 1);
     }
 }

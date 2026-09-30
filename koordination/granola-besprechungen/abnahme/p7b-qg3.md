@@ -57,3 +57,24 @@ Alle Läufe endeten mit Exit 0, ohne übrig gebliebene Prozesse und mit Status `
 - „CPU-only“ ist nachgestellt: EXE-Kopie ohne `ggml-vulkan.dll` (transcribe-cpp meldet nur das CPU-Gerät) und `CUDA_VISIBLE_DEVICES=-1` für den llama-server („Backend cuda sieht kein Gerät“; die CPU-Laufzeit von llama.cpp ist auf diesem Rechner nicht installiert). Die Kontextgröße des LLM wird weiter aus dem VRAM geschätzt.
 - Messbedingungen: Job-Objekt BelowNormal. Parallel lief ein fremder `pwsh`-Prozess mit hoher CPU-Last, beim ersten Lauf (`gpu-qwen`, 80 %) zusätzlich ein Cargo-Build (P5f). Die Werte sind eher konservativ. Je Variante gibt es einen Lauf, die Streuung ist nicht gemessen.
 - KI-Notizen ohne Notizblock (0 Nutzer-Einträge) und mit der Standardvorlage. Mit Notizblock wird der Prompt etwas länger.
+
+## Nachtrag P1i (30.09.2026): Befund 1 und 2 behoben
+
+Stand: `feat/granola-p1i`, Release-Build `--features gpu-vulkan`, gleicher Aufbau wie oben (`p7b-qg3.ps1 -Variant gpu-auto -CpuPercent 100`, 61,8 min, `auto` nimmt jetzt Qwen3-ASR 1.7B). Rohdaten: `abnahme/p1i-qg3-gemma.json`, `abnahme/p1i-qg3-qwen35.json`, `abnahme/p1i-eval-notes-gemma4.json`, `abnahme/p1i-eval-notes-qwen35.json`.
+
+| Lauf | Enddurchlauf | KI-Notizen | **Stopp → Notizen** | ≤ 180 s | Blöcke |
+|---|---|---|---|---|---|
+| Gemma 4 E4B (`p1i-qg3-gemma.json`) | 105,5 s | **51,0 s**, 3 Blöcke, Reduce übersprungen (30 Zeilen) | **156,6 s** | **ja** | 0 abgeschnitten, 0 halbiert, 0 verworfen |
+| Gemma 4 E4B, zwei weitere Läufe desselben Stands | 106,9 s / 107,3 s | 51,3 s / 51,0 s | 158,1 s / 158,3 s | ja | wie oben |
+| Qwen3.5-9B (`p1i-qg3-qwen35.json`) | 109,4 s | 76,7 s, 3 Blöcke, Reduce übersprungen (76 Zeilen) | 186,1 s | **nein** (Enddurchlauf 15 s langsamer als im ersten P7b-Lauf) | 0 abgeschnitten, 0 halbiert, 0 verworfen |
+| Vorher (Gemma, P7b) | 130,7 s | 86,3 s, 4 Antworten abgeschnitten, Block 1/2 verworfen | 217,0 s | nein | – |
+
+`--eval-notes` (Standardkontext 16 384, drei Fixtures, Einzeldurchlauf): Gemma 4 E4B Exit 0 (Nutzer 1,000, KI belegt 0,970), Qwen3.5-9B Exit 0 (1,000 / 1,000).
+
+**Was der Fehler wirklich war.** Die Blockgröße allein war es nicht. Ohne Grenze im Prompt läuft die Antwort eines lokalen Modells bei einem echten Block in eine Endlosliste bis zum Kontextende (Gemma: 7 200 Token, `finish_reason: length`; Qwen3.5: zwei von zwei echten 35 000-Zeichen-Blöcken). Ein größerer Antwortplatz hätte das nur verschoben. Deshalb wurde beides gemacht:
+- **Budget in Token** (`notes/budget.rs`): Kontext − Antwortreserve (6 144) − Rahmen, Zeichen je Token nur als Rückfall. Der fertige Prompt wird über `/tokenize` des Servers gemessen (Einzeldurchlauf, Blockgröße aus dem Verhältnis am ganzen Transkript, jeder Block vor dem Senden); Blöcke sind gleichmäßig statt „voll, voll, Rest“.
+- **Antwort begrenzt:** lokale map-/Reduce-Prompts nennen eine Höchstzahl KI-Einträge (1 je 3 500 Zeichen, mindestens 4). Gemma, echter Block von 9 200 Token: ohne Grenze 7 185 Token und `length` (zweimal reproduziert), mit Grenze 2 800 bis 4 350 Token und `stop` (in allen Läufen, auch in den QG3-Läufen). Qwen3.5 ist unstetiger: ohne Grenze 2 100 Token im Testblock, aber beide 35 000-Zeichen-Blöcke des QG3-Laufs ohne Grenze wurden abgeschnitten; mit Grenze 3 bis 10 beendete jede Antwort regulär (4 100 bis 6 600 Token), Grenze 2 lief weg. Die Zahl verankert das Modell: Qwen schreibt mit Grenze mehr Einträge (76 Zeilen für 60 Minuten statt der 20 des ersten P7b-Laufs) und braucht 76,7 s statt 42,1 s. Der frühere Wert stammt aus einem Lauf ohne Grenze, der (vermutlich zufällig) kurz blieb.
+- **Reduce nur bei kurzer Liste** (höchstens 24 Zeilen): er gibt alle Zeilen noch einmal aus (Gemma: 33 Zeilen = 3 977 Token = 25 s, im ersten Anlauf 51 Zeilen = 8 939 Token = 57 s und abgeschnitten). Sonst der deterministische Zusammenschluss, der jeden Eintrag behält.
+- **Nie still verwerfen:** abgeschnittene oder ungültige Antwort → Block halbieren (höchstens zwei Stufen), nicht wiederholen; nur was danach noch scheitert, steht in `chunks_failed` (die Oberfläche zeigt dafür „X von Y Abschnitten … Die Notizen sind unvollständig“), der Reduce bekommt die fehlenden Zeiten genannt, und die Simulation meldet `incomplete`.
+
+**Befund 2 (auto nimmt Whisper large-v3):** `AUTO_GPU_CANDIDATES` nennt jetzt Qwen3-ASR 1.7B zuerst. Enddurchlauf gemessen 94,8 bis 109,4 s (STT 63 bis 77 s, RTF 50 bis 61) je nach Rechnerlast bei gleichem Aufbau; das ist die Streuung, die das Gate im Ergebnis mit trägt. Die Notizen der Gemma-Läufe bleiben stabil bei 51 s, das Gate hat damit bei langsamem Enddurchlauf rund 23 s Luft, bei schnellem rund 34 s.

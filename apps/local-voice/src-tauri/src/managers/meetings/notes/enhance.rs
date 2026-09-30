@@ -28,6 +28,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use super::assemble::{assemble, note_ref, parse_source_id, ProtectedEntry, RawEnhanced, RawEntry};
+use super::budget::{self, TokenBudget, MAX_SPLIT_DEPTH};
 use super::model::{
     ActionItem, EnhanceStats, EnhancedEntry, EnhancedNotes, EnhancedSection, NoteBlock,
     NoteBlockKind, Origin, SectionKind, TemplateInfo, TemplateSection, TemplateSpec, SOURCE_AI,
@@ -35,8 +36,9 @@ use super::model::{
 };
 use super::templates::{builtin_templates, DEFAULT_TEMPLATE_ID};
 use crate::managers::meetings::llm_call::{
-    ask_json, build_head_with, head_facts_block, mm_ss, resolve_provider_coded, retry_chunk,
-    should_retry, sorted_segments, AskOptions, MeetingHead, SemanticRetry,
+    ask_json, build_head_with, head_facts_block, is_splittable_error, is_truncation_error, mm_ss,
+    resolve_provider_coded, retry_chunk, should_retry, sorted_segments, AskOptions, MeetingHead,
+    SemanticRetry,
 };
 use crate::managers::meetings::speakers::SpeakerDirectory;
 use crate::managers::meetings::store::{MeetingDocument, MeetingStore, StoredSegment};
@@ -53,14 +55,10 @@ pub const DOC_FORMAT: &str = "enhanced@1";
 /// HTTP-Timeout.
 const RUN_TIMEOUT: Duration = Duration::from_secs(90 * 60);
 
-/// Annahmen fuer das Einzeldurchlauf-Budget (Entwurf §6): lokal aus dem
-/// Kontext des lokalen Servers. Kalibriert mit P1e (`--eval-notes`, drei
-/// Fixtures, /tokenize des Servers): 3,35 Zeichen je Token (3,12 bis 3,48),
-/// Prompt-Overhead (System, Kopf, Vorlage) 641 bis 745 Token.
-const OUTPUT_RESERVE_TOKENS: usize = 2_048;
-const PROMPT_OVERHEAD_TOKENS: usize = 750;
-/// Zeichen je Token mal hundert (3,35).
-const CHARS_PER_TOKEN_X100: usize = 335;
+/// Das Einzeldurchlauf-Budget (Entwurf §6) rechnet in Token: Kontext des
+/// lokalen Servers - Antwortreserve - Prompt-Rahmen (`budget`, P1i). Die
+/// Zeichenzahlen daraus sind nur der Rueckfall, wenn der Server `/tokenize`
+/// nicht beantwortet.
 /// Entfernte Anbieter haben grosse Kontexte; konservativ angesetzt.
 const REMOTE_SINGLE_PASS_CHARS: usize = 48_000;
 
@@ -261,14 +259,13 @@ type Progress<'a> = &'a (dyn Fn(u32, u32) + Send + Sync);
 // ---------------------------------------------------------------------------
 
 /// Zeichen (Notizen + Transkript), die ein Einzeldurchlauf hoechstens
-/// bekommt. Lokal: Kontext des lokalen Servers minus Ausgabereserve minus
-/// Prompt-Overhead, mal Zeichen je Token (Werte siehe oben). Der Kontext
-/// waehlt der Serverstart je freiem VRAM (`llm::context`, P1g).
-pub fn single_pass_budget_chars_for(context_tokens: u32, local: bool) -> usize {
+/// bekommt (geschaetzt). Lokal: Kontext des lokalen Servers minus
+/// Antwortreserve minus Prompt-Rahmen in Token, mal die konservativen Zeichen
+/// je Token der Modellfamilie (`budget::TokenBudget`). Der Kontext waehlt der
+/// Serverstart je freiem VRAM (`llm::context`, P1g).
+pub fn single_pass_budget_chars_for(model: &str, context_tokens: u32, local: bool) -> usize {
     if local {
-        (context_tokens as usize).saturating_sub(OUTPUT_RESERVE_TOKENS + PROMPT_OVERHEAD_TOKENS)
-            * CHARS_PER_TOKEN_X100
-            / 100
+        TokenBudget::for_model(model, context_tokens).payload_chars()
     } else {
         REMOTE_SINGLE_PASS_CHARS
     }
@@ -282,7 +279,72 @@ pub async fn single_pass_budget_chars(model: &str, local: bool) -> usize {
     } else {
         crate::managers::llm::DEFAULT_CONTEXT_TOKENS
     };
-    single_pass_budget_chars_for(context, local)
+    single_pass_budget_chars_for(model, context, local)
+}
+
+// ---------------------------------------------------------------------------
+// Token messen (P1i)
+// ---------------------------------------------------------------------------
+
+/// Wie die Groesse eines fertigen Prompts bestimmt wird.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Meter {
+    /// `/tokenize` des laufenden lokalen Servers (Wurzeladresse ohne `/v1`):
+    /// die exakte Zahl, mit dem Tokenizer des Modells.
+    Exact(String),
+    /// Zeichen je Token der Modellfamilie, konservativ.
+    Estimate,
+}
+
+/// Die Token-Rechnung eines Laufs mit lokalem Modell. Ohne (`None` im
+/// Kontext) rechnet der Lauf in Zeichen: entfernte Anbieter (grosse Kontexte,
+/// kein `/tokenize`) und die Tests mit fester Zeichenvorgabe.
+#[derive(Clone, Debug)]
+struct TokenPlan {
+    budget: TokenBudget,
+    meter: Meter,
+}
+
+impl TokenPlan {
+    /// Lokal: Kontext des Servers, dazu `/tokenize`, wenn der Server bereit
+    /// wird. Startet den Server (das Modell wird ohnehin gebraucht); scheitert
+    /// das (RAM-Tor, Absturz), rechnet der Plan mit der Schaetzung, und der
+    /// erste echte Aufruf meldet den Fehler mit dem richtigen Code.
+    async fn for_local(model: &str) -> Self {
+        let context = crate::managers::llm::context_for_model(model).await;
+        let meter = match crate::managers::llm::local_server_root(model).await {
+            Some(root) => Meter::Exact(root),
+            None => {
+                log::info!("KI-Notizen: /tokenize nicht verfuegbar -- Schaetzung nach Modellfamilie");
+                Meter::Estimate
+            }
+        };
+        Self {
+            budget: TokenBudget::for_model(model, context),
+            meter,
+        }
+    }
+
+    fn is_exact(&self) -> bool {
+        matches!(self.meter, Meter::Exact(_))
+    }
+
+    /// Token eines Textes, exakt oder geschaetzt. Faellt eine exakte Messung
+    /// aus (Server weg), gilt die Schaetzung fuer diesen Text.
+    async fn text_tokens(&self, text: &str) -> usize {
+        if let Meter::Exact(root) = &self.meter {
+            if let Some(count) = crate::managers::llm::tokenize_count(root, text).await {
+                return count;
+            }
+            log::warn!("KI-Notizen: Messung ueber /tokenize fehlgeschlagen -- Schaetzung");
+        }
+        self.budget.estimate_tokens(text.chars().count())
+    }
+
+    /// Token eines fertigen Prompts: System-Prompt und Nutzertext.
+    async fn prompt_tokens(&self, system: &str, user: &str) -> usize {
+        self.text_tokens(system).await + self.text_tokens(user).await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -566,27 +628,38 @@ fn enhance_user_prompt(
     )
 }
 
+/// `label` nennt den Block: `2` fuer den zweiten, `2.1` fuer die erste Haelfte
+/// davon, nachdem er halbiert werden musste (`budget::part_label`).
 fn map_prompt(
     head: &MeetingHead,
     spec: &TemplateSpec,
-    index: usize,
+    label: &str,
     total: usize,
+    max_entries: Option<usize>,
     notes_rendered: &str,
     chunk_rendered: &str,
 ) -> String {
+    // Nur lokal (`Ctx::entry_cap`): ohne Grenze laufen die Modelle in eine
+    // Endlosliste bis zum Kontextende (`budget::CHARS_PER_ENTRY`).
+    let cap = max_entries
+        .map(|n| {
+            format!(
+                " Write at most {n} AI entries for this part (the user's own notes do not \
+count): merge related points into one entry and keep the most important."
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "{}\n{}\nThis is part {} of {} of one long transcript. Extract entries \
+        "{}\n{}\nThis is part {label} of {} of one long transcript. Extract entries \
 only from THIS part; do not summarize the whole meeting and do not invent \
-anything that is not in this part.\n\n{}\n# Transcript (part {}, segment ids S<k>)\n{chunk_rendered}",
+anything that is not in this part.{cap}\n\n{}\n# Transcript (part {label}, segment ids S<k>)\n{chunk_rendered}",
         head_facts_block(head),
         sections_block(spec),
-        index + 1,
         total,
         notes_block(
             "User notes taken during this part (ids N<k>; place every one exactly once)",
             notes_rendered
         ),
-        index + 1,
     )
 }
 
@@ -625,25 +698,33 @@ fn parse_note_ref_ok(reference: &str) -> bool {
     super::assemble::parse_note_ref(reference).is_some()
 }
 
+/// `gaps`: Zeitbereiche (`mm:ss-mm:ss`) des Transkripts, die nicht
+/// ausgewertet werden konnten. Zeiten statt Blocknummern, weil ein Block
+/// halbiert worden sein kann.
 fn reduce_prompt(
     head: &MeetingHead,
     spec: &TemplateSpec,
     notes_rendered: &str,
     lines: &[String],
-    failed_blocks: &[u32],
+    gaps: &[String],
+    max_entries: Option<usize>,
 ) -> String {
-    let gap = if failed_blocks.is_empty() {
+    let cap = max_entries
+        .map(|n| {
+            format!(
+                " The final notes hold at most {n} AI entries (the user's own notes do not \
+count): merge related lines and drop the least important."
+            )
+        })
+        .unwrap_or_default();
+    let gap = if gaps.is_empty() {
         String::new()
     } else {
         format!(
-            "\nNote: part(s) {} of the transcript could not be processed and are \
+            "\nNote: the transcript part(s) at {} could not be processed and are \
 missing below. Merge only what is present and do not pretend the meeting had no \
 other content; mention the gap in an open-questions section if there is one.\n",
-            failed_blocks
-                .iter()
-                .map(u32::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
+            gaps.join(", ")
         )
     };
     format!(
@@ -654,7 +735,7 @@ Merge the lines into the final notes: deduplicate, keep the best wording, put \
 EVERY user note exactly once (as {{\"ref\":\"N<k>\",\"text\":\"\",...}}; reuse \
 the segment ids of lines that mention it) and keep the segment ids of every \
 AI entry (only ids that appear in the lines). Add nothing that is not in the \
-lines.\n{gap}\n{}",
+lines.{cap}\n{gap}\n{}",
         head_facts_block(head),
         sections_block(spec),
         notes_block(
@@ -729,15 +810,29 @@ struct Ctx<'a> {
     /// M3-P3b: Sprechernamen der Besprechung fuer die Labels im Prompt.
     labels: SpeakerDirectory,
     limits: RunLimits,
+    /// P1i: lokal die Token-Rechnung (Kontext, Messverfahren). `None`: der Lauf
+    /// rechnet in Zeichen (entfernte Anbieter, Tests mit fester Zeichenvorgabe).
+    tokens: Option<TokenPlan>,
+    /// P1i: die Eintragsgrenze steht in den map- und Reduce-Prompts. Lokal immer
+    /// (ohne sie laufen die Modelle in Endlosliste bis zum Kontextende), bei
+    /// entfernten Anbietern nicht (Prompt wie vor P1i).
+    entry_cap: bool,
 }
 
-async fn single_pass(ctx: &Ctx<'_>) -> Result<RawEnhanced, EnhanceError> {
-    let prompt = enhance_user_prompt(
+/// Der Nutzertext des Einzeldurchlaufs.
+fn single_prompt(ctx: &Ctx<'_>) -> String {
+    enhance_user_prompt(
         &ctx.head,
         &ctx.spec,
         &render_notes_for_prompt(&ctx.blocks),
         &render_segments_with(&ctx.segments, &ctx.labels),
-    );
+    )
+}
+
+/// Einzeldurchlauf. Der Fehler bleibt Text: der Aufrufer entscheidet mit
+/// `is_splittable_error`, ob er stattdessen in Bloecken arbeitet.
+async fn single_pass(ctx: &Ctx<'_>) -> Result<RawEnhanced, String> {
+    let prompt = single_prompt(ctx);
     ask_json::<RawEnhanced>(
         ctx.settings,
         &ask_options(),
@@ -747,7 +842,28 @@ async fn single_pass(ctx: &Ctx<'_>) -> Result<RawEnhanced, EnhanceError> {
         &empty_answer_retry,
     )
     .await
-    .map_err(|e| classify_llm_error(e, (ctx.limits.free_mb)()))
+}
+
+/// Passt alles in einen Aufruf? Lokal mit exakter Messung: der fertige Prompt
+/// samt Antwortreserve im Kontext des Servers. Sonst (Schaetzung, entfernte
+/// Anbieter, feste Zeichenvorgabe): die Zeichen gegen das Budget.
+async fn fits_single_pass(ctx: &Ctx<'_>, payload_chars: usize, budget_chars: usize) -> bool {
+    match ctx.tokens.as_ref().filter(|plan| plan.is_exact()) {
+        Some(plan) => {
+            let tokens = plan
+                .prompt_tokens(&enhance_system_prompt(), &single_prompt(ctx))
+                .await;
+            let fits = plan.budget.fits(tokens);
+            log::info!(
+                "KI-Notizen: Einzeldurchlauf-Prompt {tokens} Token (gemessen), Kontext {}, Antwortreserve {} -> {}",
+                plan.budget.context,
+                plan.budget.reserve,
+                if fits { "Einzeldurchlauf" } else { "Bloecke" }
+            );
+            fits
+        }
+        None => payload_chars <= budget_chars,
+    }
 }
 
 /// Segmente in Bloecke ganzer Zeilen packen (IDs bleiben ganz; ein einzelnes
@@ -797,95 +913,322 @@ fn merge_deterministic(collected: Vec<RawEntry>, spec: &TemplateSpec) -> RawEnha
 
 struct MapReduceResult {
     raw: RawEnhanced,
+    /// Zahl der Teile, die einzeln gefragt wurden (nach dem Halbieren).
     chunks_total: u32,
+    /// Nummern (ab 1, in Transkriptreihenfolge) der Teile, die auch nach dem
+    /// Halbieren nicht auswertbar waren: diese Zeiten fehlen in den Notizen.
     chunks_failed: Vec<u32>,
+    /// Wie oft ein Block halbiert wurde (abgeschnitten, ungueltig, zu gross).
+    chunks_split: u32,
+}
+
+/// Ein Stueck Transkript fuer einen map-Aufruf: ein Block der Planung oder,
+/// nach dem Halbieren, ein Teil davon.
+struct Work {
+    range: std::ops::Range<usize>,
+    block_index: usize,
+    /// Weg der Halbierungen (0 links, 1 rechts); leer = ganzer Block.
+    path: Vec<u8>,
+}
+
+impl Work {
+    /// Noch eine Stufe erlaubt, und mindestens zwei Zeilen (eine einzelne
+    /// Zeile wird nie zerschnitten: IDs bleiben ganz).
+    fn can_split(&self) -> bool {
+        (self.path.len() as u32) < MAX_SPLIT_DEPTH && self.range.len() >= 2
+    }
+}
+
+/// Was aus einem map-Versuch wird.
+enum Step {
+    Done(Vec<RawEntry>),
+    /// Zu gross (Prompt passt nicht, Antwort abgeschnitten oder ungueltig):
+    /// in zwei Haelften noch einmal versuchen.
+    Split,
+    /// Auch nach dem Halbieren nicht auswertbar (der letzte Fehler).
+    Failed(String),
+    /// Abbruch des ganzen Laufs (RAM knapp).
+    Abort(EnhanceError),
+}
+
+/// Ein ausgewerteter oder verlorener Teil, in Transkriptreihenfolge.
+struct Leaf {
+    range: std::ops::Range<usize>,
+    entries: Option<Vec<RawEntry>>,
+}
+
+/// Notizen des Zeitfensters eines Bereichs: ab dem Beginn seines ersten
+/// Segments (der erste Block ab 0) bis zum Beginn des naechsten. Notizen ohne
+/// Zeitstempel kommen nur im Reduce vor.
+fn notes_window(ctx: &Ctx<'_>, range: &std::ops::Range<usize>) -> String {
+    let from = if range.start == 0 {
+        0
+    } else {
+        ctx.segments[range.start].start_ms
+    };
+    let until = ctx
+        .segments
+        .get(range.end)
+        .map(|next| next.start_ms)
+        .unwrap_or(u64::MAX);
+    render_notes_where(&ctx.blocks, |_, block| {
+        block.at_ms.is_some_and(|ms| ms >= from && ms < until)
+    })
+}
+
+/// Zeichen je Block der Planung. Lokal mit exakter Messung: Platz im Kontext
+/// (nach Antwortreserve und dem gemessenen Rahmen des Prompts) mal die am
+/// ganzen Transkript gemessene Zeichenzahl je Token. Sonst das Zeichenbudget
+/// abzueglich der Notizen. Danach gleichmaessig auf die noetige Blockzahl
+/// verteilt (`budget::balanced_block_limit`). `force_split`: mindestens zwei
+/// Bloecke (der Einzeldurchlauf war zu gross).
+async fn plan_block_chars(
+    ctx: &Ctx<'_>,
+    budget: usize,
+    force_split: bool,
+    notes_rendered: &str,
+    line_chars: &[usize],
+) -> usize {
+    let total: usize = line_chars.iter().sum();
+    let longest = line_chars.iter().copied().max().unwrap_or(0);
+    // Zeichenrechnung: Notizen + Vorlage + Kopf brauchen Platz neben dem Transkript.
+    let by_chars = budget
+        .saturating_sub(notes_rendered.chars().count().min(budget / 3))
+        .max(200);
+    let mut max_block = match ctx.tokens.as_ref() {
+        // Lokal mit Schaetzung (kein `/tokenize`): Platz im Kontext nach Blockreserve,
+        // Rahmen und den (im schlechtesten Fall alle) Notizen, mal Zeichen je Token.
+        Some(plan) if !plan.is_exact() => {
+            let fixed = plan.budget.overhead
+                + plan
+                    .budget
+                    .estimate_tokens(notes_rendered.chars().count());
+            plan.budget.block_room_tokens(fixed) * plan.budget.cpt_x100 / 100
+        }
+        Some(plan) => {
+            let fixed = plan
+                .prompt_tokens(
+                    &map_system_prompt(),
+                    &map_prompt(&ctx.head, &ctx.spec, "1", 1, Some(budget::MAX_ENTRIES), notes_rendered, ""),
+                )
+                .await;
+            let room = plan.budget.block_room_tokens(fixed);
+            let transcript = render_segments_with(&ctx.segments, &ctx.labels);
+            let transcript_chars = transcript.chars().count();
+            let tokens = plan.text_tokens(&transcript).await;
+            let chars = budget::block_chars_from_measure(room, transcript_chars, tokens);
+            log::info!(
+                "KI-Notizen: Blockgroesse aus Messung: Prompt-Rahmen {fixed} Token, Platz {room} Token, Transkript {transcript_chars} Zeichen = {tokens} Token -> {chars} Zeichen je Block"
+            );
+            chars
+        }
+        None => by_chars,
+    };
+    if force_split {
+        max_block = max_block.min(total.div_ceil(2) + longest);
+    }
+    budget::balanced_block_limit(total, max_block.max(200), longest)
+}
+
+/// Ein map-Aufruf fuer `work`. Vorher (nur bei exakter Messung) wird der
+/// fertige Prompt vermessen: laesst er der Antwort keinen Platz, wird gar nicht
+/// erst gefragt. Bei abgeschnittener oder ungueltiger Antwort: halbieren, nicht
+/// wiederholen und nicht verwerfen.
+async fn map_step(ctx: &Ctx<'_>, work: &Work, total_blocks: usize) -> Step {
+    let label = budget::part_label(work.block_index, &work.path);
+    let chunk = render_segments_with(&ctx.segments[work.range.clone()], &ctx.labels);
+    let prompt = map_prompt(
+        &ctx.head,
+        &ctx.spec,
+        &label,
+        total_blocks,
+        // Mit Grenze, wenn lokal -- oder nach einem Abschneiden: dann lief die
+        // Antwort weg, und die Haelften sollen es nicht wieder tun.
+        (ctx.entry_cap || !work.path.is_empty())
+            .then(|| budget::entry_cap(chunk.chars().count())),
+        &notes_window(ctx, &work.range),
+        &chunk,
+    );
+    let system = map_system_prompt();
+    if work.can_split() {
+        if let Some(plan) = ctx.tokens.as_ref().filter(|plan| plan.is_exact()) {
+            let tokens = plan.prompt_tokens(&system, &prompt).await;
+            if !plan.budget.fits(tokens) {
+                log::warn!(
+                    "KI-Notizen: Block {label}/{total_blocks}: Prompt {tokens} Token laesst nicht genug Platz fuer die Antwort (Kontext {}, Reserve {}) -- wird halbiert",
+                    plan.budget.context,
+                    plan.budget.reserve
+                );
+                return Step::Split;
+            }
+        }
+    }
+    let free = || (ctx.limits.free_mb)();
+    let (settings, spec, prompt_ref, system_ref) = (ctx.settings, &ctx.spec, &prompt, &system);
+    let result = retry_chunk(
+        "KI-Notizen",
+        work.block_index,
+        total_blocks,
+        // Abgeschnitten oder ungueltig: derselbe Prompt scheitert wieder, dafuer
+        // ist das Halbieren da. Ein Transportfehler (Server kurz weg) bekommt
+        // wie bisher den zweiten Anlauf.
+        |e| !is_splittable_error(e) && should_retry(e, free()),
+        move || async move {
+            ask_json::<MapOutput>(
+                settings,
+                &ask_options(),
+                system_ref,
+                &|local| map_schema(spec, local),
+                prompt_ref,
+                &no_retry::<MapOutput>,
+            )
+            .await
+        },
+    )
+    .await;
+    match result {
+        Ok(output) => Step::Done(output.entries),
+        Err(e) => {
+            if !should_retry(&e, free()) {
+                // RAM: abbrechen statt weiterzumachen -- ein Retry oder der
+                // naechste Block starten das Modell erneut.
+                return Step::Abort(EnhanceError::new("memory_low", e));
+            }
+            if work.can_split() && is_splittable_error(&e) {
+                Step::Split
+            } else {
+                Step::Failed(e)
+            }
+        }
+    }
+}
+
+/// `mm:ss-mm:ss` der Zeit, die ein Bereich von Segmenten abdeckt.
+fn time_span(ctx: &Ctx<'_>, range: &std::ops::Range<usize>) -> String {
+    let first = &ctx.segments[range.start];
+    let last = &ctx.segments[range.end - 1];
+    format!("{}-{}", mm_ss(first.start_ms), mm_ss(last.end_ms.max(first.start_ms)))
+}
+
+/// Die Zeitbereiche der verlorenen Teile fuer den Reduce-Prompt; aneinander
+/// grenzende Teile (Viertel desselben Blocks) werden zu einem Bereich.
+fn gap_spans(ctx: &Ctx<'_>, leaves: &[Leaf]) -> Vec<String> {
+    let mut merged: Vec<std::ops::Range<usize>> = Vec::new();
+    for leaf in leaves.iter().filter(|leaf| leaf.entries.is_none()) {
+        match merged.last_mut() {
+            Some(last) if last.end == leaf.range.start => last.end = leaf.range.end,
+            _ => merged.push(leaf.range.clone()),
+        }
+    }
+    merged.iter().map(|range| time_span(ctx, range)).collect()
 }
 
 async fn map_reduce(
     ctx: &Ctx<'_>,
     budget: usize,
+    force_split: bool,
     progress: Progress<'_>,
 ) -> Result<MapReduceResult, EnhanceError> {
     let notes_rendered = render_notes_for_prompt(&ctx.blocks);
-    // Notizen des Blocks + Vorlage + Kopf brauchen Platz neben dem Transkript.
-    let block_chars = budget
-        .saturating_sub(notes_rendered.chars().count().min(budget / 3))
-        .max(200);
+    let line_chars: Vec<usize> = ctx
+        .segments
+        .iter()
+        .map(|segment| render_segment_line_with(segment, &ctx.labels).chars().count() + 1)
+        .collect();
+    let block_chars = plan_block_chars(ctx, budget, force_split, &notes_rendered, &line_chars).await;
     let ranges = chunk_ranges_with(&ctx.segments, block_chars, &ctx.labels);
     let total_blocks = ranges.len();
     let total_steps = (total_blocks + 1) as u32;
     let valid: HashSet<u32> = ctx.segments.iter().map(|s| s.segment_index).collect();
-    log::info!("KI-Notizen: {total_blocks} Bloecke (map-reduce)");
+    log::info!("KI-Notizen: {total_blocks} Bloecke (map-reduce, bis {block_chars} Zeichen je Block)");
     progress(0, total_steps);
 
-    let mut collected: Vec<RawEntry> = Vec::new();
-    let mut failed: Vec<u32> = Vec::new();
+    let mut leaves: Vec<Leaf> = Vec::new();
+    let mut splits = 0u32;
     for (index, range) in ranges.iter().enumerate() {
-        // Fenster: bis zum Beginn des naechsten Blocks; Notizen ohne
-        // Zeitstempel kommen nur im Reduce vor.
-        let from = if index == 0 {
-            0
-        } else {
-            ctx.segments[range.start].start_ms
-        };
-        let until = ranges
-            .get(index + 1)
-            .map(|next| ctx.segments[next.start].start_ms)
-            .unwrap_or(u64::MAX);
-        let window_notes = render_notes_where(&ctx.blocks, |_, block| {
-            block.at_ms.is_some_and(|ms| ms >= from && ms < until)
-        });
-        let prompt = map_prompt(
-            &ctx.head,
-            &ctx.spec,
-            index,
-            total_blocks,
-            &window_notes,
-            &render_segments_with(&ctx.segments[range.clone()], &ctx.labels),
-        );
-        let (settings, spec, prompt_ref) = (ctx.settings, &ctx.spec, &prompt);
-        let result = retry_chunk(
-            "KI-Notizen",
-            index,
-            total_blocks,
-            |e| should_retry(e, (ctx.limits.free_mb)()),
-            move || async move {
-                ask_json::<MapOutput>(
-                    settings,
-                    &ask_options(),
-                    &map_system_prompt(),
-                    &|local| map_schema(spec, local),
-                    prompt_ref,
-                    &no_retry::<MapOutput>,
-                )
-                .await
-            },
-        )
-        .await;
-        match result {
-            Ok(output) => collected.extend(output.entries),
-            Err(e) => {
-                if !should_retry(&e, (ctx.limits.free_mb)()) {
-                    // RAM: abbrechen statt weiterzumachen -- ein Retry oder der
-                    // naechste Block starten das Modell erneut.
-                    return Err(EnhanceError::new("memory_low", e));
+        // Arbeitsstapel: die linke Haelfte kommt zuerst dran, und ihr ganzer
+        // Teilbaum ist fertig, bevor die rechte beginnt -- die Teile landen
+        // in Transkriptreihenfolge.
+        let mut stack = vec![Work {
+            range: range.clone(),
+            block_index: index,
+            path: Vec::new(),
+        }];
+        while let Some(work) = stack.pop() {
+            match map_step(ctx, &work, total_blocks).await {
+                Step::Done(entries) => leaves.push(Leaf {
+                    range: work.range,
+                    entries: Some(entries),
+                }),
+                Step::Split => {
+                    let Some((left, right)) = budget::halve(&work.range, &line_chars) else {
+                        // Unerreichbar (`can_split` prueft das); sicher statt Endlosschleife.
+                        leaves.push(Leaf {
+                            range: work.range,
+                            entries: None,
+                        });
+                        continue;
+                    };
+                    splits += 1;
+                    log::warn!(
+                        "KI-Notizen: Block {} halbiert ({} Segmente -> {} + {})",
+                        budget::part_label(work.block_index, &work.path),
+                        work.range.len(),
+                        left.len(),
+                        right.len()
+                    );
+                    let (mut left_path, mut right_path) = (work.path.clone(), work.path);
+                    left_path.push(0);
+                    right_path.push(1);
+                    stack.push(Work {
+                        range: right,
+                        block_index: work.block_index,
+                        path: right_path,
+                    });
+                    stack.push(Work {
+                        range: left,
+                        block_index: work.block_index,
+                        path: left_path,
+                    });
                 }
-                log::warn!(
-                    "KI-Notizen: Block {}/{} nicht ausgewertet -- das Ergebnis entsteht aus den uebrigen",
-                    index + 1,
-                    total_blocks
-                );
-                failed.push(index as u32 + 1);
+                Step::Failed(e) => {
+                    log::warn!(
+                        "KI-Notizen: Block {}/{} nicht ausgewertet ({e}) -- das Ergebnis entsteht aus den uebrigen und ist unvollstaendig",
+                        budget::part_label(work.block_index, &work.path),
+                        total_blocks
+                    );
+                    leaves.push(Leaf {
+                        range: work.range,
+                        entries: None,
+                    });
+                }
+                Step::Abort(err) => return Err(err),
             }
         }
         progress((index + 1) as u32, total_steps);
     }
-    if failed.len() == total_blocks {
+    let failed: Vec<u32> = leaves
+        .iter()
+        .enumerate()
+        .filter(|(_, leaf)| leaf.entries.is_none())
+        .map(|(index, _)| index as u32 + 1)
+        .collect();
+    if failed.len() == leaves.len() {
         return Err(EnhanceError::new(
             "llm_failed",
-            format!("kein einziger der {total_blocks} Transkriptbloecke konnte ausgewertet werden"),
+            format!(
+                "kein einziger der {} Transkriptbloecke konnte ausgewertet werden",
+                leaves.len()
+            ),
         ));
     }
+    let gaps = gap_spans(ctx, &leaves);
+    let chunks_total = leaves.len() as u32;
+    let collected: Vec<RawEntry> = leaves
+        .into_iter()
+        .filter_map(|leaf| leaf.entries)
+        .flatten()
+        .collect();
 
     let lines: Vec<String> = collected
         .iter()
@@ -893,53 +1236,82 @@ async fn map_reduce(
         .collect();
     let payload =
         notes_rendered.chars().count() + lines.iter().map(|l| l.chars().count() + 1).sum::<usize>();
-    let raw = if lines.is_empty() || payload > budget {
-        log::info!(
-            "KI-Notizen: Reduce uebersprungen ({} Zeilen, {payload} Zeichen, Budget {budget})",
-            lines.len()
-        );
-        merge_deterministic(collected, &ctx.spec)
+    // Der Reduce lohnt nur bei kurzer Liste (`MAX_REDUCE_LINES`): seine Antwort
+    // gibt alle Zeilen noch einmal aus und kostet sonst so viel wie alle Bloecke.
+    let reduce_prompt_text = if lines.is_empty() || lines.len() > budget::MAX_REDUCE_LINES {
+        None
     } else {
-        let prompt = reduce_prompt(&ctx.head, &ctx.spec, &notes_rendered, &lines, &failed);
-        let (settings, spec, prompt_ref) = (ctx.settings, &ctx.spec, &prompt);
-        let result = retry_chunk(
-            "KI-Notizen (Reduce)",
-            total_blocks,
-            total_blocks + 1,
-            |e| should_retry(e, (ctx.limits.free_mb)()),
-            move || async move {
-                ask_json::<RawEnhanced>(
-                    settings,
-                    &ask_options(),
-                    &enhance_system_prompt(),
-                    &|local| enhance_schema(spec, local),
-                    prompt_ref,
-                    &empty_answer_retry,
-                )
-                .await
-            },
-        )
-        .await;
-        match result {
-            Ok(raw) => raw,
-            Err(e) => {
-                if !should_retry(&e, (ctx.limits.free_mb)()) {
-                    return Err(EnhanceError::new("memory_low", e));
+        let transcript_chars: usize = line_chars.iter().sum();
+        let prompt = reduce_prompt(
+            &ctx.head,
+            &ctx.spec,
+            &notes_rendered,
+            &lines,
+            &gaps,
+            ctx.entry_cap
+                .then(|| budget::entry_cap(transcript_chars)),
+        );
+        let fits = match ctx.tokens.as_ref().filter(|plan| plan.is_exact()) {
+            Some(plan) => {
+                let tokens = plan.prompt_tokens(&enhance_system_prompt(), &prompt).await;
+                plan.budget.fits(tokens)
+            }
+            None => payload <= budget,
+        };
+        fits.then_some(prompt)
+    };
+    let raw = match reduce_prompt_text {
+        None => {
+            log::info!(
+                "KI-Notizen: Reduce uebersprungen ({} Zeilen, Grenze {}; {payload} Zeichen, Budget {budget})",
+                lines.len(),
+                budget::MAX_REDUCE_LINES
+            );
+            merge_deterministic(collected, &ctx.spec)
+        }
+        Some(prompt) => {
+            let (settings, spec, prompt_ref) = (ctx.settings, &ctx.spec, &prompt);
+            let result = retry_chunk(
+                "KI-Notizen (Reduce)",
+                total_blocks,
+                total_blocks + 1,
+                // Abgeschnitten: derselbe Prompt endet wieder am Kontextende.
+                |e| !is_truncation_error(e) && should_retry(e, (ctx.limits.free_mb)()),
+                move || async move {
+                    ask_json::<RawEnhanced>(
+                        settings,
+                        &ask_options(),
+                        &enhance_system_prompt(),
+                        &|local| enhance_schema(spec, local),
+                        prompt_ref,
+                        &empty_answer_retry,
+                    )
+                    .await
+                },
+            )
+            .await;
+            match result {
+                Ok(raw) => raw,
+                Err(e) => {
+                    if !should_retry(&e, (ctx.limits.free_mb)()) {
+                        return Err(EnhanceError::new("memory_low", e));
+                    }
+                    // Die map-Ergebnisse sind gueltig: besser ohne Verdichtung
+                    // liefern als den ganzen Lauf verwerfen.
+                    log::warn!(
+                        "KI-Notizen: Reduce fehlgeschlagen -- deterministischer Zusammenschluss"
+                    );
+                    merge_deterministic(collected, &ctx.spec)
                 }
-                // Die map-Ergebnisse sind gueltig: besser ohne Verdichtung
-                // liefern als den ganzen Lauf verwerfen.
-                log::warn!(
-                    "KI-Notizen: Reduce fehlgeschlagen -- deterministischer Zusammenschluss"
-                );
-                merge_deterministic(collected, &ctx.spec)
             }
         }
     };
     progress(total_steps, total_steps);
     Ok(MapReduceResult {
         raw,
-        chunks_total: total_blocks as u32,
+        chunks_total,
         chunks_failed: failed,
+        chunks_split: splits,
     })
 }
 
@@ -1070,6 +1442,13 @@ async fn run_enhance(
     let blocks = store.get_notes(meeting_id).map_err(store_err)?.blocks;
 
     let labels = SpeakerDirectory::load(&store, meeting_id);
+    // P1i: lokal rechnet der Lauf in Token (Kontext, `/tokenize`); eine feste
+    // Zeichenvorgabe (Tests) und entfernte Anbieter rechnen in Zeichen.
+    let tokens = if local && limits.budget_chars.is_none() {
+        Some(TokenPlan::for_local(&model).await)
+    } else {
+        None
+    };
     let ctx = Ctx {
         settings,
         head: build_head_with(&meeting, &segments, &labels),
@@ -1078,10 +1457,13 @@ async fn run_enhance(
         segments,
         labels,
         limits,
+        tokens,
+        entry_cap: local,
     };
-    let budget = match limits.budget_chars {
-        Some(chars) => chars,
-        None => single_pass_budget_chars(&model, local).await,
+    let budget = match (limits.budget_chars, &ctx.tokens) {
+        (Some(chars), _) => chars,
+        (None, Some(plan)) => plan.budget.payload_chars(),
+        (None, None) => single_pass_budget_chars(&model, local).await,
     };
     let payload = render_notes_for_prompt(&ctx.blocks).chars().count()
         + render_segments_with(&ctx.segments, &ctx.labels)
@@ -1093,14 +1475,39 @@ async fn run_enhance(
         ctx.segments.len()
     );
 
-    let (raw, chunks_total, chunks_failed, single) = if payload <= budget {
+    let single_fits = fits_single_pass(&ctx, payload, budget).await;
+    let mut alone = None;
+    if single_fits {
         progress(0, 1);
-        let raw = single_pass(&ctx).await?;
-        progress(1, 1);
-        (raw, 1u32, Vec::new(), true)
-    } else {
-        let result = map_reduce(&ctx, budget, progress).await?;
-        (result.raw, result.chunks_total, result.chunks_failed, false)
+        match single_pass(&ctx).await {
+            Ok(raw) => {
+                progress(1, 1);
+                alone = Some(raw);
+            }
+            // Abgeschnitten: die Antwort war fuer den Kontext zu gross. Nicht
+            // aufgeben, sondern in (mindestens zwei) Bloecken arbeiten -- ein
+            // Ergebnis, kein Fehler. Ungueltiges JSON dagegen bleibt ein
+            // sichtbarer Fehler (Halbieren behebt Prosa statt JSON nicht).
+            Err(e) if is_truncation_error(&e) => {
+                log::warn!(
+                    "KI-Notizen: Einzeldurchlauf nicht auswertbar (Antwort zu lang) -- weiter in Bloecken"
+                );
+            }
+            Err(e) => return Err(classify_llm_error(e, (limits.free_mb)())),
+        }
+    }
+    let (raw, chunks_total, chunks_failed, chunks_split, single) = match alone {
+        Some(raw) => (raw, 1u32, Vec::new(), 0u32, true),
+        None => {
+            let result = map_reduce(&ctx, budget, single_fits, progress).await?;
+            (
+                result.raw,
+                result.chunks_total,
+                result.chunks_failed,
+                result.chunks_split,
+                false,
+            )
+        }
     };
 
     let (sections, mut stats) = assemble(raw, &ctx.spec, &ctx.blocks, &[], &ctx.segments);
@@ -1139,6 +1546,8 @@ async fn run_enhance(
         "single_pass": single,
         "chunks_total": chunks_total,
         "chunks_failed": notes.stats.chunks_failed,
+        "chunks_split": chunks_split,
+        "incomplete": !notes.stats.chunks_failed.is_empty(),
     });
     persist(&store, meeting_id, &notes, &ctx.blocks, metadata)
 }
@@ -1821,7 +2230,8 @@ mod tests {
 
     use super::*;
     use crate::managers::meetings::llm_call::test_support::{
-        chat_body, settings_with_mock_provider, spawn_llm_mock_with, MockReply,
+        chat_body, chat_body_truncated, settings_with_mock_provider, spawn_llm_mock_with,
+        MockReply,
     };
     use crate::managers::meetings::notes::model::EntryFlags;
     use crate::managers::meetings::store::{MeetingSource, MeetingStatus, TranscriptDelta};
@@ -2070,26 +2480,52 @@ mod tests {
         );
     }
 
+    const GEMMA: &str = "llm-gemma4-e4b-q4";
+    const QWEN: &str = "llm-qwen3.5-9b-q4";
+
     #[test]
-    fn the_single_pass_budget_follows_the_local_context() {
-        // (8192 - 2048 - 750) Token * 3,35 Zeichen
-        assert_eq!(single_pass_budget_chars_for(8_192, true), 18_069);
+    fn the_single_pass_budget_follows_the_local_context_and_the_model() {
+        use crate::managers::meetings::notes::budget::{
+            ANSWER_RESERVE_TOKENS, PROMPT_OVERHEAD_TOKENS, TEMPLATE_TOKENS,
+        };
+        // Kontext - Antwortreserve - Rahmen, in Token, mal Zeichen je Token.
+        let tokens = |ctx: usize| ctx - ANSWER_RESERVE_TOKENS - PROMPT_OVERHEAD_TOKENS - TEMPLATE_TOKENS;
+        assert_eq!(
+            single_pass_budget_chars_for(QWEN, 16_384, true),
+            tokens(16_384) * 330 / 100
+        );
+        assert_eq!(
+            single_pass_budget_chars_for(GEMMA, 16_384, true),
+            tokens(16_384) * 290 / 100
+        );
+        // Gemma tokenisiert dichter als Qwen: bei gleichem Kontext weniger Zeichen
+        // (B11: mit dem Qwen-Wert fuer Gemma lief der Prompt ueber).
+        assert!(
+            single_pass_budget_chars_for(GEMMA, 16_384, true)
+                < single_pass_budget_chars_for(QWEN, 16_384, true)
+        );
         // Groesserer Kontext (je VRAM, P1g): mehr Platz im Einzeldurchlauf.
-        assert_eq!(single_pass_budget_chars_for(16_384, true), 45_513);
-        assert!(single_pass_budget_chars_for(12_288, true) > single_pass_budget_chars_for(8_192, true));
+        assert!(
+            single_pass_budget_chars_for(GEMMA, 12_288, true)
+                > single_pass_budget_chars_for(GEMMA, 8_192, true)
+        );
         // Entfernte Anbieter: fester Wert, der Kontext spielt keine Rolle.
-        assert_eq!(single_pass_budget_chars_for(8_192, false), 48_000);
-        assert_eq!(single_pass_budget_chars_for(16_384, false), 48_000);
+        assert_eq!(single_pass_budget_chars_for(GEMMA, 8_192, false), 48_000);
+        assert_eq!(single_pass_budget_chars_for(GEMMA, 16_384, false), 48_000);
         // Ein winziger Kontext ergibt 0, nie einen Ueberlauf.
-        assert_eq!(single_pass_budget_chars_for(1_000, true), 0);
+        assert_eq!(single_pass_budget_chars_for(GEMMA, 1_000, true), 0);
     }
 
-    /// Die gemessenen Werte aus P1e: 3,35 Zeichen je Token, Overhead 641-745.
+    /// Die Antwortreserve ist keine Formsache: Gemma 4 E4B schreibt fuer 15 000
+    /// bis 38 000 Zeichen Transkript 4 700 bis 6 700 Antwort-Token (P1i-Messung,
+    /// deterministisch); Qwen3.5-9B 900 bis 2 600. Unter ~4 000 Token wuerde ein
+    /// gefuellter Block abgeschnitten (B11: 1 244 Token Platz, Antwort viermal
+    /// abgeschnitten).
     #[test]
-    fn the_budget_constants_match_the_p1e_measurement() {
-        assert_eq!(CHARS_PER_TOKEN_X100, 335);
-        assert_eq!(PROMPT_OVERHEAD_TOKENS, 750);
-        assert!(PROMPT_OVERHEAD_TOKENS >= 745, "hoechster gemessener Overhead");
+    fn the_answer_reserve_covers_a_typical_gemma_block_answer() {
+        use crate::managers::meetings::notes::budget::{ANSWER_RESERVE_TOKENS, PROMPT_OVERHEAD_TOKENS};
+        assert!(ANSWER_RESERVE_TOKENS >= 4_096, "gemessen: bis 4 737 fuer einen halben Lauf");
+        assert!(PROMPT_OVERHEAD_TOKENS >= 745, "hoechster gemessener Overhead (P1e)");
     }
 
     #[test]
@@ -2689,9 +3125,18 @@ mod tests {
         ids
     }
 
+    /// Nummer des Blocks; bei einem halbierten Block (`2.1`) die des Originals.
     fn part_number(request: &str) -> usize {
         let start = request.find("This is part ").unwrap() + "This is part ".len();
-        request[start..].split(' ').next().unwrap().parse().unwrap()
+        request[start..]
+            .split(' ')
+            .next()
+            .unwrap()
+            .split('.')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
     }
 
     /// Map: je Block ein belegter KI-Eintrag (zitiert das erste Segment des
@@ -3000,6 +3445,607 @@ mod tests {
         let err = run(&fx, &settings, None, ok_ram).await.unwrap_err();
         assert_eq!(error_code(&err), "llm_failed");
         assert_eq!(requests.load(Ordering::SeqCst), expected_blocks * 2);
+    }
+
+    // -- P1i (B11): halbieren statt verwerfen ----------------------------------
+
+    /// Label des Blocks aus dem Prompt: `2`, `2.1`, `2.1.2`.
+    fn part_label_in(request: &str) -> String {
+        let start = request.find("This is part ").unwrap() + "This is part ".len();
+        request[start..].split(' ').next().unwrap().to_string()
+    }
+
+    /// Wie `map_reduce_handler`, aber ein map-Aufruf wird abgeschnitten
+    /// (`finish_reason: length`, halbes JSON), wenn sein Block mehr als
+    /// `max_segments` Segmente hat oder sein Label mit `always_cut` beginnt
+    /// (dann in jeder Groesse). Kleine Bloecke antworten regulaer.
+    fn cutting_handler(
+        max_segments: usize,
+        always_cut: Option<&'static str>,
+        invalid_instead: bool,
+    ) -> impl Fn(&str) -> MockReply + Send + Sync {
+        let inner = map_reduce_handler(None, false);
+        move |request: &str| {
+            if request.contains("This is part ") {
+                let label = part_label_in(request);
+                let too_big = segment_ids_in(request).len() > max_segments;
+                let forced = always_cut.is_some_and(|prefix| {
+                    label == prefix || label.starts_with(&format!("{prefix}."))
+                });
+                if too_big || forced {
+                    return if invalid_instead {
+                        MockReply::Body(chat_body("das ist kein JSON"))
+                    } else {
+                        MockReply::Body(chat_body_truncated(r#"{"entries":[{"section":"besp"#))
+                    };
+                }
+            }
+            inner(request)
+        }
+    }
+
+    fn metadata_of(fx: &Fixture, doc: &MeetingDocument) -> Value {
+        let conn = rusqlite::Connection::open(&fx.db_path).unwrap();
+        let text: String = conn
+            .query_row(
+                "SELECT generation_metadata_json FROM meeting_documents WHERE id = ?1",
+                rusqlite::params![doc.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        serde_json::from_str(&text).unwrap()
+    }
+
+    fn ai_entries(notes: &EnhancedNotes) -> Vec<&EnhancedEntry> {
+        notes
+            .sections
+            .iter()
+            .flat_map(|s| s.entries.iter())
+            .filter(|e| e.origin == Origin::Ai)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_truncated_block_is_halved_and_both_halves_are_evaluated() {
+        // 12 Segmente in 3 Bloecken zu 4; der Mock schneidet alles ueber 2
+        // Segmente ab: jeder Block muss einmal halbiert werden.
+        let (fx, budget, expected_blocks) = map_reduce_setup(0);
+        assert_eq!(expected_blocks, 3);
+        let log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = log.clone();
+        let inner = cutting_handler(2, None, false);
+        let port = spawn_llm_mock_with(move |body| {
+            if body.contains("This is part ") {
+                seen.lock().unwrap().push(part_label_in(body));
+            } else if body.contains("# Partial results") {
+                seen.lock().unwrap().push("reduce".to_string());
+            }
+            inner(body)
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        let doc = run(&fx, &settings, None, limits(Some(budget))).await.unwrap();
+        let notes = body_of(&doc);
+
+        assert!(notes.stats.chunks_failed.is_empty(), "nichts verworfen");
+        assert_eq!(notes.stats.chunks_total, 6, "3 Bloecke, je in zwei Haelften");
+        assert!(!notes.stats.single_pass);
+        // Jede Haelfte liefert einen Eintrag, zitiert ihr erstes Segment: die 12
+        // Segmente sind in Sechsern von 2 lueckenlos abgedeckt.
+        let cited: HashSet<u32> = ai_entries(&notes)
+            .iter()
+            .map(|e| e.source_segment_ids[0])
+            .collect();
+        assert_eq!(cited, HashSet::from([0, 2, 4, 6, 8, 10]));
+        // Ablauf: je Block erst der abgeschnittene Versuch (nicht wiederholt),
+        // dann die linke und die rechte Haelfte; am Ende der Reduce.
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec![
+                "1", "1.1", "1.2", "2", "2.1", "2.2", "3", "3.1", "3.2", "reduce"
+            ]
+        );
+        let metadata = metadata_of(&fx, &doc);
+        assert_eq!(metadata["chunks_split"], json!(3));
+        assert_eq!(metadata["incomplete"], json!(false));
+    }
+
+    #[tokio::test]
+    async fn an_invalid_answer_is_halved_too() {
+        // Kein JSON, aber auch kein Abschneide-Hinweis: `ask_json` fragt einmal
+        // mit dem Fehlertext nach, danach wird der Block halbiert.
+        let (fx, budget, _) = map_reduce_setup(0);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let inner = cutting_handler(2, None, true);
+        let port = spawn_llm_mock_with(move |body| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            inner(body)
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        let doc = run(&fx, &settings, None, limits(Some(budget))).await.unwrap();
+        let notes = body_of(&doc);
+        assert!(notes.stats.chunks_failed.is_empty());
+        assert_eq!(notes.stats.chunks_total, 6);
+        // Je Block: 2 ungueltige Antworten (Versuch + Retry), 2 Haelften; dazu 1 Reduce.
+        assert_eq!(calls.load(Ordering::SeqCst), 3 * (2 + 2) + 1);
+    }
+
+    /// Hilft auch das Halbieren nicht (zwei Stufen), gilt der Teil als nicht
+    /// ausgewertet: die Notizen sind gekennzeichnet, und der Reduce weiss, welche
+    /// Zeit fehlt -- kein stilles `ok`.
+    #[tokio::test]
+    async fn a_part_that_cannot_be_evaluated_is_marked_incomplete() {
+        let (fx, budget, _) = map_reduce_setup(0);
+        let reduce_prompt_seen = Arc::new(Mutex::new(String::new()));
+        let seen = reduce_prompt_seen.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        // Block 2 wird in jeder Groesse abgeschnitten.
+        let inner = cutting_handler(100, Some("2"), false);
+        let port = spawn_llm_mock_with(move |body| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            if body.contains("# Partial results") {
+                *seen.lock().unwrap() = body.to_string();
+            }
+            inner(body)
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        let doc = run(&fx, &settings, None, limits(Some(budget))).await.unwrap();
+        let notes = body_of(&doc);
+
+        // Block 1 und 3 ganz (je 1 Teil), Block 2 in vier Vierteln verloren.
+        assert_eq!(notes.stats.chunks_total, 6);
+        assert_eq!(notes.stats.chunks_failed, vec![2, 3, 4, 5]);
+        assert_eq!(ai_entries(&notes).len(), 2, "nur Block 1 und 3 liefern");
+        // 2 Bloecke ganz + Block 2 (Original, 2 Haelften, 4 Viertel) + Reduce.
+        assert_eq!(calls.load(Ordering::SeqCst), 2 + (1 + 2 + 4) + 1);
+        // Der Reduce weiss, welche Zeit fehlt (Segmente 4 bis 7 = 00:20 bis 00:39,
+        // zu einem Bereich zusammengefasst).
+        let reduce = reduce_prompt_seen.lock().unwrap().clone();
+        assert!(reduce.contains("could not be processed"), "{reduce}");
+        assert!(reduce.contains("00:20-00:39"), "{reduce}");
+        let metadata = metadata_of(&fx, &doc);
+        assert_eq!(metadata["incomplete"], json!(true));
+        assert_eq!(metadata["chunks_split"], json!(3), "1 Original + 2 Haelften halbiert");
+    }
+
+    #[tokio::test]
+    async fn when_nothing_can_be_evaluated_even_after_halving_the_run_fails_visibly() {
+        let (fx, budget, _) = map_reduce_setup(0);
+        let port = spawn_llm_mock_with(cutting_handler(0, None, false)).await;
+        let settings = settings_with_mock_provider(port);
+        let err = run(&fx, &settings, None, limits(Some(budget)))
+            .await
+            .unwrap_err();
+        assert_eq!(error_code(&err), "llm_failed", "war: {err}");
+        assert!(
+            fx.store.get_documents(&fx.meeting_id).unwrap().is_empty(),
+            "kein halbes Dokument"
+        );
+    }
+
+    /// Ein Transportfehler ist kein Grund zu halbieren (kleinere Bloecke helfen
+    /// nicht, kosten aber Zeit): es bleibt beim zweiten Anlauf.
+    #[tokio::test]
+    async fn a_transport_error_does_not_split_the_block() {
+        let (fx, budget, expected_blocks) = map_reduce_setup(0);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let inner = map_reduce_handler(Some(2), false);
+        let port = spawn_llm_mock_with(move |body| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            inner(body)
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        let doc = run(&fx, &settings, None, limits(Some(budget))).await.unwrap();
+        let notes = body_of(&doc);
+        assert_eq!(notes.stats.chunks_total as usize, expected_blocks, "nicht geteilt");
+        assert_eq!(notes.stats.chunks_failed, vec![2]);
+        assert_eq!(metadata_of(&fx, &doc)["chunks_split"], json!(0));
+    }
+
+    /// Abgeschnitten im Einzeldurchlauf: nicht aufgeben, sondern in Bloecken
+    /// arbeiten (ein Ergebnis, kein Fehler).
+    #[tokio::test]
+    async fn a_truncated_single_pass_falls_back_to_blocks() {
+        let fx = fixture(6);
+        let log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = log.clone();
+        let inner = map_reduce_handler(None, false);
+        let port = spawn_llm_mock_with(move |body| {
+            if body.contains("This is part ") {
+                seen.lock().unwrap().push(format!("map {}", part_label_in(body)));
+                inner(body)
+            } else if body.contains("# Partial results") {
+                seen.lock().unwrap().push("reduce".to_string());
+                inner(body)
+            } else {
+                seen.lock().unwrap().push("single".to_string());
+                MockReply::Body(chat_body_truncated(r#"{"zusammenfassung":[{"ref":null,"te"#))
+            }
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        // Entfernter Anbieter, keine Zeichenvorgabe: der Einzeldurchlauf passt.
+        let doc = run(&fx, &settings, None, limits(None)).await.unwrap();
+        let notes = body_of(&doc);
+        assert!(!notes.stats.single_pass);
+        assert_eq!(notes.stats.chunks_total, 2, "in zwei Bloecke geteilt");
+        assert!(notes.stats.chunks_failed.is_empty());
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec!["single", "map 1", "map 2", "reduce"],
+            "ein abgeschnittener Versuch, dann Bloecke"
+        );
+    }
+
+    /// Ein RAM-Fehler im Einzeldurchlauf bleibt `memory_low`: das Halbieren
+    /// startet das Modell nicht noch einmal.
+    #[tokio::test]
+    async fn a_memory_error_in_the_single_pass_is_not_turned_into_blocks() {
+        let fx = fixture(4);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let port = spawn_llm_mock_with(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            MockReply::Status(500)
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        let low = RunLimits {
+            free_mb: low_ram,
+            ..limits(None)
+        };
+        let err = run(&fx, &settings, None, low).await.unwrap_err();
+        assert_eq!(error_code(&err), "memory_low", "war: {err}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_block_is_only_split_with_two_lines_and_two_levels_left() {
+        let work = |range: std::ops::Range<usize>, depth: usize| Work {
+            range,
+            block_index: 0,
+            path: vec![0; depth],
+        };
+        assert!(work(0..4, 0).can_split());
+        assert!(work(0..2, 1).can_split());
+        assert!(!work(0..2, MAX_SPLIT_DEPTH as usize).can_split(), "zwei Stufen sind genug");
+        assert!(!work(3..4, 0).can_split(), "eine Zeile wird nie zerschnitten");
+        assert!(!work(3..3, 0).can_split());
+    }
+
+    /// Ohne Grenze laufen lokale Modelle in eine Endlosliste (B11): lokale
+    /// map-Prompts tragen sie von Anfang an, entfernte nur in den Haelften nach
+    /// einem Abschneiden.
+    #[tokio::test]
+    async fn the_entry_cap_is_in_local_prompts_and_in_halves_after_a_cut() {
+        let fx = fixture(8);
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = seen.clone();
+        let port = spawn_llm_mock_with(move |body| {
+            sink.lock().unwrap().push(body.to_string());
+            MockReply::Body(chat_body(r#"{"entries":[]}"#))
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        let work = Work { range: 0..4, block_index: 0, path: vec![] };
+        let cap_text = |request: &String| request.contains("Write at most");
+
+        // Lokal: Grenze schon im ersten Versuch (Kleinstwert bei kleinem Block).
+        let mut local = ctx_for(&fx, &settings, None);
+        local.entry_cap = true;
+        assert!(matches!(map_step(&local, &work, 2).await, Step::Done(_)));
+        // Entfernter Anbieter: Prompt wie vor P1i.
+        let remote = ctx_for(&fx, &settings, None);
+        assert!(matches!(map_step(&remote, &work, 2).await, Step::Done(_)));
+        // Ein Teil nach dem Halbieren bekommt die Grenze auch beim entfernten Anbieter.
+        let half = Work { range: 0..2, block_index: 0, path: vec![0] };
+        assert!(matches!(map_step(&remote, &half, 2).await, Step::Done(_)));
+
+        let requests = seen.lock().unwrap().clone();
+        assert_eq!(requests.len(), 3);
+        let expected = [true, false, true];
+        for (request, want) in requests.iter().zip(expected) {
+            assert_eq!(cap_text(request), want, "{request}");
+        }
+        assert!(requests[0].contains(&format!("at most {} AI entries", budget::MIN_ENTRIES)));
+        assert!(requests[0].contains("do not count"), "Nutzernotizen zaehlen nicht");
+    }
+
+    #[tokio::test]
+    async fn the_reduce_carries_the_cap_only_for_local_models() {
+        let (fx, budget, _) = map_reduce_setup(0);
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = seen.clone();
+        let inner = map_reduce_handler(None, false);
+        let port = spawn_llm_mock_with(move |body| {
+            if body.contains("# Partial results") {
+                sink.lock().unwrap().push(body.to_string());
+            }
+            inner(body)
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        // Entfernter Anbieter: Prompt wie vor P1i.
+        run(&fx, &settings, None, limits(Some(budget))).await.unwrap();
+        let reduces = seen.lock().unwrap().clone();
+        assert_eq!(reduces.len(), 1);
+        assert!(!reduces[0].contains("The final notes hold at most"));
+        // Lokal: die Grenze steht im Reduce-Prompt (Kleinstwert bei kleinem Transkript).
+        let mut gemma = ctx_for(&fx, &settings, None);
+        gemma.entry_cap = true;
+        seen.lock().unwrap().clear();
+        map_reduce(&gemma, budget, false, &|_, _| {}).await.unwrap();
+        let reduces = seen.lock().unwrap().clone();
+        assert_eq!(reduces.len(), 1);
+        assert!(reduces[0].contains(&format!(
+            "The final notes hold at most {} AI entries",
+            budget::MIN_ENTRIES
+        )));
+    }
+
+    #[test]
+    fn the_prompts_state_the_given_entry_cap_or_nothing() {
+        let (_, _, spec) = builtin_templates().into_iter().next().unwrap();
+        let head = MeetingHead {
+            title: "T".into(),
+            date_iso: "2026-09-30".into(),
+            duration_ms: 60_000,
+            shares: vec![],
+            single_speaker: true,
+            mixed_channel: false,
+        };
+        let map = map_prompt(&head, &spec, "2.1", 3, Some(10), "", "S1 [00:05] Ich: Hallo");
+        assert!(map.contains("This is part 2.1 of 3"));
+        assert!(map.contains("Write at most 10 AI entries for this part"));
+        let plain = map_prompt(&head, &spec, "2.1", 3, None, "", "S1 [00:05] Ich: Hallo");
+        assert!(!plain.contains("Write at most"));
+        assert!(plain.contains("anything that is not in this part.\n\n"), "wie vor P1i");
+        let lines = ["allgemein | S1 | x".to_string()];
+        let reduce = reduce_prompt(&head, &spec, "", &lines, &[], Some(19));
+        assert!(reduce.contains("The final notes hold at most 19 AI entries"));
+        assert!(!reduce.contains("could not be processed"), "ohne Luecken kein Hinweis");
+        let plain = reduce_prompt(&head, &spec, "", &lines, &[], None);
+        assert!(!plain.contains("hold at most"));
+        assert!(plain.contains("Add nothing that is not in the lines.\n"), "wie vor P1i");
+    }
+
+    /// Bei langer Liste (mehr als `MAX_REDUCE_LINES` Zeilen) wird kein Reduce
+    /// gefragt: er wuerde alles noch einmal ausgeben. Der deterministische
+    /// Zusammenschluss behaelt jeden Eintrag.
+    #[tokio::test]
+    async fn a_long_list_skips_the_reduce_and_keeps_every_entry() {
+        let fx = fixture(45);
+        let log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = log.clone();
+        let inner = map_reduce_handler(None, false);
+        let port = spawn_llm_mock_with(move |body| {
+            seen.lock().unwrap().push(if body.contains("# Partial results") {
+                "reduce".to_string()
+            } else {
+                "map".to_string()
+            });
+            inner(body)
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        // Ein Segment je Block: 45 Bloecke, 45 Zeilen.
+        let doc = run(&fx, &settings, None, limits(Some(200))).await.unwrap();
+        let notes = body_of(&doc);
+        assert_eq!(notes.stats.chunks_total, 45);
+        assert!(notes.stats.chunks_failed.is_empty());
+        let log = log.lock().unwrap();
+        assert_eq!(log.len(), 45, "45 map-Aufrufe, kein Reduce");
+        assert!(!log.iter().any(|entry| entry == "reduce"));
+        assert_eq!(ai_entries(&notes).len(), 45, "kein Eintrag geht verloren");
+    }
+
+    /// Kurze Liste: der Reduce laeuft wie bisher.
+    #[tokio::test]
+    async fn a_short_list_still_gets_its_reduce() {
+        let (fx, budget, expected_blocks) = map_reduce_setup(0);
+        assert!(expected_blocks <= budget::MAX_REDUCE_LINES);
+        let reduces = Arc::new(AtomicUsize::new(0));
+        let counter = reduces.clone();
+        let inner = map_reduce_handler(None, false);
+        let port = spawn_llm_mock_with(move |body| {
+            if body.contains("# Partial results") {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+            inner(body)
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        run(&fx, &settings, None, limits(Some(budget))).await.unwrap();
+        assert_eq!(reduces.load(Ordering::SeqCst), 1);
+    }
+
+    // -- P1i: Token exakt messen ---------------------------------------------
+
+    /// Ein Server, der `/tokenize` mit `chars_per_token` beantwortet und Chat-
+    /// Anfragen an `chat` weitergibt (zaehlt sie).
+    async fn tokenizing_mock(
+        chars_per_token: usize,
+        chat_calls: Arc<AtomicUsize>,
+        chat: impl Fn(&str) -> MockReply + Send + Sync + 'static,
+    ) -> u16 {
+        spawn_llm_mock_with(move |body| {
+            if body.contains("\"messages\"") {
+                chat_calls.fetch_add(1, Ordering::SeqCst);
+                return chat(body);
+            }
+            let text = serde_json::from_str::<Value>(body)
+                .ok()
+                .and_then(|v| v["content"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            let tokens: Vec<u32> = (0..text.chars().count().div_ceil(chars_per_token) as u32).collect();
+            MockReply::Body(json!({ "tokens": tokens }).to_string())
+        })
+        .await
+    }
+
+    /// Der Kontext eines Laufs ohne Store-Lauf, fuer die Planungsfunktionen.
+    fn ctx_for<'a>(fx: &Fixture, settings: &'a AppSettings, tokens: Option<TokenPlan>) -> Ctx<'a> {
+        let meeting = fx.store.get_meeting(&fx.meeting_id).unwrap().unwrap();
+        let segments = sorted_segments(&fx.store.get_segments(&fx.meeting_id).unwrap());
+        let labels = SpeakerDirectory::load(&fx.store, &fx.meeting_id);
+        let (_, _, spec) = builtin_templates().into_iter().next().unwrap();
+        Ctx {
+            settings,
+            head: build_head_with(&meeting, &segments, &labels),
+            spec,
+            blocks: Vec::new(),
+            segments,
+            labels,
+            limits: limits(None),
+            tokens,
+            entry_cap: false,
+        }
+    }
+
+    fn plan_with(root: &str, context: usize) -> TokenPlan {
+        TokenPlan {
+            budget: TokenBudget {
+                context,
+                reserve: budget::ANSWER_RESERVE_TOKENS,
+                overhead: budget::PROMPT_OVERHEAD_TOKENS,
+                cpt_x100: 290,
+            },
+            meter: Meter::Exact(root.to_string()),
+        }
+    }
+
+    /// Der Kern von B11: der Tokenizer des Modells ist dichter als angenommen
+    /// (hier 2 Zeichen je Token statt 2,9). Die Schaetzung haelt alles fuer einen
+    /// Block; die Messung teilt, und jeder Block passt samt Antwortreserve.
+    #[tokio::test]
+    async fn exact_measurement_splits_where_the_estimate_would_overflow() {
+        let fx = fixture(60);
+        let chat = Arc::new(AtomicUsize::new(0));
+        let port = tokenizing_mock(2, chat, |_| MockReply::Status(500)).await;
+        let root = format!("http://127.0.0.1:{port}");
+        let settings = settings_with_mock_provider(port);
+        let plan = plan_with(&root, 14_000);
+        let exact = ctx_for(&fx, &settings, Some(plan.clone()));
+        let estimating = ctx_for(
+            &fx,
+            &settings,
+            Some(TokenPlan {
+                meter: Meter::Estimate,
+                ..plan.clone()
+            }),
+        );
+        let budget_chars = plan.budget.payload_chars();
+        let notes = String::new();
+        let line_chars: Vec<usize> = exact
+            .segments
+            .iter()
+            .map(|s| render_segment_line_with(s, &exact.labels).chars().count() + 1)
+            .collect();
+
+        let estimate_limit = plan_block_chars(&estimating, budget_chars, false, &notes, &line_chars).await;
+        let exact_limit = plan_block_chars(&exact, budget_chars, false, &notes, &line_chars).await;
+        let estimate_blocks = chunk_ranges_with(&exact.segments, estimate_limit, &exact.labels);
+        let exact_blocks = chunk_ranges_with(&exact.segments, exact_limit, &exact.labels);
+        assert_eq!(estimate_blocks.len(), 1, "die Schaetzung sieht keinen Grund zu teilen");
+        assert!(exact_blocks.len() >= 2, "die Messung teilt: {} Bloecke", exact_blocks.len());
+        // Jeder Block passt samt Antwortreserve in den Kontext (gemessen).
+        for (index, range) in exact_blocks.iter().enumerate() {
+            let prompt = map_prompt(
+                &exact.head,
+                &exact.spec,
+                &budget::part_label(index, &[]),
+                exact_blocks.len(),
+                None,
+                "",
+                &render_segments_with(&exact.segments[range.clone()], &exact.labels),
+            );
+            let tokens = plan.prompt_tokens(&map_system_prompt(), &prompt).await;
+            assert!(plan.budget.fits(tokens), "Block {index}: {tokens} Token");
+        }
+        // Der ueberschrittene Einzeldurchlauf wird erkannt; die Schaetzung sagt ja.
+        let payload = render_segments_with(&exact.segments, &exact.labels).chars().count();
+        assert!(payload <= budget_chars, "die Zeichenrechnung liesse es zu");
+        assert!(!fits_single_pass(&exact, payload, budget_chars).await);
+        assert!(fits_single_pass(&estimating, payload, budget_chars).await);
+    }
+
+    /// Auch in die andere Richtung: ist der Tokenizer weniger dicht als
+    /// angenommen, laeuft das Transkript im Einzeldurchlauf statt in Bloecken.
+    #[tokio::test]
+    async fn exact_measurement_allows_a_single_pass_the_estimate_would_refuse() {
+        let fx = fixture(30);
+        let port = tokenizing_mock(6, Arc::new(AtomicUsize::new(0)), |_| MockReply::Status(500)).await;
+        let settings = settings_with_mock_provider(port);
+        let plan = plan_with(&format!("http://127.0.0.1:{port}"), 12_000);
+        let ctx = ctx_for(&fx, &settings, Some(plan));
+        let payload = render_segments_with(&ctx.segments, &ctx.labels).chars().count();
+        // Ein Zeichenbudget, das den Einzeldurchlauf ablehnt.
+        assert!(!fits_single_pass(&ctx_for(&fx, &settings, None), payload, payload - 1).await);
+        assert!(fits_single_pass(&ctx, payload, payload - 1).await);
+    }
+
+    /// Passt ein Prompt nicht samt Antwortreserve, wird der Block halbiert, ohne
+    /// dass eine einzige Chat-Anfrage rausgeht (nicht 15 140 Token an einen
+    /// 16 384er Kontext schicken und auf das Abschneiden warten). Ohne Platz zum
+    /// Teilen wird trotzdem gefragt.
+    #[tokio::test]
+    async fn an_overfull_block_is_halved_before_any_chat_request() {
+        let fx = fixture(8);
+        let chat = Arc::new(AtomicUsize::new(0));
+        let port = tokenizing_mock(1, chat.clone(), |_| {
+            MockReply::Body(chat_body(r#"{"entries":[]}"#))
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+        // Kontext so knapp, dass kein Block samt Reserve passt.
+        let plan = plan_with(&format!("http://127.0.0.1:{port}"), 6_000);
+        let ctx = ctx_for(&fx, &settings, Some(plan));
+
+        let whole = Work { range: 0..8, block_index: 0, path: vec![] };
+        assert!(matches!(map_step(&ctx, &whole, 1).await, Step::Split));
+        assert_eq!(chat.load(Ordering::SeqCst), 0, "keine Chat-Anfrage vorab");
+
+        // Zwei Stufen sind ausgeschoepft, oder nur eine Zeile: es wird gefragt.
+        let quarter = Work { range: 0..2, block_index: 0, path: vec![0, 1] };
+        assert!(matches!(map_step(&ctx, &quarter, 1).await, Step::Done(_)));
+        let line = Work { range: 3..4, block_index: 0, path: vec![] };
+        assert!(matches!(map_step(&ctx, &line, 1).await, Step::Done(_)));
+        assert_eq!(chat.load(Ordering::SeqCst), 2);
+    }
+
+    /// Antwortet `/tokenize` nicht (Server ohne Endpunkt), gilt die Schaetzung
+    /// nach Modellfamilie, und der Lauf geht weiter.
+    #[tokio::test]
+    async fn without_tokenize_the_estimate_of_the_model_family_takes_over() {
+        let fx = fixture(6);
+        let port = spawn_llm_mock_with(|_| MockReply::Status(404)).await;
+        let settings = settings_with_mock_provider(port);
+        let plan = plan_with(&format!("http://127.0.0.1:{port}"), 12_000);
+        // Text-Messung scheitert -> Schaetzung fuer diesen Text.
+        assert_eq!(plan.text_tokens("abcdefghij").await, plan.budget.estimate_tokens(10));
+        // Und die Planung laeuft trotzdem durch.
+        let ctx = ctx_for(&fx, &settings, Some(plan.clone()));
+        let payload = render_segments_with(&ctx.segments, &ctx.labels).chars().count();
+        assert!(fits_single_pass(&ctx, payload, plan.budget.payload_chars()).await);
+    }
+
+    /// Ohne laufendes lokales Modell (unvollstaendige Installation): kein Server,
+    /// also Schaetzung mit dem Standardkontext, nie ein Absturz.
+    #[tokio::test]
+    async fn the_local_token_plan_falls_back_to_the_estimate_without_a_server() {
+        let plan = TokenPlan::for_local("llm-gemma4-e4b-q4").await;
+        assert_eq!(plan.meter, Meter::Estimate);
+        assert_eq!(
+            plan.budget.context,
+            crate::managers::llm::DEFAULT_CONTEXT_TOKENS as usize
+        );
+        assert_eq!(plan.budget.cpt_x100, 290);
     }
 
     // -- Nebenlaeufigkeit, Zeitlimit, Abbruch ---------------------------------
