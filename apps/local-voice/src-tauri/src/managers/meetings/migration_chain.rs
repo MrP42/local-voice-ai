@@ -131,6 +131,25 @@ fn legacy_db(dir: &tempfile::TempDir) -> std::path::PathBuf {
     path
 }
 
+/// Werkzeug fuer den Rauchtest der Release-EXE (kein Test): schreibt eine
+/// Datenbank im Stand 0.20.9 samt Altdaten nach `LVA_SMOKE_LEGACY_DB`; die EXE
+/// migriert sie dann in einer Sandbox (`LVA_MEETINGS_DIR`).
+///
+/// LVA_SMOKE_LEGACY_DB=<pfad>/meetings.db cargo test --lib write_legacy_db -- --ignored
+#[test]
+#[ignore = "Werkzeug: schreibt die Datei aus LVA_SMOKE_LEGACY_DB"]
+fn write_legacy_db_for_the_release_smoke_test() {
+    let target = std::env::var("LVA_SMOKE_LEGACY_DB").expect("LVA_SMOKE_LEGACY_DB setzen");
+    let target = std::path::PathBuf::from(target);
+    assert!(!target.exists(), "die Datei darf noch nicht existieren");
+    let mut conn = Connection::open(&target).unwrap();
+    Migrations::new(MIGRATIONS[..5].to_vec())
+        .to_latest(&mut conn)
+        .unwrap();
+    seed_0_20_9_data(&conn);
+    println!("LEGACY_DB={}", target.display());
+}
+
 /// Wie jede Stufe der Kette aussieht: Version und Tabellen.
 #[test]
 fn the_chain_is_register_then_variants_then_queue() {
