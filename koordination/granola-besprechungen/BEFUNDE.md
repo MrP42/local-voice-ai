@@ -78,7 +78,7 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 ## B14 — Abnahme 0.20.8: Protokoll-Erzeugung verliert Laufzustand beim Reiterwechsel (30.09.)
 - Beobachtet (Patrick): „Erzeugen“ -> „Protokoll wird erzeugt“; Reiter wechseln und zurück -> Hinweis weg, Knopf wieder klickbar, paralleler zweiter Start möglich. Kein Fortschritt, keine Steuerung.
 - Konsequenz: P1k (Laufzustand im Backend, Doppelstart abgewiesen, Fortschrittswerte) + P8a (Phase Protokoll/KI-Notizen mit Balken, Pause/Stopp).
-- Status: offen (Protokoll erledigt in P1k 29229e59; KI-Notizen-Reiter und Pause/Stopp folgen mit P8a)
+- Status: erledigt (P1k + P8a 14f0c940: Laufzustand im Backend fuer Protokoll und KI-Notizen, Fortschritt, Stopp)
 
 ## B15 — P3e: ähnlich klingende Stimmen verschmelzen (Hörspiel Emilia/Sofie/Mara) (30.09.)
 - Beobachtet: 4 von 7 Stimmen erkannt, DER 33,84 % (Verwechslung 30,79 %); die drei Schwestern (Grundfrequenz 258/262/267 Hz) laufen als ein Sprecher, auch in 3-min-Ausschnitten. Erzähler, Leo, Patrick zu 100 % richtig. Nemotron 31,95 %, gleiches Muster. Nachtuning hilft nicht.
@@ -90,4 +90,9 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beobachtet: `the_cli_wrapper_reports_success_as_exit_code_zero` einmal rot während 3 Worker bauten; einzeln 2x grün (0,44 s).
 - Konsequenz: Zeitgrenze des Tests beobachten; bei zweitem Auftreten Grenze lastfest machen.
 - Status: erledigt (beobachtet, einzeln grün)
+
+## B17 — P8a: Neu-Transkription löscht das alte Transkript schon beim Start (30.09.)
+- Beobachtet: vorbestehend; ein Stopp danach hinterlässt Teil-Segmente und `cancelled`, das alte Transkript ist weg. Hinweistext `retranscribe.runningHint` verspricht „ersetzt nach dem Lauf“.
+- Konsequenz: Folgepaket (Goal Aufnahmen-Oberfläche #64): neue Fassung erst am Ende tauschen (passt zu Fassungen/Diff aus #65), bis dahin Hinweistext korrigieren.
+- Status: erledigt (Hinweistext korrigiert in 0.20.9; Tausch erst am Ende als Paket im Goal Aufnahmen-Oberfläche #64)
 

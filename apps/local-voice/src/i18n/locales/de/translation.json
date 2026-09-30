@@ -2020,7 +2020,7 @@
       "configuredModel": "Eingestelltes Besprechungsmodell",
       "start": "Neu transkribieren",
       "running": "Transkribiere…",
-      "runningHint": "Das bisherige Transkript wird nach dem Lauf ersetzt. Bei langen Aufzeichnungen dauert das eine Weile."
+      "runningHint": "Das bisherige Transkript wird durch das neue ersetzt, während der Lauf fortschreitet. Stoppst du vorher, bleibt nur der schon neu transkribierte Teil. Bei langen Aufzeichnungen dauert das eine Weile."
     },
     "notes": {
       "tab": "Notizen",

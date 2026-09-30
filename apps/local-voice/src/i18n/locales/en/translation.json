@@ -2020,7 +2020,7 @@
       "configuredModel": "Configured meeting model",
       "start": "Re-transcribe",
       "running": "Transcribing…",
-      "runningHint": "The existing transcript is replaced when the run finishes. This can take a while for long recordings."
+      "runningHint": "The existing transcript is replaced by the new one as the run progresses. If you stop early, only the part transcribed so far remains. This can take a while for long recordings."
     },
     "notes": {
       "tab": "Notes",
