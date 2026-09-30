@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::managers::meetings::import::import_media_file;
+use crate::managers::meetings::job::{self, JobPhase};
 use crate::managers::meetings::minutes::{generate_minutes, latest_minutes_file};
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 use crate::managers::meetings::retention::delete_audio_files;
@@ -160,6 +161,9 @@ pub async fn meetings_delete(
     store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
 ) -> Result<(), String> {
+    // P8a: eine laufende Verarbeitung (Import, Enddurchlauf, Notizen ...) endet,
+    // bevor ihre Audiodateien verschwinden. Ohne Auftrag ist das ein leerer Aufruf.
+    let _ = job::global().stop(&meeting_id);
     let paths = store
         .soft_delete_meeting(&meeting_id)
         .map_err(|e| e.to_string())?;
@@ -179,8 +183,31 @@ pub async fn meetings_generate_minutes(
     meeting_id: String,
 ) -> Result<MeetingDocument, String> {
     let store = Arc::clone(&store);
-    generate_minutes(&app, store, &meeting_id).await
+    // P8a: die Erzeugung ist ein Auftrag (Phase Protokoll): der Laufzustand
+    // liegt im Backend und ueberlebt einen Reiterwechsel; Stopp laesst das
+    // Future fallen (nichts wird gespeichert). Fortschritt in Bloecken und
+    // Pause meldet `generate_minutes` selbst ueber `job::report_*` und
+    // `job::checkpoint()` (Schnittstelle in `managers::meetings::job`); bis
+    // dahin ist es eine Phase mit unbekannter Groesse, nur mit Stopp.
+    let job = job::global()
+        .try_start(&meeting_id, job::app_emit(&app))
+        .map_err(|e| e.to_string())?;
+    let handle = Arc::clone(job.handle());
+    handle.begin_phase_ex(JobPhase::Minutes, 0, false);
+    let run = job::scope(
+        Arc::clone(&handle),
+        generate_minutes(&app, store, &meeting_id),
+    );
+    let result = tokio::select! {
+        result = run => result,
+        _ = handle.stopped() => Err(MINUTES_STOPPED.to_string()),
+    };
+    drop(job);
+    result
 }
+
+/// Fehlercode, wenn der Nutzer die Protokoll-Erzeugung gestoppt hat (P8a).
+pub const MINUTES_STOPPED: &str = "minutes_stopped";
 
 /// Where this meeting's minutes were filed as Markdown, if the file is there.
 /// The database holds the authoritative copy; this is the convenience copy the

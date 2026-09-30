@@ -777,6 +777,60 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         return 2;
     }
 
+    // P8a: die Steuerhaken (Skript, Fortsetzen) laufen nur in der Sandbox.
+    if (args.job_script.is_some() || args.continue_meeting.is_some())
+        && std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+    {
+        eprintln!(
+            "error: --job-script / --continue-meeting only run in a sandbox: set {}=<empty temp dir>",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let job_script = match args.job_script.as_deref().map(managers::meetings::job_harness::parse_script) {
+        Some(Ok(steps)) => Some(steps),
+        Some(Err(e)) => {
+            eprintln!("error: --job-script: {e}");
+            return 2;
+        }
+        None => None,
+    };
+    let job_log = match args
+        .job_events
+        .as_deref()
+        .map(managers::meetings::job_harness::EventLog::create)
+    {
+        Some(Ok(log)) => {
+            managers::meetings::job_harness::attach_event_log(app, Arc::clone(&log));
+            Some(log)
+        }
+        Some(Err(e)) => {
+            eprintln!("error: --job-events: {e}");
+            return 2;
+        }
+        None => None,
+    };
+    // Das Skript laeuft nebenher und steuert den ersten Auftrag, der erscheint.
+    let start_job_script = move || {
+        if let Some(steps) = job_script.clone() {
+            let log = job_log.clone();
+            std::thread::spawn(move || {
+                managers::meetings::job_harness::run_script(
+                    managers::meetings::job::global(),
+                    &steps,
+                    managers::meetings::job_harness::WAIT_FOR_JOB,
+                    &|line| {
+                        if let Some(log) = &log {
+                            log.write(line);
+                        }
+                    },
+                );
+            });
+        }
+    };
+
     let store = match MeetingStore::new(app) {
         Ok(store) => Arc::new(store),
         Err(e) => {
@@ -829,6 +883,25 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         return run_simulate_meeting(app, &store, &tm, args);
     }
 
+    // P8a: "Fortsetzen" eines gestoppten Imports, wie der Knopf es ausloest.
+    if let Some(id) = args.continue_meeting.clone() {
+        start_job_script();
+        let started = std::time::Instant::now();
+        if let Err(e) = recorder.continue_processing(&id) {
+            eprintln!("error: continue failed: {e}");
+            return 1;
+        }
+        recorder.wait_final_jobs();
+        println!("CONTINUE_MS={}", started.elapsed().as_millis());
+        if args.dump_meeting.is_none() {
+            let mut payload =
+                meeting_payload(&store, &id).unwrap_or_else(|| serde_json::json!({}));
+            payload["meeting_id"] = serde_json::json!(id);
+            payload["continue_ms"] = serde_json::json!(started.elapsed().as_millis() as u64);
+            emit_headless_payload(&payload, args.out.as_deref());
+        }
+    }
+
     if let Some(path) = args.import_meeting.clone() {
         if !path.exists() {
             eprintln!("error: no such file: {}", path.display());
@@ -867,6 +940,7 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         }
 
         let started = std::time::Instant::now();
+        start_job_script(); // P8a: Pause/Stopp wie die Knoepfe (nur mit --job-script)
         // Consent is confirmed by the caller: a headless import is an
         // explicit, deliberate act by whoever typed the flag (the UI gate
         // itself is covered by the consent-gate scenario, not by this path).
@@ -1780,6 +1854,11 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::meetings_update_segment,
             commands::meetings::meetings_rename,
             commands::meetings::meetings_retranscribe,
+            commands::meeting_jobs::meetings_progress_list, // P8a
+            commands::meeting_jobs::meetings_job_pause,
+            commands::meeting_jobs::meetings_job_resume,
+            commands::meeting_jobs::meetings_job_stop,
+            commands::meeting_jobs::meetings_continue,
             commands::meetings::meetings_get_documents,
             commands::meetings::meetings_delete,
             commands::meetings::meetings_import_file,
@@ -2031,6 +2110,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.tts_test
         || cli_args.import_meeting.is_some()
         || cli_args.dump_meeting.is_some()
+        || cli_args.continue_meeting.is_some() // P8a
         || cli_args.make_orphan.is_some()
         || cli_args.bench_search // M4-P4a
         || cli_args.simulate_meeting // M2-P2c2
@@ -2393,6 +2473,7 @@ pub fn run(cli_args: CliArgs) {
                 let args = cli_args.clone();
                 let meetings_mode = args.import_meeting.is_some()
                     || args.dump_meeting.is_some()
+                    || args.continue_meeting.is_some()
                     || args.make_orphan.is_some()
                     || args.simulate_meeting;
                 std::thread::spawn(move || {

@@ -119,6 +119,25 @@ pub struct CliArgs {
     #[arg(long, value_name = "ID")]
     pub dump_meeting: Option<String>,
 
+    /// P8a test hook (headless): steer the running processing job like the UI
+    /// buttons do. Comma-separated `action@seconds` (pause, resume, stop),
+    /// counted from the moment the job appears, e.g. `pause@4,resume@9,stop@14`.
+    /// Works with --import-meeting and --continue-meeting; sandbox only
+    /// (LVA_MEETINGS_DIR must be set).
+    #[arg(long, value_name = "SCRIPT", hide = true)]
+    pub job_script: Option<String>,
+
+    /// P8a: write every meeting event of a headless run (state, progress,
+    /// job end, script steps) as one JSON line to this file. Evidence for
+    /// progress events and for pause/stop taking effect.
+    #[arg(long, value_name = "FILE", hide = true)]
+    pub job_events: Option<PathBuf>,
+
+    /// P8a test hook (headless): continue a stopped (`cancelled`) meeting like
+    /// the "Fortsetzen" button does and wait for the job. Sandbox only.
+    #[arg(long, value_name = "ID", hide = true)]
+    pub continue_meeting: Option<String>,
+
     /// Test hook for the crash-recovery scenario: fabricates an "app died
     /// mid recording" meeting — a row left on `recording` with a WAV whose
     /// RIFF/data sizes were never patched — from this 16 kHz mono WAV, then

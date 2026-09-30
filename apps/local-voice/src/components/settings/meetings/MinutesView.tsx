@@ -8,6 +8,9 @@ import { Alert } from "../../ui/Alert";
 import Badge from "../../ui/Badge";
 import { MarkdownContent } from "../../whats-new/MarkdownContent";
 import { Download } from "lucide-react";
+import { useJobEnded, useMeetingProgress } from "@/hooks/useMeetingJobs";
+import { JobBar } from "./JobProgress";
+import { translateMeetingError } from "./meetingErrors";
 
 interface MinutesViewProps {
   meetingId: string;
@@ -21,8 +24,15 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   const { t } = useTranslation();
   const [doc, setDoc] = useState<MeetingDocument | null>(null);
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stopped, setStopped] = useState(false);
+  // P8a: die Erzeugung ist ein Auftrag im Backend. Beim Reiterwechsel wird die
+  // Ansicht neu gebaut und sieht trotzdem, dass sie noch laeuft.
+  const progressMap = useMeetingProgress();
+  const job =
+    progressMap[meetingId]?.phase === "minutes" ? progressMap[meetingId] : undefined;
+  const generating = busy || job !== undefined;
   const [saved, setSaved] = useState<string | null>(null);
   const [autoFile, setAutoFile] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -60,18 +70,32 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   }, [loadLatest, refreshAutoFile]);
 
   const generate = async () => {
-    setGenerating(true);
+    setBusy(true);
     setError(null);
+    setStopped(false);
     setSaved(null);
     const result = await commands.meetingsGenerateMinutes(meetingId);
-    setGenerating(false);
+    setBusy(false);
     if (result.status === "error") {
-      setError(result.error);
+      // Vom Nutzer gestoppt (P8a) ist keine Panne.
+      if (result.error === "minutes_stopped") {
+        setStopped(true);
+        return;
+      }
+      setError(translateMeetingError(result.error, t));
       return;
     }
     setDoc(result.data);
     void refreshAutoFile();
   };
+
+  // Das Ende des Auftrags laedt das Ergebnis neu, auch wenn die Ansicht beim
+  // Ende nicht offen war.
+  useJobEnded(meetingId, (ended) => {
+    if (ended.phase !== "minutes") return;
+    void loadLatest();
+    void refreshAutoFile();
+  });
 
   /**
    * Two flavours in one clipboard write: `text/html` so a paste into Word,
@@ -141,6 +165,11 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   return (
     <div className="space-y-3">
       {error && <Alert variant="error">{error}</Alert>}
+      {stopped && !generating && (
+        <div data-testid="minutes-stopped">
+          <Alert variant="info">{t("meetings.minutes.stopped")}</Alert>
+        </div>
+      )}
 
       <div className="flex gap-2 items-center flex-wrap">
         <Button onClick={generate} disabled={generating}>
@@ -168,6 +197,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         {generating && (
           <Badge variant="secondary">{t("meetings.minutes.generating")}</Badge>
         )}
+        {job && <JobBar progress={job} className="w-44" />}
         {saved && (
           <span className="text-xs text-text/60 break-all">
             {t("meetings.minutes.exportSaved", { path: saved })}
