@@ -5,8 +5,11 @@ pub mod dsp;
 pub mod echo;
 pub mod export;
 pub mod final_pass;
+pub mod followup; // P6f (B13)
 pub mod hallucination;
 pub mod import;
+pub mod job; // P8a
+pub mod job_harness; // P8a: Pruefhaken fuer den Headless-Lauf
 pub mod llm_call;
 pub mod mail; // M6-P6c
 pub mod mic_capture;

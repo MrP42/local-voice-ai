@@ -39,6 +39,8 @@ import {
 import { ContextMenu, FolderChips } from "./search/FolderChips";
 import type { PersonRef } from "./people/PersonPopover";
 import { FolderPickerDialog } from "./search/FolderPickerDialog";
+import { JobBar } from "./JobProgress";
+import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 
 const PAGE_SIZE = 25;
 const DAY_SECONDS = 86_400;
@@ -104,6 +106,8 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   onPersonFilterChange,
 }) => {
   const { t, i18n } = useTranslation();
+  // P8a: laufende Verarbeitungen (Fortschritt, Restdauer) statt nur "Wird verarbeitet".
+  const progressMap = useMeetingProgress();
   // Ohne Suche/Filter tragen die Eintraege kein Snippet.
   const [items, setItems] = useState<MeetingSearchItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -609,11 +613,17 @@ export const MeetingList: React.FC<MeetingListProps> = ({
                     {snippet && <SearchSnippet snippet={snippet} />}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <Badge variant={statusBadgeVariant(meeting.status)}>
-                      {t(`meetings.status.${meeting.status}`, {
-                        defaultValue: meeting.status,
-                      })}
-                    </Badge>
+                    {progressMap[meeting.id] &&
+                    (meeting.status === "processing" ||
+                      meeting.status === "recording") ? (
+                      <JobBar progress={progressMap[meeting.id]} />
+                    ) : (
+                      <Badge variant={statusBadgeVariant(meeting.status)}>
+                        {t(`meetings.status.${meeting.status}`, {
+                          defaultValue: meeting.status,
+                        })}
+                      </Badge>
+                    )}
                     <button
                       type="button"
                       className="p-1.5 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/15 cursor-pointer"

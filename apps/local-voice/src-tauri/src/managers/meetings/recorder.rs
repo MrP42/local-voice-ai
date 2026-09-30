@@ -82,6 +82,39 @@ pub fn may_start(state: &MeetingRunState) -> bool {
     matches!(state, MeetingRunState::Idle)
 }
 
+/// Recovery beim Start: nur `recording` und `processing` sind Reste eines
+/// Absturzes. `cancelled` (P8a, Stopp durch den Nutzer) ist ein Endzustand:
+/// wer gestoppt hat, will nicht, dass die App beim naechsten Start von selbst
+/// weiterrechnet.
+pub fn is_orphan_status(status: &str) -> bool {
+    matches!(status, "recording" | "processing")
+}
+
+/// P8a: darf eine Besprechung fortgesetzt werden? Nur nach einem Stopp
+/// (`cancelled`), nur ohne laufenden Auftrag und nur, solange eine Aufnahme auf
+/// der Platte liegt (`exists` prueft einen Pfad). Die Fehlercodes uebersetzt
+/// die Oberflaeche.
+pub fn check_can_continue(
+    meeting: &Meeting,
+    job_running: bool,
+    exists: &dyn Fn(&str) -> bool,
+) -> Result<(), String> {
+    if meeting.status != "cancelled" {
+        return Err("not_cancelled".to_string());
+    }
+    if job_running {
+        return Err(super::job::JobError::Busy.to_string());
+    }
+    let has_audio = [&meeting.mic_audio_path, &meeting.system_audio_path]
+        .into_iter()
+        .flatten()
+        .any(|p| exists(p));
+    if !has_audio {
+        return Err("audio_missing".to_string());
+    }
+    Ok(())
+}
+
 /// Pause/resume only mean something while recording.
 pub fn apply_pause(state: &mut MeetingRunState, paused: bool) -> Result<(), String> {
     match state {
@@ -143,6 +176,31 @@ pub enum MeetingEvent {
         meeting_id: String,
         channel: u8,
         state: HealthState,
+    },
+    /// P8a: Fortschritt einer Verarbeitung (Import, Enddurchlauf, Neu-
+    /// Transkription, Sprecher, Notizen, Protokoll); hoechstens 2 / s je
+    /// Besprechung, Zustandswechsel (Pause, Stopp, Phase) sofort. `done` /
+    /// `total` zaehlen ms Audio (Notizen und Protokoll: Bloecke), `total` 0 =
+    /// Groesse unbekannt, `eta_ms` `None` = noch in der Anlaufzeit.
+    #[serde(rename = "progress")]
+    Progress {
+        meeting_id: String,
+        phase: super::job::JobPhase,
+        done: u64,
+        total: u64,
+        elapsed_ms: u64,
+        eta_ms: Option<u64>,
+        state: super::job::JobRunState,
+        pausable: bool,
+    },
+    /// P8a: der Auftrag zu `meeting_id` ist zu Ende (fertig, gestoppt oder
+    /// gescheitert): eine Ansicht, die beim Ende nicht offen war, laedt ihr
+    /// Ergebnis daraufhin neu und nimmt den Laufzustand zurueck.
+    #[serde(rename = "job_ended")]
+    JobEnded {
+        meeting_id: String,
+        phase: super::job::JobPhase,
+        stopped: bool,
     },
 }
 
@@ -922,7 +980,7 @@ impl MeetingRecorderManager {
             };
             let page_len = page.len() as u32;
             for meeting in page {
-                if meeting.status != "recording" && meeting.status != "processing" {
+                if !is_orphan_status(&meeting.status) {
                     continue;
                 }
                 // WAV-Header reparieren, echte Dauer, Status `processing`.
@@ -956,6 +1014,44 @@ impl MeetingRecorderManager {
             );
         }
         self.spawn_final_jobs(jobs);
+    }
+
+    /// P8a: "Fortsetzen" nach einem Stopp durch den Nutzer: holt den Rest einer
+    /// abgebrochenen Verarbeitung nach, mit derselben Logik wie die
+    /// Wiederherstellung nach einem Absturz (`recover_orphans`): je Kanal ab dem
+    /// letzten gespeicherten Segment, danach der Plan der Besprechung. Laeuft im
+    /// Hintergrund-Thread mit Fortschritt, Pause und Stopp. Blockierend
+    /// (Hardware-Messung fuer den Plan): nicht im UI-Thread rufen.
+    pub fn continue_processing(&self, meeting_id: &str) -> Result<(), String> {
+        let meeting = self
+            .store
+            .get_meeting(meeting_id)
+            .map_err(|e| format!("meeting_lookup_failed: {e}"))?
+            .ok_or_else(|| "meeting_not_found".to_string())?;
+        check_can_continue(
+            &meeting,
+            super::job::global().is_running(meeting_id),
+            &|p| std::path::Path::new(p).exists(),
+        )?;
+        let settings = crate::settings::get_settings(&self.app);
+        let catch_up_model = self.transcription.meeting_model_target(&settings);
+        // WAV-Header pruefen, echte Dauer, Status `processing`.
+        final_pass::prepare_orphan(&self.store, &meeting)
+            .map_err(|e| format!("status_processing_failed: {e}"))?;
+        let plan = if meeting.source == "live" {
+            final_pass::plan_for_app(&self.app, &FinalChoice::parse(&settings.meeting_final_model))
+        } else {
+            FinalPlan::Keep(KeepReason::NotLive)
+        };
+        self.emit_state(meeting_id, "processing", false);
+        info!("meetings: continuing a stopped meeting ({meeting_id})");
+        self.spawn_final_jobs(vec![JobSpec {
+            meeting_id: meeting_id.to_string(),
+            catch_up_model: Some(catch_up_model),
+            plan,
+            live_model: None,
+        }]);
+        Ok(())
     }
 
     /// Spec A1: while a meeting records, the machine must show it — tray icon
@@ -1277,5 +1373,63 @@ mod tests {
         assert_eq!(rms(&[]), 0.0);
         assert_eq!(rms(&[0, 0, 0, 0]), 0.0);
         assert!((rms(&[i16::MAX, -i16::MAX]) - 1.0).abs() < 1e-4);
+    }
+
+    /// P8a: der Start nimmt nur Reste eines Absturzes wieder auf. Ein Stopp
+    /// durch den Nutzer (`cancelled`) bleibt gestoppt.
+    #[test]
+    fn only_crash_leftovers_are_recovered_and_a_stopped_meeting_stays_stopped() {
+        assert!(is_orphan_status("recording"));
+        assert!(is_orphan_status("processing"));
+        assert!(!is_orphan_status("cancelled"));
+        assert!(!is_orphan_status("ready"));
+        assert!(!is_orphan_status("failed"));
+    }
+
+    fn meeting_with(status: &str, mic: Option<&str>, system: Option<&str>) -> Meeting {
+        Meeting {
+            id: "m1".into(),
+            title: "t".into(),
+            status: status.into(),
+            source: "import".into(),
+            started_at: None,
+            ended_at: None,
+            language: None,
+            mic_audio_path: mic.map(str::to_string),
+            system_audio_path: system.map(str::to_string),
+            duration_ms: None,
+            consent_confirmed_at: None,
+            audio_retention_until: None,
+            source_path: None,
+            created_at: 0,
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn continuing_needs_a_stopped_meeting_no_running_job_and_audio_on_disk() {
+        let exists = |p: &str| p == "C:/m/import.wav";
+        let ok = meeting_with("cancelled", Some("C:/m/import.wav"), None);
+        assert_eq!(check_can_continue(&ok, false, &exists), Ok(()));
+        // Nur die zweite Spur genuegt.
+        let system_only = meeting_with("cancelled", Some("C:/weg.wav"), Some("C:/m/import.wav"));
+        assert_eq!(check_can_continue(&system_only, false, &exists), Ok(()));
+        for status in ["ready", "failed", "processing", "recording"] {
+            let m = meeting_with(status, Some("C:/m/import.wav"), None);
+            assert_eq!(
+                check_can_continue(&m, false, &exists),
+                Err("not_cancelled".to_string()),
+                "{status}"
+            );
+        }
+        assert_eq!(
+            check_can_continue(&ok, true, &exists),
+            Err("job_busy".to_string()),
+            "ein zweiter Klick startet keinen zweiten Auftrag"
+        );
+        let gone = meeting_with("cancelled", Some("C:/weg.wav"), None);
+        assert_eq!(check_can_continue(&gone, false, &exists), Err("audio_missing".to_string()));
+        let none = meeting_with("cancelled", None, None);
+        assert_eq!(check_can_continue(&none, false, &exists), Err("audio_missing".to_string()));
     }
 }

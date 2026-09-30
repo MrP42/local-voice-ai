@@ -379,10 +379,14 @@ pub trait ChannelDiarizer {
     fn check_ram(&mut self, need_mb: u64) -> Result<(), String>;
     /// Turns eines Kanals (16 kHz mono f32), Sprecher 1-basiert.
     fn diarize(&mut self, channel: u8, pcm: &[f32]) -> Result<Vec<Turn>, DiarizeError>;
-    /// Abbruch von aussen (neue Aufnahme).
+    /// Abbruch von aussen (neue Aufnahme, Stopp durch den Nutzer).
     fn cancelled(&self) -> bool {
         false
     }
+    /// P8a: Fortschritt: `done_ms` von `total_ms` Audio der jetzt zu
+    /// berechnenden Kanaele sind fertig (je Kanal ein Modelllauf, darin gibt es
+    /// keinen Zwischenstand). Standard: nichts.
+    fn progress(&mut self, _done_ms: u64, _total_ms: u64) {}
     /// Modell freigeben (vor dem Laden des End-STT-Modells).
     fn release(&mut self) {}
 }
@@ -632,6 +636,16 @@ pub fn collect_turns(
         );
     }
     let unavailable = diarizer.unavailable();
+    // P8a: Gesamtdauer der Kanaele, die das Modell rechnen wird.
+    let total_ms: u64 = if unavailable.is_some() || brake {
+        0
+    } else {
+        todo.iter()
+            .filter_map(|t| wav_duration_ms(&t.path))
+            .filter(|ms| (MIN_AUDIO_MS..=MAX_AUDIO_MS).contains(ms))
+            .sum()
+    };
+    let mut done_ms: u64 = 0;
 
     for track in todo {
         let channel = track.channel;
@@ -689,8 +703,14 @@ pub fn collect_turns(
             }
         };
         let run = Instant::now();
+        diarizer.progress(done_ms, total_ms);
         let result = diarizer.diarize(channel, &pcm);
         drop(pcm);
+        // Ein abgebrochener Kanal ist nicht "fertig": der Balken springt nicht auf 100 %.
+        if !matches!(result, Err(DiarizeError::Cancelled)) {
+            done_ms += audio_ms;
+            diarizer.progress(done_ms, total_ms);
+        }
         match result {
             Ok(turns) => {
                 report.channels.push(ChannelReport {
@@ -1266,6 +1286,7 @@ mod tests {
 
     /// Attrappe: feste Turns je Kanal, zaehlt Aufrufe, steuerbare Fehler.
     struct Fake {
+        progress: Vec<(u64, u64)>,
         turns: BTreeMap<u8, Vec<Turn>>,
         calls: RefCell<Vec<u8>>,
         ram_error: Option<String>,
@@ -1278,6 +1299,7 @@ mod tests {
     impl Fake {
         fn new(turns: &[(u8, Vec<Turn>)]) -> Self {
             Self {
+                progress: Vec::new(),
                 turns: turns.iter().cloned().collect(),
                 calls: RefCell::new(Vec::new()),
                 ram_error: None,
@@ -1314,6 +1336,9 @@ mod tests {
         fn cancelled(&self) -> bool {
             self.cancel_after_calls
                 .is_some_and(|n| self.calls.borrow().len() >= n)
+        }
+        fn progress(&mut self, done_ms: u64, total_ms: u64) {
+            self.progress.push((done_ms, total_ms));
         }
         fn release(&mut self) {
             self.released += 1;
@@ -1381,6 +1406,58 @@ mod tests {
         let md = f.store.metadata_json(&f.id).unwrap().unwrap();
         assert_eq!(md["diarize"]["state"], "done");
         assert_eq!(md["diarize"]["attempts"], 1);
+    }
+
+    /// P8a: je Kanal vor und nach dem Modelllauf ein Stand, mit der
+    /// Gesamtdauer der Kanaele, die wirklich gerechnet werden.
+    #[test]
+    fn collect_turns_reports_progress_per_channel_against_the_total() {
+        let (f, m) = live(4_000);
+        f.store
+            .set_metadata_key(&f.id, "diarize_mic", json!(true))
+            .unwrap();
+        let mut fake = Fake::new(&[
+            (0, vec![turn(0, 4_000, 1)]),
+            (1, vec![turn(0, 4_000, 1)]),
+        ]);
+        let (r, _) = collect(&f, &m, &mut fake, true);
+        assert!(r.unwrap().is_some());
+        assert_eq!(
+            fake.progress,
+            vec![(0, 8_000), (4_000, 8_000), (4_000, 8_000), (8_000, 8_000)]
+        );
+    }
+
+    #[test]
+    fn a_channel_that_fails_still_advances_the_progress() {
+        let (f, m) = live(4_000);
+        let mut fake = Fake::new(&[]);
+        fake.run_error = Some(|| DiarizeError::Run("kaputt".into()));
+        let (_r, _) = collect(&f, &m, &mut fake, true);
+        assert_eq!(fake.progress.last(), Some(&(4_000, 4_000)), "Balken bleibt nicht stehen");
+    }
+
+    #[test]
+    fn a_cancelled_channel_never_reports_itself_as_done() {
+        let (f, m) = live(4_000);
+        let mut fake = Fake::new(&[]);
+        fake.run_error = Some(|| DiarizeError::Cancelled);
+        let (r, _) = collect(&f, &m, &mut fake, true);
+        assert_eq!(r, Err(Cancelled));
+        assert_eq!(
+            fake.progress,
+            vec![(0, 4_000)],
+            "nur der Start, kein Sprung auf 100 % nach dem Abbruch"
+        );
+    }
+
+    #[test]
+    fn nothing_is_reported_when_the_model_will_not_run() {
+        let (f, m) = live(4_000);
+        let mut fake = Fake::new(&[]);
+        fake.unavailable = Some("disabled");
+        let (_r, _) = collect(&f, &m, &mut fake, true);
+        assert!(fake.progress.is_empty());
     }
 
     #[test]

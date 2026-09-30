@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
@@ -44,6 +50,9 @@ import { MeetingExportDialog } from "./MeetingExportDialog";
 import { PeopleDialog } from "./people/PeopleDialog";
 import { PersonPopover, type PersonRef } from "./people/PersonPopover";
 import { orderParticipants } from "@/lib/meetingPeople";
+import { useMeetingProgress } from "@/hooks/useMeetingJobs";
+import { usePersistentState } from "@/hooks/usePersistentState";
+import { JobPanel } from "./JobProgress";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -112,6 +121,27 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const [highlightIndex, setHighlightIndex] = useState<number | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  // P8a: laufende Verarbeitung dieser Besprechung (Fortschritt, Pause, Stopp).
+  const progressMap = useMeetingProgress();
+  const jobProgress = progressMap[meetingId];
+  // Nur das Transkript waechst mit: Notizen und Protokoll aendern es nicht.
+  const transcribing =
+    meeting.status === "processing" ||
+    (jobProgress !== undefined &&
+      jobProgress.phase !== "notes" &&
+      jobProgress.phase !== "minutes");
+  // Automatisch mitscrollen: Schalter (gemerkt) und "folgt gerade". Blaettert
+  // der Nutzer hoch, pausiert das Mitscrollen, bis er wieder ans Ende scrollt
+  // oder den Schalter benutzt.
+  const [autoScrollPref, setAutoScrollPref] = usePersistentState<"on" | "off">(
+    "meetings.autoscroll",
+    "on",
+    (v) => v === "on" || v === "off",
+  );
+  const autoScroll = autoScrollPref === "on";
+  const [following, setFollowing] = useState(true);
+  const [continuing, setContinuing] = useState(false);
+  const [continueError, setContinueError] = useState<string | null>(null);
   // Erhoeht sich, wenn sich die Segmente ersetzt haben koennten (Laden,
   // Neu-Transkription): die KI-Notizen lesen dann die Epoche neu.
   const [epochKey, setEpochKey] = useState(0);
@@ -154,6 +184,37 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     },
     [],
   );
+
+  // P8a: neue Segmente waehrend der Verarbeitung -> ans Ende scrollen, solange
+  // der Schalter an ist und der Nutzer nicht weggescrollt hat.
+  useLayoutEffect(() => {
+    if (!transcribing || !autoScroll || !following || tab !== "transcript") {
+      return;
+    }
+    const el = transcriptRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [segments, transcribing, autoScroll, following, tab]);
+
+  useEffect(() => {
+    setFollowing(true);
+  }, [meetingId]);
+
+  const onTranscriptScroll = () => {
+    const el = transcriptRef.current;
+    if (!el) return;
+    // Am Ende (mit etwas Spiel) folgt das Mitscrollen wieder, sonst pausiert es.
+    setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < 24);
+  };
+
+  const continueProcessing = async () => {
+    setContinuing(true);
+    setContinueError(null);
+    const result = await commands.meetingsContinue(meetingId);
+    setContinuing(false);
+    if (result.status === "error") {
+      setContinueError(translateMeetingError(result.error, t));
+    }
+  };
 
   // Nach dem Wechsel in den Transkript-Tab steht die Zeile erst im DOM.
   useEffect(() => {
@@ -333,9 +394,14 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         );
       } else if (payload.kind === "state") {
         // Statusfeld und Dauer/Audio-Pfade kommen aus dem Datensatz; nach
-        // ready/failed einmal frisch laden, damit Badge und Player stimmen.
-        if (payload.status === "ready" || payload.status === "failed") {
-          void loadSegments();
+        // ready/failed/cancelled einmal frisch laden, damit Badge und Player
+        // stimmen. P8a: auch beim Wechsel nach `processing` (Fortsetzen).
+        const finished =
+          payload.status === "ready" ||
+          payload.status === "failed" ||
+          payload.status === "cancelled";
+        if (finished) void loadSegments();
+        if (finished || payload.status === "processing") {
           void commands.meetingsList(0, 200).then((r) => {
             if (r.status !== "ok") return;
             const fresh = r.data.find((m) => m.id === meetingId);
@@ -616,6 +682,41 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           </div>
         )}
 
+        {jobProgress && <JobPanel progress={jobProgress} />}
+
+        {meeting.status === "cancelled" && !jobProgress && (
+          <div
+            data-testid="cancelled-panel"
+            className="space-y-2 rounded-md border border-mid-gray/20 px-3 py-2"
+          >
+            <p className="text-sm font-medium">
+              {t("meetings.progress.cancelledTitle")}
+            </p>
+            <p className="text-xs text-text/70">
+              {t("meetings.progress.cancelledBody", { count: segments.length })}
+            </p>
+            {hasAudio && (
+              <Button
+                size="sm"
+                variant="secondary"
+                data-testid="job-continue"
+                onClick={() => void continueProcessing()}
+                disabled={continuing}
+              >
+                {t("meetings.progress.continue")}
+              </Button>
+            )}
+            {continueError && (
+              <p
+                className="text-sm text-red-400"
+                data-testid="job-continue-error"
+              >
+                {continueError}
+              </p>
+            )}
+          </div>
+        )}
+
         {(meeting.mic_audio_path || meeting.system_audio_path) && (
           <AudioPlayerGroup>
             {meeting.mic_audio_path && (
@@ -713,7 +814,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           <span>{segments.length}</span>
         </div>
 
-        <RetranscribeControl meeting={meeting} onFinished={loadSegments} />
+        <RetranscribeControl
+          meeting={meeting}
+          onFinished={loadSegments}
+          busy={meeting.status === "processing" || jobProgress !== undefined}
+        />
 
         <div className="flex gap-1 border-b border-mid-gray/20">
           <button
@@ -751,6 +856,31 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           </button>
         </div>
 
+        {tab === "transcript" && transcribing && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-text/80">
+              <input
+                type="checkbox"
+                data-testid="autoscroll-toggle"
+                checked={autoScroll}
+                onChange={(e) => {
+                  setAutoScrollPref(e.target.checked ? "on" : "off");
+                  // Der Schalter selbst holt das Mitscrollen zurueck.
+                  if (e.target.checked) setFollowing(true);
+                }}
+              />
+              {t("meetings.detail.autoscroll")}
+            </label>
+            {autoScroll && !following && (
+              <span
+                className="text-xs text-text/50"
+                data-testid="autoscroll-paused"
+              >
+                {t("meetings.detail.autoscrollPaused")}
+              </span>
+            )}
+          </div>
+        )}
         {tab === "transcript" && segments.length > 0 && (
           <div className="flex items-center gap-2">
             <Button
@@ -849,6 +979,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           ) : (
             <div
               ref={transcriptRef}
+              data-testid="transcript-scroll"
+              onScroll={onTranscriptScroll}
               className="space-y-2 max-h-96 overflow-y-auto"
             >
               {segments.map((segment) => (

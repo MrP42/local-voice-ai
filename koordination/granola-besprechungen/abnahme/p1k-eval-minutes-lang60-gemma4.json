@@ -1,0 +1,67 @@
+{
+  "aggregate": {
+    "elapsed_ms": 116855,
+    "fixtures": 1,
+    "template_mismatches": 0,
+    "with_gaps": 0
+  },
+  "context_tokens": 16384,
+  "exit_code": 0,
+  "fixtures": [
+    {
+      "auto": {
+        "outcome": "model",
+        "reason": "Der Auszug zeigt den Statusbericht, die Zuweisung von Aufgaben und die Diskussion von Blockern im Rahmen eines laufenden Projekts.",
+        "template_id": "builtin:jour_fixe",
+        "title": "Jour fixe / Team"
+      },
+      "chosen_template": "builtin:jour_fixe",
+      "chosen_title": "Jour fixe / Team",
+      "dropped_blocks": false,
+      "elapsed_ms": 116489,
+      "expected_template": null,
+      "meta": {
+        "auto": {
+          "outcome": "model",
+          "reason": "Der Auszug zeigt den Statusbericht, die Zuweisung von Aufgaben und die Diskussion von Blockern im Rahmen eines laufenden Projekts.",
+          "template_id": "builtin:jour_fixe",
+          "title": "Jour fixe / Team"
+        },
+        "chunks_split": 0,
+        "chunks_total": 3,
+        "document_id": "01M3SF03P0S52R56VKF37QXDYT",
+        "gaps": [],
+        "incomplete": false,
+        "template_id": "builtin:jour_fixe",
+        "template_title": "Jour fixe / Team"
+      },
+      "minutes_chars": 2528,
+      "minutes_markdown": "# Protokoll: Projektbesprechung Migration (60 Minuten)\n\n**Datum:** 2026-09-30 · **Dauer:** 1:01:44 · **Vorlage:** Jour fixe / Team (automatisch gewählt)\n\n## Stand je Person oder Thema\n\n- Die Kalkulation ist nach Besprechung mit Frau Lehmann im Plan.\n- Bei der Schnittstelle liegen wir etwa 3% über dem ursprünglichen Ansatz.\n- Das Rechenzentrum liegt etwa 20% über dem ursprünglichen Ansatz.\n- Der Rahmenvertrag ist abgeschlossen.\n- Die Testabdeckung ist nach Besprechung mit Frau Demir im Plan.\n- Der Lasttest ist abgeschlossen, die Fehlerbehebung läuft, und das Sprintreview beginnt am Montagvormittag.\n- Das Steuergerät ist abgeschlossen, das Lieferantennaudit läuft, und das Anboarding beginnt vor dem Wochenende.\n- Die Serverumstellung wird vor dem Wochenende geschafft, wenn Frau Lehmann rechtzeitig liefert.\n\n## Blocker\n\n- Das Migrationskonzept ist noch nicht sauber dokumentiert.\n- Die Konformitätserklärung ist noch nicht sauber dokumentiert und verhindert den Fortschritt.\n- Das Lastenheft ist noch nicht sauber dokumentiert.\n- Die Ausschreibung ist noch nicht sauber dokumentiert.\n\n## Entscheidungen\n\n- Der Rollout wird ins Protokoll aufgenommen.\n- Das Prigging wird ins Protokoll aufgenommen.\n- Der Kickoff wird ins Protokoll aufgenommen.\n\n## Aufgaben\n\n- Herr Schmidt kümmert sich um die Ausschreibung _(Wer: Herr Schmidt)_\n- Ich kümmere mich um die Serverumstellung _(Wer: Ich)_\n- Tobias kümmert sich um das Zahlungsziel _(Wer: Tobias)_\n- Gegenseite kümmert sich um die Konformitätserklärung _(Wer: Gegenseite)_\n- Gegenseite kümmert sich um den Lasttest _(Wer: Gegenseite)_\n- Frau Lehmann kümmert sich um die Fehlerbehebung _(Wer: Frau Lehmann)_\n- Ich übernehme die Schnittstelle und melde mich bei Lena _(Wer: Ich, Bis: Donnerstagnachmittag)_\n- Gegenseite übernimmt das Steuergerät und meldet sich bei Herr Kaiser _(Wer: Gegenseite, Bis: vor dem Wochenende)_\n- Gegenseite übernimmt die Vertragsstrafe und meldet sich bei Lena _(Wer: Gegenseite, Bis: Montagvormittag)_\n- Markus kümmert sich um das Lastenheft _(Wer: Gegenseite)_\n- Ich übernehme den Schulungsplan und melde mich bei Frau Brandt _(Wer: Ich, Bis: nächste Woche)_\n- Herr Kaiser kümmert sich um die Vertragsstrafe _(Wer: Herr Kaiser)_\n\n## Themen fürs nächste Mal\n\n- Es wird vorgeschlagen, das Meeting vor dem Wochenende noch einmal gemeinsam durchzugehen.\n- Das Rollout wird als Thema für das nächste Treffen besprochen.\n\n## Sprecher & Redeanteile\n\n| Sprecher | Redezeit | Anteil |\n|---|---|---|\n| Ich | 24:36 | 40,5 % |\n| Gegenseite | 36:06 | 59,5 % |\n",
+      "name": "lang60",
+      "requested_template": "auto",
+      "segments": 919,
+      "stored_choice": {
+        "outcome": "model",
+        "reason": "Der Auszug zeigt den Statusbericht, die Zuweisung von Aufgaben und die Diskussion von Blockern im Rahmen eines laufenden Projekts.",
+        "template_id": "builtin:jour_fixe",
+        "title": "Jour fixe / Team"
+      },
+      "template_matches": null,
+      "title": "Projektbesprechung Migration (60 Minuten)",
+      "usage": {
+        "calls": 5,
+        "completion_tokens": 12808,
+        "failed_calls": 0,
+        "first_prompt_tokens": 1037,
+        "llm_ms": 116179,
+        "prompt_tokens": 26965
+      }
+    }
+  ],
+  "local": true,
+  "mode": "eval-minutes",
+  "model": "llm-gemma4-e4b-q4",
+  "passed": true,
+  "provider": "local",
+  "requested_template": "auto"
+}

@@ -777,6 +777,60 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         return 2;
     }
 
+    // P8a: die Steuerhaken (Skript, Fortsetzen) laufen nur in der Sandbox.
+    if (args.job_script.is_some() || args.continue_meeting.is_some())
+        && std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+    {
+        eprintln!(
+            "error: --job-script / --continue-meeting only run in a sandbox: set {}=<empty temp dir>",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let job_script = match args.job_script.as_deref().map(managers::meetings::job_harness::parse_script) {
+        Some(Ok(steps)) => Some(steps),
+        Some(Err(e)) => {
+            eprintln!("error: --job-script: {e}");
+            return 2;
+        }
+        None => None,
+    };
+    let job_log = match args
+        .job_events
+        .as_deref()
+        .map(managers::meetings::job_harness::EventLog::create)
+    {
+        Some(Ok(log)) => {
+            managers::meetings::job_harness::attach_event_log(app, Arc::clone(&log));
+            Some(log)
+        }
+        Some(Err(e)) => {
+            eprintln!("error: --job-events: {e}");
+            return 2;
+        }
+        None => None,
+    };
+    // Das Skript laeuft nebenher und steuert den ersten Auftrag, der erscheint.
+    let start_job_script = move || {
+        if let Some(steps) = job_script.clone() {
+            let log = job_log.clone();
+            std::thread::spawn(move || {
+                managers::meetings::job_harness::run_script(
+                    managers::meetings::job::global(),
+                    &steps,
+                    managers::meetings::job_harness::WAIT_FOR_JOB,
+                    &|line| {
+                        if let Some(log) = &log {
+                            log.write(line);
+                        }
+                    },
+                );
+            });
+        }
+    };
+
     let store = match MeetingStore::new(app) {
         Ok(store) => Arc::new(store),
         Err(e) => {
@@ -829,6 +883,25 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         return run_simulate_meeting(app, &store, &tm, args);
     }
 
+    // P8a: "Fortsetzen" eines gestoppten Imports, wie der Knopf es ausloest.
+    if let Some(id) = args.continue_meeting.clone() {
+        start_job_script();
+        let started = std::time::Instant::now();
+        if let Err(e) = recorder.continue_processing(&id) {
+            eprintln!("error: continue failed: {e}");
+            return 1;
+        }
+        recorder.wait_final_jobs();
+        println!("CONTINUE_MS={}", started.elapsed().as_millis());
+        if args.dump_meeting.is_none() {
+            let mut payload =
+                meeting_payload(&store, &id).unwrap_or_else(|| serde_json::json!({}));
+            payload["meeting_id"] = serde_json::json!(id);
+            payload["continue_ms"] = serde_json::json!(started.elapsed().as_millis() as u64);
+            emit_headless_payload(&payload, args.out.as_deref());
+        }
+    }
+
     if let Some(path) = args.import_meeting.clone() {
         if !path.exists() {
             eprintln!("error: no such file: {}", path.display());
@@ -867,6 +940,7 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         }
 
         let started = std::time::Instant::now();
+        start_job_script(); // P8a: Pause/Stopp wie die Knoepfe (nur mit --job-script)
         // Consent is confirmed by the caller: a headless import is an
         // explicit, deliberate act by whoever typed the flag (the UI gate
         // itself is covered by the consent-gate scenario, not by this path).
@@ -1780,11 +1854,21 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::meetings_update_segment,
             commands::meetings::meetings_rename,
             commands::meetings::meetings_retranscribe,
+            commands::meeting_jobs::meetings_progress_list, // P8a
+            commands::meeting_jobs::meetings_job_pause,
+            commands::meeting_jobs::meetings_job_resume,
+            commands::meeting_jobs::meetings_job_stop,
+            commands::meeting_jobs::meetings_continue,
             commands::meetings::meetings_get_documents,
             commands::meetings::meetings_delete,
             commands::meetings::meetings_import_file,
             commands::meetings::meetings_generate_minutes,
             commands::meetings::meetings_minutes_file,
+            // P1k
+            commands::meeting_minutes::meetings_minutes_state,
+            commands::meeting_minutes::meetings_minutes_cancel,
+            commands::meeting_minutes::meetings_minutes_meta,
+            commands::meeting_minutes::meetings_get_auto_template,
             commands::meetings::meetings_export_document,
             // M1-P1c
             commands::meeting_notes::meeting_notes_get,
@@ -1997,6 +2081,8 @@ pub fn run(cli_args: CliArgs) {
             managers::meetings::recorder::MeetingEvent,
             // M1-P1b
             commands::meeting_enhance::MeetingNotesEvent,
+            // P1k
+            commands::meeting_minutes::MinutesEvent,
             // M4-P4b
             managers::meetings::search::indexer::MeetingIndexEvent,
             // M5-P5c
@@ -2031,14 +2117,17 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.tts_test
         || cli_args.import_meeting.is_some()
         || cli_args.dump_meeting.is_some()
+        || cli_args.continue_meeting.is_some() // P8a
         || cli_args.make_orphan.is_some()
         || cli_args.bench_search // M4-P4a
         || cli_args.simulate_meeting // M2-P2c2
         || cli_args.eval_notes.is_some() // M1-P1e
+        || cli_args.eval_minutes.is_some() // M1-P1k
         || cli_args.reindex_meetings // M4-P4b
         || cli_args.eval_diarization.is_some() // M3-P3a
         || cli_args.eval_chat.is_some() // M4-P4f
         || cli_args.export_meeting.is_some() // M6-P6a
+        || cli_args.followup_draft.is_some() // P6f
         || cli_args.calendar_dump.is_some() // M5-P5a
         || cli_args.detect_mic; // M5-P5c
 
@@ -2321,6 +2410,23 @@ pub fn run(cli_args: CliArgs) {
                     return Ok(());
                 }
 
+                // M1-P1k: Vorlagenwahl und Protokoll auf synthetischen Fixtures in
+                // einem Sandbox-Store; braucht nur das Sprachmodell.
+                if let Some(dir) = cli_args.eval_minutes.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_eval_minutes(&app_handle, &args, &dir)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
                 // M4-P4f: Chat-Eval (AK8) auf synthetischen Fixtures in einem
                 // Sandbox-Store; Sprachmodell und Embedding-Server werden am
                 // Ende beendet.
@@ -2350,6 +2456,22 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_eval_diarization(&app_handle, &args, &dir)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // P6f (B13): Follow-up-Entwurf einer Sandbox-Besprechung.
+                if let Some(id) = cli_args.followup_draft.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_followup_draft(&app_handle, &args, &id)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -2393,6 +2515,7 @@ pub fn run(cli_args: CliArgs) {
                 let args = cli_args.clone();
                 let meetings_mode = args.import_meeting.is_some()
                     || args.dump_meeting.is_some()
+                    || args.continue_meeting.is_some()
                     || args.make_orphan.is_some()
                     || args.simulate_meeting;
                 std::thread::spawn(move || {
@@ -2749,6 +2872,109 @@ fn run_headless_export_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> i32
     }
 }
 
+// P6f (B13): `--followup-draft <id>`. Entwurf der Follow-up-Mail einer
+// Sandbox-Besprechung (`LVA_MEETINGS_DIR` ist Pflicht, damit nie die
+// produktive meetings.db gelesen wird) mit dem eingestellten oder per
+// `--model` gewaehlten lokalen Sprachmodell. Globale Zugriffe des lokalen
+// Servers und Speicherwaechter wie in `run_headless_eval_notes`; der Server
+// wird am Ende gestoppt. Ausgabe: JSON (`to`, `subject`, `body_text`) auf
+// stdout, mit `--out` auch in eine Datei. Exit 0 Entwurf, 3 kein Inhalt oder
+// leere Antwort, 1 Fehler, 2 Eingabe (keine Sandbox, unbekannte Besprechung).
+fn run_headless_followup_draft(app: &AppHandle, args: &CliArgs, id: &str) -> i32 {
+    use managers::meetings::followup::{draft, RunLimits, CODE_EMPTY, CODE_NO_CONTENT};
+    use managers::meetings::mail::participant_recipients;
+    use managers::meetings::store::MeetingStore;
+
+    crate::selftest::begin_headless_run();
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if sandbox.is_none() {
+        eprintln!(
+            "error: --followup-draft requires {} (sandbox); it never reads the productive store",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let mut settings = get_settings(app);
+    if let Some(model) = args.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        managers::meetings::notes::eval::apply_model_override(&mut settings, model.trim());
+    }
+    let store = match MeetingStore::new(app) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    match store.get_meeting(id) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            eprintln!("error: no meeting {id}");
+            return 2;
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    }
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+    let (recipients, addressee) = match participant_recipients(&store, id, &settings.meeting_self_emails) {
+        Ok(r) if !r.names.is_empty() => {
+            let names = r.names.join(", ");
+            (r, names)
+        }
+        Ok(r) => (r, "die Teilnehmenden".to_string()),
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    };
+    let result = tauri::async_runtime::block_on(draft(
+        &settings,
+        store.clone(),
+        id,
+        &addressee,
+        recipients.emails,
+        RunLimits::default(),
+    ));
+    llm_server.stop();
+    match result {
+        Ok(d) => {
+            let payload = serde_json::json!({
+                "to": d.to,
+                "subject": d.subject,
+                "body_text": d.body_text,
+            });
+            emit_headless_payload(&payload, args.out.as_deref());
+            0
+        }
+        Err(e) => {
+            eprintln!("error: follow-up draft failed: {e}");
+            if e.code == CODE_NO_CONTENT || e.code == CODE_EMPTY {
+                3
+            } else {
+                1
+            }
+        }
+    }
+}
+
 // M4-P4b: `--reindex-meetings [--seed-meetings DIR]`. Baut den Such-Index der
 // Besprechungen (`LVA_MEETINGS_DIR` wird beachtet) neu auf: Chunks und FTS
 // sofort, dann Vektoren ueber den Embedding-Server, der am Ende beendet wird.
@@ -3002,6 +3228,76 @@ fn run_headless_eval_notes(app: &AppHandle, args: &CliArgs, dir: &std::path::Pat
         emit_headless_payload(&payload, args.out.as_deref());
     } else {
         for line in eval::summary_lines(&payload) {
+            println!("{line}");
+        }
+        if let Some(path) = args.out.as_deref() {
+            match std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                Ok(()) => eprintln!("wrote {}", path.display()),
+                Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
+    code
+}
+
+// M1-P1k: `--eval-minutes <dir> [--model id] [--minutes-template id|auto]`. Vorlagenwahl
+// und Protokoll gegen synthetische Fixtures mit dem eingestellten (oder per
+// `--model` gewaehlten lokalen) Sprachmodell. Sandbox-Store im Temp-Ordner, nie
+// die produktive meetings.db; Server-Zugriffe und Speicherwaechter wie in
+// `run_headless_eval_notes`. Exit 0 ok, 3 falsche Vorlage oder Luecke, 1 Fehler.
+fn run_headless_eval_minutes(app: &AppHandle, args: &CliArgs, dir: &std::path::Path) -> i32 {
+    use managers::meetings::notes::{eval, eval_minutes};
+
+    crate::selftest::begin_headless_run();
+    let mut settings = get_settings(app);
+    if let Some(model) = args.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        eval::apply_model_override(&mut settings, model.trim());
+    }
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+    let sandbox = match tempfile::Builder::new().prefix("lva-eval-minutes-").tempdir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("error: no sandbox directory: {e}");
+            return 1;
+        }
+    };
+    eprintln!("eval-minutes: Sandbox {}", sandbox.path().display());
+    let template = args
+        .minutes_template
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .unwrap_or("auto");
+    let (code, payload) = tauri::async_runtime::block_on(eval_minutes::run_cli(
+        settings,
+        dir,
+        sandbox.path(),
+        template,
+    ));
+    llm_server.stop();
+
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        for line in eval_minutes::summary_lines(&payload) {
             println!("{line}");
         }
         if let Some(path) = args.out.as_deref() {

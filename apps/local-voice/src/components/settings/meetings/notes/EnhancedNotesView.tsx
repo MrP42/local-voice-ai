@@ -37,6 +37,7 @@ import {
   withNewEntry,
   withoutEmptyEntries,
 } from "@/lib/meetingNotes";
+import { useJobEnded, useMeetingProgress } from "@/hooks/useMeetingJobs";
 import { Alert } from "../../../ui/Alert";
 import { Button } from "../../../ui/Button";
 import { Dropdown } from "../../../ui/Dropdown";
@@ -164,6 +165,14 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [reloaded, setReloaded] = useState(false);
   const [exported, setExported] = useState<string | null>(null);
+  // P8a: der Lauf steht im Backend (Auftrag "KI-Notizen"): beim Reiterwechsel
+  // erscheint die Ansicht neu und sieht trotzdem, dass er noch laeuft.
+  const progressMap = useMeetingProgress();
+  const notesJob =
+    progressMap[meetingId]?.phase === "notes"
+      ? progressMap[meetingId]
+      : undefined;
+  const [stoppedNote, setStoppedNote] = useState(false);
 
   // Stand des Editors ausserhalb von React: der entprellte Speichervorgang
   // liest immer die neueste Fassung, nie eine veraltete Closure.
@@ -190,7 +199,7 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
   const selected = docs.find((d) => d.id === selectedId) ?? docs[0] ?? null;
   const readOnly = selected !== null && docs[0]?.id !== selected.id;
   const stale = notes !== null && isStale(notes, epoch);
-  const running = busy || progress !== null;
+  const running = busy || progress !== null || notesJob !== undefined;
 
   // ---- Laden ------------------------------------------------------------
 
@@ -272,6 +281,7 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
       const payload = event.payload;
       if (payload.meeting_id !== meetingId) return;
       if (payload.kind === "progress") {
+        setStoppedNote(false);
         setProgress({ step: payload.step, total: payload.total });
       } else if (payload.kind === "done") {
         setProgress(null);
@@ -280,6 +290,11 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
         setSelectedId(null);
         void loadDocs();
         void loadItems();
+      } else if (payload.code === "stopped") {
+        // P8a: vom Nutzer gestoppt ist keine Panne.
+        setProgress(null);
+        setError(null);
+        setStoppedNote(true);
       } else {
         setProgress(null);
         setError(payload.code);
@@ -289,6 +304,15 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
       un.then((f) => f());
     };
   }, [meetingId, loadDocs, loadItems]);
+
+  // P8a: das Ende des Auftrags laedt das Ergebnis neu, auch wenn die Ansicht
+  // beim Ende nicht offen war (Reiterwechsel).
+  useJobEnded(meetingId, (ended) => {
+    if (ended.phase !== "notes") return;
+    setProgress(null);
+    void loadDocs();
+    void loadItems();
+  });
 
   // ---- Speichern (entprellt, ein Vorgang zugleich) -----------------------
 
@@ -410,11 +434,17 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
     await flush();
     setBusy(true);
     setError(null);
+    setStoppedNote(false);
     setReloaded(false);
     // `None`: die Vorlage, die fuer diese Besprechung gewaehlt ist.
     const result = await commands.meetingNotesEnhance(meetingId, null);
     safe(() => setBusy(false));
     if (result.status === "error") {
+      // Gestoppt (P8a) meldet das Ereignis; hier keine Fehlermeldung daraus machen.
+      if (result.error === "stopped") {
+        safe(() => setStoppedNote(true));
+        return;
+      }
       safe(() => setError(result.error));
       return;
     }
@@ -701,7 +731,7 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
         </div>
       </div>
 
-      {progress && (
+      {progress && !notesJob && (
         <p
           className="text-sm text-text/70"
           aria-live="polite"
@@ -713,10 +743,15 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
           })}
         </p>
       )}
-      {busy && !progress && (
+      {(busy || notesJob) && !progress && (
         <p className="text-sm text-text/70" aria-live="polite">
           {t("meetings.enhanced.working")}
         </p>
+      )}
+      {stoppedNote && !running && (
+        <div data-testid="enhance-stopped">
+          <Alert variant="info">{t("meetings.enhanced.stopped")}</Alert>
+        </div>
       )}
       {errorText && (
         <div data-testid="enhance-error" data-code={errorCode}>

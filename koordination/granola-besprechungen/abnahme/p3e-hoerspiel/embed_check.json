@@ -1,0 +1,42 @@
+{
+ "turns": {
+  "emilia": 40,
+  "sofie": 40,
+  "mara": 40,
+  "die-drei-fragezeichen-erzaehler": 40
+ },
+ "models": {
+  "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx": {
+   "cosine": {
+    "emilia|emilia": 0.709,
+    "emilia|sofie": 0.381,
+    "emilia|mara": 0.411,
+    "emilia|die-drei-fragezeichen-erzaehler": 0.081,
+    "sofie|sofie": 0.664,
+    "sofie|mara": 0.528,
+    "sofie|die-drei-fragezeichen-erzaehler": 0.051,
+    "mara|mara": 0.545,
+    "mara|die-drei-fragezeichen-erzaehler": 0.039,
+    "die-drei-fragezeichen-erzaehler|die-drei-fragezeichen-erzaehler": 0.768
+   },
+   "loo_centroid_acc": 0.975,
+   "chance": 0.25
+  },
+  "wespeaker_en_voxceleb_resnet34_LM.onnx": {
+   "cosine": {
+    "emilia|emilia": 0.798,
+    "emilia|sofie": 0.755,
+    "emilia|mara": 0.728,
+    "emilia|die-drei-fragezeichen-erzaehler": 0.517,
+    "sofie|sofie": 0.795,
+    "sofie|mara": 0.757,
+    "sofie|die-drei-fragezeichen-erzaehler": 0.532,
+    "mara|mara": 0.749,
+    "mara|die-drei-fragezeichen-erzaehler": 0.577,
+    "die-drei-fragezeichen-erzaehler|die-drei-fragezeichen-erzaehler": 0.839
+   },
+   "loo_centroid_acc": 0.825,
+   "chance": 0.25
+  }
+ }
+}

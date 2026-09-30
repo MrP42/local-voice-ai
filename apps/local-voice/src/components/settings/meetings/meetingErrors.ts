@@ -26,6 +26,14 @@ const ERROR_KEY_MAP: Record<string, string> = {
   retranscribe_failed: "meetings.errors.retranscribeFailed",
   // M2-P2d
   final_pass_skipped: "meetings.errors.finalPassSkipped",
+  // P8a
+  final_pass_stopped: "meetings.errors.finalPassStopped",
+  meeting_busy: "meetings.errors.meetingBusy",
+  job_busy: "meetings.progress.errors.busy",
+  no_job: "meetings.progress.errors.noJob",
+  not_pausable: "meetings.progress.errors.notPausable",
+  job_stopping: "meetings.progress.errors.stopping",
+  not_cancelled: "meetings.progress.errors.notCancelled",
   transcription_failed: "meetings.errors.chunkTranscriptionFailed",
 };
 

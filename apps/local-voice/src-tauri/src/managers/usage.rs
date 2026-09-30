@@ -58,6 +58,8 @@ pub enum Purpose {
     Translation,
     /// Chat ueber Besprechungen (M4, P4c).
     Chat,
+    /// Follow-up-Mail zu einer Besprechung (B13).
+    Followup,
 }
 
 impl Purpose {
@@ -70,6 +72,7 @@ impl Purpose {
             Purpose::Tagging => "tagging",
             Purpose::Translation => "translation",
             Purpose::Chat => "chat",
+            Purpose::Followup => "followup",
         }
     }
 }

@@ -1,0 +1,57 @@
+{
+  "script": "Emilia,-Sofie-und-Mara-und-das-Tal-der-drei-Wege_2026-09-15_2031.mp3.json",
+  "audio_ms": 1119033,
+  "script_end_ms": 1119019,
+  "sentences": 488,
+  "voices": 7,
+  "threshold_db": -50.0,
+  "bridge_ms": 300,
+  "min_ms": 50,
+  "span_s": 1119.02,
+  "speech_s": 1055.08,
+  "per_voice": {
+    "die-drei-fragezeichen-erzaehler": {
+      "sentences": 228,
+      "span_s": 478.01,
+      "speech_s": 469.23,
+      "empty": 0
+    },
+    "emilia": {
+      "sentences": 79,
+      "span_s": 233.74,
+      "speech_s": 213.9,
+      "empty": 0
+    },
+    "mara": {
+      "sentences": 90,
+      "span_s": 193.04,
+      "speech_s": 173.94,
+      "empty": 0
+    },
+    "sofie": {
+      "sentences": 69,
+      "span_s": 177.59,
+      "speech_s": 164.04,
+      "empty": 0
+    },
+    "patrick": {
+      "sentences": 12,
+      "span_s": 16.16,
+      "speech_s": 14.75,
+      "empty": 0
+    },
+    "leo-lausemaus": {
+      "sentences": 9,
+      "span_s": 15.84,
+      "speech_s": 14.67,
+      "empty": 0
+    },
+    "german-father": {
+      "sentences": 1,
+      "span_s": 4.64,
+      "speech_s": 4.54,
+      "empty": 0
+    }
+  },
+  "turns_trimmed": 526
+}

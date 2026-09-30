@@ -1,0 +1,51 @@
+{
+ "die-drei-fragezeichen-erzaehler": {
+  "frames": 150,
+  "voiced": 48,
+  "f0_q1_hz": 81,
+  "f0_median_hz": 88,
+  "f0_q3_hz": 96
+ },
+ "emilia": {
+  "frames": 150,
+  "voiced": 95,
+  "f0_q1_hz": 242,
+  "f0_median_hz": 258,
+  "f0_q3_hz": 281
+ },
+ "german-father": {
+  "frames": 110,
+  "voiced": 75,
+  "f0_q1_hz": 97,
+  "f0_median_hz": 106,
+  "f0_q3_hz": 126
+ },
+ "leo-lausemaus": {
+  "frames": 150,
+  "voiced": 123,
+  "f0_q1_hz": 281,
+  "f0_median_hz": 320,
+  "f0_q3_hz": 372
+ },
+ "mara": {
+  "frames": 150,
+  "voiced": 104,
+  "f0_q1_hz": 232,
+  "f0_median_hz": 262,
+  "f0_q3_hz": 291
+ },
+ "patrick": {
+  "frames": 150,
+  "voiced": 60,
+  "f0_q1_hz": 83,
+  "f0_median_hz": 90,
+  "f0_q3_hz": 102
+ },
+ "sofie": {
+  "frames": 150,
+  "voiced": 103,
+  "f0_q1_hz": 242,
+  "f0_median_hz": 267,
+  "f0_q3_hz": 286
+ }
+}

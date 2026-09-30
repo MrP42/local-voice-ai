@@ -12,6 +12,8 @@ interface RetranscribeControlProps {
   meeting: Meeting;
   /** Called once the run finished, so the caller can reload its segments. */
   onFinished: () => void;
+  /** P8a: die Besprechung wird gerade verarbeitet: nicht noch einmal starten. */
+  busy?: boolean;
 }
 
 /**
@@ -26,6 +28,7 @@ interface RetranscribeControlProps {
 export const RetranscribeControl: React.FC<RetranscribeControlProps> = ({
   meeting,
   onFinished,
+  busy = false,
 }) => {
   const { t } = useTranslation();
   const { models, loadModels } = useModelStore();
@@ -74,14 +77,14 @@ export const RetranscribeControl: React.FC<RetranscribeControlProps> = ({
           options={options}
           selectedValue={modelId}
           onSelect={setModelId}
-          disabled={running}
+          disabled={running || busy}
           className="flex-1 min-w-[12rem]"
         />
         <Button
           variant="secondary"
           size="sm"
           onClick={run}
-          disabled={running}
+          disabled={running || busy}
           className="shrink-0"
         >
           <RefreshCw

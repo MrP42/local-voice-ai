@@ -67,11 +67,32 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beobachtet: gleiches Muster wie B11 im älteren Protokoll-Pfad (vor dem Goal vorhanden, nicht die KI-Notizen); ask_json gibt bei Abschneiden auf.
 - Nebenbefund: Qwen3.5-9B im QG3-Lauf 186,1 s (> 180 s); das Gate gilt für das Standardmodell Gemma (156,6 s).
 - Konsequenz: Folge-Goal (Protokoll-Pfad auf die P1i-Blocklogik umstellen); in docs/KNOWN-LIMITATIONS.md vermerkt.
-- Status: offen (30.09.: Patrick holt es in Runde 3 -> P1k)
+- Status: erledigt (P1k 29229e59: Protokoll in Token-Bloecken mit Halbieren, Warnung statt Luecke)
 
 ## B13 — Abnahme 0.20.8: Follow-up-Mail meldet „Sprachmodell hat keinen Text geliefert“ (30.09.)
 - Beobachtet: Import „Die drei Schwestern …“ (Märchen); Log: Chat-Runden 1/2 „Antwort 10 Zeichen, kein Beleg: true“ -> followup_empty. Der Entwurf läuft über den Chat mit strenger Belegpflicht; ohne Treffer gibt es keinen Text, die Meldung ist irreführend.
 - Beleg: handy.log 30.09. 14:22–14:23, Screenshot Patrick.
 - Konsequenz: Paket P6f.
-- Status: offen
+- Status: erledigt (P6f 1878c045: Maerchen-Aufnahme liefert Entwurf in 7,5 s; ohne Inhalt klare Meldung ohne Endlos-Retry)
+
+## B14 — Abnahme 0.20.8: Protokoll-Erzeugung verliert Laufzustand beim Reiterwechsel (30.09.)
+- Beobachtet (Patrick): „Erzeugen“ -> „Protokoll wird erzeugt“; Reiter wechseln und zurück -> Hinweis weg, Knopf wieder klickbar, paralleler zweiter Start möglich. Kein Fortschritt, keine Steuerung.
+- Konsequenz: P1k (Laufzustand im Backend, Doppelstart abgewiesen, Fortschrittswerte) + P8a (Phase Protokoll/KI-Notizen mit Balken, Pause/Stopp).
+- Status: erledigt (P1k + P8a 14f0c940: Laufzustand im Backend fuer Protokoll und KI-Notizen, Fortschritt, Stopp)
+
+## B15 — P3e: ähnlich klingende Stimmen verschmelzen (Hörspiel Emilia/Sofie/Mara) (30.09.)
+- Beobachtet: 4 von 7 Stimmen erkannt, DER 33,84 % (Verwechslung 30,79 %); die drei Schwestern (Grundfrequenz 258/262/267 Hz) laufen als ein Sprecher, auch in 3-min-Ausschnitten. Erzähler, Leo, Patrick zu 100 % richtig. Nemotron 31,95 %, gleiches Muster. Nachtuning hilft nicht.
+- Beleg: abnahme/p3e-hoerspiel.md.
+- Konsequenz: AK7 (AMI + deutsches Fixture) formal unberührt; Grenze in KNOWN-LIMITATIONS. Lösungsansatz Nachschritt mit Stimm-Embeddings (ERes2Net trennt die Schwestern mit Labels zu 97,5 %) -> Folge-Goal zusammen mit P3d.
+- Status: erledigt (dokumentiert, Lösung im Folge-Goal P3d)
+
+## B16 — Merge P6f: search::bench-Test kippt unter paralleler Build-Last (30.09.)
+- Beobachtet: `the_cli_wrapper_reports_success_as_exit_code_zero` einmal rot während 3 Worker bauten; einzeln 2x grün (0,44 s).
+- Konsequenz: Zeitgrenze des Tests beobachten; bei zweitem Auftreten Grenze lastfest machen.
+- Status: erledigt (beobachtet, einzeln grün)
+
+## B17 — P8a: Neu-Transkription löscht das alte Transkript schon beim Start (30.09.)
+- Beobachtet: vorbestehend; ein Stopp danach hinterlässt Teil-Segmente und `cancelled`, das alte Transkript ist weg. Hinweistext `retranscribe.runningHint` verspricht „ersetzt nach dem Lauf“.
+- Konsequenz: Folgepaket (Goal Aufnahmen-Oberfläche #64): neue Fassung erst am Ende tauschen (passt zu Fassungen/Diff aus #65), bis dahin Hinweistext korrigieren.
+- Status: erledigt (Hinweistext korrigiert in 0.20.9; Tausch erst am Ende als Paket im Goal Aufnahmen-Oberfläche #64)
 

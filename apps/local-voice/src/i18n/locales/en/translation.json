@@ -1526,7 +1526,8 @@
           "summary": "Summary",
           "tagging": "Tags",
           "translation": "Translation",
-          "enhanced_notes": "AI notes"
+          "enhanced_notes": "AI notes",
+          "followup": "Follow-up e-mail"
         }
       }
     }
@@ -1848,6 +1849,8 @@
       "audioMissing": "The recording is no longer on disk (retention period expired).",
       "retranscribeFailed": "Re-transcription failed. The transcript was left unchanged.",
       "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, or cancelled).",
+      "finalPassStopped": "Post-processing stopped – the live transcript stays valid.",
+      "meetingBusy": "This meeting is being processed right now.",
       "listFailed": "The meeting list could not be loaded: {{error}}"
     },
     "retention": {
@@ -1892,13 +1895,61 @@
       "copied": "Copied!",
       "exportTranscript": "Export transcript — as Word (.docx), text or Markdown",
       "renameTitle": "Rename",
-      "titleLabel": "Meeting title"
+      "titleLabel": "Meeting title",
+      "autoscroll": "Scroll along automatically",
+      "autoscrollPaused": "Auto-scroll paused – scroll to the end to resume."
     },
     "status": {
       "recording": "Recording",
       "processing": "Processing",
       "ready": "Ready",
-      "failed": "Failed"
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "progress": {
+      "percent": "{{percent}}%",
+      "elapsed": "Running for {{time}}",
+      "audioOf": "{{done}} of {{total}} audio",
+      "stepsOf": "Step {{done}} of {{total}}",
+      "pause": "Pause",
+      "resume": "Resume",
+      "stop": "Stop",
+      "notPausable": "This phase cannot be paused – stopping works at any time.",
+      "stopTitle": "Stop processing?",
+      "stopBody": "Sections that are already transcribed are kept. The meeting is then marked as cancelled; you can continue it later or transcribe it again.",
+      "stopBodyGenerate": "Generation will be cancelled. Nothing is saved; you can start it again at any time.",
+      "stopCancel": "Cancel",
+      "stopConfirm": "Stop",
+      "cancelledTitle": "Processing cancelled",
+      "cancelledBody": "{{count}} sections are transcribed. You can pick up where it left off, or transcribe the recording again further down.",
+      "continue": "Continue",
+      "phase": {
+        "prepare": "Preparing",
+        "transcription": "Transcription",
+        "final_pass": "Final pass",
+        "speakers": "Speakers",
+        "notes": "AI notes",
+        "minutes": "Minutes"
+      },
+      "state": {
+        "pausing": "Pausing …",
+        "paused": "Paused",
+        "stopping": "Stopping …"
+      },
+      "eta": {
+        "calculating": "Estimating time left …",
+        "few": "a few seconds left",
+        "seconds": "about {{count}} s left",
+        "minutes": "about {{count}} min left",
+        "hours": "about {{hours}} h {{minutes}} min left"
+      },
+      "errors": {
+        "noJob": "The processing has finished in the meantime.",
+        "notPausable": "This phase cannot be paused.",
+        "stopping": "The processing is already being stopped.",
+        "busy": "Something is already being processed for this meeting.",
+        "notCancelled": "This meeting is not cancelled."
+      }
     },
     "minutes": {
       "empty": "No minutes generated yet.",
@@ -1908,7 +1959,32 @@
       "copy": "Copy minutes",
       "copyError": "Could not copy the minutes",
       "loadError": "The minutes could not be loaded: {{error}}",
-      "autoSaved": "Automatically filed as:"
+      "autoSaved": "Automatically filed as:",
+      "createdWith": "Generated with the template: {{title}}",
+      "createdWithAuto": "Generated with the template: {{title}} (chosen automatically)",
+      "incomplete": "The minutes are incomplete: the meeting at {{gaps}} could not be evaluated. The full transcript is kept.",
+      "progressLabel": "Minutes progress",
+      "phase": {
+        "template": "Choosing the template …",
+        "write": "Evaluating the transcript …",
+        "merge": "Merging the parts …"
+      },
+      "stepOf": "Step {{done}} of {{total}}",
+      "cancelled": "Generation was cancelled.",
+      "errors": {
+        "minutes_busy": "Minutes are already being generated for this meeting.",
+        "job_busy": "Another job is already running for this meeting (for example AI notes).",
+        "minutes_cancelled": "Generation was cancelled.",
+        "meeting_not_found": "The meeting no longer exists.",
+        "meeting_not_finished": "The recording is still running. Minutes can only be generated after it has stopped.",
+        "no_transcript": "There is no transcript yet to write minutes from.",
+        "template_not_found": "This template no longer exists. Please choose another one.",
+        "no_provider": "No language model set up (Settings → Post-processing).",
+        "no_model": "No model entered for the provider (Settings → Post-processing → Model).",
+        "memory_low": "Not enough free memory for the language model. Please close other programs and try again.",
+        "llm_failed": "The language model did not deliver usable minutes: {{error}}",
+        "store_failed": "The minutes could not be saved: {{error}}"
+      }
     },
     "language": {
       "title": "Transcription language",
@@ -1944,7 +2020,7 @@
       "configuredModel": "Configured meeting model",
       "start": "Re-transcribe",
       "running": "Transcribing…",
-      "runningHint": "The existing transcript is replaced when the run finishes. This can take a while for long recordings."
+      "runningHint": "The existing transcript is replaced by the new one as the run progresses. If you stop early, only the part transcribed so far remains. This can take a while for long recordings."
     },
     "notes": {
       "tab": "Notes",
@@ -1971,7 +2047,13 @@
     },
     "templates": {
       "label": "Template",
-      "manage": "Manage templates …",
+      "auto": "Automatic (by content)",
+      "autoChosen": "Automatic: {{title}}",
+      "autoPending": "Chosen from the content when generating.",
+      "autoUncertain": "Unclear – the standard template is used.",
+      "autoFailed": "The choice by content did not work – the standard template is used.",
+      "autoReason": "Reason: {{reason}}",
+      "manage":"Manage templates …",
       "title": "Templates",
       "description": "A template defines how notes and transcript become structured meeting notes.",
       "close": "Close",
@@ -2045,6 +2127,7 @@
       "versionLabel": "Version {{version}} · {{date}}",
       "progress": "Creating AI notes … {{step}}/{{total}}",
       "working": "The AI is working …",
+      "stopped": "AI notes stopped. Nothing was saved.",
       "providerHint": "Please set one up under Settings → Language models.",
       "loadError": "The AI notes could not be loaded: {{error}}",
       "reloaded": "The AI notes were changed in the meantime (another window or a new run) and have been reloaded.",
@@ -2280,7 +2363,8 @@
       "mailtoClipped": "The text was too long for the mail link and is on the clipboard – paste it in the email app with Ctrl+V.",
       "emlSaved": "Saved: {{path}}",
       "errors": {
-        "followup_empty": "The language model returned no text. Please try again.",
+        "followup_empty": "The language model returned no text even on the second try. Another language model in the settings may help.",
+        "followup_no_content": "No content found for a follow-up – the recording contains no meeting points.",
         "mailto_failed": "The email app could not be opened. Copy the text instead and paste it there.",
         "clipboard_failed": "The clipboard is not available right now.",
         "write_failed": "The file could not be saved.",

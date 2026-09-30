@@ -119,6 +119,25 @@ pub struct CliArgs {
     #[arg(long, value_name = "ID")]
     pub dump_meeting: Option<String>,
 
+    /// P8a test hook (headless): steer the running processing job like the UI
+    /// buttons do. Comma-separated `action@seconds` (pause, resume, stop),
+    /// counted from the moment the job appears, e.g. `pause@4,resume@9,stop@14`.
+    /// Works with --import-meeting and --continue-meeting; sandbox only
+    /// (LVA_MEETINGS_DIR must be set).
+    #[arg(long, value_name = "SCRIPT", hide = true)]
+    pub job_script: Option<String>,
+
+    /// P8a: write every meeting event of a headless run (state, progress,
+    /// job end, script steps) as one JSON line to this file. Evidence for
+    /// progress events and for pause/stop taking effect.
+    #[arg(long, value_name = "FILE", hide = true)]
+    pub job_events: Option<PathBuf>,
+
+    /// P8a test hook (headless): continue a stopped (`cancelled`) meeting like
+    /// the "Fortsetzen" button does and wait for the job. Sandbox only.
+    #[arg(long, value_name = "ID", hide = true)]
+    pub continue_meeting: Option<String>,
+
     /// Test hook for the crash-recovery scenario: fabricates an "app died
     /// mid recording" meeting — a row left on `recording` with a WAV whose
     /// RIFF/data sizes were never patched — from this 16 kHz mono WAV, then
@@ -258,6 +277,24 @@ pub struct CliArgs {
     #[arg(long, value_name = "DIR")]
     pub eval_notes: Option<PathBuf>,
 
+    // P1k
+    /// Evaluate the template choice ("Automatisch (nach Inhalt)") and the
+    /// minutes on the synthetic fixtures in DIR (tests/fixtures/notes for the
+    /// choice, tests/fixtures/minutes for long transcripts) with the configured
+    /// language model and exit. Runs one fixture after the other in a sandbox
+    /// store in the temp directory (never the productive meetings.db) and stops
+    /// the local llama-server at the end. --model picks a local model for this
+    /// run, --minutes-template a template instead of the automatic choice.
+    /// Output via --json/--out. Exit 0 ok, 3 wrong template or a gap in the
+    /// minutes, 1 error.
+    #[arg(long, value_name = "DIR")]
+    pub eval_minutes: Option<PathBuf>,
+
+    /// With --eval-minutes: `auto` (default) or a template id such as
+    /// builtin:vertrieb.
+    #[arg(long, value_name = "ID")]
+    pub minutes_template: Option<String>,
+
     // M4-P4f
     /// Evaluate the meeting chat (acceptance AK8) on the synthetic fixtures
     /// in DIR (tests/fixtures/chat with questions.json) with the configured
@@ -356,4 +393,15 @@ pub struct CliArgs {
     /// closed the pipe, 1 on an I/O error.
     #[arg(long)]
     pub mcp: bool,
+
+    // P6f (B13)
+    /// Draft the follow-up e-mail of one meeting with the configured language
+    /// model (--model picks a local one for this run) and print it as JSON
+    /// (to, subject, body_text), then exit. SANDBOX ONLY: requires
+    /// LVA_MEETINGS_DIR (prepare the meeting with --import-meeting), so it can
+    /// never read the productive meetings.db. Stops the local llama-server at
+    /// the end. Exit 0 draft written, 3 no content / empty answer, 1 error,
+    /// 2 bad input (no sandbox, unknown meeting).
+    #[arg(long, value_name = "ID")]
+    pub followup_draft: Option<String>,
 }
