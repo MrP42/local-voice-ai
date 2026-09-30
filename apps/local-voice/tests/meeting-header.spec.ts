@@ -202,7 +202,9 @@ test.describe("Detailkopf", () => {
   }) => {
     await openM2(page);
     await page.getByTestId("project-chip").click();
-    const dialog = page.getByRole("dialog", { name: "In Ordner" });
+    const dialog = page.getByRole("dialog", {
+      name: "In Projekt verschieben …",
+    });
     await expect(dialog).toBeVisible();
     const box = (name: string) => dialog.getByRole("checkbox", { name });
     await expect(box("Geschäftlich")).toHaveAttribute("aria-checked", "true");
@@ -221,7 +223,9 @@ test.describe("Detailkopf", () => {
     await expect(page.getByTestId("project-chip")).toContainText("Privat");
     // Ueber das Menue derselbe Dialog.
     await chooseMenu(page, "menu-move");
-    await expect(page.getByRole("dialog", { name: "In Ordner" })).toBeVisible();
+    await expect(
+      page.getByRole("dialog", { name: "In Projekt verschieben …" }),
+    ).toBeVisible();
   });
 });
 

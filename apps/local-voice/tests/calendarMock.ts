@@ -155,6 +155,19 @@ export const installTauriMock = async (
               return { ...w.__meeting, title: args.title ?? "aus Termin" };
             case "meetings_stop":
               return "m-neu";
+            // Seit M5 waehlt der Start die neue Besprechung: die Detailansicht
+            // laedt Segmente und Notizen.
+            case "meetings_get_segments":
+              return [];
+            case "meeting_notes_get":
+              return {
+                meeting_id: args.meetingId,
+                blocks: [],
+                revision: 0,
+                updated_at: 0,
+              };
+            case "meeting_notes_save":
+              return 1;
             case "meetings_set_template":
               return null;
             case "meeting_templates_list":

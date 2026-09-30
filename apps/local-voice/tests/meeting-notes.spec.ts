@@ -110,6 +110,9 @@ test.beforeEach(async ({ page }) => {
         source_path: null,
       },
     ];
+    // Wie viele Hoerer zu einem Ereignis stehen: die Registrierung ist im echten
+    // Tauri asynchron, ein zu frueh ausgeloestes Ereignis ginge ins Leere.
+    w.__listening = (event: string) => (listeners[event] ?? []).length;
     w.__emit = (event: string, payload: unknown) =>
       (listeners[event] ?? []).forEach((h) =>
         callbacks.get(h)?.({ event, id: 0, payload }),
@@ -1761,11 +1764,17 @@ test.describe("KI-Notizen", () => {
     await setup(page, { withDocument: false });
     const view = await openAiNotes(page);
     await expect(page.getByTestId("ai-notes-placeholder")).toBeVisible();
-    const emit = (payload: unknown) =>
-      page.evaluate(
+    // Erst melden, wenn der Hoerer der KI-Notizen steht (Registrierung und
+    // Laden laufen nebeneinander; ein zu frueh gemeldetes Ereignis ginge verloren).
+    const emit = async (payload: unknown) => {
+      await page.waitForFunction(
+        () => (window as any).__listening("meeting-notes-event") > 0,
+      );
+      await page.evaluate(
         (p) => (window as any).__emit("meeting-notes-event", p),
         payload,
       );
+    };
     // Ereignis einer anderen Besprechung: ignoriert.
     await emit({ kind: "progress", meeting_id: "m2", step: 1, total: 5 });
     await expect(page.getByTestId("enhance-progress")).toHaveCount(0);

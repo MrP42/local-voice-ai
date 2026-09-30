@@ -132,6 +132,8 @@ interface MeetingHeaderProps {
   tab: string;
   onTab: (id: string) => void;
   tabsLabel: string;
+  /** Schmales Fenster: das Menue mit allen Aktionen sitzt rechts in der Titelzeile. */
+  menu?: React.ReactNode;
 }
 
 const dateFormatter = (language: string) =>
@@ -164,6 +166,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
   tab,
   onTab,
   tabsLabel,
+  menu,
 }) => {
   const { t, i18n } = useTranslation();
   const [editing, setEditing] = useState(false);
@@ -306,6 +309,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
           testId="meeting-details-open"
           onClick={onOpenDetails}
         />
+        {menu}
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
 

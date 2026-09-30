@@ -4,6 +4,7 @@ import type { Meeting } from "@/bindings";
 import { NOTES_MAX_BYTES } from "@/lib/meetingNotes";
 import { Alert } from "../../../ui/Alert";
 import { NoteBlocksEditor } from "./NoteBlocksEditor";
+import { MeetingTemplatePicker } from "./TemplatePicker";
 import {
   recordingStamper,
   useNotesAutosave,
@@ -12,7 +13,7 @@ import {
 
 /**
  * Speicherstatus, Groessenwarnung und Konflikthinweis eines Notizblocks;
- * gemeinsam fuer Aufnahmeseite (`LiveNotesPad`) und Detailansicht.
+ * gemeinsam fuer laufende Aufnahme und Detailansicht (beides `MyNotesView`).
  */
 export const NotesStatusLine: React.FC<{ autosave: NotesAutosave }> = ({
   autosave,
@@ -62,25 +63,56 @@ export const NotesStatusLine: React.FC<{ autosave: NotesAutosave }> = ({
 
 /**
  * "Meine Notizen" in der Besprechungsdetailansicht: derselbe Block-Editor und
- * derselbe Autosave wie waehrend der Aufnahme. Laeuft die Aufnahme noch, tragen
- * neue Bloecke die Audioposition; nach dem Stopp und bei importierten
- * Besprechungen bleiben sie ohne Zeitstempel.
+ * derselbe Autosave fuer Live und danach. Laeuft die Aufnahme dieser
+ * Besprechung (`live`), hat der Editor den Fokus, tragen neue Bloecke die
+ * Audioposition, und die Vorlage laesst sich gleich hier waehlen; nach dem
+ * Stopp und bei importierten Besprechungen bleiben neue Bloecke ohne
+ * Zeitstempel. `compact` (schmales Fenster) spart Hinweis und Vorlagenwahl:
+ * die Vorlage steht dann im Menue.
  */
-export const MyNotesView: React.FC<{ meeting: Meeting }> = ({ meeting }) => {
+export const MyNotesView: React.FC<{
+  meeting: Meeting;
+  live?: boolean;
+  compact?: boolean;
+}> = ({ meeting, live = false, compact = false }) => {
   const { t } = useTranslation();
   const autosave = useNotesAutosave(meeting.id);
   const stamp = React.useMemo(
-    () =>
-      meeting.status === "recording" ? recordingStamper(meeting.id) : undefined,
-    [meeting.id, meeting.status],
+    () => (live ? recordingStamper(meeting.id) : undefined),
+    [meeting.id, live],
   );
 
+  // Der Fokus gehoert dem Notizfeld, sobald die Aufnahme dieser Besprechung
+  // laeuft und der Block geladen ist (`autoFocus` allein reicht nicht: `live`
+  // wird oft erst nach dem Laden wahr). Nur einmal je Aufnahme und nur, wenn
+  // sonst niemand den Fokus hat (Nutzer tippt schon woanders, Dialog offen).
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const focusedFor = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!live || !autosave.loaded || focusedFor.current === meeting.id) return;
+    focusedFor.current = meeting.id;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    const fields = rootRef.current?.querySelectorAll("textarea");
+    fields?.[fields.length - 1]?.focus({ preventScroll: true });
+  }, [live, autosave.loaded, meeting.id]);
+
   return (
-    <div className="space-y-2" data-testid="my-notes">
+    <div
+      ref={rootRef}
+      className="space-y-2"
+      data-testid={live ? "live-notes-pad" : "my-notes"}
+    >
       {meeting.source === "import" && (
         <p className="text-xs text-text/60">
           {t("meetings.notes.importedHint")}
         </p>
+      )}
+      {live && !compact && (
+        <>
+          <p className="text-xs text-mid-gray">{t("meetings.notes.padHint")}</p>
+          <MeetingTemplatePicker meetingId={meeting.id} />
+        </>
       )}
       {autosave.loaded ? (
         <div className="rounded-lg border border-mid-gray/20 px-3 py-3">
@@ -90,6 +122,7 @@ export const MyNotesView: React.FC<{ meeting: Meeting }> = ({ meeting }) => {
             stampNewBlock={stamp}
             placeholder={t("meetings.notes.emptyHint")}
             onBlur={() => void autosave.flush()}
+            autoFocus={live}
           />
         </div>
       ) : (

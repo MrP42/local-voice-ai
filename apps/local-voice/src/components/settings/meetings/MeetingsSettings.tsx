@@ -1,14 +1,8 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ChevronRight,
-  MessageSquare,
-  PanelLeftOpen,
-  Sparkles,
-} from "lucide-react";
+import { PanelLeftOpen } from "lucide-react";
 import { toast } from "sonner";
 import { PageShell } from "../../ui/PageShell";
-import { SettingsGroup } from "../../ui/SettingsGroup";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { useRecordingActive } from "../../../hooks/useRecordingActive";
 import {
@@ -17,12 +11,9 @@ import {
   type BriefInfo,
   type Citation,
   type Meeting,
-  type RecipeItem,
   type ScopeFilter,
 } from "@/bindings";
 import { RecorderCard } from "./RecorderCard";
-import { LiveTranscript } from "./LiveTranscript";
-import { LiveNotesPad } from "./notes/LiveNotesPad";
 import { MeetingList } from "./MeetingList";
 import { MeetingDetail } from "./MeetingDetail";
 import { RecWorkspace, isRightTab, type RightTab } from "./RecWorkspace";
@@ -32,9 +23,10 @@ import { ProjectsRail } from "./projects/ProjectsRail";
 import { DragGhost } from "./projects/DragGhost";
 import { useRecLayout } from "./useRecLayout";
 import { ChatPanel } from "./chat/ChatPanel";
-import { recipeTitleText } from "./chat/RecipeMenu";
 import { EMPTY_SCOPE } from "./chat/ScopeChips";
 import type { PersonRef } from "./people/PersonPopover";
+import { useImportDrop, useMeetingImport } from "./useMeetingImport";
+import { useSelectedProject } from "./projects/selectedProject";
 
 type JumpRequest = { citation: Citation; nonce: number };
 
@@ -63,109 +55,30 @@ const findMeeting = async (id: string): Promise<Meeting | null> => {
   return null;
 };
 
-/**
- * M4-P4e: eingeklappte Zeile "Frage zur laufenden Besprechung" unter dem
- * Notizblock. Erscheint mit einer laufenden Aufnahme; die live-tauglichen
- * Recipes ("Was habe ich verpasst?") fragen mit einem Klick.
- */
-const LiveChatRow: React.FC<{ onJump: (citation: Citation) => void }> = ({
-  onJump,
-}) => {
-  const { t } = useTranslation();
-  const [meetingId, setMeetingId] = useState<string | null>(null);
-  const [recording, setRecording] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [recipes, setRecipes] = useState<RecipeItem[]>([]);
-  const [auto, setAuto] = useState<{ id: string; nonce: number } | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void commands.meetingsRecordingPosition().then((result) => {
-      if (!cancelled && result.status === "ok" && result.data) {
-        setMeetingId((prev) => prev ?? result.data!.meeting_id);
-        setRecording(true);
-      }
-    });
-    const un = events.meetingEvent.listen((e) => {
-      const payload = e.payload;
-      if (payload.kind !== "state") return;
-      setRecording(
-        payload.status === "recording" || payload.status === "paused",
-      );
-      if (payload.status === "recording") setMeetingId(payload.meeting_id);
-    });
-    return () => {
-      cancelled = true;
-      un.then((f) => f());
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!meetingId) return;
-    void commands.chatRecipesList().then((result) => {
-      if (result.status !== "ok") return;
-      setRecipes(
-        (result.data ?? []).filter(
-          (r) => r.spec.live_ok && r.spec.scope !== "global",
-        ),
-      );
-    });
-  }, [meetingId]);
-
-  if (!meetingId || (!recording && !open)) return null;
-
-  return (
-    <SettingsGroup>
-      <div className="space-y-2 px-4 py-2" data-testid="live-chat-row">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            aria-expanded={open}
-            aria-label={
-              open
-                ? t("meetings.chat.live.collapse")
-                : t("meetings.chat.live.expand")
-            }
-            className="flex items-center gap-1.5 text-sm font-medium text-text/80 hover:text-text cursor-pointer"
-          >
-            <ChevronRight
-              width={14}
-              height={14}
-              aria-hidden="true"
-              className={`transition-transform ${open ? "rotate-90" : ""}`}
-            />
-            <MessageSquare width={14} height={14} aria-hidden="true" />
-            {t("meetings.chat.live.row")}
-          </button>
-          {!open &&
-            recipes.map((recipe) => (
-              <button
-                key={recipe.id}
-                type="button"
-                onClick={() => {
-                  setOpen(true);
-                  setAuto({ id: recipe.id, nonce: Date.now() });
-                }}
-                className="inline-flex items-center gap-1 rounded-full border border-mid-gray/40 px-2 py-0.5 text-xs text-text/70 hover:bg-mid-gray/15 hover:text-text cursor-pointer"
-              >
-                <Sparkles width={10} height={10} aria-hidden="true" />
-                {recipeTitleText(recipe)}
-              </button>
-            ))}
-        </div>
-        {open && (
-          <ChatPanel
-            scope={{ kind: "meeting", meeting_id: meetingId }}
-            mode={recording ? "live" : "meeting"}
-            onJump={onJump}
-            autoRecipe={auto}
-          />
-        )}
-      </div>
-    </SettingsGroup>
-  );
+/** Eine Besprechung, die es in der Liste (noch) nicht gibt, aber gerade aufgenommen wird. */
+const liveStub = (id: string, title: string): Meeting => {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    id,
+    title,
+    status: "recording",
+    source: "recording",
+    started_at: now,
+    ended_at: null,
+    language: null,
+    mic_audio_path: null,
+    system_audio_path: null,
+    duration_ms: null,
+    consent_confirmed_at: now,
+    audio_retention_until: null,
+    created_at: now,
+    source_path: null,
+    deleted_at: null,
+  };
 };
+
+/** Wartezeiten vor den Versuchen, die laufende Besprechung in der Liste zu finden. */
+const FIND_RECORDING_WAITS_MS = [0, 250, 700];
 
 export const MeetingsSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -216,12 +129,14 @@ export const MeetingsSettings: React.FC = () => {
   const [transcriptEl, setTranscriptEl] = useState<HTMLDivElement | null>(null);
 
   // Gemerkte Besprechung beim Start laden; gibt es sie nicht mehr, vergessen.
+  // Hat inzwischen etwas anderes die Auswahl uebernommen (eine laufende
+  // Aufnahme), bleibt es dabei.
   useEffect(() => {
     if (!selectedId || selected) return;
     let cancelled = false;
     void findMeeting(selectedId).then((meeting) => {
       if (cancelled) return;
-      if (meeting) setSelected(meeting);
+      if (meeting) setSelected((prev) => prev ?? meeting);
       else setSelectedId("");
     });
     return () => {
@@ -230,10 +145,73 @@ export const MeetingsSettings: React.FC = () => {
     // Nur beim Einhaengen: spaetere Auswahlen setzen `selected` selbst.
   }, []);
 
-  // Eine neue Aufnahme zeigt ihren Notizblock in der Arbeitsflaeche.
+  // Die laufende Aufnahme ist die gewaehlte Besprechung: Notizblock in der
+  // Mitte, Live-Transkript rechts, Fragen im Reiter. Geschieht einmal je
+  // Aufnahme (auch wenn die Seite mitten in einer Aufnahme geoeffnet wird);
+  // danach darf der Nutzer eine andere Besprechung ansehen. Der Start ueber die
+  // Aufnahmekarte meldet die Besprechung selbst (`startedHere`); ueber andere
+  // Wege (Kalender, Hinweisfenster) kommt sie aus der Liste.
+  const handledRecording = useRef<string | null>(null);
+  // Die Suche laeuft ueber mehrere Versuche weiter, auch wenn sich `t` oder
+  // eine Abhaengigkeit aendert (sie wuerde sonst abgebrochen und nie wiederholt,
+  // weil die Aufnahme schon als bearbeitet gilt); nur das Ausblenden der Seite beendet sie.
+  const mounted = useRef(true);
   useEffect(() => {
-    if (recording.meetingId) select(null);
-  }, [recording.meetingId, select]);
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const titleFallback = useRef(t("meetings.record.titlePlaceholder"));
+  titleFallback.current = t("meetings.record.titlePlaceholder");
+  const startedHere = useCallback(
+    (meeting: Meeting) => {
+      handledRecording.current = meeting.id;
+      select(meeting);
+      setRightTab("transcript");
+    },
+    [select, setRightTab],
+  );
+  useEffect(() => {
+    const id = recording.active ? recording.meetingId : null;
+    if (!id || handledRecording.current === id) return;
+    handledRecording.current = id;
+    void (async () => {
+      let meeting: Meeting | null = null;
+      for (const wait of FIND_RECORDING_WAITS_MS) {
+        if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+        if (!mounted.current) return;
+        meeting = await findMeeting(id);
+        if (meeting) break;
+      }
+      if (!mounted.current) return;
+      // Ohne Eintrag in der Liste (Datenbank gerade beschaeftigt) trotzdem
+      // zeigen: die Aufnahme laeuft, die Notizen muessen tippbar sein.
+      select(meeting ?? liveStub(id, titleFallback.current));
+      setRightTab("transcript");
+    })();
+  }, [recording.active, recording.meetingId, select, setRightTab]);
+
+  // Import: Symbol und Ablage auf der Arbeitsflaeche fuehren in EINEN Weg.
+  // Eine laufende Aufnahme behaelt den Fokus; der Import laeuft links mit
+  // Fortschritt weiter.
+  const recordingActiveRef = useRef(recording.active);
+  recordingActiveRef.current = recording.active;
+  const importer = useMeetingImport(
+    useCallback(
+      (meeting: Meeting) => {
+        if (recordingActiveRef.current) return;
+        select(meeting);
+        setRightTab("transcript");
+      },
+      [select, setRightTab],
+    ),
+  );
+  const dropOver = useImportDrop(importer.ask);
+  const target = useSelectedProject();
+  const targetName = target.projectId
+    ? projects.folders.find((f) => f.id === target.projectId)?.name
+    : undefined;
 
   /** Chat ueber viele Besprechungen oeffnen (ohne Brief-Auftrag). */
   const openGlobal = useCallback(
@@ -335,6 +313,12 @@ export const MeetingsSettings: React.FC = () => {
     <p className="p-3 text-sm text-text/60">{text}</p>
   );
 
+  // Laeuft gerade die Aufnahme DIESER Besprechung?
+  const live =
+    selected !== null &&
+    recording.active &&
+    recording.meetingId === selected.id;
+
   const chatBody = globalFilter ? (
     <ChatPanel
       fill
@@ -354,7 +338,7 @@ export const MeetingsSettings: React.FC = () => {
       fill
       key={selected.id}
       scope={{ kind: "meeting", meeting_id: selected.id }}
-      mode="meeting"
+      mode={live ? "live" : "meeting"}
       onClose={() => setRightTab("transcript")}
       onJump={(c) => void openCitation(c)}
     />
@@ -413,6 +397,8 @@ export const MeetingsSettings: React.FC = () => {
               if (selected?.id === id) select(null);
             }}
             onAsk={openGlobal}
+            onPrepare={openBrief}
+            liveId={recording.active ? recording.meetingId : null}
             personFilter={personFilter}
             onPersonFilterChange={setPersonFilter}
           />
@@ -423,22 +409,34 @@ export const MeetingsSettings: React.FC = () => {
           controls: setControlsEl,
           transcript: setTranscriptEl,
         }}
-        idleContent={
-          <div className="space-y-3 p-3">
-            <LiveNotesPad fallback={hint(t("meetings.layout.emptyContent"))} />
-            <LiveChatRow onJump={(c) => void openCitation(c)} />
-          </div>
-        }
-        controls={<RecorderCard onPrepare={openBrief} />}
-        rightTab={rightTab}
-        onRightTab={setRightTab}
-        idleTranscript={
-          <LiveTranscript
-            fallback={hint(t("meetings.layout.emptyTranscript"))}
+        idleContent={hint(t("meetings.layout.emptyContent"))}
+        controls={
+          <RecorderCard
+            onStarted={startedHere}
+            importApi={{
+              busy: importer.busy,
+              pick: () => void importer.pick(),
+            }}
           />
         }
+        rightTab={rightTab}
+        onRightTab={setRightTab}
+        idleTranscript={hint(t("meetings.layout.emptyTranscript"))}
         chatBody={chatBody}
+        dropOverlay={
+          dropOver ? (
+            <div
+              data-testid="drop-overlay"
+              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-logo-primary bg-background/85 p-4 text-center text-sm font-medium text-logo-primary"
+            >
+              {targetName
+                ? t("meetings.import.dropInto", { name: targetName })
+                : t("meetings.import.dropIntoNone")}
+            </div>
+          ) : null
+        }
       />
+      {importer.dialog}
       <DragGhost drag={drag.drag} />
       {selected && (
         <MeetingDetail
@@ -459,6 +457,8 @@ export const MeetingsSettings: React.FC = () => {
           onPersonAsk={(person) =>
             openGlobal({ ...EMPTY_SCOPE, person_id: person.id })
           }
+          live={live}
+          compact={layout.mode === "narrow"}
         />
       )}
     </PageShell>

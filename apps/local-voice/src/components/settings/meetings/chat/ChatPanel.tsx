@@ -215,7 +215,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     [],
   );
 
-  // Deltas, Stufen, Fehler der laufenden Anfrage.
+  // Deltas, Stufen, Fehler der laufenden Anfrage. Der Hoerer steht fuer die
+  // ganze Lebensdauer des Panels: Haengt er bei jedem Wechsel von `t` (Sprache,
+  // Nachladen) neu um, gibt es eine Luecke zwischen Abmelden und Anmelden, in
+  // der ein `failed` oder `delta` verloren geht.
+  const tRef = useRef(t);
+  tRef.current = t;
   useEffect(() => {
     const un = events.meetingChatEvent.listen((e) => {
       const payload = e.payload;
@@ -234,13 +239,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           text: newRound ? "" : current.text,
         });
       } else if (payload.kind === "failed" && payload.code !== "cancelled") {
-        setError(t(chatErrorKey(payload.code), { code: payload.code }));
+        setError(
+          tRef.current(chatErrorKey(payload.code), { code: payload.code }),
+        );
       }
     });
     return () => {
       un.then((f) => f());
     };
-  }, [setPending, t]);
+  }, [setPending]);
 
   // Neue Inhalte: ans Ende scrollen.
   useEffect(() => {

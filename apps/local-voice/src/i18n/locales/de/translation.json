@@ -1687,7 +1687,8 @@
         "running": "Läuft jetzt",
         "empty": "Kein Termin in den nächsten 7 Tagen.",
         "start": "Termin aufnehmen",
-        "startHint": "Aufnahme zu diesem Termin starten; Titel und Teilnehmende kommen aus dem Kalender"
+        "startHint": "Aufnahme zu diesem Termin starten; Titel und Teilnehmende kommen aus dem Kalender",
+        "more": "Weitere Termine heute ({{count}})"
       }
     },
     "layout": {
@@ -1960,7 +1961,8 @@
       "renameTitle": "Umbenennen",
       "titleLabel": "Titel der Besprechung",
       "autoscroll": "Automatisch mitscrollen",
-      "autoscrollPaused": "Mitscrollen pausiert – ans Ende scrollen setzt es fort."
+      "autoscrollPaused": "Mitscrollen pausiert – ans Ende scrollen setzt es fort.",
+      "toLiveEnd": "Zum Live-Ende"
     },
     "status": {
       "recording": "Aufnahme läuft",
@@ -2136,6 +2138,7 @@
       "exportTranscript": "Transkript als Datei …",
       "details": "Details …",
       "delete": "Besprechung löschen …",
+      "deleteLive": "Die Aufnahme läuft noch – erst beenden, dann löschen.",
       "templateTitle": "Vorlage wechseln",
       "templateBody": "Die Vorlage bestimmt, wie KI-Notizen und Protokoll dieser Besprechung aufgebaut werden.",
       "close": "Schließen"
@@ -2146,9 +2149,15 @@
       "cancel": "Abbrechen",
       "close": "Schließen"
     },
+    "import": {
+      "target": "Import in das Projekt „{{name}}“",
+      "targetNone": "Import ohne Projekt",
+      "dropInto": "Datei hier ablegen – Import in „{{name}}“",
+      "dropIntoNone": "Datei hier ablegen – Import ohne Projekt"
+    },
     "importAction": {
       "name": "Datei importieren",
-      "hint": "Audio, Video oder Untertitel wählen – oder in die Liste ziehen",
+      "hint": "Audio, Video oder Untertitel wählen – oder auf die Arbeitsfläche ziehen",
       "linkName": "Link einfügen",
       "linkHint": "folgt mit YouTube #65"
     },
@@ -2187,7 +2196,7 @@
       },
       "aiPlaceholder": "Die KI-Notizen erscheinen hier, sobald sie erstellt wurden.",
       "padTitle": "Deine Notizen",
-      "padHint": "Stichpunkte genügen. Jeder Punkt merkt sich die Aufnahmezeit.",
+      "padHint": "Stichpunkte genügen. Enter speichert einen Punkt mit der Aufnahmezeit, „[ ]“ am Anfang macht daraus eine Aufgabe.",
       "emptyHint": "Stichpunkte genügen …",
       "blockLabel": "Notiz",
       "todoCheck": "Erledigt",

@@ -822,40 +822,49 @@ test.describe("Aufnahmeseite mit Kalender", () => {
     ];
   };
 
-  test("Nächste Termine (heute): Karte listet die heutigen Termine und lässt sich einklappen", async ({
+  test("Als Nächstes: der nächste Termin steht oben, die weiteren von heute hinter „Weitere Termine“", async ({
     page,
   }) => {
     await setup(page, withUpcoming);
     await openRecordings(page);
+    // Die Karte „Nächste Termine“ der Aufnahmezeile gibt es nicht mehr.
+    await expect(page.getByTestId("rec-controls")).not.toContainText(
+      "Nächste Termine (heute)",
+    );
+    await expect(page.getByTestId("next-up-title")).toHaveText("Design Review");
     const card = page.getByTestId("upcoming-card");
-    await expect(card).toContainText("Nächste Termine (heute)");
+    await expect(card).toContainText("Weitere Termine heute (1)");
     const rows = page.getByTestId("upcoming-event");
-    await expect(rows).toHaveCount(2); // der Ganztagstermin fehlt
-    await expect(rows.nth(0)).toContainText("09:10–10:00");
-    await expect(rows.nth(0)).toContainText("Design Review");
-    await expect(rows.nth(0)).toContainText("2 Teilnehmende");
-    await expect(rows.nth(1)).toContainText("Kundentermin Meyer");
-    await page.getByTestId("upcoming-toggle").click();
+    // Standardmäßig zu: der Abschnitt bleibt klein.
     await expect(rows).toHaveCount(0);
     await expect(page.getByTestId("upcoming-toggle")).toHaveAttribute(
       "aria-expanded",
       "false",
     );
     await page.getByTestId("upcoming-toggle").click();
-    await expect(rows).toHaveCount(2);
+    await expect(rows).toHaveCount(1); // der Ganztagstermin fehlt
+    await expect(rows.nth(0)).toContainText("14:00–15:00");
+    await expect(rows.nth(0)).toContainText("Kundentermin Meyer");
+    await expect(rows.nth(0)).toContainText("2 Teilnehmende");
+    await page.getByTestId("upcoming-toggle").click();
+    await expect(rows).toHaveCount(0);
   });
 
-  test("Nächste Termine: [Aufnahme starten] je Termin geht über die Einwilligung", async ({
+  test("Als Nächstes: [Aufnehmen] je Termin öffnet den Startdialog mit dem Termin und geht über die Einwilligung", async ({
     page,
   }) => {
     await setup(page, withUpcoming);
     await openRecordings(page);
-    await page.getByTestId("upcoming-start").nth(1).click();
+    await page.getByTestId("upcoming-toggle").click();
+    await page.getByTestId("upcoming-start").click();
+    const dialog = page.getByTestId("start-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByPlaceholder("Titel der Besprechung")).toHaveValue(
+      "Kundentermin Meyer",
+    );
     await expect(page.getByText("Einwilligung erforderlich")).toBeVisible();
     expect(await calls(page, "meetings_start_from_event")).toHaveLength(0);
-    await page
-      .getByRole("button", { name: "Alle Beteiligten haben zugestimmt" })
-      .click();
+    await confirmStart(page);
     await expect
       .poll(async () => (await calls(page, "meetings_start_from_event")).length)
       .toBe(1);
@@ -869,7 +878,26 @@ test.describe("Aufnahmeseite mit Kalender", () => {
     });
   });
 
-  test("Mit verbundenem Kalender, aber ohne Termine sagt die Karte es", async ({
+  test("Als Nächstes: der Knopf am nächsten Termin öffnet denselben Startdialog", async ({
+    page,
+  }) => {
+    await setup(page, withUpcoming);
+    await openRecordings(page);
+    await page.getByTestId("next-up-start").click();
+    const dialog = page.getByTestId("start-dialog");
+    await expect(dialog.getByPlaceholder("Titel der Besprechung")).toHaveValue(
+      "Design Review",
+    );
+    await confirmStart(page);
+    await expect
+      .poll(async () => (await calls(page, "meetings_start_from_event")).length)
+      .toBe(1);
+    expect(
+      (await calls(page, "meetings_start_from_event"))[0].args,
+    ).toMatchObject({ eventKey: "ics-1:a:1", linkMode: "prompt" });
+  });
+
+  test("Mit verbundenem Kalender, aber ohne Termine sagt „Als Nächstes“ es", async ({
     page,
   }) => {
     await setup(page, () => {
@@ -889,8 +917,8 @@ test.describe("Aufnahmeseite mit Kalender", () => {
       ];
     });
     await openRecordings(page);
-    await expect(page.getByTestId("upcoming-card")).toContainText(
-      "Heute stehen keine weiteren Termine an.",
+    await expect(page.getByTestId("next-up")).toContainText(
+      "Kein Termin in den nächsten 7 Tagen.",
     );
   });
 });

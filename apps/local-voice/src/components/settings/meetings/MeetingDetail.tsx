@@ -7,7 +7,7 @@ import React, {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
-import { Pencil } from "lucide-react";
+import { ArrowDown, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -43,6 +43,7 @@ import { translateMeetingError } from "./meetingErrors";
 import { enhanceErrorText, SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
 import { minutesErrorCode, minutesErrorDetail } from "@/lib/meetingMinutes";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
+import { mergeSegments } from "@/lib/meetingSegments";
 import { FollowupDialog } from "./FollowupDialog";
 import { MeetingExportDialog } from "./MeetingExportDialog";
 import { PeopleDialog } from "./people/PeopleDialog";
@@ -102,6 +103,11 @@ interface MeetingDetailProps {
   onPersonFilter?: (person: PersonRef) => void;
   /** M5-P5d: Popover einer Person -> Chat ueber alle Besprechungen mit ihr. */
   onPersonAsk?: (person: PersonRef) => void;
+  /** Diese Besprechung wird gerade aufgenommen (Notizblock mit Zeitstempel,
+      Transkript waechst mit, keine Bearbeitung und kein Loeschen). */
+  live?: boolean;
+  /** Schmales Fenster: die Aktionen wandern ins Menue des Kopfes. */
+  compact?: boolean;
 }
 
 export const MeetingDetail: React.FC<MeetingDetailProps> = ({
@@ -115,6 +121,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   jumpRequest,
   onPersonFilter,
   onPersonAsk,
+  live = false,
+  compact = false,
 }) => {
   const { t } = useTranslation();
   const meetingId = meeting.id;
@@ -135,6 +143,10 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     "notes",
     isMidTab,
   );
+  // Eine laufende Aufnahme zeigt den Notizblock; danach darf der Reiter wechseln.
+  useEffect(() => {
+    if (live) setMidTab("notes");
+  }, [live, setMidTab]);
   const midTabs = [
     { id: "notes" as const, label: t("meetings.notes.tab") },
     { id: "ai" as const, label: t("meetings.notes.view.ai") },
@@ -159,6 +171,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     (jobProgress !== undefined &&
       jobProgress.phase !== "notes" &&
       jobProgress.phase !== "minutes");
+  // Das Transkript waechst gerade: Aufnahme oder Verarbeitung.
+  const growing = live || transcribing;
   // Automatisch mitscrollen: Schalter (gemerkt) und "folgt gerade". Blaettert
   // der Nutzer hoch, pausiert das Mitscrollen, bis er wieder ans Ende scrollt
   // oder den Schalter benutzt.
@@ -214,12 +228,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // P8a: neue Segmente waehrend der Verarbeitung -> ans Ende scrollen, solange
   // der Schalter an ist und der Nutzer nicht weggescrollt hat.
   useLayoutEffect(() => {
-    if (!transcribing || !autoScroll || !following || !slots.transcript) {
+    if (!growing || !autoScroll || !following || !slots.transcript) {
       return;
     }
     const el = transcriptRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [segments, transcribing, autoScroll, following, slots.transcript]);
+  }, [segments, growing, autoScroll, following, slots.transcript]);
 
   useEffect(() => {
     setFollowing(true);
@@ -230,6 +244,13 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     if (!el) return;
     // Am Ende (mit etwas Spiel) folgt das Mitscrollen wieder, sonst pausiert es.
     setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < 24);
+  };
+
+  /** "Zum Live-Ende": wieder mitlaufen und ans Ende springen. */
+  const toLiveEnd = () => {
+    setFollowing(true);
+    const el = transcriptRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   };
 
   const continueProcessing = async () => {
@@ -350,24 +371,35 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     if (notices.status === "ok") setSpeakerNotices(notices.data ?? []);
   }, [meetingId]);
 
+  // Ladevorgang und Ereignisse laufen nebeneinander (bei einer laufenden
+  // Aufnahme wachsen die Segmente waehrend des Ladens weiter). Jeder Ladevorgang
+  // bekommt eine Nummer; `liveBuffer` sammelt, was per Ereignis seit seinem
+  // Beginn eintraf. Das Ergebnis ist die Vereinigung beider nach
+  // `segment_index`: nichts doppelt, nichts verloren. Ein `reset` (Neu-
+  // Transkription) macht eine laufende Ladung ungueltig.
+  const loadSeq = useRef(0);
+  const liveBuffer = useRef<StoredSegment[] | null>(null);
   const loadSegments = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    liveBuffer.current = [];
     setLoading(true);
     const [result] = await Promise.all([
       commands.meetingsGetSegments(meetingId),
       loadSpeakers(),
     ]);
+    if (seq !== loadSeq.current) return;
+    const arrived = liveBuffer.current ?? [];
+    liveBuffer.current = null;
     setLoading(false);
     setEpochKey((k) => k + 1);
     if (result.status === "ok") {
       // Segments come back in segment_index order, which interleaves
-      // channels for a live-recorded meeting — always sort by start_ms.
-      setSegments([...result.data].sort((a, b) => a.start_ms - b.start_ms));
+      // channels for a live-recorded meeting - always sort by start_ms.
+      setSegments(mergeSegments(mergeSegments([], result.data), arrived));
     }
   }, [meetingId, loadSpeakers]);
-
-  useEffect(() => {
-    void loadSegments();
-  }, [loadSegments]);
+  const loadSegmentsRef = useRef(loadSegments);
+  loadSegmentsRef.current = loadSegments;
 
   // M5-P5d: Teilnehmende (Kalender, benannte Sprecher) als Chips in der Kopfzeile.
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -399,19 +431,25 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // fuer Block und melden jeden ueber `meetingEvent`. Ohne diesen Hoerer
   // zeigte die Detailseite nur den Stand beim Oeffnen — wer waehrend der
   // Transkription zusah, sah nichts wachsen (17.09.2026).
+  // Der Hoerer steht, bevor die Segmente geladen werden: ein Satz, der
+  // dazwischen entsteht, geht so weder beim Laden noch beim Zuhoeren verloren.
+  const onMeetingChangeRef = useRef(onMeetingChange);
+  onMeetingChangeRef.current = onMeetingChange;
   useEffect(() => {
-    const un = events.meetingEvent.listen((e) => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    const listening = events.meetingEvent.listen((e) => {
       const payload = e.payload;
       if (payload.kind === "levels" || payload.meeting_id !== meetingId) return;
       if (payload.kind === "reset") {
+        loadSeq.current += 1;
+        liveBuffer.current = null;
+        setLoading(false);
         setSegments([]);
         setEpochKey((k) => k + 1);
       } else if (payload.kind === "segments") {
-        setSegments((prev) =>
-          [...prev, ...payload.appended].sort(
-            (a, b) => a.start_ms - b.start_ms,
-          ),
-        );
+        liveBuffer.current?.push(...payload.appended);
+        setSegments((prev) => mergeSegments(prev, payload.appended));
       } else if (payload.kind === "state") {
         // Statusfeld und Dauer/Audio-Pfade kommen aus dem Datensatz; nach
         // ready/failed/cancelled einmal frisch laden, damit Badge und Player
@@ -420,20 +458,34 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           payload.status === "ready" ||
           payload.status === "failed" ||
           payload.status === "cancelled";
-        if (finished) void loadSegments();
+        if (finished) void loadSegmentsRef.current();
         if (finished || payload.status === "processing") {
           void commands.meetingsList(0, 200).then((r) => {
             if (r.status !== "ok") return;
             const fresh = r.data.find((m) => m.id === meetingId);
-            if (fresh) onMeetingChange(fresh);
+            if (fresh) onMeetingChangeRef.current(fresh);
           });
         }
       }
     });
+    void listening.then(
+      (un) => {
+        if (cancelled) un();
+        else {
+          unlisten = un;
+          void loadSegmentsRef.current();
+        }
+      },
+      // Ohne Hoerer wenigstens den gespeicherten Stand zeigen.
+      () => {
+        if (!cancelled) void loadSegmentsRef.current();
+      },
+    );
     return () => {
-      un.then((f) => f());
+      cancelled = true;
+      unlisten?.();
     };
-  }, [meetingId, loadSegments, onMeetingChange]);
+  }, [meetingId]);
 
   // M3-P3c: Namen, Zusammenführen und Umhängen (auch aus anderen Ansichten):
   // Segmente tragen neue Sprecher, die Sprecherliste neue Labels.
@@ -469,7 +521,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // kleiner), bleibt ein mitlaufendes Transkript am Ende. Die Liste fuellt die
   // Resthoehe ihrer Spalte und hat keine feste Hoehe mehr, die das verhinderte.
   const keepAtEnd = useRef(false);
-  keepAtEnd.current = transcribing && autoScroll && following;
+  keepAtEnd.current = growing && autoScroll && following;
   const hasList = !loading && segments.length > 0;
   useEffect(() => {
     const el = transcriptRef.current;
@@ -659,6 +711,36 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     }
   };
 
+  /** Symbolzeile mit Menue (breit) bzw. nur das Menue mit allen Aktionen (schmal). */
+  const actions = (menuOnly: boolean) => (
+    <MeetingActions
+      menuOnly={menuOnly}
+      hasSegments={segments.length > 0}
+      hasAudio={hasAudio}
+      busy={
+        live || meeting.status === "processing" || jobProgress !== undefined
+      }
+      live={live}
+      chatOpen={chatOpen}
+      copied={copied === "meta"}
+      onExport={() => setExportOpen(true)}
+      onFollowup={() => setFollowupOpen(true)}
+      onCopy={() => void copyTranscript(true)}
+      onPeople={() => setPeopleOpen(true)}
+      onChatToggle={onChatToggle}
+      onRetranscribe={() => setRetranscribeOpen(true)}
+      onRegenNotes={regenerateNotes}
+      onRegenMinutes={regenerateMinutes}
+      onTemplate={() => setTemplateOpen(true)}
+      onRename={() => setRenameNonce((n) => n + 1)}
+      onMove={() => setMoveOpen(true)}
+      onCopyPlain={() => void copyTranscript(false)}
+      onExportTranscript={() => void exportTranscript()}
+      onDetails={() => setDetailsOpen(true)}
+      onDelete={() => setDeleteOpen(true)}
+    />
+  );
+
   /** Kopf der Besprechung und die Reiter der Arbeitsflaeche (Mitte). */
   const contentPart = (
     <>
@@ -680,6 +762,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           if (isMidTab(id)) setMidTab(id);
         }}
         tabsLabel={t("meetings.layout.contentTabs")}
+        menu={compact ? actions(true) : undefined}
       />
 
       {meeting.status === "cancelled" && !jobProgress && (
@@ -719,7 +802,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         {midTab === "notes" || midTab === "ai" ? (
           <div className="space-y-3" ref={notesRef}>
             {midTab === "notes" ? (
-              <MyNotesView meeting={meeting} />
+              <MyNotesView meeting={meeting} live={live} compact={compact} />
             ) : (
               <EnhancedNotesView
                 meeting={meeting}
@@ -740,7 +823,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   /** Wiedergabe, Fortschritt und Symbolzeile (rechts oben, unter der Aufnahmezeile). */
   const controlsPart = (
     <>
-      {hasAudio && (
+      {hasAudio && !live && (
         <AudioPlayerGroup>
           {meeting.mic_audio_path && (
             <div className="space-y-0.5" data-testid="rec-player">
@@ -779,35 +862,14 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
 
       {jobProgress && <JobPanel progress={jobProgress} />}
 
-      <MeetingActions
-        hasSegments={segments.length > 0}
-        hasAudio={hasAudio}
-        busy={meeting.status === "processing" || jobProgress !== undefined}
-        chatOpen={chatOpen}
-        copied={copied === "meta"}
-        onExport={() => setExportOpen(true)}
-        onFollowup={() => setFollowupOpen(true)}
-        onCopy={() => void copyTranscript(true)}
-        onPeople={() => setPeopleOpen(true)}
-        onChatToggle={onChatToggle}
-        onRetranscribe={() => setRetranscribeOpen(true)}
-        onRegenNotes={regenerateNotes}
-        onRegenMinutes={regenerateMinutes}
-        onTemplate={() => setTemplateOpen(true)}
-        onRename={() => setRenameNonce((n) => n + 1)}
-        onMove={() => setMoveOpen(true)}
-        onCopyPlain={() => void copyTranscript(false)}
-        onExportTranscript={() => void exportTranscript()}
-        onDetails={() => setDetailsOpen(true)}
-        onDelete={() => setDeleteOpen(true)}
-      />
+      {!compact && actions(false)}
     </>
   );
 
   /** Transkript (Reiter rechts unten): Werkzeugzeilen fest, die Liste scrollt. */
   const transcriptPart = (
     <>
-      {transcribing && (
+      {growing && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <label className="flex cursor-pointer items-center gap-2 text-xs text-text/80">
             <input
@@ -856,102 +918,124 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       ) : segments.length === 0 ? (
         <p className="text-sm text-text/60">{t("meetings.live.empty")}</p>
       ) : (
-        <div
-          ref={transcriptRef}
-          data-testid="transcript-scroll"
-          onScroll={onTranscriptScroll}
-          className="min-h-0 flex-1 space-y-2 overflow-y-auto"
-        >
-          {segments.map((segment) => (
-            <div
-              key={segment.segment_index}
-              data-segment-index={segment.segment_index}
-              data-highlighted={
-                highlightIndex === segment.segment_index ? "true" : undefined
-              }
-              className={`flex gap-2 items-start text-sm group rounded-md px-1 -mx-1 transition-colors ${
-                highlightIndex === segment.segment_index
-                  ? "bg-logo-primary/25 ring-1 ring-logo-primary/50"
-                  : ""
-              }`}
-            >
-              {player.canSeek ? (
-                <button
-                  type="button"
-                  data-act="seek"
-                  data-seek-ms={segment.start_ms}
-                  onClick={() => player.seek(segment.start_ms, segment.channel)}
-                  title={t("meetings.detail.playFrom")}
-                  className="text-xs text-text/60 w-10 shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer"
-                >
-                  {formatMmSs(segment.start_ms)}
-                </button>
-              ) : (
-                <span className="text-xs text-text/60 w-10 shrink-0 pt-0.5">
-                  {formatMmSs(segment.start_ms)}
-                </span>
-              )}
-              {showChannels && (
-                <span
-                  className={`text-xs text-text/50 shrink-0 pt-0.5 truncate ${
-                    hasSpeakers ? "w-24" : "w-16"
-                  }`}
-                  title={whoLabel(segment)}
-                >
-                  {speakerOf(segment) ? (
-                    <SpeakerPopover
-                      meetingId={meetingId}
-                      segment={segment}
-                      speaker={speakerOf(segment)!}
-                      speakers={speakers}
-                      epoch={segmentEpoch}
-                      onChanged={onSpeakersChanged}
-                      className="max-w-full"
-                    />
-                  ) : (
-                    t(channelLabelKey(segment.channel))
-                  )}
-                </span>
-              )}
-              {editingIndex === segment.segment_index ? (
-                <div className="flex-1 space-y-1">
-                  <Textarea
-                    value={editText}
-                    onChange={(e) => setEditText(e.target.value)}
-                    rows={2}
-                    className="w-full"
-                    autoFocus
-                  />
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      onClick={() => saveEdit(segment.segment_index)}
-                      disabled={saving}
-                    >
-                      {t("meetings.detail.save")}
-                    </Button>
-                    <Button size="sm" variant="secondary" onClick={cancelEdit}>
-                      {t("meetings.detail.cancel")}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <p className="text-text/90 break-words flex-1">
-                    {segment.text}
-                  </p>
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={transcriptRef}
+            data-testid="transcript-scroll"
+            onScroll={onTranscriptScroll}
+            className="min-h-0 flex-1 space-y-2 overflow-y-auto"
+          >
+            {segments.map((segment) => (
+              <div
+                key={segment.segment_index}
+                data-segment-index={segment.segment_index}
+                data-highlighted={
+                  highlightIndex === segment.segment_index ? "true" : undefined
+                }
+                className={`flex gap-2 items-start text-sm group rounded-md px-1 -mx-1 transition-colors ${
+                  highlightIndex === segment.segment_index
+                    ? "bg-logo-primary/25 ring-1 ring-logo-primary/50"
+                    : ""
+                }`}
+              >
+                {player.canSeek ? (
                   <button
                     type="button"
-                    onClick={() => startEdit(segment)}
-                    title={t("meetings.detail.editSegment")}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-text/50 hover:text-logo-primary cursor-pointer shrink-0"
+                    data-act="seek"
+                    data-seek-ms={segment.start_ms}
+                    onClick={() =>
+                      player.seek(segment.start_ms, segment.channel)
+                    }
+                    title={t("meetings.detail.playFrom")}
+                    className="text-xs text-text/60 w-10 shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer"
                   >
-                    <Pencil width={14} height={14} />
+                    {formatMmSs(segment.start_ms)}
                   </button>
-                </>
-              )}
-            </div>
-          ))}
+                ) : (
+                  <span className="text-xs text-text/60 w-10 shrink-0 pt-0.5">
+                    {formatMmSs(segment.start_ms)}
+                  </span>
+                )}
+                {showChannels && (
+                  <span
+                    className={`text-xs text-text/50 shrink-0 pt-0.5 truncate ${
+                      hasSpeakers ? "w-24" : "w-16"
+                    }`}
+                    title={whoLabel(segment)}
+                  >
+                    {speakerOf(segment) ? (
+                      <SpeakerPopover
+                        meetingId={meetingId}
+                        segment={segment}
+                        speaker={speakerOf(segment)!}
+                        speakers={speakers}
+                        epoch={segmentEpoch}
+                        onChanged={onSpeakersChanged}
+                        className="max-w-full"
+                      />
+                    ) : (
+                      t(channelLabelKey(segment.channel))
+                    )}
+                  </span>
+                )}
+                {editingIndex === segment.segment_index ? (
+                  <div className="flex-1 space-y-1">
+                    <Textarea
+                      value={editText}
+                      onChange={(e) => setEditText(e.target.value)}
+                      rows={2}
+                      className="w-full"
+                      autoFocus
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => saveEdit(segment.segment_index)}
+                        disabled={saving}
+                      >
+                        {t("meetings.detail.save")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={cancelEdit}
+                      >
+                        {t("meetings.detail.cancel")}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-text/90 break-words flex-1">
+                      {segment.text}
+                    </p>
+                    {!live && (
+                      <button
+                        type="button"
+                        onClick={() => startEdit(segment)}
+                        title={t("meetings.detail.editSegment")}
+                        className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-text/50 hover:text-logo-primary cursor-pointer shrink-0"
+                      >
+                        <Pencil width={14} height={14} />
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+          {growing && !following && (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="absolute bottom-2 end-3 shadow-md"
+              data-testid="follow-live"
+              onClick={toLiveEnd}
+            >
+              <ArrowDown width={14} height={14} aria-hidden="true" />
+              {t("meetings.detail.toLiveEnd")}
+            </Button>
+          )}
         </div>
       )}
     </>

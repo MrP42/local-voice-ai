@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   PanelLeftClose,
@@ -10,6 +11,7 @@ import {
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { TabList } from "../../ui/TabList";
 import type { RecLayout } from "./useRecLayout";
+import { useStableSlot } from "./useStableSlot";
 
 /** Reiter der unteren rechten Flaeche. */
 export type RightTab = "transcript" | "chat";
@@ -105,16 +107,18 @@ interface RecWorkspaceProps {
   /** Gewaehlte Besprechung: die Detailansicht haengt ihre Teile in die Slots. */
   detailActive: boolean;
   slotRefs: RecSlotRefs;
-  /** Arbeitsflaeche ohne gewaehlte Besprechung (Notizblock, Hinweis). */
+  /** Arbeitsflaeche ohne gewaehlte Besprechung (Hinweis). */
   idleContent: React.ReactNode;
   /** Bedienung oben rechts (Aufnahmekarte). */
   controls: React.ReactNode;
   rightTab: RightTab;
   onRightTab: (tab: RightTab) => void;
-  /** Transkript ohne gewaehlte Besprechung (Live-Transkript, Hinweis). */
+  /** Transkript ohne gewaehlte Besprechung (Hinweis). */
   idleTranscript: React.ReactNode;
   /** Fragen-Reiter (Chat). */
   chatBody: React.ReactNode;
+  /** Ablagefeld ueber der Arbeitsflaeche, solange eine Datei darueber schwebt. */
+  dropOverlay?: React.ReactNode;
 }
 
 /**
@@ -123,8 +127,15 @@ interface RecWorkspaceProps {
  *
  * - breit (>= 1000 px): drei Bereiche, Ziehgriffe, einklappbar.
  * - mittel (620 bis 999 px): Projekte als Leiste mit Schublade.
- * - schmal (< 620 px): Arbeitsflaeche oben, rechter Bereich unten, dazwischen
+ * - schmal (< 620 px): oben die Aufnahmezeile, darunter geteilt die
+ *   Arbeitsflaeche (Notizen) und das Transkript bzw. die Fragen, dazwischen
  *   ein waagerechter Griff; Projekte in der Schublade.
+ *
+ * Die drei Hauptteile (Arbeitsflaeche, Aufnahmezeile samt Bedienung,
+ * Transkript/Fragen) sitzen in festen Elementen, die je nach Breite nur an
+ * einen anderen Platz gehaengt werden (`useStableSlot`): Ein Fensterwechsel
+ * waehrend einer Aufnahme baut weder den Notizblock noch das Live-Transkript
+ * oder die Aufnahmekarte neu.
  */
 export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
   layout,
@@ -139,6 +150,7 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
   onRightTab,
   idleTranscript,
   chatBody,
+  dropOverlay,
 }) => {
   const { t } = useTranslation();
   const { mode, sessions, right, split, sessionsColumn } = layout;
@@ -147,6 +159,13 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
   const drawerOpen = drawerWanted && !sessionsColumn;
   const showColumn = sessionsColumn || drawerOpen;
   const containerRef = layout.ref;
+  const splitRef = useRef<HTMLDivElement | null>(null);
+  const contentSlot = useStableSlot("flex min-h-0 min-w-0 flex-1 flex-col");
+  const controlsSlot = useStableSlot(
+    "max-h-full min-h-0 space-y-3 overflow-y-auto",
+    "rec-controls-area",
+  );
+  const lowerSlot = useStableSlot("flex min-h-0 min-w-0 flex-1 flex-col");
 
   // Nach einer Groessenaenderung kann die Schublade ueberfluessig werden.
   useEffect(() => {
@@ -259,13 +278,15 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
       </div>
     ) : null;
 
-  const content = (
+  // --- Die drei Hauptteile (leben in festen Elementen, siehe oben) ---------
+
+  const contentCard = (
     <div
       data-testid="rec-content"
+      data-rec-dropzone=""
       role="region"
       aria-label={t("meetings.layout.content")}
-      className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-mid-gray/20 bg-background"
-      style={narrow ? { flex: `${split.value} 1 0` } : { flex: "1 1 0" }}
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-mid-gray/20 bg-background"
     >
       <div
         data-testid="rec-content-scroll"
@@ -277,7 +298,15 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
           idleContent
         )}
       </div>
+      {dropOverlay}
     </div>
+  );
+
+  const controlsPiece = (
+    <>
+      {controls}
+      {detailActive && <div ref={slotRefs.controls} className="space-y-3" />}
+    </>
   );
 
   const transcriptTabs = [
@@ -285,89 +314,96 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
     { id: "chat" as const, label: t("meetings.chat.ask") },
   ];
 
+  const lowerCard = (
+    <div
+      data-testid="rec-lower"
+      className="flex min-h-[8rem] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-mid-gray/20 bg-background"
+    >
+      <TabList
+        compact
+        tabs={transcriptTabs}
+        value={rightTab}
+        onChange={onRightTab}
+        ariaLabel={t("meetings.layout.lowerTabs")}
+        className="shrink-0 border-b border-mid-gray/20 px-3"
+      />
+      <div
+        role="tabpanel"
+        hidden={rightTab !== "transcript"}
+        className={
+          rightTab === "transcript" ? "flex min-h-0 flex-1 flex-col" : "hidden"
+        }
+        data-testid="rec-transcript"
+      >
+        {detailActive ? (
+          <div
+            ref={slotRefs.transcript}
+            className="flex min-h-0 flex-1 flex-col gap-2 px-3 py-2"
+          />
+        ) : (
+          idleTranscript
+        )}
+      </div>
+      {(chatSeen || rightTab === "chat") && (
+        <div
+          role="tabpanel"
+          hidden={rightTab !== "chat"}
+          className={
+            rightTab === "chat" ? "flex min-h-0 flex-1 flex-col" : "hidden"
+          }
+          data-testid="rec-chat"
+        >
+          {chatBody}
+        </div>
+      )}
+    </div>
+  );
+
+  // --- Plaetze der drei Hauptteile je nach Breite ---------------------------
+
+  const contentHost = (
+    <div
+      ref={contentSlot.host}
+      className="flex min-h-0 min-w-0 flex-col"
+      style={narrow ? { flex: `${split.value} 1 0` } : { flex: "1 1 0" }}
+    />
+  );
+
   const rightColumn = (
     <div
       data-testid="rec-controls"
       role="region"
       aria-label={t("meetings.layout.controls")}
       className="flex min-h-0 min-w-0 flex-col gap-2"
-      style={
-        narrow
-          ? { flex: `${100 - split.value} 1 0` }
-          : { width: `${right.width}px`, flexShrink: 0 }
-      }
+      style={{ width: `${right.width}px`, flexShrink: 0 }}
     >
-      {!narrow && (
-        <div className="flex items-center justify-between px-1">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-text/60">
-            {t("meetings.layout.controls")}
-          </h2>
-          <button
-            type="button"
-            className={ICON_BUTTON}
-            title={t("meetings.layout.rightCollapse")}
-            aria-label={t("meetings.layout.rightCollapse")}
-            data-testid="right-collapse"
-            // Waehrend einer Aufnahme sitzt dort der Stopp-Knopf.
-            disabled={layout.recording}
-            onClick={() => right.setCollapsed(true)}
-          >
-            <PanelRightClose width={16} height={16} aria-hidden="true" />
-          </button>
-        </div>
-      )}
+      <div className="flex items-center justify-between px-1">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-text/60">
+          {t("meetings.layout.controls")}
+        </h2>
+        <button
+          type="button"
+          className={ICON_BUTTON}
+          title={t("meetings.layout.rightCollapse")}
+          aria-label={t("meetings.layout.rightCollapse")}
+          data-testid="right-collapse"
+          // Waehrend einer Aufnahme sitzt dort der Stopp-Knopf.
+          disabled={layout.recording}
+          onClick={() => right.setCollapsed(true)}
+        >
+          <PanelRightClose width={16} height={16} aria-hidden="true" />
+        </button>
+      </div>
       <div
-        data-testid="rec-controls-area"
-        className="min-h-0 space-y-3 overflow-y-auto"
+        className="flex min-h-0 flex-col"
         style={{ flex: "0 1 auto", maxHeight: "55%" }}
       >
-        {controls}
-        {detailActive && <div ref={slotRefs.controls} className="space-y-3" />}
+        <div ref={controlsSlot.host} className="flex min-h-0 flex-col" />
       </div>
       <div
-        data-testid="rec-lower"
-        className="flex min-h-[8rem] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-mid-gray/20 bg-background"
-      >
-        <TabList
-          compact
-          tabs={transcriptTabs}
-          value={rightTab}
-          onChange={onRightTab}
-          ariaLabel={t("meetings.layout.lowerTabs")}
-          className="shrink-0 border-b border-mid-gray/20 px-3"
-        />
-        <div
-          role="tabpanel"
-          hidden={rightTab !== "transcript"}
-          className={
-            rightTab === "transcript"
-              ? "flex min-h-0 flex-1 flex-col"
-              : "hidden"
-          }
-          data-testid="rec-transcript"
-        >
-          {detailActive ? (
-            <div
-              ref={slotRefs.transcript}
-              className="flex min-h-0 flex-1 flex-col gap-2 px-3 py-2"
-            />
-          ) : (
-            idleTranscript
-          )}
-        </div>
-        {(chatSeen || rightTab === "chat") && (
-          <div
-            role="tabpanel"
-            hidden={rightTab !== "chat"}
-            className={
-              rightTab === "chat" ? "flex min-h-0 flex-1 flex-col" : "hidden"
-            }
-            data-testid="rec-chat"
-          >
-            {chatBody}
-          </div>
-        )}
-      </div>
+        ref={lowerSlot.host}
+        className="flex min-h-[8rem] min-w-0 flex-1 flex-col"
+      />
     </div>
   );
 
@@ -393,60 +429,99 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
   );
 
   return (
-    <div
-      ref={containerRef}
-      data-mode={mode}
-      className={`rec-workspace relative flex h-full min-h-0 w-full items-stretch ${
-        narrow ? "flex-col gap-2" : "gap-4"
-      }`}
-    >
-      {sessionsRail}
-      {sessionsColumnEl}
-      {drawerOpen && (
-        <div
-          className="absolute inset-0 z-20 rounded-lg bg-black/30"
-          onClick={() => setDrawerOpen(false)}
-          aria-hidden="true"
-        />
-      )}
-      {sessionsColumn && (
-        <ResizeHandle
-          testId="resize-sessions"
-          label={t("meetings.projects.resize")}
-          direction={1}
-          value={sessions.width}
-          min={sessions.min}
-          max={sessions.max}
-          defaultValue={sessions.def}
-          onChange={sessions.set}
-        />
-      )}
-      {content}
-      {narrow ? (
-        <SplitHandle
-          container={containerRef}
-          value={split.value}
-          min={split.min}
-          max={split.max}
-          defaultValue={split.def}
-          label={t("meetings.layout.split")}
-          onChange={split.set}
-        />
-      ) : (
-        !right.collapsed && (
-          <ResizeHandle
-            testId="resize-right"
-            label={t("meetings.layout.resizeRight")}
-            direction={-1}
-            value={right.width}
-            min={right.min}
-            max={right.max}
-            defaultValue={right.def}
-            onChange={right.set}
+    <>
+      <div
+        ref={containerRef}
+        data-mode={mode}
+        className={`rec-workspace relative flex h-full min-h-0 w-full items-stretch ${
+          narrow ? "flex-col gap-2" : "gap-4"
+        }`}
+      >
+        {sessionsRail}
+        {sessionsColumnEl}
+        {drawerOpen && (
+          <div
+            className="absolute inset-0 z-20 rounded-lg bg-black/30"
+            onClick={() => setDrawerOpen(false)}
+            aria-hidden="true"
           />
-        )
-      )}
-      {right.collapsed && !narrow ? rightRail : rightColumn}
-    </div>
+        )}
+        {sessionsColumn && (
+          <ResizeHandle
+            testId="resize-sessions"
+            label={t("meetings.projects.resize")}
+            direction={1}
+            value={sessions.width}
+            min={sessions.min}
+            max={sessions.max}
+            defaultValue={sessions.def}
+            onChange={sessions.set}
+          />
+        )}
+        {narrow ? (
+          <>
+            {/* Aufnahmezeile (Start/Import oder laufende Aufnahme) samt
+                Wiedergabe und Fortschritt: steht fest ueber der Teilung. */}
+            <div
+              data-testid="rec-strip"
+              role="region"
+              aria-label={t("meetings.layout.controls")}
+              className="flex min-h-0 shrink-0 flex-col"
+              style={{ maxHeight: "40%" }}
+            >
+              <div ref={controlsSlot.host} className="flex min-h-0 flex-col" />
+            </div>
+            <div
+              ref={splitRef}
+              className="flex min-h-0 flex-1 flex-col gap-2"
+              data-testid="rec-split"
+            >
+              {contentHost}
+              <SplitHandle
+                container={splitRef}
+                value={split.value}
+                min={split.min}
+                max={split.max}
+                defaultValue={split.def}
+                label={t("meetings.layout.split")}
+                onChange={split.set}
+              />
+              <div
+                data-testid="rec-controls"
+                role="region"
+                aria-label={t("meetings.layout.lowerTabs")}
+                className="flex min-h-0 min-w-0 flex-col"
+                style={{ flex: `${100 - split.value} 1 0` }}
+              >
+                <div
+                  ref={lowerSlot.host}
+                  className="flex min-h-0 flex-1 flex-col"
+                />
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            {contentHost}
+            {!right.collapsed && (
+              <ResizeHandle
+                testId="resize-right"
+                label={t("meetings.layout.resizeRight")}
+                direction={-1}
+                value={right.width}
+                min={right.min}
+                max={right.max}
+                defaultValue={right.def}
+                onChange={right.set}
+              />
+            )}
+            {right.collapsed ? rightRail : rightColumn}
+          </>
+        )}
+      </div>
+      {createPortal(contentCard, contentSlot.el)}
+      {createPortal(controlsPiece, controlsSlot.el)}
+      {createPortal(lowerCard, lowerSlot.el)}
+    </>
   );
 };

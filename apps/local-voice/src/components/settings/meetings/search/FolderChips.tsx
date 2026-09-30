@@ -24,6 +24,8 @@ export interface ContextMenuItem {
   label: string;
   onSelect: () => void;
   danger?: boolean;
+  /** Gesperrt: sichtbar, aber nicht waehlbar. */
+  disabled?: boolean;
 }
 
 interface ContextMenuProps {
@@ -89,7 +91,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           key={item.label}
           type="button"
           role="menuitem"
-          className={`flex w-full min-h-[36px] cursor-pointer items-center px-3 text-start text-sm hover:bg-mid-gray/15 focus-visible:outline-none focus-visible:bg-mid-gray/15 ${
+          disabled={item.disabled}
+          className={`flex w-full min-h-[36px] cursor-pointer items-center px-3 text-start text-sm hover:bg-mid-gray/15 focus-visible:outline-none focus-visible:bg-mid-gray/15 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent ${
             item.danger ? "text-red-400" : "text-text/80 hover:text-text"
           }`}
           onClick={() => {
