@@ -237,3 +237,4 @@ Modell mit CC-BY-NC-4.0 (Canary 1B); es ist nicht vorgewählt und wird nicht fü
   Kaltstart, Electron) ausreicht, bevor die Zwischenablage zurückgesetzt wird.
 
 - Besprechungen, Protokoll-Pfad (ältere Funktion „Protokoll“): Bei sehr langen Aufnahmen kann ein zu großer Abschnitt noch unbemerkt fehlen; die KI-Notizen sind davon nicht betroffen (seit P1i Warnung statt Lücke). Mit Qwen3.5-9B dauern KI-Notizen einer Stunde rund 3 min, mit Gemma 4 E4B rund 2,5 min nach Stopp.
+- Sprechertrennung: Sehr ähnlich klingende Stimmen (z. B. drei TTS-Stimmen mit fast gleicher Tonhöhe) werden zu einem Sprecher zusammengelegt; Test mit dem Hörspiel „Emilia, Sofie und Mara“: 4 von 7 Stimmen erkannt, DER 33,8 %. Deutlich verschiedene Stimmen werden zuverlässig getrennt. Sprecher lassen sich von Hand korrigieren; eine Nachtrennung per Stimmprofil folgt.

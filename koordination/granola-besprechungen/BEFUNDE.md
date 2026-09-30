@@ -80,3 +80,9 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Konsequenz: P1k (Laufzustand im Backend, Doppelstart abgewiesen, Fortschrittswerte) + P8a (Phase Protokoll/KI-Notizen mit Balken, Pause/Stopp).
 - Status: offen
 
+## B15 — P3e: ähnlich klingende Stimmen verschmelzen (Hörspiel Emilia/Sofie/Mara) (30.09.)
+- Beobachtet: 4 von 7 Stimmen erkannt, DER 33,84 % (Verwechslung 30,79 %); die drei Schwestern (Grundfrequenz 258/262/267 Hz) laufen als ein Sprecher, auch in 3-min-Ausschnitten. Erzähler, Leo, Patrick zu 100 % richtig. Nemotron 31,95 %, gleiches Muster. Nachtuning hilft nicht.
+- Beleg: abnahme/p3e-hoerspiel.md.
+- Konsequenz: AK7 (AMI + deutsches Fixture) formal unberührt; Grenze in KNOWN-LIMITATIONS. Lösungsansatz Nachschritt mit Stimm-Embeddings (ERes2Net trennt die Schwestern mit Labels zu 97,5 %) -> Folge-Goal zusammen mit P3d.
+- Status: erledigt (dokumentiert, Lösung im Folge-Goal P3d)
+
