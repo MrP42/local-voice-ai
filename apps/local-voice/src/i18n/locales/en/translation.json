@@ -1909,7 +1909,31 @@
       "copy": "Copy minutes",
       "copyError": "Could not copy the minutes",
       "loadError": "The minutes could not be loaded: {{error}}",
-      "autoSaved": "Automatically filed as:"
+      "autoSaved": "Automatically filed as:",
+      "createdWith": "Generated with the template: {{title}}",
+      "createdWithAuto": "Generated with the template: {{title}} (chosen automatically)",
+      "incomplete": "The minutes are incomplete: the meeting at {{gaps}} could not be evaluated. The full transcript is kept.",
+      "progressLabel": "Minutes progress",
+      "phase": {
+        "template": "Choosing the template …",
+        "write": "Evaluating the transcript …",
+        "merge": "Merging the parts …"
+      },
+      "stepOf": "Step {{done}} of {{total}}",
+      "cancelled": "Generation was cancelled.",
+      "errors": {
+        "minutes_busy": "Minutes are already being generated for this meeting.",
+        "minutes_cancelled": "Generation was cancelled.",
+        "meeting_not_found": "The meeting no longer exists.",
+        "meeting_not_finished": "The recording is still running. Minutes can only be generated after it has stopped.",
+        "no_transcript": "There is no transcript yet to write minutes from.",
+        "template_not_found": "This template no longer exists. Please choose another one.",
+        "no_provider": "No language model set up (Settings → Post-processing).",
+        "no_model": "No model entered for the provider (Settings → Post-processing → Model).",
+        "memory_low": "Not enough free memory for the language model. Please close other programs and try again.",
+        "llm_failed": "The language model did not deliver usable minutes: {{error}}",
+        "store_failed": "The minutes could not be saved: {{error}}"
+      }
     },
     "language": {
       "title": "Transcription language",
@@ -1972,7 +1996,13 @@
     },
     "templates": {
       "label": "Template",
-      "manage": "Manage templates …",
+      "auto": "Automatic (by content)",
+      "autoChosen": "Automatic: {{title}}",
+      "autoPending": "Chosen from the content when generating.",
+      "autoUncertain": "Unclear – the standard template is used.",
+      "autoFailed": "The choice by content did not work – the standard template is used.",
+      "autoReason": "Reason: {{reason}}",
+      "manage":"Manage templates …",
       "title": "Templates",
       "description": "A template defines how notes and transcript become structured meeting notes.",
       "close": "Close",

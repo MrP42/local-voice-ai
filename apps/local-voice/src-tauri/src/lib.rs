@@ -1785,6 +1785,11 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::meetings_import_file,
             commands::meetings::meetings_generate_minutes,
             commands::meetings::meetings_minutes_file,
+            // P1k
+            commands::meeting_minutes::meetings_minutes_state,
+            commands::meeting_minutes::meetings_minutes_cancel,
+            commands::meeting_minutes::meetings_minutes_meta,
+            commands::meeting_minutes::meetings_get_auto_template,
             commands::meetings::meetings_export_document,
             // M1-P1c
             commands::meeting_notes::meeting_notes_get,
@@ -1997,6 +2002,8 @@ pub fn run(cli_args: CliArgs) {
             managers::meetings::recorder::MeetingEvent,
             // M1-P1b
             commands::meeting_enhance::MeetingNotesEvent,
+            // P1k
+            commands::meeting_minutes::MinutesEvent,
             // M4-P4b
             managers::meetings::search::indexer::MeetingIndexEvent,
             // M5-P5c
@@ -2035,6 +2042,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.bench_search // M4-P4a
         || cli_args.simulate_meeting // M2-P2c2
         || cli_args.eval_notes.is_some() // M1-P1e
+        || cli_args.eval_minutes.is_some() // M1-P1k
         || cli_args.reindex_meetings // M4-P4b
         || cli_args.eval_diarization.is_some() // M3-P3a
         || cli_args.eval_chat.is_some() // M4-P4f
@@ -2313,6 +2321,23 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_eval_notes(&app_handle, &args, &dir)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // M1-P1k: Vorlagenwahl und Protokoll auf synthetischen Fixtures in
+                // einem Sandbox-Store; braucht nur das Sprachmodell.
+                if let Some(dir) = cli_args.eval_minutes.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_eval_minutes(&app_handle, &args, &dir)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -3122,6 +3147,76 @@ fn run_headless_eval_notes(app: &AppHandle, args: &CliArgs, dir: &std::path::Pat
         emit_headless_payload(&payload, args.out.as_deref());
     } else {
         for line in eval::summary_lines(&payload) {
+            println!("{line}");
+        }
+        if let Some(path) = args.out.as_deref() {
+            match std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                Ok(()) => eprintln!("wrote {}", path.display()),
+                Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
+    code
+}
+
+// M1-P1k: `--eval-minutes <dir> [--model id] [--minutes-template id|auto]`. Vorlagenwahl
+// und Protokoll gegen synthetische Fixtures mit dem eingestellten (oder per
+// `--model` gewaehlten lokalen) Sprachmodell. Sandbox-Store im Temp-Ordner, nie
+// die produktive meetings.db; Server-Zugriffe und Speicherwaechter wie in
+// `run_headless_eval_notes`. Exit 0 ok, 3 falsche Vorlage oder Luecke, 1 Fehler.
+fn run_headless_eval_minutes(app: &AppHandle, args: &CliArgs, dir: &std::path::Path) -> i32 {
+    use managers::meetings::notes::{eval, eval_minutes};
+
+    crate::selftest::begin_headless_run();
+    let mut settings = get_settings(app);
+    if let Some(model) = args.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        eval::apply_model_override(&mut settings, model.trim());
+    }
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+    let sandbox = match tempfile::Builder::new().prefix("lva-eval-minutes-").tempdir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("error: no sandbox directory: {e}");
+            return 1;
+        }
+    };
+    eprintln!("eval-minutes: Sandbox {}", sandbox.path().display());
+    let template = args
+        .minutes_template
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .unwrap_or("auto");
+    let (code, payload) = tauri::async_runtime::block_on(eval_minutes::run_cli(
+        settings,
+        dir,
+        sandbox.path(),
+        template,
+    ));
+    llm_server.stop();
+
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        for line in eval_minutes::summary_lines(&payload) {
             println!("{line}");
         }
         if let Some(path) = args.out.as_deref() {

@@ -34,7 +34,8 @@ use super::model::{
     NoteBlockKind, Origin, SectionKind, TemplateInfo, TemplateSection, TemplateSpec, SOURCE_AI,
     SOURCE_USER, STATUS_DONE, STATUS_TODO,
 };
-use super::templates::{builtin_templates, DEFAULT_TEMPLATE_ID};
+#[cfg(test)]
+use super::templates::builtin_templates;
 use crate::managers::meetings::llm_call::{
     ask_json, build_head_with, head_facts_block, is_splittable_error, is_truncation_error, mm_ss,
     resolve_provider_coded, retry_chunk, should_retry, sorted_segments, AskOptions, MeetingHead,
@@ -288,7 +289,7 @@ pub async fn single_pass_budget_chars(model: &str, local: bool) -> usize {
 
 /// Wie die Groesse eines fertigen Prompts bestimmt wird.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Meter {
+pub(crate) enum Meter {
     /// `/tokenize` des laufenden lokalen Servers (Wurzeladresse ohne `/v1`):
     /// die exakte Zahl, mit dem Tokenizer des Modells.
     Exact(String),
@@ -300,9 +301,9 @@ enum Meter {
 /// Kontext) rechnet der Lauf in Zeichen: entfernte Anbieter (grosse Kontexte,
 /// kein `/tokenize`) und die Tests mit fester Zeichenvorgabe.
 #[derive(Clone, Debug)]
-struct TokenPlan {
-    budget: TokenBudget,
-    meter: Meter,
+pub(crate) struct TokenPlan {
+    pub(crate) budget: TokenBudget,
+    pub(crate) meter: Meter,
 }
 
 impl TokenPlan {
@@ -310,7 +311,7 @@ impl TokenPlan {
     /// wird. Startet den Server (das Modell wird ohnehin gebraucht); scheitert
     /// das (RAM-Tor, Absturz), rechnet der Plan mit der Schaetzung, und der
     /// erste echte Aufruf meldet den Fehler mit dem richtigen Code.
-    async fn for_local(model: &str) -> Self {
+    pub(crate) async fn for_local(model: &str) -> Self {
         let context = crate::managers::llm::context_for_model(model).await;
         let meter = match crate::managers::llm::local_server_root(model).await {
             Some(root) => Meter::Exact(root),
@@ -325,13 +326,13 @@ impl TokenPlan {
         }
     }
 
-    fn is_exact(&self) -> bool {
+    pub(crate) fn is_exact(&self) -> bool {
         matches!(self.meter, Meter::Exact(_))
     }
 
     /// Token eines Textes, exakt oder geschaetzt. Faellt eine exakte Messung
     /// aus (Server weg), gilt die Schaetzung fuer diesen Text.
-    async fn text_tokens(&self, text: &str) -> usize {
+    pub(crate) async fn text_tokens(&self, text: &str) -> usize {
         if let Meter::Exact(root) = &self.meter {
             if let Some(count) = crate::managers::llm::tokenize_count(root, text).await {
                 return count;
@@ -342,7 +343,7 @@ impl TokenPlan {
     }
 
     /// Token eines fertigen Prompts: System-Prompt und Nutzertext.
-    async fn prompt_tokens(&self, system: &str, user: &str) -> usize {
+    pub(crate) async fn prompt_tokens(&self, system: &str, user: &str) -> usize {
         self.text_tokens(system).await + self.text_tokens(user).await
     }
 }
@@ -1319,44 +1320,38 @@ fn total_entries(sections: &[EnhancedSection]) -> usize {
     sections.iter().map(|s| s.entries.len()).sum()
 }
 
-/// Die Vorlage eines Laufs: ausdruecklich gewaehlt (unbekannt = Fehler),
-/// sonst die der Besprechung, sonst die Standardvorlage. Eine geloeschte
-/// Vorlage der Besprechung faellt still auf die Standardvorlage zurueck.
-fn resolve_template(
+/// Die Vorlage eines Laufs: ausdruecklich gewaehlt (unbekannt = Fehler), sonst
+/// die der Besprechung, sonst die Standardvorlage; eine geloeschte Vorlage der
+/// Besprechung faellt still auf die Standardvorlage zurueck. P1k: ist "auto"
+/// gewaehlt, waehlt das Modell nach dem Inhalt (`classify`); eine Nutzerwahl wird
+/// nie ueberstimmt. Das Ergebnis traegt die Wahl mit Begruendung.
+async fn resolve_template(
+    settings: &AppSettings,
     store: &MeetingStore,
-    meeting_id: &str,
+    meeting: &crate::managers::meetings::store::Meeting,
+    segments: &[StoredSegment],
+    labels: &SpeakerDirectory,
     explicit: Option<&str>,
-) -> Result<TemplateInfo, EnhanceError> {
-    if let Some(id) = explicit.map(str::trim).filter(|id| !id.is_empty()) {
-        return store
-            .get_template_info(id)
-            .map_err(store_err)?
-            .ok_or_else(|| EnhanceError::code_only("template_not_found"));
-    }
-    if let Some(id) = store.meeting_template_id(meeting_id).map_err(store_err)? {
-        if let Some(info) = store.get_template_info(&id).map_err(store_err)? {
-            return Ok(info);
-        }
-    }
-    if let Some(info) = store
-        .get_template_info(DEFAULT_TEMPLATE_ID)
-        .map_err(store_err)?
-    {
-        return Ok(info);
-    }
-    // Der Katalog wird beim Oeffnen des Stores eingespielt; das hier ist der
-    // Notnagel fuer eine beschaedigte Vorlagentabelle.
-    builtin_templates()
-        .into_iter()
-        .find(|(key, _, _)| super::templates::builtin_id(key) == DEFAULT_TEMPLATE_ID)
-        .map(|(_, title, spec)| TemplateInfo {
-            id: DEFAULT_TEMPLATE_ID.to_string(),
-            title: title.to_string(),
-            builtin: true,
-            spec,
-            updated_at: 0,
-        })
-        .ok_or_else(|| EnhanceError::code_only("template_not_found"))
+) -> Result<super::classify::Resolved, EnhanceError> {
+    use super::classify::{resolve_template, ResolveError, ResolveInput, CLASSIFY_TIMEOUT};
+    resolve_template(
+        &ResolveInput {
+            settings,
+            purpose: Purpose::EnhancedNotes,
+            store,
+            meeting_id: &meeting.id,
+            title: &meeting.title,
+            segments,
+            labels,
+            timeout: CLASSIFY_TIMEOUT,
+        },
+        explicit,
+    )
+    .await
+    .map_err(|e| match e {
+        ResolveError::NotFound => EnhanceError::code_only("template_not_found"),
+        ResolveError::Store(message) => EnhanceError::new("store_failed", message),
+    })
 }
 
 fn check_finished(status: &str) -> Result<(), EnhanceError> {
@@ -1438,10 +1433,12 @@ async fn run_enhance(
             "Kein Transkript vorhanden",
         ));
     }
-    let info = resolve_template(&store, meeting_id, template_id)?;
     let blocks = store.get_notes(meeting_id).map_err(store_err)?.blocks;
 
     let labels = SpeakerDirectory::load(&store, meeting_id);
+    let resolved =
+        resolve_template(settings, &store, &meeting, &segments, &labels, template_id).await?;
+    let (info, auto) = (resolved.info, resolved.auto);
     // P1i: lokal rechnet der Lauf in Token (Kontext, `/tokenize`); eine feste
     // Zeichenvorgabe (Tests) und entfernte Anbieter rechnen in Zeichen.
     let tokens = if local && limits.budget_chars.is_none() {
@@ -1548,6 +1545,12 @@ async fn run_enhance(
         "chunks_failed": notes.stats.chunks_failed,
         "chunks_split": chunks_split,
         "incomplete": !notes.stats.chunks_failed.is_empty(),
+        "template_id": info.id,
+        "auto": auto.as_ref().map(|d| json!({
+            "template_id": d.template_id,
+            "reason": d.reason,
+            "outcome": d.outcome,
+        })),
     });
     persist(&store, meeting_id, &notes, &ctx.blocks, metadata)
 }
@@ -2952,6 +2955,68 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(doc.template_id.as_deref(), Some("builtin:allgemein"));
+    }
+
+    /// P1k: "Automatisch (nach Inhalt)" waehlt vor dem Erzeugen eine Vorlage; die
+    /// Wahl steht mit Begruendung in den Metadaten. Eine Nutzerwahl loest nie eine
+    /// Klassifikation aus und wird nie ueberstimmt.
+    #[tokio::test]
+    async fn auto_picks_the_template_by_content_and_a_users_choice_never_asks_the_model() {
+        let fx = fixture(3);
+        let sales = fx.store.get_template_info("builtin:vertrieb").unwrap().unwrap();
+        let first_id = sales.spec.sections[0].id.clone();
+        let reply: Value = sales
+            .spec
+            .sections
+            .iter()
+            .map(|s| {
+                let entries = if s.id == first_id {
+                    json!([{"ref": null, "text": "Kunde will ein Angebot.", "sources": ["S1"]}])
+                } else {
+                    json!([])
+                };
+                (s.id.clone(), entries)
+            })
+            .collect::<serde_json::Map<String, Value>>()
+            .into();
+        let classify_calls = Arc::new(AtomicUsize::new(0));
+        let counter = classify_calls.clone();
+        let port = spawn_llm_mock_with(move |body| {
+            if body.contains("Templates (choose one id)") {
+                counter.fetch_add(1, Ordering::SeqCst);
+                return ok_body(json!({
+                    "reason": "Angebot fuer einen Kunden",
+                    "template_id": "builtin:vertrieb"
+                }));
+            }
+            ok_body(reply.clone())
+        })
+        .await;
+        let settings = settings_with_mock_provider(port);
+
+        // Gewaehlt in der Besprechung: "auto".
+        fx.store.set_meeting_template(&fx.meeting_id, Some("auto")).unwrap();
+        let doc = run(&fx, &settings, None, limits(None)).await.unwrap();
+        assert_eq!(doc.template_id.as_deref(), Some("builtin:vertrieb"));
+        assert_eq!(body_of(&doc).template_title, sales.title);
+        assert_eq!(classify_calls.load(Ordering::SeqCst), 1);
+        let meta = metadata_of(&fx, &doc);
+        assert_eq!(meta["template_id"], json!("builtin:vertrieb"));
+        assert_eq!(meta["auto"]["outcome"], json!("model"));
+        assert_eq!(meta["auto"]["reason"], json!("Angebot fuer einen Kunden"));
+
+        // Derselbe Inhalt (etwa das Protokoll danach): die Wahl wird wiederverwendet.
+        run(&fx, &settings, None, limits(None)).await.unwrap();
+        assert_eq!(classify_calls.load(Ordering::SeqCst), 1);
+
+        // Eine gemerkte Nutzerwahl gilt ohne jede Klassifikation. (Der Mock antwortet
+        // mit den Abschnitten der Vertriebsvorlage: fuer Jour fixe ein leeres
+        // Ergebnis, das Ergebnis des Laufs ist hier nicht der Punkt.)
+        fx.store
+            .set_meeting_template(&fx.meeting_id, Some("builtin:jour_fixe"))
+            .unwrap();
+        let _ = run(&fx, &settings, None, limits(None)).await;
+        assert_eq!(classify_calls.load(Ordering::SeqCst), 1, "Nutzerwahl: keine Klassifikation");
     }
 
     #[tokio::test]

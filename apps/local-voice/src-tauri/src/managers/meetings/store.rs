@@ -2036,6 +2036,23 @@ impl MeetingStore {
 
     // ---- Dokumente -------------------------------------------------------
 
+    /// P1k: the `generation_metadata_json` a document was written with (model,
+    /// template, blocks that could not be evaluated). `None` for an unknown or
+    /// deleted document and for rows written without metadata. Not part of
+    /// `MeetingDocument` because most readers never need it.
+    pub fn document_generation_metadata(&self, document_id: &str) -> Result<Option<String>> {
+        let conn = self.get_connection()?;
+        let text: Option<Option<String>> = conn
+            .query_row(
+                "SELECT generation_metadata_json FROM meeting_documents
+                 WHERE id = ?1 AND deleted_at IS NULL",
+                params![document_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(text.flatten())
+    }
+
     pub fn get_document(&self, document_id: &str) -> Result<Option<MeetingDocument>> {
         let conn = self.get_connection()?;
         let doc = conn

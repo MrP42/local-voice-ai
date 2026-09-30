@@ -1909,7 +1909,31 @@
       "copy": "Protokoll kopieren",
       "copyError": "Das Protokoll konnte nicht kopiert werden",
       "loadError": "Das Protokoll konnte nicht geladen werden: {{error}}",
-      "autoSaved": "Automatisch abgelegt unter:"
+      "autoSaved": "Automatisch abgelegt unter:",
+      "createdWith": "Erzeugt mit der Vorlage: {{title}}",
+      "createdWithAuto": "Erzeugt mit der Vorlage: {{title}} (automatisch gewählt)",
+      "incomplete": "Das Protokoll ist unvollständig: Die Besprechung bei {{gaps}} konnte nicht ausgewertet werden. Das vollständige Transkript bleibt erhalten.",
+      "progressLabel": "Fortschritt des Protokolls",
+      "phase": {
+        "template": "Vorlage wird gewählt …",
+        "write": "Transkript wird ausgewertet …",
+        "merge": "Teile werden zusammengeführt …"
+      },
+      "stepOf": "Schritt {{done}} von {{total}}",
+      "cancelled": "Die Erzeugung wurde abgebrochen.",
+      "errors": {
+        "minutes_busy": "Für diese Besprechung wird schon ein Protokoll erzeugt.",
+        "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",
+        "meeting_not_found": "Die Besprechung gibt es nicht mehr.",
+        "meeting_not_finished": "Die Aufnahme läuft noch. Das Protokoll kann erst nach dem Stopp erzeugt werden.",
+        "no_transcript": "Es gibt noch kein Transkript, aus dem ein Protokoll entstehen könnte.",
+        "template_not_found": "Diese Vorlage gibt es nicht mehr. Bitte eine andere wählen.",
+        "no_provider": "Kein Sprachmodell eingerichtet (Einstellungen → Nachbearbeitung).",
+        "no_model": "Für den Anbieter ist kein Modell eingetragen (Einstellungen → Nachbearbeitung → Modell).",
+        "memory_low": "Zu wenig freier Arbeitsspeicher für das Sprachmodell. Bitte andere Programme schließen und erneut versuchen.",
+        "llm_failed": "Das Sprachmodell hat kein brauchbares Protokoll geliefert: {{error}}",
+        "store_failed": "Das Protokoll konnte nicht gespeichert werden: {{error}}"
+      }
     },
     "language": {
       "title": "Transkriptionssprache",
@@ -1972,6 +1996,12 @@
     },
     "templates": {
       "label": "Vorlage",
+      "auto": "Automatisch (nach Inhalt)",
+      "autoChosen": "Automatisch: {{title}}",
+      "autoPending": "Wird beim Erzeugen nach dem Inhalt gewählt.",
+      "autoUncertain": "Nicht eindeutig – es gilt die Standardvorlage.",
+      "autoFailed": "Die Wahl nach Inhalt hat nicht geklappt – es gilt die Standardvorlage.",
+      "autoReason": "Begründung: {{reason}}",
       "manage": "Vorlagen verwalten …",
       "title": "Vorlagen",
       "description": "Eine Vorlage legt fest, wie aus Notizen und Transkript geordnete Besprechungsnotizen werden.",

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::managers::meetings::import::import_media_file;
-use crate::managers::meetings::minutes::{generate_minutes, latest_minutes_file};
+use crate::managers::meetings::minutes::latest_minutes_file;
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 use crate::managers::meetings::retention::delete_audio_files;
 use crate::managers::meetings::retranscribe::retranscribe_meeting;
@@ -168,18 +168,23 @@ pub async fn meetings_delete(
     Ok(())
 }
 
-/// Generates the standardized minutes for a finished meeting and stores them
-/// as a new document version. The meeting status stays untouched — a failed
-/// generation leaves a 'ready' meeting 'ready' and only returns the error.
+/// Generates the minutes for a finished meeting, following a template, and
+/// stores them as a new document version. `template_id`: a template id, `"auto"`
+/// (chosen by content) or `None` (the meeting's own choice, else the standard
+/// template). The meeting status stays untouched — a failed generation leaves a
+/// 'ready' meeting 'ready' and only returns the error. One run per meeting: a
+/// second start is refused with `minutes_busy` (P1k, B14).
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_generate_minutes(
     app: tauri::AppHandle,
     store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
+    template_id: Option<String>,
 ) -> Result<MeetingDocument, String> {
     let store = Arc::clone(&store);
-    generate_minutes(&app, store, &meeting_id).await
+    super::meeting_minutes::generate_and_notify(&app, store, &meeting_id, template_id.as_deref())
+        .await
 }
 
 /// Where this meeting's minutes were filed as Markdown, if the file is there.

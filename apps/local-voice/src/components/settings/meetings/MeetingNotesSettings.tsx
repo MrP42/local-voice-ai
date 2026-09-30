@@ -5,7 +5,7 @@ import {
   type MeetingEchoCancellation,
   type TemplateInfo,
 } from "@/bindings";
-import { DEFAULT_TEMPLATE_ID } from "@/lib/meetingNotes";
+import { AUTO_TEMPLATE_ID, DEFAULT_TEMPLATE_ID } from "@/lib/meetingNotes";
 import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
@@ -33,15 +33,20 @@ export const MeetingNotesSettings: React.FC = () => {
     };
   }, []);
 
-  const options = templates.map((info) => ({
-    value: info.id,
-    label: info.title,
-  }));
+  // P1k: "Automatisch (nach Inhalt)" als Standardoption fuer neue Aufnahmen.
+  const options = [
+    { value: AUTO_TEMPLATE_ID, label: t("meetings.templates.auto") },
+    ...templates.map((info) => ({
+      value: info.id,
+      label: info.title,
+    })),
+  ];
   const stored = getSetting("meeting_default_template_id") ?? null;
   // Eine geloeschte oder unbekannte Vorlage zeigt die Standardvorlage
   // (wie der Motor, der bei unbekannter ID darauf zurueckfaellt).
   const selected =
-    stored && templates.some((info) => info.id === stored)
+    stored === AUTO_TEMPLATE_ID ||
+    (stored && templates.some((info) => info.id === stored))
       ? stored
       : DEFAULT_TEMPLATE_ID;
 
