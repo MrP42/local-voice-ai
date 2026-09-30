@@ -1,0 +1,22 @@
+{
+  "viewport": {
+    "w": 1920,
+    "h": 1050
+  },
+  "document": {
+    "scrollHeight": 1050,
+    "innerHeight": 1050
+  },
+  "main": {
+    "scrollHeight": 998,
+    "clientHeight": 998,
+    "pageScrolls": false
+  },
+  "scrollables": [],
+  "tabTop": null,
+  "boxes": {
+    "jobPanel": null,
+    "transcript": null,
+    "notesPad": null
+  }
+}

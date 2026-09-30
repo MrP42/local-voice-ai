@@ -1,0 +1,678 @@
+{
+  "A-1920": {
+    "check": "…",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 1111
+    },
+    "sessions": {
+      "top": 74,
+      "h": 908,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 908,
+      "w": 1113
+    },
+    "controls": {
+      "top": 74,
+      "h": 908,
+      "w": 300
+    },
+    "notein": null,
+    "tx": {
+      "top": 187,
+      "h": 794,
+      "w": 1111
+    }
+  },
+  "A-1366": {
+    "check": "Eine Scrollbar je Bereich ✓ (1 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 557
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 559
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 300
+    },
+    "notein": null,
+    "tx": {
+      "top": 187,
+      "h": 512,
+      "w": 557
+    }
+  },
+  "A-900": {
+    "check": "Eine Scrollbar je Bereich ✓ (1 scrollend)",
+    "head": {
+      "top": 61,
+      "h": 140,
+      "w": 426
+    },
+    "sessions": {
+      "top": 60,
+      "h": 572,
+      "w": 44
+    },
+    "content": {
+      "top": 60,
+      "h": 572,
+      "w": 428
+    },
+    "controls": {
+      "top": 60,
+      "h": 572,
+      "w": 300
+    },
+    "notein": null,
+    "tx": {
+      "top": 201,
+      "h": 430,
+      "w": 426
+    }
+  },
+  "A-480": {
+    "check": "Eine Scrollbar je Bereich ✓ (1 scrollend)",
+    "head": null,
+    "sessions": null,
+    "content": {
+      "top": 140,
+      "h": 536,
+      "w": 456
+    },
+    "controls": null,
+    "notein": null,
+    "tx": {
+      "top": 177,
+      "h": 498,
+      "w": 454
+    }
+  },
+  "B-1920": {
+    "check": "Eine Scrollbar je Bereich ✓ (1 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 991
+    },
+    "sessions": {
+      "top": 74,
+      "h": 908,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 908,
+      "w": 993
+    },
+    "controls": {
+      "top": 74,
+      "h": 908,
+      "w": 420
+    },
+    "notein": {
+      "top": 935,
+      "h": 36,
+      "w": 925
+    },
+    "tx": {
+      "top": 303,
+      "h": 678,
+      "w": 418
+    }
+  },
+  "B-1366": {
+    "check": "Eine Scrollbar je Bereich ✓ (1 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 437
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 439
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 420
+    },
+    "notein": {
+      "top": 653,
+      "h": 36,
+      "w": 371
+    },
+    "tx": {
+      "top": 303,
+      "h": 396,
+      "w": 418
+    }
+  },
+  "B-900": {
+    "check": "Eine Scrollbar je Bereich ✓ (1 scrollend)",
+    "head": {
+      "top": 61,
+      "h": 140,
+      "w": 378
+    },
+    "sessions": {
+      "top": 60,
+      "h": 572,
+      "w": 44
+    },
+    "content": {
+      "top": 60,
+      "h": 572,
+      "w": 380
+    },
+    "controls": {
+      "top": 60,
+      "h": 572,
+      "w": 348
+    },
+    "notein": {
+      "top": 585,
+      "h": 36,
+      "w": 312
+    },
+    "tx": {
+      "top": 289,
+      "h": 342,
+      "w": 346
+    }
+  },
+  "B-480": {
+    "check": "Eine Scrollbar je Bereich ✓ (1 scrollend)",
+    "head": null,
+    "sessions": null,
+    "content": {
+      "top": 110,
+      "h": 278,
+      "w": 456
+    },
+    "controls": {
+      "top": 398,
+      "h": 278,
+      "w": 456
+    },
+    "notein": {
+      "top": 341,
+      "h": 36,
+      "w": 422
+    },
+    "tx": {
+      "top": 435,
+      "h": 240,
+      "w": 454
+    }
+  },
+  "B-480-startdialog": {
+    "check": "Eine Scrollbar je Bereich ✓ (1 scrollend)",
+    "head": null,
+    "sessions": null,
+    "content": {
+      "top": 110,
+      "h": 278,
+      "w": 456
+    },
+    "controls": {
+      "top": 398,
+      "h": 278,
+      "w": 456
+    },
+    "notein": {
+      "top": 341,
+      "h": 36,
+      "w": 422
+    },
+    "tx": {
+      "top": 435,
+      "h": 240,
+      "w": 454
+    }
+  },
+  "B-480-live": {
+    "check": "Eine Scrollbar je Bereich ✓ (0 scrollend)",
+    "head": null,
+    "sessions": null,
+    "content": {
+      "top": 110,
+      "h": 278,
+      "w": 456
+    },
+    "controls": {
+      "top": 398,
+      "h": 278,
+      "w": 456
+    },
+    "notein": {
+      "top": 341,
+      "h": 36,
+      "w": 422
+    },
+    "tx": {
+      "top": 435,
+      "h": 240,
+      "w": 454
+    }
+  },
+  "B-1366-live": {
+    "check": "Eine Scrollbar je Bereich ✓ (0 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 437
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 439
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 420
+    },
+    "notein": {
+      "top": 653,
+      "h": 36,
+      "w": 361
+    },
+    "tx": {
+      "top": 306,
+      "h": 393,
+      "w": 418
+    }
+  },
+  "A-1366-live": {
+    "check": "Eine Scrollbar je Bereich ✓ (0 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 557
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 559
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 300
+    },
+    "notein": null,
+    "tx": {
+      "top": 187,
+      "h": 512,
+      "w": 557
+    }
+  },
+  "A-480-live": {
+    "check": "Eine Scrollbar je Bereich ✓ (0 scrollend)",
+    "head": null,
+    "sessions": null,
+    "content": {
+      "top": 140,
+      "h": 536,
+      "w": 456
+    },
+    "controls": null,
+    "notein": null,
+    "tx": {
+      "top": 177,
+      "h": 498,
+      "w": 454
+    }
+  },
+  "A-1366-verarbeitung": {
+    "check": "Eine Scrollbar je Bereich ✓ (0 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 557
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 559
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 300
+    },
+    "notein": null,
+    "tx": {
+      "top": 187,
+      "h": 512,
+      "w": 557
+    }
+  },
+  "B-1366-verarbeitung": {
+    "check": "Eine Scrollbar je Bereich ✓ (0 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 140,
+      "w": 437
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 439
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 420
+    },
+    "notein": {
+      "top": 653,
+      "h": 36,
+      "w": 371
+    },
+    "tx": {
+      "top": 399,
+      "h": 300,
+      "w": 418
+    }
+  },
+  "B-1366-menue": {
+    "check": "Eine Scrollbar je Bereich ✓ (0 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 437
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 439
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 420
+    },
+    "notein": {
+      "top": 653,
+      "h": 36,
+      "w": 371
+    },
+    "tx": {
+      "top": 303,
+      "h": 396,
+      "w": 418
+    }
+  },
+  "B-1366-details": {
+    "check": "Eine Scrollbar je Bereich ✓ (1 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 437
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 439
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 420
+    },
+    "notein": {
+      "top": 653,
+      "h": 36,
+      "w": 371
+    },
+    "tx": {
+      "top": 303,
+      "h": 396,
+      "w": 418
+    }
+  },
+  "B-1366-ki-notizen-quelle": {
+    "check": "Eine Scrollbar je Bereich ✓ (2 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 437
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 439
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 420
+    },
+    "notein": null,
+    "tx": {
+      "top": 303,
+      "h": 396,
+      "w": 418
+    }
+  },
+  "A-1366-ki-notizen": {
+    "check": "Eine Scrollbar je Bereich ✓ (2 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 557
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 559
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 300
+    },
+    "notein": null,
+    "tx": null
+  },
+  "A-1366-fragen": {
+    "check": "Eine Scrollbar je Bereich ✓ (0 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 557
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 248
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 559
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 300
+    },
+    "notein": null,
+    "tx": null
+  },
+  "A-1366-dunkel-eingeklappt": {
+    "check": "Eine Scrollbar je Bereich ✓ (0 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 761
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 44
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 763
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 300
+    },
+    "notein": null,
+    "tx": null
+  },
+  "keyboardResize": {
+    "before": "248",
+    "after": "280"
+  },
+  "afterReload": {
+    "variant": "B",
+    "size": "1366",
+    "theme": "light",
+    "session": "s3",
+    "meeting": "m2",
+    "tabA": "ai",
+    "tabB": "ai",
+    "tabR": "transcript",
+    "wA": {
+      "s": 248,
+      "c": 300
+    },
+    "wB": {
+      "s": 280,
+      "r": 420
+    },
+    "col": {
+      "s": false,
+      "c": false,
+      "r": false
+    },
+    "split": 0.5,
+    "chatA": true
+  },
+  "B-900-nach-reload": {
+    "check": "…",
+    "head": {
+      "top": 61,
+      "h": 140,
+      "w": 378
+    },
+    "sessions": {
+      "top": 60,
+      "h": 572,
+      "w": 44
+    },
+    "content": {
+      "top": 60,
+      "h": 572,
+      "w": 380
+    },
+    "controls": {
+      "top": 60,
+      "h": 572,
+      "w": 348
+    },
+    "notein": null,
+    "tx": {
+      "top": 289,
+      "h": 342,
+      "w": 346
+    }
+  },
+  "B-1366-dunkel-eingeklappt": {
+    "check": "Eine Scrollbar je Bereich ✓ (1 scrollend)",
+    "head": {
+      "top": 75,
+      "h": 112,
+      "w": 641
+    },
+    "sessions": {
+      "top": 74,
+      "h": 626,
+      "w": 44
+    },
+    "content": {
+      "top": 74,
+      "h": 626,
+      "w": 643
+    },
+    "controls": {
+      "top": 74,
+      "h": 626,
+      "w": 420
+    },
+    "notein": null,
+    "tx": {
+      "top": 303,
+      "h": 396,
+      "w": 418
+    }
+  }
+}
