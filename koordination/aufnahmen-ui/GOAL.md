@@ -99,6 +99,7 @@ Die Seite „Aufnahmen“ arbeitet wie das Vorlesen-Modul in Spalten: links Sess
 -
 
 ## Entscheidungen
+- 2026-09-30 Patrick nach Installer 0.20.10: U7 freigegeben (Rahmen gemeinsam 4,8 MTok): Import-Warteschlange (weitere Dateien jederzeit hinzufügen, Reihenfolge des Hinzufügens), Einstellung „Gleichzeitige Transkriptionen 1–3“ nur bei ausreichendem RAM/VRAM, Metadaten bearbeiten (Titel, Beschreibung, Datum, Teilnehmende, Projekte; Dateiname bleibt). Zusätzlich gewünscht (U8, Freigabe offen): Sprecher benennen überall sichtbar, Namensvorschlag aus dem Transkript („Danke, André“ → vorheriger Sprecher), eigener Name für das eigene Mikrofon/„Ich“.
 - 2026-09-30 Patrick: Die Ordner heißen in der Oberfläche „Projekte“ (en „Projects“), nicht „Sessions“; im Goal-Text bleibt „Sessions“ als Arbeitsbegriff, `data-testid="rec-sessions"` bleibt.
 - 2026-09-30 Patrick am Prototyp (https://claude.ai/artifact/3RaBLbuyHDX1WnQtAvMQJS): R1 = Variante B (Sessions | Notizen/KI-Notizen/Protokoll | rechts Bedienung + Transkript/Fragen); Besprechung in mehreren Sessions (Ziehen verschiebt, Strg+Ziehen fügt hinzu); Sessions eine Ebene; Aufnahme-Optionen in den Einwilligungs-Startdialog; Kalender als „Als Nächstes“ unten in der Sessions-Spalte.
 - 2026-09-30 Patrick: R2 ja (Sessions = oberste Ebene der M4-Ordner), R3 Budget – gemeinsam mit YouTube-Bündel 1 aus #66 zusammen 3,5 MTok (Aufnahmen-UI ~2,5); R1 (Anordnung) wählt Patrick am Klick-Prototyp (AK1). Zusätzlich B17 aus #59: Neu-Transkription tauscht die Fassung erst am Ende.
