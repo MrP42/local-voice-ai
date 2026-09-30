@@ -26,5 +26,5 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 ## B5 — Zeitabhängige Tests zum zweiten Mal rot: search::index unfiled_filter, llm::server restart cooldown (30.09.)
 - Beobachtet: beide erneut in vollen Läufen rot, einzeln grün (B3 war das erste Auftreten).
 - Konsequenz: Regel „beim zweiten Auftreten reparieren“ – im Integrationspaket I1 ursachengerecht lastfest machen.
-- Status: offen
+- Status: erledigt (I1 ba084f48: created_at im Test fixiert; Neustart-Uhr in Tests vorstellbar; beide Rot-Beweise)
 
