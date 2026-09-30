@@ -49,6 +49,7 @@ const measure = async (page: Page) => {
         "rec-sessions",
         "rec-content",
         "rec-controls",
+        "rec-detail-head",
         "rec-lower",
         "transcript-scroll",
         "live-notes-pad",
@@ -172,3 +173,37 @@ test("Bilder 480: Projekte in der Schublade", async ({ page }) => {
   await page.getByTestId("sessions-open").click();
   await shoot(page, "schublade-480");
 });
+
+// M4: Menue, Dialoge und Tooltip der Symbolzeile.
+for (const label of ["1366", "480"] as const) {
+  test(`Bilder ${label}: Menue, Dialoge und Tooltip (M4)`, async ({ page }) => {
+    const vp = VIEWPORTS[label];
+    await openRecordings(page, vp.width, vp.height);
+    await pickMeeting(page, "m2");
+    await expect(page.locator('[data-segment-index="0"]')).toBeVisible();
+    await page.getByTestId("export-open").hover();
+    await expect(page.getByRole("tooltip")).toBeVisible();
+    await shoot(page, `tooltip-${label}`);
+    await page.mouse.move(2, 2);
+    await page.getByTestId("meeting-menu").click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    await shoot(page, `menue-${label}`);
+    await page.keyboard.press("Escape");
+    await page.getByTestId("meeting-details-open").click();
+    await expect(page.getByRole("dialog", { name: "Details" })).toBeVisible();
+    await shoot(page, `details-dialog-${label}`);
+    await page.keyboard.press("Escape");
+    await page.getByTestId("meeting-menu").click();
+    await page
+      .getByTestId("menu-retranscribe")
+      .evaluate((el) => (el as HTMLElement).click());
+    await expect(
+      page.getByRole("dialog", { name: "Neu transkribieren" }),
+    ).toBeVisible();
+    await shoot(page, `neu-transkribieren-${label}`);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: /Aufnahme starten/ }).click();
+    await expect(page.getByTestId("start-dialog")).toBeVisible();
+    await shoot(page, `startdialog-${label}`);
+  });
+}

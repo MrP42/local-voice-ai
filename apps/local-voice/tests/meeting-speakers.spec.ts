@@ -469,11 +469,16 @@ test.describe("Sprecher im Transkript", () => {
 });
 
 test.describe("Aufnahme und Einstellung", () => {
-  const startNow = async (page: Page) => {
-    await page.getByRole("button", { name: "Aufnahme starten" }).click();
-    await page
+  // Die Optionen stehen seit M4 im Startdialog.
+  const openStart = (page: Page) =>
+    page.getByRole("button", { name: "Aufnahme starten" }).click();
+  const confirmStart = (page: Page) =>
+    page
       .getByRole("button", { name: "Alle Beteiligten haben zugestimmt" })
       .click();
+  const startNow = async (page: Page) => {
+    await openStart(page);
+    await confirmStart(page);
   };
 
   test("Häkchen „Mehrere Personen am Mikrofon“ setzt diarize_mic der neuen Besprechung", async ({
@@ -482,10 +487,11 @@ test.describe("Aufnahme und Einstellung", () => {
     await page.setViewportSize({ width: 1280, height: 1000 });
     await page.goto("/");
     await page.getByRole("button", { name: "Aufnahmen", exact: true }).click();
+    await openStart(page);
     const box = page.getByTestId("diarize-mic");
     await expect(box).not.toBeChecked();
     await box.check();
-    await startNow(page);
+    await confirmStart(page);
     await expect
       .poll(async () => (await calls(page, "meetings_set_diarize_mic")).length)
       .toBe(1);
@@ -517,6 +523,7 @@ test.describe("Aufnahme und Einstellung", () => {
     await page.setViewportSize({ width: 1280, height: 1000 });
     await page.goto("/");
     await page.getByRole("button", { name: "Aufnahmen", exact: true }).click();
+    await openStart(page);
     await expect(page.getByTestId("capture-system")).not.toBeChecked();
     await expect(page.getByTestId("diarize-mic")).toHaveCount(0);
   });

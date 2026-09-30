@@ -767,18 +767,24 @@ test("Notizblock: Aufnahmeseite zweispaltig mit Transkript (Screenshot)", async 
     await page.screenshot({ path: shot, animations: "disabled" });
   }
 
-  // Schmal: untereinander.
-  await page.setViewportSize({ width: 800, height: 900 });
-  const stacked = await page.evaluate(() => {
-    const padBox = document
-      .querySelector("[data-testid=live-notes-pad]")!
-      .getBoundingClientRect();
-    const transcript = [...document.querySelectorAll("p")]
-      .find((p) => p.textContent?.includes("Wir wollten kurz"))!
-      .getBoundingClientRect();
-    return transcript.top >= padBox.bottom - 1;
-  });
-  expect(stacked).toBe(true);
+  // Schmal (unter 620 px): die Arbeitsflaeche mit dem Notizblock steht ueber dem
+  // rechten Bereich mit dem Transkript. Die Aufnahmezeile rechts ist seit M4
+  // niedrig, deshalb entscheidet nicht mehr die Notizblock-Hoehe, sondern die
+  // Anordnung der beiden Bereiche.
+  await page.setViewportSize({ width: 560, height: 900 });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const content = document
+          .querySelector("[data-testid=rec-content]")!
+          .getBoundingClientRect();
+        const controls = document
+          .querySelector("[data-testid=rec-controls]")!
+          .getBoundingClientRect();
+        return controls.top >= content.bottom - 1;
+      }),
+    )
+    .toBe(true);
 });
 
 // ---------------------------------------------------------------------------
@@ -869,13 +875,22 @@ test("Notizblock: leere Notizen zeigen den Hinweis Stichpunkte genügen", async 
 // Vorlagen
 // ---------------------------------------------------------------------------
 
-const openManager = async (page: Page) => {
+// Seit M4 wechselt man die Vorlage ueber das Menue der Bedienspalte
+// ("Vorlage wechseln ..."), nicht mehr ueber eine Auswahl im Reiter.
+const openTemplateDialog = async (page: Page) => {
   await openDetailNotes(page);
-  // Die Aufnahmekarte rechts hat denselben Knopf: hier zaehlt der der Arbeitsflaeche.
+  await page.getByTestId("meeting-menu").click();
   await page
-    .getByTestId("rec-content")
-    .getByRole("button", { name: "Vorlagen verwalten …" })
-    .click();
+    .getByTestId("menu-template")
+    .evaluate((el) => (el as HTMLElement).click());
+  const dialog = page.getByRole("dialog", { name: "Vorlage wechseln" });
+  await expect(dialog).toBeVisible();
+  return dialog;
+};
+
+const openManager = async (page: Page) => {
+  const picker = await openTemplateDialog(page);
+  await picker.getByRole("button", { name: "Vorlagen verwalten …" }).click();
   const dialog = page.getByRole("dialog", { name: "Vorlagen" });
   await expect(dialog).toBeVisible();
   return dialog;
@@ -884,8 +899,8 @@ const openManager = async (page: Page) => {
 test("Vorlagen: Auswahl merkt sich die Vorlage der Besprechung", async ({
   page,
 }) => {
-  await openDetailNotes(page);
-  await page.locator(".app-select__control").first().click();
+  const picker = await openTemplateDialog(page);
+  await picker.locator(".app-select__control").first().click();
   await page
     .getByRole("option", { name: "Kundengespräch / Vertrieb", exact: true })
     .click();
@@ -1087,9 +1102,10 @@ test.describe("Hinweis Meeting-Chat", () => {
       LOCAL_NOTICE,
     );
     await page.getByTestId("recording-chat-notice-copy").click();
-    await expect(page.getByTestId("recording-chat-notice-copy")).toHaveText(
-      "Kopiert",
-    );
+    // Der Symbolknopf hat keinen Text: die Rueckmeldung steht im Namen.
+    await expect(
+      page.getByTestId("recording-chat-notice-copy"),
+    ).toHaveAttribute("aria-label", "Hinweis kopiert");
     expect(await readClipboard(page)).toBe(LOCAL_NOTICE);
   });
 
@@ -1148,8 +1164,9 @@ test.describe("Systemton Vorgabe", () => {
     page,
   }) => {
     await openRecordings(page);
-    await expect(page.getByTestId("capture-system")).toBeChecked();
+    // Die Wahl steht seit M4 im Startdialog.
     await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    await expect(page.getByTestId("capture-system")).toBeChecked();
     await page
       .getByRole("button", { name: "Alle Beteiligten haben zugestimmt" })
       .click();
@@ -1166,6 +1183,7 @@ test.describe("Systemton Vorgabe", () => {
   }) => {
     await withSettings(page, { meeting_capture_system: false });
     await openRecordings(page);
+    await page.getByRole("button", { name: "Aufnahme starten" }).click();
     const box = page.getByTestId("capture-system");
     await expect(box).not.toBeChecked();
     await box.check();
@@ -1178,7 +1196,6 @@ test.describe("Systemton Vorgabe", () => {
     expect(
       (await calls(page, "change_meeting_capture_system_setting"))[0].args,
     ).toEqual({ enabled: true });
-    await page.getByRole("button", { name: "Aufnahme starten" }).click();
     await page
       .getByRole("button", { name: "Alle Beteiligten haben zugestimmt" })
       .click();
@@ -1230,8 +1247,12 @@ test.describe("Systemton Vorgabe", () => {
 });
 
 test.describe("Vorlage vor dem Start", () => {
-  const startNow = async (page: Page) => {
+  // Die Vorlagenwahl steht seit M4 im Startdialog.
+  const openStart = async (page: Page) => {
     await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    await expect(page.getByTestId("record-template")).toBeVisible();
+  };
+  const startNow = async (page: Page) => {
     await page
       .getByRole("button", { name: "Alle Beteiligten haben zugestimmt" })
       .click();
@@ -1241,6 +1262,7 @@ test.describe("Vorlage vor dem Start", () => {
     page,
   }) => {
     await openRecordings(page);
+    await openStart(page);
     const picker = page.getByTestId("record-template");
     await picker.locator(".app-select__control").click();
     await page
@@ -1265,6 +1287,7 @@ test.describe("Vorlage vor dem Start", () => {
       meeting_default_template_id: "builtin:vertrieb",
     });
     await openRecordings(page);
+    await openStart(page);
     await expect(
       page.getByTestId("record-template").locator(".app-select__single-value"),
     ).toHaveText("Kundengespräch / Vertrieb");

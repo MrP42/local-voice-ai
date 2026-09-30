@@ -87,7 +87,11 @@ test("AK2: selecting a recording fills the workspace and the right column", asyn
   }
   // Transkript und Wiedergabe rechts, die Liste bleibt stehen.
   await expect(page.locator('[data-segment-index="0"]')).toBeVisible();
-  await expect(page.getByTestId("rec-controls")).toContainText("Exportieren");
+  await expect(
+    page
+      .getByTestId("rec-controls")
+      .getByRole("button", { name: "Exportieren" }),
+  ).toBeVisible();
   await expect(page.locator('[data-meeting-id="m2"]')).toHaveAttribute(
     "aria-current",
     "true",

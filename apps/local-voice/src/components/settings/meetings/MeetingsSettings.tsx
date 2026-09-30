@@ -453,6 +453,7 @@ export const MeetingsSettings: React.FC = () => {
           chatOpen={chatOpen}
           onChatToggle={toggleChat}
           onMeetingChange={setSelected}
+          onDeleted={() => select(null)}
           jumpRequest={jump}
           onPersonFilter={setPersonFilter}
           onPersonAsk={(person) =>

@@ -22,6 +22,8 @@ interface PersonPopoverProps {
   onAsk: (person: PersonRef) => void;
   /** "Personen verwalten ..." */
   onManage: () => void;
+  /** Nur der Avatar (Initialen) in der Chipzeile; der Name steht im Tooltip. */
+  compact?: boolean;
 }
 
 /**
@@ -35,6 +37,7 @@ export const PersonPopover: React.FC<PersonPopoverProps> = ({
   onFilter,
   onAsk,
   onManage,
+  compact = false,
 }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -116,13 +119,22 @@ export const PersonPopover: React.FC<PersonPopoverProps> = ({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={t(`meetings.people.role.${participant.role}`, {
-          defaultValue: participant.role,
-        })}
+        title={
+          compact
+            ? `${participant.name} · ${t(
+                `meetings.people.role.${participant.role}`,
+                { defaultValue: participant.role },
+              )}`
+            : t(`meetings.people.role.${participant.role}`, {
+                defaultValue: participant.role,
+              })
+        }
         data-testid="participant-chip"
         data-human-id={participant.human_id}
         data-role={participant.role}
-        className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/60 ${
+        className={`inline-flex items-center rounded-full border text-xs cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/60 ${
+          compact ? "gap-0 p-0.5" : "gap-1.5 px-2 py-0.5"
+        } ${
           open
             ? "bg-logo-primary/20 border-logo-primary text-text"
             : "border-mid-gray/40 text-text/80 hover:bg-mid-gray/15 hover:text-text"
@@ -130,13 +142,19 @@ export const PersonPopover: React.FC<PersonPopoverProps> = ({
       >
         <span
           aria-hidden="true"
-          className="flex h-4 w-4 items-center justify-center rounded-full bg-mid-gray/25 text-[9px] font-semibold"
+          className={`flex items-center justify-center rounded-full bg-mid-gray/25 font-semibold ${
+            compact ? "h-5 w-5 text-[10px]" : "h-4 w-4 text-[9px]"
+          }`}
         >
           {initials(participant.name)}
         </span>
-        <span className="max-w-[12rem] truncate">{participant.name}</span>
+        <span className={compact ? "sr-only" : "max-w-[12rem] truncate"}>
+          {participant.name}
+        </span>
         {participant.is_self && (
-          <span className="text-text/50">({t("meetings.people.you")})</span>
+          <span className={compact ? "sr-only" : "text-text/50"}>
+            ({t("meetings.people.you")})
+          </span>
         )}
       </button>
       {open &&
