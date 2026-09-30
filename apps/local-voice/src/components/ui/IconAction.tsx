@@ -23,6 +23,8 @@ export interface IconActionProps extends Omit<
   badgeTestId?: string;
   /** Tooltip zurückhalten, solange ein Menü am Knopf offen ist. */
   suppressTooltip?: boolean;
+  /** Ohne Rahmen und Fläche (Symbol neben einem Titel); Größe bleibt gleich. */
+  ghost?: boolean;
 }
 
 /**
@@ -44,6 +46,7 @@ export const IconAction = forwardRef<HTMLButtonElement, IconActionProps>(
       badge,
       badgeTestId,
       suppressTooltip = false,
+      ghost = false,
       className = "",
       type = "button",
       ...props
@@ -71,7 +74,11 @@ export const IconAction = forwardRef<HTMLButtonElement, IconActionProps>(
           aria-label={label}
           aria-describedby={tooltipId}
           data-testid={testId}
-          className={`relative inline-flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-lg border border-mid-gray/20 bg-mid-gray/10 text-text transition-colors hover:border-logo-primary hover:bg-background-ui/30 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${className}`}
+          className={`relative inline-flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-lg border text-text transition-colors focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${
+            ghost
+              ? "border-transparent bg-transparent text-text/70 hover:bg-mid-gray/15 hover:text-text"
+              : "border-mid-gray/20 bg-mid-gray/10 hover:border-logo-primary hover:bg-background-ui/30"
+          } ${className}`}
           {...props}
         >
           <Icon

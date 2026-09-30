@@ -53,11 +53,21 @@ const openRecordings = async (page: Page) => {
   await page.getByRole("button", { name: "Aufnahmen", exact: true }).click();
 };
 
-const consentAndStart = async (page: Page) => {
+// Titel, Projekt und Vorlage stehen seit M4 im Startdialog.
+const openStart = async (page: Page) => {
   await page.getByRole("button", { name: "Aufnahme starten" }).first().click();
+  await expect(page.getByTestId("start-dialog")).toBeVisible();
+};
+
+const confirmStart = async (page: Page) => {
   await page
     .getByRole("button", { name: "Alle Beteiligten haben zugestimmt" })
     .click();
+};
+
+const consentAndStart = async (page: Page) => {
+  await openStart(page);
+  await confirmStart(page);
 };
 
 // ---------------------------------------------------------------------------
@@ -672,13 +682,14 @@ test.describe("Aufnahmeseite mit Kalender", () => {
   }) => {
     await setup(page, withSuggestion);
     await openRecordings(page);
+    await openStart(page);
     await expect(page.getByPlaceholder("Titel der Besprechung")).toHaveValue(
       "Jour fixe Vertrieb",
     );
     await expect(page.getByTestId("calendar-chip")).toContainText(
       "aus Kalender · 3 Teilnehmende",
     );
-    await consentAndStart(page);
+    await confirmStart(page);
     await expect
       .poll(async () => (await calls(page, "meetings_start_from_event")).length)
       .toBe(1);
@@ -700,13 +711,14 @@ test.describe("Aufnahmeseite mit Kalender", () => {
   }) => {
     await setup(page, withSuggestion);
     await openRecordings(page);
+    await openStart(page);
     await page.getByTestId("calendar-chip-clear").click();
     await expect(page.getByTestId("calendar-chip")).toHaveCount(0);
     // Der Titel bleibt stehen, wird aber nicht wieder vorgeschlagen.
     await expect(page.getByPlaceholder("Titel der Besprechung")).toHaveValue(
       "Jour fixe Vertrieb",
     );
-    await consentAndStart(page);
+    await confirmStart(page);
     await expect
       .poll(async () => (await calls(page, "meetings_start")).length)
       .toBe(1);
@@ -723,9 +735,10 @@ test.describe("Aufnahmeseite mit Kalender", () => {
   }) => {
     await setup(page, withSuggestion);
     await openRecordings(page);
+    await openStart(page);
     const input = page.getByPlaceholder("Titel der Besprechung");
     await input.fill("Meyer Nachbesprechung");
-    await consentAndStart(page);
+    await confirmStart(page);
     await expect
       .poll(async () => (await calls(page, "meetings_start_from_event")).length)
       .toBe(1);
@@ -742,12 +755,13 @@ test.describe("Aufnahmeseite mit Kalender", () => {
   }) => {
     await setup(page);
     await openRecordings(page);
+    await expect(page.getByTestId("upcoming-card")).toHaveCount(0);
+    await openStart(page);
     await expect(page.getByPlaceholder("Titel der Besprechung")).toHaveValue(
       "",
     );
     await expect(page.getByTestId("calendar-chip")).toHaveCount(0);
-    await expect(page.getByTestId("upcoming-card")).toHaveCount(0);
-    await consentAndStart(page);
+    await confirmStart(page);
     await expect
       .poll(async () => (await calls(page, "meetings_start")).length)
       .toBe(1);

@@ -7,41 +7,46 @@ import React, {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
-import { Check, Download, Mail, MessageSquare, Pencil, X } from "lucide-react";
+import { Pencil } from "lucide-react";
+import { toast } from "sonner";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
   commands,
   events,
   type Citation,
+  type Folder,
   type Meeting,
   type MeetingSpeaker,
   type Participant,
   type StoredSegment,
 } from "@/bindings";
 import { Button } from "../../ui/Button";
+import { Dialog } from "../../ui/Dialog";
 import { Textarea } from "../../ui/Textarea";
-import { TabList } from "../../ui/TabList";
 import {
   AudioPlayer,
   AudioPlayerGroup,
   type AudioPlayerHandle,
 } from "../../ui/AudioPlayer";
-import Badge from "../../ui/Badge";
 import { MinutesView } from "./MinutesView";
 import { MyNotesView } from "./notes/MyNotesView";
 import { EnhancedNotesView } from "./notes/EnhancedNotesView";
 import { MeetingTemplatePicker } from "./notes/TemplatePicker";
-import { RetranscribeControl } from "./RetranscribeControl";
+import { FolderPickerDialog } from "./search/FolderPickerDialog";
+import { MeetingActions } from "./MeetingActions";
+import { MeetingDetailsDialog } from "./MeetingDetailsDialog";
+import { MeetingHeader } from "./MeetingHeader";
+import { RetranscribeDialog } from "./RetranscribeDialog";
 import { SpeakerPopover } from "./SpeakerPopover";
-import { Input } from "../../ui/Input";
 import { translateMeetingError } from "./meetingErrors";
-import { SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
+import { enhanceErrorText, SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
+import { minutesErrorCode, minutesErrorDetail } from "@/lib/meetingMinutes";
+import { notifyMeetingsChanged } from "@/lib/meetingsBus";
 import { FollowupDialog } from "./FollowupDialog";
 import { MeetingExportDialog } from "./MeetingExportDialog";
 import { PeopleDialog } from "./people/PeopleDialog";
-import { PersonPopover, type PersonRef } from "./people/PersonPopover";
-import { orderParticipants } from "@/lib/meetingPeople";
+import type { PersonRef } from "./people/PersonPopover";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { JobPanel } from "./JobProgress";
@@ -77,10 +82,6 @@ export interface MeetingDetailSlots {
   transcript: HTMLElement | null;
 }
 
-// Windows paths use backslashes; the old class `[\/]` matched only the
-// forward slash, so a C:\... path came back whole.
-const fileBaseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
-
 interface MeetingDetailProps {
   meeting: Meeting;
   /** Bereiche der Aufnahmen-Seite, in die gerendert wird (Portale). Fehlt ein
@@ -93,6 +94,8 @@ interface MeetingDetailProps {
   onChatToggle: () => void;
   /** Propagates a title change back to the list, which owns the record. */
   onMeetingChange: (meeting: Meeting) => void;
+  /** Die Besprechung wurde ueber das Menue geloescht (die Seite waehlt ab). */
+  onDeleted?: (id: string) => void;
   /** M4-P4e: Sprung aus einem Chat ausserhalb (global); `nonce` je Klick neu. */
   jumpRequest?: { citation: Citation; nonce: number } | null;
   /** M5-P5d: Popover einer Person -> Liste auf ihre Besprechungen eingrenzen. */
@@ -108,16 +111,24 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   chatOpen,
   onChatToggle,
   onMeetingChange,
+  onDeleted,
   jumpRequest,
   onPersonFilter,
   onPersonAsk,
 }) => {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const meetingId = meeting.id;
   const meetingTitle = meeting.title;
-  const [editingTitle, setEditingTitle] = useState(false);
-  const [titleDraft, setTitleDraft] = useState(meetingTitle);
-  const [titleError, setTitleError] = useState<string | null>(null);
+  // Dialoge und Anfragen aus Menue und Kopf.
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [retranscribeOpen, setRetranscribeOpen] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [renameNonce, setRenameNonce] = useState(0);
+  // Projekte (= Ordner der obersten Ebene): alle, und die dieser Besprechung.
+  const [allFolders, setAllFolders] = useState<Folder[]>([]);
+  const [meetingFolderIds, setMeetingFolderIds] = useState<string[]>([]);
   // Der letzte Reiter bleibt ueber Neuladen, Seitenwechsel und Neustart.
   const [midTab, setMidTab] = usePersistentState<MidTab>(
     "meetings.midTab",
@@ -470,27 +481,87 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     return () => observer.disconnect();
   }, [slots.transcript, hasList]);
 
-  const saveTitle = async () => {
-    const next = titleDraft.trim();
-    if (next === "" || next === meetingTitle) {
-      setEditingTitle(false);
-      setTitleDraft(meetingTitle);
-      return;
-    }
+  /** Neuer Titel aus dem Kopf: Fehlertext oder `null`. */
+  const renameTo = async (next: string): Promise<string | null> => {
     const result = await commands.meetingsRename(meetingId, next);
     if (result.status === "error") {
-      setTitleError(translateMeetingError(result.error, t));
-      return;
+      return translateMeetingError(result.error, t);
     }
-    setTitleError(null);
-    setEditingTitle(false);
     onMeetingChange({ ...meeting, title: next });
+    return null;
   };
 
-  const cancelTitleEdit = () => {
-    setEditingTitle(false);
-    setTitleDraft(meetingTitle);
-    setTitleError(null);
+  // F2 benennt um, solange kein Eingabefeld den Fokus hat.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "F2" || e.defaultPrevented) return;
+      // Hinter einem offenen Dialog nichts umbenennen.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.isContentEditable ||
+          ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+      ) {
+        return;
+      }
+      e.preventDefault();
+      setRenameNonce((n) => n + 1);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const loadFolders = useCallback(async () => {
+    const [all, mine] = await Promise.all([
+      commands.meetingFoldersList(),
+      commands.meetingsGetFolders(meetingId),
+    ]);
+    if (all.status === "ok") setAllFolders(all.data ?? []);
+    if (mine.status === "ok") setMeetingFolderIds(mine.data ?? []);
+  }, [meetingId]);
+  useEffect(() => {
+    void loadFolders();
+  }, [loadFolders]);
+  const projectNames = allFolders
+    .filter((folder) => meetingFolderIds.includes(folder.id))
+    .map((folder) => folder.name);
+
+  const confirmDelete = async () => {
+    setDeleteOpen(false);
+    const result = await commands.meetingsDelete(meetingId);
+    if (result.status === "error") {
+      toast.error(t("meetings.errors.deleteFailed"));
+      return;
+    }
+    notifyMeetingsChanged();
+    onDeleted?.(meetingId);
+  };
+
+  /** KI-Notizen bzw. Protokoll neu erzeugen: Reiter zeigen, dann starten. */
+  const regenerateNotes = () => {
+    setMidTab("ai");
+    void commands.meetingNotesEnhance(meetingId, null).then((result) => {
+      if (result.status === "error" && result.error !== "stopped") {
+        const text = enhanceErrorText(result.error);
+        toast.error(t(text.key, text.params));
+      }
+    });
+  };
+  const regenerateMinutes = () => {
+    setMidTab("minutes");
+    void commands.meetingsGenerateMinutes(meetingId, null).then((result) => {
+      if (result.status === "error") {
+        const code = minutesErrorCode(result.error);
+        if (code === "minutes_busy" || code === "minutes_cancelled") return;
+        toast.error(
+          t(`meetings.minutes.errors.${code}`, {
+            error: minutesErrorDetail(result.error),
+            defaultValue: result.error,
+          }),
+        );
+      }
+    });
   };
 
   /**
@@ -591,77 +662,25 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   /** Kopf der Besprechung und die Reiter der Arbeitsflaeche (Mitte). */
   const contentPart = (
     <>
-      {/* Title and origin are two different facts: the title is what the
-      user calls this meeting, `source_path` is the file it was imported
-      from. Renaming must not lose the second one, hence both lines. */}
-      {editingTitle ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            value={titleDraft}
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void saveTitle();
-              if (e.key === "Escape") cancelTitleEdit();
-            }}
-            className="flex-1 min-w-[12rem]"
-            autoFocus
-            aria-label={t("meetings.detail.titleLabel")}
-          />
-          <Button size="sm" onClick={saveTitle}>
-            <Check width={14} height={14} />
-            {t("meetings.detail.save")}
-          </Button>
-          <Button size="sm" variant="secondary" onClick={cancelTitleEdit}>
-            <X width={14} height={14} />
-            {t("meetings.detail.cancel")}
-          </Button>
-        </div>
-      ) : (
-        <div className="flex items-start gap-2 group">
-          <h3 className="text-base font-semibold break-words min-w-0 flex-1">
-            {meetingTitle}
-          </h3>
-          <button
-            type="button"
-            onClick={() => {
-              setTitleDraft(meetingTitle);
-              setEditingTitle(true);
-            }}
-            title={t("meetings.detail.renameTitle")}
-            className="p-1 rounded-md text-text/50 hover:text-logo-primary cursor-pointer shrink-0"
-          >
-            <Pencil width={14} height={14} />
-          </button>
-        </div>
-      )}
-      {meeting.source_path && (
-        <p
-          className="text-xs text-text/50 break-all -mt-2"
-          title={meeting.source_path}
-        >
-          {fileBaseName(meeting.source_path)}
-        </p>
-      )}
-      {titleError && <p className="text-sm text-red-400">{titleError}</p>}
-
-      {participants.length > 0 && (
-        <div
-          className="flex flex-wrap items-center gap-1.5"
-          role="group"
-          aria-label={t("meetings.people.chipsLabel")}
-          data-testid="participant-chips"
-        >
-          {orderParticipants(participants).map((participant) => (
-            <PersonPopover
-              key={participant.human_id}
-              participant={participant}
-              onFilter={(person) => onPersonFilter?.(person)}
-              onAsk={(person) => onPersonAsk?.(person)}
-              onManage={() => setPeopleOpen(true)}
-            />
-          ))}
-        </div>
-      )}
+      <MeetingHeader
+        meeting={meeting}
+        progress={jobProgress}
+        participants={participants}
+        projectNames={projectNames}
+        onRename={renameTo}
+        renameNonce={renameNonce}
+        onOpenDetails={() => setDetailsOpen(true)}
+        onOpenProjects={() => setMoveOpen(true)}
+        onManagePeople={() => setPeopleOpen(true)}
+        onPersonFilter={(person) => onPersonFilter?.(person)}
+        onPersonAsk={(person) => onPersonAsk?.(person)}
+        tabs={midTabs}
+        tab={midTab}
+        onTab={(id) => {
+          if (isMidTab(id)) setMidTab(id);
+        }}
+        tabsLabel={t("meetings.layout.contentTabs")}
+      />
 
       {meeting.status === "cancelled" && !jobProgress && (
         <div
@@ -696,87 +715,9 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-4 gap-y-1 text-sm border border-mid-gray/20 rounded-md px-3 py-2">
-        <span className="text-text/60">{t("meetings.meta.status")}</span>
-        <span>
-          <Badge variant={meeting.status === "ready" ? "success" : "secondary"}>
-            {t(`meetings.status.${meeting.status}`, {
-              defaultValue: meeting.status,
-            })}
-          </Badge>
-        </span>
-        <span className="text-text/60">{t("meetings.meta.source")}</span>
-        <span>
-          {t(`meetings.meta.sourceKind.${meeting.source}`, {
-            defaultValue: meeting.source,
-          })}
-        </span>
-        <span className="text-text/60">{t("meetings.meta.started")}</span>
-        <span>
-          {new Intl.DateTimeFormat(i18n.language, {
-            dateStyle: "medium",
-            timeStyle: "short",
-          }).format(
-            new Date((meeting.started_at ?? meeting.created_at) * 1000),
-          )}
-        </span>
-        {meeting.duration_ms !== null && (
-          <>
-            <span className="text-text/60">{t("meetings.meta.duration")}</span>
-            <span>{formatMmSs(meeting.duration_ms)}</span>
-          </>
-        )}
-        {meeting.consent_confirmed_at !== null && (
-          <>
-            <span className="text-text/60">{t("meetings.meta.consent")}</span>
-            <span>
-              {new Intl.DateTimeFormat(i18n.language, {
-                dateStyle: "medium",
-                timeStyle: "short",
-              }).format(new Date(meeting.consent_confirmed_at * 1000))}
-            </span>
-          </>
-        )}
-        {meeting.audio_retention_until !== null && (
-          <>
-            <span className="text-text/60">
-              {t("meetings.meta.retentionUntil")}
-            </span>
-            <span>
-              {new Intl.DateTimeFormat(i18n.language, {
-                dateStyle: "medium",
-                timeStyle: "short",
-              }).format(new Date(meeting.audio_retention_until * 1000))}
-            </span>
-          </>
-        )}
-        <span className="text-text/60">{t("meetings.meta.segments")}</span>
-        <span>{segments.length}</span>
-      </div>
-
-      <RetranscribeControl
-        meeting={meeting}
-        onFinished={loadSegments}
-        busy={meeting.status === "processing" || jobProgress !== undefined}
-      />
-
-      {/* Die Reiter bleiben beim Scrollen der Arbeitsflaeche oben stehen. */}
-      <div className="sticky top-0 z-10 -mx-4 bg-background px-4">
-        <TabList
-          tabs={midTabs}
-          value={midTab}
-          onChange={setMidTab}
-          ariaLabel={t("meetings.layout.contentTabs")}
-          className="border-b border-mid-gray/20"
-        />
-      </div>
-
       <div role="tabpanel" data-testid={`mid-panel-${midTab}`}>
         {midTab === "notes" || midTab === "ai" ? (
           <div className="space-y-3" ref={notesRef}>
-            <div className="flex justify-end">
-              <MeetingTemplatePicker meetingId={meetingId} />
-            </div>
             {midTab === "notes" ? (
               <MyNotesView meeting={meeting} />
             ) : (
@@ -796,58 +737,22 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     </>
   );
 
-  /** Aktionen, Fortschritt und Wiedergabe (rechts oben, unter der Aufnahmekarte). */
+  /** Wiedergabe, Fortschritt und Symbolzeile (rechts oben, unter der Aufnahmezeile). */
   const controlsPart = (
     <>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => setExportOpen(true)}
-          title={t("meetings.export.buttonTitle")}
-          data-testid="export-open"
-        >
-          <Download width={14} height={14} aria-hidden="true" />
-          {t("meetings.export.button")}
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => setFollowupOpen(true)}
-          title={t("meetings.followup.buttonTitle")}
-          disabled={segments.length === 0}
-          data-testid="followup-open"
-        >
-          <Mail width={14} height={14} aria-hidden="true" />
-          {t("meetings.followup.button")}
-        </Button>
-        <Button
-          size="sm"
-          variant={chatOpen ? "primary-soft" : "secondary"}
-          onClick={onChatToggle}
-          title={t("meetings.chat.askTitle")}
-          aria-pressed={chatOpen}
-          aria-keyshortcuts="Control+J"
-        >
-          <MessageSquare width={14} height={14} aria-hidden="true" />
-          {t("meetings.chat.ask")}
-        </Button>
-      </div>
-
-      {jobProgress && <JobPanel progress={jobProgress} />}
-
-      {(meeting.mic_audio_path || meeting.system_audio_path) && (
+      {hasAudio && (
         <AudioPlayerGroup>
           {meeting.mic_audio_path && (
-            <div className="space-y-1">
-              <p className="text-xs text-text/60">
-                {meeting.source === "import"
-                  ? t("meetings.meta.audioImport")
-                  : t("meetings.live.me")}
-                {" · "}
-                {fileBaseName(meeting.mic_audio_path)}
-              </p>
+            <div className="space-y-0.5" data-testid="rec-player">
+              {meeting.system_audio_path && (
+                <p className="text-xs text-text/60">
+                  {meeting.source === "import"
+                    ? t("meetings.meta.audioImport")
+                    : t("meetings.live.me")}
+                </p>
+              )}
               <AudioPlayer
+                compact
                 controlRef={micPlayerRef}
                 src={convertFileSrc(meeting.mic_audio_path, "asset")}
                 className="w-full"
@@ -855,13 +760,14 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             </div>
           )}
           {meeting.system_audio_path && (
-            <div className="space-y-1">
-              <p className="text-xs text-text/60">
-                {t("meetings.live.remote")}
-                {" · "}
-                {fileBaseName(meeting.system_audio_path)}
-              </p>
+            <div className="space-y-0.5" data-testid="rec-player-system">
+              {meeting.mic_audio_path && (
+                <p className="text-xs text-text/60">
+                  {t("meetings.live.remote")}
+                </p>
+              )}
               <AudioPlayer
+                compact
                 controlRef={systemPlayerRef}
                 src={convertFileSrc(meeting.system_audio_path, "asset")}
                 className="w-full"
@@ -870,6 +776,31 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           )}
         </AudioPlayerGroup>
       )}
+
+      {jobProgress && <JobPanel progress={jobProgress} />}
+
+      <MeetingActions
+        hasSegments={segments.length > 0}
+        hasAudio={hasAudio}
+        busy={meeting.status === "processing" || jobProgress !== undefined}
+        chatOpen={chatOpen}
+        copied={copied === "meta"}
+        onExport={() => setExportOpen(true)}
+        onFollowup={() => setFollowupOpen(true)}
+        onCopy={() => void copyTranscript(true)}
+        onPeople={() => setPeopleOpen(true)}
+        onChatToggle={onChatToggle}
+        onRetranscribe={() => setRetranscribeOpen(true)}
+        onRegenNotes={regenerateNotes}
+        onRegenMinutes={regenerateMinutes}
+        onTemplate={() => setTemplateOpen(true)}
+        onRename={() => setRenameNonce((n) => n + 1)}
+        onMove={() => setMoveOpen(true)}
+        onCopyPlain={() => void copyTranscript(false)}
+        onExportTranscript={() => void exportTranscript()}
+        onDetails={() => setDetailsOpen(true)}
+        onDelete={() => setDeleteOpen(true)}
+      />
     </>
   );
 
@@ -899,38 +830,6 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
               {t("meetings.detail.autoscrollPaused")}
             </span>
           )}
-        </div>
-      )}
-      {segments.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void copyTranscript(true)}
-          >
-            {copied === "meta"
-              ? t("meetings.detail.copied")
-              : t("meetings.detail.copyTranscript")}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void copyTranscript(false)}
-            title={t("meetings.detail.copyPlainHint")}
-          >
-            {copied === "plain"
-              ? t("meetings.detail.copied")
-              : t("meetings.detail.copyPlain")}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={exportTranscript}
-            title={t("meetings.detail.exportTranscript")}
-            aria-label={t("meetings.detail.exportTranscript")}
-          >
-            <Download width={14} height={14} />
-          </Button>
         </div>
       )}
       {transcriptError && (
@@ -983,12 +882,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
                   data-seek-ms={segment.start_ms}
                   onClick={() => player.seek(segment.start_ms, segment.channel)}
                   title={t("meetings.detail.playFrom")}
-                  className="text-xs text-text/40 w-10 shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer"
+                  className="text-xs text-text/60 w-10 shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer"
                 >
                   {formatMmSs(segment.start_ms)}
                 </button>
               ) : (
-                <span className="text-xs text-text/40 w-10 shrink-0 pt-0.5">
+                <span className="text-xs text-text/60 w-10 shrink-0 pt-0.5">
                   {formatMmSs(segment.start_ms)}
                 </span>
               )}
@@ -1081,6 +980,69 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         onOpenChange={setPeopleOpen}
         onChanged={() => void loadParticipants()}
       />
+      <MeetingDetailsDialog
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        meeting={meeting}
+        progress={jobProgress}
+        segmentCount={segments.length}
+        projectNames={projectNames}
+      />
+      <RetranscribeDialog
+        open={retranscribeOpen}
+        onOpenChange={setRetranscribeOpen}
+        meeting={meeting}
+        onFinished={loadSegments}
+      />
+      <Dialog
+        open={templateOpen}
+        onOpenChange={setTemplateOpen}
+        title={t("meetings.actions.templateTitle")}
+        description={t("meetings.actions.templateBody")}
+        closeLabel={t("meetings.actions.close")}
+        footer={
+          <Button onClick={() => setTemplateOpen(false)}>
+            {t("meetings.actions.close")}
+          </Button>
+        }
+      >
+        <div data-testid="template-dialog">
+          <MeetingTemplatePicker meetingId={meetingId} menuPortal />
+        </div>
+      </Dialog>
+      <FolderPickerDialog
+        meeting={moveOpen ? meeting : null}
+        folders={allFolders}
+        onClose={() => setMoveOpen(false)}
+        onSaved={() => {
+          void loadFolders();
+          notifyMeetingsChanged();
+        }}
+      />
+      <Dialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={t("meetings.list.deleteConfirmTitle")}
+        closeLabel={t("meetings.list.cancel")}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeleteOpen(false)}>
+              {t("meetings.list.cancel")}
+            </Button>
+            <Button
+              variant="danger"
+              data-testid="meeting-delete-confirm"
+              onClick={() => void confirmDelete()}
+            >
+              {t("meetings.list.deleteButton")}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-text/80">
+          {t("meetings.list.deleteConfirm")}
+        </p>
+      </Dialog>
     </>
   );
 };

@@ -6,6 +6,10 @@ import type { Page } from "@playwright/test";
  * `meeting-screens.spec.ts` (Nachher-Bilder, nur mit LVA_SCREENSHOTS).
  * Eine Besprechung laeuft (m3, Fortschritt per `emit`), eine ist importiert
  * (m2, mit Audio, Protokoll und 60 Segmenten), der Rest ist fertig.
+ *
+ * Seit M4 (`meeting-header.spec.ts`) schreibt die Attrappe alle Aufrufe mit
+ * (`calls`) und kennt die Befehle aus Startdialog, Menue und Kopf (Start,
+ * Umbenennen, Loeschen, Ordner, Import, Neu-Transkription, Neu-Erzeugen).
  */
 
 export const VIEWPORTS = {
@@ -208,6 +212,26 @@ export const installRecMock = async (
         ? { meeting_id: "m1", position_ms: 754_000 }
         : null;
       w.__progressList = [];
+      w.__calls = [];
+      w.__participants = {};
+      w.__folderMap = { m2: ["f2", "f3"] };
+      w.__pick = null;
+      w.__templates = [
+        {
+          id: "builtin:allgemein",
+          title: "Allgemein",
+          builtin: true,
+          spec: {},
+          updated_at: 1,
+        },
+        {
+          id: "builtin:vertrieb",
+          title: "Kundengespräch / Vertrieb",
+          builtin: true,
+          spec: {},
+          updated_at: 1,
+        },
+      ];
       w.__documents = [
         {
           id: "p1",
@@ -247,7 +271,34 @@ export const installRecMock = async (
           unregisterCallback: (id: number) => callbacks.delete(id),
           convertFileSrc: (p: string) => p,
           invoke: async (cmd: string, args: Record<string, any> = {}) => {
+            if (!cmd.startsWith("plugin:event|")) w.__calls.push({ cmd, args });
             switch (cmd) {
+              case "meetings_start":
+                return {
+                  ...w.__meetings[0],
+                  id: "m-neu",
+                  title: args.title,
+                  status: "recording",
+                };
+              case "meetings_rename":
+                w.__meetings = w.__meetings.map((m: any) =>
+                  m.id === args.meetingId ? { ...m, title: args.title } : m,
+                );
+                return null;
+              case "meetings_delete":
+                w.__meetings = w.__meetings.filter(
+                  (m: any) => m.id !== args.meetingId,
+                );
+                return null;
+              case "meetings_set_folders":
+                w.__folderMap[args.meetingId] = args.folderIds;
+                return null;
+              case "plugin:dialog|open":
+                return w.__pick;
+              case "meeting_templates_list":
+                return w.__templates;
+              case "meeting_participants":
+                return w.__participants[args.meetingId] ?? [];
               case "get_app_settings":
               case "get_default_settings":
                 return w.__settings;
@@ -297,7 +348,7 @@ export const installRecMock = async (
               case "meeting_folders_list":
                 return w.__folders;
               case "meetings_get_folders":
-                return args.meetingId === "m2" ? ["f2", "f3"] : [];
+                return w.__folderMap[args.meetingId] ?? [];
               case "meetings_get_segments":
                 return args.meetingId === "m1" && w.__recording
                   ? []
@@ -333,8 +384,6 @@ export const installRecMock = async (
               case "action_items_list":
               case "meeting_speakers_list":
               case "meeting_speaker_notices":
-              case "meeting_participants":
-              case "meeting_templates_list":
               case "chat_recipes_list":
               case "meeting_chat_threads":
               case "people_list":
@@ -468,3 +517,15 @@ export const scrollReport = (page: Page): Promise<ScrollReport> =>
       nested,
     };
   });
+
+export interface Call {
+  cmd: string;
+  args: Record<string, unknown>;
+}
+
+/** Aufrufe eines Befehls, in Reihenfolge (nur seit dem Laden der Seite). */
+export const calls = (page: Page, cmd: string): Promise<Call[]> =>
+  page.evaluate(
+    (c) => ((window as any).__calls as Call[]).filter((x) => x.cmd === c),
+    cmd,
+  );

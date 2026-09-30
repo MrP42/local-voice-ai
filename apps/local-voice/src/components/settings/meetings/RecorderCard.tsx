@@ -1,23 +1,32 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Link,
+  Mic,
+  Pause,
+  Play,
+  Square,
+} from "lucide-react";
 import {
   commands,
   events,
   type BriefInfo,
   type CalEvent,
+  type Folder,
   type HealthState,
 } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
-import { SettingsGroup } from "../../ui/SettingsGroup";
+import { usePersistentState } from "../../../hooks/usePersistentState";
+import { notifyMeetingsChanged } from "@/lib/meetingsBus";
 import { Button } from "../../ui/Button";
-import { Input } from "../../ui/Input";
-import { Dialog } from "../../ui/Dialog";
+import { IconAction } from "../../ui/IconAction";
 import { Alert } from "../../ui/Alert";
-import Badge from "../../ui/Badge";
 import { translateMeetingError } from "./meetingErrors";
 import { MeetingChatNotice } from "./MeetingChatNotice";
-import { TemplatePicker } from "./notes/TemplatePicker";
+import { MeetingImportAction } from "./MeetingImportAction";
+import { NO_PROJECT, StartRecordingDialog } from "./StartRecordingDialog";
 import { BriefButton } from "./people/BriefButton";
 import { flushAllNotes } from "./notes/useNotesAutosave";
 import {
@@ -74,13 +83,15 @@ const applyHealth = (
   return { ...view, conditions: { ...view.conditions, [channel]: state } };
 };
 
-const LevelBar: React.FC<{ label: string; value: number }> = ({
-  label,
-  value,
-}) => (
-  <div className="flex items-center gap-2">
-    <span className="text-xs text-text/60 w-20 shrink-0">{label}</span>
-    <div className="h-1.5 flex-1 rounded-full bg-mid-gray/20 overflow-hidden">
+/** Zwei schmale Pegelbalken (oben Mikrofon, unten Gegenseite) fuer die Aufnahmezeile. */
+const MiniLevels: React.FC<{
+  mic: number;
+  system: number;
+  showSystem: boolean;
+  title: string;
+}> = ({ mic, system, showSystem, title }) => {
+  const bar = (value: number) => (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-mid-gray/20">
       <div
         className="h-full rounded-full bg-logo-primary"
         style={{
@@ -89,8 +100,30 @@ const LevelBar: React.FC<{ label: string; value: number }> = ({
         }}
       />
     </div>
-  </div>
-);
+  );
+  return (
+    <div
+      className="flex w-14 shrink-0 flex-col gap-1"
+      role="img"
+      aria-label={title}
+      title={title}
+      data-testid="rec-levels"
+    >
+      {bar(mic)}
+      {showSystem && bar(system)}
+    </div>
+  );
+};
+
+const formatClock = (ms: number) => {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+  const ss = String(sec).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+};
 
 /** Termin, dem die naechste Aufnahme gehoert (M5-P5b). `auto` = Titelvorschlag, `prompt` = Terminkarte. */
 type EventChoice = { event: CalEvent; mode: "auto" | "prompt" };
@@ -127,6 +160,14 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
   const [systemLevel, setSystemLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Startdialog: Projekt (zuletzt gewaehlt, bleibt ueber Neustarts) und
+  // Aufnahmedauer der laufenden Aufnahme.
+  const [projects, setProjects] = useState<Folder[]>([]);
+  const [projectChoice, setProjectChoice] = usePersistentState<string>(
+    "meetings.startProject",
+    NO_PROJECT,
+  );
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [autoNotes, setAutoNotes] = useState<AutoNotes | null>(null);
   const [health, setHealth] = useState<HealthView>(NO_HEALTH);
   // Kalender (M5-P5b): Vorschlag aus laufendem/naechstem Termin (+-15 min),
@@ -145,6 +186,12 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
   useEffect(() => {
     commands.meetingsIsRecording().then((r) => {
       if (r.status === "ok" && r.data) setPhase("recording");
+    });
+    // Seite mitten in einer Aufnahme geoeffnet: die Uhr startet bei der Position.
+    void commands.meetingsRecordingPosition().then((r) => {
+      if (r.status === "ok" && r.data) {
+        setElapsedMs((prev) => Math.max(prev, r.data!.position_ms));
+      }
     });
 
     const un = events.meetingEvent.listen((e) => {
@@ -191,6 +238,18 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
     };
   }, []);
 
+  // Uhr: zaehlt nur, solange aufgenommen wird (Pause haelt sie an).
+  useEffect(() => {
+    if (phase !== "recording") return;
+    let last = Date.now();
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setElapsedMs((prev) => prev + (now - last));
+      last = now;
+    }, 500);
+    return () => clearInterval(timer);
+  }, [phase]);
+
   const idle = phase === "idle";
   useEffect(() => {
     if (!idle) return;
@@ -228,6 +287,9 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
   const openConsent = () => {
     setError(null);
     setConsentOpen(true);
+    void commands.meetingFoldersList().then((result) => {
+      if (result.status === "ok") setProjects(result.data ?? []);
+    });
   };
 
   const confirmStart = async () => {
@@ -256,6 +318,12 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
       return;
     }
     setStartedWithSystem(captureSetting);
+    setElapsedMs(0);
+    if (projects.some((p) => p.id === projectChoice)) {
+      void commands
+        .meetingsSetFolders(result.data.id, [projectChoice])
+        .then(() => notifyMeetingsChanged());
+    }
     if (diarizeMic && captureSetting) {
       void commands.meetingsSetDiarizeMic(result.data.id, true);
     }
@@ -314,6 +382,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
       return;
     }
     setPhase("idle");
+    setElapsedMs(0);
     setTitle("");
     setEventChoice(null);
     setSuggestionCleared(false);
@@ -362,8 +431,8 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
   };
 
   return (
-    <SettingsGroup title={t("meetings.title")}>
-      <div className="px-4 py-3 space-y-3">
+    <div data-testid="rec-recorder">
+      <div className="space-y-3">
         {error && <Alert variant="error">{error}</Alert>}
         {!active && autoNotes && (
           <div data-testid="auto-notes-status" data-state={autoNotes.kind}>
@@ -381,107 +450,101 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
           </div>
         )}
 
-        {!active && (
-          <div className="flex gap-2 items-center flex-wrap">
-            <Input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder={t("meetings.record.titlePlaceholder")}
-              className="flex-1 min-w-48"
-            />
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={captureSetting}
-                onChange={(e) =>
-                  void updateSetting("meeting_capture_system", e.target.checked)
-                }
-                className="accent-logo-primary"
-                data-testid="capture-system"
-              />
-              {t("meetings.record.captureSystem")}
-            </label>
-            {captureSetting && (
-              <label
-                className="flex items-center gap-2 text-sm"
-                title={t("meetings.record.diarizeMicHint")}
-              >
-                <input
-                  type="checkbox"
-                  checked={diarizeMic}
-                  onChange={(e) => setDiarizeMic(e.target.checked)}
-                  className="accent-logo-primary"
-                  data-testid="diarize-mic"
-                />
-                {t("meetings.record.diarizeMic")}
-              </label>
-            )}
-          </div>
-        )}
-
-        {!active && eventChoice && (
+        {!active ? (
           <div
-            className="flex items-center gap-1.5 text-xs text-text/70"
-            data-testid="calendar-chip"
-            data-event-key={eventChoice.event.key}
+            className="flex items-center gap-2"
+            role="group"
+            aria-label={t("meetings.title")}
+            data-testid="rec-start"
           >
-            <span className="rounded-full bg-logo-primary/20 px-2 py-0.5">
-              {distinctAttendees(eventChoice.event) > 0
-                ? t("meetings.calendar.suggestion.chipWithAttendees", {
-                    count: distinctAttendees(eventChoice.event),
-                  })
-                : t("meetings.calendar.suggestion.chip")}
-            </span>
-            <button
-              type="button"
-              onClick={clearEventChoice}
-              aria-label={t("meetings.calendar.suggestion.clear")}
-              title={t("meetings.calendar.suggestion.clear")}
-              className="rounded p-0.5 hover:bg-mid-gray/20 cursor-pointer"
-              data-testid="calendar-chip-clear"
-            >
-              <X width={12} height={12} />
-            </button>
-          </div>
-        )}
-
-        {!active && (
-          <div data-testid="record-template">
-            <TemplatePicker
-              value={templateId}
-              onChange={(id) => setTemplateChoice(id)}
+            <Button
+              onClick={openConsent}
               disabled={busy}
-              allowAuto
-            />
-          </div>
-        )}
-
-        <div className="flex gap-2 items-center flex-wrap">
-          {!active ? (
-            <Button onClick={openConsent} disabled={busy}>
+              className="h-[36px] min-w-0 flex-1"
+              title={t("meetings.recorder.startHint")}
+            >
+              <Mic width={16} height={16} aria-hidden="true" />
               {t("meetings.record.start")}
             </Button>
-          ) : (
-            <>
-              <Badge variant={paused ? "secondary" : "success"}>
-                {paused ? t("meetings.record.pause") : t("meetings.title")}
-              </Badge>
-              {paused ? (
-                <Button variant="secondary" onClick={resume} disabled={busy}>
-                  {t("meetings.record.resume")}
-                </Button>
-              ) : (
-                <Button variant="secondary" onClick={pause} disabled={busy}>
-                  {t("meetings.record.pause")}
-                </Button>
-              )}
-              <Button variant="danger" onClick={stop} disabled={busy}>
-                {t("meetings.record.stop")}
-              </Button>
-            </>
-          )}
-        </div>
+            <MeetingImportAction />
+            <IconAction
+              icon={Link}
+              label={t("meetings.importAction.linkName")}
+              description={t("meetings.importAction.linkHint")}
+              testId="link-open"
+              disabled
+            />
+          </div>
+        ) : (
+          <div
+            className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-mid-gray/30 px-3 py-2"
+            data-testid="rec-live"
+            data-state={paused ? "paused" : "recording"}
+          >
+            <span
+              className="inline-flex items-center gap-1.5 text-sm font-medium"
+              data-testid="rec-state-chip"
+            >
+              <span
+                aria-hidden="true"
+                className={`h-2.5 w-2.5 rounded-full bg-red-500 ${
+                  paused ? "opacity-50" : "animate-pulse"
+                }`}
+              />
+              {paused
+                ? t("meetings.recorder.paused")
+                : t("meetings.recorder.running")}
+            </span>
+            <span
+              className="text-sm tabular-nums text-text/80"
+              data-testid="rec-clock"
+              title={t("meetings.recorder.clock")}
+            >
+              {formatClock(elapsedMs)}
+            </span>
+            <MiniLevels
+              mic={micLevel}
+              system={systemLevel}
+              showSystem={showSystem}
+              title={`${t("meetings.recorder.levelsName")}: ${t(
+                "meetings.recorder.levelsHint",
+              )}`}
+            />
+            <span className="flex-1" aria-hidden="true" />
+            <div
+              className="flex items-center gap-2"
+              role="group"
+              aria-label={t("meetings.title")}
+            >
+              <IconAction
+                icon={paused ? Play : Pause}
+                label={
+                  paused
+                    ? t("meetings.record.resume")
+                    : t("meetings.record.pause")
+                }
+                description={
+                  paused
+                    ? t("meetings.recorder.resumeHint")
+                    : t("meetings.recorder.pauseHint")
+                }
+                testId={paused ? "rec-resume" : "rec-pause"}
+                onClick={paused ? resume : pause}
+                disabled={busy}
+              />
+              <IconAction
+                icon={Square}
+                iconClassName="text-red-500"
+                label={t("meetings.record.stop")}
+                description={t("meetings.recorder.stopHint")}
+                testId="rec-stop"
+                onClick={() => void stop()}
+                disabled={busy}
+              />
+              <MeetingChatNotice testId="recording" compact />
+            </div>
+          </div>
+        )}
 
         {!active && (hasCalendar || upcoming.length > 0) && (
           <div
@@ -566,49 +629,29 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
             ))}
           </div>
         )}
-
-        {active && (
-          <div className="space-y-1.5 pt-1">
-            <LevelBar label={t("meetings.record.micLevel")} value={micLevel} />
-            {showSystem && (
-              <LevelBar
-                label={t("meetings.record.systemLevel")}
-                value={systemLevel}
-              />
-            )}
-          </div>
-        )}
-
-        {active && <MeetingChatNotice testId="recording" />}
       </div>
 
-      <Dialog
+      <StartRecordingDialog
         open={consentOpen}
         onOpenChange={setConsentOpen}
-        title={t("meetings.consent.title")}
-        closeLabel={t("meetings.consent.cancel")}
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={() => setConsentOpen(false)}
-              disabled={busy}
-            >
-              {t("meetings.consent.cancel")}
-            </Button>
-            <Button onClick={confirmStart} disabled={busy}>
-              {t("meetings.consent.confirm")}
-            </Button>
-          </>
+        busy={busy}
+        onConfirm={() => void confirmStart()}
+        title={title}
+        onTitleChange={setTitle}
+        eventChoice={eventChoice?.event ?? null}
+        onClearEvent={clearEventChoice}
+        folders={projects}
+        projectId={projectChoice}
+        onProjectChange={setProjectChoice}
+        templateId={templateId}
+        onTemplateChange={(id) => setTemplateChoice(id)}
+        captureSystem={captureSetting}
+        onCaptureSystemChange={(value) =>
+          void updateSetting("meeting_capture_system", value)
         }
-      >
-        <div className="space-y-3">
-          <p className="text-sm text-text/80 whitespace-pre-wrap">
-            {t("meetings.consent.body")}
-          </p>
-          <MeetingChatNotice testId="consent" />
-        </div>
-      </Dialog>
-    </SettingsGroup>
+        diarizeMic={diarizeMic}
+        onDiarizeMicChange={setDiarizeMic}
+      />
+    </div>
   );
 };

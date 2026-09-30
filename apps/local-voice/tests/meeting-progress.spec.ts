@@ -374,7 +374,10 @@ test.describe("Statusbereich der Detailansicht", () => {
     );
     const pause = page.getByTestId("job-pause");
     await expect(pause).toBeDisabled();
-    await expect(pause).toHaveAttribute("title", /nicht pausieren/);
+    // Der Grund steht im Tooltip (Name + Kurzerklaerung), auch am gesperrten Knopf.
+    const box = (await pause.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.getByRole("tooltip")).toContainText(/nicht pausieren/);
     // Stoppen geht in jeder Phase.
     await expect(page.getByTestId("job-stop")).toBeEnabled();
   });
@@ -525,7 +528,8 @@ test.describe("Pause und Fortsetzen", () => {
     await emit(page, progress());
     const pause = page.getByTestId("job-pause");
     await expect(pause).toBeEnabled();
-    await expect(pause).toHaveText("Pausieren");
+    // Symbolknopf: der Name steht im aria-label.
+    await expect(pause).toHaveAttribute("aria-label", "Pausieren");
 
     await pause.click();
     expect(await calls(page, "meetings_job_pause")).toEqual([
@@ -536,7 +540,10 @@ test.describe("Pause und Fortsetzen", () => {
     await expect(page.getByTestId("job-state")).toHaveText(
       "Pause wird eingelegt …",
     );
-    await expect(page.getByTestId("job-resume")).toHaveText("Fortsetzen");
+    await expect(page.getByTestId("job-resume")).toHaveAttribute(
+      "aria-label",
+      "Fortsetzen",
+    );
     await emit(page, progress({ state: "paused" }));
     await expect(page.getByTestId("job-state")).toHaveText("Pausiert");
     await expect(page.getByTestId("job-eta")).toHaveCount(0);
@@ -546,7 +553,10 @@ test.describe("Pause und Fortsetzen", () => {
       { cmd: "meetings_job_resume", args: { meetingId: "m1" } },
     ]);
     await emit(page, progress({ state: "running" }));
-    await expect(page.getByTestId("job-pause")).toHaveText("Pausieren");
+    await expect(page.getByTestId("job-pause")).toHaveAttribute(
+      "aria-label",
+      "Pausieren",
+    );
     await expect(page.getByTestId("job-state")).toHaveCount(0);
   });
 

@@ -695,17 +695,22 @@ test("Protokoll: ein vollständiges Protokoll zeigt keine Warnung", async ({
 // ---------------------------------------------------------------------------
 
 test.describe("Automatisch bei neuen Aufnahmen", () => {
-  const startNow = async (page: Page) => {
+  // Die Vorlagenwahl steht seit M4 im Startdialog.
+  const openStart = async (page: Page) => {
     await page.getByRole("button", { name: "Aufnahme starten" }).click();
+    await expect(page.getByTestId("record-template")).toBeVisible();
+  };
+  const startNow = async (page: Page) => {
     await page
       .getByRole("button", { name: "Alle Beteiligten haben zugestimmt" })
       .click();
   };
 
-  test("Die Aufnahme-Karte bietet Automatisch, die Wahl geht an die Besprechung", async ({
+  test("Der Startdialog bietet Automatisch, die Wahl geht an die Besprechung", async ({
     page,
   }) => {
     await openRecordings(page);
+    await openStart(page);
     const picker = page.getByTestId("record-template");
     await picker.locator(".app-select__control").click();
     await page
@@ -730,6 +735,7 @@ test.describe("Automatisch bei neuen Aufnahmen", () => {
       (window as any).__settings.meeting_default_template_id = "auto";
     });
     await openRecordings(page);
+    await openStart(page);
     await expect(
       page.getByTestId("record-template").locator(".app-select__single-value"),
     ).toHaveText("Automatisch (nach Inhalt)");
