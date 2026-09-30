@@ -20,6 +20,8 @@ pub mod notes;
 pub mod pdf; // M6-P6b
 pub mod queue; // U7
 pub mod queue_store; // U7
+#[cfg(test)]
+mod migration_chain; // I1: Migrationskette A1, A3, U7
 pub mod recorder;
 pub mod retention;
 pub mod retranscribe;

@@ -643,6 +643,57 @@ pub(crate) fn backup_before_migration(db_path: &Path) -> Result<Option<PathBuf>>
     Ok(Some(target))
 }
 
+/// I1: `user_version` einer Datenbank, die nur U7 (ohne A1/A3) kannte: Index 0
+/// bis 4 plus die Warteschlange als Index 5.
+const U7_FIRST_VERSION: i64 = 6;
+/// `user_version` nach A1 (Index 5), A3 (Index 6) und U7 (Index 7).
+const AFTER_U7_VERSION: i64 = 8;
+
+/// I1: Vor dem Zusammenfuehren war U7 der Schritt mit Index 5; danach ist Index 5
+/// das Register (A1), Index 6 die Fassungen (A3) und U7 Index 7. Eine Datenbank,
+/// die ein reiner U7-Build angelegt hat (Version 6, `import_queue` da, weder
+/// Register noch Fassungen), wuerde ohne diese Angleichung A3 anwenden und an
+/// U7 (`ADD COLUMN description` doppelt) scheitern: alles rollt zurueck, die
+/// Besprechungen liessen sich nicht mehr oeffnen. Hier werden stattdessen genau
+/// die fehlenden Schritte A1 und A3 nachgeholt und die Version auf "nach U7"
+/// gesetzt, in EINER Transaktion (Abbruch: alles wie vorher). Der Test
+/// `a_database_from_a_u7_only_build_is_adopted` deckt es ab.
+///
+/// Eine Datenbank, die eine Version des zusammengefuehrten Standes angelegt
+/// hat, kann diese Merkmale nie haben (dort ist `import_queue` erst mit
+/// Version 8 da): es gibt keinen Fehlgriff.
+fn adopt_u7_first_database(conn: &mut Connection) -> Result<bool> {
+    let table_exists = |conn: &Connection, name: &str| -> Result<bool> {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![name],
+            |row| row.get::<_, i64>(0),
+        )? > 0)
+    };
+    let looks_u7_first = |conn: &Connection| -> Result<bool> {
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        Ok(version == U7_FIRST_VERSION
+            && table_exists(conn, "import_queue")?
+            && !table_exists(conn, "provenance")?
+            && !table_exists(conn, "transcript_variants")?)
+    };
+    // Schneller Vorabtest ohne Sperre: fast jede Datenbank ist es nicht.
+    if !looks_u7_first(conn)? {
+        return Ok(false);
+    }
+    // Unter der Schreibsperre noch einmal pruefen: ein zweiter Prozess (Import-CLI
+    // neben der App) kann gleichzeitig angleichen.
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if !looks_u7_first(&tx)? {
+        return Ok(false);
+    }
+    tx.execute_batch(crate::managers::integrations::schema::INTEGRATIONS_MIGRATION)?;
+    tx.execute_batch(super::variants::VARIANTS_MIGRATION)?;
+    tx.pragma_update(None, "user_version", AFTER_U7_VERSION)?;
+    tx.commit()?;
+    Ok(true)
+}
+
 pub struct MeetingStore {
     db_path: PathBuf,
     /// M6-P6e: `Some(Wartezeit)` = nur lesend geoeffnet (`open_read_only`,
@@ -739,6 +790,15 @@ impl MeetingStore {
             Err(e) => warn!("Could not back up the meetings database before migrating: {e}"),
         }
         let mut conn = Connection::open(&self.db_path)?;
+
+        // I1: eine Datenbank aus einem reinen U7-Build erst an die Reihenfolge
+        // A1, A3, U7 angleichen. Ein Fehler hier laesst die Datenbank unveraendert
+        // (eine Transaktion); `to_latest` meldet dann den eigentlichen Fehler.
+        match adopt_u7_first_database(&mut conn) {
+            Ok(true) => info!("Meetings database from a U7-only build adopted into the merged migration order"),
+            Ok(false) => {}
+            Err(e) => warn!("Could not adopt a U7-only meetings database: {e}"),
+        }
 
         let migrations = Migrations::new(MIGRATIONS.to_vec());
         #[cfg(debug_assertions)]
