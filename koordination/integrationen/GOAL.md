@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/integrationen
 iteration: 1
 erstellt: 2026-09-30
-aktualisiert: 2026-09-30T22:10
+aktualisiert: 2026-09-30T23:07
 ---
 
 # Goal: Integrationen: Register fuer Kalender, Mail, Speicher, Wissen und Agenten (MCP/CLI lesend+schreibend)
@@ -54,9 +54,9 @@ Agenten steuern die App über MCP und `local-voice-ai.exe ctl` nur im Rahmen die
 - [x] AK1 — Fundament: `cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml --lib integrations:: provenance::` → ≥ 30 Tests grün, u. a. Migrationstest (Fixture mit 2 `calendar_sources` → 2 Integrationen gleicher ID, zweiter Start ohne Dubletten) und Provenienz: Protokoll-Erzeugung legt einen Eintrag mit Modell, Token, Dauer, `usage_event_id` an; alte Dokumente liefern Herkunft aus `generation_metadata_json`.
 - [x] AK2 — YouTube-Quelle: Playwright `youtube-source.spec.ts` → Link `https://www.youtube.com/watch?v=…` (auch `youtu.be/…`, `shorts/…`) in Aufnahmen einfügen erzeugt eine Besprechung mit Quelle „YouTube“, Titel und Kanal; ungültige/Playlist-Links → verständliche Meldung; Rust-Test für Link-Normalisierung (≥ 10 Fälle).
 - [ ] AK3 — Ansehen: Installer, echtes Video → Player in der Inhaltsspalte spielt ab, Position springt beim Klick auf ein Transkript-Segment; kein verschachteltes iframe, keine Veränderung der Werbung (Code-Review-Punkt).
-- [ ] AK4 — Untertitel + eigene Transkription: für ein Video mit Untertiteln liegen beide Fassungen an derselben Besprechung (Quelle je Fassung sichtbar); ohne Untertitel → nur eigene Fassung mit Hinweis; Sprachauswahl bei mehreren Spuren (Rust-Tests gegen Fixture-VTT, manuell 1 Video).
-- [ ] AK5 — Vergleich/Zusammenführen: Playwright → Diff-Ansicht markiert Einfügungen/Löschungen wortweise; „Fassung wählen“ setzt das aktive Transkript; „Zusammenführen“ erzeugt eine dritte Fassung mit Provenienz (Quellen = beide Fassungen, Modell, Token); Rust-Test: Zusammenführung verwirft Ausgaben, die das Schema verletzen oder > 20 % Text erfinden (Längen-/Überdeckungsprüfung).
-- [ ] AK6 — Zusammenfassung + Herkunft: Zusammenfassung eines YouTube-Videos wird erzeugt; Rechtsklick „Herkunft“ auf Transkript, Zusammenfassung und Protokoll öffnet Dialog mit Modell, Token, Dauer, Zeitpunkt, Quellen, Konfidenz (falls vorhanden) und Auslöser (Playwright).
+- [x] AK4 — Untertitel + eigene Transkription: für ein Video mit Untertiteln liegen beide Fassungen an derselben Besprechung (Quelle je Fassung sichtbar); ohne Untertitel → nur eigene Fassung mit Hinweis; Sprachauswahl bei mehreren Spuren (Rust-Tests gegen Fixture-VTT, manuell 1 Video).
+- [x] AK5 — Vergleich/Zusammenführen: Playwright → Diff-Ansicht markiert Einfügungen/Löschungen wortweise; „Fassung wählen“ setzt das aktive Transkript; „Zusammenführen“ erzeugt eine dritte Fassung mit Provenienz (Quellen = beide Fassungen, Modell, Token); Rust-Test: Zusammenführung verwirft Ausgaben, die das Schema verletzen oder > 20 % Text erfinden (Längen-/Überdeckungsprüfung).
+- [x] AK6 — Zusammenfassung + Herkunft: Zusammenfassung eines YouTube-Videos wird erzeugt; Rechtsklick „Herkunft“ auf Transkript, Zusammenfassung und Protokoll öffnet Dialog mit Modell, Token, Dauer, Zeitpunkt, Quellen, Konfidenz (falls vorhanden) und Auslöser (Playwright).
 - [ ] AK7 — Seite Integrationen: Playwright `integrations.spec.ts` → Eintrag zwischen „Modelle“ und „Einstellungen“; Katalog ≥ 7 Arten; Ordner-Integration anlegen, Richtung/Fähigkeitsmodus ändern übersteht Neuladen; Kalenderquellen als Karten; MCP-Schalter unter Einstellungen > Besprechungen durch Verweis ersetzt, `meeting_mcp_enabled` wirkt unverändert.
 - [ ] AK8 — Konten und Ziele: `--lib integrations::m365 integrations::smtp integrations::folder integrations::obsidian integrations::wissen` → ≥ 30 Tests gegen Test-Server/Sandbox (Scopes nur für eingeschaltete Fähigkeiten, `sendMail`, OneDrive-Upload klein und per Upload-Session, 401→Refresh; SMTP an Test-Server; Pfad-Sandbox gegen `..`/Junction; Vault-Notiz mit Frontmatter-Golden; `wissen_suchen` mit Scope-Fehler-Meldung); manuell Patrick: Testmail, Datei in OneDrive, Suche in der Wissensbasis.
 - [ ] AK9 — Agentenbrücke: `--lib agent_bridge::` → ≥ 15 Tests (Pipe nur aktueller Benutzer, Remote abgewiesen, Token ungültig/zurückgezogen → abgelehnt + Audit, „aus“ → Werkzeug fehlt in `tools/list`, „fragen“ → Freigabe, 30 s ohne Antwort → `pending` + ID).
@@ -126,6 +126,9 @@ Pakete und Bündel: `vorschlag.md` → Paketschnitt; Budget: 8 Pakete × ~275 kT
 ## Evidence
 - 2026-09-30T20:15 AK1 erfüllt — A1 20f0e763: cargo test --lib -- integrations:: provenance:: 153 passed; Migrationstest idempotent; Protokoll-Provenienz mit usage_event_id
 - 2026-09-30T22:10 AK2 erfüllt — A2: youtube-source 20 passed, Link-Normalisierung >40 Faelle, echter oEmbed-Abruf
+- 2026-09-30T23:07 AK4 erfüllt — A3 2f0c7642: VTT-Fixture-Tests, echter yt-dlp-Lauf 4 Spuren
+- 2026-09-30T23:07 AK5 erfüllt — A3 2f0c7642: youtube-versions Diff/Fassung waehlen/Zusammenfuehren, Merge-Schutz-Tests
+- 2026-09-30T23:07 AK6 erfüllt — A3 2f0c7642: Herkunft-Dialog an Transkript/KI-Notizen/Protokoll, Protokoll auf YouTube-Besprechung
 
 ## Blocker
 -

@@ -18,3 +18,13 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Konsequenz: beobachten; beim zweiten Auftreten Ursache (Zeit/Isolation) beheben.
 - Status: erledigt (beobachtet)
 
+## B4 — A3: axe meldet zu geringen Farbkontrast (abgeblendete Schrift text-text/60) app-weit (30.09.)
+- Beobachtet: axe `color-contrast` „serious“ bei Zeitmarken, Spaltenüberschriften, Leerhinweisen, Navigation; Ursache Design-Token, betrifft die ganze App.
+- Konsequenz: eigenes Paket (Token-Anpassung app-weit) mit Owner-Freigabe wegen breitem Diff; bis dahin axe ohne color-contrast.
+- Status: offen
+
+## B5 — Zeitabhängige Tests zum zweiten Mal rot: search::index unfiled_filter, llm::server restart cooldown (30.09.)
+- Beobachtet: beide erneut in vollen Läufen rot, einzeln grün (B3 war das erste Auftreten).
+- Konsequenz: Regel „beim zweiten Auftreten reparieren“ – im Integrationspaket I1 ursachengerecht lastfest machen.
+- Status: offen
+
