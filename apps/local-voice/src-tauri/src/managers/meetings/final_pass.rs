@@ -31,6 +31,13 @@
 //! Schritt (Modell fehlt, wenig RAM, Panik) laesst das Transkript, wie es ist:
 //! die Besprechung wird `ready`, die Labels bleiben "Ich" / "Gegenseite".
 //!
+//! P8a: jeder Ablauf ist ein Auftrag mit Fortschritt (Anteil der verarbeiteten
+//! Audiodauer), Pause und Stopp (`job.rs`; hier ueber [`FinalEnv`]). Ein Stopp
+//! des Nutzers im Enddurchlauf oder in der Sprechertrennung laesst das
+//! Live-Transkript stehen (Besprechung `ready`, Hinweis `final_pass_stopped`);
+//! ein Stopp im Nachholen beendet die Besprechung als `cancelled`, ohne
+//! Luecken-Platzhalter: "Fortsetzen" holt dann den Rest nach.
+//!
 //! Alles, was Tauri, das Modell oder die Hardware braucht, steckt hinter
 //! [`FinalEnv`]; die Ablaeufe selbst sind ohne Geraet und ohne Modell testbar.
 
@@ -47,7 +54,9 @@ use serde::Serialize;
 use super::chunker::{ChannelChunker, Chunk};
 use super::diarize::assign::assign_segments;
 use super::dsp::{live_segments, DspStats, SegmentMeta, VadFactory, FALLBACK_CHUNK_MS};
+use super::job::{self, Gate, JobHandle, JobPhase};
 use super::recorder::{MeetingEvent, CHANNEL_MIC, CHANNEL_SYSTEM};
+use super::retention::MeetingAudioRetention;
 use super::segmenter::{Segment, SegmenterConfig, VadSegmenter};
 use super::speakers::{self, ApplyOutcome, ChannelDiarizer, StepReport, TurnSet};
 use super::store::{
@@ -70,6 +79,8 @@ pub const LIVE_TRANSCRIPT_FILE: &str = "transcript_live.json";
 pub const REPORT_KEY: &str = "final_pass";
 /// Hinweis-Code (MeetingEvent::Error) fuer einen uebersprungenen Enddurchlauf.
 pub const SKIPPED_CODE: &str = "final_pass_skipped";
+/// P8a: Hinweis-Code, wenn der Nutzer die Nachbearbeitung gestoppt hat.
+pub const STOPPED_CODE: &str = "final_pass_stopped";
 /// Import-Spur ohne Kanaltrennung (wie `retranscribe.rs`).
 const CHANNEL_MIXED: u8 = 2;
 /// `remap_sources`: ohne Ueberlappung zaehlt das naechste Segment, wenn es
@@ -160,6 +171,8 @@ pub enum KeepReason {
     StoreFailed,
     /// Eine neue Aufnahme hat den Lauf abgebrochen.
     Cancelled,
+    /// P8a: der Nutzer hat gestoppt.
+    UserStopped,
     Panic,
     /// Der Enddurchlauf lief schon (Absturz nach dem Ersatz, vor `ready`).
     AlreadyFinal,
@@ -333,6 +346,33 @@ pub trait FinalEnv {
     fn emit(&mut self, event: MeetingEvent);
     /// Eine neue Aufnahme will die Engine: zwischen zwei Segmenten aufhoeren.
     fn cancelled(&self) -> bool;
+    /// P8a: der Auftrag zu `meeting_id` beginnt (Fortschritt, Pause, Stopp).
+    /// Standard: nichts (Attrappen ohne Oberflaeche).
+    fn job_begin(&mut self, _meeting_id: &str) {}
+    /// P8a: der Auftrag ist zu Ende (auch nach einem Fehler oder Stopp).
+    fn job_end(&mut self) {}
+    /// P8a: eine neue Phase mit ihrer Groesse in ms Audio (0 = unbekannt).
+    fn phase(&mut self, _phase: JobPhase, _total: u64) {}
+    /// P8a: Stand der Phase in ms Audio.
+    fn progress(&mut self, _done: u64) {}
+    /// P8a: Kontrollpunkt zwischen zwei Bloecken. Haelt bei einer Pause an;
+    /// `Stopped`: der Nutzer hat gestoppt, `Cancelled`: eine neue Aufnahme will
+    /// die Engine. Standard: nur die Engine-Abfrage.
+    fn checkpoint(&mut self) -> Gate {
+        if self.cancelled() {
+            Gate::Cancelled
+        } else {
+            Gate::Go { resumed: false }
+        }
+    }
+    /// P8a: hat der Nutzer diesen Auftrag gestoppt?
+    fn stopped(&self) -> bool {
+        false
+    }
+    /// P8a: Aufbewahrung der Audiodateien (fuer den Endzustand nach einem Stopp).
+    fn retention_policy(&self) -> MeetingAudioRetention {
+        MeetingAudioRetention::Forever
+    }
     /// M3-P3b: die Sprechertrennung dieser Umgebung. Standard: keine (Attrappen
     /// ohne Diarisierer); die App liefert immer einen (auch abgeschaltet, dann
     /// nutzt der Schritt nur gespeicherte Turns).
@@ -643,23 +683,33 @@ pub struct FinalReport {
     pub speakers: Option<StepReport>,
 }
 
+/// Wie das Nachholen endete.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CatchUp {
+    Finished,
+    /// Der Nutzer hat gestoppt: kein Luecken-Platzhalter, der Rest bleibt
+    /// offen und wird beim Fortsetzen nachgeholt.
+    Stopped,
+}
+
 /// Nachholen nach einem Absturz: je Kanal alles ab dem groessten `end_ms`
 /// dieses Kanals, mit dem Besprechungsmodell, gespeichert wie der Live-Pfad
 /// (`append_delta` + `Segments`). Scheitert das Laden, das Transkribieren
 /// oder bricht eine neue Aufnahme ab, markiert ein Luecken-Platzhalter den
-/// Rest, damit nichts stumm fehlt.
+/// Rest, damit nichts stumm fehlt. Der Nutzer kann stoppen (P8a): dann bleibt
+/// alles bis dahin Gespeicherte, und es entsteht KEIN Platzhalter.
 fn catch_up(
     store: &MeetingStore,
     meeting: &Meeting,
     model_id: &str,
     env: &mut dyn FinalEnv,
     report: &mut FinalReport,
-) {
+) -> CatchUp {
     let segments = match store.get_segments(&meeting.id) {
         Ok(s) => s,
         Err(e) => {
             warn!("meetings: catch-up could not read the transcript: {e}");
-            return;
+            return CatchUp::Finished;
         }
     };
     let mut next_index = segments
@@ -670,20 +720,33 @@ fn catch_up(
     let vad = env.vad();
     let stats = DspStats::default();
     let mut loaded = false;
-    for track in catch_up_tracks(meeting) {
-        let from_ms = segments
-            .iter()
-            .filter(|s| s.channel == track.channel)
-            .map(|s| s.end_ms)
-            .max()
-            .unwrap_or(0);
-        let Some(total_ms) = wav_duration_ms(&track.path) else {
-            continue;
-        };
-        // Weniger als eine halbe Sekunde Rest: nichts, was ein Wort traegt.
-        if from_ms + 500 >= total_ms {
-            continue;
+
+    // P8a: was nachzuholen ist (Spur, Beginn, Ende), fuer den Fortschritt.
+    let todo: Vec<(Track, u64, u64)> = catch_up_tracks(meeting)
+        .into_iter()
+        .filter_map(|track| {
+            let from_ms = segments
+                .iter()
+                .filter(|s| s.channel == track.channel)
+                .map(|s| s.end_ms)
+                .max()
+                .unwrap_or(0);
+            let total_ms = wav_duration_ms(&track.path)?;
+            // Weniger als eine halbe Sekunde Rest: nichts, was ein Wort traegt.
+            (from_ms + 500 < total_ms).then_some((track, from_ms, total_ms))
+        })
+        .collect();
+    let todo_total: u64 = todo.iter().map(|(_, from, total)| total - from).sum();
+    if todo_total > 0 {
+        env.phase(JobPhase::Transcription, todo_total);
+    }
+    let mut done_before = 0u64;
+
+    for (track, from_ms, total_ms) in todo {
+        if env.stopped() {
+            return CatchUp::Stopped;
         }
+        let remaining = total_ms - from_ms;
         let mut failed = env.cancelled();
         if !failed && !loaded {
             match env.load(model_id) {
@@ -695,11 +758,17 @@ fn catch_up(
             }
         }
         let mut done_ms = from_ms;
+        let mut stopped_by_user = false;
         if !failed {
             let channel = track.channel;
             let mut on_segment = |chunk: Chunk, meta: Option<SegmentMeta>| -> bool {
-                if env.cancelled() {
-                    return false;
+                match env.checkpoint() {
+                    Gate::Go { .. } => {}
+                    Gate::Stopped => {
+                        stopped_by_user = true;
+                        return false;
+                    }
+                    Gate::Cancelled => return false,
                 }
                 let timed = match env.transcribe(model_id, &chunk) {
                     Ok(t) => t,
@@ -708,7 +777,9 @@ fn catch_up(
                         return false;
                     }
                 };
+                let chunk_end = chunk.offset_ms + chunk.samples.len() as u64 / SAMPLES_PER_MS;
                 let appended = live_segments(timed, &chunk, channel, meta, &mut next_index, &stats);
+                env.progress(done_before + chunk_end.saturating_sub(from_ms).min(remaining));
                 if appended.is_empty() {
                     return true;
                 }
@@ -729,9 +800,16 @@ fn catch_up(
                 true
             };
             match segment_wav(&track.path, from_ms, 15_000, vad.as_ref(), &mut on_segment) {
-                Ok(run) if !run.stopped => continue,
+                Ok(run) if !run.stopped => {
+                    done_before += remaining;
+                    env.progress(done_before);
+                    continue;
+                }
                 Ok(run) => done_ms = run.done_ms,
                 Err(e) => warn!("meetings: catch-up could not read a track: {e}"),
+            }
+            if stopped_by_user {
+                return CatchUp::Stopped;
             }
         }
         // Rest als Luecke markieren (Muster `import.rs`).
@@ -760,7 +838,10 @@ fn catch_up(
             }
             Err(e) => warn!("meetings: catch-up gap marker not stored: {e}"),
         }
+        done_before += remaining;
+        env.progress(done_before);
     }
+    CatchUp::Finished
 }
 
 /// Der eigentliche Enddurchlauf. `Ok(epoch)` = ersetzt; `Err` = das
@@ -794,18 +875,36 @@ fn final_pass(
     if env.cancelled() {
         return Err(KeepReason::Cancelled);
     }
+    if env.stopped() {
+        return Err(KeepReason::UserStopped);
+    }
+    // P8a: die Phase mit der Gesamtdauer beider Spuren, schon vor dem Laden des
+    // Modells (das Laden eines grossen Modells dauert Sekunden).
+    let total_ms: u64 = tracks
+        .iter()
+        .filter_map(|t| wav_duration_ms(&t.path))
+        .sum();
+    env.phase(JobPhase::FinalPass, total_ms);
     report.load_ms = env.load(model_id)?;
 
     let vad = env.vad();
     let stats = DspStats::default();
     let mut fresh: Vec<StoredSegment> = Vec::new();
     let mut failure: Option<KeepReason> = None;
+    let mut track_base_ms = 0u64;
     for track in &tracks {
         let channel = track.channel;
         let mut on_segment = |chunk: Chunk, meta: Option<SegmentMeta>| -> bool {
-            if env.cancelled() {
-                failure = Some(KeepReason::Cancelled);
-                return false;
+            match env.checkpoint() {
+                Gate::Go { .. } => {}
+                Gate::Stopped => {
+                    failure = Some(KeepReason::UserStopped);
+                    return false;
+                }
+                Gate::Cancelled => {
+                    failure = Some(KeepReason::Cancelled);
+                    return false;
+                }
             }
             let started = Instant::now();
             let timed = match env.transcribe(model_id, &chunk) {
@@ -823,6 +922,7 @@ fn final_pass(
             report.transcribe_ms += started.elapsed().as_millis() as u64;
             report.blocks += 1;
             report.audio_ms += chunk.samples.len() as u64 / SAMPLES_PER_MS;
+            env.progress(track_base_ms + chunk.offset_ms + chunk.samples.len() as u64 / SAMPLES_PER_MS);
             let mut index = 0;
             fresh.extend(live_segments(timed, &chunk, channel, meta, &mut index, &stats));
             true
@@ -837,6 +937,8 @@ fn final_pass(
                 return Err(KeepReason::NoAudio);
             }
         }
+        track_base_ms += wav_duration_ms(&track.path).unwrap_or(0);
+        env.progress(track_base_ms);
     }
     if env.cancelled() {
         return Err(KeepReason::Cancelled);
@@ -946,6 +1048,15 @@ fn turns_before_stt(
     {
         return None;
     }
+    // P8a: die Phase "Sprecher" nur, wenn das Modell auch rechnen wird (sonst
+    // blitzte sie fuer einen Augenblick auf). Erst melden, dann den Diarisierer
+    // ausleihen: beides braucht `env`.
+    let will_run = env
+        .diarizer()
+        .is_some_and(|d| d.unavailable().is_none());
+    if will_run {
+        env.phase(JobPhase::Speakers, 0);
+    }
     let diarizer = env.diarizer()?;
     let mut step = StepReport::default();
     let collected = catch_unwind(AssertUnwindSafe(|| {
@@ -1030,31 +1141,43 @@ pub struct JobOutcome {
 pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> JobOutcome {
     let started = Instant::now();
     let mut report = FinalReport::default();
+    // P8a: der Auftrag (Fortschritt, Pause, Stopp) gilt fuer den ganzen Ablauf.
+    env.job_begin(&job.meeting_id);
+    let mut stopped_in_catch_up = false;
     let result = catch_unwind(AssertUnwindSafe(|| {
         let meeting = match store.get_meeting(&job.meeting_id) {
             Ok(Some(m)) if m.deleted_at.is_none() => m,
             _ => return Err(KeepReason::StoreFailed),
         };
         if let Some(model) = &job.catch_up_model {
-            catch_up(store, &meeting, model, env, &mut report);
+            if catch_up(store, &meeting, model, env, &mut report) == CatchUp::Stopped {
+                stopped_in_catch_up = true;
+                return Err(KeepReason::UserStopped);
+            }
         }
         // M3-P3b: die Turns VOR dem End-STT holen (ein grosses Modell zur Zeit).
         let turns = turns_before_stt(store, &meeting, &job.plan, env, &mut report);
-        let outcome = match &job.plan {
-            FinalPlan::Keep(reason) => Err(*reason),
-            FinalPlan::Run {
-                model_id,
-                max_segment_ms,
-            } => final_pass(
-                store,
-                &meeting,
-                model_id,
-                *max_segment_ms,
-                env,
-                &mut report,
-                turns.as_ref(),
-            )
-            .map(|epoch| (epoch, model_id.clone())),
+        let outcome = if env.stopped() && matches!(job.plan, FinalPlan::Run { .. }) {
+            // P8a: gestoppt (etwa waehrend der Sprechertrennung): kein
+            // Enddurchlauf, das Live-Transkript bleibt.
+            Err(KeepReason::UserStopped)
+        } else {
+            match &job.plan {
+                FinalPlan::Keep(reason) => Err(*reason),
+                FinalPlan::Run {
+                    model_id,
+                    max_segment_ms,
+                } => final_pass(
+                    store,
+                    &meeting,
+                    model_id,
+                    *max_segment_ms,
+                    env,
+                    &mut report,
+                    turns.as_ref(),
+                )
+                .map(|epoch| (epoch, model_id.clone())),
+            }
         };
         if outcome.is_err() {
             // Das Live-Transkript bleibt: die Sprecher kommen auf dieses.
@@ -1069,6 +1192,10 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
     report.wall_ms = started.elapsed().as_millis() as u64;
     if report.transcribe_ms > 0 {
         report.rtf = Some(report.audio_ms as f64 / report.transcribe_ms as f64);
+    }
+
+    if stopped_in_catch_up {
+        return finish_stopped(store, job, env, report);
     }
 
     let (epoch, model) = match result {
@@ -1091,7 +1218,12 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
                 );
                 env.emit(MeetingEvent::Error {
                     meeting_id: job.meeting_id.clone(),
-                    message: SKIPPED_CODE.to_string(),
+                    message: if reason == KeepReason::UserStopped {
+                        STOPPED_CODE
+                    } else {
+                        SKIPPED_CODE
+                    }
+                    .to_string(),
                 });
             }
             (epoch, model)
@@ -1115,6 +1247,10 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
         status: "ready".to_string(),
         paused: false,
     });
+    // P8a: der Auftrag ist VOR `TranscriptFinal` ausgetragen: darauf starten
+    // die KI-Notizen (Auto-Lauf) und melden sich selbst fuer diese Besprechung
+    // an; stuende der Auftrag noch, waeren sie "belegt".
+    env.job_end();
     // Epoche aus der DB (nach einem Ersatz die neue).
     env.emit(super::dsp::transcript_final_event(
         store,
@@ -1139,6 +1275,56 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
         report,
         epoch,
         model,
+    }
+}
+
+/// P8a: der Nutzer hat das Nachholen gestoppt. Das Transkript ist nicht
+/// vollstaendig, also weder `TranscriptFinal` noch Notizen: die Besprechung
+/// endet als `cancelled` (Endzustand, kein Wiederanlauf beim Start), die
+/// fertigen Bloecke bleiben, "Fortsetzen" holt den Rest nach. Faellt das
+/// Schreiben des Status aus, wird es `failed` statt eines haengenden
+/// `processing`.
+fn finish_stopped(
+    store: &MeetingStore,
+    job: &JobSpec,
+    env: &mut dyn FinalEnv,
+    mut report: FinalReport,
+) -> JobOutcome {
+    report.kept = Some(KeepReason::UserStopped);
+    let epoch = store.segment_epoch(&job.meeting_id).unwrap_or(0);
+    report.epoch = epoch;
+    if let Ok(value) = serde_json::to_value(&report) {
+        if let Err(e) = store.set_metadata_key(&job.meeting_id, REPORT_KEY, value) {
+            warn!("meetings: final pass report not stored: {e}");
+        }
+    }
+    let status = match super::import::mark_stopped(
+        store,
+        &job.meeting_id,
+        chrono::Utc::now().timestamp(),
+        &env.retention_policy(),
+    ) {
+        Ok(()) => "cancelled",
+        Err(e) => {
+            error!("meetings: stop not stored for {}: {e}", job.meeting_id);
+            let _ = store.set_status(&job.meeting_id, MeetingStatus::Failed);
+            "failed"
+        }
+    };
+    env.emit(MeetingEvent::State {
+        meeting_id: job.meeting_id.clone(),
+        status: status.to_string(),
+        paused: false,
+    });
+    info!(
+        "meetings: processing stopped by the user ({}): catch_up={}/{}",
+        job.meeting_id, report.catch_up_segments, report.catch_up_gaps
+    );
+    env.job_end();
+    JobOutcome {
+        report,
+        epoch,
+        model: None,
     }
 }
 
@@ -1256,6 +1442,10 @@ pub struct AppDiarizer {
     threads: usize,
     cancel: Arc<AtomicBool>,
     loaded: Option<super::diarize::Diarizer>,
+    /// P8a: der Auftrag, dessen Fortschritt und Stopp gelten.
+    job: Option<Arc<JobHandle>>,
+    /// Zuletzt gemeldete Gesamtdauer (die Groesse geht nur bei Aenderung hinaus).
+    last_total: u64,
 }
 
 /// So oft fragt der Wachthund den Abbruch-Merker ab.
@@ -1276,7 +1466,25 @@ impl AppDiarizer {
             threads: super::diarize::default_threads(),
             cancel,
             loaded: None,
+            job: None,
+            last_total: 0,
         }
+    }
+
+    /// P8a: Fortschritt an `job` melden; sein Stopp beendet den Modelllauf.
+    pub fn attach_job(&mut self, job: Arc<JobHandle>) {
+        self.job = Some(job);
+        self.last_total = 0;
+    }
+
+    pub fn detach_job(&mut self) {
+        self.job = None;
+    }
+
+    /// Abbruch der Engine (neue Aufnahme) oder Stopp des Nutzers.
+    fn stop_requested(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+            || self.job.as_ref().is_some_and(|j| j.is_stopped())
     }
 }
 
@@ -1305,7 +1513,7 @@ impl ChannelDiarizer for AppDiarizer {
         pcm: &[f32],
     ) -> Result<Vec<super::diarize::Turn>, super::diarize::DiarizeError> {
         use super::diarize::{DiarizeError, DiarizeParams, Diarizer};
-        if self.cancel.load(Ordering::Relaxed) {
+        if self.stop_requested() {
             return Err(DiarizeError::Cancelled);
         }
         if self.loaded.is_none() {
@@ -1320,10 +1528,11 @@ impl ChannelDiarizer for AppDiarizer {
         params.cancel = Some(token.clone());
         let done = AtomicBool::new(false);
         let cancel = &self.cancel;
+        let job = self.job.as_ref();
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 while !done.load(Ordering::Relaxed) {
-                    if cancel.load(Ordering::Relaxed) {
+                    if cancel.load(Ordering::Relaxed) || job.is_some_and(|j| j.is_stopped()) {
                         token.cancel();
                         break;
                     }
@@ -1337,7 +1546,17 @@ impl ChannelDiarizer for AppDiarizer {
     }
 
     fn cancelled(&self) -> bool {
-        self.cancel.load(Ordering::Relaxed)
+        self.stop_requested()
+    }
+
+    fn progress(&mut self, done_ms: u64, total_ms: u64) {
+        if let Some(job) = &self.job {
+            if total_ms != self.last_total {
+                job.set_total(total_ms);
+                self.last_total = total_ms;
+            }
+            job.advance(done_ms);
+        }
     }
 
     fn release(&mut self) {
@@ -1352,6 +1571,8 @@ pub struct AppEnv {
     cancel: Arc<AtomicBool>,
     vad: Option<VadFactory>,
     diarizer: AppDiarizer,
+    /// P8a: der laufende Auftrag; beim Drop ist er ausgetragen.
+    job: Option<job::JobGuard>,
 }
 
 /// So lange wartet ein Laden auf einen laufenden fremden Ladevorgang.
@@ -1369,6 +1590,7 @@ impl AppEnv {
             diarizer: AppDiarizer::from_app(app, Arc::clone(&cancel)),
             cancel,
             vad: super::recorder::meeting_vad_factory(app),
+            job: None,
         }
     }
 
@@ -1467,6 +1689,54 @@ impl FinalEnv for AppEnv {
 
     fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
+    }
+
+    fn job_begin(&mut self, meeting_id: &str) {
+        match job::global().try_start(meeting_id, job::app_emit(&self.app)) {
+            Ok(guard) => {
+                self.diarizer.attach_job(Arc::clone(guard.handle()));
+                self.job = Some(guard);
+            }
+            // Laeuft schon ein Auftrag fuer die Besprechung, arbeitet dieser
+            // hier ohne Steuerung weiter: jede Besprechung muss ein Ende finden.
+            Err(e) => warn!("meetings: no job control for {meeting_id} ({e})"),
+        }
+    }
+
+    fn job_end(&mut self) {
+        self.diarizer.detach_job();
+        self.job = None;
+    }
+
+    fn phase(&mut self, phase: JobPhase, total: u64) {
+        if let Some(job) = &self.job {
+            job.begin_phase(phase, total);
+        }
+    }
+
+    fn progress(&mut self, done: u64) {
+        if let Some(job) = &self.job {
+            job.advance(done);
+        }
+    }
+
+    /// Pause haelt hier an. Eine neue Aufnahme (`cancel`) befreit auch einen
+    /// pausierten Lauf, sonst wartete `cancel_final_jobs` ewig auf ihn.
+    fn checkpoint(&mut self) -> Gate {
+        let cancel = &self.cancel;
+        match &self.job {
+            Some(job) => job.checkpoint(&|| cancel.load(Ordering::Relaxed)),
+            None if cancel.load(Ordering::Relaxed) => Gate::Cancelled,
+            None => Gate::Go { resumed: false },
+        }
+    }
+
+    fn stopped(&self) -> bool {
+        self.job.as_ref().is_some_and(|j| j.is_stopped())
+    }
+
+    fn retention_policy(&self) -> MeetingAudioRetention {
+        crate::settings::get_meeting_audio_retention(&self.app)
     }
 
     fn diarizer(&mut self) -> Option<&mut dyn ChannelDiarizer> {
@@ -1713,6 +1983,12 @@ mod tests {
         many_words: bool,
         log: Rc<RefCell<Vec<String>>>,
         diar: Option<FakeDiar>,
+        /// P8a: der Nutzer stoppt nach so vielen Bloecken (0 = sofort).
+        user_stop_after: Option<usize>,
+        phases: Vec<(JobPhase, u64)>,
+        progress_log: Vec<u64>,
+        /// `job_begin` / `job_end` in der Reihenfolge des Aufrufs.
+        job_log: Vec<String>,
     }
 
     impl FakeEnv {
@@ -1730,6 +2006,10 @@ mod tests {
                 many_words: false,
                 log: Rc::new(RefCell::new(Vec::new())),
                 diar: None,
+                user_stop_after: None,
+                phases: Vec::new(),
+                progress_log: Vec::new(),
+                job_log: Vec::new(),
             }
         }
 
@@ -1757,6 +2037,8 @@ mod tests {
                     MeetingEvent::Reset { .. } => "reset",
                     MeetingEvent::TranscriptFinal { .. } => "final",
                     MeetingEvent::Health { .. } => "health",
+                    MeetingEvent::Progress { .. } => "progress",
+                    MeetingEvent::JobEnded { .. } => "job_ended",
                 })
                 .collect()
         }
@@ -1830,6 +2112,30 @@ mod tests {
         }
         fn cancelled(&self) -> bool {
             self.cancel_after.is_some_and(|n| self.calls >= n)
+        }
+        fn job_begin(&mut self, _meeting_id: &str) {
+            self.job_log.push("job_begin".into());
+        }
+        fn job_end(&mut self) {
+            self.job_log.push("job_end".into());
+        }
+        fn phase(&mut self, phase: JobPhase, total: u64) {
+            self.phases.push((phase, total));
+        }
+        fn progress(&mut self, done: u64) {
+            self.progress_log.push(done);
+        }
+        fn stopped(&self) -> bool {
+            self.user_stop_after.is_some_and(|n| self.calls >= n)
+        }
+        fn checkpoint(&mut self) -> Gate {
+            if self.stopped() {
+                Gate::Stopped
+            } else if self.cancelled() {
+                Gate::Cancelled
+            } else {
+                Gate::Go { resumed: false }
+            }
         }
     }
 
@@ -2433,6 +2739,8 @@ mod tests {
             threads: 1,
             cancel: Arc::new(AtomicBool::new(cancelled)),
             loaded: None,
+            job: None,
+            last_total: 0,
         }
     }
 
@@ -2509,5 +2817,299 @@ mod tests {
         assert_eq!(gap.end_ms, 6_000);
         assert!(gap.text.starts_with("[Nicht transkribiert"));
         assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+    }
+
+    // ---- P8a: Fortschritt, Pause, Stopp ------------------------------------------
+
+    fn errors_of(env: &FakeEnv) -> Vec<String> {
+        env.events
+            .iter()
+            .filter_map(|e| match e {
+                MeetingEvent::Error { message, .. } => Some(message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_final_pass_reports_one_progress_axis_over_both_tracks() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mut env = FakeEnv::new();
+        run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_eq!(env.phases, vec![(JobPhase::FinalPass, 12_000)], "2 x 6 s");
+        assert!(!env.progress_log.is_empty());
+        assert!(
+            env.progress_log.windows(2).all(|w| w[0] <= w[1]),
+            "nie rueckwaerts: {:?}",
+            env.progress_log
+        );
+        assert_eq!(env.progress_log.last(), Some(&12_000), "endet am Ende der Audiodauer");
+        assert!(
+            env.progress_log.contains(&6_000),
+            "die zweite Spur beginnt bei 6 s der gemeinsamen Achse"
+        );
+        assert_eq!(env.job_log, vec!["job_begin", "job_end"], "je Auftrag genau einmal");
+    }
+
+    #[test]
+    fn a_user_stop_during_the_final_pass_keeps_the_live_transcript_and_says_so() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mut env = FakeEnv::new();
+        env.user_stop_after = Some(1);
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_eq!(out.report.kept, Some(KeepReason::UserStopped));
+        assert_eq!(env.calls, 1, "nach dem laufenden Block Schluss");
+        let snap = f.store.transcript_snapshot(&f.id).unwrap();
+        assert_eq!(snap.epoch, 0);
+        let texts: Vec<&str> = snap.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts, vec!["s0", "s1"], "Live-Transkript unveraendert");
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        assert_eq!(errors_of(&env), vec![STOPPED_CODE.to_string()], "eigener Hinweis, nicht 'uebersprungen'");
+        assert!(!env.kinds().contains(&"reset"));
+        assert_eq!(env.final_event(), (0, None));
+        assert_eq!(env.job_log, vec!["job_begin", "job_end"], "der Auftrag ist ausgetragen");
+    }
+
+    #[test]
+    fn a_stop_before_the_final_pass_starts_never_loads_the_model() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mut env = FakeEnv::new();
+        env.user_stop_after = Some(0);
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_eq!(out.report.kept, Some(KeepReason::UserStopped));
+        assert!(env.loads.is_empty(), "kein Modell fuer einen gestoppten Lauf");
+        assert_eq!(env.calls, 0);
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+    }
+
+    #[test]
+    fn a_stop_in_the_speaker_step_skips_the_final_pass_but_the_speakers_reach_the_live_transcript() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let (mut env, runs) = FakeEnv::new().with_turns(&[
+            (0, vec![turn(0, 6_000, 1)]),
+            (1, vec![turn(0, 6_000, 1)]),
+        ]);
+        env.user_stop_after = Some(0);
+        let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_eq!(*runs.borrow(), 1, "die Turns der Gegenseite liefen (Modell vor dem End-STT)");
+        assert_eq!(out.report.kept, Some(KeepReason::UserStopped));
+        assert!(env.loads.is_empty() && env.calls == 0, "kein End-STT");
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        assert_eq!(f.store.segment_epoch(&f.id).unwrap(), out.report.epoch);
+    }
+
+    #[test]
+    fn a_stop_with_a_by_design_keep_plan_ends_ready_without_any_notice() {
+        let f = fixture(false, MeetingStatus::Processing);
+        let mut env = FakeEnv::new();
+        env.user_stop_after = Some(0);
+        let out = run_job(&f.store, &job(&f, FinalPlan::Keep(KeepReason::CpuOnly)), &mut env);
+        assert_eq!(out.report.kept, Some(KeepReason::CpuOnly), "der geplante Grund bleibt");
+        assert!(errors_of(&env).is_empty());
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+    }
+
+    #[test]
+    fn a_user_stop_during_catch_up_ends_as_cancelled_with_no_gap_marker_and_no_transcript_final() {
+        // Absturz: Live-Transkript endet bei 2,5 s (Kanal 0) bzw. 2,4 s (Kanal 1).
+        let f = fixture(true, MeetingStatus::Processing);
+        let mut env = FakeEnv::new();
+        env.user_stop_after = Some(1); // nach dem ersten nachgeholten Block
+        let mut spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
+        spec.catch_up_model = Some("meeting-model".into());
+        let out = run_job(&f.store, &spec, &mut env);
+
+        assert_eq!(out.report.kept, Some(KeepReason::UserStopped));
+        let meeting = f.store.get_meeting(&f.id).unwrap().unwrap();
+        assert_eq!(meeting.status, "cancelled");
+        assert!(meeting.ended_at.is_some(), "Endzeit nachgetragen");
+        let segs = f.store.get_segments(&f.id).unwrap();
+        assert_eq!(segs.len(), 3, "2 Live-Segmente + der eine nachgeholte Block");
+        assert!(
+            segs.iter().all(|s| !s.text.starts_with("[Nicht transkribiert")),
+            "kein Luecken-Platzhalter: der Rest wird beim Fortsetzen nachgeholt"
+        );
+        // Zustand -> `cancelled`, aber kein TranscriptFinal (nicht vollstaendig).
+        assert!(env.kinds().contains(&"state"));
+        assert!(!env.kinds().contains(&"final"));
+        let status: Vec<String> = env
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                MeetingEvent::State { status, .. } => Some(status.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(status, vec!["cancelled".to_string()]);
+        assert_eq!(env.phases, vec![(JobPhase::Transcription, 6_000 - 2_500 + 6_000 - 2_400)]);
+        let md = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert_eq!(md[REPORT_KEY]["kept"], "user_stopped");
+    }
+
+    /// Fortsetzen nach dem Stopp: dieselbe Nachhol-Logik holt den Rest, ohne
+    /// die schon vorhandenen Segmente doppelt zu schreiben.
+    #[test]
+    fn continuing_a_cancelled_meeting_catches_up_only_what_is_missing() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mut first = FakeEnv::new();
+        first.user_stop_after = Some(1);
+        let mut spec = job(&f, FinalPlan::Keep(KeepReason::NotLive));
+        spec.catch_up_model = Some("meeting-model".into());
+        run_job(&f.store, &spec, &mut first);
+        assert_eq!(
+            f.store.get_meeting(&f.id).unwrap().unwrap().status,
+            "cancelled"
+        );
+        let after_stop = f.store.get_segments(&f.id).unwrap();
+        assert_eq!(after_stop.len(), 3);
+
+        // "Fortsetzen": Status wieder `processing`, derselbe Auftrag ohne Stopp.
+        f.store.set_status(&f.id, MeetingStatus::Processing).unwrap();
+        let mut second = FakeEnv::new();
+        let out = run_job(&f.store, &spec, &mut second);
+        let segs = f.store.get_segments(&f.id).unwrap();
+        assert_eq!(out.report.catch_up_segments, 1, "nur der fehlende Kanal");
+        assert_eq!(segs.len(), 4);
+        assert_eq!(
+            segs.iter().map(|s| s.segment_index).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3],
+            "keine Luecke, keine Doppelten"
+        );
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+        assert_eq!(second.kinds().last(), Some(&"final"));
+        assert!(
+            second.phases[0].1 <= (6_000 - 2_400) + 1_000,
+            "der Fortschritt bezieht sich nur auf den Rest: {:?}",
+            second.phases
+        );
+    }
+
+    #[test]
+    fn a_stop_that_arrives_when_nothing_is_left_to_catch_up_changes_nothing() {
+        // Kein Rest: der Nachholschritt endet sofort, der Stopp wird beim
+        // naechsten Kontrollpunkt gesehen (hier: gar keiner) -> ready wie sonst.
+        let f = fixture(false, MeetingStatus::Processing);
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(2, 0, 2_500, 6_000)],
+                },
+            )
+            .unwrap();
+        let mut env = FakeEnv::new();
+        env.user_stop_after = Some(0);
+        let mut spec = job(&f, FinalPlan::Keep(KeepReason::NotLive));
+        spec.catch_up_model = Some("meeting-model".into());
+        let out = run_job(&f.store, &spec, &mut env);
+        assert_eq!(out.report.catch_up_segments, 0);
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+    }
+
+    #[test]
+    fn the_job_ends_even_when_the_engine_panics() {
+        let f = fixture(true, MeetingStatus::Processing);
+        let mut env = FakeEnv::new();
+        env.panic_transcribe = true;
+        run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
+        assert_eq!(env.job_log, vec!["job_begin", "job_end"]);
+        assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
+    }
+
+    #[test]
+    fn the_app_diarizer_stops_with_the_job_and_reports_progress_to_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("diar.gguf");
+        std::fs::write(&model, b"x").unwrap();
+        let events: Arc<std::sync::Mutex<Vec<MeetingEvent>>> = Default::default();
+        let sink = Arc::clone(&events);
+        let handle = JobHandle::new("m1", Arc::new(move |e| sink.lock().unwrap().push(e)));
+        handle.begin_phase(JobPhase::Speakers, 0);
+        let mut d = app_diarizer(true, &model, false);
+        d.attach_job(Arc::clone(&handle));
+        assert!(!d.cancelled());
+
+        d.progress(0, 120_000);
+        d.progress(60_000, 120_000);
+        let snap = handle.snapshot();
+        assert_eq!((snap.done, snap.total), (60_000, 120_000));
+
+        // Der Stopp des Nutzers beendet den Modelllauf, ohne das Modell zu laden.
+        handle.stop().unwrap();
+        assert!(d.cancelled());
+        assert!(matches!(d.diarize(1, &[0.0; 16]), Err(DiarizeError::Cancelled)));
+        assert!(d.loaded.is_none());
+
+        // Ohne Auftrag ist `progress` wirkungslos.
+        d.detach_job();
+        d.progress(1, 2);
+        assert!(!d.cancelled(), "ohne Auftrag zaehlt nur der Abbruch der Engine");
+    }
+
+    /// P8a: die Pfade eines Imports stehen jetzt VOR der Transkription. Stirbt
+    /// die App mittendrin (oder pausiert sie, oder der Nutzer beendet sie), holt
+    /// die Wiederherstellung den Rest nach, statt die Besprechung mit einem
+    /// halben Transkript auf `ready` zu setzen.
+    #[test]
+    fn an_import_interrupted_after_its_audio_paths_were_stored_is_caught_up_on_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let m = store
+            .create_meeting("Import", MeetingSource::Import, Some(0))
+            .unwrap();
+        let meeting_dir = dir.path().join(&m.id);
+        std::fs::create_dir_all(&meeting_dir).unwrap();
+        let wav = meeting_dir.join("import.wav");
+        write_wav(&wav, &speech());
+        // Wie `run_import` vor der Transkription: Pfade und Dauer stehen.
+        store
+            .set_audio_paths(&m.id, wav.to_str(), None, Some(6_000))
+            .unwrap();
+        // Ein Block war schon transkribiert (Kanal 2 = gemischte Spur), dann Schluss.
+        store
+            .append_delta(
+                &m.id,
+                &TranscriptDelta {
+                    new_segments: vec![seg(0, 2, 0, 2_500)],
+                },
+            )
+            .unwrap();
+        assert_eq!(store.get_meeting(&m.id).unwrap().unwrap().status, "processing");
+
+        // Neustart: die Wiederherstellung sieht `processing` ...
+        let meeting = store.get_meeting(&m.id).unwrap().unwrap();
+        assert!(crate::managers::meetings::recorder::is_orphan_status(&meeting.status));
+        assert_eq!(prepare_orphan(&store, &meeting).unwrap(), Some(6_000));
+        let mut env = FakeEnv::new();
+        let spec = JobSpec {
+            meeting_id: m.id.clone(),
+            catch_up_model: Some("meeting-model".into()),
+            plan: FinalPlan::Keep(KeepReason::NotLive),
+            live_model: None,
+        };
+        let out = run_job(&store, &spec, &mut env);
+
+        // ... und holt den Rest nach, auf derselben gemischten Spur, ohne Luecke.
+        assert!(out.report.catch_up_segments >= 1);
+        assert_eq!(out.report.catch_up_gaps, 0);
+        let segs = store.get_segments(&m.id).unwrap();
+        assert!(segs.iter().all(|s| s.channel == 2), "gemischte Spur");
+        assert!(segs.iter().map(|s| s.end_ms).max().unwrap() >= 5_000, "bis zum Ende");
+        assert_eq!(
+            segs.iter().map(|s| s.segment_index).collect::<Vec<_>>(),
+            (0..segs.len() as u32).collect::<Vec<_>>()
+        );
+        assert_eq!(store.get_meeting(&m.id).unwrap().unwrap().status, "ready");
+        assert_eq!(env.kinds().last(), Some(&"final"));
+    }
+
+    /// Ein gestoppter Import ist beim Start kein Wiederherstellungsfall: die
+    /// Besprechung bleibt `cancelled`, bis der Nutzer sie fortsetzt.
+    #[test]
+    fn a_stopped_meeting_is_not_picked_up_by_the_startup_scan() {
+        let f = fixture(false, MeetingStatus::Cancelled);
+        let meeting = f.store.get_meeting(&f.id).unwrap().unwrap();
+        assert_eq!(meeting.status, "cancelled");
+        assert!(!crate::managers::meetings::recorder::is_orphan_status(&meeting.status));
     }
 }

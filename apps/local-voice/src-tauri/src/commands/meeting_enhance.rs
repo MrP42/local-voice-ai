@@ -14,6 +14,7 @@ use specta::Type;
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
+use crate::managers::meetings::job::{self, JobPhase};
 use crate::managers::meetings::llm_call::resolve_provider_coded;
 use crate::managers::meetings::notes::enhance::{
     self, check_recording_conflict, event_code, EnhanceError,
@@ -79,9 +80,23 @@ fn recording_conflict(
     }
 }
 
+/// Der Code des Ereignisses `Failed`, wenn der Nutzer den Lauf gestoppt hat
+/// (P8a). Kein Fehler: die Oberflaeche zeigt einen Hinweis statt einer Warnung.
+pub const CODE_STOPPED: &str = "stopped";
+
+/// Wie viele Schritte der Fortschrittsmeldung es geben muss, damit der Lauf
+/// sich anhalten laesst: Bloecke plus Reduce, also mindestens zwei Bloecke.
+/// Der Einzeldurchlauf (0/1 -> 1/1) ist ein einziger Modellaufruf.
+const MIN_STEPS_TO_PAUSE: u32 = 3;
+
 /// KI-Notizen erzeugen und dabei `MeetingNotesEvent` senden (Fortschritt,
 /// Ende, Fehler). Gemeinsamer Weg fuer den Knopf und den Auto-Lauf nach dem
 /// Stopp (P1f): dort ist `recording_active = false`.
+///
+/// P8a: der Lauf ist ein Auftrag (`job.rs`, Phase Notizen): Fortschritt in
+/// Bloecken mit Laufzeit und Restdauer, Pause zwischen den Bloecken, Stopp
+/// jederzeit (das Future faellt, die Anfrage an das Modell endet, nichts wird
+/// gespeichert). Der Zustand liegt im Backend und ueberlebt einen Reiterwechsel.
 pub async fn enhance_and_notify(
     app: &AppHandle,
     store: Arc<MeetingStore>,
@@ -95,23 +110,55 @@ pub async fn enhance_and_notify(
         emit_failed(app, meeting_id, &message);
         return Err(message);
     }
+    // Ein Auftrag je Besprechung: laeuft schon einer (Protokoll, ein zweiter
+    // Notizenlauf), ist das "belegt", wie beim Wettlauf um das Modell.
+    let job = match job::global().try_start(meeting_id, job::app_emit(app)) {
+        Ok(job) => job,
+        Err(_) => {
+            let message = "enhance_busy".to_string();
+            emit_failed(app, meeting_id, &message);
+            return Err(message);
+        }
+    };
+    let handle = Arc::clone(job.handle());
+    handle.begin_phase_ex(JobPhase::Notes, 0, false);
     let progress_app = app.clone();
     let progress_id = meeting_id.to_string();
-    let result = enhance::enhance_meeting(
-        &settings,
-        store,
-        meeting_id,
-        template_id,
-        move |step, total| {
+    let progress_job = Arc::clone(&handle);
+    let run = job::scope(
+        Arc::clone(&handle),
+        enhance::enhance_meeting(&settings, store, meeting_id, template_id, move |step, total| {
             let _ = MeetingNotesEvent::Progress {
                 meeting_id: progress_id.clone(),
                 step,
                 total,
             }
             .emit(&progress_app);
-        },
-    )
-    .await;
+            if step == 0 {
+                progress_job.begin_phase_ex(
+                    JobPhase::Notes,
+                    u64::from(total),
+                    total >= MIN_STEPS_TO_PAUSE,
+                );
+            } else {
+                progress_job.advance(u64::from(step));
+            }
+        }),
+    );
+    let result = tokio::select! {
+        result = run => result,
+        _ = handle.stopped() => Err(CODE_STOPPED.to_string()),
+    };
+    // Ein Stopp ist kein Fehler: eigener Code, kein `llm_failed`.
+    if handle.is_stopped() && result.is_err() {
+        log::info!("KI-Notizen vom Nutzer gestoppt");
+        let _ = MeetingNotesEvent::Failed {
+            meeting_id: meeting_id.to_string(),
+            code: CODE_STOPPED.to_string(),
+        }
+        .emit(app);
+        return Err(CODE_STOPPED.to_string());
+    }
     match &result {
         Ok(document) => emit_done(app, document),
         Err(message) => emit_failed(app, meeting_id, message),

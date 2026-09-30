@@ -1354,8 +1354,9 @@ async fn run_minutes(
     // open, then nulling its path, is exactly how `recover_orphans` loses
     // audio for good after a crash. `failed` is allowed through so a
     // meeting stuck in that terminal state can still get minutes from
-    // whatever transcript it captured before failing.
-    if meeting.status != "ready" && meeting.status != "failed" {
+    // whatever transcript it captured before failing; P8a: so is `cancelled`
+    // (stopped by the user, the transcript so far is there).
+    if !matches!(meeting.status.as_str(), "ready" | "failed" | "cancelled") {
         return Err(MinutesError::new(
             "meeting_not_finished",
             format!(
@@ -2858,6 +2859,33 @@ mod tests {
             .contains("Standardvorlage, Automatik nicht eindeutig"));
         let meta = latest_meta(&fx.store, &fx.meeting_id).unwrap();
         assert_eq!(meta.auto.unwrap().outcome, AutoOutcome::Failed);
+    }
+
+    /// P8a: ein vom Nutzer gestoppter Import (`cancelled`) besteht die
+    /// Statuspruefung wie `failed`: das bisherige Transkript reicht fuer ein
+    /// Protokoll. Ohne Transkript kommt `no_transcript`, nicht `meeting_not_finished`.
+    #[tokio::test]
+    async fn a_stopped_meeting_passes_the_status_guard() {
+        let settings = get_default_settings();
+        let fx = fixture(0);
+        let meeting = fx
+            .store
+            .create_meeting("Abgebrochen", MeetingSource::Import, Some(1_755_600_000))
+            .unwrap();
+        fx.store
+            .set_status(&meeting.id, MeetingStatus::Cancelled)
+            .unwrap();
+        let err = generate_guarded(
+            &settings,
+            fx.store.clone(),
+            &meeting.id,
+            None,
+            limits(None),
+            &|_| {},
+        )
+        .await
+        .expect_err("ohne Transkript gibt es kein Protokoll");
+        assert_ne!(err.code, "meeting_not_finished", "der Status ist kein Hindernis");
     }
 
     #[tokio::test]

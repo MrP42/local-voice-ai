@@ -1147,6 +1147,14 @@ async fn map_reduce(
     let mut leaves: Vec<Leaf> = Vec::new();
     let mut splits = 0u32;
     for (index, range) in ranges.iter().enumerate() {
+        // P8a: Kontrollpunkt vor jedem Block. Pause haelt hier an (ohne
+        // Auftrag geschieht nichts); ein Stopp beendet den Lauf (der Aufrufer
+        // bricht ihn meist schon vorher ab, indem er das Future fallen laesst).
+        if crate::managers::meetings::job::checkpoint().await
+            == crate::managers::meetings::job::Gate::Stopped
+        {
+            return Err(EnhanceError::code_only("notes_stopped"));
+        }
         // Arbeitsstapel: die linke Haelfte kommt zuerst dran, und ihr ganzer
         // Teilbaum ist fertig, bevor die rechte beginnt -- die Teile landen
         // in Transkriptreihenfolge.
@@ -1356,8 +1364,10 @@ async fn resolve_template(
 
 fn check_finished(status: &str) -> Result<(), EnhanceError> {
     // Wie beim Protokoll: `failed` darf durch, damit eine haengengebliebene
-    // Besprechung aus ihrem Transkript noch Notizen bekommt.
-    if status == "ready" || status == "failed" {
+    // Besprechung aus ihrem Transkript noch Notizen bekommt; ebenso
+    // `cancelled` (P8a, vom Nutzer gestoppt: das Transkript ist unvollstaendig,
+    // aber vorhanden).
+    if status == "ready" || status == "failed" || status == "cancelled" {
         Ok(())
     } else {
         Err(EnhanceError::new(
@@ -1565,7 +1575,9 @@ async fn enhance_guarded(
     progress: Progress<'_>,
 ) -> Result<MeetingDocument, String> {
     let _guard = EnhanceGuard::try_acquire(flag).map_err(String::from)?;
-    match tokio::time::timeout(
+    // P8a: Zeit in der Pause zaehlt nicht gegen das Zeitlimit (ohne Auftrag ist
+    // es ein gewoehnliches `tokio::time::timeout`).
+    match crate::managers::meetings::job::timeout_excluding_pauses(
         limits.timeout,
         run_enhance(settings, store, meeting_id, template_id, limits, progress),
     )

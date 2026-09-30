@@ -1639,6 +1639,66 @@ async meetingsRetranscribe(meetingId: string, modelId: string | null) : Promise<
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Stand aller laufenden Verarbeitungen. Die Oberflaeche fragt beim Oeffnen
+ * (Liste, Detail, Notizen, Protokoll) und haelt sich danach an
+ * `MeetingEvent::Progress` / `JobEnded`; so geht der Laufzustand beim
+ * Reiterwechsel nicht verloren.
+ */
+async meetingsProgressList() : Promise<Result<JobProgress[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_progress_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Haelt die Verarbeitung am naechsten Block an (der laufende wird fertig).
+ */
+async meetingsJobPause(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_job_pause", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt eine pausierte (oder eine noch nicht wirksame) Pause fort.
+ */
+async meetingsJobResume(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_job_resume", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stoppt die Verarbeitung: am naechsten Block, auch aus der Pause. Bereits
+ * transkribierte Segmente bleiben; mehrfaches Stoppen ist harmlos.
+ */
+async meetingsJobStop(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_job_stop", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "Fortsetzen" einer gestoppten Verarbeitung (Status `cancelled`): holt den
+ * Rest nach (wie die Wiederherstellung nach einem Absturz).
+ */
+async meetingsContinue(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_continue", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingsGetDocuments(meetingId: string) : Promise<Result<MeetingDocument[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_get_documents", { meetingId }) };
@@ -4725,6 +4785,61 @@ server_running: boolean;
  * Code des letzten Fehlers der Vektorstufe (`memory_low`, `no_model`, ...).
  */
 last_error: string | null }
+/**
+ * Was ein Auftrag gerade tut. Die Oberflaeche benennt daran den Fortschritt.
+ */
+export type JobPhase = 
+/**
+ * Audio lesen und dekodieren (Import); Groesse noch unbekannt.
+ */
+"prepare" | 
+/**
+ * Transkription in Bloecken (Import, Neu-Transkription, Nachholen).
+ */
+"transcription" | 
+/**
+ * Enddurchlauf nach dem Stopp einer Aufnahme.
+ */
+"final_pass" | 
+/**
+ * Sprechertrennung (ein Modelllauf je Kanal).
+ */
+"speakers" | 
+/**
+ * KI-Notizen (Schritte statt Audiodauer).
+ */
+"notes" | 
+/**
+ * Protokoll (Bloecke statt Audiodauer).
+ */
+"minutes"
+/**
+ * Fortschritt eines Auftrags: Ereignis und Abfrage haben dieselben Felder.
+ * `done`/`total` zaehlen Millisekunden Audio, in den Phasen `notes` und
+ * `minutes` Schritte (Bloecke).
+ * `total == 0`: Groesse (noch) unbekannt.
+ */
+export type JobProgress = { meeting_id: string; phase: JobPhase; done: number; total: number; 
+/**
+ * Laufzeit des ganzen Auftrags ohne Pausen.
+ */
+elapsed_ms: number; 
+/**
+ * Geschaetzte Restdauer der Phase; `None` in der Anlaufzeit.
+ */
+eta_ms: number | null; state: JobRunState; pausable: boolean }
+/**
+ * Zustand des Auftrags fuer die Anzeige.
+ */
+export type JobRunState = "running" | 
+/**
+ * Pause ist verlangt, der laufende Block wird noch fertig.
+ */
+"pausing" | "paused" | 
+/**
+ * Stopp ist verlangt, der laufende Block wird noch fertig.
+ */
+"stopping"
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 /**
@@ -4887,7 +5002,21 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  * `recovered` nimmt die Kanalwarnung zurueck, `vad_unavailable` und
  * `loopback_died` bleiben bis zum Ende der Besprechung stehen.
  */
-{ kind: "health"; meeting_id: string; channel: number; state: HealthState }
+{ kind: "health"; meeting_id: string; channel: number; state: HealthState } | 
+/**
+ * P8a: Fortschritt einer Verarbeitung (Import, Enddurchlauf, Neu-
+ * Transkription, Sprecher, Notizen, Protokoll); hoechstens 2 / s je
+ * Besprechung, Zustandswechsel (Pause, Stopp, Phase) sofort. `done` /
+ * `total` zaehlen ms Audio (Notizen und Protokoll: Bloecke), `total` 0 =
+ * Groesse unbekannt, `eta_ms` `None` = noch in der Anlaufzeit.
+ */
+{ kind: "progress"; meeting_id: string; phase: JobPhase; done: number; total: number; elapsed_ms: number; eta_ms: number | null; state: JobRunState; pausable: boolean } | 
+/**
+ * P8a: der Auftrag zu `meeting_id` ist zu Ende (fertig, gestoppt oder
+ * gescheitert): eine Ansicht, die beim Ende nicht offen war, laedt ihr
+ * Ergebnis daraufhin neu und nimmt den Laufzustand zurueck.
+ */
+{ kind: "job_ended"; meeting_id: string; phase: JobPhase; stopped: boolean }
 /**
  * Filter der Listensuche. `source` ist die HERKUNFT der Besprechung
  * (`live` | `import` | `subtitle`), nicht die Chunk-Quelle.

@@ -9,6 +9,8 @@ import type { MinutesPhase, MinutesProgress } from "@/bindings";
 /** Codes, die das Backend fuer Fehler der Protokoll-Erzeugung liefert (`minutes.rs`). */
 export const MINUTES_ERROR_CODES = [
   "minutes_busy",
+  // P8a: eine andere Verarbeitung (KI-Notizen ...) belegt die Besprechung.
+  "job_busy",
   "minutes_cancelled",
   "meeting_not_found",
   "meeting_not_finished",

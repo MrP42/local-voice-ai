@@ -245,6 +245,10 @@ pub enum MeetingStatus {
     Processing,
     Ready,
     Failed,
+    /// P8a: der Nutzer hat die Verarbeitung gestoppt; das bis dahin fertige
+    /// Transkript bleibt, der Rest fehlt. Endzustand (kein Wiederanlauf beim
+    /// Start), aus dem "Fortsetzen" oder "Neu transkribieren" fuehrt.
+    Cancelled,
 }
 
 impl MeetingStatus {
@@ -254,6 +258,7 @@ impl MeetingStatus {
             MeetingStatus::Processing => "processing",
             MeetingStatus::Ready => "ready",
             MeetingStatus::Failed => "failed",
+            MeetingStatus::Cancelled => "cancelled",
         }
     }
 }

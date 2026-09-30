@@ -500,7 +500,9 @@ impl IndexerCore {
     /// Schreibt den Index aus einem gelesenen Stand. Getrennt vom Lesen, damit
     /// ein Test "Quelle aendert sich dazwischen" nachstellen kann.
     fn write_snapshot(&mut self, snap: &Snapshot) -> Result<LexicalOutcome> {
-        if snap.status != "ready" {
+        // P8a: auch ein vom Nutzer gestopptes Teil-Transkript (`cancelled`) ist
+        // durchsuchbar; laufende und fehlgeschlagene Besprechungen nicht.
+        if !matches!(snap.status.as_str(), "ready" | "cancelled") {
             return Ok(LexicalOutcome::Skipped);
         }
         let prev = self.store.index_state(&snap.meeting_id)?;
@@ -1130,8 +1132,9 @@ pub fn start_for_app(app: &tauri::AppHandle, store: Arc<MeetingStore>) {
                     set.insert(meeting_id);
                 }
                 // Import fertig, Neu-Transkription fertig, Aufnahme gestoppt
-                // (Rueckfall ohne `TranscriptFinal`).
-                "ready" => {
+                // (Rueckfall ohne `TranscriptFinal`). P8a: auch `cancelled` (vom
+                // Nutzer gestoppt): das Teil-Transkript ist durchsuchbar.
+                "ready" | "cancelled" => {
                     set.remove(&meeting_id);
                     drop(set);
                     listener.submit(IndexJob::Meeting(meeting_id));

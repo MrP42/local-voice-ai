@@ -1849,6 +1849,8 @@
       "audioMissing": "Die Aufzeichnung liegt nicht mehr auf der Platte (Aufbewahrungsfrist abgelaufen).",
       "retranscribeFailed": "Die Neu-Transkription ist fehlgeschlagen. Das Transkript blieb unverändert.",
       "finalPassSkipped": "Enddurchlauf übersprungen – das Live-Transkript bleibt gültig (Modell fehlt, zu wenig Speicher oder abgebrochen).",
+      "finalPassStopped": "Nachbearbeitung gestoppt – das Live-Transkript bleibt gültig.",
+      "meetingBusy": "Diese Besprechung wird gerade verarbeitet.",
       "listFailed": "Die Besprechungsliste konnte nicht geladen werden: {{error}}"
     },
     "retention": {
@@ -1893,13 +1895,61 @@
       "copied": "Kopiert!",
       "exportTranscript": "Transkript exportieren — als Word (.docx), Text oder Markdown",
       "renameTitle": "Umbenennen",
-      "titleLabel": "Titel der Besprechung"
+      "titleLabel": "Titel der Besprechung",
+      "autoscroll": "Automatisch mitscrollen",
+      "autoscrollPaused": "Mitscrollen pausiert – ans Ende scrollen setzt es fort."
     },
     "status": {
       "recording": "Aufnahme läuft",
       "processing": "Wird verarbeitet",
       "ready": "Fertig",
-      "failed": "Fehlgeschlagen"
+      "failed": "Fehlgeschlagen",
+      "cancelled": "Abgebrochen"
+    },
+    "progress": {
+      "percent": "{{percent}} %",
+      "elapsed": "Laufzeit {{time}}",
+      "audioOf": "{{done}} von {{total}} Audio",
+      "stepsOf": "Schritt {{done}} von {{total}}",
+      "pause": "Pausieren",
+      "resume": "Fortsetzen",
+      "stop": "Stoppen",
+      "notPausable": "In dieser Phase lässt sich die Verarbeitung nicht pausieren – stoppen geht jederzeit.",
+      "stopTitle": "Verarbeitung stoppen?",
+      "stopBody": "Die bereits transkribierten Abschnitte bleiben erhalten. Die Besprechung gilt dann als abgebrochen; du kannst sie später fortsetzen oder neu transkribieren.",
+      "stopBodyGenerate": "Die Erzeugung wird abgebrochen. Es wird nichts gespeichert; du kannst sie jederzeit neu starten.",
+      "stopCancel": "Abbrechen",
+      "stopConfirm": "Stoppen",
+      "cancelledTitle": "Verarbeitung abgebrochen",
+      "cancelledBody": "Es sind {{count}} Abschnitte transkribiert. Du kannst dort weitermachen, wo es aufgehört hat, oder die Aufnahme weiter unten neu transkribieren.",
+      "continue": "Fortsetzen",
+      "phase": {
+        "prepare": "Vorbereitung",
+        "transcription": "Transkription",
+        "final_pass": "Enddurchlauf",
+        "speakers": "Sprecher",
+        "notes": "KI-Notizen",
+        "minutes": "Protokoll"
+      },
+      "state": {
+        "pausing": "Pause wird eingelegt …",
+        "paused": "Pausiert",
+        "stopping": "Wird gestoppt …"
+      },
+      "eta": {
+        "calculating": "Restdauer wird berechnet …",
+        "few": "noch wenige Sekunden",
+        "seconds": "noch ca. {{count}} s",
+        "minutes": "noch ca. {{count}} Min.",
+        "hours": "noch ca. {{hours}} Std. {{minutes}} Min."
+      },
+      "errors": {
+        "noJob": "Die Verarbeitung ist inzwischen beendet.",
+        "notPausable": "In dieser Phase lässt sich die Verarbeitung nicht pausieren.",
+        "stopping": "Die Verarbeitung wird bereits gestoppt.",
+        "busy": "Für diese Besprechung läuft bereits eine Verarbeitung.",
+        "notCancelled": "Diese Besprechung ist nicht abgebrochen."
+      }
     },
     "minutes": {
       "empty": "Noch kein Protokoll erzeugt.",
@@ -1923,6 +1973,7 @@
       "cancelled": "Die Erzeugung wurde abgebrochen.",
       "errors": {
         "minutes_busy": "Für diese Besprechung wird schon ein Protokoll erzeugt.",
+        "job_busy": "Für diese Besprechung läuft schon eine andere Verarbeitung (zum Beispiel KI-Notizen).",
         "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",
         "meeting_not_found": "Die Besprechung gibt es nicht mehr.",
         "meeting_not_finished": "Die Aufnahme läuft noch. Das Protokoll kann erst nach dem Stopp erzeugt werden.",
@@ -2076,6 +2127,7 @@
       "versionLabel": "Version {{version}} · {{date}}",
       "progress": "KI-Notizen werden erstellt … {{step}}/{{total}}",
       "working": "Die KI arbeitet …",
+      "stopped": "KI-Notizen gestoppt. Es wurde nichts gespeichert.",
       "providerHint": "Bitte unter Einstellungen → Sprachmodelle einrichten.",
       "loadError": "Die KI-Notizen konnten nicht geladen werden: {{error}}",
       "reloaded": "Die KI-Notizen wurden zwischenzeitlich geändert (anderes Fenster oder neuer Lauf) und neu geladen.",

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::managers::meetings::import::import_media_file;
+use crate::managers::meetings::job;
 use crate::managers::meetings::minutes::latest_minutes_file;
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 use crate::managers::meetings::retention::delete_audio_files;
@@ -160,6 +161,9 @@ pub async fn meetings_delete(
     store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
 ) -> Result<(), String> {
+    // P8a: eine laufende Verarbeitung (Import, Enddurchlauf, Notizen ...) endet,
+    // bevor ihre Audiodateien verschwinden. Ohne Auftrag ist das ein leerer Aufruf.
+    let _ = job::global().stop(&meeting_id);
     let paths = store
         .soft_delete_meeting(&meeting_id)
         .map_err(|e| e.to_string())?;

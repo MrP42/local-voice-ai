@@ -12,6 +12,13 @@
 //! `Error` event; nothing is silently dropped (recording an import that
 //! looked like it worked but has no segments would be worse than an obvious
 //! failure).
+//!
+//! P8a: jede Verarbeitung ist ein Auftrag (`job.rs`): Fortschritt als Anteil
+//! der Audiodauer, Pause und Stopp zwischen zwei Bloecken. Ein Stopp in der
+//! Vorbereitung oder Transkription beendet die Besprechung als `cancelled`
+//! (die fertigen Bloecke bleiben, die WAV bleibt fuer "Fortsetzen"); ein Stopp
+//! erst in der Sprechertrennung laesst das vollstaendige Transkript stehen und
+//! die Besprechung wird `ready`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,11 +27,13 @@ use log::{error, info};
 use tauri_specta::Event;
 
 use super::chunker::{ChannelChunker, Chunk};
+use super::job::{self, Gate, JobHandle, JobPhase};
 use super::recorder::MeetingEvent;
+use super::retention::MeetingAudioRetention;
 use super::speakers::{self, ApplyOutcome};
 use super::store::{MeetingSource, MeetingStatus, MeetingStore, StoredSegment, TranscriptDelta};
 use super::subtitle::parse_subtitles;
-use crate::managers::transcription::{TranscriptionManager, WordTime};
+use crate::managers::transcription::{TimedSegment, TranscriptionManager, WordTime};
 use crate::media;
 
 /// `StoredSegment::channel` for a single imported track — there is no
@@ -140,13 +149,30 @@ async fn import_audio_file(
             log::warn!("meetings: source_path not stored for import: {e}");
         }
     }
+    // P8a: Fortschritt, Pause und Stopp fuer diese Verarbeitung. Fuer eine
+    // frische Besprechung gibt es nie schon einen Auftrag; scheitert es doch,
+    // darf die Zeile nicht auf `processing` stehen bleiben.
+    let job = match job::global().try_start(&meeting_id, job::app_emit(app)) {
+        Ok(job) => job,
+        Err(e) => {
+            let _ = store.set_status(&meeting_id, MeetingStatus::Failed);
+            return Err(e.to_string());
+        }
+    };
     emit_state(app, &meeting_id, "processing");
 
     let app_owned = app.clone();
     let status_store = Arc::clone(&store);
     let blocking_meeting_id = meeting_id.clone();
     let join_result = tauri::async_runtime::spawn_blocking(move || {
-        run_import(&app_owned, &store, &tm, &blocking_meeting_id, &path)
+        run_import(
+            &app_owned,
+            &store,
+            &tm,
+            &blocking_meeting_id,
+            &path,
+            job.handle(),
+        )
     })
     .await;
 
@@ -161,16 +187,27 @@ async fn import_audio_file(
     }
 }
 
+/// Wie eine Import-Verarbeitung endete, wenn sie nicht scheiterte.
+enum ImportEnd {
+    /// Das Transkript ist vollstaendig (die Sprechertrennung darf gestoppt sein).
+    Done { duration_ms: u64 },
+    /// Der Nutzer hat vor dem Ende der Transkription gestoppt.
+    Stopped,
+}
+
 /// The blocking body: decode, copy the WAV, transcribe in chunks, finish with
-/// `ready` or `failed` — always one or the other, plus the matching event.
+/// `ready` or `failed` (or, when the user stopped, `cancelled`) — always one
+/// of them, plus the matching event.
 fn run_import(
     app: &tauri::AppHandle,
     store: &Arc<MeetingStore>,
     tm: &Arc<TranscriptionManager>,
     meeting_id: &str,
     path: &Path,
+    job: &Arc<JobHandle>,
 ) -> Result<(), String> {
-    let outcome = (|| -> Result<u64, String> {
+    let outcome = (|| -> Result<ImportEnd, String> {
+        job.begin_phase(JobPhase::Prepare, 0);
         // Kick the model load FIRST (non-blocking) so it warms up while ffmpeg
         // decodes; `transcribe_segments` then waits on the load condvar instead
         // of failing with "Model is not loaded" — the live recorder does the
@@ -178,7 +215,16 @@ fn run_import(
         // idle unload (default 5 min) failed immediately. Meetings may use
         // their own model (`meeting_model`, dictation model as fallback).
         tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
-        let (wav_path, _tmp_guard) = media::ensure_wav(path, 16_000)?;
+        // P8a: ein Stopp beendet ffmpeg (ueber sein Handle, nie ueber den Namen).
+        let (wav_path, _tmp_guard) =
+            match media::ensure_wav_cancellable(path, 16_000, &job.stop_flag()) {
+                Ok(decoded) => decoded,
+                Err(e) if e == media::DECODE_CANCELLED => return Ok(ImportEnd::Stopped),
+                Err(e) => return Err(e),
+            };
+        if job.is_stopped() {
+            return Ok(ImportEnd::Stopped);
+        }
         let samples = read_wav_i16_mono_16k(&wav_path)?;
 
         let dir = super::meetings_data_dir(app)
@@ -189,12 +235,10 @@ fn run_import(
         std::fs::copy(&wav_path, &import_wav_path)
             .map_err(|e| format!("import_wav_copy_failed: {e}"))?;
 
-        transcribe_and_store(app, store, tm, meeting_id, &samples, CHANNEL_MIXED, 0)?;
-
         let duration_ms = (samples.len() as u64 * 1_000) / 16_000;
-        // Der Puffer (i16) wird nicht mehr gebraucht; die Sprechertrennung liest
-        // die Spur selbst (f32) und soll nicht zwei Kopien nebeneinander halten.
-        drop(samples);
+        // P8a: die Pfade stehen VOR der Transkription. Ein Absturz oder Stopp
+        // mittendrin laesst sonst eine Besprechung ohne Audio zurueck, die
+        // weder nachgeholt noch fortgesetzt werden kann.
         store
             .set_audio_paths(
                 meeting_id,
@@ -203,14 +247,34 @@ fn run_import(
                 Some(duration_ms),
             )
             .map_err(|e| format!("audio_paths_failed: {e}"))?;
+
+        job.begin_phase(JobPhase::Transcription, duration_ms);
+        let run = transcribe_and_store(
+            app,
+            store,
+            tm,
+            meeting_id,
+            &samples,
+            CHANNEL_MIXED,
+            0,
+            job,
+            0,
+            &mut || tm.initiate_meeting_model_load(&crate::settings::get_settings(app)),
+        )?;
+        // Der Puffer (i16) wird nicht mehr gebraucht; die Sprechertrennung liest
+        // die Spur selbst (f32) und soll nicht zwei Kopien nebeneinander halten.
+        drop(samples);
+        if run.stopped {
+            return Ok(ImportEnd::Stopped);
+        }
         // M3-P3b: Sprecher (Einstellung `meeting_diarization`). Ein Fehler hier
         // macht den Import nicht kaputt: das Transkript steht schon.
-        run_speaker_step(app, store, meeting_id);
-        Ok(duration_ms)
+        run_speaker_step(app, store, meeting_id, Some(job));
+        Ok(ImportEnd::Done { duration_ms })
     })();
 
     let result = match outcome {
-        Ok(duration_ms) => {
+        Ok(ImportEnd::Done { duration_ms }) => {
             mark_import_ready(store, meeting_id)?;
             // Imports have no separate "recording ended" moment, so `now`
             // stands in for `ended_at` here too (mirrors the live recorder's
@@ -229,6 +293,31 @@ fn run_import(
             emit_state(app, meeting_id, "ready");
             info!("meetings: import ready ({meeting_id}, {duration_ms} ms)");
             Ok(())
+        }
+        Ok(ImportEnd::Stopped) => {
+            let policy = crate::settings::get_meeting_audio_retention(app);
+            match mark_stopped(
+                store,
+                meeting_id,
+                chrono::Utc::now().timestamp(),
+                &policy,
+            ) {
+                Ok(()) => {
+                    emit_state(app, meeting_id, "cancelled");
+                    info!("meetings: import stopped by the user ({meeting_id})");
+                    Ok(())
+                }
+                // Der Endzustand liess sich nicht schreiben (Platte voll, Datei
+                // gesperrt): wie jeder andere Fehler `failed` statt `processing`,
+                // und das Diktatmodell kommt trotzdem zurueck.
+                Err(e) => {
+                    error!("meetings: stop not stored ({meeting_id}): {e}");
+                    mark_import_failed(store, meeting_id);
+                    emit_state(app, meeting_id, "failed");
+                    emit_error(app, meeting_id, "import_failed");
+                    Err(e)
+                }
+            }
         }
         Err(e) => {
             error!("meetings: import failed ({meeting_id}): {e}");
@@ -252,6 +341,29 @@ fn run_import(
     result
 }
 
+/// P8a: Endzustand nach einem Stopp durch den Nutzer: `cancelled`, mit
+/// Abschlusszeit und Aufbewahrung wie bei einem normalen Ende (sonst bliebe
+/// die WAV eines abgebrochenen Imports fuer immer liegen). Das bis dahin
+/// gespeicherte Transkript wird nicht angefasst.
+pub(super) fn mark_stopped(
+    store: &MeetingStore,
+    meeting_id: &str,
+    now: i64,
+    policy: &MeetingAudioRetention,
+) -> Result<(), String> {
+    store
+        .set_status(meeting_id, MeetingStatus::Cancelled)
+        .map_err(|e| format!("status_cancelled_failed: {e}"))?;
+    if let Err(e) = store.set_ended_at(meeting_id, now) {
+        log::warn!("meetings: ended_at not stored after stop: {e}");
+    }
+    let until = super::retention::retention_until(policy, now, now, false);
+    if let Err(e) = store.set_retention_until(meeting_id, until) {
+        log::warn!("meetings: retention_until not stored after stop: {e}");
+    }
+    Ok(())
+}
+
 /// M3-P3b: Sprechertrennung fuer das gespeicherte Transkript einer
 /// Besprechung (Import, Neu-Transkription): gespeicherte Turns zuerst, sonst
 /// Sortformer (Einstellung `meeting_diarization`, RAM-Tor, ein Modell zur
@@ -263,11 +375,18 @@ pub(super) fn run_speaker_step(
     app: &tauri::AppHandle,
     store: &Arc<MeetingStore>,
     meeting_id: &str,
+    job: Option<&Arc<JobHandle>>,
 ) {
     let mut diarizer = super::final_pass::AppDiarizer::from_app(
         app,
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
     );
+    // P8a: die Phase "Sprecher" mit Fortschritt je Kanal; ein Stopp beendet den
+    // laufenden Modelllauf, das Transkript bleibt, wie es ist.
+    if let Some(job) = job {
+        job.begin_phase(JobPhase::Speakers, 0);
+        diarizer.attach_job(Arc::clone(job));
+    }
     let step = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         speakers::step_on_stored(store, meeting_id, &mut diarizer, true)
     }));
@@ -463,8 +582,71 @@ pub(super) fn stored_segments(
         .collect()
 }
 
+/// Was ein Durchlauf ueber Bloecke ergab.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct TranscribeRun {
+    /// Naechster freier `segment_index`.
+    pub next_index: u32,
+    /// Der Nutzer hat gestoppt: jeder Block bis dahin ist gespeichert, der
+    /// Rest nicht transkribiert.
+    pub stopped: bool,
+}
+
+/// Ein Durchlauf ueber `chunks` mit einem Kontrollpunkt vor jedem Block (Pause
+/// haelt hier an, Stopp beendet den Lauf) und dem Fortschritt danach. Ohne
+/// Tauri, Modell und Speicher: Transkription, Ablage und "nach der Pause"
+/// stehen als Closures, damit Pause, Stopp und Fortschritt direkt testbar
+/// sind. Ein Block, der schon laeuft, wird fertig und gespeichert.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn drive_chunks(
+    chunks: Vec<Chunk>,
+    job: &JobHandle,
+    base_ms: u64,
+    channel: u8,
+    first_index: u32,
+    transcribe: &mut dyn FnMut(&Chunk) -> Vec<TimedSegment>,
+    store_batch: &mut dyn FnMut(Vec<StoredSegment>) -> Result<(), String>,
+    on_resume: &mut dyn FnMut(),
+) -> Result<TranscribeRun, String> {
+    let mut next_index = first_index;
+    for chunk in chunks {
+        match job.checkpoint(&|| false) {
+            Gate::Go { resumed } => {
+                if resumed {
+                    // Nach einer langen Pause ist das Modell evtl. wegen
+                    // Leerlauf entladen: gleich wieder anfordern, statt den
+                    // ersten Versuch scheitern zu lassen.
+                    on_resume();
+                }
+            }
+            Gate::Stopped | Gate::Cancelled => {
+                return Ok(TranscribeRun {
+                    next_index,
+                    stopped: true,
+                })
+            }
+        }
+        let offset_ms = chunk.offset_ms;
+        let chunk_ms = chunk.samples.len() as u64 / 16;
+        let timed = transcribe(&chunk);
+        let appended = stored_segments(timed, offset_ms, channel, &mut next_index);
+        if !appended.is_empty() {
+            store_batch(appended)?;
+        }
+        job.advance(base_ms + offset_ms + chunk_ms);
+    }
+    Ok(TranscribeRun {
+        next_index,
+        stopped: false,
+    })
+}
+
 /// Transcribes and stores each chunk in turn, same as the live worker in
 /// `recorder.rs` — chunking itself happens incrementally in `chunk_all`.
+/// `base_ms`: Beginn dieser Spur auf der Achse des Auftrags (mehrere Spuren
+/// zaehlen in einen Fortschritt); `on_resume`: Modell nach einer Pause wieder
+/// anfordern.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn transcribe_and_store(
     app: &tauri::AppHandle,
     store: &Arc<MeetingStore>,
@@ -473,32 +655,35 @@ pub(super) fn transcribe_and_store(
     samples: &[i16],
     channel: u8,
     first_index: u32,
-) -> Result<u32, String> {
-    let mut next_index: u32 = first_index;
-    for chunk in chunk_all(samples, IMPORT_CHUNK_TARGET_MS) {
-        let offset_ms = chunk.offset_ms;
-        let timed = transcribe_chunk_resilient(app, tm, &chunk);
-
-        let appended = stored_segments(timed, offset_ms, channel, &mut next_index);
-        if appended.is_empty() {
-            continue;
-        }
-
-        store
-            .append_delta(
-                meeting_id,
-                &TranscriptDelta {
-                    new_segments: appended.clone(),
-                },
-            )
-            .map_err(|e| format!("delta_store_failed: {e}"))?;
-        let _ = (MeetingEvent::Segments {
-            meeting_id: meeting_id.to_string(),
-            appended,
-        })
-        .emit(app);
-    }
-    Ok(next_index)
+    job: &JobHandle,
+    base_ms: u64,
+    on_resume: &mut dyn FnMut(),
+) -> Result<TranscribeRun, String> {
+    drive_chunks(
+        chunk_all(samples, IMPORT_CHUNK_TARGET_MS),
+        job,
+        base_ms,
+        channel,
+        first_index,
+        &mut |chunk| transcribe_chunk_resilient(app, tm, chunk),
+        &mut |appended| {
+            store
+                .append_delta(
+                    meeting_id,
+                    &TranscriptDelta {
+                        new_segments: appended.clone(),
+                    },
+                )
+                .map_err(|e| format!("delta_store_failed: {e}"))?;
+            let _ = (MeetingEvent::Segments {
+                meeting_id: meeting_id.to_string(),
+                appended,
+            })
+            .emit(app);
+            Ok(())
+        },
+        on_resume,
+    )
 }
 
 /// Reads a WAV file as 16 kHz mono i16 PCM, downmixing/resampling as needed.
@@ -772,5 +957,341 @@ mod tests {
 
         let after = store.get_meeting(&meeting.id).unwrap().unwrap();
         assert_eq!(after.status, "ready");
+    }
+
+    // -- P8a: Fortschritt, Pause und Stopp zwischen den Bloecken --------------
+
+    use super::super::job::JobRunState;
+    use std::sync::{mpsc, Mutex};
+    use std::time::Duration;
+
+    fn job_with_events() -> (Arc<JobHandle>, Arc<Mutex<Vec<MeetingEvent>>>) {
+        let events: Arc<Mutex<Vec<MeetingEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&events);
+        let job = JobHandle::new("m1", Arc::new(move |e| sink.lock().unwrap().push(e)));
+        (job, events)
+    }
+
+    /// Ein Block von `ms` Millisekunden Stille bei `offset_ms`.
+    fn block(offset_ms: u64, ms: u64) -> Chunk {
+        Chunk {
+            samples: vec![0.1; (ms * 16) as usize],
+            offset_ms,
+        }
+    }
+
+    fn one_segment(text: &str) -> Vec<TimedSegment> {
+        vec![TimedSegment {
+            text: text.to_string(),
+            start_ms: 0,
+            end_ms: 500,
+            words: None,
+        }]
+    }
+
+    #[test]
+    fn every_block_is_stored_in_order_and_the_progress_reaches_the_end_of_the_audio() {
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, 180_000);
+        let chunks = vec![block(0, 60_000), block(60_000, 60_000), block(120_000, 60_000)];
+        let mut stored: Vec<Vec<StoredSegment>> = Vec::new();
+        let run = drive_chunks(
+            chunks,
+            &job,
+            0,
+            CHANNEL_MIXED,
+            5,
+            &mut |c| one_segment(&format!("ab {}", c.offset_ms)),
+            &mut |batch| {
+                stored.push(batch);
+                Ok(())
+            },
+            &mut || {},
+        )
+        .unwrap();
+        assert_eq!(run, TranscribeRun { next_index: 8, stopped: false });
+        let starts: Vec<u64> = stored.iter().map(|b| b[0].start_ms).collect();
+        assert_eq!(starts, vec![0, 60_000, 120_000]);
+        assert_eq!(stored[2][0].segment_index, 7, "Indizes laufen ab first_index weiter");
+        let snap = job.snapshot();
+        assert_eq!((snap.done, snap.total), (180_000, 180_000));
+    }
+
+    #[test]
+    fn a_stop_lets_the_running_block_finish_and_skips_the_rest() {
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, 240_000);
+        let chunks = (0..4).map(|i| block(i * 60_000, 60_000)).collect();
+        let mut stored: Vec<u64> = Vec::new();
+        let mut transcribed: Vec<u64> = Vec::new();
+        let job_for_stop = Arc::clone(&job);
+        let run = drive_chunks(
+            chunks,
+            &job,
+            0,
+            CHANNEL_MIXED,
+            0,
+            &mut |c| {
+                transcribed.push(c.offset_ms);
+                if c.offset_ms == 60_000 {
+                    // Der Nutzer drueckt "Stoppen", waehrend Block 2 rechnet.
+                    job_for_stop.stop().unwrap();
+                }
+                one_segment("Wort")
+            },
+            &mut |batch| {
+                stored.push(batch[0].start_ms);
+                Ok(())
+            },
+            &mut || {},
+        )
+        .unwrap();
+        assert!(run.stopped);
+        assert_eq!(run.next_index, 2);
+        assert_eq!(transcribed, vec![0, 60_000], "Block 3 und 4 nie transkribiert");
+        assert_eq!(stored, vec![0, 60_000], "der laufende Block ist gespeichert");
+        assert_eq!(job.snapshot().done, 120_000);
+    }
+
+    #[test]
+    fn a_stop_before_the_first_block_transcribes_nothing() {
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, 120_000);
+        job.stop().unwrap();
+        let mut calls = 0;
+        let run = drive_chunks(
+            vec![block(0, 60_000), block(60_000, 60_000)],
+            &job,
+            0,
+            CHANNEL_MIXED,
+            0,
+            &mut |_| {
+                calls += 1;
+                one_segment("x")
+            },
+            &mut |_| Ok(()),
+            &mut || {},
+        )
+        .unwrap();
+        assert!(run.stopped);
+        assert_eq!((run.next_index, calls), (0, 0));
+    }
+
+    #[test]
+    fn a_pause_holds_before_the_next_block_and_resume_asks_for_the_model_once() {
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, 240_000);
+        let (entered_tx, entered_rx) = mpsc::channel::<u64>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let resumed = Arc::new(Mutex::new(0u32));
+        let worker = {
+            let job = Arc::clone(&job);
+            let resumed = Arc::clone(&resumed);
+            std::thread::spawn(move || {
+                let chunks = (0..4).map(|i| block(i * 60_000, 60_000)).collect();
+                drive_chunks(
+                    chunks,
+                    &job,
+                    0,
+                    CHANNEL_MIXED,
+                    0,
+                    &mut |c| {
+                        entered_tx.send(c.offset_ms).unwrap();
+                        release_rx.recv().unwrap();
+                        one_segment("Wort")
+                    },
+                    &mut |_| Ok(()),
+                    &mut || *resumed.lock().unwrap() += 1,
+                )
+            })
+        };
+        // Block 1 rechnet; waehrenddessen wird pausiert.
+        assert_eq!(entered_rx.recv_timeout(Duration::from_secs(2)), Ok(0));
+        job.pause().unwrap();
+        release_tx.send(()).unwrap();
+        // Block 2 darf NICHT beginnen: der Kontrollpunkt haelt.
+        assert!(entered_rx.recv_timeout(Duration::from_millis(400)).is_err());
+        assert_eq!(job.snapshot().state, JobRunState::Paused);
+        assert_eq!(job.snapshot().done, 60_000, "Block 1 ist verbucht");
+        job.resume().unwrap();
+        for expected in [60_000, 120_000, 180_000] {
+            assert_eq!(entered_rx.recv_timeout(Duration::from_secs(2)), Ok(expected));
+            release_tx.send(()).unwrap();
+        }
+        let run = worker.join().unwrap().unwrap();
+        assert!(!run.stopped);
+        assert_eq!(run.next_index, 4, "kein Block verloren, keiner doppelt");
+        assert_eq!(*resumed.lock().unwrap(), 1, "Modell einmal nach der Pause angefordert");
+    }
+
+    #[test]
+    fn stopping_a_paused_run_ends_it_without_another_block() {
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, 180_000);
+        let (entered_tx, entered_rx) = mpsc::channel::<u64>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let worker = {
+            let job = Arc::clone(&job);
+            std::thread::spawn(move || {
+                let chunks = (0..3).map(|i| block(i * 60_000, 60_000)).collect();
+                drive_chunks(
+                    chunks,
+                    &job,
+                    0,
+                    CHANNEL_MIXED,
+                    0,
+                    &mut |c| {
+                        entered_tx.send(c.offset_ms).unwrap();
+                        release_rx.recv().unwrap();
+                        one_segment("Wort")
+                    },
+                    &mut |_| Ok(()),
+                    &mut || {},
+                )
+            })
+        };
+        assert_eq!(entered_rx.recv_timeout(Duration::from_secs(2)), Ok(0));
+        job.pause().unwrap();
+        release_tx.send(()).unwrap();
+        assert!(entered_rx.recv_timeout(Duration::from_millis(300)).is_err());
+        job.stop().unwrap();
+        let run = worker.join().unwrap().unwrap();
+        assert!(run.stopped);
+        assert_eq!(run.next_index, 1, "nur der erste Block");
+        assert!(entered_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_storage_error_ends_the_run_with_that_error_and_no_further_block() {
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, 120_000);
+        let mut transcribed = 0;
+        let result = drive_chunks(
+            vec![block(0, 60_000), block(60_000, 60_000)],
+            &job,
+            0,
+            CHANNEL_MIXED,
+            0,
+            &mut |_| {
+                transcribed += 1;
+                one_segment("Wort")
+            },
+            &mut |_| Err("delta_store_failed: Platte voll".to_string()),
+            &mut || {},
+        );
+        assert_eq!(result, Err("delta_store_failed: Platte voll".to_string()));
+        assert_eq!(transcribed, 1);
+        assert_eq!(job.snapshot().done, 0, "ein nicht gespeicherter Block zaehlt nicht");
+    }
+
+    #[test]
+    fn blocks_without_text_still_advance_the_progress() {
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, 120_000);
+        let mut stored = 0;
+        let run = drive_chunks(
+            vec![block(0, 60_000), block(60_000, 60_000)],
+            &job,
+            0,
+            CHANNEL_MIXED,
+            0,
+            &mut |_| Vec::new(),
+            &mut |_| {
+                stored += 1;
+                Ok(())
+            },
+            &mut || {},
+        )
+        .unwrap();
+        assert_eq!((run.next_index, stored), (0, 0));
+        assert_eq!(job.snapshot().done, 120_000, "Stille ist trotzdem verarbeitet");
+    }
+
+    #[test]
+    fn several_tracks_share_one_progress_axis() {
+        let (job, _events) = job_with_events();
+        job.begin_phase(JobPhase::Transcription, 120_000);
+        let a = drive_chunks(
+            vec![block(0, 60_000)],
+            &job,
+            0,
+            0,
+            0,
+            &mut |_| one_segment("Wort"),
+            &mut |_| Ok(()),
+            &mut || {},
+        )
+        .unwrap();
+        assert_eq!(job.snapshot().done, 60_000);
+        let b = drive_chunks(
+            vec![block(0, 60_000)],
+            &job,
+            60_000, // die zweite Spur beginnt bei 60 s der Achse des Auftrags
+            1,
+            a.next_index,
+            &mut |_| one_segment("Wort"),
+            &mut |_| Ok(()),
+            &mut || {},
+        )
+        .unwrap();
+        assert_eq!(b.next_index, 2);
+        assert_eq!(job.snapshot().done, 120_000);
+    }
+
+    #[test]
+    fn a_stopped_import_ends_as_cancelled_keeps_its_segments_and_gets_a_retention_date() {
+        let store = temp_store();
+        let meeting = store
+            .create_meeting("Abgebrochener Import", MeetingSource::Import, None)
+            .unwrap();
+        let segment = |i: u32, text: &str| StoredSegment {
+            segment_index: i,
+            text: text.to_string(),
+            start_ms: u64::from(i) * 1_000,
+            end_ms: u64::from(i) * 1_000 + 900,
+            channel: CHANNEL_MIXED,
+            speaker_index: None,
+            words: None,
+        };
+        store
+            .append_delta(
+                &meeting.id,
+                &TranscriptDelta {
+                    new_segments: vec![segment(0, "Guten Tag"), segment(1, "zusammen")],
+                },
+            )
+            .unwrap();
+
+        let now = 1_800_000_000;
+        mark_stopped(&store, &meeting.id, now, &MeetingAudioRetention::Days(7)).unwrap();
+
+        let after = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(after.status, "cancelled");
+        assert_eq!(after.ended_at, Some(now));
+        assert_eq!(after.audio_retention_until, Some(now + 7 * 86_400));
+        assert_eq!(
+            store.get_segments(&meeting.id).unwrap().len(),
+            2,
+            "bereits transkribierte Segmente bleiben erhalten"
+        );
+
+        // Doppelt aufgerufen (Stopp waehrend des Stopps): derselbe Endzustand.
+        mark_stopped(&store, &meeting.id, now + 5, &MeetingAudioRetention::Days(7)).unwrap();
+        let again = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(again.status, "cancelled");
+        assert_eq!(store.get_segments(&meeting.id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_stopped_import_under_the_after_minutes_policy_keeps_its_audio_for_now() {
+        let store = temp_store();
+        let meeting = store
+            .create_meeting("Abgebrochen", MeetingSource::Import, None)
+            .unwrap();
+        mark_stopped(&store, &meeting.id, 1_800_000_000, &MeetingAudioRetention::AfterMinutes)
+            .unwrap();
+        let after = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(after.audio_retention_until, None, "kein Protokoll, also bleibt die WAV");
+        assert_eq!(after.status, "cancelled");
     }
 }
