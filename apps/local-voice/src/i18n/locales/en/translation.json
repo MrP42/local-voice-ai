@@ -2068,7 +2068,8 @@
       "sourceKind": {
         "live": "Live recording",
         "import": "File import",
-        "subtitle": "Subtitle import"
+        "subtitle": "Subtitle import",
+        "youtube": "YouTube-Link"
       }
     },
     "model": {
@@ -2088,6 +2089,7 @@
       "sourceLive": "Recording",
       "sourceImport": "Import",
       "sourceSubtitle": "Subtitles",
+      "sourceYoutube": "YouTube",
       "minutes": "{{count}} min",
       "projectHint": "Click to move the meeting to another project",
       "projectMore": "+{{count}}",
@@ -2146,11 +2148,91 @@
       "cancel": "Cancel",
       "close": "Close"
     },
+    "youtube": {
+      "link": {
+        "title": "Paste a YouTube link",
+        "urlLabel": "Link to a YouTube video",
+        "urlPlaceholder": "https://www.youtube.com/watch?v=…",
+        "projectLabel": "Project",
+        "projectNone": "No project",
+        "recognized": "Video recognised",
+        "startsAt": "Starts at {{time}}",
+        "notice": "When you add it, the app asks YouTube once for the title and channel, without sign-in and without cookies. The video itself is only loaded when you play it.",
+        "add": "Add",
+        "adding": "Adding …",
+        "cancel": "Cancel",
+        "added": "“{{title}}” was added as a source."
+      },
+      "errors": {
+        "youtube_empty": "Please paste a YouTube link.",
+        "youtube_too_long": "The text is too long for a link.",
+        "youtube_invalid_link": "That is not a valid YouTube link to a single video.",
+        "youtube_not_youtube": "That is not a YouTube link.",
+        "youtube_playlist": "Playlists will follow later. Please paste the link of a single video.",
+        "youtube_channel": "Channels are not supported. Please paste the link of a single video.",
+        "youtube_disabled": "YouTube is switched off under Integrations.",
+        "youtube_busy": "This video is being added right now.",
+        "youtube_project_not_found": "The selected project no longer exists.",
+        "youtube_unavailable": "The video is not available: private, deleted or not allowed to be embedded.",
+        "youtube_rate_limited": "YouTube is not answering further requests right now. Please try again later.",
+        "youtube_timeout": "YouTube did not answer in time. Please try again.",
+        "youtube_network": "No connection to YouTube. {{detail}}",
+        "youtube_http": "YouTube answered with status {{detail}}.",
+        "youtube_bad_response": "The answer from YouTube could not be read.",
+        "youtube_store_failed": "The meeting could not be saved. {{detail}}",
+        "youtube_path_invalid": "The path is invalid."
+      },
+      "player": {
+        "region": "YouTube video",
+        "title": "YouTube",
+        "collapse": "Collapse video",
+        "expand": "Expand video",
+        "openExternal": "Open on YouTube",
+        "play": "Play video",
+        "privacy": "Playing connects the app to YouTube. Playback and ads stay unchanged.",
+        "loading": "Loading player …",
+        "retry": "Try again",
+        "resize": "Change the height of the video",
+        "errors": {
+          "api": "The YouTube player could not be loaded. Please check the internet connection.",
+          "2": "YouTube reports an invalid link.",
+          "5": "The player reported an error.",
+          "100": "The video was not found or is private.",
+          "101": "The owner does not allow playback outside YouTube. “Open on YouTube” opens it in the browser.",
+          "150": "The owner does not allow playback outside YouTube. “Open on YouTube” opens it in the browser.",
+          "153": "YouTube rejected the player. “Open on YouTube” opens it in the browser.",
+          "generic": "The video cannot be played here."
+        }
+      },
+      "settings": {
+        "private": "YouTube: use a self-installed yt-dlp (private, experimental)",
+        "privateDescription": "Off (default): videos are only watched in the embedded YouTube player. On: if you installed yt-dlp yourself, the app may later use it to fetch audio and subtitles for your own use. The app does not bundle or download yt-dlp.",
+        "tool": {
+          "title": "Path to yt-dlp",
+          "description": "File or folder of yt-dlp. Empty: the app searches the PATH.",
+          "placeholder": "Leave empty to search the PATH",
+          "browse": "Browse …",
+          "check": "Check",
+          "checking": "Looking for yt-dlp …",
+          "found": "yt-dlp found: version {{version}} ({{path}})",
+          "errors": {
+            "not_found": "yt-dlp not found. Please install it yourself (e.g. with a package manager) or enter the path.",
+            "not_absolute": "Please enter a full path (e.g. C:\\Tools\\yt-dlp.exe).",
+            "bad_name": "The file name must start with “yt-dlp” (Windows: .exe).",
+            "timeout": "yt-dlp did not answer in time.",
+            "failed": "yt-dlp started but reported an error. Please update or reinstall it.",
+            "start_failed": "yt-dlp could not be started.",
+            "not_ytdlp": "This file does not answer like yt-dlp."
+          }
+        },
+        "legal": "Note: downloading YouTube videos may violate YouTube's terms of use and may be relevant under copyright law (Higher Regional Court Hamburg, 21 Nov 2024, 5 U 54/23). Use at your own risk; have this checked legally before passing the app on to third parties. Not legal advice."
+      }
+    },
     "importAction": {
       "name": "Import file",
       "hint": "Choose audio, video or subtitles – or drag them onto the list",
       "linkName": "Paste link",
-      "linkHint": "coming with YouTube #65"
+      "linkHint": "Add a YouTube link as a source, or paste the link with Ctrl+V"
     },
     "recorder": {
       "running": "Recording",

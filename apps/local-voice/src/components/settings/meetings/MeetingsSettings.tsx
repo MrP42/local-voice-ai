@@ -25,6 +25,7 @@ import { LiveTranscript } from "./LiveTranscript";
 import { LiveNotesPad } from "./notes/LiveNotesPad";
 import { MeetingList } from "./MeetingList";
 import { MeetingDetail } from "./MeetingDetail";
+import { YoutubeLinkHost } from "./youtube/YoutubeLinkHost";
 import { RecWorkspace, isRightTab, type RightTab } from "./RecWorkspace";
 import { useProjects } from "./projects/useProjects";
 import { useMeetingDrag } from "./projects/useMeetingDrag";
@@ -440,6 +441,7 @@ export const MeetingsSettings: React.FC = () => {
         chatBody={chatBody}
       />
       <DragGhost drag={drag.drag} />
+      <YoutubeLinkHost onCreated={select} />
       {selected && (
         <MeetingDetail
           key={selected.id}

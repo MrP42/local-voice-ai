@@ -416,4 +416,16 @@ pub struct CliArgs {
     /// Exit 0 ok, 1 error, 2 no sandbox.
     #[arg(long)]
     pub integrations_dump: bool,
+
+    // A2 (Goal Integrationen)
+    /// Add a YouTube link as a meeting source headlessly and exit: one oEmbed
+    /// request (title, channel; no API key, time-limited) creates a meeting with
+    /// source `youtube`, records the register entry, the audit row and the
+    /// provenance, prints `MEETING_ID=<ulid>` and, with --json/--out, the source
+    /// as JSON. SANDBOX ONLY: requires LVA_MEETINGS_DIR, so it can never write to
+    /// the productive meetings.db. In the sandbox LVA_YOUTUBE_OEMBED_URL may point
+    /// to a local test endpoint. Exit 0 created, 1 error, 2 bad input (no sandbox,
+    /// not a single-video link), 3 YouTube unreachable or video unavailable.
+    #[arg(long, value_name = "URL")]
+    pub add_youtube: Option<String>,
 }

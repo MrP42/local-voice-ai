@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
   ChevronRight,
-  Link,
   Mic,
   Pause,
   Play,
@@ -26,6 +25,7 @@ import { Alert } from "../../ui/Alert";
 import { translateMeetingError } from "./meetingErrors";
 import { MeetingChatNotice } from "./MeetingChatNotice";
 import { MeetingImportAction } from "./MeetingImportAction";
+import { YoutubeLinkAction } from "./youtube/YoutubeLinkAction";
 import { NO_PROJECT, StartRecordingDialog } from "./StartRecordingDialog";
 import { BriefButton } from "./people/BriefButton";
 import { flushAllNotes } from "./notes/useNotesAutosave";
@@ -467,13 +467,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
               {t("meetings.record.start")}
             </Button>
             <MeetingImportAction />
-            <IconAction
-              icon={Link}
-              label={t("meetings.importAction.linkName")}
-              description={t("meetings.importAction.linkHint")}
-              testId="link-open"
-              disabled
-            />
+            <YoutubeLinkAction />
           </div>
         ) : (
           <div

@@ -278,6 +278,13 @@ const settingUpdaters: {
     commands.changeMeetingMcpEnabledSetting(value as boolean),
   meeting_mcp_include_transcript: (value) =>
     commands.changeMeetingMcpIncludeTranscriptSetting(value as boolean),
+  // A2 (YouTube)
+  meeting_youtube_private: (value) =>
+    commands.changeMeetingYoutubePrivateSetting(value as boolean),
+  meeting_youtube_tool_path: (value) =>
+    commands.changeMeetingYoutubeToolPathSetting(
+      (value as string | null) ?? null,
+    ),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

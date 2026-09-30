@@ -516,7 +516,7 @@ test.describe("Neu transkribieren", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Bedienung oben rechts", () => {
-  test("Zeile: Aufnahme starten (primaer), Import, Link einfuegen (ausgegraut mit Tooltip)", async ({
+  test("Zeile: Aufnahme starten (primaer), Import, Link einfuegen (aktiv seit A2, mit Tooltip)", async ({
     page,
   }) => {
     await openRecordings(page, 1366, 768);
@@ -529,12 +529,13 @@ test.describe("Bedienung oben rechts", () => {
       "Datei importieren",
     );
     const link = row.getByTestId("link-open");
-    await expect(link).toBeDisabled();
+    // A2 (#65): der Link-Knopf ist aktiv und oeffnet den YouTube-Dialog.
+    await expect(link).toBeEnabled();
     const b = (await link.boundingBox())!;
     await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
     const tip = page.getByRole("tooltip");
     await expect(tip.locator("strong")).toHaveText("Link einfügen");
-    await expect(tip).toContainText("folgt mit YouTube #65");
+    await expect(tip).toContainText("YouTube-Link als Quelle anlegen");
     // Keine Formularfelder mehr in der Bedienspalte.
     await expect(
       page

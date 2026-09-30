@@ -51,6 +51,7 @@ import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { JobPanel } from "./JobProgress";
 import { audioTranscriptPlayer } from "./transcriptPlayer";
+import { useYoutubeSource } from "./youtube/useYoutubeSource";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -184,7 +185,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // Ein Klick auf eine Zeitmarke spricht diesen Player an. Heute ist das das
   // Audio der Besprechung; ein YouTube-Player (#66) setzt hier seine eigene
   // Umsetzung ein, das Transkript bleibt unveraendert.
-  const player = audioTranscriptPlayer(micPlayerRef, systemPlayerRef, hasAudio);
+  // Eine YouTube-Besprechung hat statt des Audios den YouTube-Player (#66).
+  const youtube = useYoutubeSource(meeting);
+  const player =
+    youtube.player ??
+    audioTranscriptPlayer(micPlayerRef, systemPlayerRef, hasAudio);
 
   /**
    * Quelle einer KI-Notiz: das Transkript rechts zeigen, das Segment markieren
@@ -662,6 +667,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   /** Kopf der Besprechung und die Reiter der Arbeitsflaeche (Mitte). */
   const contentPart = (
     <>
+      {youtube.panel}
       <MeetingHeader
         meeting={meeting}
         progress={jobProgress}

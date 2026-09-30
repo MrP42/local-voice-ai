@@ -1847,6 +1847,79 @@ async provenanceGet(contentType: SubjectKind, id: string) : Promise<Result<Prove
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Prueft einen eingefuegten Link ohne Netzzugriff: die bereinigte Adresse oder
+ * ein Fehlercode (`youtube_playlist`, `youtube_channel`, `youtube_not_youtube`, ...).
+ */
+async youtubeNormalizeLink(url: string) : Promise<Result<YoutubeLinkInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_normalize_link", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt aus einem Link eine Besprechung mit Quelle YouTube an (ein oEmbed-Abruf
+ * fuer Titel und Kanal, im Audit) im gewaehlten Projekt. Der bewusste Nutzerschritt
+ * „Link einfuegen“; nichts anderes verbindet sich dabei mit YouTube.
+ */
+async youtubeAddSource(url: string, projectId: string | null) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_add_source", { url, projectId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die YouTube-Angaben einer Besprechung, oder nichts (andere Quelle, keine Daten).
+ * Kein Netzzugriff.
+ */
+async youtubeSourceGet(meetingId: string) : Promise<Result<YoutubeSource | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_source_get", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sucht ein selbst installiertes yt-dlp und zeigt seine Version. `path`: der Wert
+ * aus dem Eingabefeld (noch nicht gespeichert); `None` = gespeicherter Pfad.
+ * Startet hoechstens `yt-dlp --version` (im Job-Objekt, mit Zeitlimit); kein
+ * Netzzugriff.
+ */
+async youtubeToolDetect(path: string | null) : Promise<Result<ToolStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_tool_detect", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schalter „privat/experimentell“ (Standard aus).
+ */
+async changeMeetingYoutubePrivateSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_youtube_private_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Pfad eines selbst installierten yt-dlp. Leer = im PATH suchen.
+ */
+async changeMeetingYoutubeToolPathSetting(path: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_youtube_tool_path_setting", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingNotesGet(meetingId: string) : Promise<Result<MeetingNotes, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_notes_get", { meetingId }) };
@@ -4310,7 +4383,19 @@ calendar_graph_client_id?: string | null;
 /**
  * M5-P5f: Verzeichnis (Tenant) der Anmeldung; `None` = `common`.
  */
-calendar_graph_tenant?: string | null }
+calendar_graph_tenant?: string | null; 
+/**
+ * A2 (Goal Integrationen, E1): Schalter „privat/experimentell“. An UND ein
+ * selbst installiertes yt-dlp gefunden: A3 darf darueber Audio und Untertitel
+ * fuer den eigenen Gebrauch holen. Standard AUS; yt-dlp wird weder gebuendelt
+ * noch geladen. Bleibt auf dem Geraet (kein Sync).
+ */
+meeting_youtube_private?: boolean; 
+/**
+ * A2: Pfad (Datei oder Ordner) eines selbst installierten yt-dlp; `None` =
+ * im PATH suchen. Bleibt auf dem Geraet.
+ */
+meeting_youtube_tool_path?: string | null }
 export type Attendee = { 
 /**
  * Klein geschrieben, ohne `mailto:`; `None`, wenn die Quelle keine
@@ -5619,6 +5704,22 @@ export type TemplateSpec = { version: number; context: string; sections: Templat
  * and `Dark` force one of the two palettes Handy already ships.
  */
 export type Theme = "system" | "light" | "dark"
+/**
+ * Ergebnis der Erkennung fuer die Oberflaeche.
+ */
+export type ToolStatus = { found: boolean; 
+/**
+ * Der geprueft Pfad (auch wenn es misslang, zur Anzeige).
+ */
+path: string | null; version: string | null; 
+/**
+ * `configured` oder `path`.
+ */
+source: string | null; 
+/**
+ * Code eines Fehlers (siehe `ToolError::code`), sonst `None`.
+ */
+error: string | null }
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TranslateOutcome = { transcript: string; translation: string }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
@@ -5751,6 +5852,22 @@ export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_ac
  * channel timeline (basis for M3's word-to-speaker assignment).
  */
 export type WordTime = { text: string; start_ms: number; end_ms: number }
+/**
+ * Was ein gueltiger Link bezeichnet (fuer die Rueckmeldung im Dialog, ohne Netz).
+ */
+export type YoutubeLinkInfo = { video_id: string; url: string; start_s: number | null }
+/**
+ * Die Angaben zur Quelle, wie die Oberflaeche sie liest (Player, Kopf, Herkunft).
+ */
+export type YoutubeSource = { video_id: string; 
+/**
+ * Bereinigte Adresse (nur die ID), immer aus `video_id` abgeleitet.
+ */
+url: string; title: string; channel: string; channel_url: string | null; thumbnail_url: string | null; 
+/**
+ * Startzeit aus dem Link in Sekunden.
+ */
+start_s: number | null }
 
 /** tauri-specta globals **/
 

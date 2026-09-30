@@ -1872,6 +1872,13 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::meetings_export_document,
             // M1-P1c
             commands::provenance::provenance_get, // A1
+            // A2: YouTube als Quelle
+            commands::youtube::youtube_normalize_link,
+            commands::youtube::youtube_add_source,
+            commands::youtube::youtube_source_get,
+            commands::youtube::youtube_tool_detect,
+            commands::youtube::change_meeting_youtube_private_setting,
+            commands::youtube::change_meeting_youtube_tool_path_setting,
             commands::meeting_notes::meeting_notes_get,
             commands::meeting_notes::meeting_notes_save,
             commands::meeting_notes::meetings_recording_position,
@@ -2133,6 +2140,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.followup_draft.is_some() // P6f
         || cli_args.calendar_dump.is_some() // M5-P5a
         || cli_args.integrations_dump // A1
+        || cli_args.add_youtube.is_some() // A2
         || cli_args.detect_mic; // M5-P5c
 
     #[allow(unused_mut)]
@@ -2355,6 +2363,21 @@ pub fn run(cli_args: CliArgs) {
                         let code = run_headless_guarded(|| {
                             run_headless_integrations_dump(&app_handle, &args)
                         });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // A2: YouTube-Link als Quelle anlegen (nur Sandbox, ein oEmbed-Abruf).
+                if cli_args.add_youtube.is_some() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code =
+                            run_headless_guarded(|| run_headless_add_youtube(&app_handle, &args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2843,6 +2866,76 @@ fn run_headless_integrations_dump(app: &AppHandle, args: &CliArgs) -> i32 {
         }
     }
     0
+}
+
+// A2: `--add-youtube URL [--json] [--out F]`. Nur mit Sandbox
+// (`LVA_MEETINGS_DIR`): der Aufruf oeffnet und migriert den Store dort und schreibt
+// nie in die produktive Datenbank. Genau ein oEmbed-Abruf (Zeitlimit 10 s).
+fn run_headless_add_youtube(app: &AppHandle, args: &CliArgs) -> i32 {
+    use managers::meetings::store::MeetingStore;
+    use managers::youtube::source::{add_youtube_source, AddOptions};
+    use managers::youtube::YoutubeError;
+
+    crate::selftest::begin_headless_run();
+    let Some(url) = args.add_youtube.clone() else {
+        return 2;
+    };
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if sandbox.is_none() {
+        eprintln!(
+            "error: --add-youtube requires {} (sandbox); it never writes to the productive store",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let store = match MeetingStore::new(app) {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    let options = AddOptions::production();
+    let started = std::time::Instant::now();
+    let result = tauri::async_runtime::block_on(add_youtube_source(&store, &url, None, &options));
+    match result {
+        Ok(added) => {
+            println!("MEETING_ID={}", added.meeting.id);
+            let payload = serde_json::json!({
+                "meeting_id": added.meeting.id,
+                "source": added.meeting.source,
+                "video_id": added.video.video_id,
+                "url": added.video.canonical_url(),
+                "title": added.meta.title,
+                "channel": added.meta.channel,
+                "thumbnail_url": added.meta.thumbnail_url,
+                "oembed_ms": started.elapsed().as_millis() as u64,
+                "db": store.db_path().display().to_string(),
+            });
+            if args.json || args.out.is_some() {
+                emit_headless_payload(&payload, args.out.as_deref());
+            } else {
+                println!("TITLE={}", added.meta.title);
+                println!("CHANNEL={}", added.meta.channel);
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("error: {} ({})", e, e.code());
+            match e {
+                YoutubeError::Link(_) | YoutubeError::Project | YoutubeError::Busy => 2,
+                YoutubeError::Unavailable
+                | YoutubeError::RateLimited
+                | YoutubeError::Timeout
+                | YoutubeError::Network(_)
+                | YoutubeError::Http(_)
+                | YoutubeError::BadResponse(_) => 3,
+                _ => 1,
+            }
+        }
+    }
 }
 
 // M5-P5c: `--detect-mic --seconds N [--all-apps] [--json] [--out F]`. Beobachtet

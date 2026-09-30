@@ -6,6 +6,7 @@ import {
   Folder as FolderIcon,
   Info,
   Mic,
+  MonitorPlay,
   Upload,
 } from "lucide-react";
 import type { Meeting, Participant } from "@/bindings";
@@ -226,13 +227,17 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
       ? "sourceImport"
       : meeting.source === "subtitle"
         ? "sourceSubtitle"
-        : "sourceLive";
+        : meeting.source === "youtube"
+          ? "sourceYoutube"
+          : "sourceLive";
   const SourceIcon =
     meeting.source === "import"
       ? Upload
       : meeting.source === "subtitle"
         ? FileText
-        : Mic;
+        : meeting.source === "youtube"
+          ? MonitorPlay
+          : Mic;
   const sourceLabel = t(`meetings.header.${sourceKey}`);
   const sourceFull = t(`meetings.meta.sourceKind.${meeting.source}`, {
     defaultValue: sourceLabel,

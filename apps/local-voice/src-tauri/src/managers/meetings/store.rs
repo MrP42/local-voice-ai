@@ -231,14 +231,17 @@ pub enum MeetingSource {
     Live,
     Import,
     Subtitle,
+    /// A2 (Goal Integrationen): Besprechung aus einem YouTube-Link, ohne Audio.
+    Youtube,
 }
 
 impl MeetingSource {
-    fn as_str(&self) -> &'static str {
+    pub(crate) fn as_str(&self) -> &'static str {
         match self {
             MeetingSource::Live => "live",
             MeetingSource::Import => "import",
             MeetingSource::Subtitle => "subtitle",
+            MeetingSource::Youtube => "youtube",
         }
     }
 }
@@ -935,6 +938,8 @@ impl MeetingStore {
         let status = match source {
             MeetingSource::Live => MeetingStatus::Recording,
             MeetingSource::Import | MeetingSource::Subtitle => MeetingStatus::Processing,
+            // Nichts laeuft: es gibt (noch) kein Audio zu verarbeiten.
+            MeetingSource::Youtube => MeetingStatus::Ready,
         };
 
         let id = Ulid::new().to_string();

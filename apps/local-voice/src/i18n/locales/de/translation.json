@@ -2068,7 +2068,8 @@
       "sourceKind": {
         "live": "Live-Aufnahme",
         "import": "Datei-Import",
-        "subtitle": "Untertitel-Import"
+        "subtitle": "Untertitel-Import",
+        "youtube": "YouTube-Link"
       }
     },
     "model": {
@@ -2088,6 +2089,7 @@
       "sourceLive": "Aufnahme",
       "sourceImport": "Import",
       "sourceSubtitle": "Untertitel",
+      "sourceYoutube": "YouTube",
       "minutes": "{{count}} Min.",
       "projectHint": "Klicken, um die Besprechung in ein anderes Projekt zu verschieben",
       "projectMore": "+{{count}}",
@@ -2146,11 +2148,91 @@
       "cancel": "Abbrechen",
       "close": "Schließen"
     },
+    "youtube": {
+      "link": {
+        "title": "YouTube-Link einfügen",
+        "urlLabel": "Link zu einem YouTube-Video",
+        "urlPlaceholder": "https://www.youtube.com/watch?v=…",
+        "projectLabel": "Projekt",
+        "projectNone": "Ohne Projekt",
+        "recognized": "Video erkannt",
+        "startsAt": "Start bei {{time}}",
+        "notice": "Beim Hinzufügen fragt die App einmalig Titel und Kanal bei YouTube ab, ohne Anmeldung und ohne Cookies. Das Video selbst wird erst geladen, wenn du es abspielst.",
+        "add": "Hinzufügen",
+        "adding": "Wird angelegt …",
+        "cancel": "Abbrechen",
+        "added": "„{{title}}“ wurde als Quelle angelegt."
+      },
+      "errors": {
+        "youtube_empty": "Bitte einen YouTube-Link einfügen.",
+        "youtube_too_long": "Der Text ist zu lang für einen Link.",
+        "youtube_invalid_link": "Das ist kein gültiger YouTube-Link zu einem einzelnen Video.",
+        "youtube_not_youtube": "Das ist kein YouTube-Link.",
+        "youtube_playlist": "Playlists folgen später. Bitte den Link eines einzelnen Videos einfügen.",
+        "youtube_channel": "Kanäle werden nicht unterstützt. Bitte den Link eines einzelnen Videos einfügen.",
+        "youtube_disabled": "YouTube ist in den Integrationen ausgeschaltet.",
+        "youtube_busy": "Dieses Video wird gerade angelegt.",
+        "youtube_project_not_found": "Das gewählte Projekt gibt es nicht mehr.",
+        "youtube_unavailable": "Das Video ist nicht verfügbar: privat, gelöscht oder nicht zum Einbetten freigegeben.",
+        "youtube_rate_limited": "YouTube antwortet gerade nicht auf weitere Anfragen. Bitte später erneut versuchen.",
+        "youtube_timeout": "YouTube hat nicht rechtzeitig geantwortet. Bitte erneut versuchen.",
+        "youtube_network": "Keine Verbindung zu YouTube. {{detail}}",
+        "youtube_http": "YouTube antwortete mit dem Status {{detail}}.",
+        "youtube_bad_response": "Die Antwort von YouTube war nicht auswertbar.",
+        "youtube_store_failed": "Die Besprechung konnte nicht gespeichert werden. {{detail}}",
+        "youtube_path_invalid": "Der Pfad ist ungültig."
+      },
+      "player": {
+        "region": "YouTube-Video",
+        "title": "YouTube",
+        "collapse": "Video einklappen",
+        "expand": "Video ausklappen",
+        "openExternal": "Auf YouTube öffnen",
+        "play": "Video abspielen",
+        "privacy": "Beim Abspielen verbindet sich die App mit YouTube. Wiedergabe und Werbung bleiben unverändert.",
+        "loading": "Player wird geladen …",
+        "retry": "Erneut versuchen",
+        "resize": "Höhe des Videos ändern",
+        "errors": {
+          "api": "Der YouTube-Player konnte nicht geladen werden. Bitte die Internetverbindung prüfen.",
+          "2": "YouTube meldet einen ungültigen Link.",
+          "5": "Der Player hat einen Fehler gemeldet.",
+          "100": "Das Video wurde nicht gefunden oder ist privat.",
+          "101": "Der Besitzer erlaubt die Wiedergabe außerhalb von YouTube nicht. Über „Auf YouTube öffnen“ geht es im Browser.",
+          "150": "Der Besitzer erlaubt die Wiedergabe außerhalb von YouTube nicht. Über „Auf YouTube öffnen“ geht es im Browser.",
+          "153": "YouTube hat den Player abgelehnt. Über „Auf YouTube öffnen“ geht es im Browser.",
+          "generic": "Das Video lässt sich hier nicht abspielen."
+        }
+      },
+      "settings": {
+        "private": "YouTube: selbst installiertes yt-dlp nutzen (privat, experimentell)",
+        "privateDescription": "Aus (Standard): Videos werden nur im eingebetteten YouTube-Player angesehen. An: Ist yt-dlp von dir selbst installiert, darf die App damit später Audio und Untertitel für den eigenen Gebrauch holen. Die App bündelt yt-dlp nicht und lädt es nicht herunter.",
+        "tool": {
+          "title": "Pfad zu yt-dlp",
+          "description": "Datei oder Ordner von yt-dlp. Leer: die App sucht im PATH.",
+          "placeholder": "Leer lassen, um im PATH zu suchen",
+          "browse": "Durchsuchen …",
+          "check": "Prüfen",
+          "checking": "Suche yt-dlp …",
+          "found": "yt-dlp gefunden: Version {{version}} ({{path}})",
+          "errors": {
+            "not_found": "yt-dlp nicht gefunden. Bitte selbst installieren (z. B. über den Paketmanager) oder den Pfad eintragen.",
+            "not_absolute": "Bitte einen vollständigen Pfad angeben (z. B. C:\\Tools\\yt-dlp.exe).",
+            "bad_name": "Der Dateiname muss mit „yt-dlp“ beginnen (Windows: .exe).",
+            "timeout": "yt-dlp hat nicht rechtzeitig geantwortet.",
+            "failed": "yt-dlp wurde gestartet, meldete aber einen Fehler. Bitte aktualisieren oder neu installieren.",
+            "start_failed": "yt-dlp ließ sich nicht starten.",
+            "not_ytdlp": "Diese Datei antwortet nicht wie yt-dlp."
+          }
+        },
+        "legal": "Hinweis: Das Herunterladen von YouTube-Videos kann gegen die Nutzungsbedingungen von YouTube verstoßen und urheberrechtlich relevant sein (OLG Hamburg, 21.11.2024, 5 U 54/23). Nutzung auf eigene Verantwortung; vor einer Weitergabe der App an Dritte bitte rechtlich prüfen lassen. Keine Rechtsberatung."
+      }
+    },
     "importAction": {
       "name": "Datei importieren",
       "hint": "Audio, Video oder Untertitel wählen – oder in die Liste ziehen",
       "linkName": "Link einfügen",
-      "linkHint": "folgt mit YouTube #65"
+      "linkHint": "YouTube-Link als Quelle anlegen, oder den Link mit Strg+V einfügen"
     },
     "recorder": {
       "running": "Aufnahme läuft",

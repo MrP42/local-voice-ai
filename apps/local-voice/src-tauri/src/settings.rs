@@ -867,6 +867,16 @@ pub struct AppSettings {
     /// M5-P5f: Verzeichnis (Tenant) der Anmeldung; `None` = `common`.
     #[serde(default)]
     pub calendar_graph_tenant: Option<String>,
+    /// A2 (Goal Integrationen, E1): Schalter „privat/experimentell“. An UND ein
+    /// selbst installiertes yt-dlp gefunden: A3 darf darueber Audio und Untertitel
+    /// fuer den eigenen Gebrauch holen. Standard AUS; yt-dlp wird weder gebuendelt
+    /// noch geladen. Bleibt auf dem Geraet (kein Sync).
+    #[serde(default)]
+    pub meeting_youtube_private: bool,
+    /// A2: Pfad (Datei oder Ordner) eines selbst installierten yt-dlp; `None` =
+    /// im PATH suchen. Bleibt auf dem Geraet.
+    #[serde(default)]
+    pub meeting_youtube_tool_path: Option<String>,
 }
 
 fn default_meeting_reminder_lead_s() -> u32 {
@@ -1643,6 +1653,8 @@ pub fn get_default_settings() -> AppSettings {
         meeting_mcp_include_transcript: true,
         calendar_graph_client_id: None,
         calendar_graph_tenant: None,
+        meeting_youtube_private: false,
+        meeting_youtube_tool_path: None,
     }
 }
 
@@ -2774,6 +2786,32 @@ mod tests {
         assert!(!crate::sync::collect::SYNCED_SETTINGS
             .iter()
             .any(|key| key.starts_with("meeting_mcp")));
+    }
+
+    /// A2: der Schalter „privat“ ist ohne Zutun AUS (auch bei einer settings.json
+    /// aus einer Fassung vor A2), der Pfad leer; beides bleibt auf dem Geraet.
+    #[test]
+    fn youtube_private_mode_is_off_by_default_and_stays_on_the_device() {
+        let d = get_default_settings();
+        assert!(!d.meeting_youtube_private);
+        assert_eq!(d.meeting_youtube_tool_path, None);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(!old.meeting_youtube_private, "ältere settings.json: bleibt aus");
+        assert_eq!(old.meeting_youtube_tool_path, None);
+        let chosen: AppSettings = serde_json::from_value(serde_json::json!({
+            "meeting_youtube_private": true,
+            "meeting_youtube_tool_path": "C:/Tools/yt-dlp.exe",
+        }))
+        .unwrap();
+        assert!(chosen.meeting_youtube_private);
+        assert_eq!(
+            chosen.meeting_youtube_tool_path.as_deref(),
+            Some("C:/Tools/yt-dlp.exe")
+        );
+        assert!(!crate::sync::collect::SYNCED_SETTINGS
+            .iter()
+            .any(|key| key.starts_with("meeting_youtube")));
     }
 
     #[test]

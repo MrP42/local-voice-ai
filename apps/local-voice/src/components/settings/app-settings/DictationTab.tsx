@@ -4,6 +4,7 @@ import { MeetingLanguageSetting } from "../meetings/MeetingLanguageSetting";
 import { MeetingMcpSettings } from "../meetings/MeetingMcpSettings";
 import { MeetingModelSetting } from "../meetings/MeetingModelSetting";
 import { MeetingNotesSettings } from "../meetings/MeetingNotesSettings";
+import { MeetingYoutubeSettings } from "../meetings/youtube/MeetingYoutubeSettings";
 import { useTranslation } from "react-i18next";
 import { type } from "@tauri-apps/plugin-os";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -68,6 +69,7 @@ export const DictationTab: React.FC = () => {
         <MeetingNotesSettings />
         <MeetingCalendarSettings />
         <MeetingMcpSettings />
+        <MeetingYoutubeSettings />
       </SettingsGroup>
       <DictationTest />
     </div>
