@@ -44,6 +44,17 @@ export const ResourceMeter: React.FC = () => {
   const gpu =
     memory.gpus.find((g) => !g.shared) ?? memory.gpus[0] ?? null;
 
+  // Anteil der App (samt Modell-Servern). Fehlt er oder ist er nicht
+  // messbar (`null`), steht nur die Systemzahl da — keine erfundene Null.
+  const appRam =
+    typeof memory.app_ram_mb === "number" && memory.app_ram_mb > 0
+      ? memory.app_ram_mb
+      : null;
+  const appGpu =
+    gpu && !gpu.shared && typeof memory.app_gpu_mb === "number"
+      ? memory.app_gpu_mb
+      : null;
+
   return (
     <div
       className="hidden md:flex items-center gap-3 text-text/60"
@@ -51,17 +62,26 @@ export const ResourceMeter: React.FC = () => {
       title={t("resourceMeter.hint")}
     >
       <span className="whitespace-nowrap">
-        {t("resourceMeter.ram", {
+        {t(appRam === null ? "resourceMeter.ram" : "resourceMeter.ramApp", {
           used: gb(memory.ram_used_mb),
           total: gb(memory.ram_total_mb),
+          app: appRam === null ? "" : gb(appRam),
         })}
       </span>
       {gpu && (
         <span className="whitespace-nowrap">
-          {t(gpu.shared ? "resourceMeter.gpuShared" : "resourceMeter.gpu", {
-            used: gb(gpu.used_mb),
-            total: gb(gpu.budget_mb),
-          })}
+          {t(
+            gpu.shared
+              ? "resourceMeter.gpuShared"
+              : appGpu === null
+                ? "resourceMeter.gpu"
+                : "resourceMeter.gpuApp",
+            {
+              used: gb(gpu.used_mb),
+              total: gb(gpu.budget_mb),
+              app: appGpu === null ? "" : gb(appGpu),
+            },
+          )}
         </span>
       )}
     </div>

@@ -58,7 +58,7 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "llm_local_status") return { phase: "ready", model_id: "llm-qwen3-4b-q4", backend: "vulkan", port: 18477, message: null };
           if (cmd === "llm_set_active_model") { saved.active = args?.id; settings.llm_active_model_id = args?.id; return null; }
           if (cmd === "system_memory")
-            return { ram_total_mb: 65536, ram_used_mb: 12595, gpus: [
+            return (window as unknown as { __memOverride?: unknown }).__memOverride ?? { ram_total_mb: 65536, ram_used_mb: 12595, gpus: [
               { name: "Intel UHD 770", budget_mb: 32768, used_mb: 512, dedicated_mb: 128, shared: true },
               { name: "NVIDIA GeForce RTX 4090", budget_mb: 23160, used_mb: 4240, dedicated_mb: 24356, shared: false },
             ] };
@@ -105,4 +105,38 @@ test("memory is shown as measured: RAM and the dedicated GPU, not the iGPU", asy
   // Die dedizierte Karte zaehlt, nicht die iGPU mit "gemeinsamem" Speicher.
   await expect(meter).toContainText("GPU 4,1 / 22,6 GB");
   await expect(meter).not.toContainText("gemeinsam");
+});
+
+const GPUS = [
+  { name: "Intel UHD 770", budget_mb: 32768, used_mb: 512, dedicated_mb: 128, shared: true },
+  { name: "NVIDIA GeForce RTX 4090", budget_mb: 23160, used_mb: 920, dedicated_mb: 24356, shared: false },
+];
+
+test("the footer adds the app's own share of RAM and GPU memory", async ({ page }) => {
+  await page.addInitScript((gpus) => {
+    (window as unknown as { __memOverride: unknown }).__memOverride = {
+      ram_total_mb: 65536, ram_used_mb: 32358, gpus, app_ram_mb: 4300, app_gpu_mb: 820,
+    };
+  }, GPUS);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  const meter = page.locator("[data-resource-meter]");
+  await expect(meter).toContainText("RAM 31,6 / 64,0 GB (App 4,2)");
+  await expect(meter).toContainText("GPU 0,9 / 22,6 GB (App 0,8)");
+  // Der Tooltip erklaert, was "App" umfasst.
+  await expect(meter).toHaveAttribute("title", /App = Local Voice AI inkl\. Modell-Server/);
+});
+
+test("without a measurable app VRAM only the app RAM is added, never an invented zero", async ({ page }) => {
+  await page.addInitScript((gpus) => {
+    (window as unknown as { __memOverride: unknown }).__memOverride = {
+      ram_total_mb: 65536, ram_used_mb: 32358, gpus, app_ram_mb: 4300, app_gpu_mb: null,
+    };
+  }, GPUS);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  const meter = page.locator("[data-resource-meter]");
+  await expect(meter).toContainText("RAM 31,6 / 64,0 GB (App 4,2)");
+  await expect(meter).toContainText("GPU 0,9 / 22,6 GB");
+  await expect(meter).not.toContainText("GPU 0,9 / 22,6 GB (App");
 });

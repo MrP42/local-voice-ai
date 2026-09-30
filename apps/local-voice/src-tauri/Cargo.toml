@@ -188,6 +188,8 @@ windows = { version = "0.61.3", features = [
   # Job-Objekte: RAM-/CPU-Deckel fuer eigene Kindprozesse (fish-speech,
   # llama-server), damit ein Modellstart nie den ganzen Rechner einfriert.
   "Win32_System_JobObjects",
+  # App-Anteil am GPU-Speicher: PDH-Leistungsindikator "GPU Process Memory".
+  "Win32_System_Performance",
   # M5-P5a: DPAPI (CryptProtectData) fuer die Kalender-Geheimnisse.
   "Win32_Security_Cryptography",
 ] }

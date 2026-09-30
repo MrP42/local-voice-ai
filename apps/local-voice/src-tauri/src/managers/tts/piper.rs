@@ -195,6 +195,15 @@ pub fn run_piper_blocking(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("{ERR_BINARY_MISSING} ({e})"))?;
+    // Job-Objekt mit KILL_ON_JOB_CLOSE: endet die App mitten in einer
+    // Synthese (Beenden, Absturz), stirbt Piper mit, statt als Waise zu
+    // laufen. Kein Speicherdeckel, CPU-Deckel wie bei ffmpeg.
+    #[cfg(windows)]
+    let _job = crate::process_guard::ProcessGuard::attach(
+        &child,
+        None,
+        crate::process_guard::CPU_CAP_PERCENT,
+    );
 
     // Der Text als GENAU EINE Zeile: Piper spricht je stdin-Zeile eine
     // Äußerung — ein Satz mit hartem Umbruch käme sonst zweigeteilt heraus.

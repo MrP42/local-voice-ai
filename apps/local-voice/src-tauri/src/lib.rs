@@ -250,6 +250,22 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             crate::utils::show_transient_notice(&notify, "guard.memoryLow");
         });
     }
+    // Leerlauf-Stopp des lokalen Chat-Modells: nach "Schliessen" lebt die App
+    // im Infobereich weiter; ohne diesen Waechter bliebe das Modell bis zum
+    // Beenden im RAM/VRAM. Grenze = "Modelle entladen nach" (mind. 2 Min.).
+    {
+        let notify = app_handle.clone();
+        std::thread::Builder::new()
+            .name("llm-idle-watch".into())
+            .spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                let limit = managers::llm::local_idle_limit(
+                    get_settings(&notify).model_unload_timeout.to_seconds(),
+                );
+                tauri::async_runtime::block_on(managers::llm::stop_local_if_idle(limit));
+            })
+            .expect("llm idle watch thread");
+    }
     // Verbrauchs-Ledger: jeder Sprachmodell-Aufruf wird gebucht. Global aus
     // demselben Grund wie der Server: `llm_client` bucht ohne AppHandle.
     let usage_ledger = Arc::new(

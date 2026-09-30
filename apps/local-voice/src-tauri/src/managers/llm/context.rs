@@ -112,6 +112,7 @@ mod tests {
             used_mb: used,
             dedicated_mb: if shared { 0 } else { budget },
             shared,
+            luid: String::new(),
         }
     }
 

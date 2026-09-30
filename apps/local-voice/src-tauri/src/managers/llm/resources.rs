@@ -21,6 +21,12 @@ pub struct GpuMemory {
     pub dedicated_mb: u64,
     /// Gemeinsamer Speicher mit der CPU (iGPU, Apple Silicon).
     pub shared: bool,
+    /// Adapter-LUID (`0x00000000_0x0001ee10`), nur intern: ordnet die
+    /// Prozess-Belegung aus dem Leistungsindikator diesem Adapter zu. Leer,
+    /// wenn unbekannt (nicht Windows).
+    #[serde(skip)]
+    #[specta(skip)]
+    pub luid: String,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -30,6 +36,29 @@ pub struct SystemMemory {
     /// Leer, wenn kein Adapter messbar ist. Software-Adapter (Microsoft
     /// Basic Render Driver) sind herausgefiltert.
     pub gpus: Vec<GpuMemory>,
+    /// Anteil der App (Local Voice AI samt Kindprozessen wie llama-server)
+    /// am RAM, Arbeitssatz in MiB. 0 in `system_memory()`; gefuellt von
+    /// `system_memory_with_app()`.
+    pub app_ram_mb: u64,
+    /// Anteil der App am dedizierten GPU-Speicher der ersten Karte in MiB.
+    /// `None`: nicht messbar (kein Windows-Leistungsindikator, keine
+    /// dedizierte Karte) -- dann zeigt die Oberflaeche keine Zahl.
+    pub app_gpu_mb: Option<u64>,
+}
+
+/// Wie [`system_memory`], dazu der Anteil der App (Prozessbaum, gedrosselt
+/// auf eine Messung je 5 s). Blockierend; der Aufrufer legt es auf einen
+/// Blocking-Thread.
+pub fn system_memory_with_app() -> SystemMemory {
+    let mut mem = system_memory();
+    // Dieselbe Karte wie die Fussleiste: die erste mit eigenem Speicher. Eine
+    // reine iGPU hat keinen dedizierten Indikator-Wert, der zu ihrer
+    // gemeinsamen Belegung passte -> nicht messbar.
+    let dedicated = mem.gpus.iter().find(|g| !g.shared);
+    let usage = super::app_usage::measure(dedicated.map(|g| g.luid.as_str()).unwrap_or(""));
+    mem.app_ram_mb = usage.ram_mb;
+    mem.app_gpu_mb = dedicated.and(usage.gpu_mb);
+    mem
 }
 
 /// Misst RAM und GPU-Budgets. Blockierend, aber schnell (DXGI-Aufrufe im
@@ -41,6 +70,8 @@ pub fn system_memory() -> SystemMemory {
         ram_total_mb: sys.total_memory() / (1024 * 1024),
         ram_used_mb: sys.used_memory() / (1024 * 1024),
         gpus: gpu_memory(),
+        app_ram_mb: 0,
+        app_gpu_mb: None,
     }
 }
 
@@ -98,6 +129,10 @@ fn gpu_memory() -> Vec<GpuMemory> {
                 used_mb: info.CurrentUsage / (1024 * 1024),
                 dedicated_mb,
                 shared,
+                luid: format!(
+                    "0x{:08x}_0x{:08x}",
+                    desc.AdapterLuid.HighPart as u32, desc.AdapterLuid.LowPart
+                ),
             });
         }
     }
