@@ -123,7 +123,70 @@ Quelle: modelcontextprotocol.io/specification/2026-07-28 (…/server/tools, …/
 Empfehlung: Named Pipe als Standardkanal für `--mcp` (schreibend) und `local-voice-ai.exe ctl …`; zusätzlich je
 Agent-Client ein Token (Rechte je Werkzeug, widerrufbar). Loopback-HTTP nur als spätere Option für n8n (Goal B).
 
+## 9. YouTube als erste Integration (Zusatz Patrick, 30.09.2026)
+
+Keine Rechtsberatung; Rechtslage vor Auslieferung an Dritte anwaltlich prüfen lassen.
+
+### 9.1 Wege, ein Video in der App anzusehen
+
+| Weg | Werbung | Grundlage fürs Transkribieren | Rechts-/ToS-Lage (DE) | Beleg |
+|---|---|---|---|---|
+| **A: YouTube-IFrame-Player** (Einbettung in der WebView) | ja; Werbung darf nicht blockiert, verändert oder ersetzt werden | keine Datei; nur Mitschnitt der Systemwiedergabe (Loopback) in Echtzeit | ToS-konform, ausdrücklich erlaubter Zugang („Embeddable Player“) | belegt: developers.google.com/youtube/terms/developer-policies (Werbung nicht blockieren/verändern; kein verschachteltes iframe zur Verschleierung, III.I.21); youtube.com/static?template=terms |
+| **B: yt-dlp lädt Datei**, Wiedergabe lokal | nein | ja, direkt (Audio → STT) | ToS: Download nur bei YouTube-eigenem Download-Link; **OLG Hamburg 21.11.2024 (5 U 54/23): „Rolling Cipher“ ist wirksame technische Schutzmaßnahme (§ 95a UrhG)**, youtube-dl-Hosting haftet → Anbieten/Bündeln eines Umgehungswerkzeugs in einer verteilten App ist hochriskant; private Kopie (§ 53 UrhG) deckt Umgehung nicht (Vermutung, juristisch prüfen) | belegt: openjur.de/u/2498326.html; sekundär: lto.de, ferner-alsdorf.de |
+| **C: Werbeblocker im eingebetteten Player** | nein | wie A | Verstoß gegen Developer Policies; BGH 31.07.2025 (I ZR 131/23): Werbeblocker **können** Urheberrecht (Programmschutz § 69a UrhG) verletzen, zurückverwiesen an OLG Hamburg | belegt: bundesgerichtshof.de Pressemitteilung 2025148; sekundär: lto.de, heise.de |
+| **D: Nutzer liefert Datei** (eigene Videos aus YouTube Studio, vom Urheber bereitgestellte Datei) | nein | ja (vorhandener Import) | unkritisch bei eigenen/freigegebenen Inhalten | Vermutung (Studio-Download eigener Videos ist YouTube-Funktion) |
+| **E: YouTube Premium** | im Premium-Konto keine Werbung | keine Datei | ToS-konform; ob die Anmeldung in einer eingebetteten WebView2 funktioniert, ist ungeprüft (Google sperrt Anmeldungen in eingebetteten Browsern teils) | Vermutung |
+
+**yt-dlp technisch** (belegt: github.com/yt-dlp/yt-dlp/issues/14404, /15012): braucht seit Ende 2025 eine externe
+JavaScript-Laufzeit (Deno standardmäßig; Node/Bun/QuickJS optional) für Signatur-/n-Challenges und PO-Token;
+YouTube erzwingt SABR-Streaming und hält Formate ohne PO-Token zurück. Folge: häufige Updates nötig
+(Wettrüsten), zweites Binary (Deno) im Paket, Brüche ohne Vorwarnung. Lizenz yt-dlp: Unlicense (sekundär, Repo).
+Bündelung wäre technisch über `process_guard` (Job-Objekt, RAM-/CPU-Deckel) machbar — die Frage ist rechtlich.
+
+**Ehrliche Einordnung**: „ohne Werbung ansehen“ und „rechtssicher“ gehen nur mit Premium (E) oder eigenen/freigegebenen
+Dateien (D). Weg B erfüllt beides technisch, ist aber rechtlich der riskanteste — für eine verteilte App mehr als für
+Privatnutzung.
+
+### 9.2 Untertitel
+
+- **Offizielle API**: `captions.download` nur für Videos, die der angemeldete Nutzer besitzt/bearbeiten darf
+  (sonst 403, „third-party contributions“) — belegt: developers.google.com/youtube/v3/docs/captions/download;
+  sekundär: youtube2text.org. Für fremde Kanäle also nicht nutzbar.
+- **Inoffiziell** (yt-dlp `--write-subs`/`--write-auto-subs`, Timedtext-Adressen aus der Player-Antwort): manuelle
+  und automatische Spuren, viele Sprachen (auto-übersetzt). ToS-Verstoß („nur über die bereitgestellte
+  Funktionalität“); ob dabei eine Schutzmaßnahme umgangen wird, ist offen (Vermutung: Untertitel sind nicht
+  chiffriert, PO-Token/Player-Client aber nötig).
+- **Selbst transkribieren** ist unabhängig davon möglich, sobald Audio vorliegt (Weg B/D oder Loopback bei A).
+- **Vergleich/Zusammenführen**: vorhandene Bausteine — Import von VTT/SRT (`managers/meetings/import.rs`,
+  `SUBTITLE_EXTENSIONS`), Wort-Diff aus `--reference`-Bewertung (`cli.rs`), LLM-Aufrufe mit Schema (Goal C/M7).
+
+### 9.3 Metadaten ohne API-Schlüssel
+- oEmbed (`https://www.youtube.com/oembed?url=…&format=json`: Titel, Kanal, Vorschaubild) — Vermutung (bekannte,
+  öffentliche Schnittstelle, nicht neu geprüft).
+- Kanal-RSS `https://www.youtube.com/feeds/videos.xml?channel_id=UC…` liefert die 15 neuesten Uploads; ab Dezember
+  2025 zeitweise 404, Stand Mai 2026 wieder funktionsfähig (sekundär: rsscribe.com, wprssaggregator.com).
+
+## 10. Provenienz — was es heute schon gibt (belegt, Code)
+
+| Ort | Inhalt | Lücke |
+|---|---|---|
+| `managers/usage.rs` → `usage.db`, Tabelle `usage_event` | je LLM-Aufruf: `ts, purpose, connection_*, model_id/label, prompt/completion_tokens, Preise, cost_micro, duration_ms, ok, error`; `record()` liefert die Zeilen-ID (`Result<i64>`) | **kein Bezug zum erzeugten Inhalt** (keine meeting_id/document_id); `Purpose` fest: PostProcess, Minutes, EnhancedNotes, Summary, Tagging, Translation, Chat |
+| `meetings.db`, `meeting_documents.generation_metadata_json` | Protokoll/Notizen: u. a. `model` (Test `minutes.rs` prüft „test-model“) | freies JSON, keine Tokens/Dauer/Quellen einheitlich, nicht in der UI |
+| `transcripts.provider, model, language` | STT-Modell je Transkript | keine Dauer/RTF, keine Quelle (YouTube-Untertitel vs. eigene STT) |
+| `managers/meetings/notes/model.rs` `EnhancedNotes.stats: EnhanceStats` | Zahl belegter KI-Einträge (`ai_entries_sourced`), verworfene Quellen-IDs, Chunks | Qualitäts-/Belegzahlen, gute Grundlage für „Konfidenz“ |
+| `action_items.source` (`ai`/`user`/`manual`) | Herkunft je Aufgabe | nur grob |
+
+**Folgerung**: Ein kleines, einheitliches `provenance`-Fundament in `meetings.db`, das je erzeugtem Inhalt auf
+`usage_event.id` verweist (Tokens/Kosten bleiben im Ledger, keine Doppelhaltung), plus Quellenliste, Konfidenz und
+Auslöser (Nutzer, Automatik, Workflow, Agent). Bestehende `generation_metadata_json` bleibt und wird beim Lesen
+als Rückfall genutzt.
+
 ## Quellen (Abruf 30.09.2026)
+- https://developers.google.com/youtube/terms/developer-policies ; https://www.youtube.com/static?template=terms ; https://developers.google.com/youtube/v3/docs/captions/download ; https://youtube2text.org/blog/youtube-data-api-transcripts
+- https://openjur.de/u/2498326.html (OLG Hamburg 5 U 54/23) ; https://www.lto.de/recht/hintergruende/h/urheberrecht-youtube-musik-videos-download-haftung-uberspace-youtube-dl ; https://www.ferner-alsdorf.de/entscheidung-des-olg-hamburg-zu-youtube-dl/
+- https://www.bundesgerichtshof.de/SharedDocs/Pressemitteilungen/DE/2025/2025148.html ; https://www.lto.de/recht/nachrichten/n/bgh-izr13123-werbeblocker-urheberrechte-umarbeitungsrechte ; https://www.heise.de/en/news/Copyright-Springer-vs-Adblock-Plus-enters-another-round-10505898.html
+- https://github.com/yt-dlp/yt-dlp/issues/14404 ; https://github.com/yt-dlp/yt-dlp/issues/15012
+- https://rsscribe.com/blog/youtube-rss-feeds-explained ; https://www.wprssaggregator.com/youtube-rss-feed/
 - https://modelcontextprotocol.io/specification/latest und …/2026-07-28/server/tools, …/client/elicitation, …/basic/authorization
 - https://ai.meta.com/blog/practical-ai-agent-security/ ; https://simonwillison.net/2025/Jun/13/prompt-injection-design-patterns/
 - https://developers.home-assistant.io/docs/config_entries_index/ ; https://developers.home-assistant.io/docs/config_entries_config_flow_handler/

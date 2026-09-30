@@ -78,7 +78,34 @@ Laufzeit. n8n bleibt **Brücke** für Patricks eigene Automationen (interne Nutz
 - MCP-Spec: Tools SHOULD Mensch-in-der-Schleife, Server MUST Eingaben validieren und Aufrufe begrenzen (belegt,
   siehe `koordination/integrationen/recherche/muster-und-quellen.md` §7).
 
+## 8. YouTube-Kanal beobachten → Wissensbasis (Zusatz Patrick, 30.09.2026)
+
+- **Auslöser „neues Video in Kanal X“**: Kanal-RSS `https://www.youtube.com/feeds/videos.xml?channel_id=UC…`,
+  ohne API-Schlüssel, 15 neueste Uploads, Abfrage z. B. alle 30–60 min; ab Dezember 2025 zeitweise 404, Stand Mai
+  2026 wieder funktionsfähig (sekundär: rsscribe.com, wprssaggregator.com) → Ausfall muss als „Quelle nicht
+  erreichbar“ sichtbar werden, nicht still. Idempotenz über `yt:videoId` im Ledger.
+- **Inhalt holen**: dieselben Wege und Rechtsfragen wie in Goal A (`koordination/integrationen/recherche/
+  muster-und-quellen.md` §9): Untertitel/Download nur über den dort entschiedenen Weg.
+- **Kette**: Transkript → Zusammenfassung → Relevanzbewertung (Profil „Patricks Themen“, Schema-gebunden, Skala +
+  Begründung) → Abgleich mit Wissen: `wissen_suchen` (WAI-MCP, `wissen:read:<bereich>`) + Vault-Volltext →
+  je Aussage „neu / bereits vorhanden / ergänzt / widerspricht“ → Vault-Notiz (neue Datei oder Abschnitt
+  „Ergänzungen“ an bestehender Notiz, Quelle angehängt, Widerspruch als Markierung `> [!widerspruch]`) → RAG über
+  Vault-Hook. Dublettenschutz: Video-ID im Frontmatter (`quelle_id`), Ähnlichkeitsprüfung gegen Treffer.
+- **Management-Summary/Dashboard**: je Kanal letzter Stand (Neuigkeiten, Erkenntnisse, Handlungsempfehlungen, Quellen)
+  als Markdown-Notiz im Vault und als Karte in der App.
+- **Faktencheck (optional)**: braucht Websuche.
+  | Option | Kosten | Betrieb | Beleg |
+  |---|---|---|---|
+  | SearXNG selbst gehostet (Docker, AGPL-3.0, JSON-API nach Freischalten `formats: [html, json]`) | kein Abo | eigener Container; Upstream-Suchmaschinen drosseln/sperren Metasuche gelegentlich (Vermutung) | sekundär: bitdoze.com, docs.litellm.ai/docs/search/searxng |
+  | Such-API eines Anbieters (z. B. Brave, Tavily) | nutzungsabhängig, Schlüssel nötig | kein Betrieb | Vermutung (Preise nicht geprüft) |
+  Konfidenz je Aussage = Übereinstimmung unabhängiger Quellen (Anzahl, Herkunft), vom Modell nur klassifiziert,
+  gezählt im Code; „Falschbehauptung“ nur als Hinweis mit Belegen, nie als automatische Korrektur des Wissens.
+  Docker lief beim Recherchezeitpunkt nicht (`dockerDesktopLinuxEngine` nicht erreichbar); SearXNG ist in AI-OS nicht
+  vorhanden (Compose-Dateien durchsucht).
+
 ## Quellen (Abruf 30.09.2026)
+- https://rsscribe.com/blog/youtube-rss-feeds-explained ; https://www.wprssaggregator.com/youtube-rss-feed/
+- https://www.bitdoze.com/searxng-self-host-privacy-search/ ; https://docs.litellm.ai/docs/search/searxng
 - https://docs.n8n.io/privacy-and-security/sustainable-use-license ; https://nordflux.de/en/guides/the-n8n-sustainable-use-license-explained ; https://www.fatcamel.ai/blog/n8n-licensing-101-understanding-commercial-embed-and-sustainable-use-licenses
 - https://www.ssdnodes.com/learn/self-hosted-n8n-alternatives ; https://instapods.com/blog/n8n-alternatives/ ; https://openalternative.co/compare/activepieces/vs/windmill ; https://automationatlas.io/answers/windmill-pricing-explained-2026/
 - https://learn.microsoft.com/en-us/graph/delta-query-overview ; https://learn.microsoft.com/en-us/onedrive/developer/rest-api/concepts/scan-guidance?view=odsp-graph-online ; https://learn.microsoft.com/en-us/graph/change-notifications-delivery-webhooks

@@ -1,91 +1,108 @@
-# Vorschlag Goal „Integrationen“ — Register für Kalender, Mail, Speicher, Wissen und Agenten
+# Vorschlag Goal „Integrationen“ — YouTube zuerst, dann Register für Kalender, Mail, Speicher, Wissen und Agenten
 
-Grundlage: `recherche/muster-und-quellen.md` (Stand 30.09.2026). Für den Planer zum Übertragen in `GOAL.md`.
+Grundlage: `recherche/muster-und-quellen.md` (Stand 30.09.2026, inkl. §9 YouTube und §10 Provenienz).
+Für den Planer zum Übertragen in `GOAL.md`. Zusatz Patrick vom 30.09.: YouTube ist die **erste** Integration und
+das erste lieferbare Paket-Bündel; Provenienz ist Querschnitt für A, B und C.
 
 ## Zielzustand
-Eine neue Seite „Integrationen“ zwischen „Modelle“ und „Einstellungen“ verwaltet beliebig viele Verbindungen —
-Kalender (ICS, Microsoft 365), Postfächer (Microsoft 365, SMTP), Ordner (lokal, OneDrive-Sync), Obsidian-Vault,
-WAI-Wissensbasis und Agentenzugänge (MCP/CLI) — mit Richtung und einem Recht je Fähigkeit (aus / fragen / erlaubt);
-die bisherigen Kalenderquellen, der MCP-Schalter, die Follow-up-Mail und der Export nutzen dieses Register statt
-eigener Einstellungen. Erkennbar daran, dass ein externer Agent per MCP oder `local-voice-ai.exe ctl` eine Datei
-transkribieren oder eine Vorlesen-Seite mit Audio anlegen kann, nur wenn das Werkzeug freigegeben ist, und jede
-solche Aktion im Audit-Protokoll der Seite steht.
+Ein YouTube-Link lässt sich in „Aufnahmen“ einfügen und wird zur Quelle: Video in der App ansehen, Untertitel (falls
+verfügbar) und eigene Transkription nebeneinander vergleichen, eine Fassung wählen oder per KI zusammenführen und
+zusammenfassen — und zu jedem erzeugten Inhalt zeigt ein Rechtsklick „Herkunft“ Modell, Token, Dauer, Zeitpunkt,
+Quellen, Konfidenz und Auslöser. Danach verwaltet eine neue Seite „Integrationen“ zwischen „Modelle“ und
+„Einstellungen“ beliebig viele Verbindungen (YouTube, Kalender, Postfächer, Ordner/OneDrive, Obsidian-Vault,
+WAI-Wissensbasis, Agentenzugänge) mit Richtung und einem Recht je Fähigkeit (aus / fragen / erlaubt), und externe
+Agenten steuern die App über MCP und `local-voice-ai.exe ctl` nur im Rahmen dieser Rechte, jede Aktion im Audit-Log.
 
 ## Scope
-- Register-Kern: Datenmodell, Migration der vorhandenen `calendar_sources`, verallgemeinerter DPAPI-Geheimnisspeicher,
-  Rechte (Richtung × Fähigkeit × Aufrufer), Audit-Log, Freigabe-Warteschlange.
-- Seite „Integrationen“: Liste, Katalog „Integration hinzufügen“ mit Assistent je Art, Detail (Richtung,
-  Fähigkeiten-Matrix, Verbindung testen, Protokoll), Freigabedialog.
-- Integrationsarten: ICS-Kalender (vorhanden), Microsoft-365-Konto (Kalender lesen/schreiben, Mail senden, OneDrive
-  lesen/schreiben), SMTP-Postfach (senden, App-Passwort), Ordner (lokal / OneDrive-Sync), Obsidian-Vault (Notizen
-  schreiben mit AI-OS-Frontmatter), WAI-Wissensbasis (MCP-Client, suchen/lesen), Agentenzugang (MCP/CLI-Clients mit
-  Token), individuell: Webhook (HTTP POST) und eigener MCP-Server (HTTP).
-- Agentensteuerung: Named-Pipe-Kanal zur laufenden App; MCP-Werkzeuge schreibend (Aufnahme starten/stoppen, Datei
-  transkribieren, Session anlegen, Besprechung anlegen/importieren, Vorlesen-Seite anlegen, Audio erzeugen) und
-  `ctl`-CLI mit JSON-Ausgabe und Exit-Codes.
-- Überführung: Kalender-UI und MCP-Schalter ziehen auf die neue Seite; Follow-up-Mail bietet „senden über …“;
-  Export bietet „ablegen in …“.
+**Bündel 1 — zuerst lieferbar (A1–A3):**
+- Fundament: Register-Kern (Datenmodell, Übernahme der `calendar_sources`, Rechte, Audit) und **Provenienz**
+  (`provenance`-Tabelle, Verweis auf `usage_event`, Rückfall auf `generation_metadata_json`).
+- YouTube-Quelle: Link (Video) in Aufnahmen einfügen → Besprechung mit Quelle `youtube`, Metadaten (Titel, Kanal,
+  Vorschaubild, Dauer), Ansehen in der App im eingebetteten YouTube-Player; Audio-/Dateiweg je Owner-Entscheidung E1.
+- Untertitel (manuell/automatisch, Sprachwahl) laden, sofern der entschiedene Weg das erlaubt; unabhängig davon
+  eigene Transkription; **Vergleichsansicht** (Wort-Diff), Fassung wählen oder **KI-Zusammenführung** (Schema-gebunden,
+  mit Provenienz); Zusammenfassung über den vorhandenen KI-Notizen-/Protokollpfad.
+- Kontextmenü „Herkunft“ an Transkript, KI-Notizen, Protokoll, Zusammenfassung (Dialog).
+
+**Bündel 2 (A4–A8):**
+- Seite „Integrationen“: Liste, Katalog mit Assistent je Art, Detail (Richtung, Fähigkeiten-Matrix, Test, Protokoll),
+  Freigabedialog; Umzug von Kalender-UI und MCP-Schalter.
+- Microsoft-365-Konto (Kalender lesen/schreiben, Mail senden, OneDrive), SMTP-Postfach (App-Passwort), Ordner
+  (lokal/OneDrive-Sync), Obsidian-Vault (AI-OS-Frontmatter), WAI-Wissensbasis (MCP-Client, suchen/lesen).
+- Agentensteuerung: Named Pipe zur laufenden App, Client-Token, Rechte je Werkzeug; MCP schreibend (Aufnahme
+  starten/stoppen, Datei transkribieren, Session/Besprechung anlegen, Vorlesen-Seite + Audio, YouTube-Link als Quelle
+  anlegen) und `ctl`-CLI.
 
 ## Non-Scope
-- Workflow-Engine, Trigger, Automationen (Goal B) und lokaler LLM-Agent (Goal C).
-- Google-OAuth (Kalender/Gmail/Drive) — Gmail läuft über SMTP mit App-Passwort; OAuth als Folgepaket.
-- IMAP-Lesen von Postfächern, Graph-Mail-Lesen (nur Senden in diesem Goal).
-- Schreib-Endpunkt `wissen:write` im AI-OS-Repo (Wissen fließt über den Vault ein).
-- macOS-Kanal (Unix-Socket, Keychain) — Schnittstelle so schneiden, dass er später passt.
-- DLP-Klassen („geschäftlich“/„privat“ nicht mischen) — nur Datenfeld vorsehen.
+- **Playlist** (Folgeschritt, eigenes Paket A9 nach Bündel 1, nicht im Budget).
+- Werbung im eingebetteten Player blockieren oder verändern (Developer Policies, BGH I ZR 131/23).
+- Bündeln von yt-dlp/Deno im Installer (siehe E1).
+- Workflow-Engine (Goal B), lokaler LLM-Agent (Goal C), Google-OAuth, IMAP-Lesen, `wissen:write` im AI-OS-Repo,
+  Webhook- und „eigener MCP-Server“-Integration (nach B verschoben), macOS-Kanal, DLP-Klassen.
 
 ## Akzeptanzkriterien
-- [ ] AK1 — Register-Kern: `cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml --lib integrations::` → ≥ 25 Tests grün, darunter Migrationstest: eine Fixture-DB mit 2 `calendar_sources` ergibt 2 Integrationen gleicher ID; zweiter Start erzeugt keine Dubletten.
-- [ ] AK2 — Dump: `local-voice-ai.exe --integrations-dump --json` (Sandbox `LVA_MEETINGS_DIR`) → JSON mit Art, Richtung, Fähigkeiten, Modus je Aufrufer; Test prüft, dass kein Geheimnis (Token-/Passwortmuster, ICS-URL) enthalten ist.
-- [ ] AK3 — Seite: Playwright `integrations.spec.ts` → Navigationseintrag „Integrationen“ steht zwischen „Modelle“ und „Einstellungen“; Katalog zeigt ≥ 8 Arten; Ordner-Integration anlegen, Richtung „nur lesen“ und Fähigkeit „fragen“ setzen, Neuladen → Zustand erhalten; löschen mit Rückfrage.
-- [ ] AK4 — Überführung: Playwright → Kalenderquellen erscheinen als Karten und lassen sich dort synchronisieren; der MCP-Schalter unter Einstellungen > Besprechungen ist durch einen Verweis ersetzt; `meeting_mcp_enabled` wirkt unverändert (Rust-Test).
-- [ ] AK5 — Microsoft 365: `--lib integrations::m365` → ≥ 12 Tests gegen Test-HTTP-Server (Scopes nur für eingeschaltete Fähigkeiten, `sendMail`, OneDrive-Upload klein und per Upload-Session, Termin-Notiz, 401→Refresh, 403→Klartextmeldung); manuell Patrick: Testmail an sich, Datei im OneDrive-Ordner, Notiz im Termin.
-- [ ] AK6 — SMTP + Ordner: `--lib integrations::smtp integrations::folder` → Versand an lokalen Test-SMTP-Server; Pfad-Sandbox lehnt `..`, absolute Fremdpfade, Junction/Symlink nach außen ab (≥ 10 Tests).
-- [ ] AK7 — Obsidian + Wissen: Golden-Test → Notiz mit `title, tags, context_area, data_class, sensitivity, tier` im Sandbox-Vault, kein Überschreiben ohne Recht; `wissen_suchen` gegen Test-MCP-Server liefert Treffer, falscher Scope → verständliche Meldung; manuell: Suche gegen die laufende Wissensbasis.
-- [ ] AK8 — Agentenbrücke: `--lib agent_bridge::` → ≥ 15 Tests: Pipe nur für aktuellen Benutzer, entfernte Clients abgewiesen, ungültiger/zurückgezogener Token → abgelehnt + Audit, Modus „aus“ → Werkzeug fehlt in `tools/list`, „fragen“ → Freigabe, keine Antwort in 30 s → `pending` mit Freigabe-ID.
-- [ ] AK9 — MCP schreibend: `python apps/local-voice/scripts/mcp_smoke.py --write` gegen Release-Binary + laufende Sandbox-App → Exit 0: `transcribe_file` (Test-WAV) liefert `meeting_id`; `tts_page_create` + `tts_render_audio` liefern WAV-Pfad; `start_recording` ohne Einwilligung in der App führt nie zu einer laufenden Aufnahme.
-- [ ] AK10 — CLI: `local-voice-ai.exe ctl status --json` und `ctl transcribe <wav> --json` → Exit 0 mit JSON; ohne laufende App Exit 2 und Hinweis; Werkzeug „aus“ → Exit 3.
-- [ ] AK11 — Audit: alle Aktionen aus AK5–AK10 stehen in `--audit-dump --json` und in der UI-Ansicht; Aufbewahrung gedeckelt (Test: älteste Einträge werden über der Grenze gelöscht).
-- [ ] AK12 — Anfassbar: Screenshots (Liste, Katalog, Detail mit Rechte-Matrix, Freigabedialog, Audit) als Artefakt; Installer mit Patch-Version +1 von Patrick abgenommen.
+- [ ] AK1 — Fundament: `cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml --lib integrations:: provenance::` → ≥ 30 Tests grün, u. a. Migrationstest (Fixture mit 2 `calendar_sources` → 2 Integrationen gleicher ID, zweiter Start ohne Dubletten) und Provenienz: Protokoll-Erzeugung legt einen Eintrag mit Modell, Token, Dauer, `usage_event_id` an; alte Dokumente liefern Herkunft aus `generation_metadata_json`.
+- [ ] AK2 — YouTube-Quelle: Playwright `youtube-source.spec.ts` → Link `https://www.youtube.com/watch?v=…` (auch `youtu.be/…`, `shorts/…`) in Aufnahmen einfügen erzeugt eine Besprechung mit Quelle „YouTube“, Titel und Kanal; ungültige/Playlist-Links → verständliche Meldung; Rust-Test für Link-Normalisierung (≥ 10 Fälle).
+- [ ] AK3 — Ansehen: Installer, echtes Video → Player in der Inhaltsspalte spielt ab, Position springt beim Klick auf ein Transkript-Segment; kein verschachteltes iframe, keine Veränderung der Werbung (Code-Review-Punkt).
+- [ ] AK4 — Untertitel + eigene Transkription: für ein Video mit Untertiteln liegen beide Fassungen an derselben Besprechung (Quelle je Fassung sichtbar); ohne Untertitel → nur eigene Fassung mit Hinweis; Sprachauswahl bei mehreren Spuren (Rust-Tests gegen Fixture-VTT, manuell 1 Video).
+- [ ] AK5 — Vergleich/Zusammenführen: Playwright → Diff-Ansicht markiert Einfügungen/Löschungen wortweise; „Fassung wählen“ setzt das aktive Transkript; „Zusammenführen“ erzeugt eine dritte Fassung mit Provenienz (Quellen = beide Fassungen, Modell, Token); Rust-Test: Zusammenführung verwirft Ausgaben, die das Schema verletzen oder > 20 % Text erfinden (Längen-/Überdeckungsprüfung).
+- [ ] AK6 — Zusammenfassung + Herkunft: Zusammenfassung eines YouTube-Videos wird erzeugt; Rechtsklick „Herkunft“ auf Transkript, Zusammenfassung und Protokoll öffnet Dialog mit Modell, Token, Dauer, Zeitpunkt, Quellen, Konfidenz (falls vorhanden) und Auslöser (Playwright).
+- [ ] AK7 — Seite Integrationen: Playwright `integrations.spec.ts` → Eintrag zwischen „Modelle“ und „Einstellungen“; Katalog ≥ 7 Arten; Ordner-Integration anlegen, Richtung/Fähigkeitsmodus ändern übersteht Neuladen; Kalenderquellen als Karten; MCP-Schalter unter Einstellungen > Besprechungen durch Verweis ersetzt, `meeting_mcp_enabled` wirkt unverändert.
+- [ ] AK8 — Konten und Ziele: `--lib integrations::m365 integrations::smtp integrations::folder integrations::obsidian integrations::wissen` → ≥ 30 Tests gegen Test-Server/Sandbox (Scopes nur für eingeschaltete Fähigkeiten, `sendMail`, OneDrive-Upload klein und per Upload-Session, 401→Refresh; SMTP an Test-Server; Pfad-Sandbox gegen `..`/Junction; Vault-Notiz mit Frontmatter-Golden; `wissen_suchen` mit Scope-Fehler-Meldung); manuell Patrick: Testmail, Datei in OneDrive, Suche in der Wissensbasis.
+- [ ] AK9 — Agentenbrücke: `--lib agent_bridge::` → ≥ 15 Tests (Pipe nur aktueller Benutzer, Remote abgewiesen, Token ungültig/zurückgezogen → abgelehnt + Audit, „aus“ → Werkzeug fehlt in `tools/list`, „fragen“ → Freigabe, 30 s ohne Antwort → `pending` + ID).
+- [ ] AK10 — MCP/CLI schreibend: `python apps/local-voice/scripts/mcp_smoke.py --write` gegen Release-Binary + laufende Sandbox-App → Exit 0 (`transcribe_file` → `meeting_id`; `tts_page_create` + `tts_render_audio` → WAV; `add_youtube_source` → Besprechung; `start_recording` ohne Einwilligung in der App startet nie eine Aufnahme); `ctl status --json` Exit 0, ohne App Exit 2, Werkzeug „aus“ Exit 3.
+- [ ] AK11 — Audit: alle Aktionen aus AK8–AK10 in `--audit-dump --json` und in der UI; Aufbewahrung gedeckelt (Test).
+- [ ] AK12 — Anfassbar: nach Bündel 1 Installer (Patch +1) mit YouTube-Ablauf und Screenshots (Player, Diff, Herkunft) — **erste Abnahme durch Patrick**; nach Bündel 2 Installer + Screenshots (Liste, Katalog, Rechte-Matrix, Freigabe, Audit).
 
 ## Quality Gates
-- [ ] QG1 — `cargo test --lib` gesamt grün (Sandbox, `CARGO_BUILD_JOBS=8`); vorbestehendes Clippy-Rot bleibt, neue Dateien ohne neue Warnungen.
+- [ ] QG1 — `cargo test --lib` gesamt grün (Sandbox, `CARGO_BUILD_JOBS=8`); neue Dateien ohne neue Clippy-Warnungen.
 - [ ] QG2 — `npx tsc --noEmit` Exit 0; Playwright-Suite grün; eslint/prettier nur berührte Dateien.
-- [ ] QG3 — i18n de + en für alle neuen Schlüssel, echte Umlaute.
-- [ ] QG4 — Sicherheitsreview (extern, Codex) für Rechteprüfung, Pipe, Token, Freigabe (A1, A6, A7) — das sind Gate-/Sicherheitslogik im Sinne der Budgetregel.
-- [ ] QG5 — Systemschutz: kein neuer Kindprozess ohne `process_guard`; Werkzeuge mit Modellstart gehen durch das RAM-Gate; Aufruf-Obergrenze je Client/Minute.
-- [ ] QG6 — Doku: `docs/INTEGRATIONEN.md` (Arten, Rechte, Agentenzugang einrichten mit Beispiel `claude mcp add`), Hilfe-Text der Seite, Handoff.
-- [ ] QG7 — Budget: 2,7 MTok (Spanne 2,3–3,5); Meldung bei 50 % und 80 %, harter Stopp bei 150 %.
+- [ ] QG3 — i18n de + en, echte Umlaute.
+- [ ] QG4 — Externes Sicherheitsreview für Rechte, Pipe, Token, Freigabe (A1, A7, A8) und für den YouTube-Dateiweg (Prozessaufruf, Pfade).
+- [ ] QG5 — Systemschutz: jeder Kindprozess (z. B. externes yt-dlp, falls E1 so entschieden) über `process_guard`; Modellstarts über das RAM-Gate; Aufruf-Obergrenzen je Agent-Client.
+- [ ] QG6 — Doku: `docs/INTEGRATIONEN.md` (YouTube inkl. Rechtshinweis, Rechte, Agentenzugang mit `claude mcp add`-Beispiel), Hilfe-Texte, Handoff.
+- [ ] QG7 — Budget 2,7 MTok (Spanne 2,3–3,5); Meldung bei 50 % und 80 %, harter Stopp bei 150 %.
 
 ## Architektur-Skizze
 
 ### Module (Anschluss an vorhandene Muster)
 ```
+src-tauri/src/managers/provenance/   mod.rs (record/list), model.rs            ← Querschnitt A/B/C
 src-tauri/src/managers/integrations/
-  mod.rs        IntegrationManager (State), Start: Migration + Übernahme calendar_sources
-  model.rs      Integration, IntegrationKind, Direction, Capability, Caller, GrantMode (serde + specta)
-  store.rs      SQL in meetings.db (rusqlite_migration, nächster Index nach CALENDAR_MIGRATION)
-  grants.rs     effective_mode(integration, capability, caller) -> GrantMode   (rein, testbar)
-  audit.rs      append/list/prune
-  approvals.rs  Freigabe-Warteschlange (pending/approved/denied/expired)
-  kinds/{ics.rs → delegiert an calendar::, m365.rs (Graph: calendar/mail/files), smtp.rs (lettre, Lizenz prüfen),
-         folder.rs (Pfad-Sandbox), obsidian.rs (Frontmatter-Vertrag AI-OS), wissen.rs (HTTP-MCP-Client), webhook.rs}
-managers/calendar/secret.rs → Namensraum je Integration (Entropy-Präfix alt für Kalender beibehalten, kein Neu-Login)
-src-tauri/src/agent_bridge/  pipe.rs (Named Pipe, DACL aktueller Benutzer, PIPE_REJECT_REMOTE_CLIENTS),
-                             protocol.rs (JSON-Zeilen, versioniert), tools.rs (Werkzeug → App-Funktion + Capability)
-src-tauri/src/mcp/tools.rs   + schreibende Werkzeuge: leiten über Pipe an die laufende App weiter
-src-tauri/src/cli.rs          + Unterbefehl `ctl <verb>` (Client der Pipe), `--integrations-dump`, `--audit-dump`
-src-tauri/src/commands/integrations.rs, src/components/integrations/*, Sidebar-Eintrag `integrations`
+  mod.rs, model.rs, store.rs, grants.rs (effective_mode, rein), audit.rs, approvals.rs
+  kinds/youtube.rs   Link-Normalisierung, oEmbed-Metadaten, Untertitel-/Dateiweg (Adapter je E1)
+  kinds/{m365.rs, smtp.rs, folder.rs, obsidian.rs, wissen.rs}; ics/graph delegieren an managers/calendar
+managers/meetings/: neue Quelle `youtube` (meetings.source), Transkript-Fassungen (s. u.), Merge-Aufruf über llm_call
+managers/calendar/secret.rs → Namensraum je Integration (Kalender-Präfix bleibt, kein Neu-Login)
+src-tauri/src/agent_bridge/  pipe.rs (DACL aktueller Benutzer, PIPE_REJECT_REMOTE_CLIENTS), protocol.rs, tools.rs
+src-tauri/src/mcp/tools.rs   + schreibende Werkzeuge (leiten über die Pipe an die laufende App)
+src-tauri/src/cli.rs         + `ctl <verb>`, `--integrations-dump`, `--audit-dump`
+src/components/integrations/*, src/components/workspace/meetings/youtube/* (Player, Diff), Kontextmenü „Herkunft“
 ```
 
-### Datenmodell (meetings.db, eine Migration)
+### Datenmodell (meetings.db, Migrationen nach dem aktuellen Index)
 ```sql
-CREATE TABLE integrations (id TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1, direction TEXT NOT NULL CHECK (direction IN ('read','write','both')),
-  config_json TEXT NOT NULL DEFAULT '{}',   -- nie Geheimnisse; Geheimnis unter secrets/<id>.bin
-  account_hint TEXT, data_class TEXT, created_at INTEGER, updated_at INTEGER,
-  last_ok_at INTEGER, last_error TEXT);
--- kind ics/graph: id == calendar_sources.id (1:1, calendar_sources bleibt Betriebstabelle der Termine)
+-- Provenienz (Querschnitt): je erzeugtem Inhalt ein oder mehrere Einträge
+CREATE TABLE provenance (id TEXT PRIMARY KEY, subject_kind TEXT NOT NULL CHECK (subject_kind IN
+  ('transcript','transcript_variant','document','summary','knowledge_note','tts_audio','export','run_output')),
+  subject_id TEXT NOT NULL, subject_revision INTEGER, created_at INTEGER NOT NULL,
+  operation TEXT NOT NULL,               -- stt, subtitles_import, merge, summary, minutes, notes, relevance, reconcile, factcheck, …
+  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('user','auto','workflow','agent_external','agent_local')),
+  actor_ref TEXT,                        -- workflow-/run-/client-ID
+  provider TEXT, model_id TEXT, model_label TEXT,
+  usage_event_id INTEGER,                -- Verweis in usage.db (Kosten/Preise bleiben dort)
+  prompt_tokens INTEGER, completion_tokens INTEGER, duration_ms INTEGER,   -- Kopie für Offline-Anzeige
+  sources_json TEXT NOT NULL DEFAULT '[]', -- [{kind: youtube|subtitle|meeting|transcript|rag|vault|web, ref, title, url}]
+  confidence REAL, params_json TEXT);
+CREATE INDEX provenance_subject ON provenance(subject_kind, subject_id);
+-- Transkript-Fassungen (Untertitel / eigene STT / Zusammenführung); das aktive Transkript bleibt in `transcripts`
+CREATE TABLE transcript_variants (id TEXT PRIMARY KEY, meeting_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN
+  ('subtitles_manual','subtitles_auto','stt','merged')), language TEXT, segments_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 0);
+-- Register (wie gehabt)
+CREATE TABLE integrations (id TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+  direction TEXT NOT NULL CHECK (direction IN ('read','write','both')), config_json TEXT NOT NULL DEFAULT '{}',
+  account_hint TEXT, data_class TEXT, created_at INTEGER, updated_at INTEGER, last_ok_at INTEGER, last_error TEXT);
 CREATE TABLE integration_grants (integration_id TEXT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,
   capability TEXT NOT NULL, caller TEXT NOT NULL CHECK (caller IN ('workflow','agent_external','agent_local')),
   mode TEXT NOT NULL CHECK (mode IN ('off','ask','allow')), PRIMARY KEY (integration_id, capability, caller));
@@ -94,78 +111,91 @@ CREATE TABLE agent_clients (id TEXT PRIMARY KEY, label TEXT NOT NULL, token_hash
 CREATE TABLE agent_tool_grants (client_id TEXT NOT NULL REFERENCES agent_clients(id) ON DELETE CASCADE,
   tool TEXT NOT NULL, mode TEXT NOT NULL CHECK (mode IN ('off','ask','allow')), PRIMARY KEY (client_id, tool));
 CREATE TABLE audit_log (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, caller TEXT NOT NULL, integration_id TEXT,
-  capability TEXT, target TEXT, outcome TEXT NOT NULL CHECK (outcome IN ('ok','denied','error','pending')),
-  detail_json TEXT);  -- Ziel/Details gekürzt, nie Inhalt oder Geheimnis
+  capability TEXT, target TEXT, outcome TEXT NOT NULL CHECK (outcome IN ('ok','denied','error','pending')), detail_json TEXT);
 CREATE TABLE approvals (id TEXT PRIMARY KEY, created_at INTEGER, caller TEXT, tool_or_capability TEXT,
   args_preview TEXT, state TEXT CHECK (state IN ('pending','approved','denied','expired')), decided_at INTEGER);
 ```
+`usage.rs`: `Purpose` um `TranscriptMerge`, `Relevance`, `Reconcile`, `FactCheck`, `AgentRoute`, `Extract` erweitern
+(feste Liste bleibt); Aufrufer reichen die von `record()` gelieferte ID an `provenance::record` weiter.
 
 ### Rechte
-- Wirksamer Modus = min(Richtung erlaubt die Fähigkeit?, `integration_grants` für Aufrufer, bei externen Agenten
-  zusätzlich `agent_tool_grants`). Die UI selbst (Patrick klickt) braucht keine Freigabe.
-- Standard für neue Integrationen: lesende Fähigkeiten `allow` für `workflow`, alles Schreibende `ask`; für
-  `agent_external` alles `off` bis zur Freigabe.
-- **Aufnahme starten** ist nie `allow`-fähig: die App zeigt immer ihren Einwilligungsdialog (§ 201 StGB).
-- Pfade (transcribe_file, Ordner) nur innerhalb freigegebener Ordner-Integrationen oder mit Freigabe.
+- Wirksamer Modus = min(Richtung erlaubt die Fähigkeit?, `integration_grants[Aufrufer]`, bei externen Agenten
+  zusätzlich `agent_tool_grants`). Patrick in der UI braucht keine Freigabe.
+- Standard: Lesendes `allow` für `workflow`, Schreibendes `ask`, externe Agenten alles `off` bis zur Freigabe.
+- „Aufnahme starten“ nie `allow`-fähig: die App zeigt immer den Einwilligungsdialog (§ 201 StGB).
+- YouTube-Dateiweg (falls E1 = B′) nur mit eingeschalteter Fähigkeit `media.fetch` und Hinweisdialog beim ersten Mal.
 
 ### Schnittstellen (Entwurf)
 ```rust
-pub fn effective_mode(i: &Integration, cap: Capability, caller: Caller, grants: &GrantSet) -> GrantMode;
-pub trait IntegrationKindImpl { fn capabilities(&self) -> &'static [Capability];
-  async fn test(&self, i: &Integration) -> Result<TestReport, IntegrationError>; }
-#[tauri::command] integrations_list() -> Result<Vec<Integration>, String>
-#[tauri::command] integrations_catalog() -> Vec<IntegrationKindInfo>
-#[tauri::command] integration_create(kind: IntegrationKind, label: String, config: serde_json::Value) -> Result<Integration, String>
-#[tauri::command] integration_update(id: String, patch: IntegrationPatch) -> Result<Integration, String>
-#[tauri::command] integration_delete(id: String) -> Result<(), String>
-#[tauri::command] integration_set_grant(id: String, capability: Capability, caller: Caller, mode: GrantMode) -> Result<(), String>
-#[tauri::command] integration_test(id: String) -> Result<TestReport, String>
-#[tauri::command] integration_connect_m365(id: String) -> Result<(), String>   // PKCE-Fluss aus graph.rs
-#[tauri::command] agent_client_create(label: String) -> Result<(AgentClient, String /*Token, einmalig*/), String>
-#[tauri::command] approvals_pending() / approval_decide(id: String, approve: bool)
-#[tauri::command] audit_list(filter: AuditFilter) -> Result<Vec<AuditEntry>, String>
+pub fn provenance::record(conn: &Connection, e: NewProvenance) -> anyhow::Result<String>;
+pub fn provenance::list(conn: &Connection, kind: SubjectKind, id: &str) -> anyhow::Result<Vec<ProvenanceEntry>>;
+pub fn youtube::normalize_link(raw: &str) -> Result<YoutubeRef, LinkError>;   // Video | Playlist(→ A9) | Invalid
+pub async fn youtube::metadata(r: &YoutubeRef) -> Result<VideoMeta, IntegrationError>;   // oEmbed, ohne Schlüssel
+pub fn effective_mode(i: &Integration, cap: Capability, caller: Caller, g: &GrantSet) -> GrantMode;
+#[tauri::command] meetings_add_youtube(url: String, session_id: Option<String>) -> Result<Meeting, String>
+#[tauri::command] transcript_variants(meeting_id: String) -> Result<Vec<TranscriptVariant>, String>
+#[tauri::command] transcript_variant_activate(id: String) / transcript_variants_merge(meeting_id: String, a: String, b: String)
+#[tauri::command] provenance_get(subject_kind: SubjectKind, subject_id: String) -> Result<Vec<ProvenanceEntry>, String>
+#[tauri::command] integrations_list / integrations_catalog / integration_create / integration_update / integration_delete
+#[tauri::command] integration_set_grant / integration_test / integration_connect_m365 / audit_list
+#[tauri::command] agent_client_create(label) -> (AgentClient, String /*Token einmalig*/) / approvals_pending / approval_decide
 ```
-MCP-Werkzeuge (neu, `destructiveHint`/`readOnlyHint` gesetzt, Prüfung trotzdem serverseitig): `start_recording`,
-`stop_recording`, `transcribe_file`, `create_session`, `create_meeting`, `tts_page_create`, `tts_render_audio`,
-`get_action_status`. Bindings (`bindings.ts`) wie im Repo von Hand nachziehen.
+MCP-Werkzeuge neu: `add_youtube_source`, `start_recording`, `stop_recording`, `transcribe_file`, `create_session`,
+`create_meeting`, `tts_page_create`, `tts_render_audio`, `get_action_status`, `get_provenance`.
 
 ## Paketschnitt (je 250–300 kTok)
-| Paket | Scope | Akzeptanztest | Abh. | Worker |
-|---|---|---|---|---|
-| A1 | Register-Kern: Migration, Übernahme Kalender, Grants, Audit, Approvals, Geheimnis-Namensraum, `--integrations-dump` | AK1, AK2, AK11 (Kern) | – | lv-coder-xhigh (Migration) |
-| A2 | Seite Integrationen: Navigation, Liste, Katalog, Assistent-Gerüst, Detail mit Rechte-Matrix, Audit-Ansicht; Kalender/MCP-Umzug | AK3, AK4 | A1 | lv-coder |
-| A3 | Microsoft-365-Konto: Scopes je Fähigkeit, Mail senden, OneDrive ablegen, Termin-Notiz | AK5 | A1 | lv-coder-xhigh |
-| A4 | SMTP-Postfach, Ordner-Integration (Sandbox), Webhook; Follow-up-Mail „senden über“, Export „ablegen in“ | AK6 | A1, A2 | lv-coder |
-| A5 | Obsidian-Vault (Frontmatter-Vertrag) + WAI-Wissensbasis (HTTP-MCP-Client) + eigener MCP-Server | AK7 | A1 | lv-coder |
-| A6 | Agentenbrücke: Named Pipe, Client-Token, Werkzeug-Rechte, Freigabedialog, `ctl`-CLI | AK8, AK10 | A1 | lv-coder-xhigh |
-| A7 | MCP schreibend: Werkzeuge, Protokollversion 2026-07-28 prüfen, `mcp_smoke.py --write` | AK9 | A6, aufnahmen-ui M3 (Sessions) | lv-coder-xhigh |
-| A8 | Abnahme: Doku, Hilfe, Sicherheitsreview, Screenshots, Installer | AK12, QG4, QG6 | alle | Planer + lv-architect |
+| Paket | Bündel | Scope | Akzeptanztest | Abh. | Worker |
+|---|---|---|---|---|---|
+| A1 | 1 | Fundament: Register-Kern (Migration, Kalender-Übernahme, Grants, Audit, Approvals, Geheimnis-Namensraum, `--integrations-dump`) + Provenienz (Tabelle, API, `Purpose`-Erweiterung, Einbau in Protokoll/KI-Notizen/Zusammenfassung/STT) | AK1 | – | lv-coder-xhigh |
+| A2 | 1 | YouTube-Quelle: Link-Normalisierung, oEmbed, Besprechung mit Quelle `youtube`, eingebetteter Player mit Segment-Sprung, Adapter für Dateiweg nach E1, minimale YouTube-Karte im Register | AK2, AK3 | A1, aufnahmen-ui M2 | lv-coder |
+| A3 | 1 | Untertitel + Fassungen + Diff + Zusammenführen + Zusammenfassung + Kontextmenü „Herkunft“; Installer Bündel 1 | AK4, AK5, AK6, AK12 (1) | A2 | lv-coder-xhigh |
+| A4 | 2 | Seite Integrationen (Liste, Katalog, Detail, Rechte-Matrix, Audit-Ansicht, Freigabedialog), Umzug Kalender/MCP | AK7 | A1 | lv-coder |
+| A5 | 2 | Microsoft-365-Konto: Scopes je Fähigkeit, Mail senden, OneDrive, Termin-Notiz; Follow-up-Mail „senden über“ | AK8 (m365) | A1 | lv-coder-xhigh |
+| A6 | 2 | SMTP, Ordner (Sandbox), Obsidian-Vault, WAI-Wissensbasis; Export „ablegen in“ | AK8 (Rest) | A1, A4 | lv-coder |
+| A7 | 2 | Agentenbrücke: Named Pipe, Client-Token, Werkzeug-Rechte, Freigaben, `ctl`-CLI | AK9 | A1 | lv-coder-xhigh |
+| A8 | 2 | MCP schreibend (inkl. `add_youtube_source`, `get_provenance`), Protokollversion 2026-07-28 prüfen, `mcp_smoke.py --write`, Audit-Dump; Doku, Sicherheitsreview, Installer Bündel 2 | AK10, AK11, AK12 (2) | A7, aufnahmen-ui M3 | lv-coder-xhigh + Planer |
+| A9 | später | Playlist: Links auflösen, je Video eine Besprechung in einer Session, Fortschritt | – | A3 | – (nicht im Budget) |
 
 ## Budget
-8 Pakete × ~275 kTok = 2,2 MTok + Reviews/Nacharbeit ~20 % → **2,7 MTok** (Spanne 2,3–3,5).
-Minimalschnitt, falls knapp: A1, A2, A4, A6, A7 (≈ 1,7 MTok) — M365-Schreiben und Wissen folgen.
+8 Pakete × ~275 kTok = 2,2 MTok + Reviews/Nacharbeit ~20 % → **2,7 MTok** (Spanne 2,3–3,5), unverändert gegenüber dem
+ersten Entwurf; dafür wurden Webhook und „eigener MCP-Server“ nach Goal B verschoben und SMTP/Ordner/Obsidian/Wissen
+in ein Paket (A6) gelegt. Bündel 1 allein: ≈ 1,0 MTok. A9 Playlist: +0,25 MTok, falls gewünscht.
 
 ## Risiken mit Vorschlag
-- R1 Migration der Kalenderquellen beschädigt Termine/Links → 1:1-ID, `calendar_sources` bleibt; Migrationstest mit Kopie echter Struktur; Backup vor Migration (Muster `settings_store.json.bak`).
-- R2 Graph-Scopes: Entra-Registrierung fehlt `Mail.Send`/`Files.ReadWrite`/`Calendars.ReadWrite` → Owner-Aufgabe vor A3; ohne sie bleibt A3 bei Lesen.
-- R3 Prompt-Injection über Besprechungsinhalte an externe Agenten (Rule of Two) → Schreibendes standardmäßig „fragen“, Freigabe in der App, keine freien Empfänger.
-- R4 MCP-Spec-Wechsel (2026-07-28: `_meta` je Anfrage, zustandslos) bricht ältere/neuere Clients → Versionsverhandlung testen (Claude Code, Codex) in A7.
-- R5 Konflikt mit aufnahmen-ui (Sidebar, Sessions-API) → A2 nach aufnahmen-ui M2 mergen; A7 nutzt deren Sessions-Modell (M4-Ordner).
-- R6 Zwei Modellstarts (headless-CLI + App) sprengen VRAM → `ctl` spricht immer mit der laufenden App, nie eigener Modellstart.
-- R7 Umfang „keine Mengenbegrenzung“ → keine künstliche Grenze, aber Sync/Tests je Integration zeitlich gestaffelt.
+- R1 **Rechtsrisiko YouTube-Download** (OLG Hamburg 5 U 54/23: Rolling Cipher = wirksame Schutzmaßnahme; ToS verbietet
+  Download) → E1; Standard ist der ToS-konforme Player; kein Bündeln von yt-dlp; vor Verteilung an Dritte anwaltlich
+  prüfen.
+- R2 **Brüchigkeit yt-dlp** (PO-Token, SABR, Deno-Pflicht) → nur als extern installiertes Werkzeug mit Versionsanzeige,
+  Fehler klar melden („Werkzeug veraltet – bitte aktualisieren“), nie still scheitern.
+- R3 Loopback-Mitschnitt bei Weg A enthält Werbung und läuft in Echtzeit → Werbeabschnitte bleiben im Rohaudio;
+  Hinweis in der UI; Untertitel dann nicht verfügbar (API nur für eigene Videos).
+- R4 KI-Zusammenführung erfindet Text → Schema, Überdeckungsprüfung gegen beide Fassungen, Provenienz, Diff zur Kontrolle (AK5).
+- R5 Konflikt mit aufnahmen-ui (Inhaltsspalte, Sessions, Sidebar) → A2 nach aufnahmen-ui M2, A8 nach M3; Player als
+  eigenständige Komponente in der Inhaltsspalte.
+- R6 Migration Kalenderquellen → 1:1-ID, `calendar_sources` bleibt, Backup, Migrationstest.
+- R7 Graph-Scopes fehlen in der Entra-Registrierung → E5 vor A5.
+- R8 Prompt-Injection über Video-/Besprechungsinhalte an Agenten → Schreibendes „fragen“, Freigabe in der App, keine
+  freien Empfänger.
+- R9 MCP-Spec 2026-07-28 (`_meta` je Anfrage) → Versionsverhandlung mit Claude Code und Codex in A8 testen.
 
 ## Owner-Entscheidungen (Patrick)
-- E1 Register in `meetings.db` (gleiche Migrationskette, MCP liest mit) statt eigener Datenbank — **Empfehlung: ja**.
-- E2 Wissen in den RAG über den Vault (Frontmatter + AI-OS-Index) statt neuem `wissen:write`-Endpunkt — **Empfehlung: Vault jetzt, Endpunkt später im AI-OS-Goal**.
-- E3 Standardrechte: schreibend „fragen“, externe Agenten „aus“; Aufnahme starten nie ohne Einwilligungsdialog — **Empfehlung: so**.
-- E4 Entra-App um `Calendars.ReadWrite`, `Mail.Send`, `Files.ReadWrite` erweitern (Patrick im Azure-Portal) — **Empfehlung: vor A3**.
-- E5 Google-OAuth später; Gmail über SMTP-App-Passwort — **Empfehlung: so**.
-- E6 Kalender- und MCP-Einstellungen ziehen ganz auf die neue Seite (alter Ort nur Verweis) — **Empfehlung: ja**.
-- E7 Datenklasse je Integration (Standard für Vault-Notizen aus Besprechungen: `confidential`) — **Empfehlung: confidential**, weil Aussagen Dritter; Maschinen-Keys sehen sie dann nicht (gewollt).
+- **E1 YouTube-Weg** — Optionen: (A) nur eingebetteter Player, ToS-konform, mit Werbung, Transkript per Loopback-Mitschnitt
+  in Echtzeit; (B′) zusätzlich ein **von dir selbst installiertes** yt-dlp (+ Deno) als externes Werkzeug, Pfad in der
+  YouTube-Integration, Schalter „privat/experimentell“, Standard aus, nicht im Installer gebündelt → werbefrei lokal
+  ansehen, schnell transkribieren, Untertitel; (C) yt-dlp bündeln. **Empfehlung: A als Standard, B′ nur für deine
+  eigene Nutzung hinter dem Schalter; C nein.** Vor Weitergabe der App an Dritte: Rechtsprüfung.
+- E2 Register und Provenienz in `meetings.db` (gleiche Migrationskette, MCP liest mit) — **Empfehlung: ja**.
+- E3 Standardrechte: schreibend „fragen“, externe Agenten „aus“, Aufnahme nie ohne Einwilligungsdialog — **Empfehlung: so**.
+- E4 Wissen in den RAG über den Vault statt neuem `wissen:write`-Endpunkt — **Empfehlung: Vault jetzt**.
+- E5 Entra-App um `Calendars.ReadWrite`, `Mail.Send`, `Files.ReadWrite` erweitern — **Empfehlung: vor A5**.
+- E6 Kalender- und MCP-Einstellungen ziehen auf die neue Seite (alter Ort nur Verweis) — **Empfehlung: ja**.
+- E7 Datenklasse für Vault-Notizen aus Besprechungen/Videos: `confidential` (Besprechungen), `internal` (öffentliche
+  Videos) — **Empfehlung: so**.
 
 ## Abhängigkeiten
-- **aufnahmen-ui** (läuft): Sidebar und Sessions (= M4-Ordner, R2 dort). A1/A3/A5/A6 sind Backend und können parallel
-  laufen; A2 nach aufnahmen-ui M2, A7 nach aufnahmen-ui M3.
-- **Goal B** braucht A1 (Grants/Audit/Approvals) und die Integrationsarten aus A3–A5 als Aktionen.
-- **Goal C** braucht A1 (Aufrufer `agent_local`) und A5 (Vault/Wissen).
-- Basis: `feat/granola-besprechungen` inkl. P5/P6-Stand (Kalender, MCP, Mail, Export).
+- **aufnahmen-ui** (läuft): A2 braucht das Spaltengerüst (M2), A8 die Sessions (M3). A1 ist reines Backend und kann
+  sofort parallel starten.
+- **Goal B** braucht A1 (Grants, Audit, Approvals, Provenienz), A3 (YouTube-Transkript/Zusammenfassung als Aktionen),
+  A5/A6 (Mail, Ordner, Vault, Wissen), A7 (Agenten).
+- **Goal C** braucht A1 (Aufrufer `agent_local`, Provenienz mit Konfidenz) und A6 (Vault/Wissen).
+- Basis: `feat/granola-besprechungen` (P5 Kalender, P6a/b Export, P6c Mail, P6e MCP, M7 KI-Notizen).
