@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Sparkles,
   Trash2,
+  UserPen,
   Users,
 } from "lucide-react";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
@@ -33,6 +34,8 @@ export interface MeetingActionHandlers {
   onRegenNotes: () => void;
   onRegenMinutes: () => void;
   onTemplate: () => void;
+  /** U8: "Sprecher benennen ..." (Dialog mit allen Sprechern). */
+  onSpeakers: () => void;
   onRename: () => void;
   onMove: () => void;
   onCopyPlain: () => void;
@@ -43,6 +46,8 @@ export interface MeetingActionHandlers {
 
 interface MeetingActionsProps extends MeetingActionHandlers {
   hasSegments: boolean;
+  /** Gibt es erkannte Sprecher, die man benennen kann? */
+  hasSpeakers: boolean;
   chatOpen: boolean;
   /** Transkript wurde gerade kopiert (Haken statt Symbol, kurz). */
   copied: boolean;
@@ -63,6 +68,7 @@ interface MeetingActionsProps extends MeetingActionHandlers {
  */
 export const MeetingActions: React.FC<MeetingActionsProps> = ({
   hasSegments,
+  hasSpeakers,
   chatOpen,
   copied,
   busy,
@@ -78,6 +84,7 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
   onRegenNotes,
   onRegenMinutes,
   onTemplate,
+  onSpeakers,
   onRename,
   onMove,
   onCopyPlain,
@@ -125,6 +132,15 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
       icon: LayoutTemplate,
       onSelect: onTemplate,
       testId: "menu-template",
+    },
+    {
+      id: "speakers",
+      label: t("meetings.actions.speakers"),
+      icon: UserPen,
+      onSelect: onSpeakers,
+      disabled: !hasSpeakers,
+      title: hasSpeakers ? undefined : t("meetings.actions.speakersNone"),
+      testId: "menu-speakers",
     },
     {
       id: "rename",

@@ -14,11 +14,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use specta::Type;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_specta::Event;
 
 use crate::managers::meetings::search::indexer::{self, IndexJob};
-use crate::managers::meetings::speakers::{SpeakerDirectory, DIARIZE_MIC_KEY, REPORT_KEY};
+use crate::managers::meetings::speaker_names::{self, NameSuggestion};
+use crate::managers::meetings::speakers::{self, SpeakerDirectory, DIARIZE_MIC_KEY, REPORT_KEY};
 use crate::managers::meetings::store::MeetingStore;
 
 /// Laengster Sprechername (Zeichen); mehr wird abgeschnitten.
@@ -86,9 +87,19 @@ pub fn list_speakers(
     store: &MeetingStore,
     meeting_id: &str,
 ) -> Result<Vec<MeetingSpeaker>, String> {
+    list_speakers_with(store, meeting_id, speakers::self_name().as_deref())
+}
+
+/// Wie [`list_speakers`], mit ausdruecklich gegebenem eigenem Namen ("Mein
+/// Name": der dominante Sprecher am Mikrofon traegt ihn als Label).
+pub fn list_speakers_with(
+    store: &MeetingStore,
+    meeting_id: &str,
+    self_name: Option<&str>,
+) -> Result<Vec<MeetingSpeaker>, String> {
     let segments = store.get_segments(meeting_id).map_err(store_err)?;
     let rows = store.speaker_rows(meeting_id).map_err(store_err)?;
-    let directory = SpeakerDirectory::load(store, meeting_id);
+    let directory = SpeakerDirectory::load_with(store, meeting_id, self_name);
 
     let mut speech_ms: BTreeMap<(u8, u32), u64> = BTreeMap::new();
     let mut total_ms = 0u64;
@@ -149,6 +160,101 @@ pub fn rename_speaker(
         .into_iter()
         .find(|s| s.channel == channel && s.speaker_index == speaker_index)
         .ok_or_else(|| "speaker_not_found".to_string())
+}
+
+/// `metadata_json`-Schluessel: verworfene Namensvorschlaege
+/// (`Kanal:Nummer:Name`, siehe `speaker_names::dismiss_key`).
+pub const DISMISSED_KEY: &str = "speaker_name_dismissed";
+/// So viele verworfene Vorschlaege merkt sich eine Besprechung hoechstens.
+const MAX_DISMISSED: usize = 200;
+
+fn dismissed_keys(store: &MeetingStore, meeting_id: &str) -> Result<Vec<String>, String> {
+    let metadata = store
+        .metadata_json(meeting_id)
+        .map_err(|_| "meeting_not_found".to_string())?;
+    Ok(metadata
+        .and_then(|m| m.get(DISMISSED_KEY).cloned())
+        .and_then(|v| v.as_array().cloned())
+        .map(|list| {
+            list.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Namensvorschlaege fuer die unbenannten Sprecher aus dem Gesagten (U8):
+/// nur Vorschlaege, nie eine Uebernahme. Bekannt sind die Personen des
+/// Verzeichnisses (P5d, Kalender-Teilnehmende); der eigene Name und der
+/// Mikrofon-Sprecher, der ihn traegt, bleiben aussen vor. Verworfene Vorschlaege
+/// kommen nicht wieder.
+pub fn name_suggestions(
+    store: &MeetingStore,
+    meeting_id: &str,
+    self_name: Option<&str>,
+) -> Result<Vec<NameSuggestion>, String> {
+    let segments = store.get_segments(meeting_id).map_err(store_err)?;
+    let rows = store.speaker_rows(meeting_id).map_err(store_err)?;
+    let mut named: Vec<((u8, u32), String)> = rows
+        .into_iter()
+        .filter_map(|r| {
+            r.display_name
+                .filter(|n| !n.trim().is_empty())
+                .map(|n| ((r.channel, r.speaker_index), n))
+        })
+        .collect();
+    let own = speakers::clean_self_name(self_name);
+    if let Some(own) = &own {
+        // Der Mikrofon-Sprecher mit meinem Namen gilt als benannt.
+        for speaker in list_speakers_with(store, meeting_id, Some(own))? {
+            if speaker.channel == 0 && speaker.display_name.is_none() && speaker.label == *own {
+                named.push(((speaker.channel, speaker.speaker_index), own.clone()));
+            }
+        }
+    }
+    let known_people = store
+        .list_people(None, &[])
+        .map(|people| people.into_iter().map(|p| p.name).collect())
+        .unwrap_or_default();
+    let context = speaker_names::Context {
+        known_people,
+        self_name: own,
+        named,
+    };
+    let dismissed = dismissed_keys(store, meeting_id)?;
+    Ok(speaker_names::suggest(&segments, &context)
+        .into_iter()
+        .filter(|s| {
+            !dismissed.contains(&speaker_names::dismiss_key(
+                s.channel,
+                s.speaker_index,
+                &s.name,
+            ))
+        })
+        .collect())
+}
+
+/// Verwirft einen Vorschlag dauerhaft (`metadata_json`); derselbe Name kommt
+/// fuer diesen Sprecher nicht wieder. `meeting_not_found`, wenn es die
+/// Besprechung nicht gibt.
+pub fn dismiss_suggestion(
+    store: &MeetingStore,
+    meeting_id: &str,
+    channel: u8,
+    speaker_index: u32,
+    name: &str,
+) -> Result<(), String> {
+    let mut keys = dismissed_keys(store, meeting_id)?;
+    let key = speaker_names::dismiss_key(channel, speaker_index, name);
+    if keys.contains(&key) {
+        return Ok(());
+    }
+    keys.push(key);
+    let excess = keys.len().saturating_sub(MAX_DISMISSED);
+    keys.drain(..excess);
+    store
+        .set_metadata_key(meeting_id, DISMISSED_KEY, json!(keys))
+        .map_err(store_err)
 }
 
 /// Hinweise zur Sprechertrennung aus `metadata_json.diarize` (Codes, keine
@@ -278,6 +384,55 @@ pub async fn meeting_segment_set_speaker(
     Ok(())
 }
 
+/// Namensvorschlaege aus dem Gesagten (Hinweis "Person 2 ist vermutlich Andre").
+/// Der Nutzer uebernimmt mit `meeting_speaker_rename` oder verwirft mit
+/// `meeting_speaker_suggestion_dismiss`; hier wird nichts gespeichert.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_speaker_suggestions(
+    store: State<'_, Arc<MeetingStore>>,
+    meeting_id: String,
+) -> Result<Vec<NameSuggestion>, String> {
+    name_suggestions(&store, &meeting_id, speakers::self_name().as_deref())
+}
+
+/// Verwirft einen Namensvorschlag dauerhaft.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_speaker_suggestion_dismiss(
+    store: State<'_, Arc<MeetingStore>>,
+    meeting_id: String,
+    channel: u8,
+    speaker_index: u32,
+    name: String,
+) -> Result<(), String> {
+    dismiss_suggestion(&store, &meeting_id, channel, speaker_index, &name)
+}
+
+/// Einstellung `meeting_self_name` ("Mein Name"): der Kanal "Ich" und der
+/// dominante Sprecher am Mikrofon tragen ihn; in Personen ist er "ich".
+/// Leer = "Ich". Wirkt sofort in allen Ansichten, Notizen und Exporten, die
+/// danach entstehen.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_self_name_setting(
+    app: AppHandle,
+    name: Option<String>,
+) -> Result<(), String> {
+    let cleaned = speakers::clean_self_name(name.as_deref());
+    let mut settings = crate::settings::get_settings(&app);
+    let previous = settings.meeting_self_name.clone();
+    settings.meeting_self_name = cleaned.clone();
+    crate::settings::write_settings(&app, settings);
+    speakers::set_self_name(cleaned.as_deref());
+    if let Some(store) = app.try_state::<Arc<MeetingStore>>() {
+        if let Err(e) = store.set_self_person(previous.as_deref(), cleaned.as_deref()) {
+            log::warn!("speakers: own person not updated: {e}");
+        }
+    }
+    Ok(())
+}
+
 /// Hinweise zur Sprechertrennung dieser Besprechung (Codes, siehe
 /// [`speaker_notices`]).
 #[tauri::command]
@@ -353,18 +508,25 @@ mod tests {
     /// Gegenseite mit zwei Sprechern (1 und 2: 6 s und 2 s), dazu "Ich" ohne
     /// Sprechertrennung (2 s) und die Turns der Gegenseite in `speaker_hints_json`.
     fn fixture() -> Fixture {
+        fixture_with(["Text 0", "Text 1", "Text 2", "Text 3"])
+    }
+
+    fn fixture_with(texts: [&str; 4]) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
         let m = store
             .create_meeting("t", MeetingSource::Live, Some(0))
             .unwrap();
         store.set_status(&m.id, MeetingStatus::Processing).unwrap();
-        let segments = vec![
+        let mut segments = vec![
             segment(0, 0, 0, 2_000, None),
             segment(1, 1, 2_000, 5_000, Some(1)),
             segment(2, 1, 5_000, 7_000, Some(2)),
             segment(3, 1, 7_000, 10_000, Some(1)),
         ];
+        for (segment, text) in segments.iter_mut().zip(texts) {
+            segment.text = text.to_string();
+        }
         store
             .append_delta(
                 &m.id,
@@ -706,6 +868,130 @@ mod tests {
         assert!(crate::managers::meetings::speakers::diarize_mic(
             metadata.as_ref()
         ));
+    }
+
+    #[test]
+    fn renaming_to_an_existing_person_reuses_that_person() {
+        let f = fixture();
+        let anna = f
+            .store
+            .upsert_person(Some("anna@firma.de"), Some("Berg, Anna"), "calendar")
+            .unwrap();
+        let s = rename_speaker(&f.store, &f.id, 1, 2, Some("Anna Berg")).unwrap();
+        assert_eq!(s.human_id.as_deref(), Some(anna.as_str()));
+        // Zweiter Sprecher, andere Schreibweise desselben Namens: dieselbe Person.
+        let s = rename_speaker(&f.store, &f.id, 1, 1, Some("berg, anna")).unwrap();
+        assert_eq!(s.human_id.as_deref(), Some(anna.as_str()));
+        assert_eq!(f.store.list_people(None, &[]).unwrap().len(), 1);
+        // Der Kalender-Eintrag behaelt seine Adresse.
+        let people = f.store.list_people(None, &[]).unwrap();
+        assert_eq!(people[0].email.as_deref(), Some("anna@firma.de"));
+    }
+
+    fn thanks_fixture() -> Fixture {
+        fixture_with([
+            "Guten Morgen.",
+            "Wir haben das Budget geprüft.",
+            "Vielen Dank, André. Der Zeitplan steht.",
+            "Dann schicke ich das Angebot.",
+        ])
+    }
+
+    #[test]
+    fn suggestions_name_the_speaker_who_was_thanked() {
+        let f = thanks_fixture();
+        let list = name_suggestions(&f.store, &f.id, None).unwrap();
+        assert_eq!(list.len(), 1, "{list:?}");
+        assert_eq!((list[0].channel, list[0].speaker_index), (1, 1));
+        assert_eq!(list[0].name, "André");
+        assert_eq!(list[0].evidence[0].segment_index, 2);
+        // Nichts wurde uebernommen.
+        assert_eq!(speaker(&f, 1, 1).display_name, None);
+
+        // Eine bekannte Person vervollstaendigt den Namen.
+        f.store
+            .upsert_person(None, Some("André Kaya"), "manual")
+            .unwrap();
+        let list = name_suggestions(&f.store, &f.id, None).unwrap();
+        assert_eq!(list[0].name, "André Kaya");
+        // Der eigene Name wird nicht einem anderen Sprecher zugeordnet.
+        assert!(name_suggestions(&f.store, &f.id, Some("André Kaya"))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn dismissed_and_accepted_suggestions_disappear() {
+        let f = thanks_fixture();
+        dismiss_suggestion(&f.store, &f.id, 1, 1, "André").unwrap();
+        dismiss_suggestion(&f.store, &f.id, 1, 1, "andre").unwrap();
+        assert!(name_suggestions(&f.store, &f.id, None).unwrap().is_empty());
+        let stored = f.store.metadata_json(&f.id).unwrap().unwrap();
+        assert_eq!(
+            stored[DISMISSED_KEY].as_array().map(Vec::len),
+            Some(1),
+            "kein Doppeleintrag"
+        );
+        // Ein anderer Name fuer denselben Sprecher waere weiter moeglich.
+        let other = fixture_with([
+            "Guten Morgen.",
+            "Wir haben das Budget geprüft.",
+            "Danke, Anna. Der Zeitplan steht.",
+            "Dann schicke ich das Angebot.",
+        ]);
+        dismiss_suggestion(&other.store, &other.id, 1, 1, "André").unwrap();
+        assert_eq!(
+            name_suggestions(&other.store, &other.id, None).unwrap()[0].name,
+            "Anna"
+        );
+        // Uebernommen (benannt): kein Vorschlag mehr fuer diesen Sprecher.
+        rename_speaker(&other.store, &other.id, 1, 1, Some("Anna Berg")).unwrap();
+        assert!(name_suggestions(&other.store, &other.id, None)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            dismiss_suggestion(&f.store, "gibt-es-nicht", 1, 1, "X").unwrap_err(),
+            "meeting_not_found"
+        );
+    }
+
+    #[test]
+    fn the_dominant_microphone_speaker_carries_my_name_and_is_not_renamed_by_suggestions() {
+        let f = thanks_fixture();
+        // Sprecher 1 am Mikrofon spricht am laengsten, danach bedankt sich die Gegenseite.
+        let mut thanks = segment(12, 1, 40_500, 44_000, Some(2));
+        thanks.text = "Danke, Anna.".to_string();
+        f.store
+            .append_delta(
+                &f.id,
+                &TranscriptDelta {
+                    new_segments: vec![
+                        segment(10, 0, 20_000, 40_000, Some(1)),
+                        thanks,
+                        segment(11, 0, 50_000, 51_000, Some(2)),
+                    ],
+                },
+            )
+            .unwrap();
+        let labelled = list_speakers_with(&f.store, &f.id, Some("Patrick")).unwrap();
+        let find = |c: u8, i: u32| {
+            labelled
+                .iter()
+                .find(|s| s.channel == c && s.speaker_index == i)
+                .unwrap()
+        };
+        assert_eq!(find(0, 1).label, "Patrick");
+        assert_eq!(find(0, 1).display_name, None, "nicht gespeichert");
+        assert_eq!(find(0, 2).label, "Raum 2");
+        assert_eq!(find(1, 1).label, "Gegenseite 1");
+        // Ohne "Mein Name" waere der Mikrofon-Sprecher ein Kandidat fuer "Anna" ...
+        let open = name_suggestions(&f.store, &f.id, None).unwrap();
+        assert!(open.iter().any(|s| (s.channel, s.speaker_index) == (0, 1)));
+        // ... mit Namen nicht; die anderen Vorschlaege bleiben.
+        let mine = name_suggestions(&f.store, &f.id, Some("Patrick")).unwrap();
+        assert!(mine.iter().all(|s| (s.channel, s.speaker_index) != (0, 1)));
+        assert_eq!(mine.len(), 1, "{mine:?}");
+        assert_eq!(mine[0].name, "André");
     }
 
     #[test]

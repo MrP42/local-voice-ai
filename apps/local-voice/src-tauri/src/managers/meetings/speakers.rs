@@ -90,6 +90,41 @@ pub struct SpeakerDirectory {
     /// Es gibt einen Systemton (Gegenseite): Kanal-0-Sprecher heissen dann
     /// "Raum n" (mehrere Personen am Mikrofon), sonst "Person n" (Praesenz).
     has_remote: bool,
+    /// U8: "Mein Name". Der Kanal "Ich" und der dominante Sprecher des
+    /// diarisierten Mikrofons tragen ihn, sofern er dort nicht selbst benannt ist.
+    self_name: Option<String>,
+    self_speaker: Option<u32>,
+}
+
+/// Der eigene Name, prozessweit (Einstellung `meeting_self_name`). Steht hier
+/// und nicht in `settings`, weil dieses Modul keine Einstellungen lesen darf
+/// (Test-EXE, siehe AGENTS); App-Start und Einstellungsbefehl setzen ihn.
+static SELF_NAME: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Ein Name, wie er als "Mein Name" gespeichert wird (gleiche Bereinigung wie
+/// Sprechernamen); leer ergibt `None`.
+pub fn clean_self_name(name: Option<&str>) -> Option<String> {
+    let joined = name?
+        .replace(':', "-")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let cut: String = joined.chars().take(80).collect();
+    let cut = cut.trim().to_string();
+    (!cut.is_empty()).then_some(cut)
+}
+
+/// Setzt den eigenen Namen fuer alle Verzeichnisse, die danach mit `load`
+/// entstehen. `None` oder leer: zurueck auf "Ich".
+pub fn set_self_name(name: Option<&str>) {
+    if let Ok(mut guard) = SELF_NAME.write() {
+        *guard = clean_self_name(name);
+    }
+}
+
+/// Der gesetzte eigene Name.
+pub fn self_name() -> Option<String> {
+    SELF_NAME.read().ok().and_then(|g| g.clone())
 }
 
 impl SpeakerDirectory {
@@ -101,7 +136,15 @@ impl SpeakerDirectory {
                 .map(|(k, n)| (k, n.trim().to_string()))
                 .collect(),
             has_remote,
+            ..Self::default()
         }
+    }
+
+    /// Mit eigenem Namen ("Mein Name") fuer den Kanal "Ich", ohne Sprecherzuordnung.
+    #[cfg(test)]
+    pub fn with_self_name(mut self, name: Option<&str>) -> Self {
+        self.self_name = clean_self_name(name);
+        self
     }
 
     /// Ohne Namen, aus den Segmenten (Tests, Aufrufer ohne Store).
@@ -109,12 +152,20 @@ impl SpeakerDirectory {
         Self {
             names: HashMap::new(),
             has_remote: segments.iter().any(|s| s.channel == 1),
+            ..Self::default()
         }
     }
 
-    /// Namen und Kanalform aus dem Store. Nie ein Fehler: ein unlesbarer Store
-    /// ergibt Standardlabels (die Anzeige darf am Namen nicht scheitern).
+    /// Namen und Kanalform aus dem Store, mit dem eigenen Namen aus der
+    /// Einstellung ("Mein Name"). Nie ein Fehler: ein unlesbarer Store ergibt
+    /// Standardlabels (die Anzeige darf am Namen nicht scheitern).
     pub fn load(store: &MeetingStore, meeting_id: &str) -> Self {
+        Self::load_with(store, meeting_id, self_name().as_deref())
+    }
+
+    /// Wie [`load`](Self::load), mit ausdruecklich gegebenem eigenem Namen
+    /// (Tests, Aufrufer mit eigener Quelle).
+    pub fn load_with(store: &MeetingStore, meeting_id: &str, self_name: Option<&str>) -> Self {
         let names = store
             .speaker_rows(meeting_id)
             .map(|rows| {
@@ -131,12 +182,14 @@ impl SpeakerDirectory {
             .ok()
             .flatten()
             .is_some_and(|m| m.system_audio_path.is_some());
-        let has_remote = has_system
-            || store
-                .get_segments(meeting_id)
-                .map(|s| s.iter().any(|s| s.channel == 1))
-                .unwrap_or(false);
-        Self::new(names, has_remote)
+        let segments = store.get_segments(meeting_id).unwrap_or_default();
+        let has_remote = has_system || segments.iter().any(|s| s.channel == 1);
+        let mut directory = Self::new(names, has_remote);
+        directory.self_name = clean_self_name(self_name);
+        if directory.self_name.is_some() {
+            directory.self_speaker = dominant_mic_speaker(&segments, &directory);
+        }
+        directory
     }
 
     /// Der eingetragene Name (getrimmt), falls es einen gibt.
@@ -152,10 +205,18 @@ impl SpeakerDirectory {
 
     pub fn label_for(&self, channel: u8, speaker_index: Option<u32>) -> String {
         let Some(n) = speaker_index else {
+            if let (0, Some(mine)) = (channel, &self.self_name) {
+                return mine.clone();
+            }
             return label_for_channel(channel);
         };
         if let Some(name) = self.name(channel, n) {
             return name.to_string();
+        }
+        if channel == 0 && self.self_speaker == Some(n) {
+            if let Some(mine) = &self.self_name {
+                return mine.clone();
+            }
         }
         let base = match channel {
             1 => "Gegenseite",
@@ -165,6 +226,23 @@ impl SpeakerDirectory {
         };
         format!("{base} {n}")
     }
+}
+
+/// Der Sprecher am diarisierten Mikrofon mit der meisten Sprechzeit, sofern er
+/// keinen eigenen Namen hat (Gleichstand: die kleinste Nummer). `None`, wenn das
+/// Mikrofon nicht getrennt wurde.
+fn dominant_mic_speaker(segments: &[StoredSegment], directory: &SpeakerDirectory) -> Option<u32> {
+    let mut ms: BTreeMap<u32, u64> = BTreeMap::new();
+    for segment in segments.iter().filter(|s| s.channel == 0) {
+        if let Some(index) = segment.speaker_index {
+            *ms.entry(index).or_insert(0) += segment.end_ms.saturating_sub(segment.start_ms);
+        }
+    }
+    let top = ms
+        .iter()
+        .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
+        .map(|(index, _)| *index)?;
+    directory.name(0, top).is_none().then_some(top)
 }
 
 // ---------------------------------------------------------------------------
@@ -1094,6 +1172,76 @@ mod tests {
         assert_eq!(presence.label_for(0, Some(1)), "Person 1", "Praesenz");
         assert_eq!(presence.label_for(7, Some(1)), "Sprecher 1");
         assert_eq!(presence.label_for(7, None), "Kanal 7");
+    }
+
+    // ---- U8: "Mein Name" ----------------------------------------------------
+
+    #[test]
+    fn my_name_labels_the_microphone_and_its_dominant_speaker() {
+        let f = fixture(MeetingSource::Live);
+        let mut segs = vec![
+            plain(0, 0, 0, 6_000),
+            plain(1, 0, 6_000, 8_000),
+            plain(2, 1, 8_000, 9_000),
+            plain(3, 0, 9_000, 10_000),
+        ];
+        segs[0].speaker_index = Some(1);
+        segs[1].speaker_index = Some(2);
+        segs[2].speaker_index = Some(1);
+        // Segment 3: Mikrofon ohne Zuordnung ("Ich").
+        put(&f, segs);
+
+        // Ohne Namen wie bisher.
+        let plain_dir = SpeakerDirectory::load_with(&f.store, &f.id, None);
+        assert_eq!(plain_dir.label_for(0, None), "Ich");
+        assert_eq!(plain_dir.label_for(0, Some(1)), "Raum 1");
+
+        let mine = SpeakerDirectory::load_with(&f.store, &f.id, Some("  Patrick Wolff "));
+        assert_eq!(mine.label_for(0, None), "Patrick Wolff", "Kanal Ich");
+        assert_eq!(
+            mine.label_for(0, Some(1)),
+            "Patrick Wolff",
+            "der dominante Sprecher am Mikrofon"
+        );
+        assert_eq!(mine.label_for(0, Some(2)), "Raum 2", "die anderen bleiben");
+        assert_eq!(mine.label_for(1, None), "Gegenseite");
+        assert_eq!(mine.label_for(1, Some(1)), "Gegenseite 1");
+        // Leerer Name zaehlt nicht.
+        assert_eq!(
+            SpeakerDirectory::load_with(&f.store, &f.id, Some("  ")).label_for(0, None),
+            "Ich"
+        );
+        // Verzeichnis ohne Store kennt den Namen nicht.
+        assert_eq!(SpeakerDirectory::new([], true).label_for(0, None), "Ich");
+
+        // Ein von Hand vergebener Name gewinnt; der eigene Name wandert nicht weiter.
+        f.store.set_speaker_name(&f.id, 0, 1, Some("Ben")).unwrap();
+        let named = SpeakerDirectory::load_with(&f.store, &f.id, Some("Patrick Wolff"));
+        assert_eq!(named.label_for(0, Some(1)), "Ben");
+        assert_eq!(named.label_for(0, Some(2)), "Raum 2");
+        assert_eq!(named.label_for(0, None), "Patrick Wolff");
+    }
+
+    #[test]
+    fn my_name_is_cleaned_like_a_speaker_name() {
+        assert_eq!(
+            clean_self_name(Some("  Patrick \n Wolff ")),
+            Some("Patrick Wolff".to_string())
+        );
+        assert_eq!(clean_self_name(Some("   ")), None);
+        assert_eq!(clean_self_name(None), None);
+        assert_eq!(
+            clean_self_name(Some("Dr. A: B")),
+            Some("Dr. A- B".to_string()),
+            "Doppelpunkt wie bei Sprechernamen"
+        );
+        assert_eq!(
+            clean_self_name(Some(&"x".repeat(200)))
+                .unwrap()
+                .chars()
+                .count(),
+            80
+        );
     }
 
     #[test]

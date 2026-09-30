@@ -99,6 +99,7 @@ Die Seite „Aufnahmen“ arbeitet wie das Vorlesen-Modul in Spalten: links Sess
 -
 
 ## Entscheidungen
+- 2026-09-30 Patrick: U8 (Sprechernamen) und U9 (Projekt-Protokoll: mehrere Aufnahmen eines Projekts per Häkchen gemeinsam protokollieren/zusammenfassen, mit Quellen je Aufnahme) freigegeben; Rahmen gemeinsam 5,55 MTok.
 - 2026-09-30 Patrick nach Installer 0.20.10: U7 freigegeben (Rahmen gemeinsam 4,8 MTok): Import-Warteschlange (weitere Dateien jederzeit hinzufügen, Reihenfolge des Hinzufügens), Einstellung „Gleichzeitige Transkriptionen 1–3“ nur bei ausreichendem RAM/VRAM, Metadaten bearbeiten (Titel, Beschreibung, Datum, Teilnehmende, Projekte; Dateiname bleibt). Zusätzlich gewünscht (U8, Freigabe offen): Sprecher benennen überall sichtbar, Namensvorschlag aus dem Transkript („Danke, André“ → vorheriger Sprecher), eigener Name für das eigene Mikrofon/„Ich“.
 - 2026-09-30 Patrick: Die Ordner heißen in der Oberfläche „Projekte“ (en „Projects“), nicht „Sessions“; im Goal-Text bleibt „Sessions“ als Arbeitsbegriff, `data-testid="rec-sessions"` bleibt.
 - 2026-09-30 Patrick am Prototyp (https://claude.ai/artifact/3RaBLbuyHDX1WnQtAvMQJS): R1 = Variante B (Sessions | Notizen/KI-Notizen/Protokoll | rechts Bedienung + Transkript/Fragen); Besprechung in mehreren Sessions (Ziehen verschiebt, Strg+Ziehen fügt hinzu); Sessions eine Ebene; Aufnahme-Optionen in den Einwilligungs-Startdialog; Kalender als „Als Nächstes“ unten in der Sessions-Spalte.

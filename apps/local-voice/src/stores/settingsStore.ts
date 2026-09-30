@@ -264,6 +264,9 @@ const settingUpdaters: {
   // M6-P6c
   meeting_self_emails: (value) =>
     commands.changeMeetingSelfEmailsSetting((value as string[]) ?? []),
+  // U8
+  meeting_self_name: (value) =>
+    commands.changeMeetingSelfNameSetting((value as string | null) ?? null),
   // M5-P5b
   meeting_reminder_lead_s: (value) =>
     commands.changeMeetingReminderLeadSetting(value as number),

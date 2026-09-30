@@ -528,7 +528,9 @@ impl ExportBundle {
         match segment.speaker_index {
             // Mit Sprechertrennung: Name oder Nummer aus dem Verzeichnis.
             Some(_) => self.speakers.label(segment),
-            // Ohne: Kanalname ("Ich", "Gegenseite", Import ohne Praefix).
+            // Ohne: Kanalname ("Ich", "Gegenseite", Import ohne Praefix); "Ich"
+            // traegt, wenn gesetzt, "Mein Name" (U8).
+            None if segment.channel == 0 => self.speakers.label(segment),
             None => speaker_label(segment, &BTreeMap::new()),
         }
     }
@@ -1657,10 +1659,7 @@ pub(crate) mod tests {
             ExportFormat::from_extension(".docx"),
             Some(ExportFormat::Docx)
         );
-        assert_eq!(
-            ExportFormat::from_extension("pdf"),
-            Some(ExportFormat::Pdf)
-        );
+        assert_eq!(ExportFormat::from_extension("pdf"), Some(ExportFormat::Pdf));
         // Unbekannt heißt hier: melden, nicht raten.
         assert_eq!(ExportFormat::from_extension("xyz"), None);
     }
@@ -1679,8 +1678,11 @@ pub(crate) mod tests {
         .unwrap_err();
         assert!(error.starts_with("pdf_failed: "), "{error}");
         // Dasselbe Ziel über den Markdown-Weg (Protokoll-Export im Dialog).
-        let error = write_document(&missing, "# Titel
-").unwrap_err();
+        let error = write_document(
+            &missing, "# Titel
+",
+        )
+        .unwrap_err();
         assert!(error.starts_with("pdf_failed: "), "{error}");
     }
 
@@ -1890,6 +1892,23 @@ pub(crate) mod tests {
         assert!(
             !text.contains("mic_audio") && !text.contains(".wav") && !text.contains("system_audio"),
             "Audio im JSON: {text}"
+        );
+    }
+
+    #[test]
+    fn mein_name_steht_im_export_statt_ich() {
+        let mut bundle = nordlicht_bundle();
+        bundle.speakers = bundle
+            .speakers
+            .clone()
+            .with_self_name(Some("Patrick Wolff"));
+        let json = export_json(&bundle, &ExportParts::all());
+        assert_eq!(json["transcript"][0]["speaker"], "Patrick Wolff");
+        assert_eq!(json["transcript"][2]["speaker"], "Anna Berg");
+        let (_, text) = clipboard_payload(&bundle, &ExportParts::all());
+        assert!(
+            text.contains("Patrick Wolff: Guten Morgen") && !text.contains("Ich: "),
+            "{text}"
         );
     }
 
