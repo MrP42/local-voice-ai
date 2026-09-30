@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 2
 erstellt: 2026-09-29
-aktualisiert: 2026-09-30T00:30
+aktualisiert: 2026-09-30T14:28
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -41,9 +41,9 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - [ ] AK11 — Abnahme: Installer gebaut und installiert, Screenshots der Kernabläufe (Aufnahme mit Notizen → KI-Notizen → Chat) in `koordination/granola-besprechungen/abnahme/`
 
 ## Quality Gates
-- [ ] QG1 — Rust komplett grün: `cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml --lib`
-- [ ] QG2 — Frontend komplett grün: `npx tsc --noEmit` + `pnpm test:playwright`; eigene Dateien eslint/prettier-sauber
-- [ ] QG3 — Performance: 60-min-Besprechung auf RTX 4090 → Enddurchlauf + KI-Notizen ≤ 3 min nach Stopp; CPU-only-Pfad funktioniert (Messung dokumentiert)
+- [x] QG1 — Rust komplett grün: `cargo test --manifest-path apps/local-voice/src-tauri/Cargo.toml --lib`
+- [x] QG2 — Frontend komplett grün: `npx tsc --noEmit` + `pnpm test:playwright`; eigene Dateien eslint/prettier-sauber
+- [x] QG3 — Performance: 60-min-Besprechung auf RTX 4090 → Enddurchlauf + KI-Notizen ≤ 3 min nach Stopp; CPU-only-Pfad funktioniert (Messung dokumentiert)
 - [x] QG4 — Systemschutz: alle neuen Modelle/Prozesse hinter RAM-Start-Gate/Deckel; Test mit knappem RAM → sauberer Abbruch statt Einfrieren
 - [x] QG5 — Datenschutz: Besprechungspfad ohne Netzverkehr (außer Modell-Download und bewusst gewähltem externem LLM), Nachweis per Offline-Lauf
 - [x] QG6 — Lizenzen: jedes neue Modell/Crate mit Lizenz in den Third-Party-Notices, keine Nicht-kommerziell-Lizenz
@@ -120,6 +120,9 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-30T00:30 QG4 erfüllt — P7b ea876e60: abnahme/p7b-qg4.md, knapper RAM -> sauberer Abbruch je Schritt (LowRam/memory_low/pdf_low_memory), keine Restprozesse
 - 2026-09-30T00:30 QG5 erfüllt — P7b ea876e60: abnahme/p7b-qg5.md, ganze Kette 0 Nicht-Loopback-Verbindungen (94 Sockets 127.0.0.1), Proxy 0 Anfragen
 - 2026-09-30T00:30 AK2 erfüllt — check_matrix.py Exit 0: 22/22 Kern-Funktionen gleichwertig/besser/vorhanden mit Beleg (Stand 2ea33a91)
+- 2026-09-30T14:28 QG3 erfüllt — P7b+P1i 25e32343: 60 min RTX 4090 Gemma 4 E4B Stopp->KI-Notizen 156,6 s (3 Laeufe 156-158 s); CPU-only funktioniert (abnahme/p7b-qg3.md)
+- 2026-09-30T14:28 QG1 erfüllt — cargo test --lib 1748 passed 0 failed (25e32343)
+- 2026-09-30T14:28 QG2 erfüllt — tsc 0, Playwright 251 passed 0 failed (25e32343); eigene Dateien eslint/prettier je Paket geprueft
 
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)

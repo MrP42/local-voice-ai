@@ -61,4 +61,10 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Nebenbefunde: AUTO_GPU_CANDIDATES bevorzugt Whisper large-v3 statt schnellerem Qwen3-ASR (~35 s je 60 min); Live-Modell lädt ohne RAM-Gate.
 - Beleg: abnahme/p7b-qg3.md, p7b-qg3-*.json.
 - Konsequenz: Paket P1i.
-- Status: offen
+- Status: erledigt (P1i 25e32343: Gemma 60 min 156,6 s, kein verworfener Block; Warnung statt stiller Luecke)
+
+## B12 — P1i: Protokoll-Erzeugung (minutes.rs) verwirft abgeschnittene Blöcke weiter still (30.09.)
+- Beobachtet: gleiches Muster wie B11 im älteren Protokoll-Pfad (vor dem Goal vorhanden, nicht die KI-Notizen); ask_json gibt bei Abschneiden auf.
+- Nebenbefund: Qwen3.5-9B im QG3-Lauf 186,1 s (> 180 s); das Gate gilt für das Standardmodell Gemma (156,6 s).
+- Konsequenz: Folge-Goal (Protokoll-Pfad auf die P1i-Blocklogik umstellen); in docs/KNOWN-LIMITATIONS.md vermerkt.
+- Status: erledigt (in Folge-Goal verschoben, dokumentiert; KI-Notizen als Kernpfad sind behoben)

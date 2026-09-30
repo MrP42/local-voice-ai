@@ -235,3 +235,5 @@ Modell mit CC-BY-NC-4.0 (Canary 1B); es ist nicht vorgewählt und wird nicht fü
 - Verhalten der Injektion in Terminals, Electron-Anwendungen und über RDP.
 - Ob die 150-ms-Untergrenze nach dem Einfügen für langsame Zielanwendungen (Word beim
   Kaltstart, Electron) ausreicht, bevor die Zwischenablage zurückgesetzt wird.
+
+- Besprechungen, Protokoll-Pfad (ältere Funktion „Protokoll“): Bei sehr langen Aufnahmen kann ein zu großer Abschnitt noch unbemerkt fehlen; die KI-Notizen sind davon nicht betroffen (seit P1i Warnung statt Lücke). Mit Qwen3.5-9B dauern KI-Notizen einer Stunde rund 3 min, mit Gemma 4 E4B rund 2,5 min nach Stopp.
