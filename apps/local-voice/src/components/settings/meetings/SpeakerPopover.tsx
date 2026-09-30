@@ -2,9 +2,14 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { commands, type MeetingSpeaker, type StoredSegment } from "@/bindings";
+import {
+  commands,
+  type MeetingSpeaker,
+  type NameSuggestion,
+  type StoredSegment,
+} from "@/bindings";
 import { Button } from "../../ui/Button";
-import { Input } from "../../ui/Input";
+import { PersonNameField } from "./PersonNameField";
 
 /** Fehlercodes der Sprecher-Commands in Nutzertext. */
 export const speakerErrorText = (code: string, t: TFunction) => {
@@ -37,6 +42,9 @@ interface SpeakerPopoverProps {
   epoch: number | null;
   /** Nach jeder Änderung: Segmente und Sprecher neu laden. */
   onChanged: () => void;
+  /** U8: Namensvorschlag aus dem Gesagten für diesen Sprecher. */
+  suggestion?: NameSuggestion | null;
+  onDismissSuggestion?: (suggestion: NameSuggestion) => void;
   className?: string;
 }
 
@@ -52,6 +60,8 @@ export const SpeakerPopover: React.FC<SpeakerPopoverProps> = ({
   speakers,
   epoch,
   onChanged,
+  suggestion = null,
+  onDismissSuggestion,
   className = "",
 }) => {
   const { t } = useTranslation();
@@ -233,6 +243,42 @@ export const SpeakerPopover: React.FC<SpeakerPopoverProps> = ({
               </span>
             </div>
 
+            {suggestion && (
+              <div
+                data-testid="speaker-suggestion"
+                className="space-y-1.5 rounded-md bg-logo-primary/10 p-2 text-xs"
+              >
+                <p>
+                  {t("meetings.speakers.suggestion.popover", {
+                    name: suggestion.name,
+                    count: suggestion.evidence.length,
+                  })}
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void rename(suggestion.name)}
+                    data-testid="speaker-suggestion-accept"
+                  >
+                    {t("meetings.speakers.suggestion.accept")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => {
+                      onDismissSuggestion?.(suggestion);
+                      close();
+                    }}
+                    data-testid="speaker-suggestion-dismiss"
+                  >
+                    {t("meetings.speakers.suggestion.dismiss")}
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <form
               className="space-y-1.5"
               onSubmit={(e) => {
@@ -246,15 +292,18 @@ export const SpeakerPopover: React.FC<SpeakerPopoverProps> = ({
               >
                 {t("meetings.speakers.nameLabel")}
               </label>
-              <div className="flex gap-2">
-                <Input
+              <div className="flex items-start gap-2">
+                <PersonNameField
                   id={`speaker-name-${meetingId}`}
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={setName}
+                  onPick={(person) => void rename(person.name)}
                   placeholder={t("meetings.speakers.namePlaceholder")}
-                  maxLength={80}
+                  ariaLabel={t("meetings.speakers.nameLabel")}
                   autoFocus
-                  data-testid="speaker-name-input"
+                  disabled={busy}
+                  inputTestId="speaker-name-input"
+                  exclude={speaker.display_name ? [speaker.display_name] : []}
                   className="min-w-0 flex-1"
                 />
                 <Button
@@ -262,6 +311,7 @@ export const SpeakerPopover: React.FC<SpeakerPopoverProps> = ({
                   size="sm"
                   disabled={busy}
                   data-testid="speaker-save"
+                  className="mt-0.5"
                 >
                   {t("meetings.speakers.save")}
                 </Button>

@@ -865,7 +865,10 @@
       "detectIgnoredDescription": "Programs that never trigger a hint. Separate names with commas, for example \"obs64.exe, Discord\". Case does not matter and part of a name is enough.",
       "detectIgnoredPlaceholder": "e.g. obs64.exe, Discord",
       "diarization": "Separate speakers automatically",
-      "diarizationDescription": "After stopping, on import and on re-transcription, a local model detects who speaks when and labels the transcript with numbered speakers (\"Gegenseite 1\", \"Person 2\", ...). You can name the speakers in the transcript. Nothing that recognises a voice is stored. Takes effect from the next run."
+      "diarizationDescription": "After stopping, on import and on re-transcription, a local model detects who speaks when and labels the transcript with numbered speakers (\"Gegenseite 1\", \"Person 2\", ...). You can name the speakers in the transcript. Nothing that recognises a voice is stored. Takes effect from the next run.",
+      "selfName": "My name",
+      "selfNameDescription": "Your own name in the transcript: your microphone (\"Me\") and, if the microphone is split into several people, the speaker with the largest share always carry this name, even if nobody addresses you. In People you are marked as \"me\". Leave empty to keep \"Me\".",
+      "selfNamePlaceholder": "e.g. Patrick Wolff"
     },
     "modelSettings": {
       "title": "{{model}} Settings"
@@ -1860,7 +1863,7 @@
       "title": "Speaker",
       "open": "Name or change speaker",
       "share": "Speaking share {{pct}} %",
-      "nameLabel": "Name (applies to all segments of this speaker)",
+      "nameLabel": "Rename (applies everywhere)",
       "namePlaceholder": "Enter a name",
       "save": "Save",
       "removeName": "Remove name",
@@ -1869,9 +1872,36 @@
       "mergeConfirm": "\"{{from}}\" merges into \"{{into}}\": all segments switch to \"{{into}}\". This cannot be undone.",
       "mergeDo": "Merge",
       "cancel": "Cancel",
-      "moveTitle": "Assign only this segment",
+      "moveTitle": "Assign only this sentence",
       "moveTo": "To {{label}}",
       "moveNew": "New speaker",
+      "knownPeople": "Known people",
+      "self": "me",
+      "suggestion": {
+        "label": "Name suggestions",
+        "hint_one": "{{label}} is probably {{name}} ({{count}} piece of evidence)",
+        "hint_other": "{{label}} is probably {{name}} ({{count}} pieces of evidence)",
+        "popover_one": "Probably {{name}} ({{count}} piece of evidence in the conversation)",
+        "popover_other": "Probably {{name}} ({{count}} pieces of evidence in the conversation)",
+        "accept": "Accept",
+        "dismiss": "Dismiss",
+        "showEvidence": "Show evidence",
+        "hideEvidence": "Hide evidence",
+        "quote": "\"{{text}}\""
+      },
+      "dialog": {
+        "title": "Name speakers",
+        "hint": "The name applies everywhere: transcript, notes, minutes, export and people.",
+        "close": "Close",
+        "done": "Done",
+        "empty": "No speakers were detected in this meeting.",
+        "sentences_one": "{{count}} sentence",
+        "sentences_other": "{{count}} sentences",
+        "rowName": "Name for {{label}}",
+        "listen": "Listen",
+        "listenHint": "Jumps to a longer sentence of this speaker",
+        "listenFor": "Listen to {{label}}"
+      },
       "notices": {
         "disabled": "Speaker separation was switched off for this meeting.",
         "model_missing": "The speaker separation model is not installed, so there are no speakers here.",
@@ -2126,6 +2156,8 @@
       "regenNotes": "Regenerate AI notes",
       "regenMinutes": "Regenerate minutes",
       "template": "Change template …",
+      "speakers": "Name speakers …",
+      "speakersNone": "No speakers were detected in this meeting.",
       "rename": "Rename",
       "move": "Move to project …",
       "copyPlain": "Copy text only",

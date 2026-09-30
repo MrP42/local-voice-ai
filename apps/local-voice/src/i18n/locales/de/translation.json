@@ -865,7 +865,10 @@
       "detectIgnoredDescription": "Programme, die nie einen Hinweis auslösen. Namen mit Komma trennen, zum Beispiel „obs64.exe, Discord“. Groß- und Kleinschreibung ist egal; ein Namensteil genügt.",
       "detectIgnoredPlaceholder": "z. B. obs64.exe, Discord",
       "diarization": "Sprecher automatisch trennen",
-      "diarizationDescription": "Nach dem Stopp, beim Import und bei der Neu-Transkription erkennt ein lokales Modell, wer wann spricht, und beschriftet das Transkript mit „Gegenseite 1“, „Person 2“ usw. Sie können die Sprecher im Transkript benennen. Es wird nichts gespeichert, was eine Stimme wiedererkennt. Wirkt ab dem nächsten Durchlauf."
+      "diarizationDescription": "Nach dem Stopp, beim Import und bei der Neu-Transkription erkennt ein lokales Modell, wer wann spricht, und beschriftet das Transkript mit „Gegenseite 1“, „Person 2“ usw. Sie können die Sprecher im Transkript benennen. Es wird nichts gespeichert, was eine Stimme wiedererkennt. Wirkt ab dem nächsten Durchlauf.",
+      "selfName": "Mein Name",
+      "selfNameDescription": "Ihr eigener Name im Transkript: Ihr Mikrofon („Ich“) und, wenn das Mikrofon mehrere Personen trennt, der Sprecher mit dem größten Redeanteil tragen immer diesen Namen, auch wenn niemand Sie anspricht. In den Personen sind Sie als „ich“ markiert. Leer lassen: Es bleibt bei „Ich“.",
+      "selfNamePlaceholder": "z. B. Patrick Wolff"
     },
     "modelSettings": {
       "title": "{{model}}-Einstellungen"
@@ -1860,7 +1863,7 @@
       "title": "Sprecher",
       "open": "Sprecher benennen oder ändern",
       "share": "Redeanteil {{pct}} %",
-      "nameLabel": "Name (gilt für alle Segmente dieses Sprechers)",
+      "nameLabel": "Umbenennen (gilt überall)",
       "namePlaceholder": "Name eingeben",
       "save": "Speichern",
       "removeName": "Namen entfernen",
@@ -1869,9 +1872,36 @@
       "mergeConfirm": "„{{from}}“ geht in „{{into}}“ auf: Alle Segmente wechseln zu „{{into}}“. Das lässt sich nicht rückgängig machen.",
       "mergeDo": "Zusammenführen",
       "cancel": "Abbrechen",
-      "moveTitle": "Nur dieses Segment zuordnen",
+      "moveTitle": "Nur diesen Satz zuordnen",
       "moveTo": "Zu {{label}}",
       "moveNew": "Neuer Sprecher",
+      "knownPeople": "Bekannte Personen",
+      "self": "ich",
+      "suggestion": {
+        "label": "Namensvorschläge",
+        "hint_one": "{{label}} ist vermutlich {{name}} ({{count}} Beleg)",
+        "hint_other": "{{label}} ist vermutlich {{name}} ({{count}} Belege)",
+        "popover_one": "Vermutlich {{name}} ({{count}} Beleg im Gespräch)",
+        "popover_other": "Vermutlich {{name}} ({{count}} Belege im Gespräch)",
+        "accept": "Übernehmen",
+        "dismiss": "Verwerfen",
+        "showEvidence": "Belege zeigen",
+        "hideEvidence": "Belege ausblenden",
+        "quote": "„{{text}}“"
+      },
+      "dialog": {
+        "title": "Sprecher benennen",
+        "hint": "Der Name gilt überall: im Transkript, in den Notizen, im Protokoll, im Export und bei den Personen.",
+        "close": "Schließen",
+        "done": "Fertig",
+        "empty": "In dieser Besprechung wurden keine Sprecher erkannt.",
+        "sentences_one": "{{count}} Satz",
+        "sentences_other": "{{count}} Sätze",
+        "rowName": "Name für {{label}}",
+        "listen": "Anhören",
+        "listenHint": "Springt zu einem längeren Satz dieses Sprechers",
+        "listenFor": "{{label}} anhören"
+      },
       "notices": {
         "disabled": "Die Sprechertrennung war für diese Besprechung ausgeschaltet.",
         "model_missing": "Das Modell zur Sprechertrennung ist nicht installiert, deshalb gibt es hier keine Sprecher.",
@@ -2126,6 +2156,8 @@
       "regenNotes": "KI-Notizen neu erzeugen",
       "regenMinutes": "Protokoll neu erzeugen",
       "template": "Vorlage wechseln …",
+      "speakers": "Sprecher benennen …",
+      "speakersNone": "In dieser Besprechung wurden keine Sprecher erkannt.",
       "rename": "Umbenennen",
       "move": "In Projekt verschieben …",
       "copyPlain": "Nur Text kopieren",

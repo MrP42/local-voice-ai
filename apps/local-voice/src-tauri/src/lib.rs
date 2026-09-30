@@ -312,6 +312,15 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         }
     }
 
+    // U8: "Mein Name" gilt ab dem ersten Bild; die Person dazu ist idempotent da.
+    let own_name = crate::settings::get_settings(app_handle).meeting_self_name;
+    managers::meetings::speakers::set_self_name(own_name.as_deref());
+    if let (Some(store), Some(name)) = (&meeting_store, own_name.as_deref()) {
+        if let Err(e) = store.set_self_person(Some(name), Some(name)) {
+            log::warn!("meetings: own person not prepared: {e}");
+        }
+    }
+
     if let Some(store) = meeting_store {
         let recorder = Arc::new(managers::meetings::recorder::MeetingRecorderManager::new(
             app_handle,
@@ -1923,6 +1932,9 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_speakers::meeting_speaker_merge,
             commands::meeting_speakers::meeting_segment_set_speaker,
             commands::meeting_speakers::meeting_speaker_notices,
+            commands::meeting_speakers::meeting_speaker_suggestions,
+            commands::meeting_speakers::meeting_speaker_suggestion_dismiss,
+            commands::meeting_speakers::change_meeting_self_name_setting,
             commands::meeting_speakers::meetings_set_diarize_mic,
             commands::meeting_speakers::change_meeting_diarization_setting,
             // M6-P6c: Follow-up-Mail

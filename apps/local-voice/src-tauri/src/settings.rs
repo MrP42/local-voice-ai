@@ -839,6 +839,11 @@ pub struct AppSettings {
     /// Schluessel (aeltere settings.json) leer.
     #[serde(default)]
     pub meeting_self_emails: Vec<String>,
+    /// U8: Mein Name. Der Kanal "Ich" und der dominante Sprecher am Mikrofon
+    /// tragen ihn (statt "Ich"); in Personen ist er als "ich" markiert. Ohne den
+    /// Schluessel (aeltere settings.json) oder leer: "Ich".
+    #[serde(default)]
+    pub meeting_self_name: Option<String>,
     /// M5-P5b (E11): Vorlauf der Erinnerung vor einem Termin in Sekunden;
     /// 0 = Erinnerung aus. Ohne den Schluessel (aeltere settings.json) gilt 60.
     #[serde(default = "default_meeting_reminder_lead_s")]
@@ -1637,6 +1642,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_detect_mode: crate::managers::meeting_detect::DetectMode::default(),
         meeting_detect_ignored_apps: Vec::new(),
         meeting_self_emails: Vec::new(),
+        meeting_self_name: None,
         meeting_reminder_lead_s: default_meeting_reminder_lead_s(),
         meeting_reminder_all_events: false,
         meeting_mcp_enabled: false,
@@ -2822,6 +2828,19 @@ mod tests {
             Some("11111111-2222-3333-4444-555555555555")
         );
         assert_eq!(chosen.calendar_graph_tenant.as_deref(), Some("contoso.com"));
+    }
+
+    #[test]
+    fn meeting_self_name_defaults_to_none_and_keeps_a_choice() {
+        assert_eq!(get_default_settings().meeting_self_name, None);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_self_name, None);
+        let set: AppSettings = serde_json::from_value(
+            serde_json::json!({ "meeting_self_name": "Patrick Wolff" }),
+        )
+        .unwrap();
+        assert_eq!(set.meeting_self_name.as_deref(), Some("Patrick Wolff"));
     }
 
     #[test]

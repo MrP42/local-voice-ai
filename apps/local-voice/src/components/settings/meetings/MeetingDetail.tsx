@@ -39,6 +39,10 @@ import { MeetingDetailsDialog } from "./MeetingDetailsDialog";
 import { MeetingHeader } from "./MeetingHeader";
 import { RetranscribeDialog } from "./RetranscribeDialog";
 import { SpeakerPopover } from "./SpeakerPopover";
+import { SpeakerNamesDialog } from "./SpeakerNamesDialog";
+import { SpeakerSuggestionHints } from "./SpeakerSuggestionHints";
+import { useNameSuggestions } from "./useNameSuggestions";
+import { useSettings } from "@/hooks/useSettings";
 import { translateMeetingError } from "./meetingErrors";
 import { enhanceErrorText, SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
 import { minutesErrorCode, minutesErrorDetail } from "@/lib/meetingMinutes";
@@ -130,6 +134,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // Dialoge und Anfragen aus Menue und Kopf.
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
+  const [speakersOpen, setSpeakersOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -506,6 +511,15 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     };
   }, [meetingId, loadSpeakers, loadParticipants]);
 
+  // U8: "Mein Name" ersetzt "Ich" im Transkript (Kanal ohne Sprechertrennung);
+  // bei getrenntem Mikrofon trägt ihn der Sprecher mit dem größten Anteil, dessen
+  // Label das Backend liefert: die Liste wird bei jeder Änderung neu geholt.
+  const { getSetting } = useSettings();
+  const selfName = (getSetting("meeting_self_name") ?? "").trim();
+  useEffect(() => {
+    void loadSpeakers();
+  }, [selfName, loadSpeakers]);
+
   /** Nach einer Änderung im Popover: Segmente und Sprecher frisch holen. */
   const onSpeakersChanged = useCallback(() => {
     void commands.meetingsGetSegments(meetingId).then((result) => {
@@ -516,6 +530,13 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     void loadSpeakers();
     void loadParticipants();
   }, [meetingId, loadSpeakers, loadParticipants]);
+
+  // U8: Namensvorschläge aus dem Gesagten; nie automatisch übernommen.
+  const nameHints = useNameSuggestions(
+    meetingId,
+    speakers,
+    !growing && !loading && speakers.length > 0,
+  );
 
   // Aendert sich die Hoehe der Liste (Fortschrittsblock waechst, Fenster wird
   // kleiner), bleibt ein mitlaufendes Transkript am Ende. Die Liste fuellt die
@@ -634,8 +655,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             s.channel === segment.channel &&
             s.speaker_index === segment.speaker_index,
         );
+  /** Kanalname ohne Sprechertrennung; "Ich" trägt, wenn gesetzt, "Mein Name". */
+  const channelLabel = (channel: number) =>
+    channel === 0 && selfName !== "" ? selfName : t(channelLabelKey(channel));
   const whoLabel = (segment: StoredSegment) =>
-    speakerOf(segment)?.label ?? t(channelLabelKey(segment.channel));
+    speakerOf(segment)?.label ?? channelLabel(segment.channel);
 
   /** `withMeta` false liefert den blanken Text — ohne Zeitstempel, ohne
    *  Quelle, mit Leerzeile zwischen den Abschnitten, damit er sich als
@@ -716,6 +740,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     <MeetingActions
       menuOnly={menuOnly}
       hasSegments={segments.length > 0}
+      hasSpeakers={speakers.length > 0}
       hasAudio={hasAudio}
       busy={
         live || meeting.status === "processing" || jobProgress !== undefined
@@ -732,6 +757,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       onRegenNotes={regenerateNotes}
       onRegenMinutes={regenerateMinutes}
       onTemplate={() => setTemplateOpen(true)}
+      onSpeakers={() => setSpeakersOpen(true)}
       onRename={() => setRenameNonce((n) => n + 1)}
       onMove={() => setMoveOpen(true)}
       onCopyPlain={() => void copyTranscript(false)}
@@ -897,6 +923,14 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       {transcriptError && (
         <p className="text-sm text-red-400">{transcriptError}</p>
       )}
+      <SpeakerSuggestionHints
+        meetingId={meetingId}
+        suggestions={nameHints.list}
+        speakers={speakers}
+        onDismiss={(s) => void nameHints.dismiss(s)}
+        onAccepted={onSpeakersChanged}
+        onSeek={player.canSeek ? player.seek : undefined}
+      />
       {speakerNotices.length > 0 && (
         <ul
           className="space-y-0.5 text-xs text-text/50"
@@ -971,10 +1005,15 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
                         speakers={speakers}
                         epoch={segmentEpoch}
                         onChanged={onSpeakersChanged}
+                        suggestion={nameHints.forSpeaker(
+                          segment.channel,
+                          segment.speaker_index!,
+                        )}
+                        onDismissSuggestion={(s) => void nameHints.dismiss(s)}
                         className="max-w-full"
                       />
                     ) : (
-                      t(channelLabelKey(segment.channel))
+                      channelLabel(segment.channel)
                     )}
                   </span>
                 )}
@@ -1071,6 +1110,17 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         progress={jobProgress}
         segmentCount={segments.length}
         projectNames={projectNames}
+      />
+      <SpeakerNamesDialog
+        open={speakersOpen}
+        onOpenChange={setSpeakersOpen}
+        meetingId={meetingId}
+        speakers={speakers}
+        segments={segments}
+        suggestions={nameHints.list}
+        onDismissSuggestion={(s) => void nameHints.dismiss(s)}
+        player={player}
+        onChanged={onSpeakersChanged}
       />
       <RetranscribeDialog
         open={retranscribeOpen}

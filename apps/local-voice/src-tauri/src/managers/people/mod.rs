@@ -323,6 +323,39 @@ impl MeetingStore {
         })
     }
 
+    /// U8, Einstellung „Mein Name“: die Person dieses Namens wird „Ich“ (angelegt,
+    /// wenn es sie nicht gibt; gleicher Name = gleiche Person). Der vorherige Name
+    /// verliert das Kennzeichen wieder, aber nur, wenn die Person keine Adresse hat
+    /// (dann kam sie aus dem Kalender und gehoert ihm). Gibt die Person-ID zurueck.
+    pub fn set_self_person(
+        &self,
+        previous: Option<&str>,
+        name: Option<&str>,
+    ) -> Result<Option<String>> {
+        let new_name = name.and_then(display_name);
+        let new_key = new_name.as_deref().map(normalize_name).unwrap_or_default();
+        if let Some(old) = previous.and_then(display_name) {
+            let old_key = normalize_name(&old);
+            if !old_key.is_empty() && old_key != new_key {
+                let conn = self.get_connection()?;
+                if let Match::ByName(found) = lookup(&conn, None, &old_key)? {
+                    if found.is_self && found.email.is_none() {
+                        conn.execute(
+                            "UPDATE humans SET is_self = 0, updated_at = ?1 WHERE id = ?2",
+                            params![now_secs(), found.id],
+                        )?;
+                    }
+                }
+            }
+        }
+        let Some(new_name) = new_name else {
+            return Ok(None);
+        };
+        let id = self.upsert_person(None, Some(&new_name), "manual")?;
+        self.mark_person_self(&id)?;
+        Ok(Some(id))
+    }
+
     /// Kennzeichnet eine Person als „Ich“ (z. B. aus dem eigenen Konto des Kalenders).
     pub fn mark_person_self(&self, human_id: &str) -> Result<()> {
         let conn = self.get_connection()?;
@@ -1414,5 +1447,65 @@ mod tests {
         assert_eq!(names("MULLER"), vec!["Ben Müller"], "ohne Diakritika");
         assert_eq!(names("kunde.de"), vec!["Ben Müller"], "nach Adresse/Firma");
         assert!(names("niemand").is_empty());
+    }
+
+    #[test]
+    fn my_name_makes_one_person_self_and_moves_with_the_name() {
+        let (_d, s) = tmp_store();
+        let anna = s.upsert_person(None, Some("Anna Berg"), "manual").unwrap();
+        // Name gesetzt: die Person wird angelegt und ist "ich".
+        let me = s
+            .set_self_person(None, Some("Patrick Wolff"))
+            .unwrap()
+            .unwrap();
+        let list = s.list_people(None, &[]).unwrap();
+        let mine: Vec<&PersonSummary> = list.iter().filter(|p| p.is_self).collect();
+        assert_eq!(mine.len(), 1);
+        assert_eq!(
+            (mine[0].id.as_str(), mine[0].name.as_str()),
+            (me.as_str(), "Patrick Wolff")
+        );
+        // Nochmal dasselbe: keine zweite Person.
+        assert_eq!(
+            s.set_self_person(Some("Patrick Wolff"), Some("Wolff, Patrick"))
+                .unwrap()
+                .as_deref(),
+            Some(me.as_str())
+        );
+        assert_eq!(s.list_people(None, &[]).unwrap().len(), 2);
+        // Gibt es die Person schon, wird sie markiert statt doppelt angelegt.
+        assert_eq!(
+            s.set_self_person(Some("Patrick Wolff"), Some("Anna Berg"))
+                .unwrap()
+                .as_deref(),
+            Some(anna.as_str())
+        );
+        let list = s.list_people(None, &[]).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(
+            list.iter()
+                .filter(|p| p.is_self)
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Anna Berg"],
+            "der alte Name ist kein \"ich\" mehr"
+        );
+        // Name geleert: nur das alte Kennzeichen faellt weg.
+        assert_eq!(s.set_self_person(Some("Anna Berg"), None).unwrap(), None);
+        assert!(s.list_people(None, &[]).unwrap().iter().all(|p| !p.is_self));
+    }
+
+    #[test]
+    fn a_person_with_an_address_keeps_the_self_flag_when_the_name_changes() {
+        let (_d, s) = tmp_store();
+        let me = s
+            .upsert_person(Some("ich@wolff.de"), Some("Patrick Wolff"), "calendar")
+            .unwrap();
+        s.set_self_person(None, Some("Patrick Wolff")).unwrap();
+        s.set_self_person(Some("Patrick Wolff"), Some("Paddy"))
+            .unwrap();
+        let list = s.list_people(None, &[]).unwrap();
+        let old = list.iter().find(|p| p.id == me).unwrap();
+        assert!(old.is_self, "Personen mit Adresse gehoeren dem Kalender");
     }
 }

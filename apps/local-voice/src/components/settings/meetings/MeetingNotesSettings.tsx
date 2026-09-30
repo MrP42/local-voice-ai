@@ -11,6 +11,7 @@ import { SettingContainer } from "../../ui/SettingContainer";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { useSettings } from "../../../hooks/useSettings";
 import { MeetingDetectSettings } from "./MeetingDetectSettings";
+import { MeetingSelfNameSetting } from "./MeetingSelfNameSetting";
 import { MeetingSemanticSearchSetting } from "./MeetingSemanticSearchSetting";
 
 /**
@@ -122,6 +123,7 @@ export const MeetingNotesSettings: React.FC = () => {
           disabled={isUpdating("meeting_default_template_id")}
         />
       </SettingContainer>
+      <MeetingSelfNameSetting />
       <MeetingSemanticSearchSetting />
       <MeetingDetectSettings />
     </>

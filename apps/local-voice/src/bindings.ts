@@ -2317,6 +2317,44 @@ async meetingSpeakerNotices(meetingId: string) : Promise<Result<string[], string
 }
 },
 /**
+ * Namensvorschlaege aus dem Gesagten (Hinweis "Person 2 ist vermutlich Andre").
+ * Der Nutzer uebernimmt mit `meeting_speaker_rename` oder verwirft mit
+ * `meeting_speaker_suggestion_dismiss`; hier wird nichts gespeichert.
+ */
+async meetingSpeakerSuggestions(meetingId: string) : Promise<Result<NameSuggestion[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_suggestions", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verwirft einen Namensvorschlag dauerhaft.
+ */
+async meetingSpeakerSuggestionDismiss(meetingId: string, channel: number, speakerIndex: number, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_suggestion_dismiss", { meetingId, channel, speakerIndex, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_self_name` ("Mein Name"): der Kanal "Ich" und der
+ * dominante Sprecher am Mikrofon tragen ihn; in Personen ist er "ich".
+ * Leer = "Ich". Wirkt sofort in allen Ansichten, Notizen und Exporten, die
+ * danach entstehen.
+ */
+async changeMeetingSelfNameSetting(name: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_self_name_setting", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * "Mehrere Personen am Mikrofon": das Mikrofon dieser Besprechung wird
  * ebenfalls in Sprecher getrennt (`metadata_json.diarize_mic`). Wirkt beim
  * Enddurchlauf nach dem Stopp.
@@ -4248,6 +4286,12 @@ meeting_detect_ignored_apps?: string[];
  */
 meeting_self_emails?: string[]; 
 /**
+ * U8: Mein Name. Der Kanal "Ich" und der dominante Sprecher am Mikrofon
+ * tragen ihn (statt "Ich"); in Personen ist er als "ich" markiert. Ohne den
+ * Schluessel (aeltere settings.json) oder leer: "Ich".
+ */
+meeting_self_name?: string | null; 
+/**
  * M5-P5b (E11): Vorlauf der Erinnerung vor einem Termin in Sekunden;
  * 0 = Erinnerung aus. Ohne den Schluessel (aeltere settings.json) gilt 60.
  */
@@ -5237,6 +5281,22 @@ sha256: string | null } } |
  */
 "Local"
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
+/**
+ * Eine Belegstelle: der Satz, in dem die Person angesprochen wird.
+ */
+export type NameEvidence = { segment_index: number; start_ms: number; quote: string; 
+/**
+ * `thanks`, `address`, `greeting` oder `intro`.
+ */
+rule: string }
+/**
+ * "Person 2 ist vermutlich Andre (3 Belege)".
+ */
+export type NameSuggestion = { channel: number; speaker_index: number; name: string; 
+/**
+ * 0.5 bis 1.0.
+ */
+confidence: number; evidence: NameEvidence[] }
 /**
  * Ein Block des Notizblocks. Die ID erzeugt das Frontend (ULID); `at_ms` ist
  * die Audioposition beim Anlegen (`None` = importiert oder nach dem Stopp
