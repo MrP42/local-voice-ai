@@ -303,11 +303,18 @@ pub enum FollowupMode {
     Eml,
 }
 
-/// Erzeugt den Follow-up-Entwurf: das Recipe "Follow-up-E-Mail an ..." läuft
-/// im Scope der Besprechung (gleicher Motor, gleiche Sperren und Fehlercodes
-/// wie `meeting_chat_ask`), danach wird die Antwort zum Entwurf. Empfänger
-/// sind die Teilnehmenden ohne die eigene Person (leer, wenn keine bekannt).
-/// Zusätzlicher Fehlercode: `followup_empty` (das Modell lieferte keinen Text).
+/// Erzeugt den Follow-up-Entwurf (B13): eigener Prompt über KI-Notizen, eigene
+/// Notizen und Protokoll (soweit vorhanden), sonst das Transkript; das Recipe
+/// "Follow-up-E-Mail an ..." ist die Vorlage. Bewusst NICHT über den Chat: der
+/// hat eine strenge Belegpflicht und antwortet bei Aufnahmen ohne Beschluss
+/// "nicht gefunden". Gleiche Sperren wie der Chat (ein Lauf gleichzeitig, kein
+/// lokales CPU-Modell während einer Aufnahme, KI-Notizen haben Vorrang).
+/// Empfänger sind die Teilnehmenden ohne die eigene Person (leer, wenn keine
+/// bekannt). Fehlercodes: die des Chats (`no_provider`, `no_model`,
+/// `memory_low`, `recording_active_cpu`, `chat_busy`, `llm_failed`,
+/// `meeting_not_found`, `store_failed`) sowie `followup_no_content` (keine
+/// Grundlage, ein neuer Versuch hilft nicht) und `followup_empty` (das Modell
+/// lieferte auch im zweiten Versuch keinen Text).
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_followup_draft(
@@ -316,52 +323,57 @@ pub async fn meeting_followup_draft(
     recorder: State<'_, Arc<MeetingRecorderManager>>,
     meeting_id: String,
 ) -> Result<crate::managers::meetings::mail::MailDraft, String> {
-    use crate::managers::meetings::chat::{ChatRequest, ChatScope, RecipeCall};
-    use crate::managers::meetings::mail::{draft_from_answer, participant_recipients};
+    use crate::managers::meetings::chat::controller::{running_flag, CancelFlag, ChatEnv};
+    use crate::managers::meetings::followup::{draft_guarded, RunLimits};
+    use crate::managers::meetings::mail::participant_recipients;
     let settings = crate::settings::get_settings(&app);
-    let (title, recipients) = {
+    let (recipients, addressee) = {
         let store = Arc::clone(&store);
         let id = meeting_id.clone();
         let own = settings.meeting_self_emails.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            let meeting = store
+            store
                 .get_meeting(&id)
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| "meeting_not_found".to_string())?;
             let recipients =
                 participant_recipients(&store, &id, &own).map_err(|e| e.to_string())?;
-            Ok::<_, String>((meeting.title, recipients))
+            let addressee = if recipients.names.is_empty() {
+                "die Teilnehmenden".to_string()
+            } else {
+                recipients.names.join(", ")
+            };
+            Ok::<_, String>((recipients, addressee))
         })
         .await
         .map_err(|e| e.to_string())??
     };
-    let addressee = if recipients.names.is_empty() {
-        "die Teilnehmenden".to_string()
-    } else {
-        recipients.names.join(", ")
+    let local = crate::managers::meetings::llm_call::resolve_provider_coded(&settings)
+        .map(|(provider, _, _)| crate::managers::llm::is_local(&provider))
+        .unwrap_or(false);
+    let env = ChatEnv {
+        ctx_tokens: crate::managers::llm::DEFAULT_CONTEXT_TOKENS,
+        backend_cpu: local && crate::commands::meeting_chat::local_backend_is_cpu(&app).await,
+        recording_active: recorder.is_recording(),
+        now: chrono::Utc::now().timestamp(),
+        cancel: CancelFlag::default(),
+        enhance_running: Arc::new(crate::commands::meeting_chat::enhance_running),
     };
-    let mut values = std::collections::HashMap::new();
-    values.insert("empfaenger".to_string(), addressee);
-    let req = ChatRequest {
-        request_id: format!("followup-{}", ulid::Ulid::new()),
-        thread_id: None,
-        scope: ChatScope::Meeting {
-            meeting_id: meeting_id.clone(),
-        },
-        question: String::new(),
-        recipe: Some(RecipeCall {
-            recipe_id: format!(
-                "{}follow-up-mail",
-                crate::managers::meetings::search::index::BUILTIN_PREFIX
-            ),
-            values,
-        }),
-    };
-    let answer = crate::commands::meeting_chat::meeting_chat_ask(app, store, recorder, req).await?;
-    if answer.not_found || answer.text.trim().is_empty() {
-        return Err("followup_empty".to_string());
-    }
-    Ok(draft_from_answer(&answer.text, &title, recipients.emails))
+    draft_guarded(
+        running_flag(),
+        &settings,
+        Arc::clone(&store),
+        &meeting_id,
+        &addressee,
+        recipients.emails,
+        &env,
+        RunLimits::default(),
+    )
+    .await
+    .map_err(|e| {
+        log::warn!("Follow-up fehlgeschlagen: {}", e.code);
+        e.to_string()
+    })
 }
 
 /// Gibt einen (im Dialog bearbeiteten) Entwurf aus. `Copy`: HTML + Text in die

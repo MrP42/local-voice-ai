@@ -2039,6 +2039,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.eval_diarization.is_some() // M3-P3a
         || cli_args.eval_chat.is_some() // M4-P4f
         || cli_args.export_meeting.is_some() // M6-P6a
+        || cli_args.followup_draft.is_some() // P6f
         || cli_args.calendar_dump.is_some() // M5-P5a
         || cli_args.detect_mic; // M5-P5c
 
@@ -2350,6 +2351,22 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_eval_diarization(&app_handle, &args, &dir)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // P6f (B13): Follow-up-Entwurf einer Sandbox-Besprechung.
+                if let Some(id) = cli_args.followup_draft.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_followup_draft(&app_handle, &args, &id)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -2745,6 +2762,109 @@ fn run_headless_export_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> i32
         Err(e) => {
             eprintln!("error: {e}");
             1
+        }
+    }
+}
+
+// P6f (B13): `--followup-draft <id>`. Entwurf der Follow-up-Mail einer
+// Sandbox-Besprechung (`LVA_MEETINGS_DIR` ist Pflicht, damit nie die
+// produktive meetings.db gelesen wird) mit dem eingestellten oder per
+// `--model` gewaehlten lokalen Sprachmodell. Globale Zugriffe des lokalen
+// Servers und Speicherwaechter wie in `run_headless_eval_notes`; der Server
+// wird am Ende gestoppt. Ausgabe: JSON (`to`, `subject`, `body_text`) auf
+// stdout, mit `--out` auch in eine Datei. Exit 0 Entwurf, 3 kein Inhalt oder
+// leere Antwort, 1 Fehler, 2 Eingabe (keine Sandbox, unbekannte Besprechung).
+fn run_headless_followup_draft(app: &AppHandle, args: &CliArgs, id: &str) -> i32 {
+    use managers::meetings::followup::{draft, RunLimits, CODE_EMPTY, CODE_NO_CONTENT};
+    use managers::meetings::mail::participant_recipients;
+    use managers::meetings::store::MeetingStore;
+
+    crate::selftest::begin_headless_run();
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if sandbox.is_none() {
+        eprintln!(
+            "error: --followup-draft requires {} (sandbox); it never reads the productive store",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let mut settings = get_settings(app);
+    if let Some(model) = args.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        managers::meetings::notes::eval::apply_model_override(&mut settings, model.trim());
+    }
+    let store = match MeetingStore::new(app) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    match store.get_meeting(id) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            eprintln!("error: no meeting {id}");
+            return 2;
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    }
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+    let (recipients, addressee) = match participant_recipients(&store, id, &settings.meeting_self_emails) {
+        Ok(r) if !r.names.is_empty() => {
+            let names = r.names.join(", ");
+            (r, names)
+        }
+        Ok(r) => (r, "die Teilnehmenden".to_string()),
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    };
+    let result = tauri::async_runtime::block_on(draft(
+        &settings,
+        store.clone(),
+        id,
+        &addressee,
+        recipients.emails,
+        RunLimits::default(),
+    ));
+    llm_server.stop();
+    match result {
+        Ok(d) => {
+            let payload = serde_json::json!({
+                "to": d.to,
+                "subject": d.subject,
+                "body_text": d.body_text,
+            });
+            emit_headless_payload(&payload, args.out.as_deref());
+            0
+        }
+        Err(e) => {
+            eprintln!("error: follow-up draft failed: {e}");
+            if e.code == CODE_NO_CONTENT || e.code == CODE_EMPTY {
+                3
+            } else {
+                1
+            }
         }
     }
 }

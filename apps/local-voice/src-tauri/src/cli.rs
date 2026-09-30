@@ -356,4 +356,15 @@ pub struct CliArgs {
     /// closed the pipe, 1 on an I/O error.
     #[arg(long)]
     pub mcp: bool,
+
+    // P6f (B13)
+    /// Draft the follow-up e-mail of one meeting with the configured language
+    /// model (--model picks a local one for this run) and print it as JSON
+    /// (to, subject, body_text), then exit. SANDBOX ONLY: requires
+    /// LVA_MEETINGS_DIR (prepare the meeting with --import-meeting), so it can
+    /// never read the productive meetings.db. Stops the local llama-server at
+    /// the end. Exit 0 draft written, 3 no content / empty answer, 1 error,
+    /// 2 bad input (no sandbox, unknown meeting).
+    #[arg(long, value_name = "ID")]
+    pub followup_draft: Option<String>,
 }
