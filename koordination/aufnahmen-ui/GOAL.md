@@ -91,6 +91,7 @@ Die Seite „Aufnahmen“ arbeitet wie das Vorlesen-Modul in Spalten: links Sess
 -
 
 ## Entscheidungen
+- 2026-09-30 Patrick: Die Ordner heißen in der Oberfläche „Projekte“ (en „Projects“), nicht „Sessions“; im Goal-Text bleibt „Sessions“ als Arbeitsbegriff, `data-testid="rec-sessions"` bleibt.
 - 2026-09-30 Patrick am Prototyp (https://claude.ai/artifact/3RaBLbuyHDX1WnQtAvMQJS): R1 = Variante B (Sessions | Notizen/KI-Notizen/Protokoll | rechts Bedienung + Transkript/Fragen); Besprechung in mehreren Sessions (Ziehen verschiebt, Strg+Ziehen fügt hinzu); Sessions eine Ebene; Aufnahme-Optionen in den Einwilligungs-Startdialog; Kalender als „Als Nächstes“ unten in der Sessions-Spalte.
 - 2026-09-30 Patrick: R2 ja (Sessions = oberste Ebene der M4-Ordner), R3 Budget – gemeinsam mit YouTube-Bündel 1 aus #66 zusammen 3,5 MTok (Aufnahmen-UI ~2,5); R1 (Anordnung) wählt Patrick am Klick-Prototyp (AK1). Zusätzlich B17 aus #59: Neu-Transkription tauscht die Fassung erst am Ende.
 - 2026-09-30 Patrick: nächstes Goal nach Granola = Aufnahmen-Oberfläche nach Vorbild Vorlesen (Spalten, Sessions/Ordner, kompakte Details, eine Scrollbar, responsive, persistent).
