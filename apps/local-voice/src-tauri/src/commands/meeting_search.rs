@@ -17,7 +17,9 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::managers::meetings::search::index::{Folder, MeetingFilter, MeetingSearchPage};
+use crate::managers::meetings::search::index::{
+    Folder, FolderCounts, MeetingFilter, MeetingSearchPage,
+};
 use crate::managers::meetings::store::MeetingStore;
 
 // ---------------------------------------------------------------------------
@@ -65,6 +67,7 @@ fn normalize_filter(filter: MeetingFilter) -> Result<MeetingFilter, String> {
         source,
         has_notes: filter.has_notes.filter(|v| *v),
         person_id: non_empty(filter.person_id),
+        unfiled: filter.unfiled.filter(|v| *v),
     })
 }
 
@@ -154,6 +157,25 @@ pub async fn meeting_folders_delete(
     id: String,
 ) -> Result<(), String> {
     store.folder_delete(&id).map_err(|e| e.to_string())
+}
+
+/// Zaehler der Projekte-Spalte: alle Besprechungen und die ohne Projekt.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_folders_counts(
+    store: State<'_, Arc<MeetingStore>>,
+) -> Result<FolderCounts, String> {
+    store.folder_counts().map_err(|e| e.to_string())
+}
+
+/// Ordnet die Ordner (Projekte) neu; `ids` stehen vorn, der Rest folgt.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_folders_reorder(
+    store: State<'_, Arc<MeetingStore>>,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    store.folders_reorder(&ids).map_err(|e| e.to_string())
 }
 
 /// Setzt die Ordner einer Besprechung auf genau `folder_ids` (n:m).
@@ -314,12 +336,21 @@ mod tests {
             folder_id: Some("  ".into()),
             source: Some(String::new()),
             has_notes: Some(false),
+            unfiled: Some(false),
             ..filter()
         })
         .unwrap();
         assert_eq!(f.folder_id, None);
         assert_eq!(f.source, None);
         assert_eq!(f.has_notes, None);
+        assert_eq!(f.unfiled, None);
+        // "Ohne Projekt" bleibt stehen.
+        let f = normalize_filter(MeetingFilter {
+            unfiled: Some(true),
+            ..filter()
+        })
+        .unwrap();
+        assert_eq!(f.unfiled, Some(true));
     }
 
     #[test]

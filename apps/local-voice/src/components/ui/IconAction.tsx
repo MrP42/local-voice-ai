@@ -23,10 +23,13 @@ export interface IconActionProps extends Omit<
   badgeTestId?: string;
   /** Tooltip zurückhalten, solange ein Menü am Knopf offen ist. */
   suppressTooltip?: boolean;
+  /** `sm` = 28 x 28 px für schmale Spaltenköpfe (Projekte), sonst 36 x 36 px. */
+  size?: "md" | "sm";
 }
 
 /**
- * Ein Symbol-Knopf der Bedienspalte: immer 36 x 36 px, Symbol 18 px, kein
+ * Ein Symbol-Knopf der Bedienspalte: 36 x 36 px (schmal: `size="sm"`, 28 px),
+ * Symbol 18 px, kein
  * Text. Alles, was sonst auf dem Knopf stünde, steht im Tooltip und im
  * aria-label — so bleiben alle Knöpfe gleich groß und die Zeile ruhig.
  * Die Optik entspricht `Button variant="secondary"`; ein eigener Baustein,
@@ -44,6 +47,7 @@ export const IconAction = forwardRef<HTMLButtonElement, IconActionProps>(
       badge,
       badgeTestId,
       suppressTooltip = false,
+      size = "md",
       className = "",
       type = "button",
       ...props
@@ -71,7 +75,7 @@ export const IconAction = forwardRef<HTMLButtonElement, IconActionProps>(
           aria-label={label}
           aria-describedby={tooltipId}
           data-testid={testId}
-          className={`relative inline-flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-lg border border-mid-gray/20 bg-mid-gray/10 text-text transition-colors hover:border-logo-primary hover:bg-background-ui/30 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${className}`}
+          className={`relative inline-flex ${size === "sm" ? "h-[28px] w-[28px]" : "h-[36px] w-[36px]"} shrink-0 items-center justify-center rounded-lg border border-mid-gray/20 bg-mid-gray/10 text-text transition-colors hover:border-logo-primary hover:bg-background-ui/30 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${className}`}
           {...props}
         >
           <Icon

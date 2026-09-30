@@ -26,6 +26,10 @@ import { LiveNotesPad } from "./notes/LiveNotesPad";
 import { MeetingList } from "./MeetingList";
 import { MeetingDetail } from "./MeetingDetail";
 import { RecWorkspace, isRightTab, type RightTab } from "./RecWorkspace";
+import { useProjects } from "./projects/useProjects";
+import { useMeetingDrag } from "./projects/useMeetingDrag";
+import { ProjectsRail } from "./projects/ProjectsRail";
+import { DragGhost } from "./projects/DragGhost";
 import { useRecLayout } from "./useRecLayout";
 import { ChatPanel } from "./chat/ChatPanel";
 import { recipeTitleText } from "./chat/RecipeMenu";
@@ -193,6 +197,18 @@ export const MeetingsSettings: React.FC = () => {
   );
   const recording = useRecordingActive();
   const layout = useRecLayout(recording.active);
+  // Projekte (= Ordner) und das Ziehen von Besprechungen darauf.
+  const projects = useProjects();
+  const drag = useMeetingDrag((meeting, target, additive) => {
+    void projects.assign(
+      meeting,
+      projects.selection,
+      target,
+      additive ? "add" : "move",
+    );
+  });
+  const [projectsActionsEl, setProjectsActionsEl] =
+    useState<HTMLDivElement | null>(null);
 
   // Die Bereiche, in die die Detailansicht ihre Teile legt.
   const [contentEl, setContentEl] = useState<HTMLDivElement | null>(null);
@@ -371,8 +387,23 @@ export const MeetingsSettings: React.FC = () => {
     >
       <RecWorkspace
         layout={layout}
+        projectsActionsRef={setProjectsActionsEl}
+        projectsRail={(open) => (
+          <ProjectsRail
+            folders={projects.folders}
+            counts={projects.counts}
+            selection={projects.selection}
+            onPick={(id) => {
+              projects.select(id);
+              open();
+            }}
+          />
+        )}
         projectsBody={
           <MeetingList
+            projects={projects}
+            drag={drag}
+            actionsEl={projectsActionsEl}
             onSelect={(meeting) => {
               select(meeting);
               layout.drawer.setOpen(false);
@@ -408,6 +439,7 @@ export const MeetingsSettings: React.FC = () => {
         }
         chatBody={chatBody}
       />
+      <DragGhost drag={drag.drag} />
       {selected && (
         <MeetingDetail
           key={selected.id}

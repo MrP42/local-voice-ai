@@ -1076,8 +1076,9 @@ test.describe("Chat über viele Besprechungen", () => {
   }) => {
     await openRecordings(page);
     await page
-      .getByRole("group", { name: "Ordner" })
-      .getByRole("button", { name: /Vertrieb/ })
+      .getByTestId("rec-sessions")
+      .getByTestId("project-row")
+      .filter({ hasText: "Vertrieb" })
       .click();
     await expect(page.getByText("Teamrunde")).toHaveCount(0);
     await page
@@ -1162,11 +1163,12 @@ test.describe("Chat über viele Besprechungen", () => {
   }) => {
     await withAudio(page);
     await openRecordings(page);
-    await page.getByRole("button", { name: "Auswählen", exact: true }).click();
+    await page.getByTestId("projects-more").click();
+    await page.getByRole("menuitem", { name: "Auswählen", exact: true }).click();
     await page
       .getByRole("checkbox", { name: "Kundentermin Meyer auswählen" })
-      .check();
-    await page.getByRole("checkbox", { name: "Teamrunde auswählen" }).check();
+      .click();
+    await page.getByRole("checkbox", { name: "Teamrunde auswählen" }).click();
     await expect(page.getByText("2 ausgewählt")).toBeVisible();
     await page.getByRole("button", { name: "Auswahl fragen" }).click();
     const chips = panel(page).getByRole("group", { name: "Eingrenzung" });

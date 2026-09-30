@@ -1896,6 +1896,8 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_search::meeting_folders_list,
             commands::meeting_search::meeting_folders_save,
             commands::meeting_search::meeting_folders_delete,
+            commands::meeting_search::meeting_folders_reorder,
+            commands::meeting_search::meeting_folders_counts,
             commands::meeting_search::meetings_set_folders,
             commands::meeting_search::meetings_get_folders,
             // M4-P4b: Index-Status, Embedding-Modell, Einstellung

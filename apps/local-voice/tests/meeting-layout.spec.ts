@@ -57,7 +57,7 @@ test("AK2: three areas side by side, projects left, controls right", async ({
   expect(controls.width).toBeCloseTo(420, 0);
   // Die Arbeitsflaeche nimmt den Rest.
   expect(content.width).toBeGreaterThan(900);
-  await expect(page.getByTestId("rec-sessions")).toContainText("Besprechungen");
+  await expect(page.getByTestId("rec-sessions")).toContainText("Alle Aufnahmen");
   await expect(
     page.getByTestId("rec-sessions").getByRole("heading", { name: "Projekte" }),
   ).toBeVisible();

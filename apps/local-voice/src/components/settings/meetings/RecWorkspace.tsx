@@ -96,8 +96,12 @@ const SplitHandle: React.FC<{
 
 interface RecWorkspaceProps {
   layout: RecLayout;
-  /** Liste der Besprechungen (heute: MeetingList, Inhalt unveraendert). */
+  /** Projekte und ihre Besprechungen (MeetingList); scrollt selbst. */
   projectsBody: React.ReactNode;
+  /** Platz im Kopf der Projekte-Spalte fuer Symbolknoepfe (Portal-Ziel). */
+  projectsActionsRef: (el: HTMLDivElement | null) => void;
+  /** Eingeklappte Leiste: Projekte als Kuerzel; `open` oeffnet Spalte bzw. Schublade. */
+  projectsRail: (open: () => void) => React.ReactNode;
   /** Gewaehlte Besprechung: die Detailansicht haengt ihre Teile in die Slots. */
   detailActive: boolean;
   slotRefs: RecSlotRefs;
@@ -125,6 +129,8 @@ interface RecWorkspaceProps {
 export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
   layout,
   projectsBody,
+  projectsActionsRef,
+  projectsRail,
   detailActive,
   slotRefs,
   idleContent,
@@ -185,32 +191,41 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
         <h2 className="text-xs font-semibold uppercase tracking-wide text-text/60">
           {projectsTitle}
         </h2>
-        {drawerOpen ? (
-          <button
-            type="button"
-            className={ICON_BUTTON}
-            title={t("meetings.projects.close")}
-            aria-label={t("meetings.projects.close")}
-            onClick={() => setDrawerOpen(false)}
-          >
-            <X width={16} height={16} aria-hidden="true" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className={ICON_BUTTON}
-            title={t("meetings.projects.collapse")}
-            aria-label={t("meetings.projects.collapse")}
-            data-testid="sessions-collapse"
-            onClick={() => sessions.setCollapsed(true)}
-          >
-            <PanelLeftClose width={16} height={16} aria-hidden="true" />
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          <div
+            ref={projectsActionsRef}
+            className="flex items-center gap-1"
+            data-testid="projects-actions"
+          />
+          {drawerOpen ? (
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              title={t("meetings.projects.close")}
+              aria-label={t("meetings.projects.close")}
+              onClick={() => setDrawerOpen(false)}
+            >
+              <X width={16} height={16} aria-hidden="true" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              title={t("meetings.projects.collapse")}
+              aria-label={t("meetings.projects.collapse")}
+              data-testid="sessions-collapse"
+              onClick={() => sessions.setCollapsed(true)}
+            >
+              <PanelLeftClose width={16} height={16} aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </div>
+      {/* Die Liste scrollt in sich (Suche oben, "Als Naechstes" unten stehen
+          fest): hier darf nichts scrollen. */}
       <div
         data-testid="rec-sessions-scroll"
-        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
+        className="min-h-0 flex-1 overflow-hidden"
       >
         {projectsBody}
       </div>
@@ -219,13 +234,15 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
 
   // Eingeklappt (oder zu schmal fuer die Spalte): eine Leiste mit dem Knopf,
   // der die Spalte bzw. die Schublade oeffnet.
+  const openProjects = () =>
+    mode === "wide" ? sessions.setCollapsed(false) : setDrawerOpen(true);
   const sessionsRail =
     !narrow && !showColumn ? (
       <div
         data-testid="rec-sessions"
         role="region"
         aria-label={projectsTitle}
-        className="flex shrink-0 flex-col items-center pt-1"
+        className="flex min-h-0 shrink-0 flex-col items-center pt-1"
         style={{ width: `${sessions.width}px` }}
       >
         <button
@@ -234,12 +251,11 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
           title={t("meetings.projects.expand")}
           aria-label={t("meetings.projects.expand")}
           data-testid="sessions-expand"
-          onClick={() =>
-            mode === "wide" ? sessions.setCollapsed(false) : setDrawerOpen(true)
-          }
+          onClick={openProjects}
         >
           <PanelLeftOpen width={16} height={16} aria-hidden="true" />
         </button>
+        {projectsRail(openProjects)}
       </div>
     ) : null;
 
