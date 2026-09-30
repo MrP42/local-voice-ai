@@ -1,20 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ChevronDown,
-  ChevronRight,
-  Mic,
-  Pause,
-  Play,
-  Square,
-} from "lucide-react";
+import { Mic, Pause, Play, Square } from "lucide-react";
 import {
   commands,
   events,
-  type BriefInfo,
   type CalEvent,
   type Folder,
   type HealthState,
+  type Meeting,
 } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { usePersistentState } from "../../../hooks/usePersistentState";
@@ -27,13 +20,20 @@ import { MeetingChatNotice } from "./MeetingChatNotice";
 import { MeetingImportAction } from "./MeetingImportAction";
 import { YoutubeLinkAction } from "./youtube/YoutubeLinkAction";
 import { NO_PROJECT, StartRecordingDialog } from "./StartRecordingDialog";
-import { BriefButton } from "./people/BriefButton";
 import { flushAllNotes } from "./notes/useNotesAutosave";
 import {
-  distinctAttendees,
-  hoursUntilEndOfDay,
-  todaysEvents,
-} from "@/lib/meetingCalendar";
+  getSelectedProject,
+  setSelectedProject,
+  useSelectedProject,
+} from "./projects/selectedProject";
+import {
+  ALL_PROJECTS,
+  NO_PROJECT as NO_PROJECT_VIEW,
+} from "./projects/projectModel";
+import {
+  subscribeStartRequest,
+  takeStartRequest,
+} from "@/lib/recordingStartRequest";
 
 type Phase = "idle" | "recording" | "paused";
 
@@ -131,12 +131,17 @@ type EventChoice = { event: CalEvent; mode: "auto" | "prompt" };
 const CALENDAR_REFRESH_MS = 60_000;
 
 interface RecorderCardProps {
-  /** M5-P5e: "Vorbereiten" an einem Termin der Karte "Naechste Termine". */
-  onPrepare?: (info: BriefInfo) => void;
+  /** Die Aufnahme laeuft: die neue Besprechung wird zur gewaehlten. */
+  onStarted?: (meeting: Meeting) => void;
+  /** Der eine Importweg (Symbol "Datei importieren"). */
+  importApi: { busy: boolean; pick: () => void };
 }
 
-export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
-  const { t, i18n } = useTranslation();
+export const RecorderCard: React.FC<RecorderCardProps> = ({
+  onStarted,
+  importApi,
+}) => {
+  const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
   const [title, setTitle] = useState("");
   // Vorgabe und letzte Wahl liegen in den Einstellungen (`meeting_capture_system`,
@@ -170,18 +175,23 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [autoNotes, setAutoNotes] = useState<AutoNotes | null>(null);
   const [health, setHealth] = useState<HealthView>(NO_HEALTH);
-  // Kalender (M5-P5b): Vorschlag aus laufendem/naechstem Termin (+-15 min),
-  // gewaehlter Termin und die Liste "Naechste Termine (heute)".
+  // Kalender (M5-P5b): Vorschlag aus laufendem/naechstem Termin (+-15 min) und
+  // gewaehlter Termin. Die Liste der Termine steht links ("Als Naechstes").
   const [suggestion, setSuggestion] = useState<CalEvent | null>(null);
   const [eventChoice, setEventChoice] = useState<EventChoice | null>(null);
   const [suggestionCleared, setSuggestionCleared] = useState(false);
-  const [upcoming, setUpcoming] = useState<CalEvent[]>([]);
-  const [hasCalendar, setHasCalendar] = useState(false);
-  const [upcomingOpen, setUpcomingOpen] = useState(true);
+  // Das links gewaehlte Projekt belegt den Startdialog vor.
+  const selectedProject = useSelectedProject();
+  const selectedProjectRef = useRef(selectedProject.projectId);
+  selectedProjectRef.current = selectedProject.projectId;
   // Termine, zu denen schon aufgenommen wurde: kein zweiter Vorschlag.
   const usedEventKeys = useRef(new Set<string>());
   // Besprechung, deren automatische KI-Notizen die Statuszeile zeigt.
   const notesMeetingRef = useRef<string | null>(null);
+  // Die Besprechung, die gerade aufgenommen wird: nur ihr Ende beendet die
+  // Aufnahme. Ein Import, der waehrend der Aufnahme fertig wird, meldet auch
+  // "processing" und "ready" - das darf die Karte nicht auf "bereit" stellen.
+  const recordingIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     commands.meetingsIsRecording().then((r) => {
@@ -190,6 +200,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
     // Seite mitten in einer Aufnahme geoeffnet: die Uhr startet bei der Position.
     void commands.meetingsRecordingPosition().then((r) => {
       if (r.status === "ok" && r.data) {
+        recordingIdRef.current = recordingIdRef.current ?? r.data.meeting_id;
         setElapsedMs((prev) => Math.max(prev, r.data!.position_ms));
       }
     });
@@ -198,8 +209,16 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
       const payload = e.payload;
       if (payload.kind === "state") {
         if (payload.status === "recording" || payload.status === "paused") {
+          recordingIdRef.current = payload.meeting_id;
           setPhase(payload.paused ? "paused" : "recording");
         } else {
+          if (
+            recordingIdRef.current !== null &&
+            payload.meeting_id !== recordingIdRef.current
+          ) {
+            return;
+          }
+          recordingIdRef.current = null;
           setPhase("idle");
           if (payload.status === "processing") {
             // Ende der Aufnahme: ab jetzt gehoert die Statuszeile dieser Besprechung.
@@ -255,17 +274,9 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
     if (!idle) return;
     let cancelled = false;
     const refresh = async () => {
-      const now = Date.now();
-      const [sources, near, list] = await Promise.all([
-        commands.calendarSourcesList(),
-        commands.calendarSuggestEvent(),
-        commands.calendarUpcoming(hoursUntilEndOfDay(now)),
-      ]);
+      const near = await commands.calendarSuggestEvent();
       if (cancelled) return;
-      if (sources.status === "ok")
-        setHasCalendar((sources.data ?? []).length > 0);
       if (near.status === "ok") setSuggestion(near.data ?? null);
-      if (list.status === "ok") setUpcoming(todaysEvents(list.data ?? [], now));
     };
     void refresh();
     const timer = setInterval(() => void refresh(), CALENDAR_REFRESH_MS);
@@ -288,7 +299,12 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
     setError(null);
     setConsentOpen(true);
     void commands.meetingFoldersList().then((result) => {
-      if (result.status === "ok") setProjects(result.data ?? []);
+      if (result.status !== "ok") return;
+      const list = result.data ?? [];
+      setProjects(list);
+      // Vorbelegung: das links gewaehlte Projekt, sonst das zuletzt genutzte.
+      const preset = selectedProjectRef.current;
+      if (preset && list.some((f) => f.id === preset)) setProjectChoice(preset);
     });
   };
 
@@ -317,13 +333,23 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
       setError(translateMeetingError(result.error, t));
       return;
     }
+    recordingIdRef.current = result.data.id;
     setStartedWithSystem(captureSetting);
     setElapsedMs(0);
-    if (projects.some((p) => p.id === projectChoice)) {
+    const placed = projects.some((p) => p.id === projectChoice);
+    if (placed) {
       void commands
         .meetingsSetFolders(result.data.id, [projectChoice])
         .then(() => notifyMeetingsChanged());
     }
+    // Die Liste links soll die laufende Aufnahme zeigen: wer in "Alle
+    // Aufnahmen" steht, bleibt dort; sonst folgt die Liste dem Ziel.
+    const view = getSelectedProject();
+    if (view !== ALL_PROJECTS) {
+      const target = placed ? projectChoice : NO_PROJECT_VIEW;
+      if (view !== target) setSelectedProject(target);
+    }
+    onStarted?.(result.data);
     if (diarizeMic && captureSetting) {
       void commands.meetingsSetDiarizeMic(result.data.id, true);
     }
@@ -351,16 +377,27 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
     openConsent();
   };
 
+  // "Als Naechstes" (Projekte-Spalte) bittet um den Startdialog zu einem Termin.
+  const startFromCardRef = useRef(startFromCard);
+  startFromCardRef.current = startFromCard;
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  useEffect(() => {
+    const consume = () => {
+      const request = takeStartRequest();
+      // Laeuft schon eine Aufnahme, gilt der Wunsch nicht mehr.
+      if (request && phaseRef.current === "idle") {
+        startFromCardRef.current(request.event);
+      }
+    };
+    consume();
+    return subscribeStartRequest(consume);
+  }, []);
+
   const clearEventChoice = () => {
     setEventChoice(null);
     setSuggestionCleared(true);
   };
-
-  const timeOf = (ms: number) =>
-    new Date(ms).toLocaleTimeString(i18n.language, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
 
   const pause = () => {
     void commands.meetingsPause();
@@ -466,7 +503,10 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
               <Mic width={16} height={16} aria-hidden="true" />
               {t("meetings.record.start")}
             </Button>
-            <MeetingImportAction />
+            <MeetingImportAction
+              busy={importApi.busy}
+              onPick={importApi.pick}
+            />
             <YoutubeLinkAction />
           </div>
         ) : (
@@ -537,80 +577,6 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
               />
               <MeetingChatNotice testId="recording" compact />
             </div>
-          </div>
-        )}
-
-        {!active && (hasCalendar || upcoming.length > 0) && (
-          <div
-            className="rounded-lg border border-mid-gray/20"
-            data-testid="upcoming-card"
-          >
-            <button
-              type="button"
-              onClick={() => setUpcomingOpen((v) => !v)}
-              aria-expanded={upcomingOpen}
-              className="flex w-full items-center gap-1.5 px-3 py-2 text-sm font-medium cursor-pointer"
-              data-testid="upcoming-toggle"
-            >
-              {upcomingOpen ? (
-                <ChevronDown width={14} height={14} />
-              ) : (
-                <ChevronRight width={14} height={14} />
-              )}
-              {t("meetings.calendar.upcoming.title")}
-            </button>
-            {upcomingOpen &&
-              (upcoming.length === 0 ? (
-                <p className="px-3 pb-2 text-sm text-text/70">
-                  {t("meetings.calendar.upcoming.empty")}
-                </p>
-              ) : (
-                <ul className="px-3 pb-2 space-y-1.5">
-                  {upcoming.map((event) => (
-                    <li
-                      key={event.key}
-                      className="flex items-center justify-between gap-2 text-sm"
-                      data-testid="upcoming-event"
-                    >
-                      <div className="min-w-0">
-                        <span className="tabular-nums text-text/70">
-                          {timeOf(event.starts_at)}–{timeOf(event.ends_at)}
-                        </span>{" "}
-                        <span className="font-medium break-words">
-                          {event.title}
-                        </span>
-                        {distinctAttendees(event) > 0 && (
-                          <span className="text-text/60">
-                            {" "}
-                            ·{" "}
-                            {t("meetings.calendar.upcoming.attendees", {
-                              count: distinctAttendees(event),
-                            })}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        {onPrepare && (
-                          <BriefButton
-                            eventKey={event.key}
-                            onOpen={onPrepare}
-                            testId="upcoming-brief"
-                          />
-                        )}
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => startFromCard(event)}
-                          disabled={busy}
-                          data-testid="upcoming-start"
-                        >
-                          {t("meetings.calendar.upcoming.start")}
-                        </Button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ))}
           </div>
         )}
 

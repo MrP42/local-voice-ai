@@ -1,16 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarClock, Mic } from "lucide-react";
-import { toast } from "sonner";
-import { commands, type CalEvent } from "@/bindings";
-import { useSettings } from "../../../../hooks/useSettings";
+import { CalendarClock, ChevronDown, ChevronRight, Mic } from "lucide-react";
+import { commands, type BriefInfo, type CalEvent } from "@/bindings";
 import { useRecordingActive } from "../../../../hooks/useRecordingActive";
-import { distinctAttendees } from "@/lib/meetingCalendar";
-import { Button } from "../../../ui/Button";
-import { Dialog } from "../../../ui/Dialog";
+import { distinctAttendees, todaysEvents } from "@/lib/meetingCalendar";
+import { requestRecordingStart } from "@/lib/recordingStartRequest";
 import { IconAction } from "../../../ui/IconAction";
-import { translateMeetingError } from "../meetingErrors";
-import { MeetingChatNotice } from "../MeetingChatNotice";
+import { BriefButton } from "../people/BriefButton";
 
 const REFRESH_MS = 60_000;
 /** Wie weit voraus der naechste Termin gesucht wird (7 Tage). */
@@ -30,20 +26,26 @@ const startOfDay = (ms: number) => {
   return d.getTime();
 };
 
+interface NextUpProps {
+  /** M5-P5e: "Vorbereiten" an einem Termin (oeffnet den Brief im Chat). */
+  onPrepare?: (info: BriefInfo) => void;
+}
+
 /**
  * "Als Naechstes": der naechste Kalendertermin (P5b) als kleiner fester
- * Abschnitt am Fuss der Projekte-Spalte, mit einem Knopf, der die Aufnahme
- * dazu startet (nach der Einwilligung, wie auf der Aufnahmekarte). Ohne
- * Kalenderquelle erscheint nichts.
+ * Abschnitt am Fuss der Projekte-Spalte, mit einem Knopf, der den Startdialog
+ * zu diesem Termin oeffnet (Titel, Projekt, Vorlage, Einwilligung - der Dialog
+ * gehoert der Aufnahmekarte, hier geht nur der Wunsch hin). Die uebrigen Termine
+ * des Tages stehen darunter unter "Weitere Termine heute", jeweils mit
+ * "Vorbereiten" und Aufnehmen. Ohne Kalenderquelle erscheint nichts.
  */
-export const NextUp: React.FC = () => {
+export const NextUp: React.FC<NextUpProps> = ({ onPrepare }) => {
   const { t, i18n } = useTranslation();
-  const { getSetting } = useSettings();
   const recording = useRecordingActive();
   const [hasCalendar, setHasCalendar] = useState(false);
   const [event, setEvent] = useState<CalEvent | null>(null);
-  const [consentOpen, setConsentOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [others, setOthers] = useState<CalEvent[]>([]);
+  const [othersOpen, setOthersOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,9 +58,11 @@ export const NextUp: React.FC = () => {
       setHasCalendar(
         sources.status === "ok" && (sources.data ?? []).length > 0,
       );
-      setEvent(
-        list.status === "ok" ? nextEvent(list.data ?? [], Date.now()) : null,
-      );
+      const now = Date.now();
+      const events = list.status === "ok" ? (list.data ?? []) : [];
+      const next = nextEvent(events, now);
+      setEvent(next);
+      setOthers(todaysEvents(events, now).filter((e) => e.key !== next?.key));
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), REFRESH_MS);
@@ -70,12 +74,15 @@ export const NextUp: React.FC = () => {
 
   if (!hasCalendar && !event) return null;
 
-  const whenLabel = (e: CalEvent) => {
-    const now = Date.now();
-    const time = new Date(e.starts_at).toLocaleTimeString(i18n.language, {
+  const timeOf = (ms: number) =>
+    new Date(ms).toLocaleTimeString(i18n.language, {
       hour: "2-digit",
       minute: "2-digit",
     });
+
+  const whenLabel = (e: CalEvent) => {
+    const now = Date.now();
+    const time = timeOf(e.starts_at);
     if (e.starts_at <= now) return t("meetings.projects.nextUp.running");
     const days = Math.round(
       (startOfDay(e.starts_at) - startOfDay(now)) / 86_400_000,
@@ -90,26 +97,24 @@ export const NextUp: React.FC = () => {
     return `${day}, ${time}`;
   };
 
-  const confirmStart = async () => {
-    if (!event) return;
-    setBusy(true);
-    const capture = getSetting("meeting_capture_system") ?? true;
-    const result = await commands.meetingsStartFromEvent(
-      event.key,
-      null,
-      true,
-      capture,
-      null,
-      "prompt",
-    );
-    setBusy(false);
-    setConsentOpen(false);
-    if (result.status === "error") {
-      toast.error(translateMeetingError(result.error, t));
-    }
+  const attendeesOf = (e: CalEvent) => {
+    const count = distinctAttendees(e);
+    return count > 0
+      ? ` · ${t("meetings.calendar.upcoming.attendees", { count })}`
+      : "";
   };
 
-  const attendees = event ? distinctAttendees(event) : 0;
+  const startButton = (e: CalEvent) => (
+    <IconAction
+      size="sm"
+      icon={Mic}
+      label={t("meetings.projects.nextUp.start")}
+      description={t("meetings.projects.nextUp.startHint")}
+      testId="next-up-start"
+      disabled={recording.active}
+      onClick={() => requestRecordingStart(e)}
+    />
+  );
 
   return (
     <section
@@ -121,32 +126,32 @@ export const NextUp: React.FC = () => {
         {t("meetings.projects.nextUp.title")}
       </h3>
       {event ? (
-        <div className="flex items-center gap-2 px-1">
-          <CalendarClock
-            width={16}
-            height={16}
-            aria-hidden="true"
-            className="shrink-0 text-text/60"
-          />
-          <div className="min-w-0 flex-1 text-sm">
-            <p className="truncate font-medium" data-testid="next-up-title">
-              {event.title}
-            </p>
-            <p className="truncate text-xs text-text/60">
-              {whenLabel(event)}
-              {attendees > 0 &&
-                ` · ${t("meetings.calendar.upcoming.attendees", { count: attendees })}`}
-            </p>
+        <div className="space-y-1 px-1">
+          <div className="flex items-center gap-2">
+            <CalendarClock
+              width={16}
+              height={16}
+              aria-hidden="true"
+              className="shrink-0 text-text/60"
+            />
+            <div className="min-w-0 flex-1 text-sm">
+              <p className="truncate font-medium" data-testid="next-up-title">
+                {event.title}
+              </p>
+              <p className="truncate text-xs text-text/60">
+                {whenLabel(event)}
+                {attendeesOf(event)}
+              </p>
+            </div>
+            {startButton(event)}
           </div>
-          <IconAction
-            size="sm"
-            icon={Mic}
-            label={t("meetings.projects.nextUp.start")}
-            description={t("meetings.projects.nextUp.startHint")}
-            testId="next-up-start"
-            disabled={recording.active || busy}
-            onClick={() => setConsentOpen(true)}
-          />
+          {onPrepare && (
+            <BriefButton
+              eventKey={event.key}
+              onOpen={onPrepare}
+              testId="upcoming-brief"
+            />
+          )}
         </div>
       ) : (
         <p className="px-1 text-sm text-text/60">
@@ -154,33 +159,63 @@ export const NextUp: React.FC = () => {
         </p>
       )}
 
-      <Dialog
-        open={consentOpen}
-        onOpenChange={setConsentOpen}
-        title={t("meetings.consent.title")}
-        closeLabel={t("meetings.consent.cancel")}
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={() => setConsentOpen(false)}
-              disabled={busy}
-            >
-              {t("meetings.consent.cancel")}
-            </Button>
-            <Button onClick={confirmStart} disabled={busy}>
-              {t("meetings.consent.confirm")}
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <p className="text-sm text-text/80 whitespace-pre-wrap">
-            {t("meetings.consent.body")}
-          </p>
-          <MeetingChatNotice testId="next-up-consent" />
+      {others.length > 0 && (
+        <div className="mt-1" data-testid="upcoming-card">
+          <button
+            type="button"
+            onClick={() => setOthersOpen((v) => !v)}
+            aria-expanded={othersOpen}
+            className="flex w-full cursor-pointer items-center gap-1 rounded-md px-1 py-1 text-xs font-medium text-text/70 hover:text-text"
+            data-testid="upcoming-toggle"
+          >
+            {othersOpen ? (
+              <ChevronDown width={14} height={14} aria-hidden="true" />
+            ) : (
+              <ChevronRight width={14} height={14} aria-hidden="true" />
+            )}
+            {t("meetings.projects.nextUp.more", { count: others.length })}
+          </button>
+          {othersOpen && (
+            <ul className="max-h-40 space-y-2 overflow-y-auto px-1 pb-1">
+              {others.map((other) => (
+                <li
+                  key={other.key}
+                  className="space-y-1 text-sm"
+                  data-testid="upcoming-event"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">{other.title}</p>
+                      <p className="truncate text-xs text-text/60">
+                        <span className="tabular-nums">
+                          {timeOf(other.starts_at)}–{timeOf(other.ends_at)}
+                        </span>
+                        {attendeesOf(other)}
+                      </p>
+                    </div>
+                    <IconAction
+                      size="sm"
+                      icon={Mic}
+                      label={t("meetings.projects.nextUp.start")}
+                      description={t("meetings.projects.nextUp.startHint")}
+                      testId="upcoming-start"
+                      disabled={recording.active}
+                      onClick={() => requestRecordingStart(other)}
+                    />
+                  </div>
+                  {onPrepare && (
+                    <BriefButton
+                      eventKey={other.key}
+                      onOpen={onPrepare}
+                      testId="upcoming-brief"
+                    />
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-      </Dialog>
+      )}
     </section>
   );
 };

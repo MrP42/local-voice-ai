@@ -163,6 +163,9 @@ test.beforeEach(async ({ page }) => {
         "Entscheidungen im Ordner {{folder}}?",
       ),
     ];
+    // Wie viele Hoerer zu einem Ereignis stehen: die Registrierung ist im echten
+    // Tauri asynchron, ein zu frueh ausgeloestes Ereignis ginge ins Leere.
+    w.__listening = (event: string) => (listeners[event] ?? []).length;
     w.__emit = (event: string, payload: unknown) =>
       (listeners[event] ?? []).forEach((h) =>
         callbacks.get(h)?.({ event, id: 0, payload }),
@@ -408,11 +411,18 @@ const pendingRequest = async (page: Page) => {
   return page.evaluate(() => (window as any).__pending.req);
 };
 
-const emitChat = (page: Page, payload: Record<string, unknown>) =>
-  page.evaluate(
+// Erst melden, wenn der Hoerer des Chats steht. Unter Last kann die Seite noch
+// dabei sein, ihn (neu) zu registrieren, und ein Ereignis in dieser Luecke ginge
+// verloren: der Test wartete dann auf einen Fehlertext, der nie kommt.
+const emitChat = async (page: Page, payload: Record<string, unknown>) => {
+  await page.waitForFunction(
+    () => (window as any).__listening("meeting-chat-event") > 0,
+  );
+  await page.evaluate(
     (p) => (window as any).__emit("meeting-chat-event", p),
     payload,
   );
+};
 
 const resolveAsk = (page: Page, value: unknown) =>
   page.evaluate((v) => {
@@ -1210,21 +1220,42 @@ test.describe("Chat über viele Besprechungen", () => {
 // Aufnahme: Live-Zeile
 // ---------------------------------------------------------------------------
 
-test("Live: eingeklappte Zeile unter dem Notizblock, Recipe „Was habe ich verpasst?“", async ({
+test("Live: die laufende Besprechung ist gewählt, Fragen stehen im Reiter, Recipe „Was habe ich verpasst?“", async ({
   page,
 }) => {
   await page.addInitScript(() => {
-    (window as any).__position = { meeting_id: "m-live", position_ms: 60000 };
+    const w = window as any;
+    w.__position = { meeting_id: "m-live", position_ms: 60000 };
+    // Die laufende Aufnahme hat ihre Zeile in der Liste (Status "recording").
+    w.__meetings = [
+      {
+        ...w.__meetings[0],
+        id: "m-live",
+        title: "Laufende Runde",
+        status: "recording",
+        ended_at: null,
+      },
+      ...w.__meetings,
+    ];
   });
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.goto("/");
   await page.getByRole("button", { name: "Aufnahmen", exact: true }).click();
   await expect(page.getByTestId("live-notes-pad")).toBeVisible();
-  const row = page.getByTestId("live-chat-row");
-  await expect(row).toContainText("Frage zur laufenden Besprechung");
+  await expect(
+    page.getByTestId("rec-content").getByRole("heading", {
+      name: "Laufende Runde",
+    }),
+  ).toBeVisible();
+  // Keine Zeile mehr unter dem Notizblock (das war eine geschachtelte
+  // Scrollfläche): die Fragen stehen im Reiter der rechten Spalte.
+  await expect(page.getByTestId("live-chat-row")).toHaveCount(0);
   await expect(panel(page)).toHaveCount(0);
-  await row.getByRole("button", { name: "Was habe ich verpasst?" }).click();
+  await page.getByRole("tab", { name: "Fragen", exact: true }).click();
   await expect(panel(page)).toBeVisible();
+  await panel(page)
+    .getByRole("button", { name: "Was habe ich verpasst?" })
+    .click();
   const req = await pendingRequest(page);
   expect(req.scope).toEqual({ kind: "meeting", meeting_id: "m-live" });
   expect(req.recipe).toEqual({ recipe_id: "builtin:was-verpasst", values: {} });
@@ -1239,8 +1270,11 @@ test("Live: eingeklappte Zeile unter dem Notizblock, Recipe „Was habe ich verp
   await expect(
     panel(page).getByRole("button", { name: /Follow-up/ }),
   ).toHaveCount(0);
-  await row.getByRole("button", { name: "Chat einklappen" }).click();
-  await expect(panel(page)).toHaveCount(0);
+  // Der Notizblock bleibt daneben stehen: zurück zum Transkript, Chat bleibt
+  // eingehängt (die Antwort geht beim Reiterwechsel nicht verloren).
+  await page.getByRole("tab", { name: "Transkript", exact: true }).click();
+  await page.getByRole("tab", { name: "Fragen", exact: true }).click();
+  await expect(panel(page).getByTestId("coverage-note")).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------

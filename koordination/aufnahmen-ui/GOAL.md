@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/aufnahmen-ui
 iteration: 0
 erstellt: 2026-09-30
-aktualisiert: 2026-09-30T21:00
+aktualisiert: 2026-09-30T22:00
 ---
 
 # Goal: Aufnahmen-Oberflaeche: Spalten, Sessions, eine Scrollbar
@@ -40,8 +40,8 @@ Die Seite „Aufnahmen“ arbeitet wie das Vorlesen-Modul in Spalten: links Sess
 - [x] AK3 — Sessions: anlegen, umbenennen, löschen (mit Rückfrage, Besprechungen bleiben erhalten), Besprechung per Ziehen und per Menü verschieben; Filter/Suche wirken innerhalb der gewählten Session; Datenmodell nutzt die vorhandenen Ordner (Migrationstest).
 - [x] AK4 — Eine Scrollbar: Viewports 1920×1050, 1366×768, 900×700, 480×800 → `document.scrollingElement.scrollHeight <= innerHeight + 1`; innerhalb jeder Spalte höchstens eine scrollbare Fläche entlang eines Wegs (Playwright prüft verschachtelte `overflow:auto` mit Überlauf).
 - [x] AK5 — Kompakt: Detailkopf (Titel, Status-Chips, Symbolzeile) ≤ 120 px hoch bei 1366×768; Vollinfo per Dialog; „Neu transkribieren“ im Menü; Tooltips mit Name + Kurzerklärung (Maus und Tastatur).
-- [ ] AK6 — Live im kleinen Fenster: bei 480×800 lässt sich Aufnahme starten, eine Notiz tippen und das Live-Transkript sehen, ohne zu scrollen oder die Seite zu wechseln (Playwright-Ablauf).
-- [ ] AK7 — Import: Datei in die Inhaltsspalte ziehen oder über die Bedienspalte wählen → Import startet in der aktuellen Session, Fortschritt (P8a) sichtbar an der erwarteten Stelle.
+- [x] AK6 — Live im kleinen Fenster: bei 480×800 lässt sich Aufnahme starten, eine Notiz tippen und das Live-Transkript sehen, ohne zu scrollen oder die Seite zu wechseln (Playwright-Ablauf).
+- [x] AK7 — Import: Datei in die Inhaltsspalte ziehen oder über die Bedienspalte wählen → Import startet in der aktuellen Session, Fortschritt (P8a) sichtbar an der erwarteten Stelle.
 - [ ] AK8 — Persistenz: Breiten, Klappzustand, gewählte Session, Reiter und Layout überstehen Neuladen, Seitenwechsel und App-Neustart (localStorage bzw. Settings) – Playwright.
 - [ ] AK9 — Barrierefreiheit: Tastaturbedienung aller Spaltenaktionen, sichtbarer Fokus, `aria`-Rollen; axe-Prüfung ohne kritische Befunde.
 - [ ] AK10 — Anfassbar: Vorher/Nachher-Screenshots (breit, schmal, gestapelt, Dialog, Menü) als Artefakt; Installer mit Patch-Version +1 gebaut und von Patrick abgenommen.
@@ -50,9 +50,9 @@ Die Seite „Aufnahmen“ arbeitet wie das Vorlesen-Modul in Spalten: links Sess
 - [ ] QG1 — Typen: `cd apps/local-voice && npx tsc --noEmit` → Exit 0.
 - [ ] QG2 — Gesamte Playwright-Suite grün (Port je Checkout automatisch).
 - [ ] QG3 — Rust unverändert grün, falls Backend berührt (`cargo test --lib`).
-- [ ] QG4 — i18n: neue Schlüssel in de und en, echte Umlaute (`tools/check_i18n_meetings.py` bzw. Pendant).
-- [ ] QG5 — Lint/Format nur berührte Dateien (eslint 0 Fehler, prettier grün); vorbestehendes Rot bleibt.
-- [ ] QG6 — Doku: Hilfe-Text der Seite und `docs/BESPRECHUNGEN.md` angepasst; Handoff geschrieben.
+- [x] QG4 — i18n: neue Schlüssel in de und en, echte Umlaute (`tools/check_i18n_meetings.py` bzw. Pendant).
+- [x] QG5 — Lint/Format nur berührte Dateien (eslint 0 Fehler, prettier grün); vorbestehendes Rot bleibt.
+- [x] QG6 — Doku: Hilfe-Text der Seite und `docs/BESPRECHUNGEN.md` angepasst; Handoff geschrieben.
 - [ ] QG7 — Budget: Schätzung 2,5 MTok (Spanne 2–3,5), Meldung bei 50 % und 80 %, harter Stopp bei 150 %.
 
 ## Constraints
@@ -89,6 +89,11 @@ Die Seite „Aufnahmen“ arbeitet wie das Vorlesen-Modul in Spalten: links Sess
 - 2026-09-30T20:26 AK4 erfüllt — U2 94dd0569: meeting-layout.spec 30 passed, 4 Viewports ohne Seiten-Scroll, keine verschachtelten Scrollflaechen
 - 2026-09-30T21:00 AK3 erfüllt — U3 89f39ae5: meeting-projects 30 passed, Migrationstest folders
 - 2026-09-30T21:00 AK5 erfüllt — U4 89f39ae5: meeting-header 32 passed, Kopf 95 px bei 1366
+- 2026-09-30T21:49 AK6 erfüllt — U5 3a385469: meeting-live-narrow 23 passed (repeat 8x 184), 480x800 ohne Scrollen
+- 2026-09-30T21:49 AK7 erfüllt — U5 3a385469: Import per Symbol und Tauri-Drop ins gewaehlte Projekt, Fortschritt sichtbar
+- 2026-09-30T22:00 QG4 erfüllt — check_i18n_meetings.py OK (955 Schluessel de/en)
+- 2026-09-30T22:00 QG5 erfüllt — eslint/prettier eigene Dateien je Paket gruen
+- 2026-09-30T22:00 QG6 erfüllt — Hilfe aufnahmen.de/en.md und docs/BESPRECHUNGEN.md aktualisiert (30f66788)
 
 ## Blocker
 -

@@ -30,6 +30,9 @@ type BaseProps = {
    *  Inhalte. Standard: aus. */
   menuPortal?: boolean;
   formatCreateLabel?: (input: string) => string;
+  /** Zugänglicher Name des Eingabefelds (die sichtbare Beschriftung steht
+   *  meist daneben, ohne mit dem Feld verbunden zu sein). */
+  ariaLabel?: string;
 };
 
 type CreatableProps = {
@@ -139,6 +142,7 @@ export const Select: React.FC<SelectProps> = React.memo(
     onBlur,
     className = "",
     menuPortal = false,
+    ariaLabel,
     isCreatable,
     formatCreateLabel,
     onCreateOption,
@@ -164,6 +168,7 @@ export const Select: React.FC<SelectProps> = React.memo(
       options,
       onChange: handleChange,
       placeholder,
+      "aria-label": ariaLabel,
       isDisabled: disabled,
       isLoading,
       onBlur,

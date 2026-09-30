@@ -7,8 +7,6 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { open } from "@tauri-apps/plugin-dialog";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   commands,
   events,
@@ -21,16 +19,7 @@ import { Dialog } from "../../ui/Dialog";
 import { Alert } from "../../ui/Alert";
 import { IconAction } from "../../ui/IconAction";
 import { ActionMenu } from "../../ui/ActionMenu";
-import {
-  Check,
-  CheckSquare,
-  Menu,
-  MessageSquare,
-  Plus,
-  Upload,
-  X,
-} from "lucide-react";
-import { translateMeetingError } from "./meetingErrors";
+import { Check, CheckSquare, Menu, MessageSquare, Plus, X } from "lucide-react";
 import { SearchBar, SearchSnippet } from "./search/SearchBar";
 import { EMPTY_FILTER, type ListFilter } from "./search/FilterChips";
 import { ContextMenu } from "./search/FolderChips";
@@ -39,6 +28,7 @@ import { FolderPickerDialog } from "./search/FolderPickerDialog";
 import { JobBar } from "./JobProgress";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 import { notifyMeetingsChanged, useMeetingsChanged } from "@/lib/meetingsBus";
+import type { BriefInfo } from "@/bindings";
 import { ProjectRow } from "./projects/ProjectRow";
 import { ProjectFilter, activeFilterCount } from "./projects/ProjectFilter";
 import { NextUp } from "./projects/NextUp";
@@ -48,26 +38,6 @@ import { ALL_PROJECTS, NO_PROJECT } from "./projects/projectModel";
 
 const PAGE_SIZE = 25;
 const DAY_SECONDS = 86_400;
-
-// One list for the picker filter AND the drag-and-drop filter — they must
-// never diverge (same import pipeline behind both).
-const IMPORT_EXTENSIONS = [
-  "wav",
-  "mp3",
-  "m4a",
-  "mp4",
-  "mkv",
-  "mov",
-  "flac",
-  "ogg",
-  "vtt",
-  "srt",
-];
-
-const hasImportExtension = (path: string) => {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  return IMPORT_EXTENSIONS.includes(ext);
-};
 
 // Windows paths use backslashes; the old class `[\/]` matched only the
 // forward slash, so a C:\... path came back whole.
@@ -116,6 +86,10 @@ interface MeetingListProps {
   onDeleted?: (id: string) => void;
   /** M4-P4e: Chat ueber viele Besprechungen oeffnen (Scope vorbelegt). */
   onAsk?: (filter: ScopeFilter) => void;
+  /** M5-P5e: "Vorbereiten" an einem Termin des Abschnitts "Als Naechstes". */
+  onPrepare?: (info: BriefInfo) => void;
+  /** Die Besprechung, die gerade aufgenommen wird: sie laesst sich nicht loeschen. */
+  liveId?: string | null;
   /** M5-P5d: Filter "Person: Anna Berg" (kommt aus dem Popover der Detailansicht). */
   personFilter?: PersonRef | null;
   onPersonFilterChange?: (person: PersonRef | null) => void;
@@ -136,6 +110,8 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   selected = null,
   onDeleted,
   onAsk,
+  onPrepare,
+  liveId = null,
   personFilter = null,
   onPersonFilterChange,
 }) => {
@@ -147,12 +123,6 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importConsentPaths, setImportConsentPaths] = useState<string[] | null>(
-    null,
-  );
-  const [isDragOver, setIsDragOver] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Meeting | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -359,69 +329,6 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [loading, hasMore, loadPage, items.length]);
-
-  const pickImportFile = async () => {
-    setImportError(null);
-    const picked = await open({
-      multiple: false,
-      filters: [
-        {
-          name: "Media",
-          extensions: IMPORT_EXTENSIONS,
-        },
-      ],
-    });
-    if (typeof picked !== "string") return;
-    // Spec A1: the import path needs the same consent confirmation as a
-    // live recording — the file's mere existence is not proof that everyone
-    // in it agreed to being recorded. The command is only ever called with
-    // `consentConfirmed: true` after this dialog is explicitly confirmed.
-    setImportConsentPaths([picked]);
-  };
-
-  // Drag-and-drop lands in the exact same consent-gated pipeline as the
-  // picker button — dropping a file must not shortcut the Spec-A1 dialog.
-  useEffect(() => {
-    const un = getCurrentWebview().onDragDropEvent((event) => {
-      const kind = event.payload.type;
-      if (kind === "enter" || kind === "over") {
-        setIsDragOver(true);
-        return;
-      }
-      setIsDragOver(false);
-      if (kind !== "drop") return;
-      const accepted = event.payload.paths.filter(hasImportExtension);
-      if (accepted.length === 0) {
-        setImportError(t("meetings.errors.unsupportedFile"));
-        return;
-      }
-      setImportError(null);
-      setImportConsentPaths(accepted);
-    });
-    return () => {
-      un.then((f) => f());
-    };
-  }, [t]);
-
-  const confirmImport = async () => {
-    const paths = importConsentPaths;
-    if (!paths || paths.length === 0) return;
-    setImportConsentPaths(null);
-    setImporting(true);
-    let lastError: string | null = null;
-    for (const path of paths) {
-      const result = await commands.meetingsImportFile(path, true);
-      if (result.status === "error") {
-        lastError = translateMeetingError(result.error, t);
-      }
-      // Refresh after every file so long batches show progress in the list.
-      // (The synchronous VTT/SRT path emits no state events — the command
-      // return is its only signal.)
-      notifyMeetingsChanged();
-    }
-    setImporting(false);
-    if (lastError) setImportError(lastError);
-  };
 
   // Titel und Status der gewaehlten Besprechung kommen aus der Detailansicht
   // (Umbenennen, Verarbeitung fertig): die Zeile zieht sofort nach.
@@ -723,14 +630,6 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         align="end"
         widthClass="w-56"
         items={[
-          {
-            id: "import",
-            label: t("meetings.list.import"),
-            icon: Upload,
-            disabled: importing,
-            testId: "projects-import",
-            onSelect: () => void pickImportFile(),
-          },
           ...(onAsk
             ? [
                 {
@@ -753,13 +652,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   );
 
   return (
-    <div
-      className={`flex h-full min-h-0 flex-col gap-2 rounded-md transition-colors ${
-        isDragOver
-          ? "outline-2 outline-dashed outline-logo-primary bg-logo-primary/5"
-          : ""
-      }`}
-    >
+    <div className="flex h-full min-h-0 flex-col gap-2 rounded-md">
       {actionsEl && createPortal(actions, actionsEl)}
 
       <div className="flex shrink-0 items-center gap-1.5">
@@ -815,13 +708,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
           </span>
         </div>
       )}
-      {isDragOver && (
-        <p className="shrink-0 text-center text-sm font-medium text-logo-primary">
-          {t("meetings.list.dropHint")}
-        </p>
-      )}
       {listError && <Alert variant="error">{listError}</Alert>}
-      {importError && <Alert variant="error">{importError}</Alert>}
       {deleteError && <Alert variant="error">{deleteError}</Alert>}
 
       <div
@@ -926,7 +813,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         <div ref={sentinelRef} className="h-1" />
       </div>
 
-      <NextUp />
+      <NextUp onPrepare={onPrepare} />
 
       {rowMenu && (
         <ContextMenu
@@ -942,6 +829,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({
             {
               label: t("meetings.list.deleteButton"),
               danger: true,
+              // Die laufende Aufnahme erst beenden: sonst schreibt das Backend
+              // weiter in eine geloeschte Besprechung.
+              disabled: rowMenu.meeting.id === liveId,
               onSelect: () => setDeleteTarget(rowMenu.meeting),
             },
           ]}
@@ -1048,41 +938,6 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         <p className="text-sm text-text/80">
           {t("meetings.list.deleteConfirm")}
         </p>
-      </Dialog>
-
-      <Dialog
-        open={importConsentPaths !== null}
-        onOpenChange={(open) => {
-          if (!open) setImportConsentPaths(null);
-        }}
-        title={t("meetings.consent.title")}
-        closeLabel={t("meetings.consent.cancel")}
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={() => setImportConsentPaths(null)}
-            >
-              {t("meetings.consent.cancel")}
-            </Button>
-            <Button onClick={confirmImport} disabled={importing}>
-              {t("meetings.consent.confirm")}
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm text-text/80 whitespace-pre-wrap">
-          {t("meetings.consent.importBody")}
-        </p>
-        {importConsentPaths && (
-          <ul className="mt-2 text-xs text-text/60 space-y-0.5">
-            {importConsentPaths.map((p) => (
-              <li key={p} className="truncate">
-                {baseName(p)}
-              </li>
-            ))}
-          </ul>
-        )}
       </Dialog>
     </div>
   );

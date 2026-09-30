@@ -554,6 +554,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           max={duration || 0}
           step="0.01"
           value={currentTime}
+          aria-label="Wiedergabeposition"
           onChange={handleSeek}
           onMouseDown={handleSliderMouseDown}
           onTouchStart={handleSliderTouchStart}

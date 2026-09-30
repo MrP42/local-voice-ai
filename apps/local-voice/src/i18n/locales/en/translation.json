@@ -1687,7 +1687,8 @@
         "running": "Running now",
         "empty": "No appointment in the next 7 days.",
         "start": "Record appointment",
-        "startHint": "Start a recording for this appointment; title and attendees come from the calendar"
+        "startHint": "Start a recording for this appointment; title and attendees come from the calendar",
+        "more": "More events today ({{count}})"
       }
     },
     "layout": {
@@ -1825,12 +1826,8 @@
         "allEventsDescription": "Also reminds about events on your own, without anyone else and without a join link."
       },
       "upcoming": {
-        "title": "Next events (today)",
-        "empty": "No more events today.",
-        "start": "Start recording",
         "attendees_one": "{{count}} attendee",
-        "attendees_other": "{{count}} attendees",
-        "running": "running"
+        "attendees_other": "{{count}} attendees"
       },
       "suggestion": {
         "chip": "from calendar",
@@ -1929,7 +1926,6 @@
     "list": {
       "title": "Meetings",
       "empty": "No meetings yet.",
-      "import": "Import…",
       "importError": "Import failed",
       "loading": "Loading…",
       "date": "Date",
@@ -1937,8 +1933,7 @@
       "deleteConfirmTitle": "Delete meeting?",
       "deleteConfirm": "The meeting, its transcript and minutes will be permanently deleted.",
       "deleteButton": "Delete",
-      "cancel": "Cancel",
-      "dropHint": "Drop files here to import them"
+      "cancel": "Cancel"
     },
     "detail": {
       "transcriptTab": "Transcript",
@@ -1960,7 +1955,8 @@
       "renameTitle": "Rename",
       "titleLabel": "Meeting title",
       "autoscroll": "Scroll along automatically",
-      "autoscrollPaused": "Auto-scroll paused – scroll to the end to resume."
+      "autoscrollPaused": "Auto-scroll paused – scroll to the end to resume.",
+      "toLiveEnd": "Jump to live"
     },
     "status": {
       "recording": "Recording",
@@ -2138,6 +2134,7 @@
       "exportTranscript": "Transcript as file …",
       "details": "Details …",
       "delete": "Delete meeting …",
+      "deleteLive": "The recording is still running – stop it first, then delete.",
       "templateTitle": "Change template",
       "templateBody": "The template decides how the AI notes and the minutes of this meeting are structured.",
       "close": "Close"
@@ -2228,9 +2225,15 @@
         "legal": "Note: downloading YouTube videos may violate YouTube's terms of use and may be relevant under copyright law (Higher Regional Court Hamburg, 21 Nov 2024, 5 U 54/23). Use at your own risk; have this checked legally before passing the app on to third parties. Not legal advice."
       }
     },
+    "import": {
+      "target": "Import into the project “{{name}}”",
+      "targetNone": "Import without a project",
+      "dropInto": "Drop the file here – import into “{{name}}”",
+      "dropIntoNone": "Drop the file here – import without a project"
+    },
     "importAction": {
       "name": "Import file",
-      "hint": "Choose audio, video or subtitles – or drag them onto the list",
+      "hint": "Choose audio, video or subtitles – or drag them onto the work area",
       "linkName": "Paste link",
       "linkHint": "Add a YouTube link as a source, or paste the link with Ctrl+V"
     },
@@ -2269,7 +2272,7 @@
       },
       "aiPlaceholder": "The AI notes appear here as soon as they have been created.",
       "padTitle": "Your notes",
-      "padHint": "Bullet points are enough. Each point remembers the recording time.",
+      "padHint": "Bullet points are enough. Enter saves a point with the recording time; “[ ]” at the start turns it into a task.",
       "emptyHint": "Bullet points are enough …",
       "blockLabel": "Note",
       "todoCheck": "Done",
@@ -2696,11 +2699,6 @@
         "thread_not_found": "The thread was deleted.",
         "store_failed": "The answer could not be saved.",
         "unknown": "The question failed ({{code}})."
-      },
-      "live": {
-        "row": "Ask about the current meeting",
-        "expand": "Open chat for the current meeting",
-        "collapse": "Collapse chat"
       },
       "list": {
         "askAll": "Ask all meetings",

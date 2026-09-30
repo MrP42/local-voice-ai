@@ -49,6 +49,10 @@ interface MeetingActionsProps extends MeetingActionHandlers {
   /** Läuft eine Verarbeitung? Dann sind Neu-Transkription und Neu-Erzeugen gesperrt. */
   busy: boolean;
   hasAudio: boolean;
+  /** Die Besprechung wird gerade aufgenommen: Löschen ist gesperrt. */
+  live?: boolean;
+  /** Nur das Menü "☰", das alle Aktionen trägt (schmales Fenster). */
+  menuOnly?: boolean;
 }
 
 /**
@@ -63,6 +67,8 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
   copied,
   busy,
   hasAudio,
+  live = false,
+  menuOnly = false,
   onExport,
   onFollowup,
   onCopy,
@@ -166,9 +172,69 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
       icon: Trash2,
       iconClassName: "text-red-500",
       onSelect: onDelete,
+      disabled: live,
+      title: live ? t("meetings.actions.deleteLive") : undefined,
       testId: "menu-delete",
     },
   ];
+
+  // Schmales Fenster: die Symbolzeile fällt weg, ihre Aktionen stehen vorn im Menü.
+  const primaryItems: ActionMenuItem[] = [
+    {
+      id: "export",
+      label: t("meetings.export.button"),
+      icon: Download,
+      onSelect: onExport,
+      testId: "menu-export",
+    },
+    {
+      id: "followup",
+      label: t("meetings.followup.button"),
+      icon: Mail,
+      onSelect: onFollowup,
+      disabled: !hasSegments,
+      testId: "menu-followup",
+    },
+    {
+      id: "copy",
+      label: t("meetings.actions.copyName"),
+      icon: Copy,
+      onSelect: onCopy,
+      disabled: !hasSegments,
+      testId: "menu-copy",
+    },
+    {
+      id: "people",
+      label: t("meetings.actions.peopleName"),
+      icon: Users,
+      onSelect: onPeople,
+      testId: "menu-people",
+    },
+    {
+      id: "chat",
+      label: t("meetings.chat.ask"),
+      icon: MessageSquare,
+      onSelect: onChatToggle,
+      testId: "menu-chat",
+    },
+  ];
+
+  if (menuOnly) {
+    return (
+      <ActionMenu
+        trigger={{
+          icon: Menu,
+          label: t("meetings.actions.menuName"),
+          description: t("meetings.actions.menuHint"),
+          testId: "meeting-menu",
+        }}
+        menuLabel={t("meetings.actions.menuLabel")}
+        align="end"
+        widthClass="w-72"
+        items={[...primaryItems, ...items]}
+      />
+    );
+  }
 
   return (
     <div

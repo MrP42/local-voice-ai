@@ -1687,7 +1687,8 @@
         "running": "Läuft jetzt",
         "empty": "Kein Termin in den nächsten 7 Tagen.",
         "start": "Termin aufnehmen",
-        "startHint": "Aufnahme zu diesem Termin starten; Titel und Teilnehmende kommen aus dem Kalender"
+        "startHint": "Aufnahme zu diesem Termin starten; Titel und Teilnehmende kommen aus dem Kalender",
+        "more": "Weitere Termine heute ({{count}})"
       }
     },
     "layout": {
@@ -1825,12 +1826,8 @@
         "allEventsDescription": "Erinnert auch an Termine allein, ohne Gegenüber und ohne Beitritts-Adresse."
       },
       "upcoming": {
-        "title": "Nächste Termine (heute)",
-        "empty": "Heute stehen keine weiteren Termine an.",
-        "start": "Aufnahme starten",
         "attendees_one": "{{count}} Teilnehmende",
-        "attendees_other": "{{count}} Teilnehmende",
-        "running": "läuft"
+        "attendees_other": "{{count}} Teilnehmende"
       },
       "suggestion": {
         "chip": "aus Kalender",
@@ -1929,7 +1926,6 @@
     "list": {
       "title": "Besprechungen",
       "empty": "Noch keine Besprechungen.",
-      "import": "Importieren…",
       "importError": "Import fehlgeschlagen",
       "loading": "Wird geladen…",
       "date": "Datum",
@@ -1937,8 +1933,7 @@
       "deleteConfirmTitle": "Besprechung löschen?",
       "deleteConfirm": "Die Besprechung samt Transkript und Protokoll wird unwiderruflich gelöscht.",
       "deleteButton": "Löschen",
-      "cancel": "Abbrechen",
-      "dropHint": "Dateien hier ablegen, um sie zu importieren"
+      "cancel": "Abbrechen"
     },
     "detail": {
       "transcriptTab": "Transkript",
@@ -1960,7 +1955,8 @@
       "renameTitle": "Umbenennen",
       "titleLabel": "Titel der Besprechung",
       "autoscroll": "Automatisch mitscrollen",
-      "autoscrollPaused": "Mitscrollen pausiert – ans Ende scrollen setzt es fort."
+      "autoscrollPaused": "Mitscrollen pausiert – ans Ende scrollen setzt es fort.",
+      "toLiveEnd": "Zum Live-Ende"
     },
     "status": {
       "recording": "Aufnahme läuft",
@@ -2138,6 +2134,7 @@
       "exportTranscript": "Transkript als Datei …",
       "details": "Details …",
       "delete": "Besprechung löschen …",
+      "deleteLive": "Die Aufnahme läuft noch – erst beenden, dann löschen.",
       "templateTitle": "Vorlage wechseln",
       "templateBody": "Die Vorlage bestimmt, wie KI-Notizen und Protokoll dieser Besprechung aufgebaut werden.",
       "close": "Schließen"
@@ -2228,9 +2225,15 @@
         "legal": "Hinweis: Das Herunterladen von YouTube-Videos kann gegen die Nutzungsbedingungen von YouTube verstoßen und urheberrechtlich relevant sein (OLG Hamburg, 21.11.2024, 5 U 54/23). Nutzung auf eigene Verantwortung; vor einer Weitergabe der App an Dritte bitte rechtlich prüfen lassen. Keine Rechtsberatung."
       }
     },
+    "import": {
+      "target": "Import in das Projekt „{{name}}“",
+      "targetNone": "Import ohne Projekt",
+      "dropInto": "Datei hier ablegen – Import in „{{name}}“",
+      "dropIntoNone": "Datei hier ablegen – Import ohne Projekt"
+    },
     "importAction": {
       "name": "Datei importieren",
-      "hint": "Audio, Video oder Untertitel wählen – oder in die Liste ziehen",
+      "hint": "Audio, Video oder Untertitel wählen – oder auf die Arbeitsfläche ziehen",
       "linkName": "Link einfügen",
       "linkHint": "YouTube-Link als Quelle anlegen, oder den Link mit Strg+V einfügen"
     },
@@ -2269,7 +2272,7 @@
       },
       "aiPlaceholder": "Die KI-Notizen erscheinen hier, sobald sie erstellt wurden.",
       "padTitle": "Deine Notizen",
-      "padHint": "Stichpunkte genügen. Jeder Punkt merkt sich die Aufnahmezeit.",
+      "padHint": "Stichpunkte genügen. Enter speichert einen Punkt mit der Aufnahmezeit, „[ ]“ am Anfang macht daraus eine Aufgabe.",
       "emptyHint": "Stichpunkte genügen …",
       "blockLabel": "Notiz",
       "todoCheck": "Erledigt",
@@ -2696,11 +2699,6 @@
         "thread_not_found": "Der Verlauf wurde gelöscht.",
         "store_failed": "Die Antwort konnte nicht gespeichert werden.",
         "unknown": "Die Frage ist fehlgeschlagen ({{code}})."
-      },
-      "live": {
-        "row": "Frage zur laufenden Besprechung",
-        "expand": "Chat zur laufenden Besprechung öffnen",
-        "collapse": "Chat einklappen"
       },
       "list": {
         "askAll": "Alle Besprechungen fragen",

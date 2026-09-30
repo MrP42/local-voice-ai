@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 
 /** Grenzen und Standardbreiten der verstellbaren Spalten (Pixel). */
@@ -83,17 +83,20 @@ export function useRecLayout(recording: boolean) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Breite des Arbeitsbereichs (nicht des Fensters: links steht die Navigation).
-  const ref = useRef<HTMLDivElement | null>(null);
+  // Der Knoten kommt ueber eine Callback-Referenz: Oeffnet sich die Hilfe, baut
+  // React den Bereich unter einem anderen Elternelement neu auf. Ein Beobachter
+  // am alten Knoten meldete dann Breite 0 (= "schmal"), obwohl Platz ist.
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
   const [available, setAvailable] = useState(Infinity);
   useLayoutEffect(() => {
-    const node = ref.current;
     if (!node) return;
     const measure = () => setAvailable(node.clientWidth);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
+  }, [node]);
+  const ref = setNode;
 
   const mode: RecMode =
     available >= WIDE_MIN

@@ -133,6 +133,8 @@ interface MeetingHeaderProps {
   tab: string;
   onTab: (id: string) => void;
   tabsLabel: string;
+  /** Schmales Fenster: das Menue mit allen Aktionen sitzt rechts in der Titelzeile. */
+  menu?: React.ReactNode;
 }
 
 const dateFormatter = (language: string) =>
@@ -165,6 +167,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
   tab,
   onTab,
   tabsLabel,
+  menu,
 }) => {
   const { t, i18n } = useTranslation();
   const [editing, setEditing] = useState(false);
@@ -296,7 +299,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
                     startEdit();
                   }
                 }}
-                className="block w-full cursor-text truncate rounded-md px-1 text-start hover:bg-mid-gray/10 focus:outline-none focus-visible:outline-2 focus-visible:outline-logo-primary"
+                className="block w-full cursor-text truncate rounded-md px-1 text-start hover:bg-mid-gray/10 focus:outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-logo-primary"
               >
                 {meeting.title}
               </button>
@@ -311,6 +314,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
           testId="meeting-details-open"
           onClick={onOpenDetails}
         />
+        {menu}
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -356,7 +360,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
               onClick={onOpenProjects}
               aria-describedby={projectTip}
               data-testid="project-chip"
-              className={`${CHIP} min-w-0 shrink cursor-pointer hover:border-logo-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-logo-primary`}
+              className={`${CHIP} min-w-0 shrink cursor-pointer hover:border-logo-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-logo-primary`}
             >
               <FolderIcon
                 width={12}

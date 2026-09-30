@@ -892,12 +892,14 @@ test("Tastatur: Zeilen sind fokussierbar, Enter wählt, die Menütaste öffnet d
   }
 });
 
-test("Mehr-Menü: Importieren und Auswählen", async ({ page }) => {
+test("Mehr-Menü: Auswählen (der Import hat nur noch den einen Weg über Symbol und Ablage)", async ({
+  page,
+}) => {
   await openRecordings(page, 1366, 768);
   await sessions(page).getByTestId("projects-more").click();
   await expect(
     page.getByRole("menuitem", { name: "Importieren…" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await page.getByRole("menuitem", { name: "Auswählen" }).click();
   await expect(sessions(page).getByText("0 ausgewählt")).toBeVisible();
   await meetingRow(page, "m1").click();

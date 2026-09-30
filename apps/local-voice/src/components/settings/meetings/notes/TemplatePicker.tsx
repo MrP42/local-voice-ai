@@ -80,8 +80,9 @@ export const TemplatePicker: React.FC<TemplatePickerProps> = ({
       <span className="text-xs text-text/60">
         {t("meetings.templates.label")}
       </span>
-      <div className="min-w-48" aria-label={t("meetings.templates.label")}>
+      <div className="min-w-48">
         <Select
+          ariaLabel={t("meetings.templates.label")}
           value={shown}
           options={options}
           isClearable={false}

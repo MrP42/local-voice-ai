@@ -93,6 +93,7 @@ export const RetranscribeDialog: React.FC<RetranscribeDialogProps> = ({
             {t("meetings.retranscribeDialog.model")}
           </span>
           <Select
+            ariaLabel={t("meetings.retranscribeDialog.model")}
             value={modelId}
             options={options}
             isClearable={false}
