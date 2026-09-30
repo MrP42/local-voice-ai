@@ -1826,12 +1826,8 @@
         "allEventsDescription": "Erinnert auch an Termine allein, ohne Gegenüber und ohne Beitritts-Adresse."
       },
       "upcoming": {
-        "title": "Nächste Termine (heute)",
-        "empty": "Heute stehen keine weiteren Termine an.",
-        "start": "Aufnahme starten",
         "attendees_one": "{{count}} Teilnehmende",
-        "attendees_other": "{{count}} Teilnehmende",
-        "running": "läuft"
+        "attendees_other": "{{count}} Teilnehmende"
       },
       "suggestion": {
         "chip": "aus Kalender",
@@ -1930,7 +1926,6 @@
     "list": {
       "title": "Besprechungen",
       "empty": "Noch keine Besprechungen.",
-      "import": "Importieren…",
       "importError": "Import fehlgeschlagen",
       "loading": "Wird geladen…",
       "date": "Datum",
@@ -1938,8 +1933,7 @@
       "deleteConfirmTitle": "Besprechung löschen?",
       "deleteConfirm": "Die Besprechung samt Transkript und Protokoll wird unwiderruflich gelöscht.",
       "deleteButton": "Löschen",
-      "cancel": "Abbrechen",
-      "dropHint": "Dateien hier ablegen, um sie zu importieren"
+      "cancel": "Abbrechen"
     },
     "detail": {
       "transcriptTab": "Transkript",
@@ -2623,11 +2617,6 @@
         "thread_not_found": "Der Verlauf wurde gelöscht.",
         "store_failed": "Die Antwort konnte nicht gespeichert werden.",
         "unknown": "Die Frage ist fehlgeschlagen ({{code}})."
-      },
-      "live": {
-        "row": "Frage zur laufenden Besprechung",
-        "expand": "Chat zur laufenden Besprechung öffnen",
-        "collapse": "Chat einklappen"
       },
       "list": {
         "askAll": "Alle Besprechungen fragen",

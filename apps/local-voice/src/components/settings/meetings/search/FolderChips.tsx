@@ -37,7 +37,9 @@ interface ContextMenuProps {
 }
 
 /** Schlichtes Menue an der Mausposition; schliesst bei Klick daneben, Escape,
- *  Scrollen und Fensterwechsel. */
+ *  Scrollen und Fensterwechsel. Pfeiltasten, Pos1 und Ende wandern durch die
+ *  Eintraege; Escape und Tab geben den Fokus an das Element zurueck, das das
+ *  Menue geoeffnet hat (nach einer Auswahl bestimmt die Aktion den Fokus). */
 export const ContextMenu: React.FC<ContextMenuProps> = ({
   x,
   y,
@@ -47,6 +49,15 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 }) => {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y });
+  const opener = useRef<HTMLElement | null>(
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+  const closeAndRestore = () => {
+    onClose();
+    if (opener.current?.isConnected) opener.current.focus();
+  };
 
   useEffect(() => {
     const el = ref.current;
@@ -64,7 +75,9 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       if (!ref.current?.contains(e.target as Node)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      onClose();
+      if (opener.current?.isConnected) opener.current.focus();
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -85,6 +98,32 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       aria-label={label}
       className="fixed z-50 min-w-[180px] rounded-md border border-mid-gray/30 bg-background py-1 shadow-lg"
       style={{ left: pos.x, top: pos.y }}
+      onKeyDown={(e) => {
+        if (e.key === "Tab") {
+          // Das Menue haengt am Ende von body: Tab wuerde die Seite verlassen.
+          e.preventDefault();
+          closeAndRestore();
+          return;
+        }
+        if (!/^(ArrowDown|ArrowUp|Home|End)$/.test(e.key)) return;
+        const list = Array.from(
+          ref.current?.querySelectorAll<HTMLButtonElement>(
+            "[role=menuitem]:not(:disabled)",
+          ) ?? [],
+        );
+        if (list.length === 0) return;
+        e.preventDefault();
+        const at = list.indexOf(document.activeElement as HTMLButtonElement);
+        const next =
+          e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? list.length - 1
+              : e.key === "ArrowDown"
+                ? (at + 1) % list.length
+                : (at - 1 + list.length) % list.length;
+        list[next]?.focus();
+      }}
     >
       {items.map((item) => (
         <button

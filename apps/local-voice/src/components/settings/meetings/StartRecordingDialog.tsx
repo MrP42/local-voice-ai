@@ -141,6 +141,7 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
             {t("meetings.startDialog.project")}
           </span>
           <Select
+            ariaLabel={t("meetings.startDialog.project")}
             value={knownProject}
             options={projectOptions}
             isClearable={false}

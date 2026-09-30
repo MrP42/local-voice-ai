@@ -1826,12 +1826,8 @@
         "allEventsDescription": "Also reminds about events on your own, without anyone else and without a join link."
       },
       "upcoming": {
-        "title": "Next events (today)",
-        "empty": "No more events today.",
-        "start": "Start recording",
         "attendees_one": "{{count}} attendee",
-        "attendees_other": "{{count}} attendees",
-        "running": "running"
+        "attendees_other": "{{count}} attendees"
       },
       "suggestion": {
         "chip": "from calendar",
@@ -1930,7 +1926,6 @@
     "list": {
       "title": "Meetings",
       "empty": "No meetings yet.",
-      "import": "Import…",
       "importError": "Import failed",
       "loading": "Loading…",
       "date": "Date",
@@ -1938,8 +1933,7 @@
       "deleteConfirmTitle": "Delete meeting?",
       "deleteConfirm": "The meeting, its transcript and minutes will be permanently deleted.",
       "deleteButton": "Delete",
-      "cancel": "Cancel",
-      "dropHint": "Drop files here to import them"
+      "cancel": "Cancel"
     },
     "detail": {
       "transcriptTab": "Transcript",
@@ -2623,11 +2617,6 @@
         "thread_not_found": "The thread was deleted.",
         "store_failed": "The answer could not be saved.",
         "unknown": "The question failed ({{code}})."
-      },
-      "live": {
-        "row": "Ask about the current meeting",
-        "expand": "Open chat for the current meeting",
-        "collapse": "Collapse chat"
       },
       "list": {
         "askAll": "Ask all meetings",

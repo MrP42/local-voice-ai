@@ -294,7 +294,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
                     startEdit();
                   }
                 }}
-                className="block w-full cursor-text truncate rounded-md px-1 text-start hover:bg-mid-gray/10 focus:outline-none focus-visible:outline-2 focus-visible:outline-logo-primary"
+                className="block w-full cursor-text truncate rounded-md px-1 text-start hover:bg-mid-gray/10 focus:outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-logo-primary"
               >
                 {meeting.title}
               </button>
@@ -355,7 +355,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
               onClick={onOpenProjects}
               aria-describedby={projectTip}
               data-testid="project-chip"
-              className={`${CHIP} min-w-0 shrink cursor-pointer hover:border-logo-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-logo-primary`}
+              className={`${CHIP} min-w-0 shrink cursor-pointer hover:border-logo-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-logo-primary`}
             >
               <FolderIcon
                 width={12}
