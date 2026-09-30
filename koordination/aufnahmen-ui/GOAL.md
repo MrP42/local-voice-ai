@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/aufnahmen-ui
 iteration: 0
 erstellt: 2026-09-30
-aktualisiert: 2026-09-30T20:26
+aktualisiert: 2026-09-30T21:00
 ---
 
 # Goal: Aufnahmen-Oberflaeche: Spalten, Sessions, eine Scrollbar
@@ -37,9 +37,9 @@ Die Seite „Aufnahmen“ arbeitet wie das Vorlesen-Modul in Spalten: links Sess
 ## Akzeptanzkriterien
 - [x] AK1 — Audit + Entwurf: `koordination/aufnahmen-ui/UI-AUDIT.md` (Element · Ist · Soll · Fundstelle · Schwere) und ein Entwurf mit mindestens zwei Spaltenvarianten als Screenshot/Artefakt; Patrick hat eine Variante gewählt (Entscheidung in GOAL.md).
 - [ ] AK2 — Spalten: Playwright → Seite Aufnahmen hat drei Bereiche (`data-testid="rec-sessions"`, `rec-content`, `rec-controls`); Griffe (`role="separator"`, Pfeiltasten, Doppelklick = Standard) ändern die Breite in Grenzen; ein-/ausklappbar; Zustand übersteht Neuladen.
-- [ ] AK3 — Sessions: anlegen, umbenennen, löschen (mit Rückfrage, Besprechungen bleiben erhalten), Besprechung per Ziehen und per Menü verschieben; Filter/Suche wirken innerhalb der gewählten Session; Datenmodell nutzt die vorhandenen Ordner (Migrationstest).
+- [x] AK3 — Sessions: anlegen, umbenennen, löschen (mit Rückfrage, Besprechungen bleiben erhalten), Besprechung per Ziehen und per Menü verschieben; Filter/Suche wirken innerhalb der gewählten Session; Datenmodell nutzt die vorhandenen Ordner (Migrationstest).
 - [x] AK4 — Eine Scrollbar: Viewports 1920×1050, 1366×768, 900×700, 480×800 → `document.scrollingElement.scrollHeight <= innerHeight + 1`; innerhalb jeder Spalte höchstens eine scrollbare Fläche entlang eines Wegs (Playwright prüft verschachtelte `overflow:auto` mit Überlauf).
-- [ ] AK5 — Kompakt: Detailkopf (Titel, Status-Chips, Symbolzeile) ≤ 120 px hoch bei 1366×768; Vollinfo per Dialog; „Neu transkribieren“ im Menü; Tooltips mit Name + Kurzerklärung (Maus und Tastatur).
+- [x] AK5 — Kompakt: Detailkopf (Titel, Status-Chips, Symbolzeile) ≤ 120 px hoch bei 1366×768; Vollinfo per Dialog; „Neu transkribieren“ im Menü; Tooltips mit Name + Kurzerklärung (Maus und Tastatur).
 - [ ] AK6 — Live im kleinen Fenster: bei 480×800 lässt sich Aufnahme starten, eine Notiz tippen und das Live-Transkript sehen, ohne zu scrollen oder die Seite zu wechseln (Playwright-Ablauf).
 - [ ] AK7 — Import: Datei in die Inhaltsspalte ziehen oder über die Bedienspalte wählen → Import startet in der aktuellen Session, Fortschritt (P8a) sichtbar an der erwarteten Stelle.
 - [ ] AK8 — Persistenz: Breiten, Klappzustand, gewählte Session, Reiter und Layout überstehen Neuladen, Seitenwechsel und App-Neustart (localStorage bzw. Settings) – Playwright.
@@ -87,6 +87,8 @@ Die Seite „Aufnahmen“ arbeitet wie das Vorlesen-Modul in Spalten: links Sess
 ## Evidence
 - 2026-09-30T20:00 AK1 erfüllt — U1 c3e6e4ec: UI-AUDIT.md (34 Zeilen), Prototyp A/B https://claude.ai/artifact/3RaBLbuyHDX1WnQtAvMQJS, Patrick waehlt B (30.09.)
 - 2026-09-30T20:26 AK4 erfüllt — U2 94dd0569: meeting-layout.spec 30 passed, 4 Viewports ohne Seiten-Scroll, keine verschachtelten Scrollflaechen
+- 2026-09-30T21:00 AK3 erfüllt — U3 89f39ae5: meeting-projects 30 passed, Migrationstest folders
+- 2026-09-30T21:00 AK5 erfüllt — U4 89f39ae5: meeting-header 32 passed, Kopf 95 px bei 1366
 
 ## Blocker
 -
