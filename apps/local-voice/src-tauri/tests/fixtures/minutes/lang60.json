@@ -1,0 +1,7359 @@
+{
+ "title": "Projektbesprechung Migration (60 Minuten)",
+ "template_key": "",
+ "segments": [
+  {
+   "segment_index": 0,
+   "text": "Guten Tag zusammen, wir beginnen heute mit dem Migrationskonzept und schauen danach auf den Rolllout.",
+   "start_ms": 630,
+   "end_ms": 6990,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 1,
+   "text": "Ich schlage vor, dass wir die Röhredmet vor dem Wochenende noch einmal gemeinsam durchgehen.",
+   "start_ms": 7440,
+   "end_ms": 13240,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 2,
+   "text": "Haben wir für die Rödmate schon einen verbindlichen Termin.",
+   "start_ms": 14040,
+   "end_ms": 17440,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 3,
+   "text": "Soweit ich weiß, ist das Abnahmeprotokoll fertig.",
+   "start_ms": 17610,
+   "end_ms": 21840,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 4,
+   "text": "Nur der Kickoff steht noch aus.",
+   "start_ms": 21840,
+   "end_ms": 23810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 5,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 24360,
+   "end_ms": 26990,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 6,
+   "text": "Herr Schmidt kümmert sich um die Ausschreibung, ich um die Serverumstellung.",
+   "start_ms": 26990,
+   "end_ms": 31600,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 7,
+   "text": "Ich habe die Kalkulation gestern mit Frau Lehmann durchgesprochen.",
+   "start_ms": 30060,
+   "end_ms": 34450,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 8,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 34450,
+   "end_ms": 35780,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 9,
+   "text": "Da habe ich Bedenken, weil das Migrationskonzept noch nicht sauber dokumentiert ist.",
+   "start_ms": 36360,
+   "end_ms": 42000,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 10,
+   "text": "Ist das Abnahmeprotokoll von Herrn Schmidt schon freigegeben worden?",
+   "start_ms": 42480,
+   "end_ms": 46680,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 11,
+   "text": "Bei der Schnittstelle liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 47040,
+   "end_ms": 51800,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 12,
+   "text": "Was passiert, wenn die Röödmet nicht rechtzeitig fertig wird?",
+   "start_ms": 52380,
+   "end_ms": 56820,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 13,
+   "text": "Ich habe den Schulungsplan gestern mit Lena durchgesprochen, wir liegen im Plan.",
+   "start_ms": 57360,
+   "end_ms": 62760,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 14,
+   "text": "Ich schlage vor, dass wir das Meeting vor dem Wochenende noch einmal gemeinsam durchgehen.",
+   "start_ms": 63060,
+   "end_ms": 68860,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 15,
+   "text": "Was passiert, wenn die Rötemate nicht rechtzeitig fertig wird?",
+   "start_ms": 69480,
+   "end_ms": 73840,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 16,
+   "text": "Das klären wir in der nächsten Woche mit Frau Demir.",
+   "start_ms": 74250,
+   "end_ms": 77840,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 17,
+   "text": "Dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 77840,
+   "end_ms": 80450,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 18,
+   "text": "Einverstanden, dann übernehme ich den Schulungsplan und melde mich in der nächsten Woche bei Frau Brandt.",
+   "start_ms": 81000,
+   "end_ms": 87710,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 19,
+   "text": "Das hängt vor allem von dem Schulungsplan ab, Tobias meldet sich dazu am3.",
+   "start_ms": 87710,
+   "end_ms": 92990,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 20,
+   "text": "Oktober.",
+   "start_ms": 92990,
+   "end_ms": 93680,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 21,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 92280,
+   "end_ms": 95150,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 22,
+   "text": "Und den Rollout nehmen wir ins Protokoll auf.",
+   "start_ms": 95150,
+   "end_ms": 98000,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 23,
+   "text": "Und wie sieht es bei dem Update aus?",
+   "start_ms": 98430,
+   "end_ms": 100820,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 24,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 100820,
+   "end_ms": 102710,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 25,
+   "text": "Wir haben das Update bereits getestet, aber die Ausschreibung macht uns noch Sorgen.",
+   "start_ms": 103260,
+   "end_ms": 108580,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 26,
+   "text": "Wer kümmert sich um das Rechenzentrum?",
+   "start_ms": 108840,
+   "end_ms": 111550,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 27,
+   "text": "Und wer hat die Ausschreibung im Blick?",
+   "start_ms": 111550,
+   "end_ms": 113920,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 28,
+   "text": "Wir haben den Workshop bereits getestet, aber das Lastenheft macht uns noch Sorgen.",
+   "start_ms": 114060,
+   "end_ms": 119540,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 29,
+   "text": "Wichtig ist mir, dass das Budget und das Abnahmeprotokoll zusammen betrachtet werden.",
+   "start_ms": 119970,
+   "end_ms": 125770,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 30,
+   "text": "Können wir den Schulungsplan bis übermorgen abschließen?",
+   "start_ms": 126240,
+   "end_ms": 129910,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 31,
+   "text": "Das klären wir am Montagvormittag mit Frau Brandt, dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 129910,
+   "end_ms": 136120,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 32,
+   "text": "Das sehe ich anders.",
+   "start_ms": 136590,
+   "end_ms": 138340,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 33,
+   "text": "Die Deadline sollte erst nach dem Abnahmeprotokoll kommen.",
+   "start_ms": 138340,
+   "end_ms": 141750,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 34,
+   "text": "Wie hoch ist der Puffer für die Serverumstellung, nachdem wir20% eingeplant haben?",
+   "start_ms": 142560,
+   "end_ms": 148840,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 35,
+   "text": "Ich habe das Buschet gestern mit Frau Demir durchgesprochen.",
+   "start_ms": 149070,
+   "end_ms": 153060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 36,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 153060,
+   "end_ms": 154310,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 37,
+   "text": "Ja, genau so machen wir das, und den Kickoff nehmen wir ins Protokoll auf.",
+   "start_ms": 154830,
+   "end_ms": 160310,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 38,
+   "text": "Was passiert, wenn der Malston nicht rechtzeitig fertig wird?",
+   "start_ms": 160950,
+   "end_ms": 165390,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 39,
+   "text": "Wir haben den Rolllout bereits getestet, aber der Wartungsvertrag macht uns noch Sorgen.",
+   "start_ms": 165840,
+   "end_ms": 171400,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 40,
+   "text": "Da habe ich Bedenken, weil die Ausschreibung noch nicht sauber dokumentiert ist.",
+   "start_ms": 171960,
+   "end_ms": 177120,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 41,
+   "text": "Soweit ich weiß, ist der Wartungsvertrag fertig.",
+   "start_ms": 177750,
+   "end_ms": 181820,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 42,
+   "text": "Nur der Rollout steht noch aus.",
+   "start_ms": 181820,
+   "end_ms": 183710,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 43,
+   "text": "Die Kosten für die Kalkulation liegen derzeit bei20% über dem Plan.",
+   "start_ms": 184290,
+   "end_ms": 189370,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 44,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 189690,
+   "end_ms": 192560,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 45,
+   "text": "Und den Kick-Off nehmen wir ins Protokoll auf.",
+   "start_ms": 192560,
+   "end_ms": 195410,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 46,
+   "text": "Haben Sie den Wartungsvertrag schon mit Lena abgestimmt?",
+   "start_ms": 196260,
+   "end_ms": 199740,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 47,
+   "text": "Nach meiner Einschätzung schaffen wir die Serverumstellung vor dem Wochenende, wenn Frau Lehmann rechtzeitig liefert.",
+   "start_ms": 199830,
+   "end_ms": 207150,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 48,
+   "text": "Und wie sieht es bei dem Tick-off aus?",
+   "start_ms": 205320,
+   "end_ms": 207790,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 49,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 207790,
+   "end_ms": 209680,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 50,
+   "text": "Nach meiner Einschätzung schaffen wir die Ausschreibung in der nächsten Woche.",
+   "start_ms": 209890,
+   "end_ms": 214450,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 51,
+   "text": "Wenn Frau Brandt rechtzeitig liefert.",
+   "start_ms": 214450,
+   "end_ms": 217250,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 52,
+   "text": "Bei dem Rechenzentrum liegen wir etwa20% über dem ursprünglichen Ansatz.",
+   "start_ms": 217250,
+   "end_ms": 222660,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 53,
+   "text": "Wir sollten das Budget nicht unterschätzen, denn Frau Demir rechnet mit40 Stunden Mehraufwand.",
+   "start_ms": 223500,
+   "end_ms": 229780,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 54,
+   "text": "Haben wir für den Rolllout schon einen verbindlichen Termin.",
+   "start_ms": 230070,
+   "end_ms": 233470,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 55,
+   "text": "Soweit ich weiß, ist das Budget fertig, nur der Kickoff steht noch aus.",
+   "start_ms": 233820,
+   "end_ms": 239410,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 56,
+   "text": "Einverstanden, dann übernehme ich die Schnittstelle und melde mich am Donnerstagnachmittag bei Lena.",
+   "start_ms": 239410,
+   "end_ms": 245620,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 57,
+   "text": "Ist der Wartungsvertrag von Frau Demir schon freigegeben worden?",
+   "start_ms": 245880,
+   "end_ms": 250000,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 58,
+   "text": "Dann bedanke ich mich bei allen, Herr Kaiser verschickt das Protokoll, und wir hören voneinander.",
+   "start_ms": 250260,
+   "end_ms": 256860,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 59,
+   "text": "Schön, dass alle da sind.",
+   "start_ms": 258240,
+   "end_ms": 260520,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 60,
+   "text": "Heute geht es um das Lastenheft, die Konformitätserklärung und den Workshop.",
+   "start_ms": 261210,
+   "end_ms": 266690,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 61,
+   "text": "Da habe ich Bedenken, weil die Konformitätserklärung noch nicht sauber dokumentiert ist.",
+   "start_ms": 264540,
+   "end_ms": 270340,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 62,
+   "text": "Ich habe die Preisliste gestern mit Frau Lehmann durchgesprochen.",
+   "start_ms": 270900,
+   "end_ms": 274890,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 63,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 274890,
+   "end_ms": 276140,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 64,
+   "text": "Haben wir für den Proof of Concept schon einen verbindlichen Termin.",
+   "start_ms": 276930,
+   "end_ms": 280810,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 65,
+   "text": "Das klären wir Mitte November mit Tobias.",
+   "start_ms": 281460,
+   "end_ms": 284650,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 66,
+   "text": "Dann bekommen sie eine verbindliche Antwort.",
+   "start_ms": 284650,
+   "end_ms": 287260,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 67,
+   "text": "Wir sollten die Leistungsbeschreibung nicht unterschätzen, denn Herr Kaiser rechnet mit eine Woche mehr Aufwand.",
+   "start_ms": 287940,
+   "end_ms": 294620,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 68,
+   "text": "Aktuell fehlen uns noch eine Woche.",
+   "start_ms": 294850,
+   "end_ms": 297490,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 69,
+   "text": "Dann können wir den Key-Account starten.",
+   "start_ms": 297490,
+   "end_ms": 299780,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 70,
+   "text": "Dass das Lieferantennaudit und die Vertragsstrafe zusammen betrachtet werden.",
+   "start_ms": 299470,
+   "end_ms": 304160,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 71,
+   "text": "Einverstanden.",
+   "start_ms": 302520,
+   "end_ms": 303950,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 72,
+   "text": "Dann übernehme ich das Steuergerät und melde mich vor dem Wochenende bei Herr Kaiser.",
+   "start_ms": 303950,
+   "end_ms": 308720,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 73,
+   "text": "Haben Sie die Gewährleistung schon mit Tobias abgestimmt?",
+   "start_ms": 309450,
+   "end_ms": 313090,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 74,
+   "text": "Nach meiner Einschätzung schaffen wir die Angebotskalkulation am Montagvormittag, wenn Markus rechtzeitig liefert.",
+   "start_ms": 313320,
+   "end_ms": 320960,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 75,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 320980,
+   "end_ms": 323300,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 76,
+   "text": "Tobias kümmert sich um das Zahlungsziel.",
+   "start_ms": 323300,
+   "end_ms": 326180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 77,
+   "text": "Ich um die Konformitätserklärung.",
+   "start_ms": 326180,
+   "end_ms": 328230,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 78,
+   "text": "Bis Mitte nächster Woche brauchen wir eine Entscheidung zu der Gewährleistung.",
+   "start_ms": 328890,
+   "end_ms": 333680,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 79,
+   "text": "Sonst verschiebt sich das Service-Level-Agrement.",
+   "start_ms": 333680,
+   "end_ms": 336690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 80,
+   "text": "Da habe ich Bedenken, weil das Zahlungsziel noch nicht sauber dokumentiert ist.",
+   "start_ms": 336960,
+   "end_ms": 342230,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 81,
+   "text": "Nach meiner Einschätzung schaffen wir die Leistungsbeschreibung Anfang Dezember, wenn Tobias rechtzeitig liefert.",
+   "start_ms": 342230,
+   "end_ms": 349240,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 82,
+   "text": "Wir sollten die Vertragsstrafe nicht unterschätzen, denn Lena rechnet mit drei Tagen mehr Aufwand.",
+   "start_ms": 349530,
+   "end_ms": 355810,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 83,
+   "text": "Bei dem Lieferanten Audit liegen wir etwa8% über dem ursprünglichen Ansatz.",
+   "start_ms": 354990,
+   "end_ms": 360070,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 84,
+   "text": "Da habe ich Bedenken, weil das Lastenheft noch nicht sauber dokumentiert ist.",
+   "start_ms": 360450,
+   "end_ms": 365450,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 85,
+   "text": "Haben wir für das Anboarding schon einen verbindlichen Termin.",
+   "start_ms": 365790,
+   "end_ms": 369350,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 86,
+   "text": "Wir haben den Workshop bereits getestet, aber die Konformitätserklärung macht uns noch Sorgen.",
+   "start_ms": 369420,
+   "end_ms": 375620,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 87,
+   "text": "Einverstanden?",
+   "start_ms": 376230,
+   "end_ms": 377820,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 88,
+   "text": "Dann übernehme ich die Vertragsstrafe und melde mich am Montagvormittag bei Lena.",
+   "start_ms": 377820,
+   "end_ms": 382910,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 89,
+   "text": "Das hängt vor allem von der Konformitätserklärung ab.",
+   "start_ms": 383280,
+   "end_ms": 386950,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 90,
+   "text": "Herr Schmidt meldet sich dazu Mitte November.",
+   "start_ms": 386950,
+   "end_ms": 389720,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 91,
+   "text": "Ist der Kabelbaum von Herrn Schmidt schon freigegeben worden?",
+   "start_ms": 389760,
+   "end_ms": 393160,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 92,
+   "text": "Bei dem Lastenheft liegen wir etwa15% über dem ursprünglichen Ansatz.",
+   "start_ms": 393480,
+   "end_ms": 398560,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 93,
+   "text": "Haben Sie das Steuergerät schon mit Frau Demir abgestimmt?",
+   "start_ms": 398460,
+   "end_ms": 401940,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 94,
+   "text": "Nach meiner Einschätzung schaffen wir die Vertragsstrafe am3.",
+   "start_ms": 401970,
+   "end_ms": 405800,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 95,
+   "text": "Oktober, wenn Markus rechtzeitig liefert.",
+   "start_ms": 405800,
+   "end_ms": 408970,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 96,
+   "text": "Haben Sie die Vertragsstrafe schon mit Frau Demir abgestimmt?",
+   "start_ms": 408840,
+   "end_ms": 412880,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 97,
+   "text": "Das hängt vor allem von der Vertragsstrafe ab.",
+   "start_ms": 413100,
+   "end_ms": 416370,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 98,
+   "text": "Frau Brandt meldet sich dazu am Donnerstagnachmittag.",
+   "start_ms": 416370,
+   "end_ms": 419940,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 99,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 420480,
+   "end_ms": 422870,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 100,
+   "text": "Markus kümmert sich um das Lastenheft.",
+   "start_ms": 422870,
+   "end_ms": 425590,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 101,
+   "text": "Ich um die Rechtsabteilung.",
+   "start_ms": 425590,
+   "end_ms": 427160,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 102,
+   "text": "Kurz zur Lage, das Steuergerät ist abgeschlossen, das Lieferanten Audit läuft, und das Anboarding beginnt vor dem Wochenende.",
+   "start_ms": 427590,
+   "end_ms": 436940,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 103,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens zwei Wochen.",
+   "start_ms": 436940,
+   "end_ms": 441310,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 104,
+   "text": "Wie hoch ist der Puffer für den Rahmenvertrag?",
+   "start_ms": 441540,
+   "end_ms": 444730,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 105,
+   "text": "Nachdem wir12% eingeplant haben.",
+   "start_ms": 444730,
+   "end_ms": 447660,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 106,
+   "text": "Aktuell fehlen uns noch drei Tage, dann können wir das Anboarding starten.",
+   "start_ms": 448110,
+   "end_ms": 453110,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 107,
+   "text": "Da habe ich Bedenken, weil das Lieferanten Audit noch nicht sauber dokumentiert ist.",
+   "start_ms": 453750,
+   "end_ms": 458990,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 108,
+   "text": "Kurz zur Lage.",
+   "start_ms": 459660,
+   "end_ms": 461250,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 109,
+   "text": "Der Rahmenvertrag ist abgeschlossen.",
+   "start_ms": 461250,
+   "end_ms": 463810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 110,
+   "text": "Die Vertragsstrafe läuft.",
+   "start_ms": 463810,
+   "end_ms": 465730,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 111,
+   "text": "Und der Proofhof-Carzept beginnt im ersten Quartal.",
+   "start_ms": 465730,
+   "end_ms": 468900,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 112,
+   "text": "Haben wir für den Vorkäst schon einen verbindlichen Termin.",
+   "start_ms": 469740,
+   "end_ms": 473220,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 113,
+   "text": "Aktuell fehlen uns noch zwei Wochen, dann können wir den Key-Account starten.",
+   "start_ms": 474300,
+   "end_ms": 479140,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 114,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 479980,
+   "end_ms": 482620,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 115,
+   "text": "Markus kümmert sich um das Lastenheft.",
+   "start_ms": 482620,
+   "end_ms": 485340,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 116,
+   "text": "Ich um die Preisliste.",
+   "start_ms": 485340,
+   "end_ms": 486750,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 117,
+   "text": "Kurz zur Lage, das Zahlungsziel ist abgeschlossen, das Steuergerät läuft, und das Service-Level-Agrement beginnt in der nächsten Woche.",
+   "start_ms": 487480,
+   "end_ms": 496490,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 118,
+   "text": "Wie weit sind wir eigentlich mit der Leistungsbeschreibung?",
+   "start_ms": 497130,
+   "end_ms": 500610,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 119,
+   "text": "Bei dem Lieferanten Audit liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 501060,
+   "end_ms": 506140,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 120,
+   "text": "Kurz zur Lage.",
+   "start_ms": 506370,
+   "end_ms": 507880,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 121,
+   "text": "Die Angebotskalkulation ist abgeschlossen.",
+   "start_ms": 507880,
+   "end_ms": 511000,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 122,
+   "text": "Das Steuergerät läuft.",
+   "start_ms": 511000,
+   "end_ms": 512760,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 123,
+   "text": "Und der Vorkäst beginnt in der nächsten Woche.",
+   "start_ms": 512760,
+   "end_ms": 515290,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 124,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 516030,
+   "end_ms": 518900,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 125,
+   "text": "Und das Prigging nehmen wir ins Protokoll auf.",
+   "start_ms": 518900,
+   "end_ms": 521750,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 126,
+   "text": "Haben Sie die Gewährleistung schon mit Frau Brandt abgestimmt?",
+   "start_ms": 522210,
+   "end_ms": 525690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 127,
+   "text": "Soweit ich weiß, ist die Preisliste fertig, nur das Pricking steht noch aus.",
+   "start_ms": 524190,
+   "end_ms": 529750,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 128,
+   "text": "Für den Kunden zählt am Ende vor allem, dass das Lastenheft verlässlich funktioniert.",
+   "start_ms": 529650,
+   "end_ms": 535290,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 129,
+   "text": "Da habe ich Bedenken, weil das Steuergerät noch nicht sauber dokumentiert ist.",
+   "start_ms": 535980,
+   "end_ms": 541140,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 130,
+   "text": "Das klären wir Mitte November mit Tobias.",
+   "start_ms": 541860,
+   "end_ms": 544890,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 131,
+   "text": "Dann bekommen sie eine verbindliche Antwort.",
+   "start_ms": 544890,
+   "end_ms": 547260,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 132,
+   "text": "Wir sollten das Steuergerät nicht unterschätzen, denn Markus rechnet mit6 Personentage mehr Aufwand.",
+   "start_ms": 547680,
+   "end_ms": 554440,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 133,
+   "text": "Gut, dann halten wir fest, Herr Kaiser kümmert sich um die Vertragsstrafe, ich um das Steuergerät.",
+   "start_ms": 553330,
+   "end_ms": 560900,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 134,
+   "text": "Kurz zur Lage, der Rahmenvertrag ist abgeschlossen.",
+   "start_ms": 561370,
+   "end_ms": 565530,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 135,
+   "text": "Die Konformitätserklärung läuft.",
+   "start_ms": 565530,
+   "end_ms": 567930,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 136,
+   "text": "Und der Workshop beginnt Anfang Dezember.",
+   "start_ms": 567930,
+   "end_ms": 570380,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 137,
+   "text": "Das klären wir Mitte November mit Frau Brandt.",
+   "start_ms": 570930,
+   "end_ms": 574280,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 138,
+   "text": "Dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 574280,
+   "end_ms": 576810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 139,
+   "text": "Bis übermorgen brauchen wir eine Entscheidung zu dem Zahlungsziel.",
+   "start_ms": 577320,
+   "end_ms": 581470,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 140,
+   "text": "Sonst verschiebt sich das Service-Level-Agrement.",
+   "start_ms": 581470,
+   "end_ms": 584160,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 141,
+   "text": "Ist das Lastenheft von Frau Demir schon freigegeben worden?",
+   "start_ms": 584310,
+   "end_ms": 587950,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 142,
+   "text": "Wir haben das Service-Level-Agrement bereits getestet.",
+   "start_ms": 588690,
+   "end_ms": 592520,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 143,
+   "text": "Aber das Zahlungsziel macht uns noch Sorgen.",
+   "start_ms": 592520,
+   "end_ms": 595130,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 144,
+   "text": "Reichen drei Tage für die Konformitätserklärung und den Vorquest überhaupt aus?",
+   "start_ms": 595920,
+   "end_ms": 601160,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 145,
+   "text": "Wichtig ist mir, dass das Steuergerät und die Vertragsstrafe zusammen betrachtet werden.",
+   "start_ms": 601350,
+   "end_ms": 607230,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 146,
+   "text": "Was passiert, wenn der Vorkehrst nicht rechtzeitig fertig wird?",
+   "start_ms": 607560,
+   "end_ms": 612160,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 147,
+   "text": "Bei dem Kabelbaum liegen wir etwa12% über dem ursprünglichen Ansatz.",
+   "start_ms": 612870,
+   "end_ms": 617790,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 148,
+   "text": "Wichtig ist mir, dass das Lastenheft und die Gewährleistung zusammen betrachtet werden.",
+   "start_ms": 615690,
+   "end_ms": 621490,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 149,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens40 Stunden.",
+   "start_ms": 622170,
+   "end_ms": 626930,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 150,
+   "text": "Aktuell fehlen uns noch zwei Wochen, dann können wir das Brigg-ing starten.",
+   "start_ms": 627370,
+   "end_ms": 632380,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 151,
+   "text": "Dann bedanke ich mich bei allen, Herr Schmidt verschickt das Protokoll, und wir hören voneinander.",
+   "start_ms": 632880,
+   "end_ms": 639240,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 152,
+   "text": "Wie weit sind wir eigentlich mit der Testabdeckung?",
+   "start_ms": 645990,
+   "end_ms": 649150,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 153,
+   "text": "Guten Tag zusammen, wir beginnen heute mit der Datenbankmigration und schauen danach auf die Zeit eigentlich mit der Testabwägung.",
+   "start_ms": 640740,
+   "end_ms": 649690,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 154,
+   "text": "Nach meiner Einschätzung schaffen wir die Sicherheitslücke Anfang Dezember, wenn Frau Demir.",
+   "start_ms": 649690,
+   "end_ms": 655260,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 155,
+   "text": "Ich liebe.",
+   "start_ms": 655590,
+   "end_ms": 656440,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 156,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 654630,
+   "end_ms": 657500,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 157,
+   "text": "Und das Staging-System nehmen wir ins Protokoll auf.",
+   "start_ms": 657500,
+   "end_ms": 660990,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 158,
+   "text": "Wie weit sind wir eigentlich mit dem Lasttest?",
+   "start_ms": 661350,
+   "end_ms": 664030,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 159,
+   "text": "Ich habe den Speicherverbrauch gestern mit Frau Brandt durchgesprochen, wir liegen im Plan.",
+   "start_ms": 664170,
+   "end_ms": 669970,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 160,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens zwei Wochen.",
+   "start_ms": 669900,
+   "end_ms": 674500,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 161,
+   "text": "Kurz zur Lage, der Lasttest ist abgeschlossen, die Fehlerbehebung läuft, und das Sprintreview beginnt am Montagvormittag.",
+   "start_ms": 672660,
+   "end_ms": 681660,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 162,
+   "text": "Aktuell fehlen uns noch40 Stunden.",
+   "start_ms": 680340,
+   "end_ms": 683290,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 163,
+   "text": "Dann können wir das Sprint-Review starten.",
+   "start_ms": 683290,
+   "end_ms": 686170,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 164,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 686170,
+   "end_ms": 688810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 165,
+   "text": "Und den Rollback nehmen wir ins Protokoll auf.",
+   "start_ms": 688810,
+   "end_ms": 691660,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 166,
+   "text": "Reichen drei Tage für den Speicherverbrauch und den Pull Request überhaupt aus.",
+   "start_ms": 692250,
+   "end_ms": 696930,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 167,
+   "text": "Nach meiner Einschätzung schaffen wir die Fehlerbehebung Mitte November.",
+   "start_ms": 697650,
+   "end_ms": 702040,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 168,
+   "text": "Wenn Lena rechtzeitig liefert.",
+   "start_ms": 702040,
+   "end_ms": 704520,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 169,
+   "text": "Das sehe ich anders.",
+   "start_ms": 704520,
+   "end_ms": 706040,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 170,
+   "text": "Das Backlog sollte erst nach dem Speicherverbrauch kommen.",
+   "start_ms": 706040,
+   "end_ms": 709210,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 171,
+   "text": "Ist der Abnahmetest von Frau Demir schon freigegeben worden?",
+   "start_ms": 709650,
+   "end_ms": 713370,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 172,
+   "text": "Aktuell fehlen uns noch6 Personentage?",
+   "start_ms": 712260,
+   "end_ms": 715690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 173,
+   "text": "Dann können wir den Kubernetes Cluster starten.",
+   "start_ms": 715690,
+   "end_ms": 718700,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 174,
+   "text": "Wichtig ist mir, dass die Testabdeckung und der Speicherverbrauch zusammen betrachtet werden.",
+   "start_ms": 719130,
+   "end_ms": 725090,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 175,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 725640,
+   "end_ms": 728190,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 176,
+   "text": "Und das D-Epilow-Aiment nehmen wir ins Protokoll auf.",
+   "start_ms": 728190,
+   "end_ms": 731520,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 177,
+   "text": "Wie sieht es bei dem DIEPLO-Alliment aus?",
+   "start_ms": 730380,
+   "end_ms": 733090,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 178,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 733090,
+   "end_ms": 734900,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 179,
+   "text": "Bei der Konfigurationsdatei liegen wir etwa20% über dem ursprünglichen Ansatz.",
+   "start_ms": 733800,
+   "end_ms": 739520,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 180,
+   "text": "Ist die Konfigurationsdatei von Herrn Schmidt schon freigegeben worden?",
+   "start_ms": 740220,
+   "end_ms": 744930,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 181,
+   "text": "Wir haben das Backlog bereits getestet.",
+   "start_ms": 744930,
+   "end_ms": 747650,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 182,
+   "text": "Aber der Abnahmetest macht uns noch Sorgen.",
+   "start_ms": 747650,
+   "end_ms": 750180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 183,
+   "text": "Das sehe ich anders, der Kubernetes Cluster sollte erst nach der Konfigurationsdatei kommen.",
+   "start_ms": 751020,
+   "end_ms": 757300,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 184,
+   "text": "Wichtig ist mir, dass die Datenbankmigration und der Lasttest zusammen betrachtet werden.",
+   "start_ms": 756060,
+   "end_ms": 762260,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 185,
+   "text": "Da habe ich Bedenken, weil die Sicherheitslücke noch nicht sauber dokumentiert ist.",
+   "start_ms": 763020,
+   "end_ms": 768260,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 186,
+   "text": "Ich habe den Speicherverbrauch gestern mit Herr Kaiser durchgesprochen.",
+   "start_ms": 767340,
+   "end_ms": 771490,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 187,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 771490,
+   "end_ms": 772900,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 188,
+   "text": "Wie weit sind wir eigentlich mit der Konfigurationsdatei?",
+   "start_ms": 770970,
+   "end_ms": 774610,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 189,
+   "text": "Nach meiner Einschätzung schaffen wir die Sicherheitslücke Anfang Dezember, wenn Markus rechtzeitig liefert.",
+   "start_ms": 775260,
+   "end_ms": 781940,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 190,
+   "text": "Wichtig ist mir, dass die Sicherheitslücke und der Lasttest zusammen betrachtet werden.",
+   "start_ms": 780960,
+   "end_ms": 786760,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 191,
+   "text": "Können wir den Speicherverbrauch bis übermorgen abschließen.",
+   "start_ms": 787680,
+   "end_ms": 791080,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 192,
+   "text": "Wir haben den Kubernetes Cluster bereits getestet, aber die Konfigurationsdatei macht uns ab.",
+   "start_ms": 790170,
+   "end_ms": 796770,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 193,
+   "text": "Wir sollten den Speicherverbrauch nicht unterschätzen, denn Frau Lehmann rechnet mit zwei Wochen mehr Aufwand.",
+   "start_ms": 794970,
+   "end_ms": 801410,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 194,
+   "text": "Ich habe die Testabdeckung gestern mit Frau Demir durchgesprochen, wir liegen im Plan.",
+   "start_ms": 801540,
+   "end_ms": 807180,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 195,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 805780,
+   "end_ms": 808340,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 196,
+   "text": "Und das Backlog nehmen wir ins Protokoll auf.",
+   "start_ms": 808340,
+   "end_ms": 811380,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 197,
+   "text": "Soweit ich weiß, ist der Lasttest fertig.",
+   "start_ms": 811380,
+   "end_ms": 814820,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 198,
+   "text": "Nur der Release-Kentteil-Date steht noch aus.",
+   "start_ms": 814820,
+   "end_ms": 817590,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 199,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 816300,
+   "end_ms": 818930,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 200,
+   "text": "Und das Feature Flake nehmen wir ins Protokoll auf.",
+   "start_ms": 818930,
+   "end_ms": 822020,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 201,
+   "text": "Haben wir für den Hotfix schon einen verbindlichen Termin.",
+   "start_ms": 822390,
+   "end_ms": 825950,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 202,
+   "text": "Wir haben den Kubernetes Cluster bereits getestet.",
+   "start_ms": 826800,
+   "end_ms": 830390,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 203,
+   "text": "Aber der Abnahmetest macht uns noch Sorgen.",
+   "start_ms": 830390,
+   "end_ms": 833270,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 204,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 833270,
+   "end_ms": 835670,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 205,
+   "text": "Lena kümmert sich um den Abnahmetest.",
+   "start_ms": 835670,
+   "end_ms": 838120,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 206,
+   "text": "Ich um den Lasttest.",
+   "start_ms": 838350,
+   "end_ms": 840100,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 207,
+   "text": "Und wie sieht es bei dem Backlog aus?",
+   "start_ms": 840100,
+   "end_ms": 842340,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 208,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 842340,
+   "end_ms": 844070,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 209,
+   "text": "Nach meiner Einschätzung schaffen wir die Konfigurationsdatei vor dem Wochenende, wenn Lena rechtzeitig liefert.",
+   "start_ms": 842580,
+   "end_ms": 849660,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 210,
+   "text": "Bis Freitagmittag brauchen wir eine Entscheidung zu der Schnittstellendokumentation, sonst verschiebt sich das Sprint-Revreview.",
+   "start_ms": 849690,
+   "end_ms": 857570,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 211,
+   "text": "Was passiert, wenn das Staging-System nicht rechtzeitig fertig wird?",
+   "start_ms": 858060,
+   "end_ms": 862740,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 212,
+   "text": "Das hängt vor allem von der Konfigurationsdatei ab.",
+   "start_ms": 861870,
+   "end_ms": 865460,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 213,
+   "text": "Herr Schmidt meldet sich dazu in der nächsten Woche.",
+   "start_ms": 865460,
+   "end_ms": 868390,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 214,
+   "text": "Ist der Abnahmetest von Frau Demir schon freigegeben worden?",
+   "start_ms": 867300,
+   "end_ms": 871260,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 215,
+   "text": "Nach meiner Einschätzung schaffen wir die Testabdeckung Anfang Dezember.",
+   "start_ms": 871590,
+   "end_ms": 876060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 216,
+   "text": "Wenn Frau D mir rechtzeitig liefert.",
+   "start_ms": 876060,
+   "end_ms": 878430,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 217,
+   "text": "Ja, genau so machen wir das, und den Kubernetes Cluster nehmen wir ins Protokoll auf.",
+   "start_ms": 877170,
+   "end_ms": 883290,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 218,
+   "text": "Wir sollten die Sicherheitslücke nicht unterschätzen, denn Herr Kaiser rechnet mit einer Woche mehr Aufwand.",
+   "start_ms": 883830,
+   "end_ms": 890350,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 219,
+   "text": "Das klären wir in der nächsten Woche mit Herr Kaiser.",
+   "start_ms": 891090,
+   "end_ms": 894520,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 220,
+   "text": "Dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 894520,
+   "end_ms": 897240,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 221,
+   "text": "Und wie sieht es bei der Pipeline aus?",
+   "start_ms": 897240,
+   "end_ms": 899800,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 222,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 899800,
+   "end_ms": 901610,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 223,
+   "text": "Das klären wir in der nächsten Woche mit Frau Lehmann, dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 902040,
+   "end_ms": 907920,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 224,
+   "text": "Gut, dann halten wir fest, Tobias kümmert sich um den Speicherverbrauch, ich um die Datenbankmigration.",
+   "start_ms": 908460,
+   "end_ms": 916180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 225,
+   "text": "Für den Kunden zählt am Ende vor allem, dass die Fehlerbehebung verlässlich funktioniert.",
+   "start_ms": 916920,
+   "end_ms": 922640,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 226,
+   "text": "Soweit ich weiß, ist die Datenbank Migration fertig, nur das Feature Flake steht noch auf.",
+   "start_ms": 922710,
+   "end_ms": 929230,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 227,
+   "text": "Wir sollten die Konfigurationsdatei nicht unterschätzen, denn Lena rechnet mit sechs Personentage mehr Aufwand.",
+   "start_ms": 928200,
+   "end_ms": 935550,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 228,
+   "text": "Einverstanden.",
+   "start_ms": 935550,
+   "end_ms": 936990,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 229,
+   "text": "Dann übernehme ich die Datenbankmigration und melde mich im ersten Quartal bei Herrn Schmidt.",
+   "start_ms": 936990,
+   "end_ms": 942400,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 230,
+   "text": "Bei der Schnittstellendokumentation liegen wir etwa8% über dem ursprünglichen Ansatz.",
+   "start_ms": 943110,
+   "end_ms": 948750,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 231,
+   "text": "Da habe ich Bedenken, weil die Schnittstellendokumentation noch nicht sauber dokumentiert ist.",
+   "start_ms": 949050,
+   "end_ms": 955090,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 232,
+   "text": "Ich habe die Sicherheitsgestern mit Markus durchgesprochen.",
+   "start_ms": 953400,
+   "end_ms": 957470,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 233,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 957470,
+   "end_ms": 958880,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 234,
+   "text": "Und wie sieht es bei der Pipeline aus?",
+   "start_ms": 957870,
+   "end_ms": 960580,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 235,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 960580,
+   "end_ms": 962470,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 236,
+   "text": "Bei der Fehlerbehebung liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 962850,
+   "end_ms": 967770,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 237,
+   "text": "Aktuell fehlen uns noch eine Woche, dann können wir das Sprint-Review starten.",
+   "start_ms": 968070,
+   "end_ms": 973230,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 238,
+   "text": "Haben Sie die Fehlerbehebung schon mit Lena abgestimmt?",
+   "start_ms": 973890,
+   "end_ms": 977210,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 239,
+   "text": "Bei der Sicherheitslücke liegen wir etwa15% über dem ursprünglichen Ansatz.",
+   "start_ms": 977610,
+   "end_ms": 983170,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 240,
+   "text": "Wie weit sind wir eigentlich mit der Datenbank Migration?",
+   "start_ms": 983460,
+   "end_ms": 986940,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 241,
+   "text": "Bei der Konfigurationsdatei liegen wir etwa20% über dem ursprünglichen Ansatz.",
+   "start_ms": 987570,
+   "end_ms": 993530,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 242,
+   "text": "Können wir den Lasttest bis Mitte nächster Woche abschließen.",
+   "start_ms": 994320,
+   "end_ms": 997880,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 243,
+   "text": "Das hängt vor allem von der Konfigurationsdatei ab.",
+   "start_ms": 998640,
+   "end_ms": 1002230,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 244,
+   "text": "Frau Demir meldet sich dazu am3.",
+   "start_ms": 1002230,
+   "end_ms": 1004550,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 245,
+   "text": "Oktober.",
+   "start_ms": 1004550,
+   "end_ms": 1005240,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 246,
+   "text": "Einverstanden?",
+   "start_ms": 1003980,
+   "end_ms": 1005570,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 247,
+   "text": "Dann übernehme ich den Speicherverbrauch und melde mich Anfang Dezember bei Frau Lehmann.",
+   "start_ms": 1005570,
+   "end_ms": 1010820,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 248,
+   "text": "Haben wir für den Rollback schon einen verbindlichen Termin.",
+   "start_ms": 1011150,
+   "end_ms": 1014550,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 249,
+   "text": "Aktuell fehlen uns noch6 Personentage, dann können wir die Pipeline starten.",
+   "start_ms": 1015170,
+   "end_ms": 1020570,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 250,
+   "text": "Das sehe ich anders.",
+   "start_ms": 1021170,
+   "end_ms": 1022920,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 251,
+   "text": "Das Code Review sollte erst nach der Testabdeckung kommen.",
+   "start_ms": 1022920,
+   "end_ms": 1026410,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 252,
+   "text": "Wie hoch ist der Puffer für die Fehlerbehebung?",
+   "start_ms": 1024890,
+   "end_ms": 1027840,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 253,
+   "text": "Nachdem wir8% eingeplant haben.",
+   "start_ms": 1027840,
+   "end_ms": 1030450,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 254,
+   "text": "Aktuell fehlen uns noch zwei Wochen, dann können wir die Pipeline starten.",
+   "start_ms": 1029390,
+   "end_ms": 1033990,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 255,
+   "text": "Können wir die Fehlerbehebung bis zum3.",
+   "start_ms": 1032180,
+   "end_ms": 1034810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 256,
+   "text": "November abschließen.",
+   "start_ms": 1034810,
+   "end_ms": 1035980,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 257,
+   "text": "Wir haben den Hotfix bereits getestet, aber die Datenbankmigration macht uns noch Sorgen.",
+   "start_ms": 1036740,
+   "end_ms": 1042940,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 258,
+   "text": "Da habe ich Bedenken, weil die Fehlerbehebung noch nicht sauber dokumentiert ist.",
+   "start_ms": 1041660,
+   "end_ms": 1046500,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 259,
+   "text": "Wer kümmert sich um die Datenbankmigration?",
+   "start_ms": 1045620,
+   "end_ms": 1048570,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 260,
+   "text": "Und wer hat den Lasttest im Blick?",
+   "start_ms": 1048570,
+   "end_ms": 1050700,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 261,
+   "text": "Bei der Datenbankmigration liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 1051080,
+   "end_ms": 1056990,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 262,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens drei Tage.",
+   "start_ms": 1056990,
+   "end_ms": 1061280,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 263,
+   "text": "Kurz zur Lage.",
+   "start_ms": 1061740,
+   "end_ms": 1063260,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 264,
+   "text": "Die Konfigurationsdatei ist abgeschlossen.",
+   "start_ms": 1063260,
+   "end_ms": 1066220,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 265,
+   "text": "Der Abnahmetest läuft.",
+   "start_ms": 1066220,
+   "end_ms": 1068060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 266,
+   "text": "Und das Backlog beginnt am Montagvormittag.",
+   "start_ms": 1068060,
+   "end_ms": 1070750,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 267,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 1071250,
+   "end_ms": 1073890,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 268,
+   "text": "Frau Lehmann kümmert sich um die Fehlerbehebung, ich um den Lasttest.",
+   "start_ms": 1073890,
+   "end_ms": 1078420,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 269,
+   "text": "Wie weit sind wir eigentlich mit dem Abnahmetest?",
+   "start_ms": 1079280,
+   "end_ms": 1082200,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 270,
+   "text": "Aktuell fehlen uns noch zwei Wochen.",
+   "start_ms": 1082190,
+   "end_ms": 1084980,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 271,
+   "text": "Dann können wir das Backlog starten.",
+   "start_ms": 1084980,
+   "end_ms": 1087110,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 272,
+   "text": "Gut, dann halten wir fest, Frau Brandt kümmert sich um die Datenbankmigration, ich um die Sicherheitslücke.",
+   "start_ms": 1087260,
+   "end_ms": 1095140,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 273,
+   "text": "Aus Sicht von VDemir sollten wir die Pipeline vor der Konfigurationsdatei priorisieren.",
+   "start_ms": 1095180,
+   "end_ms": 1100660,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 274,
+   "text": "Und wie sieht es bei dem Staging System aus?",
+   "start_ms": 1101150,
+   "end_ms": 1104260,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 275,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 1104260,
+   "end_ms": 1106150,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 276,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 1106100,
+   "end_ms": 1108730,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 277,
+   "text": "Und den Release-Kennteilaten nehmen wir ins Protokoll auf.",
+   "start_ms": 1108730,
+   "end_ms": 1112220,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 278,
+   "text": "Nach meiner Einschätzung schaffen wir den Speicherverbrauch in der nächsten Woche, wenn Herr Kaiser rechtzeitig",
+   "start_ms": 1112460,
+   "end_ms": 1118900,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 279,
+   "text": "Bis Mitte nächste Woche brauchen wir eine Entscheidung zu der Schnittstellendokumentation, sonst verschiebt sich das Staging-System.",
+   "start_ms": 1118220,
+   "end_ms": 1125940,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 280,
+   "text": "Wie hoch ist der Puffer für die Fehlerbehebung, nachdem wir15% eingetrant haben?",
+   "start_ms": 1126320,
+   "end_ms": 1132280,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 281,
+   "text": "Bei dem Abnahmetest liegen wir etwa15% über dem ursprünglichen Ansatz.",
+   "start_ms": 1130670,
+   "end_ms": 1136150,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 282,
+   "text": "Was passiert, wenn das Deepillowment nicht rechtzeitig fertig wird?",
+   "start_ms": 1136760,
+   "end_ms": 1141950,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 283,
+   "text": "Dann bedanke ich mich bei allen, Tobias verschickt das Protokoll, und wir hören voneinander.",
+   "start_ms": 1141950,
+   "end_ms": 1148240,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 284,
+   "text": "Guten Tag zusammen, wir beginnen heute mit dem Migrationskonzept und schauen danach auf den Rolllout.",
+   "start_ms": 1149750,
+   "end_ms": 1156190,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 285,
+   "text": "Ich schlage vor, dass wir die Röhrdme vor dem Wochenende noch einmal gemeinsam durchgehen.",
+   "start_ms": 1156500,
+   "end_ms": 1162380,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 286,
+   "text": "Haben wir für die Rödmate schon einen verbindlichen Termin.",
+   "start_ms": 1163160,
+   "end_ms": 1166480,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 287,
+   "text": "Soweit ich weiß, ist das Abnahmeprotokoll fertig.",
+   "start_ms": 1166730,
+   "end_ms": 1170960,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 288,
+   "text": "Nur der Kickoff steht noch aus.",
+   "start_ms": 1170960,
+   "end_ms": 1172930,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 289,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 1173480,
+   "end_ms": 1176110,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 290,
+   "text": "Herr Schmidt kümmert sich um die Ausschreibung, ich um die Serverumstellung.",
+   "start_ms": 1176110,
+   "end_ms": 1180720,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 291,
+   "text": "Ich habe die Kalkulation gestern mit Frau Lehmann durchgesprochen.",
+   "start_ms": 1179180,
+   "end_ms": 1183570,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 292,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 1183570,
+   "end_ms": 1184900,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 293,
+   "text": "Da habe ich Bedenken, weil das Migrationskonzept noch nicht sauber dokumentiert ist.",
+   "start_ms": 1185480,
+   "end_ms": 1191120,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 294,
+   "text": "Ist das Abnahmeprotokoll von Herrn Schmidt schon freigegeben worden?",
+   "start_ms": 1191600,
+   "end_ms": 1195800,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 295,
+   "text": "Bei der Schnittstelle liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 1196160,
+   "end_ms": 1200840,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 296,
+   "text": "Was passiert, wenn die Rödmet nicht rechtzeitig fertig wird?",
+   "start_ms": 1201500,
+   "end_ms": 1205940,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 297,
+   "text": "Ich habe den Schulungsplan gestern mit Lena durchgesprochen, wir liegen im Plan.",
+   "start_ms": 1206480,
+   "end_ms": 1211880,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 298,
+   "text": "Ich schlage vor, dass wir das Meeting vor dem Wochenende noch einmal gemeinsam durchgehen.",
+   "start_ms": 1212180,
+   "end_ms": 1217980,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 299,
+   "text": "Was passiert, wenn die Rödmade nicht rechtzeitig fertig wird?",
+   "start_ms": 1218570,
+   "end_ms": 1222930,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 300,
+   "text": "Das klären wir in der nächsten Woche mit Frau Demir.",
+   "start_ms": 1223370,
+   "end_ms": 1226960,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 301,
+   "text": "Dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 1226960,
+   "end_ms": 1229570,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 302,
+   "text": "Einverstanden, dann übernehme ich den Schulungsplan und melde mich in der nächsten Woche bei Frau Brandt.",
+   "start_ms": 1230150,
+   "end_ms": 1236780,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 303,
+   "text": "Das hängt vor allem von dem Schulungsplan ab, Tobias meldet sich dazu am3.",
+   "start_ms": 1236780,
+   "end_ms": 1242060,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 304,
+   "text": "Oktober.",
+   "start_ms": 1242060,
+   "end_ms": 1242750,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 305,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 1241400,
+   "end_ms": 1244270,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 306,
+   "text": "Und den Rollout nehmen wir ins Protokoll auf.",
+   "start_ms": 1244270,
+   "end_ms": 1247120,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 307,
+   "text": "Und wie sieht es bei dem Update aus?",
+   "start_ms": 1247550,
+   "end_ms": 1249940,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 308,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 1249940,
+   "end_ms": 1251830,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 309,
+   "text": "Wir haben das Update bereits getestet, aber die Ausschreibung macht uns noch Sorgen.",
+   "start_ms": 1252380,
+   "end_ms": 1257700,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 310,
+   "text": "Wer kümmert sich um das Rechenzentrum?",
+   "start_ms": 1257960,
+   "end_ms": 1260670,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 311,
+   "text": "Und wer hat die Ausschreibung im Blick?",
+   "start_ms": 1260670,
+   "end_ms": 1263040,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 312,
+   "text": "Wir haben den Workshop bereits getestet, aber das Lastenheft macht uns noch Sorgen.",
+   "start_ms": 1263240,
+   "end_ms": 1268720,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 313,
+   "text": "Wichtig ist mir, dass das Budget und das Abnahmeprotokoll zusammen betrachtet werden.",
+   "start_ms": 1269090,
+   "end_ms": 1274890,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 314,
+   "text": "Können wir den Schulungsplan bis übermorgen abschließen?",
+   "start_ms": 1275390,
+   "end_ms": 1279060,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 315,
+   "text": "Das klären wir am Montagvormittag mit Frau Brandt, dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 1279060,
+   "end_ms": 1285270,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 316,
+   "text": "Das sehe ich anders.",
+   "start_ms": 1285710,
+   "end_ms": 1287460,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 317,
+   "text": "Die Deadline sollte erst nach dem Abnahmeprotokoll kommen.",
+   "start_ms": 1287460,
+   "end_ms": 1290950,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 318,
+   "text": "Wie hoch ist der Puffer für die Serverumstellung, nachdem wir20% eingeplant haben?",
+   "start_ms": 1291680,
+   "end_ms": 1297960,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 319,
+   "text": "Ich habe das Buschet gestern mit Frau Demir durchgesprochen.",
+   "start_ms": 1298190,
+   "end_ms": 1302180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 320,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 1302180,
+   "end_ms": 1303430,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 321,
+   "text": "Ja, genau so machen wir das, und den Kickoff nehmen wir ins Protokoll auf.",
+   "start_ms": 1303950,
+   "end_ms": 1309430,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 322,
+   "text": "Was passiert, wenn der Malston nicht rechtzeitig fertig wird?",
+   "start_ms": 1310070,
+   "end_ms": 1314510,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 323,
+   "text": "Wir haben den Rolllout bereits getestet, aber der Wartungsvertrag macht uns noch Sorgen.",
+   "start_ms": 1314900,
+   "end_ms": 1320540,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 324,
+   "text": "Da habe ich Bedenken, weil die Ausschreibung noch nicht sauber dokumentiert ist.",
+   "start_ms": 1321050,
+   "end_ms": 1326210,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 325,
+   "text": "Soweit ich weiß, ist der Wartungsvertrag fertig.",
+   "start_ms": 1326870,
+   "end_ms": 1330940,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 326,
+   "text": "Nur der Rollout steht noch aus.",
+   "start_ms": 1330940,
+   "end_ms": 1332830,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 327,
+   "text": "Die Kosten für die Kalkulation liegen derzeit bei20% über dem Plan.",
+   "start_ms": 1333410,
+   "end_ms": 1338490,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 328,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 1338810,
+   "end_ms": 1341680,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 329,
+   "text": "Und den Kick-Off nehmen wir ins Protokoll auf.",
+   "start_ms": 1341680,
+   "end_ms": 1344450,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 330,
+   "text": "Haben Sie den Wartungsvertrag schon mit Lena abgestimmt?",
+   "start_ms": 1345380,
+   "end_ms": 1348860,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 331,
+   "text": "Nach meiner Einschätzung schaffen wir die Serverumstellung vor dem Wochenende.",
+   "start_ms": 1348950,
+   "end_ms": 1353470,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 332,
+   "text": "Wenn Frau Lehmann rechtzeitig liefert.",
+   "start_ms": 1353720,
+   "end_ms": 1356320,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 333,
+   "text": "Und wie sieht es bei dem Kick-off aus?",
+   "start_ms": 1354440,
+   "end_ms": 1356830,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 334,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 1356830,
+   "end_ms": 1358800,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 335,
+   "text": "Nach meiner Einschätzung schaffen wir die Ausschreibung in der nächsten Woche.",
+   "start_ms": 1359010,
+   "end_ms": 1363570,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 336,
+   "text": "Wenn Frau Brandt rechtzeitig liefert.",
+   "start_ms": 1363570,
+   "end_ms": 1366370,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 337,
+   "text": "Bei dem Rechenzentrum liegen wir etwa20% über dem ursprünglichen Ansatz.",
+   "start_ms": 1366370,
+   "end_ms": 1371780,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 338,
+   "text": "Wir sollten das Budget nicht unterschätzen, denn Frau Demir rechnet mit40 Stunden Mehraufwand.",
+   "start_ms": 1372620,
+   "end_ms": 1378900,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 339,
+   "text": "Haben wir für den Rolllout schon einen verbindlichen Termin.",
+   "start_ms": 1379190,
+   "end_ms": 1382590,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 340,
+   "text": "Soweit ich weiß, ist das Budget fertig, nur der Kickoff steht noch aus.",
+   "start_ms": 1382940,
+   "end_ms": 1388530,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 341,
+   "text": "Einverstanden, dann übernehme ich die Schnittstelle und melde mich am Donnerstagnachmittag bei Lena.",
+   "start_ms": 1388530,
+   "end_ms": 1394820,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 342,
+   "text": "Ist der Wartungsvertrag von Frau Demir schon freigegeben worden?",
+   "start_ms": 1395000,
+   "end_ms": 1399120,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 343,
+   "text": "Dann bedanke ich mich bei allen, Herr Kaiser verschickt das Protokoll, und wir hören voneinander.",
+   "start_ms": 1399380,
+   "end_ms": 1405900,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 344,
+   "text": "Schön, dass alle da sind.",
+   "start_ms": 1407360,
+   "end_ms": 1409640,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 345,
+   "text": "Heute geht es um das Lastenheft, die Konformitätserklärung und den Workshop.",
+   "start_ms": 1410330,
+   "end_ms": 1415810,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 346,
+   "text": "Da habe ich Bedenken, weil die Konformitätserklärung noch nicht sauber dokumentiert ist.",
+   "start_ms": 1413660,
+   "end_ms": 1419460,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 347,
+   "text": "Ich habe die Preisliste gestern mit Frau Lehmann durchgesprochen.",
+   "start_ms": 1420020,
+   "end_ms": 1424010,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 348,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 1424010,
+   "end_ms": 1425260,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 349,
+   "text": "Haben wir für den Proof auf Concept schon einen verbindlichen Termin.",
+   "start_ms": 1426050,
+   "end_ms": 1429930,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 350,
+   "text": "Das klären wir Mitte November mit Tobias.",
+   "start_ms": 1430580,
+   "end_ms": 1433770,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 351,
+   "text": "Dann bekommen sie eine verbindliche Antwort.",
+   "start_ms": 1433770,
+   "end_ms": 1436300,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 352,
+   "text": "Wir sollten die Leistungsbeschreibung nicht unterschätzen, denn Herr Kaiser rechnet mit eine Woche Mehraufwand.",
+   "start_ms": 1437030,
+   "end_ms": 1443710,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 353,
+   "text": "Aktuell fehlen uns noch eine Woche.",
+   "start_ms": 1443970,
+   "end_ms": 1446610,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 354,
+   "text": "Dann können wir den Key-Account starten.",
+   "start_ms": 1446610,
+   "end_ms": 1448900,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 355,
+   "text": "Dass das Lieferantennaudit und die Vertragsstrafe zusammen betrachtet werden.",
+   "start_ms": 1448640,
+   "end_ms": 1453250,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 356,
+   "text": "Einverstanden.",
+   "start_ms": 1451640,
+   "end_ms": 1453070,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 357,
+   "text": "Dann übernehme ich das Steuergerät und melde mich vor dem Wochenende bei Herr Kaiser.",
+   "start_ms": 1453070,
+   "end_ms": 1457840,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 358,
+   "text": "Haben Sie die Gewährleistung schon mit Tobias abgestimmt?",
+   "start_ms": 1458600,
+   "end_ms": 1462240,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 359,
+   "text": "Nach meiner Einschätzung schaffen wir die Angebotskalkulation am Montagvormittag, wenn Markus rechtzeitig liefert.",
+   "start_ms": 1462440,
+   "end_ms": 1470000,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 360,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 1470030,
+   "end_ms": 1472420,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 361,
+   "text": "Tobias kümmert sich um das Zahlungsziel.",
+   "start_ms": 1472420,
+   "end_ms": 1475300,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 362,
+   "text": "Ich um die Konformitätserklärung.",
+   "start_ms": 1475300,
+   "end_ms": 1477350,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 363,
+   "text": "Bis Mitte nächster Woche brauchen wir eine Entscheidung zu der Gewährleistung.",
+   "start_ms": 1478010,
+   "end_ms": 1482800,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 364,
+   "text": "Sonst verschiebt sich das Service-Level-Agrement.",
+   "start_ms": 1482800,
+   "end_ms": 1485810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 365,
+   "text": "Da habe ich Bedenken, weil das Zahlungsziel noch nicht sauber dokumentiert ist.",
+   "start_ms": 1486080,
+   "end_ms": 1491350,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 366,
+   "text": "Nach meiner Einschätzung schaffen wir die Leistungsbeschreibung Anfang Dezember, wenn Tobias rechtzeitig liefert.",
+   "start_ms": 1491350,
+   "end_ms": 1498360,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 367,
+   "text": "Wir sollten die Vertragsstrafe nicht unterschätzen, denn Lena rechnet mit drei Tagen mehr Aufwand.",
+   "start_ms": 1498650,
+   "end_ms": 1504930,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 368,
+   "text": "Bei dem Lieferanten Audit liegen wir etwa8% über dem ursprünglichen Ansatz.",
+   "start_ms": 1504110,
+   "end_ms": 1509190,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 369,
+   "text": "Da habe ich Bedenken, weil das Lastenheft noch nicht sauber dokumentiert ist.",
+   "start_ms": 1509570,
+   "end_ms": 1514570,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 370,
+   "text": "Haben wir für das Anboarding schon einen verbindlichen Termin.",
+   "start_ms": 1514910,
+   "end_ms": 1518470,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 371,
+   "text": "Wir haben den Workshop bereits getestet, aber die Konformitätserklärung macht uns noch Sorgen.",
+   "start_ms": 1518510,
+   "end_ms": 1524790,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 372,
+   "text": "Einverstanden?",
+   "start_ms": 1525350,
+   "end_ms": 1526940,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 373,
+   "text": "Dann übernehme ich die Vertragsstrafe und melde mich am Montagvormittag bei Lena.",
+   "start_ms": 1526940,
+   "end_ms": 1532030,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 374,
+   "text": "Das hängt vor allem von der Konformitätserklärung ab.",
+   "start_ms": 1532400,
+   "end_ms": 1536070,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 375,
+   "text": "Herr Schmidt meldet sich dazu Mitte November.",
+   "start_ms": 1536070,
+   "end_ms": 1538840,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 376,
+   "text": "Ist der Kabelbaum von Herrn Schmidt schon freigegeben worden?",
+   "start_ms": 1538880,
+   "end_ms": 1542280,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 377,
+   "text": "Bei dem Lastenheft liegen wir etwa15% über dem ursprünglichen Ansatz.",
+   "start_ms": 1542600,
+   "end_ms": 1547680,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 378,
+   "text": "Haben Sie das Steuergerät schon mit Frau Demir abgestimmt?",
+   "start_ms": 1547580,
+   "end_ms": 1551060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 379,
+   "text": "Nach meiner Einschätzung schaffen wir die Vertragsstrafe am3.",
+   "start_ms": 1551090,
+   "end_ms": 1554920,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 380,
+   "text": "Oktober, wenn Markus rechtzeitig liefert.",
+   "start_ms": 1554920,
+   "end_ms": 1558090,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 381,
+   "text": "Haben Sie die Vertragsstrafe schon mit Frau Demir abgestimmt?",
+   "start_ms": 1557960,
+   "end_ms": 1562000,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 382,
+   "text": "Das hängt vor allem von der Vertragsstrafe ab.",
+   "start_ms": 1562220,
+   "end_ms": 1565490,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 383,
+   "text": "Frau Brandt meldet sich dazu am Donnerstagnachmittag.",
+   "start_ms": 1565490,
+   "end_ms": 1568980,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 384,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 1569600,
+   "end_ms": 1571990,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 385,
+   "text": "Markus kümmert sich um das Lastenheft.",
+   "start_ms": 1571990,
+   "end_ms": 1574710,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 386,
+   "text": "Ich um die Rechtsabteilung.",
+   "start_ms": 1574710,
+   "end_ms": 1576280,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 387,
+   "text": "Kurz zur Lage, das Steuergerät ist abgeschlossen, das Lieferantennaudit läuft, und das Anboarding beginnt vor dem Wochenende.",
+   "start_ms": 1576710,
+   "end_ms": 1586060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 388,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens zwei Wochen.",
+   "start_ms": 1586060,
+   "end_ms": 1590430,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 389,
+   "text": "Wie hoch ist der Puffer für den Rahmenvertrag?",
+   "start_ms": 1590660,
+   "end_ms": 1593850,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 390,
+   "text": "Nachdem wir12% eingeplant haben.",
+   "start_ms": 1593850,
+   "end_ms": 1596780,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 391,
+   "text": "Aktuell fehlen uns noch drei Tage, dann können wir das Anboarding starten.",
+   "start_ms": 1597230,
+   "end_ms": 1602230,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 392,
+   "text": "Da habe ich Bedenken, weil das Lieferanten Audit noch nicht sauber dokumentiert ist.",
+   "start_ms": 1602870,
+   "end_ms": 1608110,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 393,
+   "text": "Kurz zur Lage.",
+   "start_ms": 1608780,
+   "end_ms": 1610370,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 394,
+   "text": "Der Rahmenvertrag ist abgeschlossen.",
+   "start_ms": 1610370,
+   "end_ms": 1612930,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 395,
+   "text": "Die Vertragsstrafe läuft.",
+   "start_ms": 1612930,
+   "end_ms": 1614850,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 396,
+   "text": "Und der Proofhof-Carzept beginnt im ersten Quartal.",
+   "start_ms": 1614850,
+   "end_ms": 1618020,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 397,
+   "text": "Haben wir für den Vorkäst schon einen verbindlichen Termin.",
+   "start_ms": 1618860,
+   "end_ms": 1622340,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 398,
+   "text": "Aktuell fehlen uns noch zwei Wochen, dann können wir den Key-Acount starten.",
+   "start_ms": 1623420,
+   "end_ms": 1628260,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 399,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 1629100,
+   "end_ms": 1631740,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 400,
+   "text": "Markus kümmert sich um das Lastenheft.",
+   "start_ms": 1631740,
+   "end_ms": 1634460,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 401,
+   "text": "Ich um die Preisliste.",
+   "start_ms": 1634460,
+   "end_ms": 1635870,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 402,
+   "text": "Kurz zur Lage, das Zahlungsziel ist abgeschlossen, das Steuergerät läuft, und das Service-Level-Agrement beginnt in der nächsten Woche.",
+   "start_ms": 1636600,
+   "end_ms": 1645610,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 403,
+   "text": "Wie weit sind wir eigentlich mit der Leistungsbeschreibung?",
+   "start_ms": 1646220,
+   "end_ms": 1649700,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 404,
+   "text": "Bei dem Lieferanten Audit liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 1650150,
+   "end_ms": 1655310,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 405,
+   "text": "Kurz zur Lage.",
+   "start_ms": 1655490,
+   "end_ms": 1657000,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 406,
+   "text": "Die Angebotskalkulation ist abgeschlossen.",
+   "start_ms": 1657000,
+   "end_ms": 1660120,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 407,
+   "text": "Das Steuergerät läuft.",
+   "start_ms": 1660120,
+   "end_ms": 1661880,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 408,
+   "text": "Und der Vorkäst beginnt in der nächsten Woche.",
+   "start_ms": 1661880,
+   "end_ms": 1664410,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 409,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 1665150,
+   "end_ms": 1668020,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 410,
+   "text": "Und das Prigging nehmen wir ins Protokoll auf.",
+   "start_ms": 1668020,
+   "end_ms": 1670870,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 411,
+   "text": "Haben Sie die Gewährleistung schon mit Frau Brandt abgestimmt?",
+   "start_ms": 1671330,
+   "end_ms": 1674810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 412,
+   "text": "Soweit ich weiß, ist die Preisliste fertig, nur das Pricking steht noch aus.",
+   "start_ms": 1673310,
+   "end_ms": 1678870,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 413,
+   "text": "Für den Kunden zählt am Ende vor allem, dass das Lastenheft verlässlich funktioniert.",
+   "start_ms": 1678770,
+   "end_ms": 1684410,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 414,
+   "text": "Da habe ich Bedenken, weil das Steuergerät noch nicht sauber dokumentiert ist.",
+   "start_ms": 1685100,
+   "end_ms": 1690260,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 415,
+   "text": "Das klären wir Mitte November mit Tobias.",
+   "start_ms": 1690980,
+   "end_ms": 1694010,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 416,
+   "text": "Dann bekommen sie eine verbindliche Antwort.",
+   "start_ms": 1694010,
+   "end_ms": 1696380,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 417,
+   "text": "Wir sollten das Steuergerät nicht unterschätzen, denn Markus rechnet mit6 Personentage mehr Aufwand.",
+   "start_ms": 1696800,
+   "end_ms": 1703560,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 418,
+   "text": "Gut, dann halten wir fest, Herr Kaiser kümmert sich um die Vertragsstrafe, ich um das Steuergerät.",
+   "start_ms": 1702450,
+   "end_ms": 1710020,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 419,
+   "text": "Kurz zur Lage, der Rahmenvertrag ist abgeschlossen.",
+   "start_ms": 1710450,
+   "end_ms": 1714600,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 420,
+   "text": "Die Konformitätserklärung läuft.",
+   "start_ms": 1714600,
+   "end_ms": 1717080,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 421,
+   "text": "Und der Workshop beginnt Anfang Dezember.",
+   "start_ms": 1717080,
+   "end_ms": 1719450,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 422,
+   "text": "Das klären wir Mitte November mit Frau Brandt.",
+   "start_ms": 1720050,
+   "end_ms": 1723400,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 423,
+   "text": "Dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 1723400,
+   "end_ms": 1725930,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 424,
+   "text": "Bis übermorgen brauchen wir eine Entscheidung zu dem Zahlungsziel.",
+   "start_ms": 1726440,
+   "end_ms": 1730590,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 425,
+   "text": "Sonst verschiebt sich das Service-Level-Agrement.",
+   "start_ms": 1730590,
+   "end_ms": 1733280,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 426,
+   "text": "Ist das Lastenheft von Frau Demir schon freigegeben worden?",
+   "start_ms": 1733430,
+   "end_ms": 1737070,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 427,
+   "text": "Wir haben das Service-Level-Agrement bereits getestet.",
+   "start_ms": 1737810,
+   "end_ms": 1741640,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 428,
+   "text": "Aber das Zahlungsziel macht uns noch Sorgen.",
+   "start_ms": 1741640,
+   "end_ms": 1744250,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 429,
+   "text": "Reichen drei Tage für die Konformitätserklärung und den Vorquest überhaupt aus?",
+   "start_ms": 1745040,
+   "end_ms": 1750280,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 430,
+   "text": "Wichtig ist mir, dass das Steuergerät und die Vertragsstrafe zusammen betrachtet werden.",
+   "start_ms": 1750470,
+   "end_ms": 1756350,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 431,
+   "text": "Was passiert, wenn der Vorkehrst nicht rechtzeitig fertig wird?",
+   "start_ms": 1756680,
+   "end_ms": 1761280,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 432,
+   "text": "Bei dem Kabelbaum liegen wir etwa12% über dem ursprünglichen Ansatz.",
+   "start_ms": 1761990,
+   "end_ms": 1766910,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 433,
+   "text": "Wichtig ist mir, dass das Lastenheft und die Gewährleistung zusammen betrachtet werden.",
+   "start_ms": 1764810,
+   "end_ms": 1770610,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 434,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens40 Stunden.",
+   "start_ms": 1771290,
+   "end_ms": 1776050,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 435,
+   "text": "Aktuell fehlen uns noch zwei Wochen, dann können wir das Brigg-ing starten.",
+   "start_ms": 1776490,
+   "end_ms": 1781500,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 436,
+   "text": "Dann bedanke ich mich bei allen, Herr Schmidt verschickt das Protokoll, und wir hören voneinander.",
+   "start_ms": 1782000,
+   "end_ms": 1788360,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 437,
+   "text": "Wie weit sind wir eigentlich mit der Testabdeckung?",
+   "start_ms": 1795110,
+   "end_ms": 1798270,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 438,
+   "text": "Guten Tag zusammen, wir beginnen heute mit der Datenbankmigration und schauen danach auf die Zeit.",
+   "start_ms": 1789860,
+   "end_ms": 1798810,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 439,
+   "text": "Nach meiner Einschätzung schaffen wir die Sicherheitslücke Anfang Dezember.",
+   "start_ms": 1798810,
+   "end_ms": 1802860,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 440,
+   "text": "Wenn Frau Demirtig liebt",
+   "start_ms": 1803210,
+   "end_ms": 1805090,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 441,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 1803750,
+   "end_ms": 1806620,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 442,
+   "text": "Und das Staging-System nehmen wir ins Protokoll auf.",
+   "start_ms": 1806620,
+   "end_ms": 1810110,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 443,
+   "text": "Wie weit sind wir eigentlich mit dem Lasttest?",
+   "start_ms": 1810470,
+   "end_ms": 1813150,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 444,
+   "text": "Ich habe den Speicherverbrauch gestern mit Frau Brandt durchgesprochen, wir liegen im Plan.",
+   "start_ms": 1813290,
+   "end_ms": 1819090,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 445,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens zwei Wochen.",
+   "start_ms": 1819020,
+   "end_ms": 1823620,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 446,
+   "text": "Kurz zur Lage, der Lasttest ist abgeschlossen, die Fehlerbehebung läuft.",
+   "start_ms": 1821780,
+   "end_ms": 1827530,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 447,
+   "text": "Und das Sprintreview beginnt am Montag vormittag.",
+   "start_ms": 1827530,
+   "end_ms": 1830780,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 448,
+   "text": "Aktuell fehlen uns noch40 Stunden.",
+   "start_ms": 1829460,
+   "end_ms": 1832410,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 449,
+   "text": "Dann können wir das Sprint-Review starten.",
+   "start_ms": 1832410,
+   "end_ms": 1835290,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 450,
+   "text": "Ja, genauso machen wir das.",
+   "start_ms": 1835290,
+   "end_ms": 1837930,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 451,
+   "text": "Und den Rollback nehmen wir ins Protokoll auf.",
+   "start_ms": 1837930,
+   "end_ms": 1840780,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 452,
+   "text": "Reichen drei Tage für den Speicherverbrauch und den Pull Request überhaupt aus.",
+   "start_ms": 1841370,
+   "end_ms": 1846050,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 453,
+   "text": "Nach meiner Einschätzung schaffen wir die Fehlerbehebung Mitte November.",
+   "start_ms": 1846770,
+   "end_ms": 1851160,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 454,
+   "text": "Wenn Lena rechtzeitig liefert.",
+   "start_ms": 1851160,
+   "end_ms": 1853640,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 455,
+   "text": "Das sehe ich anders.",
+   "start_ms": 1853640,
+   "end_ms": 1855160,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 456,
+   "text": "Das Backlog sollte erst nach dem Speicherverbrauch kommen.",
+   "start_ms": 1855160,
+   "end_ms": 1858330,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 457,
+   "text": "Ist der Abnahmetest von Frau Demir schon freigegeben worden?",
+   "start_ms": 1858770,
+   "end_ms": 1862410,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 458,
+   "text": "Aktuell fehlen uns noch6 Personentage?",
+   "start_ms": 1861380,
+   "end_ms": 1864810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 459,
+   "text": "Dann können wir den Kubernetes Cluster starten.",
+   "start_ms": 1864810,
+   "end_ms": 1867820,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 460,
+   "text": "Wichtig ist mir, dass die Testabdeckung und der Speicherverbrauch zusammen betrachtet werden.",
+   "start_ms": 1868250,
+   "end_ms": 1874210,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 461,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 1874760,
+   "end_ms": 1877310,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 462,
+   "text": "Und das D-Epilow-Aiment nehmen wir ins Protokoll auf.",
+   "start_ms": 1877310,
+   "end_ms": 1880640,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 463,
+   "text": "Wie sieht es bei dem Diepello Aliment aus?",
+   "start_ms": 1879480,
+   "end_ms": 1882200,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 464,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 1882200,
+   "end_ms": 1884010,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 465,
+   "text": "Bei der Konfigurationsdatei liegen wir etwa20% über dem ursprünglichen Ansatz.",
+   "start_ms": 1882920,
+   "end_ms": 1888640,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 466,
+   "text": "Ist die Konfigurationsdatei von Herrn Schmidt schon freigegeben worden?",
+   "start_ms": 1889340,
+   "end_ms": 1894050,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 467,
+   "text": "Wir haben das Backlog bereits getestet.",
+   "start_ms": 1894050,
+   "end_ms": 1896770,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 468,
+   "text": "Aber der Abnahmetest macht uns noch Sorgen.",
+   "start_ms": 1896770,
+   "end_ms": 1899300,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 469,
+   "text": "Das sehe ich anders, der Kubernetes Cluster sollte erst nach der Konfigurationsdatei kommen.",
+   "start_ms": 1900140,
+   "end_ms": 1906340,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 470,
+   "text": "Wichtig ist mir, dass die Datenbankmigration und der Lasttest zusammen betrachtet werden.",
+   "start_ms": 1905180,
+   "end_ms": 1911380,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 471,
+   "text": "Da habe ich Bedenken, weil die Sicherheitslücke noch nicht sauber dokumentiert ist.",
+   "start_ms": 1912140,
+   "end_ms": 1917380,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 472,
+   "text": "den Speicherverbrauch gestern mit Herr Kaiser durchgesprochen.",
+   "start_ms": 1917050,
+   "end_ms": 1920650,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 473,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 1920650,
+   "end_ms": 1922060,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 474,
+   "text": "Wie weit sind wir eigentlich mit der Konfigurationsdatei?",
+   "start_ms": 1920090,
+   "end_ms": 1923730,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 475,
+   "text": "Nach meiner Einschätzung schaffen wir die Sicherheitslücke Anfang Dezember, wenn Markus rechtzeitig liefert.",
+   "start_ms": 1924380,
+   "end_ms": 1931060,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 476,
+   "text": "Wichtig ist mir, dass die Sicherheitslücke und der Lasttest zusammen betrachtet werden.",
+   "start_ms": 1930080,
+   "end_ms": 1935880,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 477,
+   "text": "Können wir den Speicherverbrauch bis übermorgen abschließen.",
+   "start_ms": 1936800,
+   "end_ms": 1940200,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 478,
+   "text": "Wir haben den Kubernetes Cluster bereits getestet, aber die Konfigurationsdatei macht uns doch Sorgen.",
+   "start_ms": 1939290,
+   "end_ms": 1945970,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 479,
+   "text": "Wir sollten den Speicherverbrauch nicht unterschätzen, denn Frau Lehmann rechnet mit zwei Wochen mehr Aufwand.",
+   "start_ms": 1944090,
+   "end_ms": 1950530,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 480,
+   "text": "Ich habe die Testabdeckung gestern mit Frau Demir durchgesprochen, wir liegen im Plan.",
+   "start_ms": 1950660,
+   "end_ms": 1956300,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 481,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 1954900,
+   "end_ms": 1957460,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 482,
+   "text": "Und das Backlog nehmen wir ins Protokoll auf.",
+   "start_ms": 1957460,
+   "end_ms": 1960500,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 483,
+   "text": "Soweit ich weiß, ist der Lasttest fertig.",
+   "start_ms": 1960500,
+   "end_ms": 1963940,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 484,
+   "text": "Nur der Release-Kenntteil-Date steht noch aus.",
+   "start_ms": 1963940,
+   "end_ms": 1966710,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 485,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 1965420,
+   "end_ms": 1968050,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 486,
+   "text": "Und das Feature Flake nehmen wir ins Protokoll auf.",
+   "start_ms": 1968050,
+   "end_ms": 1971140,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 487,
+   "text": "Haben wir für den Hotfix schon einen verbindlichen Termin.",
+   "start_ms": 1971510,
+   "end_ms": 1975070,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 488,
+   "text": "Wir haben den Kubernetes Cluster bereits getestet.",
+   "start_ms": 1975920,
+   "end_ms": 1979510,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 489,
+   "text": "Aber der Abnahmetest macht uns noch Sorgen.",
+   "start_ms": 1979510,
+   "end_ms": 1982390,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 490,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 1982390,
+   "end_ms": 1984790,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 491,
+   "text": "Lena kümmert sich um den Abnahmetest.",
+   "start_ms": 1984790,
+   "end_ms": 1987240,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 492,
+   "text": "Ich um den Lasttest.",
+   "start_ms": 1987470,
+   "end_ms": 1989220,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 493,
+   "text": "Und wie sieht es bei dem Backlog aus?",
+   "start_ms": 1989220,
+   "end_ms": 1991460,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 494,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 1991460,
+   "end_ms": 1993190,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 495,
+   "text": "Nach meiner Einschätzung schaffen wir die Konfigurationsdatei vor dem Wochenende, wenn Lena rechtzeitig liefert.",
+   "start_ms": 1991700,
+   "end_ms": 1998780,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 496,
+   "text": "Bis Freitagmittag brauchen wir eine Entscheidung zu der Schnittstellendokumentation, sonst verschiebt sich das Sprint-Revreview.",
+   "start_ms": 1998810,
+   "end_ms": 2006690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 497,
+   "text": "Was passiert, wenn das Staging-System nicht rechtzeitig fertig wird?",
+   "start_ms": 2007180,
+   "end_ms": 2011860,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 498,
+   "text": "Das hängt vor allem von der Konfigurationsdatei ab.",
+   "start_ms": 2010990,
+   "end_ms": 2014580,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 499,
+   "text": "Herr Schmidt meldet sich dazu in der nächsten Woche.",
+   "start_ms": 2014580,
+   "end_ms": 2017430,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 500,
+   "text": "Ist der Abnahmetest von Frau Demir schon freigegeben worden?",
+   "start_ms": 2016420,
+   "end_ms": 2020380,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 501,
+   "text": "Nach meiner Einschätzung schaffen wir die Testabdeckung Anfang Dezember.",
+   "start_ms": 2020710,
+   "end_ms": 2025180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 502,
+   "text": "Wenn Frau D mir rechtzeitig liefert.",
+   "start_ms": 2025180,
+   "end_ms": 2027550,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 503,
+   "text": "Ja, genau so machen wir das, und den Kubernetes Cluster nehmen wir ins Protokoll auf.",
+   "start_ms": 2026290,
+   "end_ms": 2032410,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 504,
+   "text": "Wir sollten die Sicherheitslücke nicht unterschätzen, denn Herr Kaiser rechnet mit einer Woche mehr Aufwand.",
+   "start_ms": 2032950,
+   "end_ms": 2039470,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 505,
+   "text": "Das klären wir in der nächsten Woche mit Herr Kaiser.",
+   "start_ms": 2040210,
+   "end_ms": 2043640,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 506,
+   "text": "Dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 2043640,
+   "end_ms": 2046360,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 507,
+   "text": "Und wie sieht es bei der Pipeline aus?",
+   "start_ms": 2046360,
+   "end_ms": 2048920,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 508,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 2048920,
+   "end_ms": 2050730,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 509,
+   "text": "Das klären wir in der nächsten Woche mit Frau Lehmann, dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 2051160,
+   "end_ms": 2057120,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 510,
+   "text": "Gut, dann halten wir fest, Tobias kümmert sich um den Speicherverbrauch, ich um die Datenbankmigration.",
+   "start_ms": 2057580,
+   "end_ms": 2065300,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 511,
+   "text": "Für den Kunden zählt am Ende vor allem, dass die Fehlerbehebung verlässlich funktioniert.",
+   "start_ms": 2066010,
+   "end_ms": 2071730,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 512,
+   "text": "Soweit ich weiß, ist die Datenbank Migration fertig, nur das Feature Flake steht noch auf.",
+   "start_ms": 2071830,
+   "end_ms": 2078350,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 513,
+   "text": "Wir sollten die Konfigurationsdatei nicht unterschätzen, denn Lena rechnet mit sechs Personentage mehr Aufwand.",
+   "start_ms": 2077320,
+   "end_ms": 2084670,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 514,
+   "text": "Einverstanden.",
+   "start_ms": 2084670,
+   "end_ms": 2086110,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 515,
+   "text": "Dann übernehme ich die Datenbankmigration und melde mich im ersten Quartal bei Herrn Schmidt.",
+   "start_ms": 2086110,
+   "end_ms": 2091600,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 516,
+   "text": "Bei der Schnittstellendokumentation liegen wir etwa8% über dem ursprünglichen Ansatz.",
+   "start_ms": 2092230,
+   "end_ms": 2097870,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 517,
+   "text": "Da habe ich Bedenken, weil die Schnittstellendokumentation noch nicht sauber dokumentiert ist.",
+   "start_ms": 2098170,
+   "end_ms": 2104210,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 518,
+   "text": "Ich habe die Sicherheitsmitte gestern mit Markus durchgesprochen.",
+   "start_ms": 2102730,
+   "end_ms": 2106560,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 519,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 2106560,
+   "end_ms": 2107970,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 520,
+   "text": "Und wie sieht es bei der Pipeline aus?",
+   "start_ms": 2106990,
+   "end_ms": 2109700,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 521,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 2109700,
+   "end_ms": 2111590,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 522,
+   "text": "Bei der Fehlerbehebung liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 2111970,
+   "end_ms": 2116890,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 523,
+   "text": "Aktuell fehlen uns noch eine Woche, dann können wir das Sprint-Review starten.",
+   "start_ms": 2117190,
+   "end_ms": 2122350,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 524,
+   "text": "Haben Sie die Fehlerbehebung schon mit Lena abgestimmt?",
+   "start_ms": 2123010,
+   "end_ms": 2126330,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 525,
+   "text": "Bei der Sicherheitslücke liegen wir etwa15% über dem ursprünglichen Ansatz.",
+   "start_ms": 2126730,
+   "end_ms": 2132290,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 526,
+   "text": "Wie weit sind wir eigentlich mit der Datenbank Migration?",
+   "start_ms": 2132580,
+   "end_ms": 2136060,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 527,
+   "text": "Bei der Konfigurationsdatei liegen wir etwa20% über dem ursprünglichen Ansatz.",
+   "start_ms": 2136690,
+   "end_ms": 2142650,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 528,
+   "text": "Können wir den Lasttest bis Mitte nächster Woche abschließen.",
+   "start_ms": 2143440,
+   "end_ms": 2147000,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 529,
+   "text": "Das hängt vor allem von der Konfigurationsdatei ab.",
+   "start_ms": 2147760,
+   "end_ms": 2151350,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 530,
+   "text": "Frau Demir meldet sich dazu am3.",
+   "start_ms": 2151350,
+   "end_ms": 2153750,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 531,
+   "text": "Oktober.",
+   "start_ms": 2153750,
+   "end_ms": 2154360,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 532,
+   "text": "Einverstanden?",
+   "start_ms": 2153100,
+   "end_ms": 2154690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 533,
+   "text": "Dann übernehme ich den Speicherverbrauch und melde mich Anfang Dezember bei Frau Lehmann.",
+   "start_ms": 2154690,
+   "end_ms": 2159940,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 534,
+   "text": "Haben wir für den Rollback schon einen verbindlichen Termin.",
+   "start_ms": 2160270,
+   "end_ms": 2163670,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 535,
+   "text": "Aktuell fehlen uns noch6 Personentage, dann können wir die Pipeline starten.",
+   "start_ms": 2164290,
+   "end_ms": 2169690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 536,
+   "text": "Das sehe ich anders.",
+   "start_ms": 2170290,
+   "end_ms": 2172040,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 537,
+   "text": "Das Code Review sollte erst nach der Testabdeckung kommen.",
+   "start_ms": 2172040,
+   "end_ms": 2175530,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 538,
+   "text": "Wie hoch ist der Puffer für die Fehlerbehebung?",
+   "start_ms": 2174010,
+   "end_ms": 2176960,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 539,
+   "text": "Nachdem wir8% eingeplant haben.",
+   "start_ms": 2176960,
+   "end_ms": 2179570,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 540,
+   "text": "Aktuell fehlen noch zwei Wochen.",
+   "start_ms": 2178510,
+   "end_ms": 2180980,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 541,
+   "text": "Dann können wir die Pipeline starten.",
+   "start_ms": 2180980,
+   "end_ms": 2183030,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 542,
+   "text": "Können wir die Fehlerbehebung bis zum3.",
+   "start_ms": 2181300,
+   "end_ms": 2183930,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 543,
+   "text": "November abschließen.",
+   "start_ms": 2183930,
+   "end_ms": 2185100,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 544,
+   "text": "Wir haben den Hotfix bereits getestet, aber die Datenbankmigration macht uns noch Sorgen.",
+   "start_ms": 2185860,
+   "end_ms": 2192060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 545,
+   "text": "Da habe ich Bedenken, weil die Fehlerbehebung noch nicht sauber dokumentiert ist.",
+   "start_ms": 2190780,
+   "end_ms": 2195620,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 546,
+   "text": "Wer kümmert sich um die Datenbankmigration?",
+   "start_ms": 2194740,
+   "end_ms": 2197690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 547,
+   "text": "Und wer hat den Lasttest im Blick?",
+   "start_ms": 2197690,
+   "end_ms": 2199820,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 548,
+   "text": "Bei der Datenbankmigration liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 2200200,
+   "end_ms": 2206110,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 549,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens drei Tage.",
+   "start_ms": 2206110,
+   "end_ms": 2210400,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 550,
+   "text": "Kurz zur Lage.",
+   "start_ms": 2210860,
+   "end_ms": 2212380,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 551,
+   "text": "Die Konfigurationsdatei ist abgeschlossen.",
+   "start_ms": 2212380,
+   "end_ms": 2215340,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 552,
+   "text": "Der Abnahmetest läuft.",
+   "start_ms": 2215340,
+   "end_ms": 2217180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 553,
+   "text": "Und das Backlog beginnt am Montagvormittag.",
+   "start_ms": 2217180,
+   "end_ms": 2219870,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 554,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 2220300,
+   "end_ms": 2223010,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 555,
+   "text": "Frau Lehmann kümmert sich um die Fehlerbehebung, ich um den Lasttest.",
+   "start_ms": 2223010,
+   "end_ms": 2227540,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 556,
+   "text": "Wie weit sind wir eigentlich mit dem Abnahmetest?",
+   "start_ms": 2228400,
+   "end_ms": 2231320,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 557,
+   "text": "Aktuell fehlen uns noch zwei Wochen.",
+   "start_ms": 2231310,
+   "end_ms": 2234100,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 558,
+   "text": "Dann können wir das Backlog starten.",
+   "start_ms": 2234100,
+   "end_ms": 2236150,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 559,
+   "text": "Gut, dann halten wir fest, Frau Brandt kümmert sich um die Datenbankmigration, ich um die Sicherheitslücke.",
+   "start_ms": 2236410,
+   "end_ms": 2244210,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 560,
+   "text": "Aus Sicht von VDemir sollten wir die Pipeline vor der Konfigurationsdatei priorisieren.",
+   "start_ms": 2244300,
+   "end_ms": 2249780,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 561,
+   "text": "Und wie sieht es bei dem Staging System aus?",
+   "start_ms": 2250270,
+   "end_ms": 2253380,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 562,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 2253380,
+   "end_ms": 2255270,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 563,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 2255220,
+   "end_ms": 2257850,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 564,
+   "text": "Und den Release-Kennteilaten nehmen wir ins Protokoll auf.",
+   "start_ms": 2257850,
+   "end_ms": 2261260,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 565,
+   "text": "Nach meiner Einschätzung schaffen wir den Speicherverbrauch in der nächsten Woche, wenn Herr Kaiser rechtzeitig ist.",
+   "start_ms": 2261580,
+   "end_ms": 2268500,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 566,
+   "text": "Bis Mitte nächste Woche brauchen wir eine Entscheidung zu der Schnittstellendokumentation.",
+   "start_ms": 2267340,
+   "end_ms": 2272610,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 567,
+   "text": "Sonst verschiebt sich das Staging-System.",
+   "start_ms": 2272610,
+   "end_ms": 2275060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 568,
+   "text": "Wie hoch ist der Puffer für die Fehlerbehebung, nachdem wir15% eingeplant haben?",
+   "start_ms": 2275440,
+   "end_ms": 2281400,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 569,
+   "text": "Bei dem Abnahmetest liegen wir etwa15% über dem ursprünglichen Ansatz.",
+   "start_ms": 2279790,
+   "end_ms": 2285270,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 570,
+   "text": "Was passiert, wenn das DLPLOALMENT nicht rechtzeitig fertig wird?",
+   "start_ms": 2285880,
+   "end_ms": 2291070,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 571,
+   "text": "Dann bedanke ich mich bei allen, Tobias verschickt das Protokoll, und wir hören voneinander.",
+   "start_ms": 2291070,
+   "end_ms": 2297360,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 572,
+   "text": "Guten Tag zusammen, wir beginnen heute mit dem Migrationskonzept und schauen danach auf den Rolllout.",
+   "start_ms": 2298870,
+   "end_ms": 2305310,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 573,
+   "text": "Does",
+   "start_ms": 2307300,
+   "end_ms": 2307510,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 574,
+   "text": "Ich schlage vor, dass wir die Röhrdmee vor dem Wochenende noch einmal gemeinsam durchgehen.",
+   "start_ms": 2305620,
+   "end_ms": 2311500,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 575,
+   "text": "Haben wir für die Rödmate schon einen verbindlichen Termin.",
+   "start_ms": 2312280,
+   "end_ms": 2315680,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 576,
+   "text": "Soweit ich weiß, ist das Abnahmeprotokoll fertig.",
+   "start_ms": 2315850,
+   "end_ms": 2320080,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 577,
+   "text": "Nur der Kickoff steht noch aus.",
+   "start_ms": 2320080,
+   "end_ms": 2322050,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 578,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 2322600,
+   "end_ms": 2325230,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 579,
+   "text": "Herr Schmidt kümmert sich um die Ausschreibung, ich um die Serverumstellung.",
+   "start_ms": 2325230,
+   "end_ms": 2329840,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 580,
+   "text": "Ich habe die Kalkulation gestern mit Frau Lehmann durchgesprochen.",
+   "start_ms": 2328300,
+   "end_ms": 2332690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 581,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 2332690,
+   "end_ms": 2334020,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 582,
+   "text": "Da habe ich Bedenken, weil das Migrationskonzept noch nicht sauber dokumentiert ist.",
+   "start_ms": 2334600,
+   "end_ms": 2340240,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 583,
+   "text": "Ist das Abnahmeprotokoll von Herrn Schmidt schon freigegeben worden?",
+   "start_ms": 2340720,
+   "end_ms": 2344920,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 584,
+   "text": "Bei der Schnittstelle liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 2345280,
+   "end_ms": 2349960,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 585,
+   "text": "Was passiert, wenn die Röödmet nicht rechtzeitig fertig wird?",
+   "start_ms": 2350620,
+   "end_ms": 2355060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 586,
+   "text": "Ich habe den Schulungsplan gestern mit Lena durchgesprochen, wir liegen im Plan.",
+   "start_ms": 2355600,
+   "end_ms": 2361000,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 587,
+   "text": "Ich schlage vor, dass wir das Meeting vor dem Wochenende noch einmal gemeinsam durchgehen.",
+   "start_ms": 2361300,
+   "end_ms": 2367100,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 588,
+   "text": "Was passiert, wenn die Rödmate nicht rechtzeitig fertig wird?",
+   "start_ms": 2367690,
+   "end_ms": 2372050,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 589,
+   "text": "Das klären wir in der nächsten Woche mit Frau Demir.",
+   "start_ms": 2372490,
+   "end_ms": 2376080,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 590,
+   "text": "Dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 2376080,
+   "end_ms": 2378690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 591,
+   "text": "Einverstanden, dann übernehme ich den Schulungsplan und melde mich in der nächsten Woche bei Frau Brandt.",
+   "start_ms": 2379240,
+   "end_ms": 2385950,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 592,
+   "text": "Das hängt vor allem von dem Schulungsplan ab.",
+   "start_ms": 2385950,
+   "end_ms": 2388830,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 593,
+   "text": "Tobias meldet sich dazu am3.",
+   "start_ms": 2388830,
+   "end_ms": 2391230,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 594,
+   "text": "Oktober.",
+   "start_ms": 2391230,
+   "end_ms": 2391920,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 595,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 2390520,
+   "end_ms": 2393390,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 596,
+   "text": "Und den Rollout nehmen wir ins Protokoll auf.",
+   "start_ms": 2393390,
+   "end_ms": 2396240,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 597,
+   "text": "Und wie sieht es bei dem Update aus?",
+   "start_ms": 2396670,
+   "end_ms": 2399060,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 598,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 2399060,
+   "end_ms": 2401030,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 599,
+   "text": "Wir haben das Update bereits getestet, aber die Ausschreibung macht uns noch Sorgen.",
+   "start_ms": 2401500,
+   "end_ms": 2406820,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 600,
+   "text": "Wer kümmert sich um das Rechenzentrum?",
+   "start_ms": 2407080,
+   "end_ms": 2409790,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 601,
+   "text": "Und wer hat die Ausschreibung im Blick?",
+   "start_ms": 2409790,
+   "end_ms": 2412160,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 602,
+   "text": "Wir haben den Workshop bereits getestet, aber das Lastenheft macht uns noch Sorgen.",
+   "start_ms": 2412360,
+   "end_ms": 2417840,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 603,
+   "text": "Wichtig ist mir, dass das Budget und das Abnahmeprotokoll zusammen betrachtet werden.",
+   "start_ms": 2418210,
+   "end_ms": 2424010,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 604,
+   "text": "Können wir den Schulungsplan bis übermorgen abschließen?",
+   "start_ms": 2424480,
+   "end_ms": 2428150,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 605,
+   "text": "Das klären wir am Montagvormittag mit Frau Brandt, dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 2428150,
+   "end_ms": 2434360,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 606,
+   "text": "Das sehe ich anders.",
+   "start_ms": 2434830,
+   "end_ms": 2436580,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 607,
+   "text": "Die Deadline sollte erst nach dem Abnahmeprotokoll kommen.",
+   "start_ms": 2436580,
+   "end_ms": 2439990,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 608,
+   "text": "Wie hoch ist der Puffer für die Serverumstellung, nachdem wir20% eingeplant haben?",
+   "start_ms": 2440800,
+   "end_ms": 2447080,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 609,
+   "text": "Ich habe das Buschett gestern mit Frau Demir durchgesprochen.",
+   "start_ms": 2447310,
+   "end_ms": 2451300,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 610,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 2451300,
+   "end_ms": 2452630,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 611,
+   "text": "Ja, genau so machen wir das, und den Kickoff nehmen wir ins Protokoll auf.",
+   "start_ms": 2453070,
+   "end_ms": 2458550,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 612,
+   "text": "Was passiert, wenn der Malston nicht rechtzeitig fertig wird?",
+   "start_ms": 2459190,
+   "end_ms": 2463630,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 613,
+   "text": "Wir haben den Rolllout bereits getestet, aber der Wartungsvertrag macht uns noch Sorgen.",
+   "start_ms": 2464020,
+   "end_ms": 2469660,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 614,
+   "text": "Da habe ich Bedenken, weil die Ausschreibung noch nicht sauber dokumentiert ist.",
+   "start_ms": 2470170,
+   "end_ms": 2475330,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 615,
+   "text": "Soweit ich weiß, ist der Wartungsvertrag fertig.",
+   "start_ms": 2475990,
+   "end_ms": 2480060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 616,
+   "text": "Nur der Rolllout steht noch aus.",
+   "start_ms": 2480060,
+   "end_ms": 2481950,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 617,
+   "text": "Die Kosten für die Kalkulation liegen derzeit bei20% über dem Plan.",
+   "start_ms": 2482530,
+   "end_ms": 2487610,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 618,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 2487930,
+   "end_ms": 2490800,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 619,
+   "text": "Und den Kickoff nehmen wir ins Protokoll auf.",
+   "start_ms": 2490800,
+   "end_ms": 2493570,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 620,
+   "text": "Haben Sie den Wartungsvertrag schon mit Lena abgestimmt?",
+   "start_ms": 2494500,
+   "end_ms": 2498060,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 621,
+   "text": "Nach meiner Einschätzung schaffen wir die Serverumstellung vor dem Wochenende.",
+   "start_ms": 2498070,
+   "end_ms": 2502590,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 622,
+   "text": "Wenn Frau Lehmann rechtzeitig liefert.",
+   "start_ms": 2502840,
+   "end_ms": 2505440,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 623,
+   "text": "Und wie sieht es bei dem Kick-off aus?",
+   "start_ms": 2503560,
+   "end_ms": 2506030,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 624,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 2506030,
+   "end_ms": 2507920,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 625,
+   "text": "Nach meiner Einschätzung schaffen wir die Ausschreibung in der nächsten Woche.",
+   "start_ms": 2508130,
+   "end_ms": 2512690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 626,
+   "text": "Wenn Frau Brandt rechtzeitig liefert.",
+   "start_ms": 2512690,
+   "end_ms": 2515490,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 627,
+   "text": "Bei dem Rechenzentrum liegen wir etwa20% über dem ursprünglichen Ansatz.",
+   "start_ms": 2515490,
+   "end_ms": 2520900,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 628,
+   "text": "Wir sollten das Budget nicht unterschätzen, denn Frau Demir rechnet mit40 Stunden Mehraufwand.",
+   "start_ms": 2521740,
+   "end_ms": 2528020,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 629,
+   "text": "Haben wir für den Rolllout schon einen verbindlichen Termin.",
+   "start_ms": 2528310,
+   "end_ms": 2531790,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 630,
+   "text": "Soweit ich weiß, ist das Budget fertig, nur der Kickoff steht noch aus.",
+   "start_ms": 2532060,
+   "end_ms": 2537650,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 631,
+   "text": "Einverstanden, dann übernehme ich die Schnittstelle und melde mich am Donnerstagnachmittag bei Lena.",
+   "start_ms": 2537650,
+   "end_ms": 2543940,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 632,
+   "text": "Ist der Wartungsvertrag von Frau Demir schon freigegeben worden?",
+   "start_ms": 2544120,
+   "end_ms": 2548240,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 633,
+   "text": "Dann bedanke ich mich bei allen, Herr Kaiser verschickt das Protokoll, und wir hören voneinander.",
+   "start_ms": 2548470,
+   "end_ms": 2555070,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 634,
+   "text": "Schön, dass alle da sind.",
+   "start_ms": 2556480,
+   "end_ms": 2558760,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 635,
+   "text": "Heute geht es um das Lastenheft, die Konformitätserklärung und den Workshop.",
+   "start_ms": 2559450,
+   "end_ms": 2564850,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 636,
+   "text": "Da habe ich Bedenken, weil die Konformitätserklärung noch nicht sauber dokumentiert ist.",
+   "start_ms": 2562780,
+   "end_ms": 2568580,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 637,
+   "text": "Ich habe die Preisliste gestern mit Frau Lehmann durchgesprochen.",
+   "start_ms": 2569140,
+   "end_ms": 2573130,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 638,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 2573130,
+   "end_ms": 2574380,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 639,
+   "text": "Haben wir für den Proof auf Concept schon einen verbindlichen Termin.",
+   "start_ms": 2575170,
+   "end_ms": 2579050,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 640,
+   "text": "Das klären wir Mitte November mit Tobias.",
+   "start_ms": 2579700,
+   "end_ms": 2582890,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 641,
+   "text": "Dann bekommen sie eine verbindliche Antwort.",
+   "start_ms": 2582890,
+   "end_ms": 2585420,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 642,
+   "text": "Wir sollten die Leistungsbeschreibung nicht unterschätzen, denn Herr Kaiser rechnet mit eine Woche mehr Aufwand.",
+   "start_ms": 2586180,
+   "end_ms": 2592860,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 643,
+   "text": "Aktuell fehlen uns noch eine Woche, dann können wir den Key-Account starten.",
+   "start_ms": 2593020,
+   "end_ms": 2598020,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 644,
+   "text": "Dass das Lieferanten Audit und die Vertragsstrafe zusammen betrachtet werden.",
+   "start_ms": 2597730,
+   "end_ms": 2602420,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 645,
+   "text": "Einverstanden.",
+   "start_ms": 2600760,
+   "end_ms": 2602190,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 646,
+   "text": "Dann übernehme ich das Steuergerät und melde mich vor dem Wochenende bei Herr Kaiser.",
+   "start_ms": 2602190,
+   "end_ms": 2606960,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 647,
+   "text": "Haben Sie die Gewährleistung schon mit Tobias abgestimmt?",
+   "start_ms": 2607720,
+   "end_ms": 2611360,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 648,
+   "text": "Nach meiner Einschätzung schaffen wir die Angebotskalkulation am Montagvormittag, wenn Markus rechtzeitig liefert.",
+   "start_ms": 2611560,
+   "end_ms": 2619120,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 649,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 2619220,
+   "end_ms": 2621540,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 650,
+   "text": "Tobias kümmert sich um das Zahlungsziel.",
+   "start_ms": 2621540,
+   "end_ms": 2624420,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 651,
+   "text": "Ich um die Konformitätserklärung.",
+   "start_ms": 2624420,
+   "end_ms": 2626470,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 652,
+   "text": "Bis Mitte nächster Woche brauchen wir eine Entscheidung zu der Gewährleistung.",
+   "start_ms": 2627130,
+   "end_ms": 2631920,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 653,
+   "text": "Sonst verschiebt sich das Service-Level-Agrement.",
+   "start_ms": 2631920,
+   "end_ms": 2634930,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 654,
+   "text": "Da habe ich Bedenken, weil das Zahlungsziel noch nicht sauber dokumentiert ist.",
+   "start_ms": 2635200,
+   "end_ms": 2640470,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 655,
+   "text": "Nach meiner Einschätzung schaffen wir die Leistungsbeschreibung Anfang Dezember, wenn Tobias rechtzeitig liefert.",
+   "start_ms": 2640470,
+   "end_ms": 2647480,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 656,
+   "text": "Wir sollten die Vertragsstrafe nicht unterschätzen, denn Lena rechnet mit drei Tagen mehr Aufwand.",
+   "start_ms": 2647740,
+   "end_ms": 2654100,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 657,
+   "text": "Bei dem Lieferanten Audit liegen wir etwa8% über dem ursprünglichen Ansatz.",
+   "start_ms": 2653230,
+   "end_ms": 2658310,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 658,
+   "text": "Da habe ich Bedenken, weil das Lastenheft noch nicht sauber dokumentiert ist.",
+   "start_ms": 2658690,
+   "end_ms": 2663690,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 659,
+   "text": "Haben wir für das Anboarding schon einen verbindlichen Termin.",
+   "start_ms": 2664030,
+   "end_ms": 2667590,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 660,
+   "text": "Wir haben den Workshop bereits getestet, aber die Konformitätserklärung macht uns noch Sorgen.",
+   "start_ms": 2667630,
+   "end_ms": 2673910,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 661,
+   "text": "Einverstanden?",
+   "start_ms": 2674470,
+   "end_ms": 2676060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 662,
+   "text": "Dann übernehme ich die Vertragsstrafe und melde mich am Montagvormittag bei Lena.",
+   "start_ms": 2676060,
+   "end_ms": 2681150,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 663,
+   "text": "Das hängt vor allem von der Konformitätserklärung ab.",
+   "start_ms": 2681520,
+   "end_ms": 2685190,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 664,
+   "text": "Herr Schmidt meldet sich dazu Mitte November.",
+   "start_ms": 2685190,
+   "end_ms": 2687960,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 665,
+   "text": "Ist der Kabelbaum von Herrn Schmidt schon freigegeben worden?",
+   "start_ms": 2688000,
+   "end_ms": 2691400,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 666,
+   "text": "Bei dem Lastenheft liegen wir etwa15% über dem ursprünglichen Ansatz.",
+   "start_ms": 2691720,
+   "end_ms": 2696800,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 667,
+   "text": "Haben Sie das Steuergerät schon mit Frau Demir abgestimmt?",
+   "start_ms": 2696700,
+   "end_ms": 2700180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 668,
+   "text": "Nach meiner Einschätzung schaffen wir die Vertragsstrafe am3.",
+   "start_ms": 2700210,
+   "end_ms": 2704040,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 669,
+   "text": "Oktober, wenn Markus rechtzeitig liefert.",
+   "start_ms": 2704040,
+   "end_ms": 2707210,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 670,
+   "text": "Haben Sie die Vertragsstrafe schon mit Frau Demir abgestimmt?",
+   "start_ms": 2707080,
+   "end_ms": 2711120,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 671,
+   "text": "Das hängt vor allem von der Vertragsstrafe ab.",
+   "start_ms": 2711340,
+   "end_ms": 2714610,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 672,
+   "text": "Frau Brandt meldet sich dazu am Donnerstagnachmittag.",
+   "start_ms": 2714610,
+   "end_ms": 2718100,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 673,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 2718690,
+   "end_ms": 2721160,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 674,
+   "text": "Markus kümmert sich um das Lastenheft.",
+   "start_ms": 2721160,
+   "end_ms": 2723800,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 675,
+   "text": "Ich um die Rechtsabteilung.",
+   "start_ms": 2723800,
+   "end_ms": 2725370,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 676,
+   "text": "Kurz zur Lage, das Steuergerät ist abgeschlossen, das Lieferanten Audit läuft, und das Anboarding beginnt vor dem Wochenende.",
+   "start_ms": 2725830,
+   "end_ms": 2735180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 677,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens zwei Wochen.",
+   "start_ms": 2735180,
+   "end_ms": 2739550,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 678,
+   "text": "Wie hoch ist der Puffer für den Rahmenvertrag?",
+   "start_ms": 2739750,
+   "end_ms": 2742940,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 679,
+   "text": "Nachdem wir12% eingeplant haben.",
+   "start_ms": 2742940,
+   "end_ms": 2745870,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 680,
+   "text": "Aktuell fehlen uns noch drei Tage, dann können wir das Anboarding starten.",
+   "start_ms": 2746350,
+   "end_ms": 2751270,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 681,
+   "text": "Da habe ich Bedenken, weil das Lieferanten Audit noch nicht sauber dokumentiert ist.",
+   "start_ms": 2751990,
+   "end_ms": 2757230,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 682,
+   "text": "Kurz zur Lage.",
+   "start_ms": 2757900,
+   "end_ms": 2759490,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 683,
+   "text": "Der Rahmenvertrag ist abgeschlossen.",
+   "start_ms": 2759490,
+   "end_ms": 2762050,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 684,
+   "text": "Die Vertragsstrafe läuft.",
+   "start_ms": 2762050,
+   "end_ms": 2763970,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 685,
+   "text": "Und der Proofhof-Conzept beginnt im ersten Quartal.",
+   "start_ms": 2763970,
+   "end_ms": 2767140,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 686,
+   "text": "Haben wir für den Vorkäst schon einen verbindlichen Termin.",
+   "start_ms": 2767980,
+   "end_ms": 2771460,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 687,
+   "text": "Aktuell fehlen uns noch zwei Wochen, dann können wir den Key Account starten.",
+   "start_ms": 2772540,
+   "end_ms": 2777380,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 688,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 2778210,
+   "end_ms": 2780920,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 689,
+   "text": "Markus kümmert sich um das Lastenheft.",
+   "start_ms": 2780920,
+   "end_ms": 2783560,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 690,
+   "text": "Ich um die Preisliste.",
+   "start_ms": 2783560,
+   "end_ms": 2784970,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 691,
+   "text": "Kurz zur Lage, das Zahlungsziel ist abgeschlossen, das Steuergerät läuft, und das Service-Level-Agrement beginnt in der nächsten Woche.",
+   "start_ms": 2785720,
+   "end_ms": 2794730,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 692,
+   "text": "Wie weit sind wir eigentlich mit der Leistungsbeschreibung?",
+   "start_ms": 2795340,
+   "end_ms": 2798820,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 693,
+   "text": "Bei dem Lieferanten Audit liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 2799300,
+   "end_ms": 2804380,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 694,
+   "text": "Kurz zur Lage.",
+   "start_ms": 2804610,
+   "end_ms": 2806120,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 695,
+   "text": "Die Angebotskalkulation ist abgeschlossen.",
+   "start_ms": 2806120,
+   "end_ms": 2809240,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 696,
+   "text": "Das Steuergerät läuft.",
+   "start_ms": 2809240,
+   "end_ms": 2811000,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 697,
+   "text": "Und der Vorkäst beginnt in der nächsten Woche.",
+   "start_ms": 2811000,
+   "end_ms": 2813530,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 698,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 2814340,
+   "end_ms": 2817140,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 699,
+   "text": "Und das Prigging nehmen wir ins Protokoll auf.",
+   "start_ms": 2817140,
+   "end_ms": 2819990,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 700,
+   "text": "Haben Sie die Gewährleistung schon mit Frau Brandt abgestimmt?",
+   "start_ms": 2820450,
+   "end_ms": 2823930,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 701,
+   "text": "Soweit ich weiß, ist die Preisliste fertig, nur das Pricking steht noch aus.",
+   "start_ms": 2822430,
+   "end_ms": 2827990,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 702,
+   "text": "Für den Kunden zählt am Ende vor allem, dass das Lastenheft verlässlich funktioniert.",
+   "start_ms": 2827860,
+   "end_ms": 2833500,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 703,
+   "text": "Da habe ich Bedenken, weil das Steuergerät noch nicht sauber dokumentiert ist.",
+   "start_ms": 2834220,
+   "end_ms": 2839380,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 704,
+   "text": "Das klären wir Mitte November mit Tobias.",
+   "start_ms": 2840100,
+   "end_ms": 2843130,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 705,
+   "text": "Dann bekommen sie eine verbindliche Antwort.",
+   "start_ms": 2843130,
+   "end_ms": 2845500,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 706,
+   "text": "Wir sollten das Steuergerät nicht unterschätzen, denn Markus rechnet mit sechs Personentage mehr Aufwand.",
+   "start_ms": 2845920,
+   "end_ms": 2852680,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 707,
+   "text": "Gut, dann halten wir fest, Herr Kaiser kümmert sich um die Vertragsstrafe, ich um das Steuergerät.",
+   "start_ms": 2851570,
+   "end_ms": 2859140,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 708,
+   "text": "Kurz zur Lage, der Rahmenvertrag ist abgeschlossen.",
+   "start_ms": 2859570,
+   "end_ms": 2863720,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 709,
+   "text": "Die Konformitätserklärung läuft.",
+   "start_ms": 2863720,
+   "end_ms": 2866200,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 710,
+   "text": "Und der Workshop beginnt Anfang Dezember.",
+   "start_ms": 2866200,
+   "end_ms": 2868570,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 711,
+   "text": "Das klären wir Mitte November mit Frau Brandt.",
+   "start_ms": 2869170,
+   "end_ms": 2872520,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 712,
+   "text": "Dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 2872520,
+   "end_ms": 2875050,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 713,
+   "text": "Bis übermorgen brauchen wir eine Entscheidung zu dem Zahlungsziel.",
+   "start_ms": 2875560,
+   "end_ms": 2879710,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 714,
+   "text": "Sonst verschiebt sich das Service-Level-Agrement.",
+   "start_ms": 2879710,
+   "end_ms": 2882480,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 715,
+   "text": "Ist das Lastenheft von Frau Demir schon freigegeben worden?",
+   "start_ms": 2882550,
+   "end_ms": 2886190,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 716,
+   "text": "Wir haben das Service-Level-Agrement bereits getestet.",
+   "start_ms": 2886930,
+   "end_ms": 2890760,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 717,
+   "text": "Aber das Zahlungsziel macht uns noch Sorgen.",
+   "start_ms": 2890760,
+   "end_ms": 2893370,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 718,
+   "text": "Reichen drei Tage für die Konformitätserklärung und den Vorquest überhaupt aus?",
+   "start_ms": 2894160,
+   "end_ms": 2899400,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 719,
+   "text": "Wichtig ist mir, dass das Steuergerät und die Vertragsstrafe zusammen betrachtet werden.",
+   "start_ms": 2899530,
+   "end_ms": 2905490,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 720,
+   "text": "Was passiert, wenn der Vorkehrst nicht rechtzeitig fertig wird?",
+   "start_ms": 2905800,
+   "end_ms": 2910400,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 721,
+   "text": "Bei dem Kabelbaum liegen wir etwa12% über dem ursprünglichen Ansatz.",
+   "start_ms": 2911110,
+   "end_ms": 2916110,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 722,
+   "text": "Wichtig ist mir, dass das Lastenheft und die Gewährleistung zusammen betrachtet werden.",
+   "start_ms": 2913930,
+   "end_ms": 2919810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 723,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens40 Stunden.",
+   "start_ms": 2920410,
+   "end_ms": 2925170,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 724,
+   "text": "Aktuell fehlen uns noch zwei Wochen, dann können wir das Brigg-ing starten.",
+   "start_ms": 2925610,
+   "end_ms": 2930620,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 725,
+   "text": "Dann bedanke ich mich bei allen, Herr Schmidt verschickt das Protokoll, und wir hören voneinander.",
+   "start_ms": 2931120,
+   "end_ms": 2937480,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 726,
+   "text": "Wie weit sind wir eigentlich mit der Testabdeckung?",
+   "start_ms": 2944230,
+   "end_ms": 2947390,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 727,
+   "text": "Guten Tag zusammen, wir beginnen heute mit der Datenbankmigration und schauen danach auf den19.",
+   "start_ms": 2938980,
+   "end_ms": 2947930,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 728,
+   "text": "Nach meiner Einschätzung schaffen wir die Sicherheitslücke Anfang Dezember, wenn Frau Demir rechts ist.",
+   "start_ms": 2947930,
+   "end_ms": 2953580,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 729,
+   "text": "Hätte ich liefert.",
+   "start_ms": 2953620,
+   "end_ms": 2954620,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 730,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 2952870,
+   "end_ms": 2955740,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 731,
+   "text": "Und das Staging-System nehmen wir ins Protokoll auf.",
+   "start_ms": 2955740,
+   "end_ms": 2959230,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 732,
+   "text": "Wie weit sind wir eigentlich mit dem Lasttest?",
+   "start_ms": 2959590,
+   "end_ms": 2962270,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 733,
+   "text": "Ich habe den Speicherverbrauch gestern mit Frau Brandt durchgesprochen, wir liegen im Plan.",
+   "start_ms": 2962410,
+   "end_ms": 2968210,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 734,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens zwei Wochen.",
+   "start_ms": 2968140,
+   "end_ms": 2972740,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 735,
+   "text": "Kurz zur Lage, der Lasttest ist abgeschlossen, die Fehlerbehebung läuft, und das Sprintreview beginnt am Montagvormittag.",
+   "start_ms": 2970970,
+   "end_ms": 2979900,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 736,
+   "text": "Aktuell fehlen uns noch40 Stunden.",
+   "start_ms": 2978580,
+   "end_ms": 2981530,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 737,
+   "text": "Dann können wir das Sprint-Review starten.",
+   "start_ms": 2981530,
+   "end_ms": 2984410,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 738,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 2984410,
+   "end_ms": 2987050,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 739,
+   "text": "Und den Rollback nehmen wir ins Protokoll auf.",
+   "start_ms": 2987050,
+   "end_ms": 2989900,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 740,
+   "text": "Reichen drei Tage für den Speicherverbrauch und den Pull Request überhaupt aus.",
+   "start_ms": 2990490,
+   "end_ms": 2995250,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 741,
+   "text": "Nach meiner Einschätzung schaffen wir die Fehlerbehebung Mitte November.",
+   "start_ms": 2995890,
+   "end_ms": 3000280,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 742,
+   "text": "Wenn Lena rechtzeitig liefert.",
+   "start_ms": 3000280,
+   "end_ms": 3002760,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 743,
+   "text": "Das sehe ich anders.",
+   "start_ms": 3002760,
+   "end_ms": 3004280,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 744,
+   "text": "Das Backlog sollte erst nach dem Speicherverbrauch kommen.",
+   "start_ms": 3004280,
+   "end_ms": 3007450,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 745,
+   "text": "Ist der Abnahmetest von Frau Demir schon freigegeben worden?",
+   "start_ms": 3007890,
+   "end_ms": 3011530,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 746,
+   "text": "Aktuell fehlen uns noch6 Personentage?",
+   "start_ms": 3010500,
+   "end_ms": 3013930,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 747,
+   "text": "Dann können wir den Kubernetes Cluster starten.",
+   "start_ms": 3013930,
+   "end_ms": 3016860,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 748,
+   "text": "Wichtig ist mir, dass die Testabdeckung und der Speicherverbrauch zusammen betrachtet werden.",
+   "start_ms": 3017370,
+   "end_ms": 3023330,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 749,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 3023880,
+   "end_ms": 3026430,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 750,
+   "text": "Und das D-Epilow-Aiment nehmen wir ins Protokoll auf.",
+   "start_ms": 3026430,
+   "end_ms": 3029760,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 751,
+   "text": "Und wie sieht es bei dem DPillo-Alliment aus?",
+   "start_ms": 3028530,
+   "end_ms": 3031320,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 752,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 3031320,
+   "end_ms": 3033130,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 753,
+   "text": "Bei der Konfigurationsdatei liegen wir etwa20% über dem ursprünglichen Ansatz.",
+   "start_ms": 3032040,
+   "end_ms": 3037760,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 754,
+   "text": "Ist die Konfigurationsdatei von Herrn Schmidt schon freigegeben worden?",
+   "start_ms": 3038460,
+   "end_ms": 3043170,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 755,
+   "text": "Wir haben das Backlog bereits getestet.",
+   "start_ms": 3043170,
+   "end_ms": 3045890,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 756,
+   "text": "Aber der Abnahmetest macht uns noch Sorgen.",
+   "start_ms": 3045890,
+   "end_ms": 3048420,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 757,
+   "text": "Das sehe ich anders, der Kubernetes Cluster sollte erst nach der Konfigurationsdatei kommen.",
+   "start_ms": 3049260,
+   "end_ms": 3055460,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 758,
+   "text": "Wichtig ist mir, dass die Datenbankmigration und der Lasttest zusammen betrachtet werden.",
+   "start_ms": 3054300,
+   "end_ms": 3060500,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 759,
+   "text": "Da habe ich Bedenken, weil die Sicherheitslücke noch nicht sauber dokumentiert ist.",
+   "start_ms": 3061260,
+   "end_ms": 3066500,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 760,
+   "text": "Ich habe den Speicherverbrauch gestern mit Herr Kaiser durchgesprochen.",
+   "start_ms": 3065580,
+   "end_ms": 3069730,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 761,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 3069730,
+   "end_ms": 3071140,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 762,
+   "text": "Wie weit sind wir eigentlich mit der Konfigurationsdatei?",
+   "start_ms": 3069210,
+   "end_ms": 3072850,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 763,
+   "text": "Nach meiner Einschätzung schaffen wir die Sicherheitslücke Anfang Dezember, wenn Markus rechtzeitig liefert.",
+   "start_ms": 3073500,
+   "end_ms": 3080180,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 764,
+   "text": "Wichtig ist mir, dass die Sicherheitslücke und der Lasttest zusammen betrachtet werden.",
+   "start_ms": 3079200,
+   "end_ms": 3085000,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 765,
+   "text": "Können wir den Speicherverbrauch bis übermorgen abschließen.",
+   "start_ms": 3085920,
+   "end_ms": 3089320,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 766,
+   "text": "Wir haben den Kubernetes Cluster bereits getestet, aber die Konfigurationsdatei macht uns doch so.",
+   "start_ms": 3088410,
+   "end_ms": 3095010,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 767,
+   "text": "Wir sollten den Speicherverbrauch nicht unterschätzen, denn Frau Lehmann rechnet mit zwei Wochen mehr Aufwand.",
+   "start_ms": 3093210,
+   "end_ms": 3099650,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 768,
+   "text": "Ich habe die Testabdeckung gestern mit Frau Demir durchgesprochen, wir liegen im Plan.",
+   "start_ms": 3099780,
+   "end_ms": 3105420,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 769,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 3104020,
+   "end_ms": 3106580,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 770,
+   "text": "Und das Backlog nehmen wir ins Protokoll auf.",
+   "start_ms": 3106580,
+   "end_ms": 3109620,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 771,
+   "text": "Soweit ich weiß, ist der Lasttest fertig.",
+   "start_ms": 3109620,
+   "end_ms": 3113060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 772,
+   "text": "Nur der Release-Kenntteil-Date steht noch aus.",
+   "start_ms": 3113060,
+   "end_ms": 3115830,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 773,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 3114540,
+   "end_ms": 3117170,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 774,
+   "text": "Und das Feature Flake nehmen wir ins Protokoll auf.",
+   "start_ms": 3117170,
+   "end_ms": 3120260,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 775,
+   "text": "Haben wir für den Hotfix schon einen verbindlichen Termin?",
+   "start_ms": 3120630,
+   "end_ms": 3124190,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 776,
+   "text": "Wir haben den Kubernetes Cluster bereits getestet.",
+   "start_ms": 3125040,
+   "end_ms": 3128630,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 777,
+   "text": "Aber der Abnahmetest macht uns noch Sorgen.",
+   "start_ms": 3128630,
+   "end_ms": 3131510,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 778,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 3131510,
+   "end_ms": 3133910,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 779,
+   "text": "Lena kümmert sich um den Abnahmetest.",
+   "start_ms": 3133910,
+   "end_ms": 3136360,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 780,
+   "text": "Ich um den Lasttest.",
+   "start_ms": 3136590,
+   "end_ms": 3138340,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 781,
+   "text": "Und wie sieht es bei dem Backlog aus?",
+   "start_ms": 3138340,
+   "end_ms": 3140580,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 782,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 3140580,
+   "end_ms": 3142310,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 783,
+   "text": "Nach meiner Einschätzung schaffen wir die Konfigurationsdatei vor dem Wochenende, wenn Lena rechtzeitig liefert.",
+   "start_ms": 3140820,
+   "end_ms": 3147900,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 784,
+   "text": "Bis Freitagmittag brauchen wir eine Entscheidung zu der Schnittstellendokumentation, sonst verschiebt sich das Sprint-Revreview.",
+   "start_ms": 3147930,
+   "end_ms": 3155810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 785,
+   "text": "Was passiert, wenn das Staging-System nicht rechtzeitig fertig wird?",
+   "start_ms": 3156300,
+   "end_ms": 3160980,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 786,
+   "text": "Das hängt vor allem von der Konfigurationsdatei ab.",
+   "start_ms": 3160170,
+   "end_ms": 3163680,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 787,
+   "text": "Herr Schmidt meldet sich dazu in der nächsten Woche.",
+   "start_ms": 3163680,
+   "end_ms": 3166530,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 788,
+   "text": "Ist der Abnahmetest von Frau Demir schon freigegeben worden?",
+   "start_ms": 3165540,
+   "end_ms": 3169500,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 789,
+   "text": "Nach meiner Einschätzung schaffen wir die Testabdeckung Anfang Dezember.",
+   "start_ms": 3169860,
+   "end_ms": 3174330,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 790,
+   "text": "Wenn Frau D mir rechtzeitig liefert.",
+   "start_ms": 3174330,
+   "end_ms": 3176620,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 791,
+   "text": "Ja, genau so machen wir das, und den Kubernetes Cluster nehmen wir ins Protokoll auf.",
+   "start_ms": 3175410,
+   "end_ms": 3181530,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 792,
+   "text": "Wir sollten die Sicherheitslücke nicht unterschätzen, denn Herr Kaiser rechnet mit einer Woche mehr Aufwand.",
+   "start_ms": 3182070,
+   "end_ms": 3188590,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 793,
+   "text": "Das klären wir in der nächsten Woche mit Herr Kaiser.",
+   "start_ms": 3189330,
+   "end_ms": 3192760,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 794,
+   "text": "Dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 3192760,
+   "end_ms": 3195480,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 795,
+   "text": "Und wie sieht es bei der Pipeline aus?",
+   "start_ms": 3195480,
+   "end_ms": 3198040,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 796,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 3198040,
+   "end_ms": 3199850,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 797,
+   "text": "Das klären wir in der nächsten Woche mit Frau Lehmann, dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 3200280,
+   "end_ms": 3206160,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 798,
+   "text": "Gut, dann halten wir fest, Tobias kümmert sich um den Speicherverbrauch, ich um die Datenbankmigration.",
+   "start_ms": 3206700,
+   "end_ms": 3214420,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 799,
+   "text": "Für den Kunden zählt am Ende vor allem, dass die Fehlerbehebung verlässlich funktioniert.",
+   "start_ms": 3215130,
+   "end_ms": 3220850,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 800,
+   "text": "Soweit ich weiß, ist die Datenbank Migration fertig, nur das Feature Flake steht noch auf.",
+   "start_ms": 3220950,
+   "end_ms": 3227470,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 801,
+   "text": "Wir sollten die Konfigurationsdatei nicht unterschätzen, denn Lena rechnet mit sechs Personentage mehr Aufwand.",
+   "start_ms": 3226440,
+   "end_ms": 3233790,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 802,
+   "text": "Einverstanden.",
+   "start_ms": 3233790,
+   "end_ms": 3235230,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 803,
+   "text": "Dann übernehme ich die Datenbankmigration und melde mich im ersten Quartal bei Herrn Schmidt.",
+   "start_ms": 3235230,
+   "end_ms": 3240720,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 804,
+   "text": "Bei der Schnittstellendokumentation liegen wir etwa8% über dem ursprünglichen Ansatz.",
+   "start_ms": 3241350,
+   "end_ms": 3246990,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 805,
+   "text": "Da habe ich Bedenken, weil die Schnittstellendokumentation noch nicht sauber dokumentiert ist.",
+   "start_ms": 3247290,
+   "end_ms": 3253330,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 806,
+   "text": "Ich habe die Sicherheitsliste gestern mit Markus durchgesprochen.",
+   "start_ms": 3251610,
+   "end_ms": 3255680,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 807,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 3255680,
+   "end_ms": 3257090,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 808,
+   "text": "Und wie sieht es bei der Pipeline aus?",
+   "start_ms": 3256110,
+   "end_ms": 3258820,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 809,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 3258820,
+   "end_ms": 3260710,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 810,
+   "text": "Bei der Fehlerbehebung liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 3261060,
+   "end_ms": 3266060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 811,
+   "text": "Aktuell fehlen uns noch eine Woche, dann können wir das Sprint-Review starten.",
+   "start_ms": 3266310,
+   "end_ms": 3271470,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 812,
+   "text": "Haben Sie die Fehlerbehebung schon mit Lena abgestimmt?",
+   "start_ms": 3272130,
+   "end_ms": 3275450,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 813,
+   "text": "Bei der Sicherheitslücke liegen wir etwa15% über dem ursprünglichen Ansatz.",
+   "start_ms": 3275850,
+   "end_ms": 3281410,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 814,
+   "text": "Wie weit sind wir eigentlich mit der Datenbank Migration?",
+   "start_ms": 3281700,
+   "end_ms": 3285260,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 815,
+   "text": "Bei der Konfigurationsdatei liegen wir etwa20% über dem ursprünglichen Ansatz.",
+   "start_ms": 3285780,
+   "end_ms": 3291820,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 816,
+   "text": "Können wir den Lasttest bis Mitte nächster Woche abschließen.",
+   "start_ms": 3292560,
+   "end_ms": 3296120,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 817,
+   "text": "Das hängt vor allem von der Konfigurationsdatei ab.",
+   "start_ms": 3296880,
+   "end_ms": 3300470,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 818,
+   "text": "Frau Demir meldet sich dazu am3.",
+   "start_ms": 3300470,
+   "end_ms": 3302870,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 819,
+   "text": "Oktober.",
+   "start_ms": 3302870,
+   "end_ms": 3303480,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 820,
+   "text": "Einverstanden?",
+   "start_ms": 3302220,
+   "end_ms": 3303810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 821,
+   "text": "Dann übernehme ich den Speicherverbrauch und melde mich Anfang Dezember bei Frau Lehmann.",
+   "start_ms": 3303810,
+   "end_ms": 3309060,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 822,
+   "text": "Haben wir für den Rollback schon einen verbindlichen Termin.",
+   "start_ms": 3309390,
+   "end_ms": 3312790,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 823,
+   "text": "Aktuell fehlen uns noch6 Personentage, dann können wir die Pipeline starten.",
+   "start_ms": 3313410,
+   "end_ms": 3318810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 824,
+   "text": "Das sehe ich anders.",
+   "start_ms": 3319410,
+   "end_ms": 3321160,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 825,
+   "text": "Das Code Review sollte erst nach der Testabdeckung kommen.",
+   "start_ms": 3321160,
+   "end_ms": 3324650,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 826,
+   "text": "Wie hoch ist der Puffer für die Fehlerbehebung?",
+   "start_ms": 3323130,
+   "end_ms": 3326080,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 827,
+   "text": "Nachdem wir8% eingeplant haben.",
+   "start_ms": 3326080,
+   "end_ms": 3328690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 828,
+   "text": "Aktuell fehlen noch zwei Wochen.",
+   "start_ms": 3327630,
+   "end_ms": 3330020,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 829,
+   "text": "Dann können wir die Pipeline starten.",
+   "start_ms": 3330020,
+   "end_ms": 3332150,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 830,
+   "text": "Können wir die Fehlerbehebung bis zum3.",
+   "start_ms": 3330420,
+   "end_ms": 3333050,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 831,
+   "text": "November abschließen.",
+   "start_ms": 3333050,
+   "end_ms": 3334220,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 832,
+   "text": "Wir haben den Hotfix bereits getestet, aber die Datenbankmigration macht uns noch Sorgen.",
+   "start_ms": 3334980,
+   "end_ms": 3341180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 833,
+   "text": "Da habe ich Bedenken, weil die Fehlerbehebung noch nicht sauber dokumentiert ist.",
+   "start_ms": 3339900,
+   "end_ms": 3344660,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 834,
+   "text": "Wer kümmert sich um die Datenbankmigration?",
+   "start_ms": 3343860,
+   "end_ms": 3346810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 835,
+   "text": "Und wer hat den Lasttest im Blick?",
+   "start_ms": 3346810,
+   "end_ms": 3348940,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 836,
+   "text": "Bei der Datenbankmigration liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 3349320,
+   "end_ms": 3355230,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 837,
+   "text": "Das klingt vernünftig, aber wir brauchen dafür mindestens drei Tage.",
+   "start_ms": 3355230,
+   "end_ms": 3359520,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 838,
+   "text": "Kurz zur Lage.",
+   "start_ms": 3359980,
+   "end_ms": 3361500,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 839,
+   "text": "Die Konfigurationsdatei ist abgeschlossen.",
+   "start_ms": 3361500,
+   "end_ms": 3364460,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 840,
+   "text": "Der Abnahmetest läuft.",
+   "start_ms": 3364460,
+   "end_ms": 3366300,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 841,
+   "text": "Und das Backlog beginnt am Montagvormittag.",
+   "start_ms": 3366300,
+   "end_ms": 3368990,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 842,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 3369490,
+   "end_ms": 3372130,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 843,
+   "text": "Frau Lehmann kümmert sich um die Fehlerbehebung, ich um den Lasttest.",
+   "start_ms": 3372130,
+   "end_ms": 3376660,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 844,
+   "text": "Wie weit sind wir eigentlich mit dem Abnahmetest?",
+   "start_ms": 3377520,
+   "end_ms": 3380520,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 845,
+   "text": "Aktuell fehlen uns noch zwei Wochen.",
+   "start_ms": 3380430,
+   "end_ms": 3383220,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 846,
+   "text": "Dann können wir das Backlog starten.",
+   "start_ms": 3383220,
+   "end_ms": 3385270,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 847,
+   "text": "Gut, dann halten wir fest, Frau Brandt kümmert sich um die Datenbankmigration, ich um die Sicherheitslücke.",
+   "start_ms": 3385500,
+   "end_ms": 3393380,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 848,
+   "text": "Aus Sicht von VDMir sollten wir die Pipeline vor der Konfigurationsdatei priorisieren.",
+   "start_ms": 3393420,
+   "end_ms": 3398900,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 849,
+   "text": "Und wie sieht es bei dem Staging System aus?",
+   "start_ms": 3399390,
+   "end_ms": 3402500,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 850,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 3402500,
+   "end_ms": 3404390,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 851,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 3404340,
+   "end_ms": 3406970,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 852,
+   "text": "Und den Release-Kennteildaten nehmen wir ins Protokoll auf.",
+   "start_ms": 3406970,
+   "end_ms": 3410460,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 853,
+   "text": "Nach meiner Einschätzung schaffen wir den Speicherverbrauch in der nächsten Woche, wenn Herr Kaiser rechtzeitig",
+   "start_ms": 3410700,
+   "end_ms": 3417140,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 854,
+   "text": "Bis Mitte nächste Woche brauchen wir eine Entscheidung zu der Schnittstellendokumentation, sonst verschiebt sich das Staging-System.",
+   "start_ms": 3416460,
+   "end_ms": 3424180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 855,
+   "text": "Wie hoch ist der Puffer für die Fehlerbehebung, nachdem wir15% eingeplant haben?",
+   "start_ms": 3424560,
+   "end_ms": 3430520,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 856,
+   "text": "Bei dem Abnahmetest liegen wir etwa15% über dem ursprünglichen Ansatz.",
+   "start_ms": 3428910,
+   "end_ms": 3434390,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 857,
+   "text": "Was passiert, wenn das D-Epilow Aliment nicht rechtzeitig fertig wird?",
+   "start_ms": 3434970,
+   "end_ms": 3440160,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 858,
+   "text": "Dann bedanke ich mich bei allen, Tobias verschickt das Protokoll, und wir hören voneinander.",
+   "start_ms": 3440160,
+   "end_ms": 3446450,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 859,
+   "text": "Guten Tag zusammen, wir beginnen heute mit dem Migrationskonzept und schauen danach auf den Rolllout.",
+   "start_ms": 3447990,
+   "end_ms": 3454430,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 860,
+   "text": "The",
+   "start_ms": 3456500,
+   "end_ms": 3456550,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 861,
+   "text": "Ich schlage vor, dass wir die Röhdmet vor dem Wochenende noch einmal gemeinsam durchgehen.",
+   "start_ms": 3454740,
+   "end_ms": 3460620,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 862,
+   "text": "Haben wir für die Rödmate schon einen verbindlichen Termin.",
+   "start_ms": 3461400,
+   "end_ms": 3464720,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 863,
+   "text": "Soweit ich weiß, ist das Abnahmeprotokoll fertig.",
+   "start_ms": 3464970,
+   "end_ms": 3469200,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 864,
+   "text": "Nur der Kickoff steht noch aus.",
+   "start_ms": 3469200,
+   "end_ms": 3471170,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 865,
+   "text": "Gut, dann halten wir fest.",
+   "start_ms": 3471720,
+   "end_ms": 3474350,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 866,
+   "text": "Herr Schmidt kümmert sich um die Ausschreibung, ich um die Serverumstellung.",
+   "start_ms": 3474350,
+   "end_ms": 3478960,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 867,
+   "text": "Ich habe die Kalkulation gestern mit Frau Lehmann durchgesprochen.",
+   "start_ms": 3477420,
+   "end_ms": 3481810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 868,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 3481810,
+   "end_ms": 3483140,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 869,
+   "text": "Da habe ich Bedenken, weil das Migrationskonzept noch nicht sauber dokumentiert ist.",
+   "start_ms": 3483720,
+   "end_ms": 3489360,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 870,
+   "text": "Ist das Abnahmeprotokoll von Herrn Schmidt schon freigegeben worden?",
+   "start_ms": 3489840,
+   "end_ms": 3494040,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 871,
+   "text": "Bei der Schnittstelle liegen wir etwa3% über dem ursprünglichen Ansatz.",
+   "start_ms": 3494400,
+   "end_ms": 3499080,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 872,
+   "text": "Was passiert, wenn die Röödmet nicht rechtzeitig fertig wird?",
+   "start_ms": 3499740,
+   "end_ms": 3504180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 873,
+   "text": "Ich habe den Schulungsplan gestern mit Lena durchgesprochen, wir liegen im Plan.",
+   "start_ms": 3504720,
+   "end_ms": 3510120,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 874,
+   "text": "Ich schlage vor, dass wir das Meeting vor dem Wochenende noch einmal gemeinsam durchgehen.",
+   "start_ms": 3510420,
+   "end_ms": 3516220,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 875,
+   "text": "Was passiert, wenn die Redmade nicht rechtzeitig fertig wird?",
+   "start_ms": 3516810,
+   "end_ms": 3521170,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 876,
+   "text": "Das klären wir in der nächsten Woche mit Frau Demir.",
+   "start_ms": 3521610,
+   "end_ms": 3525200,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 877,
+   "text": "Dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 3525200,
+   "end_ms": 3527810,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 878,
+   "text": "Einverstanden, dann übernehme ich den Schulungsplan und melde mich in der nächsten Woche bei Frau Brandt.",
+   "start_ms": 3528360,
+   "end_ms": 3535070,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 879,
+   "text": "Das hängt vor allem von dem Schulungsplan ab.",
+   "start_ms": 3535070,
+   "end_ms": 3537950,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 880,
+   "text": "Tobias meldet sich dazu am3.",
+   "start_ms": 3537950,
+   "end_ms": 3540350,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 881,
+   "text": "Oktober.",
+   "start_ms": 3540350,
+   "end_ms": 3540960,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 882,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 3539640,
+   "end_ms": 3542510,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 883,
+   "text": "Und den Rollout nehmen wir ins Protokoll auf.",
+   "start_ms": 3542510,
+   "end_ms": 3545360,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 884,
+   "text": "Und wie sieht es bei dem Update aus?",
+   "start_ms": 3545790,
+   "end_ms": 3548180,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 885,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 3548180,
+   "end_ms": 3550070,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 886,
+   "text": "Wir haben das Update bereits getestet, aber die Ausschreibung macht uns noch Sorgen.",
+   "start_ms": 3550620,
+   "end_ms": 3555940,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 887,
+   "text": "Wer kümmert sich um das Rechenzentrum?",
+   "start_ms": 3556200,
+   "end_ms": 3558910,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 888,
+   "text": "Und wer hat die Ausschreibung im Blick?",
+   "start_ms": 3558910,
+   "end_ms": 3561280,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 889,
+   "text": "Wir haben den Workshop bereits getestet, aber das Lastenheft macht uns noch Sorgen.",
+   "start_ms": 3561480,
+   "end_ms": 3566960,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 890,
+   "text": "Wichtig ist mir, dass das Budget und das Abnahmeprotokoll zusammen betrachtet werden.",
+   "start_ms": 3567330,
+   "end_ms": 3573130,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 891,
+   "text": "Können wir den Schulungsplan bis übermorgen abschließen?",
+   "start_ms": 3573600,
+   "end_ms": 3577270,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 892,
+   "text": "Das klären wir am Montagvormittag mit Frau Brandt, dann bekommen Sie eine verbindliche Antwort.",
+   "start_ms": 3577270,
+   "end_ms": 3583480,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 893,
+   "text": "Das sehe ich anders.",
+   "start_ms": 3583950,
+   "end_ms": 3585700,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 894,
+   "text": "Die Deadline sollte erst nach dem Abnahmeprotokoll kommen.",
+   "start_ms": 3585700,
+   "end_ms": 3589110,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 895,
+   "text": "Wie hoch ist der Puffer für die Serverumstellung, nachdem wir20% eingeplant haben?",
+   "start_ms": 3589920,
+   "end_ms": 3596200,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 896,
+   "text": "Ich habe das Budget gestern mit Frau Demir durchgesprochen.",
+   "start_ms": 3596430,
+   "end_ms": 3600420,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 897,
+   "text": "Wir liegen im Plan.",
+   "start_ms": 3600420,
+   "end_ms": 3601750,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 898,
+   "text": "Ja, genau so machen wir das, und den Kickoff nehmen wir ins Protokoll auf.",
+   "start_ms": 3602190,
+   "end_ms": 3607670,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 899,
+   "text": "Was passiert, wenn der Malston nicht rechtzeitig fertig wird?",
+   "start_ms": 3608310,
+   "end_ms": 3612750,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 900,
+   "text": "Wir haben den Rolllout bereits getestet, aber der Wartungsvertrag macht uns noch Sorgen.",
+   "start_ms": 3613140,
+   "end_ms": 3618780,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 901,
+   "text": "Da habe ich Bedenken, weil die Ausschreibung noch nicht sauber dokumentiert ist.",
+   "start_ms": 3619290,
+   "end_ms": 3624450,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 902,
+   "text": "Soweit ich weiß, ist der Wartungsvertrag fertig.",
+   "start_ms": 3625110,
+   "end_ms": 3629180,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 903,
+   "text": "Nur der Rollout steht noch aus.",
+   "start_ms": 3629180,
+   "end_ms": 3631070,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 904,
+   "text": "Die Kosten für die Kalkulation liegen derzeit bei20% über dem Plan.",
+   "start_ms": 3631620,
+   "end_ms": 3636700,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 905,
+   "text": "Ja, genau so machen wir das.",
+   "start_ms": 3637050,
+   "end_ms": 3639920,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 906,
+   "text": "Und den Kickoff nehmen wir ins Protokoll auf.",
+   "start_ms": 3639920,
+   "end_ms": 3642690,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 907,
+   "text": "Haben Sie den Wartungsvertrag schon mit Lena abgestimmt?",
+   "start_ms": 3643620,
+   "end_ms": 3647100,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 908,
+   "text": "Nach meiner Einschätzung schaffen wir die Serverumstellung vor dem Wochenende, wenn Frau Lehmann rechtzeitig liefert.",
+   "start_ms": 3647190,
+   "end_ms": 3654510,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 909,
+   "text": "Und wie sieht es bei dem Kick Off aus?",
+   "start_ms": 3652680,
+   "end_ms": 3655150,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 910,
+   "text": "Gibt es dort neue Risiken?",
+   "start_ms": 3655150,
+   "end_ms": 3657040,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 911,
+   "text": "Nach meiner Einschätzung schaffen wir die Ausschreibung in der nächsten Woche, wenn Frau Brandt rechtzeitig liefert.",
+   "start_ms": 3657250,
+   "end_ms": 3664610,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 912,
+   "text": "Bei dem Rechenzentrum liegen wir etwa20% über dem ursprünglichen Ansatz.",
+   "start_ms": 3664610,
+   "end_ms": 3670020,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 913,
+   "text": "Wir sollten das Budget nicht unterschätzen, denn Frau Demir rechnet mit40 Stunden Mehraufwand.",
+   "start_ms": 3670860,
+   "end_ms": 3677140,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 914,
+   "text": "Haben wir für den Rolllout schon einen verbindlichen Termin.",
+   "start_ms": 3677430,
+   "end_ms": 3680830,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 915,
+   "text": "Soweit ich weiß, ist das Budget fertig, nur der Kickoff steht noch aus.",
+   "start_ms": 3681180,
+   "end_ms": 3686770,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 916,
+   "text": "Einverstanden, dann übernehme ich die Schnittstelle und melde mich am Donnerstagnachmittag bei Lena.",
+   "start_ms": 3686770,
+   "end_ms": 3692980,
+   "channel": 0,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 917,
+   "text": "Ist der Wartungsvertrag von Frau Demir schon freigegeben worden?",
+   "start_ms": 3693240,
+   "end_ms": 3697360,
+   "channel": 1,
+   "speaker_index": null
+  },
+  {
+   "segment_index": 918,
+   "text": "Dann bedanke ich mich bei allen, Herr Kaiser verschickt das Protokoll, und wir hören voneinander.",
+   "start_ms": 3697530,
+   "end_ms": 3704130,
+   "channel": 0,
+   "speaker_index": null
+  }
+ ],
+ "notes": []
+}

@@ -21,6 +21,12 @@ export const AUTOSAVE_DEBOUNCE_MS = 700;
 /** Standardvorlage, solange keine andere gewaehlt ist (`templates.rs`). */
 export const DEFAULT_TEMPLATE_ID = "builtin:allgemein";
 
+/**
+ * P1k: "Automatisch (nach Inhalt)". Keine Vorlage, sondern die Wahl selbst
+ * (`templates.rs`): das Backend waehlt beim Erzeugen anhand des Inhalts.
+ */
+export const AUTO_TEMPLATE_ID = "auto";
+
 // ---------------------------------------------------------------------------
 // Zeit
 // ---------------------------------------------------------------------------

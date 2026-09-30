@@ -452,6 +452,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({ onPrepare }) => {
               value={templateId}
               onChange={(id) => setTemplateChoice(id)}
               disabled={busy}
+              allowAuto
             />
           </div>
         )}

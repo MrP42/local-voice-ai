@@ -327,7 +327,7 @@ pub struct UsageTotals {
     pub llm_ms: u64,
 }
 
-fn ledger_last_id() -> i64 {
+pub(crate) fn ledger_last_id() -> i64 {
     crate::managers::usage::ledger()
         .and_then(|l| l.events(1, 0).ok())
         .and_then(|events| events.first().map(|e| e.id))
@@ -337,10 +337,18 @@ fn ledger_last_id() -> i64 {
 /// Die Buchungen nach `after_id`. `record_call` schreibt im Hintergrund:
 /// warten, bis die Zahl 300 ms lang stabil ist (hoechstens 3 s).
 async fn usage_since(after_id: i64) -> UsageTotals {
+    usage_since_for(after_id, crate::managers::usage::Purpose::EnhancedNotes).await
+}
+
+/// Wie [`usage_since`] fuer einen anderen Zweck (P1k: Protokoll).
+pub(crate) async fn usage_since_for(
+    after_id: i64,
+    purpose: crate::managers::usage::Purpose,
+) -> UsageTotals {
     let Some(ledger) = crate::managers::usage::ledger() else {
         return UsageTotals::default();
     };
-    let purpose = crate::managers::usage::Purpose::EnhancedNotes.as_str();
+    let purpose = purpose.as_str();
     let mut events = Vec::new();
     let (mut last, mut stable) = (usize::MAX, 0);
     for _ in 0..30 {

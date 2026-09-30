@@ -55,6 +55,23 @@ pub const CHARS_PER_ENTRY: usize = 3_500;
 pub const MIN_ENTRIES: usize = 4;
 pub const MAX_ENTRIES: usize = 40;
 
+/// P1k (B12): Protokoll-Eintraege sind kuerzer als KI-Notizen-Eintraege (nur
+/// Text, weder Quellen noch Schluessel: rund 40 bis 70 Token je Eintrag), das
+/// Protokoll soll aber dichter sein als die Notizen: ein Eintrag je 1 800
+/// Zeichen Transkript (~1,5 Minuten Sprache). Ein Block mit 35 000 Zeichen darf
+/// dann 19 Eintraege schreiben (~1 300 Token), die Grenze von 48 (~3 400 Token)
+/// bleibt weit unter `ANSWER_RESERVE_TOKENS`. Ohne Grenze im Prompt laufen lokale
+/// Modelle in eine Endlosliste (siehe `CHARS_PER_ENTRY`).
+pub const MINUTES_CHARS_PER_ENTRY: usize = 1_800;
+pub const MINUTES_MIN_ENTRIES: usize = 6;
+pub const MINUTES_MAX_ENTRIES: usize = 48;
+
+/// Wie viele Protokoll-Eintraege (ueber alle Abschnitte) ein Stueck Transkript
+/// von `transcript_chars` Zeichen hoechstens bekommt.
+pub fn minutes_entry_cap(transcript_chars: usize) -> usize {
+    (transcript_chars / MINUTES_CHARS_PER_ENTRY).clamp(MINUTES_MIN_ENTRIES, MINUTES_MAX_ENTRIES)
+}
+
 /// Mehr als so viele Zeilen (Eintraege der map-Stufe): der Reduce wird
 /// uebersprungen. Seine Antwort gibt alle Zeilen noch einmal als JSON aus
 /// (gemessen, Gemma 4 E4B, 60 Minuten: 33 Zeilen = 3 977 Token = 25 s; im
@@ -192,6 +209,27 @@ pub fn balanced_block_limit(total_chars: usize, max_block_chars: usize, longest_
         return max_block_chars;
     }
     (total_chars.div_ceil(blocks) + longest_line).min(max_block_chars)
+}
+
+/// Packt ganze Zeilen (Laengen in Zeichen, samt Zeilenumbruch) der Reihe nach in
+/// Bloecke von hoechstens `max_chars`; eine einzelne Zeile ueber dem Limit
+/// bildet einen eigenen Block (Zeilen werden nie zerschnitten). Liefert
+/// Indexbereiche.
+pub fn pack_ranges(line_chars: &[usize], max_chars: usize) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let (mut start, mut used) = (0usize, 0usize);
+    for (index, len) in line_chars.iter().enumerate() {
+        if index > start && used + len > max_chars {
+            ranges.push(start..index);
+            start = index;
+            used = 0;
+        }
+        used += len;
+    }
+    if start < line_chars.len() {
+        ranges.push(start..line_chars.len());
+    }
+    ranges
 }
 
 /// Wo ein Block aus Zeilen (Laengen in Zeichen) halbiert wird: der Index, ab
@@ -359,6 +397,27 @@ mod tests {
         }
     }
 
+    /// P1k: die Protokoll-Grenze waechst mit dem Transkript, bleibt in ihren
+    /// Schranken und passt samt JSON-Rahmen in die Antwortreserve.
+    #[test]
+    fn the_minutes_entry_cap_follows_the_transcript_and_fits_the_reserve() {
+        assert_eq!(minutes_entry_cap(0), MINUTES_MIN_ENTRIES);
+        assert_eq!(minutes_entry_cap(35_000), 19);
+        assert_eq!(minutes_entry_cap(usize::MAX), MINUTES_MAX_ENTRIES);
+        let mut last = 0;
+        for chars in (0..400_000).step_by(1_000) {
+            let cap = minutes_entry_cap(chars);
+            assert!(cap >= last && (MINUTES_MIN_ENTRIES..=MINUTES_MAX_ENTRIES).contains(&cap));
+            last = cap;
+        }
+        // Auch die groesste Grenze mit pessimistischen 90 Token je Eintrag (Aufgaben
+        // mit Verantwortlichem und Termin) plus Rahmen passt in die Reserve.
+        assert!(MINUTES_MAX_ENTRIES * 90 + 800 <= ANSWER_RESERVE_TOKENS);
+        // Dichter als die KI-Notizen, aber nie mehr als ein Eintrag je Transkriptzeile
+        // dieser Groesse.
+        assert!(MINUTES_CHARS_PER_ENTRY < CHARS_PER_ENTRY);
+    }
+
     #[test]
     fn the_estimate_rounds_up_and_matches_the_payload_chars() {
         let b = TokenBudget::for_model(GEMMA, 16_384);
@@ -429,6 +488,25 @@ mod tests {
             }
             assert_eq!(blocks, planned.max(1), "{lines} Zeilen a {len}, Maximum {max}");
         }
+    }
+
+    #[test]
+    fn lines_are_packed_whole_into_blocks_that_cover_everything_once() {
+        let lens = vec![10usize; 10];
+        assert_eq!(pack_ranges(&lens, 35), vec![0..3, 3..6, 6..9, 9..10]);
+        assert_eq!(pack_ranges(&lens, 1_000), vec![0..10]);
+        assert_eq!(pack_ranges(&[], 100), Vec::<Range<usize>>::new());
+        // Eine Zeile ueber dem Limit bildet einen eigenen Block, nie zwei Bloecke leer.
+        assert_eq!(pack_ranges(&[5, 500, 5], 50), vec![0..1, 1..2, 2..3]);
+        assert_eq!(pack_ranges(&[500], 50), vec![0..1]);
+        // Limit 0: jede Zeile fuer sich, nie eine Endlosschleife.
+        assert_eq!(pack_ranges(&[3, 3], 0), vec![0..1, 1..2]);
+        // Lueckenlos und ohne Ueberschneidung.
+        let lens: Vec<usize> = (0..97).map(|i| 20 + (i * 7) % 90).collect();
+        let ranges = pack_ranges(&lens, 400);
+        assert_eq!(ranges.first().unwrap().start, 0);
+        assert_eq!(ranges.last().unwrap().end, 97);
+        assert!(ranges.windows(2).all(|w| w[0].end == w[1].start));
     }
 
     #[test]

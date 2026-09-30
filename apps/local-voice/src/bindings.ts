@@ -1674,13 +1674,16 @@ async meetingsImportFile(path: string, consentConfirmed: boolean) : Promise<Resu
 }
 },
 /**
- * Generates the standardized minutes for a finished meeting and stores them
- * as a new document version. The meeting status stays untouched — a failed
- * generation leaves a 'ready' meeting 'ready' and only returns the error.
+ * Generates the minutes for a finished meeting, following a template, and
+ * stores them as a new document version. `template_id`: a template id, `"auto"`
+ * (chosen by content) or `None` (the meeting's own choice, else the standard
+ * template). The meeting status stays untouched — a failed generation leaves a
+ * 'ready' meeting 'ready' and only returns the error. One run per meeting: a
+ * second start is refused with `minutes_busy` (P1k, B14).
  */
-async meetingsGenerateMinutes(meetingId: string) : Promise<Result<MeetingDocument, string>> {
+async meetingsGenerateMinutes(meetingId: string, templateId: string | null) : Promise<Result<MeetingDocument, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_generate_minutes", { meetingId }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_generate_minutes", { meetingId, templateId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1694,6 +1697,53 @@ async meetingsGenerateMinutes(meetingId: string) : Promise<Result<MeetingDocumen
 async meetingsMinutesFile(meetingId: string) : Promise<Result<string | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_minutes_file", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laeuft fuer die Besprechung gerade ein Protokoll-Lauf? Beim Einblenden des
+ * Reiters abfragen (B14); danach halten `MinutesEvent`s den Stand aktuell.
+ */
+async meetingsMinutesState(meetingId: string) : Promise<Result<MinutesRunState, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_minutes_state", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stopp anfordern: `true`, wenn ein Lauf besteht. Er endet vor dem naechsten
+ * Modellaufruf mit `minutes_cancelled` und schreibt nichts.
+ */
+async meetingsMinutesCancel(meetingId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_minutes_cancel", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mit welcher Vorlage das jüngste Protokoll entstand und ob etwas fehlt.
+ */
+async meetingsMinutesMeta(meetingId: string) : Promise<Result<MinutesMeta | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_minutes_meta", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die zuletzt automatisch gewählte Vorlage der Besprechung ("Automatisch:
+ * Kundengespräch"); `None`, solange noch nie nach Inhalt gewählt wurde.
+ */
+async meetingsGetAutoTemplate(meetingId: string) : Promise<Result<AutoTemplateInfo | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_get_auto_template", { meetingId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3718,6 +3768,7 @@ meetingEvent: MeetingEvent,
 meetingIndexEvent: MeetingIndexEvent,
 meetingNotesEvent: MeetingNotesEvent,
 meetingPromptEvent: MeetingPromptEvent,
+minutesEvent: MinutesEvent,
 speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
@@ -3731,6 +3782,7 @@ meetingEvent: "meeting-event",
 meetingIndexEvent: "meeting-index-event",
 meetingNotesEvent: "meeting-notes-event",
 meetingPromptEvent: "meeting-prompt-event",
+minutesEvent: "minutes-event",
 speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event"
@@ -4187,6 +4239,22 @@ export type AudioSegment = { text: string;
  * Sprecher dieses Satzes; `None` ist die Stimme des Stuecks.
  */
 voice: string | null; start_ms: number; end_ms: number }
+/**
+ * Wie eine automatische Wahl zustande kam.
+ */
+export type AutoOutcome = 
+/**
+ * Das Modell hat eine Vorlage der Liste benannt.
+ */
+"model" | 
+/**
+ * Leere oder unbekannte Antwort: "Allgemein".
+ */
+"uncertain" | 
+/**
+ * Der Aufruf ist gescheitert (Fehler, Zeitlimit): "Allgemein".
+ */
+"failed"
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 /**
  * Eine vom LLM vorgeschlagene Tag-Einfügung. `offset_in_original` ist ein
@@ -4216,6 +4284,10 @@ style_hint: string;
  */
 max_per_sentence: number }
 export type AutoTagPreset = { name: string; options: AutoTagOptions }
+/**
+ * Was die UI zeigt: "Automatisch: <Titel>".
+ */
+export type AutoTemplateInfo = { template_id: string; title: string; reason: string; outcome: AutoOutcome }
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 /**
  * Avatarquelle einer Stimme: ein hochgeladenes Bild oder ein Icon-Name aus
@@ -4905,6 +4977,64 @@ export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: n
 from_metadata: boolean }
 export type MemoryFile = { kind: string; text: string }
 export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
+/**
+ * Ereignis eines Protokoll-Laufs. `code` von `Failed` ist einer der Codes aus
+ * `minutes::ALL_CODES`; die Oberflaeche uebersetzt ihn. Ein abgewiesener zweiter
+ * Start (`minutes_busy`) sendet KEIN Ereignis: der laufende Lauf gehoert dem
+ * ersten Start, und dessen Anzeige darf nicht gestoert werden.
+ */
+export type MinutesEvent = { kind: "progress"; meeting_id: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
+/**
+ * Was die Anzeige zu einem erzeugten Protokoll braucht (aus den Metadaten der
+ * Dokumentversion): mit welcher Vorlage, und ob etwas fehlt.
+ */
+export type MinutesMeta = { document_id: string; template_id: string | null; template_title: string | null; 
+/**
+ * Die automatische Wahl, wenn "Automatisch" gewaehlt war.
+ */
+auto: AutoTemplateInfo | null; 
+/**
+ * Teile des Transkripts konnten nicht ausgewertet werden.
+ */
+incomplete: boolean; 
+/**
+ * Die fehlenden Zeitbereiche (`mm:ss-mm:ss`).
+ */
+gaps: string[]; chunks_total: number; chunks_split: number }
+/**
+ * Woran der Lauf gerade arbeitet.
+ */
+export type MinutesPhase = 
+/**
+ * Vorlage bestimmen (bei "Automatisch" ein kurzer Modellaufruf).
+ */
+"template" | 
+/**
+ * Transkript auswerten: ein Aufruf oder Block fuer Block.
+ */
+"write" | 
+/**
+ * Blockergebnisse zusammenfuehren.
+ */
+"merge"
+/**
+ * Fortschritt eines Laufs. `done`/`total` zaehlen Schritte (Bloecke plus
+ * Zusammenfuehren; im Einzeldurchlauf 0/1 -> 1/1); `total == 0` heisst
+ * unbestimmt.
+ */
+export type MinutesProgress = { phase: MinutesPhase; done: number; total: number }
+/**
+ * Zustand fuer die Oberflaeche, abfragbar beim Einblenden des Reiters.
+ */
+export type MinutesRunState = { running: boolean; progress: MinutesProgress | null; 
+/**
+ * Ein Stopp ist angefordert, der Lauf endet vor dem naechsten Aufruf.
+ */
+cancelling: boolean; 
+/**
+ * Beginn des Laufs (Sekunden seit der Epoche); fuer die Laufzeitanzeige.
+ */
+started_at: number | null }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean; 
 /**
  * Whether the streaming look-ahead (`att_context_right`) can be chosen for
