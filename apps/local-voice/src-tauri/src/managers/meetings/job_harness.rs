@@ -244,9 +244,21 @@ mod tests {
         assert_eq!(
             steps,
             vec![
-                ScriptStep { phase: None, at: Duration::from_secs(4), action: ScriptAction::Pause },
-                ScriptStep { phase: None, at: Duration::from_millis(9_500), action: ScriptAction::Resume },
-                ScriptStep { phase: None, at: Duration::from_secs(14), action: ScriptAction::Stop },
+                ScriptStep {
+                    phase: None,
+                    at: Duration::from_secs(4),
+                    action: ScriptAction::Pause
+                },
+                ScriptStep {
+                    phase: None,
+                    at: Duration::from_millis(9_500),
+                    action: ScriptAction::Resume
+                },
+                ScriptStep {
+                    phase: None,
+                    at: Duration::from_secs(14),
+                    action: ScriptAction::Stop
+                },
             ]
         );
     }
@@ -270,7 +282,9 @@ mod tests {
             ],
             "mit Phase zaehlt die Reihenfolge der Eingabe"
         );
-        assert!(parse_script("stop@sprechen").unwrap_err().contains("unbekannte Phase"));
+        assert!(parse_script("stop@sprechen")
+            .unwrap_err()
+            .contains("unbekannte Phase"));
         assert!(parse_script("stop@speakers+abc").is_err());
     }
 
@@ -312,8 +326,12 @@ mod tests {
     #[test]
     fn a_broken_script_is_refused_with_a_reason() {
         assert!(parse_script("").is_err());
-        assert!(parse_script("pause").unwrap_err().contains("aktion@sekunden"));
-        assert!(parse_script("explode@3").unwrap_err().contains("unbekannte Aktion"));
+        assert!(parse_script("pause")
+            .unwrap_err()
+            .contains("aktion@sekunden"));
+        assert!(parse_script("explode@3")
+            .unwrap_err()
+            .contains("unbekannte Aktion"));
         assert!(parse_script("pause@abc").is_err());
         assert!(parse_script("pause@-2").is_err());
         assert!(parse_script("pause@NaN").is_err());
@@ -322,9 +340,7 @@ mod tests {
     #[test]
     fn the_script_steers_the_running_job_like_the_buttons_do() {
         let jobs = MeetingJobs::new();
-        let guard = jobs
-            .try_start("m1", Arc::new(|_| {}))
-            .expect("Auftrag");
+        let guard = jobs.try_start("m1", Arc::new(|_| {})).expect("Auftrag");
         guard.begin_phase(JobPhase::Transcription, 100_000);
         let steps = parse_script("pause@0,resume@0.05,stop@0.1").unwrap();
         let lines: StdMutex<Vec<Value>> = StdMutex::new(Vec::new());
@@ -343,8 +359,14 @@ mod tests {
         let lines = lines.lock().unwrap();
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0]["action"], "pause");
-        assert_eq!(lines[0]["state"], serde_json::to_value(JobRunState::Pausing).unwrap());
-        assert_eq!(lines[2]["state"], serde_json::to_value(JobRunState::Stopping).unwrap());
+        assert_eq!(
+            lines[0]["state"],
+            serde_json::to_value(JobRunState::Pausing).unwrap()
+        );
+        assert_eq!(
+            lines[2]["state"],
+            serde_json::to_value(JobRunState::Stopping).unwrap()
+        );
     }
 
     #[test]
@@ -355,7 +377,10 @@ mod tests {
         guard.begin_phase(JobPhase::Speakers, 1_000);
         let steps = parse_script("pause@0").unwrap();
         let results = run_script(&jobs, &steps, Duration::from_secs(1), &|_| {});
-        assert_eq!(results, vec![(ScriptAction::Pause, "not_pausable".to_string())]);
+        assert_eq!(
+            results,
+            vec![(ScriptAction::Pause, "not_pausable".to_string())]
+        );
 
         // Ohne Auftrag: gibt nach der Wartezeit auf, ohne zu haengen.
         let empty = MeetingJobs::new();
@@ -375,7 +400,10 @@ mod tests {
         log.write(json!({ "kind": "progress", "done": 1 }));
         log.write(json!({ "kind": "state", "status": "ready" }));
         let text = std::fs::read_to_string(&path).unwrap();
-        let lines: Vec<Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0]["kind"], "progress");
         assert!(lines[1]["t_ms"].is_u64());

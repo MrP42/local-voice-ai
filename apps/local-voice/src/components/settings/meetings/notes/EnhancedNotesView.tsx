@@ -169,7 +169,9 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
   // erscheint die Ansicht neu und sieht trotzdem, dass er noch laeuft.
   const progressMap = useMeetingProgress();
   const notesJob =
-    progressMap[meetingId]?.phase === "notes" ? progressMap[meetingId] : undefined;
+    progressMap[meetingId]?.phase === "notes"
+      ? progressMap[meetingId]
+      : undefined;
   const [stoppedNote, setStoppedNote] = useState(false);
 
   // Stand des Editors ausserhalb von React: der entprellte Speichervorgang

@@ -55,6 +55,12 @@ test.beforeEach(async ({ page }) => {
     w.__calls = [];
     w.__meetings = [{ ...meeting }];
     w.__progressList = [];
+    w.__minutesState = {
+      running: false,
+      progress: null,
+      cancelling: false,
+      started_at: null,
+    };
     w.__jobError = null;
     w.__segments = Array.from({ length: 40 }, (_, i) => ({
       segment_index: i,
@@ -135,6 +141,8 @@ test.beforeEach(async ({ page }) => {
               return 0;
             case "meetings_progress_list":
               return w.__progressList;
+            case "meetings_minutes_state":
+              return w.__minutesState;
             case "meetings_job_pause":
             case "meetings_job_resume":
             case "meetings_job_stop":
@@ -222,7 +230,9 @@ const openList = async (page: Page) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto("/");
   await page.getByRole("button", { name: "Aufnahmen", exact: true }).click();
-  await expect(page.getByText("Jour Fixe Vertrieb", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Jour Fixe Vertrieb", { exact: true }),
+  ).toBeVisible();
 };
 
 const openDetail = async (page: Page) => {
@@ -248,7 +258,9 @@ test.describe("Besprechungsliste", () => {
     await expect(bar).toBeVisible();
     await expect(bar).toContainText("Transkription");
     await expect(bar.getByTestId("job-bar-percent")).toHaveText("42 %");
-    await expect(bar.getByTestId("job-bar-note")).toHaveText("noch ca. 24 Min.");
+    await expect(bar.getByTestId("job-bar-note")).toHaveText(
+      "noch ca. 24 Min.",
+    );
     await expect(bar.getByRole("progressbar")).toHaveAttribute(
       "aria-valuenow",
       "42",
@@ -261,7 +273,12 @@ test.describe("Besprechungsliste", () => {
 
     // Fertig: Balken weg, Chip "Fertig".
     await setMeetings(page, { status: "ready" });
-    await emit(page, { kind: "state", meeting_id: "m1", status: "ready", paused: false });
+    await emit(page, {
+      kind: "state",
+      meeting_id: "m1",
+      status: "ready",
+      paused: false,
+    });
     await expect(row.getByTestId("job-bar")).toHaveCount(0);
     await expect(row.getByText("Fertig", { exact: true })).toBeVisible();
   });
@@ -277,8 +294,18 @@ test.describe("Besprechungsliste", () => {
     await expect(row.getByTestId("job-bar")).not.toContainText("noch ca.");
 
     await setMeetings(page, { status: "cancelled" });
-    await emit(page, { kind: "state", meeting_id: "m1", status: "cancelled", paused: false });
-    await emit(page, { kind: "job_ended", meeting_id: "m1", phase: "transcription", stopped: true });
+    await emit(page, {
+      kind: "state",
+      meeting_id: "m1",
+      status: "cancelled",
+      paused: false,
+    });
+    await emit(page, {
+      kind: "job_ended",
+      meeting_id: "m1",
+      phase: "transcription",
+      stopped: true,
+    });
     await expect(row.getByText("Abgebrochen", { exact: true })).toBeVisible();
     await expect(row.getByTestId("job-bar")).toHaveCount(0);
   });
@@ -293,8 +320,12 @@ test.describe("Statusbereich der Detailansicht", () => {
     await expect(panel(page)).toBeVisible();
     await expect(page.getByTestId("job-phase")).toHaveText("Transkription");
     await expect(page.getByTestId("job-percent")).toHaveText("42 %");
-    await expect(page.getByTestId("job-amount")).toHaveText("29:24 von 70:00 Audio");
-    await expect(page.getByTestId("job-elapsed")).toHaveText(/^Laufzeit 12:3\d$/);
+    await expect(page.getByTestId("job-amount")).toHaveText(
+      "29:24 von 70:00 Audio",
+    );
+    await expect(page.getByTestId("job-elapsed")).toHaveText(
+      /^Laufzeit 12:3\d$/,
+    );
     await expect(page.getByTestId("job-eta")).toHaveText("noch ca. 24 Min.");
     await expect(panel(page).getByRole("progressbar")).toHaveAttribute(
       "aria-valuenow",
@@ -311,11 +342,17 @@ test.describe("Statusbereich der Detailansicht", () => {
     page,
   }) => {
     await openDetail(page);
-    await emit(page, progress({ done: 60_000, elapsed_ms: 3_000, eta_ms: null }));
+    await emit(
+      page,
+      progress({ done: 60_000, elapsed_ms: 3_000, eta_ms: null }),
+    );
     await expect(page.getByTestId("job-eta")).toHaveText(
       "Restdauer wird berechnet …",
     );
-    await emit(page, progress({ done: 300_000, elapsed_ms: 9_000, eta_ms: 200_000 }));
+    await emit(
+      page,
+      progress({ done: 300_000, elapsed_ms: 9_000, eta_ms: 200_000 }),
+    );
     await expect(page.getByTestId("job-eta")).toHaveText("noch ca. 4 Min.");
   });
 
@@ -340,43 +377,122 @@ test.describe("Statusbereich der Detailansicht", () => {
     await expect(page.getByTestId("job-stop")).toBeEnabled();
   });
 
-  test("der Zustand kommt beim Öffnen aus dem Backend und überlebt einen Reiterwechsel", async ({
+  test("Protokoll: der Zustand kommt beim Öffnen aus dem Backend und überlebt einen Reiterwechsel", async ({
     page,
   }) => {
-    await page.addInitScript((snap) => {
-      (window as any).__progressList = [snap];
-    }, snapshot({ phase: "minutes", done: 2, total: 6, eta_ms: 90_000 }));
-    await setMeetingsLater(page);
+    await page.addInitScript(
+      (snap) => {
+        const w = window as any;
+        w.__progressList = [snap];
+        // Dasselbe sagt das Protokoll-Backend über `meetings_minutes_state` (P1k).
+        w.__minutesState = {
+          running: true,
+          progress: { phase: "write", done: 2, total: 6 },
+          cancelling: false,
+          started_at: 1790001000,
+        };
+      },
+      snapshot({
+        phase: "minutes",
+        done: 2,
+        total: 6,
+        eta_ms: 90_000,
+        pausable: false,
+      }),
+    );
     await openDetail(page);
-    // Ohne ein einziges Ereignis: der Auftrag ist da.
+    // Ohne ein einziges Ereignis: der Auftrag steht im Statusbereich.
     await expect(panel(page)).toBeVisible();
     await expect(page.getByTestId("job-phase")).toHaveText("Protokoll");
     await expect(page.getByTestId("job-amount")).toHaveText("Schritt 2 von 6");
+    await expect(page.getByTestId("job-eta")).toHaveText("noch ca. 2 Min.");
+    // Das Protokoll lässt sich nicht pausieren, nur stoppen.
+    await expect(page.getByTestId("job-pause")).toBeDisabled();
+    await expect(page.getByTestId("job-stop")).toBeEnabled();
 
     await page.getByRole("button", { name: "Protokoll", exact: true }).click();
-    const generate = page.getByRole("button", { name: "Erzeugen", exact: true });
+    const generate = page.getByRole("button", {
+      name: "Erzeugen",
+      exact: true,
+    });
     await expect(generate).toBeDisabled();
-    await expect(page.getByText("Protokoll wird erzeugt…")).toBeVisible();
+    await expect(page.getByTestId("minutes-running")).toBeVisible();
 
     // Reiter weg und zurück: der Laufzustand ist nicht verloren, der Knopf bleibt gesperrt.
     await page.getByRole("button", { name: "Transkript", exact: true }).click();
+    await expect(panel(page)).toBeVisible();
     await page.getByRole("button", { name: "Protokoll", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Erzeugen", exact: true })).toBeDisabled();
-    await expect(page.getByText("Protokoll wird erzeugt…")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Erzeugen", exact: true }),
+    ).toBeDisabled();
+    await expect(page.getByTestId("minutes-running")).toBeVisible();
     await expect(panel(page)).toBeVisible();
 
-    // Ende des Auftrags: Knopf frei, Panel weg.
-    await emit(page, { kind: "job_ended", meeting_id: "m1", phase: "minutes", stopped: false });
-    await expect(page.getByRole("button", { name: "Erzeugen", exact: true })).toBeEnabled();
+    // Ende des Auftrags: das Backend meldet das Ende, der Knopf ist frei, das Panel weg.
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__minutesState = {
+        running: false,
+        progress: null,
+        cancelling: false,
+        started_at: null,
+      };
+      w.__emit("minutes-event", {
+        kind: "done",
+        meeting_id: "m1",
+        document_id: "d1",
+      });
+    });
+    await emit(page, {
+      kind: "job_ended",
+      meeting_id: "m1",
+      phase: "minutes",
+      stopped: false,
+    });
+    await expect(
+      page.getByRole("button", { name: "Erzeugen", exact: true }),
+    ).toBeEnabled();
     await expect(panel(page)).toHaveCount(0);
+  });
+
+  test("Protokoll: Stoppen im Statusbereich fragt zurück und ruft den Stopp-Befehl der Besprechung", async ({
+    page,
+  }) => {
+    await page.addInitScript(
+      (snap) => {
+        (window as any).__progressList = [snap];
+      },
+      snapshot({
+        phase: "minutes",
+        done: 0,
+        total: 0,
+        eta_ms: null,
+        pausable: false,
+      }),
+    );
+    await openDetail(page);
+    // Unbekannte Größe: unbestimmter Balken, aber Stoppen geht.
+    await expect(page.getByTestId("job-phase")).toHaveText("Protokoll");
+    await expect(page.getByTestId("job-percent")).toHaveCount(0);
+    await page.getByTestId("job-stop").click();
+    await expect(page.getByRole("dialog")).toContainText(
+      "Die Erzeugung wird abgebrochen",
+    );
+    await page.getByTestId("job-stop-confirm").click();
+    expect(await calls(page, "meetings_job_stop")).toEqual([
+      { cmd: "meetings_job_stop", args: { meetingId: "m1" } },
+    ]);
   });
 
   test("KI-Notizen: ein laufender Auftrag sperrt den Knopf auch nach einem Reiterwechsel", async ({
     page,
   }) => {
-    await page.addInitScript((snap) => {
-      (window as any).__progressList = [snap];
-    }, snapshot({ phase: "notes", done: 2, total: 5, eta_ms: 60_000 }));
+    await page.addInitScript(
+      (snap) => {
+        (window as any).__progressList = [snap];
+      },
+      snapshot({ phase: "notes", done: 2, total: 5, eta_ms: 60_000 }),
+    );
     await setMeetingsLater(page, { status: "ready" });
     await openDetail(page);
     await expect(page.getByTestId("job-phase")).toHaveText("KI-Notizen");
@@ -389,7 +505,10 @@ test.describe("Statusbereich der Detailansicht", () => {
 });
 
 /** Setzt die Attrappen-Besprechung vor dem ersten Laden (Init-Skript, nach dem der Test-Setup). */
-const setMeetingsLater = async (page: Page, patch: Record<string, unknown> = {}) => {
+const setMeetingsLater = async (
+  page: Page,
+  patch: Record<string, unknown> = {},
+) => {
   await page.addInitScript((p) => {
     const w = window as any;
     w.__meetings = w.__meetings.map((m: any) => ({ ...m, ...p }));
@@ -412,7 +531,9 @@ test.describe("Pause und Fortsetzen", () => {
     ]);
     // Das Backend bestätigt: erst "Pause wird eingelegt", dann "Pausiert".
     await emit(page, progress({ state: "pausing" }));
-    await expect(page.getByTestId("job-state")).toHaveText("Pause wird eingelegt …");
+    await expect(page.getByTestId("job-state")).toHaveText(
+      "Pause wird eingelegt …",
+    );
     await expect(page.getByTestId("job-resume")).toHaveText("Fortsetzen");
     await emit(page, progress({ state: "paused" }));
     await expect(page.getByTestId("job-state")).toHaveText("Pausiert");
@@ -427,7 +548,9 @@ test.describe("Pause und Fortsetzen", () => {
     await expect(page.getByTestId("job-state")).toHaveCount(0);
   });
 
-  test("ein Fehler des Befehls steht im Panel, der Zustand bleibt", async ({ page }) => {
+  test("ein Fehler des Befehls steht im Panel, der Zustand bleibt", async ({
+    page,
+  }) => {
     await openDetail(page);
     await emit(page, progress());
     await page.evaluate(() => ((window as any).__jobError = "no_job"));
@@ -449,7 +572,9 @@ test.describe("Stoppen", () => {
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("Verarbeitung stoppen?");
-    await expect(dialog).toContainText("bereits transkribierten Abschnitte bleiben erhalten");
+    await expect(dialog).toContainText(
+      "bereits transkribierten Abschnitte bleiben erhalten",
+    );
 
     // Abbrechen: Dialog zu, kein Befehl.
     await page.getByTestId("job-stop-cancel").click();
@@ -479,18 +604,32 @@ test.describe("Stoppen", () => {
     await emit(page, progress({ state: "stopping" }));
     // Ende: Zustand `cancelled`, der Auftrag ist weg.
     await setMeetings(page, { status: "cancelled" });
-    await emit(page, { kind: "state", meeting_id: "m1", status: "cancelled", paused: false });
-    await emit(page, { kind: "job_ended", meeting_id: "m1", phase: "transcription", stopped: true });
+    await emit(page, {
+      kind: "state",
+      meeting_id: "m1",
+      status: "cancelled",
+      paused: false,
+    });
+    await emit(page, {
+      kind: "job_ended",
+      meeting_id: "m1",
+      phase: "transcription",
+      stopped: true,
+    });
 
     await expect(panel(page)).toHaveCount(0);
     const cancelled = page.getByTestId("cancelled-panel");
     await expect(cancelled).toBeVisible();
     await expect(cancelled).toContainText("Verarbeitung abgebrochen");
-    await expect(cancelled).toContainText("Es sind 40 Abschnitte transkribiert");
+    await expect(cancelled).toContainText(
+      "Es sind 40 Abschnitte transkribiert",
+    );
     // Die schon transkribierten Segmente stehen noch da.
     await expect(page.locator('[data-segment-index="39"]')).toBeVisible();
     // "Neu transkribieren" bleibt erreichbar (Audio ist da).
-    await expect(page.getByText("Neu transkribieren", { exact: false }).first()).toBeVisible();
+    await expect(
+      page.getByText("Neu transkribieren", { exact: false }).first(),
+    ).toBeVisible();
 
     await page.getByTestId("job-continue").click();
     expect(await calls(page, "meetings_continue")).toEqual([
@@ -498,20 +637,29 @@ test.describe("Stoppen", () => {
     ]);
     // Das Backend setzt wieder auf "processing" und meldet Fortschritt.
     await setMeetings(page, { status: "processing" });
-    await emit(page, { kind: "state", meeting_id: "m1", status: "processing", paused: false });
+    await emit(page, {
+      kind: "state",
+      meeting_id: "m1",
+      status: "processing",
+      paused: false,
+    });
     await emit(page, progress({ done: 2_000_000, eta_ms: 900_000 }));
     await expect(page.getByTestId("cancelled-panel")).toHaveCount(0);
     await expect(panel(page)).toBeVisible();
   });
 
-  test("Fortsetzen ohne Aufnahme auf der Platte gibt es nicht", async ({ page }) => {
+  test("Fortsetzen ohne Aufnahme auf der Platte gibt es nicht", async ({
+    page,
+  }) => {
     await setMeetingsLater(page, { status: "cancelled" });
     await openDetail(page);
     await expect(page.getByTestId("cancelled-panel")).toBeVisible();
     await expect(page.getByTestId("job-continue")).toHaveCount(0);
   });
 
-  test("Fortsetzen: Fehlercode des Backends wird übersetzt angezeigt", async ({ page }) => {
+  test("Fortsetzen: Fehlercode des Backends wird übersetzt angezeigt", async ({
+    page,
+  }) => {
     await setMeetingsLater(page, {
       status: "cancelled",
       mic_audio_path: "C:/Import/import.wav",
@@ -608,7 +756,9 @@ test.describe("Automatisch mitscrollen", () => {
     await expect(page.getByTestId("autoscroll-toggle")).not.toBeChecked();
   });
 
-  test("ohne laufende Verarbeitung gibt es den Schalter nicht", async ({ page }) => {
+  test("ohne laufende Verarbeitung gibt es den Schalter nicht", async ({
+    page,
+  }) => {
     await setMeetingsLater(page, { status: "ready" });
     await openDetail(page);
     await expect(page.getByTestId("autoscroll-toggle")).toHaveCount(0);

@@ -707,7 +707,10 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
               </Button>
             )}
             {continueError && (
-              <p className="text-sm text-red-400" data-testid="job-continue-error">
+              <p
+                className="text-sm text-red-400"
+                data-testid="job-continue-error"
+              >
                 {continueError}
               </p>
             )}

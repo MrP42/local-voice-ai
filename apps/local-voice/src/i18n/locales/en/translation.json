@@ -1954,7 +1954,6 @@
     "minutes": {
       "empty": "No minutes generated yet.",
       "generating": "Generating minutes…",
-      "stopped": "Generation was stopped. Nothing was saved.",
       "exportSaved": "Saved to {{path}}",
       "exportError": "Export failed",
       "copy": "Copy minutes",
@@ -1974,6 +1973,7 @@
       "cancelled": "Generation was cancelled.",
       "errors": {
         "minutes_busy": "Minutes are already being generated for this meeting.",
+        "job_busy": "Another job is already running for this meeting (for example AI notes).",
         "minutes_cancelled": "Generation was cancelled.",
         "meeting_not_found": "The meeting no longer exists.",
         "meeting_not_finished": "The recording is still running. Minutes can only be generated after it has stopped.",

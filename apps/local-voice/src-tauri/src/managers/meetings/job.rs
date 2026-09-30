@@ -335,7 +335,9 @@ pub enum Gate {
 pub(crate) enum Step {
     Done(Gate),
     /// Warten; `announce`: der Uebergang nach "pausiert" ist neu (Ereignis).
-    Wait { announce: bool },
+    Wait {
+        announce: bool,
+    },
 }
 
 /// Pause / Stopp eines Auftrags ohne Sperren und ohne Zeit.
@@ -451,6 +453,10 @@ pub struct JobHandle {
     stop_flag: Arc<AtomicBool>,
     /// Weckt asynchrone Wartende (`select!` gegen [`JobHandle::stopped`]).
     stop_notify: tokio::sync::Notify,
+    /// Haken beim ERSTEN Stopp: Laeufe mit eigenem Abbruchweg (das Protokoll
+    /// stoppt ueber `minutes::request_cancel`) haengen ihn hier ein, damit ein
+    /// Stopp aus dem Statusbereich dort ankommt.
+    on_stop: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 impl JobHandle {
@@ -471,7 +477,33 @@ impl JobHandle {
             cvar: Condvar::new(),
             stop_flag: Arc::new(AtomicBool::new(false)),
             stop_notify: tokio::sync::Notify::new(),
+            on_stop: Mutex::new(None),
         })
+    }
+
+    /// Haengt den Haken ein, der beim ersten Stopp genau einmal laeuft. Stand
+    /// der Auftrag schon im Stopp, laeuft er sofort (nichts geht verloren).
+    pub fn set_on_stop(&self, hook: Box<dyn Fn() + Send + Sync>) {
+        if self.is_stopped() {
+            hook();
+            return;
+        }
+        *self.on_stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(hook);
+        // Ein Stopp zwischen Pruefung und Einhaengen: nachholen.
+        if self.is_stopped() {
+            self.run_on_stop();
+        }
+    }
+
+    fn run_on_stop(&self) {
+        let hook = self
+            .on_stop
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 
     pub fn meeting_id(&self) -> &str {
@@ -686,9 +718,12 @@ impl JobHandle {
             let mut ctl = self.lock();
             ctl.control.request_stop();
         }
-        self.stop_flag.store(true, Ordering::Release);
+        let first = !self.stop_flag.swap(true, Ordering::AcqRel);
         self.stop_notify.notify_waiters();
         self.control_changed();
+        if first {
+            self.run_on_stop();
+        }
         Ok(())
     }
 
@@ -791,10 +826,7 @@ impl MeetingJobs {
     }
 
     fn get(&self, meeting_id: &str) -> Result<Arc<JobHandle>, JobError> {
-        self.lock()
-            .get(meeting_id)
-            .cloned()
-            .ok_or(JobError::NoJob)
+        self.lock().get(meeting_id).cloned().ok_or(JobError::NoJob)
     }
 
     pub fn pause(&self, meeting_id: &str) -> Result<(), JobError> {
@@ -811,6 +843,12 @@ impl MeetingJobs {
 
     pub fn is_running(&self, meeting_id: &str) -> bool {
         self.lock().contains_key(meeting_id)
+    }
+
+    /// In welcher Phase ist der Auftrag der Besprechung, falls es einen gibt?
+    pub fn phase_of(&self, meeting_id: &str) -> Option<JobPhase> {
+        let handle = self.lock().get(meeting_id).cloned()?;
+        Some(handle.phase())
     }
 
     /// Stand aller laufenden Auftraege (Hydrierung der Oberflaeche).
@@ -1139,7 +1177,11 @@ mod tests {
         assert_eq!(c.run_state(), JobRunState::Pausing);
         assert_eq!(c.step(false), Step::Wait { announce: true });
         assert_eq!(c.run_state(), JobRunState::Paused);
-        assert_eq!(c.step(false), Step::Wait { announce: false }, "bleibt stehen");
+        assert_eq!(
+            c.step(false),
+            Step::Wait { announce: false },
+            "bleibt stehen"
+        );
         assert_eq!(c.request_resume(), Ok(()));
         assert_eq!(c.step(false), Step::Done(Gate::Go { resumed: true }));
         assert_eq!(c.run_state(), JobRunState::Running);
@@ -1176,7 +1218,11 @@ mod tests {
     fn control_a_stop_beats_an_outside_cancel_and_both_beat_a_pause() {
         let mut c = Control::default();
         c.request_pause(true).unwrap();
-        assert_eq!(c.step(true), Step::Done(Gate::Cancelled), "neue Aufnahme in der Pause");
+        assert_eq!(
+            c.step(true),
+            Step::Done(Gate::Cancelled),
+            "neue Aufnahme in der Pause"
+        );
         let mut c = Control::default();
         c.request_stop();
         assert_eq!(c.step(true), Step::Done(Gate::Stopped));
@@ -1210,10 +1256,7 @@ mod tests {
     fn collector() -> (EmitFn, Events) {
         let events: Events = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&events);
-        (
-            Arc::new(move |e| sink.lock().unwrap().push(e)),
-            events,
-        )
+        (Arc::new(move |e| sink.lock().unwrap().push(e)), events)
     }
 
     fn progress_events(events: &Events) -> Vec<(JobPhase, u64, JobRunState)> {
@@ -1240,7 +1283,13 @@ mod tests {
     }
 
     /// Ein Job-Thread, der je Nachricht einen Kontrollpunkt durchlaeuft.
-    fn stepper(job: &Arc<JobHandle>) -> (mpsc::Sender<()>, mpsc::Receiver<Gate>, thread::JoinHandle<()>) {
+    fn stepper(
+        job: &Arc<JobHandle>,
+    ) -> (
+        mpsc::Sender<()>,
+        mpsc::Receiver<Gate>,
+        thread::JoinHandle<()>,
+    ) {
         let (go_tx, go_rx) = mpsc::channel::<()>();
         let (gate_tx, gate_rx) = mpsc::channel::<Gate>();
         let job = Arc::clone(job);
@@ -1261,10 +1310,17 @@ mod tests {
         let (go, gate, worker) = stepper(&job);
 
         go.send(()).unwrap();
-        assert_eq!(gate.recv_timeout(Duration::from_secs(2)), Ok(Gate::Go { resumed: false }));
+        assert_eq!(
+            gate.recv_timeout(Duration::from_secs(2)),
+            Ok(Gate::Go { resumed: false })
+        );
 
         job.pause().unwrap();
-        assert_eq!(job.snapshot().state, JobRunState::Pausing, "noch nicht angehalten");
+        assert_eq!(
+            job.snapshot().state,
+            JobRunState::Pausing,
+            "noch nicht angehalten"
+        );
         go.send(()).unwrap();
         assert!(
             gate.recv_timeout(Duration::from_millis(300)).is_err(),
@@ -1273,7 +1329,10 @@ mod tests {
         assert_eq!(job.snapshot().state, JobRunState::Paused);
 
         job.resume().unwrap();
-        assert_eq!(gate.recv_timeout(Duration::from_secs(2)), Ok(Gate::Go { resumed: true }));
+        assert_eq!(
+            gate.recv_timeout(Duration::from_secs(2)),
+            Ok(Gate::Go { resumed: true })
+        );
         assert_eq!(job.snapshot().state, JobRunState::Running);
 
         drop(go);
@@ -1396,7 +1455,10 @@ mod tests {
         let last = *progress_events(&events).last().unwrap();
         assert_eq!((last.0, last.1), (JobPhase::Transcription, 1_000_000));
         job.begin_phase(JobPhase::Speakers, 10);
-        assert_eq!(progress_events(&events).last().unwrap().0, JobPhase::Speakers);
+        assert_eq!(
+            progress_events(&events).last().unwrap().0,
+            JobPhase::Speakers
+        );
     }
 
     #[test]
@@ -1406,7 +1468,10 @@ mod tests {
         job.begin_phase(JobPhase::Transcription, 10);
         thread::sleep(Duration::from_millis(60));
         job.begin_phase(JobPhase::Speakers, 10);
-        assert!(job.snapshot().elapsed_ms >= 50, "Laufzeit geht nicht auf 0 zurueck");
+        assert!(
+            job.snapshot().elapsed_ms >= 50,
+            "Laufzeit geht nicht auf 0 zurueck"
+        );
     }
 
     #[test]
@@ -1449,8 +1514,14 @@ mod tests {
         let (emit, _e) = collector();
         let guard = jobs.try_start("m1", emit.clone()).unwrap();
         assert!(jobs.is_running("m1"));
-        assert_eq!(jobs.try_start("m1", emit.clone()).err(), Some(JobError::Busy));
-        assert!(jobs.try_start("m2", emit.clone()).is_ok(), "andere Besprechung");
+        assert_eq!(
+            jobs.try_start("m1", emit.clone()).err(),
+            Some(JobError::Busy)
+        );
+        assert!(
+            jobs.try_start("m2", emit.clone()).is_ok(),
+            "andere Besprechung"
+        );
         drop(guard);
         assert!(!jobs.is_running("m1"));
         assert!(jobs.try_start("m1", emit).is_ok(), "danach wieder frei");
@@ -1520,7 +1591,11 @@ mod tests {
                 let job = Arc::clone(&job);
                 thread::spawn(move || {
                     for i in 0..150 {
-                        let _ = if (i + k) % 2 == 0 { job.pause() } else { job.resume() };
+                        let _ = if (i + k) % 2 == 0 {
+                            job.pause()
+                        } else {
+                            job.resume()
+                        };
                         thread::sleep(Duration::from_micros(100));
                     }
                 })
@@ -1533,7 +1608,10 @@ mod tests {
         job.stop().unwrap();
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || tx.send(worker.join()).unwrap());
-        assert!(rx.recv_timeout(Duration::from_secs(5)).unwrap().is_ok(), "haengt nicht");
+        assert!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap().is_ok(),
+            "haengt nicht"
+        );
     }
 
     // ---- JobEnded, asynchrone Schnittstelle ---------------------------------------
@@ -1656,7 +1734,10 @@ mod tests {
         };
         stopper.await.unwrap();
         assert_eq!(outcome, "stopped");
-        assert!(released.load(Ordering::SeqCst), "Wache und Verbindung gehen frei (Drop)");
+        assert!(
+            released.load(Ordering::SeqCst),
+            "Wache und Verbindung gehen frei (Drop)"
+        );
     }
 
     #[tokio::test]
@@ -1679,7 +1760,10 @@ mod tests {
         })
         .await;
         let snap = job.snapshot();
-        assert_eq!((snap.phase, snap.total, snap.done), (JobPhase::Minutes, 4, 2));
+        assert_eq!(
+            (snap.phase, snap.total, snap.done),
+            (JobPhase::Minutes, 4, 2)
+        );
         assert!(!progress_events(&events).is_empty());
     }
 
@@ -1710,7 +1794,10 @@ mod tests {
             .await
         })
         .await;
-        assert!(result.is_ok(), "700 ms in der Pause zaehlen nicht gegen 200 ms");
+        assert!(
+            result.is_ok(),
+            "700 ms in der Pause zaehlen nicht gegen 200 ms"
+        );
         job.stop().unwrap();
         holder.await.unwrap();
         // Laeuft der Auftrag, gilt das Limit.
@@ -1725,5 +1812,53 @@ mod tests {
         })
         .await;
         assert_eq!(result, Err(TimedOut));
+    }
+
+    #[test]
+    fn the_on_stop_hook_runs_exactly_once_on_the_first_stop() {
+        let (emit, _events) = collector();
+        let job = JobHandle::new("m1", emit);
+        let calls = Arc::new(AtomicBool::new(false));
+        let count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        {
+            let (calls, count) = (Arc::clone(&calls), Arc::clone(&count));
+            job.set_on_stop(Box::new(move || {
+                calls.store(true, Ordering::SeqCst);
+                count.fetch_add(1, Ordering::SeqCst);
+            }));
+        }
+        assert!(!calls.load(Ordering::SeqCst), "nicht vor dem Stopp");
+        job.stop().unwrap();
+        job.stop().unwrap(); // doppelter Stopp
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_hook_set_after_the_stop_runs_at_once() {
+        let (emit, _events) = collector();
+        let job = JobHandle::new("m1", emit);
+        job.stop().unwrap();
+        let count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let c = Arc::clone(&count);
+        job.set_on_stop(Box::new(move || {
+            c.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "der Stopp ging nicht verloren"
+        );
+    }
+
+    #[test]
+    fn phase_of_names_the_phase_of_the_running_job() {
+        let jobs = MeetingJobs::new();
+        let (emit, _events) = collector();
+        assert_eq!(jobs.phase_of("m1"), None);
+        let guard = jobs.try_start("m1", emit).unwrap();
+        guard.begin_phase_ex(JobPhase::Minutes, 3, false);
+        assert_eq!(jobs.phase_of("m1"), Some(JobPhase::Minutes));
+        drop(guard);
+        assert_eq!(jobs.phase_of("m1"), None);
     }
 }

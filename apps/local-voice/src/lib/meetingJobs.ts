@@ -133,10 +133,15 @@ export type EtaText =
 export const etaText = (ms: number): EtaText => {
   const seconds = Math.ceil(ms / 1000);
   if (seconds <= 10) return { unit: "few" };
-  if (seconds < 60) return { unit: "seconds", seconds: Math.ceil(seconds / 10) * 10 };
+  if (seconds < 60)
+    return { unit: "seconds", seconds: Math.ceil(seconds / 10) * 10 };
   const minutes = Math.ceil(seconds / 60);
   if (minutes < 60) return { unit: "minutes", minutes };
-  return { unit: "hours", hours: Math.floor(minutes / 60), minutes: minutes % 60 };
+  return {
+    unit: "hours",
+    hours: Math.floor(minutes / 60),
+    minutes: minutes % 60,
+  };
 };
 
 /** Fehlercodes der Steuerbefehle als i18n-Schluessel. */

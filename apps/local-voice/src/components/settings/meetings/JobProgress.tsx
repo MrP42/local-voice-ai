@@ -81,17 +81,19 @@ const Bar: React.FC<{ progress: LiveProgress; thin?: boolean }> = ({
  * Schmaler Balken fuer die Liste (und die Reiter Notizen/Protokoll): Phase,
  * Prozent und Restdauer. Klicks darauf oeffnen nicht die Besprechung.
  */
-export const JobBar: React.FC<{ progress: LiveProgress; className?: string }> = ({
-  progress,
-  className = "w-44",
-}) => {
+export const JobBar: React.FC<{
+  progress: LiveProgress;
+  className?: string;
+}> = ({ progress, className = "w-44" }) => {
   const { t } = useTranslation();
   const now = useNow(progress.state !== "paused");
   const eta = useEtaLabel(progress, now);
   const percent = percentOf(progress);
   const indeterminate = isIndeterminate(progress);
   const stateNote =
-    progress.state === "running" ? null : t(`meetings.progress.state.${progress.state}`);
+    progress.state === "running"
+      ? null
+      : t(`meetings.progress.state.${progress.state}`);
   return (
     <div
       data-testid="job-bar"
@@ -164,8 +166,7 @@ export const JobPanel: React.FC<JobPanelProps> = ({ progress }) => {
 
   const holding = progress.state === "pausing" || progress.state === "paused";
   const stopping = progress.state === "stopping";
-  const pauseDisabled =
-    busy || stopping || (!holding && !progress.pausable);
+  const pauseDisabled = busy || stopping || (!holding && !progress.pausable);
   const generating = progress.phase === "notes" || progress.phase === "minutes";
 
   const statusText =
@@ -244,7 +245,9 @@ export const JobPanel: React.FC<JobPanelProps> = ({ progress }) => {
           ) : (
             <Pause width={14} height={14} aria-hidden="true" />
           )}
-          {holding ? t("meetings.progress.resume") : t("meetings.progress.pause")}
+          {holding
+            ? t("meetings.progress.resume")
+            : t("meetings.progress.pause")}
         </Button>
         <Button
           size="sm"

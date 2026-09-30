@@ -1954,7 +1954,6 @@
     "minutes": {
       "empty": "Noch kein Protokoll erzeugt.",
       "generating": "Protokoll wird erzeugt…",
-      "stopped": "Die Erzeugung wurde gestoppt. Es wurde nichts gespeichert.",
       "exportSaved": "Gespeichert unter {{path}}",
       "exportError": "Export fehlgeschlagen",
       "copy": "Protokoll kopieren",
@@ -1974,6 +1973,7 @@
       "cancelled": "Die Erzeugung wurde abgebrochen.",
       "errors": {
         "minutes_busy": "Für diese Besprechung wird schon ein Protokoll erzeugt.",
+        "job_busy": "Für diese Besprechung läuft schon eine andere Verarbeitung (zum Beispiel KI-Notizen).",
         "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",
         "meeting_not_found": "Die Besprechung gibt es nicht mehr.",
         "meeting_not_finished": "Die Aufnahme läuft noch. Das Protokoll kann erst nach dem Stopp erzeugt werden.",

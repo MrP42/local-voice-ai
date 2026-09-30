@@ -17,6 +17,7 @@ use specta::Type;
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
+use crate::managers::meetings::job::{self, JobPhase};
 use crate::managers::meetings::minutes::{
     self, error_code, MinutesMeta, MinutesPhase, MinutesRunState, CODE_BUSY,
 };
@@ -48,14 +49,46 @@ pub enum MinutesEvent {
 
 /// Protokoll erzeugen und dabei `MinutesEvent` senden. Gemeinsamer Weg fuer den
 /// Knopf (und spaeter jeden Automatismus).
+///
+/// P8a: der Lauf ist zugleich ein Auftrag im Verzeichnis der Verarbeitungen
+/// (`job.rs`, Phase Protokoll): Fortschritt mit Laufzeit und Restdauer im
+/// Statusbereich der Besprechung, und ein Stopp von dort ruft
+/// `minutes::request_cancel` (derselbe Weg wie `meetings_minutes_cancel`).
+/// Pausieren gibt es hier nicht: geschrieben wird erst am Ende.
 pub async fn generate_and_notify(
     app: &AppHandle,
     store: Arc<MeetingStore>,
     meeting_id: &str,
     template_id: Option<&str>,
 ) -> Result<MeetingDocument, String> {
+    let job = match job::global().try_start(meeting_id, job::app_emit(app)) {
+        Ok(job) => job,
+        Err(e) => {
+            // Ein zweiter Start waehrend eines Protokoll-Laufs ist `minutes_busy`
+            // (der erste Lauf laeuft weiter, kein Ereignis); jeder andere Auftrag
+            // (KI-Notizen ...) belegt die Besprechung.
+            let code = if job::global().phase_of(meeting_id) == Some(JobPhase::Minutes) {
+                CODE_BUSY.to_string()
+            } else {
+                e.to_string()
+            };
+            return Err(code);
+        }
+    };
+    let handle = Arc::clone(job.handle());
+    handle.begin_phase_ex(JobPhase::Minutes, 0, false);
+    let cancel_id = meeting_id.to_string();
+    handle.set_on_stop(Box::new(move || {
+        minutes::request_cancel(&cancel_id);
+    }));
+
     let progress_app = app.clone();
     let progress_id = meeting_id.to_string();
+    // Jede Teilphase (Vorlage, Schreiben, Zusammenfuehren) zaehlt ihre eigenen
+    // Schritte: bei einem Wechsel beginnt der Auftrag eine neue Phase, sonst
+    // lieferte der Fortschritt scheinbar rueckwaerts.
+    let bridge = Arc::clone(&handle);
+    let last_phase = std::sync::Mutex::new(None::<(MinutesPhase, u32)>);
     let result = minutes::generate_minutes(app, store, meeting_id, template_id, &move |p| {
         let _ = MinutesEvent::Progress {
             meeting_id: progress_id.clone(),
@@ -64,6 +97,12 @@ pub async fn generate_and_notify(
             total: p.total,
         }
         .emit(&progress_app);
+        let mut last = last_phase.lock().unwrap_or_else(|e| e.into_inner());
+        if *last != Some((p.phase, p.total)) {
+            bridge.begin_phase_ex(JobPhase::Minutes, u64::from(p.total), false);
+            *last = Some((p.phase, p.total));
+        }
+        bridge.advance(u64::from(p.done));
     })
     .await;
     match &result {
