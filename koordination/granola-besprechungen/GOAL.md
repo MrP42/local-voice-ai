@@ -1,7 +1,7 @@
 ---
 thema: granola-besprechungen
 titel: Besprechungen auf Granola-Niveau - lokal, ohne Abo
-state: EXECUTING
+state: BLOCKED
 vorzustand: EXECUTING
 pausengrund: -
 issue: 59
@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 3
 erstellt: 2026-09-29
-aktualisiert: 2026-09-30T16:34
+aktualisiert: 2026-09-30T18:20
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -129,6 +129,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
 - B2 [gelöst] 2026-09-29T20:32 Ursache: Freigegebener Budgetrahmen 12 MTok erreicht (Ist ~12,8 MTok); Hochrechnung bis COMPLETE 15-16 MTok · Owner: Patrick · entsperrt, wenn: Patrick hebt den Rahmen an (Vorschlag 16 MTok) oder kuerzt den Umfang (Komfortpakete P3d/P5d/P5e/P5f/P6e in Folge-Goal); dazu offen: B7, E14, E23 · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T21:51: Patrick 29.09. abends: Rahmen 16 MTok, B7 a, E14 als Einstellung spaeter, E23 spaeter
 - B3 [gelöst] 2026-09-30T15:50 Ursache: AK11: Abnahme per Installer 0.20.8 (inkl. #62) braucht Installation und Pruefung durch Patrick; Installer liegt unter apps/local-voice/src-tauri/target/release/bundle/nsis/ · Owner: Patrick · entsperrt, wenn: Patrick hat 0.20.8 installiert und Kernablauf geprueft (Aufnahme mit Notizen -> KI-Notizen -> Chat), Screenshots/Rueckmeldung liegen vor · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-30T16:33: Patrick hat 0.20.8 installiert und durchgeklickt (30.09.); Rueckmeldung -> P8a, P6f, P3e
+- B4 [offen] 2026-09-30T18:20 Ursache: AK11: Abnahme per Installer 0.20.9 (Runde 3) durch Patrick · Owner: Patrick · entsperrt, wenn: Patrick hat 0.20.9 installiert und Runde 3 geprueft (Fortschritt/Pause/Stopp, Protokoll mit Vorlage/Automatik, Follow-up) · nächste Prüfung: beim nächsten Sessionstart
 
 ## Entscheidungen
 - 2026-09-29 Patrick: voller Umfang M1–M7 in diesem Goal, Budgetrahmen ~12 MTok (Hochrechnung nach Ist 3,0 MTok).
@@ -143,7 +144,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-abnehmen, Installer 0.20.9
+B4 auflösen (Patrick): Patrick hat 0.20.9 installiert und Runde 3 geprueft (Fortschritt/Pause/Stopp, Protokoll mit Vorlage/Automatik, Follow-up). Dann `goal.py resolve-blocker --id B4 --beleg …` und `goal.py set --state PLANNING`.
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -171,4 +172,5 @@ abnehmen, Installer 0.20.9
 - 2026-09-30T16:33 BLOCKED (Runde 2) — B3 gelöst: Patrick hat 0.20.8 installiert und durchgeklickt (30.09.); Rueckmeldung -> P8a, P6f, P3e
 - 2026-09-30T16:33 PLANNING (Runde 3) — Runde 3 nach Abnahme-Rueckmeldung: P8a, P6f, P3e
 - 2026-09-30T16:34 EXECUTING (Runde 3) — P8a (wt-m1), P6f (wt-m1c), P3e (wt-m2b) laufen; Budget ~16,8 MTok
+- 2026-09-30T18:20 BLOCKED (Runde 3) — BLOCKIERT B4 (global, keine unabhängige Arbeit mehr): AK11: Abnahme per Installer 0.20.9 (Runde 3) durch Patrick
 
