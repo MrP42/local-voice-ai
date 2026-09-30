@@ -7,3 +7,4 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 
 | ID | M | Paket | Abnahmekriterium | Status | Commit |
 |---|---|---|---|---|---|
+| U2 | M2 | Spaltengerüst Variante B (PageShell fill, 3 Bereiche, Griffe, Klappleisten, eine Scrollbar, Persistenz, Transkript flex statt max-h-96) — lv-coder | playwright meeting-layout: AK2, AK4 (4 Viewports), AK8 | in_arbeit | |
