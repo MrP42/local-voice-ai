@@ -8,7 +8,13 @@
 //! Die Kalenderquellen bleiben in `calendar_sources` (R6); das Register spiegelt
 //! sie unter derselben ID. Die Trigger halten den Spiegel in derselben
 //! Transaktion wie jede Aenderung an `calendar_sources` aktuell (App, Headless,
-//! jeder Schreibweg), `adopt::reconcile` heilt Abweichungen beim Oeffnen.
+//! jeder Schreibweg), `adopt::reconcile` heilt Abweichungen beim Oeffnen. Sie
+//! beruehren NUR Eintraege der Kalenderarten (`kind IN ('ics','graph')`): ein
+//! Eintrag anderer Art mit zufaellig gleicher Kennung bleibt unangetastet
+//! (`store::create` vergibt solche Kennungen ohnehin nicht).
+//!
+//! Die Migration ist noch nicht ausgeliefert (A1 unveroeffentlicht) und wurde
+//! deshalb fuer A1n direkt angepasst, nicht durch einen weiteren Schritt ergaenzt.
 //!
 //! Fremdschluessel sind nur Dokumentation: die Verbindungen des Stores schalten
 //! `PRAGMA foreign_keys` nicht ein, deshalb loescht `store::delete` die Rechte
@@ -112,19 +118,22 @@ BEGIN
   UPDATE integrations SET label = new.label, enabled = new.enabled,
          account_hint = new.account_hint, last_ok_at = new.last_ok_at,
          last_error = new.last_error, updated_at = new.updated_at
-    WHERE id = new.id AND new.deleted_at IS NULL;
+    WHERE id = new.id AND kind IN ('ics','graph') AND new.deleted_at IS NULL;
   INSERT INTO integrations (id, kind, label, enabled, direction, config_json, account_hint,
                             data_class, created_at, updated_at, last_ok_at, last_error)
     SELECT new.id, new.kind, new.label, new.enabled, 'read', '{}', new.account_hint, NULL,
            new.created_at, new.updated_at, new.last_ok_at, new.last_error
     WHERE new.deleted_at IS NULL
     ON CONFLICT(id) DO NOTHING;
-  DELETE FROM integration_grants WHERE integration_id = new.id AND new.deleted_at IS NOT NULL;
-  DELETE FROM integrations WHERE id = new.id AND new.deleted_at IS NOT NULL;
+  DELETE FROM integration_grants WHERE integration_id = new.id AND new.deleted_at IS NOT NULL
+    AND EXISTS (SELECT 1 FROM integrations WHERE id = new.id AND kind IN ('ics','graph'));
+  DELETE FROM integrations WHERE id = new.id AND kind IN ('ics','graph')
+    AND new.deleted_at IS NOT NULL;
 END;
 CREATE TRIGGER calendar_sources_mirror_ad AFTER DELETE ON calendar_sources
 BEGIN
-  DELETE FROM integration_grants WHERE integration_id = old.id;
-  DELETE FROM integrations WHERE id = old.id;
+  DELETE FROM integration_grants WHERE integration_id = old.id
+    AND EXISTS (SELECT 1 FROM integrations WHERE id = old.id AND kind IN ('ics','graph'));
+  DELETE FROM integrations WHERE id = old.id AND kind IN ('ics','graph');
 END;
 ";

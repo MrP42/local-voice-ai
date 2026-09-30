@@ -77,7 +77,7 @@ fn redact_text_removes_credentials_from_addresses_tokens_and_assignments() {
 fn redact_value_masks_secret_keys_at_any_depth_and_bounds_size() {
     let v = json!({
         "to": "anna@example.invalid",
-        "auth": { "password": "p1", "nested": { "apiKey": "k1", "ok": 1 } },
+        "konto": { "password": "p1", "nested": { "apiKey": "k1", "ok": 1 } },
         "list": [ { "token": "t1" }, "https://u:pw@h/" ],
     });
     let out = redact_value(&v);
@@ -85,7 +85,7 @@ fn redact_value_masks_secret_keys_at_any_depth_and_bounds_size() {
     for secret in ["p1", "k1", "t1", "u:pw@"] {
         assert!(!text.contains(secret), "{secret} in {text}");
     }
-    assert_eq!(out["auth"]["nested"]["ok"], json!(1));
+    assert_eq!(out["konto"]["nested"]["ok"], json!(1));
     assert_eq!(out["to"], json!("anna@example.invalid"));
 
     // Listen und Tiefe sind begrenzt.
@@ -251,7 +251,7 @@ fn retention_keeps_at_most_max_rows_and_drops_the_oldest() {
     assert_eq!(count(&conn).unwrap(), MAX_ROWS);
     // ... dann schreiben drei Aufrufe ueber die Grenze: die aeltesten fallen weg.
     for i in 0..3 {
-        record_at(&conn, &entry(AuditOutcome::Denied), MAX_ROWS + i).unwrap();
+        record_at(&conn, &entry(AuditOutcome::Ok), MAX_ROWS + i).unwrap();
     }
     assert_eq!(count(&conn).unwrap(), MAX_ROWS);
     let oldest: i64 = conn
@@ -259,7 +259,7 @@ fn retention_keeps_at_most_max_rows_and_drops_the_oldest() {
         .unwrap();
     assert_eq!(oldest, 3, "die drei aeltesten Zeilen sind weg");
     let newest = list(&conn, &AuditFilter::default(), 1).unwrap().remove(0);
-    assert_eq!(newest.outcome, "denied");
+    assert_eq!(newest.outcome, "ok");
 }
 
 #[test]
@@ -306,4 +306,316 @@ fn a_full_disk_leaves_no_half_written_entry() {
     let err = record_at(&conn, &entry(AuditOutcome::Ok), 2).unwrap_err();
     assert!(err.to_string().contains("disk is full"), "{err}");
     assert_eq!(count(&conn).unwrap(), 1, "der alte Stand bleibt");
+}
+
+// -- A1n: Haertung nach dem Sicherheits-Review -----------------------------------
+
+fn denied(reason: &str) -> NewAudit {
+    NewAudit {
+        detail: Some(json!({ "reason": reason })),
+        ..entry(AuditOutcome::Denied)
+    }
+}
+
+fn detail_of(conn: &Connection, id: i64) -> Value {
+    let raw: String = conn
+        .query_row(
+            "SELECT detail_json FROM audit_log WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    serde_json::from_str(&raw).unwrap()
+}
+
+#[test]
+fn the_added_secret_key_names_are_recognised_and_lookalikes_are_not() {
+    for key in [
+        "pwd",
+        "PWD",
+        "pass",
+        "Pass",
+        "cookie",
+        "Set-Cookie",
+        "session",
+        "sessionId",
+        "JSESSIONID",
+        "auth",
+        "Auth",
+        "x-auth",
+        "sig",
+        "signature",
+        "X-Amz-Signature",
+        "accessKey",
+        "access_key",
+        "sas",
+        "sas_token",
+        "x_sig",
+        "key",
+        "KEY",
+        "passphrase",
+    ] {
+        assert!(is_secret_key(key), "{key}");
+    }
+    for key in [
+        "author",
+        "keyboard",
+        "monkey",
+        "design",
+        "passage",
+        "auth_mode",
+        "sort_key",
+        "hotkey",
+        "sasha",
+        "signal",
+        "compass",
+        "label",
+        "single_pass",
+        "final_pass",
+    ] {
+        assert!(!is_secret_key(key), "{key}");
+    }
+}
+
+#[test]
+fn redact_text_masks_signature_code_and_key_assignments_in_addresses() {
+    let cases = [
+        (
+            "https://blob.example/x?sv=1&sig=abc123def&se=2030",
+            "abc123def",
+        ),
+        ("https://h.example/cb?code=zz9Secret&state=1", "zz9Secret"),
+        ("GET /feed?key=k77Private HTTP/1.1", "k77Private"),
+        ("signature=Qx1Yyyy", "Qx1Yyyy"),
+        ("pwd=geheim77", "geheim77"),
+        ("{\"key\": \"k88Private\"}", "k88Private"),
+    ];
+    for (input, secret) in cases {
+        let out = redact_text(input);
+        assert!(!out.contains(secret), "{input} -> {out}");
+        assert!(out.contains("***"), "{input} -> {out}");
+    }
+    // Wortteile und Nachbarn bleiben unberuehrt.
+    assert_eq!(
+        redact_text("monkey=1 keyword=2 signal=3 barcode=4"),
+        "monkey=1 keyword=2 signal=3 barcode=4"
+    );
+}
+
+#[test]
+fn an_address_in_the_audit_keeps_the_host_but_not_the_path_with_a_key() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let ics =
+        "https://outlook.office365.com/owa/calendar/abc@firma.example/SCHLUESSEL123/calendar.ics";
+    let mut e = entry(AuditOutcome::Error);
+    e.target = Some(ics.into());
+    e.detail = Some(json!({
+        "error": format!("Abruf von {ics} gescheitert"),
+        "nested": { "url": format!("{ics}?x=1#frag") },
+    }));
+    let id = record_at(&conn, &e, 1).unwrap();
+    let row = list(&conn, &AuditFilter::default(), 1).unwrap().remove(0);
+    assert_eq!(row.id, id);
+    assert_eq!(row.target.unwrap(), "https://outlook.office365.com/…");
+    let detail = row.detail_json.unwrap();
+    assert!(!detail.contains("SCHLUESSEL123"), "{detail}");
+    assert!(detail.contains("outlook.office365.com"), "{detail}");
+    // Lokale Pfade und Dateiadressen sind keine Zugangsschluessel: sie bleiben lesbar.
+    let mut local = entry(AuditOutcome::Ok);
+    local.target = Some("C:/Ablage/Protokoll.md".into());
+    record_at(&conn, &local, 2).unwrap();
+    local.target = Some("file:///C:/Ablage/Protokoll.md".into());
+    record_at(&conn, &local, 3).unwrap();
+    let rows = list(&conn, &AuditFilter::default(), 2).unwrap();
+    assert_eq!(
+        rows[0].target.as_deref(),
+        Some("file:///C:/Ablage/Protokoll.md")
+    );
+    assert_eq!(rows[1].target.as_deref(), Some("C:/Ablage/Protokoll.md"));
+}
+
+#[test]
+fn repeated_denials_within_the_window_become_one_counted_row() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let first = record_at(&conn, &denied("grant_off"), 10_000).unwrap();
+    for i in 1..200 {
+        let id = record_at(&conn, &denied("grant_off"), 10_000 + i).unwrap();
+        assert_eq!(id, first, "dieselbe Zeile, keine neue");
+    }
+    assert_eq!(count(&conn).unwrap(), 1);
+    let d = detail_of(&conn, first);
+    assert_eq!(d["reason"], json!("grant_off"));
+    assert_eq!(d["count"], json!(200));
+    assert_eq!(d["first_ts"], json!(10_000));
+    let row = list(&conn, &AuditFilter::default(), 1).unwrap().remove(0);
+    assert_eq!(row.ts, 10_199, "die Zeile zeigt den letzten Zeitpunkt");
+}
+
+#[test]
+fn denials_that_differ_in_caller_integration_capability_reason_or_window_stay_separate() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    record_at(&conn, &denied("grant_off"), 1_000).unwrap();
+    record_at(&conn, &denied("tool_off"), 1_001).unwrap();
+    record_at(
+        &conn,
+        &NewAudit {
+            caller: "workflow".into(),
+            ..denied("grant_off")
+        },
+        1_002,
+    )
+    .unwrap();
+    record_at(
+        &conn,
+        &NewAudit {
+            integration_id: Some("i-2".into()),
+            ..denied("grant_off")
+        },
+        1_003,
+    )
+    .unwrap();
+    record_at(
+        &conn,
+        &NewAudit {
+            capability: Some("files.write".into()),
+            ..denied("grant_off")
+        },
+        1_004,
+    )
+    .unwrap();
+    record_at(
+        &conn,
+        &NewAudit {
+            integration_id: None,
+            ..denied("grant_off")
+        },
+        1_005,
+    )
+    .unwrap();
+    assert_eq!(count(&conn).unwrap(), 6, "sechs verschiedene Schluessel");
+    // Nach dem Zeitfenster beginnt eine neue Zeile.
+    record_at(&conn, &denied("grant_off"), 1_000 + DENY_WINDOW_MS + 1).unwrap();
+    assert_eq!(count(&conn).unwrap(), 7);
+    // Andere Ergebnisse werden nie zusammengefasst.
+    record_at(&conn, &entry(AuditOutcome::Ok), 1_010).unwrap();
+    record_at(&conn, &entry(AuditOutcome::Ok), 1_011).unwrap();
+    assert_eq!(count(&conn).unwrap(), 9);
+}
+
+#[test]
+fn a_full_log_drops_denied_rows_first_and_keeps_ok_error_and_pending() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    conn.execute_batch("BEGIN").unwrap();
+    {
+        let mut stmt = conn
+            .prepare("INSERT INTO audit_log (ts, caller, outcome) VALUES (?1, 'workflow', ?2)")
+            .unwrap();
+        // Die ersten Zeilen sind die aeltesten und die wertvollen ...
+        for i in 0..30 {
+            let outcome = ["ok", "error", "pending"][i as usize % 3];
+            stmt.execute(params![i, outcome]).unwrap();
+        }
+        // ... danach fuellen Verweigerungen das Log bis zur Grenze.
+        for i in 30..MAX_ROWS {
+            stmt.execute(params![i, "denied"]).unwrap();
+        }
+    }
+    conn.execute_batch("COMMIT").unwrap();
+    assert_eq!(count(&conn).unwrap(), MAX_ROWS);
+    for i in 0..5 {
+        record_at(&conn, &entry(AuditOutcome::Ok), MAX_ROWS + i).unwrap();
+    }
+    assert_eq!(count(&conn).unwrap(), MAX_ROWS);
+    let kept: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM audit_log WHERE outcome <> 'denied' AND ts < 30",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(kept, 30, "kein altes ok/error/pending wurde verdraengt");
+    let oldest_denied: i64 = conn
+        .query_row(
+            "SELECT MIN(ts) FROM audit_log WHERE outcome = 'denied'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        oldest_denied, 35,
+        "die fuenf aeltesten Verweigerungen sind weg"
+    );
+}
+
+#[test]
+fn when_no_denied_rows_are_left_the_oldest_rows_go_and_the_new_row_stays() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    conn.execute_batch("BEGIN").unwrap();
+    {
+        let mut stmt = conn
+            .prepare("INSERT INTO audit_log (ts, caller, outcome) VALUES (?1, 'workflow', 'ok')")
+            .unwrap();
+        for i in 0..MAX_ROWS {
+            stmt.execute(params![i]).unwrap();
+        }
+    }
+    conn.execute_batch("COMMIT").unwrap();
+    // Die Verweigerung ist selbst die einzige ihrer Art: sie wird nicht sofort wieder geloescht.
+    let id = record_at(&conn, &denied("grant_off"), MAX_ROWS).unwrap();
+    assert_eq!(count(&conn).unwrap(), MAX_ROWS);
+    let still: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM audit_log WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(still, 1);
+    let oldest: i64 = conn
+        .query_row("SELECT MIN(ts) FROM audit_log", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(oldest, 1);
+}
+
+#[test]
+fn integration_and_capability_are_clipped_in_the_audit() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let e = NewAudit {
+        integration_id: Some("i".repeat(5_000)),
+        capability: Some("c".repeat(5_000)),
+        ..entry(AuditOutcome::Ok)
+    };
+    record_at(&conn, &e, 1).unwrap();
+    let row = list(&conn, &AuditFilter::default(), 1).unwrap().remove(0);
+    assert!(row.integration_id.unwrap().chars().count() <= MAX_ID_CHARS + 1);
+    assert!(row.capability.unwrap().chars().count() <= MAX_ID_CHARS + 1);
+}
+
+#[test]
+fn params_are_redacted_without_losing_long_lists_or_paths() {
+    let v = json!({
+        "password": "p1",
+        "auth": "Bearer abcdef0123456789xyz",
+        "note": "sig=abc123 und https://u:pw@h.example/pfad/datei",
+        "usage_event_ids": (0..120).collect::<Vec<i32>>(),
+        "link": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    });
+    let out = redact_params(&v);
+    let text = out.to_string();
+    for secret in ["p1\"", "abcdef0123456789xyz", "abc123", "u:pw@"] {
+        assert!(!text.contains(secret), "{secret} in {text}");
+    }
+    assert_eq!(out["usage_event_ids"].as_array().unwrap().len(), 120);
+    assert_eq!(
+        out["link"],
+        json!("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+        "der Verweis bleibt vollstaendig"
+    );
+    assert!(out["note"].as_str().unwrap().contains("/pfad/datei"));
 }

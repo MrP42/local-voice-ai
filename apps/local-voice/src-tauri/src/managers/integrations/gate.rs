@@ -18,18 +18,31 @@
 //!   erscheint nicht im Audit dieses Tores; Integration aus, fehlende Faehigkeit
 //!   und gesperrte Richtung gelten aber auch fuer ihn.
 //! - Kein Geheimnis im Audit: Ziel, Vorschau und Detail laufen durch die
-//!   Schwaerzung (`audit::redact_*`).
+//!   Schwaerzung (`audit::redact_*`); Adressen behalten im Audit und in Fehlertexten
+//!   nur den Host (`audit::clip_url_paths`).
+//! - Die Freigabe zeigt, was genehmigt wird: Ziel und sicherheitsrelevante Felder
+//!   (Empfaenger, Pfade, Adressen, Anhaenge) stehen vollstaendig in der Vorschau
+//!   (`preview::build`); laesst sich das nicht darstellen, wird die Anfrage
+//!   abgelehnt (`preview_unsafe`), nie gekuerzt vorgelegt.
+//! - Keine Flut: Dieselbe offene Anfrage bekommt dieselbe Freigabe (kein neuer
+//!   Audit-Eintrag, keine neue Zeile); offene Freigaben sind je Aufrufer und
+//!   Integration begrenzt; gleiche Verweigerungen zaehlt das Audit hoch.
+//! - Kennung und Faehigkeit gelangen nur geprueft ins Audit: eine Kennung, die
+//!   `store::valid_id` nicht besteht, erscheint als Platzhalter.
 
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
-use super::approvals::{self, ApprovalError, Expect, NewApproval};
-use super::audit::{self, sanitize_text};
+use super::approvals::{self, ApprovalError, Expect, NewApproval, OpenError};
+use super::audit::{self, sanitize_audit_text};
 use super::grants::{explain, OffReason};
 use super::model::{
     AuditOutcome, Caller, Capability, GrantMode, Integration, IntegrationError, NewAudit,
 };
-use super::store;
+use super::{preview, store};
+
+/// Steht im Audit statt einer Kennung, die keine gueltige Kennung sein kann.
+pub const INVALID_ID_PLACEHOLDER: &str = "(ungültig)";
 
 /// Eine Anfrage an das Tor.
 #[derive(Clone, Debug)]
@@ -81,18 +94,6 @@ fn args_text(args: Option<&Value>) -> String {
     args.map(|a| a.to_string()).unwrap_or_default()
 }
 
-fn preview(req: &Request<'_>) -> String {
-    let target = req.target.unwrap_or("");
-    let args = args_text(req.args);
-    if args.is_empty() || args == "null" {
-        target.to_string()
-    } else if target.is_empty() {
-        args
-    } else {
-        format!("{target} — {args}")
-    }
-}
-
 fn hash_of(req: &Request<'_>) -> String {
     approvals::args_hash(
         req.integration_id,
@@ -102,10 +103,20 @@ fn hash_of(req: &Request<'_>) -> String {
     )
 }
 
+/// Die Kennung fuers Audit: nur eine gueltige Kennung wird uebernommen, sonst
+/// ein Platzhalter (eine Kennung aus fremder Hand kann alles enthalten).
+fn audit_integration_id(id: &str) -> String {
+    if store::valid_id(id) {
+        id.to_string()
+    } else {
+        INVALID_ID_PLACEHOLDER.to_string()
+    }
+}
+
 fn audit_entry(req: &Request<'_>, outcome: AuditOutcome, detail: Value) -> NewAudit {
     NewAudit {
         caller: caller_label(req.caller).to_string(),
-        integration_id: Some(req.integration_id.to_string()),
+        integration_id: Some(audit_integration_id(req.integration_id)),
         capability: Some(req.capability.as_str().to_string()),
         target: req.target.map(str::to_string),
         outcome,
@@ -178,34 +189,51 @@ fn check_loaded(
             deny(conn, req, r.as_str(), r.message(), now_ms)
         }
         GrantMode::Ask => {
+            // Was der Nutzer genehmigt, muss er vollstaendig sehen koennen.
+            let shown = match preview::build(req.target, req.args) {
+                Ok(p) => p,
+                Err(e) => return deny(conn, req, "preview_unsafe", &e.to_string(), now_ms),
+            };
             let hash = hash_of(req);
-            let created = approvals::create(
+            let opened = approvals::open(
                 conn,
                 &NewApproval {
                     caller: caller_label(req.caller),
                     integration_id: Some(req.integration_id),
                     capability: req.capability.as_str(),
-                    args_preview: Some(&preview(req)),
+                    args_preview: Some(&shown),
                     args_hash: Some(&hash),
                 },
                 now_ms,
             );
-            let approval = match created {
-                Ok(a) => a,
-                Err(IntegrationError::Invalid(msg)) => {
-                    return deny(conn, req, "too_many_pending", &msg, now_ms);
-                }
-                Err(e) => return Err(e),
+            let opened = match opened {
+                Ok(o) => o,
+                Err(OpenError::Store(e)) => return Err(e),
+                Err(e) => return deny(conn, req, e.code(), &e.to_string(), now_ms),
             };
-            audit::record_at(
-                conn,
-                &audit_entry(
-                    req,
-                    AuditOutcome::Pending,
-                    json!({ "phase": "approval", "approval_id": approval.id }),
-                ),
-                now_ms,
-            )?;
+            let approval = opened.approval;
+            // Eine schon offene gleiche Anfrage steht bereits im Audit: keine zweite Zeile.
+            if !opened.reused {
+                let recorded = audit::record_at(
+                    conn,
+                    &audit_entry(
+                        req,
+                        AuditOutcome::Pending,
+                        json!({ "phase": "approval", "approval_id": approval.id }),
+                    ),
+                    now_ms,
+                );
+                if let Err(e) = recorded {
+                    // Keine Freigabe ohne Audit-Zeile: zurueckziehen (best effort) und melden.
+                    if let Err(w) = approvals::withdraw(conn, &approval.id, now_ms) {
+                        log::warn!(
+                            "integrations: Freigabe {} nach Audit-Fehler nicht zurueckgezogen: {w}",
+                            approval.id
+                        );
+                    }
+                    return Err(e);
+                }
+            }
             Ok(Decision::NeedsApproval {
                 approval_id: approval.id,
             })
@@ -308,7 +336,7 @@ fn execute<T>(
     if req.caller == Caller::User {
         return Ok(match action() {
             Ok(v) => GateOutcome::Done(v),
-            Err(e) => GateOutcome::Failed(sanitize_text(&e, 300)),
+            Err(e) => GateOutcome::Failed(sanitize_audit_text(&e, 300)),
         });
     }
     // Fail closed: ohne Audit-Eintrag keine Aktion.
@@ -325,7 +353,7 @@ fn execute<T>(
             GateOutcome::Done(v),
         ),
         Err(e) => {
-            let clean = sanitize_text(&e, 300);
+            let clean = sanitize_audit_text(&e, 300);
             (
                 AuditOutcome::Error,
                 json!({ "phase": "done", "error": clean }),

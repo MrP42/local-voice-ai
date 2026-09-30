@@ -8,7 +8,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBe
 use serde_json::Value;
 use ulid::Ulid;
 
-use super::audit::{is_secret_key, sanitize_text};
+use super::audit::{is_secret_key, sanitize_audit_text, sanitize_text};
 use super::grants::{effective_mode, GrantSet};
 use super::model::{
     Caller, Capability, Direction, GrantMode, GrantRow, Integration, IntegrationError,
@@ -138,13 +138,22 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<Integration>, Integrati
         .optional()?)
 }
 
-/// Alle Integrationen, aelteste zuerst.
+/// Alle Integrationen, aelteste zuerst. Eine Zeile mit unbekannter Art oder
+/// Richtung (neuere Version, kaputte Zeile) wird uebersprungen und protokolliert;
+/// sie laesst nicht die ganze Liste scheitern. Andere Fehler (Datenbank) brechen ab.
 pub fn list(conn: &Connection) -> Result<Vec<Integration>, IntegrationError> {
     let mut stmt = conn.prepare(&format!("{SELECT} ORDER BY created_at, id"))?;
-    let rows = stmt
-        .query_map([], map_integration)?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+    let mut out = Vec::new();
+    for row in stmt.query_map([], map_integration)? {
+        match row {
+            Ok(i) => out.push(i),
+            Err(rusqlite::Error::FromSqlConversionFailure(_, _, cause)) => {
+                log::warn!("integrations: Zeile des Registers uebersprungen: {cause}");
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(out)
 }
 
 /// Legt eine Integration an. Kalenderarten (`ics`, `graph`) legt der Kalender
@@ -171,7 +180,19 @@ pub fn create(
         Some(_) => return invalid("Ungültige Kennung."),
         None => Ulid::new().to_string(),
     };
-    conn.execute(
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    // Die Kennungen des Kalenders gehoeren dem Kalender, auch die entfernter Quellen:
+    // deren Zeile steht in `calendar_sources` weiter, und die Spiegel-Trigger wuerden
+    // sonst an einem fremden Eintrag arbeiten.
+    let taken_by_calendar: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM calendar_sources WHERE id = ?1)",
+        params![id],
+        |r| r.get(0),
+    )?;
+    if taken_by_calendar {
+        return invalid("Diese Kennung ist schon vergeben.");
+    }
+    tx.execute(
         "INSERT INTO integrations (id, kind, label, enabled, direction, config_json, account_hint,
                                    data_class, created_at, updated_at)
          VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, ?8)",
@@ -196,6 +217,7 @@ pub fn create(
         }
         other => other.into(),
     })?;
+    tx.commit()?;
     get(conn, &id)?.ok_or_else(|| IntegrationError::NotFound(id))
 }
 
@@ -293,7 +315,7 @@ pub fn mark_error(
 ) -> Result<(), IntegrationError> {
     conn.execute(
         "UPDATE integrations SET last_error = ?2, updated_at = ?3 WHERE id = ?1",
-        params![id, sanitize_text(error, MAX_ERROR_CHARS), now_ms],
+        params![id, sanitize_audit_text(error, MAX_ERROR_CHARS), now_ms],
     )?;
     Ok(())
 }

@@ -546,3 +546,99 @@ fn a_failing_backup_never_blocks_the_migration() {
         "keine halbe Sicherung unter dem Endnamen"
     );
 }
+
+// -- A1n: die Spiegel-Trigger beruehren nur Eintraege der Kalenderarten ----------
+
+/// Ein Register-Eintrag anderer Art, dessen Kennung zufaellig auch in
+/// `calendar_sources` vorkommt (so, wie ihn nur ein Altbestand oder ein
+/// Schreiber am Register vorbei erzeugen kann).
+fn folder_with_the_id_of_a_calendar_source(conn: &Connection, id: &str) {
+    conn.execute(
+        "INSERT INTO integrations (id, kind, label, enabled, direction, config_json,
+                                   created_at, updated_at)
+         VALUES (?1, 'folder', 'Mein Ordner', 1, 'both', '{}', 10, 10)",
+        params![id],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO integration_grants VALUES (?1, 'files.write', 'workflow', 'allow')",
+        params![id],
+    )
+    .unwrap();
+}
+
+fn folder_is_untouched(conn: &Connection, id: &str) {
+    let i = store::get(conn, id).unwrap().expect("Eintrag fehlt");
+    assert_eq!(i.kind, Kind::Folder);
+    assert_eq!(i.label, "Mein Ordner");
+    assert!(i.enabled);
+    assert_eq!(
+        store::list_grants(conn, id).unwrap().len(),
+        1,
+        "Recht fehlt"
+    );
+}
+
+#[test]
+fn a_calendar_update_does_not_rewrite_or_remove_a_register_entry_of_another_kind() {
+    let dir = tempfile::tempdir().unwrap();
+    let store_ = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+    let conn = store_.get_connection().unwrap();
+    folder_with_the_id_of_a_calendar_source(&conn, "gleiche-id");
+    crate::managers::integrations::test_support::add_calendar_source(
+        &conn,
+        "gleiche-id",
+        "ics",
+        "Kalender",
+        20,
+    );
+    folder_is_untouched(&conn, "gleiche-id");
+    // Umbenennen und Ausschalten der Kalenderquelle ...
+    conn.execute(
+        "UPDATE calendar_sources SET label = 'Umbenannt', enabled = 0, updated_at = 30
+         WHERE id = 'gleiche-id'",
+        [],
+    )
+    .unwrap();
+    folder_is_untouched(&conn, "gleiche-id");
+    // ... ihr Entfernen (weiches Loeschen) ...
+    conn.execute(
+        "UPDATE calendar_sources SET deleted_at = 40 WHERE id = 'gleiche-id'",
+        [],
+    )
+    .unwrap();
+    folder_is_untouched(&conn, "gleiche-id");
+    // ... und das harte Loeschen der Zeile.
+    conn.execute("DELETE FROM calendar_sources WHERE id = 'gleiche-id'", [])
+        .unwrap();
+    folder_is_untouched(&conn, "gleiche-id");
+}
+
+#[test]
+fn the_triggers_still_mirror_and_remove_the_entries_of_the_calendar_kinds() {
+    // Gegenprobe: mit dem Kind-Filter bleibt der Normalfall unveraendert.
+    let (path, _dir) = legacy_db_with_fixture();
+    let store_ = MeetingStore::open_at(&path).unwrap();
+    let conn = store_.get_connection().unwrap();
+    store::set_grant(
+        &conn,
+        GRAPH_ID,
+        Capability::CalendarWrite,
+        Caller::Workflow,
+        GrantMode::Allow,
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE calendar_sources SET label = 'Anders' WHERE id = ?1",
+        params![ICS_ID],
+    )
+    .unwrap();
+    assert_eq!(store::get(&conn, ICS_ID).unwrap().unwrap().label, "Anders");
+    conn.execute(
+        "UPDATE calendar_sources SET deleted_at = 99 WHERE id = ?1",
+        params![GRAPH_ID],
+    )
+    .unwrap();
+    assert!(store::get(&conn, GRAPH_ID).unwrap().is_none());
+    assert!(store::list_grants(&conn, GRAPH_ID).unwrap().is_empty());
+}

@@ -11,6 +11,8 @@
 //! - `audit`, `approvals`, `gate`: jede Aktion eines Nicht-Nutzers ist
 //!   protokolliert, „fragen“ erzeugt eine einmalige, an die Ausfuehrung
 //!   gebundene Freigabe, ohne Audit keine Aktion.
+//! - `preview`: gegliederte Vorschau einer Freigabe (Ziel und sicherheitsrelevante
+//!   Felder vollstaendig, sonst Ablehnung; A1n).
 //! - `adopt`: Uebernahme der Kalenderquellen unter gleicher ID (idempotent).
 //! - `secrets`: Geheimnis-Namensraum ueber dem DPAPI-Speicher.
 //! - `dump`: `--integrations-dump` (JSON, nur in der Sandbox).
@@ -37,8 +39,27 @@
 //!   nur den Zustand.
 //! - **Kindprozess / fehlendes Geraet / Audio**: nicht beteiligt (Datenbank und
 //!   Dateien); entfaellt.
-//! - **Speicher**: Konfiguration 64 KiB, Audit 20 000 Zeilen, Freigaben 50 offen,
-//!   Quellen je Provenienz 200 (Tests in den Modulen).
+//! - **Speicher**: Konfiguration 64 KiB, Audit 20 000 Zeilen (Verweigerungen zuerst
+//!   verdraengt und je Schluessel zusammengefasst), Freigaben 50 offen (je Aufrufer und
+//!   Integration 10, gleiche Anfragen wiederverwendet), Quellen je Provenienz 200
+//!   (Tests in den Modulen).
+//!
+//! Haertung A1n (Sicherheits-Review B2) und ihre Absicherung:
+//! - **Unsichtbare Empfaenger** (langer Text vor `to`/`bcc`): `preview::tests::*`,
+//!   `gate::tests::a_long_body_cannot_hide_the_recipients_from_the_user`; nicht
+//!   darstellbar -> `preview_unsafe`, nichts liegt zur Freigabe vor
+//!   (`gate::tests::a_request_whose_recipients_cannot_be_shown_in_full_is_refused_not_clipped`).
+//! - **Audit-Flutung**: `audit::tests::repeated_denials_within_the_window_*`,
+//!   `a_full_log_drops_denied_rows_first_*`.
+//! - **Freigabe-Flutung und gleichzeitige gleiche Anfragen**: `approvals::tests::*`,
+//!   `gate::tests::concurrent_identical_asks_share_one_approval` (eine `IMMEDIATE`-
+//!   Transaktion je `open`).
+//! - **Platte voll nach dem Anlegen der Freigabe**: die Freigabe wird zurueckgezogen
+//!   (`gate::tests::a_failing_audit_write_leaves_no_open_approval_behind`).
+//! - **Fremde Kennungen, Zugangsschluessel im Pfad, Kalender-Trigger, unbekannte Art
+//!   im Register**: `gate::tests::a_hostile_integration_id_*`,
+//!   `audit::tests::an_address_in_the_audit_*`, `tests::a_calendar_update_does_not_*`,
+//!   `store::tests::list_skips_a_row_*`.
 
 #![allow(dead_code)]
 
@@ -49,6 +70,7 @@ pub mod dump;
 pub mod gate;
 pub mod grants;
 pub mod model;
+pub mod preview;
 pub mod schema;
 pub mod secrets;
 pub mod store;

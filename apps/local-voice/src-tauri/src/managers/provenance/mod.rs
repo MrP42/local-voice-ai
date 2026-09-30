@@ -9,7 +9,10 @@
 //!
 //! - **Schreiben** (`record`): ein einzelnes INSERT, also atomar. Eingaben werden
 //!   geprueft und begrenzt (Quellen, Textlaengen, `params`), damit ein Fehler
-//!   in einer Erzeugungsstelle nie die Tabelle sprengt.
+//!   in einer Erzeugungsstelle nie die Tabelle sprengt. `params`, `actor_ref` und
+//!   Quellen-Adressen laufen durch dieselbe Schwaerzung wie das Audit
+//!   (`integrations::audit::redact_params`/`redact_text`): kein Zugangsschluessel
+//!   in der Herkunft, aber Listen und Pfade bleiben vollstaendig.
 //! - **Lesen** (`get`): die gespeicherten Eintraege; gibt es keine (Inhalt aus der
 //!   Zeit vor A1, oder der Eintrag liess sich nicht schreiben), wird die Herkunft
 //!   aus den vorhandenen Daten abgeleitet (`derive_legacy`): bei Dokumenten aus
@@ -45,6 +48,8 @@ pub use model::{
 use rusqlite::{params, Connection, OptionalExtension};
 use ulid::Ulid;
 
+use crate::managers::integrations::audit::{redact_params, redact_text};
+
 /// Hoechstzahl Quellen je Eintrag.
 pub const MAX_SOURCES: usize = 200;
 /// Laengste Textangabe (Modell, Titel, Verweis) in Zeichen; mehr wird gekuerzt.
@@ -62,6 +67,12 @@ fn clip(s: &str) -> String {
 
 fn clip_opt(s: &Option<String>) -> Option<String> {
     s.as_deref().map(clip).filter(|t| !t.trim().is_empty())
+}
+
+/// Wie `clip_opt`, und Zugangsdaten in Adressen, Tokens und `key=wert`-Zuweisungen
+/// fallen weg (dieselbe Schwaerzung wie im Audit: `audit::redact_text`).
+fn clean_opt(s: &Option<String>) -> Option<String> {
+    clip_opt(s).map(|t| redact_text(&t))
 }
 
 /// Kleinbuchstaben, Ziffern, `_`; 1 bis 48 Zeichen.
@@ -131,9 +142,9 @@ pub fn record_at(
         .iter()
         .map(|s| SourceRef {
             kind: s.kind.clone(),
-            reference: clip(&s.reference),
+            reference: redact_text(&clip(&s.reference)),
             title: clip_opt(&s.title),
-            url: clip_opt(&s.url),
+            url: clean_opt(&s.url),
         })
         .collect();
     let sources_json =
@@ -153,7 +164,7 @@ pub fn record_at(
             now_ms,
             e.operation,
             e.actor_kind.as_str(),
-            clip_opt(&e.actor_ref),
+            clean_opt(&e.actor_ref),
             clip_opt(&e.provider),
             e.locality.map(Locality::as_str),
             clip_opt(&e.model_id),
@@ -164,7 +175,7 @@ pub fn record_at(
             e.duration_ms.map(to_i64),
             sources_json,
             e.confidence,
-            e.params.as_ref().map(|p| p.to_string()),
+            e.params.as_ref().map(|p| redact_params(p).to_string()),
         ],
     )?;
     Ok(id)
@@ -325,7 +336,7 @@ fn derive_document(
     };
     let provider = text("provider");
     let model = text("model");
-    let mut params = value.clone();
+    let mut params = redact_params(&value);
     if let Some(template) = &template_id {
         if params.get("template_id").is_none() {
             params["template_id"] = serde_json::json!(template);

@@ -557,3 +557,74 @@ fn a_document_without_an_entry_falls_back_to_its_metadata_when_the_table_is_gone
         .unwrap();
     assert_eq!(e.model_id.as_deref(), Some("gemma-4-e4b"));
 }
+
+// -- A1n: Schwaerzung von params, actor_ref und Quellen-Adressen -----------------
+
+#[test]
+fn secrets_never_reach_params_actor_ref_or_source_urls() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let mut e = full();
+    e.actor_ref = Some("client token=ABC123tok".into());
+    e.params = Some(json!({
+        "template_id": "builtin:allgemein",
+        "password": "hunter2",
+        "note": "Bearer abcdef0123456789xyz und sig=SIG987",
+        "verschachtelt": { "apiKey": "k-secret", "ok": 1 },
+    }));
+    e.sources = vec![SourceRef {
+        kind: "web".into(),
+        reference: "seite-1".into(),
+        title: Some("Seite".into()),
+        url: Some("https://anna:geheim123@feed.example/kal.ics?sig=QUERYSIG&code=CODE77".into()),
+    }];
+    record_at(&conn, &e, 1).unwrap();
+    let raw: (Option<String>, String, Option<String>) = conn
+        .query_row(
+            "SELECT actor_ref, sources_json, params_json FROM provenance",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    let all = format!("{raw:?}");
+    for secret in [
+        "ABC123tok",
+        "hunter2",
+        "abcdef0123456789xyz",
+        "SIG987",
+        "k-secret",
+        "geheim123",
+        "QUERYSIG",
+        "CODE77",
+    ] {
+        assert!(!all.contains(secret), "{secret} in {all}");
+    }
+    // Was kein Geheimnis ist, bleibt: Vorlage, Zahl, Host und Pfad der Adresse.
+    let got = list(&conn, SubjectKind::Document, "doc-1")
+        .unwrap()
+        .remove(0);
+    let params: serde_json::Value = serde_json::from_str(&got.params_json.unwrap()).unwrap();
+    assert_eq!(params["template_id"], json!("builtin:allgemein"));
+    assert_eq!(params["verschachtelt"]["ok"], json!(1));
+    let url = got.sources[0].url.clone().unwrap();
+    assert!(url.starts_with("https://***@feed.example/kal.ics"), "{url}");
+}
+
+#[test]
+fn redaction_keeps_long_event_lists_and_the_shape_of_params() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let mut e = full();
+    let ids: Vec<i64> = (1..=100).collect();
+    e.params = Some(json!({
+        "usage_event_ids": ids,
+        "segments": (0..80).map(|i| json!({ "i": i })).collect::<Vec<_>>(),
+    }));
+    record_at(&conn, &e, 1).unwrap();
+    let got = list(&conn, SubjectKind::Document, "doc-1")
+        .unwrap()
+        .remove(0);
+    let params: serde_json::Value = serde_json::from_str(&got.params_json.unwrap()).unwrap();
+    assert_eq!(params["usage_event_ids"].as_array().unwrap().len(), 100);
+    assert_eq!(params["segments"].as_array().unwrap().len(), 80);
+}

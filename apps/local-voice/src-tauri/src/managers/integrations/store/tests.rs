@@ -519,3 +519,103 @@ fn mark_ok_and_mark_error_keep_the_status_without_secrets() {
             <= MAX_ERROR_CHARS + 1
     );
 }
+
+// -- A1n: Haertung nach dem Sicherheits-Review -----------------------------------
+
+#[test]
+fn list_skips_a_row_of_an_unknown_kind_instead_of_failing_as_a_whole() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let a = folder(&conn, "Erste");
+    // Eine Zeile aus einer neueren Version: die Spalte `kind` hat keine CHECK-Regel.
+    conn.execute(
+        "INSERT INTO integrations (id, kind, label, enabled, direction, config_json,
+                                   created_at, updated_at)
+         VALUES ('zukunft-1', 'hologramm', 'Neu', 1, 'read', '{}', 5000, 5000)",
+        [],
+    )
+    .unwrap();
+    let b = folder(&conn, "Zweite");
+    let listed = list(&conn).unwrap();
+    let ids: Vec<&str> = listed.iter().map(|i| i.id.as_str()).collect();
+    assert_eq!(ids, vec![a.id.as_str(), b.id.as_str()], "{ids:?}");
+    // Die einzelne Zeile selbst wird nie geraten: `get` meldet den Fehler.
+    assert!(get(&conn, "zukunft-1").is_err());
+    // Auch eine unbekannte Richtung zieht nur ihre Zeile heraus.
+    conn.execute(
+        "UPDATE integrations SET kind = 'folder' WHERE id = 'zukunft-1'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(list(&conn).unwrap().len(), 3);
+}
+
+#[test]
+fn an_id_that_belongs_to_a_calendar_source_cannot_be_taken_by_the_register() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    crate::managers::integrations::test_support::add_calendar_source(
+        &conn, "kal-1", "ics", "Kalender", 1_000,
+    );
+    let mut n = NewIntegration::new(Kind::Folder, "Ordner");
+    n.id = Some("kal-1".into());
+    // Solange die Quelle lebt, sperrt schon der Spiegel die Kennung ...
+    assert!(create(&conn, &n, 2_000).is_err());
+    // ... und die Kennung einer entfernten Quelle bleibt ebenfalls tabu: die Zeile
+    // steht in `calendar_sources` weiter, der Spiegel ist aber weg.
+    conn.execute(
+        "UPDATE calendar_sources SET deleted_at = 1500 WHERE id = 'kal-1'",
+        [],
+    )
+    .unwrap();
+    assert!(get(&conn, "kal-1").unwrap().is_none(), "Spiegel entfernt");
+    let err = create(&conn, &n, 2_000).unwrap_err();
+    assert!(err.to_string().contains("schon vergeben"), "{err}");
+    assert!(get(&conn, "kal-1").unwrap().is_none());
+    // Eine freie Kennung geht weiterhin.
+    n.id = Some("ordner-frei".into());
+    create(&conn, &n, 2_000).unwrap();
+}
+
+#[test]
+fn the_added_secret_key_names_are_refused_in_a_configuration() {
+    for key in [
+        "pwd",
+        "pass",
+        "cookie",
+        "session",
+        "auth",
+        "sig",
+        "signature",
+        "accessKey",
+        "sas",
+        "key",
+    ] {
+        let cfg = json!({ "verschachtelt": { key: "wert" } });
+        let err = validate_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains(key), "{key}: {err}");
+        assert!(validate_config(&json!({ key: "wert" })).is_err(), "{key}");
+    }
+    // Aehnlich klingende, harmlose Namen bleiben erlaubt.
+    validate_config(
+        &json!({ "author": "a", "keyboard": "de", "auth_mode": "device", "design": 1 }),
+    )
+    .unwrap();
+}
+
+#[test]
+fn mark_error_keeps_the_host_of_an_address_but_not_its_path() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let f = folder(&conn, "Ablage");
+    mark_error(
+        &conn,
+        &f.id,
+        "Abruf https://outlook.office365.com/owa/calendar/x/SCHLUESSEL123/calendar.ics: 403",
+        5,
+    )
+    .unwrap();
+    let err = get(&conn, &f.id).unwrap().unwrap().last_error.unwrap();
+    assert!(!err.contains("SCHLUESSEL123"), "{err}");
+    assert!(err.contains("outlook.office365.com"), "{err}");
+}
