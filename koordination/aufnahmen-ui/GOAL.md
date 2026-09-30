@@ -1,15 +1,15 @@
 ---
 thema: aufnahmen-ui
 titel: Aufnahmen-Oberflaeche: Spalten, Sessions, eine Scrollbar
-state: READY
+state: EXECUTING
 vorzustand: -
 pausengrund: -
 issue: 64
 repo: MrP42/local-voice-ai
 branch: feat/aufnahmen-ui
-iteration: 0
+iteration: 1
 erstellt: 2026-09-30
-aktualisiert: 2026-09-30T19:27
+aktualisiert: 2026-09-30T19:28
 ---
 
 # Goal: Aufnahmen-Oberflaeche: Spalten, Sessions, eine Scrollbar
@@ -101,4 +101,6 @@ Nach Merge von Granola-Runde 3: Branch auf `feat/granola-besprechungen` nachzieh
 - 2026-09-30T16:41 DISCOVERY — Goal State angelegt
 - 2026-09-30T16:42 DISCOVERY (Runde 0) — Metadaten: issue=64
 - 2026-09-30T19:27 READY (Runde 0) — Owner-Entscheidungen 30.09. eingetragen, Rahmen 3,5 MTok gemeinsam
+- 2026-09-30T19:28 PLANNING (Runde 1) — Pakete geplant
+- 2026-09-30T19:28 EXECUTING (Runde 1) — U1 (wt-aui) und A1 (wt-int) laufen parallel; Rahmen 3,5 MTok gemeinsam
 

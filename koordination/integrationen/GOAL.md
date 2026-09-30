@@ -1,15 +1,15 @@
 ---
 thema: integrationen
 titel: Integrationen: Register fuer Kalender, Mail, Speicher, Wissen und Agenten (MCP/CLI lesend+schreibend)
-state: READY
+state: EXECUTING
 vorzustand: -
 pausengrund: -
 issue: 66
 repo: MrP42/local-voice-ai
 branch: feat/integrationen
-iteration: 0
+iteration: 1
 erstellt: 2026-09-30
-aktualisiert: 2026-09-30T19:27
+aktualisiert: 2026-09-30T19:28
 ---
 
 # Goal: Integrationen: Register fuer Kalender, Mail, Speicher, Wissen und Agenten (MCP/CLI lesend+schreibend)
@@ -140,4 +140,6 @@ Owner-Entscheidungen von Patrick einholen, dann `goal.py set --state READY`.
 - 2026-09-30T17:01 DISCOVERY — Goal State angelegt
 - 2026-09-30T17:25 DISCOVERY (Runde 0) — Metadaten: issue=66
 - 2026-09-30T19:27 READY (Runde 0) — Owner-Entscheidungen 30.09. eingetragen, Rahmen 3,5 MTok gemeinsam
+- 2026-09-30T19:28 PLANNING (Runde 1) — Pakete geplant
+- 2026-09-30T19:28 EXECUTING (Runde 1) — U1 (wt-aui) und A1 (wt-int) laufen parallel; Rahmen 3,5 MTok gemeinsam
 
