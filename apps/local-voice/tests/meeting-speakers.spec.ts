@@ -183,6 +183,14 @@ test.beforeEach(async ({ page }) => {
             case "meetings_get_documents":
             case "action_items_list":
               return [];
+            case "meeting_notes_get":
+              // Die Notizen sind der erste Reiter der Arbeitsflaeche.
+              return {
+                meeting_id: args.meetingId,
+                blocks: [],
+                revision: 0,
+                updated_at: 0,
+              };
             case "meeting_speakers_list":
               return speakerList();
             case "meeting_speaker_notices":

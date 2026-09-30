@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { events, type StoredSegment } from "@/bindings";
-import { SettingsGroup } from "../../ui/SettingsGroup";
 import Badge from "../../ui/Badge";
 
 const formatMmSs = (ms: number) => {
@@ -29,7 +28,10 @@ const channelLabelKey = (channel: number) => {
  * transcribe independently), so they are always re-sorted by `start_ms`
  * before rendering rather than trusted to arrive in reading order.
  */
-export const LiveTranscript: React.FC = () => {
+export const LiveTranscript: React.FC<{
+  /** Was stehen bleibt, solange es noch kein Live-Transkript gibt. */
+  fallback?: React.ReactNode;
+}> = ({ fallback = null }) => {
   const { t } = useTranslation();
   const [segments, setSegments] = useState<StoredSegment[]>([]);
   const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
@@ -79,40 +81,41 @@ export const LiveTranscript: React.FC = () => {
     if (el) el.scrollTop = el.scrollHeight;
   }, [segments]);
 
-  if (!activeMeetingId && segments.length === 0) return null;
+  if (!activeMeetingId && segments.length === 0) return <>{fallback}</>;
 
   // Dieselbe Regel wie in der Detailansicht: Eine Quellenangabe, die auf
   // jeder Zeile gleich lautet, unterscheidet nichts. Sichtbar wird sie
   // erst, sobald Mikrofon und Gegenseite getrennt eintreffen.
   const showChannels = new Set(segments.map((s) => s.channel)).size > 1;
 
+  // Fuellt den Reiter "Transkript" der rechten Spalte: eine Scrollflaeche,
+  // kein eigener Kasten und keine feste Hoehe mehr.
   return (
-    <SettingsGroup>
-      <div
-        ref={listRef}
-        className="px-4 py-3 space-y-2 max-h-80 overflow-y-auto"
-      >
-        {segments.length === 0 ? (
-          <p className="text-sm text-text/60">{t("meetings.live.empty")}</p>
-        ) : (
-          segments.map((segment) => (
-            <div
-              key={`${segment.channel}-${segment.segment_index}`}
-              className="flex gap-2 items-start text-sm"
-            >
-              <span className="text-xs text-text/40 w-10 shrink-0 pt-0.5">
-                {formatMmSs(segment.start_ms)}
-              </span>
-              {showChannels && (
-                <Badge variant="secondary" className="shrink-0">
-                  {t(channelLabelKey(segment.channel))}
-                </Badge>
-              )}
-              <p className="text-text/90 break-words">{segment.text}</p>
-            </div>
-          ))
-        )}
-      </div>
-    </SettingsGroup>
+    <div
+      ref={listRef}
+      data-testid="live-transcript"
+      className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2"
+    >
+      {segments.length === 0 ? (
+        <p className="text-sm text-text/60">{t("meetings.live.empty")}</p>
+      ) : (
+        segments.map((segment) => (
+          <div
+            key={`${segment.channel}-${segment.segment_index}`}
+            className="flex gap-2 items-start text-sm"
+          >
+            <span className="text-xs text-text/40 w-10 shrink-0 pt-0.5">
+              {formatMmSs(segment.start_ms)}
+            </span>
+            {showChannels && (
+              <Badge variant="secondary" className="shrink-0">
+                {t(channelLabelKey(segment.channel))}
+              </Badge>
+            )}
+            <p className="text-text/90 break-words">{segment.text}</p>
+          </div>
+        ))
+      )}
+    </div>
   );
 };

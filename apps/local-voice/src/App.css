@@ -872,3 +872,50 @@ body.lv-resizing * {
   margin-block: 0;
   padding-block: 0;
 }
+
+/* Aufnahmen (Variante B): Arbeitsflaeche mit fester Hoehe, auch im schmalen
+   Fenster. Die Seite scrollt nie; jeder Bereich scrollt fuer sich. Steht nach
+   dem 1100-px-Block oben und ueberstimmt dessen "Seite scrollt wieder". */
+.workspace-main--fixed {
+  overflow: hidden;
+}
+.workspace-content--fixed,
+.workspace-content--fixed .page-shell--fill {
+  height: 100%;
+  min-height: 0;
+}
+/* Die Ziehgriffe bleiben auch unter 1100 px sichtbar (Vorlesen blendet sie dort aus). */
+.rec-workspace .tts-resize {
+  display: block;
+}
+/* Waagerechter Griff (gestapeltes Layout): 12 px Flaeche, die in die Luecke
+   faellt; sichtbar wird eine duenne Linie bei Hover/Fokus/Ziehen. */
+.rec-hsplit {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  height: 12px;
+  margin-block: -8px;
+  cursor: row-resize;
+  touch-action: none;
+  outline: none;
+}
+.rec-hsplit::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 5px;
+  height: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color 120ms;
+}
+.rec-hsplit:hover::after,
+.rec-hsplit:focus-visible::after {
+  background: var(--color-logo-primary);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-hsplit::after {
+    transition: none;
+  }
+}

@@ -220,6 +220,14 @@ test.beforeEach(async ({ page }) => {
               ];
               return w.__documents[w.__documents.length - 1];
             }
+            case "meeting_notes_get":
+              // Die Notizen sind der erste Reiter der Arbeitsflaeche.
+              return {
+                meeting_id: args.meetingId,
+                blocks: [],
+                revision: 0,
+                updated_at: 0,
+              };
             case "meeting_templates_list":
               return w.__templates;
             case "plugin:dialog|save":
@@ -272,7 +280,7 @@ const openRecordings = async (page: Page) => {
 const openMinutes = async (page: Page) => {
   await openRecordings(page);
   await page.getByText("Kundentermin Meyer", { exact: true }).click();
-  await page.getByRole("button", { name: "Protokoll", exact: true }).click();
+  await page.getByRole("tab", { name: "Protokoll", exact: true }).click();
 };
 
 const generateButton = (page: Page) =>
@@ -476,9 +484,9 @@ test("Protokoll: Reiterwechsel waehrend des Laufs behaelt Sperre und Fortschritt
   ).toBeVisible();
 
   // Reiter verlassen und zurueck: das Backend laeuft weiter, der Reiter fragt nach.
-  await page.getByRole("button", { name: "Transkript", exact: true }).click();
+  await page.getByRole("tab", { name: "Notizen", exact: true }).click();
   await expect(page.getByTestId("minutes-running")).toHaveCount(0);
-  await page.getByRole("button", { name: "Protokoll", exact: true }).click();
+  await page.getByRole("tab", { name: "Protokoll", exact: true }).click();
   await expect(page.getByTestId("minutes-running")).toBeVisible();
   await expect(generateButton(page)).toBeDisabled();
   // Der Zustand kam vom Backend, mit dem Stand des Laufs: Schritt 1 von 4 = 25 %.

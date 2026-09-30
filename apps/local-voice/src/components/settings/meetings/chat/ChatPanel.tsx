@@ -114,6 +114,9 @@ interface ChatPanelProps {
   } | null;
   /** M5-P5e: einen gespeicherten Verlauf sofort oeffnen (Brief); `nonce` je Klick neu. */
   openThread?: { id: string; nonce: number } | null;
+  /** Fuellt die Hoehe des Elternelements (Reiter "Fragen" der Aufnahmen-Seite)
+      statt einer eigenen Mindest-/Maximalhoehe; nur die Nachrichten scrollen. */
+  fill?: boolean;
 }
 
 /**
@@ -129,6 +132,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onScopeChange,
   autoRecipe,
   openThread: openThreadRequest,
+  fill = false,
 }) => {
   const { t } = useTranslation();
   const global = mode === "global";
@@ -509,7 +513,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     <section
       data-testid="chat-panel"
       aria-label={t("meetings.chat.panelLabel")}
-      className="flex max-h-[80vh] min-h-[22rem] flex-col gap-2 rounded-lg border border-mid-gray/20 bg-background p-3"
+      className={`flex flex-col gap-2 bg-background p-3 ${
+        fill
+          ? "min-h-0 flex-1 overflow-hidden"
+          : "max-h-[80vh] min-h-[22rem] rounded-lg border border-mid-gray/20"
+      }`}
     >
       <header className="flex items-center justify-between gap-2">
         <h2 className="flex items-center gap-1.5 text-sm font-semibold">
@@ -608,7 +616,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
       <div
         ref={listRef}
-        className="min-h-[6rem] flex-1 space-y-3 overflow-y-auto border-t border-mid-gray/20 pt-2"
+        className={`flex-1 space-y-3 overflow-y-auto border-t border-mid-gray/20 pt-2 ${
+          fill ? "min-h-0" : "min-h-[6rem]"
+        }`}
         aria-live="polite"
       >
         {messages.length === 0 && !pending && (

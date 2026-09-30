@@ -92,6 +92,11 @@ const formatDuration = (durationMs: number | null) => {
 
 interface MeetingListProps {
   onSelect: (meeting: Meeting) => void;
+  /** Die gewaehlte Besprechung: wird hervorgehoben, ihre Aenderungen (Titel,
+      Status) landen sofort in der Zeile. */
+  selected?: Meeting | null;
+  /** Eine Besprechung wurde geloescht (die gewaehlte braucht dann Ersatz). */
+  onDeleted?: (id: string) => void;
   /** M4-P4e: Chat ueber viele Besprechungen oeffnen (Scope vorbelegt). */
   onAsk?: (filter: ScopeFilter) => void;
   /** M5-P5d: Filter "Person: Anna Berg" (kommt aus dem Popover der Detailansicht). */
@@ -101,6 +106,8 @@ interface MeetingListProps {
 
 export const MeetingList: React.FC<MeetingListProps> = ({
   onSelect,
+  selected = null,
+  onDeleted,
   onAsk,
   personFilter = null,
   onPersonFilterChange,
@@ -372,10 +379,27 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     if (lastError) setImportError(lastError);
   };
 
+  // Titel und Status der gewaehlten Besprechung kommen aus der Detailansicht
+  // (Umbenennen, Verarbeitung fertig): die Zeile zieht sofort nach.
+  useEffect(() => {
+    if (!selected) return;
+    setItems((prev) =>
+      prev.some((item) => item.meeting === selected) ||
+      !prev.some((item) => item.meeting.id === selected.id)
+        ? prev
+        : prev.map((item) =>
+            item.meeting.id === selected.id
+              ? { ...item, meeting: selected }
+              : item,
+          ),
+    );
+  }, [selected]);
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     const id = deleteTarget.id;
     setDeleteTarget(null);
+    onDeleted?.(id);
     setDeleteError(null);
     setItems((prev) => prev.filter((item) => item.meeting.id !== id));
     const result = await commands.meetingsDelete(id);
@@ -431,7 +455,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
             : ""
         }`}
       >
-        <div className="flex justify-between items-center gap-2">
+        <div className="flex flex-wrap justify-between items-center gap-2">
           <p className="text-sm text-text/70">{t("meetings.list.title")}</p>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {onAsk && (
@@ -561,8 +585,13 @@ export const MeetingList: React.FC<MeetingListProps> = ({
               return (
                 <div
                   key={meeting.id}
-                  className="flex items-center justify-between gap-2 py-2 cursor-pointer hover:bg-mid-gray/10 rounded-md px-1"
+                  className={`flex flex-wrap items-center justify-between gap-2 py-2 cursor-pointer hover:bg-mid-gray/10 rounded-md px-1 ${
+                    selected?.id === meeting.id ? "bg-logo-primary/15" : ""
+                  }`}
                   data-meeting-id={meeting.id}
+                  aria-current={
+                    selected?.id === meeting.id ? "true" : undefined
+                  }
                   onClick={() =>
                     selecting ? toggleSelected(meeting.id) : onSelect(meeting)
                   }
@@ -583,7 +612,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
                       onChange={() => toggleSelected(meeting.id)}
                     />
                   )}
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-[9rem] flex-1">
                     <p className="text-sm font-medium truncate">
                       {meeting.title}
                     </p>

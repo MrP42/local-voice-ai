@@ -6,15 +6,8 @@ import React, {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ArrowLeft,
-  Check,
-  Download,
-  Mail,
-  MessageSquare,
-  Pencil,
-  X,
-} from "lucide-react";
+import { createPortal } from "react-dom";
+import { Check, Download, Mail, MessageSquare, Pencil, X } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
@@ -26,9 +19,9 @@ import {
   type Participant,
   type StoredSegment,
 } from "@/bindings";
-import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Button } from "../../ui/Button";
 import { Textarea } from "../../ui/Textarea";
+import { TabList } from "../../ui/TabList";
 import {
   AudioPlayer,
   AudioPlayerGroup,
@@ -44,7 +37,6 @@ import { SpeakerPopover } from "./SpeakerPopover";
 import { Input } from "../../ui/Input";
 import { translateMeetingError } from "./meetingErrors";
 import { SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
-import { ChatPanel } from "./chat/ChatPanel";
 import { FollowupDialog } from "./FollowupDialog";
 import { MeetingExportDialog } from "./MeetingExportDialog";
 import { PeopleDialog } from "./people/PeopleDialog";
@@ -53,6 +45,7 @@ import { orderParticipants } from "@/lib/meetingPeople";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { JobPanel } from "./JobProgress";
+import { audioTranscriptPlayer } from "./transcriptPlayer";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -72,8 +65,17 @@ const channelLabelKey = (channel: number) => {
   }
 };
 
-type Tab = "notes" | "transcript" | "minutes";
-type NotesView = "mine" | "ai";
+/** Reiter der Arbeitsflaeche (Mitte). Das Transkript steht rechts unten. */
+type MidTab = "notes" | "ai" | "minutes";
+const isMidTab = (value: string): value is MidTab =>
+  value === "notes" || value === "ai" || value === "minutes";
+
+/** Die Stellen der Aufnahmen-Seite, in die die Detailansicht ihre Teile legt. */
+export interface MeetingDetailSlots {
+  content: HTMLElement | null;
+  controls: HTMLElement | null;
+  transcript: HTMLElement | null;
+}
 
 // Windows paths use backslashes; the old class `[\/]` matched only the
 // forward slash, so a C:\... path came back whole.
@@ -81,13 +83,18 @@ const fileBaseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
 interface MeetingDetailProps {
   meeting: Meeting;
-  onBack: () => void;
+  /** Bereiche der Aufnahmen-Seite, in die gerendert wird (Portale). Fehlt ein
+      Bereich (eingeklappt, anderer Reiter), bleibt der Zustand trotzdem hier. */
+  slots: MeetingDetailSlots;
+  /** Transkript zeigen (Quellsprung aus KI-Notizen oder Chat). */
+  onShowTranscript: () => void;
+  /** Der Fragen-Reiter zeigt den Chat dieser Besprechung. */
+  chatOpen: boolean;
+  onChatToggle: () => void;
   /** Propagates a title change back to the list, which owns the record. */
   onMeetingChange: (meeting: Meeting) => void;
   /** M4-P4e: Sprung aus einem Chat ausserhalb (global); `nonce` je Klick neu. */
   jumpRequest?: { citation: Citation; nonce: number } | null;
-  /** M4-P4e: die eigene Chat-Seitenleiste geht auf (ein globaler Chat weicht). */
-  onChatOpen?: () => void;
   /** M5-P5d: Popover einer Person -> Liste auf ihre Besprechungen eingrenzen. */
   onPersonFilter?: (person: PersonRef) => void;
   /** M5-P5d: Popover einer Person -> Chat ueber alle Besprechungen mit ihr. */
@@ -96,10 +103,12 @@ interface MeetingDetailProps {
 
 export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   meeting,
-  onBack,
+  slots,
+  onShowTranscript,
+  chatOpen,
+  onChatToggle,
   onMeetingChange,
   jumpRequest,
-  onChatOpen,
   onPersonFilter,
   onPersonAsk,
 }) => {
@@ -109,8 +118,17 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(meetingTitle);
   const [titleError, setTitleError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("transcript");
-  const [notesView, setNotesView] = useState<NotesView>("mine");
+  // Der letzte Reiter bleibt ueber Neuladen, Seitenwechsel und Neustart.
+  const [midTab, setMidTab] = usePersistentState<MidTab>(
+    "meetings.midTab",
+    "notes",
+    isMidTab,
+  );
+  const midTabs = [
+    { id: "notes" as const, label: t("meetings.notes.tab") },
+    { id: "ai" as const, label: t("meetings.notes.view.ai") },
+    { id: "minutes" as const, label: t("meetings.detail.minutesTab") },
+  ];
   const [segments, setSegments] = useState<StoredSegment[]>([]);
   // M3-P3c: Sprecher (Namen, Anteile), Epoche der Segmentnummern und Hinweise
   // zur Sprechertrennung (`metadata_json.diarize`).
@@ -149,33 +167,30 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // andere (Mikrofon, Import als Mischkanal) im Mikrofon-/Import-Player.
   const micPlayerRef = useRef<AudioPlayerHandle>(null);
   const systemPlayerRef = useRef<AudioPlayerHandle>(null);
-  const playSegment = (segment: StoredSegment) => {
-    const player =
-      segment.channel === 1 && systemPlayerRef.current
-        ? systemPlayerRef.current
-        : (micPlayerRef.current ?? systemPlayerRef.current);
-    player?.playAt(segment.start_ms / 1000);
-  };
   const hasAudio = Boolean(
     meeting?.mic_audio_path || meeting?.system_audio_path,
   );
+  // Ein Klick auf eine Zeitmarke spricht diesen Player an. Heute ist das das
+  // Audio der Besprechung; ein YouTube-Player (#66) setzt hier seine eigene
+  // Umsetzung ein, das Transkript bleibt unveraendert.
+  const player = audioTranscriptPlayer(micPlayerRef, systemPlayerRef, hasAudio);
 
   /**
-   * Quelle einer KI-Notiz: ins Transkript wechseln, das Segment markieren
-   * und (solange Audio da ist) ab der Stelle abspielen. Die Player liegen
-   * ueber den Tabs und bleiben beim Wechsel erhalten.
+   * Quelle einer KI-Notiz: das Transkript rechts zeigen, das Segment markieren
+   * und (solange es einen Player gibt) ab der Stelle abspielen. Die KI-Notizen
+   * bleiben dabei stehen.
    */
   const jumpToSource = (segmentIndex: number) => {
     const segment = segments.find((s) => s.segment_index === segmentIndex);
     if (!segment) return;
-    setTab("transcript");
+    onShowTranscript();
     setHighlightIndex(segmentIndex);
     if (highlightTimer.current) clearTimeout(highlightTimer.current);
     highlightTimer.current = setTimeout(
       () => setHighlightIndex(null),
       SOURCE_HIGHLIGHT_MS,
     );
-    if (hasAudio) playSegment(segment);
+    if (player.canSeek) player.seek(segment.start_ms, segment.channel);
   };
 
   useEffect(
@@ -188,12 +203,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // P8a: neue Segmente waehrend der Verarbeitung -> ans Ende scrollen, solange
   // der Schalter an ist und der Nutzer nicht weggescrollt hat.
   useLayoutEffect(() => {
-    if (!transcribing || !autoScroll || !following || tab !== "transcript") {
+    if (!transcribing || !autoScroll || !following || !slots.transcript) {
       return;
     }
     const el = transcriptRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [segments, transcribing, autoScroll, following, tab]);
+  }, [segments, transcribing, autoScroll, following, slots.transcript]);
 
   useEffect(() => {
     setFollowing(true);
@@ -216,16 +231,15 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     }
   };
 
-  // Nach dem Wechsel in den Transkript-Tab steht die Zeile erst im DOM.
+  // Nach dem Wechsel in den Transkript-Reiter steht die Zeile erst im DOM.
   useEffect(() => {
-    if (highlightIndex === null || tab !== "transcript") return;
+    if (highlightIndex === null || !slots.transcript) return;
     transcriptRef.current
       ?.querySelector<HTMLElement>(`[data-segment-index="${highlightIndex}"]`)
       ?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [highlightIndex, tab]);
+  }, [highlightIndex, slots.transcript]);
 
-  // M4-P4e: Chat-Seitenleiste (Strg+J) und Belegsprung.
-  const [chatOpen, setChatOpen] = useState(false);
+  // M4-P4e: Chat (Strg+J) und Belegsprung.
   // M6-P6c: Follow-up-Mail
   const [followupOpen, setFollowupOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -234,11 +248,6 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     selector: string;
     nonce: number;
   } | null>(null);
-
-  const toggleChat = useCallback(() => {
-    if (!chatOpen) onChatOpen?.();
-    setChatOpen(!chatOpen);
-  }, [chatOpen, onChatOpen]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -249,21 +258,21 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         e.key.toLowerCase() === "j"
       ) {
         e.preventDefault();
-        toggleChat();
+        onChatToggle();
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [toggleChat]);
+  }, [onChatToggle]);
 
   /**
    * Beleg aus dem Chat: Transkript-Stelle wie eine KI-Notizen-Quelle
-   * (markieren + abspielen), Notizen-Beleg im Tab Notizen markieren.
+   * (markieren + abspielen), Notizen-Beleg im Reiter Notizen bzw. KI-Notizen
+   * markieren.
    */
   const jumpToCitation = (citation: Citation) => {
     if (citation.source === "user_notes" || citation.source === "ai_notes") {
-      setTab("notes");
-      setNotesView(citation.source === "user_notes" ? "mine" : "ai");
+      setMidTab(citation.source === "user_notes" ? "notes" : "ai");
       if (citation.ref_key) {
         const attr =
           citation.source === "user_notes" ? "data-block-id" : "data-entry-id";
@@ -275,7 +284,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       return;
     }
     if (citation.segment_index !== null) jumpToSource(citation.segment_index);
-    else setTab("transcript");
+    else onShowTranscript();
   };
 
   // Notizen laden nach dem Tabwechsel: kurz auf den Block warten, dann
@@ -445,6 +454,22 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     void loadParticipants();
   }, [meetingId, loadSpeakers, loadParticipants]);
 
+  // Aendert sich die Hoehe der Liste (Fortschrittsblock waechst, Fenster wird
+  // kleiner), bleibt ein mitlaufendes Transkript am Ende. Die Liste fuellt die
+  // Resthoehe ihrer Spalte und hat keine feste Hoehe mehr, die das verhinderte.
+  const keepAtEnd = useRef(false);
+  keepAtEnd.current = transcribing && autoScroll && following;
+  const hasList = !loading && segments.length > 0;
+  useEffect(() => {
+    const el = transcriptRef.current;
+    if (!el || !slots.transcript || !hasList) return;
+    const observer = new ResizeObserver(() => {
+      if (keepAtEnd.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [slots.transcript, hasList]);
+
   const saveTitle = async () => {
     const next = titleDraft.trim();
     if (next === "" || next === meetingTitle) {
@@ -563,400 +588,196 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     }
   };
 
-  const main = (
-    <SettingsGroup>
-      <div className="px-4 py-3 space-y-3">
-        <div className="flex items-center justify-between gap-2">
+  /** Kopf der Besprechung und die Reiter der Arbeitsflaeche (Mitte). */
+  const contentPart = (
+    <>
+      {/* Title and origin are two different facts: the title is what the
+      user calls this meeting, `source_path` is the file it was imported
+      from. Renaming must not lose the second one, hence both lines. */}
+      {editingTitle ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void saveTitle();
+              if (e.key === "Escape") cancelTitleEdit();
+            }}
+            className="flex-1 min-w-[12rem]"
+            autoFocus
+            aria-label={t("meetings.detail.titleLabel")}
+          />
+          <Button size="sm" onClick={saveTitle}>
+            <Check width={14} height={14} />
+            {t("meetings.detail.save")}
+          </Button>
+          <Button size="sm" variant="secondary" onClick={cancelTitleEdit}>
+            <X width={14} height={14} />
+            {t("meetings.detail.cancel")}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-start gap-2 group">
+          <h3 className="text-base font-semibold break-words min-w-0 flex-1">
+            {meetingTitle}
+          </h3>
           <button
             type="button"
-            onClick={onBack}
-            className="flex items-center gap-1 text-sm text-text/70 hover:text-text cursor-pointer"
+            onClick={() => {
+              setTitleDraft(meetingTitle);
+              setEditingTitle(true);
+            }}
+            title={t("meetings.detail.renameTitle")}
+            className="p-1 rounded-md text-text/50 hover:text-logo-primary cursor-pointer shrink-0"
           >
-            <ArrowLeft width={16} height={16} />
-            {t("meetings.detail.back")}
+            <Pencil width={14} height={14} />
           </button>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setExportOpen(true)}
-              title={t("meetings.export.buttonTitle")}
-              data-testid="export-open"
-            >
-              <Download width={14} height={14} aria-hidden="true" />
-              {t("meetings.export.button")}
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setFollowupOpen(true)}
-              title={t("meetings.followup.buttonTitle")}
-              disabled={segments.length === 0}
-              data-testid="followup-open"
-            >
-              <Mail width={14} height={14} aria-hidden="true" />
-              {t("meetings.followup.button")}
-            </Button>
-            <Button
-              size="sm"
-              variant={chatOpen ? "primary-soft" : "secondary"}
-              onClick={toggleChat}
-              title={t("meetings.chat.askTitle")}
-              aria-pressed={chatOpen}
-              aria-keyshortcuts="Control+J"
-            >
-              <MessageSquare width={14} height={14} aria-hidden="true" />
-              {t("meetings.chat.ask")}
-            </Button>
-          </div>
         </div>
-        {/* Title and origin are two different facts: the title is what the
-        user calls this meeting, `source_path` is the file it was imported
-        from. Renaming must not lose the second one, hence both lines. */}
-        {editingTitle ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void saveTitle();
-                if (e.key === "Escape") cancelTitleEdit();
-              }}
-              className="flex-1 min-w-[12rem]"
-              autoFocus
-              aria-label={t("meetings.detail.titleLabel")}
+      )}
+      {meeting.source_path && (
+        <p
+          className="text-xs text-text/50 break-all -mt-2"
+          title={meeting.source_path}
+        >
+          {fileBaseName(meeting.source_path)}
+        </p>
+      )}
+      {titleError && <p className="text-sm text-red-400">{titleError}</p>}
+
+      {participants.length > 0 && (
+        <div
+          className="flex flex-wrap items-center gap-1.5"
+          role="group"
+          aria-label={t("meetings.people.chipsLabel")}
+          data-testid="participant-chips"
+        >
+          {orderParticipants(participants).map((participant) => (
+            <PersonPopover
+              key={participant.human_id}
+              participant={participant}
+              onFilter={(person) => onPersonFilter?.(person)}
+              onAsk={(person) => onPersonAsk?.(person)}
+              onManage={() => setPeopleOpen(true)}
             />
-            <Button size="sm" onClick={saveTitle}>
-              <Check width={14} height={14} />
-              {t("meetings.detail.save")}
-            </Button>
-            <Button size="sm" variant="secondary" onClick={cancelTitleEdit}>
-              <X width={14} height={14} />
-              {t("meetings.detail.cancel")}
-            </Button>
-          </div>
-        ) : (
-          <div className="flex items-start gap-2 group">
-            <h3 className="text-base font-semibold break-words min-w-0 flex-1">
-              {meetingTitle}
-            </h3>
-            <button
-              type="button"
-              onClick={() => {
-                setTitleDraft(meetingTitle);
-                setEditingTitle(true);
-              }}
-              title={t("meetings.detail.renameTitle")}
-              className="p-1 rounded-md text-text/50 hover:text-logo-primary cursor-pointer shrink-0"
-            >
-              <Pencil width={14} height={14} />
-            </button>
-          </div>
-        )}
-        {meeting.source_path && (
-          <p
-            className="text-xs text-text/50 break-all -mt-2"
-            title={meeting.source_path}
-          >
-            {fileBaseName(meeting.source_path)}
+          ))}
+        </div>
+      )}
+
+      {meeting.status === "cancelled" && !jobProgress && (
+        <div
+          data-testid="cancelled-panel"
+          className="space-y-2 rounded-md border border-mid-gray/20 px-3 py-2"
+        >
+          <p className="text-sm font-medium">
+            {t("meetings.progress.cancelledTitle")}
           </p>
-        )}
-        {titleError && <p className="text-sm text-red-400">{titleError}</p>}
-
-        {participants.length > 0 && (
-          <div
-            className="flex flex-wrap items-center gap-1.5"
-            role="group"
-            aria-label={t("meetings.people.chipsLabel")}
-            data-testid="participant-chips"
-          >
-            {orderParticipants(participants).map((participant) => (
-              <PersonPopover
-                key={participant.human_id}
-                participant={participant}
-                onFilter={(person) => onPersonFilter?.(person)}
-                onAsk={(person) => onPersonAsk?.(person)}
-                onManage={() => setPeopleOpen(true)}
-              />
-            ))}
-          </div>
-        )}
-
-        {jobProgress && <JobPanel progress={jobProgress} />}
-
-        {meeting.status === "cancelled" && !jobProgress && (
-          <div
-            data-testid="cancelled-panel"
-            className="space-y-2 rounded-md border border-mid-gray/20 px-3 py-2"
-          >
-            <p className="text-sm font-medium">
-              {t("meetings.progress.cancelledTitle")}
-            </p>
-            <p className="text-xs text-text/70">
-              {t("meetings.progress.cancelledBody", { count: segments.length })}
-            </p>
-            {hasAudio && (
-              <Button
-                size="sm"
-                variant="secondary"
-                data-testid="job-continue"
-                onClick={() => void continueProcessing()}
-                disabled={continuing}
-              >
-                {t("meetings.progress.continue")}
-              </Button>
-            )}
-            {continueError && (
-              <p
-                className="text-sm text-red-400"
-                data-testid="job-continue-error"
-              >
-                {continueError}
-              </p>
-            )}
-          </div>
-        )}
-
-        {(meeting.mic_audio_path || meeting.system_audio_path) && (
-          <AudioPlayerGroup>
-            {meeting.mic_audio_path && (
-              <div className="space-y-1">
-                <p className="text-xs text-text/60">
-                  {meeting.source === "import"
-                    ? t("meetings.meta.audioImport")
-                    : t("meetings.live.me")}
-                  {" · "}
-                  {fileBaseName(meeting.mic_audio_path)}
-                </p>
-                <AudioPlayer
-                  controlRef={micPlayerRef}
-                  src={convertFileSrc(meeting.mic_audio_path, "asset")}
-                  className="w-full"
-                />
-              </div>
-            )}
-            {meeting.system_audio_path && (
-              <div className="space-y-1">
-                <p className="text-xs text-text/60">
-                  {t("meetings.live.remote")}
-                  {" · "}
-                  {fileBaseName(meeting.system_audio_path)}
-                </p>
-                <AudioPlayer
-                  controlRef={systemPlayerRef}
-                  src={convertFileSrc(meeting.system_audio_path, "asset")}
-                  className="w-full"
-                />
-              </div>
-            )}
-          </AudioPlayerGroup>
-        )}
-
-        <div className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-4 gap-y-1 text-sm border border-mid-gray/20 rounded-md px-3 py-2">
-          <span className="text-text/60">{t("meetings.meta.status")}</span>
-          <span>
-            <Badge
-              variant={meeting.status === "ready" ? "success" : "secondary"}
+          <p className="text-xs text-text/70">
+            {t("meetings.progress.cancelledBody", { count: segments.length })}
+          </p>
+          {hasAudio && (
+            <Button
+              size="sm"
+              variant="secondary"
+              data-testid="job-continue"
+              onClick={() => void continueProcessing()}
+              disabled={continuing}
             >
-              {t(`meetings.status.${meeting.status}`, {
-                defaultValue: meeting.status,
-              })}
-            </Badge>
-          </span>
-          <span className="text-text/60">{t("meetings.meta.source")}</span>
-          <span>
-            {t(`meetings.meta.sourceKind.${meeting.source}`, {
-              defaultValue: meeting.source,
+              {t("meetings.progress.continue")}
+            </Button>
+          )}
+          {continueError && (
+            <p
+              className="text-sm text-red-400"
+              data-testid="job-continue-error"
+            >
+              {continueError}
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-4 gap-y-1 text-sm border border-mid-gray/20 rounded-md px-3 py-2">
+        <span className="text-text/60">{t("meetings.meta.status")}</span>
+        <span>
+          <Badge variant={meeting.status === "ready" ? "success" : "secondary"}>
+            {t(`meetings.status.${meeting.status}`, {
+              defaultValue: meeting.status,
             })}
-          </span>
-          <span className="text-text/60">{t("meetings.meta.started")}</span>
-          <span>
-            {new Intl.DateTimeFormat(i18n.language, {
-              dateStyle: "medium",
-              timeStyle: "short",
-            }).format(
-              new Date((meeting.started_at ?? meeting.created_at) * 1000),
-            )}
-          </span>
-          {meeting.duration_ms !== null && (
-            <>
-              <span className="text-text/60">
-                {t("meetings.meta.duration")}
-              </span>
-              <span>{formatMmSs(meeting.duration_ms)}</span>
-            </>
+          </Badge>
+        </span>
+        <span className="text-text/60">{t("meetings.meta.source")}</span>
+        <span>
+          {t(`meetings.meta.sourceKind.${meeting.source}`, {
+            defaultValue: meeting.source,
+          })}
+        </span>
+        <span className="text-text/60">{t("meetings.meta.started")}</span>
+        <span>
+          {new Intl.DateTimeFormat(i18n.language, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          }).format(
+            new Date((meeting.started_at ?? meeting.created_at) * 1000),
           )}
-          {meeting.consent_confirmed_at !== null && (
-            <>
-              <span className="text-text/60">{t("meetings.meta.consent")}</span>
-              <span>
-                {new Intl.DateTimeFormat(i18n.language, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                }).format(new Date(meeting.consent_confirmed_at * 1000))}
-              </span>
-            </>
-          )}
-          {meeting.audio_retention_until !== null && (
-            <>
-              <span className="text-text/60">
-                {t("meetings.meta.retentionUntil")}
-              </span>
-              <span>
-                {new Intl.DateTimeFormat(i18n.language, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                }).format(new Date(meeting.audio_retention_until * 1000))}
-              </span>
-            </>
-          )}
-          <span className="text-text/60">{t("meetings.meta.segments")}</span>
-          <span>{segments.length}</span>
-        </div>
+        </span>
+        {meeting.duration_ms !== null && (
+          <>
+            <span className="text-text/60">{t("meetings.meta.duration")}</span>
+            <span>{formatMmSs(meeting.duration_ms)}</span>
+          </>
+        )}
+        {meeting.consent_confirmed_at !== null && (
+          <>
+            <span className="text-text/60">{t("meetings.meta.consent")}</span>
+            <span>
+              {new Intl.DateTimeFormat(i18n.language, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              }).format(new Date(meeting.consent_confirmed_at * 1000))}
+            </span>
+          </>
+        )}
+        {meeting.audio_retention_until !== null && (
+          <>
+            <span className="text-text/60">
+              {t("meetings.meta.retentionUntil")}
+            </span>
+            <span>
+              {new Intl.DateTimeFormat(i18n.language, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              }).format(new Date(meeting.audio_retention_until * 1000))}
+            </span>
+          </>
+        )}
+        <span className="text-text/60">{t("meetings.meta.segments")}</span>
+        <span>{segments.length}</span>
+      </div>
 
-        <RetranscribeControl
-          meeting={meeting}
-          onFinished={loadSegments}
-          busy={meeting.status === "processing" || jobProgress !== undefined}
+      <RetranscribeControl
+        meeting={meeting}
+        onFinished={loadSegments}
+        busy={meeting.status === "processing" || jobProgress !== undefined}
+      />
+
+      {/* Die Reiter bleiben beim Scrollen der Arbeitsflaeche oben stehen. */}
+      <div className="sticky top-0 z-10 -mx-4 bg-background px-4">
+        <TabList
+          tabs={midTabs}
+          value={midTab}
+          onChange={setMidTab}
+          ariaLabel={t("meetings.layout.contentTabs")}
+          className="border-b border-mid-gray/20"
         />
+      </div>
 
-        <div className="flex gap-1 border-b border-mid-gray/20">
-          <button
-            type="button"
-            onClick={() => setTab("notes")}
-            className={`px-3 py-1.5 text-sm font-medium border-b-2 cursor-pointer ${
-              tab === "notes"
-                ? "border-logo-primary text-text"
-                : "border-transparent text-text/60 hover:text-text"
-            }`}
-          >
-            {t("meetings.notes.tab")}
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("transcript")}
-            className={`px-3 py-1.5 text-sm font-medium border-b-2 cursor-pointer ${
-              tab === "transcript"
-                ? "border-logo-primary text-text"
-                : "border-transparent text-text/60 hover:text-text"
-            }`}
-          >
-            {t("meetings.detail.transcriptTab")}
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("minutes")}
-            className={`px-3 py-1.5 text-sm font-medium border-b-2 cursor-pointer ${
-              tab === "minutes"
-                ? "border-logo-primary text-text"
-                : "border-transparent text-text/60 hover:text-text"
-            }`}
-          >
-            {t("meetings.detail.minutesTab")}
-          </button>
-        </div>
-
-        {tab === "transcript" && transcribing && (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-text/80">
-              <input
-                type="checkbox"
-                data-testid="autoscroll-toggle"
-                checked={autoScroll}
-                onChange={(e) => {
-                  setAutoScrollPref(e.target.checked ? "on" : "off");
-                  // Der Schalter selbst holt das Mitscrollen zurueck.
-                  if (e.target.checked) setFollowing(true);
-                }}
-              />
-              {t("meetings.detail.autoscroll")}
-            </label>
-            {autoScroll && !following && (
-              <span
-                className="text-xs text-text/50"
-                data-testid="autoscroll-paused"
-              >
-                {t("meetings.detail.autoscrollPaused")}
-              </span>
-            )}
-          </div>
-        )}
-        {tab === "transcript" && segments.length > 0 && (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void copyTranscript(true)}
-            >
-              {copied === "meta"
-                ? t("meetings.detail.copied")
-                : t("meetings.detail.copyTranscript")}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void copyTranscript(false)}
-              title={t("meetings.detail.copyPlainHint")}
-            >
-              {copied === "plain"
-                ? t("meetings.detail.copied")
-                : t("meetings.detail.copyPlain")}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={exportTranscript}
-              title={t("meetings.detail.exportTranscript")}
-              aria-label={t("meetings.detail.exportTranscript")}
-            >
-              <Download width={14} height={14} />
-            </Button>
-          </div>
-        )}
-        {tab === "transcript" && transcriptError && (
-          <p className="text-sm text-red-400">{transcriptError}</p>
-        )}
-        {tab === "transcript" && speakerNotices.length > 0 && (
-          <ul
-            className="space-y-0.5 text-xs text-text/50"
-            data-testid="speaker-notices"
-          >
-            {speakerNotices.map((code) => (
-              <li key={code} data-notice={code}>
-                {t(`meetings.speakers.notices.${code}`, {
-                  defaultValue: code,
-                })}
-              </li>
-            ))}
-          </ul>
-        )}
-        {tab === "notes" && (
+      <div role="tabpanel" data-testid={`mid-panel-${midTab}`}>
+        {midTab === "notes" || midTab === "ai" ? (
           <div className="space-y-3" ref={notesRef}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div
-                role="group"
-                aria-label={t("meetings.notes.tab")}
-                className="inline-flex rounded-lg border border-mid-gray/20 p-0.5 text-sm"
-              >
-                {(["mine", "ai"] as const).map((view) => (
-                  <button
-                    key={view}
-                    type="button"
-                    aria-pressed={notesView === view}
-                    onClick={() => setNotesView(view)}
-                    className={`rounded-md px-3 py-1 cursor-pointer ${
-                      notesView === view
-                        ? "bg-logo-primary/20 text-text"
-                        : "text-text/60 hover:text-text"
-                    }`}
-                  >
-                    {t(`meetings.notes.view.${view}`)}
-                  </button>
-                ))}
-              </div>
+            <div className="flex justify-end">
               <MeetingTemplatePicker meetingId={meetingId} />
             </div>
-            {notesView === "mine" ? (
+            {midTab === "notes" ? (
               <MyNotesView meeting={meeting} />
             ) : (
               <EnhancedNotesView
@@ -968,137 +789,282 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
               />
             )}
           </div>
-        )}
-        {tab === "transcript" ? (
-          loading ? (
-            <p className="text-sm text-text/60 text-center py-3">
-              {t("meetings.list.loading")}
-            </p>
-          ) : segments.length === 0 ? (
-            <p className="text-sm text-text/60">{t("meetings.live.empty")}</p>
-          ) : (
-            <div
-              ref={transcriptRef}
-              data-testid="transcript-scroll"
-              onScroll={onTranscriptScroll}
-              className="space-y-2 max-h-96 overflow-y-auto"
-            >
-              {segments.map((segment) => (
-                <div
-                  key={segment.segment_index}
-                  data-segment-index={segment.segment_index}
-                  data-highlighted={
-                    highlightIndex === segment.segment_index
-                      ? "true"
-                      : undefined
-                  }
-                  className={`flex gap-2 items-start text-sm group rounded-md px-1 -mx-1 transition-colors ${
-                    highlightIndex === segment.segment_index
-                      ? "bg-logo-primary/25 ring-1 ring-logo-primary/50"
-                      : ""
-                  }`}
-                >
-                  {hasAudio ? (
-                    <button
-                      type="button"
-                      onClick={() => playSegment(segment)}
-                      title={t("meetings.detail.playFrom")}
-                      className="text-xs text-text/40 w-10 shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer"
-                    >
-                      {formatMmSs(segment.start_ms)}
-                    </button>
-                  ) : (
-                    <span className="text-xs text-text/40 w-10 shrink-0 pt-0.5">
-                      {formatMmSs(segment.start_ms)}
-                    </span>
-                  )}
-                  {showChannels && (
-                    <span
-                      className={`text-xs text-text/50 shrink-0 pt-0.5 truncate ${
-                        hasSpeakers ? "w-24" : "w-16"
-                      }`}
-                      title={whoLabel(segment)}
-                    >
-                      {speakerOf(segment) ? (
-                        <SpeakerPopover
-                          meetingId={meetingId}
-                          segment={segment}
-                          speaker={speakerOf(segment)!}
-                          speakers={speakers}
-                          epoch={segmentEpoch}
-                          onChanged={onSpeakersChanged}
-                          className="max-w-full"
-                        />
-                      ) : (
-                        t(channelLabelKey(segment.channel))
-                      )}
-                    </span>
-                  )}
-                  {editingIndex === segment.segment_index ? (
-                    <div className="flex-1 space-y-1">
-                      <Textarea
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
-                        rows={2}
-                        className="w-full"
-                        autoFocus
-                      />
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => saveEdit(segment.segment_index)}
-                          disabled={saving}
-                        >
-                          {t("meetings.detail.save")}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={cancelEdit}
-                        >
-                          {t("meetings.detail.cancel")}
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-text/90 break-words flex-1">
-                        {segment.text}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => startEdit(segment)}
-                        title={t("meetings.detail.editSegment")}
-                        className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-text/50 hover:text-logo-primary cursor-pointer shrink-0"
-                      >
-                        <Pencil width={14} height={14} />
-                      </button>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          )
-        ) : tab === "minutes" ? (
+        ) : (
           <MinutesView meetingId={meetingId} meetingTitle={meetingTitle} />
-        ) : null}
+        )}
       </div>
-    </SettingsGroup>
+    </>
   );
 
-  return (
-    <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-      <div className="min-w-0 flex-1">{main}</div>
-      {chatOpen && (
-        <aside className="w-full shrink-0 lg:sticky lg:top-0 lg:w-96">
-          <ChatPanel
-            scope={{ kind: "meeting", meeting_id: meetingId }}
-            mode="meeting"
-            onClose={() => setChatOpen(false)}
-            onJump={jumpToCitation}
-          />
-        </aside>
+  /** Aktionen, Fortschritt und Wiedergabe (rechts oben, unter der Aufnahmekarte). */
+  const controlsPart = (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => setExportOpen(true)}
+          title={t("meetings.export.buttonTitle")}
+          data-testid="export-open"
+        >
+          <Download width={14} height={14} aria-hidden="true" />
+          {t("meetings.export.button")}
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => setFollowupOpen(true)}
+          title={t("meetings.followup.buttonTitle")}
+          disabled={segments.length === 0}
+          data-testid="followup-open"
+        >
+          <Mail width={14} height={14} aria-hidden="true" />
+          {t("meetings.followup.button")}
+        </Button>
+        <Button
+          size="sm"
+          variant={chatOpen ? "primary-soft" : "secondary"}
+          onClick={onChatToggle}
+          title={t("meetings.chat.askTitle")}
+          aria-pressed={chatOpen}
+          aria-keyshortcuts="Control+J"
+        >
+          <MessageSquare width={14} height={14} aria-hidden="true" />
+          {t("meetings.chat.ask")}
+        </Button>
+      </div>
+
+      {jobProgress && <JobPanel progress={jobProgress} />}
+
+      {(meeting.mic_audio_path || meeting.system_audio_path) && (
+        <AudioPlayerGroup>
+          {meeting.mic_audio_path && (
+            <div className="space-y-1">
+              <p className="text-xs text-text/60">
+                {meeting.source === "import"
+                  ? t("meetings.meta.audioImport")
+                  : t("meetings.live.me")}
+                {" · "}
+                {fileBaseName(meeting.mic_audio_path)}
+              </p>
+              <AudioPlayer
+                controlRef={micPlayerRef}
+                src={convertFileSrc(meeting.mic_audio_path, "asset")}
+                className="w-full"
+              />
+            </div>
+          )}
+          {meeting.system_audio_path && (
+            <div className="space-y-1">
+              <p className="text-xs text-text/60">
+                {t("meetings.live.remote")}
+                {" · "}
+                {fileBaseName(meeting.system_audio_path)}
+              </p>
+              <AudioPlayer
+                controlRef={systemPlayerRef}
+                src={convertFileSrc(meeting.system_audio_path, "asset")}
+                className="w-full"
+              />
+            </div>
+          )}
+        </AudioPlayerGroup>
       )}
+    </>
+  );
+
+  /** Transkript (Reiter rechts unten): Werkzeugzeilen fest, die Liste scrollt. */
+  const transcriptPart = (
+    <>
+      {transcribing && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-text/80">
+            <input
+              type="checkbox"
+              data-testid="autoscroll-toggle"
+              checked={autoScroll}
+              onChange={(e) => {
+                setAutoScrollPref(e.target.checked ? "on" : "off");
+                // Der Schalter selbst holt das Mitscrollen zurueck.
+                if (e.target.checked) setFollowing(true);
+              }}
+            />
+            {t("meetings.detail.autoscroll")}
+          </label>
+          {autoScroll && !following && (
+            <span
+              className="text-xs text-text/50"
+              data-testid="autoscroll-paused"
+            >
+              {t("meetings.detail.autoscrollPaused")}
+            </span>
+          )}
+        </div>
+      )}
+      {segments.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void copyTranscript(true)}
+          >
+            {copied === "meta"
+              ? t("meetings.detail.copied")
+              : t("meetings.detail.copyTranscript")}
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void copyTranscript(false)}
+            title={t("meetings.detail.copyPlainHint")}
+          >
+            {copied === "plain"
+              ? t("meetings.detail.copied")
+              : t("meetings.detail.copyPlain")}
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={exportTranscript}
+            title={t("meetings.detail.exportTranscript")}
+            aria-label={t("meetings.detail.exportTranscript")}
+          >
+            <Download width={14} height={14} />
+          </Button>
+        </div>
+      )}
+      {transcriptError && (
+        <p className="text-sm text-red-400">{transcriptError}</p>
+      )}
+      {speakerNotices.length > 0 && (
+        <ul
+          className="space-y-0.5 text-xs text-text/50"
+          data-testid="speaker-notices"
+        >
+          {speakerNotices.map((code) => (
+            <li key={code} data-notice={code}>
+              {t(`meetings.speakers.notices.${code}`, {
+                defaultValue: code,
+              })}
+            </li>
+          ))}
+        </ul>
+      )}
+      {loading ? (
+        <p className="text-sm text-text/60 text-center py-3">
+          {t("meetings.list.loading")}
+        </p>
+      ) : segments.length === 0 ? (
+        <p className="text-sm text-text/60">{t("meetings.live.empty")}</p>
+      ) : (
+        <div
+          ref={transcriptRef}
+          data-testid="transcript-scroll"
+          onScroll={onTranscriptScroll}
+          className="min-h-0 flex-1 space-y-2 overflow-y-auto"
+        >
+          {segments.map((segment) => (
+            <div
+              key={segment.segment_index}
+              data-segment-index={segment.segment_index}
+              data-highlighted={
+                highlightIndex === segment.segment_index ? "true" : undefined
+              }
+              className={`flex gap-2 items-start text-sm group rounded-md px-1 -mx-1 transition-colors ${
+                highlightIndex === segment.segment_index
+                  ? "bg-logo-primary/25 ring-1 ring-logo-primary/50"
+                  : ""
+              }`}
+            >
+              {player.canSeek ? (
+                <button
+                  type="button"
+                  data-act="seek"
+                  data-seek-ms={segment.start_ms}
+                  onClick={() => player.seek(segment.start_ms, segment.channel)}
+                  title={t("meetings.detail.playFrom")}
+                  className="text-xs text-text/40 w-10 shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer"
+                >
+                  {formatMmSs(segment.start_ms)}
+                </button>
+              ) : (
+                <span className="text-xs text-text/40 w-10 shrink-0 pt-0.5">
+                  {formatMmSs(segment.start_ms)}
+                </span>
+              )}
+              {showChannels && (
+                <span
+                  className={`text-xs text-text/50 shrink-0 pt-0.5 truncate ${
+                    hasSpeakers ? "w-24" : "w-16"
+                  }`}
+                  title={whoLabel(segment)}
+                >
+                  {speakerOf(segment) ? (
+                    <SpeakerPopover
+                      meetingId={meetingId}
+                      segment={segment}
+                      speaker={speakerOf(segment)!}
+                      speakers={speakers}
+                      epoch={segmentEpoch}
+                      onChanged={onSpeakersChanged}
+                      className="max-w-full"
+                    />
+                  ) : (
+                    t(channelLabelKey(segment.channel))
+                  )}
+                </span>
+              )}
+              {editingIndex === segment.segment_index ? (
+                <div className="flex-1 space-y-1">
+                  <Textarea
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    rows={2}
+                    className="w-full"
+                    autoFocus
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => saveEdit(segment.segment_index)}
+                      disabled={saving}
+                    >
+                      {t("meetings.detail.save")}
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={cancelEdit}>
+                      {t("meetings.detail.cancel")}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="text-text/90 break-words flex-1">
+                    {segment.text}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => startEdit(segment)}
+                    title={t("meetings.detail.editSegment")}
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-text/50 hover:text-logo-primary cursor-pointer shrink-0"
+                  >
+                    <Pencil width={14} height={14} />
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+
+  // Die Teile wandern per Portal in ihre Bereiche der Aufnahmen-Seite; der
+  // Zustand (Segmente, Player, Auswahl) bleibt hier an einer Stelle.
+  return (
+    <>
+      {slots.content && createPortal(contentPart, slots.content)}
+      {slots.controls && createPortal(controlsPart, slots.controls)}
+      {slots.transcript && createPortal(transcriptPart, slots.transcript)}
       <MeetingExportDialog
         open={exportOpen}
         onOpenChange={setExportOpen}
@@ -1115,6 +1081,6 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         onOpenChange={setPeopleOpen}
         onChanged={() => void loadParticipants()}
       />
-    </div>
+    </>
   );
 };

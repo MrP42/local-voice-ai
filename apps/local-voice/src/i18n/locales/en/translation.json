@@ -1640,6 +1640,27 @@
     "recordingIndicator": "Meeting recording is running",
     "dictationBlocked": "Dictation is blocked while a meeting is recording.",
     "title": "Meetings",
+    "projects": {
+      "title": "Projects",
+      "collapse": "Collapse projects",
+      "expand": "Expand projects",
+      "open": "Open projects",
+      "close": "Close projects",
+      "resize": "Width of the projects column"
+    },
+    "layout": {
+      "content": "Workspace",
+      "controls": "Controls",
+      "rightCollapse": "Collapse controls",
+      "rightExpand": "Expand controls",
+      "resizeRight": "Width of the right column",
+      "split": "Split between workspace and transcript",
+      "lowerTabs": "Transcript and questions",
+      "contentTabs": "Notes, AI notes and minutes",
+      "emptyContent": "Pick a recording from the projects or start a new one.",
+      "emptyTranscript": "The transcript appears here once a recording is running or you pick one.",
+      "emptyChat": "Pick a recording first to ask questions about it."
+    },
     "record": {
       "start": "Start recording",
       "stop": "Stop",

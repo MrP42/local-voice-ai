@@ -1,0 +1,60 @@
+{
+  "viewport": {
+    "w": 1920
+  },
+  "documentScrollHeight": 700,
+  "innerHeight": 700,
+  "mainOverflow": false,
+  "scrollers": [
+    {
+      "id": "rec-content-scroll",
+      "scrollHeight": 714,
+      "clientHeight": 552
+    },
+    {
+      "id": "rec-controls-area",
+      "scrollHeight": 482,
+      "clientHeight": 305
+    },
+    {
+      "id": "transcript-scroll",
+      "scrollHeight": 4830,
+      "clientHeight": 127
+    }
+  ],
+  "nested": [],
+  "boxes": {
+    "rec-sessions": {
+      "top": 79,
+      "left": 211,
+      "width": 40,
+      "height": 554
+    },
+    "rec-content": {
+      "top": 79,
+      "left": 266,
+      "width": 305,
+      "height": 554
+    },
+    "rec-controls": {
+      "top": 79,
+      "left": 585,
+      "width": 300,
+      "height": 554
+    },
+    "rec-lower": {
+      "top": 422,
+      "left": 585,
+      "width": 300,
+      "height": 211
+    },
+    "transcript-scroll": {
+      "top": 497,
+      "left": 597,
+      "width": 276,
+      "height": 127
+    },
+    "live-notes-pad": null,
+    "job-panel": null
+  }
+}

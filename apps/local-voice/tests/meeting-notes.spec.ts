@@ -788,7 +788,7 @@ test("Notizblock: Aufnahmeseite zweispaltig mit Transkript (Screenshot)", async 
 const openDetailNotes = async (page: Page) => {
   await openRecordings(page);
   await page.getByText("Kundentermin Meyer", { exact: true }).click();
-  await page.getByRole("button", { name: "Notizen", exact: true }).click();
+  await page.getByRole("tab", { name: "Notizen", exact: true }).click();
 };
 
 test("Notizblock: Detailansicht zeigt dieselben Notizen und speichert Aenderungen", async ({
@@ -831,13 +831,13 @@ test("Notizblock: Detailansicht zeigt dieselben Notizen und speichert Aenderunge
   await expect(
     view.locator("[data-block-id]").nth(2).getByTestId("note-time"),
   ).toHaveText("");
-  // Umschalter mit Platzhalter fuer die KI-Ansicht.
+  // Reiter mit Platzhalter fuer die KI-Ansicht.
   await expect(
-    page.getByRole("button", { name: "Meine Notizen" }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "KI-Notizen" }).click();
+    page.getByRole("tab", { name: "Notizen", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "KI-Notizen" }).click();
   await expect(page.getByTestId("ai-notes-placeholder")).toBeVisible();
-  await page.getByRole("button", { name: "Meine Notizen" }).click();
+  await page.getByRole("tab", { name: "Notizen", exact: true }).click();
 
   const ta = view.locator("[data-block-id]").nth(1).locator("textarea");
   await ta.click();
@@ -871,7 +871,11 @@ test("Notizblock: leere Notizen zeigen den Hinweis Stichpunkte genügen", async 
 
 const openManager = async (page: Page) => {
   await openDetailNotes(page);
-  await page.getByRole("button", { name: "Vorlagen verwalten …" }).click();
+  // Die Aufnahmekarte rechts hat denselben Knopf: hier zaehlt der der Arbeitsflaeche.
+  await page
+    .getByTestId("rec-content")
+    .getByRole("button", { name: "Vorlagen verwalten …" })
+    .click();
   const dialog = page.getByRole("dialog", { name: "Vorlagen" });
   await expect(dialog).toBeVisible();
   return dialog;
@@ -1523,7 +1527,7 @@ test.describe("KI-Notizen", () => {
 
   const openAiNotes = async (page: Page) => {
     await openDetailNotes(page);
-    await page.getByRole("button", { name: "KI-Notizen", exact: true }).click();
+    await page.getByRole("tab", { name: "KI-Notizen", exact: true }).click();
     const view = page.getByTestId("enhanced-notes");
     await expect(view).toBeVisible();
     return view;
@@ -1586,7 +1590,7 @@ test.describe("KI-Notizen", () => {
     await expect(page.getByText("konnten nicht ausgewertet werden")).toHaveCount(0);
   });
 
-  test("KI-Notizen: Quell-Klick wechselt ins Transkript, markiert Segment 12 und spielt ab 195 s", async ({
+  test("KI-Notizen: Quell-Klick markiert Segment 12 im Transkript und spielt ab 195 s", async ({
     page,
   }) => {
     await setup(page, { audio: true });
@@ -1598,8 +1602,8 @@ test.describe("KI-Notizen", () => {
     await expect(row).toBeVisible();
     await expect(row).toContainText("Der Preis ist uns zu hoch.");
     await expect(row).toHaveAttribute("data-highlighted", "true");
-    // Tab Transkript ist aktiv: die KI-Notizen sind ausgeblendet.
-    await expect(page.getByTestId("enhanced-notes")).toHaveCount(0);
+    // Das Transkript steht rechts: die KI-Notizen bleiben stehen.
+    await expect(page.getByTestId("enhanced-notes")).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => (window as any).__played))
       .toEqual([195]);

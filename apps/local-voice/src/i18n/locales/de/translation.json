@@ -1640,6 +1640,27 @@
     "recordingIndicator": "Meeting-Aufnahme läuft",
     "dictationBlocked": "Diktat ist gesperrt, solange eine Meeting-Aufnahme läuft.",
     "title": "Besprechungen",
+    "projects": {
+      "title": "Projekte",
+      "collapse": "Projekte einklappen",
+      "expand": "Projekte ausklappen",
+      "open": "Projekte öffnen",
+      "close": "Projekte schließen",
+      "resize": "Breite der Projekte-Spalte"
+    },
+    "layout": {
+      "content": "Arbeitsfläche",
+      "controls": "Bedienung",
+      "rightCollapse": "Bedienung einklappen",
+      "rightExpand": "Bedienung ausklappen",
+      "resizeRight": "Breite der rechten Spalte",
+      "split": "Aufteilung zwischen Arbeitsfläche und Transkript",
+      "lowerTabs": "Transkript und Fragen",
+      "contentTabs": "Notizen, KI-Notizen und Protokoll",
+      "emptyContent": "Wähle eine Aufnahme aus den Projekten oder starte eine neue.",
+      "emptyTranscript": "Das Transkript erscheint hier, sobald eine Aufnahme läuft oder du eine Aufnahme wählst.",
+      "emptyChat": "Wähle zuerst eine Aufnahme, um Fragen zu ihr zu stellen."
+    },
     "record": {
       "start": "Aufnahme starten",
       "stop": "Beenden",
