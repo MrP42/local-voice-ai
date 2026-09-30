@@ -251,6 +251,11 @@ pub struct LocalLlmServer {
     /// Test: ersetzt das Starten von `llama-server` durch ein eigenes Kind.
     #[cfg(test)]
     spawn_hook: Mutex<Option<SpawnHook>>,
+    /// Test: so weit ist die Uhr der Neustart-Sperre vorgestellt. Die Tests
+    /// lassen die Sperre ablaufen, ohne Wanduhrzeit zu warten: ein echter
+    /// Prozessstart dauert unter Last laenger als jede kurze Sperre (B5).
+    #[cfg(test)]
+    clock_skew: Mutex<Duration>,
 }
 
 impl Default for LocalLlmServer {
@@ -295,6 +300,21 @@ impl LocalLlmServer {
             starts: AtomicU32::new(0),
             #[cfg(test)]
             spawn_hook: Mutex::new(None),
+            #[cfg(test)]
+            clock_skew: Mutex::new(Duration::ZERO),
+        }
+    }
+
+    /// Die Uhr der Neustart-Sperre: `Instant::now()`. Nur in Tests laesst sie
+    /// sich vorstellen (`clock_skew`), damit die Sperrzeit ohne Warten ablaeuft.
+    fn restart_clock(&self) -> Instant {
+        #[cfg(test)]
+        {
+            Instant::now() + *self.clock_skew.lock().unwrap()
+        }
+        #[cfg(not(test))]
+        {
+            Instant::now()
         }
     }
 
@@ -526,7 +546,7 @@ impl LocalLlmServer {
     /// Entscheidet vor jedem Start: erlaubt, oder Sperre nach Absturz.
     /// Hoechstens ein Neustart nach Absturz pro `restart_cooldown`.
     fn admit_start(&self, model_id: &str) -> Result<StartKind, String> {
-        let now = Instant::now();
+        let now = self.restart_clock();
         let refusal: String = {
             let mut st = self.crash.lock().unwrap();
             // Abgelaufene Sperre: der Absturz gilt wieder als unbehandelt, der
@@ -1154,6 +1174,11 @@ mod tests {
                 self.spawned.load(Ordering::Acquire)
             }
 
+            /// Stellt die Uhr der Neustart-Sperre vor (statt zu warten).
+            fn advance_clock(&self, by: Duration) {
+                *self.server.clock_skew.lock().unwrap() += by;
+            }
+
             /// "Absturz": den Prozess beenden, ohne den Server davon zu
             /// unterrichten -- der Zustand bleibt "bereit".
             fn crash(&self) {
@@ -1257,7 +1282,12 @@ mod tests {
 
         #[tokio::test]
         async fn the_restart_is_allowed_again_after_the_cooldown_and_opens_a_new_minute() {
-            let h = Harness::new(Duration::from_millis(900));
+            // B5: echte Sperrzeit (eine Minute) und vorgestellte Uhr statt 900 ms
+            // Wanduhr. Der echte Start eines Prozesses (`ping`, Port binden) kann
+            // unter Last laenger dauern als die alte Sperre von 900 ms; dann lief
+            // sie ab, bevor der zweite Absturz gemeldet war, und der Test sah
+            // einen dritten Start statt der Sperre.
+            let h = Harness::new(RESTART_COOLDOWN);
             h.ensure().await.unwrap();
             h.crash();
             h.ensure().await.unwrap(); // Neustart 1
@@ -1265,7 +1295,12 @@ mod tests {
             assert!(h.ensure().await.unwrap_err().starts_with(CRASHED));
             assert_eq!(h.spawned(), 2);
 
-            tokio::time::sleep(Duration::from_millis(1000)).await;
+            // Noch in der Minute: auch ein spaeterer Aufruf bleibt gesperrt.
+            h.advance_clock(RESTART_COOLDOWN - Duration::from_secs(10));
+            assert!(h.ensure().await.unwrap_err().starts_with(CRASHED));
+            assert_eq!(h.spawned(), 2);
+
+            h.advance_clock(Duration::from_secs(11));
             h.ensure().await.expect("nach der Sperrzeit wieder erlaubt");
             assert_eq!(h.spawned(), 3);
 
@@ -1279,7 +1314,8 @@ mod tests {
 
         #[tokio::test]
         async fn a_failed_restart_blocks_further_attempts_and_reports_the_code() {
-            let h = Harness::new(Duration::from_millis(1500));
+            // Wie oben (B5): vorgestellte Uhr statt Wanduhr-Sperre von 1,5 s.
+            let h = Harness::new(RESTART_COOLDOWN);
             h.ensure().await.unwrap();
             h.crash();
             *h.behaviour.lock().unwrap() = Behaviour::ExitImmediately;
@@ -1295,7 +1331,7 @@ mod tests {
             assert!(blocked.starts_with(CRASHED), "{blocked}");
             assert_eq!(h.spawned(), 2, "kein Start in der Sperre");
 
-            tokio::time::sleep(Duration::from_millis(1600)).await;
+            h.advance_clock(RESTART_COOLDOWN + Duration::from_secs(1));
             h.ensure().await.expect("nach der Sperre wieder ein Start");
             assert_eq!(h.spawned(), 3);
         }

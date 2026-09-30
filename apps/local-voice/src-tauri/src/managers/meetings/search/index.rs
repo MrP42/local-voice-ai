@@ -1856,6 +1856,23 @@ pub(crate) mod tests {
         page.items.iter().map(|i| i.meeting.title.clone()).collect()
     }
 
+    /// Setzt `created_at` (Sekunden) fest. Die Liste ohne Suchtext ordnet nach
+    /// `created_at DESC, id`; `create_meeting` stempelt die aktuelle Sekunde.
+    /// Ohne festen Wert haengt die Reihenfolge davon ab, ob zwischen zwei
+    /// `ready_meeting` die Sekunde wechselt (dann steht die spaetere vorn) und
+    /// sonst von der ULID, die innerhalb einer Millisekunde zufaellig ordnet:
+    /// unter Last kippt sie (B5).
+    fn pin_created_at(s: &MeetingStore, pins: &[(&Meeting, i64)]) {
+        let conn = s.get_connection().unwrap();
+        for (m, at) in pins {
+            conn.execute(
+                "UPDATE meetings SET created_at = ?1 WHERE id = ?2",
+                params![at, m.id],
+            )
+            .unwrap();
+        }
+    }
+
     // ---- Wort- und Trigram-Suche -----------------------------------------
 
     #[test]
@@ -3334,6 +3351,8 @@ pub(crate) mod tests {
         for m in [&filed, &loose, &orphan] {
             index_texts(&s, m, &["Das Angebot liegt vor."]);
         }
+        // B5: feste Reihenfolge der Liste (neueste zuerst), nicht die der Uhr.
+        pin_created_at(&s, &[(&filed, 3_000), (&loose, 2_000), (&orphan, 1_000)]);
         let f = s.folder_save(None, "Kunden", None).unwrap();
         let gone = s.folder_save(None, "Alt", None).unwrap();
         s.set_meeting_folders(&filed.id, &[f.id.clone()]).unwrap();
@@ -3348,10 +3367,11 @@ pub(crate) mod tests {
         assert_eq!(meeting_titles(&page), vec!["Ohne Projekt", "Projekt geloescht"]);
         assert_eq!(page.total, 2);
         // Auch mit Suchtext (Such-Index-Pfad) und als Zaehler fuer die Liste.
-        assert_eq!(
-            meeting_titles(&s.search_meetings("Angebot", &unfiled, 0, 25).unwrap()),
-            vec!["Ohne Projekt", "Projekt geloescht"]
-        );
+        // Drei gleiche Texte haben gleichen Rang: ihre Reihenfolge ist Sache
+        // von SQLite, geprueft wird, WELCHE Besprechungen es sind.
+        let mut by_text = meeting_titles(&s.search_meetings("Angebot", &unfiled, 0, 25).unwrap());
+        by_text.sort();
+        assert_eq!(by_text, vec!["Ohne Projekt", "Projekt geloescht"]);
         // Ohne das Feld (oder mit false) bleibt alles wie zuvor.
         let all = s
             .search_meetings("", &MeetingFilter::default(), 0, 25)
@@ -3379,6 +3399,29 @@ pub(crate) mod tests {
             s.folder_counts().unwrap(),
             FolderCounts { all: 2, unfiled: 0 }
         );
+    }
+
+    #[test]
+    fn the_list_orders_by_creation_second_then_id_so_a_later_second_comes_first() {
+        // B5: so kippte `unfiled_filter_lists_meetings_without_a_living_folder`,
+        // wenn zwischen zwei Besprechungen die Sekunde wechselte.
+        let (_d, s) = tmp_store();
+        let first = ready_meeting(&s, "Zuerst", 1_000);
+        let second = ready_meeting(&s, "Danach", 2_000);
+        pin_created_at(&s, &[(&first, 100), (&second, 101)]);
+        let page = s
+            .search_meetings("", &MeetingFilter::default(), 0, 25)
+            .unwrap();
+        assert_eq!(meeting_titles(&page), vec!["Danach", "Zuerst"]);
+        // Gleiche Sekunde: die kleinere ID zuerst.
+        pin_created_at(&s, &[(&first, 100), (&second, 100)]);
+        let page = s
+            .search_meetings("", &MeetingFilter::default(), 0, 25)
+            .unwrap();
+        let mut ids = [first.id.clone(), second.id.clone()];
+        ids.sort();
+        let by_id: Vec<String> = page.items.iter().map(|i| i.meeting.id.clone()).collect();
+        assert_eq!(by_id, ids);
     }
 
     // ---- Recipes ---------------------------------------------------------
