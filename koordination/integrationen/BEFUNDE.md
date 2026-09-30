@@ -8,3 +8,8 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Konsequenz: Codex-Review (Gate-/Sicherheitslogik) vor A4/A7; Adapter A5–A7 müssen gate::run verwenden (Test je Adapter); Freigabe-Entscheidung nur aus der UI, nie über die Agentenpipe.
 - Status: offen
 
+## B2 — Review A1 (30.09.): 6 Härtungspunkte im Rechtekern
+- Beobachtet (feature-dev:code-reviewer, keine kritischen Funde): (1) Freigabe-Vorschau kann Empfänger abschneiden; (2) Audit-Flutung durch deny; (3) Freigabe-Flutung ohne Deduplizierung; (4) ungeprüfte IDs im Audit; (5) Lücken der Geheimnis-Erkennung; (6) Trigger ohne kind-Filter; dazu store::list-Abbruch, Provenienz-Schwärzung.
+- Konsequenz: Paket A1n.
+- Status: offen
+
