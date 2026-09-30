@@ -21,11 +21,15 @@ export interface YtPlayer {
   playVideo(): void;
   pauseVideo(): void;
   getCurrentTime(): number;
+  /** Sekunden; 0, solange die Metadaten noch nicht geladen sind. */
+  getDuration?(): number;
 }
 
 export interface YtEvents {
   onReady?: () => void;
   onError?: (event: { data: number }) => void;
+  /** `data` 1 = spielt. */
+  onStateChange?: (event: { data: number }) => void;
 }
 
 export interface YtNamespace {

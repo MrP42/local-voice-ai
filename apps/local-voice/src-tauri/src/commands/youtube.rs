@@ -11,10 +11,15 @@ use serde::Serialize;
 use specta::Type;
 use tauri::State;
 
+use crate::managers::meetings::retranscribe::{rerun_meeting, RerunSource};
 use crate::managers::meetings::search::indexer::{self, IndexJob};
 use crate::managers::meetings::store::{Meeting, MeetingStore};
+use crate::managers::meetings::variants::{self as fassungen, TranscriptVariant};
+use crate::managers::transcription::TranscriptionManager;
 use crate::managers::youtube::source::{self, AddOptions, YoutubeSource};
+use crate::managers::youtube::subtitles::SubtitleTrack;
 use crate::managers::youtube::tool::{self, ToolStatus};
+use crate::managers::youtube::{fetch, variants as yt_variants};
 use crate::managers::youtube::{normalize_link, YoutubeError};
 use crate::settings;
 
@@ -90,6 +95,126 @@ pub async fn youtube_tool_detect(
     tauri::async_runtime::spawn_blocking(move || tool::detect(configured.as_deref()))
         .await
         .map_err(|e| format!("youtube_tool_detect panicked: {e}"))
+}
+
+/// A3: Untertitelspuren des Videos (ein Seitenabruf ueber das selbst installierte
+/// yt-dlp, im Audit). Nur mit Schalter „privat“ und gefundenem Programm; sonst ein
+/// Fehlercode (`youtube_private_off`, `youtube_tool_missing`).
+#[tauri::command]
+#[specta::specta]
+pub async fn youtube_subtitle_tracks(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    meeting_id: String,
+) -> Result<Vec<SubtitleTrack>, String> {
+    let store = Arc::clone(&store);
+    let settings = settings::get_settings(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let status = tool::detect(settings.meeting_youtube_tool_path.as_deref());
+        yt_variants::tracks(
+            &store,
+            &meeting_id,
+            settings.meeting_youtube_private,
+            &status,
+            None,
+            None,
+        )
+    })
+    .await
+    .map_err(|e| format!("youtube_subtitle_tracks panicked: {e}"))?
+    .map_err(|e| e.to_command_error())
+}
+
+/// A3: laedt eine Untertitelspur und legt sie als Fassung an (die erste wird aktiv).
+#[tauri::command]
+#[specta::specta]
+pub async fn youtube_subtitles_fetch(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    meeting_id: String,
+    track: SubtitleTrack,
+) -> Result<TranscriptVariant, String> {
+    let store = Arc::clone(&store);
+    let settings = settings::get_settings(&app);
+    let id = meeting_id.clone();
+    let worker = Arc::clone(&store);
+    let variant_id = tauri::async_runtime::spawn_blocking(move || {
+        let status = tool::detect(settings.meeting_youtube_tool_path.as_deref());
+        yt_variants::fetch_subtitles(
+            &worker,
+            &id,
+            settings.meeting_youtube_private,
+            &status,
+            &track,
+            None,
+            None,
+        )
+    })
+    .await
+    .map_err(|e| format!("youtube_subtitles_fetch panicked: {e}"))?
+    .map_err(|e| e.to_command_error())?;
+    indexer::submit(&app, IndexJob::Meeting(meeting_id.clone()));
+    let mut conn = store.get_connection().map_err(|e| e.to_string())?;
+    fassungen::list(&mut conn, &meeting_id)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|v| v.id == variant_id)
+        .ok_or_else(|| "variant_not_found".to_string())
+}
+
+/// A3: eigene Transkription des Videos: Audio ueber das selbst installierte yt-dlp
+/// in einen Temp-Ordner, dann die Pipeline der Neu-Transkription (Fortschritt,
+/// Pause, Stopp). Das Ergebnis wird am Ende eine NEUE Fassung und aktiv; ein Stopp
+/// laesst die bisherige aktiv (B17).
+#[tauri::command]
+#[specta::specta]
+pub async fn youtube_own_transcription(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    transcription: State<'_, Arc<TranscriptionManager>>,
+    meeting_id: String,
+    model_id: Option<String>,
+) -> Result<(), String> {
+    let store = Arc::clone(&store);
+    let transcription = Arc::clone(&transcription);
+    let settings = settings::get_settings(&app);
+    let video_id = source::read_source(&store, &meeting_id)
+        .map_err(|e| e.to_command_error())?
+        .map(|s| s.video_id)
+        .ok_or_else(|| "not_a_youtube_meeting".to_string())?;
+    let status = tauri::async_runtime::spawn_blocking({
+        let path = settings.meeting_youtube_tool_path.clone();
+        move || tool::detect(path.as_deref())
+    })
+    .await
+    .map_err(|e| format!("youtube_own_transcription panicked: {e}"))?;
+    let exe = fetch::resolve(settings.meeting_youtube_private, &status)
+        .map_err(|e| e.to_command_error())?;
+    rerun_meeting(
+        &app,
+        store,
+        transcription,
+        meeting_id,
+        model_id,
+        RerunSource::Youtube {
+            exe,
+            video_id,
+            tool_version: status.version,
+        },
+    )
+    .await
+}
+
+/// A3: die Videodauer aus dem Player nachtragen (nur wenn sie fehlt).
+#[tauri::command]
+#[specta::specta]
+pub async fn youtube_set_duration(
+    store: State<'_, Arc<MeetingStore>>,
+    meeting_id: String,
+    seconds: f64,
+) -> Result<bool, String> {
+    yt_variants::set_duration_if_missing(&store, &meeting_id, seconds)
+        .map_err(|e| e.to_command_error())
 }
 
 /// Schalter „privat/experimentell“ (Standard aus).

@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { commands, type Meeting, type YoutubeSource } from "@/bindings";
 import type { TranscriptPlayer } from "../transcriptPlayer";
 import {
@@ -55,8 +61,19 @@ export function useYoutubeSource(meeting: Meeting): YoutubeBinding {
     [source],
   );
 
+  // A3: die Dauer fehlt bei einer neuen YouTube-Besprechung (oEmbed nennt sie
+  // nicht); der Player kennt sie nach dem Start und traegt sie einmalig nach.
+  const durationMissing = meeting.duration_ms == null;
+  const onDuration = useCallback(
+    (seconds: number) => {
+      if (durationMissing)
+        void commands.youtubeSetDuration(meeting.id, seconds);
+    },
+    [durationMissing, meeting.id],
+  );
+
   const panel = source ? (
-    <YoutubePlayerPanel ref={handle} source={source} />
+    <YoutubePlayerPanel ref={handle} source={source} onDuration={onDuration} />
   ) : null;
 
   return { source, player, panel };

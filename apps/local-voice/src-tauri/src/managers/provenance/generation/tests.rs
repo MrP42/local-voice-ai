@@ -876,3 +876,88 @@ fn every_purpose_has_its_own_stable_snake_case_name() {
         assert_eq!(serde_json::to_value(purpose).unwrap(), json!(name));
     }
 }
+
+// -- A3: Zusammenfassung einer YouTube-Besprechung -------------------------------
+
+/// Eine YouTube-Besprechung wie nach A2/A3: keine Audiodatei, keine Dauer, kein
+/// Aufnahmeende, das Transkript stammt aus einer Fassung (Untertitel).
+fn youtube_meeting_with_subtitles(fx: &Fx, n: u32) -> String {
+    use crate::managers::meetings::variants::{self, NewVariant};
+    let meeting = fx
+        .store
+        .create_meeting("Lastgang verstehen", MeetingSource::Youtube, None)
+        .unwrap();
+    fx.store
+        .set_status(&meeting.id, MeetingStatus::Ready)
+        .unwrap();
+    let segments: Vec<StoredSegment> = (0..n)
+        .map(|i| StoredSegment {
+            segment_index: i,
+            text: format!(
+                "Satz {i} im Video ueber Lastgang und Speicher. {}",
+                "Weitere Erklaerungen zum Thema. ".repeat(3)
+            ),
+            start_ms: u64::from(i) * 7_000,
+            end_ms: u64::from(i) * 7_000 + 6_000,
+            channel: 2,
+            speaker_index: None,
+            words: None,
+        })
+        .collect();
+    let mut conn = fx.conn();
+    variants::add(
+        &mut conn,
+        NewVariant {
+            meeting_id: meeting.id.clone(),
+            kind: variants::KIND_SUBTITLES_MANUAL,
+            language: Some("de".into()),
+            model: None,
+            segments,
+            activate: false,
+        },
+    )
+    .unwrap();
+    meeting.id
+}
+
+#[tokio::test]
+async fn a_youtube_meeting_gets_a_protocol_with_provenance_without_duration_or_audio() {
+    ensure_ledger();
+    let port =
+        spawn_llm_mock_with(|_| MockReply::Body(body_with_usage(&minutes_answer(), 400, 80))).await;
+    let settings = settings_with_mock_provider(port);
+    let fx = Fx::new();
+    let meeting_id = youtube_meeting_with_subtitles(&fx, 4);
+    let store = Arc::new(crate::managers::meetings::store::MeetingStore::open_at(&fx.db_path).unwrap());
+    let meeting = store.get_meeting(&meeting_id).unwrap().unwrap();
+    assert_eq!((meeting.duration_ms, meeting.ended_at), (None, None));
+    assert!(meeting.audio_paths().is_empty());
+
+    // Kopffakten: Dauer aus dem letzten Segment, Datum vom Anlegen, Mischkanal.
+    let segments = store.get_segments(&meeting_id).unwrap();
+    let head = crate::managers::meetings::llm_call::build_head(&meeting, &segments);
+    assert_eq!(head.duration_ms, 3 * 7_000 + 6_000);
+    assert!(head.mixed_channel, "Untertitel haben keine Sprecher");
+    assert!(!head.date_iso.is_empty());
+
+    let doc = crate::managers::meetings::minutes::generate_minutes_with_settings(
+        &settings,
+        store.clone(),
+        &meeting_id,
+        None,
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    let entries = provenance::get(&fx.conn(), SubjectKind::Document, &doc.id).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].operation, "minutes");
+    assert_eq!(entries[0].model_id.as_deref(), Some("test-model"));
+    assert_eq!(entries[0].sources[0].reference, meeting_id);
+
+    // Mit der Dauer aus dem Player nennt der Kopf diese statt der Segmentzeit.
+    assert!(crate::managers::youtube::variants::set_duration_if_missing(&store, &meeting_id, 1_800.0).unwrap());
+    let meeting = store.get_meeting(&meeting_id).unwrap().unwrap();
+    let head = crate::managers::meetings::llm_call::build_head(&meeting, &segments);
+    assert_eq!(head.duration_ms, 1_800_000);
+}

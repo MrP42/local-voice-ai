@@ -1899,6 +1899,103 @@ async youtubeToolDetect(path: string | null) : Promise<Result<ToolStatus, string
 }
 },
 /**
+ * A3: Untertitelspuren des Videos (ein Seitenabruf ueber das selbst installierte
+ * yt-dlp, im Audit). Nur mit Schalter „privat“ und gefundenem Programm; sonst ein
+ * Fehlercode (`youtube_private_off`, `youtube_tool_missing`).
+ */
+async youtubeSubtitleTracks(meetingId: string) : Promise<Result<SubtitleTrack[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_subtitle_tracks", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A3: laedt eine Untertitelspur und legt sie als Fassung an (die erste wird aktiv).
+ */
+async youtubeSubtitlesFetch(meetingId: string, track: SubtitleTrack) : Promise<Result<TranscriptVariant, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_subtitles_fetch", { meetingId, track }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A3: eigene Transkription des Videos: Audio ueber das selbst installierte yt-dlp
+ * in einen Temp-Ordner, dann die Pipeline der Neu-Transkription (Fortschritt,
+ * Pause, Stopp). Das Ergebnis wird am Ende eine NEUE Fassung und aktiv; ein Stopp
+ * laesst die bisherige aktiv (B17).
+ */
+async youtubeOwnTranscription(meetingId: string, modelId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_own_transcription", { meetingId, modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A3: die Videodauer aus dem Player nachtragen (nur wenn sie fehlt).
+ */
+async youtubeSetDuration(meetingId: string, seconds: number) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_set_duration", { meetingId, seconds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Fassungen einer Besprechung. Eine unterbrochene Neu-Transkription (Absturz)
+ * wird vorher zurueckgenommen, sofern kein Auftrag mehr laeuft.
+ */
+async transcriptVariants(meetingId: string) : Promise<Result<TranscriptVariant[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variants", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Fassung waehlen“: macht die Fassung zum aktiven Transkript.
+ */
+async transcriptVariantActivate(variantId: string) : Promise<Result<TranscriptVariant, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variant_activate", { variantId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Segmente einer Fassung (fuer die Vergleichsansicht). Die aktive Fassung liefert
+ * den Stand von `transcripts`, also auch Korrekturen von Hand.
+ */
+async transcriptVariantSegments(variantId: string) : Promise<Result<StoredSegment[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variant_segments", { variantId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Zusammenfuehren“: das lokale Modell verbessert den Text von Fassung `base_id`
+ * mit Hilfe von `other_id` und legt eine dritte Fassung an (nicht aktiv). Ausgaben,
+ * die das Schema verletzen oder zu viel erfinden, werden verworfen (`merge`).
+ */
+async transcriptVariantsMerge(meetingId: string, baseId: string, otherId: string) : Promise<Result<TranscriptVariant, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variants_merge", { meetingId, baseId, otherId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Schalter „privat/experimentell“ (Standard aus).
  */
 async changeMeetingYoutubePrivateSetting(enabled: boolean) : Promise<Result<null, string>> {
@@ -5650,6 +5747,22 @@ export type SubjectKind =
  * Ergebnis eines Workflow-Laufs (Goal B).
  */
 "run_output"
+/**
+ * Eine verfuegbare Untertitelspur.
+ */
+export type SubtitleTrack = { 
+/**
+ * Sprachcode wie von yt-dlp genannt (`de`, `en`, `de-orig`).
+ */
+language: string; name: string; 
+/**
+ * Automatisch erzeugt (Spracherkennung von YouTube), nicht hochgeladen.
+ */
+auto: boolean; 
+/**
+ * Die Spur, die ohne Nachfrage genommen wird.
+ */
+recommended: boolean }
 export type SummaryOptions = { 
 /**
  * "kurz" (~150 Wörter) | "mittel" (~400) | "lang" (~900)
@@ -5721,6 +5834,22 @@ source: string | null;
  */
 error: string | null }
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
+/**
+ * Eine Fassung, wie die Oberflaeche sie liest.
+ */
+export type TranscriptVariant = { id: string; meeting_id: string; 
+/**
+ * `subtitles_manual`, `subtitles_auto`, `stt`, `merged`, `retranscribed`.
+ */
+kind: string; language: string | null; model: string | null; 
+/**
+ * Laufende Nummer je Besprechung (v1, v2, ...).
+ */
+number: number; 
+/**
+ * Sekunden UTC.
+ */
+created_at: number; active: boolean; segment_count: number }
 export type TranslateOutcome = { transcript: string; translation: string }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**

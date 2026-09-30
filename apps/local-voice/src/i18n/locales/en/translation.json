@@ -2177,7 +2177,14 @@
         "youtube_http": "YouTube answered with status {{detail}}.",
         "youtube_bad_response": "The answer from YouTube could not be read.",
         "youtube_store_failed": "The meeting could not be saved. {{detail}}",
-        "youtube_path_invalid": "The path is invalid."
+        "youtube_path_invalid": "The path is invalid.",
+        "youtube_private_off": "For subtitles and transcription, install yt-dlp yourself and switch on “private” in the settings.",
+        "youtube_tool_missing": "yt-dlp was not found. Please install it yourself and enter its path in the settings.",
+        "youtube_tool_outdated": "yt-dlp is out of date – please update it (yt-dlp -U) and try again.",
+        "youtube_tool_failed": "yt-dlp ended with error code {{detail}}.",
+        "youtube_tool_start": "yt-dlp could not be started. {{detail}}",
+        "youtube_no_subtitles": "This video has no subtitles.",
+        "youtube_cancelled": "Cancelled."
       },
       "player": {
         "region": "YouTube video",
@@ -2262,7 +2269,7 @@
       "configuredModel": "Configured meeting model",
       "start": "Re-transcribe",
       "running": "Transcribing…",
-      "runningHint": "The existing transcript is replaced by the new one as the run progresses. If you stop early, only the part transcribed so far remains. This can take a while for long recordings."
+      "runningHint": "The existing transcript is kept as a version. While the run progresses the view shows the new text; only at the end does it become the active version. If you stop early, the existing transcript stays active. This can take a while for long recordings."
     },
     "notes": {
       "tab": "Notes",
@@ -2786,6 +2793,100 @@
         "readonly": "Built-in recipes cannot be changed.",
         "not_found": "The recipe no longer exists.",
         "generic": "Saving failed: {{error}}"
+      }
+    },
+    "variants": {
+      "compareTab": "Compare",
+      "chip": "Version v{{number}} · {{kind}}",
+      "chipLabel": "Choose transcript version",
+      "menuLabel": "Versions",
+      "itemLabel": "v{{number}} · {{kind}} · {{count}} segments",
+      "itemActive": "{{label}} (active)",
+      "compare": "Compare",
+      "activated": "Version v{{number}} is now active.",
+      "kinds": {
+        "subtitles_manual": "Subtitles (manual)",
+        "subtitles_auto": "Subtitles (automatic)",
+        "stt": "Own transcription",
+        "merged": "Merged",
+        "retranscribed": "Re-transcribed"
+      },
+      "errors": {
+        "variant_busy": "The meeting is being processed. Please wait until it is done.",
+        "variant_not_found": "That version no longer exists.",
+        "variant_empty": "The version contains no text.",
+        "variant_no_rerun": "No re-transcription is running.",
+        "variant_store_failed": "The version could not be saved. {{detail}}",
+        "merge_same_variant": "Please choose two different versions.",
+        "merge_empty": "One of the versions contains no text.",
+        "merge_llm_failed": "The language model did not answer. {{detail}}",
+        "merge_rejected": "The merge was discarded: the model invented text or broke the format. No new version is created.",
+        "merge_timeout": "The merge took too long.",
+        "no_provider": "No language model is set up.",
+        "no_model": "No language model is selected."
+      },
+      "diff": {
+        "title": "Compare versions",
+        "baseLabel": "Version A (base)",
+        "otherLabel": "Version B",
+        "chooseA": "Use version A",
+        "chooseB": "Use version B",
+        "merge": "Merge",
+        "merging": "Merging …",
+        "mergeHint": "The local model improves the text of A using B and creates a third version. Invented text is discarded.",
+        "legendDel": "only in A (deleted)",
+        "legendIns": "only in B (inserted)",
+        "same": "The two versions are identical.",
+        "loading": "Loading …",
+        "need": "Comparing needs two versions.",
+        "merged": "Third version v{{number}} created. It is not active yet.",
+        "region": "Differences per line"
+      },
+      "youtube": {
+        "needTool": "For subtitles and transcription, install yt-dlp yourself and switch on “private” in the settings.",
+        "subtitles": "Load subtitles",
+        "subtitlesBusy": "Looking for subtitles …",
+        "pick": "Subtitle language",
+        "load": "Load",
+        "noSubtitles": "This video has no subtitles. Only your own transcription remains.",
+        "own": "Own transcription",
+        "ownBusy": "Transcribing …",
+        "loaded": "Subtitles “{{name}}” were added as a version.",
+        "ownDone": "The own transcription is done.",
+        "trackManual": "{{name}} (uploaded)",
+        "trackAuto": "{{name}} (automatic)",
+        "tools": "Subtitles and transcription"
+      }
+    },
+    "provenance": {
+      "menu": "Origin",
+      "menuLabel": "Actions",
+      "title": "Origin",
+      "model": "Model",
+      "tokens": "Tokens",
+      "tokensValue": "{{input}} in · {{output}} out",
+      "duration": "Duration",
+      "time": "Time",
+      "sources": "Sources",
+      "confidence": "Confidence",
+      "trigger": "Trigger",
+      "operation": "Operation",
+      "origin": "Record",
+      "originRecorded": "recorded when it was created",
+      "originDerived": "reconstructed from older data",
+      "empty": "There is no origin information for this content.",
+      "unknown": "unknown",
+      "local": "local",
+      "remote": "external",
+      "loading": "Loading …",
+      "failed": "The origin could not be read.",
+      "close": "Close",
+      "actor": {
+        "user": "User",
+        "auto": "Automatic",
+        "workflow": "Workflow",
+        "agent_external": "External agent",
+        "agent_local": "Local agent"
       }
     }
   },

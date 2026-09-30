@@ -137,3 +137,17 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## Entwicklungswerkzeuge
+
+Diese Pakete laufen nur in der Entwicklung (Playwright-Tests, `devDependencies`). Sie sind **nicht** Teil des
+Installers und der App.
+
+| Paket | Verwendung | Lizenz | Quelle |
+|---|---|---|---|
+| `@axe-core/playwright` 4.13.0 (Deque Systems) | axe-Prüfung der Seite Aufnahmen (`tests/meeting-a11y.spec.ts`) | MPL-2.0 | <https://github.com/dequelabs/axe-core-npm> |
+| `axe-core` 4.13.0 (Deque Systems), von `@axe-core/playwright` mitgebracht | Regelwerk der Barrierefreiheitsprüfung | MPL-2.0 | <https://github.com/dequelabs/axe-core> |
+
+Die MPL-2.0 (<https://www.mozilla.org/en-US/MPL/2.0/>) verlangt bei Weitergabe die Nennung und den Quelltext der
+Dateien selbst; beides ist hier erfüllt, weil nichts davon weitergegeben wird und die Pakete unverändert aus dem
+npm-Register kommen.

@@ -14,6 +14,14 @@
 //! Nutzer, bevor das alte Transkript ersetzt wurde, bleibt alles wie es war
 //! (der vorherige Status kommt zurueck); danach endet die Besprechung als
 //! `cancelled` mit den bis dahin neu transkribierten Bloecken.
+//!
+//! A3 / B17: das alte Transkript geht nie mehr verloren. Vor dem ersten neuen Block
+//! sichert `variants::begin_rerun` es als Fassung; am Ende wird das Ergebnis die
+//! NEUE aktive Fassung (`finish_rerun`), bei Stopp oder Fehler stellt `abort_rerun`
+//! die alte wieder her (der vorherige Status kommt zurueck, auch nach einem
+//! Stopp mitten im Lauf). Dieselbe Pipeline traegt die eigene Transkription eines
+//! YouTube-Videos (`RerunSource::Youtube`): Audio per selbst installiertem yt-dlp
+//! in einen Temp-Ordner, dekodiert, transkribiert, Temp-Datei geloescht.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -21,13 +29,13 @@ use std::sync::Arc;
 use log::{error, info};
 use tauri_specta::Event;
 
-use super::import::{
-    mark_stopped, read_wav_i16_mono_16k, run_speaker_step, transcribe_and_store,
-};
+use super::import::{read_wav_i16_mono_16k, run_speaker_step, transcribe_and_store};
 use super::job::{self, JobHandle, JobPhase};
 use super::recorder::MeetingEvent;
 use super::store::{MeetingStatus, MeetingStore};
+use super::variants;
 use crate::managers::transcription::TranscriptionManager;
+use crate::managers::youtube::fetch as yt_fetch;
 
 /// `StoredSegment::channel` values, mirroring `store.rs`.
 const CHANNEL_MIC: u8 = 0;
@@ -47,6 +55,41 @@ pub async fn retranscribe_meeting(
     meeting_id: String,
     model_id: Option<String>,
 ) -> Result<(), String> {
+    rerun_meeting(app, store, tm, meeting_id, model_id, RerunSource::Stored).await
+}
+
+/// Woher das Audio eines Laufs kommt.
+pub enum RerunSource {
+    /// Die gespeicherte Aufnahme oder Importdatei der Besprechung.
+    Stored,
+    /// A3: das Video einer YouTube-Besprechung ueber ein selbst installiertes yt-dlp.
+    Youtube {
+        exe: std::path::PathBuf,
+        video_id: String,
+        tool_version: Option<String>,
+    },
+}
+
+/// Die Eingabe des blockierenden Laufs.
+enum Input {
+    Files(Vec<(String, u8)>),
+    Youtube {
+        exe: std::path::PathBuf,
+        video_id: String,
+        tool_version: Option<String>,
+        guard: yt_fetch::Guard,
+    },
+}
+
+/// Neu-Transkription aus gespeichertem Audio oder (A3) aus einem YouTube-Video.
+pub async fn rerun_meeting(
+    app: &tauri::AppHandle,
+    store: Arc<MeetingStore>,
+    tm: Arc<TranscriptionManager>,
+    meeting_id: String,
+    model_id: Option<String>,
+    source: RerunSource,
+) -> Result<(), String> {
     let meeting = store
         .get_meeting(&meeting_id)
         .map_err(|e| format!("meeting_lookup_failed: {e}"))?
@@ -61,6 +104,12 @@ pub async fn retranscribe_meeting(
     // Subtitle imports carry no audio at all — there is nothing to redo, and
     // silently clearing their segments would destroy the only copy.
     let audio: Vec<(String, u8)> = match (&meeting.mic_audio_path, &meeting.system_audio_path) {
+        _ if matches!(source, RerunSource::Youtube { .. }) => {
+            if meeting.source != "youtube" {
+                return Err("not_a_youtube_meeting".to_string());
+            }
+            Vec::new()
+        }
         (Some(mic), Some(system)) => {
             vec![(mic.clone(), CHANNEL_MIC), (system.clone(), CHANNEL_SYSTEM)]
         }
@@ -89,10 +138,49 @@ pub async fn retranscribe_meeting(
         _ => tm.meeting_model_target(&crate::settings::get_settings(app)),
     };
 
+    // A3: eine unterbrochene Neu-Transkription (Absturz) zuerst zuruecknehmen.
+    if !job::global().is_running(&meeting_id) {
+        if let Ok(mut conn) = store.get_connection() {
+            let _ = variants::recover_interrupted(&mut conn, &meeting_id);
+        }
+    }
+    // A3: Tor und Audit `media.fetch` VOR dem Auftrag und vor dem ersten Byte.
+    let (input, youtube_guard_failed) = match source {
+        RerunSource::Stored => (Input::Files(audio), None),
+        RerunSource::Youtube {
+            exe,
+            video_id,
+            tool_version,
+        } => match yt_fetch::begin(&store, &video_id, "audio") {
+            Ok(guard) => (
+                Input::Youtube {
+                    exe,
+                    video_id,
+                    tool_version,
+                    guard,
+                },
+                None,
+            ),
+            Err(e) => (Input::Files(Vec::new()), Some(e)),
+        },
+    };
+    if let Some(e) = youtube_guard_failed {
+        return Err(e.to_command_error());
+    }
     // P8a: der Auftrag zuerst: gibt es schon einen, geschieht nichts.
-    let job = job::global()
-        .try_start(&meeting_id, job::app_emit(app))
-        .map_err(|e| e.to_string())?;
+    let job = match job::global().try_start(&meeting_id, job::app_emit(app)) {
+        Ok(job) => job,
+        Err(e) => {
+            if let Input::Youtube { guard, .. } = input {
+                yt_fetch::end(
+                    &store,
+                    guard,
+                    &Err(crate::managers::youtube::YoutubeError::Cancelled),
+                );
+            }
+            return Err(e.to_string());
+        }
+    };
     let previous_status = restored_status(&meeting.status);
     store
         .set_status(&meeting_id, MeetingStatus::Processing)
@@ -108,7 +196,7 @@ pub async fn retranscribe_meeting(
             &blocking_store,
             &tm,
             &blocking_id,
-            &audio,
+            input,
             &target,
             job.handle(),
         );
@@ -131,19 +219,19 @@ pub async fn retranscribe_meeting(
             info!("meetings: retranscribe ready ({meeting_id})");
             Ok(())
         }
-        Ok(RetranscribeEnd::Stopped { transcript_replaced }) => {
-            // Nichts ersetzt: alles ist wie vor dem Start (vorheriger Status).
-            // Sonst `cancelled` mit Abschluss- und Aufbewahrungsdaten.
-            let stored = if transcript_replaced {
-                let policy = crate::settings::get_meeting_audio_retention(app);
-                mark_stopped(&store, &meeting_id, chrono::Utc::now().timestamp(), &policy)
-                    .map(|()| MeetingStatus::Cancelled)
-            } else {
-                store
-                    .set_status(&meeting_id, previous_status)
-                    .map(|()| previous_status)
-                    .map_err(|e| format!("status_restore_failed: {e}"))
-            };
+        Ok(RetranscribeEnd::Stopped {
+            transcript_replaced,
+        }) => {
+            // B17: auch nach einem Stopp mitten im Lauf ist alles wie vor dem
+            // Start: die alte Fassung ist wieder das Transkript, der vorherige
+            // Status kommt zurueck. `cancelled` mit Teilergebnis gibt es hier nicht mehr.
+            if transcript_replaced {
+                restore_old_transcript(app, &store, &meeting_id);
+            }
+            let stored = store
+                .set_status(&meeting_id, previous_status)
+                .map(|()| previous_status)
+                .map_err(|e| format!("status_restore_failed: {e}"));
             match stored {
                 Ok(status) => {
                     emit_state(app, &meeting_id, status_name(status));
@@ -163,8 +251,10 @@ pub async fn retranscribe_meeting(
         }
         Err(e) => {
             error!("meetings: retranscribe failed ({meeting_id}): {e}");
-            let _ = store.set_status(&meeting_id, MeetingStatus::Failed);
-            emit_state(app, &meeting_id, "failed");
+            // B17: ein Fehler mitten im Lauf nimmt dem Nutzer das alte Transkript nicht.
+            restore_old_transcript(app, &store, &meeting_id);
+            let _ = store.set_status(&meeting_id, previous_status);
+            emit_state(app, &meeting_id, status_name(previous_status));
             emit_error(app, &meeting_id, "retranscribe_failed");
             Err(e)
         }
@@ -177,7 +267,9 @@ enum RetranscribeEnd {
     Completed,
     /// Der Nutzer hat gestoppt; `transcript_replaced`: das alte Transkript war
     /// schon durch (Teile des) neuen ersetzt.
-    Stopped { transcript_replaced: bool },
+    Stopped {
+        transcript_replaced: bool,
+    },
 }
 
 /// Der Status, den eine gestoppte Neu-Transkription ohne Aenderung
@@ -208,16 +300,77 @@ fn run_retranscribe(
     store: &Arc<MeetingStore>,
     tm: &Arc<TranscriptionManager>,
     meeting_id: &str,
-    audio: &[(String, u8)],
+    input: Input,
     target: &str,
     job: &Arc<JobHandle>,
 ) -> Result<RetranscribeEnd, String> {
     job.begin_phase(JobPhase::Prepare, 0);
     tm.initiate_model_load_target(target);
 
+    let (audio, youtube) = match input {
+        Input::Files(audio) => (audio, None),
+        Input::Youtube {
+            exe,
+            video_id,
+            tool_version,
+            guard,
+        } => (Vec::new(), Some((exe, video_id, tool_version, guard))),
+    };
     let mut tracks: Vec<(Vec<i16>, u8)> = Vec::with_capacity(audio.len());
     let mut stopped_early = false;
-    for (path, channel) in audio {
+    let mut youtube_ref: Option<(String, Option<String>)> = None;
+    if let Some((exe, video_id, tool_version, guard)) = youtube {
+        // Audio ins Temp, dekodieren, in den Speicher lesen; die Datei verschwindet
+        // sofort danach (nicht erst nach der langen Transkription).
+        let cancel = job.stop_flag();
+        let fetched = yt_fetch::download_audio(
+            &yt_fetch::ToolRun {
+                exe: &exe,
+                temp_base: None,
+            },
+            &video_id,
+            &cancel,
+        );
+        yt_fetch::end(
+            store,
+            guard,
+            &fetched.as_ref().map(|_| ()).map_err(Clone::clone),
+        );
+        let downloaded = match fetched {
+            Ok(d) => d,
+            Err(crate::managers::youtube::YoutubeError::Cancelled) => {
+                restore_dictation_model(app, tm);
+                return Ok(RetranscribeEnd::Stopped {
+                    transcript_replaced: false,
+                });
+            }
+            Err(e) => {
+                restore_dictation_model(app, tm);
+                return Err(e.to_command_error());
+            }
+        };
+        let decoded = crate::media::ensure_wav_cancellable(&downloaded.file, 16_000, &cancel);
+        let samples = match decoded {
+            Ok((wav, _tmp)) => read_wav_i16_mono_16k(&wav),
+            Err(e) if e == crate::media::DECODE_CANCELLED => {
+                restore_dictation_model(app, tm);
+                return Ok(RetranscribeEnd::Stopped {
+                    transcript_replaced: false,
+                });
+            }
+            Err(e) => Err(e),
+        };
+        drop(downloaded);
+        match samples {
+            Ok(samples) => tracks.push((samples, CHANNEL_MIXED)),
+            Err(e) => {
+                restore_dictation_model(app, tm);
+                return Err(e);
+            }
+        }
+        youtube_ref = Some((video_id, tool_version));
+    }
+    for (path, channel) in &audio {
         if job.is_stopped() {
             stopped_early = true;
             break;
@@ -240,6 +393,15 @@ fn run_retranscribe(
     let started = std::time::Instant::now();
 
     let result = (move || -> Result<RetranscribeEnd, String> {
+        // B17: das alte Transkript als Fassung sichern, bevor der Lauf in
+        // `transcripts` schreibt.
+        {
+            let mut conn = store
+                .get_connection()
+                .map_err(|e| format!("variants_begin_failed: {e}"))?;
+            variants::begin_rerun(&mut conn, meeting_id)
+                .map_err(|e| format!("variants_begin_failed: {e}"))?;
+        }
         store
             .clear_segments(meeting_id)
             .map_err(|e| format!("clear_segments_failed: {e}"))?;
@@ -278,21 +440,55 @@ fn run_retranscribe(
         drop(tracks);
         run_speaker_step(app, store, meeting_id, Some(job));
         // A1: Herkunft des neuen Transkripts (Modell, Dauer, Quelle).
-        crate::managers::provenance::generation::record_stt(
-            store,
-            crate::managers::provenance::generation::SttRun {
-                meeting_id,
-                operation: "retranscribe",
-                actor_kind: crate::managers::provenance::ActorKind::User,
-                model_id: target,
-                revision: None,
-                duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                sources: vec![crate::managers::provenance::SourceRef::new(
+        let (operation, sources, params) = match &youtube_ref {
+            Some((video_id, tool_version)) => {
+                let mut source =
+                    crate::managers::provenance::SourceRef::new("youtube", video_id, None);
+                source.url = Some(crate::managers::youtube::subtitles::watch_url(video_id));
+                (
+                    "youtube_audio",
+                    vec![source],
+                    serde_json::json!({
+                        "audio_ms": total_ms,
+                        "tool": "yt-dlp",
+                        "tool_version": tool_version,
+                    }),
+                )
+            }
+            None => (
+                "retranscribe",
+                vec![crate::managers::provenance::SourceRef::new(
                     "audio", meeting_id, None,
                 )],
-                params: serde_json::json!({ "audio_ms": total_ms }),
-            },
-        );
+                serde_json::json!({ "audio_ms": total_ms }),
+            ),
+        };
+        let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let run = || crate::managers::provenance::generation::SttRun {
+            meeting_id,
+            operation,
+            actor_kind: crate::managers::provenance::ActorKind::User,
+            model_id: target,
+            revision: None,
+            duration_ms,
+            sources: sources.clone(),
+            params: params.clone(),
+        };
+        crate::managers::provenance::generation::record_stt(store, run());
+        // B17: das Ergebnis wird erst JETZT die neue aktive Fassung.
+        let kind = if youtube_ref.is_some() {
+            variants::KIND_OWN
+        } else {
+            variants::KIND_RETRANSCRIBED
+        };
+        let variant_id = {
+            let mut conn = store
+                .get_connection()
+                .map_err(|e| format!("variants_finish_failed: {e}"))?;
+            variants::finish_rerun(&mut conn, meeting_id, kind, None)
+                .map_err(|e| format!("variants_finish_failed: {e}"))?
+        };
+        crate::managers::provenance::generation::record_stt_variant(store, &variant_id, run());
         Ok(RetranscribeEnd::Completed)
     })();
 
@@ -300,6 +496,28 @@ fn run_retranscribe(
     restore_dictation_model(app, tm);
 
     result
+}
+
+/// B17: Stopp oder Fehler nach dem Start der Transkription: die alte Fassung ist
+/// wieder das Transkript, die Anzeige laedt neu. Ein Fehler hier ist nur ein Log:
+/// die Marke bleibt, `recover_interrupted` holt es beim naechsten Oeffnen nach.
+fn restore_old_transcript(app: &tauri::AppHandle, store: &Arc<MeetingStore>, meeting_id: &str) {
+    let restored = store
+        .get_connection()
+        .map_err(|e| e.to_string())
+        .and_then(|mut conn| {
+            variants::abort_rerun(&mut conn, meeting_id).map_err(|e| e.to_string())
+        });
+    match restored {
+        Ok(true) => {
+            let _ = (MeetingEvent::Reset {
+                meeting_id: meeting_id.to_string(),
+            })
+            .emit(app);
+        }
+        Ok(false) => {}
+        Err(e) => error!("meetings: old transcript not restored ({meeting_id}): {e}"),
+    }
 }
 
 fn restore_dictation_model(app: &tauri::AppHandle, tm: &Arc<TranscriptionManager>) {

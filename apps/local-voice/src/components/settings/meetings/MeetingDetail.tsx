@@ -53,6 +53,11 @@ import { usePersistentState } from "@/hooks/usePersistentState";
 import { JobPanel } from "./JobProgress";
 import { audioTranscriptPlayer } from "./transcriptPlayer";
 import { useYoutubeSource } from "./youtube/useYoutubeSource";
+import { CompareView } from "./variants/CompareView";
+import { ProvenanceArea } from "./variants/ProvenanceArea";
+import { VariantChip } from "./variants/VariantChip";
+import { YoutubeTranscriptTools } from "./variants/YoutubeTranscriptTools";
+import { translateVariantError, useVariants } from "./variants/useVariants";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -73,9 +78,12 @@ const channelLabelKey = (channel: number) => {
 };
 
 /** Reiter der Arbeitsflaeche (Mitte). Das Transkript steht rechts unten. */
-type MidTab = "notes" | "ai" | "minutes";
+type MidTab = "notes" | "ai" | "minutes" | "compare";
 const isMidTab = (value: string): value is MidTab =>
-  value === "notes" || value === "ai" || value === "minutes";
+  value === "notes" ||
+  value === "ai" ||
+  value === "minutes" ||
+  value === "compare";
 
 /** Die Stellen der Aufnahmen-Seite, in die die Detailansicht ihre Teile legt. */
 export interface MeetingDetailSlots {
@@ -148,11 +156,22 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   useEffect(() => {
     if (live) setMidTab("notes");
   }, [live, setMidTab]);
+  // A3: Fassungen des Transkripts; der Reiter Vergleich erscheint ab zwei.
+  const { variants, reload: reloadVariants } = useVariants(meetingId);
+  const reloadVariantsRef = useRef(reloadVariants);
+  reloadVariantsRef.current = reloadVariants;
   const midTabs = [
     { id: "notes" as const, label: t("meetings.notes.tab") },
     { id: "ai" as const, label: t("meetings.notes.view.ai") },
     { id: "minutes" as const, label: t("meetings.detail.minutesTab") },
+    ...(variants.length >= 2
+      ? [{ id: "compare" as const, label: t("meetings.variants.compareTab") }]
+      : []),
   ];
+  // Ohne zwei Fassungen gibt es nichts zu vergleichen.
+  useEffect(() => {
+    if (midTab === "compare" && variants.length < 2) setMidTab("notes");
+  }, [midTab, variants.length, setMidTab]);
   const [segments, setSegments] = useState<StoredSegment[]>([]);
   // M3-P3c: Sprecher (Namen, Anteile), Epoche der Segmentnummern und Hinweise
   // zur Sprechertrennung (`metadata_json.diarize`).
@@ -388,6 +407,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     const seq = ++loadSeq.current;
     liveBuffer.current = [];
     setLoading(true);
+    void reloadVariantsRef.current();
     const [result] = await Promise.all([
       commands.meetingsGetSegments(meetingId),
       loadSpeakers(),
@@ -805,22 +825,43 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       )}
 
       <div role="tabpanel" data-testid={`mid-panel-${midTab}`}>
-        {midTab === "notes" || midTab === "ai" ? (
+        {midTab === "compare" ? (
+          <CompareView
+            meetingId={meetingId}
+            variants={variants}
+            onActivated={() => loadSegments()}
+            onMerged={() => reloadVariants()}
+          />
+        ) : midTab === "notes" || midTab === "ai" ? (
           <div className="space-y-3" ref={notesRef}>
             {midTab === "notes" ? (
               <MyNotesView meeting={meeting} live={live} compact={compact} />
             ) : (
-              <EnhancedNotesView
-                meeting={meeting}
-                segments={segments}
-                epochKey={epochKey}
-                hasAudio={hasAudio}
-                onJumpToSource={jumpToSource}
-              />
+              <ProvenanceArea
+                subject={{
+                  type: "document",
+                  meetingId,
+                  docKind: "enhanced_notes",
+                }}
+                testId="prov-area-ai"
+              >
+                <EnhancedNotesView
+                  meeting={meeting}
+                  segments={segments}
+                  epochKey={epochKey}
+                  hasAudio={hasAudio}
+                  onJumpToSource={jumpToSource}
+                />
+              </ProvenanceArea>
             )}
           </div>
         ) : (
-          <MinutesView meetingId={meetingId} meetingTitle={meetingTitle} />
+          <ProvenanceArea
+            subject={{ type: "document", meetingId, docKind: "minutes" }}
+            testId="prov-area-minutes"
+          >
+            <MinutesView meetingId={meetingId} meetingTitle={meetingTitle} />
+          </ProvenanceArea>
         )}
       </div>
     </>
@@ -873,8 +914,38 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   );
 
   /** Transkript (Reiter rechts unten): Werkzeugzeilen fest, die Liste scrollt. */
+  const activeVariant = variants.find((v) => v.active) ?? null;
+  const chooseVariant = async (id: string) => {
+    const result = await commands.transcriptVariantActivate(id);
+    if (result.status !== "ok") {
+      setTranscriptError(translateVariantError(result.error, t));
+      return;
+    }
+    setTranscriptError(null);
+    await loadSegments();
+  };
+  const showChip =
+    variants.length > 1 || (youtube.source !== null && variants.length > 0);
+
   const transcriptPart = (
     <>
+      {showChip && (
+        <div className="flex flex-wrap items-center gap-2">
+          <VariantChip
+            variants={variants}
+            disabled={growing}
+            onActivate={(v) => void chooseVariant(v.id)}
+            onCompare={() => setMidTab("compare")}
+          />
+        </div>
+      )}
+      {youtube.source && (
+        <YoutubeTranscriptTools
+          meetingId={meetingId}
+          busy={growing}
+          onChanged={() => loadSegments()}
+        />
+      )}
       {growing && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <label className="flex cursor-pointer items-center gap-2 text-xs text-text/80">
@@ -924,7 +995,15 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       ) : segments.length === 0 ? (
         <p className="text-sm text-text/60">{t("meetings.live.empty")}</p>
       ) : (
-        <div className="relative flex min-h-0 flex-1 flex-col">
+        <ProvenanceArea
+          subject={{
+            type: "transcript",
+            meetingId,
+            variantId: activeVariant?.id ?? null,
+          }}
+          testId="prov-area-transcript"
+          className="relative flex min-h-0 flex-1 flex-col"
+        >
           <div
             ref={transcriptRef}
             data-testid="transcript-scroll"
@@ -1042,7 +1121,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
               {t("meetings.detail.toLiveEnd")}
             </Button>
           )}
-        </div>
+        </ProvenanceArea>
       )}
     </>
   );

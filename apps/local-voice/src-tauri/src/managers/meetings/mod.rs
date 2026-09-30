@@ -11,6 +11,7 @@ pub mod import;
 pub mod job; // P8a
 pub mod job_harness; // P8a: Pruefhaken fuer den Headless-Lauf
 pub mod llm_call;
+pub mod merge; // A3: KI-Zusammenfuehrung von Fassungen
 pub mod mail; // M6-P6c
 pub mod mic_capture;
 pub mod minutes;
@@ -27,6 +28,7 @@ pub mod speakers; // M3-P3b
 pub mod stats;
 pub mod store;
 pub mod subtitle;
+pub mod variants; // A3: Transkript-Fassungen
 
 use std::path::{Path, PathBuf};
 

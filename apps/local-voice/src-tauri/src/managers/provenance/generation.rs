@@ -188,6 +188,19 @@ pub fn record_stt(store: &MeetingStore, run: SttRun<'_>) -> Option<String> {
     write(store, &entry, run.operation)
 }
 
+/// Wie `record_stt`, aber fuer eine Transkript-FASSUNG (A3): der Eintrag haengt an
+/// der Kennung der Fassung, nicht an der Besprechung.
+pub fn record_stt_variant(
+    store: &MeetingStore,
+    variant_id: &str,
+    run: SttRun<'_>,
+) -> Option<String> {
+    let mut entry = build_stt(&run);
+    entry.subject_kind = SubjectKind::TranscriptVariant;
+    entry.subject_id = variant_id.to_string();
+    write(store, &entry, run.operation)
+}
+
 /// Provenienz eines Transkripts aus einer Untertiteldatei (VTT/SRT): kein Modell,
 /// kein Sprachmodell-Aufruf; Quelle ist die Datei.
 pub fn build_subtitle_import(meeting_id: &str, file_name: &str, segments: usize) -> NewProvenance {

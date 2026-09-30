@@ -56,12 +56,18 @@ struct ChatCompletionRequest {
 
 /// Temperatur und Startwert fuer einen nicht-streamenden Aufruf: die KI-Notizen
 /// (Erzeugen, Map/Reduce, Anweisung anwenden) und seit P1k das Protokoll samt
-/// Vorlagenwahl laufen lokal deterministisch, wie der Chat seit P4g. Sonst sampelt das Modell mal ohne, mal mit
+/// Vorlagenwahl laufen lokal deterministisch, wie der Chat seit P4g (A3: auch die
+/// KI-Zusammenfuehrung von Transkript-Fassungen). Sonst sampelt das Modell mal ohne, mal mit
 /// verworfener Quell-ID, und die Notizen-Eval (Soll ai_sourced >= 0,95)
 /// besteht nur zufaellig. Entfernte Anbieter und alle anderen Zwecke bekommen
 /// die Felder nicht: manche lehnen sie mit 400 ab (Denkmodelle).
 fn deterministic_sampling(local: bool, purpose: Purpose) -> (Option<f32>, Option<u32>) {
-    if local && matches!(purpose, Purpose::EnhancedNotes | Purpose::Followup | Purpose::Minutes) {
+    if local
+        && matches!(
+            purpose,
+            Purpose::EnhancedNotes | Purpose::Followup | Purpose::Minutes | Purpose::TranscriptMerge
+        )
+    {
         (Some(0.0), Some(CHAT_SEED))
     } else {
         (None, None)

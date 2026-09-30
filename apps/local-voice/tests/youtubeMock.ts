@@ -73,6 +73,9 @@ export const installYoutubeMock = async (
             getCurrentTime() {
               return 0;
             }
+            getDuration() {
+              return 1234.5;
+            }
           },
         };
       }

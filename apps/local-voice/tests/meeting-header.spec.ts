@@ -473,7 +473,7 @@ test.describe("Neu transkribieren", () => {
     ).toBeVisible();
     // B17: das Transkript wird waehrend des Laufs ersetzt, bei einem Stopp bleibt der neue Teil.
     await expect(dialog.getByTestId("retranscribe-hint")).toHaveText(
-      "Das bisherige Transkript wird durch das neue ersetzt, während der Lauf fortschreitet. Stoppst du vorher, bleibt nur der schon neu transkribierte Teil. Bei langen Aufzeichnungen dauert das eine Weile.",
+      "Das bisherige Transkript bleibt als Fassung erhalten. Während der Lauf fortschreitet, zeigt die Ansicht den neuen Text; erst am Ende wird er die aktive Fassung. Stoppst du vorher, bleibt das bisherige Transkript aktiv. Bei langen Aufzeichnungen dauert das eine Weile.",
     );
     expect(await calls(page, "meetings_retranscribe")).toHaveLength(0);
     await dialog.getByTestId("retranscribe-start").click();

@@ -45,6 +45,8 @@ const PLAYER_ERROR_CODES = new Set([2, 5, 100, 101, 150, 153]);
 
 interface Props {
   source: YoutubeSource;
+  /** Die Videodauer (Sekunden), sobald der Player sie kennt; hoechstens einmal je Video. */
+  onDuration?: (seconds: number) => void;
 }
 
 /**
@@ -56,8 +58,11 @@ interface Props {
  * Zeitmarke): vorher verbindet sich nichts mit YouTube (Offline-Pfad, QG5).
  */
 export const YoutubePlayerPanel = forwardRef<YoutubePanelHandle, Props>(
-  ({ source }, ref) => {
+  ({ source, onDuration }, ref) => {
     const { t } = useTranslation();
+    const onDurationRef = useRef(onDuration);
+    onDurationRef.current = onDuration;
+    const durationSent = useRef<string | null>(null);
     // Die Sprache darf den laufenden Player nicht neu aufbauen: der Effekt liest `t` ueber eine Ref.
     const tRef = useRef(t);
     tRef.current = t;
@@ -104,6 +109,14 @@ export const YoutubePlayerPanel = forwardRef<YoutubePanelHandle, Props>(
       [source.video_id, source.start_s],
     );
 
+    const reportDuration = () => {
+      const seconds = playerRef.current?.getDuration?.() ?? 0;
+      if (seconds > 0 && durationSent.current !== source.video_id) {
+        durationSent.current = source.video_id;
+        onDurationRef.current?.(seconds);
+      }
+    };
+
     // Den Player an den Rahmen haengen, sobald der Nutzer ihn will. Kein
     // `destroy()`: es entfernt den Rahmen selbst, und React tut es beim Abbau
     // noch einmal.
@@ -118,6 +131,11 @@ export const YoutubePlayerPanel = forwardRef<YoutubePanelHandle, Props>(
           if (cancelled || !mounted.current || !frame) return;
           playerRef.current = new YT.Player(frame, {
             events: {
+              onStateChange: (event) => {
+                // Nach dem Start kennt der Player die Dauer (vorher meldet er 0).
+                if (cancelled || !mounted.current || event.data !== 1) return;
+                reportDuration();
+              },
               onReady: () => {
                 if (cancelled || !mounted.current) return;
                 setPhase("ready");

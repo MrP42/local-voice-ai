@@ -96,6 +96,9 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // Nur CREATE plus eine Rueckfuellung aus `calendar_sources`; Trigger halten
     // den Spiegel aktuell. Naeheres in `managers/integrations/schema.rs`.
     M::up(crate::managers::integrations::schema::INTEGRATIONS_MIGRATION),
+    // A3 (Transkript-Fassungen, B17). Nur CREATE plus eine Rueckfuellung: jedes
+    // vorhandene Transkript wird Fassung 1 (aktiv). Naeheres in `variants.rs`.
+    M::up(super::variants::VARIANTS_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).

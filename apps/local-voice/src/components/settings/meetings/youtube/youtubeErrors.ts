@@ -23,6 +23,13 @@ const KNOWN = new Set([
   "youtube_bad_response",
   "youtube_store_failed",
   "youtube_path_invalid",
+  "youtube_private_off",
+  "youtube_tool_missing",
+  "youtube_tool_outdated",
+  "youtube_tool_failed",
+  "youtube_tool_start",
+  "youtube_no_subtitles",
+  "youtube_cancelled",
 ]);
 
 export const youtubeErrorCode = (raw: string): string =>

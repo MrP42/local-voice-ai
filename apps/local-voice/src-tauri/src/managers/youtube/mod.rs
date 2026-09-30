@@ -50,10 +50,14 @@
 //!   Job-Objekt mit RAM-Deckel 1 GB und CPU-Deckel). Bei vollem RAM scheitert der
 //!   Start dieses Prozesses mit Fehlercode; die App bleibt bedienbar.
 
+pub mod fetch;
 pub mod link;
 pub mod oembed;
+pub mod run;
 pub mod source;
+pub mod subtitles;
 pub mod tool;
+pub mod variants;
 
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -90,6 +94,20 @@ pub enum YoutubeError {
     BadResponse(String),
     /// Datenbank (gesperrt, voll, defekt).
     Store(String),
+    /// A3: der Schalter „privat“ ist aus.
+    PrivateOff,
+    /// A3: kein selbst installiertes yt-dlp gefunden.
+    ToolMissing,
+    /// A3: yt-dlp ist zu alt fuer YouTubes aktuelle Seite (R2).
+    ToolOutdated,
+    /// A3: yt-dlp endete mit diesem Fehlercode.
+    ToolFailed(i32),
+    /// A3: yt-dlp liess sich nicht starten.
+    ToolStart(String),
+    /// A3: das Video hat keine Untertitel (oder die Spur fehlt).
+    NoSubtitles,
+    /// A3: vom Nutzer gestoppt.
+    Cancelled,
 }
 
 impl YoutubeError {
@@ -106,6 +124,13 @@ impl YoutubeError {
             YoutubeError::Http(_) => "youtube_http",
             YoutubeError::BadResponse(_) => "youtube_bad_response",
             YoutubeError::Store(_) => "youtube_store_failed",
+            YoutubeError::PrivateOff => "youtube_private_off",
+            YoutubeError::ToolMissing => "youtube_tool_missing",
+            YoutubeError::ToolOutdated => "youtube_tool_outdated",
+            YoutubeError::ToolFailed(_) => "youtube_tool_failed",
+            YoutubeError::ToolStart(_) => "youtube_tool_start",
+            YoutubeError::NoSubtitles => "youtube_no_subtitles",
+            YoutubeError::Cancelled => "youtube_cancelled",
         }
     }
 
@@ -115,7 +140,11 @@ impl YoutubeError {
     pub fn to_command_error(&self) -> String {
         match self {
             YoutubeError::Http(status) => format!("{}: {status}", self.code()),
-            YoutubeError::Network(m) | YoutubeError::Store(m) | YoutubeError::BadResponse(m) => {
+            YoutubeError::ToolFailed(code) => format!("{}: {code}", self.code()),
+            YoutubeError::Network(m)
+            | YoutubeError::Store(m)
+            | YoutubeError::ToolStart(m)
+            | YoutubeError::BadResponse(m) => {
                 format!("{}: {m}", self.code())
             }
             YoutubeError::Disabled(m) => format!("{}: {m}", self.code()),
@@ -146,6 +175,24 @@ impl std::fmt::Display for YoutubeError {
                 write!(f, "Die Antwort von YouTube war nicht auswertbar: {m}")
             }
             YoutubeError::Store(m) => write!(f, "Speicherfehler: {m}"),
+            YoutubeError::PrivateOff => write!(
+                f,
+                "Für Untertitel und Transkription yt-dlp selbst installieren und in den Einstellungen „privat“ einschalten."
+            ),
+            YoutubeError::ToolMissing => write!(
+                f,
+                "yt-dlp wurde nicht gefunden. Bitte selbst installieren und den Pfad in den Einstellungen eintragen."
+            ),
+            YoutubeError::ToolOutdated => write!(
+                f,
+                "yt-dlp ist veraltet – bitte aktualisieren (yt-dlp -U) und erneut versuchen."
+            ),
+            YoutubeError::ToolFailed(code) => {
+                write!(f, "yt-dlp endete mit Fehlercode {code}.")
+            }
+            YoutubeError::ToolStart(m) => write!(f, "yt-dlp ließ sich nicht starten: {m}"),
+            YoutubeError::NoSubtitles => write!(f, "Dieses Video hat keine Untertitel."),
+            YoutubeError::Cancelled => write!(f, "Abgebrochen."),
         }
     }
 }

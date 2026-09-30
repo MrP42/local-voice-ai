@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 import {
   VIEWPORTS,
   installRecMock,
@@ -7,9 +8,9 @@ import {
 } from "./recLayoutMock";
 
 // Aufnahmen-Oberflaeche (Goal aufnahmen-ui, M6): Barrierefreiheit (AK9).
-// @axe-core/playwright ist nicht installiert (und wird nicht nachgeruestet);
-// stattdessen pruefen gezielte Regeln: zugaengliche Namen, ARIA-Rollen und
-// -Verweise, sichtbarer Fokus, Tastaturwege fuer Griffe, Menue und Dialoge.
+// Gezielte Regeln: zugaengliche Namen, ARIA-Rollen und -Verweise, sichtbarer
+// Fokus, Tastaturwege fuer Griffe, Menue und Dialoge. Seit A3 (#66) zusaetzlich
+// eine axe-Pruefung der Seite (`@axe-core/playwright`, nur Entwicklung, MPL-2.0).
 
 test.beforeEach(async ({ page }) => {
   await installRecMock(page);
@@ -476,3 +477,51 @@ test("AK9: Projekt-Dialog per Tastatur - Fokus gefangen, Escape schliesst", asyn
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });
+
+// ---------------------------------------------------------------------------
+// axe (A3): keine kritischen und keine schweren Befunde
+// ---------------------------------------------------------------------------
+
+/**
+ * Befunde der Stufen "critical" und "serious", lesbar zusammengefasst.
+ *
+ * Bekannter Befund, hier bewusst ausgenommen: `color-contrast` (serious). Er
+ * entsteht app-weit durch die abgeblendete Schriftfarbe `text-text/60` (Zeitmarken,
+ * Ueberschriften der Spalten, Leerhinweise, Navigation) und liesse sich nur ueber
+ * die Design-Token beheben, also mit einem Diff durch fremde Dateien. Er ist als
+ * eigenes Paket zu behandeln (siehe Report A3); alle anderen Regeln gelten hier.
+ */
+const axeSevere = async (page: Page): Promise<string[]> => {
+  const result = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
+    .disableRules(["color-contrast"])
+    .analyze();
+  return result.violations
+    .filter((v) => v.impact === "critical" || v.impact === "serious")
+    .map(
+      (v) =>
+        `${v.id} (${v.impact}): ${v.nodes
+          .slice(0, 3)
+          .map((n) => n.target.join(" "))
+          .join(" | ")}`,
+    );
+};
+
+for (const [width, height] of [
+  [1366, 768],
+  [480, 800],
+] as const) {
+  test(`axe: Seite Aufnahmen bei ${width} px ohne kritische oder schwere Befunde`, async ({
+    page,
+  }) => {
+    await openM2(page, width, height);
+    expect(await axeSevere(page)).toEqual([]);
+  });
+
+  test(`axe: Seite Aufnahmen bei ${width} px ohne Auswahl`, async ({
+    page,
+  }) => {
+    await openRecordings(page, width, height);
+    expect(await axeSevere(page)).toEqual([]);
+  });
+}

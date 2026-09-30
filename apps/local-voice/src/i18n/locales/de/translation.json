@@ -2177,7 +2177,14 @@
         "youtube_http": "YouTube antwortete mit dem Status {{detail}}.",
         "youtube_bad_response": "Die Antwort von YouTube war nicht auswertbar.",
         "youtube_store_failed": "Die Besprechung konnte nicht gespeichert werden. {{detail}}",
-        "youtube_path_invalid": "Der Pfad ist ungültig."
+        "youtube_path_invalid": "Der Pfad ist ungültig.",
+        "youtube_private_off": "Für Untertitel und Transkription yt-dlp selbst installieren und in den Einstellungen „privat“ einschalten.",
+        "youtube_tool_missing": "yt-dlp wurde nicht gefunden. Bitte selbst installieren und den Pfad in den Einstellungen eintragen.",
+        "youtube_tool_outdated": "yt-dlp ist veraltet – bitte aktualisieren (yt-dlp -U) und erneut versuchen.",
+        "youtube_tool_failed": "yt-dlp endete mit Fehlercode {{detail}}.",
+        "youtube_tool_start": "yt-dlp ließ sich nicht starten. {{detail}}",
+        "youtube_no_subtitles": "Dieses Video hat keine Untertitel.",
+        "youtube_cancelled": "Abgebrochen."
       },
       "player": {
         "region": "YouTube-Video",
@@ -2262,7 +2269,7 @@
       "configuredModel": "Eingestelltes Besprechungsmodell",
       "start": "Neu transkribieren",
       "running": "Transkribiere…",
-      "runningHint": "Das bisherige Transkript wird durch das neue ersetzt, während der Lauf fortschreitet. Stoppst du vorher, bleibt nur der schon neu transkribierte Teil. Bei langen Aufzeichnungen dauert das eine Weile."
+      "runningHint": "Das bisherige Transkript bleibt als Fassung erhalten. Während der Lauf fortschreitet, zeigt die Ansicht den neuen Text; erst am Ende wird er die aktive Fassung. Stoppst du vorher, bleibt das bisherige Transkript aktiv. Bei langen Aufzeichnungen dauert das eine Weile."
     },
     "notes": {
       "tab": "Notizen",
@@ -2786,6 +2793,100 @@
         "readonly": "Mitgelieferte Recipes lassen sich nicht ändern.",
         "not_found": "Das Recipe gibt es nicht mehr.",
         "generic": "Speichern fehlgeschlagen: {{error}}"
+      }
+    },
+    "variants": {
+      "compareTab": "Vergleich",
+      "chip": "Fassung v{{number}} · {{kind}}",
+      "chipLabel": "Transkript-Fassung wählen",
+      "menuLabel": "Fassungen",
+      "itemLabel": "v{{number}} · {{kind}} · {{count}} Segmente",
+      "itemActive": "{{label}} (aktiv)",
+      "compare": "Vergleichen",
+      "activated": "Fassung v{{number}} ist jetzt aktiv.",
+      "kinds": {
+        "subtitles_manual": "Untertitel (manuell)",
+        "subtitles_auto": "Untertitel (automatisch)",
+        "stt": "Eigene Transkription",
+        "merged": "Zusammengeführt",
+        "retranscribed": "Neu transkribiert"
+      },
+      "errors": {
+        "variant_busy": "Die Besprechung wird gerade verarbeitet. Bitte warten, bis es fertig ist.",
+        "variant_not_found": "Die Fassung gibt es nicht mehr.",
+        "variant_empty": "Die Fassung enthält keinen Text.",
+        "variant_no_rerun": "Es läuft keine Neu-Transkription.",
+        "variant_store_failed": "Die Fassung konnte nicht gespeichert werden. {{detail}}",
+        "merge_same_variant": "Bitte zwei verschiedene Fassungen wählen.",
+        "merge_empty": "Eine der Fassungen enthält keinen Text.",
+        "merge_llm_failed": "Das Sprachmodell hat nicht geantwortet. {{detail}}",
+        "merge_rejected": "Die Zusammenführung wurde verworfen: Das Modell hat Text erfunden oder das Format verletzt. Es entsteht keine neue Fassung.",
+        "merge_timeout": "Die Zusammenführung hat zu lange gedauert.",
+        "no_provider": "Es ist kein Sprachmodell eingerichtet.",
+        "no_model": "Es ist kein Sprachmodell gewählt."
+      },
+      "diff": {
+        "title": "Fassungen vergleichen",
+        "baseLabel": "Fassung A (Basis)",
+        "otherLabel": "Fassung B",
+        "chooseA": "Fassung A wählen",
+        "chooseB": "Fassung B wählen",
+        "merge": "Zusammenführen",
+        "merging": "Wird zusammengeführt …",
+        "mergeHint": "Das lokale Modell verbessert den Text von A mit Hilfe von B und legt eine dritte Fassung an. Erfundener Text wird verworfen.",
+        "legendDel": "nur in A (gelöscht)",
+        "legendIns": "nur in B (eingefügt)",
+        "same": "Die beiden Fassungen sind wortgleich.",
+        "loading": "Lädt …",
+        "need": "Für den Vergleich braucht es zwei Fassungen.",
+        "merged": "Dritte Fassung v{{number}} angelegt. Sie ist noch nicht aktiv.",
+        "region": "Unterschiede je Zeile"
+      },
+      "youtube": {
+        "needTool": "Für Untertitel und Transkription yt-dlp selbst installieren und in den Einstellungen „privat“ einschalten.",
+        "subtitles": "Untertitel laden",
+        "subtitlesBusy": "Suche Untertitel …",
+        "pick": "Sprache der Untertitel",
+        "load": "Laden",
+        "noSubtitles": "Dieses Video hat keine Untertitel. Es bleibt die eigene Transkription.",
+        "own": "Eigene Transkription",
+        "ownBusy": "Transkription läuft …",
+        "loaded": "Untertitel „{{name}}“ sind als Fassung angelegt.",
+        "ownDone": "Die eigene Transkription ist fertig.",
+        "trackManual": "{{name}} (hochgeladen)",
+        "trackAuto": "{{name}} (automatisch)",
+        "tools": "Untertitel und Transkription"
+      }
+    },
+    "provenance": {
+      "menu": "Herkunft",
+      "menuLabel": "Aktionen",
+      "title": "Herkunft",
+      "model": "Modell",
+      "tokens": "Token",
+      "tokensValue": "{{input}} ein · {{output}} aus",
+      "duration": "Dauer",
+      "time": "Zeitpunkt",
+      "sources": "Quellen",
+      "confidence": "Konfidenz",
+      "trigger": "Auslöser",
+      "operation": "Vorgang",
+      "origin": "Angabe",
+      "originRecorded": "bei der Erzeugung festgehalten",
+      "originDerived": "aus älteren Daten rekonstruiert",
+      "empty": "Zu diesem Inhalt liegen keine Herkunftsangaben vor.",
+      "unknown": "unbekannt",
+      "local": "lokal",
+      "remote": "extern",
+      "loading": "Lädt …",
+      "failed": "Die Herkunft konnte nicht gelesen werden.",
+      "close": "Schließen",
+      "actor": {
+        "user": "Nutzer",
+        "auto": "Automatik",
+        "workflow": "Workflow",
+        "agent_external": "Externer Agent",
+        "agent_local": "Lokaler Agent"
       }
     }
   },
