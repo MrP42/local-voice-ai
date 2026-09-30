@@ -1,15 +1,15 @@
 ---
 thema: granola-besprechungen
 titel: Besprechungen auf Granola-Niveau - lokal, ohne Abo
-state: BLOCKED
+state: PLANNING
 vorzustand: EXECUTING
 pausengrund: -
 issue: 59
 repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
-iteration: 2
+iteration: 3
 erstellt: 2026-09-29
-aktualisiert: 2026-09-30T15:50
+aktualisiert: 2026-09-30T16:33
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -94,14 +94,14 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 ## Meilensteine
 | M | Ergebnis (anfassbar) | Status |
 |---|---|---|
-| M0 | Analyse-Artefakt (Link) + Feature-Matrix + Paketplan, Issue | offen |
-| M1 | Notizblock während der Aufnahme + KI-Notizen nach Vorlage mit Nutzer-/KI-Unterscheidung und Quellsprung (Installer + Screenshot) | offen |
-| M2 | Audio/STT: AEC, VAD, Live ≤ 5 s, Enddurchlauf, Ausfallwächter, Benchmark-Tabelle | offen |
-| M3 | Sprecher: Diarisierung, Benennen, Wiedererkennen (DER-Tabelle) | offen |
-| M4 | Chat + Suche + Ordner über alle Besprechungen (Eval-Tabelle) | offen |
-| M5 | Kalender, Meeting-Erkennung, Personen, Brief | offen |
-| M6 | Follow-up-Mail, Export, lokaler MCP-Server | offen |
-| M7 | Gesamttest, Performance, Offline-Nachweis, Installer, Doku, PR | offen |
+| M0 | Analyse-Artefakt (Link) + Feature-Matrix + Paketplan, Issue | erfüllt (Artefakt JL7yCpwFDTcrvAm9Xj2Dwo, Matrix, Issue #59) |
+| M1 | Notizblock während der Aufnahme + KI-Notizen nach Vorlage mit Nutzer-/KI-Unterscheidung und Quellsprung (Installer + Screenshot) | erfüllt (P1a–P1i; Eval 30/30, belegt; Screenshots abnahme/) |
+| M2 | Audio/STT: AEC, VAD, Live ≤ 5 s, Enddurchlauf, Ausfallwächter, Benchmark-Tabelle | erfüllt (P2a–P2g; live p95 2,0 s, WER 4,17 %/5,51 %, Echo 0 %, bench.md) |
+| M3 | Sprecher: Diarisierung, Benennen, Wiedererkennen (DER-Tabelle) | erfüllt ohne Wiedererkennen (P3a–P3c; DER de 0,94 %, AMI 15,19 %); P3d Folge-Goal |
+| M4 | Chat + Suche + Ordner über alle Besprechungen (Eval-Tabelle) | erfüllt (P4a–P4g; Chat-Eval 24/24) |
+| M5 | Kalender, Meeting-Erkennung, Personen, Brief | erfüllt (P5a–P5f; ICS + Graph, Erkennung, Personen, Brief) |
+| M6 | Follow-up-Mail, Export, lokaler MCP-Server | erfüllt (P6a–P6e; Export 8 Formate, Follow-up, MCP) |
+| M7 | Gesamttest, Performance, Offline-Nachweis, Installer, Doku, PR | Abnahme läuft (Installer 0.20.8 installiert 30.09.; Rückmeldung Patrick -> Runde 3: P8a, P6f, P3e) |
 
 ## Evidence
 - 2026-09-29T11:13 AK1 erfüllt — Recherche-Dateien + FEATURE-MATRIX.md in 45f3a3b, Artefakt https://claude.ai/artifact/JL7yCpwFDTcrvAm9Xj2Dwo (Kopie 91217fa), Issue #59
@@ -128,10 +128,11 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
 - B2 [gelöst] 2026-09-29T20:32 Ursache: Freigegebener Budgetrahmen 12 MTok erreicht (Ist ~12,8 MTok); Hochrechnung bis COMPLETE 15-16 MTok · Owner: Patrick · entsperrt, wenn: Patrick hebt den Rahmen an (Vorschlag 16 MTok) oder kuerzt den Umfang (Komfortpakete P3d/P5d/P5e/P5f/P6e in Folge-Goal); dazu offen: B7, E14, E23 · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T21:51: Patrick 29.09. abends: Rahmen 16 MTok, B7 a, E14 als Einstellung spaeter, E23 spaeter
-- B3 [offen] 2026-09-30T15:50 Ursache: AK11: Abnahme per Installer 0.20.8 (inkl. #62) braucht Installation und Pruefung durch Patrick; Installer liegt unter apps/local-voice/src-tauri/target/release/bundle/nsis/ · Owner: Patrick · entsperrt, wenn: Patrick hat 0.20.8 installiert und Kernablauf geprueft (Aufnahme mit Notizen -> KI-Notizen -> Chat), Screenshots/Rueckmeldung liegen vor · nächste Prüfung: beim nächsten Sessionstart
+- B3 [gelöst] 2026-09-30T15:50 Ursache: AK11: Abnahme per Installer 0.20.8 (inkl. #62) braucht Installation und Pruefung durch Patrick; Installer liegt unter apps/local-voice/src-tauri/target/release/bundle/nsis/ · Owner: Patrick · entsperrt, wenn: Patrick hat 0.20.8 installiert und Kernablauf geprueft (Aufnahme mit Notizen -> KI-Notizen -> Chat), Screenshots/Rueckmeldung liegen vor · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-30T16:33: Patrick hat 0.20.8 installiert und durchgeklickt (30.09.); Rueckmeldung -> P8a, P6f, P3e
 
 ## Entscheidungen
 - 2026-09-29 Patrick: voller Umfang M1–M7 in diesem Goal, Budgetrahmen ~12 MTok (Hochrechnung nach Ist 3,0 MTok).
+- 2026-09-30 Patrick nach Abnahme 0.20.8: Fortschrittsanzeige (Balken, %, Laufzeit, Restdauer) für die Verarbeitung, Autoscroll im Transkript (abwählbar), Pause und Stopp mit Nachfrage -> P8a; Mehrsprecher-Test mit Emilia-Sofie-Mara-MP3 -> P3e; Vorlage automatisch nach Inhalt -> Folge-Goal.
 - 2026-09-29 abends Patrick: Budgetrahmen 16 MTok; B7 → AK7 fuer AMI als erfuellt gewertet (Nemotron als Folge-Goal); E14 Graph-Client-ID spaeter vom Nutzer in den Einstellungen eintragbar (Feld in vorhandener Kalender-Gruppe, kein fester Wert im Code); E23 echte Testaufnahme spaeter (deutscher Teil bleibt synthetisch).
 - 2026-09-29 Patrick zu E5: GPU-STT per Vulkan aktivieren; Claude installiert das LunarG-Vulkan-SDK (winget) und alles Nötige.
 - 2026-09-29 M1/M2-Berührpunkt B4: Auto-KI-Notizen starten auf `MeetingEvent::TranscriptFinal` (P2a führt es ein und sendet es am Ende von `stop()`, P1f hängt sich daran, P2d verschiebt das Senden hinter den Enddurchlauf). Enddurchlauf nutzt `segment_epoch` aus P1a; M2 liefert `remap_sources()`; M2 fügt keine meetings.db-Migration hinzu.
@@ -141,7 +142,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-B3 auflösen (Patrick): Patrick hat 0.20.8 installiert und Kernablauf geprueft (Aufnahme mit Notizen -> KI-Notizen -> Chat), Screenshots/Rueckmeldung liegen vor. Dann `goal.py resolve-blocker --id B3 --beleg …` und `goal.py set --state PLANNING`.
+Worker starten
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -166,4 +167,6 @@ B3 auflösen (Patrick): Patrick hat 0.20.8 installiert und Kernablauf geprueft (
 - 2026-09-29T21:56 EXECUTING (Runde 2) — P7a (wt-m1), P1g (wt-m2a), P2g (wt-m2b) laufen; Budget ~12,9 von 16 MTok (80 %-Marke erreicht)
 - 2026-09-29T23:12 EXECUTING (Runde 2) — P5f (wt-m1c), P7b (wt-m2b) laufen; gemergt P7a,P6d,P7c,P6e,P5d/e,P2g,P1g; Befunde alle erledigt; Budget ~15 MTok
 - 2026-09-30T15:50 BLOCKED (Runde 2) — BLOCKIERT B3 (global, keine unabhängige Arbeit mehr): AK11: Abnahme per Installer 0.20.8 (inkl. #62) braucht Installation und Pruefung durch Patrick; Installer liegt unter apps/local-voice/src-tauri/target/release/bundle/nsis/
+- 2026-09-30T16:33 BLOCKED (Runde 2) — B3 gelöst: Patrick hat 0.20.8 installiert und durchgeklickt (30.09.); Rueckmeldung -> P8a, P6f, P3e
+- 2026-09-30T16:33 PLANNING (Runde 3) — Runde 3 nach Abnahme-Rueckmeldung: P8a, P6f, P3e
 
