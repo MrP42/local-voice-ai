@@ -75,3 +75,8 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Konsequenz: Paket P6f.
 - Status: offen
 
+## B14 — Abnahme 0.20.8: Protokoll-Erzeugung verliert Laufzustand beim Reiterwechsel (30.09.)
+- Beobachtet (Patrick): „Erzeugen“ -> „Protokoll wird erzeugt“; Reiter wechseln und zurück -> Hinweis weg, Knopf wieder klickbar, paralleler zweiter Start möglich. Kein Fortschritt, keine Steuerung.
+- Konsequenz: P1k (Laufzustand im Backend, Doppelstart abgewiesen, Fortschrittswerte) + P8a (Phase Protokoll/KI-Notizen mit Balken, Pause/Stopp).
+- Status: offen
+
