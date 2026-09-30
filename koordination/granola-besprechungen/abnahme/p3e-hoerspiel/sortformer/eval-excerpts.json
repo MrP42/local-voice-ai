@@ -1,0 +1,82 @@
+{
+  "backend": "Vulkan0",
+  "collar_s": 0.25,
+  "failed": 0,
+  "files": [
+    {
+      "audio_s": 180.0,
+      "conf": 35.13,
+      "der": 35.71,
+      "der_raw": 35.13,
+      "fa": 0.58,
+      "file": "hoerspiel_x120_300",
+      "group": "de",
+      "hyp_speakers": 2,
+      "hyp_speakers_raw": 2,
+      "miss": 0.0,
+      "ms": 546,
+      "ref_speakers": 4,
+      "ref_speech_s": 130.09,
+      "rtf": 329.58,
+      "turns": 20
+    },
+    {
+      "audio_s": 180.0,
+      "conf": 40.52,
+      "der": 41.4,
+      "der_raw": 40.59,
+      "fa": 0.83,
+      "file": "hoerspiel_x300_480",
+      "group": "de",
+      "hyp_speakers": 2,
+      "hyp_speakers_raw": 2,
+      "miss": 0.05,
+      "ms": 511,
+      "ref_speakers": 4,
+      "ref_speech_s": 129.11,
+      "rtf": 352.15,
+      "turns": 25
+    },
+    {
+      "audio_s": 180.0,
+      "conf": 32.53,
+      "der": 35.42,
+      "der_raw": 36.17,
+      "fa": 0.06,
+      "file": "hoerspiel_x900_1080",
+      "group": "de",
+      "hyp_speakers": 2,
+      "hyp_speakers_raw": 2,
+      "miss": 2.83,
+      "ms": 507,
+      "ref_speakers": 5,
+      "ref_speech_s": 125.62,
+      "rtf": 355.35,
+      "turns": 21
+    }
+  ],
+  "mode": "eval_diarization",
+  "model": "C:\\Users\\wolff\\lva-spikes\\p3e\\app\\Data\\models\\diarization\\diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf",
+  "params": {
+    "gap_ms": 1000,
+    "pad_ms": 100,
+    "preset": "VeryHighLatency",
+    "threads": 16
+  },
+  "rtf": {
+    "de": 345.31
+  },
+  "skipped_without_rttm": [],
+  "targets": {
+    "ami_test_max_pct": 15.0,
+    "ami_test_ok": true,
+    "de_max_pct": 5.0,
+    "de_ok": false
+  },
+  "weighted_der": {
+    "de": 37.52
+  },
+  "weighted_der_raw": {
+    "de": 37.3
+  }
+}

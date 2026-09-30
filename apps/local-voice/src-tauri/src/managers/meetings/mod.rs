@@ -5,6 +5,7 @@ pub mod dsp;
 pub mod echo;
 pub mod export;
 pub mod final_pass;
+pub mod followup; // P6f (B13)
 pub mod hallucination;
 pub mod import;
 pub mod job; // P8a

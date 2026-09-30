@@ -1,0 +1,165 @@
+{
+  "aggregate": {
+    "elapsed_ms": 72574,
+    "fixtures": 3,
+    "template_mismatches": 0,
+    "with_gaps": 0
+  },
+  "context_tokens": 16384,
+  "exit_code": 0,
+  "fixtures": [
+    {
+      "auto": {
+        "outcome": "model",
+        "reason": "Der Auszug beginnt mit der Erwähnung \"Jour fixe wie immer\" und behandelt Status-Updates, Blocker und offene Punkte.",
+        "template_id": "builtin:jour_fixe",
+        "title": "Jour fixe / Team"
+      },
+      "chosen_template": "builtin:jour_fixe",
+      "chosen_title": "Jour fixe / Team",
+      "dropped_blocks": false,
+      "elapsed_ms": 22190,
+      "expected_template": "builtin:jour_fixe",
+      "meta": {
+        "auto": {
+          "outcome": "model",
+          "reason": "Der Auszug beginnt mit der Erwähnung \"Jour fixe wie immer\" und behandelt Status-Updates, Blocker und offene Punkte.",
+          "template_id": "builtin:jour_fixe",
+          "title": "Jour fixe / Team"
+        },
+        "chunks_split": 0,
+        "chunks_total": 1,
+        "document_id": "01M3SETMRZBS55MYT53A9DK2Q3",
+        "gaps": [],
+        "incomplete": false,
+        "template_id": "builtin:jour_fixe",
+        "template_title": "Jour fixe / Team"
+      },
+      "minutes_chars": 2289,
+      "minutes_markdown": "# Protokoll: Jour fixe Team Plattform\n\n**Datum:** 2026-09-30 · **Dauer:** 19:49 · **Vorlage:** Jour fixe / Team (automatisch gewählt)\n\n## Stand je Person oder Thema\n\n- Der Backend für den neuen Bestellexport ist fertig und die Tests laufen, es fehlt nur noch das Review.\n- Technisch läuft die Umstellung auf Single Sign-on in der Testumgebung.\n- Es gab 41 Supportfälle in den letzten zwei Wochen, wobei die Hälfte davon die neue Suchfunktion betrifft.\n- Die Geschäftsführung möchte, dass im nächsten Quartal die mobile App angegangen wird, was Mobile-Erfahrung erfordert.\n\n## Blocker\n\n- Das Review des Backends ist blockiert, da Miriam die ganze Woche im Kundenprojekt war.\n- Der Fortschritt bei Single Sign-on ist blockiert, da die IT des Kunden (Herr Seidel) die Zugangsdaten für die Produktivumgebung nicht geschickt hat.\n- Das Testsystem ist seit gestern extrem langsam.\n\n## Entscheidungen\n\n- Die langsame Exportleistung bei großen Bestellungen wird als bekannte Einschränkung in die Release-Notes aufgenommen.\n- Wenn die Zugangsdaten bis Mittwoch nicht vorliegen, wird Single Sign-on aus dem Release entfernt und zwei Wochen später nachgeliefert.\n- Die alte Artikelnummer wird wieder als Suchfeld aufgenommen.\n- Die Strategie für die mobile App ist, zuerst eine Stelle auszuschreiben und erst ab November einen Freelancer zu beauftragen, falls keine Kandidaten gefunden werden.\n- Der Release-Termin bleibt beim fünfzehnten.\n- Die Retrospektive findet am Dienstag um zehn statt.\n\n## Aufgaben\n\n- Schick Miriam den Link zum Review des Backends. _(Wer: Jonas)_\n- Durchführen des Reviews für den neuen Bestellexport. _(Wer: Miriam, Bis: Mittwoch)_\n- Die Zugangsdaten bei Frau Lorenz eskalieren. _(Wer: Ich, Bis: Heute Nachmittag)_\n- Die Stellenanzeige für die mobile App schreiben. _(Wer: Ich)_\n- Die Stellenanzeige gegenlesen. _(Wer: Tarek)_\n- Die Einladung zur Retrospektive verschicken. _(Wer: Ich)_\n- Die Suche nach der alten Artikelnummer einbauen, nachdem das Export-Review abgeschlossen ist. _(Wer: Jonas, Bis: Vor dem Release)_\n- Urlaubsplanung in den Teamkalender eintragen. _(Wer: Team, Bis: Ende des Monats)_\n\n## Themen fürs nächste Mal\n\n_keine_\n\n## Sprecher & Redeanteile\n\n| Sprecher | Redezeit | Anteil |\n|---|---|---|\n| Ich | 03:19 | 48,9 % |\n| Gegenseite | 03:28 | 51,1 % |\n",
+      "name": "jour_fixe",
+      "requested_template": "auto",
+      "segments": 64,
+      "stored_choice": {
+        "outcome": "model",
+        "reason": "Der Auszug beginnt mit der Erwähnung \"Jour fixe wie immer\" und behandelt Status-Updates, Blocker und offene Punkte.",
+        "template_id": "builtin:jour_fixe",
+        "title": "Jour fixe / Team"
+      },
+      "template_matches": true,
+      "title": "Jour fixe Team Plattform",
+      "usage": {
+        "calls": 2,
+        "completion_tokens": 2536,
+        "failed_calls": 0,
+        "first_prompt_tokens": 1051,
+        "llm_ms": 22154,
+        "prompt_tokens": 3668
+      }
+    },
+    {
+      "auto": {
+        "outcome": "model",
+        "reason": "Die Softwarefirma präsentiert eine Lösung für die operativen Bedürfnisse des potenziellen Kunden, was ein klassisches Kundengespräch darstellt.",
+        "template_id": "builtin:vertrieb",
+        "title": "Kundengespräch / Vertrieb"
+      },
+      "chosen_template": "builtin:vertrieb",
+      "chosen_title": "Kundengespräch / Vertrieb",
+      "dropped_blocks": false,
+      "elapsed_ms": 20728,
+      "expected_template": "builtin:vertrieb",
+      "meta": {
+        "auto": {
+          "outcome": "model",
+          "reason": "Die Softwarefirma präsentiert eine Lösung für die operativen Bedürfnisse des potenziellen Kunden, was ein klassisches Kundengespräch darstellt.",
+          "template_id": "builtin:vertrieb",
+          "title": "Kundengespräch / Vertrieb"
+        },
+        "chunks_split": 0,
+        "chunks_total": 1,
+        "document_id": "01M3SEV9BM1W4M69AXE6C1CCQB",
+        "gaps": [],
+        "incomplete": false,
+        "template_id": "builtin:vertrieb",
+        "template_title": "Kundengespräch / Vertrieb"
+      },
+      "minutes_chars": 2283,
+      "minutes_markdown": "# Protokoll: Erstgespräch Brenner Haustechnik\n\n**Datum:** 2026-09-30 · **Dauer:** 09:59 · **Vorlage:** Kundengespräch / Vertrieb (automatisch gewählt)\n\n## Kunde & Ausgangslage\n\n- Der Kunde ist die Brenner Haustechnik, Heizung und Sanitär.\n- Der Ansprechpartner ist Herr Albrecht.\n- Das Unternehmen hat achtundzwanzig Monteure im Außendienst.\n- Der Anlass des Gesprächs ist die Anfrage zur Einsatzplanung für die Monteure.\n\n## Bedarf & Schmerzpunkte\n\n- Die Planung läuft heute komplett über eine Excel-Liste und über Zuruf.\n- Im Winter sind es gut dreihundert Einsätze pro Woche, im Sommer eher hundertachtzig.\n- Die Notdienste werfen den ganzen Tagesplan um.\n- Frau Kraus telefoniert zwanzig Minuten herum, bis sie weiß, wer in der Nähe ist und das passende Material im Wagen hat.\n- Die Hälfte der Nachfahrten entsteht, weil ein Ersatzteil fehlt.\n- Frau Kraus tippt die Stundenzettel abends noch einmal ab.\n- Jeden Abend dauert das Abtippen etwa eine Stunde.\n- Fehler im manuellen Abtippen führen dazu, dass die Rechnungen nicht stimmen.\n- Vier oder fünf ältere Kollegen haben teilweise gar kein Smartphone.\n\n## Einwände\n\n- Der Preis pro Monteur muss runter, sonst wird das schwierig.\n- Der Kunde erwartete einen geringeren Budgetrahmen.\n\n## Budget, Zeitrahmen, Entscheider\n\n- Der festen Budgetrahmen gibt es noch nicht, das entscheidet Herr Brenner selbst.\n- Vor dem Winter wäre eine Umstellung ideal.\n- Der gewünschte Start wäre Anfang August, um Ende September fertig zu sein.\n- Herr Brenner ist der Geschäftsführer und Inhaber.\n\n## Nächste Schritte\n\n- Angebot und Wirtschaftlichkeitsrechnung senden. _(Wer: Ich, Bis: Freitag)_\n- Referenz aus der Branche klären. _(Wer: Ich)_\n- E-Mail-Adresse von Frau Kraus senden. _(Wer: Gegenseite)_\n- Testzugang für Frau Kraus einrichten. _(Wer: Ich)_\n- Termin mit Herrn Brenner in der zweiten Juliwoche suchen. _(Wer: Ich)_\n\n## Einschätzung\n\n- Das Interesse ist hoch, da kritische Prozesse (Notdienste, Material) betroffen sind.\n- Die Dringlichkeit ist hoch, da die Umstellung vor dem Winter (Mitte Oktober) erfolgen muss.\n- Die Haupthürden sind die Budgetfreigabe durch Herrn Brenner und die Preisgestaltung.\n\n## Sprecher & Redeanteile\n\n| Sprecher | Redezeit | Anteil |\n|---|---|---|\n| Ich | 03:39 | 49,8 % |\n| Gegenseite | 03:41 | 50,2 % |\n",
+      "name": "kundengespraech",
+      "requested_template": "auto",
+      "segments": 60,
+      "stored_choice": {
+        "outcome": "model",
+        "reason": "Die Softwarefirma präsentiert eine Lösung für die operativen Bedürfnisse des potenziellen Kunden, was ein klassisches Kundengespräch darstellt.",
+        "template_id": "builtin:vertrieb",
+        "title": "Kundengespräch / Vertrieb"
+      },
+      "template_matches": true,
+      "title": "Erstgespräch Brenner Haustechnik",
+      "usage": {
+        "calls": 2,
+        "completion_tokens": 2608,
+        "failed_calls": 0,
+        "first_prompt_tokens": 1024,
+        "llm_ms": 20682,
+        "prompt_tokens": 3805
+      }
+    },
+    {
+      "auto": {
+        "outcome": "model",
+        "reason": "Die Sitzung wird explizit als Lenkungskreis zum ERP-Projekt eröffnet und behandelt kritische Entscheidungen wie den Go-Live-Termin.",
+        "template_id": "builtin:lenkungskreis",
+        "title": "Lenkungskreis / Entscheidung"
+      },
+      "chosen_template": "builtin:lenkungskreis",
+      "chosen_title": "Lenkungskreis / Entscheidung",
+      "dropped_blocks": false,
+      "elapsed_ms": 28596,
+      "expected_template": "builtin:lenkungskreis",
+      "meta": {
+        "auto": {
+          "outcome": "model",
+          "reason": "Die Sitzung wird explizit als Lenkungskreis zum ERP-Projekt eröffnet und behandelt kritische Entscheidungen wie den Go-Live-Termin.",
+          "template_id": "builtin:lenkungskreis",
+          "title": "Lenkungskreis / Entscheidung"
+        },
+        "chunks_split": 0,
+        "chunks_total": 1,
+        "document_id": "01M3SEW5M6GTBPYE2YPNNFER7R",
+        "gaps": [],
+        "incomplete": false,
+        "template_id": "builtin:lenkungskreis",
+        "template_title": "Lenkungskreis / Entscheidung"
+      },
+      "minutes_chars": 4468,
+      "minutes_markdown": "# Protokoll: Lenkungskreis ERP-Einführung\n\n**Datum:** 2026-09-30 · **Dauer:** 54:47 · **Vorlage:** Lenkungskreis / Entscheidung (automatisch gewählt)\n\n## Entscheidungsvorlage & Optionen\n\n- Datenmigration: Option A (vollständige Migration aller historischen Daten der letzten zehn Jahre).\n- Datenmigration: Option B (schlanke Migration nur von Stammdaten, offenen Aufträgen und Bewegungen der letzten zwei Jahre).\n- Go-Live-Termin: Bleiben beim 1. Januar (mit höherem Risiko).\n- Go-Live-Termin: Verschieben auf den 1. Februar.\n\n## Diskussion\n\n- Die Anpassung des Fertigungsmoduls ist notwendig, da die Stücklisten komplexer sind als angenommen.\n- Die Anpassung kostet knapp fünfundfünfzigtausend Euro, was nicht im bisherigen Budget enthalten ist (Brandt).\n- Die Anpassung ist für die Fertigung notwendig, da alte Aufträge und Ersatzteile auf alte Stücklisten basieren (Lindner).\n- Option A (vollständige Migration) ist finanziell über fünf Jahre günstiger als Option B (Brandt).\n- Option A gefährdet jedoch den Termin, da der Aufwand in die Phase der Fertigungsmodulanpassung fällt (Petersen).\n- Die Aufrechterhaltung des Altsystems für fünf Jahre kostet rund hunderttausend Euro (Brandt/Okafor).\n- Für das Controlling ist eine lückenlose Historie wünschenswert, aber Auswertungen über mehr als drei Jahre werden kaum genutzt (Brandt).\n- Die Empfehlung zur Verschiebung auf den 1. Februar wird von der IT und der Fertigung als vorteilhaft angesehen, da dies einen vollständigen Probelauf ermöglicht und der Januar für die Fertigung ungünstig ist (Okafor/Lindner).\n- Die Verschiebung verursacht zusätzliche Kosten von etwa zwanzigtausend Euro durch den Dienstleister (Petersen).\n- Die Schulungen der Schlüsselanwender sind ein großes Risiko, da nur neunzehn von zweiunddreißig Schlüsselanwendern die Grundschulung abgeschlossen haben (Petersen).\n- Der Hauptberater des Dienstleisters wechselt zum Jahresende, was ein Risiko darstellt, da er die Preisfindungsanpassungen versteht (Petersen/Okafor).\n- Die Schnittstelle zum Lagerverwaltungssystem ist neu programmiert und wurde bisher nur mit Testdaten geprüft (Petersen/Okafor).\n- Gerüchte über Stellenabbau im Zusammenhang mit dem Projekt kursieren in der Fertigung (Petersen/Lindner).\n\n## Beschlüsse\n\n- Datenmigration nach Option B, schlanke Migration mit zwei Jahren Bewegungsdaten, Altsystem fünf Jahre lesend.\n- Ergänzend wird das Archiv der alten Stücklisten im Dokumentenmanagement umgesetzt.\n- Der Lenkungskreis empfiehlt den Go-Live am ersten Februar.\n- Schulungen der Schlüsselanwender werden in halben Tagen aufgeteilt, Samstage nur freiwillig und nach Zustimmung des Betriebsrats.\n- Es wird gefordert, dass der Dienstleister eine Überlappung von acht Wochen beim Wechsel des Hauptberaters gewährleistet.\n- Die Kommunikation erfolgt kurzfristig über Schichtbesprechungen, gefolgt von einer Vorführung in der Betriebsversammlung im November.\n- Der Statusbericht wird um Budget und Fehler je Modul sowie den Stand der Stücklisten erweitert.\n\n## Risiken & Eskalationen\n\n- Die Notwendigkeit der Anpassung des Fertigungsmoduls ist festzustellen, und die Finanzierung wird im Rahmen der Budgetdiskussion behandelt.\n- Die Empfehlung zur Verschiebung des Go-Live-Termins muss mit der Geschäftsleitung abgestimmt werden, da der Termin gegenüber dem Aufsichtsrat kommuniziert wurde.\n\n## Aufträge\n\n- Klären, ob Samstagsschulungen mit dem Betriebsrat möglich sind. _(Wer: Petersen)_\n- Den Übertrag der Januarbuchungen mit der Buchhaltung planen. _(Wer: Petersen)_\n- Die finalen Schätzungen des Dienstleisters anfordern. _(Wer: Petersen, Bis: diese Woche)_\n- Die aktualisierte Budgetplanung vorlegen. _(Wer: Brandt, Bis: nächste Sitzung)_\n- Einen Plan mit Terminen für das Archiv der alten Stücklisten vorlegen. _(Wer: Okafor, Bis: nächste Sitzung)_\n- Die Kompatibilität der Etikettendrucker prüfen. _(Wer: Okafor, Bis: nächste Sitzung)_\n- Die Empfehlung zur Verschiebung des Go-Live mit der Geschäftsleitung abstimmen. _(Wer: Hartmann, Bis: Ende nächster Woche)_\n- Die Forderung nach acht Wochen Überlappung beim Wechsel des Hauptberaters an die Geschäftsführung des Dienstleisters schreiben. _(Wer: Hartmann)_\n- Ab nächster Woche in den Schichtbesprechungen über die Schulungen informieren. _(Wer: Petersen)_\n- Die Unternehmenskommunikation fragen, ob sie den monatlichen Newsletter übernehmen kann. _(Wer: Hartmann)_\n- Die Stücklistenanpassung als eigenen Arbeitspaket-Punkt in den Bericht aufnehmen. _(Wer: Petersen)_\n",
+      "name": "lenkungskreis_lang",
+      "requested_template": "auto",
+      "segments": 144,
+      "stored_choice": {
+        "outcome": "model",
+        "reason": "Die Sitzung wird explizit als Lenkungskreis zum ERP-Projekt eröffnet und behandelt kritische Entscheidungen wie den Go-Live-Termin.",
+        "template_id": "builtin:lenkungskreis",
+        "title": "Lenkungskreis / Entscheidung"
+      },
+      "template_matches": true,
+      "title": "Lenkungskreis ERP-Einführung",
+      "usage": {
+        "calls": 2,
+        "completion_tokens": 3772,
+        "failed_calls": 0,
+        "first_prompt_tokens": 1041,
+        "llm_ms": 28537,
+        "prompt_tokens": 7191
+      }
+    }
+  ],
+  "local": true,
+  "mode": "eval-minutes",
+  "model": "llm-gemma4-e4b-q4",
+  "passed": true,
+  "provider": "local",
+  "requested_template": "auto"
+}

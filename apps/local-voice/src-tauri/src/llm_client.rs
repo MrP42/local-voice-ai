@@ -46,7 +46,7 @@ struct ChatCompletionRequest {
     /// Nur lokal und nur fuer Denkmodelle: schaltet das Denken ab (P1g).
     #[serde(skip_serializing_if = "Option::is_none")]
     chat_template_kwargs: Option<Value>,
-    /// Nur lokal und nur fuer KI-Notizen: deterministisch (siehe
+    /// Nur lokal und nur fuer KI-Notizen und Follow-up-Mail: deterministisch (siehe
     /// `deterministic_sampling`).
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
@@ -55,13 +55,13 @@ struct ChatCompletionRequest {
 }
 
 /// Temperatur und Startwert fuer einen nicht-streamenden Aufruf: die KI-Notizen
-/// (Erzeugen, Map/Reduce, Anweisung anwenden) laufen lokal deterministisch,
-/// wie der Chat seit P4g. Sonst sampelt das Modell mal ohne, mal mit
+/// (Erzeugen, Map/Reduce, Anweisung anwenden) und seit P1k das Protokoll samt
+/// Vorlagenwahl laufen lokal deterministisch, wie der Chat seit P4g. Sonst sampelt das Modell mal ohne, mal mit
 /// verworfener Quell-ID, und die Notizen-Eval (Soll ai_sourced >= 0,95)
 /// besteht nur zufaellig. Entfernte Anbieter und alle anderen Zwecke bekommen
 /// die Felder nicht: manche lehnen sie mit 400 ab (Denkmodelle).
 fn deterministic_sampling(local: bool, purpose: Purpose) -> (Option<f32>, Option<u32>) {
-    if local && purpose == Purpose::EnhancedNotes {
+    if local && matches!(purpose, Purpose::EnhancedNotes | Purpose::Followup | Purpose::Minutes) {
         (Some(0.0), Some(CHAT_SEED))
     } else {
         (None, None)
@@ -1154,6 +1154,12 @@ mod stream_tests {
         let body = request_json_for(true, "llm-gemma4-e4b-q4", Purpose::EnhancedNotes);
         assert_eq!(body["temperature"].as_f64(), Some(0.0));
         assert_eq!(body["seed"], CHAT_SEED);
+        // P1k: das Protokoll (und mit ihm die Vorlagenwahl) ebenso.
+        let body = request_json_for(true, "llm-gemma4-e4b-q4", Purpose::Minutes);
+        assert_eq!(body["temperature"].as_f64(), Some(0.0));
+        assert_eq!(body["seed"], CHAT_SEED);
+        let remote = request_json_for(false, "gpt-4.1", Purpose::Minutes);
+        assert!(remote.get("temperature").is_none() && remote.get("seed").is_none());
         // Auch bei einem Denkmodell zusammen mit abgeschaltetem Denken.
         let body = request_json_for(true, "llm-qwen3.5-9b-q4", Purpose::EnhancedNotes);
         assert_eq!(body["temperature"].as_f64(), Some(0.0));
@@ -1161,6 +1167,12 @@ mod stream_tests {
         // Entfernte Anbieter: keine Sampling-Felder (Denkmodelle lehnen sie ab).
         let remote = request_json_for(false, "gpt-4.1", Purpose::EnhancedNotes);
         assert!(remote.get("temperature").is_none() && remote.get("seed").is_none());
+        // Follow-up-Mail (B13): ebenfalls deterministisch, nur lokal.
+        let mail = request_json_for(true, "llm-gemma4-e4b-q4", Purpose::Followup);
+        assert_eq!(mail["temperature"].as_f64(), Some(0.0));
+        assert_eq!(mail["seed"], CHAT_SEED);
+        let mail_remote = request_json_for(false, "gpt-4.1", Purpose::Followup);
+        assert!(mail_remote.get("temperature").is_none() && mail_remote.get("seed").is_none());
         // Andere lokale Zwecke (Diktat, Tagging, ...) bleiben unveraendert.
         for purpose in [Purpose::PostProcess, Purpose::Tagging, Purpose::Translation, Purpose::Summary] {
             let other = request_json_for(true, "llm-gemma4-e4b-q4", purpose);

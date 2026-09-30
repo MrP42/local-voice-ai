@@ -468,6 +468,53 @@ test.describe("Follow-up-Mail", () => {
     );
   });
 
+  test("keine Grundlage: klare Meldung, kein erneuter Versuch (B13)", async ({
+    page,
+  }) => {
+    await openDetail(page);
+    await page.getByTestId("followup-open").click();
+    await rejectDraft(page, "followup_no_content");
+    await expect(page.getByTestId("followup-error")).toHaveText(
+      "Kein Inhalt für eine Nachbereitung gefunden – die Aufnahme enthält keine Besprechungspunkte.",
+    );
+    // Ein neuer Versuch änderte nichts: kein Knopf, kein weiterer Aufruf.
+    await expect(
+      page.getByRole("button", { name: "Erneut versuchen" }),
+    ).toHaveCount(0);
+    await page.waitForTimeout(400);
+    expect(await calls(page, "meeting_followup_draft")).toHaveLength(1);
+    // Schließen und wieder öffnen fragt neu (die Aufnahme könnte sich geändert haben).
+    await page.getByRole("button", { name: "Schließen" }).last().click();
+    await page.getByTestId("followup-open").click();
+    await resolveDraft(page, draft());
+    await expect(page.getByLabel("Betreff", { exact: true })).toBeVisible();
+    expect(await calls(page, "meeting_followup_draft")).toHaveLength(2);
+  });
+
+  test("technische Fehler zeigen ihre eigene Meldung und bieten einen neuen Versuch", async ({
+    page,
+  }) => {
+    await openDetail(page);
+    await page.getByTestId("followup-open").click();
+    await rejectDraft(page, "memory_low");
+    await expect(page.getByTestId("followup-error")).toHaveText(
+      "Zu wenig freier Arbeitsspeicher für das lokale Modell. Bitte andere Programme schließen.",
+    );
+    await expect(
+      page.getByRole("button", { name: "Erneut versuchen" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Erneut versuchen" }).click();
+    await rejectDraft(page, "no_model");
+    await expect(page.getByTestId("followup-error")).toHaveText(
+      "Für den KI-Anbieter ist kein Modell eingetragen.",
+    );
+    await page.getByRole("button", { name: "Erneut versuchen" }).click();
+    await rejectDraft(page, "chat_busy");
+    await expect(page.getByTestId("followup-error")).toContainText(
+      "Es läuft schon eine Frage",
+    );
+  });
+
   test("Neu erzeugen ersetzt den Entwurf; Schließen verwirft eine späte Antwort", async ({
     page,
   }) => {

@@ -1,7 +1,7 @@
 ---
 thema: granola-besprechungen
 titel: Besprechungen auf Granola-Niveau - lokal, ohne Abo
-state: PLANNING
+state: EXECUTING
 vorzustand: EXECUTING
 pausengrund: -
 issue: 59
@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 3
 erstellt: 2026-09-29
-aktualisiert: 2026-09-30T16:33
+aktualisiert: 2026-09-30T16:34
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -49,7 +49,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - [x] QG6 — Lizenzen: jedes neue Modell/Crate mit Lizenz in den Third-Party-Notices, keine Nicht-kommerziell-Lizenz
 - [x] QG7 — i18n: alle neuen Texte in de + en, echte Umlaute
 - [x] QG8 — Doku + Handoff aktualisiert, PR offen gegen `main`
-- [ ] QG9 — Budget ≤ 16 MTok (29.09. abends von 12 auf 16 angehoben durch Patrick; Meldung bei 6,0 / 9,6 MTok, harter Stopp 18 MTok)
+- [ ] QG9 — Budget ≤ 19 MTok (30.09. von 16 auf 19 angehoben durch Patrick für Runde 3 + Protokoll-Vorlagen; 29.09. abends von 12 auf 16; Meldung bei 6,0 / 9,6 MTok, harter Stopp 18 MTok)
 
 ## Constraints
 - Lokal und kostenfrei im Betrieb: nur Open-Source-/frei nutzbare Modelle und Bibliotheken, Lizenz je Baustein geprüft (keine Nicht-kommerziell-Klauseln ohne Ansage).
@@ -132,6 +132,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 
 ## Entscheidungen
 - 2026-09-29 Patrick: voller Umfang M1–M7 in diesem Goal, Budgetrahmen ~12 MTok (Hochrechnung nach Ist 3,0 MTok).
+- 2026-09-30 Patrick: Protokoll-Reiter bekommt Vorlagenwahl inkl. „Automatisch (nach Inhalt)“, Protokoll über die P1i-Blocklogik (B12) -> P1k, jetzt mit Runde 3; Budgetrahmen 19 MTok.
 - 2026-09-30 Patrick nach Abnahme 0.20.8: Fortschrittsanzeige (Balken, %, Laufzeit, Restdauer) für die Verarbeitung, Autoscroll im Transkript (abwählbar), Pause und Stopp mit Nachfrage -> P8a; Mehrsprecher-Test mit Emilia-Sofie-Mara-MP3 -> P3e; Vorlage automatisch nach Inhalt -> Folge-Goal.
 - 2026-09-29 abends Patrick: Budgetrahmen 16 MTok; B7 → AK7 fuer AMI als erfuellt gewertet (Nemotron als Folge-Goal); E14 Graph-Client-ID spaeter vom Nutzer in den Einstellungen eintragbar (Feld in vorhandener Kalender-Gruppe, kein fester Wert im Code); E23 echte Testaufnahme spaeter (deutscher Teil bleibt synthetisch).
 - 2026-09-29 Patrick zu E5: GPU-STT per Vulkan aktivieren; Claude installiert das LunarG-Vulkan-SDK (winget) und alles Nötige.
@@ -142,7 +143,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-Worker starten
+abnehmen, Installer 0.20.9
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -169,4 +170,5 @@ Worker starten
 - 2026-09-30T15:50 BLOCKED (Runde 2) — BLOCKIERT B3 (global, keine unabhängige Arbeit mehr): AK11: Abnahme per Installer 0.20.8 (inkl. #62) braucht Installation und Pruefung durch Patrick; Installer liegt unter apps/local-voice/src-tauri/target/release/bundle/nsis/
 - 2026-09-30T16:33 BLOCKED (Runde 2) — B3 gelöst: Patrick hat 0.20.8 installiert und durchgeklickt (30.09.); Rueckmeldung -> P8a, P6f, P3e
 - 2026-09-30T16:33 PLANNING (Runde 3) — Runde 3 nach Abnahme-Rueckmeldung: P8a, P6f, P3e
+- 2026-09-30T16:34 EXECUTING (Runde 3) — P8a (wt-m1), P6f (wt-m1c), P3e (wt-m2b) laufen; Budget ~16,8 MTok
 

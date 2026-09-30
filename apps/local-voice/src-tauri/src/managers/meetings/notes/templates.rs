@@ -14,6 +14,12 @@ use super::model::{SectionKind, TemplateInfo, TemplateSection, TemplateSpec};
 pub const BUILTIN_PREFIX: &str = "builtin:";
 /// Standardvorlage, solange der Nutzer keine andere gewaehlt hat.
 pub const DEFAULT_TEMPLATE_ID: &str = "builtin:allgemein";
+/// P1k: "Automatisch (nach Inhalt)". Kein Vorlagen-Eintrag, sondern die Wahl
+/// selbst: sie steht als Wert in `meetings.template_id` (und in der Einstellung
+/// `meeting_default_template_id`), und der Motor waehlt beim Erzeugen anhand des
+/// Inhalts eine echte Vorlage (`classify`). Nutzer-IDs sind ULIDs und
+/// mitgelieferte tragen `builtin:`: keine Kollision.
+pub const AUTO_TEMPLATE_ID: &str = "auto";
 /// Aktuelle Version des `TemplateSpec`-Formats.
 pub const SPEC_VERSION: u32 = 1;
 /// Kennung im Austauschformat einer einzelnen Vorlage.
@@ -32,6 +38,12 @@ const MAX_SECTION_ID_CHARS: usize = 32;
 /// ID einer mitgelieferten Vorlage aus ihrem Schluessel.
 pub fn builtin_id(key: &str) -> String {
     format!("{BUILTIN_PREFIX}{key}")
+}
+
+/// `true`, wenn die Wahl "Automatisch (nach Inhalt)" gemeint ist (Gross- und
+/// Kleinschreibung und Leerraum egal).
+pub fn is_auto_id(id: &str) -> bool {
+    id.trim().eq_ignore_ascii_case(AUTO_TEMPLATE_ID)
 }
 
 /// `true`, wenn die ID zu einer mitgelieferten (schreibgeschuetzten) Vorlage gehoert.
@@ -549,6 +561,18 @@ mod tests {
         assert_eq!(ids[0], DEFAULT_TEMPLATE_ID, "Standardvorlage steht vorn");
         assert!(is_builtin_id(&ids[3]));
         assert!(!is_builtin_id("01J0ABCDEF"));
+    }
+
+    #[test]
+    fn the_auto_choice_is_no_template_id() {
+        assert!(is_auto_id("auto"));
+        assert!(is_auto_id("  Auto "));
+        assert!(!is_auto_id("builtin:allgemein"));
+        assert!(!is_auto_id("01J0ABCDEF"));
+        assert!(!is_auto_id(""));
+        // Kein Katalogschluessel und keine Vorlage darf so heissen.
+        assert!(builtin_templates().iter().all(|(key, _, _)| *key != "auto"));
+        assert!(!is_builtin_id(AUTO_TEMPLATE_ID));
     }
 
     #[test]

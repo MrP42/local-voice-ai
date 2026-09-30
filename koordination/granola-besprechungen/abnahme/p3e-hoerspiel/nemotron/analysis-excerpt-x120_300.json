@@ -1,0 +1,134 @@
+{
+ "ref": "diar-excerpts/hoerspiel_x120_300.rttm",
+ "hyp": "out/nemotron/hoerspiel_x120_300.rttm",
+ "collar_s": 0.25,
+ "overall": {
+  "total_s": 130.09,
+  "der": 35.13,
+  "miss": 0.4,
+  "fa": 0.0,
+  "conf": 34.73,
+  "ref_speakers": 4,
+  "hyp_speakers": 2,
+  "mapping": {
+   "die-drei-fragezeichen-erzaehler": "S0",
+   "emilia": "S1"
+  },
+  "overlap_s": {
+   "die-drei-fragezeichen-erzaehler": {
+    "S0": 42.88,
+    "S1": 0.0
+   },
+   "emilia": {
+    "S0": 0.0,
+    "S1": 41.51
+   },
+   "mara": {
+    "S0": 0.0,
+    "S1": 16.65
+   },
+   "sofie": {
+    "S0": 0.0,
+    "S1": 28.53
+   }
+  },
+  "per_ref_s": {
+   "die-drei-fragezeichen-erzaehler": 42.88,
+   "emilia": 41.51,
+   "mara": 16.65,
+   "sofie": 29.05
+  }
+ },
+ "per_voice": [
+  {
+   "voice": "die-drei-fragezeichen-erzaehler",
+   "scored_s": 42.88,
+   "mapped_to": "S0",
+   "correct_s": 42.88,
+   "confused_s": 0.0,
+   "missed_s": 0.0,
+   "correct_pct": 100.0,
+   "overlap_with": {
+    "S0": 42.88
+   }
+  },
+  {
+   "voice": "emilia",
+   "scored_s": 41.51,
+   "mapped_to": "S1",
+   "correct_s": 41.51,
+   "confused_s": 0.0,
+   "missed_s": 0.0,
+   "correct_pct": 100.0,
+   "overlap_with": {
+    "S1": 41.51
+   }
+  },
+  {
+   "voice": "sofie",
+   "scored_s": 29.05,
+   "mapped_to": null,
+   "correct_s": 0.0,
+   "confused_s": 28.53,
+   "missed_s": 0.52,
+   "correct_pct": 0.0,
+   "overlap_with": {
+    "S1": 28.53
+   }
+  },
+  {
+   "voice": "mara",
+   "scored_s": 16.65,
+   "mapped_to": null,
+   "correct_s": 0.0,
+   "confused_s": 16.65,
+   "missed_s": 0.0,
+   "correct_pct": 0.0,
+   "overlap_with": {
+    "S1": 16.65
+   }
+  }
+ ],
+ "by_turn_length": [
+  {
+   "turn_len": "<1 s",
+   "turns": 11,
+   "scored_s": 2.46,
+   "correct_pct": 66.7
+  },
+  {
+   "turn_len": "1-2 s",
+   "turns": 30,
+   "scored_s": 32.65,
+   "correct_pct": 54.5
+  },
+  {
+   "turn_len": "2-5 s",
+   "turns": 34,
+   "scored_s": 80.28,
+   "correct_pct": 68.9
+  },
+  {
+   "turn_len": ">=5 s",
+   "turns": 3,
+   "scored_s": 14.7,
+   "correct_pct": 65.9
+  }
+ ],
+ "windows": [
+  {
+   "from_s": 0,
+   "to_s": 180,
+   "der": 35.13,
+   "conf": 34.73,
+   "scored_s": 130.09,
+   "voices": {
+    "die-drei-fragezeichen-erzaehler": 42.88,
+    "emilia": 41.51,
+    "mara": 16.65,
+    "sofie": 29.05
+   },
+   "dominant": "die-drei-fragezeichen-erzaehler"
+  }
+ ]
+}

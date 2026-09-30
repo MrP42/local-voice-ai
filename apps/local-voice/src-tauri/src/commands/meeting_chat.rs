@@ -105,7 +105,7 @@ fn cancel_request(request_id: &str) -> bool {
 /// Laeuft das lokale Modell auf der CPU? Erst der laufende Server, sonst die
 /// Wahl des Selbsttests; unbekannt zaehlt vorsichtig als CPU (kleineres
 /// Budget, Aufnahme geschuetzt).
-async fn local_backend_is_cpu(app: &AppHandle) -> bool {
+pub(crate) async fn local_backend_is_cpu(app: &AppHandle) -> bool {
     if let Some(server) = app.try_state::<Arc<LocalLlmServer>>() {
         if let Some(backend) = server.status().backend {
             return backend == "cpu";
@@ -182,7 +182,7 @@ fn chat_embedder(semantic: bool) -> Arc<dyn Embedder> {
 
 /// Laeuft ein KI-Notizen-Lauf? Kurzer Griff nach dessen Guard (der hat
 /// Vorrang): belegt -> ja; frei -> sofort wieder freigeben.
-fn enhance_running() -> bool {
+pub(crate) fn enhance_running() -> bool {
     EnhanceGuard::acquire().is_err()
 }
 

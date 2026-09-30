@@ -2,15 +2,25 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { commands, type MeetingDocument } from "@/bindings";
+import {
+  commands,
+  events,
+  type MeetingDocument,
+  type MinutesMeta,
+  type MinutesProgress,
+} from "@/bindings";
+import {
+  minutesErrorCode,
+  minutesErrorDetail,
+  phaseKey,
+  progressPercent,
+} from "@/lib/meetingMinutes";
 import { Button } from "../../ui/Button";
 import { Alert } from "../../ui/Alert";
 import Badge from "../../ui/Badge";
 import { MarkdownContent } from "../../whats-new/MarkdownContent";
+import { MeetingTemplatePicker } from "./notes/TemplatePicker";
 import { Download } from "lucide-react";
-import { useJobEnded, useMeetingProgress } from "@/hooks/useMeetingJobs";
-import { JobBar } from "./JobProgress";
-import { translateMeetingError } from "./meetingErrors";
 
 interface MinutesViewProps {
   meetingId: string;
@@ -24,15 +34,16 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   const { t } = useTranslation();
   const [doc, setDoc] = useState<MeetingDocument | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  // Der Lauf gehoert dem Backend (B14): `running` kommt aus dessen Zustand und
+  // seinen Ereignissen, nicht aus dem Aufruf dieses Reiters. So bleibt der
+  // Knopf gesperrt, wenn man den Reiter verlaesst und wieder oeffnet.
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<MinutesProgress | null>(null);
+  const [meta, setMeta] = useState<MinutesMeta | null>(null);
+  // Die Vorlage der Besprechung (geteilt mit den KI-Notizen); `null` = die
+  // gemerkte bzw. die Standardvorlage.
+  const [templateChoice, setTemplateChoice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [stopped, setStopped] = useState(false);
-  // P8a: die Erzeugung ist ein Auftrag im Backend. Beim Reiterwechsel wird die
-  // Ansicht neu gebaut und sieht trotzdem, dass sie noch laeuft.
-  const progressMap = useMeetingProgress();
-  const job =
-    progressMap[meetingId]?.phase === "minutes" ? progressMap[meetingId] : undefined;
-  const generating = busy || job !== undefined;
   const [saved, setSaved] = useState<string | null>(null);
   const [autoFile, setAutoFile] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -64,38 +75,98 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setAutoFile(result.status === "ok" ? result.data : null);
   }, [meetingId]);
 
+  const loadMeta = useCallback(async () => {
+    const result = await commands.meetingsMinutesMeta(meetingId);
+    setMeta(result.status === "ok" ? (result.data ?? null) : null);
+  }, [meetingId]);
+
+  // Beim Einblenden fragen, ob schon ein Lauf besteht (Reiterwechsel).
+  const loadRunState = useCallback(async () => {
+    const result = await commands.meetingsMinutesState(meetingId);
+    if (result.status !== "ok" || !result.data) return;
+    setRunning(result.data.running);
+    setProgress(result.data.running ? (result.data.progress ?? null) : null);
+  }, [meetingId]);
+
   useEffect(() => {
     void loadLatest();
     void refreshAutoFile();
-  }, [loadLatest, refreshAutoFile]);
+    void loadMeta();
+    void loadRunState();
+  }, [loadLatest, refreshAutoFile, loadMeta, loadRunState]);
+
+  const errorText = useCallback(
+    (raw: string) =>
+      t(`meetings.minutes.errors.${minutesErrorCode(raw)}`, {
+        error: minutesErrorDetail(raw),
+        defaultValue: raw,
+      }),
+    [t],
+  );
+
+  // Fortschritt, Ende und Fehler des Laufs -- auch eines, den ein anderer
+  // Aufruf oder ein frueher geoeffneter Reiter gestartet hat.
+  useEffect(() => {
+    const un = events.minutesEvent.listen((event) => {
+      const payload = event.payload;
+      if (payload.meeting_id !== meetingId) return;
+      if (payload.kind === "progress") {
+        setRunning(true);
+        setProgress({
+          phase: payload.phase,
+          done: payload.done,
+          total: payload.total,
+        });
+      } else if (payload.kind === "done") {
+        setRunning(false);
+        setProgress(null);
+        setError(null);
+        void loadLatest();
+        void loadMeta();
+        void refreshAutoFile();
+      } else {
+        setRunning(false);
+        setProgress(null);
+        // Ein Stopp ist kein Fehler.
+        if (payload.code !== "minutes_cancelled") {
+          setError(errorText(payload.code));
+        }
+      }
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [meetingId, loadLatest, loadMeta, refreshAutoFile, errorText]);
 
   const generate = async () => {
-    setBusy(true);
+    setRunning(true);
+    setProgress(null);
     setError(null);
-    setStopped(false);
     setSaved(null);
-    const result = await commands.meetingsGenerateMinutes(meetingId);
-    setBusy(false);
+    const result = await commands.meetingsGenerateMinutes(
+      meetingId,
+      templateChoice,
+    );
     if (result.status === "error") {
-      // Vom Nutzer gestoppt (P8a) ist keine Panne.
-      if (result.error === "minutes_stopped") {
-        setStopped(true);
+      // Ein zweiter Start wird abgewiesen, der erste Lauf laeuft weiter: der
+      // Reiter zeigt ihn weiter als laufend, kein Fehler.
+      if (minutesErrorCode(result.error) === "minutes_busy") {
+        void loadRunState();
         return;
       }
-      setError(translateMeetingError(result.error, t));
+      setRunning(false);
+      setProgress(null);
+      if (minutesErrorCode(result.error) !== "minutes_cancelled") {
+        setError(errorText(result.error));
+      }
       return;
     }
+    setRunning(false);
+    setProgress(null);
     setDoc(result.data);
     void refreshAutoFile();
+    void loadMeta();
   };
-
-  // Das Ende des Auftrags laedt das Ergebnis neu, auch wenn die Ansicht beim
-  // Ende nicht offen war.
-  useJobEnded(meetingId, (ended) => {
-    if (ended.phase !== "minutes") return;
-    void loadLatest();
-    void refreshAutoFile();
-  });
 
   /**
    * Two flavours in one clipboard write: `text/html` so a paste into Word,
@@ -165,14 +236,15 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   return (
     <div className="space-y-3">
       {error && <Alert variant="error">{error}</Alert>}
-      {stopped && !generating && (
-        <div data-testid="minutes-stopped">
-          <Alert variant="info">{t("meetings.minutes.stopped")}</Alert>
-        </div>
-      )}
+
+      <MeetingTemplatePicker
+        meetingId={meetingId}
+        disabled={running}
+        onValueChange={setTemplateChoice}
+      />
 
       <div className="flex gap-2 items-center flex-wrap">
-        <Button onClick={generate} disabled={generating}>
+        <Button onClick={generate} disabled={running}>
           {doc
             ? t("meetings.detail.regenerate")
             : t("meetings.detail.generate")}
@@ -194,16 +266,31 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
             </Button>
           </>
         )}
-        {generating && (
-          <Badge variant="secondary">{t("meetings.minutes.generating")}</Badge>
+        {running && (
+          <Badge variant="secondary">
+            <span data-testid="minutes-running">
+              {t("meetings.minutes.generating")}
+            </span>
+          </Badge>
         )}
-        {job && <JobBar progress={job} className="w-44" />}
         {saved && (
           <span className="text-xs text-text/60 break-all">
             {t("meetings.minutes.exportSaved", { path: saved })}
           </span>
         )}
       </div>
+
+      {running && <MinutesProgressBar progress={progress} />}
+
+      {!running && meta?.incomplete && (
+        <Alert variant="warning">
+          <span data-testid="minutes-incomplete">
+            {t("meetings.minutes.incomplete", {
+              gaps: meta.gaps.length > 0 ? meta.gaps.join(", ") : "?",
+            })}
+          </span>
+        </Alert>
+      )}
 
       {/* Written automatically on generation, so the minutes exist as a file
           even for someone who never opens the export dialog. */}
@@ -220,6 +307,17 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         </p>
       )}
 
+      {doc && meta?.template_title && (
+        <p className="text-xs text-text/60" data-testid="minutes-created-with">
+          {t(
+            meta.auto?.outcome === "model"
+              ? "meetings.minutes.createdWithAuto"
+              : "meetings.minutes.createdWith",
+            { title: meta.template_title },
+          )}
+        </p>
+      )}
+
       {doc ? (
         <div
           ref={previewRef}
@@ -228,10 +326,52 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           <MarkdownContent markdown={doc.body} />
         </div>
       ) : (
-        !generating && (
+        !running && (
           <p className="text-sm text-text/60">{t("meetings.minutes.empty")}</p>
         )
       )}
+    </div>
+  );
+};
+
+/**
+ * Fortschrittsbalken der Protokoll-Erzeugung: Phase, Schritt und Prozent. Ohne
+ * bekannte Gesamtzahl (Vorlagenwahl, erster Augenblick) laeuft er unbestimmt.
+ */
+const MinutesProgressBar: React.FC<{ progress: MinutesProgress | null }> = ({
+  progress,
+}) => {
+  const { t } = useTranslation();
+  const percent = progressPercent(progress);
+  return (
+    <div className="space-y-1" data-testid="minutes-progress">
+      <div className="flex items-center justify-between text-xs text-text/60">
+        <span data-testid="minutes-phase">
+          {progress
+            ? t(phaseKey(progress.phase))
+            : t("meetings.minutes.generating")}
+        </span>
+        <span data-testid="minutes-percent">
+          {percent !== null && progress
+            ? `${t("meetings.minutes.stepOf", { done: progress.done, total: progress.total })} \u00b7 ${percent} %`
+            : ""}
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label={t("meetings.minutes.progressLabel")}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent ?? undefined}
+        className="h-1.5 w-full overflow-hidden rounded-full bg-mid-gray/20"
+      >
+        <div
+          className={`h-full rounded-full bg-logo-primary transition-[width] duration-300 ${
+            percent === null ? "w-1/3 animate-pulse" : ""
+          }`}
+          style={percent === null ? undefined : { width: `${percent}%` }}
+        />
+      </div>
     </div>
   );
 };
