@@ -1,7 +1,7 @@
 ---
 thema: granola-besprechungen
 titel: Besprechungen auf Granola-Niveau - lokal, ohne Abo
-state: EXECUTING
+state: BLOCKED
 vorzustand: EXECUTING
 pausengrund: -
 issue: 59
@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/granola-besprechungen
 iteration: 2
 erstellt: 2026-09-29
-aktualisiert: 2026-09-30T14:28
+aktualisiert: 2026-09-30T15:50
 ---
 
 # Goal: Besprechungen auf Granola-Niveau - lokal, ohne Abo
@@ -48,7 +48,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - [x] QG5 — Datenschutz: Besprechungspfad ohne Netzverkehr (außer Modell-Download und bewusst gewähltem externem LLM), Nachweis per Offline-Lauf
 - [x] QG6 — Lizenzen: jedes neue Modell/Crate mit Lizenz in den Third-Party-Notices, keine Nicht-kommerziell-Lizenz
 - [x] QG7 — i18n: alle neuen Texte in de + en, echte Umlaute
-- [ ] QG8 — Doku + Handoff aktualisiert, PR offen gegen `main`
+- [x] QG8 — Doku + Handoff aktualisiert, PR offen gegen `main`
 - [ ] QG9 — Budget ≤ 16 MTok (29.09. abends von 12 auf 16 angehoben durch Patrick; Meldung bei 6,0 / 9,6 MTok, harter Stopp 18 MTok)
 
 ## Constraints
@@ -123,10 +123,12 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-30T14:28 QG3 erfüllt — P7b+P1i 25e32343: 60 min RTX 4090 Gemma 4 E4B Stopp->KI-Notizen 156,6 s (3 Laeufe 156-158 s); CPU-only funktioniert (abnahme/p7b-qg3.md)
 - 2026-09-30T14:28 QG1 erfüllt — cargo test --lib 1748 passed 0 failed (25e32343)
 - 2026-09-30T14:28 QG2 erfüllt — tsc 0, Playwright 251 passed 0 failed (25e32343); eigene Dateien eslint/prettier je Paket geprueft
+- 2026-09-30T15:50 QG8 erfüllt — docs/BESPRECHUNGEN.md, KNOWN-LIMITATIONS, STATUS (P7c); PR #63 offen (inkl. #62); Handoff 2026-09-30
 
 ## Blocker
 - B1 [gelöst] [P2f] 2026-09-29T11:28 Ursache: Lokaler Vulkan-Build braucht das LunarG-SDK (Installation mit Admin-Rechten) und aendert den Release-Build (E5) · Owner: Patrick · entsperrt, wenn: Patrick gibt E5 frei (SDK installiert oder CUDA-Weg gewaehlt) oder lehnt ab (dann P2f abgebrochen, CPU-Pfad) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T12:10: Patrick 29.09.: Vulkan ja, Claude installiert das SDK (winget KhronosGroup.VulkanSDK)
 - B2 [gelöst] 2026-09-29T20:32 Ursache: Freigegebener Budgetrahmen 12 MTok erreicht (Ist ~12,8 MTok); Hochrechnung bis COMPLETE 15-16 MTok · Owner: Patrick · entsperrt, wenn: Patrick hebt den Rahmen an (Vorschlag 16 MTok) oder kuerzt den Umfang (Komfortpakete P3d/P5d/P5e/P5f/P6e in Folge-Goal); dazu offen: B7, E14, E23 · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-09-29T21:51: Patrick 29.09. abends: Rahmen 16 MTok, B7 a, E14 als Einstellung spaeter, E23 spaeter
+- B3 [offen] 2026-09-30T15:50 Ursache: AK11: Abnahme per Installer 0.20.8 (inkl. #62) braucht Installation und Pruefung durch Patrick; Installer liegt unter apps/local-voice/src-tauri/target/release/bundle/nsis/ · Owner: Patrick · entsperrt, wenn: Patrick hat 0.20.8 installiert und Kernablauf geprueft (Aufnahme mit Notizen -> KI-Notizen -> Chat), Screenshots/Rueckmeldung liegen vor · nächste Prüfung: beim nächsten Sessionstart
 
 ## Entscheidungen
 - 2026-09-29 Patrick: voller Umfang M1–M7 in diesem Goal, Budgetrahmen ~12 MTok (Hochrechnung nach Ist 3,0 MTok).
@@ -139,7 +141,7 @@ Local Voice AI deckt jede Kernfunktion von Granola für Besprechungen ab (Aufnah
 - 2026-09-29 Reihenfolge: M1 (Notizblock/KI-Notizen = Kern der Granola-Identität) und M2 (Audio/STT) parallel auf disjunkten Dateien; M3 nach M2; M4 nach M1.
 
 ## Nächste empfohlene Aktion
-P7b/P5f abnehmen, dann P7d Installer + PR
+B3 auflösen (Patrick): Patrick hat 0.20.8 installiert und Kernablauf geprueft (Aufnahme mit Notizen -> KI-Notizen -> Chat), Screenshots/Rueckmeldung liegen vor. Dann `goal.py resolve-blocker --id B3 --beleg …` und `goal.py set --state PLANNING`.
 
 ## Verlauf
 - 2026-09-29T10:40 DISCOVERY — Goal State angelegt
@@ -163,4 +165,5 @@ P7b/P5f abnehmen, dann P7d Installer + PR
 - 2026-09-29T21:51 PLANNING (Runde 2) — Blocker B2 aufgeloest (Rahmen 16 MTok), AK7 erfuellt
 - 2026-09-29T21:56 EXECUTING (Runde 2) — P7a (wt-m1), P1g (wt-m2a), P2g (wt-m2b) laufen; Budget ~12,9 von 16 MTok (80 %-Marke erreicht)
 - 2026-09-29T23:12 EXECUTING (Runde 2) — P5f (wt-m1c), P7b (wt-m2b) laufen; gemergt P7a,P6d,P7c,P6e,P5d/e,P2g,P1g; Befunde alle erledigt; Budget ~15 MTok
+- 2026-09-30T15:50 BLOCKED (Runde 2) — BLOCKIERT B3 (global, keine unabhängige Arbeit mehr): AK11: Abnahme per Installer 0.20.8 (inkl. #62) braucht Installation und Pruefung durch Patrick; Installer liegt unter apps/local-voice/src-tauri/target/release/bundle/nsis/
 
