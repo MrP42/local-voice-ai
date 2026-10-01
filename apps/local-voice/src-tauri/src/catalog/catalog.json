@@ -5746,6 +5746,26 @@
       ]
     },
     {
+      "id": "llm-gemma4-e4b-mmproj",
+      "name": "Gemma 4 E4B Bild-Projektor (Folienanalyse)",
+      "description": "Optionaler Bild-Projektor für Gemma 4 E4B: liest Zahlen und Tabellen auf Folien zuverlässig und beschreibt Bilder. Wird nur für die Bildanalyse von Folien geladen (rund 0,8 GB Grafikspeicher, nur mit Grafikkarte sinnvoll).",
+      "purpose": "llm-projector",
+      "license": "Apache-2.0",
+      "license_url": "https://ai.google.dev/gemma/docs/gemma_4_license",
+      "tags": [
+        "bildanalyse"
+      ],
+      "files": [
+        {
+          "filename": "gemma-4-E4B-it-mmproj-F16.gguf",
+          "quant": "F16",
+          "size_bytes": 990372672,
+          "sha256": "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51",
+          "url": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-F16.gguf"
+        }
+      ]
+    },
+    {
       "id": "emb-bge-m3-q8",
       "name": "BGE-M3 (Suche)",
       "description": "Embedding-Modell für die semantische Suche in Besprechungen (1024 Dimensionen, mehrsprachig, MIT). Wird nur für den Such-Index gebraucht.",

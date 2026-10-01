@@ -244,6 +244,9 @@ const settingUpdaters: {
   // M4-P4b
   meeting_semantic_search: (value) =>
     commands.changeMeetingSemanticSearchSetting(value as boolean),
+  // D3
+  meeting_slide_vision: (value) =>
+    commands.changeMeetingSlideVisionSetting(value as boolean),
   // M2-P2c2
   meeting_echo_cancellation: (value) =>
     commands.changeMeetingEchoCancellationSetting(
