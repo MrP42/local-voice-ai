@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/issues-abschluss
 iteration: 1
 erstellt: 2026-10-01
-aktualisiert: 2026-10-01T11:15
+aktualisiert: 2026-10-01T11:59
 ---
 
 # Goal: Offene Issues abschliessen, neue Features, Version 0.21.0
@@ -93,7 +93,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - 2026-10-01 Patrick (/goal-planner-worker): alle offenen Issues abschließen, neue Features umsetzen, testen, neue Version, Ergebnisse in GitHub; zuerst leerer Eintrag im Projekt.
 
 ## Nächste empfohlene Aktion
-M1 briefen.
+Ergebnisse G2b/G5/G2f/G3 validieren, mergen; Lizenzfragen espeak-ng/NC-Stimmen an Patrick; dann M8 0.21.0
 
 ## Verlauf
 - 2026-10-01T10:38 DISCOVERY — Goal State angelegt
@@ -101,4 +101,5 @@ M1 briefen.
 - 2026-10-01T10:39 READY (Runde 0) — Goal definiert, Issue #70
 - 2026-10-01T10:39 PLANNING (Runde 1) — M1 zuerst
 - 2026-10-01T10:39 EXECUTING (Runde 1) — G1 laeuft (wt-goal)
+- 2026-10-01T11:59 EXECUTING (Runde 1) — G2b, G5, G2f (wt-u7), G3 (wt-g2c) laufen; G2d abgenommen
 
