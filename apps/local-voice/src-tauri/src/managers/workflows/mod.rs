@@ -171,11 +171,16 @@
 //! `termin-protokoll-mail` in `templates`. Fehlerfaelle und Rechte stehen im Kopf von
 //! `integration_actions`.
 //!
+//! Baustein von Paket C3 (Lokaler Agent): `agent_route` (`agent.route`: das lokale Modell waehlt aus
+//! der Werkzeugliste des Schritts EIN Werkzeug; die Politik steht in `agent::policy`, ausgefuehrt wird
+//! in den folgenden Schritten mit ihrem Recht am Tor). Fehlerfaelle im Kopf von `agent_route`.
+//!
 #![allow(dead_code)]
 
 pub mod action;
 pub mod agent_actions; // C2
 pub mod agent_notes; // C4
+pub mod agent_route; // C3
 pub mod app_actions; // B4
 pub mod app_services; // B4
 pub mod builtin;

@@ -40,7 +40,11 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | C2 | M6 | #68 Agent-Laufzeit (Schema, Denken aus, Validierung, Retry, Rückfall) + agent.extract (To-dos/Fristen/Entscheidungen mit Belegen) + Provenienz — lv-coder-xhigh | AK3, AK4 | abgenommen (Echtlauf gegen llama-server vor C3) | 2c66d731 |
 | B7n | M5 | Einwilligung zur Aufnahme im allgemeinen Freigabedialog nur mit demselben Häkchen wie im Hinweisfenster (oder dorthin verweisen) — lv-coder | Playwright + Rust: ohne Häkchen keine Freigabe | abgenommen | 76260fb8 |
 | B6 | M5 | #67 Wissens-Aktionen (Relevanz, Abgleich, Vault ohne Dubletten, Kanal-Summary), Vorlage Kanal → Wissen — lv-coder-xhigh (D:) | AK11 workflows::knowledge | in_arbeit | |
-| C3 | M6 | #68 agent.route + policy.rs (Whitelist, Empfänger, Obergrenzen, Injection), Router Qwen3.5-9B — lv-coder-xhigh (D:) | AK5, AK9 | in_arbeit | |
-| D3 | M7 | #69 Bildanalyse für Folien (mmproj optional, nur Folienaufträge) — lv-coder (D:) | slides::vision llm::server | in_arbeit | |
+| C3 | M6 | #68 agent.route + policy.rs (Whitelist, Empfänger, Obergrenzen, Injection), Router Qwen3.5-9B — lv-coder-xhigh (D:) | AK5, AK9 | abgenommen (QG5-Review, Eval-Neumessung vor Scharfschalten) | 0bd4bca2 |
+| D3 | M7 | #69 Bildanalyse für Folien (mmproj optional, nur Folienaufträge) — lv-coder (D:) | slides::vision llm::server | abgenommen (Echtlauf mit Gemma optional) | 117895c0 |
 | K1 | M8 | Webhook-Formular, Lizenzhinweise NC-Stimmen/espeak-ng, KNOWN-LIMITATIONS — lv-coder (D:) | tsc, Specs, gen-notices --check | abgenommen | cf6b5a13 |
 | R0 | M8 | PR-Triage #21/#32/#60/#63 vor Release (Regel 7) — lv-coder-xhigh (D:) | cargo build, Entscheidung je PR | abgenommen (#60,#63 drin, #21 überholt, #32 ausgeklammert) | d2ca22ba |
+| C4 | M6 | #68 Wissens- und Fristaktionen (Vault-Notiz mit Frontmatter, Dublettenschutz, Mitteilung zur Frist, Kalender nur nach Freigabe) — lv-coder (D:) | AK6, AK7 | in_arbeit | |
+| B8 | M5 | #67 Agenten-Zugriff auf Workflows (MCP/CLI list_workflows, run_workflow, get_run), n8n-Brücke Doku + Beispiel — lv-coder (D:) | AK10 mcp_smoke --workflows, ctl workflow run | in_arbeit | |
+| C5 | M6 | #68 Oberfläche Agent-Schritt im Editor, Trockenlauf mit Modellausgabe (preview-Command), Herkunft — lv-coder (D:) | AK8 Playwright | in_arbeit | |
+| S1 | M8 | QG5-Nacharbeit B20–B23 (Sandbox handle-basiert, Anhang-Bytes gebunden, M365-Abmelde-Race, Pipe-Schreibfristen) — lv-coder-xhigh (D:) | je Befund Test rot→grün | in_arbeit | |

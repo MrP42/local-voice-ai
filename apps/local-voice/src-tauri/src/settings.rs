@@ -809,6 +809,13 @@ pub struct AppSettings {
     /// heruntergeladen ist; ohne den Schluessel gilt `true`.
     #[serde(default = "default_true")]
     pub meeting_semantic_search: bool,
+    /// D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
+    /// (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server
+    /// kurz mit Bild-Projektor. Standard AUS (der Projektor ist ein optionaler 990-MB-
+    /// Download, die Analyse braucht eine Grafikkarte); ohne die Voraussetzungen bleibt es
+    /// bei der Windows-Texterkennung, auch wenn der Schalter an ist.
+    #[serde(default)]
+    pub meeting_slide_vision: bool,
     /// M2-P2c2: Echo-Unterdrückung der Ich-Spur (`auto` | `on` | `off`). Ohne
     /// den Schlüssel (ältere settings.json) gilt `auto`.
     #[serde(default)]
@@ -1658,6 +1665,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_auto_enhance: true,
         meeting_default_template_id: None,
         meeting_semantic_search: true,
+        meeting_slide_vision: false,
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,
         meeting_final_model: default_meeting_final_model(),
         meeting_diarization: default_meeting_diarization(),
@@ -2858,6 +2866,19 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "meeting_semantic_search": false }))
                 .unwrap();
         assert!(!off.meeting_semantic_search);
+    }
+
+    /// D3: die Bildanalyse fuer Folien ist Standard AUS (auch ohne den Schluessel in einer
+    /// aelteren settings.json); ein explizites `true` bleibt.
+    #[test]
+    fn meeting_slide_vision_defaults_off_and_keeps_a_choice() {
+        assert!(!get_default_settings().meeting_slide_vision);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(!old.meeting_slide_vision);
+        let on: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_slide_vision": true })).unwrap();
+        assert!(on.meeting_slide_vision);
     }
 
     #[test]

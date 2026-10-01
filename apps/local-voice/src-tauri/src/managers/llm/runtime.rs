@@ -167,6 +167,18 @@ impl LlmRuntimeManager {
         Some(self.models_dir().join(&file.filename))
     }
 
+    /// D3: Pfad des Bild-Projektors (Katalogzweck `llm-projector`). Er liegt neben
+    /// den Sprachmodellen, erscheint aber NICHT in deren Liste (`list_downloads`):
+    /// ohne sein Modell ist er nutzlos, und er wird nur fuer die Folienanalyse
+    /// geladen.
+    pub fn projector_path(&self, projector_id: &str) -> Option<PathBuf> {
+        let entry = catalog::tts_entries(Purpose::LlmProjector)
+            .into_iter()
+            .find(|e| e.id == projector_id)?;
+        let file = entry.files.first()?;
+        Some(self.models_dir().join(&file.filename))
+    }
+
     /// M4-P4b: eigene Logdatei des Embedding-Servers (die des Chat-Servers
     /// wird bei jedem Start ueberschrieben).
     pub fn embed_log_path(&self) -> PathBuf {
@@ -379,6 +391,8 @@ impl LlmRuntimeManager {
             // M4-P4b: das Embedding-Modell laedt, prueft und loescht sich wie
             // ein Sprachmodell (gleicher Ordner, gleiche Pruefsumme).
             .chain(catalog::tts_entries(Purpose::LlmEmbedding))
+            // D3: auch der Bild-Projektor (gleicher Ordner, gleiche Pruefsumme).
+            .chain(catalog::tts_entries(Purpose::LlmProjector))
             .find(|e| e.id == id)
             .map(|e| (e, LlmDownloadKind::Model))
     }
