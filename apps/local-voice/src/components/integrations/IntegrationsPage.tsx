@@ -8,6 +8,8 @@ import { TabList } from "../ui/TabList";
 import { CalendarConnectDialog } from "../settings/meetings/CalendarConnectDialog";
 import { MeetingMcpSettings } from "../settings/meetings/MeetingMcpSettings";
 import { usePersistentState } from "../../hooks/usePersistentState";
+import { commands } from "@/bindings";
+import { AutomationsPanel } from "../automations/AutomationsPanel";
 import { ApprovalDialog } from "./ApprovalDialog";
 import { AuditView, EMPTY_AUDIT_FILTER, type AuditFilter } from "./AuditView";
 import { CalendarSourceCards, useCalendarSources } from "./CalendarSourceCards";
@@ -23,9 +25,9 @@ import { useIntegrations, usePendingApprovals } from "./useIntegrations";
 type Screen =
   { name: "list" } | { name: "catalog" } | { name: "detail"; id: string };
 
-type PageTab = "connections" | "audit";
+type PageTab = "connections" | "automations" | "audit";
 const isPageTab = (value: string): value is PageTab =>
-  value === "connections" || value === "audit";
+  value === "connections" || value === "automations" || value === "audit";
 
 /**
  * „Integrationen“ (A4, Goal Integrationen): die Verbindungen der App zu
@@ -52,6 +54,9 @@ export const IntegrationsPage: React.FC = () => {
   const [targetKind, setTargetKind] = useState<TargetKind | null>(null);
   const [m365Dialog, setM365Dialog] = useState(false);
   const [approvalsOpen, setApprovalsOpen] = useState(false);
+  // B7: wird hochgezaehlt, wenn eine Freigabe entschieden wurde, damit die Automationen
+  // ihre Laeufe neu laden.
+  const [approvalVersion, setApprovalVersion] = useState(0);
   const approvals = usePendingApprovals(true);
 
   const { views, loaded, loadFailed, reload, upsert, remove } = register;
@@ -154,6 +159,7 @@ export const IntegrationsPage: React.FC = () => {
         <TabList
           tabs={[
             { id: "connections", label: t("integrations.tabs.connections") },
+            { id: "automations", label: t("integrations.tabs.automations") },
             { id: "audit", label: t("integrations.tabs.audit") },
           ]}
           value={tab}
@@ -178,6 +184,15 @@ export const IntegrationsPage: React.FC = () => {
             toList();
           }}
           onShowAudit={showAudit}
+        />
+      )}
+
+      {inList && tab === "automations" && (
+        <AutomationsPanel
+          integrations={views}
+          pending={approvals.pending}
+          onOpenApprovals={() => setApprovalsOpen(true)}
+          version={approvalVersion}
         />
       )}
 
@@ -310,6 +325,13 @@ export const IntegrationsPage: React.FC = () => {
         onDecided={async () => {
           await approvals.reload();
           await reload();
+          // B7: ein Lauf, der auf diese Freigabe wartet, geht ohne Wartezeit weiter.
+          try {
+            await commands.workflowApprovalsChanged();
+          } catch {
+            /* der Takt der Engine findet die Entscheidung auch so */
+          }
+          setApprovalVersion((n) => n + 1);
         }}
       />
     </PageShell>

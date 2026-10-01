@@ -232,6 +232,17 @@ impl WorkflowHub {
         &self.engine
     }
 
+    /// B7: Dateien, die nur in der Cloud liegen (OneDrive-Platzhalter) und deshalb nicht
+    /// verarbeitet werden.
+    pub fn cloud_only_files(&self) -> Vec<folder_trigger::CloudFile> {
+        self.folders.cloud_only()
+    }
+
+    /// B7: Stand der beobachteten YouTube-Kanaele (letzter Abruf, Ausfall).
+    pub fn channel_status(&self) -> Vec<channel_trigger::ChannelStatus> {
+        self.channels.status()
+    }
+
     /// Beendet die Arbeiter (siehe Moduldoku). Mehrfaches Rufen ist harmlos.
     pub fn shutdown(&self) {
         let handle = self.handle.lock().unwrap_or_else(|e| e.into_inner()).take();

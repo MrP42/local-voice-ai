@@ -3593,6 +3593,225 @@ async meetingPromptWorkflowDecide(promptId: string, approve: boolean) : Promise<
 }
 },
 /**
+ * Alle Ablaeufe mit letztem Lauf und Zahl der offenen Laeufe.
+ */
+async workflowList() : Promise<Result<WorkflowItem[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Katalog der Ausloeser und Bausteine mit ihren Feldern (Grundlage des Formulars).
+ */
+async workflowCatalog() : Promise<Result<WorkflowCatalog, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_catalog") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die mitgelieferten Vorlagen.
+ */
+async workflowTemplates() : Promise<Result<WorkflowTemplate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_templates") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Prueft einen Definitionstext, ohne zu speichern (Fehler mit JSON-Zeiger).
+ */
+async workflowValidate(definitionJson: string) : Promise<Result<WorkflowIssue[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_validate", { definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Speichert einen Ablauf (`id = None`: neu, ausgeschaltet, im Trockenlauf).
+ */
+async workflowSave(id: string | null, definitionJson: string) : Promise<Result<WorkflowSaveResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_save", { id, definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async workflowDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async workflowSetEnabled(id: string, enabled: boolean) : Promise<Result<WorkflowItem, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_set_enabled", { id, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Scharf schalten (`armed = true`) oder zurueck in den Trockenlauf.
+ */
+async workflowSetArmed(id: string, armed: boolean) : Promise<Result<WorkflowItem, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_set_armed", { id, armed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Trockenlauf einer Definition (auch einer noch nicht gespeicherten) als JSON-Text:
+ * jeder Schritt mit Bedingung, geplanter Wirkung und Rechte-Ergebnis. Schreibt nichts.
+ */
+async workflowPlan(definitionJson: string, workflowId: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_plan", { definitionJson, workflowId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Startet einen Ablauf von Hand. `dry_run = true`: er plant nur. `vars_json`: Werte fuer die
+ * deklarierten Variablen als JSON-Objekt.
+ */
+async workflowRunStart(id: string, dryRun: boolean, varsJson: string | null) : Promise<Result<WorkflowStarted, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_run_start", { id, dryRun, varsJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laeufe, neueste zuerst; optional eines Ablaufs und nur offene.
+ */
+async workflowRuns(workflowId: string | null, openOnly: boolean, limit: number | null) : Promise<Result<WorkflowRunSummary[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_runs", { workflowId, openOnly, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein Lauf mit allen Schritten, Versuchen und der Herkunft der Ausgaben.
+ */
+async workflowRunDetail(runId: string) : Promise<Result<WorkflowRunDetail, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_run_detail", { runId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht einen Lauf ab. `true`: sofort; `false`: er endet am naechsten Schrittwechsel.
+ */
+async workflowRunCancel(runId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_run_cancel", { runId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wiederholt einen gescheiterten Lauf ab dem gescheiterten Schritt. Bei unklarer Wirkung
+ * (`retry_needs_confirmation`) nur mit `accept_uncertain = true`.
+ */
+async workflowRunRetry(runId: string, acceptUncertain: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_run_retry", { runId, acceptUncertain }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nach einer Entscheidung im Freigabedialog: Engine wecken und das Hinweisfenster der
+ * naechsten Bitte zeigen, damit der Lauf ohne Wartezeit weitergeht.
+ */
+async workflowApprovalsChanged() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_approvals_changed") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Definition eines Ablaufs als lesbarer JSON-Text.
+ */
+async workflowExport(id: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_export", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schreibt den Export in eine vom Nutzer gewaehlte Datei.
+ */
+async workflowExportFile(id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_export_file", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Liest eine Importdatei (hoechstens 256 KiB, UTF-8) und gibt den Text zurueck; importiert
+ * wird erst mit `workflow_import` nach der Pruefung durch den Nutzer.
+ */
+async workflowReadFile(path: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_read_file", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Importiert eine Definition als neuen Ablauf (ausgeschaltet, im Trockenlauf).
+ */
+async workflowImport(definitionJson: string) : Promise<Result<WorkflowSaveResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_import", { definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ordner-Platzhalter (nur in der Cloud) und Kanal-Ausfaelle.
+ */
+async workflowStatus() : Promise<Result<WorkflowStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Alle Personen, die meisten Besprechungen zuerst; `query` filtert nach Name,
  * Adresse oder Firma.
  */
@@ -6908,6 +7127,22 @@ export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "
  */
 export type ReferenceAnalysis = { quiet: boolean; suggested_tags: string[] }
 /**
+ * Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
+ */
+export type RunState = 
+/**
+ * Wartet auf einen freien Platz oder (mit `next_run_at`) auf einen Zeitpunkt.
+ */
+"queued" | 
+/**
+ * Ein Arbeiter haelt den Lauf (Mietvertrag `lease_until`).
+ */
+"running" | 
+/**
+ * Wartet auf die Entscheidung des Nutzers.
+ */
+"awaiting_approval" | "done" | "failed" | "cancelled"
+/**
  * Zustand einer Laufzeit fuer die Oberflaeche.
  */
 export type RuntimeState = { 
@@ -7008,6 +7243,46 @@ export type SourceRef = { kind: string; ref: string; title: string | null; url: 
  * Ansichten laden Segmente und Sprecher neu.
  */
 export type SpeakersChanged = { meeting_id: string }
+/**
+ * Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).
+ */
+export type StepState = 
+/**
+ * Der Baustein laeuft oder lief, als die App endete: Wirkung unbestimmt.
+ */
+"running" | "done" | 
+/**
+ * Endgueltig gescheitert (nicht mehr wiederholt).
+ */
+"failed" | 
+/**
+ * Vorubergehend gescheitert, ein weiterer Versuch ist eingeplant.
+ */
+"retrying" | 
+/**
+ * Das Recht fehlt (aus) oder die Freigabe wurde verweigert/ist verfallen.
+ */
+"denied" | 
+/**
+ * Bedingung falsch.
+ */
+"skipped" | 
+/**
+ * Trockenlauf: geplant, nichts getan.
+ */
+"planned" | "awaiting_approval" | 
+/**
+ * Der Baustein hat auf spaeter verschoben (`wake_at`).
+ */
+"waiting" | 
+/**
+ * Absturz oder Zeitueberschreitung mit Aussenwirkung: unklar, ob sie eintrat.
+ */
+"uncertain" | 
+/**
+ * Die App endete mitten im Schritt; er wurde neu eingeplant (ohne Aussenwirkung).
+ */
+"interrupted"
 export type StoredSegment = { segment_index: number; text: string; start_ms: number; end_ms: number; channel: number; speaker_index: number | null; 
 /**
  * M2-P2d: Wortzeiten auf der Kanal-Achse, wenn die Engine sie liefert
@@ -7490,6 +7765,137 @@ source: string; page: number | null; document_id: string | null }
  * channel timeline (basis for M3's word-to-speaker assignment).
  */
 export type WordTime = { text: string; start_ms: number; end_ms: number }
+export type WorkflowActionSpec = { id: string; title: string; effect_text: string; fields: WorkflowFieldSpec[]; 
+/**
+ * `pure`, `idempotent` oder `external`.
+ */
+effect: string; heavy_label: string | null; 
+/**
+ * Faehigkeit der Integration, die der Baustein braucht (`mail.send`), sonst leer.
+ */
+capability: string | null }
+export type WorkflowCatalog = { schema: string; max_steps: number; triggers: WorkflowTriggerSpec[]; actions: WorkflowActionSpec[] }
+/**
+ * Stand eines beobachteten YouTube-Kanals.
+ */
+export type WorkflowChannelStatus = { workflow_id: string; workflow_name: string; channel_id: string; last_ok_ms: number | null; failures: number; outage: boolean; last_error: string | null; next_fetch_ms: number }
+/**
+ * Datei, die nur in der Cloud liegt (OneDrive-Platzhalter).
+ */
+export type WorkflowCloudFile = { workflow_id: string; workflow_name: string; name: string }
+/**
+ * Beschreibung eines Felds fuer das Formular.
+ */
+export type WorkflowFieldSpec = { name: string; 
+/**
+ * `text`, `id`, `int`, `bool`, `text_list`, `choice` oder `any`.
+ */
+kind: string; required: boolean; 
+/**
+ * Nur feste Werte, nie `{{...}}` (Empfaenger, Adressen).
+ */
+literal: boolean; min: number | null; max: number | null; options: string[]; 
+/**
+ * Bei Feldern vom Typ `id`: welche Faehigkeit die Integration haben muss (zum Filtern der Auswahl).
+ */
+capability: string | null }
+/**
+ * Ein Befund der Pruefung: wo (JSON-Zeiger, leer = ganze Definition) und was (deutscher Satz).
+ */
+export type WorkflowIssue = { path: string; message: string }
+/**
+ * Ein Ablauf in der Liste.
+ */
+export type WorkflowItem = { id: string; name: string; enabled: boolean; 
+/**
+ * `true`: nicht scharf, jeder Lauf plant nur (Trockenlauf).
+ */
+dry_run: boolean; updated_at: number; 
+/**
+ * Die Definition als JSON-Text (gespeicherte, normalisierte Form).
+ */
+definition_json: string; 
+/**
+ * Kennung des Ausloesers (`calendar.event_starting`) und Zahl der Schritte, ohne die
+ * Definition in der Oberflaeche parsen zu muessen.
+ */
+trigger_kind: string; step_count: number; last_run: WorkflowRunSummary | null; 
+/**
+ * Laeufe, die noch nicht beendet sind (wartend, laufend, auf Freigabe wartend).
+ */
+open_runs: number }
+/**
+ * Ein Lauf mit Schritten und Herkunft.
+ */
+export type WorkflowRunDetail = { run: WorkflowRunSummary; 
+/**
+ * Daten des Ausloesers und Variablen des Laufs (JSON-Text).
+ */
+context_json: string; 
+/**
+ * Die Definition, mit der der Lauf lief (JSON-Text).
+ */
+definition_json: string; 
+/**
+ * Alle Versuche aller Schritte, in der Reihenfolge der Schritte, dann nach Versuch.
+ */
+steps: WorkflowStepRow[]; 
+/**
+ * Herkunft der Ausgaben des Laufs (Schritt, Modell, Quellen).
+ */
+provenance: ProvenanceEntry[]; 
+/**
+ * Der Lauf ist gescheitert und laesst sich wiederholen.
+ */
+can_retry: boolean; 
+/**
+ * Eine Wiederholung braucht die ausdrueckliche Bestaetigung (Wirkung unklar).
+ */
+retry_needs_confirmation: boolean; 
+/**
+ * Der Lauf ist noch nicht beendet und laesst sich abbrechen.
+ */
+can_cancel: boolean }
+/**
+ * Kurzfassung eines Laufs fuer Listen.
+ */
+export type WorkflowRunSummary = { id: string; workflow_id: string; workflow_name: string; 
+/**
+ * Herkunft des Starts: `trigger`, `manual` oder `agent`.
+ */
+origin: string; state: RunState; dry_run: boolean; created_at: number; started_at: number | null; ended_at: number | null; error: string | null; error_code: string | null; wait_reason: string | null; cancel_requested: boolean }
+/**
+ * Ergebnis von Speichern und Import: der gespeicherte Ablauf ODER alle Befunde.
+ */
+export type WorkflowSaveResult = { workflow: WorkflowItem | null; issues: WorkflowIssue[] }
+/**
+ * Antwort auf einen Start von Hand.
+ */
+export type WorkflowStarted = { run_id: string; created: boolean; dry_run: boolean }
+export type WorkflowStatus = { cloud_only: WorkflowCloudFile[]; channels: WorkflowChannelStatus[] }
+export type WorkflowStepRow = { step_id: string; attempt: number; ordinal: number; action: string; 
+/**
+ * Klartext des Bausteins aus dem Katalog.
+ */
+action_title: string | null; state: StepState; error_class: string | null; input_json: string | null; output_json: string | null; error: string | null; 
+/**
+ * Freigabe, auf die der Schritt wartet (Seite „Integrationen“ / Freigabedialog).
+ */
+approval_id: string | null; wake_at: number | null; started_at: number | null; ended_at: number | null }
+export type WorkflowTemplate = { id: string; name: string; description: string; 
+/**
+ * Die Vorlage als JSON-Text.
+ */
+definition_json: string }
+export type WorkflowTriggerSpec = { id: string; title: string; fields: WorkflowFieldSpec[]; 
+/**
+ * Felder, die der Ausloeser unter `trigger.<feld>` liefert (fuer die Hilfe zu Variablen).
+ */
+provides: string[]; 
+/**
+ * Startet von selbst (Kalender, Zeitplan, Datei, Kanal) und nicht auf Zuruf.
+ */
+automatic: boolean }
 /**
  * Was ein gueltiger Link bezeichnet (fuer die Rueckmeldung im Dialog, ohne Netz).
  */

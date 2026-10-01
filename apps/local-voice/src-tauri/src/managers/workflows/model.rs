@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use serde_json::{Map, Value};
 
 /// Kennung des Schemas in `"schema"` jeder Definition.
@@ -197,7 +198,7 @@ pub struct VariableDecl {
 // ---------------------------------------------------------------------------
 
 /// Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
     /// Wartet auf einen freien Platz oder (mit `next_run_at`) auf einen Zeitpunkt.
@@ -244,7 +245,7 @@ impl RunState {
 }
 
 /// Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum StepState {
     /// Der Baustein laeuft oder lief, als die App endete: Wirkung unbestimmt.

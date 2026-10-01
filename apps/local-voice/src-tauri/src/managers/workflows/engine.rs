@@ -452,7 +452,21 @@ impl Engine {
     /// (ausgeschaltet, im Trockenlauf); sonst wird seine Definition ersetzt (eine
     /// geaenderte Definition faellt in den Trockenlauf zurueck).
     pub fn save_workflow(&self, id: Option<&str>, definition: &Value) -> Result<WorkflowRow> {
-        let def = validate::parse_definition(definition).map_err(WorkflowError::Invalid)?;
+        let def = self
+            .check_definition(definition)
+            .map_err(WorkflowError::Invalid)?;
+        let text = serde_json::to_string(&def).map_err(db_err)?;
+        store::save_workflow(&self.conn()?, id, &def, &text, self.now())
+    }
+
+    /// Prueft eine Definition vollstaendig, ohne zu speichern (B7: Pruefung beim Tippen im
+    /// Editor): Katalog, Bezuege, die Pruefung der echten Bausteine, Zeitplan-Felder. Gibt die
+    /// Definition als Typ oder ALLE Befunde mit JSON-Zeiger.
+    pub fn check_definition(
+        &self,
+        definition: &Value,
+    ) -> std::result::Result<WorkflowDef, Vec<Issue>> {
+        let def = validate::parse_definition(definition)?;
         let mut issues: Vec<Issue> = Vec::new();
         for (i, step) in def.steps.iter().enumerate() {
             if let Some(a) = self.action(&step.action) {
@@ -466,11 +480,11 @@ impl Engine {
         }
         // B2: Zeitplan-Felder und Variablen automatischer Ausloeser.
         issues.extend(super::trigger::check_definition(&def));
-        if !issues.is_empty() {
-            return Err(WorkflowError::Invalid(issues));
+        if issues.is_empty() {
+            Ok(def)
+        } else {
+            Err(issues)
         }
-        let text = serde_json::to_string(&def).map_err(db_err)?;
-        store::save_workflow(&self.conn()?, id, &def, &text, self.now())
     }
 
     pub fn workflows(&self) -> Result<Vec<WorkflowRow>> {

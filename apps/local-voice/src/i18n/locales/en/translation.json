@@ -3438,6 +3438,540 @@
   "guard": {
     "memoryLow": "Memory almost full: the read-aloud and language-model servers were stopped to keep the computer responsive."
   },
+  "automations": {
+    "title": "Automations",
+    "loading": "Loading automations …",
+    "loadError": "The automations could not be loaded.",
+    "tabs": {
+      "flows": "Workflows",
+      "runs": "Runs"
+    },
+    "new": "New workflow",
+    "empty": "There are no workflows yet.",
+    "emptyHint": "A workflow runs steps when a trigger fires, e.g. “meeting starts → record → minutes → mail”. Start from a template.",
+    "steps_one": "{{count}} step",
+    "steps_other": "{{count}} steps",
+    "enabled": "On",
+    "disabled": "Off",
+    "enabledLabel": "Turn workflow “{{name}}” on",
+    "lastRun": "Last run:",
+    "noRun": "No run yet",
+    "openRuns_one": "{{count}} run open",
+    "openRuns_other": "{{count}} runs open",
+    "mode": {
+      "dry": "Dry run",
+      "armed": "Armed",
+      "dryHint": "In dry-run mode every run only plans: nothing is written, sent or recorded. Arm the workflow once the plan looks right.",
+      "arm": "Arm",
+      "disarm": "Back to dry run",
+      "armAsk": "Really arm “{{name}}”? Its steps will then take real effect. Mails to attendees and recordings still ask first where the right is set to “ask”.",
+      "armedNow": "“{{name}}” is armed.",
+      "disarmedNow": "“{{name}}” is back in dry-run mode."
+    },
+    "edit": "Edit",
+    "planShow": "Show dry run",
+    "exportJson": "Export",
+    "plan": {
+      "title": "Dry run: {{name}}",
+      "description": "What would the workflow do, and would it be allowed to? Nothing is written, sent or recorded.",
+      "failed": "The dry run could not be calculated.",
+      "loading": "Calculating the plan …",
+      "invalid": "The definition is invalid, so there is no plan:",
+      "summary": "{{steps}} steps: {{allowed}} allowed, {{ask}} ask first, {{denied}} denied, {{invalid}} invalid.",
+      "runsThrough": "The workflow would run through without intervention.",
+      "needsWork": "It still needs rights or corrections.",
+      "sample": "The trigger data is sample data.",
+      "varsWithout": "Variables without a default (must be given at start): {{names}}",
+      "condition": "Condition {{expr}}: {{result}}",
+      "heavy": "Heavy work: {{what}} (about {{ram}} GB of memory), runs one at a time.",
+      "unresolved": "Only known during the run: {{refs}}",
+      "params": "Parameters",
+      "status": {
+        "planned": "planned",
+        "skipped": "skipped",
+        "invalid": "invalid"
+      },
+      "cond": {
+        "true": "true",
+        "false": "false, step is dropped",
+        "unknown": "depends on an earlier step",
+        "error": "error"
+      },
+      "perm": {
+        "allowed": "allowed",
+        "needs_approval": "asks first",
+        "denied": "denied",
+        "invalid": "invalid",
+        "not_required": "no right needed"
+      }
+    },
+    "probe": "Start dry run",
+    "startNow": "Start now",
+    "startNowDisabled": "Only for a workflow that is on and armed.",
+    "runsOf": "Runs",
+    "export": {
+      "title": "Export “{{name}}”",
+      "description": "The definition as JSON. It contains no credentials, only identifiers from the integrations register.",
+      "copy": "Copy",
+      "copied": "Copied",
+      "copyFailed": "Copying failed. Select the text by hand.",
+      "toFile": "Save as file …",
+      "saved": "Saved: {{path}}",
+      "text": "Definition as JSON"
+    },
+    "delete": "Delete",
+    "deleteAsk": "Delete “{{name}}” permanently?",
+    "deleted": "“{{name}}” was deleted.",
+    "cancel": "Cancel",
+    "close": "Close",
+    "back": "Back",
+    "errors": {
+      "generic": "That did not work.",
+      "templateBroken": "The template could not be read.",
+      "unreadable": "The definition of this workflow could not be read."
+    },
+    "status": {
+      "cloudTitle_one": "{{count}} file is only in the cloud and will not be processed",
+      "cloudTitle_other": "{{count}} files are only in the cloud and will not be processed",
+      "cloudFile": "{{file}} (workflow “{{workflow}}”)",
+      "cloudHint": "OneDrive placeholders are never downloaded. Set the file to “always keep on this device” and it will be picked up.",
+      "channelTitle_one": "{{count}} YouTube channel is not responding",
+      "channelTitle_other": "{{count}} YouTube channels are not responding",
+      "channelLine": "{{channel}} (workflow “{{workflow}}”): {{failures}} failures in a row",
+      "lastOk": "last reachable {{time}}",
+      "channelHint": "New videos are caught up as soon as the channel responds again. Nothing is lost."
+    },
+    "templates": {
+      "title": "New workflow",
+      "description": "Pick a template. You adjust it in the next step (folders, calendars, accounts); it is only created when you press “Save”.",
+      "use": "Use this template",
+      "blank": "Empty workflow",
+      "blankHint": "You choose the trigger and the steps yourself.",
+      "useBlank": "Start empty",
+      "names": {
+        "vorlage-besprechung": "Meeting: record, minutes, mail",
+        "eingangsordner-word": "Inbox folder: transcribe, minutes as Word"
+      }
+    },
+    "import": {
+      "open": "Import JSON",
+      "title": "Import workflow",
+      "description": "Paste the definition (JSON, lva-workflow@1) or read it from a file. The import is created as a new workflow, switched off and in dry-run mode.",
+      "chooseFile": "Choose file …",
+      "text": "Definition (JSON)",
+      "submit": "Import",
+      "invalid_one": "The definition is invalid ({{count}} finding):",
+      "invalid_other": "The definition is invalid ({{count}} findings):",
+      "done": "“{{name}}” was imported (off, in dry-run mode)."
+    },
+    "editor": {
+      "titleNew": "New workflow",
+      "titleEdit": "Edit workflow",
+      "general": "General",
+      "name": "Name",
+      "description": "Description",
+      "trigger": "Trigger",
+      "triggerType": "What starts the workflow?",
+      "triggerAuto": "Starts by itself as soon as the workflow is on and armed.",
+      "triggerManual": "Starts only on request (here by button, or by an agent).",
+      "provides": "Available in steps: {{fields}}",
+      "variables": "Variables",
+      "steps": "Steps",
+      "noSteps": "No step yet. Add a block below.",
+      "addStep": "Add step",
+      "addStepPlaceholder": "Choose a block …",
+      "stepTitle": "Step {{n}}: {{title}}",
+      "moveUp": "Move step {{n}} up",
+      "moveDown": "Move step {{n}} down",
+      "removeStep": "Remove step {{n}}",
+      "action": "Block",
+      "stepId": "Identifier",
+      "stepIdRule": "Lowercase letters, digits and _, starting with a letter (at most 32 characters).",
+      "stepIdHint": "Later steps refer to this step by the identifier “{{id}}”.",
+      "stepLabel": "Label (optional)",
+      "when": "Condition (optional)",
+      "whenHint": "The step only runs if the condition holds. Empty: always.",
+      "heavy": "needs {{what}} (runs one at a time)",
+      "needsRight": "Right: {{right}}",
+      "errorRules": "Error rule and retries",
+      "onError": "On error",
+      "onErrorFail": "End the run",
+      "onErrorContinue": "Carry on",
+      "maxAttempts": "Attempts (1–10)",
+      "backoff": "Wait in ms",
+      "yes": "Yes",
+      "choose": "Choose …",
+      "chooseIntegration": "Choose an integration …",
+      "unknownIntegration": "{{id}} (not in the register)",
+      "listPlaceholder": "Separate values with commas",
+      "anyPlaceholder": "Text, number or JSON",
+      "fromVariable": "From variable",
+      "fixedValue": "Fixed value",
+      "discardAsk": "There are unsaved changes. Discard them?",
+      "discard": "Discard",
+      "keepEditing": "Keep editing",
+      "issues_one": "{{count}} finding from the check:",
+      "issues_other": "{{count}} findings from the check:",
+      "notSaved_one": "Not saved: {{count}} finding.",
+      "notSaved_other": "Not saved: {{count}} findings.",
+      "save": "Save",
+      "saved": "Saved. A changed workflow stays in dry-run mode until you arm it.",
+      "plan": "Show dry run",
+      "actions": "Actions"
+    },
+    "variables": {
+      "empty": "No variables. Variables make a workflow adjustable, e.g. the name of the minutes template.",
+      "name": "Name",
+      "type": "Type",
+      "types": {
+        "string": "Text",
+        "number": "Number",
+        "bool": "Yes/No",
+        "list": "List"
+      },
+      "default": "Default",
+      "description": "Description",
+      "remove": "Remove variable {{name}}",
+      "add": "Add variable"
+    },
+    "fields": {
+      "via": {
+        "label": "Integration",
+        "hint": "The account or folder the step runs through."
+      },
+      "stop": {
+        "label": "Stop recording"
+      },
+      "max_minutes": {
+        "label": "At most (minutes)"
+      },
+      "title": {
+        "label": "Title"
+      },
+      "path": {
+        "label": "Path"
+      },
+      "project": {
+        "label": "Project (identifier)"
+      },
+      "template": {
+        "label": "Template",
+        "hint": "Name or identifier; empty: default, auto: by content."
+      },
+      "variant_id": {
+        "label": "Transcript version"
+      },
+      "output_language": {
+        "label": "Document language"
+      },
+      "source": {
+        "label": "Source",
+        "hint": "minutes, notes, transcript or a text."
+      },
+      "style": {
+        "label": "Style",
+        "hint": "kurz, mittel, lang or management."
+      },
+      "format": {
+        "label": "Format"
+      },
+      "target": {
+        "label": "Target folder"
+      },
+      "name": {
+        "label": "File name"
+      },
+      "subfolder": {
+        "label": "Subfolder"
+      },
+      "content": {
+        "label": "Content"
+      },
+      "to": {
+        "label": "Recipients",
+        "hint": "Recipients are never built from data, only from this rule."
+      },
+      "list": {
+        "label": "Fixed list",
+        "hint": "Separate addresses with commas."
+      },
+      "subject": {
+        "label": "Subject"
+      },
+      "body": {
+        "label": "Text"
+      },
+      "attach": {
+        "label": "Attachments",
+        "hint": "List of paths, e.g. the file from an earlier step."
+      },
+      "draft": {
+        "label": "Draft only"
+      },
+      "event": {
+        "label": "Event"
+      },
+      "text": {
+        "label": "Text"
+      },
+      "mode": {
+        "label": "Write mode"
+      },
+      "section": {
+        "label": "Section"
+      },
+      "query": {
+        "label": "Search term"
+      },
+      "limit": {
+        "label": "Maximum hits"
+      },
+      "profile": {
+        "label": "Topic profile"
+      },
+      "folder": {
+        "label": "Subfolder"
+      },
+      "video_id": {
+        "label": "Video identifier"
+      },
+      "channel": {
+        "label": "Channel"
+      },
+      "url": {
+        "label": "Address"
+      },
+      "video": {
+        "label": "Video"
+      },
+      "voice": {
+        "label": "Voice"
+      },
+      "minutes": {
+        "label": "Minutes"
+      },
+      "every": {
+        "label": "How often"
+      },
+      "at": {
+        "label": "Time",
+        "hint": "e.g. 08:00"
+      },
+      "weekdays": {
+        "label": "Weekdays",
+        "hint": "Only for “Weekly”, as a JSON list."
+      },
+      "integration": {
+        "label": "Source (integration)"
+      },
+      "lead_min": {
+        "label": "Minutes before start"
+      },
+      "only_meetings": {
+        "label": "Meetings only"
+      },
+      "title_contains": {
+        "label": "Title contains"
+      },
+      "min_attendees": {
+        "label": "At least attendees"
+      },
+      "stage": {
+        "label": "Stage"
+      },
+      "extensions": {
+        "label": "File extensions",
+        "hint": "Separate with commas, e.g. wav, mp3."
+      },
+      "stable_seconds": {
+        "label": "Seconds unchanged",
+        "hint": "How long the file must stay unchanged."
+      },
+      "channel_id": {
+        "label": "Channel identifier",
+        "hint": "UC… with 24 characters (from the channel address)."
+      },
+      "poll_minutes": {
+        "label": "Check every (minutes)"
+      },
+      "backfill": {
+        "label": "Catch up on first check",
+        "hint": "Number of newest videos; 0: only future ones."
+      }
+    },
+    "choices": {
+      "every": {
+        "daily": "Daily",
+        "weekly": "Weekly"
+      },
+      "stage": {
+        "recording": "Recording ended",
+        "transcript": "Transcript ready",
+        "notes": "AI notes ready",
+        "minutes": "Minutes ready"
+      },
+      "stop": {
+        "event_end": "At the end of the event",
+        "manual": "By hand",
+        "duration": "After a fixed time"
+      },
+      "format": {
+        "docx": "Word (.docx)",
+        "pdf": "PDF",
+        "md": "Markdown"
+      },
+      "to": {
+        "me": "Only me",
+        "participants": "Attendees",
+        "all": "Everyone",
+        "list": "Fixed list"
+      },
+      "content": {
+        "minutes": "Minutes",
+        "notes": "AI notes",
+        "all": "Everything"
+      },
+      "mode": {
+        "create": "Create new",
+        "append": "Append"
+      }
+    },
+    "triggers": {
+      "manual": "Start by hand",
+      "agent": "Start by an agent",
+      "schedule": "Schedule",
+      "calendar": {
+        "event_starting": "Event starts",
+        "event_ended": "Event ends"
+      },
+      "meeting": {
+        "finished": "Meeting finished"
+      },
+      "folder": {
+        "file_added": "File in folder"
+      },
+      "youtube": {
+        "channel_new_video": "New video in channel"
+      }
+    },
+    "actions": {
+      "recording": {
+        "start": "Start recording",
+        "stop": "Stop recording"
+      },
+      "meeting": {
+        "import": "Import and transcribe file",
+        "notes": "Create AI notes",
+        "minutes": "Create minutes"
+      },
+      "text": {
+        "summarize": "Summarize"
+      },
+      "export": {
+        "document": "Save document"
+      },
+      "mail": {
+        "send": "Send mail"
+      },
+      "calendar": {
+        "note": "Write note into the event"
+      },
+      "obsidian": {
+        "note": "Write Obsidian note"
+      },
+      "knowledge": {
+        "search": "Search knowledge",
+        "rate": "Rate relevance",
+        "reconcile": "Reconcile with the knowledge base"
+      },
+      "channel": {
+        "report": "Channel management summary"
+      },
+      "youtube": {
+        "add_source": "Add YouTube source",
+        "transcript": "Fetch YouTube transcript"
+      },
+      "notify": {
+        "local": "Windows notification"
+      },
+      "tts": {
+        "render": "Read aloud"
+      },
+      "webhook": {
+        "post": "Send webhook"
+      },
+      "wait": "Wait"
+    },
+    "effectKinds": {
+      "pure": "changes nothing",
+      "idempotent": "repeatable",
+      "external": "acts on the outside"
+    },
+    "runs": {
+      "forWorkflow": "Runs of “{{name}}”",
+      "all": "All runs, newest first",
+      "showAll": "Show all",
+      "openOnly": "Open only",
+      "empty": "No runs yet. A dry run shows what a run looks like.",
+      "dry": "Dry run",
+      "open": "Open",
+      "loading": "Loading the run …",
+      "origin": "Started by",
+      "created": "Queued",
+      "started": "Started",
+      "ended": "Ended",
+      "cancelRequested": "The cancellation is noted; the run ends at the next step change.",
+      "cancel": "Cancel",
+      "cancelled": "The run was cancelled.",
+      "cancelPending": "The cancellation is noted; the run ends at the next step change.",
+      "retry": "Retry",
+      "retryAccept": "It is unclear whether the step already took effect (e.g. a mail already went out). I accept that it may take effect twice.",
+      "steps": "Steps",
+      "attempt": "Attempt {{n}}",
+      "wakeAt": "Continues at {{time}}",
+      "data": "Step data",
+      "input": "Input",
+      "output": "Result",
+      "provenance": "Origin of the results",
+      "provenanceDry": "A dry run produces nothing, so there is no origin.",
+      "provenanceNone": "This run has not (yet) produced any content with an origin.",
+      "noModel": "no model",
+      "local": "local",
+      "remote": "remote",
+      "sources_one": "{{count}} source",
+      "sources_other": "{{count}} sources",
+      "triggerData": "Trigger data",
+      "approvalWaiting": "This run is waiting for your approval.",
+      "approvalGone": "The approval is no longer open; the run continues or ends shortly.",
+      "approvalOpen": "Review approval"
+    },
+    "runState": {
+      "queued": "waiting",
+      "running": "running",
+      "awaiting_approval": "awaiting approval",
+      "done": "done",
+      "failed": "failed",
+      "cancelled": "cancelled"
+    },
+    "stepState": {
+      "running": "running",
+      "done": "done",
+      "failed": "failed",
+      "retrying": "retrying",
+      "denied": "denied",
+      "skipped": "skipped",
+      "planned": "planned",
+      "awaiting_approval": "awaiting approval",
+      "waiting": "waiting",
+      "uncertain": "effect unclear",
+      "interrupted": "interrupted"
+    },
+    "origin": {
+      "trigger": "Trigger",
+      "manual": "By hand",
+      "agent": "Agent"
+    }
+  },
   "integrations": {
     "m365": {
       "dialog": {
@@ -3538,6 +4072,7 @@
     "emptyHint": "Use “Add integration” to set up a folder or connect a calendar.",
     "tabs": {
       "connections": "Connections",
+      "automations": "Automations",
       "audit": "Log"
     },
     "sections": {

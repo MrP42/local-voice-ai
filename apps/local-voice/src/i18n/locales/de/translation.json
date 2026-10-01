@@ -3438,6 +3438,540 @@
   "guard": {
     "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
   },
+  "automations": {
+    "title": "Automationen",
+    "loading": "Automationen werden geladen …",
+    "loadError": "Die Automationen ließen sich nicht laden.",
+    "tabs": {
+      "flows": "Abläufe",
+      "runs": "Läufe"
+    },
+    "new": "Neuer Ablauf",
+    "empty": "Es gibt noch keine Abläufe.",
+    "emptyHint": "Ein Ablauf führt auf einen Auslöser hin Schritte aus, etwa „Termin beginnt → aufzeichnen → Protokoll → Mail“. Starten Sie mit einer Vorlage.",
+    "steps_one": "{{count}} Schritt",
+    "steps_other": "{{count}} Schritte",
+    "enabled": "An",
+    "disabled": "Aus",
+    "enabledLabel": "Ablauf „{{name}}“ einschalten",
+    "lastRun": "Letzter Lauf:",
+    "noRun": "Noch kein Lauf",
+    "openRuns_one": "{{count}} Lauf offen",
+    "openRuns_other": "{{count}} Läufe offen",
+    "mode": {
+      "dry": "Trockenlauf",
+      "armed": "Scharf",
+      "dryHint": "Im Trockenlauf plant jeder Lauf nur: es wird nichts geschrieben, gesendet oder aufgenommen. Schalten Sie scharf, wenn der Plan stimmt.",
+      "arm": "Scharf schalten",
+      "disarm": "Zurück in den Trockenlauf",
+      "armAsk": "„{{name}}“ wirklich scharf schalten? Danach wirken die Schritte tatsächlich. Mails an Teilnehmende und Aufnahmen fragen weiterhin vorher nach, wenn das Recht auf „fragen“ steht.",
+      "armedNow": "„{{name}}“ ist scharf geschaltet.",
+      "disarmedNow": "„{{name}}“ ist wieder im Trockenlauf."
+    },
+    "edit": "Bearbeiten",
+    "planShow": "Trockenlauf anzeigen",
+    "exportJson": "Exportieren",
+    "plan": {
+      "title": "Trockenlauf: {{name}}",
+      "description": "Was würde der Ablauf tun, und dürfte er es? Es wird nichts geschrieben, gesendet oder aufgenommen.",
+      "failed": "Der Trockenlauf ließ sich nicht berechnen.",
+      "loading": "Der Plan wird berechnet …",
+      "invalid": "Die Definition ist ungültig, deshalb gibt es keinen Plan:",
+      "summary": "{{steps}} Schritte: {{allowed}} erlaubt, {{ask}} fragen vorher, {{denied}} abgelehnt, {{invalid}} ungültig.",
+      "runsThrough": "Der Ablauf liefe ohne Eingriff durch.",
+      "needsWork": "Es braucht noch Rechte oder Korrekturen.",
+      "sample": "Die Daten des Auslösers sind Beispieldaten.",
+      "varsWithout": "Variablen ohne Vorgabe (müssen beim Start mitgegeben werden): {{names}}",
+      "condition": "Bedingung {{expr}}: {{result}}",
+      "heavy": "Schwere Arbeit: {{what}} (etwa {{ram}} GB Arbeitsspeicher), läuft nacheinander.",
+      "unresolved": "Wird erst beim Lauf bekannt: {{refs}}",
+      "params": "Parameter",
+      "status": {
+        "planned": "geplant",
+        "skipped": "übersprungen",
+        "invalid": "ungültig"
+      },
+      "cond": {
+        "true": "wahr",
+        "false": "falsch, Schritt entfällt",
+        "unknown": "hängt von einem Vorschritt ab",
+        "error": "Fehler"
+      },
+      "perm": {
+        "allowed": "erlaubt",
+        "needs_approval": "fragt vorher",
+        "denied": "abgelehnt",
+        "invalid": "ungültig",
+        "not_required": "kein Recht nötig"
+      }
+    },
+    "probe": "Probelauf starten",
+    "startNow": "Jetzt starten",
+    "startNowDisabled": "Nur für einen eingeschalteten, scharfen Ablauf.",
+    "runsOf": "Läufe",
+    "export": {
+      "title": "„{{name}}“ exportieren",
+      "description": "Die Definition als JSON. Sie enthält keine Zugangsdaten, nur Kennungen aus dem Register der Integrationen.",
+      "copy": "Kopieren",
+      "copied": "Kopiert",
+      "copyFailed": "Das Kopieren ist nicht gelungen. Markieren Sie den Text von Hand.",
+      "toFile": "Als Datei speichern …",
+      "saved": "Gespeichert: {{path}}",
+      "text": "Definition als JSON"
+    },
+    "delete": "Löschen",
+    "deleteAsk": "„{{name}}“ endgültig löschen?",
+    "deleted": "„{{name}}“ wurde gelöscht.",
+    "cancel": "Abbrechen",
+    "close": "Schließen",
+    "back": "Zurück",
+    "errors": {
+      "generic": "Das hat nicht geklappt.",
+      "templateBroken": "Die Vorlage ließ sich nicht lesen.",
+      "unreadable": "Die Definition dieses Ablaufs ließ sich nicht lesen."
+    },
+    "status": {
+      "cloudTitle_one": "{{count}} Datei liegt nur in der Cloud und wird nicht verarbeitet",
+      "cloudTitle_other": "{{count}} Dateien liegen nur in der Cloud und werden nicht verarbeitet",
+      "cloudFile": "{{file}} (Ablauf „{{workflow}}“)",
+      "cloudHint": "OneDrive-Platzhalter werden nie heruntergeladen. Machen Sie die Datei „immer auf diesem Gerät verfügbar“, dann läuft sie mit.",
+      "channelTitle_one": "{{count}} YouTube-Kanal antwortet nicht",
+      "channelTitle_other": "{{count}} YouTube-Kanäle antworten nicht",
+      "channelLine": "{{channel}} (Ablauf „{{workflow}}“): {{failures}} Fehlversuche in Folge",
+      "lastOk": "zuletzt erreichbar {{time}}",
+      "channelHint": "Neue Videos werden nachgeholt, sobald der Kanal wieder antwortet. Nichts geht verloren."
+    },
+    "templates": {
+      "title": "Neuer Ablauf",
+      "description": "Wählen Sie eine Vorlage. Sie wird im nächsten Schritt angepasst (Ordner, Kalender, Konten) und erst mit „Speichern“ angelegt.",
+      "use": "Diese Vorlage verwenden",
+      "blank": "Leerer Ablauf",
+      "blankHint": "Sie wählen Auslöser und Schritte selbst.",
+      "useBlank": "Leer beginnen",
+      "names": {
+        "vorlage-besprechung": "Termin: aufzeichnen, Protokoll, Mail",
+        "eingangsordner-word": "Eingangsordner: transkribieren, Protokoll als Word"
+      }
+    },
+    "import": {
+      "open": "JSON importieren",
+      "title": "Ablauf importieren",
+      "description": "Fügen Sie die Definition (JSON, lva-workflow@1) ein oder lesen Sie sie aus einer Datei. Der Import wird als neuer Ablauf angelegt, ausgeschaltet und im Trockenlauf.",
+      "chooseFile": "Datei wählen …",
+      "text": "Definition (JSON)",
+      "submit": "Importieren",
+      "invalid_one": "Die Definition ist ungültig ({{count}} Befund):",
+      "invalid_other": "Die Definition ist ungültig ({{count}} Befunde):",
+      "done": "„{{name}}“ wurde importiert (ausgeschaltet, im Trockenlauf)."
+    },
+    "editor": {
+      "titleNew": "Neuer Ablauf",
+      "titleEdit": "Ablauf bearbeiten",
+      "general": "Allgemein",
+      "name": "Name",
+      "description": "Beschreibung",
+      "trigger": "Auslöser",
+      "triggerType": "Was startet den Ablauf?",
+      "triggerAuto": "Startet von selbst, sobald der Ablauf eingeschaltet und scharf geschaltet ist.",
+      "triggerManual": "Startet nur auf Zuruf (hier per Knopf oder durch einen Agenten).",
+      "provides": "Verfügbar in Schritten: {{fields}}",
+      "variables": "Variablen",
+      "steps": "Schritte",
+      "noSteps": "Noch kein Schritt. Fügen Sie unten einen Baustein hinzu.",
+      "addStep": "Schritt hinzufügen",
+      "addStepPlaceholder": "Baustein wählen …",
+      "stepTitle": "Schritt {{n}}: {{title}}",
+      "moveUp": "Schritt {{n}} nach oben",
+      "moveDown": "Schritt {{n}} nach unten",
+      "removeStep": "Schritt {{n}} entfernen",
+      "action": "Baustein",
+      "stepId": "Kennung",
+      "stepIdRule": "Kleinbuchstaben, Ziffern und _, mit einem Buchstaben beginnend (höchstens 32 Zeichen).",
+      "stepIdHint": "Spätere Schritte beziehen sich über die Kennung „{{id}}“ auf diesen Schritt.",
+      "stepLabel": "Bezeichnung (optional)",
+      "when": "Bedingung (optional)",
+      "whenHint": "Der Schritt läuft nur, wenn die Bedingung stimmt. Leer: immer.",
+      "heavy": "braucht {{what}} (läuft nacheinander)",
+      "needsRight": "Recht: {{right}}",
+      "errorRules": "Fehlerregel und Wiederholung",
+      "onError": "Bei Fehler",
+      "onErrorFail": "Lauf beenden",
+      "onErrorContinue": "Weitermachen",
+      "maxAttempts": "Versuche (1–10)",
+      "backoff": "Wartezeit in ms",
+      "yes": "Ja",
+      "choose": "Wählen …",
+      "chooseIntegration": "Integration wählen …",
+      "unknownIntegration": "{{id}} (nicht im Register)",
+      "listPlaceholder": "Werte mit Komma trennen",
+      "anyPlaceholder": "Text, Zahl oder JSON",
+      "fromVariable": "Aus Variable",
+      "fixedValue": "Fester Wert",
+      "discardAsk": "Es gibt ungespeicherte Änderungen. Verwerfen?",
+      "discard": "Verwerfen",
+      "keepEditing": "Weiter bearbeiten",
+      "issues_one": "{{count}} Befund der Prüfung:",
+      "issues_other": "{{count}} Befunde der Prüfung:",
+      "notSaved_one": "Nicht gespeichert: {{count}} Befund.",
+      "notSaved_other": "Nicht gespeichert: {{count}} Befunde.",
+      "save": "Speichern",
+      "saved": "Gespeichert. Ein geänderter Ablauf bleibt im Trockenlauf, bis Sie ihn scharf schalten.",
+      "plan": "Trockenlauf anzeigen",
+      "actions": "Aktionen"
+    },
+    "variables": {
+      "empty": "Keine Variablen. Variablen machen einen Ablauf einstellbar, etwa den Namen der Protokollvorlage.",
+      "name": "Name",
+      "type": "Art",
+      "types": {
+        "string": "Text",
+        "number": "Zahl",
+        "bool": "Ja/Nein",
+        "list": "Liste"
+      },
+      "default": "Vorgabe",
+      "description": "Beschreibung",
+      "remove": "Variable {{name}} entfernen",
+      "add": "Variable hinzufügen"
+    },
+    "fields": {
+      "via": {
+        "label": "Integration",
+        "hint": "Das Konto oder der Ordner, über den der Schritt läuft."
+      },
+      "stop": {
+        "label": "Aufnahme beenden"
+      },
+      "max_minutes": {
+        "label": "Längstens (Minuten)"
+      },
+      "title": {
+        "label": "Titel"
+      },
+      "path": {
+        "label": "Pfad"
+      },
+      "project": {
+        "label": "Projekt (Kennung)"
+      },
+      "template": {
+        "label": "Vorlage",
+        "hint": "Name oder Kennung; leer: Standard, auto: nach Inhalt."
+      },
+      "variant_id": {
+        "label": "Fassung des Transkripts"
+      },
+      "output_language": {
+        "label": "Sprache des Dokuments"
+      },
+      "source": {
+        "label": "Quelle",
+        "hint": "minutes, notes, transcript oder ein Text."
+      },
+      "style": {
+        "label": "Stil",
+        "hint": "kurz, mittel, lang oder management."
+      },
+      "format": {
+        "label": "Format"
+      },
+      "target": {
+        "label": "Zielordner"
+      },
+      "name": {
+        "label": "Dateiname"
+      },
+      "subfolder": {
+        "label": "Unterordner"
+      },
+      "content": {
+        "label": "Inhalt"
+      },
+      "to": {
+        "label": "Empfänger",
+        "hint": "Empfänger werden nie aus Daten gebildet, nur aus dieser Regel."
+      },
+      "list": {
+        "label": "Feste Liste",
+        "hint": "Adressen mit Komma trennen."
+      },
+      "subject": {
+        "label": "Betreff"
+      },
+      "body": {
+        "label": "Text"
+      },
+      "attach": {
+        "label": "Anhänge",
+        "hint": "Liste von Pfaden, z. B. die Datei aus einem früheren Schritt."
+      },
+      "draft": {
+        "label": "Nur als Entwurf"
+      },
+      "event": {
+        "label": "Termin"
+      },
+      "text": {
+        "label": "Text"
+      },
+      "mode": {
+        "label": "Schreibweise"
+      },
+      "section": {
+        "label": "Abschnitt"
+      },
+      "query": {
+        "label": "Suchbegriff"
+      },
+      "limit": {
+        "label": "Höchstens Treffer"
+      },
+      "profile": {
+        "label": "Themenprofil"
+      },
+      "folder": {
+        "label": "Unterordner"
+      },
+      "video_id": {
+        "label": "Video-Kennung"
+      },
+      "channel": {
+        "label": "Kanal"
+      },
+      "url": {
+        "label": "Adresse"
+      },
+      "video": {
+        "label": "Video"
+      },
+      "voice": {
+        "label": "Stimme"
+      },
+      "minutes": {
+        "label": "Minuten"
+      },
+      "every": {
+        "label": "Wie oft"
+      },
+      "at": {
+        "label": "Uhrzeit",
+        "hint": "z. B. 08:00"
+      },
+      "weekdays": {
+        "label": "Wochentage",
+        "hint": "Nur bei „Wöchentlich“, als JSON-Liste."
+      },
+      "integration": {
+        "label": "Quelle (Integration)"
+      },
+      "lead_min": {
+        "label": "Minuten vor Beginn"
+      },
+      "only_meetings": {
+        "label": "Nur Besprechungen"
+      },
+      "title_contains": {
+        "label": "Titel enthält"
+      },
+      "min_attendees": {
+        "label": "Mindestens Teilnehmende"
+      },
+      "stage": {
+        "label": "Stufe"
+      },
+      "extensions": {
+        "label": "Dateiendungen",
+        "hint": "Mit Komma trennen, z. B. wav, mp3."
+      },
+      "stable_seconds": {
+        "label": "Sekunden unverändert",
+        "hint": "So lange darf die Datei sich nicht mehr ändern."
+      },
+      "channel_id": {
+        "label": "Kanal-Kennung",
+        "hint": "UC… mit 24 Zeichen (aus der Kanaladresse)."
+      },
+      "poll_minutes": {
+        "label": "Abruf alle (Minuten)"
+      },
+      "backfill": {
+        "label": "Beim ersten Abruf nachholen",
+        "hint": "Anzahl der neuesten Videos; 0: nur künftige."
+      }
+    },
+    "choices": {
+      "every": {
+        "daily": "Täglich",
+        "weekly": "Wöchentlich"
+      },
+      "stage": {
+        "recording": "Aufnahme beendet",
+        "transcript": "Transkript fertig",
+        "notes": "KI-Notizen fertig",
+        "minutes": "Protokoll fertig"
+      },
+      "stop": {
+        "event_end": "Am Ende des Termins",
+        "manual": "Von Hand",
+        "duration": "Nach fester Dauer"
+      },
+      "format": {
+        "docx": "Word (.docx)",
+        "pdf": "PDF",
+        "md": "Markdown"
+      },
+      "to": {
+        "me": "Nur ich",
+        "participants": "Teilnehmende",
+        "all": "Alle",
+        "list": "Feste Liste"
+      },
+      "content": {
+        "minutes": "Protokoll",
+        "notes": "KI-Notizen",
+        "all": "Alles"
+      },
+      "mode": {
+        "create": "Neu anlegen",
+        "append": "Anhängen"
+      }
+    },
+    "triggers": {
+      "manual": "Von Hand starten",
+      "agent": "Durch einen Agenten starten",
+      "schedule": "Zeitplan",
+      "calendar": {
+        "event_starting": "Termin beginnt",
+        "event_ended": "Termin endet"
+      },
+      "meeting": {
+        "finished": "Besprechung fertig"
+      },
+      "folder": {
+        "file_added": "Datei im Ordner"
+      },
+      "youtube": {
+        "channel_new_video": "Neues Video im Kanal"
+      }
+    },
+    "actions": {
+      "recording": {
+        "start": "Aufnahme starten",
+        "stop": "Aufnahme beenden"
+      },
+      "meeting": {
+        "import": "Datei importieren und transkribieren",
+        "notes": "KI-Notizen erzeugen",
+        "minutes": "Protokoll erzeugen"
+      },
+      "text": {
+        "summarize": "Zusammenfassen"
+      },
+      "export": {
+        "document": "Dokument ablegen"
+      },
+      "mail": {
+        "send": "Mail senden"
+      },
+      "calendar": {
+        "note": "Notiz in den Termin schreiben"
+      },
+      "obsidian": {
+        "note": "Obsidian-Notiz schreiben"
+      },
+      "knowledge": {
+        "search": "Wissen durchsuchen",
+        "rate": "Relevanz bewerten",
+        "reconcile": "Mit der Wissensbasis abgleichen"
+      },
+      "channel": {
+        "report": "Kanal-Management-Summary"
+      },
+      "youtube": {
+        "add_source": "YouTube-Quelle anlegen",
+        "transcript": "YouTube-Transkript holen"
+      },
+      "notify": {
+        "local": "Windows-Mitteilung"
+      },
+      "tts": {
+        "render": "Vorlesen"
+      },
+      "webhook": {
+        "post": "Webhook senden"
+      },
+      "wait": "Warten"
+    },
+    "effectKinds": {
+      "pure": "ändert nichts",
+      "idempotent": "wiederholbar",
+      "external": "wirkt nach außen"
+    },
+    "runs": {
+      "forWorkflow": "Läufe von „{{name}}“",
+      "all": "Alle Läufe, neueste zuerst",
+      "showAll": "Alle zeigen",
+      "openOnly": "Nur offene",
+      "empty": "Noch keine Läufe. Ein Probelauf zeigt, wie ein Lauf aussieht.",
+      "dry": "Trockenlauf",
+      "open": "Öffnen",
+      "loading": "Der Lauf wird geladen …",
+      "origin": "Herkunft des Starts",
+      "created": "Eingereiht",
+      "started": "Gestartet",
+      "ended": "Beendet",
+      "cancelRequested": "Der Abbruch ist vermerkt; der Lauf endet am nächsten Schrittwechsel.",
+      "cancel": "Abbrechen",
+      "cancelled": "Der Lauf wurde abgebrochen.",
+      "cancelPending": "Der Abbruch ist vermerkt; der Lauf endet am nächsten Schrittwechsel.",
+      "retry": "Wiederholen",
+      "retryAccept": "Es ist unklar, ob der Schritt schon gewirkt hat (z. B. eine Mail ging schon hinaus). Ich nehme in Kauf, dass er doppelt wirkt.",
+      "steps": "Schritte",
+      "attempt": "Versuch {{n}}",
+      "wakeAt": "Läuft weiter ab {{time}}",
+      "data": "Daten des Schritts",
+      "input": "Eingabe",
+      "output": "Ergebnis",
+      "provenance": "Herkunft der Ergebnisse",
+      "provenanceDry": "Ein Trockenlauf erzeugt nichts, deshalb gibt es keine Herkunft.",
+      "provenanceNone": "Dieser Lauf hat (noch) keine Inhalte mit Herkunft erzeugt.",
+      "noModel": "ohne Modell",
+      "local": "lokal",
+      "remote": "extern",
+      "sources_one": "{{count}} Quelle",
+      "sources_other": "{{count}} Quellen",
+      "triggerData": "Daten des Auslösers",
+      "approvalWaiting": "Dieser Lauf wartet auf Ihre Freigabe.",
+      "approvalGone": "Die Freigabe ist nicht mehr offen; der Lauf geht gleich weiter oder endet.",
+      "approvalOpen": "Freigabe prüfen"
+    },
+    "runState": {
+      "queued": "wartet",
+      "running": "läuft",
+      "awaiting_approval": "wartet auf Freigabe",
+      "done": "fertig",
+      "failed": "gescheitert",
+      "cancelled": "abgebrochen"
+    },
+    "stepState": {
+      "running": "läuft",
+      "done": "fertig",
+      "failed": "gescheitert",
+      "retrying": "wird wiederholt",
+      "denied": "abgelehnt",
+      "skipped": "übersprungen",
+      "planned": "geplant",
+      "awaiting_approval": "wartet auf Freigabe",
+      "waiting": "wartet",
+      "uncertain": "Wirkung unklar",
+      "interrupted": "unterbrochen"
+    },
+    "origin": {
+      "trigger": "Auslöser",
+      "manual": "Von Hand",
+      "agent": "Agent"
+    }
+  },
   "integrations": {
     "m365": {
       "dialog": {
@@ -3538,6 +4072,7 @@
     "emptyHint": "Mit „Integration hinzufügen“ richtest du einen Ordner ein oder verbindest einen Kalender.",
     "tabs": {
       "connections": "Verbindungen",
+      "automations": "Automationen",
       "audit": "Protokoll"
     },
     "sections": {
