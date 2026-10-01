@@ -40,7 +40,7 @@
 use std::collections::{HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -359,6 +359,11 @@ struct Inner {
     dirty: Mutex<bool>,
     wake: Condvar,
     shutdown: AtomicBool,
+    /// Zahl der beendeten Takte des Verteilers. Tests warten auf sie statt auf
+    /// Schlafzeiten (`settle`): "der Verteiler hat den Stand gesehen" ist ein
+    /// Ereignis, keine Frage der Rechnerlast.
+    #[cfg_attr(not(test), allow(dead_code))]
+    ticks: AtomicU64,
 }
 
 /// Die Warteschlange. Das Loeschen beendet den Verteiler (laufende Laeufe
@@ -393,6 +398,7 @@ impl ImportQueue {
             dirty: Mutex::new(true),
             wake: Condvar::new(),
             shutdown: AtomicBool::new(false),
+            ticks: AtomicU64::new(0),
         });
         let dispatcher = Arc::clone(&inner);
         let spawned = std::thread::Builder::new()
@@ -592,6 +598,7 @@ impl Inner {
             if catch_unwind(AssertUnwindSafe(|| self.tick())).is_err() {
                 error!("meetings: queue tick panicked - continuing");
             }
+            self.ticks.fetch_add(1, Ordering::Release);
             let mut dirty = self.dirty.lock().unwrap_or_else(|e| e.into_inner());
             if !*dirty {
                 dirty = self
@@ -1041,6 +1048,10 @@ mod tests {
     use crate::managers::meetings::job::JobPhase;
     use crate::managers::meetings::recorder::MeetingEvent;
     use crate::managers::meetings::search::index::tests::tmp_store;
+
+    /// Grenze, ab der eine Warteschlange, die nicht leer wird, als haengend gilt.
+    /// Grosszuegig: ein Lauf mit paralleler Last braucht Sekunden, ein Fehler Minuten.
+    const IDLE: Duration = Duration::from_secs(60);
 
     // ---- Planung -----------------------------------------------------------
 
@@ -1507,17 +1518,37 @@ mod tests {
         }
     }
 
+    /// Wartet auf ein Ereignis. Die Frist ist nur die Grenze, ab der ein
+    /// wirklich haengender Verteiler als Fehler gilt; sie ist grosszuegig, weil
+    /// parallele Builds den Rechner minutenlang auslasten koennen.
     fn eventually(mut cond: impl FnMut() -> bool, what: &str) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while !cond() {
             assert!(Instant::now() < deadline, "Zeit abgelaufen: {what}");
             std::thread::sleep(Duration::from_millis(10));
         }
     }
 
-    /// Ein Takt lang nichts Neues: fuer "es beginnt NICHT".
-    fn settle() {
-        std::thread::sleep(Duration::from_millis(250));
+    /// "Es beginnt NICHT": wartet, bis der Verteiler nach diesem Aufruf zwei
+    /// volle Takte beendet hat. Der erste kann vor dem Aufruf begonnen und noch
+    /// einen aelteren Stand der Datenbank gesehen haben (zuletzt eingereihte
+    /// Dateien, ein eben beendeter Lauf); der zweite hat den heutigen Stand sicher
+    /// gesehen. Ein Ereignis statt einer Schlafzeit: unter Last dauern Takte
+    /// laenger, aber es genuegen immer zwei.
+    fn settle(r: &Rig) {
+        let seen = r.queue.inner.ticks.load(Ordering::Acquire);
+        eventually(
+            || r.queue.inner.ticks.load(Ordering::Acquire) >= seen + 2,
+            "zwei volle Takte des Verteilers",
+        );
+    }
+
+    /// Die gestarteten Dateien ohne Reihenfolge. Zwei gleichzeitig beginnende
+    /// Laeufe sind zwei Threads: wer zuerst in die Liste schreibt, entscheidet
+    /// der Thread-Planer, nicht die Warteschlange (deren Entscheidung steht in
+    /// `slot_of`).
+    fn started_set(r: &Rig) -> HashSet<String> {
+        r.started().into_iter().collect()
     }
 
     #[test]
@@ -1525,7 +1556,7 @@ mod tests {
         let r = rig(RigOptions::default());
         let (a, b, c) = (r.add("a"), r.add("b"), r.add("c"));
         eventually(|| r.started() == vec![a.clone()], "a beginnt");
-        settle();
+        settle(&r);
         assert_eq!(
             r.started(),
             vec![a.clone()],
@@ -1549,7 +1580,7 @@ mod tests {
             "c beginnt",
         );
         r.finish(&c, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
         assert_eq!(r.peak.load(Ordering::SeqCst), 1, "nie zwei gleichzeitig");
         for id in [&a, &b, &c] {
             assert_eq!(r.status(id), "ready");
@@ -1571,8 +1602,12 @@ mod tests {
         });
         let (a, b, c) = (r.add("a"), r.add("b"), r.add("c"));
         eventually(|| r.started().len() == 2, "zwei beginnen");
-        settle();
-        assert_eq!(r.started(), vec![a.clone(), b.clone()], "c wartet");
+        settle(&r);
+        assert_eq!(
+            started_set(&r),
+            HashSet::from([a.clone(), b.clone()]),
+            "c wartet"
+        );
         assert_eq!(r.slot_of(&a), Slot::Primary);
         assert_eq!(r.slot_of(&b), Slot::Extra);
         assert_eq!(r.peak.load(Ordering::SeqCst), 2);
@@ -1583,7 +1618,7 @@ mod tests {
         assert_eq!(r.slot_of(&c), Slot::Primary);
         r.finish(&b, Release::Done);
         r.finish(&c, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
         assert_eq!(r.peak.load(Ordering::SeqCst), 2);
     }
 
@@ -1595,7 +1630,7 @@ mod tests {
         });
         let ids: Vec<String> = ["a", "b", "c", "d"].iter().map(|n| r.add(n)).collect();
         eventually(|| r.started().len() == 3, "drei beginnen");
-        settle();
+        settle(&r);
         assert_eq!(r.started().len(), 3, "der vierte wartet");
         assert_eq!(r.peak.load(Ordering::SeqCst), 3);
         assert_eq!(r.queue.snapshot().waiting, vec![ids[3].clone()]);
@@ -1604,7 +1639,7 @@ mod tests {
         }
         eventually(|| r.started().len() == 4, "der vierte beginnt");
         r.finish(&ids[3], Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1616,7 +1651,7 @@ mod tests {
         });
         let (a, b) = (r.add("a"), r.add("b"));
         eventually(|| r.started() == vec![a.clone()], "a beginnt");
-        settle();
+        settle(&r);
         assert_eq!(r.started(), vec![a.clone()], "kein Speicher: b wartet");
         assert_eq!(r.queue.snapshot().blocked, Some(WaitReason::Memory));
         assert_eq!(
@@ -1632,7 +1667,7 @@ mod tests {
         assert_eq!(r.queue.snapshot().blocked, None);
         r.finish(&a, Release::Done);
         r.finish(&b, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1646,19 +1681,19 @@ mod tests {
         r.limit.store(1, Ordering::SeqCst);
         r.queue.notify();
         r.finish(&ids[0], Release::Done);
-        settle();
+        settle(&r);
         assert_eq!(
             r.started().len(),
             3,
             "zwei laufen noch, Limit 1: der vierte wartet"
         );
         r.finish(&ids[1], Release::Done);
-        settle();
+        settle(&r);
         assert_eq!(r.started().len(), 3);
         r.finish(&ids[2], Release::Done);
         eventually(|| r.started().len() == 4, "jetzt beginnt der vierte");
         r.finish(&ids[3], Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1682,7 +1717,7 @@ mod tests {
         r.finish(&a, Release::Done);
         eventually(|| r.started() == vec![a.clone(), c.clone()], "c statt b");
         r.finish(&c, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
         assert!(!r.started().contains(&b));
     }
 
@@ -1704,7 +1739,7 @@ mod tests {
         r.finish(&b, Release::Done);
         eventually(|| r.started().len() == 4, "c");
         r.finish(&c, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
         assert_eq!(r.started(), vec![a, d, b, c]);
     }
 
@@ -1726,7 +1761,7 @@ mod tests {
         assert_eq!(r.queue.snapshot().running.len(), 2);
         r.finish(&a, Release::Done);
         r.finish(&c, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1737,7 +1772,7 @@ mod tests {
         eventually(|| r.started() == vec![a.clone()], "a beginnt");
         assert_eq!(r.queue.remove(&a).unwrap(), RemoveOutcome::Stopping);
         eventually(|| r.stop_seen.lock().unwrap().contains(&a), "Stopp gesehen");
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1754,7 +1789,7 @@ mod tests {
             "Auftraege da",
         );
         let c = r.add("c");
-        settle();
+        settle(&r);
         assert_eq!(r.started().len(), 2, "c wartet auf einen freien Platz");
 
         r.recording.store(true, Ordering::SeqCst);
@@ -1781,7 +1816,7 @@ mod tests {
 
         // Ein Lauf endet waehrend der Aufnahme: nichts Neues beginnt an seiner Stelle.
         r.finish(&a, Release::Done);
-        settle();
+        settle(&r);
         assert_eq!(
             r.started().len(),
             2,
@@ -1793,7 +1828,7 @@ mod tests {
         eventually(|| r.queue.snapshot().held.is_empty(), "fortgesetzt");
         r.finish(&b, Release::Done);
         r.finish(&c, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1801,7 +1836,7 @@ mod tests {
         let r = rig(RigOptions::default());
         r.recording.store(true, Ordering::SeqCst);
         let a = r.add("a");
-        settle();
+        settle(&r);
         assert!(
             r.started().is_empty(),
             "waehrend der Aufnahme beginnt nichts"
@@ -1811,7 +1846,7 @@ mod tests {
         r.recording.store(false, Ordering::SeqCst);
         eventually(|| r.started() == vec![a.clone()], "danach beginnt sie");
         r.finish(&a, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1822,7 +1857,7 @@ mod tests {
         let foreign = r.jobs.try_start("fremd", no_emit()).unwrap();
         foreign.handle().begin_phase(JobPhase::FinalPass, 1_000);
         let a = r.add("a");
-        settle();
+        settle(&r);
         assert!(
             r.started().is_empty(),
             "die gemeinsame Engine gehoert dem Enddurchlauf"
@@ -1831,7 +1866,7 @@ mod tests {
         drop(foreign);
         eventually(|| r.started() == vec![a.clone()], "danach beginnt sie");
         r.finish(&a, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1842,12 +1877,12 @@ mod tests {
         let r = rig(RigOptions::default());
         r.shared.store(true, Ordering::SeqCst);
         let a = r.add("a");
-        settle();
+        settle(&r);
         assert!(r.started().is_empty());
         r.shared.store(false, Ordering::SeqCst);
         eventually(|| r.started() == vec![a.clone()], "danach beginnt sie");
         r.finish(&a, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1872,7 +1907,7 @@ mod tests {
             .unwrap()
             .contains(&(b.clone(), "failed".into())));
         r.finish(&c, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
         assert_eq!(r.status(&c), "ready");
         assert_eq!(r.running_now.load(Ordering::SeqCst), 0);
         assert!(r.queue.snapshot().running.is_empty(), "der Platz ist frei");
@@ -1901,7 +1936,7 @@ mod tests {
             "kein Import einer fehlenden Datei"
         );
         r.finish(&c, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1915,7 +1950,7 @@ mod tests {
         r.finish(&a, Release::Done);
         eventually(|| r.started() == vec![a.clone(), c.clone()], "c statt b");
         r.finish(&c, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1948,7 +1983,7 @@ mod tests {
         r.finish(&a, Release::Done);
         eventually(|| r.started().contains(&c), "c");
         r.finish(&c, Release::Done);
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -1963,12 +1998,14 @@ mod tests {
             || r.started().len() == 2,
             "a (gemeinsam) und b (Extra) beginnen",
         );
-        settle();
+        settle(&r);
         assert_eq!(
-            r.started(),
-            vec![a.clone(), b.clone()],
+            started_set(&r),
+            HashSet::from([a.clone(), b.clone()]),
             "c wartet, bis b seine Engine geladen hat (sonst wuerden zwei Tore auf denselben Speicher schauen)"
         );
+        assert_eq!(r.slot_of(&a), Slot::Primary);
+        assert_eq!(r.slot_of(&b), Slot::Extra);
         // Die Engine von b ist da: jetzt darf c laden.
         // (Das Attrappen-`engine_ready` haengt am Request; wir holen es ueber ein neues Signal.)
         r.queue.inner.engine_loaded(&b);
@@ -1977,7 +2014,7 @@ mod tests {
         for id in [&a, &b, &c] {
             r.finish(id, Release::Done);
         }
-        assert!(r.queue.wait_idle(Duration::from_secs(5)));
+        assert!(r.queue.wait_idle(IDLE));
     }
 
     #[test]
@@ -2026,7 +2063,7 @@ mod tests {
             tick: Duration::from_millis(20),
             cooldown: Duration::from_millis(50),
         });
-        assert!(queue.wait_idle(Duration::from_secs(10)));
+        assert!(queue.wait_idle(IDLE));
         // Der abgestuerzte Lauf a behaelt seine Stelle vor der vorgezogenen d (er
         // lief ja schon), danach d, dann b und c in der Reihenfolge des Hinzufuegens.
         assert_eq!(*starts.lock().unwrap(), vec![a, d, b, c]);

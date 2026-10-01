@@ -336,6 +336,25 @@ mod tests {
         assert!(!out.status.success());
     }
 
+    /// Wartet auf ein Ereignis, hoechstens `limit`. Die Frist ist nur die Grenze,
+    /// ab der etwas als haengend gilt, nicht Teil der Aussage der Tests: Kinder
+    /// laufen im Job mit BELOW_NORMAL-Prioritaet und verhungern auf einem
+    /// ausgelasteten Rechner (parallele Builds) sekundenlang; gemessen brauchte
+    /// ein `cmd /c echo` 11 bis 21 s statt 0,1 s.
+    #[cfg(windows)]
+    fn wait_for(limit: Duration, mut cond: impl FnMut() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            if cond() {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     /// Beweis fuer "kein Kindprozess ueberlebt die App": wird das Job-Objekt
     /// geschlossen (Drop, App-Ende, Absturz), sterben Kind UND Enkel. Das
     /// Kind ist `cmd`, der Enkel ein `ping` -- wie llama-server oder
@@ -344,43 +363,40 @@ mod tests {
     #[cfg(windows)]
     fn closing_the_job_kills_child_and_grandchild() {
         use crate::managers::llm::app_usage::{process_rows, tree_pids};
+        // Der Enkel lebt ~5 Minuten, laenger als jede Frist unten: nur das
+        // Schliessen des Job-Objekts kann ihn rechtzeitig beenden.
         let mut child = std::process::Command::new("cmd")
-            .args(["/C", "ping -n 120 127.0.0.1 >nul"])
+            .args(["/C", "ping -n 300 127.0.0.1 >nul"])
             .stdout(std::process::Stdio::null())
             .spawn()
             .expect("cmd");
         let guard = ProcessGuard::attach(&child, None, 50).expect("Job-Objekt");
         // Warten, bis cmd den Enkel gestartet hat.
         let mut grandchildren = Vec::new();
-        for _ in 0..50 {
+        let started = wait_for(Duration::from_secs(90), || {
             let pids = tree_pids(child.id(), &process_rows());
             grandchildren = pids.into_iter().filter(|p| *p != child.id()).collect();
-            if !grandchildren.is_empty() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        assert!(!grandchildren.is_empty(), "cmd hat keinen Enkel gestartet");
+            !grandchildren.is_empty()
+        });
+        assert!(started, "cmd hat keinen Enkel gestartet");
         assert!(child.try_wait().unwrap().is_none(), "Kind lebt vor dem Schliessen");
 
         drop(guard); // KILL_ON_JOB_CLOSE
 
-        let mut dead = false;
-        for _ in 0..50 {
-            if child.try_wait().unwrap().is_some() {
-                dead = true;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
+        let dead = wait_for(Duration::from_secs(90), || {
+            child.try_wait().unwrap().is_some()
+        });
         assert!(dead, "das Kind lebt nach dem Schliessen des Job-Objekts");
-        std::thread::sleep(Duration::from_millis(300));
-        let alive: Vec<u32> = process_rows()
-            .iter()
-            .map(|r| r.pid)
-            .filter(|p| grandchildren.contains(p))
-            .collect();
-        assert!(alive.is_empty(), "Enkel leben noch: {alive:?}");
+        let mut alive: Vec<u32> = Vec::new();
+        let gone = wait_for(Duration::from_secs(90), || {
+            alive = process_rows()
+                .iter()
+                .map(|r| r.pid)
+                .filter(|p| grandchildren.contains(p))
+                .collect();
+            alive.is_empty()
+        });
+        assert!(gone, "Enkel leben noch: {alive:?}");
     }
 
     #[test]

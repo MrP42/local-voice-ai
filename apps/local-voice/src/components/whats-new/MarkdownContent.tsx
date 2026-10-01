@@ -60,6 +60,16 @@ const isSafeImageSrc = (src: string) => {
   return true;
 };
 
+/** Der Text eines React-Teilbaums (nur Zeichenketten und deren Kinder). */
+const textOf = (node: React.ReactNode): string => {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) {
+    return textOf(node.props.children);
+  }
+  return "";
+};
+
 const components: Components = {
   h1: ({ children }) => (
     <h3 className="text-base font-semibold leading-snug text-text">
@@ -92,17 +102,32 @@ const components: Components = {
   },
   li: ({ children, className }) => {
     const isTaskListItem = className?.includes("task-list-item");
+    // Ein Aufgaben-Kontrollkaestchen hat keine Beschriftung ausser dem Text daneben: der
+    // Aufgabentext wird sein Name (axe `label`). `input` kennt seine Nachbarn nicht, deshalb
+    // gibt der Eintrag ihn weiter.
+    const label = isTaskListItem ? textOf(children).trim() : "";
 
     return (
       <li
         className={`${isTaskListItem ? "list-none" : "pl-1"} marker:text-text/50`}
       >
-        {children}
+        {isTaskListItem && label
+          ? React.Children.map(children, (child) =>
+              React.isValidElement<{ type?: string }>(child) &&
+              child.props.type === "checkbox"
+                ? React.cloneElement(
+                    child as React.ReactElement<Record<string, unknown>>,
+                    { "aria-label": label },
+                  )
+                : child,
+            )
+          : children}
       </li>
     );
   },
-  input: ({ checked, type }) => {
+  input: ({ checked, type, ...rest }) => {
     if (type !== "checkbox") return null;
+    const label = (rest as { "aria-label"?: string })["aria-label"];
 
     return (
       <input
@@ -110,6 +135,7 @@ const components: Components = {
         checked={Boolean(checked)}
         disabled
         readOnly
+        aria-label={label}
         className="me-2 h-3.5 w-3.5 align-middle accent-logo-primary"
       />
     );

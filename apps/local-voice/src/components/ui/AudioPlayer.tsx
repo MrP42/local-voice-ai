@@ -106,6 +106,20 @@ const formatRate = (rate: number): string => `${rate}×`;
 export interface AudioPlayerHandle {
   /** Springt zu `seconds` und spielt ab; laedt die Quelle vorher, falls noetig. */
   playAt: (seconds: number) => void;
+  /**
+   * Spielt `startSeconds` bis `endSeconds` (eine Hoerprobe) und haelt dann an.
+   * `onEnd` kommt genau einmal: am Ende der Probe, bei jeder Pause (auch von
+   * aussen, auch wenn ein anderer Player der Gruppe startet), bei `stop()`,
+   * wenn eine neue Probe oder ein Sprung die Probe abloest oder das Abspielen
+   * scheitert.
+   */
+  playRange: (
+    startSeconds: number,
+    endSeconds: number,
+    onEnd: () => void,
+  ) => void;
+  /** Haelt an (ohne zurueckzuspulen); beendet eine laufende Probe. */
+  stop: () => void;
 }
 
 interface AudioPlayerProps {
@@ -180,6 +194,19 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const src = loadedSrc;
   const animationRef = useRef<number>();
   const dragTimeRef = useRef<number>(0);
+  // Eine laufende Hoerprobe: Ende in Sekunden und der Rueckruf. Jede Pause,
+  // das Ende der Datei und das Ende der Probe loesen ihn genau einmal aus.
+  const rangeRef = useRef<{ end: number; onEnd: () => void } | null>(null);
+  const finishRange = useCallback(() => {
+    const range = rangeRef.current;
+    rangeRef.current = null;
+    range?.onEnd();
+  }, []);
+  const checkRange = useCallback(() => {
+    const audio = audioRef.current;
+    const range = rangeRef.current;
+    if (audio && range && audio.currentTime >= range.end) audio.pause();
+  }, []);
 
   // Use refs to avoid stale closures in animation loop
   const isPlayingRef = useRef(false);
@@ -200,11 +227,12 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       const time = audioRef.current.currentTime;
       setCurrentTime(time);
     }
+    checkRange();
 
     if (isPlayingRef.current) {
       animationRef.current = requestAnimationFrame(tick);
     }
-  }, []); // Empty dependency array is key!
+  }, [checkRange]);
 
   // Manage animation loop lifecycle
   useEffect(() => {
@@ -282,6 +310,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       group?.releasePlayback(audio);
       setIsPlaying(false);
       setCurrentTime(audio.duration || 0);
+      finishRange();
     };
 
     const handlePlay = () => {
@@ -291,9 +320,11 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     const handlePause = () => {
       group?.releasePlayback(audio);
       setIsPlaying(false);
+      finishRange();
     };
 
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("timeupdate", checkRange);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
@@ -301,11 +332,12 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     return () => {
       group?.releasePlayback(audio);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("timeupdate", checkRange);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);
     };
-  }, [group]);
+  }, [group, checkRange, finishRange]);
 
   // Auto-play when src becomes available (via onLoadRequest or autoPlay prop)
   const prevLoadedSrc = useRef<string | null>(null);
@@ -361,39 +393,68 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     };
   }, [loadedSrc]);
 
+  /** Springt zu `seconds` und spielt ab (laedt die Quelle vorher, falls noetig). */
+  const playFrom = useCallback(
+    async (seconds: number) => {
+      const audio = audioRef.current;
+      if (!audio) {
+        finishRange();
+        return;
+      }
+      try {
+        if (!src && onLoadRequest) {
+          setIsLoading(true);
+          const newSrc = await onLoadRequest();
+          setIsLoading(false);
+          if (!newSrc) {
+            finishRange();
+            return;
+          }
+          setLoadedSrc(newSrc);
+          // Erst nach dem Laden der Metadaten laesst sich sicher springen.
+          audio.addEventListener(
+            "loadedmetadata",
+            () => {
+              audio.currentTime = Math.max(0, seconds);
+              void audio.play();
+            },
+            { once: true },
+          );
+          return;
+        }
+        audio.currentTime = Math.max(0, seconds);
+        setCurrentTime(audio.currentTime);
+        await audio.play();
+      } catch (error) {
+        console.error("Playback failed:", error);
+        finishRange();
+      }
+    },
+    [src, onLoadRequest, finishRange],
+  );
+
   useImperativeHandle(
     controlRef,
     () => ({
-      playAt: async (seconds) => {
-        const audio = audioRef.current;
-        if (!audio) return;
-        try {
-          if (!src && onLoadRequest) {
-            setIsLoading(true);
-            const newSrc = await onLoadRequest();
-            setIsLoading(false);
-            if (!newSrc) return;
-            setLoadedSrc(newSrc);
-            // Erst nach dem Laden der Metadaten laesst sich sicher springen.
-            audio.addEventListener(
-              "loadedmetadata",
-              () => {
-                audio.currentTime = Math.max(0, seconds);
-                void audio.play();
-              },
-              { once: true },
-            );
-            return;
-          }
-          audio.currentTime = Math.max(0, seconds);
-          setCurrentTime(audio.currentTime);
-          await audio.play();
-        } catch (error) {
-          console.error("Playback failed:", error);
-        }
+      playAt: (seconds) => {
+        // Ein Sprung loest eine laufende Hoerprobe ab.
+        finishRange();
+        void playFrom(seconds);
+      },
+      playRange: (startSeconds, endSeconds, onEnd) => {
+        finishRange();
+        rangeRef.current = {
+          end: Math.max(startSeconds, endSeconds),
+          onEnd,
+        };
+        void playFrom(startSeconds);
+      },
+      stop: () => {
+        audioRef.current?.pause();
+        finishRange();
       },
     }),
-    [src, onLoadRequest],
+    [playFrom, finishRange],
   );
 
   const togglePlay = async () => {

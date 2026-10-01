@@ -88,6 +88,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 -
 
 ## Entscheidungen
+- 2026-10-01 Patrick: "Vollgas" – maximale Parallelisierung, alle offenen Issues und Restpunkte; M4–M7 damit freigegeben. Neue Befunde: Sprecher-Dialog (G6), ASR-Wiederholungen (G7). Keine sichtbaren Fenster, solange Patrick am Rechner arbeitet.
 - 2026-10-01 Patrick: G5 Mehrsprachigkeit/Übersetzung aufnehmen (vor 0.21.0); Rahmen dadurch ~3,2 MTok.
 - 2026-10-01 Patrick: mp3lame LGPL als Ausnahme zulassen; Canary 1B mit Hinweis „nur nicht-kommerziell“ behalten; 12 unmaintained-Ignores übernehmen.
 - 2026-10-01 Patrick: Reiter umordnen vor 0.21.0 – Mitte Transkript + Protokoll, rechts unter der Bedienung Notizen, KI-Notizen, Fragen; Kopf zeigt Teilnehmende (Anzahl, Namen) und macht sie dort bearbeitbar (G4).

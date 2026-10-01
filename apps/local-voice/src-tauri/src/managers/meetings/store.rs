@@ -104,9 +104,20 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // `queue_store.rs`, damit dieser Schritt beim Zusammenfuehren mit anderen
     // Zweigen nur aus dieser einen Zeile besteht.
     M::up(super::queue_store::QUEUE_MIGRATION),
-    // B1 (Workflow-Automation, #67): Ablaeufe, Laeufe (Warteschlange), Schrittjournal und
-    // Ledger. Nur CREATE. Der SQL-Text steht in `workflows/schema.rs`, damit dieser
-    // Schritt beim Zusammenfuehren mit anderen Zweigen nur aus dieser einen Zeile besteht.
+    // G3 (Projekt-Protokolle, #70). Nur CREATE: vorhandene Zeilen bleiben unveraendert.
+    // Der SQL-Text steht in `project_minutes_store.rs`.
+    M::up(super::project_minutes_store::PROJECT_MINUTES_MIGRATION),
+    // G5 (Fassungsart `translation`, Herkunft einer Uebersetzung), Index 9: hinter G3.
+    // Baut `transcript_variants` neu (CHECK-Bedingung), kopiert jede Zeile unveraendert.
+    // Der SQL-Text steht in `variants.rs`; Naeheres dort.
+    M::up(super::variants::VARIANTS_TRANSLATION_MIGRATION),
+    // D1 (Folien aus Videos, #70/M7), Index 10: hinter G5. Nur CREATE ... IF NOT EXISTS:
+    // vorhandene Zeilen bleiben unveraendert. Der SQL-Text steht in `slides/store.rs`.
+    M::up(super::slides::store::SLIDES_MIGRATION),
+    // B1 (Workflow-Automation, #67), Index 11: hinter D1. Ablaeufe, Laeufe (Warteschlange),
+    // Schrittjournal und Ledger. Nur CREATE. Der SQL-Text steht in `workflows/schema.rs`,
+    // damit dieser Schritt beim Zusammenfuehren mit anderen Zweigen nur aus dieser einen
+    // Zeile besteht.
     M::up(crate::managers::workflows::schema::WORKFLOWS_MIGRATION),
 ];
 
@@ -602,6 +613,46 @@ pub struct MeetingTemplate {
     pub pinned: bool,
 }
 
+/// So lange wartet eine Verbindung auf eine gesperrte Datenbank, bevor ein
+/// Schreiben mit "database is locked" scheitert. rusqlite setzt von sich aus nur
+/// 5 s: das reicht, solange ein Commit Millisekunden dauert, nicht aber unter
+/// Last (parallele Builds, Virenscanner, volle Platte), wo ein Commit mit seinen
+/// fsyncs Sekunden braucht und mehrere Schreiber hintereinander warten. Ein
+/// scheiterndes Schreiben verliert Daten (Status, Audit, Herkunft), ein
+/// wartendes nur Zeit: also lieber lange warten.
+pub(crate) const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Der zentrale Oeffnungsweg einer Verbindung zur Datenbank der Besprechungen (auch fuer
+/// Module, die nur den Pfad kennen, wie die Workflow-Engine): `BUSY_TIMEOUT` gilt je
+/// Verbindung, der WAL-Modus steht seit `init_database` in der Datei. Wer eine eigene
+/// Verbindung per `Connection::open` aufmacht, wartet nur 0 bis 5 s und verliert unter
+/// Last ein Schreiben (G8).
+pub(crate) fn open_connection(path: &Path) -> rusqlite::Result<Connection> {
+    let conn = Connection::open(path)?;
+    conn.busy_timeout(BUSY_TIMEOUT)?;
+    Ok(conn)
+}
+
+/// Stellt die Datenbank auf WAL um (der Modus steht danach in der Datei und gilt
+/// fuer jede weitere Verbindung, auch fuer Tests und den lokalen MCP-Server).
+///
+/// Warum: im Standardmodus (Rollback-Journal) braucht jeder Commit drei fsyncs
+/// und sperrt dabei Leser UND Schreiber; mehrere Schreiber verhungern
+/// nacheinander. Gemessen unter Last (4 Schreiber, je 25 Zeilen): 4 bis 5,5 s im
+/// Standardmodus, 1,5 bis 1,9 s mit WAL. Die Haltbarkeit bleibt unveraendert
+/// (`synchronous` bleibt FULL: jeder Commit ist auf der Platte).
+///
+/// Ein Fehler ist nicht fatal: die Datenbank laeuft dann im alten Modus weiter
+/// (der Wechsel braucht kurz den alleinigen Zugriff; haelt ein zweiter Prozess
+/// die Datei offen, klappt es beim naechsten Start).
+fn enable_wal(conn: &Connection) {
+    match conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get::<_, String>(0)) {
+        Ok(mode) if mode.eq_ignore_ascii_case("wal") => {}
+        Ok(mode) => warn!("Meetings database stays in journal mode {mode}, WAL not enabled"),
+        Err(e) => warn!("Could not switch the meetings database to WAL: {e}"),
+    }
+}
+
 /// A1 (R6): Sicherung des Standes VOR einer ausstehenden Migration. Nur fuer eine
 /// bestehende, nicht leere Datenbank, die noch migriert werden muss; der Name
 /// nennt die Schema-Version davor (`meetings.db.bak-v5`). Eine vorhandene
@@ -799,6 +850,8 @@ impl MeetingStore {
             Err(e) => warn!("Could not back up the meetings database before migrating: {e}"),
         }
         let mut conn = Connection::open(&self.db_path)?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        enable_wal(&conn);
 
         // I1: eine Datenbank aus einem reinen U7-Build erst an die Reihenfolge
         // A1, A3, U7 angleichen. Ein Fehler hier laesst die Datenbank unveraendert
@@ -914,7 +967,7 @@ impl MeetingStore {
             conn.busy_timeout(busy)?;
             return Ok(conn);
         }
-        Ok(Connection::open(&self.db_path)?)
+        Ok(open_connection(&self.db_path)?)
     }
 
     /// M6-P6e: oeffnet die Datenbank NUR LESEND (`SQLITE_OPEN_READ_ONLY`), ohne
@@ -1761,6 +1814,11 @@ impl MeetingStore {
         )?;
         tx.execute(
             "UPDATE meeting_notes SET deleted_at = ?1, updated_at = ?1 WHERE meeting_id = ?2",
+            params![now, id],
+        )?;
+        // D1: Folien gehoeren zur Besprechung; die Bilder gehen mit ihrem Ordner.
+        tx.execute(
+            "UPDATE meeting_slides SET deleted_at = ?1, updated_at = ?1 WHERE meeting_id = ?2",
             params![now, id],
         )?;
 
@@ -3714,6 +3772,76 @@ mod tests {
                 dump(conn, table, cols, filter)
             })
             .collect()
+    }
+
+    fn journal_mode(conn: &Connection) -> String {
+        conn.query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// G8: jede Verbindung des Stores wartet lange auf gesperrte Datenbanken und
+    /// die Datei steht im WAL-Modus; eine Altdatenbank im alten Modus (mit Zeilen in
+    /// jeder Tabelle) wird beim Oeffnen umgestellt, ohne eine Zeile zu verlieren.
+    #[test]
+    fn an_old_database_is_switched_to_wal_with_all_rows_and_connections_wait_for_locks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        create_legacy_db(&path);
+        let cols: Vec<(String, Vec<String>)> = {
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(journal_mode(&conn), "delete", "Altstand: Rollback-Journal");
+            LEGACY_TABLES
+                .iter()
+                .map(|t| (t.to_string(), table_columns(&conn, t)))
+                .collect()
+        };
+        let before = dump_all(&Connection::open(&path).unwrap(), &cols);
+
+        let s = MeetingStore::open_at(&path).unwrap();
+        let conn = s.get_connection().unwrap();
+        assert_eq!(journal_mode(&conn), "wal");
+        let busy_ms: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(busy_ms, BUSY_TIMEOUT.as_millis() as i64);
+        assert_eq!(
+            dump_all(&conn, &cols),
+            before,
+            "Altzeilen sind nach der Umstellung wertgleich"
+        );
+        // Der Modus steht in der Datei: auch eine blanke Verbindung (Test, MCP) sieht WAL.
+        assert_eq!(journal_mode(&Connection::open(&path).unwrap()), "wal");
+    }
+
+    /// G8, Abbruch mitten im Schreiben: eine Transaktion, die nicht abgeschlossen
+    /// wird (Absturz, Fehler), hinterlaesst nichts; Festgeschriebenes ueberlebt das
+    /// Schliessen und Wiederoeffnen.
+    #[test]
+    fn an_unfinished_write_leaves_nothing_and_a_committed_one_survives_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let s = MeetingStore::open_at(&path).unwrap();
+        let kept = s
+            .create_meeting("Bleibt", MeetingSource::Live, Some(1))
+            .unwrap();
+        {
+            let mut conn = s.get_connection().unwrap();
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .unwrap();
+            tx.execute(
+                "INSERT INTO meetings (id, title, status, source, created_at, updated_at)
+                 VALUES ('halb', 'Halb', 'ready', 'live', 1, 1)",
+                [],
+            )
+            .unwrap();
+            // Kein commit: wie ein Abbruch an dieser Stelle.
+            drop(tx);
+        }
+        drop(s);
+        let s = MeetingStore::open_at(&path).unwrap();
+        assert!(s.get_meeting("halb").unwrap().is_none(), "nichts Halbes");
+        assert_eq!(s.get_meeting(&kept.id).unwrap().unwrap().title, "Bleibt");
     }
 
     #[test]

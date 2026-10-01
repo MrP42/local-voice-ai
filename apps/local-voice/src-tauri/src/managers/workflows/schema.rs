@@ -1,8 +1,8 @@
 //! Migration der Workflow-Tabellen (B1). Das JSON-Schema der Definition steht in
 //! `jsonschema.rs` (aus dem Katalog erzeugt, Abgleichdatei `schema/lva-workflow-1.schema.json`).
 //!
-//! Die Migration haengt HINTEN an `meetings::store::MIGRATIONS` (Index 8, nach A1 = 5,
-//! A3 = 6, U7 = 7); der SQL-Text steht hier, damit der Eintrag in `store.rs` nur aus
+//! Die Migration haengt HINTEN an `meetings::store::MIGRATIONS` (Index 11, nach A1 = 5,
+//! A3 = 6, U7 = 7, G3 = 8, G5 = 9, D1 = 10); der SQL-Text steht hier, damit der Eintrag in `store.rs` nur aus
 //! EINER Zeile besteht (wie bei `queue_store::QUEUE_MIGRATION`). Bestehende Schritte
 //! bleiben unveraendert. Parallel angelegte Migrationen anderer Pakete werden beim
 //! Zusammenfuehren umnummeriert, nicht hier.

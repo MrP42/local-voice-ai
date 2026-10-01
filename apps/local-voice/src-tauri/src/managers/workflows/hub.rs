@@ -250,9 +250,7 @@ impl WorkflowHub {
     }
 
     fn conn(&self) -> Option<Connection> {
-        let c = Connection::open(&self.db_path).ok()?;
-        c.busy_timeout(Duration::from_secs(5)).ok()?;
-        Some(c)
+        crate::managers::meetings::store::open_connection(&self.db_path).ok()
     }
 
     /// Zeigt die aelteste noch nicht gezeigte, offene Bitte um Einwilligung im

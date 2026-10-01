@@ -9,7 +9,7 @@
 //!   `jsonschema` erzeugt daraus das JSON-Schema.
 //! - `expr`: sichere Ausdruecke und Vorlagen-Variablen, ohne Code-Ausfuehrung.
 //! - `validate`: Pruefung einer Definition mit Pfad und deutschem Satz je Befund.
-//! - `schema` / `store`: Migration Index 8 (Tabellen) und alle Zugriffe auf sie.
+//! - `schema` / `store`: Migration Index 11 (Tabellen) und alle Zugriffe auf sie.
 //! - `action`: das `Action`-Trait, `RunCtx`, Fehlerklassen, Register der Bausteine.
 //! - `heavy`: das Tor fuer schwere Schritte (seriell, RAM-Tor).
 //! - `engine`: Warteschlange, Ausfuehrung, Wiederholung, Wiederaufnahme, Freigaben.

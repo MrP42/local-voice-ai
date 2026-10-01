@@ -67,6 +67,31 @@ pub fn put_in(dir: &Path, i: &Integration, slot: &str, data: &[u8]) -> Result<()
     secret::put_ref_in(dir, &secret_ref(i, slot), data)
 }
 
+/// Liest ein Geheimnis als Text (UTF-8); `Ok(None)`, wenn es fehlt. Der Inhalt
+/// verlaesst diese Datei nur als `Zeroizing`-Puffer in die Adapter (A6).
+pub fn get_text(i: &Integration, slot: &str) -> Result<Option<zeroize::Zeroizing<String>>, String> {
+    to_text(secret::secret_get_ref(&secret_ref(i, slot))?)
+}
+
+pub fn get_text_in(
+    dir: &Path,
+    i: &Integration,
+    slot: &str,
+) -> Result<Option<zeroize::Zeroizing<String>>, String> {
+    to_text(secret::get_ref_in(dir, &secret_ref(i, slot))?)
+}
+
+fn to_text(
+    raw: Option<zeroize::Zeroizing<Vec<u8>>>,
+) -> Result<Option<zeroize::Zeroizing<String>>, String> {
+    match raw {
+        None => Ok(None),
+        Some(bytes) => String::from_utf8(bytes.to_vec())
+            .map(|s| Some(zeroize::Zeroizing::new(s)))
+            .map_err(|_| "Das Geheimnis ist kein gültiger Text.".to_string()),
+    }
+}
+
 /// Loescht alle Geheimnisse einer Integration (beim Entfernen). Kalenderarten
 /// raeumt der Kalender selbst auf; hier bleibt ihr Geheimnis unberuehrt.
 pub fn delete_all(i: &Integration) -> usize {

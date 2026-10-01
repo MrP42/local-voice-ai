@@ -265,12 +265,13 @@ fn retention_keeps_at_most_max_rows_and_drops_the_oldest() {
 #[test]
 fn concurrent_writers_keep_every_row() {
     let fx = Fx::new();
-    let path = fx.db_path.clone();
-    let threads: Vec<_> = (0..4)
+    // Eigene Verbindung je Schreiber ueber den Weg des Produkts (`get_connection`:
+    // Wartezeit auf gesperrte Datenbank, WAL); eine blanke `Connection::open`
+    // (5 s) scheiterte unter Last mit "database is locked".
+    let threads: Vec<_> = (0..4i64)
         .map(|t| {
-            let path = path.clone();
+            let conn = fx.conn();
             std::thread::spawn(move || {
-                let conn = rusqlite::Connection::open(&path).unwrap();
                 for i in 0..25 {
                     let mut e = entry(AuditOutcome::Ok);
                     e.caller = format!("workflow-{t}");

@@ -246,11 +246,14 @@ fn the_database_itself_refuses_bad_enums_and_confidence() {
 #[test]
 fn parallel_writers_keep_every_entry() {
     let fx = Fx::new();
-    let threads: Vec<_> = (0..4)
+    // Jeder Schreiber bekommt eine eigene Verbindung ueber den Weg des Produkts
+    // (`get_connection`: Wartezeit auf gesperrte Datenbank, WAL). Mit einer
+    // blanken `Connection::open` (5 s) scheiterte der Test unter Last mit
+    // "database is locked", obwohl das Produkt diese Verbindung nie so oeffnet.
+    let threads: Vec<_> = (0..4i64)
         .map(|t| {
-            let path = fx.db_path.clone();
+            let conn = fx.conn();
             std::thread::spawn(move || {
-                let conn = rusqlite::Connection::open(&path).unwrap();
                 for i in 0..25 {
                     record_at(&conn, &base(SubjectKind::Document, "shared"), t * 1000 + i).unwrap();
                 }

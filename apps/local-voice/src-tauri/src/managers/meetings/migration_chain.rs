@@ -155,24 +155,93 @@ fn write_legacy_db_for_the_release_smoke_test() {
 fn the_chain_is_register_then_variants_then_queue() {
     assert!(
         MIGRATIONS.len() >= 8,
-        "A1 = 5, A3 = 6, U7 = 7; weitere Schritte (B1 = 8) werden hinten angehaengt"
+        "A1 = 5, A3 = 6, U7 = 7; spaetere Schritte (G3 = 8, G5 = 9, D1 = 10) haengen hinten an"
     );
-    let steps: [(usize, &[&str], &[&str]); 4] = [
-        (5, &[], &["integrations", "transcript_variants", "import_queue"]),
+    assert!(
+        MIGRATIONS.len() >= 11,
+        "G3 ist Index 8, G5 Index 9, D1 (Folien) Index 10 (dahinter)"
+    );
+    assert!(
+        MIGRATIONS.len() >= 12,
+        "B1 (Workflow-Tabellen) ist Index 11, hinter D1"
+    );
+    let steps: [(usize, &[&str], &[&str]); 8] = [
+        (
+            5,
+            &[],
+            &[
+                "integrations",
+                "transcript_variants",
+                "import_queue",
+                "meeting_slides",
+                "workflows",
+            ],
+        ),
         (
             6,
             &["integrations", "provenance"],
-            &["transcript_variants", "import_queue"],
+            &["transcript_variants", "import_queue", "meeting_slides", "workflows"],
         ),
         (
             7,
             &["integrations", "transcript_variants"],
-            &["import_queue"],
+            &["import_queue", "meeting_slides", "workflows"],
         ),
         (
             8,
             &["integrations", "transcript_variants", "import_queue"],
-            &[],
+            &["project_minutes", "transcript_variants_g5", "meeting_slides", "workflows"],
+        ),
+        // Stufe 9 = G3 (Projekt-Protokolle, Index 8): die Tabelle ist da.
+        (
+            9,
+            &[
+                "integrations",
+                "transcript_variants",
+                "import_queue",
+                "project_minutes",
+            ],
+            &["transcript_variants_g5", "meeting_slides", "workflows"],
+        ),
+        // Stufe 10 = G5 (Fassungsart Uebersetzung, Index 9): die Tabelle ist neu gebaut, die
+        // Ersatztabelle heisst wieder `transcript_variants`.
+        (
+            10,
+            &[
+                "integrations",
+                "transcript_variants",
+                "import_queue",
+                "project_minutes",
+            ],
+            &["transcript_variants_g5", "meeting_slides", "workflows"],
+        ),
+        // Stufe 11 = D1 (Folien aus Videos, Index 10): die Tabelle ist da, alles Fruehere bleibt.
+        (
+            11,
+            &[
+                "integrations",
+                "transcript_variants",
+                "import_queue",
+                "project_minutes",
+                "meeting_slides",
+            ],
+            &["transcript_variants_g5", "workflows"],
+        ),
+        // Stufe 12 = B1 (Workflow-Tabellen, Index 11): alle vier sind da, alles Fruehere bleibt.
+        (
+            12,
+            &[
+                "integrations",
+                "transcript_variants",
+                "import_queue",
+                "project_minutes",
+                "meeting_slides",
+                "workflows",
+                "workflow_runs",
+                "workflow_run_steps",
+                "workflow_file_ledger",
+            ],
+            &["transcript_variants_g5"],
         ),
     ];
     for (upto, present, absent) in steps {
@@ -202,6 +271,7 @@ fn a_database_of_0_20_9_with_data_migrates_through_all_three_steps() {
 
     let store = MeetingStore::open_at(&path).unwrap();
     let conn = store.get_connection().unwrap();
+    // Danach steht die Datenbank auf dem neuesten Stand (G3 haengt Index 8 an).
     assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
     assert!(MIGRATIONS.len() >= 8);
 
@@ -350,7 +420,7 @@ fn a_database_from_a_u7_only_build_is_adopted() {
     assert_eq!(
         user_version(&conn),
         MIGRATIONS.len() as i64,
-        "nach A1, A3, U7 und allen weiteren Schritten"
+        "nach A1, A3 und U7 und allen spaeteren Schritten"
     );
     assert_eq!(dump_all(&conn), before, "Altdaten unveraendert");
     assert!(has_table(&conn, "integrations"), "A1 nachgeholt");

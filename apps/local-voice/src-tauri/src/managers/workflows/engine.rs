@@ -353,9 +353,8 @@ impl Engine {
     }
 
     fn conn(&self) -> Result<Connection> {
-        let c = Connection::open(&self.inner.db_path).map_err(db_err)?;
-        c.busy_timeout(Duration::from_secs(5)).map_err(db_err)?;
-        Ok(c)
+        // Zentraler Oeffnungsweg (WAL, `BUSY_TIMEOUT` 30 s), nie ein blankes `Connection::open`.
+        crate::managers::meetings::store::open_connection(&self.inner.db_path).map_err(db_err)
     }
 
     /// Ersetzt oder ergaenzt einen Baustein (B2 bis B6, Goal C).
@@ -410,7 +409,9 @@ impl Engine {
         if let Some(o) = observer {
             // Ein Fehler der Anwendung darf den Arbeiter nie beenden.
             if catch_unwind(AssertUnwindSafe(|| o.run_awaiting_approval(run_id))).is_err() {
-                warn!("workflows: der Beobachter ist abgestuerzt (Panik), der Arbeiter laeuft weiter");
+                warn!(
+                    "workflows: der Beobachter ist abgestuerzt (Panik), der Arbeiter laeuft weiter"
+                );
             }
         }
     }

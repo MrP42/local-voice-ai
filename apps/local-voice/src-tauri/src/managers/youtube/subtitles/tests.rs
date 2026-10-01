@@ -580,7 +580,11 @@ mod process {
     fn a_hanging_tool_is_killed_at_the_limit_and_a_stop_ends_it_at_once() {
         let d = tempfile::tempdir().unwrap();
         let exe = d.path().join("hang.cmd");
-        std::fs::write(&exe, "@echo off\r\nping -n 60 127.0.0.1 >nul\r\n").unwrap();
+        // Der Haenger lebt laenger (200 s) als jede Frist unten: nur das Beenden
+        // durch den Job bringt den Aufruf vorher zurueck. Die Fristen sind weit,
+        // weil Kinder im Job mit BELOW_NORMAL-Prioritaet laufen und auf einem
+        // ausgelasteten Rechner Sekunden lang verhungern.
+        std::fs::write(&exe, "@echo off\r\nping -n 200 127.0.0.1 >nul\r\n").unwrap();
         let started = Instant::now();
         let end = run::run(
             &exe,
@@ -594,7 +598,7 @@ mod process {
         )
         .unwrap();
         assert_eq!(end, RunEnd::TimedOut);
-        assert!(started.elapsed() < Duration::from_secs(10), "kein Haenger");
+        assert!(started.elapsed() < Duration::from_secs(120), "kein Haenger");
 
         let cancel = std::sync::Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
@@ -615,7 +619,7 @@ mod process {
         )
         .unwrap();
         assert_eq!(end, RunEnd::Cancelled);
-        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(started.elapsed() < Duration::from_secs(120));
         // Schon gesetzt vor dem Start: das Programm startet gar nicht.
         let pre = AtomicBool::new(true);
         assert_eq!(

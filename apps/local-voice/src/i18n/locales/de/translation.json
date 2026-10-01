@@ -12,6 +12,7 @@
   "sidebar": {
     "general": "Allgemein",
     "models": "Modelle",
+    "integrations": "Integrationen",
     "advanced": "Erweitert",
     "postProcessing": "Nachbearbeitung",
     "history": "Verlauf",
@@ -1941,7 +1942,9 @@
         "rowName": "Name für {{label}}",
         "listen": "Anhören",
         "listenHint": "Springt zu einem längeren Satz dieses Sprechers",
-        "listenFor": "{{label}} anhören"
+        "listenFor": "{{label}} anhören",
+        "stop": "Stopp",
+        "stopFor": "{{label}} stoppen"
       },
       "notices": {
         "disabled": "Die Sprechertrennung war für diese Besprechung ausgeschaltet.",
@@ -2092,7 +2095,8 @@
         "final_pass": "Enddurchlauf",
         "speakers": "Sprecher",
         "notes": "KI-Notizen",
-        "minutes": "Protokoll"
+        "minutes": "Protokoll",
+        "translation": "Übersetzung"
       },
       "state": {
         "pausing": "Pause wird eingelegt …",
@@ -2112,6 +2116,121 @@
         "stopping": "Die Verarbeitung wird bereits gestoppt.",
         "busy": "Für diese Besprechung läuft bereits eine Verarbeitung.",
         "notCancelled": "Diese Besprechung ist nicht abgebrochen."
+      }
+    },
+    "projectMinutes": {
+      "menu": "Gemeinsam protokollieren",
+      "menuHint": "Mehrere Aufnahmen dieses Projekts wählen und daraus ein gemeinsames Protokoll oder eine Zusammenfassung erzeugen",
+      "needProject": "Wähle zuerst ein Projekt in der Liste.",
+      "bar": {
+        "label": "Aufnahmen für ein gemeinsames Protokoll wählen",
+        "selected_one": "{{count}} Aufnahme gewählt",
+        "selected_other": "{{count}} Aufnahmen gewählt",
+        "all": "Alle",
+        "allHint": "Alle wählbaren Aufnahmen des Projekts auswählen",
+        "none": "Keine",
+        "noneHint": "Die Auswahl aufheben",
+        "start": "Gemeinsam protokollieren …",
+        "needTwo": "Wähle mindestens zwei Aufnahmen.",
+        "cancel": "Abbrechen",
+        "loading": "Aufnahmen werden geprüft …",
+        "loadFailed": "Die Aufnahmen des Projekts konnten nicht geprüft werden."
+      },
+      "reason": {
+        "meeting_not_finished": "Läuft noch",
+        "no_transcript": "Kein Transkript",
+        "empty_entry": "Leer"
+      },
+      "reasonHint": {
+        "meeting_not_finished": "Diese Aufnahme wird noch aufgenommen oder verarbeitet. Sie lässt sich wählen, sobald sie fertig ist.",
+        "no_transcript": "Diese Aufnahme hat kein Transkript, daraus kann nichts protokolliert werden.",
+        "empty_entry": "Ein leerer Eintrag hat noch keine Aufnahme und kein Transkript."
+      },
+      "dialog": {
+        "title": "Gemeinsames Protokoll erzeugen",
+        "body_one": "Aus {{count}} Aufnahme des Projekts „{{project}}“ entsteht ein gemeinsames Dokument. Jede Aussage nennt ihre Quelle.",
+        "body_other": "Aus {{count}} Aufnahmen des Projekts „{{project}}“ entsteht ein gemeinsames Dokument. Die Aufnahmen werden nach Datum zusammengeführt, jede Aussage nennt ihre Quelle.",
+        "kind": "Art",
+        "start": "Erzeugen",
+        "cancel": "Abbrechen"
+      },
+      "kind": {
+        "minutes": "Protokoll",
+        "minutesHint": "Die Abschnitte der Vorlage, ausführlich",
+        "summary": "Zusammenfassung",
+        "summaryHint": "Dieselben Abschnitte, knapp: wenige zusammengefasste Aussagen"
+      },
+      "list": {
+        "heading": "Projekt-Protokolle",
+        "titleMinutes": "Projekt-Protokoll",
+        "titleSummary": "Projekt-Zusammenfassung",
+        "meta_one": "{{date}} · {{count}} Aufnahme",
+        "meta_other": "{{date}} · {{count}} Aufnahmen",
+        "incomplete": "unvollständig",
+        "running": "Projekt-Protokoll wird erzeugt"
+      },
+      "view": {
+        "toolbar": "Projekt-Protokoll: Werkzeuge",
+        "copy": "Kopieren",
+        "copyHint": "Kopiert das Dokument formatiert (für Word und Mail) und als Markdown",
+        "copied": "Kopiert",
+        "copyError": "Das Dokument konnte nicht kopiert werden",
+        "download": "Herunterladen",
+        "downloadHint": "Als Word, Text oder Markdown speichern",
+        "exportError": "Export fehlgeschlagen",
+        "exportSaved": "Gespeichert unter {{path}}",
+        "delete": "Löschen",
+        "deleteHint": "Das Dokument aus dem Projekt löschen; die Aufnahmen bleiben",
+        "deleteTitle": "Projekt-Protokoll löschen?",
+        "deleteBody": "Das Dokument wird gelöscht. Die Aufnahmen, aus denen es entstand, bleiben unverändert.",
+        "deleteCancel": "Abbrechen",
+        "loadError": "Das Dokument konnte nicht geladen werden: {{error}}",
+        "gone": "Dieses Projekt-Protokoll gibt es nicht mehr.",
+        "empty": "keine",
+        "assignee": "Wer: {{name}}",
+        "due": "Bis: {{date}}",
+        "noProof": "ohne Beleg",
+        "noProofHint": "Für diese Aussage hat das Modell keine Stelle im Transkript genannt.",
+        "sourceHint": "{{title}}, {{time}}: öffnet die Aufnahme an dieser Stelle",
+        "sourceDeleted": "Diese Aufnahme gibt es nicht mehr.",
+        "sourcesLabel": "Quellen",
+        "recordings": "Aufnahmen",
+        "recordingOpen": "{{title}} öffnen",
+        "origin": "Herkunft",
+        "originModel": "Modell",
+        "originTemplate": "Vorlage",
+        "originAuto": "automatisch gewählt",
+        "originCreated": "Erzeugt",
+        "originMode": "Verfahren",
+        "modeSingle": "ein Durchlauf",
+        "modeBlocks_one": "{{count}} Block",
+        "modeBlocks_other": "{{count}} Blöcke",
+        "incomplete": "Das Dokument ist unvollständig: {{gaps}} konnte nicht ausgewertet werden. Die vollständigen Transkripte bleiben erhalten.",
+        "droppedSources_one": "Eine vom Modell genannte Quelle gab es im Transkript nicht und wurde verworfen.",
+        "droppedSources_other": "{{count}} vom Modell genannte Quellen gab es im Transkript nicht und wurden verworfen.",
+        "unsupportedEntries_one": "Eine Aussage hat keinen Beleg.",
+        "unsupportedEntries_other": "{{count}} Aussagen haben keinen Beleg."
+      },
+      "run": {
+        "title": "Gemeinsames Protokoll wird erzeugt",
+        "body": "Die gewählten Aufnahmen werden ausgewertet. Du kannst währenddessen andere Aufnahmen ansehen; das Ergebnis erscheint im Projekt.",
+        "starting": "Wird gestartet …",
+        "close": "Schließen",
+        "cancelled": "Die Erzeugung wurde abgebrochen.",
+        "failed": "Das gemeinsame Protokoll konnte nicht erzeugt werden."
+      },
+      "errors": {
+        "minutes_busy": "Für dieses Projekt wird schon ein gemeinsames Protokoll erzeugt.",
+        "folder_not_found": "Das Projekt gibt es nicht mehr.",
+        "no_selection": "Wähle mindestens eine Aufnahme.",
+        "too_many_recordings": "Zu viele Aufnahmen auf einmal. Wähle weniger.",
+        "not_in_project": "Eine der gewählten Aufnahmen gehört nicht (mehr) zu diesem Projekt.",
+        "kind_invalid": "Unbekannte Art des Dokuments.",
+        "meeting_not_found": "Eine der gewählten Aufnahmen gibt es nicht mehr.",
+        "meeting_not_finished": "Eine der gewählten Aufnahmen wird noch verarbeitet.",
+        "meeting_not_finished_named": "„{{title}}“ wird noch verarbeitet.",
+        "no_transcript": "Eine der gewählten Aufnahmen hat kein Transkript.",
+        "no_transcript_named": "„{{title}}“ hat kein Transkript."
       }
     },
     "minutes": {
@@ -2154,7 +2273,7 @@
     },
     "language": {
       "title": "Transkriptionssprache",
-      "description": "Sprache der Meeting-Transkription — unabhängig von der Diktat-Einstellung. Meetings werden nie übersetzt.",
+      "description": "Sprache der Meeting-Transkription — unabhängig von der Diktat-Einstellung. „Automatisch erkennen“ bestimmt die Sprache je Aufnahme aus einer Hörprobe und wählt das passende Modell; eine feste Sprache gilt vor jeder Erkennung. Die Transkription übersetzt nie: Übersetzungen entstehen als eigene Fassung.",
       "auto": "Automatisch erkennen"
     },
     "meta": {
@@ -2241,6 +2360,9 @@
       "templateDefault": "Standardvorlage",
       "minutesOrigin": "Protokoll erzeugt",
       "minutesNone": "Noch kein Protokoll",
+      "minutesBasis": "Grundlage des Protokolls",
+      "notesBasis": "Grundlage der KI-Notizen",
+      "basisNone": "keine Angabe (erzeugt vor dieser Funktion)",
       "minutesFile": "Protokoll-Ablage",
       "minutesFileNone": "Noch nicht abgelegt",
       "minutesFileOpen": "Im Ordner zeigen",
@@ -2290,6 +2412,8 @@
       "menuHint": "Neu transkribieren, Vorlage, Verschieben, Details, Löschen …",
       "menuLabel": "Weitere Aktionen",
       "retranscribe": "Neu transkribieren …",
+      "translate": "Übersetzen nach …",
+      "translateHint": "Übersetzt das Transkript Satz für Satz in eine andere Sprache. Das Original bleibt als eigene Fassung erhalten.",
       "retranscribeBusy": "Läuft gerade eine Verarbeitung, kann nicht neu transkribiert werden.",
       "retranscribeNoAudio": "Ohne Audiodatei gibt es nichts neu zu transkribieren.",
       "regenNotes": "KI-Notizen neu erzeugen",
@@ -2453,6 +2577,10 @@
     "retranscribe": {
       "description": "Diese Besprechung erneut aus der Aufzeichnung transkribieren — zum Beispiel mit einem anderen Modell.",
       "configuredModel": "Eingestelltes Besprechungsmodell",
+      "language": "Sprache",
+      "languageAuto": "Automatisch erkennen",
+      "suggestInstalled": "Passend für diese Sprache: {{model}} (installiert, ausgewählt).",
+      "suggestMissing": "Passend für diese Sprache wäre {{model}}. Es ist noch nicht installiert: unter Modelle laden und hier wählen.",
       "start": "Neu transkribieren",
       "running": "Transkribiere…",
       "runningHint": "Das bisherige Transkript bleibt als Fassung erhalten. Während der Lauf fortschreitet, zeigt die Ansicht den neuen Text; erst am Ende wird er die aktive Fassung. Stoppst du vorher, bleibt das bisherige Transkript aktiv. Bei langen Aufzeichnungen dauert das eine Weile."
@@ -2699,7 +2827,17 @@
       "copyError": "Kopieren fehlgeschlagen: {{error}}",
       "saved": "Exportiert nach {{path}}",
       "error": "Export fehlgeschlagen: {{error}}",
-      "pdfFallback": "Alternative: als HTML speichern und die Datei im Browser drucken."
+      "pdfFallback": "Alternative: als HTML speichern und die Datei im Browser drucken.",
+      "placeTitle": "Ablegen in",
+      "placeHint": "In einen eingerichteten Ordner oder Vault legen, ohne zu überschreiben.",
+      "placeFolder": "Ordner „{{label}}“",
+      "placeVault": "Als Notiz in „{{label}}“",
+      "placeVaultButton": "Notiz ablegen",
+      "placed": "Abgelegt in „{{label}}“: {{path}}",
+      "vaultCreated": "Notiz angelegt in „{{label}}“: {{path}}",
+      "vaultUpdated": "Notiz aktualisiert in „{{label}}“: {{path}}",
+      "vaultUnchanged": "Notiz in „{{label}}“ ist schon aktuell: {{path}}",
+      "placeError": "Ablegen nicht möglich: {{error}}"
     },
     "people": {
       "chipsLabel": "Teilnehmende",
@@ -2800,6 +2938,15 @@
       "opened": "Im Mailprogramm geöffnet.",
       "mailtoClipped": "Der Text war zu lang für den Mail-Link und liegt in der Zwischenablage – im Mailprogramm mit Strg+V einfügen.",
       "emlSaved": "Gespeichert: {{path}}",
+      "m365": {
+        "via": "Über {{label}} senden",
+        "noRecipients": "Zum Senden braucht die Mail mindestens einen Empfänger.",
+        "confirmTitle": "Senden bestätigen",
+        "confirm": "Die Mail jetzt an {{count}} Empfänger über „{{label}}“ senden? Das lässt sich nicht zurückholen.",
+        "send": "Jetzt senden",
+        "cancel": "Abbrechen",
+        "sent": "Gesendet über „{{label}}“. Die Mail liegt in deinem Ordner „Gesendet“."
+      },
       "errors": {
         "followup_empty": "Das Sprachmodell hat auch beim zweiten Versuch keinen Text geliefert. Ein anderes Sprachmodell in den Einstellungen kann helfen.",
         "followup_no_content": "Kein Inhalt für eine Nachbereitung gefunden – die Aufnahme enthält keine Besprechungspunkte.",
@@ -2984,6 +3131,74 @@
         "generic": "Speichern fehlgeschlagen: {{error}}"
       }
     },
+    "langChip": {
+      "chipLabel": "Sprache der Besprechung: {{name}}. Zum Ändern öffnen.",
+      "chipUnknown": "Sprache unbekannt. Zum Festlegen öffnen.",
+      "unknownShort": "Sprache?",
+      "title": "Sprache der Besprechung",
+      "body": "Die Sprache bestimmt, welches Modell passend transkribiert. Das Transkript ändert sich erst mit einer Neu-Transkription; die bisherige Fassung bleibt erhalten.",
+      "select": "Sprache",
+      "source": {
+        "probe": "Erkannt: Spracherkennung des Modells an einer Hörprobe",
+        "text": "Erkannt: am Text geschätzt",
+        "user": "Von dir gewählt",
+        "setting": "Aus der Einstellung „Sprache“ übernommen",
+        "none": "Keine Herkunft gespeichert (ältere Besprechung)"
+      },
+      "model": "Modell: {{model}}",
+      "forcedHint": "Eingestellt war {{forced}}, der Text ist aber {{language}}. Angezeigt wird die Sprache des Textes.",
+      "mismatchHint": "Der Text wirkt wie {{language}}, gewählt ist {{chosen}}. Die Wahl bleibt, bis du sie änderst.",
+      "notCovered": "Das Modell {{model}} deckt {{language}} nicht ab.",
+      "suggestInstalled": "Besser geeignet: {{model}} (installiert).",
+      "suggestMissing": "Besser geeignet: {{model}} (noch nicht installiert, unter Modelle laden).",
+      "save": "Sprache speichern",
+      "saveRetranscribe": "Speichern und neu transkribieren",
+      "translate": "Übersetzen nach …",
+      "cancel": "Abbrechen",
+      "close": "Schließen",
+      "saved": "Sprache auf {{language}} gesetzt."
+    },
+    "translate": {
+      "title": "Übersetzen nach …",
+      "body": "Das lokale Modell übersetzt das Transkript Satz für Satz. Zeitmarken und Sprecher bleiben, das Original bleibt unverändert und jederzeit wählbar.",
+      "source": "Übersetzen aus Fassung",
+      "target": "Zielsprache",
+      "hint": "Zahlen, Eigennamen und die Satzanzahl werden je Satz geprüft; Abweichungen werden markiert, nie still verworfen. Der Fortschritt steht in der Bedienspalte, ein Stopp legt keine Fassung an.",
+      "start": "Übersetzen",
+      "cancel": "Abbrechen",
+      "close": "Schließen",
+      "done": "Fassung v{{number}} ({{language}}) ist fertig.",
+      "compare": "Vergleichen",
+      "noMerge": "Original und Übersetzung lassen sich nicht zusammenführen.",
+      "allChecked": "Alle Sätze haben die Prüfung auf Zahlen, Namen und Satzanzahl bestanden.",
+      "flaggedSummary_one": "{{count}} Satz ist markiert: bitte prüfen.",
+      "flaggedSummary_other": "{{count}} Sätze sind markiert: bitte prüfen.",
+      "onlyFlagged": "Nur markierte Sätze zeigen",
+      "region": "Original und Übersetzung Satz für Satz",
+      "original": "Original {{language}}",
+      "translation": "Übersetzung {{language}}",
+      "reasons": {
+        "numbers": "Zahl weicht ab",
+        "names": "Name fehlt",
+        "sentences": "Satzanzahl weicht ab",
+        "empty": "leer",
+        "length": "Länge auffällig",
+        "not_translated": "nicht übersetzt"
+      }
+    },
+    "basis": {
+      "variant": "Grundlage (Fassung des Transkripts)",
+      "outputLanguage": "Sprache des Dokuments",
+      "sameAsBasis": "Wie die Grundlage",
+      "hint": "Die Wahl steht im Kopf des Protokolls und im Info-Dialog. Standard ist die aktive Fassung und die Sprache der App bzw. deine letzte Wahl.",
+      "original": "Original",
+      "translation": "Übersetzung",
+      "withLanguage": "{{variant}} ({{language}})",
+      "lineMinutes": "Grundlage: {{basis}} · Protokoll auf {{language}}",
+      "lineMinutesSame": "Grundlage: {{basis}} · Protokoll in der Sprache der Grundlage",
+      "lineNotes": "Grundlage: {{basis}} · KI-Notizen auf {{language}}",
+      "lineNotesSame": "Grundlage: {{basis}} · KI-Notizen in der Sprache der Grundlage"
+    },
     "variants": {
       "compareTab": "Vergleich",
       "chip": "Fassung v{{number}} · {{kind}}",
@@ -2991,6 +3206,7 @@
       "menuLabel": "Fassungen",
       "itemLabel": "v{{number}} · {{kind}} · {{count}} Segmente",
       "itemActive": "{{label}} (aktiv)",
+      "itemLabelFlagged": "{{label}} · {{flagged}} markiert",
       "compare": "Vergleichen",
       "activated": "Fassung v{{number}} ist jetzt aktiv.",
       "kinds": {
@@ -2998,7 +3214,8 @@
         "subtitles_auto": "Untertitel (automatisch)",
         "stt": "Eigene Transkription",
         "merged": "Zusammengeführt",
-        "retranscribed": "Neu transkribiert"
+        "retranscribed": "Neu transkribiert",
+        "translation": "Übersetzung"
       },
       "errors": {
         "variant_busy": "Die Besprechung wird gerade verarbeitet. Bitte warten, bis es fertig ist.",
@@ -3011,6 +3228,12 @@
         "merge_llm_failed": "Das Sprachmodell hat nicht geantwortet. {{detail}}",
         "merge_rejected": "Die Zusammenführung wurde verworfen: Das Modell hat Text erfunden oder das Format verletzt. Es entsteht keine neue Fassung.",
         "merge_timeout": "Die Zusammenführung hat zu lange gedauert.",
+        "translate_empty": "Es gibt keinen Text zu übersetzen.",
+        "translate_same_language": "Die Zielsprache ist die Sprache der Fassung. Bitte eine andere Zielsprache wählen.",
+        "translate_cancelled": "Die Übersetzung wurde gestoppt. Es ist keine Fassung entstanden.",
+        "translate_llm_failed": "Das Sprachmodell hat nicht geantwortet. Es ist keine Fassung entstanden. {{detail}}",
+        "translate_rejected": "Mehr als die Hälfte der Abschnitte war unbrauchbar. Es ist keine Fassung entstanden.",
+        "translate_timeout": "Die Übersetzung hat zu lange gedauert.",
         "no_provider": "Es ist kein Sprachmodell eingerichtet.",
         "no_model": "Es ist kein Sprachmodell gewählt."
       },
@@ -3168,5 +3391,550 @@
   },
   "guard": {
     "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
+  },
+  "integrations": {
+    "m365": {
+      "dialog": {
+        "title": "Microsoft-365-Konto einrichten",
+        "description": "Mails senden, Dateien in OneDrive ablegen und Notizen an Termine hängen, über deine eigene App-Registrierung in Microsoft Entra. Angemeldet wird im Browser; die App fragt nur die Berechtigungen der eingeschalteten Fähigkeiten an.",
+        "name": "Name",
+        "defaultName": "Microsoft 365",
+        "clientId": "Anwendungs-ID (Client-ID)",
+        "clientIdHint": "Die Anwendungs-ID deiner App-Registrierung. Leer lassen, um die Client-ID des Microsoft-365-Kalenders zu übernehmen. Anleitung: docs/INTEGRATIONEN-M365.md.",
+        "tenant": "Verzeichnis (Mandant)",
+        "tenantHint": "Leer heißt „common“ (Arbeits-, Schul- und private Konten). „consumers“ nur für private Konten.",
+        "capabilities": "Fähigkeiten",
+        "capabilitiesHint": "Die Anmeldung fragt nur die Berechtigungen der eingeschalteten Fähigkeiten an. Eine später eingeschaltete Fähigkeit braucht eine erneute Zustimmung.",
+        "filesMode": "OneDrive-Zugriff",
+        "filesFull": "Ganzes OneDrive (Files.ReadWrite): für Arbeits-, Schul- und private Konten",
+        "filesApp": "Nur der App-Ordner (Files.ReadWrite.AppFolder): nur für private Konten",
+        "filesFolder": "Ordner in OneDrive",
+        "create": "Anlegen"
+      },
+      "caps": {
+        "mail_send": "Follow-up-Mails und Berichte als Mail aus deinem Postfach senden.",
+        "files_write": "Protokolle und Dateien in einen OneDrive-Ordner legen, große Dateien in Stücken.",
+        "calendar_write": "Eine Notiz an den Outlook-Termin einer Besprechung hängen; die Einladung bleibt unverändert."
+      },
+      "panel": {
+        "title": "Microsoft-365-Konto",
+        "loading": "Lade …",
+        "states": {
+          "not_configured": "Nicht eingerichtet: Es fehlt die Client-ID.",
+          "no_capabilities": "Keine Fähigkeit eingeschaltet.",
+          "needs_sign_in": "Anmeldung nötig.",
+          "needs_consent": "Zustimmung erweitern: Eine eingeschaltete Fähigkeit braucht neue Berechtigungen.",
+          "ready": "Angemeldet und bereit."
+        },
+        "account": "Konto: {{account}}",
+        "missing": "Es fehlt die Zustimmung zu: {{scopes}}",
+        "scopes": "Angefragte Berechtigungen",
+        "scopesHint": "Nur die der eingeschalteten Fähigkeiten, dazu die Anmeldung selbst (offline_access) und dein Profil (User.Read).",
+        "save": "Speichern",
+        "saved": "Gespeichert.",
+        "signIn": "Mit Microsoft anmelden",
+        "signInAgain": "Erneut anmelden",
+        "extend": "Zustimmung erweitern",
+        "waiting": "Warte auf die Anmeldung im Browser …",
+        "signOut": "Abmelden",
+        "signedIn": "Angemeldet.",
+        "signedOut": "Abgemeldet. Das Token ist gelöscht.",
+        "checks": "Ausprobieren",
+        "testOk": "Verbunden als {{account}}.",
+        "testMail": "Testmail an mich senden",
+        "testMailOk": "Testmail gesendet. Sieh in deinem Posteingang nach.",
+        "testFile": "Testdatei in OneDrive ablegen",
+        "testFileOk": "Die Datei „{{name}}“ liegt in OneDrive im Ordner „{{folder}}“."
+      },
+      "gate": {
+        "grant_off": "das Recht steht auf „aus“",
+        "integration_disabled": "die Integration ist ausgeschaltet",
+        "capability_not_enabled": "die Fähigkeit ist an diesem Konto nicht eingeschaltet",
+        "capability_not_offered": "das Konto bietet die Fähigkeit nicht an",
+        "direction_blocks": "die Richtung des Kontos erlaubt es nicht",
+        "pending": "es braucht eine Freigabe"
+      },
+      "errors": {
+        "m365_not_configured": "Es ist keine Client-ID eingetragen. Lege eine App-Registrierung an und trage ihre Anwendungs-ID ein.",
+        "m365_no_capability": "Es ist keine Fähigkeit eingeschaltet. Schalte mindestens eine ein, bevor du dich anmeldest.",
+        "m365_capability_off": "Diese Fähigkeit ist an diesem Konto nicht eingeschaltet.",
+        "m365_needs_sign_in": "Die Anmeldung ist abgelaufen oder wurde widerrufen. Bitte melde dich unter Integrationen neu an.",
+        "m365_needs_consent": "Für die eingeschalteten Fähigkeiten fehlen noch Berechtigungen ({{detail}}). Bitte unter Integrationen erneut anmelden und zustimmen.",
+        "m365_denied": "Microsoft hat den Zugriff abgelehnt: {{detail}}",
+        "m365_not_found": "Nicht gefunden: {{detail}}",
+        "m365_storage_full": "Der OneDrive-Speicher ist voll.",
+        "m365_throttled": "Microsoft drosselt die Abfragen. Nächster Versuch in {{detail}} min.",
+        "m365_http": "Microsoft Graph antwortet mit einem Fehler (HTTP {{detail}}).",
+        "m365_network": "Keine Verbindung: {{detail}}",
+        "m365_timeout": "Zeitüberschreitung bei Microsoft.",
+        "m365_uncertain": "Unklar, ob die Aktion ausgeführt wurde ({{detail}}). Bitte erst prüfen (z. B. Ordner „Gesendet“), bevor du es erneut versuchst.",
+        "m365_parse": "Die Antwort von Microsoft ist nicht lesbar.",
+        "m365_invalid": "{{detail}}",
+        "m365_cancelled": "Abgebrochen.",
+        "m365_sign_in_timeout": "Die Anmeldung wurde nicht innerhalb von 5 Minuten abgeschlossen.",
+        "m365_browser": "Der Browser konnte nicht geöffnet werden: {{detail}}",
+        "m365_listener": "Die lokale Anmelde-Schnittstelle konnte nicht gestartet werden: {{detail}}",
+        "m365_config": "{{detail}}",
+        "m365_store": "Speicherfehler: {{detail}}",
+        "m365_memory_low": "{{detail}}",
+        "m365_gate": "Die Rechte erlauben das nicht: {{detail}}."
+      }
+    },
+    "title": "Integrationen",
+    "description": "Verbindungen zu Kalendern, Ordnern und Agenten, jede mit Richtung und einem Recht je Fähigkeit.",
+    "add": "Integration hinzufügen",
+    "back": "Zurück zur Liste",
+    "open": "Rechte und Details",
+    "cancel": "Abbrechen",
+    "close": "Schließen",
+    "loadError": "Die Integrationen konnten nicht geladen werden.",
+    "empty": "Noch keine Integration eingerichtet.",
+    "emptyHint": "Mit „Integration hinzufügen“ richtest du einen Ordner ein oder verbindest einen Kalender.",
+    "tabs": {
+      "connections": "Verbindungen",
+      "audit": "Protokoll"
+    },
+    "sections": {
+      "connections": "Eingerichtet",
+      "calendars": "Kalender",
+      "calendarsHint": "Kalenderquellen liefern Termine für Titelvorschläge, Erinnerungen und „Als Nächstes“.",
+      "mcp": "MCP und Agenten",
+      "mcpHint": "Lässt KI-Clients auf diesem Rechner deine Besprechungen lesen. Schreibende Zugänge mit Rechten je Werkzeug folgen."
+    },
+    "status": {
+      "off": "Aus",
+      "pending_one": "{{count}} Freigabe offen",
+      "pending_other": "{{count}} Freigaben offen"
+    },
+    "directions": {
+      "read": "Nur lesen",
+      "write": "Nur schreiben",
+      "both": "Lesen und schreiben"
+    },
+    "modes": {
+      "off": "Aus",
+      "ask": "Fragen",
+      "allow": "Erlaubt"
+    },
+    "callers": {
+      "user": "Du",
+      "workflow": "Workflow",
+      "agent_external": "Externer Agent",
+      "agent_local": "Lokaler Agent"
+    },
+    "kinds": {
+      "youtube": "YouTube",
+      "ics": "Kalender (ICS)",
+      "graph": "Microsoft-365-Kalender",
+      "m365": "Microsoft 365",
+      "smtp": "Postfach (SMTP)",
+      "folder": "Ordner",
+      "obsidian": "Obsidian-Vault",
+      "wissen": "WAI-Wissensbasis",
+      "agent": "Agentenzugang"
+    },
+    "calendar": {
+      "rights": "Rechte und Richtung"
+    },
+    "catalog": {
+      "title": "Integration hinzufügen",
+      "description": "Wähle, womit sich die App verbinden soll. Jede Verbindung bekommt eine Richtung und ein Recht je Fähigkeit; Schreibendes fragt standardmäßig nach, externe Agenten sind aus.",
+      "soon": "bald",
+      "auto": "automatisch",
+      "items": {
+        "calendar_ics": {
+          "name": "Kalender (ICS-Adresse)",
+          "description": "Termine aus Outlook, Google oder Nextcloud lesen, über eine geheime ICS-Adresse. Nur lesend.",
+          "action": "Kalender verbinden"
+        },
+        "calendar_graph": {
+          "name": "Microsoft-365-Kalender",
+          "description": "Outlook-Termine mit Teilnehmenden über deine Microsoft-Anmeldung (eigene Entra-App).",
+          "action": "Mit Microsoft anmelden"
+        },
+        "folder": {
+          "name": "Ordner",
+          "description": "Ein lokaler oder per OneDrive synchronisierter Ordner als Ablage für Protokolle und Exporte.",
+          "action": "Ordner einrichten"
+        },
+        "youtube": {
+          "name": "YouTube",
+          "description": "Videos per Link in Aufnahmen holen, ansehen und transkribieren.",
+          "note": "Legt sich selbst an, sobald du in Aufnahmen den ersten YouTube-Link einfügst."
+        },
+        "mcp": {
+          "name": "MCP und Agenten",
+          "description": "Lässt KI-Clients wie Claude oder Codex auf diesem Rechner deine Besprechungen lesen.",
+          "action": "Zum MCP-Schalter"
+        },
+        "m365": {
+          "name": "Microsoft 365 (Mail, OneDrive)",
+          "description": "Mails senden, Dateien in OneDrive ablegen und Notizen an Termine hängen, über deine eigene App-Registrierung. Jede Fähigkeit lässt sich einzeln einschalten.",
+          "action": "Konto einrichten"
+        },
+        "smtp": {
+          "name": "Postfach (SMTP)",
+          "description": "Mails über ein eigenes Postfach mit App-Passwort senden (STARTTLS oder TLS).",
+          "action": "Postfach einrichten"
+        },
+        "obsidian": {
+          "name": "Obsidian-Vault",
+          "description": "Besprechungen als Notiz mit Frontmatter in deinem Vault ablegen, ohne Dubletten.",
+          "action": "Vault verbinden"
+        },
+        "wissen": {
+          "name": "WAI-Wissensbasis",
+          "description": "In der Wissensbasis suchen (MCP-Endpunkt mit Zugangsschlüssel).",
+          "action": "Wissensbasis verbinden"
+        },
+        "webhook": {
+          "name": "n8n-Webhook",
+          "description": "Abläufe in n8n anstoßen. Kommt mit den Workflows."
+        }
+      }
+    },
+    "folder": {
+      "title": "Ordner einrichten",
+      "description": "Ein Ordner auf diesem Rechner, auch ein per OneDrive synchronisierter.",
+      "name": "Name",
+      "path": "Pfad",
+      "pathPlaceholder": "C:\\Ablage\\Berichte",
+      "pick": "Ordner wählen",
+      "create": "Anlegen",
+      "directionHint": "Lesen: Dateien aus dem Ordner holen. Schreiben: Dateien dort ablegen."
+    },
+    "detail": {
+      "connection": "Verbindung",
+      "managedByCalendar": "Name, Schalter und Entfernen gehören zur Karte unter „Kalender“. Hier stellst du Richtung und Rechte ein.",
+      "name": "Name",
+      "rename": "Umbenennen",
+      "status": "Zustand",
+      "okAt": "In Ordnung, geprüft {{time}}",
+      "notTested": "Noch nicht geprüft",
+      "secret": "Zugangsschlüssel",
+      "test": "Verbindung testen",
+      "testing": "Prüfe …",
+      "direction": "Richtung",
+      "directionHint": "Was die Integration darf, bevor Rechte greifen: lesen, schreiben oder beides. Eine Fähigkeit, die die Richtung nicht erlaubt, ist aus.",
+      "rights": "Rechte",
+      "rightsHint": "Je Fähigkeit und Aufrufer: aus, fragen (du entscheidest jedes Mal) oder erlaubt. Du selbst brauchst in der App keine Freigabe.",
+      "resetRights": "Auf Standard zurücksetzen",
+      "clients": "Zugänge",
+      "clientsPlaceholder": "Zugänge für externe Agenten (je Programm ein Zugang mit eigenem Schlüssel und Rechten je Werkzeug) legst du hier an, sobald die Agentenbrücke eingerichtet ist.",
+      "showAudit": "Protokoll anzeigen",
+      "remove": "Entfernen",
+      "removeConfirm": "„{{label}}“ samt Rechten entfernen? Das Protokoll bleibt.",
+      "removeYes": "Ja, entfernen",
+      "switchOn": "Einschalten",
+      "switchOff": "Ausschalten",
+      "settings": "Einstellungen",
+      "editSettings": "Einstellungen ändern",
+      "settingHost": "Server",
+      "settingFrom": "Absender",
+      "settingLogin": "Anmeldung",
+      "settingEndpoint": "Endpunkt",
+      "settingTool": "Werkzeug",
+      "settingVault": "Vault",
+      "settingSubfolder": "Unterordner",
+      "settingArea": "Bereich",
+      "mailTest": "Testmail an mich senden",
+      "mailTesting": "Sende …",
+      "mailSent": "Testmail gesendet an {{address}}.",
+      "mailPending": "Eine Testmail geht an deine eigene Absenderadresse.",
+      "searchTitle": "Suche ausprobieren",
+      "searchPlaceholder": "Suchbegriff",
+      "searchButton": "Suchen",
+      "searching": "Suche …",
+      "searchNone": "Keine Treffer.",
+      "searchHits_one": "{{count}} Treffer",
+      "searchHits_other": "{{count}} Treffer",
+      "testDetail": "Meldung: {{detail}}"
+    },
+    "secret": {
+      "present": "hinterlegt",
+      "missing": "fehlt, bitte neu einrichten",
+      "broken": "unlesbar, bitte neu einrichten"
+    },
+    "test": {
+      "folder_ok": "Der Ordner ist erreichbar.",
+      "folder_path_not_found": "Der Ordner wurde nicht gefunden.",
+      "folder_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "folder_unreadable": "Der Ordner lässt sich nicht lesen.",
+      "test_not_available": "Für diese Art gibt es noch keinen Test.",
+      "smtp_ok": "Verbindung und Anmeldung sind in Ordnung (es wurde keine Mail gesendet).",
+      "smtp_connect_failed": "Der Mailserver ist nicht erreichbar.",
+      "smtp_timeout": "Der Mailserver antwortet nicht.",
+      "smtp_tls_failed": "Die verschlüsselte Verbindung kam nicht zustande.",
+      "smtp_starttls_unsupported": "Der Server bietet kein STARTTLS an.",
+      "smtp_auth_failed": "Die Anmeldung wurde abgelehnt.",
+      "smtp_auth_unsupported": "Der Server bietet keine Anmeldung mit Passwort an.",
+      "smtp_password_missing": "Das Passwort fehlt.",
+      "smtp_password_broken": "Das gespeicherte Passwort ist unlesbar.",
+      "smtp_config_invalid": "Die Einstellungen sind unvollständig.",
+      "smtp_plain_not_allowed": "Unverschlüsselt ist nur zu diesem Rechner erlaubt.",
+      "smtp_rejected": "Der Server hat die Anfrage abgelehnt.",
+      "smtp_protocol": "Unerwartete Antwort des Servers.",
+      "smtp_message_invalid": "Die Nachricht ist ungültig.",
+      "vault_ok": "Der Vault ist erreichbar und beschreibbar.",
+      "vault_path_missing": "Es ist kein Vault-Ordner angegeben.",
+      "vault_path_relative": "Der Pfad ist nicht vollständig.",
+      "vault_path_not_found": "Der Vault wurde nicht gefunden.",
+      "vault_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "folder_path_escape": "Der Unterordner ist nicht zulässig.",
+      "folder_io": "Im Vault lässt sich nicht schreiben.",
+      "obsidian_config_invalid": "Die Vault-Einstellungen sind unvollständig.",
+      "obsidian_io": "Im Vault lässt sich nicht schreiben.",
+      "wissen_ok": "Adresse, Schlüssel und Suchwerkzeug sind in Ordnung.",
+      "wissen_unreachable": "Die Wissensbasis ist nicht erreichbar.",
+      "wissen_tls_failed": "Die verschlüsselte Verbindung kam nicht zustande.",
+      "wissen_timeout": "Die Wissensbasis antwortet nicht.",
+      "wissen_unauthorized": "Der Zugangsschlüssel wurde abgelehnt.",
+      "wissen_scope_missing": "Dem Schlüssel fehlt der Scope „wissen:read“.",
+      "wissen_rate_limited": "Zu viele Anfragen, bitte kurz warten.",
+      "wissen_endpoint_not_found": "Unter dieser Adresse gibt es keinen MCP-Endpunkt.",
+      "wissen_server_error": "Die Wissensbasis meldet einen Serverfehler.",
+      "wissen_protocol": "Unerwartete Antwort der Wissensbasis.",
+      "wissen_tool_missing": "Das Suchwerkzeug gibt es dort nicht.",
+      "wissen_tool_error": "Die Wissensbasis meldet einen Fehler.",
+      "wissen_token_missing": "Der Zugangsschlüssel fehlt.",
+      "wissen_token_broken": "Der gespeicherte Schlüssel ist unlesbar.",
+      "wissen_config_invalid": "Die Einstellungen sind unvollständig."
+    },
+    "matrix": {
+      "reads": "lesend",
+      "writes": "verändernd",
+      "neverAllow": "Aufnahmen starten nie von allein: die App zeigt vor jeder Aufnahme den Einwilligungsdialog (§ 201 StGB). „Erlaubt“ gibt es hier deshalb nicht.",
+      "effective": "Wirkt jetzt: {{mode}}",
+      "blocked": {
+        "direction_blocks": "Die Richtung der Integration erlaubt dies nicht: ändere die Richtung, damit die Rechte wirken.",
+        "integration_disabled": "Die Integration ist ausgeschaltet: kein Zugriff, solange sie aus ist.",
+        "capability_not_enabled": "Die Fähigkeit ist an diesem Konto nicht eingeschaltet: schalte sie im Abschnitt „Microsoft-365-Konto“ ein, damit die Rechte wirken."
+      }
+    },
+    "capabilities": {
+      "calendar_read": {
+        "title": "Kalender lesen",
+        "description": "Termine und Teilnehmende lesen."
+      },
+      "calendar_write": {
+        "title": "Termine anlegen",
+        "description": "Termine anlegen oder ändern."
+      },
+      "mail_send": {
+        "title": "Mail senden",
+        "description": "E-Mails in deinem Namen versenden."
+      },
+      "files_read": {
+        "title": "Dateien lesen",
+        "description": "Dateien aus dem Ordner holen."
+      },
+      "files_write": {
+        "title": "Dateien schreiben",
+        "description": "Dateien ablegen oder überschreiben."
+      },
+      "knowledge_search": {
+        "title": "Wissen durchsuchen",
+        "description": "In der Wissensbasis suchen."
+      },
+      "knowledge_read": {
+        "title": "Wissen lesen",
+        "description": "Seiten der Wissensbasis lesen."
+      },
+      "vault_write": {
+        "title": "Notiz im Vault ablegen",
+        "description": "Notizen mit Frontmatter schreiben."
+      },
+      "media_fetch": {
+        "title": "YouTube-Datei laden",
+        "description": "Video oder Ton über das selbst installierte Werkzeug laden."
+      },
+      "youtube_add": {
+        "title": "YouTube-Link als Quelle anlegen",
+        "description": "Aus einem Link eine Besprechung machen."
+      },
+      "meeting_create": {
+        "title": "Besprechung anlegen",
+        "description": "Neue Besprechung oder Sitzung erzeugen."
+      },
+      "recording_start": {
+        "title": "Aufnahme starten",
+        "description": "Eine Aufnahme beginnen."
+      },
+      "transcribe_file": {
+        "title": "Datei transkribieren",
+        "description": "Eine Audio- oder Videodatei transkribieren."
+      },
+      "tts_render": {
+        "title": "Vorlesen als Audio erzeugen",
+        "description": "Eine Vorlesen-Seite als Tondatei erzeugen."
+      }
+    },
+    "approvals": {
+      "banner_one": "{{count}} Freigabe wartet auf dich",
+      "banner_other": "{{count}} Freigaben warten auf dich",
+      "review": "Prüfen",
+      "title": "Freigaben",
+      "description": "Diese Aktionen wollen ausgeführt werden und fragen dich vorher.",
+      "none": "Nichts mehr offen.",
+      "request": "{{caller}} möchte „{{action}}“ ausführen. Ziel: {{target}}.",
+      "unknown": "unbekannt",
+      "asked": "Angefragt {{time}}",
+      "allow": "Erlauben",
+      "deny": "Ablehnen",
+      "once": "Eine Freigabe gilt nur für diese eine Aktion und verfällt nach einer Stunde.",
+      "errors": {
+        "approval_not_found": "Diese Freigabe gibt es nicht mehr.",
+        "approval_expired": "Diese Freigabe ist abgelaufen.",
+        "approval_already_decided": "Diese Freigabe ist bereits entschieden."
+      }
+    },
+    "audit": {
+      "filterIntegration": "Integration",
+      "filterOutcome": "Ergebnis",
+      "filterCaller": "Wer",
+      "all": "Alle",
+      "empty": "Noch keine Einträge. Hier erscheint jede Aktion eines Workflows oder Agenten und jede Änderung an Rechten.",
+      "loadError": "Das Protokoll konnte nicht geladen werden.",
+      "noIntegration": "ohne Integration",
+      "default": "Standard",
+      "outcome": {
+        "ok": "erledigt",
+        "denied": "verweigert",
+        "error": "Fehler",
+        "pending": "wartet"
+      },
+      "decision": {
+        "approved": "erteilt",
+        "denied": "abgelehnt"
+      },
+      "phase": {
+        "created": "Integration angelegt",
+        "updated": "Integration geändert",
+        "deleted": "Integration entfernt",
+        "grant_changed": "Recht geändert: {{mode}} für {{caller}}",
+        "approval_decided": "Freigabe {{decision}}",
+        "approval": "Wartet auf deine Freigabe",
+        "running": "Läuft",
+        "done": "Abgeschlossen"
+      },
+      "reason": {
+        "grant_off": "Das Recht steht auf „aus“",
+        "direction_blocks": "Die Richtung erlaubt dies nicht",
+        "integration_disabled": "Die Integration ist ausgeschaltet",
+        "capability_not_offered": "Die Integration bietet das nicht an",
+        "tool_off": "Das Werkzeug ist ausgeschaltet",
+        "unknown_integration": "Unbekannte Integration",
+        "preview_unsafe": "Nicht vollständig darstellbar, abgelehnt",
+        "too_many_pending": "Zu viele offene Freigaben",
+        "too_many_pending_caller": "Zu viele offene Freigaben dieses Zugangs",
+        "approval_not_found": "Freigabe nicht gefunden",
+        "approval_expired": "Freigabe abgelaufen",
+        "approval_mismatch": "Freigabe passt nicht zur Aktion",
+        "approval_not_granted": "Freigabe nicht erteilt"
+      }
+    },
+    "errors": {
+      "generic": "Das hat nicht geklappt.",
+      "folder_path_missing": "Bitte gib den Pfad des Ordners an.",
+      "folder_path_relative": "Bitte gib einen vollständigen Pfad an, etwa C:\\Ablage\\Berichte.",
+      "folder_path_not_found": "Der Ordner wurde nicht gefunden.",
+      "folder_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "kind_not_available": "Diese Art lässt sich noch nicht einrichten.",
+      "folder_path_escape": "Der Unterordner ist nicht zulässig: kein „..“, kein Laufwerk, keine Sonderzeichen.",
+      "folder_config_invalid": "Die Ordner-Einstellungen sind unvollständig.",
+      "folder_name_invalid": "Der Dateiname ist nicht zulässig.",
+      "folder_io": "Schreiben in den Ordner ist nicht möglich.",
+      "folder_file_too_large": "Die Datei ist zu groß für dieses Ziel.",
+      "folder_no_free_name": "Es gibt schon zu viele Dateien mit diesem Namen.",
+      "vault_path_missing": "Bitte gib den Ordner des Vaults an.",
+      "vault_path_relative": "Bitte gib einen vollständigen Pfad an, etwa C:\\Users\\du\\AI-OS\\vault.",
+      "vault_path_not_found": "Der Vault wurde nicht gefunden.",
+      "vault_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "obsidian_scan_limit": "Der Vault ist zu groß, um sicher zu prüfen, ob die Notiz schon existiert. Es wurde nichts geschrieben.",
+      "export_format_unsupported": "Dieses Format lässt sich nicht ablegen.",
+      "approval_required": "Dafür ist eine Freigabe nötig."
+    },
+    "moved": {
+      "open": "Auf der Seite „Integrationen“ verwalten",
+      "calendar": {
+        "title": "Kalenderquellen",
+        "description": "Kalender verbinden, Stand ansehen und entfernen: das geht jetzt auf der Seite „Integrationen“."
+      },
+      "mcp": {
+        "title": "Lokaler MCP-Server",
+        "description": "Der Schalter für den MCP-Server und der Konfigurations-Schnipsel stehen jetzt auf der Seite „Integrationen“."
+      }
+    },
+    "target": {
+      "create": "Anlegen",
+      "save": "Speichern",
+      "name": "Name",
+      "secretKeep": "Leer lassen, um das gespeicherte {{what}} zu behalten",
+      "pick": "Ordner wählen",
+      "smtp": {
+        "title": "Postfach (SMTP) einrichten",
+        "titleEdit": "Postfach-Einstellungen",
+        "description": "Zum Senden über dein eigenes Postfach. Das Passwort wird verschlüsselt im Windows-Konto abgelegt, nie in der Datenbank.",
+        "host": "Server",
+        "hostPlaceholder": "smtp.example.de",
+        "port": "Port",
+        "security": "Verschlüsselung",
+        "starttls": "STARTTLS (Port 587)",
+        "tls": "TLS (Port 465)",
+        "username": "Benutzername",
+        "fromAddress": "Absenderadresse",
+        "fromName": "Absendername (optional)",
+        "password": "Passwort",
+        "passwordWhat": "Passwort",
+        "passwordHint": "Bei Gmail und den meisten Anbietern brauchst du ein App-Passwort, nicht das Anmeldepasswort. Microsoft 365 nutzt die Anmeldung mit Konto statt SMTP."
+      },
+      "obsidian": {
+        "title": "Obsidian-Vault verbinden",
+        "titleEdit": "Vault-Einstellungen",
+        "description": "Besprechungen werden als Markdown-Notiz mit Frontmatter in den Vault geschrieben; der AI-OS-Index übernimmt sie beim nächsten Rescan.",
+        "path": "Vault-Ordner",
+        "pathPlaceholder": "C:\\Users\\du\\AI-OS\\vault",
+        "subfolder": "Unterordner für neue Notizen",
+        "contextArea": "Kontextbereich",
+        "tier": "Schreib-Autonomie",
+        "hint": "Eine schon abgelegte Notiz wird beim erneuten Ablegen aktualisiert (Kennung im Frontmatter), nie doppelt angelegt. Deine Ergänzungen außerhalb des Blocks der App bleiben erhalten."
+      },
+      "wissen": {
+        "title": "Wissensbasis verbinden",
+        "titleEdit": "Einstellungen der Wissensbasis",
+        "description": "MCP-Endpunkt des AI-OS. Nur https, der Schlüssel liegt verschlüsselt im Windows-Konto.",
+        "endpoint": "Adresse des Endpunkts",
+        "endpointPlaceholder": "https://os.example.de/mcp",
+        "tool": "Suchwerkzeug",
+        "area": "Bereich (optional)",
+        "token": "Zugangsschlüssel",
+        "tokenWhat": "Schlüssel",
+        "tokenHint": "Der Schlüssel braucht den Scope „wissen:read“ (oder „wissen:read:<bereich>“)."
+      },
+      "folder": {
+        "title": "Ordner-Einstellungen",
+        "path": "Ordner",
+        "subfolder": "Unterordner für Exporte (optional)",
+        "subfolderHint": "Exporte landen in diesem Unterordner der Wurzel; er wird bei Bedarf angelegt."
+      }
+    },
+    "areas": {
+      "privat": "Privat",
+      "familie": "Familie",
+      "beruf": "Beruf",
+      "wai": "WAI",
+      "schule_uni": "Schule und Uni",
+      "finanzen": "Finanzen",
+      "gesundheit": "Gesundheit",
+      "behoerden": "Behörden",
+      "projekte": "Projekte",
+      "kunden": "Kunden"
+    },
+    "tiers": {
+      "auto": "auto (App darf frei schreiben)",
+      "logged": "logged (mit Protokoll)",
+      "propose": "propose (Vorschlag zur Triage)",
+      "untouchable": "untouchable (nicht ändern)"
+    }
   }
 }

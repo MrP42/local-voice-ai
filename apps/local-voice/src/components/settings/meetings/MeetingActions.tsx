@@ -8,6 +8,7 @@ import {
   FolderInput,
   Info,
   LayoutTemplate,
+  Languages,
   Library,
   Mail,
   Menu,
@@ -32,6 +33,8 @@ export interface MeetingActionHandlers {
   onPeople: () => void;
   onChatToggle: () => void;
   onRetranscribe: () => void;
+  /** G5: "Übersetzen nach ..." (neue Fassung, das Original bleibt). */
+  onTranslate: () => void;
   onRegenNotes: () => void;
   onRegenMinutes: () => void;
   onTemplate: () => void;
@@ -90,6 +93,7 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
   onPeople,
   onChatToggle,
   onRetranscribe,
+  onTranslate,
   onRegenNotes,
   onRegenMinutes,
   onTemplate,
@@ -120,6 +124,15 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
       disabled: !hasAudio || busy,
       title: retranscribeTitle,
       testId: "menu-retranscribe",
+    },
+    {
+      id: "translate",
+      label: t("meetings.actions.translate"),
+      icon: Languages,
+      onSelect: onTranslate,
+      disabled: busy || !hasSegments,
+      title: t("meetings.actions.translateHint"),
+      testId: "menu-translate",
     },
     {
       id: "regen-notes",

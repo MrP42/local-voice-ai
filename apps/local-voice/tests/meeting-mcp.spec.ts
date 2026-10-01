@@ -6,8 +6,8 @@ import {
   mcpSnippet,
 } from "../src/lib/mcpSnippets";
 
-// M6-P6e: Einstellungszeile "Lokaler MCP-Server (nur lesend)" in der Gruppe
-// Besprechungen (Schalter, Warnung, Transkript-Freigabe, Kopier-Schnipsel)
+// M6-P6e: Zeile "Lokaler MCP-Server (nur lesend)" (seit A4 auf der Seite
+// Integrationen, vorher in der Gruppe Besprechungen; Schalter, Warnung, Transkript-Freigabe, Kopier-Schnipsel)
 // gegen die Tauri-Attrappe, dazu die reine Schnipsel-Logik.
 
 test.use({ timezoneId: "Europe/Berlin", locale: "de-DE" });
@@ -58,9 +58,11 @@ const setup = async (page: Page, init?: () => void) => {
   if (init) await page.addInitScript(init);
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto("/");
+  // A4: der Schalter wohnt auf der Seite "Integrationen" (unter Einstellungen
+  // > Besprechungen steht nur ein Verweis, siehe integrations.spec.ts).
   await page
     .getByRole("navigation")
-    .getByRole("button", { name: "Einstellungen", exact: true })
+    .getByRole("button", { name: "Integrationen", exact: true })
     .click();
   await expect(
     page.getByText("Lokaler MCP-Server (nur lesend)", { exact: true }),
@@ -124,7 +126,7 @@ test.describe("MCP-Schnipsel Logik", () => {
 // Oberfläche
 // ---------------------------------------------------------------------------
 
-test.describe("Lokaler MCP-Server in den Einstellungen", () => {
+test.describe("Lokaler MCP-Server auf der Seite Integrationen", () => {
   test("Standard: aus, ohne Warnung und ohne Schnipsel", async ({ page }) => {
     await setup(page);
     await expect(mainSwitch(page)).not.toBeChecked();

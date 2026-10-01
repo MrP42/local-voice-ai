@@ -1,3 +1,4 @@
+pub mod basis; // G5: Grundlage und Ausgabesprache von Protokoll und KI-Notizen
 pub mod chat; // M4-P4c
 pub mod chunker;
 pub mod diarize; // M3-P3a
@@ -11,6 +12,8 @@ pub mod hallucination;
 pub mod import;
 pub mod job; // P8a
 pub mod job_harness; // P8a: Pruefhaken fuer den Headless-Lauf
+pub mod language; // G5: Sprache erkennen, Modell waehlen
+pub mod language_run; // G5: Anbindung an Import, Neu-Transkription, Enddurchlauf
 pub mod llm_call;
 pub mod merge; // A3: KI-Zusammenfuehrung von Fassungen
 pub mod mail; // M6-P6c
@@ -19,6 +22,7 @@ pub mod mic_capture;
 pub mod minutes;
 pub mod notes;
 pub mod pdf; // M6-P6b
+pub mod project_minutes_store; // G3 (#70): Projekt-Protokolle
 pub mod queue; // U7
 pub mod queue_store; // U7
 #[cfg(test)]
@@ -30,11 +34,13 @@ pub mod search;
 pub mod segmenter;
 pub mod signal_watch; // M2-P2e
 pub mod simulate;
+pub mod slides; // D1 (#70, M7): Folien aus Videos
 pub mod speaker_names; // U8
 pub mod speakers; // M3-P3b
 pub mod stats;
 pub mod store;
 pub mod subtitle;
+pub mod translate; // G5: Uebersetzung als neue Fassung
 pub mod variants; // A3: Transkript-Fassungen
 
 use std::path::{Path, PathBuf};

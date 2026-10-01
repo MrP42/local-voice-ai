@@ -1267,6 +1267,8 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
             warn!("meetings: final pass report not stored: {e}");
         }
     }
+    // G5: Sprache aus dem Text des Transkripts (eine gewaehlte Sprache bleibt).
+    super::language_run::finalize_from_text(store, &job.meeting_id, model.clone());
     if let Err(e) = store.set_status(&job.meeting_id, MeetingStatus::Ready) {
         warn!("meetings: status 'ready' not stored: {e}");
     }

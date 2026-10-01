@@ -199,7 +199,7 @@ impl RunCtx<'_> {
 
     /// Verbindung zur Datenbank des Laufs (fuer Provenienz und eigene Abfragen).
     pub fn conn(&self) -> rusqlite::Result<Connection> {
-        Connection::open(self.db_path)
+        crate::managers::meetings::store::open_connection(self.db_path)
     }
 
     /// Schreibt einen Provenienz-Eintrag mit Akteur `workflow` und der Kennung

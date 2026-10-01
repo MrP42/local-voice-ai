@@ -866,11 +866,8 @@ fn concurrent_identical_asks_share_one_approval() {
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
     let threads: Vec<_> = (0..8)
         .map(|_| {
-            let (path, id, barrier) = (fx.db_path.clone(), f.id.clone(), barrier.clone());
+            let (conn, id, barrier) = (fx.conn(), f.id.clone(), barrier.clone());
             std::thread::spawn(move || {
-                let conn = rusqlite::Connection::open(&path).unwrap();
-                conn.busy_timeout(std::time::Duration::from_secs(10))
-                    .unwrap();
                 let args = serde_json::json!({ "to": "kunde@example.invalid" });
                 let request = mail_request(Caller::Workflow, &id, &args);
                 barrier.wait();

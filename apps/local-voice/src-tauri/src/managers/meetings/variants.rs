@@ -39,18 +39,23 @@ use super::store::StoredSegment;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod translation_tests;
 
 pub const KIND_SUBTITLES_MANUAL: &str = "subtitles_manual";
 pub const KIND_SUBTITLES_AUTO: &str = "subtitles_auto";
 pub const KIND_OWN: &str = "stt";
 pub const KIND_MERGED: &str = "merged";
 pub const KIND_RETRANSCRIBED: &str = "retranscribed";
-pub const KINDS: [&str; 5] = [
+/// G5: Uebersetzung einer anderen Fassung (Satz fuer Satz, gleiche Zeitmarken).
+pub const KIND_TRANSLATION: &str = "translation";
+pub const KINDS: [&str; 6] = [
     KIND_SUBTITLES_MANUAL,
     KIND_SUBTITLES_AUTO,
     KIND_OWN,
     KIND_MERGED,
     KIND_RETRANSCRIBED,
+    KIND_TRANSLATION,
 ];
 
 /// Migration Index 6 (A3). Nur CREATE und eine Rueckfuellung aus `transcripts`:
@@ -76,12 +81,38 @@ pub const VARIANTS_MIGRATION: &str = "CREATE TABLE transcript_variants (
     WHERE t.deleted_at IS NULL AND m.deleted_at IS NULL AND t.segments_json <> '[]'
       AND NOT EXISTS (SELECT 1 FROM transcript_variants v WHERE v.meeting_id = t.meeting_id);";
 
+/// Migration Index 9 (G5, hinter G3 = Index 8). Die Fassungsart `translation` und die Herkunft einer
+/// Uebersetzung (Quellfassung, Ausgangssprache, Pruefbericht). SQLite kann eine
+/// CHECK-Bedingung nicht aendern: die Tabelle wird neu gebaut (neu anlegen, kopieren,
+/// alte loeschen, umbenennen, Indizes neu). Alles in EINER Transaktion der Kette: bricht
+/// etwas ab, bleibt die alte Tabelle vollstaendig, und die Ersatztabelle verschwindet
+/// mit. Jede Zeile wird mit denselben Werten kopiert (auch Neu-Lauf-Marke und
+/// geloeschte); die neuen Spalten bleiben leer.
+pub const VARIANTS_TRANSLATION_MIGRATION: &str = "CREATE TABLE transcript_variants_g5 (
+      id TEXT PRIMARY KEY, meeting_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('subtitles_manual','subtitles_auto','stt','merged','retranscribed','translation')),
+      language TEXT, model TEXT,
+      segments_json TEXT NOT NULL DEFAULT '[]', speaker_hints_json TEXT,
+      number INTEGER NOT NULL, created_at INTEGER NOT NULL,
+      active INTEGER NOT NULL DEFAULT 0, rerun_started_at INTEGER, deleted_at INTEGER,
+      source_variant_id TEXT, source_language TEXT, meta_json TEXT);
+    INSERT INTO transcript_variants_g5 (id, meeting_id, kind, language, model, segments_json,
+        speaker_hints_json, number, created_at, active, rerun_started_at, deleted_at)
+    SELECT id, meeting_id, kind, language, model, segments_json, speaker_hints_json, number,
+           created_at, active, rerun_started_at, deleted_at
+    FROM transcript_variants;
+    DROP TABLE transcript_variants;
+    ALTER TABLE transcript_variants_g5 RENAME TO transcript_variants;
+    CREATE INDEX idx_variants_meeting ON transcript_variants(meeting_id, number);
+    CREATE UNIQUE INDEX idx_variants_one_active ON transcript_variants(meeting_id)
+      WHERE active = 1 AND deleted_at IS NULL;";
+
 /// Eine Fassung, wie die Oberflaeche sie liest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct TranscriptVariant {
     pub id: String,
     pub meeting_id: String,
-    /// `subtitles_manual`, `subtitles_auto`, `stt`, `merged`, `retranscribed`.
+    /// `subtitles_manual`, `subtitles_auto`, `stt`, `merged`, `retranscribed`, `translation`.
     pub kind: String,
     pub language: Option<String>,
     pub model: Option<String>,
@@ -91,6 +122,12 @@ pub struct TranscriptVariant {
     pub created_at: i64,
     pub active: bool,
     pub segment_count: u32,
+    /// G5: bei einer Uebersetzung die Fassung, aus der sie entstand.
+    pub source_variant_id: Option<String>,
+    /// G5: bei einer Uebersetzung die Sprache der Quellfassung.
+    pub source_language: Option<String>,
+    /// G5: bei einer Uebersetzung die Zahl der Saetze, die die Treuepruefung markiert hat.
+    pub flagged: u32,
 }
 
 /// Was `add` anlegt.
@@ -381,8 +418,17 @@ fn activate_in_tx(tx: &Transaction<'_>, variant_id: &str) -> Result<(), VariantE
     Ok(())
 }
 
+/// Wie viele Saetze der Pruefbericht einer Uebersetzung markiert hat (`flagged`-Feld).
+fn flagged_count(meta_json: Option<&str>) -> u32 {
+    meta_json
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("flagged").and_then(|f| f.as_array().map(Vec::len)))
+        .map(|n| u32::try_from(n).unwrap_or(u32::MAX))
+        .unwrap_or(0)
+}
+
 fn map_variant(conn: &Connection, id: &str) -> Result<TranscriptVariant, VariantError> {
-    let row: (
+    type Row = (
         String,
         String,
         Option<String>,
@@ -391,9 +437,14 @@ fn map_variant(conn: &Connection, id: &str) -> Result<TranscriptVariant, Variant
         u32,
         i64,
         bool,
-    ) = conn
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let row: Row = conn
         .query_row(
-            "SELECT meeting_id, kind, language, model, segments_json, number, created_at, active
+            "SELECT meeting_id, kind, language, model, segments_json, number, created_at, active,
+                    source_variant_id, source_language, meta_json
              FROM transcript_variants WHERE id = ?1 AND deleted_at IS NULL",
             params![id],
             |r| {
@@ -406,12 +457,27 @@ fn map_variant(conn: &Connection, id: &str) -> Result<TranscriptVariant, Variant
                     r.get(5)?,
                     r.get(6)?,
                     r.get(7)?,
+                    r.get(8)?,
+                    r.get(9)?,
+                    r.get(10)?,
                 ))
             },
         )
         .optional()?
         .ok_or(VariantError::NotFound)?;
-    let (meeting_id, kind, language, model, json, number, created_at, active) = row;
+    let (
+        meeting_id,
+        kind,
+        language,
+        model,
+        json,
+        number,
+        created_at,
+        active,
+        source_variant_id,
+        source_language,
+        meta_json,
+    ) = row;
     // Die aktive Fassung ist der Stand von `transcripts` (Korrekturen von Hand).
     let effective_json = if active {
         transcript_row(conn, &meeting_id)?
@@ -431,6 +497,9 @@ fn map_variant(conn: &Connection, id: &str) -> Result<TranscriptVariant, Variant
         created_at,
         active,
         segment_count: count_segments(&effective_json),
+        flagged: flagged_count(meta_json.as_deref()),
+        source_variant_id,
+        source_language,
     })
 }
 
@@ -532,6 +601,121 @@ pub fn add(conn: &mut Connection, new: NewVariant) -> Result<String, VariantErro
     }
     tx.commit()?;
     Ok(id)
+}
+
+/// G5: Herkunft einer Uebersetzung.
+#[derive(Clone, Debug)]
+pub struct TranslationExtra {
+    /// Die Fassung, aus der uebersetzt wurde (gehoert zur selben Besprechung).
+    pub source_variant_id: String,
+    pub source_language: Option<String>,
+    /// Pruefbericht als JSON (`flagged`: Liste der markierten Saetze, weitere Felder frei).
+    pub meta_json: String,
+}
+
+/// G5: legt eine UEBERSETZUNG als Fassung an (nicht aktiv, ausser es gibt noch keine
+/// aktive). Das Original bleibt unveraendert: die Quellfassung wird nur geprueft, nie
+/// geschrieben. Die Quelle muss eine Fassung DERSELBEN Besprechung sein (`NotFound`).
+/// Eine Transaktion: bricht etwas ab, entsteht keine halbe Fassung.
+pub fn add_translation(
+    conn: &mut Connection,
+    new: NewVariant,
+    extra: TranslationExtra,
+) -> Result<String, VariantError> {
+    if new.kind != KIND_TRANSLATION {
+        return Err(VariantError::Store(format!(
+            "add_translation needs kind {KIND_TRANSLATION}, got {}",
+            new.kind
+        )));
+    }
+    if new.segments.is_empty() {
+        return Err(VariantError::Empty);
+    }
+    let json =
+        serde_json::to_string(&new.segments).map_err(|e| VariantError::Store(e.to_string()))?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    require_meeting(&tx, &new.meeting_id)?;
+    ensure_baseline(&tx, &new.meeting_id)?;
+    let source_ok: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM transcript_variants
+                       WHERE id = ?1 AND meeting_id = ?2 AND deleted_at IS NULL)",
+        params![extra.source_variant_id, new.meeting_id],
+        |r| r.get(0),
+    )?;
+    if !source_ok {
+        return Err(VariantError::NotFound);
+    }
+    let number: u32 = tx.query_row(
+        "SELECT COALESCE(MAX(number), 0) + 1 FROM transcript_variants WHERE meeting_id = ?1",
+        params![new.meeting_id],
+        |r| r.get(0),
+    )?;
+    let id = Ulid::new().to_string();
+    tx.execute(
+        "INSERT INTO transcript_variants (id, meeting_id, kind, language, model, segments_json,
+             number, created_at, active, source_variant_id, source_language, meta_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11)",
+        params![
+            id,
+            new.meeting_id,
+            new.kind,
+            new.language,
+            new.model,
+            json,
+            number,
+            now_s(),
+            extra.source_variant_id,
+            extra.source_language,
+            extra.meta_json,
+        ],
+    )?;
+    if new.activate || active_marker(&tx, &new.meeting_id)?.is_none() {
+        activate_in_tx(&tx, &id)?;
+    }
+    tx.commit()?;
+    Ok(id)
+}
+
+/// G5: der Pruefbericht einer Uebersetzung (JSON); `None` bei jeder anderen Fassung.
+pub fn get_meta(conn: &Connection, variant_id: &str) -> Result<Option<String>, VariantError> {
+    conn.query_row(
+        "SELECT meta_json FROM transcript_variants WHERE id = ?1 AND deleted_at IS NULL",
+        params![variant_id],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .optional()?
+    .ok_or(VariantError::NotFound)
+}
+
+/// G5: Sprachkorrektur ueber den Chip im Kopf: gilt fuer die Besprechung, das aktive
+/// Transkript und die aktive Fassung; andere Fassungen behalten ihre Sprache. Nicht
+/// waehrend eines Neu-Laufs (`Busy`): dort ist `transcripts` die Arbeitskopie.
+pub fn set_language(
+    conn: &mut Connection,
+    meeting_id: &str,
+    language: &str,
+) -> Result<(), VariantError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    require_meeting(&tx, meeting_id)?;
+    if matches!(active_marker(&tx, meeting_id)?, Some((_, true))) {
+        return Err(VariantError::Busy);
+    }
+    let now = now_s();
+    tx.execute(
+        "UPDATE meetings SET language = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
+        params![language, now, meeting_id],
+    )?;
+    tx.execute(
+        "UPDATE transcripts SET language = ?1, updated_at = ?2 WHERE meeting_id = ?3",
+        params![language, now, meeting_id],
+    )?;
+    tx.execute(
+        "UPDATE transcript_variants SET language = ?1
+         WHERE meeting_id = ?2 AND active = 1 AND deleted_at IS NULL",
+        params![language, meeting_id],
+    )?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// „Fassung waehlen“: macht die Fassung zum aktiven Transkript.

@@ -36,6 +36,8 @@ const isHeightText = (value: string) => /^\d{2,4}$/.test(value);
 export interface YoutubePanelHandle {
   /** Ab `ms` abspielen; laedt den Player zuerst, falls er noch nicht laeuft. */
   seek(ms: number): void;
+  /** Haelt das Video an (nur, wenn der Player laeuft). */
+  pause(): void;
 }
 
 type Phase = "idle" | "loading" | "ready" | "error";
@@ -189,6 +191,9 @@ export const YoutubePlayerPanel = forwardRef<YoutubePanelHandle, Props>(
             setAttempt((a) => a + 1);
           }
           setWanted(true);
+        },
+        pause() {
+          if (phaseRef.current === "ready") playerRef.current?.pauseVideo();
         },
       }),
       [setOpenState],

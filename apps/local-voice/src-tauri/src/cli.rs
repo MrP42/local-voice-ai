@@ -328,6 +328,17 @@ pub struct CliArgs {
     #[arg(long)]
     pub lexical_only: bool,
 
+    // C1 (Goal Lokaler Agent)
+    /// Evaluate the local agent's tool choice (60 built-in German tasks: tool,
+    /// arguments, dates, abstention, injection) with the local model given by
+    /// --model (catalog id, e.g. llm-gemma4-e4b-q4; must be downloaded) and
+    /// exit. Schema-bound output, thinking off, temperature 0. The llama-server
+    /// is started through the app's manager (RAM gate, job object) and stopped
+    /// at the end. Output via --json/--out. Exit 0 gate met (tool >= 95 %,
+    /// arguments >= 90 %), 3 missed, 1 error, 2 no --model.
+    #[arg(long)]
+    pub eval_agent: bool,
+
     // M3-P3a
     /// Measure speaker diarization (DER, acceptance AK7) on every pair
     /// <name>.wav + <name>.rttm in DIR and exit. --model picks the diarization
@@ -432,6 +443,21 @@ pub struct CliArgs {
     /// Exit 0 ok, 1 error, 2 no sandbox.
     #[arg(long)]
     pub integrations_dump: bool,
+
+    // G5 (Goal Issues-Abschluss #70)
+    /// Translate the ACTIVE transcript version of one meeting into --target-language with the
+    /// configured language model (--model picks a local one for this run), store the result as a
+    /// NEW version (the original stays active and unchanged) and print a JSON report: the
+    /// original check (hash before/after), the new version, the fidelity report and an excerpt
+    /// of original/translation per sentence. SANDBOX ONLY: requires LVA_MEETINGS_DIR (prepare
+    /// the meeting with --import-meeting). Stops the local llama-server at the end. Exit 0
+    /// translated, 3 nothing to translate or rejected, 1 error, 2 bad input.
+    #[arg(long, value_name = "ID")]
+    pub translate_meeting: Option<String>,
+
+    /// Target language code (de, en, fr ...) for --translate-meeting.
+    #[arg(long, value_name = "CODE")]
+    pub target_language: Option<String>,
 
     // A2 (Goal Integrationen)
     /// Add a YouTube link as a meeting source headlessly and exit: one oEmbed

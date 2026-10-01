@@ -1658,3 +1658,56 @@ fn stop_within_does_not_wait_for_a_long_step_and_the_run_is_not_cancelled() {
         "ein Lauf wird beim Beenden nie abgebrochen"
     );
 }
+
+// ---------------------------------------------------------------------------
+// G8: zentraler Oeffnungsweg der Datenbank
+// ---------------------------------------------------------------------------
+
+/// Keine Datei des Moduls oeffnet eine blanke Verbindung: jede geht ueber
+/// `meetings::store::open_connection` (WAL in der Datei, `BUSY_TIMEOUT` 30 s je Verbindung).
+/// Ein `Connection::open` mit 0 bis 5 s Wartezeit verlor unter Last (parallele Builds,
+/// Virenscanner) ein Schreiben von Journal, Freigabe oder Audit.
+#[test]
+fn no_workflow_module_opens_a_bare_connection() {
+    let files: [(&str, &str); 14] = [
+        ("engine.rs", include_str!("../engine.rs")),
+        ("action.rs", include_str!("../action.rs")),
+        ("hub.rs", include_str!("../hub.rs")),
+        ("consent.rs", include_str!("../consent.rs")),
+        ("recording.rs", include_str!("../recording.rs")),
+        ("store.rs", include_str!("../store.rs")),
+        ("plan.rs", include_str!("../plan.rs")),
+        ("cli.rs", include_str!("../cli.rs")),
+        ("heavy.rs", include_str!("../heavy.rs")),
+        ("trigger.rs", include_str!("../trigger.rs")),
+        (
+            "trigger/calendar.rs",
+            include_str!("../trigger/calendar.rs"),
+        ),
+        (
+            "trigger/schedule.rs",
+            include_str!("../trigger/schedule.rs"),
+        ),
+        (
+            "trigger/meeting_events.rs",
+            include_str!("../trigger/meeting_events.rs"),
+        ),
+        ("trigger/manual.rs", include_str!("../trigger/manual.rs")),
+    ];
+    for (name, src) in files {
+        let production = src.split("#[cfg(test)]").next().unwrap();
+        assert!(
+            !production.contains("Connection::open("),
+            "{name}: Verbindungen nur ueber meetings::store::open_connection"
+        );
+    }
+    // Und der Weg selbst haengt das Zeitlimit an.
+    let conn = crate::managers::meetings::store::open_connection(&Fx::new().db_path).unwrap();
+    let ms: i64 = conn
+        .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        ms,
+        crate::managers::meetings::store::BUSY_TIMEOUT.as_millis() as i64
+    );
+}

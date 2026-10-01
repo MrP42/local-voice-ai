@@ -1,0 +1,11 @@
+{
+ "gpu_ohne_mmproj_vram_mb": 3924,
+ "gpu_ohne_mmproj_load_s": 18.7,
+ "cpu_load_s": 11.2,
+ "cpu_vram_mb": 760,
+ "cpu_beschreibung_s": 97.6,
+ "cpu_ocr_s": 39.5,
+ "cpu_prompt_ms": 36318,
+ "cpu_rss_gb": 5.66,
+ "beendet": true
+}

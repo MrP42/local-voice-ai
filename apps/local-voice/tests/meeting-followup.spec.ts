@@ -45,6 +45,9 @@ test.beforeEach(async ({ page }) => {
     w.__pending = null;
     w.__openResult = { ok: false };
     w.__savePath = "C:\\Temp\\Follow-up.eml";
+    // A5: Microsoft-365-Konten fuer „Senden ueber“ und das Ergebnis des Versands.
+    w.__integrations = [];
+    w.__m365Result = { ok: true, code: "ok", detail: null };
     w.__meetings = [
       {
         id: "m1",
@@ -150,6 +153,10 @@ test.beforeEach(async ({ page }) => {
             }
             case "plugin:dialog|save":
               return w.__savePath;
+            case "integrations_list":
+              return w.__integrations;
+            case "meeting_followup_send_m365":
+              return w.__m365Result;
             case "get_selected_model":
               return "";
             case "tts_server_status":
@@ -535,6 +542,143 @@ test.describe("Follow-up-Mail", () => {
     await resolveDraft(page, draft({ subject: "Frisch" }));
     await expect(page.getByLabel("Betreff", { exact: true })).toHaveValue(
       "Frisch",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A5: Senden über Microsoft 365
+// ---------------------------------------------------------------------------
+
+const m365Account = (
+  over: Record<string, unknown> = {},
+  caps = ["mail.send"],
+) => ({
+  integration: {
+    id: "m365-1",
+    kind: "m365",
+    label: "Mein Konto",
+    enabled: true,
+    direction: "both",
+    config_json: JSON.stringify({ enabled_capabilities: caps }),
+    ...over,
+  },
+});
+
+const withAccounts = (page: Page, accounts: unknown[], result?: unknown) =>
+  page.addInitScript(
+    ({ accounts, result }) => {
+      const w = window as any;
+      w.__integrations = accounts;
+      if (result) w.__m365Result = result;
+    },
+    { accounts, result },
+  );
+
+const m365Buttons = (page: Page) =>
+  page.locator('[data-testid^="followup-m365-m365"]');
+
+test.describe("Follow-up: senden über Microsoft 365", () => {
+  test("ohne Microsoft-365-Konto, mit ausgeschaltetem Konto oder ohne „Mail senden“ gibt es keinen Knopf", async ({
+    page,
+  }) => {
+    await withAccounts(page, [
+      m365Account({ id: "m365-aus", enabled: false }),
+      m365Account({ id: "m365-ohne" }, ["files.write"]),
+      {
+        integration: {
+          id: "ordner",
+          kind: "folder",
+          label: "Ablage",
+          enabled: true,
+          config_json: "{}",
+        },
+      },
+    ]);
+    await openReady(page);
+    await expect(m365Buttons(page)).toHaveCount(0);
+    await expect(page.getByTestId("followup-mailto")).toBeVisible();
+  });
+
+  test("Senden fragt nach, schickt den bearbeiteten Entwurf und meldet den Erfolg", async ({
+    page,
+  }) => {
+    await withAccounts(page, [m365Account()]);
+    await openReady(page);
+    await page
+      .getByLabel("Betreff", { exact: true })
+      .fill("Angepasster Betreff");
+    const button = page.getByTestId("followup-m365-m365-1");
+    await expect(button).toHaveText("Über Mein Konto senden");
+    await button.click();
+    // Erst die Rückfrage: es ist noch nichts gesendet.
+    await expect(page.getByTestId("followup-m365-confirm")).toContainText(
+      "an 2 Empfänger über „Mein Konto“",
+    );
+    expect(await calls(page, "meeting_followup_send_m365")).toHaveLength(0);
+    await page.getByTestId("followup-m365-send").click();
+    await expect(page.getByTestId("followup-status")).toContainText(
+      "Gesendet über „Mein Konto“",
+    );
+    await expect(page.getByTestId("followup-m365-confirm")).toHaveCount(0);
+    const sent = await calls(page, "meeting_followup_send_m365");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].args).toEqual({
+      integrationId: "m365-1",
+      draft: {
+        to: ["anna@firma.de", "ben@firma.de"],
+        subject: "Angepasster Betreff",
+        body_text: "Hallo Anna,\n\nvielen Dank für das Gespräch.",
+        body_html: "",
+      },
+    });
+  });
+
+  test("Abbrechen in der Rückfrage sendet nichts", async ({ page }) => {
+    await withAccounts(page, [m365Account()]);
+    await openReady(page);
+    await page.getByTestId("followup-m365-m365-1").click();
+    await page.getByTestId("followup-m365-cancel").click();
+    await expect(page.getByTestId("followup-m365-confirm")).toHaveCount(0);
+    expect(await calls(page, "meeting_followup_send_m365")).toHaveLength(0);
+  });
+
+  test("ohne Empfänger ist der Knopf gesperrt", async ({ page }) => {
+    await withAccounts(page, [m365Account()]);
+    await openReady(page, draft({ to: [] }));
+    await expect(page.getByTestId("followup-m365-m365-1")).toBeDisabled();
+    await page.getByLabel("An", { exact: true }).fill("neu@firma.de");
+    await expect(page.getByTestId("followup-m365-m365-1")).toBeEnabled();
+  });
+
+  test("abgelaufene Anmeldung und unklarer Ausgang stehen im Klartext da, der Entwurf bleibt", async ({
+    page,
+  }) => {
+    await withAccounts(page, [m365Account()], {
+      ok: false,
+      code: "m365_needs_sign_in",
+      detail: null,
+    });
+    await openReady(page);
+    await page.getByTestId("followup-m365-m365-1").click();
+    await page.getByTestId("followup-m365-send").click();
+    await expect(page.getByTestId("followup-status")).toContainText(
+      "abgelaufen oder wurde widerrufen",
+    );
+    await expect(page.getByLabel("Betreff", { exact: true })).toHaveValue(
+      "Nächste Schritte zum Angebot",
+    );
+    await page.evaluate(() => {
+      (window as any).__m365Result = {
+        ok: false,
+        code: "m365_uncertain|Zeitüberschreitung",
+        detail: null,
+      };
+    });
+    await page.getByTestId("followup-m365-m365-1").click();
+    await page.getByTestId("followup-m365-send").click();
+    await expect(page.getByTestId("followup-status")).toContainText(
+      "Unklar, ob die Aktion ausgeführt wurde",
     );
   });
 });
