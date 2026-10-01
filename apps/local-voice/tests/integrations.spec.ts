@@ -344,10 +344,10 @@ test.describe("Detail und Rechte-Matrix", () => {
     await expect(page.getByTestId("capability-recording.start")).toContainText(
       "Einwilligungsdialog",
     );
-    // Zugänge (Token je Programm) liefert die Agentenbrücke: bis dahin ein Platzhalter.
-    await expect(page.getByTestId("agent-clients-placeholder")).toContainText(
-      "Agentenbrücke",
-    );
+    // Zugänge (Schlüssel je Programm) der Agentenbrücke: die Liste steht an der Stelle des
+    // früheren Platzhalters (ihr Verhalten prüft `integrations-agents.spec.ts`).
+    await expect(page.getByTestId("agent-clients")).toBeVisible();
+    await expect(page.getByTestId("agent-clients-placeholder")).toHaveCount(0);
     // Die anderen dürfen.
     await expect(
       grant(page, "meeting.create", "agent_external", "allow"),

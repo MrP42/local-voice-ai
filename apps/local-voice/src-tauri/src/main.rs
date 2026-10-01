@@ -13,6 +13,12 @@ fn main() {
         std::process::exit(local_voice_ai_lib::mcp::run_stdio());
     }
 
+    // A7: `ctl` spricht ueber die Named Pipe mit der laufenden App und beendet sich dann;
+    // kein Fenster, kein zweiter Programmstart der App.
+    if let Some(local_voice_ai_lib::cli::Command::Ctl(args)) = cli_args.command.clone() {
+        std::process::exit(local_voice_ai_lib::agent_bridge::ctl::run(args));
+    }
+
     #[cfg(target_os = "linux")]
     {
         // DMABUF renderer causes crashes on various GPU/display server configurations

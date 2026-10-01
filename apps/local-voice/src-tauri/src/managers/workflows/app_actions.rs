@@ -88,6 +88,7 @@ use super::action::{
 use super::catalog::{self, ActionSpec};
 use super::engine::Engine;
 use super::heavy::MEMORY_RETRY_MS;
+use super::import::{meeting_state, MeetingReadiness};
 
 /// So lange wartet ein Schritt auf eine Besprechung, die aufnimmt oder verarbeitet wird.
 pub const MAX_WAIT_FOR_MEETING_MS: i64 = 6 * 3_600_000;
@@ -377,9 +378,9 @@ fn ready_meeting(
         })?
         .filter(|m| m.deleted_at.is_none())
         .ok_or_else(|| StepError::Permanent("Die Besprechung gibt es nicht mehr.".to_string()))?;
-    match meeting.status.as_str() {
-        "ready" => Ok((store, meeting)),
-        "recording" | "processing" => {
+    match meeting_state(&meeting.status) {
+        MeetingReadiness::Ready => Ok((store, meeting)),
+        MeetingReadiness::Pending => {
             let waited = ctx.now_ms().saturating_sub(ctx.step_started_at);
             if waited >= MAX_WAIT_FOR_MEETING_MS {
                 return Err(StepError::Permanent(
@@ -395,15 +396,11 @@ fn ready_meeting(
                 },
             })
         }
-        "failed" => Err(StepError::Permanent(
-            "Die Verarbeitung der Besprechung ist fehlgeschlagen.".to_string(),
-        )),
-        "cancelled" => Err(StepError::Permanent(
-            "Die Verarbeitung der Besprechung wurde gestoppt.".to_string(),
-        )),
-        other => Err(StepError::Permanent(format!(
-            "Die Besprechung hat einen unbekannten Zustand ({other})."
-        ))),
+        MeetingReadiness::Never => Err(StepError::Permanent(match meeting.status.as_str() {
+            "cancelled" => "Die Verarbeitung der Besprechung wurde gestoppt.".to_string(),
+            "failed" => "Die Verarbeitung der Besprechung ist fehlgeschlagen.".to_string(),
+            other => format!("Die Besprechung hat einen unbekannten Zustand ({other})."),
+        })),
     }
 }
 

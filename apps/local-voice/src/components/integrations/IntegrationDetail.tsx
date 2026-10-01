@@ -23,6 +23,7 @@ import {
   isTargetKind,
 } from "./model";
 import { KindIcon } from "./KindIcon";
+import { AgentClientsPanel } from "./AgentClientsPanel";
 import { M365Panel } from "./M365Panel";
 
 interface IntegrationDetailProps {
@@ -461,17 +462,7 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
       </section>
 
       {integration.kind === "agent" && (
-        <section className="space-y-1" aria-labelledby="int-clients">
-          <h3 id="int-clients" className="text-sm font-semibold">
-            {t("integrations.detail.clients")}
-          </h3>
-          <p
-            className="text-xs text-text-muted"
-            data-testid="agent-clients-placeholder"
-          >
-            {t("integrations.detail.clientsPlaceholder")}
-          </p>
-        </section>
+        <AgentClientsPanel integrationId={integration.id} />
       )}
 
       <section className="flex flex-wrap items-center gap-3 border-t border-mid-gray/20 pt-4">

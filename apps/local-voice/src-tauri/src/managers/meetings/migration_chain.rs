@@ -165,7 +165,11 @@ fn the_chain_is_register_then_variants_then_queue() {
         MIGRATIONS.len() >= 12,
         "B1 (Workflow-Tabellen) ist Index 11, hinter D1"
     );
-    let steps: [(usize, &[&str], &[&str]); 8] = [
+    assert!(
+        MIGRATIONS.len() >= 13,
+        "A7 (Agentenbruecke) ist Index 12, hinter B1"
+    );
+    let steps: [(usize, &[&str], &[&str]); 9] = [
         (
             5,
             &[],
@@ -240,6 +244,22 @@ fn the_chain_is_register_then_variants_then_queue() {
                 "workflow_runs",
                 "workflow_run_steps",
                 "workflow_file_ledger",
+            ],
+            &["transcript_variants_g5", "agent_clients"],
+        ),
+        // Stufe 13 = A7 (Agentenbruecke, Index 12): die drei Tabellen sind da, alles Fruehere bleibt.
+        (
+            13,
+            &[
+                "integrations",
+                "transcript_variants",
+                "import_queue",
+                "project_minutes",
+                "meeting_slides",
+                "workflows",
+                "agent_clients",
+                "agent_tool_grants",
+                "agent_approvals",
             ],
             &["transcript_variants_g5"],
         ),

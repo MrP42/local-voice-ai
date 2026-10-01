@@ -119,6 +119,9 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // damit dieser Schritt beim Zusammenfuehren mit anderen Zweigen nur aus dieser einen
     // Zeile besteht.
     M::up(crate::managers::workflows::schema::WORKFLOWS_MIGRATION),
+    // A7 (Agentenbruecke: Zugaenge, Werkzeugrechte, Freigabe-Zuordnung), Index 12: hinter B1. Nur
+    // CREATE. Der SQL-Text steht in `agent_bridge/schema.rs`.
+    M::up(crate::agent_bridge::schema::AGENT_BRIDGE_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).

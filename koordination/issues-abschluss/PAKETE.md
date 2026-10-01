@@ -23,7 +23,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | B1 | M5 | #67 Workflow-Engine-Kern + Trockenlauf-CLI — lv-coder-xhigh | workflows:: ≥30 Tests, --dry-run JSON | abgenommen | c850b73a |
 | C1 | M6 | #68 Eval-Harness + Messung lokaler Modelle — lv-architect | Bericht eval-2026-10-01.md | abgenommen | 3f66fbdd |
 | D0 | M7 | #69 Spike OCR/Bildanalyse/Folien — lv-architect | Spike-Bericht mit Messung | abgenommen | koordination/bild-video/spike |
-| A7 | M4 | #66 Agentenbrücke (Named Pipe, Token, Werkzeug-Rechte, Freigaben, ctl) — lv-coder-xhigh | AK9 agent_bridge:: ≥15 | in_arbeit | |
+| A7 | M4 | #66 Agentenbrücke (Named Pipe, Token, Werkzeug-Rechte, Freigaben, ctl) — lv-coder-xhigh | AK9 agent_bridge:: ≥15 | abgenommen (QG5-Review offen) | ec72a83b |
 | A5 | M4 | #66 Microsoft-365-Konto (OAuth PKCE, Mail, OneDrive, Termin-Notiz) — lv-coder-xhigh | AK8 m365 ≥12 Tests | abgenommen (Owner: Entra-Registrierung, Testmail) | 7b9656dc |
 | A6 | M4 | #66 SMTP, Ordner-Sandbox, Obsidian, Wissensbasis, Export ablegen — lv-coder | AK8 Rest, AK11 | abgenommen (Owner: Testmail, Vault, Wissens-Schlüssel) | fa0e5870 |
 | D1 | M7 | #69 Folienerkennung Kern (dHash, meeting_slides, Job-Phase) — lv-coder-xhigh | cargo test slides | abgenommen | fc478c2e |
@@ -31,5 +31,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | B2 | M5 | #67 Auslöser Kalender/Ereignisse/Zeitplan/manuell, Arbeiter in lib.rs, Einwilligungsweg — lv-coder-xhigh | AK3, AK4 | abgenommen (Abnahme Hinweisfenster im Installer) | c850b73a |
 | D2 | M7 | #69 OCR je Folie (Windows-OCR), Text-Dubletten — lv-coder | cargo test slides::ocr | abgenommen | 219043ea |
 | D4 | M7 | #69 Folien-Oberfläche (Leiste, Sprung, Ausblenden, Großansicht, Folien erkennen) — lv-coder | meeting-slides.spec | abgenommen | cc097c92 |
-| B3 | M5 | #67 Auslöser Ordner (Stabilität, Ledger, OneDrive) und YouTube-Kanal (RSS) + Aktion Import — lv-coder | AK5, AK11 Auslöser | in_arbeit | |
+| B3 | M5 | #67 Auslöser Ordner (Stabilität, Ledger, OneDrive) und YouTube-Kanal (RSS) + Aktion Import — lv-coder | AK5, AK11 Auslöser | abgenommen | effa3670 |
 | D5 | M7 | #69 Folien in Protokoll, KI-Notizen, Chat, Suche ([Folie n · mm:ss], Belege) — lv-coder-xhigh | cargo test minutes notes search slides | in_arbeit | |
+| B4 | M5 | #67 App-Aktionen (Notizen, Protokoll, Zusammenfassung, Export, TTS, Mitteilung, Warten) + Vorlage Eingangsordner → Word — lv-coder | AK6 | in_arbeit | |
+| A8 | M4 | #66 MCP schreibend (transcribe_file, tts, add_youtube_source, get_provenance, start/stop_recording mit Einwilligung), mcp_smoke --write, --audit-dump — lv-coder-xhigh | AK10, AK11 | in_arbeit | |

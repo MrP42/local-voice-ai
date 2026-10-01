@@ -201,6 +201,10 @@
                     "maxLength": 4000,
                     "type": "string"
                   },
+                  "project": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
                   "title": {
                     "maxLength": 4000,
                     "type": "string"
@@ -1175,6 +1179,10 @@
               "params": {
                 "additionalProperties": false,
                 "properties": {
+                  "project": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
                   "url": {
                     "maxLength": 4000,
                     "type": "string"
@@ -1746,6 +1754,11 @@
         {
           "additionalProperties": false,
           "properties": {
+            "backfill": {
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            },
             "channel_id": {
               "maxLength": 4000,
               "type": "string"

@@ -1669,7 +1669,7 @@ fn stop_within_does_not_wait_for_a_long_step_and_the_run_is_not_cancelled() {
 /// Virenscanner) ein Schreiben von Journal, Freigabe oder Audit.
 #[test]
 fn no_workflow_module_opens_a_bare_connection() {
-    let files: [(&str, &str); 14] = [
+    let files: [(&str, &str); 20] = [
         ("engine.rs", include_str!("../engine.rs")),
         ("action.rs", include_str!("../action.rs")),
         ("hub.rs", include_str!("../hub.rs")),
@@ -1693,6 +1693,15 @@ fn no_workflow_module_opens_a_bare_connection() {
             include_str!("../trigger/meeting_events.rs"),
         ),
         ("trigger/manual.rs", include_str!("../trigger/manual.rs")),
+        ("trigger/folder.rs", include_str!("../trigger/folder.rs")),
+        ("trigger/ledger.rs", include_str!("../trigger/ledger.rs")),
+        (
+            "trigger/youtube_channel.rs",
+            include_str!("../trigger/youtube_channel.rs"),
+        ),
+        ("import.rs", include_str!("../import.rs")),
+        ("import_app.rs", include_str!("../import_app.rs")),
+        ("queue_gate.rs", include_str!("../queue_gate.rs")),
     ];
     for (name, src) in files {
         let production = src.split("#[cfg(test)]").next().unwrap();
