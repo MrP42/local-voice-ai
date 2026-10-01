@@ -73,6 +73,16 @@ impl AppServices for AppServicesImpl {
         Ok(crate::agent::runtime::Target::Local { model })
     }
 
+    fn agent_route_target(
+        &self,
+        model: Option<&str>,
+    ) -> Result<crate::agent::runtime::Target, ServiceError> {
+        let downloaded = crate::managers::llm::downloaded_model_ids();
+        let model = crate::agent::route::route_model(model, &downloaded)
+            .map_err(ServiceError::Permanent)?;
+        Ok(crate::agent::runtime::Target::Local { model })
+    }
+
     fn generate_notes(
         &self,
         req: &GenRequest,
