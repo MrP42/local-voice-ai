@@ -500,11 +500,18 @@ const openRecordings = async (page: Page) => {
 const openDetail = async (page: Page) => {
   await openRecordings(page);
   await page.getByText("Kundentermin Meyer", { exact: true }).click();
-  await expect(page.getByTestId("participant-chips")).toBeVisible();
+  await expect(page.getByTestId("participants-chip")).toBeVisible();
+};
+
+// G4: ein Chip "N Teilnehmende: ..." im Kopf; ein Klick oeffnet das Popover mit
+// einer Zeile je Person (Filter, Fragen, Entfernen) und dem Feld zum Hinzufuegen.
+const openPeople = async (page: Page) => {
+  await page.getByTestId("participants-chip").click();
+  await expect(page.getByTestId("participants-popover")).toBeVisible();
 };
 
 const chip = (page: Page, name: string) =>
-  page.getByTestId("participant-chip").filter({ hasText: name });
+  page.getByTestId("participant-row").filter({ hasText: name });
 
 // ---------------------------------------------------------------------------
 // Reine Logik
@@ -539,11 +546,15 @@ test.describe("Personen Logik", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Personen", () => {
-  test("Teilnehmenden-Chips: Organisator vorn, „ich“ am Ende und gekennzeichnet", async ({
+  test("Teilnehmenden-Chip: Organisator vorn, „ich“ am Ende und gekennzeichnet", async ({
     page,
   }) => {
     await openDetail(page);
-    const chips = page.getByTestId("participant-chip");
+    await expect(page.getByTestId("participants-chip")).toHaveText(
+      /^3 Teilnehmende:\s*Anna Berg, Bernd Alt, Patrick Wolff \(ich\)$/,
+    );
+    await openPeople(page);
+    const chips = page.getByTestId("participant-row");
     await expect(chips).toHaveCount(3);
     await expect(chips.nth(0)).toContainText("Anna Berg");
     await expect(chips.nth(0)).toHaveAttribute("data-role", "organizer");
@@ -555,27 +566,34 @@ test.describe("Personen", () => {
     });
   });
 
-  test("Besprechung ohne Teilnehmende zeigt keine Chipzeile", async ({
+  test("Besprechung ohne Teilnehmende bietet das Hinzufuegen an", async ({
     page,
   }) => {
     await openRecordings(page);
     await page.getByText("Teamrunde", { exact: true }).click();
     await expect(page.locator('[data-segment-index="0"]')).toBeVisible();
-    await expect(page.getByTestId("participant-chips")).toHaveCount(0);
+    const chip = page.getByTestId("participants-chip");
+    await expect(chip).toHaveText("Teilnehmende hinzufügen");
+    await expect(chip).toHaveAttribute("data-count", "0");
+    await chip.click();
+    await expect(page.getByTestId("participants-list")).toHaveCount(0);
+    await expect(page.getByTestId("participant-add-input")).toBeVisible();
   });
 
-  test("Klick auf einen Chip: Popover mit E-Mail, Firma und Besprechungen", async ({
+  test("Klick auf den Chip: Popover mit Rolle, E-Mail, Firma und Besprechungen je Person", async ({
     page,
   }) => {
     await openDetail(page);
-    await chip(page, "Anna Berg").click();
-    const pop = page.getByTestId("person-popover");
-    await expect(pop.getByTestId("person-name")).toHaveText("Anna Berg");
-    await expect(pop).toContainText("Organisator");
-    await expect(pop).toContainText("Aus dem Kalender");
-    await expect(pop.getByTestId("person-email")).toHaveText("anna@firma.de");
-    await expect(pop.getByTestId("person-company")).toHaveText("firma.de");
-    await expect(pop.getByTestId("person-meetings")).toHaveText(
+    await openPeople(page);
+    const pop = page.getByTestId("participants-popover");
+    const anna = chip(page, "Anna Berg");
+    await expect(anna.getByTestId("participant-name")).toHaveText("Anna Berg");
+    await expect(anna).toContainText("Organisator");
+    await expect(anna).toContainText("Aus dem Kalender");
+    await expect(anna).toContainText("anna@firma.de");
+    await expect(anna).toContainText("firma.de");
+    await expect(anna.getByTestId("person-meetings")).toHaveAttribute(
+      "aria-label",
       "2 Besprechungen mit Anna Berg",
     );
     // Das Popover steht sichtbar unter dem Chip, nicht ausserhalb des Fensters.
@@ -583,25 +601,28 @@ test.describe("Personen", () => {
       .poll(async () => (await pop.boundingBox())?.y ?? -1)
       .toBeGreaterThan(0);
     const box = (await pop.boundingBox())!;
-    const chipBox = (await chip(page, "Anna Berg").boundingBox())!;
+    const chipBox = (await page
+      .getByTestId("participants-chip")
+      .boundingBox())!;
     expect(box.y).toBeGreaterThanOrEqual(chipBox.y + chipBox.height);
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.y + box.height).toBeLessThanOrEqual(1000);
     await page.keyboard.press("Escape");
     await expect(pop).toBeHidden();
-    // Eine Person ohne Adresse sagt das.
-    await chip(page, "Bernd Alt").click();
-    await expect(page.getByTestId("person-meetings")).toHaveText(
-      "1 Besprechung mit Bernd Alt",
-    );
+    await expect(page.getByTestId("participants-chip")).toBeFocused();
+    // Eine Person mit einer Besprechung nennt es in der Einzahl.
+    await openPeople(page);
+    await expect(
+      chip(page, "Bernd Alt").getByTestId("person-meetings"),
+    ).toHaveAttribute("aria-label", "1 Besprechung mit Bernd Alt");
   });
 
   test("„Besprechungen mit …“ grenzt die Liste ein (Personen-Chip, person_id)", async ({
     page,
   }) => {
     await openDetail(page);
-    await chip(page, "Bernd Alt").click();
-    await page.getByTestId("person-meetings").click();
+    await openPeople(page);
+    await chip(page, "Bernd Alt").getByTestId("person-meetings").click();
     // Die Liste links zeigt den Chip "Person: Bernd Alt"; die Detailansicht
     // bleibt daneben offen.
     const list = page.getByTestId("rec-sessions");
@@ -626,8 +647,8 @@ test.describe("Personen", () => {
     page,
   }) => {
     await openDetail(page);
-    await chip(page, "Anna Berg").click();
-    await page.getByTestId("person-ask").click();
+    await openPeople(page);
+    await chip(page, "Anna Berg").getByTestId("person-ask").click();
     const panel = page.getByTestId("chat-panel");
     await expect(panel).toBeVisible();
     await expect(panel).toContainText("Person: Anna Berg");
@@ -642,7 +663,7 @@ test.describe("Personen", () => {
     page,
   }) => {
     await openDetail(page);
-    await chip(page, "Bernd Alt").click();
+    await openPeople(page);
     await page.getByTestId("person-manage").click();
     const dialog = page.getByTestId("people-dialog");
     await expect(dialog.getByTestId("people-row")).toHaveCount(4);
@@ -659,16 +680,18 @@ test.describe("Personen", () => {
       name: "Bernd Alt-Meyer",
       email: "bernd@kunde.de",
     });
-    // Schliessen: die Chip-Zeile der Besprechung zeigt den neuen Namen.
+    // Schliessen: der Chip im Kopf der Besprechung zeigt den neuen Namen.
     await page.getByRole("button", { name: "Schließen" }).last().click();
-    await expect(chip(page, "Bernd Alt-Meyer")).toBeVisible();
+    await expect(page.getByTestId("participants-chip")).toContainText(
+      "Bernd Alt-Meyer",
+    );
   });
 
   test("Personen verwalten: Fehler (Adresse vergeben) erscheinen im Dialog", async ({
     page,
   }) => {
     await openDetail(page);
-    await chip(page, "Bernd Alt").click();
+    await openPeople(page);
     await page.getByTestId("person-manage").click();
     const dialog = page.getByTestId("people-dialog");
     await dialog.getByTestId("people-row").nth(1).click();
@@ -683,7 +706,7 @@ test.describe("Personen", () => {
     page,
   }) => {
     await openDetail(page);
-    await chip(page, "Anna Berg").click();
+    await openPeople(page);
     await page.getByTestId("person-manage").click();
     const dialog = page.getByTestId("people-dialog");
     // "Bernd Altmann" (ohne Adresse) geht in "Bernd Alt" auf.

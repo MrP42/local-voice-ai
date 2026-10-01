@@ -8,6 +8,7 @@ import {
   FolderInput,
   Info,
   LayoutTemplate,
+  Library,
   Mail,
   Menu,
   MessageSquare,
@@ -34,6 +35,10 @@ export interface MeetingActionHandlers {
   onRegenNotes: () => void;
   onRegenMinutes: () => void;
   onTemplate: () => void;
+  /** G4: "Vorlagen verwalten ..." (Verwaltung der Vorlagen direkt). */
+  onManageTemplates: () => void;
+  /** G4: "Neu erzeugen mit Vorlage ..." (Vorlage waehlen, Protokoll oder KI-Notizen erzeugen). */
+  onRegenWithTemplate: () => void;
   /** U8: "Sprecher benennen ..." (Dialog mit allen Sprechern). */
   onSpeakers: () => void;
   onRename: () => void;
@@ -56,13 +61,17 @@ interface MeetingActionsProps extends MeetingActionHandlers {
   hasAudio: boolean;
   /** Die Besprechung wird gerade aufgenommen: Löschen ist gesperrt. */
   live?: boolean;
-  /** Nur das Menü "☰", das alle Aktionen trägt (schmales Fenster). */
-  menuOnly?: boolean;
+  /**
+   * `toolbar`: Symbolzeile der Bedienspalte; `menu`: das Menü "☰" mit den
+   * selteneren Aktionen (steht im Kopf neben "Details"); `menu-all`: das Menü
+   * trägt zusätzlich die Aktionen der Symbolzeile (schmales Fenster).
+   */
+  mode?: "toolbar" | "menu" | "menu-all";
 }
 
 /**
  * Symbolzeile der Bedienspalte (Exportieren, Follow-up-Mail, Kopieren,
- * Personen, Fragen) und rechts das Menü "☰" mit den selteneren Aktionen. Alle
+ * Personen, Fragen) und das Menü "☰" mit den selteneren Aktionen. Alle
  * Knöpfe sind `IconAction`: gleich groß, Name und Kurzerklärung im Tooltip (Maus
  * und Tastatur), Name im aria-label.
  */
@@ -74,7 +83,7 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
   busy,
   hasAudio,
   live = false,
-  menuOnly = false,
+  mode = "toolbar",
   onExport,
   onFollowup,
   onCopy,
@@ -84,6 +93,8 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
   onRegenNotes,
   onRegenMinutes,
   onTemplate,
+  onManageTemplates,
+  onRegenWithTemplate,
   onSpeakers,
   onRename,
   onMove,
@@ -127,11 +138,26 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
       testId: "menu-regen-minutes",
     },
     {
+      id: "regen-template",
+      label: t("meetings.actions.regenWithTemplate"),
+      icon: Sparkles,
+      onSelect: onRegenWithTemplate,
+      disabled: busy || !hasSegments,
+      testId: "menu-regen-template",
+    },
+    {
       id: "template",
       label: t("meetings.actions.template"),
       icon: LayoutTemplate,
       onSelect: onTemplate,
       testId: "menu-template",
+    },
+    {
+      id: "template-manage",
+      label: t("meetings.templates.manage"),
+      icon: Library,
+      onSelect: onManageTemplates,
+      testId: "menu-template-manage",
     },
     {
       id: "speakers",
@@ -235,7 +261,7 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
     },
   ];
 
-  if (menuOnly) {
+  if (mode !== "toolbar") {
     return (
       <ActionMenu
         trigger={{
@@ -247,7 +273,7 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
         menuLabel={t("meetings.actions.menuLabel")}
         align="end"
         widthClass="w-72"
-        items={[...primaryItems, ...items]}
+        items={mode === "menu-all" ? [...primaryItems, ...items] : items}
       />
     );
   }
@@ -300,19 +326,6 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
         aria-keyshortcuts="Control+J"
         className={chatOpen ? "border-logo-primary bg-logo-primary/20" : ""}
         onClick={onChatToggle}
-      />
-      <span className="flex-1" aria-hidden="true" />
-      <ActionMenu
-        trigger={{
-          icon: Menu,
-          label: t("meetings.actions.menuName"),
-          description: t("meetings.actions.menuHint"),
-          testId: "meeting-menu",
-        }}
-        menuLabel={t("meetings.actions.menuLabel")}
-        align="end"
-        widthClass="w-72"
-        items={items}
       />
     </div>
   );

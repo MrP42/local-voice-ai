@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { save } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   commands,
   events,
@@ -15,12 +14,11 @@ import {
   phaseKey,
   progressPercent,
 } from "@/lib/meetingMinutes";
-import { Button } from "../../ui/Button";
 import { Alert } from "../../ui/Alert";
 import Badge from "../../ui/Badge";
+import { IconAction } from "../../ui/IconAction";
 import { MarkdownContent } from "../../whats-new/MarkdownContent";
-import { MeetingTemplatePicker } from "./notes/TemplatePicker";
-import { Download } from "lucide-react";
+import { Check, Copy, Download, RefreshCw, Sparkles } from "lucide-react";
 
 interface MinutesViewProps {
   meetingId: string;
@@ -40,12 +38,8 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<MinutesProgress | null>(null);
   const [meta, setMeta] = useState<MinutesMeta | null>(null);
-  // Die Vorlage der Besprechung (geteilt mit den KI-Notizen); `null` = die
-  // gemerkte bzw. die Standardvorlage.
-  const [templateChoice, setTemplateChoice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  const [autoFile, setAutoFile] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // The rendered preview doubles as the source for the formatted clipboard
   // copy: reading its innerHTML guarantees that what lands in Word is exactly
@@ -70,11 +64,6 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setDoc(minutes[0] ?? null);
   }, [meetingId, t]);
 
-  const refreshAutoFile = useCallback(async () => {
-    const result = await commands.meetingsMinutesFile(meetingId);
-    setAutoFile(result.status === "ok" ? result.data : null);
-  }, [meetingId]);
-
   const loadMeta = useCallback(async () => {
     const result = await commands.meetingsMinutesMeta(meetingId);
     setMeta(result.status === "ok" ? (result.data ?? null) : null);
@@ -90,10 +79,9 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
 
   useEffect(() => {
     void loadLatest();
-    void refreshAutoFile();
     void loadMeta();
     void loadRunState();
-  }, [loadLatest, refreshAutoFile, loadMeta, loadRunState]);
+  }, [loadLatest, loadMeta, loadRunState]);
 
   const errorText = useCallback(
     (raw: string) =>
@@ -123,7 +111,6 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         setError(null);
         void loadLatest();
         void loadMeta();
-        void refreshAutoFile();
       } else {
         setRunning(false);
         setProgress(null);
@@ -136,17 +123,15 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     return () => {
       void un.then((f) => f());
     };
-  }, [meetingId, loadLatest, loadMeta, refreshAutoFile, errorText]);
+  }, [meetingId, loadLatest, loadMeta, errorText]);
 
   const generate = async () => {
     setRunning(true);
     setProgress(null);
     setError(null);
     setSaved(null);
-    const result = await commands.meetingsGenerateMinutes(
-      meetingId,
-      templateChoice,
-    );
+    // `null`: die Vorlage, die fuer diese Besprechung gewaehlt ist (Menue, Vorlage).
+    const result = await commands.meetingsGenerateMinutes(meetingId, null);
     if (result.status === "error") {
       // Ein zweiter Start wird abgewiesen, der erste Lauf laeuft weiter: der
       // Reiter zeigt ihn weiter als laufend, kein Fehler.
@@ -164,7 +149,6 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setRunning(false);
     setProgress(null);
     setDoc(result.data);
-    void refreshAutoFile();
     void loadMeta();
   };
 
@@ -234,36 +218,51 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   }
 
   return (
-    <div className="space-y-3">
-      {error && <Alert variant="error">{error}</Alert>}
-
-      <MeetingTemplatePicker
-        meetingId={meetingId}
-        disabled={running}
-        onValueChange={setTemplateChoice}
-      />
-
-      <div className="flex gap-2 items-center flex-wrap">
-        <Button onClick={generate} disabled={running}>
-          {doc
-            ? t("meetings.detail.regenerate")
-            : t("meetings.detail.generate")}
-        </Button>
+    <div className="space-y-2" data-testid="minutes-view">
+      {/* Schmale Werkzeugzeile statt Vorlagenwahl und Textknoepfen: der Inhalt
+          beginnt direkt unter den Reitern. Vorlage waehlen, Vorlagen verwalten und
+          "Neu erzeugen mit Vorlage" stehen im Menue neben "Details". */}
+      <div
+        role="toolbar"
+        aria-label={t("meetings.minutes.toolbar")}
+        data-testid="minutes-toolbar"
+        className="flex flex-wrap items-center gap-2"
+      >
+        <IconAction
+          size="sm"
+          icon={doc ? RefreshCw : Sparkles}
+          label={
+            doc
+              ? t("meetings.detail.regenerate")
+              : t("meetings.detail.generate")
+          }
+          description={t("meetings.minutes.regenerateHint")}
+          testId="minutes-generate"
+          disabled={running}
+          onClick={generate}
+        />
         {doc && (
           <>
-            <Button variant="secondary" onClick={copyMinutes}>
-              {copied
-                ? t("meetings.detail.copied")
-                : t("meetings.minutes.copy")}
-            </Button>
-            <Button
-              variant="secondary"
+            <IconAction
+              size="sm"
+              icon={copied ? Check : Copy}
+              label={
+                copied
+                  ? t("meetings.detail.copied")
+                  : t("meetings.minutes.copy")
+              }
+              description={t("meetings.minutes.copyHint")}
+              testId="minutes-copy"
+              onClick={copyMinutes}
+            />
+            <IconAction
+              size="sm"
+              icon={Download}
+              label={t("meetings.minutes.download")}
+              description={t("meetings.detail.export")}
+              testId="minutes-export"
               onClick={exportMinutes}
-              title={t("meetings.detail.export")}
-              aria-label={t("meetings.detail.export")}
-            >
-              <Download width={16} height={16} />
-            </Button>
+            />
           </>
         )}
         {running && (
@@ -274,11 +273,13 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           </Badge>
         )}
         {saved && (
-          <span className="text-xs text-text/60 break-all">
+          <span className="min-w-0 break-all text-xs text-text/60">
             {t("meetings.minutes.exportSaved", { path: saved })}
           </span>
         )}
       </div>
+
+      {error && <Alert variant="error">{error}</Alert>}
 
       {running && <MinutesProgressBar progress={progress} />}
 
@@ -292,35 +293,10 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         </Alert>
       )}
 
-      {/* Written automatically on generation, so the minutes exist as a file
-          even for someone who never opens the export dialog. */}
-      {doc && autoFile && (
-        <p className="text-xs text-text/60 break-all">
-          {t("meetings.minutes.autoSaved")}{" "}
-          <button
-            type="button"
-            onClick={() => void revealItemInDir(autoFile)}
-            className="underline hover:text-logo-primary cursor-pointer"
-          >
-            {autoFile}
-          </button>
-        </p>
-      )}
-
-      {doc && meta?.template_title && (
-        <p className="text-xs text-text/60" data-testid="minutes-created-with">
-          {t(
-            meta.auto?.outcome === "model"
-              ? "meetings.minutes.createdWithAuto"
-              : "meetings.minutes.createdWith",
-            { title: meta.template_title },
-          )}
-        </p>
-      )}
-
       {doc ? (
         <div
           ref={previewRef}
+          data-testid="minutes-doc"
           className="rounded-lg border border-mid-gray/20 p-4"
         >
           <MarkdownContent markdown={doc.body} />

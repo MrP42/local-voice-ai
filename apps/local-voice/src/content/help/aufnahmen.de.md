@@ -5,8 +5,8 @@ Besprechungen aufnehmen oder Dateien importieren, mitschreiben, transkribieren u
 ## So ist die Seite aufgebaut
 
 - **Links: Projekte.** „Alle Aufnahmen“, „Ohne Projekt“ und deine eigenen Projekte, etwa „Privat“ oder „Kunde Stadtwerke“. Das Symbol „Neues Projekt“ legt eins an; Doppelklick oder F2 benennt um, Alt+Pfeil hoch/runter sortiert, das Kontextmenü (rechte Maustaste) bietet dasselbe. Die Besprechungen des gewählten Projekts stehen darunter; Suche und Filter wirken nur dort.
-- **Mitte: Arbeitsfläche.** Der Titel (Klick benennt um), die Reiter **Notizen**, **KI-Notizen** und **Protokoll** und darunter dein Text.
-- **Rechts: Bedienung.** Oben Aufnahme starten und Datei importieren, darunter die Symbolzeile (Exportieren, Follow-up-Mail, Kopieren, Personen) und das Menü ☰. Weiter unten stehen **Transkript** und **Fragen**.
+- **Mitte: Arbeitsfläche.** Der Titel (Klick benennt um) mit Details ⓘ und Menü ☰, Datum, Dauer, Projekt und die Teilnehmenden (ein Klick darauf ändert sie), darunter die Reiter **Transkript** und **Protokoll**.
+- **Rechts: Bedienung.** Oben Aufnahme starten und Datei importieren, darunter die Symbolzeile (Exportieren, Follow-up-Mail, Kopieren, Personen) und das Menü ☰. Darunter stehen **Notizen**, **KI-Notizen** und **Fragen**.
 - Die Griffe zwischen den Spalten ziehst du mit der Maus oder verstellst sie mit den Pfeiltasten; Doppelklick stellt die Standardbreite her, die Pfeil-Symbole am Rand klappen eine Spalte ein. Breiten, Auswahl und Reiter bleiben beim nächsten Start erhalten. Jede Spalte scrollt für sich, die Seite nie.
 
 ## Projekte und Besprechungen ordnen
@@ -19,7 +19,7 @@ Besprechungen aufnehmen oder Dateien importieren, mitschreiben, transkribieren u
 
 - **Mikrofon** nimmt dich auf, **System-Audio** zusätzlich das, was der Rechner wiedergibt, etwa die Gegenseite eines Videocalls. System-Audio gibt es unter Windows, auf dem Mac läuft die Aufnahme nur über das Mikrofon.
 - Vor der ersten Aufnahme fragt die App nach der Einwilligung der Teilnehmer. Während der Aufnahme ist das Diktat gesperrt.
-- Schreibe mit: Stichpunkte im Reiter **Notizen** genügen, jeder Punkt merkt sich die Aufnahmezeit. Das Live-Transkript läuft rechts mit.
+- Schreibe mit: Stichpunkte im Reiter **Notizen** genügen, jeder Punkt merkt sich die Aufnahmezeit. Das Live-Transkript läuft in der Mitte mit.
 - Stürzt die App ab, wird die Aufnahme beim nächsten Start repariert und steht wieder in der Liste.
 
 ## Importieren
@@ -38,7 +38,7 @@ Audio- und Videodateien sowie Untertitel (VTT, SRT) importierst du mit dem Symbo
 
 - **Notizen** sind dein Text und bleiben es. Die **KI-Notizen** entstehen aus deinen Stichpunkten und dem Transkript; jede Aussage hat einen Beleg, ein Klick darauf springt ins Transkript.
 - Das **Protokoll** (Zusammenfassung, Entscheidungen, Aufgaben) schreibt das Sprachmodell aus der Fußleiste. Dafür muss ein Sprachmodell geladen oder ein Anbieter verbunden sein.
-- Die **Vorlage** legt die Abschnitte fest. Bei „Automatisch“ wählt die App eine passende; im Menü ☰ wechselst du sie mit „Vorlage wechseln …“ oder erzeugst Notizen und Protokoll neu.
+- Die **Vorlage** legt die Abschnitte fest. Bei „Automatisch“ wählt die App eine passende; im Menü ☰ wählst du sie mit „Vorlage wählen …“, verwaltest sie mit „Vorlagen verwalten …“ oder erzeugst Notizen und Protokoll mit „Neu erzeugen mit Vorlage …“ neu.
 - Die Transkription läuft mit dem Modell aus der Fußleiste, oder mit einem eigenen unter Einstellungen, Diktat, Besprechungen.
 
 ## Fortschritt, Pause und Stopp
@@ -47,13 +47,13 @@ Während eine Besprechung verarbeitet wird, zeigt ein Fortschrittsbalken Phase, 
 
 ## Menü ☰ und Details
 
-Seltene Aktionen stehen im Menü ☰: Neu transkribieren, KI-Notizen und Protokoll neu erzeugen, Vorlage wechseln, in Projekt verschieben, Umbenennen, Details und Löschen. **Details** zeigt Status, Quelle, Dauer, Einwilligung, Modell und Aufbewahrung auf einen Blick.
+Seltene Aktionen stehen im Menü ☰: Neu transkribieren, KI-Notizen und Protokoll neu erzeugen, Vorlage wählen und verwalten, in Projekt verschieben, Umbenennen, Details und Löschen. **Details** zeigt Status, Quelle, Dauer, Einwilligung, Modell, Aufbewahrung sowie Vorlage und Ablageort des Protokolls auf einen Blick.
 
 Mit **Bearbeiten** im Details-Dialog änderst du **Titel**, **Beschreibung** (mehrzeilig), **Datum und Uhrzeit**, die **Teilnehmenden** (aus den vorhandenen Personen) und die **Projekte**. Gespeichert wird alles oder nichts; Dateiname und Quelle bleiben, wie sie sind. Die Beschreibung ist durchsuchbar und steht dem Chat, den KI-Notizen, dem Protokoll und dem lokalen MCP-Server als Hintergrund zur Verfügung.
 
 ## Kleines Fenster
 
-Wird das Fenster schmal, etwa neben einem Videocall, klappen die Projekte in eine Schublade („Projekte öffnen“), und Arbeitsfläche und Transkript teilen sich die Höhe. Den Trenner dazwischen stellst du mit der Maus oder mit Pfeil hoch/runter ein. Aufnehmen, mitschreiben und das Live-Transkript lesen geht auch so, ohne Seitenwechsel.
+Wird das Fenster schmal, etwa neben einem Videocall, klappen die Projekte in eine Schublade („Projekte öffnen“), und Arbeitsfläche (Transkript, Protokoll) und Notizen teilen sich die Höhe. Den Trenner dazwischen stellst du mit der Maus oder mit Pfeil hoch/runter ein. Aufnehmen, mitschreiben und das Live-Transkript lesen geht auch so, ohne Seitenwechsel.
 
 ## Aufbewahrung
 

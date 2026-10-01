@@ -8,7 +8,13 @@ import React, {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { save } from "@tauri-apps/plugin-dialog";
-import { AlertTriangle, Download, Plus, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  Download,
+  Plus,
+  RefreshCw,
+  Sparkles,
+} from "lucide-react";
 import {
   commands,
   events,
@@ -39,8 +45,8 @@ import {
 } from "@/lib/meetingNotes";
 import { useJobEnded, useMeetingProgress } from "@/hooks/useMeetingJobs";
 import { Alert } from "../../../ui/Alert";
-import { Button } from "../../../ui/Button";
 import { Dropdown } from "../../../ui/Dropdown";
+import { IconAction } from "../../../ui/IconAction";
 import { InstructionBar } from "./InstructionBar";
 import { SourceChips } from "./SourceChips";
 import { TaskChecklist } from "./TaskChecklist";
@@ -684,51 +690,52 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
       data-testid="enhanced-notes"
       data-stale={stale ? "true" : "false"}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {docs.length > 1 && (
-            <div data-testid="version-picker">
-              <Dropdown
-                options={versionOptions}
-                selectedValue={selected?.id ?? null}
-                onSelect={(id) => void selectVersion(id)}
-                className="min-w-[12rem]"
-              />
-            </div>
-          )}
-          {notes && (
-            <span className="text-xs text-text/50">{notes.template_title}</span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant={docs.length > 0 ? "secondary" : "primary"}
-            onClick={() => void generate()}
-            disabled={!canGenerate}
-            title={
-              meeting.status !== "ready"
-                ? t("meetings.enhanced.errors.meeting_not_finished")
-                : undefined
-            }
-          >
-            <Sparkles width={14} height={14} />
-            {docs.length > 0
+      {/* Schmale Werkzeugzeile: Neu erzeugen und Herunterladen als Symbole,
+          bei mehreren Versionen die Auswahl daneben. Vorlage und Herkunft stehen
+          im Kopf (Chip) und im Details-Dialog, die Wahl der Vorlage im Menue. */}
+      <div
+        role="toolbar"
+        aria-label={t("meetings.enhanced.toolbar")}
+        data-testid="enhanced-toolbar"
+        className="flex flex-wrap items-center gap-2"
+      >
+        <IconAction
+          size="sm"
+          icon={docs.length > 0 ? RefreshCw : Sparkles}
+          label={
+            docs.length > 0
               ? t("meetings.enhanced.regenerate")
-              : t("meetings.enhanced.generate")}
-          </Button>
-          {selected && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => void exportMarkdown()}
-              title={t("meetings.enhanced.export")}
-              aria-label={t("meetings.enhanced.export")}
-            >
-              <Download width={14} height={14} />
-            </Button>
-          )}
-        </div>
+              : t("meetings.enhanced.generate")
+          }
+          description={
+            meeting.status !== "ready"
+              ? t("meetings.enhanced.errors.meeting_not_finished")
+              : t("meetings.enhanced.regenerateHint")
+          }
+          testId="enhanced-generate"
+          disabled={!canGenerate}
+          onClick={() => void generate()}
+        />
+        {selected && (
+          <IconAction
+            size="sm"
+            icon={Download}
+            label={t("meetings.minutes.download")}
+            description={t("meetings.enhanced.export")}
+            testId="enhanced-export"
+            onClick={() => void exportMarkdown()}
+          />
+        )}
+        {docs.length > 1 && (
+          <div data-testid="version-picker" className="min-w-0">
+            <Dropdown
+              options={versionOptions}
+              selectedValue={selected?.id ?? null}
+              onSelect={(id) => void selectVersion(id)}
+              className="min-w-[12rem]"
+            />
+          </div>
+        )}
       </div>
 
       {progress && !notesJob && (

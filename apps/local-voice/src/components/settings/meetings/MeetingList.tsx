@@ -31,6 +31,7 @@ import {
 import { SearchBar, SearchSnippet } from "./search/SearchBar";
 import { EMPTY_FILTER, type ListFilter } from "./search/FilterChips";
 import { ContextMenu } from "./search/FolderChips";
+import { formatMeetingDate } from "@/lib/meetingDate";
 import type { PersonRef } from "./people/PersonPopover";
 import { FolderPickerDialog } from "./search/FolderPickerDialog";
 import { JobBar } from "./JobProgress";
@@ -463,14 +464,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   ) => {
     const timestamp = meeting.started_at ?? meeting.created_at;
     const date = new Date(timestamp * 1000);
-    const dateLabel = new Intl.DateTimeFormat(i18n.language, {
-      year:
-        date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
+    const dateLabel = formatMeetingDate(date, i18n.language, "compact");
     const isSelected = selected?.id === meeting.id;
     const progress = progressMap[meeting.id];
     const place =

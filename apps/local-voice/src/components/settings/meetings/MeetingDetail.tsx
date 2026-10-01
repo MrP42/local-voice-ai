@@ -33,6 +33,9 @@ import { MinutesView } from "./MinutesView";
 import { MyNotesView } from "./notes/MyNotesView";
 import { EnhancedNotesView } from "./notes/EnhancedNotesView";
 import { MeetingTemplatePicker } from "./notes/TemplatePicker";
+import { TemplateManagerDialog } from "./notes/TemplateManagerDialog";
+import { ParticipantsPopover } from "./ParticipantsPopover";
+import { useTemplateInfo } from "./useTemplateInfo";
 import { FolderPickerDialog } from "./search/FolderPickerDialog";
 import { MeetingActions } from "./MeetingActions";
 import { MeetingDetailsDialog } from "./MeetingDetailsDialog";
@@ -49,6 +52,12 @@ import { translateMeetingError } from "./meetingErrors";
 import { enhanceErrorText, SOURCE_HIGHLIGHT_MS } from "@/lib/meetingNotes";
 import { minutesErrorCode, minutesErrorDetail } from "@/lib/meetingMinutes";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
+import {
+  isCenterTab,
+  type CenterTab,
+  type LowerTab,
+  type NotesTab,
+} from "@/lib/meetingTabs";
 import { mergeSegments } from "@/lib/meetingSegments";
 import { FollowupDialog } from "./FollowupDialog";
 import { MeetingExportDialog } from "./MeetingExportDialog";
@@ -86,19 +95,12 @@ const channelLabelKey = (channel: number) => {
   }
 };
 
-/** Reiter der Arbeitsflaeche (Mitte). Das Transkript steht rechts unten. */
-type MidTab = "notes" | "ai" | "minutes" | "compare";
-const isMidTab = (value: string): value is MidTab =>
-  value === "notes" ||
-  value === "ai" ||
-  value === "minutes" ||
-  value === "compare";
-
 /** Die Stellen der Aufnahmen-Seite, in die die Detailansicht ihre Teile legt. */
 export interface MeetingDetailSlots {
   content: HTMLElement | null;
   controls: HTMLElement | null;
-  transcript: HTMLElement | null;
+  /** Notizen und KI-Notizen (Reiter rechts unten). */
+  notes: HTMLElement | null;
 }
 
 interface MeetingDetailProps {
@@ -106,8 +108,12 @@ interface MeetingDetailProps {
   /** Bereiche der Aufnahmen-Seite, in die gerendert wird (Portale). Fehlt ein
       Bereich (eingeklappt, anderer Reiter), bleibt der Zustand trotzdem hier. */
   slots: MeetingDetailSlots;
-  /** Transkript zeigen (Quellsprung aus KI-Notizen oder Chat). */
-  onShowTranscript: () => void;
+  /** Der Reiter der Mitte (Transkript, Protokoll, Vergleich). */
+  centerTab: CenterTab;
+  onCenterTab: (tab: CenterTab) => void;
+  /** Der Notizen-Reiter, der eingehaengt bleibt, solange die Fragen offen sind. */
+  notesTab: NotesTab;
+  onLowerTab: (tab: LowerTab) => void;
   /** Der Fragen-Reiter zeigt den Chat dieser Besprechung. */
   chatOpen: boolean;
   onChatToggle: () => void;
@@ -145,7 +151,10 @@ interface MeetingDetailProps {
 export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   meeting,
   slots,
-  onShowTranscript,
+  centerTab,
+  onCenterTab: setCenterTab,
+  notesTab,
+  onLowerTab,
   chatOpen,
   onChatToggle,
   onMeetingChange,
@@ -174,23 +183,23 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // Projekte (= Ordner der obersten Ebene): alle, und die dieser Besprechung.
   const [allFolders, setAllFolders] = useState<Folder[]>([]);
   const [meetingFolderIds, setMeetingFolderIds] = useState<string[]>([]);
-  // Der letzte Reiter bleibt ueber Neuladen, Seitenwechsel und Neustart.
-  const [midTab, setMidTab] = usePersistentState<MidTab>(
-    "meetings.midTab",
-    "notes",
-    isMidTab,
-  );
-  // Eine laufende Aufnahme zeigt den Notizblock; danach darf der Reiter wechseln.
+  // Die Reiter (Mitte, rechts unten) gehoeren der Seite und bleiben ueber
+  // Neuladen, Seitenwechsel und Neustart.
+  // Eine laufende Aufnahme zeigt das Live-Transkript in der Mitte und den
+  // Notizblock rechts; danach darf jeder Reiter wechseln.
+  const onLowerTabRef = useRef(onLowerTab);
+  onLowerTabRef.current = onLowerTab;
   useEffect(() => {
-    if (live) setMidTab("notes");
-  }, [live, setMidTab]);
+    if (!live) return;
+    setCenterTab("transcript");
+    onLowerTabRef.current("notes");
+  }, [live, setCenterTab]);
   // A3: Fassungen des Transkripts; der Reiter Vergleich erscheint ab zwei.
   const { variants, reload: reloadVariants } = useVariants(meetingId);
   const reloadVariantsRef = useRef(reloadVariants);
   reloadVariantsRef.current = reloadVariants;
-  const midTabs = [
-    { id: "notes" as const, label: t("meetings.notes.tab") },
-    { id: "ai" as const, label: t("meetings.notes.view.ai") },
+  const centerTabs = [
+    { id: "transcript" as const, label: t("meetings.detail.transcriptTab") },
     { id: "minutes" as const, label: t("meetings.detail.minutesTab") },
     ...(variants.length >= 2
       ? [{ id: "compare" as const, label: t("meetings.variants.compareTab") }]
@@ -198,8 +207,9 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   ];
   // Ohne zwei Fassungen gibt es nichts zu vergleichen.
   useEffect(() => {
-    if (midTab === "compare" && variants.length < 2) setMidTab("notes");
-  }, [midTab, variants.length, setMidTab]);
+    if (centerTab === "compare" && variants.length < 2)
+      setCenterTab("transcript");
+  }, [centerTab, variants.length, setCenterTab]);
   const [segments, setSegments] = useState<StoredSegment[]>([]);
   // M3-P3c: Sprecher (Namen, Anteile), Epoche der Segmentnummern und Hinweise
   // zur Sprechertrennung (`metadata_json.diarize`).
@@ -259,14 +269,15 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     audioTranscriptPlayer(micPlayerRef, systemPlayerRef, hasAudio);
 
   /**
-   * Quelle einer KI-Notiz: das Transkript rechts zeigen, das Segment markieren
-   * und (solange es einen Player gibt) ab der Stelle abspielen. Die KI-Notizen
-   * bleiben dabei stehen.
+   * Quelle einer KI-Notiz: das Segment im Transkript (Mitte) markieren und
+   * (solange es einen Player gibt) ab der Stelle abspielen. Die KI-Notizen rechts
+   * bleiben dabei stehen; nur wenn die Mitte gerade das Protokoll zeigt, wechselt
+   * sie zum Transkript, damit die Stelle zu sehen ist.
    */
   const jumpToSource = (segmentIndex: number) => {
     const segment = segments.find((s) => s.segment_index === segmentIndex);
     if (!segment) return;
-    onShowTranscript();
+    setCenterTab("transcript");
     setHighlightIndex(segmentIndex);
     if (highlightTimer.current) clearTimeout(highlightTimer.current);
     highlightTimer.current = setTimeout(
@@ -286,12 +297,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // P8a: neue Segmente waehrend der Verarbeitung -> ans Ende scrollen, solange
   // der Schalter an ist und der Nutzer nicht weggescrollt hat.
   useLayoutEffect(() => {
-    if (!growing || !autoScroll || !following || !slots.transcript) {
+    if (!growing || !autoScroll || !following || !slots.content) {
       return;
     }
     const el = transcriptRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [segments, growing, autoScroll, following, slots.transcript]);
+  }, [segments, growing, autoScroll, following, slots.content, centerTab]);
 
   useEffect(() => {
     setFollowing(true);
@@ -323,11 +334,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
 
   // Nach dem Wechsel in den Transkript-Reiter steht die Zeile erst im DOM.
   useEffect(() => {
-    if (highlightIndex === null || !slots.transcript) return;
+    if (highlightIndex === null || !slots.content) return;
     transcriptRef.current
       ?.querySelector<HTMLElement>(`[data-segment-index="${highlightIndex}"]`)
       ?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [highlightIndex, slots.transcript]);
+  }, [highlightIndex, slots.content, centerTab]);
 
   // M4-P4e: Chat (Strg+J) und Belegsprung.
   // M6-P6c: Follow-up-Mail
@@ -362,7 +373,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
    */
   const jumpToCitation = (citation: Citation) => {
     if (citation.source === "user_notes" || citation.source === "ai_notes") {
-      setMidTab(citation.source === "user_notes" ? "notes" : "ai");
+      onLowerTab(citation.source === "user_notes" ? "notes" : "ai");
       if (citation.ref_key) {
         const attr =
           citation.source === "user_notes" ? "data-block-id" : "data-entry-id";
@@ -374,7 +385,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       return;
     }
     if (citation.segment_index !== null) jumpToSource(citation.segment_index);
-    else onShowTranscript();
+    else setCenterTab("transcript");
   };
 
   // Notizen laden nach dem Tabwechsel: kurz auf den Block warten, dann
@@ -470,6 +481,18 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   useEffect(() => {
     void loadParticipants();
   }, [loadParticipants]);
+
+  // G4: Vorlage (Chip im Kopf) und Ablage des Protokolls (Info-Dialog).
+  const templateInfo = useTemplateInfo(meetingId);
+  const [managerOpen, setManagerOpen] = useState(false);
+  const [regenOpen, setRegenOpen] = useState(false);
+  // Die Wahl in den Vorlagen-Dialogen steht danach im Chip und im Info-Dialog.
+  const reloadTemplate = templateInfo.reload;
+  useEffect(() => {
+    if (!templateOpen && !regenOpen && !managerOpen) {
+      void reloadTemplate().catch(() => {});
+    }
+  }, [templateOpen, regenOpen, managerOpen, reloadTemplate]);
 
   // M4-P4e: Sprung aus einem globalen Chat erst, wenn die Segmente da sind.
   const handledJump = useRef<number | null>(null);
@@ -600,13 +623,13 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const hasList = !loading && segments.length > 0;
   useEffect(() => {
     const el = transcriptRef.current;
-    if (!el || !slots.transcript || !hasList) return;
+    if (!el || !slots.content || !hasList) return;
     const observer = new ResizeObserver(() => {
       if (keepAtEnd.current) el.scrollTop = el.scrollHeight;
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [slots.transcript, hasList]);
+  }, [slots.content, hasList]);
 
   /** Neuer Titel aus dem Kopf: Fehlertext oder `null`. */
   const renameTo = async (next: string): Promise<string | null> => {
@@ -667,7 +690,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
 
   /** KI-Notizen bzw. Protokoll neu erzeugen: Reiter zeigen, dann starten. */
   const regenerateNotes = () => {
-    setMidTab("ai");
+    onLowerTab("ai");
     void commands.meetingNotesEnhance(meetingId, null).then((result) => {
       if (result.status === "error" && result.error !== "stopped") {
         const text = enhanceErrorText(result.error);
@@ -676,7 +699,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     });
   };
   const regenerateMinutes = () => {
-    setMidTab("minutes");
+    setCenterTab("minutes");
     void commands.meetingsGenerateMinutes(meetingId, null).then((result) => {
       if (result.status === "error") {
         const code = minutesErrorCode(result.error);
@@ -789,10 +812,10 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     }
   };
 
-  /** Symbolzeile mit Menue (breit) bzw. nur das Menue mit allen Aktionen (schmal). */
-  const actions = (menuOnly: boolean) => (
+  /** Symbolzeile (Bedienspalte) oder Menue im Kopf (schmal: mit allen Aktionen). */
+  const actions = (mode: "toolbar" | "menu" | "menu-all") => (
     <MeetingActions
-      menuOnly={menuOnly}
+      mode={mode}
       hasSegments={segments.length > 0}
       hasSpeakers={speakers.length > 0}
       hasAudio={hasAudio}
@@ -814,6 +837,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       onRegenNotes={regenerateNotes}
       onRegenMinutes={regenerateMinutes}
       onTemplate={() => setTemplateOpen(true)}
+      onManageTemplates={() => setManagerOpen(true)}
+      onRegenWithTemplate={() => setRegenOpen(true)}
       onSpeakers={() => setSpeakersOpen(true)}
       onRename={() => setRenameNonce((n) => n + 1)}
       onMove={() => setMoveOpen(true)}
@@ -835,180 +860,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     !loading &&
     segments.length === 0;
 
-  /** Kopf der Besprechung und die Reiter der Arbeitsflaeche (Mitte). */
-  const contentPart = (
-    <>
-      {youtube.panel}
-      <MeetingHeader
-        meeting={meeting}
-        progress={jobProgress}
-        queue={queuePosition}
-        participants={participants}
-        projectNames={projectNames}
-        onRename={renameTo}
-        renameNonce={renameNonce}
-        onOpenDetails={() => setDetailsOpen(true)}
-        onOpenProjects={() => setMoveOpen(true)}
-        onManagePeople={() => setPeopleOpen(true)}
-        onPersonFilter={(person) => onPersonFilter?.(person)}
-        onPersonAsk={(person) => onPersonAsk?.(person)}
-        tabs={midTabs}
-        tab={midTab}
-        onTab={(id) => {
-          if (isMidTab(id)) setMidTab(id);
-        }}
-        tabsLabel={t("meetings.layout.contentTabs")}
-        menu={compact ? actions(true) : undefined}
-        autoEdit={autoRename}
-        onAutoEditStarted={onAutoRenameStarted}
-      />
-
-      {emptyEntry && fill && (
-        <EmptyStartCard
-          onRecord={fill.record}
-          onImport={fill.importFile}
-          onLink={fill.link}
-          recordDisabled={fill.recordDisabled}
-          importDisabled={fill.importDisabled}
-        />
-      )}
-
-      {meeting.status === "cancelled" && !jobProgress && (
-        <div
-          data-testid="cancelled-panel"
-          className="space-y-2 rounded-md border border-mid-gray/20 px-3 py-2"
-        >
-          <p className="text-sm font-medium">
-            {notStarted
-              ? t("meetings.queue.removedTitle")
-              : t("meetings.progress.cancelledTitle")}
-          </p>
-          <p className="text-xs text-text/70">
-            {notStarted
-              ? t("meetings.queue.removedBody")
-              : t("meetings.progress.cancelledBody", {
-                  count: segments.length,
-                })}
-          </p>
-          {(hasAudio || notStarted) && (
-            <Button
-              size="sm"
-              variant="secondary"
-              data-testid="job-continue"
-              onClick={() => void continueProcessing()}
-              disabled={continuing}
-            >
-              {notStarted
-                ? t("meetings.queue.requeue")
-                : t("meetings.progress.continue")}
-            </Button>
-          )}
-          {continueError && (
-            <p
-              className="text-sm text-red-400"
-              data-testid="job-continue-error"
-            >
-              {continueError}
-            </p>
-          )}
-        </div>
-      )}
-
-      <div role="tabpanel" data-testid={`mid-panel-${midTab}`}>
-        {midTab === "compare" ? (
-          <CompareView
-            meetingId={meetingId}
-            variants={variants}
-            onActivated={() => loadSegments()}
-            onMerged={() => reloadVariants()}
-          />
-        ) : midTab === "notes" || midTab === "ai" ? (
-          <div className="space-y-3" ref={notesRef}>
-            {midTab === "notes" ? (
-              <MyNotesView meeting={meeting} live={live} compact={compact} />
-            ) : (
-              <ProvenanceArea
-                subject={{
-                  type: "document",
-                  meetingId,
-                  docKind: "enhanced_notes",
-                }}
-                testId="prov-area-ai"
-              >
-                <EnhancedNotesView
-                  meeting={meeting}
-                  segments={segments}
-                  epochKey={epochKey}
-                  hasAudio={hasAudio}
-                  onJumpToSource={jumpToSource}
-                />
-              </ProvenanceArea>
-            )}
-          </div>
-        ) : (
-          <ProvenanceArea
-            subject={{ type: "document", meetingId, docKind: "minutes" }}
-            testId="prov-area-minutes"
-          >
-            <MinutesView meetingId={meetingId} meetingTitle={meetingTitle} />
-          </ProvenanceArea>
-        )}
-      </div>
-    </>
-  );
-
-  /** Wiedergabe, Fortschritt und Symbolzeile (rechts oben, unter der Aufnahmezeile). */
-  const controlsPart = (
-    <>
-      {hasAudio && !live && (
-        <AudioPlayerGroup>
-          {meeting.mic_audio_path && (
-            <div className="space-y-0.5" data-testid="rec-player">
-              {meeting.system_audio_path && (
-                <p className="text-xs text-text/60">
-                  {meeting.source === "import"
-                    ? t("meetings.meta.audioImport")
-                    : t("meetings.live.me")}
-                </p>
-              )}
-              <AudioPlayer
-                compact
-                controlRef={micPlayerRef}
-                src={convertFileSrc(meeting.mic_audio_path, "asset")}
-                className="w-full"
-              />
-            </div>
-          )}
-          {meeting.system_audio_path && (
-            <div className="space-y-0.5" data-testid="rec-player-system">
-              {meeting.mic_audio_path && (
-                <p className="text-xs text-text/60">
-                  {t("meetings.live.remote")}
-                </p>
-              )}
-              <AudioPlayer
-                compact
-                controlRef={systemPlayerRef}
-                src={convertFileSrc(meeting.system_audio_path, "asset")}
-                className="w-full"
-              />
-            </div>
-          )}
-        </AudioPlayerGroup>
-      )}
-
-      {jobProgress && (
-        <JobPanel progress={jobProgress} heldForRecording={held} />
-      )}
-      {!jobProgress && queuePosition && (
-        <QueuePanel meetingId={meetingId} place={queuePosition} />
-      )}
-
-      {!compact && actions(false)}
-    </>
-  );
-
-  /** Transkript (Reiter rechts unten): Werkzeugzeilen fest, die Liste scrollt. */
+  /** Transkript (Reiter in der Mitte): Werkzeugzeilen fest, die Liste scrollt. */
   const activeVariant = variants.find((v) => v.active) ?? null;
   const chooseVariant = async (id: string) => {
     const result = await commands.transcriptVariantActivate(id);
@@ -1022,18 +874,20 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const showChip =
     variants.length > 1 || (youtube.source !== null && variants.length > 0);
 
+  /** Fassungs-Chip: gilt fuer Transkript und Vergleich, deshalb ueber beiden Reitern. */
+  const variantRow = showChip && (
+    <div className="flex shrink-0 flex-wrap items-center gap-2">
+      <VariantChip
+        variants={variants}
+        disabled={growing}
+        onActivate={(v) => void chooseVariant(v.id)}
+        onCompare={() => setCenterTab("compare")}
+      />
+    </div>
+  );
+
   const transcriptPart = (
     <>
-      {showChip && (
-        <div className="flex flex-wrap items-center gap-2">
-          <VariantChip
-            variants={variants}
-            disabled={growing}
-            onActivate={(v) => void chooseVariant(v.id)}
-            onCompare={() => setMidTab("compare")}
-          />
-        </div>
-      )}
       {youtube.source && (
         <YoutubeTranscriptTools
           meetingId={meetingId}
@@ -1238,13 +1092,236 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     </>
   );
 
+  /** Metadaten gespeichert (Dialog oder Teilnehmenden-Popover): alles neu lesen. */
+  const onMetadataSaved = (saved: Meeting) => {
+    // U7: neue Metadaten uebernehmen, Teilnehmende und Projekte neu lesen,
+    // die Liste (Titel, Datum, Suche) neu laden.
+    onMeetingChange(saved);
+    void loadParticipants();
+    void loadFolders();
+    notifyMeetingsChanged();
+  };
+
+  /** Kopf der Besprechung samt Reitern (Transkript, Protokoll) und deren Inhalt (Mitte). */
+  const contentPart = (
+    <>
+      {youtube.panel}
+      <MeetingHeader
+        meeting={meeting}
+        progress={jobProgress}
+        queue={queuePosition}
+        participantsSlot={
+          <ParticipantsPopover
+            meeting={meeting}
+            participants={participants}
+            speakers={speakers}
+            onSaved={onMetadataSaved}
+            onSpeakersChanged={onSpeakersChanged}
+            onFilter={(person) => onPersonFilter?.(person)}
+            onAsk={(person) => onPersonAsk?.(person)}
+            onManage={() => setPeopleOpen(true)}
+          />
+        }
+        templateName={templateInfo.templateName}
+        onOpenTemplate={() => setTemplateOpen(true)}
+        projectNames={projectNames}
+        onRename={renameTo}
+        renameNonce={renameNonce}
+        onOpenDetails={() => setDetailsOpen(true)}
+        onOpenProjects={() => setMoveOpen(true)}
+        tabs={centerTabs}
+        tab={centerTab}
+        onTab={(id) => {
+          if (isCenterTab(id)) setCenterTab(id);
+        }}
+        tabsLabel={t("meetings.layout.contentTabs")}
+        menu={actions(compact ? "menu-all" : "menu")}
+        autoEdit={autoRename}
+        onAutoEditStarted={onAutoRenameStarted}
+      />
+
+      {emptyEntry && fill && (
+        <EmptyStartCard
+          onRecord={fill.record}
+          onImport={fill.importFile}
+          onLink={fill.link}
+          recordDisabled={fill.recordDisabled}
+          importDisabled={fill.importDisabled}
+        />
+      )}
+
+      {meeting.status === "cancelled" && !jobProgress && (
+        <div
+          data-testid="cancelled-panel"
+          className="space-y-2 rounded-md border border-mid-gray/20 px-3 py-2"
+        >
+          <p className="text-sm font-medium">
+            {notStarted
+              ? t("meetings.queue.removedTitle")
+              : t("meetings.progress.cancelledTitle")}
+          </p>
+          <p className="text-xs text-text/70">
+            {notStarted
+              ? t("meetings.queue.removedBody")
+              : t("meetings.progress.cancelledBody", {
+                  count: segments.length,
+                })}
+          </p>
+          {(hasAudio || notStarted) && (
+            <Button
+              size="sm"
+              variant="secondary"
+              data-testid="job-continue"
+              onClick={() => void continueProcessing()}
+              disabled={continuing}
+            >
+              {notStarted
+                ? t("meetings.queue.requeue")
+                : t("meetings.progress.continue")}
+            </Button>
+          )}
+          {continueError && (
+            <p
+              className="text-sm text-red-400"
+              data-testid="job-continue-error"
+            >
+              {continueError}
+            </p>
+          )}
+        </div>
+      )}
+
+      {centerTab !== "minutes" && variantRow}
+
+      {/* Das Transkript bleibt eingehaengt und wird nur verborgen: ein
+          Live-Transkript sammelt Saetze, die Liste behaelt ihre Stelle. */}
+      <div
+        role="tabpanel"
+        data-testid="mid-panel-transcript"
+        hidden={centerTab !== "transcript"}
+        className={
+          centerTab === "transcript"
+            ? "flex min-h-[5rem] min-w-0 flex-1 flex-col gap-2"
+            : "hidden"
+        }
+      >
+        {transcriptPart}
+      </div>
+      {centerTab === "minutes" && (
+        <div
+          role="tabpanel"
+          data-testid="mid-panel-minutes"
+          className="min-h-[5rem] min-w-0 flex-1 overflow-y-auto"
+        >
+          <ProvenanceArea
+            subject={{ type: "document", meetingId, docKind: "minutes" }}
+            testId="prov-area-minutes"
+          >
+            <MinutesView meetingId={meetingId} meetingTitle={meetingTitle} />
+          </ProvenanceArea>
+        </div>
+      )}
+      {centerTab === "compare" && (
+        <div
+          role="tabpanel"
+          data-testid="mid-panel-compare"
+          className="min-h-[5rem] min-w-0 flex-1 overflow-y-auto"
+        >
+          <CompareView
+            meetingId={meetingId}
+            variants={variants}
+            onActivated={() => loadSegments()}
+            onMerged={() => reloadVariants()}
+          />
+        </div>
+      )}
+    </>
+  );
+
+  /** Notizen bzw. KI-Notizen (Reiter rechts unten); sie bleiben waehrend der Fragen stehen. */
+  const notesPart = (
+    <div className="space-y-2" ref={notesRef}>
+      {notesTab === "notes" ? (
+        <MyNotesView meeting={meeting} live={live} compact={compact} />
+      ) : (
+        <ProvenanceArea
+          subject={{
+            type: "document",
+            meetingId,
+            docKind: "enhanced_notes",
+          }}
+          testId="prov-area-ai"
+        >
+          <EnhancedNotesView
+            meeting={meeting}
+            segments={segments}
+            epochKey={epochKey}
+            hasAudio={hasAudio}
+            onJumpToSource={jumpToSource}
+          />
+        </ProvenanceArea>
+      )}
+    </div>
+  );
+
+  /** Wiedergabe, Fortschritt und Symbolzeile (rechts oben, unter der Aufnahmezeile). */
+  const controlsPart = (
+    <>
+      {hasAudio && !live && (
+        <AudioPlayerGroup>
+          {meeting.mic_audio_path && (
+            <div className="space-y-0.5" data-testid="rec-player">
+              {meeting.system_audio_path && (
+                <p className="text-xs text-text/60">
+                  {meeting.source === "import"
+                    ? t("meetings.meta.audioImport")
+                    : t("meetings.live.me")}
+                </p>
+              )}
+              <AudioPlayer
+                compact
+                controlRef={micPlayerRef}
+                src={convertFileSrc(meeting.mic_audio_path, "asset")}
+                className="w-full"
+              />
+            </div>
+          )}
+          {meeting.system_audio_path && (
+            <div className="space-y-0.5" data-testid="rec-player-system">
+              {meeting.mic_audio_path && (
+                <p className="text-xs text-text/60">
+                  {t("meetings.live.remote")}
+                </p>
+              )}
+              <AudioPlayer
+                compact
+                controlRef={systemPlayerRef}
+                src={convertFileSrc(meeting.system_audio_path, "asset")}
+                className="w-full"
+              />
+            </div>
+          )}
+        </AudioPlayerGroup>
+      )}
+
+      {jobProgress && (
+        <JobPanel progress={jobProgress} heldForRecording={held} />
+      )}
+      {!jobProgress && queuePosition && (
+        <QueuePanel meetingId={meetingId} place={queuePosition} />
+      )}
+
+      {!compact && actions("toolbar")}
+    </>
+  );
+
   // Die Teile wandern per Portal in ihre Bereiche der Aufnahmen-Seite; der
   // Zustand (Segmente, Player, Auswahl) bleibt hier an einer Stelle.
   return (
     <>
       {slots.content && createPortal(contentPart, slots.content)}
       {slots.controls && createPortal(controlsPart, slots.controls)}
-      {slots.transcript && createPortal(transcriptPart, slots.transcript)}
+      {slots.notes && createPortal(notesPart, slots.notes)}
       <MeetingExportDialog
         open={exportOpen}
         onOpenChange={setExportOpen}
@@ -1272,13 +1349,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         participants={participants}
         folders={allFolders}
         folderIds={meetingFolderIds}
-        onSaved={(saved) => {
-          // U7: neue Metadaten uebernehmen, Teilnehmende und Projekte neu lesen,
-          // die Liste (Titel, Datum, Suche) neu laden.
-          onMeetingChange(saved);
-          void loadParticipants();
-          void loadFolders();
-          notifyMeetingsChanged();
+        onSaved={onMetadataSaved}
+        template={{
+          chosen: templateInfo.templateName,
+          minutesTemplate: templateInfo.minutesTemplate,
+          minutesAuto: templateInfo.minutesAuto,
+          minutesFile: templateInfo.minutesFile,
         }}
       />
       <SpeakerNamesDialog
@@ -1311,6 +1387,48 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         }
       >
         <div data-testid="template-dialog">
+          <MeetingTemplatePicker meetingId={meetingId} menuPortal />
+        </div>
+      </Dialog>
+      <TemplateManagerDialog
+        open={managerOpen}
+        onOpenChange={setManagerOpen}
+        onChanged={() => void reloadTemplate().catch(() => {})}
+      />
+      <Dialog
+        open={regenOpen}
+        onOpenChange={setRegenOpen}
+        title={t("meetings.actions.regenWithTemplateTitle")}
+        description={t("meetings.actions.regenWithTemplateBody")}
+        closeLabel={t("meetings.actions.close")}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setRegenOpen(false)}>
+              {t("meetings.actions.close")}
+            </Button>
+            <Button
+              variant="secondary"
+              data-testid="regen-notes-go"
+              onClick={() => {
+                setRegenOpen(false);
+                regenerateNotes();
+              }}
+            >
+              {t("meetings.actions.regenNotes")}
+            </Button>
+            <Button
+              data-testid="regen-minutes-go"
+              onClick={() => {
+                setRegenOpen(false);
+                regenerateMinutes();
+              }}
+            >
+              {t("meetings.actions.regenMinutes")}
+            </Button>
+          </>
+        }
+      >
+        <div data-testid="regen-template-dialog">
           <MeetingTemplatePicker meetingId={meetingId} menuPortal />
         </div>
       </Dialog>

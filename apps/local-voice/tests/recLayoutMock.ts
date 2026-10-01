@@ -215,6 +215,13 @@ export const installRecMock = async (
       w.__progressList = [];
       w.__calls = [];
       w.__participants = {};
+      // G4: erkannte Sprecher (je Besprechung), Vorlage und Protokoll-Ablage
+      // der Besprechung. Bekannte Personen und `meetings_update_metadata` kommen
+      // aus `recLiveMock` (`__people`).
+      w.__speakers = {};
+      w.__template = null;
+      w.__minutesFile = null;
+      w.__minutesMeta = null;
       w.__folderMap = { m2: ["f2", "f3"] };
       w.__pick = null;
       w.__templates = [
@@ -222,14 +229,14 @@ export const installRecMock = async (
           id: "builtin:allgemein",
           title: "Allgemein",
           builtin: true,
-          spec: {},
+          spec: { version: 1, context: "Zweck", sections: [] },
           updated_at: 1,
         },
         {
           id: "builtin:vertrieb",
           title: "Kundengespräch / Vertrieb",
           builtin: true,
-          spec: {},
+          spec: { version: 1, context: "Zweck", sections: [] },
           updated_at: 1,
         },
       ];
@@ -300,6 +307,63 @@ export const installRecMock = async (
                 return w.__templates;
               case "meeting_participants":
                 return w.__participants[args.meetingId] ?? [];
+              case "meeting_speakers_list":
+                return w.__speakers[args.meetingId] ?? [];
+              case "meeting_speaker_rename": {
+                const list = w.__speakers[args.meetingId] ?? [];
+                const sp = list.find(
+                  (x: any) =>
+                    x.channel === args.channel &&
+                    x.speaker_index === args.speakerIndex,
+                );
+                if (sp) {
+                  sp.display_name = args.name;
+                  sp.label = args.name ?? sp.label;
+                }
+                let person = (w.__people ??= []).find(
+                  (p: any) => p.name === args.name,
+                );
+                if (!person && args.name) {
+                  person = {
+                    id: `h-neu-${w.__people.length}`,
+                    name: args.name,
+                    email: null,
+                    company: null,
+                    is_self: false,
+                    meeting_count: 1,
+                  };
+                  w.__people.push(person);
+                }
+                const have = w.__participants[args.meetingId] ?? [];
+                if (
+                  person &&
+                  !have.some((p: any) => p.human_id === person.id)
+                ) {
+                  w.__participants[args.meetingId] = [
+                    ...have,
+                    {
+                      human_id: person.id,
+                      name: person.name,
+                      email: person.email,
+                      company: person.company,
+                      role: "speaker",
+                      source: "speaker",
+                      is_self: false,
+                      meeting_count: 1,
+                    },
+                  ];
+                }
+                return sp;
+              }
+              case "meetings_minutes_file":
+                return w.__minutesFile;
+              case "meetings_minutes_meta":
+                return w.__minutesMeta;
+              case "meetings_get_template":
+                return w.__template;
+              case "meetings_set_template":
+                w.__template = args.templateId;
+                return null;
               case "get_app_settings":
               case "get_default_settings":
                 return w.__settings;
@@ -383,7 +447,6 @@ export const installRecMock = async (
               case "get_custom_sounds":
                 return { start: false, stop: false };
               case "action_items_list":
-              case "meeting_speakers_list":
               case "meeting_speaker_notices":
               case "chat_recipes_list":
               case "meeting_chat_threads":

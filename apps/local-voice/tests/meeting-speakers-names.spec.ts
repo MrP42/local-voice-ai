@@ -513,9 +513,8 @@ test.describe("Menü: Sprecher benennen …", () => {
     // Der Dialog zeigt den neuen Namen als Zeilenüberschrift.
     await expect(rows.nth(1)).toContainText("Ben Müller");
     // Auch die Kopfzeile kennt die Person jetzt.
-    await expect(page.getByTestId("participant-chip").first()).toHaveAttribute(
-      "title",
-      /^Ben Müller /,
+    await expect(page.getByTestId("participants-chip")).toContainText(
+      "Ben Müller",
     );
   });
 
@@ -598,10 +597,7 @@ test.describe("Namensvorschläge", () => {
       speakerIndex: 1,
       name: "André",
     });
-    await expect(page.getByTestId("participant-chip").first()).toHaveAttribute(
-      "title",
-      /^André /,
-    );
+    await expect(page.getByTestId("participants-chip")).toContainText("André");
   });
 
   test("Verwerfen entfernt den Hinweis dauerhaft und benennt nichts", async ({
@@ -779,9 +775,8 @@ test.describe("Der Name gilt überall", () => {
 
     await expect(who(page, 1)).toHaveText("Anna Berg");
     await expect(who(page, 3)).toHaveText("Anna Berg");
-    await expect(page.getByTestId("participant-chip").first()).toHaveAttribute(
-      "title",
-      /^Anna Berg /,
+    await expect(page.getByTestId("participants-chip")).toContainText(
+      "Anna Berg",
     );
     // Die Namensvorschläge sprechen den Sprecher mit dem neuen Namen an
     // (dieser Sprecher ist jetzt benannt: kein Vorschlag mehr für ihn).

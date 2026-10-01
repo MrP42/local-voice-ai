@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { Folder, Meeting, Participant } from "@/bindings";
 import type { LiveProgress } from "@/lib/meetingJobs";
+import { formatMeetingTimestamp } from "@/lib/meetingDate";
 import { useModelStore } from "@/stores/modelStore";
 import { useSettings } from "../../../hooks/useSettings";
 import { Button } from "../../ui/Button";
@@ -39,6 +41,21 @@ interface MeetingDetailsDialogProps {
   folderIds?: string[];
   /** U7: die Metadaten wurden gespeichert (aktuelle Besprechung). */
   onSaved?: (meeting: Meeting) => void;
+  /**
+   * G4: Vorlage und Ablage von Protokoll und KI-Notizen. Frueher standen sie im
+   * Reiter Protokoll ("Automatisch abgelegt unter ...", "Erzeugt mit der
+   * Vorlage ...") und kosteten dort Platz vor dem Inhalt.
+   */
+  template?: {
+    /** Gewaehlte Vorlage (Anzeigename), `null` = Standardvorlage. */
+    chosen: string | null;
+    /** Vorlage, mit der das Protokoll erzeugt wurde. */
+    minutesTemplate: string | null;
+    /** Das Modell hat sie nach dem Inhalt gewaehlt. */
+    minutesAuto: boolean;
+    /** Pfad, unter dem das Protokoll automatisch abgelegt wurde. */
+    minutesFile: string | null;
+  };
 }
 
 /**
@@ -60,6 +77,7 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
   folders = [],
   folderIds = [],
   onSaved,
+  template,
 }) => {
   const { t, i18n } = useTranslation();
   const { getSetting } = useSettings();
@@ -76,10 +94,7 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
   }, [open, models.length, loadModels]);
 
   const dateTime = (seconds: number) =>
-    new Intl.DateTimeFormat(i18n.language, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }).format(new Date(seconds * 1000));
+    formatMeetingTimestamp(seconds, i18n.language, "full");
 
   const tracks = [
     meeting.mic_audio_path
@@ -205,6 +220,53 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
         ? t("meetings.detailsDialog.modelNote", { name: modelName })
         : t("meetings.detailsDialog.modelDefault"),
     },
+    ...(template
+      ? [
+          {
+            key: "template",
+            label: t("meetings.detailsDialog.template"),
+            value:
+              template.chosen ?? t("meetings.detailsDialog.templateDefault"),
+          },
+          {
+            key: "minutes-origin",
+            label: t("meetings.detailsDialog.minutesOrigin"),
+            value: template.minutesTemplate ? (
+              <span data-testid="minutes-created-with">
+                {t(
+                  template.minutesAuto
+                    ? "meetings.minutes.createdWithAuto"
+                    : "meetings.minutes.createdWith",
+                  { title: template.minutesTemplate },
+                )}
+              </span>
+            ) : (
+              <span className="text-text/50">
+                {t("meetings.detailsDialog.minutesNone")}
+              </span>
+            ),
+          },
+          {
+            key: "minutes-file",
+            label: t("meetings.detailsDialog.minutesFile"),
+            value: template.minutesFile ? (
+              <button
+                type="button"
+                data-testid="minutes-file-open"
+                title={t("meetings.detailsDialog.minutesFileOpen")}
+                onClick={() => void revealItemInDir(template.minutesFile!)}
+                className="cursor-pointer break-all text-start underline hover:text-logo-primary"
+              >
+                {template.minutesFile}
+              </button>
+            ) : (
+              <span className="text-text/50">
+                {t("meetings.detailsDialog.minutesFileNone")}
+              </span>
+            ),
+          },
+        ]
+      : []),
     ...(meeting.consent_confirmed_at !== null
       ? [
           {

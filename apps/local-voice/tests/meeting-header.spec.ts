@@ -82,16 +82,19 @@ test.describe("Detailkopf", () => {
       "data-state",
       "processing",
     );
-    const chips = page.getByTestId("participant-chip");
-    // Vier Avatare, der Rest steht hinter "+1".
-    await expect(chips).toHaveCount(4);
-    await expect(head(page)).toContainText("+1");
+    // G4: ein Chip "5 Teilnehmende: Anna Berg, Bernd Alt, Clara Neu, +2"; der
+    // Rest und die volle Liste stehen im Tooltip bzw. im Popover.
+    const chip = page.getByTestId("participants-chip");
+    await expect(chip).toContainText("5 Teilnehmende");
+    await expect(head(page)).toContainText("+2");
     const box = (await head(page).boundingBox())!;
     expect(box.height).toBeLessThanOrEqual(120);
-    // Der Avatar traegt Initialen, der Name steht im Popover.
-    await expect(chips.first()).toContainText("Anna Berg");
-    await chips.first().click();
-    await expect(page.getByTestId("person-name")).toHaveText("Anna Berg");
+    await chip.click();
+    const rows = page.getByTestId("participant-row");
+    await expect(rows).toHaveCount(5);
+    await expect(rows.first().getByTestId("participant-name")).toHaveText(
+      "Anna Berg",
+    );
   });
 
   test("Kopf: Titel, Chips und Reiter; der grosse Statusblock und der Neu-transkribieren-Kasten entfallen", async ({
@@ -112,9 +115,15 @@ test.describe("Detailkopf", () => {
       "Geschäftlich",
     );
     await expect(page.getByTestId("project-chip")).toContainText("+1");
-    for (const name of ["Notizen", "KI-Notizen", "Protokoll"]) {
+    // G4: Mitte = Transkript und Protokoll; Notizen und KI-Notizen rechts unten.
+    for (const name of ["Transkript", "Protokoll"]) {
       await expect(
         head(page).getByRole("tab", { name, exact: true }),
+      ).toBeVisible();
+    }
+    for (const name of ["Notizen", "KI-Notizen", "Fragen"]) {
+      await expect(
+        page.getByTestId("rec-lower").getByRole("tab", { name, exact: true }),
       ).toBeVisible();
     }
     // Die Rastertabelle und der Kasten sind weg; beides steht im Dialog bzw. Menue.
@@ -122,9 +131,13 @@ test.describe("Detailkopf", () => {
     await expect(
       content.getByRole("button", { name: "Neu transkribieren" }),
     ).toHaveCount(0);
-    // Die Vorlagenwahl steht nicht als Auswahl in den Reitern Notizen / KI-Notizen.
-    await expect(content.locator(".app-select__control")).toHaveCount(0);
-    await head(page).getByRole("tab", { name: "KI-Notizen" }).click();
+    // Die Vorlagenwahl steht nicht als Auswahl in den Reitern Notizen / KI-Notizen
+    // und Protokoll (sie steht im Menue).
+    const lower = page.getByTestId("rec-lower");
+    await expect(lower.locator(".app-select__control")).toHaveCount(0);
+    await lower.getByRole("tab", { name: "KI-Notizen" }).click();
+    await expect(lower.locator(".app-select__control")).toHaveCount(0);
+    await head(page).getByRole("tab", { name: "Protokoll" }).click();
     await expect(content.locator(".app-select__control")).toHaveCount(0);
   });
 
@@ -164,7 +177,9 @@ test.describe("Detailkopf", () => {
     await expect(page.getByTestId("meeting-title-input")).toBeFocused();
     await page.keyboard.press("Escape");
     // Ohne Fokus im Titel, aber auch nicht in einem Eingabefeld.
-    await page.getByTestId("rec-detail-chips").click();
+    await page
+      .getByTestId("rec-detail-chips")
+      .click({ position: { x: 3, y: 1 } });
     await page.keyboard.press("F2");
     await expect(page.getByTestId("meeting-title-input")).toBeFocused();
   });
@@ -240,7 +255,6 @@ test.describe("Symbolzeile und Menue", () => {
     ["copy-transcript", "Kopieren"],
     ["people-open", "Personen"],
     ["chat-toggle", "Fragen"],
-    ["meeting-menu", "Menü"],
   ] as const;
 
   test("die Symbolzeile hat gleich grosse Knoepfe mit Namen, Rolle und Tastaturkuerzel", async ({
@@ -261,17 +275,25 @@ test.describe("Symbolzeile und Menue", () => {
       "aria-keyshortcuts",
       "Control+J",
     );
-    await expect(toolbar.getByTestId("meeting-menu")).toHaveAttribute(
-      "aria-haspopup",
-      "menu",
-    );
+    // G4: das Menue steht im Kopf neben "Details", nicht mehr in der Symbolzeile.
+    await expect(toolbar.getByTestId("meeting-menu")).toHaveCount(0);
+    const menu = head(page).getByTestId("meeting-menu");
+    await expect(menu).toHaveAttribute("aria-label", "Menü");
+    await expect(menu).toHaveAttribute("aria-haspopup", "menu");
+    const m = (await menu.boundingBox())!;
+    const info = (await head(page)
+      .getByTestId("meeting-details-open")
+      .boundingBox())!;
+    expect(Math.round(m.width)).toBe(36);
+    expect(m.x).toBeGreaterThan(info.x);
+    expect(Math.abs(m.y - info.y)).toBeLessThan(2);
   });
 
   test("AK5: Tooltips mit Maus - Name und Kurzerklaerung, verbunden per aria-describedby", async ({
     page,
   }) => {
     await openM2(page);
-    for (const [id, name] of ICONS) {
+    for (const [id, name] of [...ICONS, ["meeting-menu", "Menü"] as const]) {
       const button = page.getByTestId(id);
       await button.hover();
       const tip = page.getByRole("tooltip");
@@ -315,6 +337,12 @@ test.describe("Symbolzeile und Menue", () => {
     await expect(page.getByRole("tooltip").locator("strong")).toHaveText(
       "Details",
     );
+    // Tab: weiter zum Menue neben dem Info-Symbol, mit sofortigem Tooltip.
+    await page.keyboard.press("Tab");
+    await expect(page.getByTestId("meeting-menu")).toBeFocused();
+    await expect(page.getByRole("tooltip").locator("strong")).toHaveText(
+      "Menü",
+    );
     await page.keyboard.press("Escape");
     await page.getByTestId("meeting-title").hover();
     await expect(page.getByRole("tooltip").locator("strong")).toHaveText(
@@ -332,13 +360,15 @@ test.describe("Symbolzeile und Menue", () => {
     await openM2(page);
     await page.getByTestId("meeting-menu").click();
     const items = page.getByRole("menuitem");
-    await expect(items).toHaveCount(11);
+    await expect(items).toHaveCount(13);
     const labels = (await items.allTextContents()).map((t) => t.trim());
     expect(labels).toEqual([
       "Neu transkribieren …",
       "KI-Notizen neu erzeugen",
       "Protokoll neu erzeugen",
-      "Vorlage wechseln …",
+      "Neu erzeugen mit Vorlage …",
+      "Vorlage wählen …",
+      "Vorlagen verwalten …",
       "Sprecher benennen …",
       "UmbenennenF2",
       "In Projekt verschieben …",
@@ -365,12 +395,12 @@ test.describe("Symbolzeile und Menue", () => {
     await expect(page.getByTestId("meeting-title-input")).toBeFocused();
   });
 
-  test("Menue: Vorlage wechseln oeffnet einen Dialog mit der Vorlagenwahl (nicht doppelt als Karte)", async ({
+  test("Menue: Vorlage waehlen oeffnet einen Dialog mit der Vorlagenwahl (nicht doppelt als Karte)", async ({
     page,
   }) => {
     await openM2(page);
     await chooseMenu(page, "menu-template");
-    const dialog = page.getByRole("dialog", { name: "Vorlage wechseln" });
+    const dialog = page.getByRole("dialog", { name: "Vorlage wählen" });
     await expect(dialog.locator(".app-select__control")).toHaveCount(1);
     await expect(
       dialog.getByRole("button", { name: "Vorlagen verwalten …" }),
@@ -394,7 +424,7 @@ test.describe("Symbolzeile und Menue", () => {
       templateId: null,
     });
     await expect(
-      head(page).getByRole("tab", { name: "KI-Notizen" }),
+      page.getByTestId("rec-lower").getByRole("tab", { name: "KI-Notizen" }),
     ).toHaveAttribute("aria-selected", "true");
     await chooseMenu(page, "menu-regen-minutes");
     await expect
