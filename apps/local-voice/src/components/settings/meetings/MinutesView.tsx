@@ -18,6 +18,7 @@ import { Alert } from "../../ui/Alert";
 import Badge from "../../ui/Badge";
 import { IconAction } from "../../ui/IconAction";
 import { MarkdownContent } from "../../whats-new/MarkdownContent";
+import { defaultDocBasis } from "./language/DocBasisFields";
 import { Check, Copy, Download, RefreshCw, Sparkles } from "lucide-react";
 
 interface MinutesViewProps {
@@ -29,7 +30,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   meetingId,
   meetingTitle,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [doc, setDoc] = useState<MeetingDocument | null>(null);
   const [loading, setLoading] = useState(true);
   // Der Lauf gehoert dem Backend (B14): `running` kommt aus dessen Zustand und
@@ -131,7 +132,12 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setError(null);
     setSaved(null);
     // `null`: die Vorlage, die fuer diese Besprechung gewaehlt ist (Menue, Vorlage).
-    const result = await commands.meetingsGenerateMinutes(meetingId, null);
+    // G5: aktive Fassung, Sprache = letzte Wahl bzw. die der App.
+    const result = await commands.meetingsGenerateMinutes(
+      meetingId,
+      null,
+      defaultDocBasis(i18n.language),
+    );
     if (result.status === "error") {
       // Ein zweiter Start wird abgewiesen, der erste Lauf laeuft weiter: der
       // Reiter zeigt ihn weiter als laufend, kein Fehler.

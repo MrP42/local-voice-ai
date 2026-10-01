@@ -23,6 +23,7 @@ import {
   isTargetKind,
 } from "./model";
 import { KindIcon } from "./KindIcon";
+import { M365Panel } from "./M365Panel";
 
 interface IntegrationDetailProps {
   view: IntegrationView;
@@ -142,7 +143,7 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
     setBusy(false);
   };
 
-  /** Das Backend hat `last_ok_at`/`last_error` gesetzt: Zeile neu holen. */
+  /** Das Backend hat `last_ok_at`/`last_error` gesetzt (Test, Kontoaktion): Zeile neu holen. */
   const refresh = async () => {
     const list = await commands.integrationsList();
     if (list.status === "ok") {
@@ -390,6 +391,10 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
           </div>
         )}
       </section>
+
+      {integration.kind === "m365" && (
+        <M365Panel view={view} onChanged={refresh} />
+      )}
 
       <section className="space-y-2" aria-labelledby="int-dir">
         <h3 id="int-dir" className="text-sm font-semibold">

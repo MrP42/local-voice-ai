@@ -2086,7 +2086,8 @@
         "final_pass": "Final pass",
         "speakers": "Speakers",
         "notes": "AI notes",
-        "minutes": "Minutes"
+        "minutes": "Minutes",
+        "translation": "Translation"
       },
       "state": {
         "pausing": "Pausing …",
@@ -2263,7 +2264,7 @@
     },
     "language": {
       "title": "Transcription language",
-      "description": "Language for meeting transcription — independent of the dictation setting. Meetings are never translated.",
+      "description": "Language for meeting transcription — independent of the dictation setting. “Detect automatically” determines the language per recording from an audio sample and picks the suitable model; a fixed language wins over any detection. Transcription never translates: translations are created as their own version.",
       "auto": "Detect automatically"
     },
     "meta": {
@@ -2350,6 +2351,9 @@
       "templateDefault": "Default template",
       "minutesOrigin": "Minutes created",
       "minutesNone": "No minutes yet",
+      "minutesBasis": "Basis of the minutes",
+      "notesBasis": "Basis of the AI notes",
+      "basisNone": "not recorded (created before this feature)",
       "minutesFile": "Minutes file",
       "minutesFileNone": "Not filed yet",
       "minutesFileOpen": "Show in folder",
@@ -2399,6 +2403,8 @@
       "menuHint": "Re-transcribe, template, move, details, delete …",
       "menuLabel": "More actions",
       "retranscribe": "Re-transcribe …",
+      "translate": "Translate to …",
+      "translateHint": "Translates the transcript sentence by sentence into another language. The original stays as its own version.",
       "retranscribeBusy": "A job is running for this meeting, it cannot be re-transcribed now.",
       "retranscribeNoAudio": "Without an audio file there is nothing to re-transcribe.",
       "regenNotes": "Regenerate AI notes",
@@ -2562,6 +2568,10 @@
     "retranscribe": {
       "description": "Transcribe this meeting again from its recording — for example with a different model.",
       "configuredModel": "Configured meeting model",
+      "language": "Language",
+      "languageAuto": "Detect automatically",
+      "suggestInstalled": "Suited to this language: {{model}} (installed, selected).",
+      "suggestMissing": "{{model}} would suit this language. It is not installed yet: download it under Models and pick it here.",
       "start": "Re-transcribe",
       "running": "Transcribing…",
       "runningHint": "The existing transcript is kept as a version. While the run progresses the view shows the new text; only at the end does it become the active version. If you stop early, the existing transcript stays active. This can take a while for long recordings."
@@ -2919,6 +2929,15 @@
       "opened": "Opened in the email app.",
       "mailtoClipped": "The text was too long for the mail link and is on the clipboard – paste it in the email app with Ctrl+V.",
       "emlSaved": "Saved: {{path}}",
+      "m365": {
+        "via": "Send via {{label}}",
+        "noRecipients": "The mail needs at least one recipient to be sent.",
+        "confirmTitle": "Confirm sending",
+        "confirm": "Send the mail to {{count}} recipient(s) via “{{label}}” now? This cannot be taken back.",
+        "send": "Send now",
+        "cancel": "Cancel",
+        "sent": "Sent via “{{label}}”. The mail is in your Sent folder."
+      },
       "errors": {
         "followup_empty": "The language model returned no text even on the second try. Another language model in the settings may help.",
         "followup_no_content": "No content found for a follow-up – the recording contains no meeting points.",
@@ -3103,6 +3122,74 @@
         "generic": "Saving failed: {{error}}"
       }
     },
+    "langChip": {
+      "chipLabel": "Language of the meeting: {{name}}. Open to change.",
+      "chipUnknown": "Language unknown. Open to set it.",
+      "unknownShort": "Language?",
+      "title": "Language of the meeting",
+      "body": "The language decides which model transcribes it best. The transcript only changes with a re-transcription; the previous version is kept.",
+      "select": "Language",
+      "source": {
+        "probe": "Detected: the model's language detection on an audio sample",
+        "text": "Detected: estimated from the text",
+        "user": "Chosen by you",
+        "setting": "Taken from the “Language” setting",
+        "none": "No origin stored (older meeting)"
+      },
+      "model": "Model: {{model}}",
+      "forcedHint": "The setting was {{forced}}, but the text is {{language}}. The language of the text is shown.",
+      "mismatchHint": "The text reads like {{language}}, but {{chosen}} is chosen. The choice stays until you change it.",
+      "notCovered": "The model {{model}} does not cover {{language}}.",
+      "suggestInstalled": "Better suited: {{model}} (installed).",
+      "suggestMissing": "Better suited: {{model}} (not installed yet, download it under Models).",
+      "save": "Save language",
+      "saveRetranscribe": "Save and re-transcribe",
+      "translate": "Translate to …",
+      "cancel": "Cancel",
+      "close": "Close",
+      "saved": "Language set to {{language}}."
+    },
+    "translate": {
+      "title": "Translate to …",
+      "body": "The local model translates the transcript sentence by sentence. Timestamps and speakers stay, the original stays unchanged and can be chosen at any time.",
+      "source": "Translate from version",
+      "target": "Target language",
+      "hint": "Numbers, proper names and the sentence count are checked per sentence; deviations are flagged, never silently discarded. Progress shows in the control column, stopping creates no version.",
+      "start": "Translate",
+      "cancel": "Cancel",
+      "close": "Close",
+      "done": "Version v{{number}} ({{language}}) is ready.",
+      "compare": "Compare",
+      "noMerge": "An original and its translation cannot be merged.",
+      "allChecked": "All sentences passed the check for numbers, names and sentence count.",
+      "flaggedSummary_one": "{{count}} sentence is flagged: please check.",
+      "flaggedSummary_other": "{{count}} sentences are flagged: please check.",
+      "onlyFlagged": "Show flagged sentences only",
+      "region": "Original and translation, sentence by sentence",
+      "original": "Original {{language}}",
+      "translation": "Translation {{language}}",
+      "reasons": {
+        "numbers": "number differs",
+        "names": "name missing",
+        "sentences": "sentence count differs",
+        "empty": "empty",
+        "length": "unusual length",
+        "not_translated": "not translated"
+      }
+    },
+    "basis": {
+      "variant": "Basis (version of the transcript)",
+      "outputLanguage": "Language of the document",
+      "sameAsBasis": "Same as the basis",
+      "hint": "The choice is shown in the header of the minutes and in the info dialog. The default is the active version and the app language or your last choice.",
+      "original": "Original",
+      "translation": "Translation",
+      "withLanguage": "{{variant}} ({{language}})",
+      "lineMinutes": "Basis: {{basis}} · Minutes in {{language}}",
+      "lineMinutesSame": "Basis: {{basis}} · Minutes in the language of the basis",
+      "lineNotes": "Basis: {{basis}} · AI notes in {{language}}",
+      "lineNotesSame": "Basis: {{basis}} · AI notes in the language of the basis"
+    },
     "variants": {
       "compareTab": "Compare",
       "chip": "Version v{{number}} · {{kind}}",
@@ -3110,6 +3197,7 @@
       "menuLabel": "Versions",
       "itemLabel": "v{{number}} · {{kind}} · {{count}} segments",
       "itemActive": "{{label}} (active)",
+      "itemLabelFlagged": "{{label}} · {{flagged}} flagged",
       "compare": "Compare",
       "activated": "Version v{{number}} is now active.",
       "kinds": {
@@ -3117,7 +3205,8 @@
         "subtitles_auto": "Subtitles (automatic)",
         "stt": "Own transcription",
         "merged": "Merged",
-        "retranscribed": "Re-transcribed"
+        "retranscribed": "Re-transcribed",
+        "translation": "Translation"
       },
       "errors": {
         "variant_busy": "The meeting is being processed. Please wait until it is done.",
@@ -3130,6 +3219,12 @@
         "merge_llm_failed": "The language model did not answer. {{detail}}",
         "merge_rejected": "The merge was discarded: the model invented text or broke the format. No new version is created.",
         "merge_timeout": "The merge took too long.",
+        "translate_empty": "There is no text to translate.",
+        "translate_same_language": "The target language is the language of the version. Please pick another target language.",
+        "translate_cancelled": "The translation was stopped. No version was created.",
+        "translate_llm_failed": "The language model did not answer. No version was created. {{detail}}",
+        "translate_rejected": "More than half of the sections were unusable. No version was created.",
+        "translate_timeout": "The translation took too long.",
         "no_provider": "No language model is set up.",
         "no_model": "No language model is selected."
       },
@@ -3289,6 +3384,93 @@
     "memoryLow": "Memory almost full: the read-aloud and language-model servers were stopped to keep the computer responsive."
   },
   "integrations": {
+    "m365": {
+      "dialog": {
+        "title": "Set up a Microsoft 365 account",
+        "description": "Send mail, save files to OneDrive and attach notes to calendar events, through your own app registration in Microsoft Entra. You sign in in the browser; the app only asks for the permissions of the capabilities you switch on.",
+        "name": "Name",
+        "defaultName": "Microsoft 365",
+        "clientId": "Application (client) ID",
+        "clientIdHint": "The application ID of your app registration. Leave empty to reuse the client ID of the Microsoft 365 calendar. Guide: docs/INTEGRATIONEN-M365.md.",
+        "tenant": "Directory (tenant)",
+        "tenantHint": "Empty means “common” (work, school and personal accounts). “consumers” for personal accounts only.",
+        "capabilities": "Capabilities",
+        "capabilitiesHint": "Signing in only asks for the permissions of the capabilities that are switched on. A capability switched on later needs consent again.",
+        "filesMode": "OneDrive access",
+        "filesFull": "Whole OneDrive (Files.ReadWrite): for work, school and personal accounts",
+        "filesApp": "App folder only (Files.ReadWrite.AppFolder): personal accounts only",
+        "filesFolder": "Folder in OneDrive",
+        "create": "Create"
+      },
+      "caps": {
+        "mail_send": "Send follow-up mails and reports as mail from your mailbox.",
+        "files_write": "Put minutes and files into a OneDrive folder, large files in chunks.",
+        "calendar_write": "Attach a note to the Outlook event of a meeting; the invitation stays unchanged."
+      },
+      "panel": {
+        "title": "Microsoft 365 account",
+        "loading": "Loading …",
+        "states": {
+          "not_configured": "Not set up: the client ID is missing.",
+          "no_capabilities": "No capability switched on.",
+          "needs_sign_in": "Sign-in needed.",
+          "needs_consent": "Extend consent: a capability that is switched on needs new permissions.",
+          "ready": "Signed in and ready."
+        },
+        "account": "Account: {{account}}",
+        "missing": "Consent is missing for: {{scopes}}",
+        "scopes": "Requested permissions",
+        "scopesHint": "Only those of the capabilities that are switched on, plus the sign-in itself (offline_access) and your profile (User.Read).",
+        "save": "Save",
+        "saved": "Saved.",
+        "signIn": "Sign in with Microsoft",
+        "signInAgain": "Sign in again",
+        "extend": "Extend consent",
+        "waiting": "Waiting for the sign-in in the browser …",
+        "signOut": "Sign out",
+        "signedIn": "Signed in.",
+        "signedOut": "Signed out. The token is deleted.",
+        "checks": "Try it out",
+        "testOk": "Connected as {{account}}.",
+        "testMail": "Send a test mail to me",
+        "testMailOk": "Test mail sent. Check your inbox.",
+        "testFile": "Put a test file in OneDrive",
+        "testFileOk": "The file “{{name}}” is in OneDrive, in the folder “{{folder}}”."
+      },
+      "gate": {
+        "grant_off": "the right is set to “off”",
+        "integration_disabled": "the integration is switched off",
+        "capability_not_enabled": "the capability is not switched on for this account",
+        "capability_not_offered": "the account does not offer the capability",
+        "direction_blocks": "the direction of the account does not allow it",
+        "pending": "it needs an approval"
+      },
+      "errors": {
+        "m365_not_configured": "No client ID is entered. Create an app registration and enter its application ID.",
+        "m365_no_capability": "No capability is switched on. Switch on at least one before signing in.",
+        "m365_capability_off": "This capability is not switched on for this account.",
+        "m365_needs_sign_in": "The sign-in has expired or was revoked. Please sign in again under Integrations.",
+        "m365_needs_consent": "Permissions are still missing for the capabilities that are switched on ({{detail}}). Please sign in again under Integrations and consent.",
+        "m365_denied": "Microsoft refused access: {{detail}}",
+        "m365_not_found": "Not found: {{detail}}",
+        "m365_storage_full": "The OneDrive storage is full.",
+        "m365_throttled": "Microsoft is throttling requests. Next attempt in {{detail}} min.",
+        "m365_http": "Microsoft Graph answered with an error (HTTP {{detail}}).",
+        "m365_network": "No connection: {{detail}}",
+        "m365_timeout": "Microsoft did not answer in time.",
+        "m365_uncertain": "It is unclear whether the action was carried out ({{detail}}). Please check first (e.g. the Sent folder) before trying again.",
+        "m365_parse": "The answer from Microsoft cannot be read.",
+        "m365_invalid": "{{detail}}",
+        "m365_cancelled": "Cancelled.",
+        "m365_sign_in_timeout": "The sign-in was not completed within 5 minutes.",
+        "m365_browser": "The browser could not be opened: {{detail}}",
+        "m365_listener": "The local sign-in interface could not be started: {{detail}}",
+        "m365_config": "{{detail}}",
+        "m365_store": "Storage error: {{detail}}",
+        "m365_memory_low": "{{detail}}",
+        "m365_gate": "The rights do not allow this: {{detail}}."
+      }
+    },
     "title": "Integrations",
     "description": "Connections to calendars, folders and agents, each with a direction and one right per capability.",
     "add": "Add integration",
@@ -3378,7 +3560,8 @@
         },
         "m365": {
           "name": "Microsoft 365 (mail, OneDrive)",
-          "description": "Send mail, save files to OneDrive, create appointments."
+          "description": "Send mail, save files to OneDrive and attach notes to calendar events, through your own app registration. Each capability can be switched on separately.",
+          "action": "Set up account"
         },
         "smtp": {
           "name": "Mailbox (SMTP)",
@@ -3515,7 +3698,8 @@
       "effective": "Currently in effect: {{mode}}",
       "blocked": {
         "direction_blocks": "The direction of the integration does not allow this: change the direction for the rights to apply.",
-        "integration_disabled": "The integration is switched off: no access while it is off."
+        "integration_disabled": "The integration is switched off: no access while it is off.",
+        "capability_not_enabled": "The capability is not switched on for this account: switch it on in the “Microsoft 365 account” section for the rights to apply."
       }
     },
     "capabilities": {

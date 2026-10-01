@@ -65,7 +65,11 @@ fn deterministic_sampling(local: bool, purpose: Purpose) -> (Option<f32>, Option
     if local
         && matches!(
             purpose,
-            Purpose::EnhancedNotes | Purpose::Followup | Purpose::Minutes | Purpose::TranscriptMerge
+            Purpose::EnhancedNotes
+                | Purpose::Followup
+                | Purpose::Minutes
+                | Purpose::TranscriptMerge
+                | Purpose::TranscriptTranslation
         )
     {
         (Some(0.0), Some(CHAT_SEED))
@@ -1182,6 +1186,17 @@ mod stream_tests {
         assert_eq!(mail["seed"], CHAT_SEED);
         let mail_remote = request_json_for(false, "gpt-4.1", Purpose::Followup);
         assert!(mail_remote.get("temperature").is_none() && mail_remote.get("seed").is_none());
+        // G5: die Uebersetzung einer Transkript-Fassung ist ebenfalls deterministisch (nur lokal).
+        let translation =
+            request_json_for(true, "llm-gemma4-e4b-q4", Purpose::TranscriptTranslation);
+        assert_eq!(translation["temperature"].as_f64(), Some(0.0));
+        assert_eq!(translation["seed"], CHAT_SEED);
+        let translation_remote =
+            request_json_for(false, "gpt-4.1", Purpose::TranscriptTranslation);
+        assert!(
+            translation_remote.get("temperature").is_none()
+                && translation_remote.get("seed").is_none()
+        );
         // Andere lokale Zwecke (Diktat, Tagging, ...) bleiben unveraendert.
         for purpose in [Purpose::PostProcess, Purpose::Tagging, Purpose::Translation, Purpose::Summary] {
             let other = request_json_for(true, "llm-gemma4-e4b-q4", purpose);

@@ -70,6 +70,7 @@ pub mod dump;
 pub mod folder; // A6
 pub mod gate;
 pub mod grants;
+pub mod m365; // A5
 pub mod model;
 pub mod obsidian; // A6
 pub mod preview;

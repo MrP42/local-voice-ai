@@ -59,7 +59,7 @@ use serde_json::{json, Map, Value};
 use super::{
     ask_options, classify_llm_error, entry_text, no_retry, nullable_string, object_schema,
     template_block, Limits, MinutesError, MinutesPhase, MinutesProgress, MinutesRunGuard,
-    ProgressFn, Reporter, BASE_RULES, CODE_CANCELLED,
+    ProgressFn, Reporter, base_rules, CODE_CANCELLED,
 };
 use crate::managers::meetings::llm_call::{
     ask_json, is_splittable_error, is_truncation_error, resolve_provider_coded, retry_chunk,
@@ -159,19 +159,21 @@ pub fn system_prompt(kind: ProjectKind) -> String {
         ProjectKind::Minutes => "minutes",
         ProjectKind::Summary => "summary",
     };
+    let rules = base_rules();
     format!(
         "You are a meeting-minutes writer for a PROJECT. You combine the transcripts of several \
 recordings of one project into ONE set of {what} that follows a template.\n\
 - Use exactly the section ids of the template as JSON keys and follow each section's \
 instruction.\n\
 - A section is an array of entries {{\"text\",\"sources\"}}; an action-items section's entries \
-are {{\"text\",\"assignee\",\"due\",\"sources\"}}.\n{PROJECT_RULES}{}{BASE_RULES}",
+are {{\"text\",\"assignee\",\"due\",\"sources\"}}.\n{PROJECT_RULES}{}{rules}",
         kind_rules(kind)
     )
 }
 
 /// System-Prompt der map-Stufe (ein Teil des langen Transkripts).
 fn map_system_prompt(kind: ProjectKind) -> String {
+    let rules = base_rules();
     format!(
         "You extract minutes entries from ONE PART of the long transcript of several recordings \
 of one project, for a template with sections.\n\
@@ -179,7 +181,7 @@ of one project, for a template with sections.\n\
 \"sources\", \"assignee\" and \"due\" (null for anything that is not an action item or not \
 named).\n\
 - Follow each section's instruction, but only for what THIS part contains.\n{PROJECT_RULES}{}\
-{BASE_RULES}",
+{rules}",
         kind_rules(kind)
     )
 }

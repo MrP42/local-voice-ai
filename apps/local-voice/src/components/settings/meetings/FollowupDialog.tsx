@@ -5,9 +5,11 @@ import { save } from "@tauri-apps/plugin-dialog";
 import {
   commands,
   type FollowupMode,
+  type IntegrationView,
   type MailDraft,
   type PostProcessProvider,
 } from "@/bindings";
+import { m365Capabilities, m365ErrorText } from "../../integrations/m365";
 import { chatErrorCode, chatErrorKey } from "@/lib/meetingChat";
 import {
   emlFileName,
@@ -78,6 +80,9 @@ export const FollowupDialog: React.FC<FollowupDialogProps> = ({
   const [status, setStatus] = useState<Status | null>(null);
   const [copyHighlight, setCopyHighlight] = useState(false);
   const [busy, setBusy] = useState(false);
+  // A5: Microsoft-365-Konten, über die sich die Mail senden lässt („senden über“).
+  const [m365, setM365] = useState<IntegrationView[]>([]);
+  const [m365Confirm, setM365Confirm] = useState<IntegrationView | null>(null);
   // Schließen oder Neustart: eine spät eintreffende Antwort verwerfen.
   const epochRef = useRef(0);
 
@@ -124,6 +129,26 @@ export const FollowupDialog: React.FC<FollowupDialogProps> = ({
     if (remoteId === null) void generateRef.current();
   }, [open, remoteId, meetingId]);
 
+  useEffect(() => {
+    setM365Confirm(null);
+    if (!open) return;
+    let alive = true;
+    void commands.integrationsList().then((result) => {
+      if (!alive || result.status !== "ok") return;
+      setM365(
+        (result.data ?? []).filter(
+          (v) =>
+            v.integration.kind === "m365" &&
+            v.integration.enabled &&
+            m365Capabilities(v.integration.config_json).includes("mail.send"),
+        ),
+      );
+    });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
   const currentDraft = (): MailDraft => ({
     to: parseAddresses(to),
     subject,
@@ -167,6 +192,34 @@ export const FollowupDialog: React.FC<FollowupDialogProps> = ({
         ? { kind: "info", text: t("meetings.followup.mailtoClipped") }
         : { kind: "ok", text: t("meetings.followup.opened") },
     );
+
+  const onSendM365 = async (account: IntegrationView) => {
+    setBusy(true);
+    setStatus(null);
+    setM365Confirm(null);
+    let result: Awaited<ReturnType<typeof commands.meetingFollowupSendM365>>;
+    try {
+      result = await commands.meetingFollowupSendM365(
+        account.integration.id,
+        currentDraft(),
+      );
+    } catch (e) {
+      result = { status: "error", error: String(e) };
+    }
+    setBusy(false);
+    if (result.status === "error" || !result.data.ok) {
+      const raw =
+        result.status === "error" ? String(result.error) : result.data.code;
+      setStatus({ kind: "error", text: m365ErrorText(t, raw) });
+      return;
+    }
+    setStatus({
+      kind: "ok",
+      text: t("meetings.followup.m365.sent", {
+        label: account.integration.label,
+      }),
+    });
+  };
 
   const onEml = async () => {
     let target: string | null;
@@ -228,6 +281,24 @@ export const FollowupDialog: React.FC<FollowupDialogProps> = ({
           >
             {t("meetings.followup.eml")}
           </Button>
+          {m365.map((account) => (
+            <Button
+              key={account.integration.id}
+              variant="secondary"
+              onClick={() => setM365Confirm(account)}
+              disabled={busy || parseAddresses(to).length === 0}
+              title={
+                parseAddresses(to).length === 0
+                  ? t("meetings.followup.m365.noRecipients")
+                  : undefined
+              }
+              data-testid={`followup-m365-${account.integration.id}`}
+            >
+              {t("meetings.followup.m365.via", {
+                label: account.integration.label,
+              })}
+            </Button>
+          ))}
         </>
       )}
       <Button variant="secondary" onClick={() => onOpenChange(false)}>
@@ -351,6 +422,38 @@ export const FollowupDialog: React.FC<FollowupDialogProps> = ({
                 onChange={(e) => setBody(e.target.value)}
               />
             </div>
+          </div>
+        )}
+
+        {m365Confirm && (
+          <div
+            className="flex flex-wrap items-center gap-2 rounded-md border border-logo-primary bg-logo-primary/10 px-3 py-2 text-sm"
+            role="alertdialog"
+            aria-label={t("meetings.followup.m365.confirmTitle")}
+            data-testid="followup-m365-confirm"
+          >
+            <span className="min-w-0 flex-1">
+              {t("meetings.followup.m365.confirm", {
+                count: parseAddresses(to).length,
+                label: m365Confirm.integration.label,
+              })}
+            </span>
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => void onSendM365(m365Confirm)}
+              data-testid="followup-m365-send"
+            >
+              {t("meetings.followup.m365.send")}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setM365Confirm(null)}
+              data-testid="followup-m365-cancel"
+            >
+              {t("meetings.followup.m365.cancel")}
+            </Button>
           </div>
         )}
 

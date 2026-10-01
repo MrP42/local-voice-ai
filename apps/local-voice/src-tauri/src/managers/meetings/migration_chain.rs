@@ -155,9 +155,10 @@ fn write_legacy_db_for_the_release_smoke_test() {
 fn the_chain_is_register_then_variants_then_queue() {
     assert!(
         MIGRATIONS.len() >= 8,
-        "A1 = 5, A3 = 6, U7 = 7; spaetere Schritte (G3 = 8) haengen hinten an"
+        "A1 = 5, A3 = 6, U7 = 7; spaetere Schritte (G3 = 8, G5 = 9) haengen hinten an"
     );
-    let steps: [(usize, &[&str], &[&str]); 4] = [
+    assert!(MIGRATIONS.len() >= 10, "G3 ist Index 8, G5 Index 9 (dahinter)");
+    let steps: [(usize, &[&str], &[&str]); 6] = [
         (5, &[], &["integrations", "transcript_variants", "import_queue"]),
         (
             6,
@@ -172,7 +173,30 @@ fn the_chain_is_register_then_variants_then_queue() {
         (
             8,
             &["integrations", "transcript_variants", "import_queue"],
-            &[],
+            &["project_minutes", "transcript_variants_g5"],
+        ),
+        // Stufe 9 = G3 (Projekt-Protokolle, Index 8): die Tabelle ist da.
+        (
+            9,
+            &[
+                "integrations",
+                "transcript_variants",
+                "import_queue",
+                "project_minutes",
+            ],
+            &["transcript_variants_g5"],
+        ),
+        // Stufe 10 = G5 (Fassungsart Uebersetzung, Index 9): die Tabelle ist neu gebaut, die
+        // Ersatztabelle heisst wieder `transcript_variants`.
+        (
+            10,
+            &[
+                "integrations",
+                "transcript_variants",
+                "import_queue",
+                "project_minutes",
+            ],
+            &["transcript_variants_g5"],
         ),
     ];
     for (upto, present, absent) in steps {

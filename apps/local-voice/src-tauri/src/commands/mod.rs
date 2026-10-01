@@ -3,12 +3,14 @@ pub mod calendar; // M5-P5b
 pub mod history;
 pub mod integration_targets; // A6
 pub mod integrations; // A4
+pub mod integrations_m365; // A5
 pub mod llm;
 pub mod usage;
 pub mod meeting_chat; // M4-P4c
 pub mod meeting_mcp; // M6-P6e
 pub mod meeting_notes;
 pub mod meeting_variants; // A3
+pub mod meeting_language; // G5
 pub mod meeting_enhance;
 pub mod meeting_jobs; // P8a
 pub mod meeting_minutes; // P1k

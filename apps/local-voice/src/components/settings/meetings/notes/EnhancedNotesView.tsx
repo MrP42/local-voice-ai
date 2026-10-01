@@ -1,3 +1,5 @@
+import { defaultDocBasis } from "../language/DocBasisFields";
+import { documentBasisText, useDocumentBasis } from "../language/documentBasis";
 import React, {
   useCallback,
   useEffect,
@@ -204,6 +206,13 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
 
   const selected = docs.find((d) => d.id === selectedId) ?? docs[0] ?? null;
   const readOnly = selected !== null && docs[0]?.id !== selected.id;
+  // G5: aus welcher Fassung des Transkripts und in welcher Sprache diese Version entstand.
+  const basis = useDocumentBasis(
+    meetingId,
+    "enhanced_notes",
+    selected?.id ?? null,
+    selected?.id ?? "",
+  );
   const stale = notes !== null && isStale(notes, epoch);
   const running = busy || progress !== null || notesJob !== undefined;
 
@@ -443,7 +452,12 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
     setStoppedNote(false);
     setReloaded(false);
     // `None`: die Vorlage, die fuer diese Besprechung gewaehlt ist.
-    const result = await commands.meetingNotesEnhance(meetingId, null);
+    // G5: aktive Fassung, Sprache = letzte Wahl bzw. die der App.
+    const result = await commands.meetingNotesEnhance(
+      meetingId,
+      null,
+      defaultDocBasis(i18n.language),
+    );
     safe(() => setBusy(false));
     if (result.status === "error") {
       // Gestoppt (P8a) meldet das Ereignis; hier keine Fehlermeldung daraus machen.
@@ -737,6 +751,12 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
           </div>
         )}
       </div>
+
+      {basis && selected && (
+        <p className="text-xs text-text/70" data-testid="enhanced-basis">
+          {documentBasisText(basis, "enhanced_notes", t, i18n.language)}
+        </p>
+      )}
 
       {progress && !notesJob && (
         <p

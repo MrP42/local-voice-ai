@@ -112,6 +112,9 @@ url = "2"
 # Canary, Cohere). Per-platform backend features are added in the target tables.
 transcribe-rs = { version = "0.3.8", features = ["onnx"] }
 transcribe-cpp = { version = "=0.2.4", default-features = false }
+# G5: Sprache eines Textes erkennen (Rueckfall und Gegenprobe, wenn das Modell keine
+# eigene Spracherkennung liefert). Reines Rust, MIT, ohne Modelldatei.
+whatlang = "0.18"
 handy-keys = "0.3.2"
 ferrous-opencc = "0.2.3"
 clap = { version = "4", features = ["derive"] }

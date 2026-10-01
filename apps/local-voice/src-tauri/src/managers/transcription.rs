@@ -961,6 +961,11 @@ impl TranscriptionManager {
     /// Asks the registry whether the default GGUF is on disk; logs which model
     /// was picked and why (a fallback is only a hint, never an error).
     pub fn meeting_model_choice(&self, settings: &AppSettings) -> MeetingModelChoice {
+        // G5: der laufende Import hat sein Modell nach der Sprache gewaehlt; jede erneute
+        // Anforderung in diesem Thread (Fehlversuch, nach einer Pause) bleibt dabei.
+        if let Some(id) = LanguageOverride::current_model() {
+            return MeetingModelChoice::Explicit(id);
+        }
         let default_installed = self
             .model_manager
             .get_model_info(MEETING_DEFAULT_MODEL_ID)
@@ -1034,6 +1039,19 @@ impl TranscriptionManager {
     /// themselves block dictation via the recorder guard.
     pub fn initiate_model_load_target(&self, model_id: &str) {
         self.initiate_model_load_target_with_fallback(model_id, None);
+    }
+
+    /// G5: wartet, bis ein angestossenes Laden beendet ist (hoechstens `timeout`), und
+    /// sagt, ob `model_id` danach das geladene Modell ist. `false` heisst: das Laden ist
+    /// gescheitert oder dauert zu lang; der Aufrufer bleibt dann beim bisherigen Modell.
+    pub fn wait_until_loaded(&self, model_id: &str, timeout: Duration) -> bool {
+        let guard = self.is_loading.lock().unwrap_or_else(|e| e.into_inner());
+        let (guard, _) = self
+            .loading_condvar
+            .wait_timeout_while(guard, timeout, |loading| *loading)
+            .unwrap_or_else(|e| e.into_inner());
+        drop(guard);
+        self.get_current_model().as_deref() == Some(model_id)
     }
 
     /// [`Self::initiate_model_load_target`] plus an optional second model that
@@ -2225,6 +2243,17 @@ impl TranscriptionManager {
     // match) so the dictation path stays byte-identical and M3-stable; the
     // duplication is the price of that stability.
     pub fn transcribe_segments(&self, audio: Vec<f32>) -> Result<Vec<TimedSegment>> {
+        self.transcribe_segments_detecting(audio).map(|(segments, _)| segments)
+    }
+
+    /// G5: wie [`Self::transcribe_segments`], dazu die Sprache, die das Modell selbst
+    /// erkannt hat (nur transcribe-cpp-Modelle mit `lang_detect`, sonst `None`).
+    /// Die Sprachabsicht ist `meeting_language`, ersetzt durch eine Vorgabe dieses
+    /// Threads ([`LanguageOverride`]); die Einstellung wird nie geschrieben.
+    pub fn transcribe_segments_detecting(
+        &self,
+        audio: Vec<f32>,
+    ) -> Result<(Vec<TimedSegment>, Option<String>)> {
         // Update last activity timestamp
         self.touch_activity();
 
@@ -2234,7 +2263,7 @@ impl TranscriptionManager {
         if audio.is_empty() {
             debug!("Empty audio vector");
             self.maybe_unload_immediately("empty audio");
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
 
         let audio_ms = (audio_len as u64 * 1000) / 16_000;
@@ -2266,6 +2295,7 @@ impl TranscriptionManager {
         // Meetings use their own language intent and never translate — see
         // meeting_transcription_prefs() for the ruling behind this.
         let (meeting_language, meeting_translate) = meeting_transcription_prefs(&settings);
+        let meeting_language = LanguageOverride::current().unwrap_or(meeting_language);
         let validated_language = effective_language_for_intent(
             &meeting_language,
             self.model_manager.as_ref(),
@@ -2335,7 +2365,7 @@ impl TranscriptionManager {
             }
 
             let transcribe_result =
-                catch_unwind(AssertUnwindSafe(|| -> Result<Vec<TimedSegment>> {
+                catch_unwind(AssertUnwindSafe(|| -> Result<(Vec<TimedSegment>, Option<String>)> {
                     match &mut engine {
                         LoadedEngine::TranscribeCpp(session) => {
                             // Custom words become the initial prompt ONLY for models
@@ -2366,7 +2396,10 @@ impl TranscriptionManager {
 
                             session
                                 .run(&audio, &run_options)
-                                .map(|t| segments_from_transcript(&t, audio_ms))
+                                .map(|t| {
+                                    let detected = t.language.clone();
+                                    (segments_from_transcript(&t, audio_ms), detected)
+                                })
                                 .map_err(|e| {
                                     anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
                                 })
@@ -2378,18 +2411,18 @@ impl TranscriptionManager {
                             };
                             parakeet_engine
                                 .transcribe_with(&audio, &params)
-                                .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                                 .map_err(|e| {
                                     anyhow::anyhow!("Parakeet transcription failed: {}", e)
                                 })
                         }
                         LoadedEngine::Moonshine(moonshine_engine) => moonshine_engine
                             .transcribe(&audio, &TranscribeOptions::default())
-                            .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                            .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                             .map_err(|e| anyhow::anyhow!("Moonshine transcription failed: {}", e)),
                         LoadedEngine::MoonshineStreaming(streaming_engine) => streaming_engine
                             .transcribe(&audio, &TranscribeOptions::default())
-                            .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                            .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                             .map_err(|e| {
                                 anyhow::anyhow!("Moonshine streaming transcription failed: {}", e)
                             }),
@@ -2408,14 +2441,14 @@ impl TranscriptionManager {
                             };
                             sense_voice_engine
                                 .transcribe_with(&audio, &params)
-                                .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                                 .map_err(|e| {
                                     anyhow::anyhow!("SenseVoice transcription failed: {}", e)
                                 })
                         }
                         LoadedEngine::GigaAM(gigaam_engine) => gigaam_engine
                             .transcribe(&audio, &TranscribeOptions::default())
-                            .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                            .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                             .map_err(|e| anyhow::anyhow!("GigaAM transcription failed: {}", e)),
                         LoadedEngine::Canary(canary_engine) => {
                             let lang = if validated_language == "auto" {
@@ -2430,7 +2463,7 @@ impl TranscriptionManager {
                             };
                             canary_engine
                                 .transcribe(&audio, &options)
-                                .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                                 .map_err(|e| anyhow::anyhow!("Canary transcription failed: {}", e))
                         }
                         LoadedEngine::Cohere(cohere_engine) => {
@@ -2445,7 +2478,7 @@ impl TranscriptionManager {
                             };
                             cohere_engine
                                 .transcribe(&audio, &options)
-                                .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                                 .map_err(|e| anyhow::anyhow!("Cohere transcription failed: {}", e))
                         }
                     }
@@ -2522,8 +2555,10 @@ impl TranscriptionManager {
         // einen Stelle, ueber die jede Besprechungs-Transkription laeuft (neue
         // Aufnahme, Neu-Transkription, Import, YouTube), werden solche Laeufe
         // zusammengefasst. Nur Zahlen ins Log, nie Text.
-        let (result, loops) =
-            crate::managers::meetings::hallucination::collapse_loops_fail_open(result);
+        // G5: `result` traegt auch die vom Modell erkannte Sprache; bereinigt werden nur die Segmente.
+        let (segments, detected_language) = result;
+        let (segments, loops) =
+            crate::managers::meetings::hallucination::collapse_loops_fail_open(segments);
         if loops.runs > 0 {
             info!(
                 "meetings: {} Wiederholungsschleife(n) im Block zusammengefasst, {} Wort/Woerter entfernt",
@@ -2531,7 +2566,7 @@ impl TranscriptionManager {
             );
         }
 
-        Ok(result)
+        Ok((segments, detected_language))
     }
 }
 
@@ -2638,6 +2673,49 @@ impl StreamPerf {
 
     fn compute_secs(&self) -> f64 {
         self.stream_compute_elapsed.as_secs_f64()
+    }
+}
+
+thread_local! {
+    /// G5: Sprachvorgabe und Modellwahl fuer die Besprechungs-Transkription DIESES Threads.
+    /// Ein Import (oder eine Neu-Transkription) setzt sie fuer die Dauer seines Laufs;
+    /// mehrere gleichzeitige Importe (Warteschlange) haben je ihren Thread und damit je
+    /// ihre Vorgabe.
+    static MEETING_RUN_OVERRIDE: std::cell::RefCell<(Option<String>, Option<String>)> =
+        const { std::cell::RefCell::new((None, None)) };
+}
+
+/// G5: Sprachabsicht und Modell der Besprechungs-Transkription fuer den aktuellen Thread.
+/// `language`: `Some("en")` = Englisch, `Some("auto")` = erkennen, `None` = die Einstellung
+/// `meeting_language` gilt. `model`: `Some(id)` = dieses Modell gilt als Nutzerwahl, auch
+/// wenn der Lauf es nach einem Fehler oder einer Pause neu anfordert (sonst kaeme das
+/// Standardmodell zurueck); `None` = die Einstellungen gelten. Beim Verlassen kommen die
+/// vorherigen Werte zurueck.
+pub struct LanguageOverride {
+    previous: (Option<String>, Option<String>),
+}
+
+impl LanguageOverride {
+    pub fn set(language: Option<String>, model: Option<String>) -> Self {
+        let previous = MEETING_RUN_OVERRIDE.with(|cell| cell.replace((language, model)));
+        Self { previous }
+    }
+
+    /// Die Sprachvorgabe des aktuellen Threads, falls es eine gibt.
+    pub fn current() -> Option<String> {
+        MEETING_RUN_OVERRIDE.with(|cell| cell.borrow().0.clone())
+    }
+
+    /// Die Modellvorgabe des aktuellen Threads, falls es eine gibt.
+    pub fn current_model() -> Option<String> {
+        MEETING_RUN_OVERRIDE.with(|cell| cell.borrow().1.clone())
+    }
+}
+
+impl Drop for LanguageOverride {
+    fn drop(&mut self) {
+        let previous = std::mem::take(&mut self.previous);
+        MEETING_RUN_OVERRIDE.with(|cell| cell.replace(previous));
     }
 }
 
