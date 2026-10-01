@@ -331,6 +331,7 @@ fn direct_remind(
         context: &context,
         step_started_at: T0,
         approved: false,
+        gate_args: None,
         cancel,
         clock,
         db_path: &w.fx.db_path,

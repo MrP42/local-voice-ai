@@ -293,6 +293,7 @@ fn direct_calendar(w: &World, run_id: &str, params: &Value) -> Result<StepOutput
         context: &context,
         step_started_at: T0,
         approved: true,
+        gate_args: None,
         cancel: &cancel,
         clock,
         db_path: &w.fx.db_path,
