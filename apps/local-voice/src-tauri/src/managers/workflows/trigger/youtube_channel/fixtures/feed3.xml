@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=UCabcdefghijklmnopqrstuv"/>
+ <id>yt:channel:abcdefghijklmnopqrstuv</id>
+ <yt:channelId>UCabcdefghijklmnopqrstuv</yt:channelId>
+ <title>Wolff Applied AI &amp; Friends</title>
+ <link rel="alternate" href="https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv"/>
+ <author>
+  <name>Wolff Applied AI &amp; Friends</name>
+  <uri>https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv</uri>
+ </author>
+ <published>2019-03-01T09:15:00+00:00</published>
+ <entry>
+  <id>yt:video:Vid00000003</id>
+  <yt:videoId>Vid00000003</yt:videoId>
+  <yt:channelId>UCabcdefghijklmnopqrstuv</yt:channelId>
+  <title>Lokale KI im Mittelstand: Was &quot;datenschutzfreundlich&quot; wirklich heißt</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=Vid00000003"/>
+  <author>
+   <name>Wolff Applied AI &amp; Friends</name>
+   <uri>https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv</uri>
+  </author>
+  <published>2026-09-30T08:00:00+00:00</published>
+  <updated>2026-09-30T10:12:44+00:00</updated>
+  <media:group>
+   <media:title>Lokale KI im Mittelstand: Was &quot;datenschutzfreundlich&quot; wirklich heißt</media:title>
+   <media:content url="https://www.youtube.com/v/Vid00000003?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i2.ytimg.com/vi/Vid00000003/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Beschreibung mit Umlauten: Größe, Prüfung &amp; Übergabe.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:Vid00000002</id>
+  <yt:videoId>Vid00000002</yt:videoId>
+  <yt:channelId>UCabcdefghijklmnopqrstuv</yt:channelId>
+  <title>Agenten &amp; MCP in 10 Minuten</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=Vid00000002"/>
+  <author>
+   <name>Wolff Applied AI &amp; Friends</name>
+   <uri>https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv</uri>
+  </author>
+  <published>2026-09-28T17:30:00+02:00</published>
+  <updated>2026-09-29T07:00:12+00:00</updated>
+ </entry>
+ <entry>
+  <id>yt:video:Vid00000001</id>
+  <yt:videoId>Vid00000001</yt:videoId>
+  <yt:channelId>UCabcdefghijklmnopqrstuv</yt:channelId>
+  <title>Warum Transkripte nie fertig sind &#228;&#x4e;</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=Vid00000001"/>
+  <author>
+   <name>Wolff Applied AI &amp; Friends</name>
+   <uri>https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv</uri>
+  </author>
+  <published>2026-09-20T12:00:00+00:00</published>
+  <updated>2026-09-20T12:05:00+00:00</updated>
+ </entry>
+</feed>

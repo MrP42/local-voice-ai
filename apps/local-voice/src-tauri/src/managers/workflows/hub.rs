@@ -11,6 +11,14 @@
 //!   Takt der Erinnerung alle 15 s. Es gibt hier keinen eigenen Zeitgeber (AK3). Pro Takt:
 //!   Kalender-Ausloeser, Zeitplan, faellige Enden von Aufnahmen, offene Bitten um
 //!   Einwilligung zeigen.
+//! - **Ordner und Kanaele** (B3): `trigger::folder` und `trigger::youtube_channel` haengen am
+//!   selben Takt (`on_tick`), laufen aber NICHT auf dessen Thread: Hashen grosser Dateien und ein
+//!   Netzabruf duerfen die Erinnerungen nicht aufhalten. Je Art ein kurzlebiger Thread, hoechstens
+//!   einer zugleich (`State::try_begin`), und nur, wenn ein eingeschalteter Ablauf mit dem
+//!   Ausloeser existiert (sonst liest nichts den Datentraeger und nichts geht ins Netz).
+//! - **Import-Bausteine und Tor** (B3): `import_app` setzt `meeting.import` und
+//!   `youtube.add_source` ein und gibt der Engine ein Tor fuer schwere Schritte, das Aufnahme und
+//!   Import-Warteschlange kennt.
 //! - **Ende** (`shutdown`, bei `RunEvent::Exit`): setzt das Stoppzeichen und wartet hoechstens
 //!   3 s. Steckt der Arbeiter in einem langen Schritt, bleibt er zurueck und stirbt mit dem
 //!   Prozess; der Lauf wird beim naechsten Start ueber den abgelaufenen Mietvertrag
@@ -41,13 +49,17 @@ use crate::managers::meetings::recorder::{MeetingEvent, MeetingRecorderManager};
 use crate::managers::meetings::store::MeetingStore;
 
 use super::consent;
-use super::engine::{Engine, EngineHandle, EngineObserver};
+use super::engine::{Clock, Engine, EngineConfig, EngineHandle, EngineObserver, SystemClock};
+use super::import_app;
 use super::recording::{
     self, CurrentRecording, RecordingControl, StartRequest, StartedRecording, StopSchedule,
 };
 use super::trigger::calendar as calendar_trigger;
+use super::trigger::enabled_with;
+use super::trigger::folder as folder_trigger;
 use super::trigger::meeting_events::{self, MeetingInfo, Stage};
 use super::trigger::schedule as schedule_trigger;
+use super::trigger::youtube_channel as channel_trigger;
 
 /// So lange wartet `shutdown` auf die Arbeiter.
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(3);
@@ -64,6 +76,10 @@ pub struct WorkflowHub {
     stops: Arc<StopSchedule>,
     recording: Arc<dyn RecordingControl>,
     shown: Mutex<HashSet<String>>,
+    /// B3: Zustand der Ordner-Ausloeser (Stabilitaet) und der Kanal-Ausloeser (Intervall, Ausfall).
+    folders: folder_trigger::State,
+    channels: channel_trigger::State,
+    feed: Arc<dyn channel_trigger::FeedFetcher>,
 }
 
 /// Der echte Recorder hinter `RecordingControl`.
@@ -169,7 +185,14 @@ impl WorkflowHub {
     /// (`app.manage`).
     pub fn start(app: &AppHandle, store: &MeetingStore) -> Arc<Self> {
         let db_path = store.db_path().to_path_buf();
-        let engine = Engine::with_defaults(db_path.clone());
+        // B3: das Tor kennt Aufnahme und Import-Warteschlange (QG5).
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        let engine = Engine::new(
+            db_path.clone(),
+            import_app::heavy_gate(app),
+            clock,
+            EngineConfig::default(),
+        );
         let now = chrono::Utc::now().timestamp_millis();
         match store.get_connection() {
             Ok(conn) => match recording::ensure_carrier(&conn, now) {
@@ -182,6 +205,7 @@ impl WorkflowHub {
         let stops = Arc::new(StopSchedule::default());
         let recording: Arc<dyn RecordingControl> = Arc::new(AppRecording { app: app.clone() });
         recording::install(&engine, recording.clone(), stops.clone());
+        import_app::install(&engine, app);
         engine.set_observer(Arc::new(PromptObserver { app: app.clone() }));
         let handle = engine.spawn();
         register_meeting_listeners(app);
@@ -195,6 +219,9 @@ impl WorkflowHub {
             stops,
             recording,
             shown: Mutex::new(HashSet::new()),
+            folders: folder_trigger::State::default(),
+            channels: channel_trigger::State::default(),
+            feed: Arc::new(channel_trigger::HttpFeedFetcher::production()),
         })
     }
 
@@ -245,8 +272,51 @@ impl WorkflowHub {
             );
         }
         recording::run_due_stops(&*self.recording, &self.stops, now_ms);
+        self.spawn_scans(now_ms);
         self.close_decided_consent_prompt(now_ms);
         self.show_pending_consents(now_ms);
+    }
+
+    /// B3: Ordner und Kanaele auf eigenen, kurzlebigen Threads (siehe Moduldoku). Auf dem Takt
+    /// selbst geschieht nur die billige Frage, ob es ueberhaupt einen Ablauf dafuer gibt.
+    fn spawn_scans(&self, now_ms: i64) {
+        let Some(hub) = self
+            .app
+            .try_state::<Arc<WorkflowHub>>()
+            .map(|h| Arc::clone(&h))
+        else {
+            return;
+        };
+        let has = |kind: &str| {
+            enabled_with(&self.engine, &[kind])
+                .map(|a| !a.is_empty())
+                .unwrap_or(false)
+        };
+        if has(folder_trigger::KIND) && !self.folders.is_busy() {
+            let hub = Arc::clone(&hub);
+            spawn_scan("workflow-folder-scan", move || {
+                let report = folder_trigger::on_tick(
+                    hub.engine(),
+                    &hub.folders,
+                    &hub.db_path,
+                    &folder_trigger::SystemProbe,
+                    now_ms,
+                );
+                log_report("Ordner", &report);
+            });
+        }
+        if has(channel_trigger::KIND) && !self.channels.is_busy() {
+            spawn_scan("workflow-channel-poll", move || {
+                let report = channel_trigger::on_tick(
+                    hub.engine(),
+                    &hub.channels,
+                    &*hub.feed,
+                    &hub.db_path,
+                    now_ms,
+                );
+                log_report("Kanäle", &report);
+            });
+        }
     }
 
     fn conn(&self) -> Option<Connection> {
@@ -314,6 +384,30 @@ impl WorkflowHub {
     pub fn after_decision(&self) {
         self.engine.wake();
         self.show_pending_consents(chrono::Utc::now().timestamp_millis());
+    }
+}
+
+/// Startet `work` auf einem benannten Thread; ein Fehler beim Start ist nur ein Logeintrag (der
+/// naechste Takt versucht es wieder).
+fn spawn_scan(name: &str, work: impl FnOnce() + Send + 'static) {
+    if let Err(e) = std::thread::Builder::new().name(name.to_string()).spawn(work) {
+        log::warn!("workflows: Thread {name} nicht gestartet: {e}");
+    }
+}
+
+fn log_report(what: &str, report: &super::trigger::TickReport) {
+    if report.is_empty() {
+        return;
+    }
+    log::info!(
+        "workflows: {what}: {} gestartet, {} bekannt, {} Hinweise, {} Fehler",
+        report.started.len(),
+        report.duplicates,
+        report.skipped.len(),
+        report.errors.len()
+    );
+    for line in report.skipped.iter().chain(report.errors.iter()) {
+        log::info!("workflows: {what}: {line}");
     }
 }
 
