@@ -270,7 +270,8 @@ impl Action for AgentExtract {
 
 /// Haengt die Agent-Bausteine in die Engine (ersetzt die Katalogbausteine).
 pub fn install(engine: &super::engine::Engine, services: Arc<dyn AppServices>) {
-    engine.register_action(Arc::new(AgentExtract::new(services)));
+    engine.register_action(Arc::new(AgentExtract::new(services.clone())));
+    super::agent_route::install(engine, services); // C3
 }
 
 #[cfg(test)]

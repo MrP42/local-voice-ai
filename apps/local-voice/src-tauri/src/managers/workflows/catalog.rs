@@ -421,6 +421,40 @@ static ACTIONS: &[ActionSpec] = &[
         needs: NeedsSpec::None,
     },
     ActionSpec {
+        id: "agent.route",
+        title: "Werkzeug wählen (lokaler Agent)",
+        effect_text: "Das lokale Sprachmodell wählt aus den freigegebenen Werkzeugen höchstens eines; es führt nichts selbst aus, die folgenden Schritte wirken nur nach ihrer Bedingung und mit ihren Rechten",
+        fields: &[
+            // Alles Folgende bis auf `context` und `reference_date` sind FESTE Werte: Daten (Transkript,
+            // Mail, Modellausgabe) bestimmen weder die Aufgabe noch die Werkzeuge, die Empfaengerregel,
+            // die Obergrenze oder das Modell.
+            literal("task", FieldKind::Text, true),
+            // Daten fuer die Wahl (nicht vertrauenswuerdig, im Prompt als Daten markiert).
+            field("context", FieldKind::Text, false),
+            // Namen aus `agent::policy::catalog()`: `notify_local`, `send_mail`, `calendar_note`.
+            literal("tools", FieldKind::TextList, true),
+            // Empfaengerregel wie bei `mail.send`; Pflicht mit dem Werkzeug `send_mail`. Die Empfaenger
+            // bildet der Code, das Modell nennt keine.
+            literal(
+                "recipients",
+                FieldKind::Choice(&["me", "participants", "all", "internal", "list"]),
+                false,
+            ),
+            literal("list", FieldKind::TextList, false),
+            // Hoechstens so viele Werkzeugwahlen je Lauf (alle `agent.route`-Schritte zusammen); die
+            // harte Grenze liegt bei 10.
+            literal("max_actions", FieldKind::Int { min: 1, max: 10 }, false),
+            // Router-Modell; ohne Angabe `llm-qwen3.5-9b-q4`. Nur ein geladenes Modell.
+            literal("model", FieldKind::Text, false),
+            // Bezug fuer relative Zeitangaben (ISO-Datum oder -Zeitpunkt); ohne Angabe heute.
+            field("reference_date", FieldKind::Text, false),
+        ],
+        // Rechnet nur (Modellaufruf) und schreibt nichts ausser der Provenienz: beliebig wiederholbar.
+        effect: EffectKind::Pure,
+        heavy: Some(LLM),
+        needs: NeedsSpec::None,
+    },
+    ActionSpec {
         id: "export.document",
         title: "Dokument ablegen",
         effect_text: "Dokument als {{p.format}} in {{p.target}} ablegen",

@@ -529,6 +529,108 @@
             "additionalProperties": false,
             "properties": {
               "action": {
+                "const": "agent.route"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "context": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "list": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "max_actions": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "model": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "recipients": {
+                    "enum": [
+                      "me",
+                      "participants",
+                      "all",
+                      "internal",
+                      "list"
+                    ]
+                  },
+                  "reference_date": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "task": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "tools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "task",
+                  "tools"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Werkzeug wählen (lokaler Agent)",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
                 "const": "export.document"
               },
               "id": {
