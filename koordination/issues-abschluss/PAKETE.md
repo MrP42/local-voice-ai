@@ -29,7 +29,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | D1 | M7 | #69 Folienerkennung Kern (dHash, meeting_slides, Job-Phase) — lv-coder-xhigh | cargo test slides | abgenommen | fc478c2e |
 | G8 | M8 | Wackelige Tests unter Last: Ursachen beheben (SQLite busy_timeout, Zeitabhängigkeit, Prozess-Timeouts) — lv-coder-xhigh | 3x volle Suite unter Last grün | abgenommen | 09ca4341 |
 | B2 | M5 | #67 Auslöser Kalender/Ereignisse/Zeitplan/manuell, Arbeiter in lib.rs, Einwilligungsweg — lv-coder-xhigh | AK3, AK4 | abgenommen (Abnahme Hinweisfenster im Installer) | c850b73a |
-| D2 | M7 | #69 OCR je Folie (Windows-OCR), Text-Dubletten — lv-coder | cargo test slides::ocr | in_arbeit | |
+| D2 | M7 | #69 OCR je Folie (Windows-OCR), Text-Dubletten — lv-coder | cargo test slides::ocr | abgenommen | 219043ea |
 | D4 | M7 | #69 Folien-Oberfläche (Leiste, Sprung, Ausblenden, Großansicht, Folien erkennen) — lv-coder | meeting-slides.spec | abgenommen | cc097c92 |
 | B3 | M5 | #67 Auslöser Ordner (Stabilität, Ledger, OneDrive) und YouTube-Kanal (RSS) + Aktion Import — lv-coder | AK5, AK11 Auslöser | in_arbeit | |
 | D5 | M7 | #69 Folien in Protokoll, KI-Notizen, Chat, Suche ([Folie n · mm:ss], Belege) — lv-coder-xhigh | cargo test minutes notes search slides | in_arbeit | |
