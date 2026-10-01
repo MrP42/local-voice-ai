@@ -74,6 +74,14 @@ fn title_from_path(path: &Path) -> String {
 
 /// Imports `path` as a new meeting — VTT/SRT directly, audio/video through
 /// the chunked transcription pipeline. Returns the new meeting's id.
+///
+/// Consent (#15): `consent_confirmed = false` is NOT refused here, on purpose.
+/// The import has a UI gate only (the app and the headless `--import-meeting`
+/// both pass `true`); the backend merely records the moment
+/// (`consent_confirmed_at`) when the caller says it was confirmed. The live
+/// recording is different: `recorder::consent_gate` refuses it in the backend.
+/// `the_backend_import_does_not_require_a_consent_confirmation_on_purpose` pins
+/// this, so it cannot turn into a half-way gate by accident.
 pub async fn import_media_file(
     app: &tauri::AppHandle,
     store: Arc<MeetingStore>,
@@ -113,8 +121,9 @@ pub fn import_subtitle_file_into(
     consent_confirmed_at: Option<i64>,
     target: Option<&str>,
 ) -> Result<String, String> {
+    // Fehler als Code (#15, `meetingErrors.ts`): `subtitle_unreadable`, `subtitle_invalid`.
     let content =
-        std::fs::read_to_string(path).map_err(|e| format!("Untertiteldatei nicht lesbar: {e}"))?;
+        std::fs::read_to_string(path).map_err(|e| format!("subtitle_unreadable: {e}"))?;
     let segments = parse_subtitles(&content)?;
     let segment_count = segments.len();
 
@@ -223,6 +232,42 @@ async fn import_audio_file(
     }
 }
 
+/// #15: kopiert die dekodierte WAV nach `dst`. Scheitert die Kopie (Platte voll,
+/// Datei gesperrt), bleibt keine halbe `import.wav` zurueck: der Import steht dann
+/// auf `failed`, und die Datei wuerde niemand mehr kennen (die DB-Pfade stehen
+/// erst nach der Kopie). `copy` ist die Kopierfunktion, damit der Fehlerweg ohne
+/// volle Platte pruefbar ist.
+fn copy_import_wav_with(
+    copy: impl FnOnce(&Path, &Path) -> std::io::Result<u64>,
+    src: &Path,
+    dst: &Path,
+) -> Result<(), String> {
+    copy(src, dst).map(|_| ()).map_err(|e| {
+        // Best effort: eine halbe Datei, die niemand kennt, soll nicht liegen bleiben.
+        let _ = std::fs::remove_file(dst);
+        format!("import_wav_copy_failed: {e}")
+    })
+}
+
+/// #15: traegt die Audiodatei eines Imports in die Besprechung ein (Pfad und Dauer
+/// stehen VOR der Transkription, P8a). Gelingt das nicht, kennt keine Zeile die
+/// Datei: sie wird entfernt, statt als Debris zu bleiben. Steht der Pfad dagegen
+/// in der Datenbank (ein spaeterer Fehler in der Transkription), bleibt die Datei:
+/// "Neu transkribieren" einer fehlgeschlagenen Besprechung liest sie.
+fn register_import_audio(
+    store: &MeetingStore,
+    meeting_id: &str,
+    wav: &Path,
+    duration_ms: u64,
+) -> Result<(), String> {
+    store
+        .set_audio_paths(meeting_id, wav.to_str(), None, Some(duration_ms))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(wav);
+            format!("audio_paths_failed: {e}")
+        })
+}
+
 /// Wie eine Import-Verarbeitung endete, wenn sie nicht scheiterte.
 enum ImportEnd {
     /// Das Transkript ist vollstaendig (die Sprechertrennung darf gestoppt sein).
@@ -270,21 +315,13 @@ pub(super) fn run_import(
             .join(meeting_id);
         std::fs::create_dir_all(&dir).map_err(|e| format!("meeting_dir_failed: {e}"))?;
         let import_wav_path = dir.join("import.wav");
-        std::fs::copy(&wav_path, &import_wav_path)
-            .map_err(|e| format!("import_wav_copy_failed: {e}"))?;
+        copy_import_wav_with(|from, to| std::fs::copy(from, to), &wav_path, &import_wav_path)?;
 
         let duration_ms = (samples.len() as u64 * 1_000) / 16_000;
         // P8a: die Pfade stehen VOR der Transkription. Ein Absturz oder Stopp
         // mittendrin laesst sonst eine Besprechung ohne Audio zurueck, die
         // weder nachgeholt noch fortgesetzt werden kann.
-        store
-            .set_audio_paths(
-                meeting_id,
-                import_wav_path.to_str(),
-                None,
-                Some(duration_ms),
-            )
-            .map_err(|e| format!("audio_paths_failed: {e}"))?;
+        register_import_audio(store, meeting_id, &import_wav_path, duration_ms)?;
 
         // G5: Sprache bestimmen und das Modell danach waehlen (Einstellung `auto`: Probe
         // aus dem Audio; Nutzerwahl und feste Einstellung gelten vor jeder Erkennung).
@@ -1468,5 +1505,91 @@ Guten Tag.
         let after = store.get_meeting(&meeting.id).unwrap().unwrap();
         assert_eq!(after.audio_retention_until, None, "kein Protokoll, also bleibt die WAV");
         assert_eq!(after.status, "cancelled");
+    }
+
+    // ---- #15: ein gescheiterter Import hinterlaesst keine unbekannte import.wav ----
+
+    #[test]
+    fn a_failed_copy_leaves_no_half_written_import_wav_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("decoded.wav");
+        std::fs::write(&src, vec![1u8; 1_000]).unwrap();
+        let dst = dir.path().join("import.wav");
+
+        // Platte voll nach 10 Bytes: die Kopierfunktion hat schon geschrieben.
+        let err = copy_import_wav_with(
+            |_, to| {
+                std::fs::write(to, [0u8; 10])?;
+                Err(std::io::Error::other("disk full"))
+            },
+            &src,
+            &dst,
+        )
+        .unwrap_err();
+        assert!(err.starts_with("import_wav_copy_failed: "), "war: {err}");
+        assert!(!dst.exists(), "keine halbe Datei");
+        assert!(src.exists(), "die Quelle bleibt");
+
+        // Und der Normalfall kopiert wirklich.
+        copy_import_wav_with(|a, b| std::fs::copy(a, b), &src, &dst).unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap().len(), 1_000);
+    }
+
+    #[test]
+    fn audio_that_could_not_be_registered_is_removed_but_registered_audio_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
+        let wav = dir.path().join("import.wav");
+        std::fs::write(&wav, b"RIFF").unwrap();
+
+        // Unbekannte Besprechung: die Datenbank kennt die Datei nicht -> weg.
+        let err = register_import_audio(&store, "gibt-es-nicht", &wav, 1_000).unwrap_err();
+        assert!(err.starts_with("audio_paths_failed: "), "war: {err}");
+        assert!(!wav.exists(), "Debris ohne Besitzer wird entfernt");
+
+        // Eingetragen: die Datei bleibt (spaeter ist "Neu transkribieren" moeglich).
+        let meeting = store
+            .create_meeting("Import", MeetingSource::Import, None)
+            .unwrap();
+        std::fs::write(&wav, b"RIFF").unwrap();
+        register_import_audio(&store, &meeting.id, &wav, 6_000).unwrap();
+        assert!(wav.exists());
+        let stored = store.get_meeting(&meeting.id).unwrap().unwrap();
+        assert_eq!(stored.mic_audio_path.as_deref(), wav.to_str());
+        assert_eq!(stored.duration_ms, Some(6_000));
+    }
+
+    /// #15: das Backend lehnt einen Import ohne bestaetigte Einwilligung NICHT ab.
+    /// Das ist beabsichtigt: das Gate ist ein Oberflaechen-Gate (Oberflaeche und
+    /// Headless-Aufruf melden `true`); nur die Live-Aufnahme prueft `consent_gate`
+    /// im Recorder. Ohne Haken bleibt `consent_confirmed_at` leer. Der Test haelt
+    /// das fest, damit es niemand unbemerkt zur halben Sperre macht.
+    #[test]
+    fn the_backend_import_does_not_require_a_consent_confirmation_on_purpose() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
+        let vtt = dir.path().join("ohne-einwilligung.vtt");
+        std::fs::write(&vtt, "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nGuten Tag.\n").unwrap();
+        let id = import_subtitle_file(&store, "ohne", &vtt, None).unwrap();
+        let meeting = store.get_meeting(&id).unwrap().unwrap();
+        assert_eq!(meeting.status, "ready");
+        assert_eq!(meeting.consent_confirmed_at, None, "kein Haken, kein Zeitstempel");
+    }
+
+    /// #15: Fehler des Untertitel-Imports sind Codes (`code` oder `code: Detail`), keine
+    /// deutschen Saetze: die Oberflaeche zeigt sie in der Sprache der App.
+    #[test]
+    fn subtitle_import_errors_are_codes_not_prose() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
+        let missing = import_subtitle_file(&store, "x", &dir.path().join("gibt-es-nicht.vtt"), None)
+            .unwrap_err();
+        assert!(missing.starts_with("subtitle_unreadable: "), "war: {missing}");
+        let bad = dir.path().join("kaputt.vtt");
+        std::fs::write(&bad, "das ist kein Untertitel").unwrap();
+        assert_eq!(
+            import_subtitle_file(&store, "x", &bad, None).unwrap_err(),
+            "subtitle_invalid"
+        );
     }
 }

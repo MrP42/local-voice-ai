@@ -1191,7 +1191,8 @@ test.describe("Systemton Vorgabe", () => {
     await page.getByRole("button", { name: "Aufnahme starten" }).click();
     const box = page.getByTestId("capture-system");
     await expect(box).not.toBeChecked();
-    await box.check();
+    // ToggleSwitch: unsichtbares Eingabefeld unter dem sichtbaren Schalter (force).
+    await box.check({ force: true });
     await expect
       .poll(
         async () =>

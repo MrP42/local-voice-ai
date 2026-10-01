@@ -7,6 +7,7 @@ import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { Input } from "../../ui/Input";
 import { Select } from "../../ui/Select";
+import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { MeetingChatNotice } from "./MeetingChatNotice";
 import { TemplatePicker } from "./notes/TemplatePicker";
 
@@ -179,30 +180,21 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
           role="group"
           aria-label={t("meetings.startDialog.options")}
         >
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={captureSystem}
-              onChange={(e) => onCaptureSystemChange(e.target.checked)}
-              className="accent-logo-primary"
-              data-testid="capture-system"
-            />
-            {t("meetings.record.captureSystem")}
-          </label>
+          <ToggleSwitch
+            checked={captureSystem}
+            onChange={onCaptureSystemChange}
+            label={t("meetings.record.captureSystem")}
+            description={t("meetings.record.captureSystemHint")}
+            testId="capture-system"
+          />
           {captureSystem && (
-            <label
-              className="flex items-center gap-2 text-sm"
-              title={t("meetings.record.diarizeMicHint")}
-            >
-              <input
-                type="checkbox"
-                checked={diarizeMic}
-                onChange={(e) => onDiarizeMicChange(e.target.checked)}
-                className="accent-logo-primary"
-                data-testid="diarize-mic"
-              />
-              {t("meetings.record.diarizeMic")}
-            </label>
+            <ToggleSwitch
+              checked={diarizeMic}
+              onChange={onDiarizeMicChange}
+              label={t("meetings.record.diarizeMic")}
+              description={t("meetings.record.diarizeMicHint")}
+              testId="diarize-mic"
+            />
           )}
         </div>
 

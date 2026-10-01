@@ -1,4 +1,5 @@
 mod actions;
+mod agent; // C1 (Goal Lokaler Agent)
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
@@ -1926,6 +1927,7 @@ pub fn run(cli_args: CliArgs) {
             local_update::local_update_install,
             shortcut::change_append_trailing_space_setting,
             shortcut::change_lazy_stream_close_setting,
+            shortcut::change_refine_enabled_setting,
             shortcut::change_vad_enabled_setting,
             shortcut::change_app_language_setting,
             shortcut::change_update_checks_setting,
@@ -2036,9 +2038,27 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_minutes::meetings_minutes_cancel,
             commands::meeting_minutes::meetings_minutes_meta,
             commands::meeting_minutes::meetings_get_auto_template,
+            // G3 (#70): Projekt-Protokoll
+            commands::project_minutes::project_minutes_candidates,
+            commands::project_minutes::project_minutes_list,
+            commands::project_minutes::project_minutes_get,
+            commands::project_minutes::project_minutes_delete,
+            commands::project_minutes::project_minutes_state,
+            commands::project_minutes::project_minutes_cancel,
+            commands::project_minutes::project_minutes_generate,
             commands::meetings::meetings_export_document,
             // M1-P1c
             commands::provenance::provenance_get, // A1
+            // A4: Seite Integrationen
+            commands::integrations::integrations_list,
+            commands::integrations::integration_create,
+            commands::integrations::integration_update,
+            commands::integrations::integration_delete,
+            commands::integrations::integration_set_grant,
+            commands::integrations::integration_test,
+            commands::integrations::integrations_audit_list,
+            commands::integrations::approvals_pending,
+            commands::integrations::approval_decide,
             // A2: YouTube als Quelle
             commands::youtube::youtube_normalize_link,
             commands::youtube::youtube_add_source,
@@ -2238,6 +2258,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_speak_seek,
             commands::tts::tts_synthesize_to_file,
             commands::tts::tts_list_downloads,
+            commands::tts::tts_runtime_status,
             commands::tts::tts_download_model,
             commands::tts::tts_cancel_download,
             commands::tts::tts_delete_model,
@@ -2279,6 +2300,8 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_enhance::MeetingNotesEvent,
             // P1k
             commands::meeting_minutes::MinutesEvent,
+            // G3 (#70)
+            commands::project_minutes::ProjectMinutesEvent,
             // M4-P4b
             managers::meetings::search::indexer::MeetingIndexEvent,
             // M5-P5c
@@ -2323,6 +2346,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.reindex_meetings // M4-P4b
         || cli_args.eval_diarization.is_some() // M3-P3a
         || cli_args.eval_chat.is_some() // M4-P4f
+        || cli_args.eval_agent // C1
         || cli_args.export_meeting.is_some() // M6-P6a
         || cli_args.followup_draft.is_some() // P6f
         || cli_args.translate_meeting.is_some() // G5
@@ -2649,6 +2673,23 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_eval_minutes(&app_handle, &args, &dir)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // C1: Werkzeugwahl des lokalen Agenten (60 eingebettete Aufgaben);
+                // braucht nur das Sprachmodell.
+                if cli_args.eval_agent {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_eval_agent(&app_handle, &args)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -3726,6 +3767,55 @@ fn run_headless_eval_chat(app: &AppHandle, args: &CliArgs, dir: &std::path::Path
         emit_headless_payload(&payload, args.out.as_deref());
     } else {
         for line in eval::summary_lines(&payload) {
+            println!("{line}");
+        }
+        if let Some(path) = args.out.as_deref() {
+            match std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                Ok(()) => eprintln!("wrote {}", path.display()),
+                Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
+    code
+}
+
+// C1 (Goal Lokaler Agent): `--eval-agent --model <id>`. Werkzeugwahl im
+// Schema-Modus auf dem eingebetteten Datensatz. Der lokale Server startet nur
+// ueber den Manager (RAM-Gate, Job-Objekt), mit Speicherwaechter wie in
+// `run_headless_eval_notes`, und wird am Ende gestoppt. Keine Einstellungen,
+// keine Besprechungsdaten. Exit 0 Gate erfuellt, 3 verfehlt, 1 Fehler, 2 ohne --model.
+fn run_headless_eval_agent(app: &AppHandle, args: &CliArgs) -> i32 {
+    crate::selftest::begin_headless_run();
+    let Some(model) = args.model.as_deref().map(str::trim).filter(|m| !m.is_empty()) else {
+        eprintln!("error: --eval-agent needs --model <id> (see --list-models)");
+        return 2;
+    };
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+    let (code, payload) = tauri::async_runtime::block_on(agent::eval::run_cli(model));
+    llm_server.stop();
+
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        for line in agent::eval::summary_lines(&payload) {
             println!("{line}");
         }
         if let Some(path) = args.out.as_deref() {

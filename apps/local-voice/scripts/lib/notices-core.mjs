@@ -11,6 +11,7 @@ const KNOWN_SPDX = [
   "CC-BY-SA-4.0",
   "CC0-1.0",
   "GPL-3.0",
+  "GPL-3.0-or-later",
   "ISC",
   "LGPL-3.0",
   "MIT",
@@ -24,6 +25,16 @@ export function normalizeLicenseId(text) {
   if (!m) return null;
   const hit = KNOWN_SPDX.find((id) => id.toLowerCase() === m[1].toLowerCase());
   return hit ?? null;
+}
+
+/**
+ * Ganzer Lizenztext ist ein SPDX-Ausdruck mit AND/OR/WITH ("MIT AND GPL-3.0-or-later"),
+ * sonst null. Solche Eintraege duerfen nicht auf die erste Kennung verkuerzt werden.
+ */
+export function licenseExpression(text) {
+  if (typeof text !== "string") return null;
+  const t = text.trim();
+  return /^[A-Za-z0-9.+-]+(\s+(AND|OR|WITH)\s+[A-Za-z0-9.+-]+)+$/.test(t) ? t : null;
 }
 
 const firstUrl = (s) => (s.match(/<(https?:\/\/[^>]+)>/) ?? [])[1] ?? null;
@@ -120,6 +131,7 @@ export function catalogModels(catalog) {
   return catalog.models
     .map((m) => {
       const license = typeof m.license === "string" && m.license.trim() ? m.license.trim() : null;
+      const expression = licenseExpression(license);
       return {
         id: m.id,
         slug: m.slug,
@@ -127,8 +139,12 @@ export function catalogModels(catalog) {
         purpose: m.purpose ?? "asr",
         revision: m.revision ?? null,
         license,
-        licenseId: normalizeLicenseId(license),
-        nonCommercial: license ? /(^|-)nc(-|$)/i.test(license) : false,
+        licenseExpression: expression,
+        // Ein Ausdruck ("MIT AND GPL-3.0-or-later") ist keine einzelne freizuegige Kennung.
+        licenseId: expression ? null : normalizeLicenseId(license),
+        licenseUrl: typeof m.license_url === "string" && m.license_url.trim() ? m.license_url.trim() : null,
+        licenseNote: typeof m.license_note === "string" && m.license_note.trim() ? m.license_note.trim() : null,
+        nonCommercial: m.non_commercial === true || (license ? /(^|-)nc(-|$)/i.test(license) : false),
         files: (m.files ?? []).map((f) => ({ filename: f.filename, sha256: f.sha256 })),
       };
     })
@@ -157,6 +173,8 @@ export function renderNotices({ appName, version, about, npm, attribution, catal
   // Fund-Hinweise zuerst: wer die Datei liest, soll sie nicht suchen muessen.
   const copyleft = about.licenses.filter((l) => /^(A|L)?GPL/i.test(l.id));
   const restricted = catalog.filter((m) => !PERMISSIVE_CATALOG.has(m.licenseId));
+  // Auch freizuegige Eintraege mit Herkunftshinweis (z. B. Piper-Stimme aus Lessac feinabgestimmt) nennen.
+  const noted = catalog.filter((m) => m.licenseNote && PERMISSIVE_CATALOG.has(m.licenseId));
   out.push("## Hinweise");
   out.push("");
   if (copyleft.length) {
@@ -167,6 +185,13 @@ export function renderNotices({ appName, version, about, npm, attribution, catal
         out.push(`- ${u.crate.name} ${u.crate.version} — ${l.id}${u.crate.repository ? ` — <${u.crate.repository}>` : ""}`);
       }
     }
+    out.push("");
+  }
+  const catalogCopyleft = catalog.filter((m) => /(^|[\s(])(A|L)?GPL-/i.test(m.license ?? ""));
+  if (catalogCopyleft.length) {
+    out.push("**Heruntergeladene Laufzeiten mit Copyleft-Anteil (nicht im Installer, auf Wunsch von der Quelle geladen):**");
+    out.push("");
+    for (const m of catalogCopyleft) out.push(`- ${m.name} — ${m.license}${m.licenseUrl ? ` — <${m.licenseUrl}>` : ""}`);
     out.push("");
   }
   const nc = restricted.filter((m) => m.nonCommercial);
@@ -189,11 +214,18 @@ export function renderNotices({ appName, version, about, npm, attribution, catal
     out.push(`| ${m.name} | ${m.use} | ${m.license} | ${m.source ? `<${m.source}>` : ""} |`);
   }
   out.push("");
-  const explicit = restricted.filter((m) => !m.nonCommercial && m.license);
+  const explicit = [...restricted.filter((m) => m.license), ...noted].sort((a, b) => cmp(a.slug ?? a.id, b.slug ?? b.id));
   if (explicit.length) {
-    out.push("Weitere Katalogmodelle mit eigener oder nicht freizügiger Lizenz (maßgeblich ist die Modellkarte der Quelle):");
+    out.push(
+      "Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter oder nicht freizügiger Lizenz bzw. Herkunftshinweis (maßgeblich ist die Quelle):",
+    );
     out.push("");
-    for (const m of explicit) out.push(`- ${m.name} (\`${m.id}\`) — ${m.license}`);
+    for (const m of explicit) {
+      const flag = m.nonCommercial ? " — **nur nicht-kommerziell**" : "";
+      const url = m.licenseUrl ? ` — <${m.licenseUrl}>` : "";
+      const note = m.licenseNote ? `. ${m.licenseNote}` : "";
+      out.push(`- ${m.name} (\`${m.id}\`) — ${m.license}${flag}${url}${note}`);
+    }
     out.push("");
   }
   const unspecified = restricted.filter((m) => !m.license);
@@ -349,7 +381,7 @@ export function buildSbom({ cargoBom, npm, attribution, catalog }) {
   for (const m of catalog) {
     const ref = `model:catalog:${slugify(m.slug ?? m.id)}`;
     const c = {
-      type: "machine-learning-model",
+      type: /runtime$/.test(m.purpose) ? "application" : "machine-learning-model",
       "bom-ref": ref,
       name: m.name,
       scope: "optional",
@@ -362,8 +394,10 @@ export function buildSbom({ cargoBom, npm, attribution, catalog }) {
     if (m.id && m.revision) c.purl = `pkg:huggingface/${m.id}@${m.revision}`;
     if (m.nonCommercial) c.properties.push({ name: "lva:non-commercial", value: "true" });
     for (const f of m.files) c.properties.push({ name: `lva:file:${f.filename}`, value: `sha256:${f.sha256}` });
-    const lic = licenseEntries(m.license, m.licenseId);
+    if (m.licenseNote) c.properties.push({ name: "lva:license-note", value: m.licenseNote });
+    const lic = m.licenseExpression ? [{ expression: m.licenseExpression }] : licenseEntries(m.license, m.licenseId);
     if (lic) c.licenses = lic;
+    if (m.licenseUrl) c.externalReferences = [{ type: "license", url: m.licenseUrl }];
     bom.components.push(c);
     shipped.push(ref);
   }

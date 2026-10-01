@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/issues-abschluss
 iteration: 1
 erstellt: 2026-10-01
-aktualisiert: 2026-10-01T11:15
+aktualisiert: 2026-10-01T11:59
 ---
 
 # Goal: Offene Issues abschliessen, neue Features, Version 0.21.0
@@ -66,6 +66,8 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - R1 Budget ~10,6 MTok – Vorschlag: gestaffelt freigeben (M1–M3 zuerst ~2,2 MTok). Owner: Patrick.
 - R2 #6 Löschen alter Logdatei und #11 Ignore-Liste: Owner-Aktion, Vorschlag kommt fertig.
 - R3 #10 Abnahme in Word/VS Code/Browser: automatisiert per UI Automation soweit möglich, Rest manuell durch Patrick.
+- R4 Lizenz (G2d): Piper-Windows-Runtime bringt espeak-ng.dll (GPL-3.0-or-later) mit, nur Download auf Wunsch, Subprozess, nicht im Installer. Vorschlag: so lassen und Lizenztext beim Download ablegen. Owner: Patrick.
+- R5 Lizenz (G2d): Piper-Stimmen Lessac/Ryan nicht-kommerziell, Thorsten/Amy/Alan/Alba/Kerstin abgeleitet und ungeklaert. Vorschlag: Hinweis "nur nicht-kommerziell" wie bei Canary. Owner: Patrick.
 
 ## Meilensteine
 | M | Ergebnis (anfassbar) | Status |
@@ -86,6 +88,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 -
 
 ## Entscheidungen
+- 2026-10-01 Patrick: "Vollgas" – maximale Parallelisierung, alle offenen Issues und Restpunkte; M4–M7 damit freigegeben. Neue Befunde: Sprecher-Dialog (G6), ASR-Wiederholungen (G7). Keine sichtbaren Fenster, solange Patrick am Rechner arbeitet.
 - 2026-10-01 Patrick: G5 Mehrsprachigkeit/Übersetzung aufnehmen (vor 0.21.0); Rahmen dadurch ~3,2 MTok.
 - 2026-10-01 Patrick: mp3lame LGPL als Ausnahme zulassen; Canary 1B mit Hinweis „nur nicht-kommerziell“ behalten; 12 unmaintained-Ignores übernehmen.
 - 2026-10-01 Patrick: Reiter umordnen vor 0.21.0 – Mitte Transkript + Protokoll, rechts unter der Bedienung Notizen, KI-Notizen, Fragen; Kopf zeigt Teilnehmende (Anzahl, Namen) und macht sie dort bearbeitbar (G4).
@@ -93,7 +96,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - 2026-10-01 Patrick (/goal-planner-worker): alle offenen Issues abschließen, neue Features umsetzen, testen, neue Version, Ergebnisse in GitHub; zuerst leerer Eintrag im Projekt.
 
 ## Nächste empfohlene Aktion
-M1 briefen.
+Ergebnisse G2b/G5/G2f/G3 validieren, mergen; Lizenzfragen espeak-ng/NC-Stimmen an Patrick; dann M8 0.21.0
 
 ## Verlauf
 - 2026-10-01T10:38 DISCOVERY — Goal State angelegt
@@ -101,4 +104,5 @@ M1 briefen.
 - 2026-10-01T10:39 READY (Runde 0) — Goal definiert, Issue #70
 - 2026-10-01T10:39 PLANNING (Runde 1) — M1 zuerst
 - 2026-10-01T10:39 EXECUTING (Runde 1) — G1 laeuft (wt-goal)
+- 2026-10-01T11:59 EXECUTING (Runde 1) — G2b, G5, G2f (wt-u7), G3 (wt-g2c) laufen; G2d abgenommen
 

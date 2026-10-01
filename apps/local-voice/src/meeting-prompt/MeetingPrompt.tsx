@@ -10,6 +10,7 @@ import { commands, events, type MeetingPromptPayload } from "@/bindings";
 import { syncLanguageFromSettings } from "@/i18n";
 import { useSettings } from "@/hooks/useSettings";
 import { Button } from "@/components/ui/Button";
+import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { MeetingChatNotice } from "@/components/settings/meetings/MeetingChatNotice";
 import { BriefButton } from "@/components/settings/meetings/people/BriefButton";
 import { translateMeetingError } from "@/components/settings/meetings/meetingErrors";
@@ -204,18 +205,15 @@ const MeetingPrompt: React.FC = () => {
             />
             <span>{t("meetings.consent.confirm")}</span>
           </label>
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              checked={captureSystem}
-              onChange={(e) =>
-                void updateSetting("meeting_capture_system", e.target.checked)
-              }
-              className="accent-logo-primary"
-              data-testid="prompt-capture-system"
-            />
-            <span>{t("meetings.record.captureSystem")}</span>
-          </label>
+          <ToggleSwitch
+            checked={captureSystem}
+            onChange={(value) =>
+              void updateSetting("meeting_capture_system", value)
+            }
+            label={t("meetings.record.captureSystem")}
+            description={t("meetings.record.captureSystemHint")}
+            testId="prompt-capture-system"
+          />
           {error && (
             <p
               className="text-sm text-red-500"

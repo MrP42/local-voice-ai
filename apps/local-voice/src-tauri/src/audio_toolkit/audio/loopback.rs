@@ -81,6 +81,22 @@ impl QpcStamper {
     }
 }
 
+/// Toleranz auf die verstrichene Wanduhrzeit: so viel Verzug (Planung des
+/// Capture-Threads unter Last, Pufferlatenz des Treibers) darf die gemeldete
+/// Lücke größer sein als die Zeit seit dem letzten gelesenen Paket.
+pub const PAD_PLAUSIBILITY_SLACK: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// #15, Sanity-Cap: die größte Lücke (in Frames beim Gerätetakt `rate`), die
+/// nach `elapsed` Wanduhrzeit seit dem letzten Paket überhaupt echt sein kann.
+/// Die Gerätezeit läuft nie schneller als die Uhr; ein größerer Sprung ist ein
+/// korrupter Positionswert und würde den Thread sonst Stunden Stille schieben
+/// lassen. Rein, ohne Allokation: läuft im Capture-Thread.
+pub fn max_plausible_pad_frames(elapsed: std::time::Duration, rate: usize) -> u64 {
+    let nanos = elapsed.saturating_add(PAD_PLAUSIBILITY_SLACK).as_nanos();
+    let frames = nanos.saturating_mul(rate as u128) / 1_000_000_000;
+    u64::try_from(frames).unwrap_or(u64::MAX)
+}
+
 /// Pure: f32 [-1, 1] -> i16 mit Clamping (Werte außerhalb werden begrenzt).
 pub fn f32_to_i16(samples: &[f32]) -> Vec<i16> {
     samples
@@ -94,7 +110,9 @@ pub fn f32_to_i16(samples: &[f32]) -> Vec<i16> {
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use super::{downmix_to_mono, f32_to_i16, QpcStamper, TARGET_SAMPLE_RATE};
+    use super::{
+        downmix_to_mono, f32_to_i16, max_plausible_pad_frames, QpcStamper, TARGET_SAMPLE_RATE,
+    };
     use crate::audio_toolkit::audio::{FrameResampler, LoopbackTimeline, TimelineAction};
     use anyhow::{anyhow, Result};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -239,6 +257,9 @@ mod windows_impl {
         let silence_chunk = vec![0.0f32; SILENCE_CHUNK_FRAMES];
         let mut dropped_buffers: u64 = 0;
         let mut padded_frames: u64 = 0;
+        // #15: Wanduhrzeit des letzten gelesenen Pakets, nur als Plausibilitaetsgrenze
+        // fuer die Stille-Polsterung (die Zeitachse bleibt allein die Geraeteposition).
+        let mut last_packet_at = std::time::Instant::now();
 
         while !stop.load(Ordering::Relaxed) {
             // Alle bereitstehenden Pakete abholen, dann aufs nächste Event warten.
@@ -268,7 +289,19 @@ mod windows_impl {
                 // von IAudioCaptureClient::GetBuffer) — niemals aus gezählten
                 // Buffern oder Wall-Clock-Zeit.
                 let device_position = info.index;
-                let pad_frames = match timeline.on_buffer(device_position, frames_read as u64) {
+                // Instant::now() ist ein Zaehlerlesen: keine Allokation, keine Sperre, kein I/O.
+                let now = std::time::Instant::now();
+                let max_pad = max_plausible_pad_frames(
+                    now.duration_since(last_packet_at),
+                    mix_rate,
+                );
+                last_packet_at = now;
+                let capped_before = timeline.capped_gaps();
+                let pad_frames = match timeline.on_buffer_capped(
+                    device_position,
+                    frames_read as u64,
+                    max_pad,
+                ) {
                     TimelineAction::Drop => {
                         dropped_buffers += 1;
                         if dropped_buffers % 100 == 1 {
@@ -281,6 +314,15 @@ mod windows_impl {
                     TimelineAction::PadSilence(gap_frames) => gap_frames,
                     TimelineAction::Append => 0,
                 };
+                if timeline.capped_gaps() != capped_before {
+                    let capped = timeline.capped_gaps();
+                    if capped % 100 == 1 {
+                        log::warn!(
+                            "loopback: implausible position jump capped at {pad_frames} frames ({capped} so far, {} frames not padded)",
+                            timeline.skipped_frames()
+                        );
+                    }
+                }
                 // M2-P2c2: QPC des ersten Frames DIESES Puffers (hinter der
                 // Stille); die eingeschobene Stille bekommt davon
                 // zurueckgerechnete Stempel. Kein gueltiger Stempel: alter Anker.
@@ -326,7 +368,9 @@ mod windows_impl {
         });
         audio_client.stop_stream()?;
         log::info!(
-            "loopback capture stopped (padded {padded_frames} silence frames, dropped {dropped_buffers} buffers)"
+            "loopback capture stopped (padded {padded_frames} silence frames, dropped {dropped_buffers} buffers, capped {} implausible gaps = {} frames not padded)",
+            timeline.capped_gaps(),
+            timeline.skipped_frames()
         );
         Ok(())
     }
@@ -383,6 +427,30 @@ mod tests {
     fn i16_conversion_clamps_out_of_range() {
         let out = f32_to_i16(&[0.0, 1.0, -1.0, 2.0, -2.0]);
         assert_eq!(out, vec![0, 32767, -32768, 32767, -32768]);
+    }
+
+    // ---- #15: Sanity-Cap der Stille-Polsterung ---------------------------------
+
+    #[test]
+    fn the_padding_cap_follows_the_wall_clock_plus_a_fixed_slack() {
+        use std::time::Duration;
+        // 10 s seit dem letzten Paket bei 48 kHz: 10 s + 2 s Toleranz.
+        assert_eq!(
+            max_plausible_pad_frames(Duration::from_secs(10), 48_000),
+            12 * 48_000
+        );
+        // Sofort nach dem Paket: nur die Toleranz.
+        assert_eq!(max_plausible_pad_frames(Duration::ZERO, 16_000), 2 * 16_000);
+        // Stunden Stille ohne Paket (echt: nichts spielt) bleiben zulässig ...
+        assert_eq!(
+            max_plausible_pad_frames(Duration::from_secs(3 * 3_600), 48_000),
+            (3 * 3_600 + 2) * 48_000
+        );
+        // ... und eine absurde Dauer/Rate rechnet saturierend statt zu laufen über.
+        assert_eq!(
+            max_plausible_pad_frames(Duration::from_secs(u64::MAX / 2), usize::MAX),
+            u64::MAX
+        );
     }
 
     // ---- M2-P2c2: QPC-Stempel je Ausgabeblock --------------------------------

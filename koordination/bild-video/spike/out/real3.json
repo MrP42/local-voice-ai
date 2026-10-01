@@ -1,0 +1,212 @@
+[
+ {
+  "frame": "r00_0000s.png",
+  "s": 6.83,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r01_0003s.png",
+  "s": 5.34,
+  "art": "textfolie",
+  "beschreibung": "Auf der Folie steht der Titel \"8 FLOSS tools and 4 hardware for audio, video and image editing for Commons\" sowie der Name des Sprechers und der Organisation."
+ },
+ {
+  "frame": "r02_0013s.png",
+  "s": 1.55,
+  "art": "textfolie",
+  "beschreibung": "Das Bild zeigt eine Folie mit dem Titel \"Audacity Audio editing for beginners\" und Logos für Windows und macOS."
+ },
+ {
+  "frame": "r03_0020s.png",
+  "s": 1.15,
+  "art": "textfolie",
+  "beschreibung": "Die Folie zeigt das Logo von Audacity mit dem Titel \"Audacity Audio editing for beginners\" und den Betriebssystemen Windows und macOS, sowie Webadressen."
+ },
+ {
+  "frame": "r04_0035s.png",
+  "s": 1.33,
+  "art": "textfolie",
+  "beschreibung": "Auf der Folie ist das Logo von Pattypan, der Titel \"Pattypan Metadata and Commons uploading\" und weitere Informationen wie das macOS-Symbol und eine URL zu Wikimedia Commons zu sehen."
+ },
+ {
+  "frame": "r05_0044s.png",
+  "s": 2.13,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r06_0054s.png",
+  "s": 1.11,
+  "art": "textfolie",
+  "beschreibung": "Die Folie zeigt das Logo und den Titel \"Miro Video Converter Audio/video conversion\" sowie die Plattformen Windows und macOS, ergänzt durch ein Bild des Programms."
+ },
+ {
+  "frame": "r07_0063s.png",
+  "s": 1.63,
+  "art": "textfolie",
+  "beschreibung": "Auf der Folie ist ein Screenshot eines Video-Konverters zu sehen, begleitet von dem Titel \"Miro Video Converter Audio/video conversion\" und der Angabe \"Windows macOS\" sowie einer Webseite."
+ },
+ {
+  "frame": "r08_0078s.png",
+  "s": 1.12,
+  "art": "textfolie",
+  "beschreibung": "Auf der Folie ist das Logo von OBS zu sehen, zusammen mit dem Titel \"Open Broadcasting Software Live audio-visual broadcasting\" und den unterstützten Betriebssystemen Windows und macOS."
+ },
+ {
+  "frame": "r09_0087s.png",
+  "s": 1.18,
+  "art": "textfolie",
+  "beschreibung": "Auf der Folie steht der Titel \"Open Broadcasting Software Live audio-visual broadcasting\" zusammen mit dem Logo und den unterstützten Betriebssystemen Windows und macOS."
+ },
+ {
+  "frame": "r10_0105s.png",
+  "s": 1.58,
+  "art": "textfolie",
+  "beschreibung": "Das Bild zeigt eine Präsentationsfolie mit dem Text \"Gimp Photo editing\" und einem Link zu GIMP, eingebettet in eine Szene, die wie ein Wartebereich aussieht."
+ },
+ {
+  "frame": "r11_0111s.png",
+  "s": 1.14,
+  "art": "textfolie",
+  "beschreibung": "Das Bild zeigt eine Präsentation über GIMP Photo Editing mit einem Fenster zur Farbauswahl im Vordergrund und einem Hintergrund, der einen Raum mit Fenstern und Möbeln darstellt."
+ },
+ {
+  "frame": "r12_0115s.png",
+  "s": 2.13,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r13_0122s.png",
+  "s": 2.38,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r14_0126s.png",
+  "s": 1.35,
+  "art": "textfolie",
+  "beschreibung": "Das Bild zeigt eine Präsentationsfolie mit dem Titel \"Blender Animation and [some] video editing\" und dem Logo von Blender 2.5 Beta sowie einem Bild einer weiblichen Figur und eines Tieres."
+ },
+ {
+  "frame": "r15_0135s.png",
+  "s": 1.48,
+  "art": "textfolie",
+  "beschreibung": "Das Bild zeigt eine Präsentationsfolie mit dem Titel \"Blender 2.5 Beta\" und darunter \"Blender Animation and [some] video editing\", sowie Logos und Download-Informationen."
+ },
+ {
+  "frame": "r16_0140s.png",
+  "s": 1.19,
+  "art": "textfolie",
+  "beschreibung": "Auf der Folie ist das Logo von Hydrogen zu sehen, gefolgt von dem Text \"Hydrogen Open Source drum machine\" und den Betriebssystemen \"Windows macOS\" sowie einer URL."
+ },
+ {
+  "frame": "r17_0149s.png",
+  "s": 1.46,
+  "art": "textfolie",
+  "beschreibung": "Auf der Folie ist das Logo von Hydrogen zu sehen, darunter der Text \"Hydrogen Open Source drum machine\" und die Angabe \"Windows macOS\", sowie eine URL am unteren Rand."
+ },
+ {
+  "frame": "r18_0166s.png",
+  "s": 2.52,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r19_0176s.png",
+  "s": 2.43,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r20_0188s.png",
+  "s": 1.13,
+  "art": "textfolie",
+  "beschreibung": "Die Folie zeigt den Titel \"Digital audio recorders /earphones/smartphones\" und drei Produktbilder: einen digitalen Audio-Recorder, ein Paar Kopfhörer und ein Smartphone."
+ },
+ {
+  "frame": "r21_0194s.png",
+  "s": 3.03,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r22_0198s.png",
+  "s": 2.52,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r23_0201s.png",
+  "s": 1.3,
+  "art": "textfolie",
+  "beschreibung": "Auf dem Bild ist ein Teil eines Vortrags zu sehen, der eine USB-Mikrofon und einen Laptop mit einer Musiksoftware zeigt, während im Hintergrund ein Raum mit Stühlen und einem Fenster zu sehen ist."
+ },
+ {
+  "frame": "r24_0208s.png",
+  "s": 1.48,
+  "art": "textfolie",
+  "beschreibung": "Das Bild zeigt eine Übersichtsfolie mit dem Titel \"Home studio setup\" und einer detaillierten Darstellung eines Heimstudio-Setups mit verschiedenen Komponenten wie Computer, USB-Mikrofon und Monitorkopfhörer."
+ },
+ {
+  "frame": "r25_0214s.png",
+  "s": 2.34,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r26_0216s.png",
+  "s": 1.88,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r27_0218s.png",
+  "s": 1.91,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r28_0243s.png",
+  "s": 1.89,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r29_0246s.png",
+  "s": 2.32,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r30_0300s.png",
+  "s": 2.0,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r31_0322s.png",
+  "s": 2.03,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r32_0351s.png",
+  "s": 2.67,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r33_0353s.png",
+  "s": 2.11,
+  "art": "?",
+  "beschreibung": ""
+ },
+ {
+  "frame": "r34_0358s.png",
+  "s": 1.9,
+  "art": "?",
+  "beschreibung": ""
+ }
+]

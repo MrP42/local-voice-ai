@@ -32,6 +32,13 @@ Während einer Aufnahme ist das Diktat gesperrt. Dateien (Audio, Video, VTT, SRT
 **Datei importieren** (auch mehrere auf einmal) oder indem Sie sie auf die Arbeitsfläche ziehen; sie landen im
 gewählten Projekt. Bei laufender Verarbeitung: **Pausieren** gibt den Rechner frei, **Stoppen** behält das bisherige Transkript.
 
+**Wiederholungsschleifen:** Die Erkennungsmodelle Nemotron und Parakeet bleiben an unsicheren Stellen manchmal an einem
+Wort hängen und wiederholen es bis zu zehnmal („if if if if if“, „s s s s sort“). Beim Erzeugen eines Transkripts
+(Aufnahme, Neu-Transkription, Import, YouTube, Diktat) fasst die App solche Läufe zusammen: ab **vier** gleichen Wörtern
+in Folge bleibt eines, ein Wortbruchstück vor seinem Wort („cre cre cre created“) entfällt. Bis zu drei Wiederholungen
+(„no no no“), Zahlen, Lachen („ha ha ha“) und getrennte Sätze („Go. Go. Go. Go.“) bleiben unverändert. Bereits gespeicherte
+Transkripte, Anzeige und Export werden **nicht** nachträglich verändert; **Neu transkribieren** wendet die Zusammenfassung an.
+
 ### Import-Warteschlange und gleichzeitige Transkriptionen
 
 - Weitere Dateien lassen sich **jederzeit** hinzufügen. Jede bekommt sofort ihre Besprechung (Status **Wartet**, Platz in
@@ -98,6 +105,28 @@ im Menü **Herkunft**.
 die **Fassung** (Original oder Übersetzung; Standard: die aktive) und die **Sprache des Dokuments** (Standard: Ihre letzte Wahl,
 sonst die Sprache der App). Der Prompt fordert die Sprache ausdrücklich. Beides steht im Kopf des Protokolls
 („Grundlage: Original (Englisch) · Protokoll auf Deutsch“), über den KI-Notizen und im Info-Dialog.
+## Mehrere Aufnahmen gemeinsam protokollieren (Projekt-Protokoll)
+
+In einem Projekt lassen sich mehrere Aufnahmen zu **einem** Protokoll oder **einer** Zusammenfassung verbinden.
+
+1. Projekt wählen, dann ☰ → **Gemeinsam protokollieren** (oder Rechtsklick auf das Projekt). In der Liste erscheinen Häkchen,
+   oben stehen der Zähler sowie **Alle** und **Keine**. Nur Aufnahmen **mit Transkript** sind wählbar; die anderen stehen
+   ausgegraut mit ihrem Grund („Kein Transkript“, „Läuft noch“, „Leer“).
+2. **Gemeinsam protokollieren …** (ab zwei Aufnahmen): Vorlage wählen (auch **Automatisch**, dann nach dem Inhalt aller
+   Aufnahmen) und die Art, **Protokoll** (die Abschnitte der Vorlage, ausführlich) oder **Zusammenfassung** (dieselben
+   Abschnitte, knapp).
+3. Die Aufnahmen werden nach Datum zusammengeführt, je Aufnahme ein Block mit Kopfzeile; ist alles zu lang für einen
+   Durchlauf, nutzt die App dieselbe Block- und Verdichtungslogik wie beim Einzelprotokoll. Fortschritt und **Stopp** stehen
+   wie bei der Einzelverarbeitung in der Arbeitsfläche und im Projekt; Pausieren gibt es wie dort nicht. Der Lauf gehört
+   dem Programm, ein Seitenwechsel ändert nichts daran.
+4. Das Ergebnis steht **im Projekt** als Eintrag „Projekt-Protokoll“ (oder „Projekt-Zusammenfassung“), lässt sich erneut
+   öffnen, kopieren und als Word, Text oder Markdown herunterladen. **Jede Aussage nennt ihre Quelle** (Aufnahme und Zeit);
+   ein Klick öffnet die Aufnahme und springt im Transkript und im Ton an die Stelle. Aussagen ohne Beleg sind markiert.
+   **Herkunft** zeigt Modell, Vorlage, Zeitpunkt und Verfahren; Lücken (ein Teil ließ sich nicht auswerten) stehen im Dokument.
+
+Eine Aufnahme ohne Transkript weist den ganzen Lauf ab, es wird nichts halb geschrieben. Löschen Sie das Dokument, bleiben
+die Aufnahmen unverändert; Löschen Sie das Projekt, verschwinden seine Projekt-Protokolle aus der Liste (die Zeilen bleiben
+in der Datenbank).
 
 ## Sprecher
 

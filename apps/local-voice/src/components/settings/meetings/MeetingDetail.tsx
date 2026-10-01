@@ -463,16 +463,24 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const [editText, setEditText] = useState("");
   const [saving, setSaving] = useState(false);
 
-  /** Sprecher, Epoche und Hinweise; ein Fehler lässt den alten Stand stehen. */
+  /**
+   * Sprecher, Epoche und Hinweise; ein Fehler lässt den alten Stand stehen.
+   * Jeder Aufruf zählt für sich: scheitert einer (auch mit einer Ausnahme),
+   * kommen die anderen trotzdem an, sonst bliebe nach dem Benennen der alte
+   * Name im Transkript stehen.
+   */
   const loadSpeakers = useCallback(async () => {
-    const [list, epoch, notices] = await Promise.all([
+    const [list, epoch, notices] = await Promise.allSettled([
       commands.meetingSpeakersList(meetingId),
       commands.meetingsSegmentEpoch(meetingId),
       commands.meetingSpeakerNotices(meetingId),
     ]);
-    if (list.status === "ok") setSpeakers(list.data ?? []);
-    if (epoch.status === "ok") setSegmentEpoch(epoch.data);
-    if (notices.status === "ok") setSpeakerNotices(notices.data ?? []);
+    if (list.status === "fulfilled" && list.value.status === "ok")
+      setSpeakers(list.value.data ?? []);
+    if (epoch.status === "fulfilled" && epoch.value.status === "ok")
+      setSegmentEpoch(epoch.value.data);
+    if (notices.status === "fulfilled" && notices.value.status === "ok")
+      setSpeakerNotices(notices.value.data ?? []);
   }, [meetingId]);
 
   // Ladevorgang und Ereignisse laufen nebeneinander (bei einer laufenden
@@ -860,6 +868,9 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       );
       setEditingIndex(null);
       setEditText("");
+    } else {
+      // Die Eingabe bleibt offen; ohne Meldung wirkte das wie ein Haenger (#15).
+      toast.error(translateMeetingError(result.error, t));
     }
   };
 

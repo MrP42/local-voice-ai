@@ -605,6 +605,47 @@ fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), Str
     Ok(())
 }
 
+/// Schickt dieser Einfuegeweg Tasten (und muss deshalb auf das Loslassen der
+/// Hotkey-Tasten warten)? `None` und `ExternalScript` senden keine.
+fn paste_method_sends_keys(paste_method: PasteMethod) -> bool {
+    !matches!(paste_method, PasteMethod::None | PasteMethod::ExternalScript)
+}
+
+/// Wartet vor dem Einfuegen, bis die Umschalttasten des Hotkeys losgelassen sind
+/// (hoechstens `max`), aber nur bei Wegen, die Tasten senden. Eine Stapel-
+/// Transkription ist ~80 ms nach dem Stopp-Druck fertig, also bevor der Nutzer
+/// Strg/Win losgelassen hat; in ein Ziel mit gehaltenem Strg getippter oder
+/// eingefuegter Text geht verloren (Chromium-Ziele lesen ihn als Tastenkuerzel).
+/// Ein Ort fuer beide Einfuegepfade (`paste` und der geschuetzte Windows-Zweig):
+/// vorher stand die Wartezeit nur im alten Pfad (#15). `held` ist die
+/// Tastaturabfrage (im Test simuliert).
+fn wait_for_chord_release(
+    paste_method: PasteMethod,
+    held: &mut dyn FnMut() -> bool,
+    max: Duration,
+    poll: Duration,
+) -> Duration {
+    if !paste_method_sends_keys(paste_method) {
+        return Duration::ZERO;
+    }
+    input::wait_for_modifiers_released_with(held, max, poll)
+}
+
+/// Die Wartezeit mit der echten Tastatur: von beiden Einfuegepfaden vor dem ersten
+/// Tastendruck gerufen. Logt, wenn es spuerbar gewartet hat.
+fn wait_before_keystrokes(paste_method: PasteMethod) -> Duration {
+    let waited = wait_for_chord_release(
+        paste_method,
+        &mut input::modifiers_physically_held,
+        input::MODIFIER_RELEASE_TIMEOUT,
+        Duration::from_millis(10),
+    );
+    if waited > Duration::from_millis(20) {
+        info!("paste: waited {waited:?} for modifier keys to be released");
+    }
+    waited
+}
+
 fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool {
     auto_submit && paste_method != PasteMethod::None
 }
@@ -766,6 +807,15 @@ pub fn paste_transcript_guarded(
     } else {
         text
     };
+
+    // #15 (finding from G2a): this path did not wait for the hotkey chord to be
+    // released, unlike `paste`. A batch transcription is ready ~80 ms after the
+    // stop press; Ctrl+V or typed text sent while Ctrl/Win are still physically
+    // held is swallowed by Chromium-based targets. Waiting HERE, before the
+    // foreground is read for the preflight, keeps the guard's view of the target
+    // as close as possible to the moment of injection. Timed out (a key held on
+    // purpose): carry on, exactly one attempt follows.
+    wait_before_keystrokes(paste_method);
 
     // Log the inputs of the decision, never the transcript. Without this a
     // guard that silently decides "fine, paste it" is indistinguishable from
@@ -959,14 +1009,8 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     // into a target while Ctrl/Win are physically held loses the text (see
     // input::wait_for_modifiers_released). Applies to every method that
     // sends keystrokes; None and ExternalScript return before this matters.
-    if !matches!(paste_method, PasteMethod::None | PasteMethod::ExternalScript) {
-        let waited = crate::input::wait_for_modifiers_released(
-            crate::input::MODIFIER_RELEASE_TIMEOUT,
-        );
-        if waited > std::time::Duration::from_millis(20) {
-            info!("paste: waited {waited:?} for modifier keys to be released");
-        }
-    }
+    // The guarded Windows path calls the same function (#15).
+    wait_before_keystrokes(paste_method);
 
     // Perform the paste operation
     match paste_method {
@@ -1025,6 +1069,92 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const POLL: Duration = Duration::from_millis(2);
+
+    /// Simulierte Tastatur: Strg/Win sind fuer die ersten `polls_held` Abfragen unten.
+    fn keyboard(polls_held: u32) -> (impl FnMut() -> bool, std::rc::Rc<std::cell::Cell<u32>>) {
+        let polls = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let seen = std::rc::Rc::clone(&polls);
+        (
+            move || {
+                seen.set(seen.get() + 1);
+                seen.get() <= polls_held
+            },
+            polls,
+        )
+    }
+
+    /// #15 (Befund aus G2a): der Windows-Zweig von `paste_transcript_guarded` wartete
+    /// nicht auf das Loslassen der Tasten wie `paste`; kam der Stopp-Druck zu frueh,
+    /// verschluckte das Ziel den Text. Beide Pfade rufen jetzt dieselbe Wartefunktion.
+    #[test]
+    fn every_key_sending_paste_method_waits_for_the_hotkey_to_be_released() {
+        for method in [
+            PasteMethod::CtrlV,
+            PasteMethod::CtrlShiftV,
+            PasteMethod::ShiftInsert,
+            PasteMethod::Direct,
+        ] {
+            let (mut held, polls) = keyboard(3);
+            let waited = wait_for_chord_release(method, &mut held, Duration::from_secs(5), POLL);
+            assert_eq!(polls.get(), 4, "{method:?}: 3x gehalten, dann frei");
+            assert!(waited >= POLL * 3, "{method:?}: {waited:?}");
+        }
+    }
+
+    #[test]
+    fn methods_without_keystrokes_never_wait_even_if_a_key_is_held() {
+        for method in [PasteMethod::None, PasteMethod::ExternalScript] {
+            let (mut held, polls) = keyboard(u32::MAX);
+            let waited = wait_for_chord_release(method, &mut held, Duration::from_secs(5), POLL);
+            assert_eq!(polls.get(), 0, "{method:?}: die Tastatur wird gar nicht gefragt");
+            assert!(waited < Duration::from_millis(500), "{method:?}: {waited:?}");
+        }
+    }
+
+    #[test]
+    fn a_chord_that_is_never_released_ends_at_the_limit_and_the_paste_goes_on() {
+        let mut held = || true;
+        let limit = Duration::from_millis(40);
+        let waited = wait_for_chord_release(PasteMethod::CtrlV, &mut held, limit, POLL);
+        assert!(waited >= limit && waited < Duration::from_secs(2), "{waited:?}");
+    }
+
+    /// Der geschuetzte Pfad wird nur mit einem `AppHandle` und einem Fenster
+    /// ausgefuehrt, ist also hier nicht aufrufbar. Dieser Test sichert, dass sein
+    /// Windows-Zweig die Wartefunktion tatsaechlich VOR dem Einfuegen ruft (der Fehler
+    /// war genau ihr Fehlen) und dass beide Pfade dieselbe Funktion benutzen.
+    #[test]
+    fn the_guarded_windows_branch_waits_for_the_hotkey_before_it_injects() {
+        // Der Checkout kann CRLF haben (Windows): vergleichen mit LF.
+        let source = include_str!("clipboard.rs").replace("\r\n", "\n");
+        let guarded = source
+            .split("pub fn paste_transcript_guarded(")
+            .nth(1)
+            .and_then(|rest| rest.split("\npub fn paste(").next())
+            .expect("paste_transcript_guarded gefunden");
+        let windows_branch = guarded
+            .split("let settings = get_settings(&app_handle);\n    let paste_method = settings.paste_method;")
+            .nth(1)
+            .expect("Windows-Zweig gefunden");
+        let wait = windows_branch
+            .find("wait_before_keystrokes(")
+            .expect("der Windows-Zweig wartet auf das Loslassen der Tasten");
+        let inject = windows_branch
+            .find("// Exactly one attempt, no matter what.")
+            .expect("Einfuegestelle gefunden");
+        assert!(wait < inject, "die Wartezeit steht VOR dem Einfuegen");
+        let legacy = source
+            .split("\npub fn paste(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n#[cfg(test)]").next())
+            .expect("paste gefunden");
+        assert!(
+            legacy.contains("wait_before_keystrokes("),
+            "der alte Pfad benutzt dieselbe Funktion"
+        );
+    }
 
     #[test]
     fn auto_submit_requires_setting_enabled() {

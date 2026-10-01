@@ -104,7 +104,8 @@
       "parameters": "0.6B",
       "description": "Live multilingual transcription across 28 languages",
       "base_model": "nvidia/nemotron-3.5-asr-streaming-0.6b",
-      "license": "other",
+      "license": "OpenMDW-1.1",
+      "license_url": "https://openmdw.ai/license/1-1/",
       "language_count": 28,
       "languages": [
         "en",
@@ -895,7 +896,8 @@
       "parameters": "985M",
       "description": "A tiny multilingual model",
       "base_model": "FunAudioLLM/Fun-ASR-MLT-Nano-2512",
-      "license": "other",
+      "license": "FunASR Model License 1.1",
+      "license_url": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
       "language_count": 31,
       "languages": [
         "zh",
@@ -1148,6 +1150,8 @@
       "description": "4-language speech-to-text with translation.",
       "base_model": "nvidia/canary-1b",
       "license": "cc-by-nc-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-nc/4.0/",
+      "non_commercial": true,
       "language_count": 4,
       "languages": [
         "en",
@@ -1346,7 +1350,8 @@
       "parameters": "985M",
       "description": "3-language speech-to-text.",
       "base_model": "FunAudioLLM/Fun-ASR-Nano-2512",
-      "license": "other",
+      "license": "FunASR Model License 1.1",
+      "license_url": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
       "language_count": 3,
       "languages": [
         "zh",
@@ -1951,7 +1956,8 @@
       "parameters": "105M",
       "description": "English speech-to-text with token-level timestamps.",
       "base_model": "google/medasr",
-      "license": "other",
+      "license": "Health AI Developer Foundations Terms of Use",
+      "license_url": "https://developers.google.com/health-ai-developer-foundations/terms",
       "language_count": 1,
       "languages": [
         "en"
@@ -2815,7 +2821,8 @@
       "parameters": "0.6B",
       "description": "English speech-to-text with streaming, token-level timestamps.",
       "base_model": "nvidia/nemotron-speech-streaming-en-0.6b",
-      "license": "other",
+      "license": "NVIDIA Open Model License",
+      "license_url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/",
       "language_count": 1,
       "languages": [
         "en"
@@ -2945,7 +2952,8 @@
       "parameters": "0.6B",
       "description": "English speech-to-text with streaming, token-level timestamps.",
       "base_model": "nvidia/multitalker-parakeet-streaming-0.6b-v1",
-      "license": "other",
+      "license": "NVIDIA Open Model License",
+      "license_url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/",
       "language_count": 1,
       "languages": [
         "en"
@@ -3494,7 +3502,8 @@
       "parameters": "234M",
       "description": "5-language speech-to-text with auto language detection.",
       "base_model": "FunAudioLLM/SenseVoiceSmall",
-      "license": "other",
+      "license": "FunASR Model License 1.1",
+      "license_url": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
       "language_count": 5,
       "languages": [
         "zh",
@@ -5159,6 +5168,9 @@
       "name": "Piper Runtime (Windows x64)",
       "description": "Piper text-to-speech engine binary for Windows x64, from the official rhasspy/piper GitHub release 2023.11.14-2.",
       "purpose": "tts-runtime",
+      "license": "MIT AND GPL-3.0-or-later",
+      "license_url": "https://github.com/rhasspy/piper/blob/master/LICENSE.md",
+      "license_note": "Piper (MIT) mit piper-phonemize (MIT), onnxruntime 1.14.1 (MIT) und espeak-ng.dll (GPL-3.0-or-later, https://github.com/espeak-ng/espeak-ng). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert; das Archiv enthält keine Lizenzdateien.",
       "files": [
         {
           "filename": "piper_windows_amd64.zip",
@@ -5174,6 +5186,10 @@
       "name": "Piper Runtime (macOS Apple Silicon)",
       "description": "Piper text-to-speech engine binary for macOS (Apple Silicon), from the official rhasspy/piper GitHub release 2023.11.14-2.",
       "purpose": "tts-runtime",
+      "license": "MIT AND GPL-3.0-or-later",
+      "license_url": "https://github.com/rhasspy/piper/blob/master/LICENSE.md",
+      "license_note": "Piper (MIT); espeak-ng (GPL-3.0-or-later) ist Teil des Piper-Pakets. Das offizielle macOS-Archiv ist unvollständig (keine libespeak-ng/libpiper_phonemize/libonnxruntime-Dateien) und startet nicht.",
+      "unsupported_reason": "incomplete_archive",
       "files": [
         {
           "filename": "piper_macos_aarch64.tar.gz",
@@ -5189,6 +5205,10 @@
       "name": "Piper Runtime (macOS Intel)",
       "description": "Piper text-to-speech engine binary for macOS (Intel x64), from the official rhasspy/piper GitHub release 2023.11.14-2.",
       "purpose": "tts-runtime",
+      "license": "MIT AND GPL-3.0-or-later",
+      "license_url": "https://github.com/rhasspy/piper/blob/master/LICENSE.md",
+      "license_note": "Piper (MIT); espeak-ng (GPL-3.0-or-later) ist Teil des Piper-Pakets. Das offizielle macOS-Archiv ist unvollständig (keine libespeak-ng/libpiper_phonemize/libonnxruntime-Dateien) und startet nicht.",
+      "unsupported_reason": "incomplete_archive",
       "files": [
         {
           "filename": "piper_macos_x64.tar.gz",
@@ -5204,6 +5224,9 @@
       "name": "Thorsten (High Quality)",
       "description": "German. Piper voice, high quality (22.05 kHz), from rhasspy/piper-voices.",
       "purpose": "tts-voice",
+      "license": "CC0-1.0",
+      "license_url": "https://github.com/thorstenMueller/Thorsten-Voice",
+      "license_note": "Datensatz Thorsten-Voice (CC0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.",
       "files": [
         {
           "filename": "de_DE-thorsten-high.onnx",
@@ -5226,6 +5249,9 @@
       "name": "Thorsten (Medium Quality)",
       "description": "German. Piper voice, medium quality (22.05 kHz), from rhasspy/piper-voices.",
       "purpose": "tts-voice",
+      "license": "CC0-1.0",
+      "license_url": "https://github.com/thorstenMueller/Thorsten-Voice",
+      "license_note": "Datensatz Thorsten-Voice (CC0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.",
       "files": [
         {
           "filename": "de_DE-thorsten-medium.onnx",
@@ -5248,6 +5274,9 @@
       "name": "Kerstin (Low Quality)",
       "description": "German. Piper voice, low quality (16 kHz), from rhasspy/piper-voices.",
       "purpose": "tts-voice",
+      "license": "CC0-1.0",
+      "license_url": "https://github.com/rhasspy/dataset-voice-kerstin",
+      "license_note": "Datensatz Kerstin (CC0). Modell von der englischen Ryan-Stimme feinabgestimmt; deren Datensatz steht unter CC-BY-NC-SA-4.0 (nicht kommerziell). Lizenzlage des Modells ungeklärt.",
       "files": [
         {
           "filename": "de_DE-kerstin-low.onnx",
@@ -5270,6 +5299,9 @@
       "name": "Eva K. (Very Low Quality)",
       "description": "German. Piper voice, very low quality (16 kHz), from rhasspy/piper-voices — the smallest and fastest German voice.",
       "purpose": "tts-voice",
+      "license": "BSD-3-Clause",
+      "license_url": "https://github.com/MycroftAI/mimic3-voices/blob/master/voices/en_US/m-ailabs_low/LICENSE",
+      "license_note": "Datensatz M-AILABS Speech Dataset (datenspezifische BSD-3-Clause-Lizenz: kommerzielle Nutzung erlaubt, Urheberhinweis beibehalten); von Grund auf trainiert.",
       "files": [
         {
           "filename": "de_DE-eva_k-x_low.onnx",
@@ -5292,6 +5324,10 @@
       "name": "Lessac (Medium Quality)",
       "description": "English (US). Piper voice, medium quality (22.05 kHz), from rhasspy/piper-voices.",
       "purpose": "tts-voice",
+      "license": "Blizzard-2013-Research-Licence",
+      "license_url": "https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html",
+      "license_note": "Lessac-Blizzard-2013-Datensatz: Forschungslizenz, kommerzielle Nutzung ausdrücklich ausgeschlossen.",
+      "non_commercial": true,
       "files": [
         {
           "filename": "en_US-lessac-medium.onnx",
@@ -5314,6 +5350,10 @@
       "name": "Lessac (High Quality)",
       "description": "English (US). Best quality, largest download. Piper voice from rhasspy/piper-voices.",
       "purpose": "tts-voice",
+      "license": "Blizzard-2013-Research-Licence",
+      "license_url": "https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html",
+      "license_note": "Lessac-Blizzard-2013-Datensatz: Forschungslizenz, kommerzielle Nutzung ausdrücklich ausgeschlossen.",
+      "non_commercial": true,
       "files": [
         {
           "filename": "en_US-lessac-high.onnx",
@@ -5336,6 +5376,10 @@
       "name": "Ryan (High Quality)",
       "description": "English (US). Male voice, best quality. Piper voice from rhasspy/piper-voices.",
       "purpose": "tts-voice",
+      "license": "CC-BY-NC-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "license_note": "Datensatz RyanSpeech (Kaggle): nur nicht-kommerziell, Weitergabe unter gleichen Bedingungen.",
+      "non_commercial": true,
       "files": [
         {
           "filename": "en_US-ryan-high.onnx",
@@ -5358,6 +5402,9 @@
       "name": "Amy (Medium Quality)",
       "description": "English (US). Female voice, good quality. Piper voice from rhasspy/piper-voices.",
       "purpose": "tts-voice",
+      "license": "CC-BY-SA-4.0 (laut Piper-Maintainer; Datensatz unklar)",
+      "license_url": "https://github.com/MycroftAI/mimic3-voices",
+      "license_note": "Mimic-3-Stimme. Laut Piper-Maintainer stehen die Mycroft-Modelle unter CC-BY-SA-4.0, die Lizenz des Datensatzes ist unbekannt (rhasspy/piper#253). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.",
       "files": [
         {
           "filename": "en_US-amy-medium.onnx",
@@ -5380,6 +5427,9 @@
       "name": "Alan (Medium Quality)",
       "description": "English (UK). Male voice, good quality. Piper voice from rhasspy/piper-voices.",
       "purpose": "tts-voice",
+      "license": "Unklar (Mimic-3-Repo CC-BY-SA-4.0, Stimmen-Datei: All Rights Reserved)",
+      "license_url": "https://github.com/MycroftAI/mimic3-voices/tree/master/voices/en_UK/apope_low",
+      "license_note": "Mimic-3-Stimme apope (Alan Pope): das Repo steht unter CC-BY-SA-4.0, die LICENSE-Datei der Stimme nennt \"Copyright 2022 Mycroft AI, All Rights Reserved\". Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.",
       "files": [
         {
           "filename": "en_GB-alan-medium.onnx",
@@ -5402,6 +5452,9 @@
       "name": "Alba (Medium Quality)",
       "description": "English (UK, Scottish). Female voice, good quality. Piper voice from rhasspy/piper-voices.",
       "purpose": "tts-voice",
+      "license": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "license_note": "Datensatz Alba (CSTR, Univ. Edinburgh, CC-BY-4.0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.",
       "files": [
         {
           "filename": "en_GB-alba-medium.onnx",
@@ -5424,6 +5477,9 @@
       "name": "Sprachmodell-Laufzeit (Windows, Vulkan)",
       "description": "llama.cpp b10938 llama-server fuer Windows x64 mit Vulkan-Backend: laeuft auf jeder Grafikkarte (NVIDIA, AMD, Intel).",
       "purpose": "llm-runtime",
+      "license": "MIT AND Apache-2.0 WITH LLVM-exception",
+      "license_url": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE",
+      "license_note": "llama.cpp (MIT) samt LLVM-OpenMP-Laufzeit libomp.dll (Apache-2.0 mit LLVM-Ausnahme, Datei LICENSE-LLVM-OpenMP im Archiv).",
       "files": [
         {
           "filename": "llama-b10938-bin-win-vulkan-x64.zip",
@@ -5439,6 +5495,9 @@
       "name": "Sprachmodell-Laufzeit (Windows, CPU)",
       "description": "llama.cpp b10938 llama-server fuer Windows x64, nur Prozessor: Rueckfall ohne Grafikkarte.",
       "purpose": "llm-runtime",
+      "license": "MIT AND Apache-2.0 WITH LLVM-exception",
+      "license_url": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE",
+      "license_note": "llama.cpp (MIT) samt LLVM-OpenMP-Laufzeit libomp.dll (Apache-2.0 mit LLVM-Ausnahme, Datei LICENSE-LLVM-OpenMP im Archiv).",
       "files": [
         {
           "filename": "llama-b10938-bin-win-cpu-x64.zip",
@@ -5454,6 +5513,9 @@
       "name": "Sprachmodell-Laufzeit (Windows, CUDA 13.3)",
       "description": "llama.cpp b10938 llama-server fuer Windows x64 mit CUDA 13.3 samt Runtime-Bibliotheken: nur NVIDIA, dafuer am schnellsten.",
       "purpose": "llm-runtime",
+      "license": "MIT; CUDA-Bibliotheken: NVIDIA CUDA Toolkit EULA",
+      "license_url": "https://docs.nvidia.com/cuda/eula/index.html",
+      "license_note": "llama.cpp (MIT) samt libomp.dll (Apache-2.0 mit LLVM-Ausnahme). Das cudart-Paket enthält cudart64_13.dll, cublas64_13.dll und cublasLt64_13.dll von NVIDIA unter der CUDA Toolkit EULA (weitergabefähige Laufzeit-Bibliotheken).",
       "files": [
         {
           "filename": "llama-b10938-bin-win-cuda-13.3-x64.zip",
@@ -5476,6 +5538,8 @@
       "name": "Sprachmodell-Laufzeit (macOS, Apple Silicon)",
       "description": "llama.cpp b10938 llama-server fuer macOS arm64 mit Metal.",
       "purpose": "llm-runtime",
+      "license": "MIT",
+      "license_url": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE",
       "files": [
         {
           "filename": "llama-b10938-bin-macos-arm64.tar.gz",
@@ -5491,6 +5555,8 @@
       "name": "Sprachmodell-Laufzeit (macOS, Intel)",
       "description": "llama.cpp b10938 llama-server fuer macOS x64.",
       "purpose": "llm-runtime",
+      "license": "MIT",
+      "license_url": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE",
       "files": [
         {
           "filename": "llama-b10938-bin-macos-x64.tar.gz",
@@ -5506,6 +5572,8 @@
       "name": "Qwen3 0,6B",
       "description": "Winziges Modell zum Ausprobieren: antwortet in Sekundenbruchteilen, fuer Korrekturen und kurze Zusammenfassungen brauchbar, fuer mehr nicht.",
       "purpose": "llm-model",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-0.6B/blob/main/LICENSE",
       "tags": [
         "schnell",
         "klein",
@@ -5526,6 +5594,8 @@
       "name": "Qwen3 4B",
       "description": "Empfohlener Standard: gutes Deutsch, saubere Zusammenfassungen und Protokolle, passt auf jede Grafikkarte ab 4 GB.",
       "purpose": "llm-model",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-4B/blob/main/LICENSE",
       "tags": [
         "empfohlen",
         "zusammenfassung",
@@ -5546,6 +5616,8 @@
       "name": "Qwen3 8B",
       "description": "Hoehere Qualitaet bei laengeren Texten und Protokollen; braucht rund 6 GB Grafikspeicher.",
       "purpose": "llm-model",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-8B/blob/main/LICENSE",
       "tags": [
         "qualitaet",
         "zusammenfassung",
@@ -5566,6 +5638,9 @@
       "name": "Gemma 3 4B",
       "description": "Alternative zu Qwen3 4B mit anderem Schreibstil; ebenfalls mehrsprachig.",
       "purpose": "llm-model",
+      "license": "Gemma Terms of Use",
+      "license_url": "https://ai.google.dev/gemma/terms",
+      "license_note": "Eigene Google-Lizenz (Modellkarte: license gemma) mit Nutzungsbeschränkungen und Weitergabebedingungen.",
       "tags": [
         "mehrsprachig",
         "alternative"
@@ -5585,6 +5660,8 @@
       "name": "Qwen 3.5 4B",
       "description": "Nachfolger von Qwen3 4B: bessere Übersetzung und Zusammenfassung bei ähnlichem Speicherbedarf; langer Kontext.",
       "purpose": "llm-model",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/LICENSE",
       "tags": [
         "mehrsprachig",
         "zusammenfassung"
@@ -5604,6 +5681,8 @@
       "name": "Qwen 3.5 9B",
       "description": "Größere Qwen-3.5-Stufe für anspruchsvollere Zusammenfassungen; braucht rund 7 GB Speicher.",
       "purpose": "llm-model",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3.5-9B/blob/main/LICENSE",
       "tags": [
         "mehrsprachig",
         "qualitaet"
@@ -5623,6 +5702,8 @@
       "name": "Gemma 4 E4B",
       "description": "Nachfolger von Gemma 3 4B; anderer Schreibstil als Qwen, mehrsprachig. Datei ist größer als der aktive Speicherbedarf.",
       "purpose": "llm-model",
+      "license": "Apache-2.0",
+      "license_url": "https://ai.google.dev/gemma/docs/gemma_4_license",
       "tags": [
         "mehrsprachig",
         "alternative"
@@ -5642,6 +5723,8 @@
       "name": "Gemma 4 12B",
       "description": "Größte Gemma-4-Stufe im Katalog; braucht rund 9 GB Speicher, dafür die beste Textqualität.",
       "purpose": "llm-model",
+      "license": "Apache-2.0",
+      "license_url": "https://ai.google.dev/gemma/docs/gemma_4_license",
       "tags": [
         "mehrsprachig",
         "qualitaet"
@@ -5662,6 +5745,7 @@
       "description": "Embedding-Modell für die semantische Suche in Besprechungen (1024 Dimensionen, mehrsprachig, MIT). Wird nur für den Such-Index gebraucht.",
       "purpose": "llm-embedding",
       "license": "MIT",
+      "license_url": "https://huggingface.co/BAAI/bge-m3",
       "tags": [
         "suche",
         "mehrsprachig"

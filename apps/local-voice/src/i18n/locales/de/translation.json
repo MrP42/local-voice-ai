@@ -12,6 +12,7 @@
   "sidebar": {
     "general": "Allgemein",
     "models": "Modelle",
+    "integrations": "Integrationen",
     "advanced": "Erweitert",
     "postProcessing": "Nachbearbeitung",
     "history": "Verlauf",
@@ -176,6 +177,11 @@
       "piperOption": "{{name}} · Piper",
       "piperNoVoice": "Piper – keine Stimme gewählt",
       "piperVoiceMissing": "Piper – Stimme „{{id}}“ nicht verfügbar",
+      "piperNotSetUp": "{{name}} · Piper – nicht eingerichtet",
+      "fishNotSetUp": "Fish Speech – nicht eingerichtet",
+      "notSetUpHint": "Diese Stimme ist nicht eingerichtet und kann nicht vorlesen. Wählen Sie eine eingerichtete Stimme oder richten Sie sie unter Modelle > Vorlesestimmen ein.",
+      "noEngineHint": "Noch keine Sprachausgabe eingerichtet. Unter Modelle > Vorlesestimmen lässt sich die schlanke Piper-Stimme laden – ohne Grafikkarte und ohne Zusatzsoftware.",
+      "setUp": "Sprachausgabe einrichten",
       "manage": "Stimmen verwalten …",
       "umlautSuggestion": "Anzeigename mit Umlauten: „{{name}}“ übernehmen",
       "scriptVoices": "Skript mit Sprechern",
@@ -186,6 +192,8 @@
     "settings": {
       "fishDir": "Fish-Speech-Ordner",
       "fishDirDescription": "Installationsordner mit .venv und tools/api_server.py.",
+      "fishOptionalTitle": "Fish Speech (optional, nicht eingerichtet)",
+      "fishOptionalDescription": "Fish Speech ist eine zusätzliche Sprachausgabe auf der Grafikkarte mit Stimmklonen. Sie wird nicht benötigt: Piper liest auch ohne sie vor. Zum Einrichten den Installationsordner eintragen. Es fehlt: {{missing}}",
       "port": "Server-Port",
       "portDescription": "Lokaler Port auf 127.0.0.1, auf dem der TTS-Server lauscht.",
       "seed": "Stimm-Seed",
@@ -830,7 +838,9 @@
     },
     "cancel": "Abbrechen",
     "cancelDownload": "Download abbrechen",
-    "legacy": "Veraltet"
+    "legacy": "Veraltet",
+    "nonCommercial": "Nur nicht-kommerziell",
+    "nonCommercialHint": "Lizenz {{license}}: nur für nicht-kommerzielle Nutzung erlaubt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
   },
   "settings": {
     "meetings": {
@@ -952,12 +962,24 @@
         },
         "status": {
           "installed": "Installiert",
-          "downloading": "Lädt … {{percentage}}%"
+          "downloading": "Lädt … {{percentage}}%",
+          "runtimeMissing": "Programm fehlt – nicht nutzbar",
+          "unsupported": "Auf diesem System nicht verfügbar"
         },
         "actions": {
           "download": "Herunterladen",
           "cancel": "Abbrechen",
-          "delete": "Löschen"
+          "delete": "Löschen",
+          "installRuntime": "Programm installieren"
+        },
+        "unsupported": {
+          "incomplete_archive": "Für dieses System ist das offizielle Piper-Archiv unvollständig (es fehlen Bibliotheken). Piper lässt sich hier noch nicht einrichten."
+        },
+        "license": {
+          "label": "Lizenz: {{license}}",
+          "nonCommercial": "Nur nicht-kommerziell",
+          "nonCommercialHint": "Diese Stimme darf nur nicht-kommerziell genutzt werden ({{license}}).",
+          "source": "Lizenztext"
         },
         "deleteConfirm": "{{name}} löschen? Du musst sie erneut herunterladen, um sie wieder zu nutzen.",
         "deleteTitle": "Löschen"
@@ -1095,6 +1117,10 @@
       "experimentalToggle": {
         "label": "Experimentelle Funktionen",
         "description": "Experimentelle Funktionen aktivieren, die sich noch in Entwicklung befinden."
+      },
+      "refineStream": {
+        "label": "Live-Text nachträglich mit Ollama glätten",
+        "description": "Beim Live-Einfügen glättet ein lokal laufendes Ollama jeden Satz (Grammatik, Zeichensetzung, Füllwörter) und ersetzt ihn im Zieldokument. Zahlen, Verneinungen, seltene Begriffe und die Reihenfolge werden geschützt. Wird ein Satz nicht rechtzeitig fertig (4 s je Satz, 12 s am Ende) oder läuft Ollama nicht, bleibt der Originaltext stehen. Ollama ist nie Voraussetzung für Aufnahme, Erkennung oder Einfügen. Standard: aus."
       },
       "lazyStreamClose": {
         "label": "Mikrofon zwischen Diktaten offen halten",
@@ -1722,6 +1748,7 @@
       "resume": "Weiter",
       "titlePlaceholder": "Titel der Besprechung",
       "captureSystem": "System-Audio (Gegenseite) mitschneiden",
+      "captureSystemHint": "Nimmt zusätzlich den Ton auf, der über Lautsprecher oder Kopfhörer läuft, zum Beispiel die Gegenseite einer Videokonferenz.",
       "diarizeMic": "Mehrere Personen am Mikrofon",
       "diarizeMicHint": "Mehrere Personen sprechen in Ihr Mikrofon (z. B. ein Besprechungsraum): Das Mikrofon wird nach der Aufnahme ebenfalls in Sprecher getrennt. Am besten mit Kopfhörern oder Echo-Unterdrückung, sonst kann die Gegenseite als „Raum“ erscheinen.",
       "micLevel": "Mikrofon",
@@ -1908,7 +1935,9 @@
         "rowName": "Name für {{label}}",
         "listen": "Anhören",
         "listenHint": "Springt zu einem längeren Satz dieses Sprechers",
-        "listenFor": "{{label}} anhören"
+        "listenFor": "{{label}} anhören",
+        "stop": "Stopp",
+        "stopFor": "{{label}} stoppen"
       },
       "notices": {
         "disabled": "Die Sprechertrennung war für diese Besprechung ausgeschaltet.",
@@ -1952,6 +1981,10 @@
       "finalPassSkipped": "Enddurchlauf übersprungen – das Live-Transkript bleibt gültig (Modell fehlt, zu wenig Speicher oder abgebrochen).",
       "finalPassStopped": "Nachbearbeitung gestoppt – das Live-Transkript bleibt gültig.",
       "meetingBusy": "Diese Besprechung wird gerade verarbeitet.",
+      "meetingsUnavailable": "Besprechungen sind gerade nicht verfügbar: Die Datenbank ließ sich beim Start nicht öffnen. Bitte die App neu starten; hilft das nicht, steht die Ursache in der Protokolldatei.",
+      "storeFailed": "Die Änderung konnte nicht gespeichert werden.",
+      "subtitleUnreadable": "Die Untertiteldatei konnte nicht gelesen werden.",
+      "subtitleInvalid": "Kein gültiges Untertitelformat erkannt (VTT oder SRT erwartet).",
       "listFailed": "Die Besprechungsliste konnte nicht geladen werden: {{error}}"
     },
     "retention": {
@@ -2074,6 +2107,121 @@
         "stopping": "Die Verarbeitung wird bereits gestoppt.",
         "busy": "Für diese Besprechung läuft bereits eine Verarbeitung.",
         "notCancelled": "Diese Besprechung ist nicht abgebrochen."
+      }
+    },
+    "projectMinutes": {
+      "menu": "Gemeinsam protokollieren",
+      "menuHint": "Mehrere Aufnahmen dieses Projekts wählen und daraus ein gemeinsames Protokoll oder eine Zusammenfassung erzeugen",
+      "needProject": "Wähle zuerst ein Projekt in der Liste.",
+      "bar": {
+        "label": "Aufnahmen für ein gemeinsames Protokoll wählen",
+        "selected_one": "{{count}} Aufnahme gewählt",
+        "selected_other": "{{count}} Aufnahmen gewählt",
+        "all": "Alle",
+        "allHint": "Alle wählbaren Aufnahmen des Projekts auswählen",
+        "none": "Keine",
+        "noneHint": "Die Auswahl aufheben",
+        "start": "Gemeinsam protokollieren …",
+        "needTwo": "Wähle mindestens zwei Aufnahmen.",
+        "cancel": "Abbrechen",
+        "loading": "Aufnahmen werden geprüft …",
+        "loadFailed": "Die Aufnahmen des Projekts konnten nicht geprüft werden."
+      },
+      "reason": {
+        "meeting_not_finished": "Läuft noch",
+        "no_transcript": "Kein Transkript",
+        "empty_entry": "Leer"
+      },
+      "reasonHint": {
+        "meeting_not_finished": "Diese Aufnahme wird noch aufgenommen oder verarbeitet. Sie lässt sich wählen, sobald sie fertig ist.",
+        "no_transcript": "Diese Aufnahme hat kein Transkript, daraus kann nichts protokolliert werden.",
+        "empty_entry": "Ein leerer Eintrag hat noch keine Aufnahme und kein Transkript."
+      },
+      "dialog": {
+        "title": "Gemeinsames Protokoll erzeugen",
+        "body_one": "Aus {{count}} Aufnahme des Projekts „{{project}}“ entsteht ein gemeinsames Dokument. Jede Aussage nennt ihre Quelle.",
+        "body_other": "Aus {{count}} Aufnahmen des Projekts „{{project}}“ entsteht ein gemeinsames Dokument. Die Aufnahmen werden nach Datum zusammengeführt, jede Aussage nennt ihre Quelle.",
+        "kind": "Art",
+        "start": "Erzeugen",
+        "cancel": "Abbrechen"
+      },
+      "kind": {
+        "minutes": "Protokoll",
+        "minutesHint": "Die Abschnitte der Vorlage, ausführlich",
+        "summary": "Zusammenfassung",
+        "summaryHint": "Dieselben Abschnitte, knapp: wenige zusammengefasste Aussagen"
+      },
+      "list": {
+        "heading": "Projekt-Protokolle",
+        "titleMinutes": "Projekt-Protokoll",
+        "titleSummary": "Projekt-Zusammenfassung",
+        "meta_one": "{{date}} · {{count}} Aufnahme",
+        "meta_other": "{{date}} · {{count}} Aufnahmen",
+        "incomplete": "unvollständig",
+        "running": "Projekt-Protokoll wird erzeugt"
+      },
+      "view": {
+        "toolbar": "Projekt-Protokoll: Werkzeuge",
+        "copy": "Kopieren",
+        "copyHint": "Kopiert das Dokument formatiert (für Word und Mail) und als Markdown",
+        "copied": "Kopiert",
+        "copyError": "Das Dokument konnte nicht kopiert werden",
+        "download": "Herunterladen",
+        "downloadHint": "Als Word, Text oder Markdown speichern",
+        "exportError": "Export fehlgeschlagen",
+        "exportSaved": "Gespeichert unter {{path}}",
+        "delete": "Löschen",
+        "deleteHint": "Das Dokument aus dem Projekt löschen; die Aufnahmen bleiben",
+        "deleteTitle": "Projekt-Protokoll löschen?",
+        "deleteBody": "Das Dokument wird gelöscht. Die Aufnahmen, aus denen es entstand, bleiben unverändert.",
+        "deleteCancel": "Abbrechen",
+        "loadError": "Das Dokument konnte nicht geladen werden: {{error}}",
+        "gone": "Dieses Projekt-Protokoll gibt es nicht mehr.",
+        "empty": "keine",
+        "assignee": "Wer: {{name}}",
+        "due": "Bis: {{date}}",
+        "noProof": "ohne Beleg",
+        "noProofHint": "Für diese Aussage hat das Modell keine Stelle im Transkript genannt.",
+        "sourceHint": "{{title}}, {{time}}: öffnet die Aufnahme an dieser Stelle",
+        "sourceDeleted": "Diese Aufnahme gibt es nicht mehr.",
+        "sourcesLabel": "Quellen",
+        "recordings": "Aufnahmen",
+        "recordingOpen": "{{title}} öffnen",
+        "origin": "Herkunft",
+        "originModel": "Modell",
+        "originTemplate": "Vorlage",
+        "originAuto": "automatisch gewählt",
+        "originCreated": "Erzeugt",
+        "originMode": "Verfahren",
+        "modeSingle": "ein Durchlauf",
+        "modeBlocks_one": "{{count}} Block",
+        "modeBlocks_other": "{{count}} Blöcke",
+        "incomplete": "Das Dokument ist unvollständig: {{gaps}} konnte nicht ausgewertet werden. Die vollständigen Transkripte bleiben erhalten.",
+        "droppedSources_one": "Eine vom Modell genannte Quelle gab es im Transkript nicht und wurde verworfen.",
+        "droppedSources_other": "{{count}} vom Modell genannte Quellen gab es im Transkript nicht und wurden verworfen.",
+        "unsupportedEntries_one": "Eine Aussage hat keinen Beleg.",
+        "unsupportedEntries_other": "{{count}} Aussagen haben keinen Beleg."
+      },
+      "run": {
+        "title": "Gemeinsames Protokoll wird erzeugt",
+        "body": "Die gewählten Aufnahmen werden ausgewertet. Du kannst währenddessen andere Aufnahmen ansehen; das Ergebnis erscheint im Projekt.",
+        "starting": "Wird gestartet …",
+        "close": "Schließen",
+        "cancelled": "Die Erzeugung wurde abgebrochen.",
+        "failed": "Das gemeinsame Protokoll konnte nicht erzeugt werden."
+      },
+      "errors": {
+        "minutes_busy": "Für dieses Projekt wird schon ein gemeinsames Protokoll erzeugt.",
+        "folder_not_found": "Das Projekt gibt es nicht mehr.",
+        "no_selection": "Wähle mindestens eine Aufnahme.",
+        "too_many_recordings": "Zu viele Aufnahmen auf einmal. Wähle weniger.",
+        "not_in_project": "Eine der gewählten Aufnahmen gehört nicht (mehr) zu diesem Projekt.",
+        "kind_invalid": "Unbekannte Art des Dokuments.",
+        "meeting_not_found": "Eine der gewählten Aufnahmen gibt es nicht mehr.",
+        "meeting_not_finished": "Eine der gewählten Aufnahmen wird noch verarbeitet.",
+        "meeting_not_finished_named": "„{{title}}“ wird noch verarbeitet.",
+        "no_transcript": "Eine der gewählten Aufnahmen hat kein Transkript.",
+        "no_transcript_named": "„{{title}}“ hat kein Transkript."
       }
     },
     "minutes": {
@@ -3215,5 +3363,314 @@
   },
   "guard": {
     "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
+  },
+  "integrations": {
+    "title": "Integrationen",
+    "description": "Verbindungen zu Kalendern, Ordnern und Agenten, jede mit Richtung und einem Recht je Fähigkeit.",
+    "add": "Integration hinzufügen",
+    "back": "Zurück zur Liste",
+    "open": "Rechte und Details",
+    "cancel": "Abbrechen",
+    "close": "Schließen",
+    "loadError": "Die Integrationen konnten nicht geladen werden.",
+    "empty": "Noch keine Integration eingerichtet.",
+    "emptyHint": "Mit „Integration hinzufügen“ richtest du einen Ordner ein oder verbindest einen Kalender.",
+    "tabs": {
+      "connections": "Verbindungen",
+      "audit": "Protokoll"
+    },
+    "sections": {
+      "connections": "Eingerichtet",
+      "calendars": "Kalender",
+      "calendarsHint": "Kalenderquellen liefern Termine für Titelvorschläge, Erinnerungen und „Als Nächstes“.",
+      "mcp": "MCP und Agenten",
+      "mcpHint": "Lässt KI-Clients auf diesem Rechner deine Besprechungen lesen. Schreibende Zugänge mit Rechten je Werkzeug folgen."
+    },
+    "status": {
+      "off": "Aus",
+      "pending_one": "{{count}} Freigabe offen",
+      "pending_other": "{{count}} Freigaben offen"
+    },
+    "directions": {
+      "read": "Nur lesen",
+      "write": "Nur schreiben",
+      "both": "Lesen und schreiben"
+    },
+    "modes": {
+      "off": "Aus",
+      "ask": "Fragen",
+      "allow": "Erlaubt"
+    },
+    "callers": {
+      "user": "Du",
+      "workflow": "Workflow",
+      "agent_external": "Externer Agent",
+      "agent_local": "Lokaler Agent"
+    },
+    "kinds": {
+      "youtube": "YouTube",
+      "ics": "Kalender (ICS)",
+      "graph": "Microsoft-365-Kalender",
+      "m365": "Microsoft 365",
+      "smtp": "Postfach (SMTP)",
+      "folder": "Ordner",
+      "obsidian": "Obsidian-Vault",
+      "wissen": "WAI-Wissensbasis",
+      "agent": "Agentenzugang"
+    },
+    "calendar": {
+      "rights": "Rechte und Richtung"
+    },
+    "catalog": {
+      "title": "Integration hinzufügen",
+      "description": "Wähle, womit sich die App verbinden soll. Jede Verbindung bekommt eine Richtung und ein Recht je Fähigkeit; Schreibendes fragt standardmäßig nach, externe Agenten sind aus.",
+      "soon": "bald",
+      "auto": "automatisch",
+      "items": {
+        "calendar_ics": {
+          "name": "Kalender (ICS-Adresse)",
+          "description": "Termine aus Outlook, Google oder Nextcloud lesen, über eine geheime ICS-Adresse. Nur lesend.",
+          "action": "Kalender verbinden"
+        },
+        "calendar_graph": {
+          "name": "Microsoft-365-Kalender",
+          "description": "Outlook-Termine mit Teilnehmenden über deine Microsoft-Anmeldung (eigene Entra-App).",
+          "action": "Mit Microsoft anmelden"
+        },
+        "folder": {
+          "name": "Ordner",
+          "description": "Ein lokaler oder per OneDrive synchronisierter Ordner als Ablage für Protokolle und Exporte.",
+          "action": "Ordner einrichten"
+        },
+        "youtube": {
+          "name": "YouTube",
+          "description": "Videos per Link in Aufnahmen holen, ansehen und transkribieren.",
+          "note": "Legt sich selbst an, sobald du in Aufnahmen den ersten YouTube-Link einfügst."
+        },
+        "mcp": {
+          "name": "MCP und Agenten",
+          "description": "Lässt KI-Clients wie Claude oder Codex auf diesem Rechner deine Besprechungen lesen.",
+          "action": "Zum MCP-Schalter"
+        },
+        "m365": {
+          "name": "Microsoft 365 (Mail, OneDrive)",
+          "description": "Mails senden, Dateien in OneDrive ablegen, Termine anlegen."
+        },
+        "smtp": {
+          "name": "Postfach (SMTP)",
+          "description": "Mails über ein eigenes Postfach mit App-Passwort senden."
+        },
+        "obsidian": {
+          "name": "Obsidian-Vault",
+          "description": "Notizen mit Frontmatter in deinem Vault ablegen und lesen."
+        },
+        "wissen": {
+          "name": "WAI-Wissensbasis",
+          "description": "In der Wissensbasis suchen und Seiten lesen."
+        },
+        "webhook": {
+          "name": "n8n-Webhook",
+          "description": "Abläufe in n8n anstoßen. Kommt mit den Workflows."
+        }
+      }
+    },
+    "folder": {
+      "title": "Ordner einrichten",
+      "description": "Ein Ordner auf diesem Rechner, auch ein per OneDrive synchronisierter.",
+      "name": "Name",
+      "path": "Pfad",
+      "pathPlaceholder": "C:\\Ablage\\Berichte",
+      "pick": "Ordner wählen",
+      "create": "Anlegen",
+      "directionHint": "Lesen: Dateien aus dem Ordner holen. Schreiben: Dateien dort ablegen."
+    },
+    "detail": {
+      "connection": "Verbindung",
+      "managedByCalendar": "Name, Schalter und Entfernen gehören zur Karte unter „Kalender“. Hier stellst du Richtung und Rechte ein.",
+      "name": "Name",
+      "rename": "Umbenennen",
+      "status": "Zustand",
+      "okAt": "In Ordnung, geprüft {{time}}",
+      "notTested": "Noch nicht geprüft",
+      "secret": "Zugangsschlüssel",
+      "test": "Verbindung testen",
+      "testing": "Prüfe …",
+      "direction": "Richtung",
+      "directionHint": "Was die Integration darf, bevor Rechte greifen: lesen, schreiben oder beides. Eine Fähigkeit, die die Richtung nicht erlaubt, ist aus.",
+      "rights": "Rechte",
+      "rightsHint": "Je Fähigkeit und Aufrufer: aus, fragen (du entscheidest jedes Mal) oder erlaubt. Du selbst brauchst in der App keine Freigabe.",
+      "resetRights": "Auf Standard zurücksetzen",
+      "clients": "Zugänge",
+      "clientsPlaceholder": "Zugänge für externe Agenten (je Programm ein Zugang mit eigenem Schlüssel und Rechten je Werkzeug) legst du hier an, sobald die Agentenbrücke eingerichtet ist.",
+      "showAudit": "Protokoll anzeigen",
+      "remove": "Entfernen",
+      "removeConfirm": "„{{label}}“ samt Rechten entfernen? Das Protokoll bleibt.",
+      "removeYes": "Ja, entfernen",
+      "switchOn": "Einschalten",
+      "switchOff": "Ausschalten"
+    },
+    "secret": {
+      "present": "hinterlegt",
+      "missing": "fehlt, bitte neu einrichten",
+      "broken": "unlesbar, bitte neu einrichten"
+    },
+    "test": {
+      "folder_ok": "Der Ordner ist erreichbar.",
+      "folder_path_not_found": "Der Ordner wurde nicht gefunden.",
+      "folder_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "folder_unreadable": "Der Ordner lässt sich nicht lesen.",
+      "test_not_available": "Für diese Art gibt es noch keinen Test."
+    },
+    "matrix": {
+      "reads": "lesend",
+      "writes": "verändernd",
+      "neverAllow": "Aufnahmen starten nie von allein: die App zeigt vor jeder Aufnahme den Einwilligungsdialog (§ 201 StGB). „Erlaubt“ gibt es hier deshalb nicht.",
+      "effective": "Wirkt jetzt: {{mode}}",
+      "blocked": {
+        "direction_blocks": "Die Richtung der Integration erlaubt dies nicht: ändere die Richtung, damit die Rechte wirken.",
+        "integration_disabled": "Die Integration ist ausgeschaltet: kein Zugriff, solange sie aus ist."
+      }
+    },
+    "capabilities": {
+      "calendar_read": {
+        "title": "Kalender lesen",
+        "description": "Termine und Teilnehmende lesen."
+      },
+      "calendar_write": {
+        "title": "Termine anlegen",
+        "description": "Termine anlegen oder ändern."
+      },
+      "mail_send": {
+        "title": "Mail senden",
+        "description": "E-Mails in deinem Namen versenden."
+      },
+      "files_read": {
+        "title": "Dateien lesen",
+        "description": "Dateien aus dem Ordner holen."
+      },
+      "files_write": {
+        "title": "Dateien schreiben",
+        "description": "Dateien ablegen oder überschreiben."
+      },
+      "knowledge_search": {
+        "title": "Wissen durchsuchen",
+        "description": "In der Wissensbasis suchen."
+      },
+      "knowledge_read": {
+        "title": "Wissen lesen",
+        "description": "Seiten der Wissensbasis lesen."
+      },
+      "vault_write": {
+        "title": "Notiz im Vault ablegen",
+        "description": "Notizen mit Frontmatter schreiben."
+      },
+      "media_fetch": {
+        "title": "YouTube-Datei laden",
+        "description": "Video oder Ton über das selbst installierte Werkzeug laden."
+      },
+      "youtube_add": {
+        "title": "YouTube-Link als Quelle anlegen",
+        "description": "Aus einem Link eine Besprechung machen."
+      },
+      "meeting_create": {
+        "title": "Besprechung anlegen",
+        "description": "Neue Besprechung oder Sitzung erzeugen."
+      },
+      "recording_start": {
+        "title": "Aufnahme starten",
+        "description": "Eine Aufnahme beginnen."
+      },
+      "transcribe_file": {
+        "title": "Datei transkribieren",
+        "description": "Eine Audio- oder Videodatei transkribieren."
+      },
+      "tts_render": {
+        "title": "Vorlesen als Audio erzeugen",
+        "description": "Eine Vorlesen-Seite als Tondatei erzeugen."
+      }
+    },
+    "approvals": {
+      "banner_one": "{{count}} Freigabe wartet auf dich",
+      "banner_other": "{{count}} Freigaben warten auf dich",
+      "review": "Prüfen",
+      "title": "Freigaben",
+      "description": "Diese Aktionen wollen ausgeführt werden und fragen dich vorher.",
+      "none": "Nichts mehr offen.",
+      "request": "{{caller}} möchte „{{action}}“ ausführen. Ziel: {{target}}.",
+      "unknown": "unbekannt",
+      "asked": "Angefragt {{time}}",
+      "allow": "Erlauben",
+      "deny": "Ablehnen",
+      "once": "Eine Freigabe gilt nur für diese eine Aktion und verfällt nach einer Stunde.",
+      "errors": {
+        "approval_not_found": "Diese Freigabe gibt es nicht mehr.",
+        "approval_expired": "Diese Freigabe ist abgelaufen.",
+        "approval_already_decided": "Diese Freigabe ist bereits entschieden."
+      }
+    },
+    "audit": {
+      "filterIntegration": "Integration",
+      "filterOutcome": "Ergebnis",
+      "filterCaller": "Wer",
+      "all": "Alle",
+      "empty": "Noch keine Einträge. Hier erscheint jede Aktion eines Workflows oder Agenten und jede Änderung an Rechten.",
+      "loadError": "Das Protokoll konnte nicht geladen werden.",
+      "noIntegration": "ohne Integration",
+      "default": "Standard",
+      "outcome": {
+        "ok": "erledigt",
+        "denied": "verweigert",
+        "error": "Fehler",
+        "pending": "wartet"
+      },
+      "decision": {
+        "approved": "erteilt",
+        "denied": "abgelehnt"
+      },
+      "phase": {
+        "created": "Integration angelegt",
+        "updated": "Integration geändert",
+        "deleted": "Integration entfernt",
+        "grant_changed": "Recht geändert: {{mode}} für {{caller}}",
+        "approval_decided": "Freigabe {{decision}}",
+        "approval": "Wartet auf deine Freigabe",
+        "running": "Läuft",
+        "done": "Abgeschlossen"
+      },
+      "reason": {
+        "grant_off": "Das Recht steht auf „aus“",
+        "direction_blocks": "Die Richtung erlaubt dies nicht",
+        "integration_disabled": "Die Integration ist ausgeschaltet",
+        "capability_not_offered": "Die Integration bietet das nicht an",
+        "tool_off": "Das Werkzeug ist ausgeschaltet",
+        "unknown_integration": "Unbekannte Integration",
+        "preview_unsafe": "Nicht vollständig darstellbar, abgelehnt",
+        "too_many_pending": "Zu viele offene Freigaben",
+        "too_many_pending_caller": "Zu viele offene Freigaben dieses Zugangs",
+        "approval_not_found": "Freigabe nicht gefunden",
+        "approval_expired": "Freigabe abgelaufen",
+        "approval_mismatch": "Freigabe passt nicht zur Aktion",
+        "approval_not_granted": "Freigabe nicht erteilt"
+      }
+    },
+    "errors": {
+      "generic": "Das hat nicht geklappt.",
+      "folder_path_missing": "Bitte gib den Pfad des Ordners an.",
+      "folder_path_relative": "Bitte gib einen vollständigen Pfad an, etwa C:\\Ablage\\Berichte.",
+      "folder_path_not_found": "Der Ordner wurde nicht gefunden.",
+      "folder_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "kind_not_available": "Diese Art lässt sich noch nicht einrichten."
+    },
+    "moved": {
+      "open": "Auf der Seite „Integrationen“ verwalten",
+      "calendar": {
+        "title": "Kalenderquellen",
+        "description": "Kalender verbinden, Stand ansehen und entfernen: das geht jetzt auf der Seite „Integrationen“."
+      },
+      "mcp": {
+        "title": "Lokaler MCP-Server",
+        "description": "Der Schalter für den MCP-Server und der Konfigurations-Schnipsel stehen jetzt auf der Seite „Integrationen“."
+      }
+    }
   }
 }

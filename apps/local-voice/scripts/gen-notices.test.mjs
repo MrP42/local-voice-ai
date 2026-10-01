@@ -4,6 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  licenseExpression,
   normalizeLicenseId,
   parseAttribution,
   groupNpmLicenses,
@@ -219,4 +220,52 @@ test("renderNotices nennt LGPL-Fund, Canary und alle Teile, ohne Zeitstempel", (
   assert.match(text, /FLEURS/);
   assert.match(text, /react 18\.3\.1/);
   assert.equal(renderNotices({ appName: "Local Voice AI", version: "1.2.3", about, npm, attribution: parseAttribution(ATTRIBUTION), catalog: cat }), text, "deterministisch");
+});
+
+test("licenseExpression erkennt SPDX-Ausdruecke, nicht Freitext", () => {
+  assert.equal(licenseExpression("MIT AND GPL-3.0-or-later"), "MIT AND GPL-3.0-or-later");
+  assert.equal(licenseExpression("MIT AND Apache-2.0 WITH LLVM-exception"), "MIT AND Apache-2.0 WITH LLVM-exception");
+  assert.equal(licenseExpression("MIT"), null);
+  assert.equal(licenseExpression("Gemma Terms of Use"), null);
+  assert.equal(licenseExpression("MIT; CUDA-Bibliotheken: NVIDIA CUDA Toolkit EULA"), null);
+});
+
+test("Katalog: Ausdruck, URL, Hinweis und non_commercial landen in Notices und SBOM", () => {
+  const cat = catalogModels({
+    models: [
+      {
+        id: "piper-runtime-windows-x64",
+        name: "Piper Runtime",
+        purpose: "tts-runtime",
+        license: "MIT AND GPL-3.0-or-later",
+        license_url: "https://example.org/piper",
+        license_note: "enthaelt espeak-ng",
+        files: [],
+      },
+      { id: "en_US-lessac-medium", name: "Lessac", purpose: "tts-voice", license: "Blizzard-2013-Research-Licence", non_commercial: true, files: [] },
+      { id: "de_DE-thorsten-high", name: "Thorsten", purpose: "tts-voice", license: "CC0-1.0", license_note: "aus Lessac feinabgestimmt", files: [] },
+      { id: "o/y-gguf", name: "Y", license: "Apache-2.0", files: [] },
+    ],
+  });
+  assert.equal(cat.find((m) => m.id === "piper-runtime-windows-x64").licenseId, null, "Ausdruck ist keine einzelne freizuegige Kennung");
+  assert.equal(cat.find((m) => m.id === "piper-runtime-windows-x64").licenseExpression, "MIT AND GPL-3.0-or-later");
+  assert.equal(cat.find((m) => m.id === "en_US-lessac-medium").nonCommercial, true);
+  const about = { licenses: [] };
+  const npm = groupNpmLicenses({}, () => null);
+  const text = renderNotices({ appName: "Local Voice AI", version: "1", about, npm, attribution: parseAttribution(ATTRIBUTION), catalog: cat });
+  assert.match(text, /Piper Runtime.*MIT AND GPL-3\.0-or-later.*<https:\/\/example\.org\/piper>\. enthaelt espeak-ng/);
+  assert.match(text, /Lessac.*nur nicht-kommerziell/);
+  assert.match(text, /Thorsten.*aus Lessac feinabgestimmt/);
+  assert.doesNotMatch(text, /\(`o\/y-gguf`\)/, "freizuegig und ohne Hinweis: nicht gelistet");
+  const bom = buildSbom({
+    cargoBom: cargoBom(),
+    npm: { prod: [], dev: [] },
+    attribution: parseAttribution(ATTRIBUTION),
+    catalog: cat,
+  });
+  const piper = bom.components.find((c) => c.name === "Piper Runtime");
+  assert.equal(piper.type, "application");
+  assert.deepEqual(piper.licenses, [{ expression: "MIT AND GPL-3.0-or-later" }]);
+  assert.deepEqual(piper.externalReferences, [{ type: "license", url: "https://example.org/piper" }]);
+  assert.deepEqual(validateBom(bom), []);
 });

@@ -81,7 +81,7 @@ pub const VARIANTS_MIGRATION: &str = "CREATE TABLE transcript_variants (
     WHERE t.deleted_at IS NULL AND m.deleted_at IS NULL AND t.segments_json <> '[]'
       AND NOT EXISTS (SELECT 1 FROM transcript_variants v WHERE v.meeting_id = t.meeting_id);";
 
-/// Migration Index 8 (G5). Die Fassungsart `translation` und die Herkunft einer
+/// Migration Index 9 (G5, hinter G3 = Index 8). Die Fassungsart `translation` und die Herkunft einer
 /// Uebersetzung (Quellfassung, Ausgangssprache, Pruefbericht). SQLite kann eine
 /// CHECK-Bedingung nicht aendern: die Tabelle wird neu gebaut (neu anlegen, kopieren,
 /// alte loeschen, umbenennen, Indizes neu). Alles in EINER Transaktion der Kette: bricht

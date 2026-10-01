@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod calendar; // M5-P5b
 pub mod history;
+pub mod integrations; // A4
 pub mod llm;
 pub mod usage;
 pub mod meeting_chat; // M4-P4c
@@ -19,6 +20,7 @@ pub mod models;
 pub mod people; // M5-P5d
 pub mod pages;
 pub mod pages_package;
+pub mod project_minutes; // G3 (#70)
 pub mod provenance; // A1
 pub mod transcription;
 pub mod tts;

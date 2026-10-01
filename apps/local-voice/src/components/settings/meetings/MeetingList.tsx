@@ -23,6 +23,7 @@ import {
   Check,
   CheckSquare,
   FilePlus,
+  ListChecks,
   Menu,
   MessageSquare,
   Plus,
@@ -35,6 +36,7 @@ import { formatMeetingDate } from "@/lib/meetingDate";
 import type { PersonRef } from "./people/PersonPopover";
 import { FolderPickerDialog } from "./search/FolderPickerDialog";
 import { JobBar } from "./JobProgress";
+import { translateMeetingError } from "./meetingErrors";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 import { useImportQueue } from "@/hooks/useImportQueue";
 import { heldForRecording, queuePlace } from "@/lib/meetingQueue";
@@ -47,6 +49,22 @@ import { NextUp } from "./projects/NextUp";
 import type { ProjectsApi } from "./projects/useProjects";
 import type { useMeetingDrag } from "./projects/useMeetingDrag";
 import { ALL_PROJECTS, NO_PROJECT } from "./projects/projectModel";
+import {
+  ProjectMinutesDialog,
+  type ProjectMinutesChoice,
+} from "./projectMinutes/ProjectMinutesDialog";
+import { ProjectMinutesRows } from "./projectMinutes/ProjectMinutesRows";
+import type { OpenProjectMinutes } from "./projectMinutes/ProjectMinutesView";
+import {
+  useProjectCandidates,
+  useProjectMinutesList,
+} from "./projectMinutes/useProjectMinutes";
+import {
+  MIN_RECORDINGS,
+  eligibleIds,
+  projectMinutesJobKey,
+  pruneSelection,
+} from "@/lib/projectMinutes";
 
 const PAGE_SIZE = 25;
 const DAY_SECONDS = 86_400;
@@ -115,6 +133,22 @@ interface MeetingListProps {
    * danach gewaehlt wird, damit der neue Eintrag zu sehen ist.
    */
   onNewMeeting?: (folderId: string | null, view: string) => void;
+  /**
+   * G3 (#70, U9): Aufnahmen eines Projekts gemeinsam protokollieren. Die Liste
+   * kennt die Auswahl; der Lauf selbst gehoert dem Aufrufer.
+   */
+  onStartProjectMinutes?: (request: {
+    folderId: string;
+    meetingIds: string[];
+    templateId: string;
+    kind: ProjectMinutesChoice["kind"];
+  }) => void;
+  /** Ein Projekt-Protokoll in der Arbeitsflaeche oeffnen. */
+  onOpenProjectMinutes?: (id: string) => void;
+  /** Die Ansicht des laufenden Laufs eines Projekts oeffnen. */
+  onOpenProjectRun?: (folderId: string) => void;
+  /** Was die Arbeitsflaeche gerade als Projekt-Protokoll zeigt. */
+  activeProjectMinutes?: OpenProjectMinutes | null;
 }
 
 /**
@@ -137,6 +171,10 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   personFilter = null,
   onPersonFilterChange,
   onNewMeeting,
+  onStartProjectMinutes,
+  onOpenProjectMinutes,
+  onOpenProjectRun,
+  activeProjectMinutes = null,
 }) => {
   const { t, i18n } = useTranslation();
   // P8a: laufende Verarbeitungen (Fortschritt, Restdauer) statt nur "Wird verarbeitet".
@@ -175,6 +213,15 @@ export const MeetingList: React.FC<MeetingListProps> = ({
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
 
+  // G3 (#70, U9): Auswahl fuer ein gemeinsames Protokoll (nur in einem Projekt).
+  const [pmMode, setPmMode] = useState(false);
+  const [pmIds, setPmIds] = useState<string[]>([]);
+  const [pmDialog, setPmDialog] = useState(false);
+  const togglePm = (id: string) =>
+    setPmIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+
   // Projekte: Auswahl, Aufklappen, Anlegen, Umbenennen, Menue, Loeschen.
   const { folders, counts, selection } = projects;
   const [listOpen, setListOpen] = useState(true);
@@ -208,6 +255,41 @@ export const MeetingList: React.FC<MeetingListProps> = ({
       : selection === NO_PROJECT
         ? t("meetings.projects.none")
         : (folders.find((f) => f.id === selection)?.name ?? "");
+
+  // G3: die Projekt-Protokolle des gewaehlten Projekts, ihr Lauf und die
+  // Auskunft, welche Aufnahmen sich waehlen lassen.
+  const pmList = useProjectMinutesList(folderId);
+  const pmCandidates = useProjectCandidates(folderId, pmMode, items);
+  const pmCandidateById = useMemo(
+    () =>
+      new Map((pmCandidates.candidates ?? []).map((c) => [c.meeting_id, c])),
+    [pmCandidates.candidates],
+  );
+  const pmRunProgress = folderId
+    ? progressMap[projectMinutesJobKey(folderId)]
+    : undefined;
+  // Wechselt das Projekt, endet die Auswahl (sie galt dem alten); wird eine
+  // Aufnahme unwaehlbar (etwa weil sie geloescht wurde), faellt sie heraus.
+  const pendingPmRef = useRef<string | null>(null);
+  useEffect(() => {
+    setPmIds([]);
+    setPmDialog(false);
+    // Ueber das Kontextmenue eines Projekts: erst waehlen, dann beginnt dort die Auswahl.
+    if (folderId !== null && pendingPmRef.current === folderId) {
+      pendingPmRef.current = null;
+      setPmMode(true);
+    } else {
+      setPmMode(false);
+    }
+  }, [folderId]);
+  useEffect(() => {
+    if (pmCandidates.candidates) {
+      setPmIds((prev) => {
+        const next = pruneSelection(prev, pmCandidates.candidates ?? []);
+        return next.length === prev.length ? prev : next;
+      });
+    }
+  }, [pmCandidates.candidates]);
 
   const personId = personFilter?.id ?? null;
   const filtered =
@@ -247,7 +329,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({
             // A failing list used to render as "no meetings yet" — visually
             // indistinguishable from data loss. Say what actually happened.
             setListError(
-              t("meetings.errors.listFailed", { error: result.error }),
+              t("meetings.errors.listFailed", {
+                error: translateMeetingError(result.error, t),
+              }),
             );
             setHasMore(false);
             return;
@@ -471,19 +555,45 @@ export const MeetingList: React.FC<MeetingListProps> = ({
       meeting.status === "queued" ? queuePlace(queue, meeting.id) : null;
     const held = heldForRecording(queue, meeting.id);
     const label = t("meetings.chat.list.selectRow", { title: meeting.title });
+    // G3: im Auswahlmodus "Gemeinsam protokollieren" sind nur Aufnahmen mit
+    // Transkript waehlbar; die anderen stehen ausgegraut mit ihrem Grund da.
+    const checkable = selecting || pmMode;
+    const candidate = pmMode ? pmCandidateById.get(meeting.id) : undefined;
+    const pickable = !pmMode || candidate?.eligible === true;
+    const reason =
+      pmMode && candidate && !candidate.eligible ? candidate.reason : null;
+    const checked = pmMode
+      ? pmIds.includes(meeting.id)
+      : selectedIds.includes(meeting.id);
+    const toggle = () => {
+      if (pmMode) {
+        if (pickable) togglePm(meeting.id);
+      } else toggleSelected(meeting.id);
+    };
     return (
       <div
         key={meeting.id}
-        role={selecting ? "checkbox" : "button"}
-        aria-checked={selecting ? selectedIds.includes(meeting.id) : undefined}
-        aria-label={selecting ? label : undefined}
+        role={checkable ? "checkbox" : "button"}
+        aria-checked={checkable ? checked : undefined}
+        aria-disabled={pmMode && !pickable ? true : undefined}
+        aria-label={checkable ? label : undefined}
         tabIndex={0}
         data-meeting-id={meeting.id}
         data-testid="meeting-row"
+        data-pickable={pmMode ? String(pickable) : undefined}
+        title={
+          reason
+            ? t(`meetings.projectMinutes.reasonHint.${reason}`, {
+                defaultValue: reason,
+              })
+            : undefined
+        }
         aria-current={isSelected ? "true" : undefined}
-        className={`my-px cursor-pointer select-none rounded-lg border px-2 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/60 ${
-          nested ? "ms-5" : ""
-        } ${
+        className={`my-px select-none rounded-lg border px-2 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/60 ${
+          pmMode && !pickable
+            ? "cursor-not-allowed opacity-50"
+            : "cursor-pointer"
+        } ${nested ? "ms-5" : ""} ${
           dragging && drag.drag?.meeting.id === meeting.id
             ? "border-logo-primary/60 opacity-50"
             : isSelected
@@ -491,18 +601,18 @@ export const MeetingList: React.FC<MeetingListProps> = ({
               : "border-transparent hover:bg-mid-gray/10"
         }`}
         onPointerDown={(e) => {
-          if (!selecting) drag.start(e, meeting);
+          if (!checkable) drag.start(e, meeting);
         }}
         onClick={() => {
           if (drag.consumeClick()) return;
-          if (selecting) toggleSelected(meeting.id);
+          if (checkable) toggle();
           else onSelect(meeting);
         }}
         onKeyDown={(e) => {
           if (e.target !== e.currentTarget) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            if (selecting) toggleSelected(meeting.id);
+            if (checkable) toggle();
             else onSelect(meeting);
           }
         }}
@@ -512,18 +622,16 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         }}
       >
         <div className="flex items-center gap-1.5">
-          {selecting && (
+          {checkable && (
             <span
               aria-hidden="true"
               className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                selectedIds.includes(meeting.id)
+                checked
                   ? "border-logo-primary bg-logo-primary text-on-accent"
                   : "border-mid-gray/60"
               }`}
             >
-              {selectedIds.includes(meeting.id) && (
-                <Check width={12} height={12} />
-              )}
+              {checked && <Check width={12} height={12} />}
             </span>
           )}
           <p className="min-w-0 flex-1 truncate text-sm font-medium">
@@ -552,9 +660,21 @@ export const MeetingList: React.FC<MeetingListProps> = ({
               </>
             )}
           </span>
+          {reason && (
+            <span
+              className="inline-flex items-center rounded-full border border-mid-gray/40 px-2 text-[11px] font-medium text-text/70"
+              data-testid="row-reason"
+              data-reason={reason}
+            >
+              {t(`meetings.projectMinutes.reason.${reason}`, {
+                defaultValue: reason,
+              })}
+            </span>
+          )}
           {place ? (
             <QueueChip place={place} />
           ) : (
+            !reason &&
             !(
               progress &&
               (meeting.status === "processing" ||
@@ -689,8 +809,29 @@ export const MeetingList: React.FC<MeetingListProps> = ({
                   icon: CheckSquare,
                   testId: "projects-select",
                   onSelect: () => {
+                    setPmMode(false);
                     setSelecting((on) => !on);
                     setSelectedIds([]);
+                  },
+                },
+              ]
+            : []),
+          ...(onStartProjectMinutes
+            ? [
+                {
+                  id: "project-minutes",
+                  label: t("meetings.projectMinutes.menu"),
+                  icon: ListChecks,
+                  testId: "projects-pm",
+                  disabled: folderId === null,
+                  title:
+                    folderId === null
+                      ? t("meetings.projectMinutes.needProject")
+                      : t("meetings.projectMinutes.menuHint"),
+                  onSelect: () => {
+                    setSelecting(false);
+                    setPmIds([]);
+                    setPmMode((on) => !on);
                   },
                 },
               ]
@@ -714,6 +855,77 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         <ProjectFilter value={filter} onChange={setFilter} />
       </div>
 
+      {pmMode && (
+        <div
+          role="group"
+          aria-label={t("meetings.projectMinutes.bar.label")}
+          data-testid="pm-bar"
+          className="shrink-0 space-y-1.5 rounded-md bg-logo-primary/10 px-3 py-1.5"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm" data-testid="pm-count">
+              {t("meetings.projectMinutes.bar.selected", {
+                count: pmIds.length,
+              })}
+            </span>
+            <span className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                data-testid="pm-all"
+                title={t("meetings.projectMinutes.bar.allHint")}
+                disabled={!pmCandidates.candidates}
+                onClick={() =>
+                  setPmIds(eligibleIds(pmCandidates.candidates ?? []))
+                }
+              >
+                {t("meetings.projectMinutes.bar.all")}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                data-testid="pm-none"
+                title={t("meetings.projectMinutes.bar.noneHint")}
+                disabled={pmIds.length === 0}
+                onClick={() => setPmIds([])}
+              >
+                {t("meetings.projectMinutes.bar.none")}
+              </Button>
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button
+              size="sm"
+              data-testid="pm-start"
+              disabled={pmIds.length < MIN_RECORDINGS}
+              onClick={() => setPmDialog(true)}
+            >
+              <ListChecks width={14} height={14} />
+              {t("meetings.projectMinutes.bar.start")}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              data-testid="pm-cancel"
+              onClick={() => {
+                setPmMode(false);
+                setPmIds([]);
+              }}
+            >
+              {t("meetings.projectMinutes.bar.cancel")}
+            </Button>
+          </div>
+          <p className="text-xs text-text/60" data-testid="pm-hint">
+            {!pmCandidates.candidates
+              ? t("meetings.projectMinutes.bar.loading")
+              : pmCandidates.failed
+                ? t("meetings.projectMinutes.bar.loadFailed")
+                : pmIds.length < MIN_RECORDINGS
+                  ? t("meetings.projectMinutes.bar.needTwo")
+                  : " "}
+          </p>
+        </div>
+      )}
       {selecting && (
         <div className="flex shrink-0 items-center justify-between gap-2 rounded-md bg-logo-primary/10 px-3 py-1.5">
           <span className="text-sm">
@@ -824,7 +1036,28 @@ export const MeetingList: React.FC<MeetingListProps> = ({
                     setProjectMenu({ x, y, id: folder.id })
                   }
                 />
-                {selection === folder.id && listOpen && meetingsBlock(true)}
+                {selection === folder.id && listOpen && (
+                  <>
+                    {!searching && onOpenProjectMinutes && (
+                      <ProjectMinutesRows
+                        items={pmList.items}
+                        progress={pmRunProgress}
+                        activeId={
+                          activeProjectMinutes?.kind === "doc"
+                            ? activeProjectMinutes.id
+                            : null
+                        }
+                        runActive={
+                          activeProjectMinutes?.kind === "run" &&
+                          activeProjectMinutes.folderId === folder.id
+                        }
+                        onOpen={onOpenProjectMinutes}
+                        onOpenRun={() => onOpenProjectRun?.(folder.id)}
+                      />
+                    )}
+                    {meetingsBlock(true)}
+                  </>
+                )}
               </React.Fragment>
             ))}
             {creating && (
@@ -931,6 +1164,25 @@ export const MeetingList: React.FC<MeetingListProps> = ({
                   },
                 ]
               : []),
+            ...(onStartProjectMinutes
+              ? [
+                  {
+                    label: t("meetings.projectMinutes.menu"),
+                    onSelect: () => {
+                      // Das Projekt waehlen; der Wechsel beendet eine laufende
+                      // Auswahl, danach beginnt die neue.
+                      setSelecting(false);
+                      setPmIds([]);
+                      if (folderId === projectMenuTarget.id) {
+                        setPmMode(true);
+                      } else {
+                        pendingPmRef.current = projectMenuTarget.id;
+                        projects.select(projectMenuTarget.id);
+                      }
+                    },
+                  },
+                ]
+              : []),
             {
               label: t("meetings.projects.rename"),
               onSelect: () => {
@@ -980,6 +1232,32 @@ export const MeetingList: React.FC<MeetingListProps> = ({
               onSelect: () => onNewMeeting(null, plainMenu.id),
             },
           ]}
+        />
+      )}
+
+      {onStartProjectMinutes && (
+        <ProjectMinutesDialog
+          open={pmDialog}
+          count={pmIds.length}
+          project={selectionName}
+          onClose={() => setPmDialog(false)}
+          onStart={(choice) => {
+            if (!folderId) return;
+            // In Listenreihenfolge (chronologisch ordnet das Backend ohnehin).
+            const order = (pmCandidates.candidates ?? []).map(
+              (c) => c.meeting_id,
+            );
+            const ids = order.filter((id) => pmIds.includes(id));
+            setPmDialog(false);
+            setPmMode(false);
+            setPmIds([]);
+            onStartProjectMinutes({
+              folderId,
+              meetingIds: ids.length > 0 ? ids : pmIds,
+              templateId: choice.templateId,
+              kind: choice.kind,
+            });
+          }}
         />
       )}
 

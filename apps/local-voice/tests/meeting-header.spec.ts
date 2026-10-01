@@ -620,7 +620,9 @@ test.describe("Bedienung oben rechts", () => {
     await page
       .getByRole("option", { name: "Kundengespräch / Vertrieb", exact: true })
       .click();
-    await dialog.getByTestId("diarize-mic").check();
+    // ToggleSwitch: das Eingabefeld ist unsichtbar (sr-only), der sichtbare Schalter
+    // liegt darueber; wie in script-check.spec.ts mit force bedient.
+    await dialog.getByTestId("diarize-mic").check({ force: true });
     // Bis hierher nichts gestartet.
     expect(await calls(page, "meetings_start")).toHaveLength(0);
 

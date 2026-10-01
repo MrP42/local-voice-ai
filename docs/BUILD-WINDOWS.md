@@ -128,9 +128,16 @@ Nachweis am Artefakt:
 ```powershell
 $t = [System.Text.Encoding]::ASCII.GetString(
        [System.IO.File]::ReadAllBytes("src-tauri\target\release\local-voice-ai.exe"))
-$t.Contains("localhost:1420")     # darf NICHT True sein
 $t.Contains("index-<hash>.js")    # ein Asset aus dist\assets\ - muss True sein
+$t.Contains("localhost:1420")     # nur Auskunft: auch ein gutes Build enthaelt es (Icon-URL)
 ```
+
+Entscheidend ist das eingebettete Asset: eine EXE mit dem `dev`-Flag bettet kein
+Frontend ein. `localhost:1420` allein beweist nichts: auch die installierte Release-EXE
+(`%LOCALAPPDATA%\Local Voice AI\local-voice-ai.exe`) enthaelt es, als Icon-URL
+`http://localhost:1420/icons/128x128.png` aus der eingebetteten Konfiguration, neben
+dem Asset `index-<hash>.js` (gemessen 01.10.2026). `scripts\lib\m8-harness.ps1` (`Test-EmbeddedFrontend`) macht
+genau diese Pruefung; `m8-verify.ps1` warnt damit vor dem Lauf.
 
 Ursache: Das `dev`-Flag setzt `tauri-build` in `build.rs` — und dessen
 Ergebnis wird von cargo gecacht. Ein Cache aus einer früheren
@@ -250,6 +257,37 @@ pwsh -File apps\local-voice\scripts\m3-verify.ps1 -Scenario endurance -Runs 100
 
 Das Skript liest den Hotkey aus `settings_store.json` — es setzt nicht mehr
 Strg+Leertaste voraus. Ergebnisse landen unter `docs/m3-evidence/`.
+
+### Einfügen in Chrome, Word, VS Code abnehmen (`m10-verify.ps1`)
+
+`m10-verify.ps1` prüft je Ziel (`notepad`, `chrome`, `word`, `vscode`) mit einer
+eigenen Testinstanz, dass der Text nach Strg+V **wirklich** im Feld steht. Es
+liest ihn zurück (UI Automation; Word per COM `Range.Text`; VS Code notfalls
+per Strg+A/Strg+C mit Sentinel) und meldet PASS, FAIL oder SKIP. Ein FAIL
+setzt Exit 1. Beendet werden nur selbst gestartete Prozesse (`taskkill /PID /T`);
+läuft Notepad oder Word schon, wird das Ziel übersprungen.
+
+```powershell
+pwsh -File apps\local-voice\scripts\m10-verify.ps1 -DryRun                     # nur Plan, öffnet nichts
+pwsh -File apps\local-voice\scripts\m10-verify.ps1 -Target chrome,word,vscode  # öffnet Fenster; währenddessen nicht tippen
+pwsh -File apps\local-voice\scripts\test-m10-verify.ps1                        # Selbsttest ohne Fenster
+```
+
+### Alte Logdatei mit Klartext-Diktaten prüfen (`check-old-log.ps1`)
+
+Bis 2026-08-17 schrieb die App bei `debug_mode` vollständige Diktate in die
+Logdatei (DECISIONS D9). `check-old-log.ps1` zählt solche Zeilen in den
+Logordnern unter `%LOCALAPPDATA%` (aktueller und früherer App-Identifier),
+**ohne je einen Inhalt auszugeben**, und nennt Größe, Datum und den fertigen
+Löschbefehl. Ohne Schalter wird nur gelesen (Exit 1 = Klartext gefunden).
+
+```powershell
+pwsh -File apps\local-voice\scripts\check-old-log.ps1            # nur lesen, Löschbefehl anzeigen
+pwsh -File apps\local-voice\scripts\check-old-log.ps1 -Delete    # löscht Treffer-Dateien, je Datei nach Rückfrage
+```
+
+`history.db` und die WAV-Aufnahmen sind die gewollte Verlaufsfunktion und
+werden nicht angefasst.
 
 ## GPU per Vulkan (Release und lokaler Installer)
 

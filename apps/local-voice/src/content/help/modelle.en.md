@@ -20,7 +20,10 @@ Three families, all local: transcription models for dictation, language models f
 
 - Piper voices are small, language-bound voices for the CPU. Download the languages you read. When reading, the app picks the voice by the sentence's language.
 - HQ is the best quality with the largest download.
+<!--if:fish-->
 - Your own and cloned voices for Fish Speech are managed under Settings, Read aloud.
+<!--/if:fish-->
+- A voice counts as usable only when the Piper program is complete. If something is missing it shows "Program missing"; "Install program" repairs it.
 
 ## Storage
 

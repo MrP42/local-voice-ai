@@ -1,4 +1,4 @@
-//! G5: Fassungsart `translation`: Migration (Index 8) und Ablage. Die Uebersetzung selbst
+//! G5: Fassungsart `translation`: Migration (Index 9, hinter G3) und Ablage. Die Uebersetzung selbst
 //! (Modellaufruf, Treuepruefung) pruefen die Tests in `translate/tests.rs`.
 
 use rusqlite::{params, Connection};
@@ -94,14 +94,14 @@ fn translation(f: &Fx, activate: bool) -> NewVariant {
 }
 
 // ---------------------------------------------------------------------------
-// Migration (Index 8)
+// Migration (Index 9)
 // ---------------------------------------------------------------------------
 
-/// Eine Datenbank vor G5 (Index 0 bis 7) mit Fassungen in allen Zustaenden: aktiv,
+/// Eine Datenbank vor G5 (Index 0 bis 8, also mit G3) mit Fassungen in allen Zustaenden: aktiv,
 /// inaktiv, mit Neu-Lauf-Marke und geloescht.
 fn db_before_g5(path: &std::path::Path) -> Connection {
     let mut c = Connection::open(path).unwrap();
-    Migrations::new(MIGRATIONS[..8].to_vec())
+    Migrations::new(MIGRATIONS[..9].to_vec())
         .to_latest(&mut c)
         .unwrap();
     c.execute(
@@ -145,12 +145,15 @@ fn variant_dump(c: &Connection) -> Vec<String> {
 }
 
 #[test]
-fn migration_8_is_a_single_step_after_the_queue() {
-    assert!(MIGRATIONS.len() >= 9, "G5 ist Index 8: nach A1 = 5, A3 = 6, U7 = 7");
+fn migration_9_is_a_single_step_after_the_project_minutes() {
+    assert!(
+        MIGRATIONS.len() >= 10,
+        "G5 ist Index 9: nach A1 = 5, A3 = 6, U7 = 7, G3 = 8"
+    );
 }
 
 #[test]
-fn migration_8_widens_the_kind_check_and_keeps_every_variant_untouched() {
+fn migration_9_widens_the_kind_check_and_keeps_every_variant_untouched() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("m.db");
     let before = {
@@ -215,7 +218,7 @@ fn migration_8_widens_the_kind_check_and_keeps_every_variant_untouched() {
 }
 
 #[test]
-fn migration_8_runs_once_and_a_second_start_changes_nothing() {
+fn migration_9_runs_once_and_a_second_start_changes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("m.db");
     drop(db_before_g5(&path));
@@ -231,7 +234,7 @@ fn migration_8_runs_once_and_a_second_start_changes_nothing() {
 }
 
 #[test]
-fn an_abort_inside_migration_8_leaves_the_old_table_complete() {
+fn an_abort_inside_migration_9_leaves_the_old_table_complete() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("m.db");
     let before = variant_dump(&db_before_g5(&path));
@@ -241,13 +244,13 @@ fn an_abort_inside_migration_8_leaves_the_old_table_complete() {
     let broken: &'static str = Box::leak(
         format!("{} SELECT no_such_function();", VARIANTS_TRANSLATION_MIGRATION).into_boxed_str(),
     );
-    let mut steps = MIGRATIONS[..8].to_vec();
+    let mut steps = MIGRATIONS[..9].to_vec();
     steps.push(M::up(broken));
     let mut c = Connection::open(&path).unwrap();
     assert!(Migrations::new(steps).to_latest(&mut c).is_err());
 
     let version: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 8, "Version unveraendert");
+    assert_eq!(version, 9, "Version unveraendert");
     assert_eq!(variant_dump(&c), before, "keine Fassung verloren");
     let leftovers: i64 = c
         .query_row(

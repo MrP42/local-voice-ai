@@ -9,9 +9,18 @@ Local Voice AI 0.20.11 enthält Software und nutzt Modelle Dritter. Diese Datei 
 - mp3lame-encoder 0.2.5 — LGPL-3.0 — <https://github.com/DoumanAsh/mp3lame-encoder>
 - mp3lame-sys 0.1.11 — LGPL-3.0 — <https://github.com/DoumanAsh/mp3lame-sys>
 
+**Heruntergeladene Laufzeiten mit Copyleft-Anteil (nicht im Installer, auf Wunsch von der Quelle geladen):**
+
+- Piper Runtime (macOS Apple Silicon) — MIT AND GPL-3.0-or-later — <https://github.com/rhasspy/piper/blob/master/LICENSE.md>
+- Piper Runtime (macOS Intel) — MIT AND GPL-3.0-or-later — <https://github.com/rhasspy/piper/blob/master/LICENSE.md>
+- Piper Runtime (Windows x64) — MIT AND GPL-3.0-or-later — <https://github.com/rhasspy/piper/blob/master/LICENSE.md>
+
 **Modelle mit nicht-kommerzieller Lizenz (im Katalog wählbar, nicht vorgewählt):**
 
 - Canary 1B — CC-BY-NC-4.0
+- Lessac (High Quality) — Blizzard-2013-Research-Licence
+- Lessac (Medium Quality) — Blizzard-2013-Research-Licence
+- Ryan (High Quality) — CC-BY-NC-SA-4.0
 
 Modelle werden bei Bedarf geladen und nicht mit dem Installer ausgeliefert; Ausnahme ist die kleine Silero-VAD-Datei.
 
@@ -29,24 +38,44 @@ Modelle werden bei Bedarf geladen und nicht mit dem Installer ausgeliefert; Ausn
 | Qwen3 0.6B/4B/8B, Qwen3.5 4B/9B (Alibaba/Qwen) | lokales Sprachmodell (Katalog, wählbar) | Apache-2.0 |  |
 | Gemma 4 E4B und 12B (Google) | lokales Sprachmodell (Katalog, wählbar) | Apache-2.0 (Gemma-4-Lizenz) | <https://ai.google.dev/gemma/docs/gemma_4_license> |
 | Gemma 3 4B (Google) | lokales Sprachmodell (Katalog, wählbar, vorbestehend) | Gemma Terms of Use (eigene Lizenz mit Nutzungsauflagen, Modellkarte: `gemma`) | <https://huggingface.co/google/gemma-3-4b-it> |
+| Piper (Michael Hansen / Rhasspy) | Sprachausgabe-Laufzeit (Katalog, wählbar, Download von GitHub) | MIT; das Paket enthält espeak-ng (GPL-3.0-or-later), piper-phonemize (MIT), onnxruntime 1.14.1 (MIT) | <https://github.com/rhasspy/piper> |
+| espeak-ng (Teil des Piper-Pakets) | Phonemisierung, `espeak-ng.dll` (Windows) | GPL-3.0-or-later | <https://github.com/espeak-ng/espeak-ng> |
+| Piper-Stimmen (10 im Katalog, `rhasspy/piper-voices`) | Sprachausgabe (Katalog, wählbar) | je Stimme verschieden, siehe Katalogeintrag: CC0-1.0 (Thorsten, Kerstin), BSD-3-Clause (Eva K., M-AILABS), CC-BY-4.0 (Alba), CC-BY-SA-4.0 bzw. unklar (Amy, Alan), nicht kommerziell: Lessac (Blizzard-2013-Forschungslizenz), Ryan (CC-BY-NC-SA-4.0); mehrere Stimmen sind von Lessac bzw. Ryan feinabgestimmt | <https://huggingface.co/rhasspy/piper-voices> |
+| llama.cpp b10938 (ggml-Autoren) | Sprachmodell-Laufzeit (Katalog, wählbar, Download von GitHub) | MIT; Windows-Pakete enthalten libomp.dll (Apache-2.0 mit LLVM-Ausnahme); CUDA-Paket zusätzlich NVIDIA-CUDA-Bibliotheken (CUDA Toolkit EULA) | <https://github.com/ggml-org/llama.cpp> |
+| Nemotron 3.5 ASR Streaming (NVIDIA) | Spracherkennung (Katalog, wählbar) | OpenMDW-1.1 | <https://openmdw.ai/license/1-1/> |
+| Nemotron Speech Streaming EN, Multitalker Parakeet Streaming (NVIDIA) | Spracherkennung (Katalog, wählbar) | NVIDIA Open Model License | <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/> |
+| Fun-ASR-Nano, Fun-ASR-MLT-Nano, SenseVoice Small (Alibaba) | Spracherkennung (Katalog, wählbar) | FunASR Model Open Source License Agreement 1.1 (Namensnennung, Modellnamen beibehalten) | <https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE> |
+| MedASR (Google) | Spracherkennung (Katalog, wählbar) | Health AI Developer Foundations Terms of Use | <https://developers.google.com/health-ai-developer-foundations/terms> |
+| Canary 1B (NVIDIA) | Spracherkennung (Katalog, wählbar, nicht vorgewählt) | CC-BY-NC-4.0, nur nicht-kommerziell | <https://huggingface.co/nvidia/canary-1b> |
 
-Weitere Katalogmodelle mit eigener oder nicht freizügiger Lizenz (maßgeblich ist die Modellkarte der Quelle):
+Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter oder nicht freizügiger Lizenz bzw. Herkunftshinweis (maßgeblich ist die Quelle):
 
-- Fun-ASR Nano Multilingual (`handy-computer/Fun-ASR-MLT-Nano-2512-gguf`) — other
-- Fun-ASR Nano (`handy-computer/Fun-ASR-Nano-2512-gguf`) — other
-- SenseVoice Small (`handy-computer/SenseVoiceSmall-gguf`) — other
-- Sortformer 4spk v2.1 (Sprechertrennung) (`diar-sortformer-4spk-v2.1-q8`) — NVIDIA Open Model License
-- MedASR (`handy-computer/medasr-gguf`) — other
-- Multitalker Parakeet Streaming EN (`handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf`) — other
-- Nemotron 3.5 ASR Streaming (`handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf`) — other
-- Nemotron Speech Streaming EN (`handy-computer/nemotron-speech-streaming-en-0.6b-gguf`) — other
-
-Katalogeinträge ohne Lizenzangabe im Katalog (Lizenz laut Quelle bzw. Modellkarte, Download-Adresse im Katalog):
-
-- llm-model: Gemma 3 4B; Gemma 4 12B; Gemma 4 E4B; Qwen3 0,6B; Qwen3 4B; Qwen3 8B; Qwen 3.5 4B; Qwen 3.5 9B
-- llm-runtime: Sprachmodell-Laufzeit (macOS, Apple Silicon); Sprachmodell-Laufzeit (macOS, Intel); Sprachmodell-Laufzeit (Windows, CPU); Sprachmodell-Laufzeit (Windows, CUDA 13.3); Sprachmodell-Laufzeit (Windows, Vulkan)
-- tts-runtime: Piper Runtime (macOS Apple Silicon); Piper Runtime (macOS Intel); Piper Runtime (Windows x64)
-- tts-voice: Eva K. (Very Low Quality); Kerstin (Low Quality); Thorsten (High Quality); Thorsten (Medium Quality); Alan (Medium Quality); Alba (Medium Quality); Amy (Medium Quality); Lessac (High Quality); Lessac (Medium Quality); Ryan (High Quality)
+- Fun-ASR Nano Multilingual (`handy-computer/Fun-ASR-MLT-Nano-2512-gguf`) — FunASR Model License 1.1 — <https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE>
+- Fun-ASR Nano (`handy-computer/Fun-ASR-Nano-2512-gguf`) — FunASR Model License 1.1 — <https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE>
+- SenseVoice Small (`handy-computer/SenseVoiceSmall-gguf`) — FunASR Model License 1.1 — <https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE>
+- Canary 1B (`handy-computer/canary-1b-gguf`) — cc-by-nc-4.0 — **nur nicht-kommerziell** — <https://creativecommons.org/licenses/by-nc/4.0/>
+- Eva K. (Very Low Quality) (`de_DE-eva_k-x_low`) — BSD-3-Clause — <https://github.com/MycroftAI/mimic3-voices/blob/master/voices/en_US/m-ailabs_low/LICENSE>. Datensatz M-AILABS Speech Dataset (datenspezifische BSD-3-Clause-Lizenz: kommerzielle Nutzung erlaubt, Urheberhinweis beibehalten); von Grund auf trainiert.
+- Kerstin (Low Quality) (`de_DE-kerstin-low`) — CC0-1.0 — <https://github.com/rhasspy/dataset-voice-kerstin>. Datensatz Kerstin (CC0). Modell von der englischen Ryan-Stimme feinabgestimmt; deren Datensatz steht unter CC-BY-NC-SA-4.0 (nicht kommerziell). Lizenzlage des Modells ungeklärt.
+- Thorsten (High Quality) (`de_DE-thorsten-high`) — CC0-1.0 — <https://github.com/thorstenMueller/Thorsten-Voice>. Datensatz Thorsten-Voice (CC0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
+- Thorsten (Medium Quality) (`de_DE-thorsten-medium`) — CC0-1.0 — <https://github.com/thorstenMueller/Thorsten-Voice>. Datensatz Thorsten-Voice (CC0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
+- Sortformer 4spk v2.1 (Sprechertrennung) (`diar-sortformer-4spk-v2.1-q8`) — NVIDIA Open Model License — <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/>
+- Alan (Medium Quality) (`en_GB-alan-medium`) — Unklar (Mimic-3-Repo CC-BY-SA-4.0, Stimmen-Datei: All Rights Reserved) — <https://github.com/MycroftAI/mimic3-voices/tree/master/voices/en_UK/apope_low>. Mimic-3-Stimme apope (Alan Pope): das Repo steht unter CC-BY-SA-4.0, die LICENSE-Datei der Stimme nennt "Copyright 2022 Mycroft AI, All Rights Reserved". Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
+- Alba (Medium Quality) (`en_GB-alba-medium`) — CC-BY-4.0 — <https://creativecommons.org/licenses/by/4.0/>. Datensatz Alba (CSTR, Univ. Edinburgh, CC-BY-4.0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
+- Amy (Medium Quality) (`en_US-amy-medium`) — CC-BY-SA-4.0 (laut Piper-Maintainer; Datensatz unklar) — <https://github.com/MycroftAI/mimic3-voices>. Mimic-3-Stimme. Laut Piper-Maintainer stehen die Mycroft-Modelle unter CC-BY-SA-4.0, die Lizenz des Datensatzes ist unbekannt (rhasspy/piper#253). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
+- Lessac (High Quality) (`en_US-lessac-high`) — Blizzard-2013-Research-Licence — **nur nicht-kommerziell** — <https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html>. Lessac-Blizzard-2013-Datensatz: Forschungslizenz, kommerzielle Nutzung ausdrücklich ausgeschlossen.
+- Lessac (Medium Quality) (`en_US-lessac-medium`) — Blizzard-2013-Research-Licence — **nur nicht-kommerziell** — <https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html>. Lessac-Blizzard-2013-Datensatz: Forschungslizenz, kommerzielle Nutzung ausdrücklich ausgeschlossen.
+- Ryan (High Quality) (`en_US-ryan-high`) — CC-BY-NC-SA-4.0 — **nur nicht-kommerziell** — <https://creativecommons.org/licenses/by-nc-sa/4.0/>. Datensatz RyanSpeech (Kaggle): nur nicht-kommerziell, Weitergabe unter gleichen Bedingungen.
+- Gemma 3 4B (`llm-gemma3-4b-q4`) — Gemma Terms of Use — <https://ai.google.dev/gemma/terms>. Eigene Google-Lizenz (Modellkarte: license gemma) mit Nutzungsbeschränkungen und Weitergabebedingungen.
+- Sprachmodell-Laufzeit (Windows, CPU) (`llm-runtime-windows-x64-cpu`) — MIT AND Apache-2.0 WITH LLVM-exception — <https://github.com/ggml-org/llama.cpp/blob/master/LICENSE>. llama.cpp (MIT) samt LLVM-OpenMP-Laufzeit libomp.dll (Apache-2.0 mit LLVM-Ausnahme, Datei LICENSE-LLVM-OpenMP im Archiv).
+- Sprachmodell-Laufzeit (Windows, CUDA 13.3) (`llm-runtime-windows-x64-cuda`) — MIT; CUDA-Bibliotheken: NVIDIA CUDA Toolkit EULA — <https://docs.nvidia.com/cuda/eula/index.html>. llama.cpp (MIT) samt libomp.dll (Apache-2.0 mit LLVM-Ausnahme). Das cudart-Paket enthält cudart64_13.dll, cublas64_13.dll und cublasLt64_13.dll von NVIDIA unter der CUDA Toolkit EULA (weitergabefähige Laufzeit-Bibliotheken).
+- Sprachmodell-Laufzeit (Windows, Vulkan) (`llm-runtime-windows-x64-vulkan`) — MIT AND Apache-2.0 WITH LLVM-exception — <https://github.com/ggml-org/llama.cpp/blob/master/LICENSE>. llama.cpp (MIT) samt LLVM-OpenMP-Laufzeit libomp.dll (Apache-2.0 mit LLVM-Ausnahme, Datei LICENSE-LLVM-OpenMP im Archiv).
+- MedASR (`handy-computer/medasr-gguf`) — Health AI Developer Foundations Terms of Use — <https://developers.google.com/health-ai-developer-foundations/terms>
+- Multitalker Parakeet Streaming EN (`handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf`) — NVIDIA Open Model License — <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/>
+- Nemotron 3.5 ASR Streaming (`handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf`) — OpenMDW-1.1 — <https://openmdw.ai/license/1-1/>
+- Nemotron Speech Streaming EN (`handy-computer/nemotron-speech-streaming-en-0.6b-gguf`) — NVIDIA Open Model License — <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/>
+- Piper Runtime (macOS Apple Silicon) (`piper-runtime-macos-aarch64`) — MIT AND GPL-3.0-or-later — <https://github.com/rhasspy/piper/blob/master/LICENSE.md>. Piper (MIT); espeak-ng (GPL-3.0-or-later) ist Teil des Piper-Pakets. Das offizielle macOS-Archiv ist unvollständig (keine libespeak-ng/libpiper_phonemize/libonnxruntime-Dateien) und startet nicht.
+- Piper Runtime (macOS Intel) (`piper-runtime-macos-x64`) — MIT AND GPL-3.0-or-later — <https://github.com/rhasspy/piper/blob/master/LICENSE.md>. Piper (MIT); espeak-ng (GPL-3.0-or-later) ist Teil des Piper-Pakets. Das offizielle macOS-Archiv ist unvollständig (keine libespeak-ng/libpiper_phonemize/libonnxruntime-Dateien) und startet nicht.
+- Piper Runtime (Windows x64) (`piper-runtime-windows-x64`) — MIT AND GPL-3.0-or-later — <https://github.com/rhasspy/piper/blob/master/LICENSE.md>. Piper (MIT) mit piper-phonemize (MIT), onnxruntime 1.14.1 (MIT) und espeak-ng.dll (GPL-3.0-or-later, https://github.com/espeak-ng/espeak-ng). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert; das Archiv enthält keine Lizenzdateien.
 
 ## Datensätze (nur Messungen, nicht im Installer)
 

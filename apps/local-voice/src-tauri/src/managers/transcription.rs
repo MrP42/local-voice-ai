@@ -2549,7 +2549,24 @@ impl TranscriptionManager {
             self.maybe_unload_immediately("transcription");
         }
 
-        Ok(result)
+        // G7 (Issue #70): Der Greedy-RNN-T-Decoder (Nemotron, Parakeet) bleibt an
+        // unsicheren Stellen auf einem Frame haengen und gibt dasselbe Wort bis
+        // zur festen Obergrenze von 10 Symbolen wiederholt aus. Hier, an der
+        // einen Stelle, ueber die jede Besprechungs-Transkription laeuft (neue
+        // Aufnahme, Neu-Transkription, Import, YouTube), werden solche Laeufe
+        // zusammengefasst. Nur Zahlen ins Log, nie Text.
+        // G5: `result` traegt auch die vom Modell erkannte Sprache; bereinigt werden nur die Segmente.
+        let (segments, detected_language) = result;
+        let (segments, loops) =
+            crate::managers::meetings::hallucination::collapse_loops_fail_open(segments);
+        if loops.runs > 0 {
+            info!(
+                "meetings: {} Wiederholungsschleife(n) im Block zusammengefasst, {} Wort/Woerter entfernt",
+                loops.runs, loops.removed
+            );
+        }
+
+        Ok((segments, detected_language))
     }
 }
 
@@ -3001,6 +3018,12 @@ fn post_process_transcription_text(
     custom_words_already_prompted: bool,
 ) -> String {
     fail_open_text_transform(raw, |raw| {
+        // G7 (Issue #70): Decoder-Schleifen ("if if if if if", "s s s sort") vor
+        // allem anderen zusammenfassen; die eigentliche Regel samt Gegenbeispielen
+        // steht in `meetings::hallucination`. Das Live-Tippen waehrend des
+        // Sprechens bleibt unberuehrt: bereits getippter Text laesst sich nicht
+        // zurueckholen, erst der Endtext wird bereinigt.
+        let raw = crate::managers::meetings::hallucination::collapse_loops(&raw).0;
         let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
             apply_custom_words(
                 &raw,
@@ -3742,6 +3765,20 @@ mod tests {
         for kind in ["metal", "cuda", "vulkan", "gpu", "unknown"] {
             assert!(!transcribe_device_allowed(kind, true));
         }
+    }
+
+    #[test]
+    fn dictation_text_loses_decoder_loops_but_keeps_real_repeats() {
+        // G7 (Issue #70): dieselben Schleifen wie in Besprechungen, derselbe Filter.
+        // "no no" (zwei) bleibt; der aeltere Handy-Filter `collapse_stutters` im
+        // Diktat fasst ab DREI gleichen Woertern zusammen und bleibt unveraendert.
+        let settings = crate::settings::get_default_settings();
+        let looped = "So no if if if if if if if if if if if the heat death,                       there's y y you can't, no no that is wrong"
+            .to_string();
+        assert_eq!(
+            post_process_transcription_text(looped, &settings, false),
+            "So no if the heat death, there's you can't, no no that is wrong"
+        );
     }
 
     #[test]

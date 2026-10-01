@@ -22,6 +22,7 @@ pub mod mic_capture;
 pub mod minutes;
 pub mod notes;
 pub mod pdf; // M6-P6b
+pub mod project_minutes_store; // G3 (#70): Projekt-Protokolle
 pub mod queue; // U7
 pub mod queue_store; // U7
 #[cfg(test)]

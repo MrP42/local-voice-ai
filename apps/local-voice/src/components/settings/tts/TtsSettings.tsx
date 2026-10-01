@@ -16,6 +16,7 @@ import { useTagLanguage } from "./tags/tagLanguage";
 import { ScriptWorkshopDialog } from "./books/ScriptWorkshopDialog";
 import { audioExportName } from "@/lib/utils/exportName";
 import { useSettings } from "../../../hooks/useSettings";
+import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { ShortcutInput } from "../ShortcutInput";
 import {
   FilesSidebar,
@@ -834,27 +835,41 @@ export const TtsSettings = () => {
     speakProgress !== null &&
     speakProgress.position < speakProgress.total;
 
-  // Heruntergeladene Piper-Stimmen. Nur sie kann Piper vorlesen; die Liste
-  // kommt aus demselben Download-Verzeichnis, das die Modellseite fuellt.
-  const [piperVoices, setPiperVoices] = useState<
-    { id: string; name: string; language: string | null }[]
-  >([]);
+  // Heruntergeladene Piper-Stimmen und der Zustand der Laufzeiten kommen aus
+  // dem Modell-Speicher: er folgt jedem Download, jeder Reparatur und jedem
+  // Entfernen sofort (Issue #29), statt die Liste nur beim Oeffnen zu lesen.
+  // Eine Stimme ist erst "usable", wenn auch das Piper-Programm vollstaendig
+  // ist -- sonst scheitert das Vorlesen erst spaet.
+  const ttsDownloads = useTtsModelStore((state) => state.downloads);
+  const ttsRuntime = useTtsModelStore((state) => state.runtime);
+  const loadTtsRuntime = useTtsModelStore((state) => state.loadRuntime);
+  const fishDirSetting = getSetting("tts_fish_dir") ?? "";
   useEffect(() => {
-    void commands.ttsListDownloads().then((result) => {
-      if (result.status !== "ok") return;
-      // Faellt die Abfrage aus, bleibt die Liste leer statt undefiniert —
-      // ein fehlender Rueckgabewert riss sonst die ganze Vorlesen-Seite mit.
-      setPiperVoices(
-        (result.data ?? [])
-          .filter((entry) => entry.kind === "voice" && entry.is_downloaded)
-          .map((entry) => ({
-            id: entry.id,
-            name: entry.name,
-            language: entry.language,
-          })),
-      );
-    });
-  }, []);
+    // Der Fish-Ordner kann sich aendern (Einstellung, Installation von Hand).
+    void loadTtsRuntime();
+  }, [fishDirSetting, loadTtsRuntime]);
+  // Unbekannt (noch nicht geladen) gilt als vorhanden: kein Aufblitzen von
+  // "nicht eingerichtet" beim Start und unveraendertes Verhalten ohne Antwort.
+  // Ein laufender oder startender Fish-Server (auch ein fremd gestarteter, den
+  // die App uebernommen hat) gilt immer als eingerichtet.
+  const fishReady = ttsRuntime
+    ? ttsRuntime.fish.ready ||
+      phase === "starting" ||
+      phase === "ready" ||
+      phase === "speaking"
+    : true;
+  const piperVoices = useMemo(
+    () =>
+      ttsDownloads
+        .filter((entry) => entry.kind === "voice" && entry.is_downloaded)
+        .map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+          language: entry.language,
+          usable: entry.is_usable !== false,
+        })),
+    [ttsDownloads],
+  );
 
   /* Der Wert des Stimmen-Dropdowns aus den Einstellungen: Piper-Stimme als
      "piper:<id>", sonst Fish-Stimme oder Standard. */
@@ -887,6 +902,18 @@ export const TtsSettings = () => {
     // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
     // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
   }, [tab, tabVoices, applyVoiceValue]);
+
+  /* Ist die gerade gewaehlte Stimme nicht eingerichtet? Dann sagt ein Hinweis
+     unter dem Dropdown, warum -- und wohin man geht. `noVoiceSetUp`: gar keine
+     Stimme ist verwendbar (weder Fish noch Piper). */
+  const selectedPiper = voiceValue.startsWith("piper:")
+    ? piperVoices.find((v) => `piper:${v.id}` === voiceValue)
+    : undefined;
+  const anyPiperUsable = piperVoices.some((v) => v.usable);
+  const selectedVoiceNotSetUp = voiceValue.startsWith("piper:")
+    ? !selectedPiper || !selectedPiper.usable
+    : !fishReady;
+  const noVoiceSetUp = !fishReady && !anyPiperUsable;
 
   /* Beschriftung einer Piper-Stimme in der Auswahl: Name, Sprache, Qualitaet
      kurz -- "Thorsten · Deutsch · HQ". Die Sprache steht IMMER dabei: am Namen
@@ -1444,20 +1471,22 @@ export const TtsSettings = () => {
           diesem Zustand ansteht. Das Wort daneben war eine zweite
           Anzeige derselben Sache; es steht jetzt im Tooltip, wo es nur
           stoert, wenn man es sucht. */}
-          <button
-            type="button"
-            onClick={onServerIconClick}
-            title={serverTitle}
-            aria-label={serverTitle}
-            className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
-          >
-            <Server
-              width={20}
-              height={20}
-              className={serverIconClass}
-              aria-hidden="true"
-            />
-          </button>
+          {fishReady && (
+            <button
+              type="button"
+              onClick={onServerIconClick}
+              title={serverTitle}
+              aria-label={serverTitle}
+              className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
+            >
+              <Server
+                width={20}
+                height={20}
+                className={serverIconClass}
+                aria-hidden="true"
+              />
+            </button>
+          )}
         </>
       }
     >
@@ -1795,23 +1824,49 @@ export const TtsSettings = () => {
                       menuPortal
                       value={voiceValue}
                       options={[
-                        {
-                          value: "@default",
-                          label: t("tts.voices.scriptVoices"),
-                        },
-                        // Anzeigename statt technischer Kennung.
-                        ...voices.map((id) => ({
-                          value: id,
-                          label:
-                            speakers.find((sp) => sp.id === id)?.displayName ??
-                            id,
-                        })),
+                        // Fish-Stimmen nur, wenn Fish eingerichtet ist (#29).
+                        ...(fishReady
+                          ? [
+                              {
+                                value: "@default",
+                                label: t("tts.voices.scriptVoices"),
+                              },
+                              // Anzeigename statt technischer Kennung.
+                              ...voices.map((id) => ({
+                                value: id,
+                                label:
+                                  speakers.find((sp) => sp.id === id)
+                                    ?.displayName ?? id,
+                              })),
+                            ]
+                          : []),
+                        // Nur verwendbare Piper-Stimmen sind wählbar; eine
+                        // geladene Stimme ohne vollständiges Programm steht
+                        // als "nicht eingerichtet" da, nicht als Fehler erst
+                        // beim Vorlesen.
                         ...piperVoices.map((voice) => ({
                           value: `piper:${voice.id}`,
-                          label: t("tts.voices.piperOption", {
-                            name: piperVoiceLabel(voice),
-                          }),
+                          label: voice.usable
+                            ? t("tts.voices.piperOption", {
+                                name: piperVoiceLabel(voice),
+                              })
+                            : t("tts.voices.piperNotSetUp", {
+                                name: piperVoiceLabel(voice),
+                              }),
+                          isDisabled: !voice.usable,
                         })),
+                        // Die gewählte Fish-Stimme, obwohl Fish nicht
+                        // eingerichtet ist: sichtbar benannt statt still
+                        // durch eine andere ersetzt. Nicht wählbar.
+                        ...(!fishReady && !voiceValue.startsWith("piper:")
+                          ? [
+                              {
+                                value: voiceValue,
+                                label: t("tts.voices.fishNotSetUp"),
+                                isDisabled: true,
+                              },
+                            ]
+                          : []),
                         // Piper ist aktiv, aber die Stimme fehlt (keine gewählt
                         // oder nicht mehr in der Liste): sonst zeigte das Select
                         // den Rohwert "piper:". Nicht wählbar, nur Beschriftung.
@@ -1856,6 +1911,33 @@ export const TtsSettings = () => {
                       }}
                       isClearable={false}
                     />
+                    {selectedVoiceNotSetUp && (
+                      <div
+                        role="status"
+                        data-testid="voice-setup-hint"
+                        className="mt-1 text-xs text-amber-700 dark:text-amber-400"
+                      >
+                        <p>
+                          {noVoiceSetUp
+                            ? t("tts.voices.noEngineHint")
+                            : t("tts.voices.notSetUpHint")}
+                        </p>
+                        <button
+                          type="button"
+                          className="underline cursor-pointer"
+                          data-testid="voice-setup-button"
+                          onClick={() => {
+                            window.dispatchEvent(
+                              new CustomEvent("lv-navigate", {
+                                detail: { section: "models" },
+                              }),
+                            );
+                          }}
+                        >
+                          {t("tts.voices.setUp")}
+                        </button>
+                      </div>
+                    )}
                     <p
                       id="voice-mode-hint"
                       className="sr-only"

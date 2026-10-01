@@ -88,6 +88,16 @@ pub struct ModelInfo {
     /// to any other engine makes the stream refuse to start, so this gates the
     /// control rather than letting the user discover the failure mid-dictation.
     pub supports_stream_lookahead: bool,
+    /// Lizenz laut Katalog/Modellkarte (None bei lokalen und Altmodellen).
+    #[serde(default)]
+    pub license: Option<String>,
+    /// Link auf den Lizenztext.
+    #[serde(default)]
+    pub license_url: Option<String>,
+    /// Nur nicht-kommerziell nutzbar (z. B. CC-BY-NC-4.0): die Oberflaeche
+    /// zeigt dann einen deutlichen Hinweis (Issue #7, Canary 1B).
+    #[serde(default)]
+    pub license_non_commercial: bool,
 }
 
 const CHINESE_LANGUAGE_CODE: &str = "zh";
@@ -194,6 +204,10 @@ pub struct ModelDescriptor {
     /// onboarding (and badged "Recommended"). A model can be ranked for ordering
     /// without being in this set.
     pub recommended: bool,
+    /// Lizenzangaben aus dem Katalog (Issue #7).
+    pub license: Option<String>,
+    pub license_url: Option<String>,
+    pub license_non_commercial: bool,
 }
 
 impl ModelDescriptor {
@@ -269,6 +283,9 @@ impl ModelDescriptor {
                 self.caps.supports_streaming,
                 self.caps.architecture.as_deref(),
             ),
+            license: self.license.clone(),
+            license_url: self.license_url.clone(),
+            license_non_commercial: self.license_non_commercial,
         }
     }
 }
@@ -606,6 +623,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -640,6 +660,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -673,6 +696,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -706,6 +732,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -740,6 +769,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -774,6 +806,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -817,6 +852,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -850,6 +888,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -884,6 +925,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -918,6 +962,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -952,6 +999,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -992,6 +1042,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -1028,6 +1081,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -1069,6 +1125,9 @@ impl ModelManager {
                 // Canary (NeMo) requires an explicit source language — no auto-detect.
                 supports_language_detection: false,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -1113,6 +1172,9 @@ impl ModelManager {
                 // Canary (NeMo) requires an explicit source language — no auto-detect.
                 supports_language_detection: false,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -1153,6 +1215,9 @@ impl ModelManager {
                 supports_streaming: false,
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -1734,6 +1799,9 @@ impl ModelManager {
                     supports_streaming: caps.supports_streaming,
                     supports_language_detection: caps.supports_language_detection,
                     supports_stream_lookahead: caps.supports_stream_lookahead,
+                    license: None,
+                    license_url: None,
+                    license_non_commercial: false,
                 },
             );
         }
@@ -1879,6 +1947,9 @@ impl ModelManager {
                         supports_streaming: caps.supports_streaming,
                         supports_language_detection: caps.supports_language_detection,
                         supports_stream_lookahead: caps.supports_stream_lookahead,
+                        license: None,
+                        license_url: None,
+                        license_non_commercial: false,
                     },
                 );
             }
@@ -2765,6 +2836,9 @@ mod tests {
                 // (Catalog GGUFs and on-disk probes derive this from metadata.)
                 supports_language_detection: true,
                 supports_stream_lookahead: false,
+                license: None,
+                license_url: None,
+                license_non_commercial: false,
             },
         );
 
@@ -2865,6 +2939,9 @@ mod tests {
             accuracy_score: 0.5,
             recommended_rank: None,
             recommended: true,
+            license: None,
+            license_url: None,
+            license_non_commercial: false,
         };
         let status = DiskStatus::default();
 

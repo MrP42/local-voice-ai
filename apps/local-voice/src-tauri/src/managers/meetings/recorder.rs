@@ -140,6 +140,37 @@ pub fn begin_live_row(
     }
 }
 
+/// Aufraeumen nach einem Start, der nicht zustande kam (#15): die Aufnahmedateien
+/// (`mic.wav`, `system.wav`, `mic_aec.wav` mit Null-Laenge im Kopf) bleiben sonst
+/// als Debris liegen, die DB zeigt auf sie, und die Zeile bliebe `recording` und
+/// wuerde beim naechsten App-Start als "Absturzrest" wiederbelebt. Hier: Zeile
+/// `failed`, Dateien weg, Pfade geleert, Ordner weg, wenn danach leer. Fremde
+/// Dateien im Ordner bleiben. Best effort: was sich nicht loeschen laesst (noch
+/// offen), steht im Log.
+pub(crate) fn discard_failed_start(
+    store: &MeetingStore,
+    meeting_id: &str,
+    dir: &std::path::Path,
+) {
+    if let Err(e) = store.set_status(meeting_id, MeetingStatus::Failed) {
+        warn!("meetings: failed start of {meeting_id}: status not stored: {e}");
+    }
+    for name in ["mic.wav", "system.wav", super::MIC_AEC_FILE] {
+        let path = dir.join(name);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            // Pfad nur, nie Inhalt (Log-Datenschutz).
+            Err(e) => warn!("meetings: could not remove {path:?} after a failed start: {e}"),
+        }
+    }
+    // `remove_dir` entfernt nur einen leeren Ordner: Fremdes bleibt.
+    let _ = std::fs::remove_dir(dir);
+    if let Err(e) = store.set_audio_paths(meeting_id, None, None, None) {
+        warn!("meetings: failed start of {meeting_id}: audio paths not cleared: {e}");
+    }
+}
+
 /// Pause/resume only mean something while recording.
 pub fn apply_pause(state: &mut MeetingRunState, paused: bool) -> Result<(), String> {
     match state {
@@ -148,6 +179,140 @@ pub fn apply_pause(state: &mut MeetingRunState, paused: bool) -> Result<(), Stri
             Ok(())
         }
         MeetingRunState::Idle => Err("not_recording".to_string()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lauf-Kern: Zustand + Sitzung ohne Tauri
+// ---------------------------------------------------------------------------
+
+/// Sperre nehmen, auch wenn ein anderer Thread mit ihr abgestuerzt ist. Der
+/// Zustand hier ist ein kleines Enum bzw. ein Option: ein "vergifteter" Wert ist
+/// nie halb geschrieben. Wer auf dem Hotkey-Pfad `lock().unwrap()` ruft, nimmt
+/// sonst das Diktat mit in die Panik (#15).
+fn lock_recovering<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Die Zustandsregeln des Recorders mit der Sitzung als Typparameter, damit sie
+/// ohne Mikrofon, Modell und `AppHandle` pruefbar sind. Reihenfolge der Sperren
+/// ueberall: erst `state`, dann `session`.
+///
+/// Der Zustand wechselt NACH dem Capture-Start auf `Recording` und erst NACH dem
+/// Capture-Stopp zurueck auf `Idle` (#15): solange ein Mikrofon offen ist, gilt
+/// die Aufnahme als laufend, fuer Diktat-Hotkey, neuen Start und Pause.
+pub(crate) struct RunCore<S> {
+    state: Mutex<MeetingRunState>,
+    session: Mutex<Option<S>>,
+    starting: AtomicBool,
+}
+
+impl<S> RunCore<S> {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: Mutex::new(MeetingRunState::Idle),
+            session: Mutex::new(None),
+            starting: AtomicBool::new(false),
+        }
+    }
+
+    /// Laeuft eine Aufnahme oder gerade ein Start/Stopp? Hotkey-Pfad: darf nie
+    /// panikieren.
+    pub(crate) fn is_recording(&self) -> bool {
+        self.starting.load(Ordering::Acquire) || !self.is_idle()
+    }
+
+    /// Nur `Idle` darf starten.
+    pub(crate) fn is_idle(&self) -> bool {
+        may_start(&lock_recovering(&self.state))
+    }
+
+    /// Beginnt einen Start: `already_recording`, wenn schon einer laeuft oder
+    /// aufgenommen wird. Das Ticket meldet "starting" bis zum Ende (auch bei jedem
+    /// Fehlerweg).
+    pub(crate) fn begin_start(&self) -> Result<StartingFlag<'_>, String> {
+        if !self.is_idle() {
+            return Err("already_recording".to_string());
+        }
+        // Ein zweiter Start waehrend des ersten (der Start haelt die Sperre lange:
+        // Mikrofon, Loopback-Timeout) wird abgewiesen, nicht ueberholt.
+        if self
+            .starting
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err("already_recording".to_string());
+        }
+        Ok(StartingFlag::set(&self.starting))
+    }
+
+    /// Die Capture laeuft: Zustand UND Sitzung unter beiden Sperren setzen.
+    pub(crate) fn publish_started(&self, meeting_id: &str, session: S) {
+        // Beide Sperren zusammen: ein Stopp dazwischen sah vorher die Sitzung, aber
+        // noch `Idle`, stellte `Idle` ein, und der Start setzte danach `Recording`
+        // ohne Sitzung (Geisteraufnahme).
+        let mut state = lock_recovering(&self.state);
+        let mut slot = lock_recovering(&self.session);
+        *state = MeetingRunState::Recording {
+            meeting_id: meeting_id.to_string(),
+            paused: false,
+        };
+        *slot = Some(session);
+    }
+
+    /// Stopp beginnen: die Sitzung herausnehmen. Der Zustand bleibt `Recording`,
+    /// bis das Ticket beendet wird (`finish`) oder faellt (auch bei Panik).
+    pub(crate) fn begin_stop(&self) -> Result<(S, StopTicket<'_, S>), String> {
+        let _state = lock_recovering(&self.state);
+        let mut slot = lock_recovering(&self.session);
+        let session = slot.take().ok_or_else(|| "not_recording".to_string())?;
+        Ok((session, StopTicket { core: self }))
+    }
+
+    /// Pause/Weiter: nur mit laufender Sitzung. `apply` setzt das Merkzeichen der
+    /// Capture-Callbacks unter denselben Sperren.
+    pub(crate) fn set_paused(
+        &self,
+        paused: bool,
+        apply: impl FnOnce(&S),
+    ) -> Result<String, String> {
+        let mut state = lock_recovering(&self.state);
+        let slot = lock_recovering(&self.session);
+        // Ohne Sitzung (Startfenster, Stopp laeuft) gibt es nichts zu pausieren; ein
+        // Zustandsereignis "pausiert" ohne wirkende Pause waere falsch.
+        let session = slot.as_ref().ok_or_else(|| "not_recording".to_string())?;
+        apply_pause(&mut state, paused)?;
+        apply(session);
+        match &*state {
+            MeetingRunState::Recording { meeting_id, .. } => Ok(meeting_id.clone()),
+            MeetingRunState::Idle => Err("not_recording".to_string()),
+        }
+    }
+
+    /// Lesezugriff auf die Sitzung (Audioposition fuer den Notizblock).
+    pub(crate) fn with_session<R>(&self, f: impl FnOnce(Option<&S>) -> R) -> R {
+        let slot = lock_recovering(&self.session);
+        f(slot.as_ref())
+    }
+}
+
+/// Haelt den Zustand `Recording`, bis der Stopp die Capture wirklich beendet hat.
+/// Faellt es (Panik im Stopp), wird der Zustand trotzdem frei: sonst bliebe eine
+/// "Geisteraufnahme" zurueck, die Diktat und Neustart bis zum App-Neustart sperrt.
+pub(crate) struct StopTicket<'a, S> {
+    core: &'a RunCore<S>,
+}
+
+impl<S> StopTicket<'_, S> {
+    /// Die Capture ist zu: der Zustand wird `Idle`.
+    pub(crate) fn finish(self) {
+        drop(self);
+    }
+}
+
+impl<S> Drop for StopTicket<'_, S> {
+    fn drop(&mut self) {
+        *lock_recovering(&self.core.state) = MeetingRunState::Idle;
     }
 }
 
@@ -363,7 +528,7 @@ struct FinalJobHandle {
 }
 
 /// Setzt `starting` fuer die Dauer von `start()` (auch bei jedem Fehlerweg).
-struct StartingFlag<'a>(&'a AtomicBool);
+pub(crate) struct StartingFlag<'a>(&'a AtomicBool);
 
 impl<'a> StartingFlag<'a> {
     fn set(flag: &'a AtomicBool) -> Self {
@@ -386,18 +551,17 @@ pub struct MeetingRecorderManager {
     app: AppHandle,
     store: Arc<MeetingStore>,
     transcription: Arc<TranscriptionManager>,
-    state: Mutex<MeetingRunState>,
-    session: Mutex<Option<RecordingSession>>,
+    /// Zustand, Sitzung und "Start laeuft" (M2-P2d: zaehlt als "Aufnahme aktiv",
+    /// damit ein `TranscriptFinal` des eben abgebrochenen Enddurchlaufs keine
+    /// lokalen KI-Notizen neben der neuen Aufnahme startet) samt der Regeln, wie
+    /// sie wechseln (#15, `RunCore`).
+    core: RunCore<RecordingSession>,
     /// Held for the whole of `start()`. The run state only flips to
     /// `Recording` once the captures are up, so without this a double-click
     /// could get two starts past `may_start` and leave one orphaned.
     start_guard: Mutex<()>,
     /// M2-P2d: Enddurchlauf bzw. Recovery im Hintergrund (hoechstens einer).
     final_job: Mutex<Option<FinalJobHandle>>,
-    /// M2-P2d: `start()` laeuft. Zaehlt als "Aufnahme aktiv", damit ein
-    /// `TranscriptFinal` des eben abgebrochenen Enddurchlaufs keine lokalen
-    /// KI-Notizen neben der neuen Aufnahme startet.
-    starting: AtomicBool,
 }
 
 impl MeetingRecorderManager {
@@ -410,16 +574,16 @@ impl MeetingRecorderManager {
             app: app.clone(),
             store,
             transcription,
-            state: Mutex::new(MeetingRunState::Idle),
-            session: Mutex::new(None),
+            core: RunCore::new(),
             start_guard: Mutex::new(()),
             final_job: Mutex::new(None),
-            starting: AtomicBool::new(false),
         }
     }
 
     pub fn is_recording(&self) -> bool {
-        self.starting.load(Ordering::Acquire) || !may_start(&self.state.lock().unwrap())
+        // Hotkey-Pfad des Diktats: vergiftete Sperren werden uebergangen, nie
+        // zur Panik (#15).
+        self.core.is_recording()
     }
 
     /// M2-P2d: startet Enddurchlauf-/Recovery-Auftraege in EINEM Thread, der
@@ -543,15 +707,10 @@ impl MeetingRecorderManager {
         target_meeting_id: Option<&str>,
     ) -> Result<Meeting, String> {
         consent_gate(consent_confirmed)?;
-        let _start_guard = self.start_guard.lock().map_err(|_| "recorder_poisoned")?;
-
-        {
-            let state = self.state.lock().unwrap();
-            if !may_start(&state) {
-                return Err("already_recording".to_string());
-            }
-        }
-        let _starting = StartingFlag::set(&self.starting);
+        // `Mutex<()>` traegt keine Daten: eine Vergiftung hiesse sonst, dass nie
+        // wieder eine Aufnahme startet.
+        let _start_guard = lock_recovering(&self.start_guard);
+        let _starting = self.core.begin_start()?;
 
         // A dictation and a meeting would fight over the microphone and the
         // overlay; the meeting yields to the dictation already in progress
@@ -570,18 +729,38 @@ impl MeetingRecorderManager {
 
         let consent_at = chrono::Utc::now().timestamp();
         let meeting = begin_live_row(&self.store, &title, consent_at, target_meeting_id)?;
+        let meeting_id = meeting.id.clone();
         let started = self.start_row(meeting, capture_system);
-        if let (Err(e), Some(target)) = (&started, target_meeting_id) {
-            // Nichts wurde aufgenommen: der Eintrag wird wieder leer.
-            match self.store.restore_empty_meeting(target) {
-                Ok(true) => {
-                    info!("meetings: Start gescheitert ({e}), Eintrag {target} ist wieder leer");
-                    if let Ok(dir) = super::meetings_data_dir(&self.app) {
-                        let _ = std::fs::remove_dir_all(dir.join(target));
+        if let Err(e) = &started {
+            match target_meeting_id {
+                Some(target) => {
+                    // Nichts wurde aufgenommen: der Eintrag wird wieder leer.
+                    match self.store.restore_empty_meeting(target) {
+                        Ok(true) => {
+                            info!("meetings: Start gescheitert ({e}), Eintrag {target} ist wieder leer");
+                            if let Ok(dir) = super::meetings_data_dir(&self.app) {
+                                let _ = std::fs::remove_dir_all(dir.join(target));
+                            }
+                        }
+                        Ok(false) => {}
+                        Err(err) => {
+                            warn!("meetings: Eintrag {target} nicht wiederhergestellt: {err}")
+                        }
                     }
                 }
-                Ok(false) => {}
-                Err(err) => warn!("meetings: Eintrag {target} nicht wiederhergestellt: {err}"),
+                // #15: eine neue Besprechung bleibt als `failed` stehen, ohne die
+                // Null-Header-WAVs und ohne dass der naechste App-Start sie als
+                // "Absturzrest" wiederbelebt.
+                None => match super::meetings_data_dir(&self.app) {
+                    Ok(base) => {
+                        info!("meetings: Start gescheitert ({e}), {meeting_id} wird aufgeraeumt");
+                        discard_failed_start(&self.store, &meeting_id, &base.join(&meeting_id));
+                    }
+                    Err(err) => {
+                        warn!("meetings: Start gescheitert, Datenordner unbekannt ({err})");
+                        let _ = self.store.set_status(&meeting_id, MeetingStatus::Failed);
+                    }
+                },
             }
         }
         started
@@ -644,8 +823,16 @@ impl MeetingRecorderManager {
         self.transcription
             .initiate_meeting_model_load(&crate::settings::get_settings(&self.app));
 
+        // #15: was die begrenzte Queue des Mikrofons verwirft, zaehlt auf demselben
+        // Zaehler wie der Ueberlauf der DSP-Queue (`overflow_ms[mic=..]` im Log).
+        let overflow_stats = pipeline.stats();
+        let mic_overflow: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |samples| {
+            overflow_stats.overflow_samples[CHANNEL_MIC as usize]
+                .fetch_add(samples, Ordering::Relaxed);
+        });
         let mic_capture = MeetingMicCapture::start(
             crate::settings::get_settings(&self.app).selected_microphone,
+            mic_overflow,
             channel_callback(
                 CHANNEL_MIC,
                 Arc::clone(&mic_sink),
@@ -682,21 +869,21 @@ impl MeetingRecorderManager {
             }
         }
 
-        *self.session.lock().unwrap() = Some(RecordingSession {
-            meeting_id: meeting_id.clone(),
-            paused,
-            mic_capture: Some(mic_capture),
-            loopback,
-            mic_sink,
-            system_sink,
-            mic_path,
-            system_path,
-            pipeline: Some(pipeline),
-        });
-        *self.state.lock().unwrap() = MeetingRunState::Recording {
-            meeting_id: meeting_id.clone(),
-            paused: false,
-        };
+        // Zustand und Sitzung zusammen und erst jetzt, wo die Captures laufen (#15).
+        self.core.publish_started(
+            &meeting_id,
+            RecordingSession {
+                meeting_id: meeting_id.clone(),
+                paused,
+                mic_capture: Some(mic_capture),
+                loopback,
+                mic_sink,
+                system_sink,
+                mic_path,
+                system_path,
+                pipeline: Some(pipeline),
+            },
+        );
 
         self.set_indicator(true);
         self.emit_state(&meeting_id, "recording", false);
@@ -858,22 +1045,14 @@ impl MeetingRecorderManager {
     }
 
     fn set_paused(&self, paused: bool) -> Result<(), String> {
-        let meeting_id = {
-            let mut state = self.state.lock().unwrap();
-            apply_pause(&mut state, paused)?;
-            match &*state {
-                MeetingRunState::Recording { meeting_id, .. } => meeting_id.clone(),
-                MeetingRunState::Idle => unreachable!("apply_pause rejects Idle"),
-            }
-        };
-        if let Some(session) = self.session.lock().unwrap().as_ref() {
+        let meeting_id = self.core.set_paused(paused, |session| {
             // Paused means "discard samples"; wall-clock keeps running, so the
             // WAV timeline compresses the pause instead of padding it. That is
             // deliberate and consistent: transcript offsets come from the DSP
             // thread, which counts the same samples (it also closes the open
             // segment when the callback reports the pause).
             session.paused.store(paused, Ordering::Relaxed);
-        }
+        })?;
         self.emit_state(&meeting_id, "recording", paused);
         Ok(())
     }
@@ -886,13 +1065,11 @@ impl MeetingRecorderManager {
     /// that happens here at once. Returns as soon as the live worker is empty.
     /// Blocking — call it off the UI thread.
     pub fn stop(&self) -> Result<String, String> {
-        let session = self
-            .session
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| "not_recording".to_string())?;
-        *self.state.lock().unwrap() = MeetingRunState::Idle;
+        // #15: der Zustand bleibt `Recording`, bis die Captures wirklich zu sind
+        // (das Ticket stellt ihn auf `Idle`, auch bei einer Panik): vorher galt die
+        // Aufnahme schon als beendet, waehrend das Mikrofon noch offen war, und ein
+        // Diktat-Hotkey oder ein neuer Start konnte dazwischen greifen.
+        let (session, stopping) = self.core.begin_stop()?;
         let RecordingSession {
             meeting_id,
             mic_capture,
@@ -904,8 +1081,6 @@ impl MeetingRecorderManager {
             pipeline,
             ..
         } = session;
-
-        self.set_indicator(false);
 
         // Captures first: once they are stopped no callback can touch the
         // sinks or the DSP queue any more, so draining and finalizing below is
@@ -925,6 +1100,11 @@ impl MeetingRecorderManager {
             }
             capture.stop();
         }
+        // Mikrofon und Loopback sind zu: jetzt ist die Maschine nicht mehr in
+        // Aufnahme. ZUERST der Zustand, DANACH der Indikator: `hide_recording_overlay`
+        // fragt den Zustand und stellte den Indikator sonst wieder auf.
+        stopping.finish();
+        self.set_indicator(false);
 
         if let Err(e) = self
             .store
@@ -1152,8 +1332,8 @@ impl MeetingRecorderManager {
     /// milliseconds, or `None` when nothing is being recorded. Same timeline
     /// as `StoredSegment.start_ms` (paused stretches are compressed).
     pub fn position_ms(&self) -> Option<(String, u64)> {
-        let session = self.session.lock().ok()?;
-        session.as_ref().and_then(Self::session_position)
+        self.core
+            .with_session(|session| session.and_then(Self::session_position))
     }
 
     /// `None` once the mic WAV writer is gone (RIFF limit reached): a wrong
@@ -1536,5 +1716,212 @@ mod tests {
         assert_eq!(check_can_continue(&gone, false, &exists), Err("audio_missing".to_string()));
         let none = meeting_with("cancelled", None, None);
         assert_eq!(check_can_continue(&none, false, &exists), Err("audio_missing".to_string()));
+    }
+
+    // ---- #15: Zustandsfenster, Vergiftung, Geisteraufnahme ---------------------------
+
+    type Core = RunCore<&'static str>;
+
+    #[test]
+    fn a_poisoned_state_lock_does_not_take_the_hotkey_path_down() {
+        let core = Arc::new(Core::new());
+        let poisoner = Arc::clone(&core);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.state.lock().unwrap();
+            panic!("Absturz mit gehaltener Sperre");
+        })
+        .join();
+        assert!(core.state.is_poisoned(), "Voraussetzung des Tests");
+        // Der Diktat-Hotkey fragt genau das: keine Panik, richtige Antwort.
+        assert!(!core.is_recording());
+        assert!(core.is_idle());
+        assert!(core.begin_start().is_ok(), "ein Start bleibt moeglich");
+    }
+
+    #[test]
+    fn a_poisoned_session_lock_does_not_break_pause_or_position() {
+        let core = Arc::new(Core::new());
+        core.publish_started("m1", "sitzung");
+        let poisoner = Arc::clone(&core);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.session.lock().unwrap();
+            panic!("Absturz mit gehaltener Sperre");
+        })
+        .join();
+        assert_eq!(core.with_session(|s| s.copied()), Some("sitzung"));
+        assert_eq!(core.set_paused(true, |_| {}), Ok("m1".to_string()));
+    }
+
+    #[test]
+    fn the_state_stays_recording_until_the_stop_has_closed_the_capture() {
+        let core = Core::new();
+        core.publish_started("m1", "sitzung");
+        let (session, ticket) = core.begin_stop().unwrap();
+        assert_eq!(session, "sitzung");
+        // Das Mikrofon ist noch offen: Diktat-Hotkey und neuer Start sehen es.
+        assert!(core.is_recording(), "Fenster 'Zustand Idle vor Capture-Stopp' ist zu");
+        assert_eq!(core.begin_start().err(), Some("already_recording".to_string()));
+        // Ein zweiter Stopp hat nichts mehr zu stoppen.
+        assert_eq!(core.begin_stop().err(), Some("not_recording".to_string()));
+        ticket.finish();
+        assert!(!core.is_recording());
+        assert!(core.begin_start().is_ok());
+    }
+
+    #[test]
+    fn a_panic_while_stopping_still_frees_the_state() {
+        let core = Core::new();
+        core.publish_started("m1", "sitzung");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (_session, _ticket) = core.begin_stop().unwrap();
+            panic!("Capture-Stopp stuerzt ab");
+        }));
+        assert!(result.is_err());
+        assert!(
+            !core.is_recording(),
+            "keine Geisteraufnahme, die Diktat und Neustart sperrt"
+        );
+    }
+
+    #[test]
+    fn a_start_in_progress_counts_as_recording_and_refuses_a_second_start() {
+        let core = Core::new();
+        let ticket = core.begin_start().unwrap();
+        assert!(core.is_recording(), "waehrend des Starts gilt es schon als Aufnahme");
+        assert_eq!(core.begin_start().err(), Some("already_recording".to_string()));
+        drop(ticket);
+        assert!(!core.is_recording(), "auch ein gescheiterter Start gibt es frei");
+    }
+
+    #[test]
+    fn pause_needs_a_running_session_not_just_a_state() {
+        let core = Core::new();
+        // Weder vor dem Start noch im Startfenster (Capture laeuft, Sitzung fehlt noch).
+        assert_eq!(core.set_paused(true, |_| {}), Err("not_recording".to_string()));
+        let _starting = core.begin_start().unwrap();
+        assert_eq!(core.set_paused(true, |_| {}), Err("not_recording".to_string()));
+        core.publish_started("m1", "sitzung");
+        let applied = std::cell::Cell::new(false);
+        assert_eq!(
+            core.set_paused(true, |s| {
+                assert_eq!(*s, "sitzung");
+                applied.set(true);
+            }),
+            Ok("m1".to_string())
+        );
+        assert!(applied.get());
+        assert!(matches!(
+            &*lock_recovering(&core.state),
+            MeetingRunState::Recording { paused: true, .. }
+        ));
+        // Nach dem Stopp-Beginn gibt es nichts mehr zu pausieren (kein falsches Ereignis).
+        let (_s, ticket) = core.begin_stop().unwrap();
+        assert_eq!(core.set_paused(false, |_| {}), Err("not_recording".to_string()));
+        ticket.finish();
+    }
+
+    /// Start und Stopp im Wettlauf: nie darf `Recording` ohne Sitzung zurueckbleiben
+    /// (die Reihenfolge "Sitzung setzen, dann Zustand" liess einen Stopp dazwischen
+    /// den Zustand auf `Idle` setzen, bevor der Start ihn auf `Recording` stellte).
+    #[test]
+    fn start_and_stop_racing_never_leave_a_ghost_recording() {
+        for round in 0..200 {
+            let core = Arc::new(Core::new());
+            let starter = Arc::clone(&core);
+            let stopper = Arc::clone(&core);
+            let start = std::thread::spawn(move || {
+                starter.publish_started("m1", "sitzung");
+            });
+            let stop = std::thread::spawn(move || {
+                // Mehrere Versuche, damit mindestens einer nach dem Start liegt.
+                for _ in 0..50 {
+                    if let Ok((_s, ticket)) = stopper.begin_stop() {
+                        ticket.finish();
+                        return true;
+                    }
+                    std::thread::yield_now();
+                }
+                false
+            });
+            start.join().unwrap();
+            let stopped = stop.join().unwrap();
+            if !stopped {
+                // Der Stopp kam nie dazwischen: aufraeumen wie der echte Stopp.
+                let (_s, ticket) = core.begin_stop().unwrap();
+                ticket.finish();
+            }
+            assert!(
+                !core.is_recording(),
+                "Runde {round}: Zustand Recording ohne Sitzung (Geisteraufnahme)"
+            );
+        }
+    }
+
+    // ---- #15: gescheiterter Start hinterlaesst keine Debris ---------------------------
+
+    fn failed_start_fixture() -> (tempfile::TempDir, MeetingStore, String, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let meeting = store
+            .create_meeting("Montag", MeetingSource::Live, Some(1))
+            .unwrap();
+        let folder = dir.path().join("meetings").join(&meeting.id);
+        std::fs::create_dir_all(&folder).unwrap();
+        // Wie `start_row`: beide WAVs mit Kopf, Pfade vorab in die DB.
+        let mic = folder.join("mic.wav");
+        let system = folder.join("system.wav");
+        drop(StreamingWavWriter::create(&mic, SAMPLE_RATE).unwrap());
+        drop(StreamingWavWriter::create(&system, SAMPLE_RATE).unwrap());
+        store
+            .set_audio_paths(&meeting.id, mic.to_str(), system.to_str(), None)
+            .unwrap();
+        (dir, store, meeting.id, folder)
+    }
+
+    #[test]
+    fn a_failed_start_removes_the_zero_header_wavs_clears_the_paths_and_marks_the_row_failed() {
+        let (_dir, store, id, folder) = failed_start_fixture();
+        assert!(folder.join("mic.wav").exists(), "Voraussetzung: Debris liegt da");
+
+        discard_failed_start(&store, &id, &folder);
+
+        assert!(!folder.exists(), "Ordner weg, wenn er danach leer ist");
+        let meeting = store.get_meeting(&id).unwrap().unwrap();
+        assert_eq!(meeting.status, "failed");
+        assert_eq!((meeting.mic_audio_path, meeting.system_audio_path), (None, None));
+        assert!(
+            !is_orphan_status(&meeting.status),
+            "beim naechsten App-Start darf daraus keine 'wiederhergestellte' Aufnahme werden"
+        );
+    }
+
+    #[test]
+    fn a_failed_start_keeps_files_it_did_not_create() {
+        let (_dir, store, id, folder) = failed_start_fixture();
+        std::fs::write(folder.join("notizen.txt"), b"gehoert dem Nutzer").unwrap();
+        // mic_aec.wav entsteht in der Echo-Stufe der Pipeline und gehoert dazu.
+        std::fs::write(folder.join(crate::managers::meetings::MIC_AEC_FILE), b"RIFF").unwrap();
+
+        discard_failed_start(&store, &id, &folder);
+
+        assert!(folder.join("notizen.txt").exists(), "Fremdes bleibt");
+        assert!(!folder.join("mic.wav").exists());
+        assert!(!folder.join("system.wav").exists());
+        assert!(!folder.join(crate::managers::meetings::MIC_AEC_FILE).exists());
+        assert!(folder.exists(), "der Ordner bleibt, solange etwas Fremdes darin liegt");
+    }
+
+    #[test]
+    fn discarding_is_safe_when_nothing_was_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let meeting = store
+            .create_meeting("Leer", MeetingSource::Live, Some(1))
+            .unwrap();
+        // Der Ordner wurde nie angelegt (z. B. `meeting_dir_failed`).
+        discard_failed_start(&store, &meeting.id, &dir.path().join("gibt-es-nicht"));
+        assert_eq!(store.get_meeting(&meeting.id).unwrap().unwrap().status, "failed");
+        // Und eine unbekannte Besprechung bringt nichts zum Absturz.
+        discard_failed_start(&store, "gibt-es-nicht", &dir.path().join("x"));
     }
 }
