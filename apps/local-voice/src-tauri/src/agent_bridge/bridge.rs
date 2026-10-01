@@ -135,12 +135,19 @@ pub struct ApprovalInfo {
     pub decided_at: Option<i64>,
 }
 
+/// Wird gerufen, wenn fuer einen Aufruf eine Freigabe angelegt (oder eine offene wiederverwendet)
+/// wurde, mit dem Namen des Werkzeugs. Die App zeigt damit ohne Wartezeit die Bitte um
+/// Einwilligung zur Aufnahme (A8). Der Rueckruf entscheidet nie etwas: die Freigabe bleibt offen,
+/// bis der Nutzer sie in der Oberflaeche entscheidet.
+pub type ApprovalNotifier = Arc<dyn Fn(&str) + Send + Sync>;
+
 pub struct Bridge {
     store: Arc<MeetingStore>,
     registry: ToolRegistry,
     cfg: Config,
     limiter: Mutex<RateLimiter>,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    notifier: Option<ApprovalNotifier>,
 }
 
 /// Aufrufer-Kennzeichnung im Audit.
@@ -189,6 +196,22 @@ impl Bridge {
             cfg,
             limiter: Mutex::new(RateLimiter::new()),
             clock: Arc::new(|| chrono::Utc::now().timestamp_millis()),
+            notifier: None,
+        }
+    }
+
+    /// Meldet neue Freigaben an die App (siehe `ApprovalNotifier`).
+    pub fn with_notifier(mut self, notifier: ApprovalNotifier) -> Self {
+        self.notifier = Some(notifier);
+        self
+    }
+
+    /// Ruft den Rueckruf; ein Absturz darin stoert den Aufruf nicht.
+    fn notify_approval(&self, tool: &str) {
+        if let Some(n) = &self.notifier {
+            if catch_unwind(AssertUnwindSafe(|| n(tool))).is_err() {
+                log::warn!("agent_bridge: Rueckruf fuer Freigaben ist abgestuerzt");
+            }
         }
     }
 
@@ -571,6 +594,7 @@ impl Bridge {
             Decision::NeedsApproval { approval_id } => {
                 clients::link_approval(&conn, &approval_id, &row.id, name, now)
                     .map_err(|e| BridgeError::store(&e))?;
+                self.notify_approval(name);
                 Ok(CallStep::Wait(approval_id))
             }
             Decision::Allowed => {
@@ -604,6 +628,7 @@ impl Bridge {
                     GateOutcome::Pending { approval_id } => {
                         clients::link_approval(&conn, &approval_id, &row.id, name, now)
                             .map_err(|e| BridgeError::store(&e))?;
+                        self.notify_approval(name);
                         Ok(CallStep::Wait(approval_id))
                     }
                 }

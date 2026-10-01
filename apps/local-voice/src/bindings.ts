@@ -5461,7 +5461,12 @@ pipe_name: string | null;
 /**
  * Warum sie nicht laeuft.
  */
-error: string | null }
+error: string | null; 
+/**
+ * Pfad der laufenden Programmdatei: die Oberflaeche zeigt damit die fertigen Befehle zum
+ * Anbinden (`claude mcp add ... -- "<Pfad>" --mcp`). Kein Geheimnis.
+ */
+exe_path?: string | null }
 /**
  * Was die Oberflaeche fuer den Knopf „Vorbereiten“ braucht.
  */
@@ -6794,13 +6799,18 @@ export type ProjectSection = { id: string; title: string; kind: SectionKind; ent
  */
 export type PromptWorkflow = { 
 /**
- * Name des Ablaufs („Kundentermin protokollieren“).
+ * Name des Ablaufs („Kundentermin protokollieren“); bei einem Agenten sein Name.
  */
 name: string; 
 /**
  * Titel des Termins bzw. der Besprechung, wenn der Ausloeser einen hat.
  */
-title: string | null }
+title: string | null; 
+/**
+ * A8: die Bitte kommt von einem externen Agenten (Claude Code, Codex, ein Skript) statt
+ * von einem Ablauf; `name` ist der Name seines Zugangs.
+ */
+agent?: boolean }
 /**
  * Ein Eintrag, wie die Oberflaeche ihn zeigt.
  */

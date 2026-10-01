@@ -1893,6 +1893,13 @@
         "start": "Aufnahme starten",
         "decline": "Nicht aufnehmen",
         "confirm": "Aufnahme starten"
+      },
+      "agent": {
+        "title": "Ein Agent möchte aufnehmen",
+        "intro": "Der Agent „{{name}}“ möchte jetzt eine Aufnahme starten. Es beginnt nichts, bevor Sie zustimmen.",
+        "start": "Aufnahme starten",
+        "decline": "Nicht aufnehmen",
+        "confirm": "Aufnahme starten"
       }
     },
     "live": {
@@ -3609,6 +3616,14 @@
       },
       "unavailable": "Werkzeuge mit „Noch nicht verfügbar“ gibt es in dieser Version noch nicht: das Recht ist vorbereitet, aufrufen lassen sie sich erst später.",
       "unavailableBadge": "Noch nicht verfügbar",
+      "connect": {
+        "title": "Programm anbinden (Claude Code, Codex, Skript)",
+        "intro": "Lege oben einen Zugang an, kopiere seinen Schlüssel und trage ihn an Stelle von <TOKEN> ein. Der Schlüssel gehört nur in die Umgebungsvariable LVA_AGENT_TOKEN, nie in eine Datei im Projekt.",
+        "claude": "Claude Code",
+        "codex": "Codex",
+        "ctl": "Kommandozeile (ctl)",
+        "note": "Die App muss laufen. Was ein Programm tun darf, bestimmst du unten je Werkzeug; eine Aufnahme beginnt nie ohne deine Einwilligung."
+      },
       "neverAllowShort": "Nie „Erlaubt“: die App zeigt vor jeder Aufnahme den Einwilligungsdialog (§ 201 StGB).",
       "tools": {
         "add_youtube_source": {

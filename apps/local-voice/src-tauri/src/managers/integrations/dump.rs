@@ -136,6 +136,95 @@ pub fn build(
     }))
 }
 
+/// Standardzahl der Eintraege im Audit-Dump (die neuesten).
+pub const AUDIT_DUMP_DEFAULT_LIMIT: u32 = 1000;
+
+/// `--audit-dump` (A8, AK11): das Protokoll aller Aktionen als JSON, aelteste zuerst.
+///
+/// - **Alle Aktionen**: jeder Eintrag mit Zeit, Aufrufer, Integration, Faehigkeit, Ziel, Ergebnis
+///   und dem Detail als Objekt; dazu Summen je Ergebnis, Aufrufer und Faehigkeit ueber die GANZE
+///   Tabelle (nicht nur ueber die gelieferten Zeilen).
+/// - **Gedeckelt**: die Tabelle haelt hoechstens `audit::MAX_ROWS` Zeilen (beim Schreiben fallen
+///   die aeltesten, zuerst Verweigerungen); der Dump liefert hoechstens `limit` (nie mehr als
+///   `MAX_ROWS`) und sagt mit `truncated`, ob mehr da ist. `retention` nennt die Grenze.
+/// - Das Audit enthaelt nie ein Geheimnis (siehe `audit`); der Dump gibt es unveraendert wieder.
+pub fn build_audit(
+    conn: &Connection,
+    db_path: Option<&Path>,
+    limit: Option<u32>,
+) -> Result<Value, IntegrationError> {
+    let cap = audit::MAX_ROWS as u32;
+    let limit = limit.unwrap_or(AUDIT_DUMP_DEFAULT_LIMIT).clamp(1, cap);
+    let total = count(conn, "SELECT COUNT(*) FROM audit_log");
+    let mut stmt = conn.prepare(
+        "SELECT id, ts, caller, integration_id, capability, target, outcome, detail_json
+         FROM audit_log ORDER BY id DESC LIMIT ?1",
+    )?;
+    let mut rows = stmt
+        .query_map([i64::from(limit)], |r| {
+            let detail: Option<String> = r.get(7)?;
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "ts": r.get::<_, i64>(1)?,
+                "caller": r.get::<_, String>(2)?,
+                "integration_id": r.get::<_, Option<String>>(3)?,
+                "capability": r.get::<_, Option<String>>(4)?,
+                "target": r.get::<_, Option<String>>(5)?,
+                "outcome": r.get::<_, String>(6)?,
+                "detail": detail
+                    .as_deref()
+                    .and_then(|d| serde_json::from_str::<Value>(d).ok())
+                    .unwrap_or(Value::Null),
+            }))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    // Neueste zuerst gelesen (LIMIT), aelteste zuerst ausgegeben.
+    rows.reverse();
+    let group = |column: &str| -> Result<Value, IntegrationError> {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT COALESCE({column}, '-'), COUNT(*) FROM audit_log GROUP BY 1 ORDER BY 1"
+        ))?;
+        let pairs = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(Value::Object(pairs.into_iter().map(|(k, n)| (k, json!(n))).collect()))
+    };
+    Ok(json!({
+        "schema_version": count(conn, "PRAGMA user_version"),
+        "db": db_path.map(|p| p.display().to_string()),
+        "retention": { "max_rows": audit::MAX_ROWS, "rows": total },
+        "limit": limit,
+        "returned": rows.len(),
+        "truncated": (rows.len() as i64) < total,
+        "by_outcome": group("outcome")?,
+        "by_caller": group("caller")?,
+        "by_capability": group("capability")?,
+        "entries": rows,
+    }))
+}
+
+/// Kurzform des Audit-Dumps fuer die Konsole (ohne `--json`).
+pub fn format_audit_table(dump: &Value) -> String {
+    let mut out = format!(
+        "audit: {} of {} rows (retention cap {}){}\n",
+        dump["returned"],
+        dump["retention"]["rows"],
+        dump["retention"]["max_rows"],
+        if dump["truncated"].as_bool().unwrap_or(false) { ", truncated" } else { "" },
+    );
+    for e in dump["entries"].as_array().cloned().unwrap_or_default() {
+        out.push_str(&format!(
+            "  {:>6} {:<14} {:<18} {:<8} {}\n",
+            e["id"],
+            e["caller"].as_str().unwrap_or("?"),
+            e["capability"].as_str().unwrap_or("-"),
+            e["outcome"].as_str().unwrap_or("?"),
+            e["target"].as_str().unwrap_or(""),
+        ));
+    }
+    out
+}
+
 /// Kurzform fuer die Konsole (ohne `--json`).
 pub fn format_table(dump: &Value) -> String {
     let mut out = String::new();

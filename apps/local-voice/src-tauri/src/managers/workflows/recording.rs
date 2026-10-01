@@ -145,7 +145,7 @@ pub trait RecordingControl: Send + Sync {
     fn stop(&self) -> Result<String, String>;
 }
 
-fn start_failure(code: &str) -> String {
+pub(crate) fn start_failure(code: &str) -> String {
     let code = code.split(':').next().unwrap_or(code).trim();
     let text = match code {
         "already_recording" => "Es läuft schon eine Aufnahme.",
