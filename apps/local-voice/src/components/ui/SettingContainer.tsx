@@ -57,7 +57,7 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
         <div className={containerClasses}>
           <div className="flex items-center gap-2 mb-2">
             <h3
-              className={`text-sm font-medium ${disabled ? "opacity-50" : ""}`}
+              className={`text-sm font-medium ${disabled ? "text-text-muted" : ""}`}
             >
               {title}
             </h3>
@@ -107,10 +107,10 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
     return (
       <div className={containerClasses}>
         <div className="mb-2">
-          <h3 className={`text-sm font-medium ${disabled ? "opacity-50" : ""}`}>
+          <h3 className={`text-sm font-medium ${disabled ? "text-text-muted" : ""}`}>
             {title}
           </h3>
-          <p className={`text-sm ${disabled ? "opacity-50" : ""}`}>
+          <p className={`text-sm ${disabled ? "text-text-muted" : ""}`}>
             {description}
           </p>
         </div>
@@ -130,7 +130,7 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
         <div className="max-w-2/3">
           <div className="flex items-center gap-2">
             <h3
-              className={`text-sm font-medium ${disabled ? "opacity-50" : ""}`}
+              className={`text-sm font-medium ${disabled ? "text-text-muted" : ""}`}
             >
               {title}
             </h3>
@@ -181,10 +181,10 @@ export const SettingContainer: React.FC<SettingContainerProps> = ({
   return (
     <div className={horizontalContainerClasses}>
       <div className="max-w-2/3">
-        <h3 className={`text-sm font-medium ${disabled ? "opacity-50" : ""}`}>
+        <h3 className={`text-sm font-medium ${disabled ? "text-text-muted" : ""}`}>
           {title}
         </h3>
-        <p className={`text-sm ${disabled ? "opacity-50" : ""}`}>
+        <p className={`text-sm ${disabled ? "text-text-muted" : ""}`}>
           {description}
         </p>
       </div>

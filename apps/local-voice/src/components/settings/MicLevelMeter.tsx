@@ -123,7 +123,7 @@ export const MicLevelMeter: React.FC<{ compact?: boolean }> = ({
 
   if (error) {
     return (
-      <p className="text-xs opacity-60 px-1">{t("micMeter.unavailable")}</p>
+      <p className="text-xs text-text-muted px-1">{t("micMeter.unavailable")}</p>
     );
   }
 

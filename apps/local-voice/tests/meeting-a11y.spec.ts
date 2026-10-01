@@ -483,18 +483,13 @@ test("AK9: Projekt-Dialog per Tastatur - Fokus gefangen, Escape schliesst", asyn
 // ---------------------------------------------------------------------------
 
 /**
- * Befunde der Stufen "critical" und "serious", lesbar zusammengefasst.
- *
- * Bekannter Befund, hier bewusst ausgenommen: `color-contrast` (serious). Er
- * entsteht app-weit durch die abgeblendete Schriftfarbe `text-text/60` (Zeitmarken,
- * Ueberschriften der Spalten, Leerhinweise, Navigation) und liesse sich nur ueber
- * die Design-Token beheben, also mit einem Diff durch fremde Dateien. Er ist als
- * eigenes Paket zu behandeln (siehe Report A3); alle anderen Regeln gelten hier.
+ * Befunde der Stufen "critical" und "serious", lesbar zusammengefasst. Seit
+ * G2e (Befund B4) gilt auch `color-contrast`: die gedaempften Schriftfarben
+ * laufen ueber die AA-tauglichen Token in src/styles/theme.css.
  */
 const axeSevere = async (page: Page): Promise<string[]> => {
   const result = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
-    .disableRules(["color-contrast"])
     .analyze();
   return result.violations
     .filter((v) => v.impact === "critical" || v.impact === "serious")
