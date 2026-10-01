@@ -50,7 +50,7 @@ fn the_catalog_view_describes_every_trigger_and_action_with_its_fields() {
     let to = mail.fields.iter().find(|f| f.name == "to").unwrap();
     assert_eq!(to.kind, "choice");
     assert!(to.literal, "Empfaengerregel ist ein fester Wert");
-    assert_eq!(to.options, vec!["me", "participants", "all", "list"]);
+    assert_eq!(to.options, vec!["me", "participants", "all", "internal", "list"]);
     // `via` traegt die noetige Faehigkeit fuer die Auswahl der Integration.
     let via = mail.fields.iter().find(|f| f.name == "via").unwrap();
     assert_eq!(via.kind, "id");
