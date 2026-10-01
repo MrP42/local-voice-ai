@@ -61,6 +61,15 @@ Einstellungen → Info → Danksagungen.
 | Qwen3 0.6B/4B/8B, Qwen3.5 4B/9B (Alibaba/Qwen) | lokales Sprachmodell (Katalog, wählbar) | Apache-2.0 | Modellkarten `Qwen/Qwen3-*`, `Qwen/Qwen3.5-*` |
 | Gemma 4 E4B und 12B (Google) | lokales Sprachmodell (Katalog, wählbar) | Apache-2.0 (Gemma-4-Lizenz) | <https://ai.google.dev/gemma/docs/gemma_4_license> |
 | Gemma 3 4B (Google) | lokales Sprachmodell (Katalog, wählbar, vorbestehend) | Gemma Terms of Use (eigene Lizenz mit Nutzungsauflagen, Modellkarte: `gemma`) | <https://huggingface.co/google/gemma-3-4b-it> |
+| Piper (Michael Hansen / Rhasspy) | Sprachausgabe-Laufzeit (Katalog, wählbar, Download von GitHub) | MIT; das Paket enthält espeak-ng (GPL-3.0-or-later), piper-phonemize (MIT), onnxruntime 1.14.1 (MIT) | <https://github.com/rhasspy/piper> |
+| espeak-ng (Teil des Piper-Pakets) | Phonemisierung, `espeak-ng.dll` (Windows) | GPL-3.0-or-later | <https://github.com/espeak-ng/espeak-ng> |
+| Piper-Stimmen (10 im Katalog, `rhasspy/piper-voices`) | Sprachausgabe (Katalog, wählbar) | je Stimme verschieden, siehe Katalogeintrag: CC0-1.0 (Thorsten, Kerstin), BSD-3-Clause (Eva K., M-AILABS), CC-BY-4.0 (Alba), CC-BY-SA-4.0 bzw. unklar (Amy, Alan), **nicht kommerziell**: Lessac (Blizzard-2013-Forschungslizenz), Ryan (CC-BY-NC-SA-4.0); mehrere Stimmen sind von Lessac bzw. Ryan feinabgestimmt | <https://huggingface.co/rhasspy/piper-voices> |
+| llama.cpp b10938 (ggml-Autoren) | Sprachmodell-Laufzeit (Katalog, wählbar, Download von GitHub) | MIT; Windows-Pakete enthalten libomp.dll (Apache-2.0 mit LLVM-Ausnahme); CUDA-Paket zusätzlich NVIDIA-CUDA-Bibliotheken (CUDA Toolkit EULA) | <https://github.com/ggml-org/llama.cpp> |
+| Nemotron 3.5 ASR Streaming (NVIDIA) | Spracherkennung (Katalog, wählbar) | OpenMDW-1.1 | <https://openmdw.ai/license/1-1/> |
+| Nemotron Speech Streaming EN, Multitalker Parakeet Streaming (NVIDIA) | Spracherkennung (Katalog, wählbar) | NVIDIA Open Model License | <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/> |
+| Fun-ASR-Nano, Fun-ASR-MLT-Nano, SenseVoice Small (Alibaba) | Spracherkennung (Katalog, wählbar) | FunASR Model Open Source License Agreement 1.1 (Namensnennung, Modellnamen beibehalten) | <https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE> |
+| MedASR (Google) | Spracherkennung (Katalog, wählbar) | Health AI Developer Foundations Terms of Use | <https://developers.google.com/health-ai-developer-foundations/terms> |
+| Canary 1B (NVIDIA) | Spracherkennung (Katalog, wählbar, nicht vorgewählt) | **CC-BY-NC-4.0, nur nicht-kommerziell** | <https://huggingface.co/nvidia/canary-1b> |
 
 **Sortformer:** NVIDIA Streaming Sortformer 4spk v2.1, Lizenz NVIDIA Open Model License. Das Modell wird
 geladen, nicht gebündelt. Der Lizenztext ist am Katalogeintrag (`license_url`) verlinkt und unter Info
@@ -68,8 +77,9 @@ erwähnt (Entscheidung E22).
 
 **Vorbestehend, nicht für Besprechungen empfohlen:** Der ASR-Katalog enthält das Modell *Canary 1B* mit der
 Lizenz CC-BY-NC-4.0 (nicht kommerziell). Es ist nicht vorgewählt, kein Standardmodell und kein Teil der
-Besprechungsfunktion; es kam nicht durch das Goal hinzu. Die Einträge Nemotron ASR Streaming (Lizenz „other“)
-sind ebenfalls vorbestehend und nicht vorgewählt.
+Besprechungsfunktion; es kam nicht durch das Goal hinzu. In der App trägt es auf der Modelle-Seite den
+Hinweis „nur nicht-kommerziell“ (Entscheidung 01.10.2026: behalten, nicht vorgewählt). Die Karten-Lizenz „other“
+der sieben betroffenen ASR-Einträge ist im Katalog durch den Lizenznamen der Modellkarte ersetzt (Paket G2d).
 
 ## Bibliotheken (Rust), neu durch die Besprechungsfunktion
 

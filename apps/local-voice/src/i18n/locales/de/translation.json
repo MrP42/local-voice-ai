@@ -176,6 +176,11 @@
       "piperOption": "{{name}} · Piper",
       "piperNoVoice": "Piper – keine Stimme gewählt",
       "piperVoiceMissing": "Piper – Stimme „{{id}}“ nicht verfügbar",
+      "piperNotSetUp": "{{name}} · Piper – nicht eingerichtet",
+      "fishNotSetUp": "Fish Speech – nicht eingerichtet",
+      "notSetUpHint": "Diese Stimme ist nicht eingerichtet und kann nicht vorlesen. Wählen Sie eine eingerichtete Stimme oder richten Sie sie unter Modelle > Vorlesestimmen ein.",
+      "noEngineHint": "Noch keine Sprachausgabe eingerichtet. Unter Modelle > Vorlesestimmen lässt sich die schlanke Piper-Stimme laden – ohne Grafikkarte und ohne Zusatzsoftware.",
+      "setUp": "Sprachausgabe einrichten",
       "manage": "Stimmen verwalten …",
       "umlautSuggestion": "Anzeigename mit Umlauten: „{{name}}“ übernehmen",
       "scriptVoices": "Skript mit Sprechern",
@@ -186,6 +191,8 @@
     "settings": {
       "fishDir": "Fish-Speech-Ordner",
       "fishDirDescription": "Installationsordner mit .venv und tools/api_server.py.",
+      "fishOptionalTitle": "Fish Speech (optional, nicht eingerichtet)",
+      "fishOptionalDescription": "Fish Speech ist eine zusätzliche Sprachausgabe auf der Grafikkarte mit Stimmklonen. Sie wird nicht benötigt: Piper liest auch ohne sie vor. Zum Einrichten den Installationsordner eintragen. Es fehlt: {{missing}}",
       "port": "Server-Port",
       "portDescription": "Lokaler Port auf 127.0.0.1, auf dem der TTS-Server lauscht.",
       "seed": "Stimm-Seed",
@@ -830,7 +837,9 @@
     },
     "cancel": "Abbrechen",
     "cancelDownload": "Download abbrechen",
-    "legacy": "Veraltet"
+    "legacy": "Veraltet",
+    "nonCommercial": "Nur nicht-kommerziell",
+    "nonCommercialHint": "Lizenz {{license}}: nur für nicht-kommerzielle Nutzung erlaubt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
   },
   "settings": {
     "meetings": {
@@ -952,12 +961,24 @@
         },
         "status": {
           "installed": "Installiert",
-          "downloading": "Lädt … {{percentage}}%"
+          "downloading": "Lädt … {{percentage}}%",
+          "runtimeMissing": "Programm fehlt – nicht nutzbar",
+          "unsupported": "Auf diesem System nicht verfügbar"
         },
         "actions": {
           "download": "Herunterladen",
           "cancel": "Abbrechen",
-          "delete": "Löschen"
+          "delete": "Löschen",
+          "installRuntime": "Programm installieren"
+        },
+        "unsupported": {
+          "incomplete_archive": "Für dieses System ist das offizielle Piper-Archiv unvollständig (es fehlen Bibliotheken). Piper lässt sich hier noch nicht einrichten."
+        },
+        "license": {
+          "label": "Lizenz: {{license}}",
+          "nonCommercial": "Nur nicht-kommerziell",
+          "nonCommercialHint": "Diese Stimme darf nur nicht-kommerziell genutzt werden ({{license}}).",
+          "source": "Lizenztext"
         },
         "deleteConfirm": "{{name}} löschen? Du musst sie erneut herunterladen, um sie wieder zu nutzen.",
         "deleteTitle": "Löschen"
@@ -1095,6 +1116,10 @@
       "experimentalToggle": {
         "label": "Experimentelle Funktionen",
         "description": "Experimentelle Funktionen aktivieren, die sich noch in Entwicklung befinden."
+      },
+      "refineStream": {
+        "label": "Live-Text nachträglich mit Ollama glätten",
+        "description": "Beim Live-Einfügen glättet ein lokal laufendes Ollama jeden Satz (Grammatik, Zeichensetzung, Füllwörter) und ersetzt ihn im Zieldokument. Zahlen, Verneinungen, seltene Begriffe und die Reihenfolge werden geschützt. Wird ein Satz nicht rechtzeitig fertig (4 s je Satz, 12 s am Ende) oder läuft Ollama nicht, bleibt der Originaltext stehen. Ollama ist nie Voraussetzung für Aufnahme, Erkennung oder Einfügen. Standard: aus."
       },
       "lazyStreamClose": {
         "label": "Mikrofon zwischen Diktaten offen halten",

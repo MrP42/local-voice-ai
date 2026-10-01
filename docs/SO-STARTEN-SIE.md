@@ -92,7 +92,7 @@ Umschalten der Modelle im Hauptfenster unter „Modelle".
 |---|---|---|
 | Modell | Parakeet V3 | verifiziert, rund 23-fache Echtzeit, normalisiert Zahlen |
 | Live-Einfügung während des Sprechens | aus | funktioniert, aber ohne Fokusüberwachung — siehe oben |
-| KI-Nachbearbeitung (Ollama) | aus | gehört nicht in den stabilen Pfad |
+| KI-Nachbearbeitung (Ollama) | aus | optional (Diktat → Ausgabe), nur mit Live-Einfügung sichtbar; Ollama bleibt nie Voraussetzung |
 | Debug-Modus | aus | — |
 
 ## Falls etwas klemmt

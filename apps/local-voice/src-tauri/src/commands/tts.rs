@@ -595,6 +595,17 @@ pub fn tts_list_downloads(app: AppHandle) -> Result<Vec<TtsDownloadInfo>, String
     Ok(app.state::<Arc<TtsModelManager>>().list_downloads())
 }
 
+/// Zustand der Sprachausgabe-Laufzeiten (Piper, Fish Speech): vorhanden,
+/// vollstaendig, auf dieser Plattform unterstuetzt. Nur Dateisystem -- startet
+/// keinen Prozess und laedt kein Modell, darf also beim Zeichnen laufen.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_runtime_status(
+    app: AppHandle,
+) -> Result<crate::managers::tts::availability::TtsRuntimeStatus, String> {
+    Ok(app.state::<Arc<TtsManager>>().runtime_status())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_download_model(app: AppHandle, id: String) -> Result<(), String> {

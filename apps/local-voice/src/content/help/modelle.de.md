@@ -20,7 +20,10 @@ Drei Familien, alle lokal: Transkriptionsmodelle fürs Diktat, Sprachmodelle fü
 
 - Piper-Stimmen sind kleine, sprachgebundene Stimmen für die CPU. Lade die Sprachen, die du vorliest. Die App wählt beim Vorlesen die Stimme nach der Sprache des Satzes.
 - HQ ist die beste Qualität mit dem größten Download.
+<!--if:fish-->
 - Eigene und geklonte Stimmen für Fish Speech verwaltest du unter Einstellungen, Vorlesen.
+<!--/if:fish-->
+- Eine Stimme gilt erst als nutzbar, wenn das Piper-Programm vollständig da ist. Fehlt etwas, steht sie als „Programm fehlt“ da; „Programm installieren“ repariert das.
 
 ## Speicher
 

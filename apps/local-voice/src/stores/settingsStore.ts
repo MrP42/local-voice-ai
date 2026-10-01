@@ -206,6 +206,8 @@ const settingUpdaters: {
   theme: (value) => commands.changeThemeSetting(value as string),
   experimental_enabled: (value) =>
     commands.changeExperimentalEnabledSetting(value as boolean),
+  refine_enabled: (value) =>
+    commands.changeRefineEnabledSetting(value as boolean),
   lazy_stream_close: (value) =>
     commands.changeLazyStreamCloseSetting(value as boolean),
   local_update_dir: (value) =>

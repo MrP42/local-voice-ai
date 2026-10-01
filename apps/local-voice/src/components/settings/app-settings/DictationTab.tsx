@@ -17,6 +17,7 @@ import { PasteMethodSetting } from "../PasteMethod";
 import { TypingToolSetting } from "../TypingTool";
 import { ClipboardHandlingSetting } from "../ClipboardHandling";
 import { AutoSubmit } from "../AutoSubmit";
+import { RefineStream } from "../RefineStream";
 import { useSettings } from "../../../hooks/useSettings";
 import { DictationTest } from "../dictation-test/DictationTest";
 
@@ -36,6 +37,7 @@ export const DictationTab: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const pushToTalk = getSetting("push_to_talk");
+  const streamInjection = getSetting("stream_injection") ?? false;
   const isLinux = type() === "linux";
 
   return (
@@ -61,6 +63,11 @@ export const DictationTab: React.FC = () => {
         <TypingToolSetting descriptionMode="tooltip" grouped={true} />
         <ClipboardHandlingSetting descriptionMode="tooltip" grouped={true} />
         <AutoSubmit descriptionMode="tooltip" grouped={true} />
+        {/* Nur mit Live-Einfuegung: ohne sie gibt es keinen Text, den Ollama
+            glaetten koennte (Issue #5, Standard aus). */}
+        {streamInjection && (
+          <RefineStream descriptionMode="tooltip" grouped={true} />
+        )}
       </SettingsGroup>
 
       <SettingsGroup title={t("meetings.title")}>
