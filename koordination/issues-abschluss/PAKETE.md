@@ -24,7 +24,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | C1 | M6 | #68 Eval-Harness + Messung lokaler Modelle — lv-architect | Bericht eval-2026-10-01.md | abgenommen | 3f66fbdd |
 | D0 | M7 | #69 Spike OCR/Bildanalyse/Folien — lv-architect | Spike-Bericht mit Messung | abgenommen | koordination/bild-video/spike |
 | A7 | M4 | #66 Agentenbrücke (Named Pipe, Token, Werkzeug-Rechte, Freigaben, ctl) — lv-coder-xhigh | AK9 agent_bridge:: ≥15 | in_arbeit | |
-| A5 | M4 | #66 Microsoft-365-Konto (OAuth PKCE, Mail, OneDrive, Termin-Notiz) — lv-coder-xhigh | AK8 m365 ≥12 Tests | in_arbeit | |
+| A5 | M4 | #66 Microsoft-365-Konto (OAuth PKCE, Mail, OneDrive, Termin-Notiz) — lv-coder-xhigh | AK8 m365 ≥12 Tests | abgenommen (Owner: Entra-Registrierung, Testmail) | 7b9656dc |
 | A6 | M4 | #66 SMTP, Ordner-Sandbox, Obsidian, Wissensbasis, Export ablegen — lv-coder | AK8 Rest, AK11 | in_arbeit | |
 | D1 | M7 | #69 Folienerkennung Kern (dHash, meeting_slides, Job-Phase) — lv-coder-xhigh | cargo test slides | in_arbeit | |
 | G8 | M8 | Wackelige Tests unter Last: Ursachen beheben (SQLite busy_timeout, Zeitabhängigkeit, Prozess-Timeouts) — lv-coder-xhigh | 3x volle Suite unter Last grün | in_arbeit | |
