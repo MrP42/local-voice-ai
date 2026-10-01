@@ -7,7 +7,7 @@ import {
   todaysEvents,
 } from "../src/lib/meetingCalendar";
 
-// M5-P5b: Kalender in den Einstellungen (Gruppe Besprechungen) und auf der
+// M5-P5b: Kalender (seit A4 auf der Seite Integrationen) und auf der
 // Aufnahmeseite (Titelvorschlag, "Naechste Termine (heute)") gegen die
 // Tauri-Attrappe.
 
@@ -41,12 +41,22 @@ const setup = async (page: Page, init?: () => void) => {
   await page.goto("/");
 };
 
+// A4: die Kalenderquellen wohnen auf der Seite "Integrationen"; in den
+// Einstellungen bleiben nur der Verweis und die Erinnerung.
+const openIntegrations = async (page: Page) => {
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Integrationen", exact: true })
+    .click();
+  await expect(page.getByTestId("calendar-settings")).toBeVisible();
+};
+
 const openSettings = async (page: Page) => {
   await page
     .getByRole("navigation")
     .getByRole("button", { name: "Einstellungen", exact: true })
     .click();
-  await expect(page.getByTestId("calendar-settings")).toBeVisible();
+  await expect(page.getByTestId("calendar-reminder-settings")).toBeVisible();
 };
 
 const openRecordings = async (page: Page) => {
@@ -141,7 +151,7 @@ test.describe("Kalender in den Einstellungen", () => {
     page,
   }) => {
     await setup(page);
-    await openSettings(page);
+    await openIntegrations(page);
     await expect(page.getByTestId("calendar-empty")).toBeVisible();
 
     await page.getByTestId("calendar-connect").click();
@@ -187,7 +197,7 @@ test.describe("Kalender in den Einstellungen", () => {
 
   test("Ohne Adresse ist Verbinden gesperrt", async ({ page }) => {
     await setup(page);
-    await openSettings(page);
+    await openIntegrations(page);
     await page.getByTestId("calendar-connect").click();
     await expect(page.getByTestId("calendar-connect-submit")).toBeDisabled();
     await page.getByTestId("calendar-url").fill("https://x.example/a.ics");
@@ -202,7 +212,7 @@ test.describe("Kalender in den Einstellungen", () => {
       (window as any).__addError =
         "Die Adresse liefert keinen Kalender (ICS), vermutlich eine Anmelde- oder Fehlerseite.";
     });
-    await openSettings(page);
+    await openIntegrations(page);
     await page.getByTestId("calendar-connect").click();
     await page.getByTestId("calendar-url").fill(URL_SECRET);
     await page.getByTestId("calendar-connect-submit").click();
@@ -226,7 +236,7 @@ test.describe("Kalender in den Einstellungen", () => {
     await setup(page, () => {
       (window as any).__addDelay = 600;
     });
-    await openSettings(page);
+    await openIntegrations(page);
     await page.getByTestId("calendar-connect").click();
     await page.getByTestId("calendar-url").fill(URL_SECRET);
     const submit = page.getByTestId("calendar-connect-submit");
@@ -256,7 +266,7 @@ test.describe("Kalender in den Einstellungen", () => {
         },
       ];
     });
-    await openSettings(page);
+    await openIntegrations(page);
     await expect(page.getByTestId("calendar-source-error")).toContainText(
       "Zugriff verweigert (HTTP 403)",
     );
@@ -290,7 +300,7 @@ test.describe("Kalender in den Einstellungen", () => {
         },
       ];
     });
-    await openSettings(page);
+    await openIntegrations(page);
     await page.getByTestId("calendar-remove").click();
     await expect(page.getByTestId("calendar-remove-confirm")).toContainText(
       "Kalender „Outlook Arbeit“ entfernen?",
@@ -366,7 +376,7 @@ test.describe("Kalender in den Einstellungen", () => {
 // Microsoft-Anmeldung (P5f)
 // ---------------------------------------------------------------------------
 
-test.describe("Microsoft-Anmeldung in den Einstellungen", () => {
+test.describe("Microsoft-Anmeldung auf der Seite Integrationen", () => {
   const CLIENT_ID = "11111111-2222-3333-4444-555555555555";
   const withClientId = () => {
     (window as any).__settings.calendar_graph_client_id =
@@ -387,7 +397,7 @@ test.describe("Microsoft-Anmeldung in den Einstellungen", () => {
   });
 
   const openDialog = async (page: Page) => {
-    await openSettings(page);
+    await openIntegrations(page);
     await page.getByTestId("calendar-connect").click();
     const dialog = page.getByRole("dialog", { name: "Kalender verbinden" });
     await expect(dialog).toBeVisible();
@@ -582,7 +592,7 @@ test.describe("Microsoft-Anmeldung in den Einstellungen", () => {
         },
       ];
     });
-    await openSettings(page);
+    await openIntegrations(page);
     await expect(page.getByTestId("calendar-source-error")).toContainText(
       "Anmeldung nötig",
     );
@@ -627,7 +637,7 @@ test.describe("Microsoft-Anmeldung in den Einstellungen", () => {
         },
       ];
     });
-    await openSettings(page);
+    await openIntegrations(page);
     await expect(page.getByTestId("calendar-source")).toHaveCount(1);
     await expect(page.getByTestId("calendar-graph-reauth")).toHaveCount(0);
   });

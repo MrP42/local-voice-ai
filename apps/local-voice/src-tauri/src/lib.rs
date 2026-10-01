@@ -2040,6 +2040,16 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::meetings_export_document,
             // M1-P1c
             commands::provenance::provenance_get, // A1
+            // A4: Seite Integrationen
+            commands::integrations::integrations_list,
+            commands::integrations::integration_create,
+            commands::integrations::integration_update,
+            commands::integrations::integration_delete,
+            commands::integrations::integration_set_grant,
+            commands::integrations::integration_test,
+            commands::integrations::integrations_audit_list,
+            commands::integrations::approvals_pending,
+            commands::integrations::approval_decide,
             // A2: YouTube als Quelle
             commands::youtube::youtube_normalize_link,
             commands::youtube::youtube_add_source,

@@ -1,7 +1,7 @@
 import React from "react";
 import { MeetingCalendarSettings } from "../meetings/MeetingCalendarSettings";
 import { MeetingLanguageSetting } from "../meetings/MeetingLanguageSetting";
-import { MeetingMcpSettings } from "../meetings/MeetingMcpSettings";
+import { IntegrationsLinkRow } from "../meetings/IntegrationsLinkRow";
 import { MeetingModelSetting } from "../meetings/MeetingModelSetting";
 import { MeetingNotesSettings } from "../meetings/MeetingNotesSettings";
 import { MeetingYoutubeSettings } from "../meetings/youtube/MeetingYoutubeSettings";
@@ -75,7 +75,7 @@ export const DictationTab: React.FC = () => {
         <MeetingModelSetting />
         <MeetingNotesSettings />
         <MeetingCalendarSettings />
-        <MeetingMcpSettings />
+        <IntegrationsLinkRow topic="mcp" />
         <MeetingYoutubeSettings />
       </SettingsGroup>
       <DictationTest />

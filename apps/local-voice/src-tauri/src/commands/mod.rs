@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod calendar; // M5-P5b
 pub mod history;
+pub mod integrations; // A4
 pub mod llm;
 pub mod usage;
 pub mod meeting_chat; // M4-P4c
