@@ -37,10 +37,13 @@ export const CitationChip: React.FC<CitationChipProps> = ({
 
   if (!citation) return <span>[{n}]</span>;
 
+  // D5: ein Folien-Beleg nennt die Quelle und die Zeit der Folie ("Folie 04:12").
   const where =
     citation.source === "transcript" && citation.start_ms !== null
       ? formatAt(citation.start_ms)
-      : t(`meetings.chat.citation.source.${citation.source}`);
+      : citation.source === "slide" && citation.start_ms !== null
+        ? `${t("meetings.chat.citation.source.slide")} ${formatAt(citation.start_ms)}`
+        : t(`meetings.chat.citation.source.${citation.source}`);
   const day = formatDay(citation.started_at, i18n.language);
   const label = `${t("meetings.chat.citation.label", { n })}: ${citation.meeting_title}, ${where}`;
 

@@ -732,6 +732,82 @@ test.describe("Chat in der Besprechung", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
+  test("Folien-Zitat: Chip nennt Folie und Zeit und springt zur Folie (Reiter Folien, Audio ab 252 s)", async ({
+    page,
+  }) => {
+    await withAudio(page);
+    // D5: die Besprechung m1 hat eine Folie mit Text; die Attrappe kennt die Folien-Befehle.
+    await page.addInitScript(() => {
+      const w = window as any;
+      const inner = w.__TAURI_INTERNALS__.invoke;
+      w.__TAURI_INTERNALS__.invoke = async (
+        cmd: string,
+        args: Record<string, any> = {},
+      ) => {
+        if (cmd === "list_meeting_slides") {
+          return args.meetingId === "m1"
+            ? [
+                {
+                  id: "sl7",
+                  meeting_id: "m1",
+                  number: 7,
+                  origin: "video",
+                  image_path: "slides/0007.jpg",
+                  thumb_path: null,
+                  occurrences: [{ start_ms: 252_000, end_ms: 270_000 }],
+                  ocr_text: "Umsatz 13,1 Mio. EUR",
+                  ocr_engine: "windows-ocr",
+                  kind: "text",
+                  description: null,
+                  description_model: null,
+                  hidden: false,
+                },
+              ]
+            : [];
+        }
+        if (cmd === "meeting_slides_dir") return `C:\data\${args.meetingId}`;
+        return inner(cmd, args);
+      };
+    });
+    await openDetail(page);
+    await page.keyboard.press("Control+j");
+    await questionBox(page).fill("Wie hoch ist der Umsatz?");
+    await questionBox(page).press("Enter");
+    await pendingRequest(page);
+    await resolveAsk(
+      page,
+      answer({
+        text: "Der Umsatz liegt bei 13,1 Mio. EUR [1].",
+        citations: [
+          citation({
+            source: "slide",
+            segment_index: null,
+            start_ms: 252_000,
+            ref_key: "sl7",
+            quote: "Umsatz 13,1 Mio. EUR",
+          }),
+        ],
+      }),
+    );
+    const chip = panel(page).getByTestId("citation-chip").first();
+    await expect(chip).toHaveAttribute(
+      "aria-label",
+      "Beleg 1: Kundentermin Meyer, Folie 04:12",
+    );
+    await chip.hover();
+    await expect(page.getByRole("tooltip")).toContainText("Folie 04:12");
+    await chip.click();
+    await expect(
+      page.getByRole("tab", { name: "Folien", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      page.locator('[data-testid="slide-card"][data-slide-id="sl7"]'),
+    ).toHaveAttribute("data-active", "true");
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__played))
+      .toEqual([252]);
+  });
+
   test("Notizen-Zitat öffnet den Tab Notizen und markiert den Block", async ({
     page,
   }) => {

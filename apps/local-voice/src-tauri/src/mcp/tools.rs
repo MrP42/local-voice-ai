@@ -495,9 +495,14 @@ fn search_meetings(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
         .items
         .iter()
         .filter(|item| item.meeting.status == "ready")
-        // Ohne Transkript-Freigabe kein Treffer, dessen bester Chunk das Transkript ist.
+        // Ohne Transkript-Freigabe kein Treffer, dessen bester Chunk das Transkript ist
+        // (D5: auch nicht der Text einer Folie, er stammt aus derselben Aufnahme).
         .filter(|item| {
-            backend.include_transcript || item.hit_source != Some(ChunkSource::Transcript)
+            backend.include_transcript
+                || !matches!(
+                    item.hit_source,
+                    Some(ChunkSource::Transcript | ChunkSource::Slide)
+                )
         })
         .collect();
     let more = visible.len() > limit;

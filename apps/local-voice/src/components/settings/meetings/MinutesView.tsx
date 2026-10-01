@@ -17,18 +17,24 @@ import {
 import { Alert } from "../../ui/Alert";
 import Badge from "../../ui/Badge";
 import { IconAction } from "../../ui/IconAction";
-import { MarkdownContent } from "../../whats-new/MarkdownContent";
+import {
+  MarkdownContent,
+  type SlideRefs,
+} from "../../whats-new/MarkdownContent";
 import { defaultDocBasis } from "./language/DocBasisFields";
 import { Check, Copy, Download, RefreshCw, Sparkles } from "lucide-react";
 
 interface MinutesViewProps {
   meetingId: string;
   meetingTitle: string;
+  /** D5: Folienbelege (`[F7]`) im Protokoll anklickbar machen (Sprung zur Folie). */
+  slideRefs?: SlideRefs;
 }
 
 export const MinutesView: React.FC<MinutesViewProps> = ({
   meetingId,
   meetingTitle,
+  slideRefs,
 }) => {
   const { t, i18n } = useTranslation();
   const [doc, setDoc] = useState<MeetingDocument | null>(null);
@@ -167,7 +173,16 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   const copyMinutes = async () => {
     if (!doc) return;
     setError(null);
-    const html = previewRef.current?.innerHTML;
+    // D5: die Folienmarken sind im Dokument Schaltflaechen; in der Zwischenablage stehen sie
+    // wieder als Text (`[F7]`), wie im gespeicherten Protokoll.
+    const preview = previewRef.current?.cloneNode(true) as
+      HTMLElement | undefined;
+    preview?.querySelectorAll("[data-slide-ref]").forEach((el) => {
+      el.replaceWith(
+        document.createTextNode(`[F${el.getAttribute("data-slide-ref")}]`),
+      );
+    });
+    const html = preview?.innerHTML;
     try {
       if (html && typeof ClipboardItem !== "undefined") {
         await navigator.clipboard.write([
@@ -305,7 +320,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           data-testid="minutes-doc"
           className="rounded-lg border border-mid-gray/20 p-4"
         >
-          <MarkdownContent markdown={doc.body} />
+          <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
         </div>
       ) : (
         !running && (

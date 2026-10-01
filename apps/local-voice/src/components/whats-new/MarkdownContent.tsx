@@ -1,10 +1,19 @@
-import React from "react";
+import React, { useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { linkSlideTags, SLIDE_LINK } from "@/lib/meetingSlides";
+
+/** D5: Folienbelege (`[F7]`) eines Protokolls als anklickbare Marken. */
+export interface SlideRefs {
+  /** Gibt es die Folie? Nur dann wird aus `[F7]` ein Link. */
+  known: (slideNumber: number) => boolean;
+  onOpen: (slideNumber: number) => void;
+}
 
 interface MarkdownContentProps {
   markdown: string;
+  slideRefs?: SlideRefs;
 }
 
 const allowedElements = [
@@ -68,6 +77,29 @@ const textOf = (node: React.ReactNode): string => {
     return textOf(node.props.children);
   }
   return "";
+};
+
+const ExternalLink: React.FC<{
+  href?: string;
+  children?: React.ReactNode;
+}> = ({ children, href }) => {
+  if (!href || !isSafeUrl(href)) {
+    return <>{children}</>;
+  }
+
+  return (
+    <a
+      href={href}
+      rel="noreferrer"
+      onClick={(event) => {
+        event.preventDefault();
+        void openSafeUrl(href);
+      }}
+      className="text-logo-primary underline decoration-logo-primary/40 underline-offset-2 hover:decoration-logo-primary"
+    >
+      {children}
+    </a>
+  );
 };
 
 const components: Components = {
@@ -208,39 +240,54 @@ const components: Components = {
       {children}
     </pre>
   ),
-  a: ({ children, href }) => {
-    if (!href || !isSafeUrl(href)) {
-      return <>{children}</>;
-    }
-
-    return (
-      <a
-        href={href}
-        rel="noreferrer"
-        onClick={(event) => {
-          event.preventDefault();
-          void openSafeUrl(href);
-        }}
-        className="text-logo-primary underline decoration-logo-primary/40 underline-offset-2 hover:decoration-logo-primary"
-      >
-        {children}
-      </a>
-    );
-  },
+  a: ({ children, href }) => (
+    <ExternalLink href={href}>{children}</ExternalLink>
+  ),
 };
 
 export const MarkdownContent: React.FC<MarkdownContentProps> = ({
   markdown,
+  slideRefs,
 }) => {
+  const merged = useMemo<Components>(() => {
+    if (!slideRefs) return components;
+    return {
+      ...components,
+      a: (props) => {
+        const match = SLIDE_LINK.exec(props.href ?? "");
+        if (!match) {
+          return (
+            <ExternalLink href={props.href}>{props.children}</ExternalLink>
+          );
+        }
+        const number = Number(match[1]);
+        return (
+          <button
+            type="button"
+            data-testid="slide-ref"
+            data-slide-ref={number}
+            onClick={() => slideRefs.onOpen(number)}
+            className="mx-0.5 inline-flex cursor-pointer items-center rounded-md border border-logo-primary/50 bg-logo-primary/10 px-1 align-baseline text-[11px] font-medium leading-4 tabular-nums text-text hover:bg-logo-primary/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/60"
+          >
+            {props.children}
+          </button>
+        );
+      },
+    };
+  }, [slideRefs]);
+  const source = useMemo(
+    () => (slideRefs ? linkSlideTags(markdown, slideRefs.known) : markdown),
+    [markdown, slideRefs],
+  );
   return (
     <div className="space-y-3">
       <ReactMarkdown
         allowedElements={allowedElements}
-        components={components}
+        components={merged}
         remarkPlugins={[remarkGfm]}
         skipHtml
       >
-        {markdown}
+        {source}
       </ReactMarkdown>
     </div>
   );

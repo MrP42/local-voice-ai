@@ -68,12 +68,15 @@ const Row: React.FC<{
 interface ProvenanceDialogProps {
   subject: ProvenanceSubject;
   onClose: () => void;
+  /** D5: Quellen der Art `slide` anklickbar (Sprung zur Folie); `ref` ist die Folien-ID. */
+  onOpenSlide?: (slideId: string) => void;
 }
 
 /** Dialog „Herkunft“: Modell, Token, Dauer, Zeitpunkt, Quellen, Konfidenz, Ausloeser. */
 export const ProvenanceDialog: React.FC<ProvenanceDialogProps> = ({
   subject,
   onClose,
+  onOpenSlide,
 }) => {
   const { t, i18n } = useTranslation();
   const [entries, setEntries] = useState<ProvenanceEntry[] | null>(null);
@@ -165,7 +168,23 @@ export const ProvenanceDialog: React.FC<ProvenanceDialogProps> = ({
                   <ul className="space-y-0.5">
                     {e.sources.map((s, i) => (
                       <li key={`${s.kind}-${s.ref}-${i}`}>
-                        {s.title ?? s.ref}{" "}
+                        {s.kind === "slide" && onOpenSlide ? (
+                          <button
+                            type="button"
+                            data-testid="prov-slide-source"
+                            data-slide-id={s.ref}
+                            title={t("meetings.provenance.openSlide")}
+                            onClick={() => {
+                              onOpenSlide(s.ref);
+                              onClose();
+                            }}
+                            className="cursor-pointer text-logo-primary underline decoration-logo-primary/40 underline-offset-2 hover:decoration-logo-primary focus:outline-none focus-visible:ring-1 focus-visible:ring-logo-primary"
+                          >
+                            {s.title ?? s.ref}
+                          </button>
+                        ) : (
+                          (s.title ?? s.ref)
+                        )}{" "}
                         <span className="text-text/50">({s.kind})</span>
                       </li>
                     ))}
@@ -206,6 +225,8 @@ interface ProvenanceAreaProps {
   children: React.ReactNode;
   className?: string;
   testId?: string;
+  /** D5: Sprung zu einer Folie, die als Quelle genannt ist (`SourceRef kind = slide`). */
+  onOpenSlide?: (slideId: string) => void;
 }
 
 /**
@@ -217,6 +238,7 @@ export const ProvenanceArea: React.FC<ProvenanceAreaProps> = ({
   children,
   className,
   testId,
+  onOpenSlide,
 }) => {
   const { t } = useTranslation();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -249,7 +271,11 @@ export const ProvenanceArea: React.FC<ProvenanceAreaProps> = ({
         />
       )}
       {open && (
-        <ProvenanceDialog subject={subject} onClose={() => setOpen(false)} />
+        <ProvenanceDialog
+          subject={subject}
+          onClose={() => setOpen(false)}
+          onOpenSlide={onOpenSlide}
+        />
       )}
     </div>
   );

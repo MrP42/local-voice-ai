@@ -23,12 +23,12 @@ use super::citations::{postprocess, DeltaFilter};
 use super::context::{
     bm25_rank, budget_chars, card_summary, clip_chars, context_budget_tokens, enhanced_excerpts,
     history_budget_chars, notes_excerpts, number_excerpts, order_for_reading, pack, pack_dynamic,
-    rank_meetings, total_cost, transcript_blocks_with, Excerpt, ExcerptPlan, MeetingCard, MeetingRef,
-    SEARCH_TOP, SECOND_ROUND_LAST_RANK, SHORTLIST,
+    rank_meetings, slide_excerpts, total_cost, transcript_blocks_with, Excerpt, ExcerptPlan,
+    MeetingCard, MeetingRef, SEARCH_TOP, SECOND_ROUND_LAST_RANK, SHORTLIST,
 };
 use super::live::{live_plan, LiveSnapshot};
 use super::prompt::{
-    build_user_prompt, card_line, date_de, render_history, PromptInput, SYSTEM_PROMPT,
+    build_user_prompt, card_line, date_de, render_history, system_prompt_for, PromptInput,
 };
 use super::recipes::{apply_filter, check_use, load_recipe, render_recipe, StoreLookup};
 use super::*;
@@ -409,7 +409,16 @@ pub async fn ask(
             question: &question,
         });
         on_progress(ChatProgress::Stage(ChatStage::Answering, round));
-        let raw = call_llm(&provider, api_key.clone(), &model, user_prompt, on_progress).await?;
+        let system = system_prompt_for(&excerpts);
+        let raw = call_llm(
+            &provider,
+            api_key.clone(),
+            &model,
+            &system,
+            user_prompt,
+            on_progress,
+        )
+        .await?;
         // Inzwischen geloeschte Besprechungen: ihre Zitate fallen weg.
         let alive = drop_deleted(&store, &excerpts);
         let (text, citations, dropped, not_found) = postprocess(&raw, &alive);
@@ -502,6 +511,7 @@ async fn call_llm(
     provider: &crate::settings::PostProcessProvider,
     api_key: String,
     model: &str,
+    system: &str,
     user_prompt: String,
     on_progress: ProgressFn<'_>,
 ) -> Result<String, ChatError> {
@@ -513,7 +523,7 @@ async fn call_llm(
         }
     };
     let messages = vec![
-        StreamMessage::new("system", SYSTEM_PROMPT),
+        StreamMessage::new("system", system),
         StreamMessage::new("user", user_prompt),
     ];
     send_chat_completion_stream(Purpose::Chat, provider, api_key, model, messages, &on_delta)
@@ -650,6 +660,11 @@ async fn meeting_plan(
         .map(|n| enhanced_excerpts(&meeting, &n))
         .unwrap_or_default();
     overview.extend(notes_excerpts(&meeting, &notes, TARGET_CHARS));
+    // D5: Folientext zeitlich geordnet daneben (ohne Folien oder bei einem Lesefehler: nichts).
+    match store.slides_list(meeting_id) {
+        Ok(slides) => overview.extend(slide_excerpts(&meeting, &slides)),
+        Err(e) => log::warn!("Chat: Folien nicht lesbar ({e}) -- ohne Folien"),
+    }
     let speakers = SpeakerDirectory::load(store, meeting_id);
     let blocks = transcript_blocks_with(&meeting, &segments, epoch, TARGET_CHARS, &speakers);
 
@@ -1883,6 +1898,145 @@ mod tests {
         assert_eq!(
             (err.code, err.detail.as_str()),
             (CODE_RECIPE_INVALID, "not_live")
+        );
+    }
+
+    // ---- D5: Folien ----------------------------------------------------------
+
+    use crate::managers::meetings::search::chunking::{chunk_slides, ChunkHead};
+    use crate::managers::meetings::slides::test_support::add_slide;
+
+    /// Mock, der den ganzen Body jeder Anfrage mitschreibt (System- UND Nutzertext).
+    async fn body_mock(reply: &'static str) -> (u16, Arc<Mutex<Vec<serde_json::Value>>>) {
+        let bodies = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let seen = Arc::clone(&bodies);
+        let port = spawn_llm_mock_with(move |body| {
+            seen.lock().unwrap().push(serde_json::from_str(body).unwrap());
+            MockReply::Body(chat_body(reply))
+        })
+        .await;
+        (port, bodies)
+    }
+
+    fn content_of(body: &serde_json::Value, index: usize) -> String {
+        body["messages"][index]["content"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn a_meeting_chat_reads_the_slide_text_and_cites_the_slide_with_its_time() {
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        let m = ready_meeting(&store, "Quartalsvortrag", 1_789_214_400);
+        segments(&store, &m, &["Guten Morgen.", "Hier die Zahlen.", "Danke."]);
+        let slide = add_slide(&store, &m.id, 10_000, Some("Umsatz 13,1 Mio. EUR"));
+        store
+            .slide_set_description(&slide.id, Some("Balkendiagramm"), Some("gemma-4-e4b"))
+            .unwrap();
+        let (port, bodies) = body_mock("Der Umsatz liegt bei 13,1 Mio. EUR [Q1].").await;
+        let settings = settings_with_mock_provider(port);
+        let answer = run(
+            &settings,
+            &store,
+            request(
+                ChatScope::Meeting {
+                    meeting_id: m.id.clone(),
+                },
+                "Wie hoch ist der Umsatz?",
+            ),
+        )
+        .await
+        .unwrap();
+
+        let bodies = bodies.lock().unwrap();
+        let (system, prompt) = (content_of(&bodies[0], 0), content_of(&bodies[0], 1));
+        assert_eq!(system, format!("{SYSTEM_PROMPT_FOR_TESTS}
+{SLIDE_RULE_FOR_TESTS}"));
+        assert!(system.contains("Bild:"), "die Regel fuer Bildbeschreibungen steht im System-Prompt");
+        assert!(
+            prompt.contains("[Q1] B1 · Folie 1 · 00:10\nFolie 1 00:10: Umsatz 13,1 Mio. EUR\nBild: Balkendiagramm"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("[Q2] B1 · Transkript"), "das Transkript steht daneben: {prompt}");
+        assert_eq!(answer.text, "Der Umsatz liegt bei 13,1 Mio. EUR [1].");
+        let c = &answer.citations[0];
+        assert_eq!(
+            (c.source, c.ref_key.as_deref(), c.start_ms, c.segment_index),
+            (ChunkSource::Slide, Some(slide.id.as_str()), Some(10_000), None)
+        );
+        // Gespeichert und wieder lesbar: die Quelle `slide` ueberlebt den Weg durch die Datenbank.
+        let (_, messages) = store.thread_get(&answer.thread_id).unwrap().unwrap();
+        assert_eq!(ChatMessage::from_row(&messages[1]).citations, answer.citations);
+    }
+
+    #[tokio::test]
+    async fn a_meeting_without_slides_keeps_the_old_system_prompt_and_excerpts() {
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        let m = ready_meeting(&store, "Nordlicht", 1_789_214_400);
+        segments(&store, &m, &["Guten Morgen.", "Das Budget liegt bei 5 000 Euro."]);
+        // Ausgeblendete und textlose Folien zaehlen nicht.
+        let hidden = add_slide(&store, &m.id, 1_000, Some("Sprecherbild"));
+        store.slide_set_hidden(&hidden.id, true).unwrap();
+        add_slide(&store, &m.id, 2_000, None);
+        let (port, bodies) = body_mock("Das Budget liegt bei 5 000 Euro [Q1].").await;
+        let settings = settings_with_mock_provider(port);
+        run(
+            &settings,
+            &store,
+            request(
+                ChatScope::Meeting {
+                    meeting_id: m.id.clone(),
+                },
+                "Wie hoch ist das Budget?",
+            ),
+        )
+        .await
+        .unwrap();
+        let bodies = bodies.lock().unwrap();
+        assert_eq!(content_of(&bodies[0], 0), SYSTEM_PROMPT_FOR_TESTS);
+        let prompt = content_of(&bodies[0], 1);
+        assert!(!prompt.contains("Folie") && !prompt.contains("Sprecherbild"), "{prompt}");
+        assert!(prompt.contains("[Q1] B1 · Transkript"));
+    }
+
+    const SYSTEM_PROMPT_FOR_TESTS: &str = crate::managers::meetings::chat::prompt::SYSTEM_PROMPT;
+    const SLIDE_RULE_FOR_TESTS: &str = crate::managers::meetings::chat::prompt::SLIDE_RULE;
+
+    #[tokio::test]
+    async fn a_global_chat_finds_a_slide_through_the_index_and_cites_it() {
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        let m = ready_meeting(&store, "Quartalsvortrag", 1_789_214_400);
+        let other = ready_meeting(&store, "Andere", 1_789_214_500);
+        index(&store, &other, &[("Wir sprechen ueber das Wetter", 1)]);
+        // Der Begriff steht NUR auf einer Folie.
+        let slide = add_slide(&store, &m.id, 252_000, Some("Wasserturmallee Umsatz 13,1 Mio. EUR"));
+        let drafts = chunk_slides(&store.slides_list(&m.id).unwrap(), &ChunkHead::default());
+        store
+            .replace_meeting_chunks(
+                &m.id,
+                &[ChunkSource::Slide],
+                &drafts,
+                &state(STATUS_LEXICAL),
+            )
+            .unwrap();
+        let (port, bodies) = body_mock("Auf der Folie steht der Umsatz [Q1].").await;
+        let settings = settings_with_mock_provider(port);
+        let answer = run(&settings, &store, request(global(), "Was steht zur Wasserturmallee?"))
+            .await
+            .unwrap();
+        let bodies = bodies.lock().unwrap();
+        let prompt = content_of(&bodies[0], 1);
+        assert!(
+            prompt.contains("Folie 1 04:12: Wasserturmallee Umsatz 13,1 Mio. EUR"),
+            "{prompt}"
+        );
+        assert!(content_of(&bodies[0], 0).contains("Bild:"), "Regel fuer Folien im System-Prompt");
+        assert!(!answer.not_found);
+        let c = &answer.citations[0];
+        assert_eq!(
+            (c.source, c.ref_key.as_deref(), c.start_ms, c.meeting_id.as_str()),
+            (ChunkSource::Slide, Some(slide.id.as_str()), Some(252_000), m.id.as_str())
         );
     }
 }

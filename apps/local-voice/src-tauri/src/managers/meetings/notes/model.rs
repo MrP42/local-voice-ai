@@ -115,6 +115,10 @@ pub struct EnhancedEntry {
     /// Bei `origin = User`: der Block, aus dem der Text stammt.
     pub note_id: Option<String>,
     pub source_segment_ids: Vec<u32>,
+    /// D5: Nummern der Folien (`meeting_slides.number`), auf die sich der Eintrag
+    /// belegt (`F7`). Fehlt in aelteren Dokumenten: dann leer.
+    #[serde(default)]
+    pub source_slide_ids: Vec<u32>,
     pub assignee: Option<String>,
     pub due: Option<String>,
     pub flags: EntryFlags,
@@ -227,6 +231,7 @@ mod tests {
             "export type NoteBlockKind = \"paragraph\" | \"bullet\" | \"heading\" | \"todo\"",
             "export type Origin = \"user\" | \"ai\"",
             "at_ms: number | null",
+            "source_slide_ids?: number[]",
         ] {
             assert!(ts.contains(expected), "{expected} fehlt in:\n{ts}");
         }

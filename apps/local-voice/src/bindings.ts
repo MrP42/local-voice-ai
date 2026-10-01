@@ -5697,7 +5697,7 @@ export type ChatScope = { kind: "meeting"; meeting_id: string } | { kind: "globa
  */
 export type ChatStage = "searching" | "reading" | "answering"
 export type ChatThread = { id: string; scope_json: string; meeting_id: string | null; title: string | null; message_count: number; created_at: number; updated_at: number }
-export type ChunkSource = "title" | "transcript" | "user_notes" | "ai_notes"
+export type ChunkSource = "title" | "transcript" | "user_notes" | "ai_notes" | "slide"
 /**
  * Ein Beleg in der Antwort. `n` ist die Anzeige-Nummer (`[n]` im Text).
  * Transkript: `segment_index` + `start_ms` (Epoche `epoch`); Notizen:
@@ -5825,7 +5825,12 @@ id: string; origin: Origin; text: string;
 /**
  * Bei `origin = User`: der Block, aus dem der Text stammt.
  */
-note_id: string | null; source_segment_ids: number[]; assignee: string | null; due: string | null; flags: EntryFlags }
+note_id: string | null; source_segment_ids: number[]; 
+/**
+ * D5: Nummern der Folien (`meeting_slides.number`), auf die sich der Eintrag
+ * belegt (`F7`). Fehlt in aelteren Dokumenten: dann leer.
+ */
+source_slide_ids?: number[]; assignee: string | null; due: string | null; flags: EntryFlags }
 export type EnhancedNotes = { 
 /**
  * Immer "enhanced@1".

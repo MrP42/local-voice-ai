@@ -115,6 +115,34 @@ export const marksBySegment = (
   return result;
 };
 
+/** D5: die Folie mit dieser Nummer (Beleg `F7` in Protokoll und KI-Notizen). */
+export const slideByNumber = (
+  slides: MeetingSlide[],
+  number: number,
+): MeetingSlide | null => slides.find((s) => s.number === number) ?? null;
+
+/** D5: die Folie mit dieser ID (Quelle `slide` in Herkunft und Chat-Belegen). */
+export const slideById = (
+  slides: MeetingSlide[],
+  id: string,
+): MeetingSlide | null => slides.find((s) => s.id === id) ?? null;
+
+/** Ziel der Links, die aus `[F7]` im Protokoll werden (`#folie-7`). */
+export const SLIDE_LINK = /^#folie-(\d{1,6})$/;
+
+/**
+ * D5: macht aus den Folienbelegen `[F7]` eines Protokolls Links (`[F7](#folie-7)`),
+ * aber nur fuer Folien, die es gibt; ein Beleg auf eine geloeschte Folie bleibt Text.
+ * Das gespeicherte Markdown bleibt unveraendert (Export, Kopieren).
+ */
+export const linkSlideTags = (
+  markdown: string,
+  known: (slideNumber: number) => boolean,
+): string =>
+  markdown.replace(/\[F(\d{1,6})\]/g, (all, digits: string) =>
+    known(Number(digits)) ? `[F${digits}](#folie-${digits})` : all,
+  );
+
 /** Bild-Pfad einer Folie: Besprechungsordner (absolut) + relativer Pfad. */
 export const slideFilePath = (dir: string, relative: string): string =>
   `${dir.replace(/[\\/]+$/, "")}/${relative.replace(/^[\\/]+/, "")}`;

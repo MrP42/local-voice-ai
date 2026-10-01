@@ -15,7 +15,9 @@
 //! 3. KI-Eintrag: leerer Text entfaellt; Quellen `S<n>` bleiben nur, wenn es
 //!    dieses Segment gibt (der Rest zaehlt in `dropped_sources`); ohne gueltige
 //!    Quelle wird der Eintrag NICHT geloescht, sondern `unsupported` markiert
-//!    (sonst waere die Belegquote geschoent).
+//!    (sonst waere die Belegquote geschoent). D5: Quellen `F<n>` (Folien) gelten
+//!    ebenso, aber nur fuer Folien, die im Prompt standen; eine Folie allein
+//!    ist eine gueltige Quelle.
 //! 4. Nicht platzierte, nicht leere Notizen kommen in Dokumentreihenfolge ans
 //!    Ende des ersten Text-Abschnitts (Aufgaben-Notizen in den Aufgaben-
 //!    Abschnitt), `placed_by_fallback = true`.
@@ -124,6 +126,16 @@ pub fn parse_source_id(raw: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
+/// D5: `"F7"` -> 7, die Folie mit dieser Nummer. Wie [`parse_source_id`], mit `F`.
+pub fn parse_slide_id(raw: &str) -> Option<u32> {
+    let normalized = normalize_ref(raw);
+    let digits = normalized.strip_prefix('F')?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
 fn clean_optional(value: Option<String>) -> Option<String> {
     value
         .map(|v| v.trim().to_string())
@@ -144,22 +156,40 @@ pub struct ProtectedEntry {
     pub entry: EnhancedEntry,
 }
 
-/// Gueltige, deduplizierte Quellen eines Eintrags und wie viele verworfen
-/// wurden. Doppelte Nennungen derselben Quelle sind kein Verwerfen.
-fn validate_sources(raw: &[String], valid: &HashSet<u32>) -> (Vec<u32>, u32) {
+/// Gueltige, deduplizierte Quellen eines Eintrags: Segmente (`S12`) und, seit D5,
+/// Folien (`F7`), dazu wie viele Angaben verworfen wurden. Doppelte Nennungen derselben
+/// Quelle sind kein Verwerfen; eine Folie, die nicht im Prompt stand, zaehlt wie ein
+/// unbekanntes Segment.
+fn validate_sources_with(
+    raw: &[String],
+    valid: &HashSet<u32>,
+    valid_slides: &HashSet<u32>,
+) -> (Vec<u32>, Vec<u32>, u32) {
     let mut kept: Vec<u32> = Vec::new();
+    let mut kept_slides: Vec<u32> = Vec::new();
     let mut dropped = 0u32;
     for source in raw {
-        match parse_source_id(source) {
-            Some(id) if valid.contains(&id) => {
+        if let Some(id) = parse_source_id(source) {
+            if valid.contains(&id) {
                 if !kept.contains(&id) {
                     kept.push(id);
                 }
+            } else {
+                dropped += 1;
             }
-            _ => dropped += 1,
+        } else if let Some(id) = parse_slide_id(source) {
+            if valid_slides.contains(&id) {
+                if !kept_slides.contains(&id) {
+                    kept_slides.push(id);
+                }
+            } else {
+                dropped += 1;
+            }
+        } else {
+            dropped += 1;
         }
     }
-    (kept, dropped)
+    (kept, kept_slides, dropped)
 }
 
 fn blank_entry(origin: Origin) -> EnhancedEntry {
@@ -169,6 +199,7 @@ fn blank_entry(origin: Origin) -> EnhancedEntry {
         text: String::new(),
         note_id: None,
         source_segment_ids: Vec::new(),
+        source_slide_ids: Vec::new(),
         assignee: None,
         due: None,
         flags: EntryFlags::default(),
@@ -197,11 +228,23 @@ fn fallback_section(sections: &[EnhancedSection], want_tasks: bool) -> Option<us
 /// des Transkripts (Quellen werden gegen sie geprueft). `chunks_*` und
 /// `single_pass` der Statistik setzt der Aufrufer.
 pub fn assemble(
+    raw: RawEnhanced,
+    spec: &TemplateSpec,
+    notes: &[NoteBlock],
+    protected: &[ProtectedEntry],
+    segments: &[StoredSegment],
+) -> (Vec<EnhancedSection>, EnhanceStats) {
+    assemble_with_slides(raw, spec, notes, protected, segments, &HashSet::new())
+}
+
+/// D5: wie [`assemble`]; `slides` sind die Nummern der Folien, die im Prompt standen.
+pub fn assemble_with_slides(
     mut raw: RawEnhanced,
     spec: &TemplateSpec,
     notes: &[NoteBlock],
     protected: &[ProtectedEntry],
     segments: &[StoredSegment],
+    slides: &HashSet<u32>,
 ) -> (Vec<EnhancedSection>, EnhanceStats) {
     let valid_segments: HashSet<u32> = segments.iter().map(|s| s.segment_index).collect();
 
@@ -258,11 +301,13 @@ pub fn assemble(
                         continue; // doppelte ref: der spaetere Eintrag entfaellt
                     }
                     let block = &notes[index];
-                    let (sources, dropped) = validate_sources(&raw_entry.sources, &valid_segments);
+                    let (sources, slide_sources, dropped) =
+                        validate_sources_with(&raw_entry.sources, &valid_segments, slides);
                     let mut entry = blank_entry(Origin::User);
                     entry.text = block.text.clone(); // byte-genau, nie vom Modell
                     entry.note_id = Some(block.id.clone());
                     entry.source_segment_ids = sources;
+                    entry.source_slide_ids = slide_sources;
                     entry.assignee = assignee;
                     entry.due = due;
                     entry.flags.dropped_sources = dropped;
@@ -289,12 +334,14 @@ pub fn assemble(
             if raw_entry.text.trim().is_empty() {
                 continue;
             }
-            let (sources, dropped) = validate_sources(&raw_entry.sources, &valid_segments);
+            let (sources, slide_sources, dropped) =
+                validate_sources_with(&raw_entry.sources, &valid_segments, slides);
             let mut entry = blank_entry(Origin::Ai);
             entry.text = raw_entry.text.trim().to_string();
-            entry.flags.unsupported = sources.is_empty();
+            entry.flags.unsupported = sources.is_empty() && slide_sources.is_empty();
             entry.flags.dropped_sources = dropped;
             entry.source_segment_ids = sources;
+            entry.source_slide_ids = slide_sources;
             entry.assignee = assignee;
             entry.due = due;
             section.entries.push(entry);
@@ -354,7 +401,7 @@ pub fn assemble(
             stats.dropped_source_ids += entry.flags.dropped_sources;
             if entry.origin == Origin::Ai {
                 stats.ai_entries += 1;
-                if !entry.source_segment_ids.is_empty() {
+                if !entry.source_segment_ids.is_empty() || !entry.source_slide_ids.is_empty() {
                     stats.ai_entries_sourced += 1;
                 }
             }

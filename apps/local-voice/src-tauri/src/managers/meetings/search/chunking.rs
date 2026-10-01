@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::super::notes::model::{EnhancedNotes, NoteBlock, NoteBlockKind};
+use super::super::slides::prompt::slide_texts;
+use super::super::slides::store::MeetingSlide;
 use super::super::speakers::SpeakerDirectory;
 use super::super::store::StoredSegment;
 
@@ -32,6 +34,9 @@ pub enum ChunkSource {
     Transcript,
     UserNotes,
     AiNotes,
+    // D5: Text einer Folie (OCR) samt gekennzeichneter Bildbeschreibung (kein Doku-Kommentar:
+    // der landet sonst mitten im TypeScript-Typ von `bindings.ts`).
+    Slide,
 }
 
 impl ChunkSource {
@@ -41,6 +46,7 @@ impl ChunkSource {
             ChunkSource::Transcript => "transcript",
             ChunkSource::UserNotes => "user_notes",
             ChunkSource::AiNotes => "ai_notes",
+            ChunkSource::Slide => "slide",
         }
     }
 
@@ -50,6 +56,7 @@ impl ChunkSource {
             "transcript" => ChunkSource::Transcript,
             "user_notes" => ChunkSource::UserNotes,
             "ai_notes" => ChunkSource::AiNotes,
+            "slide" => ChunkSource::Slide,
             _ => return None,
         })
     }
@@ -386,6 +393,53 @@ pub fn chunk_title(head: &ChunkHead) -> Option<ChunkDraft> {
         ),
         text,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Folien (D5)
+// ---------------------------------------------------------------------------
+
+/// Chunks der Folien einer Besprechung: je Folie mit Text einer (ein sehr langer Text
+/// wird an Wortgrenzen auf mehrere verteilt, alle mit demselben Schluessel). Nur
+/// nicht ausgeblendete Folien mit Text (`slides::prompt::slide_texts`). Zeile:
+/// `Folie 7 04:12: <Text>`; die Bildbeschreibung folgt gekennzeichnet in einer
+/// eigenen Zeile (`Bild: ...`), wenn sie in den letzten Chunk passt (R2: sie hat
+/// Ablesefehler, sie bleibt als solche erkennbar). Schluessel (`ref_keys`) ist die
+/// Folien-ID, `start_ms` die erste Sichtung: ein Treffer fuehrt zur Folie und zur Zeit.
+pub fn chunk_slides(slides: &[MeetingSlide], head: &ChunkHead) -> Vec<ChunkDraft> {
+    let mut out = Vec::new();
+    for slide in slide_texts(slides) {
+        let start_ms = slide.starts.first().copied().unwrap_or(0);
+        let prefix = format!("Folie {} {}: ", slide.number, clock(start_ms));
+        let mut pieces = split_to_fit(&prefix, &slide.text, MAX_CHARS);
+        if let (Some(description), Some(last)) = (&slide.description, pieces.last_mut()) {
+            let line = format!("\nBild: {description}");
+            if char_len(last) + char_len(&line) <= MAX_CHARS {
+                last.push_str(&line);
+            }
+        }
+        for text in pieces {
+            out.push(ChunkDraft {
+                source: ChunkSource::Slide,
+                epoch: 0,
+                segment_ids: Vec::new(),
+                ref_keys: vec![slide.id.clone()],
+                document_id: None,
+                start_ms: Some(start_ms),
+                end_ms: None,
+                channel: None,
+                embed_text: embed_text_for(
+                    ChunkSource::Slide,
+                    &head.title,
+                    head.started_at,
+                    &head.folder_names,
+                    &text,
+                ),
+                text,
+            });
+        }
+    }
+    out
 }
 
 #[derive(Default)]
@@ -1111,6 +1165,7 @@ mod tests {
             text: text.into(),
             note_id: None,
             source_segment_ids: sources.to_vec(),
+            source_slide_ids: Vec::new(),
             assignee: assignee.map(str::to_string),
             due: None,
             flags: EntryFlags::default(),
@@ -1385,5 +1440,84 @@ mod tests {
         assert_eq!(fts_query_trigram(""), None);
         let q = fts_query_trigram("Straße").unwrap();
         assert!(q.starts_with('(') && q.contains("\"strasse\""), "{q}");
+    }
+
+    // ---- D5: Folien ----------------------------------------------------------
+
+    fn slide(number: u32, start_ms: u64, text: &str) -> MeetingSlide {
+        use crate::managers::meetings::slides::SlideOccurrence;
+        MeetingSlide {
+            id: format!("sl-{number}"),
+            meeting_id: "m1".into(),
+            number,
+            origin: "video".into(),
+            image_path: format!("slides/{number:04}.jpg"),
+            thumb_path: None,
+            occurrences: vec![SlideOccurrence {
+                start_ms,
+                end_ms: start_ms + 20_000,
+            }],
+            ocr_text: Some(text.into()),
+            ocr_engine: Some("windows-ocr".into()),
+            kind: Some("text".into()),
+            description: None,
+            description_model: None,
+            hidden: false,
+        }
+    }
+
+    #[test]
+    fn a_slide_becomes_one_chunk_with_its_id_as_key_and_its_first_sighting_as_time() {
+        let drafts = chunk_slides(&[slide(7, 252_000, "Umsatz 13,1 Mio. EUR")], &head());
+        assert_eq!(drafts.len(), 1);
+        let c = &drafts[0];
+        assert_eq!(c.source, ChunkSource::Slide);
+        assert_eq!(c.text, "Folie 7 04:12: Umsatz 13,1 Mio. EUR");
+        assert_eq!(c.ref_keys, vec!["sl-7".to_string()]);
+        assert_eq!((c.start_ms, c.epoch), (Some(252_000), 0));
+        assert!(c.segment_ids.is_empty() && c.document_id.is_none());
+        assert!(c.embed_text.contains("Besprechung:") && c.embed_text.contains("Umsatz 13,1"));
+    }
+
+    #[test]
+    fn hidden_slides_and_slides_without_text_have_no_chunk_and_the_order_is_by_time() {
+        let mut hidden = slide(1, 0, "Sprecherbild");
+        hidden.hidden = true;
+        let mut empty = slide(2, 0, "   ");
+        empty.ocr_text = Some("   ".into());
+        let late = slide(3, 90_000, "Spaet");
+        let early = slide(4, 10_000, "Frueh");
+        let drafts = chunk_slides(&[hidden, empty, late, early], &head());
+        let texts: Vec<&str> = drafts.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(texts, vec!["Folie 4 00:10: Frueh", "Folie 3 01:30: Spaet"]);
+        assert!(chunk_slides(&[], &head()).is_empty());
+    }
+
+    #[test]
+    fn the_description_is_marked_and_a_very_long_text_stays_under_the_chunk_limit() {
+        let mut s = slide(2, 0, "Balkendiagramm");
+        s.description = Some("Region Sued hoechster Umsatz".into());
+        let drafts = chunk_slides(&[s], &head());
+        assert_eq!(
+            drafts[0].text,
+            "Folie 2 00:00: Balkendiagramm\nBild: Region Sued hoechster Umsatz"
+        );
+        let long = chunk_slides(&[slide(9, 0, &"Wort ".repeat(900))], &head());
+        assert!(long.len() >= 3, "{} Chunks", long.len());
+        for d in &long {
+            assert!(d.text.chars().count() <= MAX_CHARS);
+            assert_eq!(d.ref_keys, vec!["sl-9".to_string()], "alle Teile gehoeren zur Folie");
+            assert!(d.text.starts_with("Folie 9 00:00: "));
+        }
+    }
+
+    #[test]
+    fn the_slide_source_round_trips_through_its_name() {
+        assert_eq!(ChunkSource::Slide.as_str(), "slide");
+        assert_eq!(ChunkSource::parse("slide"), Some(ChunkSource::Slide));
+        assert_eq!(
+            serde_json::to_string(&ChunkSource::Slide).unwrap(),
+            "\"slide\""
+        );
     }
 }

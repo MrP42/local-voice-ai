@@ -72,6 +72,23 @@ pub fn minutes_entry_cap(transcript_chars: usize) -> usize {
     (transcript_chars / MINUTES_CHARS_PER_ENTRY).clamp(MINUTES_MIN_ENTRIES, MINUTES_MAX_ENTRIES)
 }
 
+/// D5: so viel vom Prompt duerfen Folientexte hoechstens belegen, in Prozent der
+/// Zeichen des Transkripts. Spike M7: 50 bis 150 Token je Folie, 15 Folien rund
+/// 2 000 Token; ein Vortrag von einer Stunde hat ein Transkript von 50 000 bis
+/// 60 000 Zeichen, 25 % davon sind reichlich. Die Folien duerfen das Transkript
+/// nicht aus dem Kontext verdraengen (mehr Bloecke, mehr Aufrufe).
+pub const SLIDE_BUDGET_PERCENT: usize = 25;
+/// Untergrenze der Folienzeichen, damit ein kurzes Transkript trotzdem einige
+/// Folien bekommt (rund 600 Token).
+pub const SLIDE_BUDGET_MIN_CHARS: usize = 2_000;
+
+/// Wie viele Zeichen Folientext ein Prompt zu einem Transkript von
+/// `transcript_chars` Zeichen hoechstens traegt (Kuerzungsleiter:
+/// `slides::prompt::LEVELS`).
+pub fn slide_budget_chars(transcript_chars: usize) -> usize {
+    (transcript_chars.saturating_mul(SLIDE_BUDGET_PERCENT) / 100).max(SLIDE_BUDGET_MIN_CHARS)
+}
+
 /// Mehr als so viele Zeilen (Eintraege der map-Stufe): der Reduce wird
 /// uebersprungen. Seine Antwort gibt alle Zeilen noch einmal als JSON aus
 /// (gemessen, Gemma 4 E4B, 60 Minuten: 33 Zeilen = 3 977 Token = 25 s; im

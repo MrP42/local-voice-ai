@@ -2,7 +2,7 @@
 //!
 //! Zwei Stufen:
 //! 1. **Lexikalisch, sofort** (ein Thread, Millisekunden je Besprechung):
-//!    Titel, Transkript, Nutzernotizen und juengste KI-Notizen werden in Chunks
+//!    Titel, Transkript, Nutzernotizen, juengste KI-Notizen und (D5) Folientexte werden in Chunks
 //!    zerlegt und mit FTS in `meetings.db` geschrieben (`replace_meeting_chunks`,
 //!    EINE Transaktion je Besprechung). Nur geaenderte Quellen werden ersetzt.
 //! 2. **Vektoren, im Hintergrund**: Chunks ohne Vektor gehen in Chargen zu
@@ -33,10 +33,11 @@ use specta::Type;
 
 use super::super::notes::enhance::DOC_FORMAT;
 use super::super::notes::model::{EnhancedNotes, NoteBlock};
+use super::super::slides::store::MeetingSlide;
 use super::super::store::{MeetingStore, StoredSegment};
 use super::chunking::{
-    chunk_enhanced, chunk_title, chunk_transcript_with, chunk_user_notes, ChunkDraft, ChunkHead,
-    ChunkSource,
+    chunk_enhanced, chunk_slides, chunk_title, chunk_transcript_with, chunk_user_notes, ChunkDraft,
+    ChunkHead, ChunkSource,
 };
 use super::super::speakers::SpeakerDirectory;
 use super::embed::{EmbedError, EmbedKind, Embedder};
@@ -59,11 +60,12 @@ pub const SLICE_BATCHES: usize = 8;
 const MAX_STALE_RETRIES: u8 = 3;
 /// Mehr uebersprungene ("giftige") Chunks als das: systemischer Fehler.
 const MAX_SKIPPED_CHUNKS: usize = 256;
-const ALL_SOURCES: [ChunkSource; 4] = [
+const ALL_SOURCES: [ChunkSource; 5] = [
     ChunkSource::Title,
     ChunkSource::Transcript,
     ChunkSource::UserNotes,
     ChunkSource::AiNotes,
+    ChunkSource::Slide,
 ];
 
 // ---------------------------------------------------------------------------
@@ -161,6 +163,9 @@ struct Snapshot {
     blocks: Vec<NoteBlock>,
     /// (Dokument-ID, `updated_at`, lesbarer Inhalt)
     doc: Option<(String, i64, Option<EnhancedNotes>)>,
+    /// D5: die Folien der Besprechung; `None`: nicht lesbar (die Folien-Chunks bleiben
+    /// dann unberuehrt, statt mit einer leeren Liste ersetzt zu werden).
+    slides: Option<Vec<MeetingSlide>>,
 }
 
 impl MeetingStore {
@@ -245,6 +250,16 @@ impl MeetingStore {
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             names
         };
+        // D5: Folien ausserhalb der Lesetransaktion (eigene Verbindung); aendern sie sich
+        // danach, loest der Aendernde einen neuen Auftrag aus.
+        drop(tx);
+        let slides = match self.slides_list(meeting_id) {
+            Ok(slides) => Some(slides),
+            Err(e) => {
+                log::warn!("Indexer: Folien von {meeting_id} nicht lesbar ({e}), Folien-Chunks bleiben");
+                None
+            }
+        };
         Ok(Some(Snapshot {
             meeting_id: meeting_id.to_string(),
             title,
@@ -258,6 +273,7 @@ impl MeetingStore {
             notes_revision: notes_revision.max(0) as u64,
             blocks,
             doc,
+            slides,
         }))
     }
 
@@ -561,16 +577,26 @@ impl IndexerCore {
                 sources.push(ChunkSource::AiNotes);
             }
         }
-        if sources.is_empty() {
-            return Ok(LexicalOutcome::Unchanged);
-        }
-
         let head = ChunkHead {
             title: snap.title.clone(),
             description: snap.description.clone(),
             started_at: snap.started_at,
             folder_names: snap.folders.clone(),
         };
+        // D5: die Folien haben keinen Zaehler im Index-Zustand; der Vergleich der Chunks
+        // (Text, Folie, Zeit) sagt, ob sie sich geaendert haben.
+        let slide_drafts: Option<Vec<ChunkDraft>> =
+            snap.slides.as_ref().map(|slides| chunk_slides(slides, &head));
+        if !full {
+            if let Some(drafts) = &slide_drafts {
+                if self.store.slide_chunks_differ(&snap.meeting_id, drafts)? {
+                    sources.push(ChunkSource::Slide);
+                }
+            }
+        }
+        if sources.is_empty() {
+            return Ok(LexicalOutcome::Unchanged);
+        }
         let mut drafts: Vec<ChunkDraft> = Vec::new();
         for source in &sources {
             match source {
@@ -590,7 +616,16 @@ impl IndexerCore {
                         drafts.extend(chunk_enhanced(id, notes, &head));
                     }
                 }
+                ChunkSource::Slide => {
+                    if let Some(slide_drafts) = &slide_drafts {
+                        drafts.extend(slide_drafts.iter().cloned());
+                    }
+                }
             }
+        }
+        // Nicht lesbare Folien: bei einem vollen Neuaufbau bleibt die Quelle leer.
+        if slide_drafts.is_none() {
+            sources.retain(|s| *s != ChunkSource::Slide);
         }
         let state = IndexState {
             transcript_epoch: Some(snap.epoch),
@@ -1418,6 +1453,7 @@ mod tests {
                     text: text.into(),
                     note_id: None,
                     source_segment_ids: vec![1, 2],
+                    source_slide_ids: Vec::new(),
                     assignee: None,
                     due: None,
                     flags: EntryFlags::default(),
@@ -2006,5 +2042,181 @@ Ansprechpartnerin Frau Lindner");
             .search_meetings("Zeppelinstrasse", &MeetingFilter::default(), 0, 25)
             .unwrap();
         assert!(gone.items.is_empty());
+    }
+
+    // ---- D5: Folien ----------------------------------------------------------
+
+    use crate::managers::meetings::slides::test_support::add_slide;
+
+    fn slide_chunk_texts(store: &MeetingStore, meeting_id: &str) -> Vec<String> {
+        let conn = store.get_connection().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT text FROM meeting_chunks WHERE meeting_id = ?1 AND source = 'slide' ORDER BY id")
+            .unwrap();
+        stmt.query_map([meeting_id], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn index_now(r: &mut Rig, id: &str) -> usize {
+        let t0 = Instant::now();
+        r.core.handle(IndexJob::Meeting(id.to_string()), t0);
+        r.core.run_lexical(t0)
+    }
+
+    #[test]
+    fn slide_text_is_findable_by_words_and_by_the_meeting_search() {
+        use crate::managers::meetings::search::index::MeetingFilter;
+        let mut r = rig();
+        let m = meeting_with_content(&r.store, "Quartalsvortrag");
+        add_slide(&r.store, &m.id, 12_000, Some("Umsatz Region Nordlicht 13,1 Mio. EUR"));
+        add_slide(&r.store, &m.id, 30_000, Some("Zeitplan Wasserturmallee"));
+        assert_eq!(index_now(&mut r, &m.id), 1);
+        assert_eq!(
+            sources_of(&r.store, &m.id),
+            vec!["slide", "title", "transcript", "user_notes"]
+        );
+        assert_eq!(
+            slide_chunk_texts(&r.store, &m.id),
+            vec![
+                "Folie 1 00:12: Umsatz Region Nordlicht 13,1 Mio. EUR",
+                "Folie 2 00:30: Zeitplan Wasserturmallee"
+            ]
+        );
+        // Wortsuche (Chat-Pfad) und Meeting-Suche (Liste): der Folientext steht NUR auf der Folie.
+        for word in ["nordlicht", "wasserturmallee"] {
+            let hits = r
+                .store
+                .search_words(&format!("\"{word}\""), &[m.id.clone()], 10)
+                .unwrap();
+            assert_eq!(hits.len(), 1, "{word}");
+        }
+        let page = r
+            .store
+            .search_meetings("Nordlicht", &MeetingFilter::default(), 0, 25)
+            .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].meeting.id, m.id);
+        assert_eq!(page.items[0].hit_source, Some(ChunkSource::Slide));
+        // Ein Teilwort der Zahl-/Wortfolge geht ueber die Trigram-Suche.
+        assert_eq!(
+            r.store
+                .search_meetings("wasserturm", &MeetingFilter::default(), 0, 25)
+                .unwrap()
+                .total,
+            1
+        );
+    }
+
+    #[test]
+    fn slide_changes_replace_only_the_slide_chunks_and_keep_every_vector_of_the_rest() {
+        let mut r = rig();
+        let m = meeting_with_content(&r.store, "Quartalsvortrag");
+        let a = add_slide(&r.store, &m.id, 12_000, Some("Alpha Umsatz"));
+        add_slide(&r.store, &m.id, 30_000, Some("Beta Zeitplan"));
+        assert_eq!(index_now(&mut r, &m.id), 1);
+        let t0 = Instant::now();
+        run_all_vectors(&mut r.core, t0);
+        let all_chunks = chunks(&r.store);
+        assert_eq!(vectors(&r.store), all_chunks, "alle Chunks haben einen Vektor");
+
+        // Ohne Aenderung: nichts neu.
+        assert_eq!(index_now(&mut r, &m.id), 0);
+        assert_eq!(chunks(&r.store), all_chunks);
+
+        // Folie ausblenden: ihr Chunk verschwindet samt Vektor, die anderen bleiben.
+        r.store.slide_set_hidden(&a.id, true).unwrap();
+        assert_eq!(index_now(&mut r, &m.id), 1);
+        assert_eq!(slide_chunk_texts(&r.store, &m.id), vec!["Folie 2 00:30: Beta Zeitplan"]);
+        assert_eq!(chunks(&r.store), all_chunks - 1);
+        // Nur der neue Folien-Chunk braucht noch einen Vektor.
+        assert_eq!(vectors(&r.store), all_chunks - 2, "die uebrigen Vektoren sind unberuehrt");
+
+        // Neuer OCR-Text (z. B. Gemma-OCR ersetzt Windows-OCR): der alte Text ist weg, der neue findbar.
+        r.store
+            .slide_set_text(&a.id, Some("Gamma Korrektur 13,1"), Some("gemma-4-e4b"), Some("text"))
+            .unwrap();
+        r.store.slide_set_hidden(&a.id, false).unwrap();
+        assert_eq!(index_now(&mut r, &m.id), 1);
+        assert_eq!(
+            slide_chunk_texts(&r.store, &m.id),
+            vec!["Folie 1 00:12: Gamma Korrektur 13,1", "Folie 2 00:30: Beta Zeitplan"]
+        );
+        let find = |word: &str| {
+            r.store
+                .search_words(&format!("\"{word}\""), &[m.id.clone()], 10)
+                .unwrap()
+                .len()
+        };
+        assert_eq!((find("alpha"), find("gamma")), (0, 1));
+        assert_eq!(status(&r.store, &m.id), STATUS_LEXICAL, "neue Chunks warten auf Vektoren");
+    }
+
+    #[test]
+    fn slides_found_before_the_index_make_the_meeting_stale_for_the_backfill_exactly_once() {
+        let mut r = rig();
+        let m = meeting_with_content(&r.store, "Quartalsvortrag");
+        assert_eq!(index_now(&mut r, &m.id), 1);
+        assert!(r.store.stale_meetings(10).unwrap().is_empty());
+        // Folien kommen nach dem Index (Lauf der Folienerkennung): veraltet.
+        let s = add_slide(&r.store, &m.id, 12_000, Some("Umsatz Nordlicht"));
+        assert_eq!(r.store.stale_meetings(10).unwrap(), vec![m.id.clone()]);
+        // Nachholen indexiert sie; danach ist der Zustand ruhig (keine Endlosschleife).
+        let t0 = Instant::now();
+        r.core.handle(IndexJob::Backfill, t0);
+        assert_eq!(r.core.run_lexical(t0), 1);
+        assert!(r.store.stale_meetings(10).unwrap().is_empty());
+        assert_eq!(slide_chunk_texts(&r.store, &m.id).len(), 1);
+        // Eine ausgeblendete oder textlose Folie allein macht nichts veraltet.
+        let mut r2 = rig();
+        let m2 = meeting_with_content(&r2.store, "Zweiter");
+        assert_eq!(index_now(&mut r2, &m2.id), 1);
+        let hidden = add_slide(&r2.store, &m2.id, 1_000, Some("Sprecherbild"));
+        r2.store.slide_set_hidden(&hidden.id, true).unwrap();
+        add_slide(&r2.store, &m2.id, 2_000, None);
+        assert!(r2.store.stale_meetings(10).unwrap().is_empty());
+        let _ = s;
+    }
+
+    #[test]
+    fn unreadable_slides_leave_the_slide_chunks_alone_and_a_deleted_meeting_loses_them() {
+        let mut r = rig();
+        let m = meeting_with_content(&r.store, "Quartalsvortrag");
+        add_slide(&r.store, &m.id, 12_000, Some("Umsatz Nordlicht"));
+        assert_eq!(index_now(&mut r, &m.id), 1);
+        assert_eq!(slide_chunk_texts(&r.store, &m.id).len(), 1);
+        // Die Folien-Tabelle ist beschaedigt: die Besprechung wird neu indexiert (Titel geaendert),
+        // die Folien-Chunks bleiben stehen statt mit einer leeren Liste ersetzt zu werden.
+        r.store
+            .get_connection()
+            .unwrap()
+            .execute_batch("DROP TABLE meeting_slides;")
+            .unwrap();
+        r.store
+            .update_metadata(
+                &m.id,
+                &crate::managers::meetings::metadata::MetadataEdit {
+                    description: Some("Neue Beschreibung".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(index_now(&mut r, &m.id), 1, "der Kopf hat sich geaendert");
+        assert_eq!(slide_chunk_texts(&r.store, &m.id).len(), 1, "Folien-Chunks bleiben");
+    }
+
+    #[test]
+    fn a_deleted_meeting_loses_its_slide_chunks_and_their_vectors() {
+        let mut r = rig();
+        let m = meeting_with_content(&r.store, "Quartalsvortrag");
+        add_slide(&r.store, &m.id, 12_000, Some("Umsatz Nordlicht"));
+        assert_eq!(index_now(&mut r, &m.id), 1);
+        run_all_vectors(&mut r.core, Instant::now());
+        assert_eq!(slide_chunk_texts(&r.store, &m.id).len(), 1);
+        r.store.soft_delete_meeting(&m.id).unwrap();
+        assert_eq!(slide_chunk_texts(&r.store, &m.id).len(), 0);
+        assert_eq!(chunks(&r.store), 0);
+        assert_eq!(vectors(&r.store), 0, "die Trigger raeumen die Vektoren mit");
     }
 }

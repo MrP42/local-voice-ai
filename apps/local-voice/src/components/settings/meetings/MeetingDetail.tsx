@@ -31,6 +31,7 @@ import {
   type AudioPlayerHandle,
 } from "../../ui/AudioPlayer";
 import { MinutesView } from "./MinutesView";
+import type { SlideRefs } from "../../whats-new/MarkdownContent";
 import { MyNotesView } from "./notes/MyNotesView";
 import { EnhancedNotesView } from "./notes/EnhancedNotesView";
 import { MeetingTemplatePicker } from "./notes/TemplatePicker";
@@ -64,7 +65,10 @@ import {
   canDetectSlides,
   marksBySegment,
   slideAt,
+  slideById,
+  slideByNumber,
   slideMarks,
+  slideStartMs,
   slidesErrorKey,
   visibleSlides,
 } from "@/lib/meetingSlides";
@@ -252,6 +256,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const { slides } = slidesState;
   const [slideViewerId, setSlideViewerId] = useState<string | null>(null);
   const [activeSlideId, setActiveSlideId] = useState<string | null>(null);
+  const [slideJump, setSlideJump] = useState<{ id: string } | null>(null);
   const slidesRef = useRef(slides);
   slidesRef.current = slides;
   const centerTabs = [
@@ -462,6 +467,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
    * markieren.
    */
   const jumpToCitation = (citation: Citation) => {
+    // D5: ein Folien-Beleg fuehrt zur Folie (und im Audio an ihre Zeit).
+    if (citation.source === "slide") {
+      if (citation.ref_key) setSlideJump({ id: citation.ref_key });
+      return;
+    }
     if (citation.source === "user_notes" || citation.source === "ai_notes") {
       onLowerTab(citation.source === "user_notes" ? "notes" : "ai");
       if (citation.ref_key) {
@@ -943,6 +953,38 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const seekSlide = (ms: number) => {
     if (player.canSeek) player.seek(ms);
   };
+  // D5: Sprung zu einer Folie, auf die ein Beleg zeigt (Protokoll `[F7]`, KI-Notizen, Chat,
+  // Herkunft): Reiter Folien, Folie markieren, im Audio an ihre erste Sichtung. Sind die
+  // Folien noch nicht gelesen (Sprung aus dem globalen Chat), wartet der Sprung darauf;
+  // gibt es die Folie nach dem Lesen nicht, verfaellt er.
+  useEffect(() => {
+    if (!slideJump) return;
+    const slide = slideById(slides, slideJump.id);
+    if (slide) {
+      setSlideJump(null);
+      setCenterTab("slides");
+      setActiveSlideId(slide.id);
+      if (slide.hidden) setSlideViewerId(slide.id);
+      if (player.canSeek) player.seek(slideStartMs(slide));
+    } else if (slidesState.loaded) {
+      setSlideJump(null);
+    }
+    // Der Player und der Reiter werden beim Ausloesen gelesen, nicht beobachtet.
+  }, [slideJump, slides, slidesState.loaded]);
+  const slideRefs = useMemo<SlideRefs>(
+    () => ({
+      known: (number) => slideByNumber(slides, number) !== null,
+      onOpen: (number) => {
+        const slide = slideByNumber(slides, number);
+        if (slide) setSlideJump({ id: slide.id });
+      },
+    }),
+    [slides],
+  );
+  const slideStartMsOf = (number: number): number | null => {
+    const slide = slideByNumber(slides, number);
+    return slide ? slideStartMs(slide) : null;
+  };
   const hideSlide = async (slideId: string, hidden: boolean) => {
     const error = await slidesState.setHidden(slideId, hidden);
     if (error) toast.error(t(slidesErrorKey(error)));
@@ -1117,6 +1159,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           }}
           testId="prov-area-transcript"
           className="relative flex min-h-0 flex-1 flex-col"
+          onOpenSlide={(id) => setSlideJump({ id })}
         >
           <div
             ref={transcriptRef}
@@ -1395,8 +1438,13 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           <ProvenanceArea
             subject={{ type: "document", meetingId, docKind: "minutes" }}
             testId="prov-area-minutes"
+            onOpenSlide={(id) => setSlideJump({ id })}
           >
-            <MinutesView meetingId={meetingId} meetingTitle={meetingTitle} />
+            <MinutesView
+              meetingId={meetingId}
+              meetingTitle={meetingTitle}
+              slideRefs={slideRefs}
+            />
           </ProvenanceArea>
         </div>
       )}
@@ -1447,6 +1495,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             docKind: "enhanced_notes",
           }}
           testId="prov-area-ai"
+          onOpenSlide={(id) => setSlideJump({ id })}
         >
           <EnhancedNotesView
             meeting={meeting}
@@ -1454,6 +1503,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             epochKey={epochKey}
             hasAudio={hasAudio}
             onJumpToSource={jumpToSource}
+            slideStartMsOf={slideStartMsOf}
+            onJumpToSlide={(number) => {
+              const slide = slideByNumber(slides, number);
+              if (slide) setSlideJump({ id: slide.id });
+            }}
           />
         </ProvenanceArea>
       )}

@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use super::{dhash64, FRAME_BYTES, SAMPLE_H, SAMPLE_W};
+use super::store::{MeetingSlide, NewSlide, ORIGIN_VIDEO};
+use super::{dhash64, SlideOccurrence, FRAME_BYTES, SAMPLE_H, SAMPLE_W};
+use crate::managers::meetings::store::MeetingStore;
 
 /// Serialisiert die Tests, die Kindprozesse starten: unter Windows erbt ein
 /// gleichzeitig gestarteter Prozess gelegentlich fremde Pipe-Enden, und die
@@ -150,4 +152,37 @@ pub(crate) fn gray_hash_of_image(path: &Path) -> u64 {
         "genau ein Abtastbild erwartet"
     );
     dhash64(&out.stdout, SAMPLE_W, SAMPLE_H)
+}
+
+/// D5: legt eine Folie an einer Zeit an (Sichtung 20 s lang), mit Text (`text`) und
+/// Art `text`, oder ohne. Fuer die Tests von Protokoll, KI-Notizen, Suche und Chat.
+pub(crate) fn add_slide(
+    store: &MeetingStore,
+    meeting_id: &str,
+    start_ms: u64,
+    text: Option<&str>,
+) -> MeetingSlide {
+    let made = store
+        .slide_insert(&NewSlide {
+            meeting_id: meeting_id.to_string(),
+            number: None,
+            origin: ORIGIN_VIDEO,
+            image_path: "slides/0001.jpg".to_string(),
+            thumb_path: None,
+            dhash: start_ms,
+            occurrences: vec![SlideOccurrence {
+                start_ms,
+                end_ms: start_ms + 20_000,
+            }],
+        })
+        .expect("Folie anlegen");
+    if let Some(text) = text {
+        store
+            .slide_set_text(&made.id, Some(text), Some("windows-ocr"), Some("text"))
+            .expect("Folientext setzen");
+    }
+    store
+        .slide_get(&made.id)
+        .expect("Folie lesen")
+        .expect("Folie da")
 }

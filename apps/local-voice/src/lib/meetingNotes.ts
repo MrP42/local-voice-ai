@@ -313,7 +313,17 @@ export const parseEnhanced = (body: string): EnhancedNotes | null => {
       value.format === ENHANCED_FORMAT &&
       Array.isArray(value.sections)
     ) {
-      return value as EnhancedNotes;
+      // D5: Dokumente von vor den Folien kennen `source_slide_ids` nicht.
+      return {
+        ...value,
+        sections: value.sections.map((section) => ({
+          ...section,
+          entries: (section.entries ?? []).map((entry) => ({
+            ...entry,
+            source_slide_ids: entry.source_slide_ids ?? [],
+          })),
+        })),
+      } as EnhancedNotes;
     }
   } catch {
     // kaputter Body: wie ein fremdes Format behandeln
@@ -338,7 +348,9 @@ export const isAiText = (entry: EnhancedEntry): boolean =>
 /** KI-Eintrag ohne gueltigen Beleg: bekommt das gelbe "ohne Beleg"-Zeichen. */
 export const lacksEvidence = (entry: EnhancedEntry): boolean =>
   isAiText(entry) &&
-  (entry.flags.unsupported || entry.source_segment_ids.length === 0);
+  (entry.flags.unsupported ||
+    (entry.source_segment_ids.length === 0 &&
+      (entry.source_slide_ids ?? []).length === 0));
 
 /** Sichtbare Quellen und die Zahl der weiteren (`+n`). */
 export const splitSources = (
@@ -439,6 +451,7 @@ export const withNewEntry = (
               text,
               note_id: null,
               source_segment_ids: [],
+              source_slide_ids: [],
               assignee: null,
               due: null,
               flags: {

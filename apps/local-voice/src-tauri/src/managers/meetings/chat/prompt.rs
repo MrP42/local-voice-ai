@@ -19,6 +19,20 @@ Belege jede Aussage direkt dahinter mit der Auszugs-ID in eckigen Klammern, z. B
 Erfinde keine Namen, Zahlen, Termine. Wenn die Auszüge die Frage nicht beantworten, schreibe genau: KEIN_BELEG
 Antworte knapp, in der Sprache der Frage, ohne Überschriften. Datum der Besprechung angeben, wenn mehrere beteiligt sind.";
 
+/// D5: Zusatz zum System-Prompt, wenn Folien-Auszuege dabei sind. Die Bildbeschreibung
+/// (Zeilen `Bild:`) hat Ablesefehler (R2): Zahlen kommen nur aus dem Folientext.
+pub const SLIDE_RULE: &str = "Auszüge „Folie n“ enthalten den Text einer Folie; Zeilen „Bild:“ sind automatische Bildbeschreibungen mit möglichen Ablesefehlern. Übernimm Zahlen, Daten und Namen nur aus dem Folientext, nie aus einer „Bild:“-Zeile.";
+
+/// Der System-Prompt: unverändert, und nur wenn Folien-Auszüge dabei sind, mit
+/// [`SLIDE_RULE`] (ohne Folien ist der Prompt byteweise wie vorher).
+pub fn system_prompt_for(excerpts: &[Excerpt]) -> String {
+    if excerpts.iter().any(|e| e.source == ChunkSource::Slide) {
+        format!("{SYSTEM_PROMPT}\n{SLIDE_RULE}")
+    } else {
+        SYSTEM_PROMPT.to_string()
+    }
+}
+
 /// Laengster Verlaufsbeitrag im Prompt (eine lange Antwort soll den Verlauf
 /// nicht allein fuellen).
 const HISTORY_ITEM_CHARS: usize = 600;
@@ -48,6 +62,13 @@ pub fn excerpt_heading(ex: &Excerpt) -> String {
             None => "KI-Notizen".to_string(),
         },
         ChunkSource::Title => "Titel".to_string(),
+        // D5: `Folie 7 · 04:12` (die Bezeichnung steht in `section`).
+        ChunkSource::Slide => match (&ex.section, ex.start_ms) {
+            (Some(section), Some(s)) => format!("{section} · {}", clock(s)),
+            (Some(section), None) => section.clone(),
+            (None, Some(s)) => format!("Folie · {}", clock(s)),
+            _ => "Folie".to_string(),
+        },
     };
     format!("[Q{}] {} · {}", ex.qid, ex.meeting_label, what)
 }
@@ -286,5 +307,59 @@ mod tests {
         assert!(newest.starts_with("Nutzer: Wie hoch"), "war: {newest}");
         assert!(!newest.contains("ganz alt"));
         assert_eq!(render_history(&[], 100), "");
+    }
+
+    // ---- D5: Folien ----------------------------------------------------------
+
+    fn slide_excerpt() -> Excerpt {
+        use crate::managers::meetings::slides::store::MeetingSlide;
+        use crate::managers::meetings::slides::SlideOccurrence;
+        let slide = MeetingSlide {
+            id: "sl-7".into(),
+            meeting_id: "m1".into(),
+            number: 7,
+            origin: "video".into(),
+            image_path: "slides/0007.jpg".into(),
+            thumb_path: None,
+            occurrences: vec![SlideOccurrence {
+                start_ms: 252_000,
+                end_ms: 270_000,
+            }],
+            ocr_text: Some("Umsatz 13,1 Mio. EUR".into()),
+            ocr_engine: None,
+            kind: Some("text".into()),
+            description: Some("Balkendiagramm".into()),
+            description_model: None,
+            hidden: false,
+        };
+        let mut ex = super::super::context::slide_excerpts(&meeting("m1"), &[slide]).remove(0);
+        ex.qid = 4;
+        ex.meeting_label = "B1".into();
+        ex
+    }
+
+    #[test]
+    fn a_slide_excerpt_reads_folie_number_and_time_and_marks_the_image_description() {
+        let ex = slide_excerpt();
+        assert_eq!(excerpt_heading(&ex), "[Q4] B1 · Folie 7 · 04:12");
+        assert_eq!(
+            prompt_body(&ex),
+            "Folie 7 04:12: Umsatz 13,1 Mio. EUR\nBild: Balkendiagramm"
+        );
+    }
+
+    #[test]
+    fn the_system_prompt_only_grows_when_slide_excerpts_are_in_the_context() {
+        let plain = {
+            let mut ex = transcript_blocks(&meeting("m1"), &[seg(0, 0, "Hallo")], 0, 1_200).remove(0);
+            ex.qid = 1;
+            ex
+        };
+        assert_eq!(system_prompt_for(&[]), SYSTEM_PROMPT);
+        assert_eq!(system_prompt_for(&[plain.clone()]), SYSTEM_PROMPT, "ohne Folien byteweise wie vorher");
+        let with = system_prompt_for(&[plain, slide_excerpt()]);
+        assert!(with.starts_with(SYSTEM_PROMPT));
+        assert!(with.ends_with(SLIDE_RULE));
+        assert!(with.contains("nie aus einer „Bild:“-Zeile"));
     }
 }

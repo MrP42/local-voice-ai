@@ -520,7 +520,7 @@ pub fn citation_matches(c: &CitedRef, src: &ExpectSource) -> bool {
             src.segments.iter().any(|s| segs.contains(s))
         }
         ChunkSource::UserNotes => c.ref_key.as_ref().is_some_and(|k| src.notes.contains(k)),
-        ChunkSource::AiNotes | ChunkSource::Title => false,
+        ChunkSource::AiNotes | ChunkSource::Title | ChunkSource::Slide => false,
     }
 }
 
