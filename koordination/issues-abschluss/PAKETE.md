@@ -42,5 +42,5 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | B6 | M5 | #67 Wissens-Aktionen (Relevanz, Abgleich, Vault ohne Dubletten, Kanal-Summary), Vorlage Kanal → Wissen — lv-coder-xhigh (D:) | AK11 workflows::knowledge | in_arbeit | |
 | C3 | M6 | #68 agent.route + policy.rs (Whitelist, Empfänger, Obergrenzen, Injection), Router Qwen3.5-9B — lv-coder-xhigh (D:) | AK5, AK9 | in_arbeit | |
 | D3 | M7 | #69 Bildanalyse für Folien (mmproj optional, nur Folienaufträge) — lv-coder (D:) | slides::vision llm::server | in_arbeit | |
-| K1 | M8 | Webhook-Formular, Lizenzhinweise NC-Stimmen/espeak-ng, KNOWN-LIMITATIONS — lv-coder (D:) | tsc, Specs, gen-notices --check | in_arbeit | |
+| K1 | M8 | Webhook-Formular, Lizenzhinweise NC-Stimmen/espeak-ng, KNOWN-LIMITATIONS — lv-coder (D:) | tsc, Specs, gen-notices --check | abgenommen | cf6b5a13 |
 | R0 | M8 | PR-Triage #21/#32/#60/#63 vor Release (Regel 7) — lv-coder-xhigh (D:) | cargo build, Entscheidung je PR | abgenommen (#60,#63 drin, #21 überholt, #32 ausgeklammert) | d2ca22ba |
