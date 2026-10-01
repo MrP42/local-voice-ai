@@ -79,7 +79,7 @@ pub fn parse_subtitles(content: &str) -> Result<Vec<StoredSegment>, String> {
     }
 
     if segments.is_empty() {
-        return Err("Kein gültiges Untertitelformat erkannt (VTT/SRT erwartet)".to_string());
+        return Err("subtitle_invalid".to_string());
     }
     Ok(segments)
 }
@@ -226,7 +226,11 @@ mod tests {
 
     #[test]
     fn garbage_is_an_error_not_an_empty_import() {
-        assert!(parse_subtitles("kein untertitelformat").is_err());
+        // #15: ein Code, kein Satz in einer Sprache (die Oberflaeche uebersetzt ihn).
+        assert_eq!(
+            parse_subtitles("kein untertitelformat").unwrap_err(),
+            "subtitle_invalid"
+        );
     }
 
     #[test]

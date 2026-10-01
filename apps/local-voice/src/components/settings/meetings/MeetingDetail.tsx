@@ -786,6 +786,9 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       );
       setEditingIndex(null);
       setEditText("");
+    } else {
+      // Die Eingabe bleibt offen; ohne Meldung wirkte das wie ein Haenger (#15).
+      toast.error(translateMeetingError(result.error, t));
     }
   };
 

@@ -625,6 +625,41 @@ pub fn hide_decision(meeting_recording: bool) -> HideDecision {
     }
 }
 
+/// Ablauf eines Hide-Wunsches als reine Folge von Entscheidungen, damit das
+/// Wettlauffenster pruefbar ist (#15, "Zombie-Indikator"). `recording` fragt, ob
+/// eine Besprechung laeuft; `restore` stellt den Aufnahme-Indikator wieder auf;
+/// `hide` blendet das Fenster aus.
+///
+/// Der Wettlauf: die Frage "laeuft eine Besprechung?" (ja) und das Wiederaufstellen
+/// sind nicht atomar. Endet die Besprechung dazwischen (`stop()` stellt den
+/// Zustand zuerst auf Idle und versteckt dann selbst), stuende der Indikator
+/// danach fuer immer: niemand versteckt ihn mehr. Darum wird nach dem
+/// Wiederaufstellen noch einmal gefragt; ist die Aufnahme inzwischen zu Ende,
+/// geht es doch in den Hide.
+pub(crate) fn run_hide(
+    recording: &mut dyn FnMut() -> bool,
+    restore: &mut dyn FnMut(),
+    hide: &mut dyn FnMut(),
+) {
+    if hide_decision(recording()) == HideDecision::RestoreMeetingIndicator {
+        restore();
+        // Zweite Frage gegen den Wettlauf: laeuft die Besprechung noch, bleibt der
+        // Indikator stehen; sonst hat `stop()` zwischendurch beendet und versteckt nur
+        // einmal, also hier.
+        if recording() {
+            return;
+        }
+    }
+    hide();
+}
+
+/// Darf das verzoegerte `window.hide()` noch laufen? Nur, wenn seit dem
+/// Ausblenden kein anderer Overlay-Zustand uebernommen hat (neue Aufnahme,
+/// Notiz, Meeting-Start): sonst verschwaende ein frisch gezeigter Indikator.
+pub(crate) fn deferred_hide_allowed(scheduled_generation: u64, current_generation: u64) -> bool {
+    scheduled_generation == current_generation
+}
+
 /// True while a meeting recording is running. `try_state` keeps this a no-op
 /// in builds/tests where no recorder is managed.
 fn meeting_is_recording(app_handle: &AppHandle) -> bool {
@@ -707,21 +742,33 @@ pub fn update_overlay_position(app_handle: &AppHandle) {
 /// expiry, dictation end, TTS) runs through here, so no caller has to
 /// remember the meeting.
 pub fn hide_recording_overlay(app_handle: &AppHandle) {
-    if hide_decision(meeting_is_recording(app_handle)) == HideDecision::RestoreMeetingIndicator {
-        show_persistent_notice(app_handle, MEETING_RECORDING_NOTICE_KEY);
-        return;
-    }
+    run_hide(
+        &mut || meeting_is_recording(app_handle),
+        &mut || show_persistent_notice(app_handle, MEETING_RECORDING_NOTICE_KEY),
+        &mut || hide_overlay_window(app_handle),
+    );
+}
 
+/// Blendet das Overlay-Fenster aus (Ausblend-Animation, dann `hide()`).
+///
+/// #15: das verzoegerte `hide()` gilt nur fuer den Zustand, der beim Ausblenden
+/// aktuell war. Zeigt in den 300 ms ein anderer Zustand das Overlay (der
+/// Meeting-Indikator einer neu gestarteten Aufnahme, ein Hinweis, ein Diktat), hat
+/// der den Zaehler erhoeht, und das alte `hide()` laesst das Fenster stehen.
+fn hide_overlay_window(app_handle: &AppHandle) {
     // Always hide the overlay regardless of settings - if setting was changed while recording,
     // we still want to hide it properly
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
+        let generation = OVERLAY_STATE_GENERATION.load(Ordering::Acquire);
         // Emit event to trigger fade-out animation
         let _ = overlay_window.emit("hide-overlay", ());
         // Hide the window after a short delay to allow animation to complete
         let window_clone = overlay_window.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(300));
-            let _ = window_clone.hide();
+            if deferred_hide_allowed(generation, OVERLAY_STATE_GENERATION.load(Ordering::Acquire)) {
+                let _ = window_clone.hide();
+            }
         });
     }
 }
@@ -803,6 +850,57 @@ mod tests {
         // a transient notice expiring must not silently end it.
         assert_eq!(hide_decision(true), HideDecision::RestoreMeetingIndicator);
         assert_eq!(hide_decision(false), HideDecision::Hide);
+    }
+
+    fn run(answers: &[bool]) -> (u32, u32, u32) {
+        let asked = std::cell::Cell::new(0usize);
+        let restored = std::cell::Cell::new(0u32);
+        let hidden = std::cell::Cell::new(0u32);
+        run_hide(
+            &mut || {
+                let i = asked.get();
+                asked.set(i + 1);
+                // Nach der letzten Antwort gilt sie weiter.
+                answers[i.min(answers.len() - 1)]
+            },
+            &mut || restored.set(restored.get() + 1),
+            &mut || hidden.set(hidden.get() + 1),
+        );
+        (asked.get() as u32, restored.get(), hidden.get())
+    }
+
+    #[test]
+    fn a_running_meeting_gets_its_indicator_back_and_the_overlay_stays() {
+        let (asked, restored, hidden) = run(&[true, true]);
+        assert_eq!((restored, hidden), (1, 0));
+        assert_eq!(
+            asked, 2,
+            "einmal fuer die Entscheidung, einmal gegen den Wettlauf"
+        );
+    }
+
+    #[test]
+    fn without_a_meeting_the_overlay_is_simply_hidden() {
+        let (asked, restored, hidden) = run(&[false]);
+        assert_eq!((asked, restored, hidden), (1, 0, 1));
+    }
+
+    /// Der Wettlauf: `stop()` stellt den Zustand zwischen der Frage und dem
+    /// Wiederaufstellen auf Idle. Ohne die zweite Frage bliebe der Indikator als
+    /// Zombie stehen, ohne dass ihn noch jemand ausblendet.
+    #[test]
+    fn a_meeting_that_ends_between_the_check_and_the_restore_leaves_no_zombie_indicator() {
+        let (_, restored, hidden) = run(&[true, false]);
+        assert_eq!(restored, 1, "es wurde (zu Recht) wieder aufgestellt");
+        assert_eq!(hidden, 1, "und danach doch ausgeblendet");
+    }
+
+    #[test]
+    fn a_delayed_hide_never_closes_an_overlay_a_later_state_has_taken_over() {
+        assert!(deferred_hide_allowed(7, 7));
+        // Meeting-Start (Indikator), Diktat oder Hinweis haben den Zaehler erhoeht.
+        assert!(!deferred_hide_allowed(7, 8));
+        assert!(!deferred_hide_allowed(7, 9));
     }
 
     #[test]

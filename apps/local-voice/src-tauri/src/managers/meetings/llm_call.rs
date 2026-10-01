@@ -93,7 +93,7 @@ pub fn sorted_segments(segments: &[StoredSegment]) -> Vec<StoredSegment> {
 
 pub fn head_facts_block(head: &MeetingHead) -> String {
     let mut block = format!(
-        "# Meeting facts (computed, treat as given — restate them, never recompute)\n\
+        "# Meeting facts (computed, treat as given — never recompute; mention them only where a section or the task asks for them)\n\
          Title: {}\nDate: {}\nDuration: {}\n",
         head.title,
         head.date_iso,
@@ -682,6 +682,24 @@ mod tests {
         let plain = head_facts_block(&head_with("  
  "));
         assert!(!plain.contains("Description"), "{plain}");
+    }
+
+    /// #15: "restate them" verlangte vom Modell, die Fakten zu wiederholen, obwohl
+    /// das Protokoll-Schema (nur Abschnitts-IDs der Vorlage) dafuer kein Feld hat:
+    /// das Modell erfand Kopfzeilen in irgendeinem Abschnitt. Der Block sagt jetzt,
+    /// dass die Fakten gegeben sind (nie neu berechnen) und nur dort vorkommen, wo
+    /// eine Anweisung sie verlangt.
+    #[test]
+    fn the_facts_block_does_not_ask_for_a_restatement_the_schema_has_no_slot_for() {
+        let block = head_facts_block(&head_with(""));
+        assert!(!block.contains("restate"), "{block}");
+        assert!(block.contains("never recompute"), "{block}");
+        assert!(
+            block.contains("only where a section or the task asks for them"),
+            "{block}"
+        );
+        // Die Fakten selbst stehen weiter drin.
+        assert!(block.contains("Title: Kick-off") && block.contains("Date: 2026-09-30"), "{block}");
     }
 
     #[test]

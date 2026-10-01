@@ -490,7 +490,8 @@ test.describe("Aufnahme und Einstellung", () => {
     await openStart(page);
     const box = page.getByTestId("diarize-mic");
     await expect(box).not.toBeChecked();
-    await box.check();
+    // ToggleSwitch: unsichtbares Eingabefeld unter dem sichtbaren Schalter (force).
+    await box.check({ force: true });
     await confirmStart(page);
     await expect
       .poll(async () => (await calls(page, "meetings_set_diarize_mic")).length)

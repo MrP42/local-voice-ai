@@ -53,9 +53,26 @@ pub(crate) fn modifiers_physically_held() -> bool {
 /// release logged only afterwards). Waiting for the release costs at most
 /// the time the user needs to lift a finger.
 pub(crate) fn wait_for_modifiers_released(max: std::time::Duration) -> std::time::Duration {
+    wait_for_modifiers_released_with(
+        &mut modifiers_physically_held,
+        max,
+        std::time::Duration::from_millis(10),
+    )
+}
+
+/// Wie [`wait_for_modifiers_released`], mit austauschbarer Tastaturabfrage und
+/// Abfragetakt: `held` sagt, ob gerade eine Umschalttaste gehalten wird. Fragt
+/// sofort, schlaeft nur zwischen zwei Abfragen und gibt nach `max` auf (eine
+/// dauerhaft gehaltene Taste, ein Spiel, ein klemmender Schalter, darf das Diktat
+/// nicht aufhalten). Gibt zurueck, wie lange gewartet wurde.
+pub(crate) fn wait_for_modifiers_released_with(
+    held: &mut dyn FnMut() -> bool,
+    max: std::time::Duration,
+    poll: std::time::Duration,
+) -> std::time::Duration {
     let started = std::time::Instant::now();
-    while modifiers_physically_held() && started.elapsed() < max {
-        std::thread::sleep(std::time::Duration::from_millis(10));
+    while held() && started.elapsed() < max {
+        std::thread::sleep(poll);
     }
     started.elapsed()
 }
@@ -494,6 +511,47 @@ mod tests {
 #[cfg(test)]
 mod modifier_release_tests {
     use super::*;
+
+    const STEP: std::time::Duration = std::time::Duration::from_millis(2);
+
+    /// Simulierter Tastaturzustand: gehalten fuer die ersten `polls_held` Abfragen.
+    fn keyboard(polls_held: u32) -> (impl FnMut() -> bool, std::rc::Rc<std::cell::Cell<u32>>) {
+        let polls = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let seen = std::rc::Rc::clone(&polls);
+        (
+            move || {
+                seen.set(seen.get() + 1);
+                seen.get() <= polls_held
+            },
+            polls,
+        )
+    }
+
+    #[test]
+    fn the_wait_ends_as_soon_as_the_chord_is_let_go() {
+        let (mut held, polls) = keyboard(3); // Strg+Win noch 3 Abfragen unten
+        let waited = wait_for_modifiers_released_with(&mut held, std::time::Duration::from_secs(5), STEP);
+        assert_eq!(polls.get(), 4, "3x gehalten, dann losgelassen");
+        assert!(waited >= STEP * 3, "es wurde wirklich gewartet: {waited:?}");
+        assert!(waited < std::time::Duration::from_secs(1), "und nicht bis zum Limit: {waited:?}");
+    }
+
+    #[test]
+    fn a_key_held_forever_ends_at_the_time_limit() {
+        let mut held = || true;
+        let limit = std::time::Duration::from_millis(40);
+        let waited = wait_for_modifiers_released_with(&mut held, limit, STEP);
+        assert!(waited >= limit, "{waited:?}");
+        assert!(waited < std::time::Duration::from_secs(2), "{waited:?}");
+    }
+
+    #[test]
+    fn nothing_held_costs_one_query_and_no_sleep() {
+        let (mut held, polls) = keyboard(0);
+        let waited = wait_for_modifiers_released_with(&mut held, std::time::Duration::from_secs(5), std::time::Duration::from_secs(5));
+        assert_eq!(polls.get(), 1);
+        assert!(waited < std::time::Duration::from_millis(500), "kein Takt-Schlaf: {waited:?}");
+    }
 
     /// Ohne gedrueckte Taste darf das Warten nichts kosten — sonst wuerde
     /// jede Injektion um die Wartezeit spaeter landen.

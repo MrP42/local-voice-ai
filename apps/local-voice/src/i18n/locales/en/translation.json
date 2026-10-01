@@ -1717,6 +1717,7 @@
       "resume": "Resume",
       "titlePlaceholder": "Meeting title",
       "captureSystem": "Capture system audio (other party)",
+      "captureSystemHint": "Also records the sound that plays through your speakers or headphones, for example the other side of a video call.",
       "diarizeMic": "Several people at the microphone",
       "diarizeMicHint": "Several people speak into your microphone (e.g. a meeting room): after the recording the microphone is separated into speakers as well. Best with headphones or echo cancellation, otherwise the remote side may show up among the room speakers (\"Raum n\").",
       "micLevel": "Microphone",
@@ -1947,6 +1948,10 @@
       "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, or cancelled).",
       "finalPassStopped": "Post-processing stopped – the live transcript stays valid.",
       "meetingBusy": "This meeting is being processed right now.",
+      "meetingsUnavailable": "Meetings are not available right now: the database could not be opened at start-up. Please restart the app; if that does not help, the log file names the cause.",
+      "storeFailed": "The change could not be saved.",
+      "subtitleUnreadable": "The subtitle file could not be read.",
+      "subtitleInvalid": "No valid subtitle format recognised (VTT or SRT expected).",
       "listFailed": "The meeting list could not be loaded: {{error}}"
     },
     "retention": {

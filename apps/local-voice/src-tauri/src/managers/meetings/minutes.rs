@@ -346,7 +346,9 @@ fn transcript_line(segment: &StoredSegment, labels: &SpeakerDirectory) -> String
         "{} [{}]: {}",
         labels.label(segment),
         mm_ss(segment.start_ms),
-        segment.text.trim()
+        // Eine Zeile je Segment: ein Zeilenumbruch im Text liesse daraus mehrere
+        // Zeilen ohne Label werden (#15).
+        one_line(&segment.text)
     )
 }
 
@@ -2236,6 +2238,33 @@ mod tests {
         assert!(named.contains("Anna Berg [01:10]: Guten Tag"), "{named}");
         assert!(named.contains("Gegenseite 1 [01:05]"), "{named}");
         assert!(named.starts_with("Ich [00:00]"), "{named}");
+    }
+
+    /// #15: das Transkript steht im Prompt als eine Zeile je Segment
+    /// (`Label [mm:ss]: Text`); ein Zeilenumbruch im Segmenttext (STT liefert
+    /// manchmal Absaetze) liess daraus mehrere Zeilen werden, die wie neue
+    /// Segmente ohne Label aussehen und die Blockgrenzen verfaelschen.
+    #[test]
+    fn a_segment_text_with_line_breaks_stays_one_line_of_the_prompt() {
+        let seg = |index: u32, text: &str, start_ms: u64| StoredSegment {
+            segment_index: index,
+            text: text.into(),
+            start_ms,
+            end_ms: start_ms + 1_000,
+            channel: 0,
+            speaker_index: None,
+            words: None,
+        };
+        let segs = vec![
+            seg(0, "Erste Zeile\nzweite Zeile\r\n\r\ndritte", 0),
+            seg(1, "  Nur ein Satz  ", 65_000),
+        ];
+        let rendered = render_transcript_for_prompt(&segs);
+        assert_eq!(rendered.lines().count(), 2, "ein Segment = eine Zeile: {rendered:?}");
+        assert_eq!(
+            rendered,
+            "Ich [00:00]: Erste Zeile zweite Zeile dritte\nIch [01:05]: Nur ein Satz"
+        );
     }
 
     #[test]

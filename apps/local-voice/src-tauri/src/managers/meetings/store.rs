@@ -1902,13 +1902,17 @@ impl MeetingStore {
         let conn = self.get_connection()?;
         let now = Utc::now().timestamp();
 
+        // `.optional()?`: nur "keine Zeile" heisst "kein Transkript". Ein Datenbankfehler
+        // (gesperrt, beschaedigt, Platte voll) geht als solcher nach oben, statt als
+        // "No transcript" zu erscheinen (#15; wie `merge_speakers` und `set_segment_speaker`).
         let (transcript_id, segments_json): (String, String) = conn
             .query_row(
                 "SELECT id, segments_json FROM transcripts WHERE meeting_id = ?1 AND deleted_at IS NULL",
                 params![meeting_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .map_err(|_| anyhow!("No transcript for meeting {}", meeting_id))?;
+            .optional()?
+            .ok_or_else(|| anyhow!("No transcript for meeting {}", meeting_id))?;
 
         let mut segments: Vec<StoredSegment> = serde_json::from_str(&segments_json)?;
         let segment = segments
@@ -3389,6 +3393,48 @@ mod tests {
         assert_eq!(segs.len(), 2);
         assert_eq!(segs[1].text, "Guten Morgen.");
         assert_eq!(segs[1].channel, 1);
+    }
+
+    /// #15: ein Datenbankfehler beim Lesen des Transkripts darf nicht als
+    /// "kein Transkript" erscheinen. Vorher schluckte `map_err(|_| ..)` jeden
+    /// rusqlite-Fehler; die Oberflaeche suchte dann ein Transkript, das da ist.
+    #[test]
+    fn a_database_failure_while_correcting_a_segment_is_not_reported_as_a_missing_transcript() {
+        let s = store();
+        let m = s.create_meeting("T", MeetingSource::Live, Some(1)).unwrap();
+        s.append_delta(
+            &m.id,
+            &TranscriptDelta {
+                new_segments: vec![StoredSegment {
+                    segment_index: 0,
+                    text: "Text".into(),
+                    start_ms: 0,
+                    end_ms: 800,
+                    channel: 0,
+                    speaker_index: None,
+                    words: None,
+                }],
+            },
+        )
+        .unwrap();
+        // Ein echtes Fehlen: Besprechung ohne Transkript, und ein falscher Index.
+        let none = s.create_meeting("Leer", MeetingSource::Live, Some(1)).unwrap();
+        let missing = s.update_segment_text(&none.id, 0, "x").unwrap_err().to_string();
+        assert!(missing.contains("No transcript"), "war: {missing}");
+        let wrong = s.update_segment_text(&m.id, 99, "x").unwrap_err().to_string();
+        assert!(wrong.contains("Segment 99 not found"), "war: {wrong}");
+
+        // Ein DB-Fehler (Tabelle weg, wie bei einer beschaedigten Datei).
+        s.get_connection()
+            .unwrap()
+            .execute_batch("DROP TABLE transcripts")
+            .unwrap();
+        let broken = s.update_segment_text(&m.id, 0, "x").unwrap_err().to_string();
+        assert!(
+            !broken.contains("No transcript"),
+            "ein Datenbankfehler ist kein fehlendes Transkript, war: {broken}"
+        );
+        assert!(broken.contains("transcripts"), "die DB-Ursache bleibt sichtbar: {broken}");
     }
 
     #[test]

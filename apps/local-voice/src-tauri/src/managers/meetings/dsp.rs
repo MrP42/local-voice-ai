@@ -1755,6 +1755,12 @@ impl LivePipeline {
         self.dsp.as_ref().map(DspHandle::control)
     }
 
+    /// Die Zaehler dieser Besprechung (lock-frei, fuer die Capture-Seite: was die
+    /// Mikrofon-Queue verwirft, zaehlt auf `overflow_samples`).
+    pub fn stats(&self) -> Arc<DspStats> {
+        Arc::clone(&self.stats)
+    }
+
     /// Ende der Aufnahme. Voraussetzung: die Captures sind gestoppt (kein
     /// Callback ruft `ChannelFeed::push` mehr). Reihenfolge: DSP leeren und
     /// Segmentierer flushen, dann Worker beenden. Wenn das hier zurueckkehrt,

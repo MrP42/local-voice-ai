@@ -7,6 +7,15 @@ import type { TFunction } from "i18next";
  * is appended after a colon), while the same code arrives verbatim as an
  * event payload — so the code is normalized by taking everything before the
  * first colon before looking it up.
+ *
+ * Convention (#15): every error a command returns is `"<code>"` or
+ * `"<code>: <detail>"` with a snake_case ASCII code. The code is the only part
+ * the user ever sees (translated here); the detail is the cause for the log and
+ * a bug report. Backend prose in any language (German strings of the minutes
+ * run, English strings of the store) is therefore not part of the contract:
+ * database and storage failures are `store_failed`, a store that did not open
+ * at start-up is `meetings_unavailable`. Unknown codes still fall back to the
+ * raw text, so nothing is hidden that a user might need to report.
  */
 const ERROR_KEY_MAP: Record<string, string> = {
   consent_required: "meetings.errors.consentRequired",
@@ -43,6 +52,11 @@ const ERROR_KEY_MAP: Record<string, string> = {
   not_queued: "meetings.queue.errors.notQueued",
   // G1 (#70)
   target_not_empty: "meetings.errors.targetNotEmpty",
+  // #15
+  meetings_unavailable: "meetings.errors.meetingsUnavailable",
+  store_failed: "meetings.errors.storeFailed",
+  subtitle_unreadable: "meetings.errors.subtitleUnreadable",
+  subtitle_invalid: "meetings.errors.subtitleInvalid",
 };
 
 /** U7: Fehlercodes beim Bearbeiten der Metadaten als i18n-Schluessel. */

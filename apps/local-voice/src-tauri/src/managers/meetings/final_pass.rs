@@ -1406,6 +1406,14 @@ pub fn probe_hardware(app: &tauri::AppHandle) -> Hardware {
 /// `processing` setzen. `Err` nur, wenn der Status nicht gespeichert wurde.
 pub fn prepare_orphan(store: &MeetingStore, meeting: &Meeting) -> Result<Option<u64>, String> {
     use crate::audio_toolkit::audio::wav_writer::repair_orphan_wav;
+    // #15: die Dateizeit VOR der Reparatur lesen: sie schreibt den Kopf neu und setzt
+    // die Zeit damit auf "jetzt". Davor liegt sie am Absturz.
+    let modified_before_repair = newest_modified_secs(
+        [&meeting.mic_audio_path, &meeting.system_audio_path]
+            .into_iter()
+            .flatten()
+            .map(String::as_str),
+    );
     let derived: Vec<String> = meeting
         .mic_audio_path
         .as_deref()
@@ -1442,10 +1450,48 @@ pub fn prepare_orphan(store: &MeetingStore, meeting: &Meeting) -> Result<Option<
             warn!("meetings: orphan duration not stored: {e}");
         }
     }
+    // #15: auch die Endzeit (Liste: sonst `--:--`; Aufbewahrung: ein echter Anker).
+    // Ein Rest, den der Nutzer gestoppt hat (`cancelled`), hat sie schon.
+    if meeting.ended_at.is_none() {
+        let ended_at = orphan_ended_at(
+            modified_before_repair,
+            meeting.started_at,
+            meeting.created_at,
+            duration_ms,
+        );
+        if let Err(e) = store.set_ended_at(&meeting.id, ended_at) {
+            warn!("meetings: orphan end time not stored: {e}");
+        }
+    }
     store
         .set_status(&meeting.id, MeetingStatus::Processing)
         .map_err(|e| e.to_string())?;
     Ok(duration_ms)
+}
+
+/// #15: wann ein Absturzrest endete (Unix-Sekunden), damit die Liste Dauer und
+/// Endzeit zeigt statt `--:--` und die Aufbewahrung einen echten Anker hat.
+/// Beste Naeherung zuerst: die letzte Aenderung der Audiodatei (der Kopf wird
+/// jede Sekunde geschrieben, sie liegt also am Absturz), sonst Start + gemessene
+/// Dauer, sonst Anlage + Dauer.
+fn orphan_ended_at(
+    wav_modified: Option<i64>,
+    started_at: Option<i64>,
+    created_at: i64,
+    duration_ms: Option<u64>,
+) -> i64 {
+    let by_duration = started_at.unwrap_or(created_at) + (duration_ms.unwrap_or(0) / 1_000) as i64;
+    wav_modified.unwrap_or(by_duration).max(created_at)
+}
+
+/// Letzte Aenderung der vorhandenen Dateien (Unix-Sekunden), die neueste gewinnt.
+fn newest_modified_secs<'a>(paths: impl IntoIterator<Item = &'a str>) -> Option<i64> {
+    paths
+        .into_iter()
+        .filter_map(|path| std::fs::metadata(path).ok()?.modified().ok())
+        .filter_map(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|age| age.as_secs() as i64)
+        .max()
 }
 
 /// Plan aus der Einstellung und der Hardware, fuer eine Live-Besprechung.
@@ -2522,10 +2568,15 @@ mod tests {
 
         let meeting = f.store.get_meeting(&f.id).unwrap().unwrap();
         assert_eq!(meeting.status, "processing");
+        assert_eq!(meeting.ended_at, None, "Voraussetzung: der Absturz schrieb keine Endzeit");
         assert_eq!(prepare_orphan(&f.store, &meeting).unwrap(), Some(6_000));
         let meeting = f.store.get_meeting(&f.id).unwrap().unwrap();
         assert_eq!(meeting.duration_ms, Some(6_000));
         assert_eq!(meeting.status, "processing");
+        // #15: auch die Endzeit kommt aus der Reparatur (Liste zeigte sonst `--:--`).
+        let ended = meeting.ended_at.expect("Endzeit des Absturzrests");
+        let now = chrono::Utc::now().timestamp();
+        assert!((now - 60..=now + 5).contains(&ended), "aus der Dateizeit: {ended} vs {now}");
 
         let mut env = FakeEnv::new();
         let mut spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
@@ -3124,6 +3175,19 @@ mod tests {
         d.detach_job();
         d.progress(1, 2);
         assert!(!d.cancelled(), "ohne Auftrag zaehlt nur der Abbruch der Engine");
+    }
+
+    #[test]
+    fn the_end_of_an_orphan_comes_from_the_file_time_then_start_plus_duration_then_creation() {
+        // Dateizeit gewinnt (der Kopf wird sekuendlich geschrieben).
+        assert_eq!(orphan_ended_at(Some(5_000), Some(1_000), 900, Some(60_000)), 5_000);
+        // Ohne Dateizeit: Start + Dauer.
+        assert_eq!(orphan_ended_at(None, Some(1_000), 900, Some(60_000)), 1_060);
+        // Ohne Start (Import): Anlage + Dauer.
+        assert_eq!(orphan_ended_at(None, None, 900, Some(90_500)), 990);
+        // Ohne alles: die Anlagezeit, nie 0 und nie vor der Anlage.
+        assert_eq!(orphan_ended_at(None, None, 900, None), 900);
+        assert!(orphan_ended_at(Some(10), Some(1_000), 900, Some(1_000)) >= 900);
     }
 
     /// P8a: die Pfade eines Imports stehen jetzt VOR der Transkription. Stirbt

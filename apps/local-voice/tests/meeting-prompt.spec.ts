@@ -125,7 +125,8 @@ test("Systemton: die Vorgabe kommt aus den Einstellungen und die Wahl wird gemer
   await toConsent(page);
   const system = page.getByTestId("prompt-capture-system");
   await expect(system).not.toBeChecked();
-  await system.check();
+  // ToggleSwitch: unsichtbares Eingabefeld unter dem sichtbaren Schalter (force).
+  await system.check({ force: true });
   await expect
     .poll(
       async () =>
