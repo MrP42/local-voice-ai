@@ -468,6 +468,7 @@ pub(crate) mod testkit {
                 text: text.into(),
                 note_id: None,
                 source_segment_ids: vec![1],
+                source_slide_ids: Vec::new(),
                 assignee: None,
                 due: None,
                 flags: EntryFlags::default(),
@@ -998,6 +999,40 @@ mod tests {
         assert!(is_error && text.contains("Transkript-Freigabe"), "{text}");
         // Ohne den Filter bleibt die Liste nutzbar.
         assert_eq!(fx.tool_json("list_meetings", json!({}))["total"], 3);
+    }
+
+    /// D5: der Text einer Folie stammt aus derselben Aufnahme wie das Transkript: ohne
+    /// Transkript-Freigabe ist auch ein Treffer auf einer Folie unsichtbar.
+    #[test]
+    fn a_slide_hit_follows_the_transcript_release() {
+        use crate::managers::meetings::search::chunking::{ChunkDraft, ChunkSource};
+        let fx = Fx::new();
+        let state = fx.store.index_state(&fx.d).unwrap().expect("indexiert");
+        fx.store
+            .replace_meeting_chunks(
+                &fx.d,
+                &[ChunkSource::Slide],
+                &[ChunkDraft {
+                    source: ChunkSource::Slide,
+                    epoch: 0,
+                    segment_ids: vec![],
+                    ref_keys: vec!["sl-1".into()],
+                    document_id: None,
+                    start_ms: Some(12_000),
+                    end_ms: None,
+                    channel: None,
+                    text: "Folie 1 00:12: Wasserturmallee Umsatz".into(),
+                    embed_text: "Wasserturmallee".into(),
+                }],
+                &state,
+            )
+            .unwrap();
+        let hit = fx.tool_json("search_meetings", json!({ "query": "Wasserturmallee" }));
+        assert_eq!(ids(&hit), std::slice::from_ref(&fx.d));
+        assert_eq!(hit["meetings"][0]["hit_source"], "slide");
+        fx.settings(true, false);
+        let hidden = fx.tool_json("search_meetings", json!({ "query": "Wasserturmallee" }));
+        assert!(ids(&hidden).is_empty(), "{hidden}");
     }
 
     #[test]

@@ -1405,6 +1405,7 @@ pub(crate) mod tests {
             text: text.to_string(),
             note_id: None,
             source_segment_ids: sources.to_vec(),
+            source_slide_ids: Vec::new(),
             assignee: None,
             due: None,
             flags: EntryFlags::default(),

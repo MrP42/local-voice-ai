@@ -2715,6 +2715,7 @@
       "sourceJump": "Zur Stelle {{time}} im Transkript springen",
       "sourceStale": "Quellen veraltet – neu erzeugen",
       "sourceMore": "{{count}} weitere Quellen anzeigen",
+      "slideJump": "Zu Folie {{number}} springen ({{time}})",
       "taskDone": "Aufgabe erledigt",
       "due": "bis {{due}}",
       "instruction": {
@@ -2766,7 +2767,8 @@
         "title": "Titel oder Beschreibung",
         "transcript": "Transkript",
         "user_notes": "Meine Notizen",
-        "ai_notes": "KI-Notizen"
+        "ai_notes": "KI-Notizen",
+        "slide": "Folie"
       }
     },
     "folders": {
@@ -3001,7 +3003,8 @@
           "title": "Titel",
           "transcript": "Transkript",
           "user_notes": "Meine Notizen",
-          "ai_notes": "KI-Notizen"
+          "ai_notes": "KI-Notizen",
+          "slide": "Folie"
         }
       },
       "coverage": {
@@ -3326,6 +3329,7 @@
       "duration": "Dauer",
       "time": "Zeitpunkt",
       "sources": "Quellen",
+      "openSlide": "Folie anzeigen",
       "confidence": "Konfidenz",
       "trigger": "Auslöser",
       "operation": "Vorgang",

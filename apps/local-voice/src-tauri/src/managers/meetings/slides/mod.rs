@@ -19,6 +19,10 @@
 //!    `<Besprechungsordner>/slides/`, danach die Zeile in `meeting_slides`
 //!    ([`store`]). Der Auftrag ([`run`]) ist die Job-Phase
 //!    [`JobPhase::Slides`](super::job::JobPhase::Slides): pausierbar, stoppbar.
+//! 5. **Nutzung (D5)** ([`prompt`]): der Folientext (`ocr_text`) wird zeitlich in die
+//!    Prompts von Protokoll, KI-Notizen und Chat eingewoben (`[Folie 7 · 04:12] Text`),
+//!    steht als Chunks (`ChunkSource::Slide`) im Suchindex und belegt Aussagen als `[F7]`;
+//!    die Bildbeschreibung nur gekennzeichnet (`{Bild: ...}`, R2).
 //!
 //! # Fehlerfaelle und Absicherung
 //!
@@ -41,6 +45,7 @@
 //! `KILL_ON_JOB_CLOSE`), und der Speicherwaechter der App betrifft nur Server.
 
 pub mod ffmpeg;
+pub mod prompt;
 pub mod run;
 pub mod store;
 #[cfg(test)]

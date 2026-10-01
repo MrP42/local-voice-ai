@@ -2715,6 +2715,7 @@
       "sourceJump": "Jump to {{time}} in the transcript",
       "sourceStale": "Sources outdated – regenerate",
       "sourceMore": "Show {{count}} more sources",
+      "slideJump": "Jump to slide {{number}} ({{time}})",
       "taskDone": "Task done",
       "due": "due {{due}}",
       "instruction": {
@@ -2766,7 +2767,8 @@
         "title": "Title or description",
         "transcript": "Transcript",
         "user_notes": "My notes",
-        "ai_notes": "AI notes"
+        "ai_notes": "AI notes",
+        "slide": "Slide"
       }
     },
     "folders": {
@@ -3001,7 +3003,8 @@
           "title": "Title",
           "transcript": "Transcript",
           "user_notes": "My notes",
-          "ai_notes": "AI notes"
+          "ai_notes": "AI notes",
+          "slide": "Slide"
         }
       },
       "coverage": {
@@ -3326,6 +3329,7 @@
       "duration": "Duration",
       "time": "Time",
       "sources": "Sources",
+      "openSlide": "Show slide",
       "confidence": "Confidence",
       "trigger": "Trigger",
       "operation": "Operation",

@@ -63,6 +63,10 @@ interface EnhancedNotesViewProps {
   hasAudio: boolean;
   /** Wechselt ins Transkript, markiert das Segment und spielt (falls Audio) ab. */
   onJumpToSource: (segmentIndex: number) => void;
+  /** D5: erste Sichtung einer Folie in ms (`null`: es gibt sie nicht (mehr)). */
+  slideStartMsOf?: (slideNumber: number) => number | null;
+  /** D5: Sprung zu einer Folie, auf die sich ein Eintrag belegt (`F7`). */
+  onJumpToSlide?: (slideNumber: number) => void;
 }
 
 type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "error";
@@ -150,6 +154,8 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
   epochKey,
   hasAudio,
   onJumpToSource,
+  slideStartMsOf,
+  onJumpToSlide,
 }) => {
   const { t, i18n } = useTranslation();
   const meetingId = meeting.id;
@@ -604,6 +610,9 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
               startMsOf={startMs}
               stale={stale}
               onJump={onJumpToSource}
+              slideIds={entry.source_slide_ids}
+              slideStartMsOf={slideStartMsOf}
+              onJumpSlide={onJumpToSlide}
             />
           )}
         </div>

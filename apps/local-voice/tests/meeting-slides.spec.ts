@@ -1068,3 +1068,238 @@ test.describe("Import: Folien erkennen", () => {
     ).toBe("[]");
   });
 });
+
+// ---------------------------------------------------------------------------
+// 8. D5: Folien als Belege (Protokoll `[F5]`, KI-Notizen `F5`, Herkunft, Chat)
+// ---------------------------------------------------------------------------
+
+const MINUTES_BODY =
+  "# Protokoll: Vortrag\n\n## Zusammenfassung\n\n- Grundpreis 70 € [F5]\n- Erfundener Beleg [F99]\n";
+
+const ENTRY_FLAGS = {
+  unsupported: false,
+  dropped_sources: 0,
+  placed_by_fallback: false,
+  edited: false,
+};
+
+/** KI-Notizen, deren einziger Beleg die Folie 5 ist (kein Segment). */
+const NOTES_WITH_SLIDE = {
+  format: "enhanced@1",
+  template_id: "builtin:allgemein",
+  template_title: "Allgemein",
+  segment_epoch: 0,
+  sections: [
+    {
+      id: "summary",
+      title: "Zusammenfassung",
+      kind: "text",
+      entries: [
+        {
+          id: "E1",
+          origin: "ai",
+          text: "Arbeitspreis 13,1 ct/kWh",
+          note_id: null,
+          source_segment_ids: [],
+          source_slide_ids: [5],
+          assignee: null,
+          due: null,
+          flags: ENTRY_FLAGS,
+        },
+      ],
+    },
+  ],
+  stats: {
+    user_notes_total: 0,
+    user_notes_by_model: 0,
+    user_notes_by_fallback: 0,
+    ai_entries: 1,
+    ai_entries_sourced: 1,
+    dropped_source_ids: 0,
+    chunks_total: 1,
+    chunks_failed: [],
+    single_pass: true,
+  },
+};
+
+/** Besprechung m8 mit Protokoll und KI-Notizen, die auf Folie 5 verweisen, samt Herkunft des Protokolls. */
+const setupRefs = async (page: Page) => {
+  await setup(page);
+  await page.addInitScript(
+    ({ id, minutes, notes }) => {
+      const w = window as any;
+      w.__documents.push(
+        {
+          id: "pm1",
+          meeting_id: id,
+          kind: "minutes",
+          body_format: "markdown@1",
+          body: minutes,
+          version: 1,
+          created_at: 1790000900,
+          template_id: null,
+          updated_at: 301,
+        },
+        {
+          id: "pn1",
+          meeting_id: id,
+          kind: "enhanced_notes",
+          body_format: "enhanced@1",
+          body: JSON.stringify(notes),
+          version: 1,
+          created_at: 1790000700,
+          template_id: "builtin:allgemein",
+          updated_at: 100,
+        },
+      );
+      const inner = w.__TAURI_INTERNALS__.invoke;
+      w.__TAURI_INTERNALS__.invoke = async (
+        cmd: string,
+        args: Record<string, any> = {},
+      ) => {
+        if (cmd === "provenance_get") {
+          w.__calls.push({ cmd, args });
+          if (args.id !== "pm1") return [];
+          return [
+            {
+              id: "pv1",
+              subject_kind: "document",
+              subject_id: "pm1",
+              subject_revision: null,
+              created_at: 1790000900000,
+              operation: "minutes",
+              actor_kind: "user",
+              actor_ref: null,
+              provider: "local",
+              locality: "local",
+              model_id: "gemma",
+              model_label: "Gemma 4 E4B",
+              usage_event_id: null,
+              prompt_tokens: 1200,
+              completion_tokens: 300,
+              duration_ms: 5000,
+              sources: [
+                {
+                  kind: "transcript",
+                  ref: id,
+                  title: "Vortrag",
+                  url: null,
+                },
+                {
+                  kind: "slide",
+                  ref: "s5",
+                  title: "Folie 5 · 07:10",
+                  url: null,
+                },
+              ],
+              confidence: null,
+              params_json: null,
+              origin: "recorded",
+            },
+          ];
+        }
+        return inner(cmd, args);
+      };
+    },
+    { id: VIDEO_ID, minutes: MINUTES_BODY, notes: NOTES_WITH_SLIDE },
+  );
+};
+
+test.describe("D5 Folien als Belege", () => {
+  test("Protokoll: [F5] ist eine Marke und springt zur Folie, [F99] bleibt Text", async ({
+    page,
+  }) => {
+    await setupRefs(page);
+    await openVideo(page);
+    await centerTab(page, "Protokoll").click();
+    const doc = page.getByTestId("minutes-doc");
+    await expect(doc).toContainText("Grundpreis 70 €");
+    const refs = doc.getByTestId("slide-ref");
+    await expect(refs).toHaveCount(1);
+    await expect(refs).toHaveAttribute("data-slide-ref", "5");
+    await expect(refs).toHaveText("F5");
+    // Eine Folie, die es nicht gibt, bleibt Text.
+    await expect(doc).toContainText("[F99]");
+    await refs.click();
+    await expect(centerTab(page, "Folien")).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(card(page, 5)).toHaveAttribute("data-active", "true");
+    // Im Audio an die erste Sichtung der Folie (430 s).
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__played))
+      .toEqual([430]);
+    await shoot(page, "d5-protokoll-beleg");
+  });
+
+  test("KI-Notizen: eine Folie allein ist ein Beleg (kein 'ohne Beleg'), der Chip springt zur Folie", async ({
+    page,
+  }) => {
+    await setupRefs(page);
+    await openVideo(page);
+    await page
+      .getByRole("tab", { name: "KI-Notizen", exact: true })
+      .first()
+      .click();
+    const entry = page.locator(
+      '[data-testid="enhanced-entry"][data-entry-id="E1"]',
+    );
+    await expect(entry).toContainText("Arbeitspreis 13,1 ct/kWh");
+    await expect(entry.getByTestId("no-evidence")).toHaveCount(0);
+    const chip = entry.getByTestId("source-slide");
+    await expect(chip).toHaveText("F5");
+    await expect(chip).toHaveAttribute("title", "Zu Folie 5 springen (07:10)");
+    await chip.click();
+    await expect(centerTab(page, "Folien")).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(card(page, 5)).toHaveAttribute("data-active", "true");
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__played))
+      .toEqual([430]);
+  });
+
+  test("Herkunft: die Quelle 'Folie 5 · 07:10' ist anklickbar und fuehrt zur Folie", async ({
+    page,
+  }) => {
+    await setupRefs(page);
+    await openVideo(page);
+    await centerTab(page, "Protokoll").click();
+    await page
+      .getByTestId("prov-area-minutes")
+      .click({ button: "right", position: { x: 12, y: 12 } });
+    await page
+      .getByRole("menuitem", { name: "Herkunft" })
+      .evaluate((el) => (el as HTMLElement).click());
+    const dialog = page.getByTestId("provenance-dialog");
+    await expect(dialog.getByTestId("prov-sources")).toContainText(
+      "Folie 5 · 07:10",
+    );
+    // Die Transkript-Quelle bleibt Text, nur Folien sind Schaltflaechen.
+    await expect(dialog.getByTestId("prov-slide-source")).toHaveCount(1);
+    await dialog.getByTestId("prov-slide-source").click();
+    await expect(dialog).toBeHidden();
+    await expect(centerTab(page, "Folien")).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(card(page, 5)).toHaveAttribute("data-active", "true");
+  });
+
+  test("Protokoll ohne Folien: [F5] bleibt Text, es gibt keine Marke", async ({
+    page,
+  }) => {
+    await setupRefs(page);
+    // Besprechung ohne erkannte Folien (der Beleg verweist ins Leere).
+    await page.addInitScript(() => {
+      (window as any).__slides = { m8: [] };
+    });
+    await openVideo(page);
+    await centerTab(page, "Protokoll").click();
+    const doc = page.getByTestId("minutes-doc");
+    await expect(doc).toContainText("[F5]");
+    await expect(doc.getByTestId("slide-ref")).toHaveCount(0);
+  });
+});

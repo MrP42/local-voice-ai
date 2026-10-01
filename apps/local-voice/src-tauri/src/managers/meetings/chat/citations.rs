@@ -168,7 +168,9 @@ fn citation_for(excerpt: &Excerpt, sentence: &str, hint: Option<u32>) -> (Source
     } else {
         None
     };
-    let start_ms = if transcript {
+    // D5: auch ein Folien-Beleg traegt die Zeit (Sprung in die Aufnahme); sein
+    // Schluessel (`ref_key`) ist die Folien-ID.
+    let start_ms = if transcript || excerpt.source == ChunkSource::Slide {
         line.and_then(|l| l.start_ms).or(excerpt.start_ms)
     } else {
         None
@@ -1033,5 +1035,54 @@ mod tests {
         assert_eq!(cites.len(), 2, "gleiche Quelle = gleiche Nummer");
         assert_eq!(dropped, 400);
         assert!(!raw_marker_left(&text));
+    }
+
+    // ---- D5: Folien ----------------------------------------------------------
+
+    #[test]
+    fn a_slide_citation_carries_the_slide_id_and_the_time_of_its_first_sighting() {
+        use crate::managers::meetings::slides::store::MeetingSlide;
+        use crate::managers::meetings::slides::SlideOccurrence;
+        let slide = |n: u32, start: u64, text: &str| MeetingSlide {
+            id: format!("sl-{n}"),
+            meeting_id: "m1".into(),
+            number: n,
+            origin: "video".into(),
+            image_path: String::new(),
+            thumb_path: None,
+            occurrences: vec![SlideOccurrence {
+                start_ms: start,
+                end_ms: start + 1_000,
+            }],
+            ocr_text: Some(text.into()),
+            ocr_engine: None,
+            kind: Some("text".into()),
+            description: None,
+            description_model: None,
+            hidden: false,
+        };
+        let mut excerpts = super::super::context::slide_excerpts(
+            &meeting("m1"),
+            &[slide(1, 12_000, "Umsatz Sued"), slide(2, 90_000, "Zeitplan Ost")],
+        );
+        for (i, ex) in excerpts.iter_mut().enumerate() {
+            ex.qid = i as u32 + 1;
+        }
+        let (text, citations, dropped, not_found) =
+            postprocess("Der Umsatz steigt [Q1]. Der Plan steht [Q2].", &excerpts);
+        assert_eq!(text, "Der Umsatz steigt [1]. Der Plan steht [2].");
+        assert_eq!((dropped, not_found), (0, false));
+        let got: Vec<(ChunkSource, Option<String>, Option<u64>, Option<u32>)> = citations
+            .iter()
+            .map(|c| (c.source, c.ref_key.clone(), c.start_ms, c.segment_index))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (ChunkSource::Slide, Some("sl-1".to_string()), Some(12_000), None),
+                (ChunkSource::Slide, Some("sl-2".to_string()), Some(90_000), None),
+            ]
+        );
+        assert_eq!(citations[0].quote, "Umsatz Sued");
     }
 }

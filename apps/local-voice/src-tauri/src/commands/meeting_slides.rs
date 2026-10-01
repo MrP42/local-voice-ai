@@ -192,6 +192,14 @@ fn execute(
     };
     let _ = event.emit(app);
     drop(job); // meldet `JobEnded`
+    // D5: neue oder geaenderte Folientexte gehoeren in den Suchindex (Chat, Suche).
+    reindex(app, meeting_id);
+}
+
+/// D5: reiht die Besprechung beim Indexer ein (Folientext findbar). Ohne Indexer: nichts.
+fn reindex(app: &AppHandle, meeting_id: &str) {
+    use crate::managers::meetings::search::indexer::{self, IndexJob};
+    indexer::submit(app, IndexJob::Meeting(meeting_id.to_string()));
 }
 
 /// Startet die Folienerkennung fuer eine fertige Besprechung mit Videodatei. Kehrt
@@ -261,6 +269,10 @@ pub async fn set_meeting_slide_hidden(
         .slide_set_hidden(&slide_id, hidden)
         .map_err(store_err)?
     {
+        // D5: eine ausgeblendete Folie verlaesst den Suchindex (und kommt wieder hinein).
+        if let Ok(Some(slide)) = store.slide_get(&slide_id) {
+            reindex(&app, &slide.meeting_id);
+        }
         Ok(())
     } else {
         Err("slide_not_found".to_string())

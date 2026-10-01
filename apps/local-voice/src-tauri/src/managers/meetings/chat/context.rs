@@ -10,8 +10,11 @@ use std::collections::{HashMap, HashSet};
 
 use super::ChunkSource;
 use crate::managers::meetings::notes::model::{EnhancedNotes, NoteBlock, NoteBlockKind};
-use crate::managers::meetings::search::chunking::{clock, compound_parts};
+use crate::managers::meetings::search::chunking::{
+    chunk_slides, clock, compound_parts, ChunkHead,
+};
 use crate::managers::meetings::search::index::ChunkRow;
+use crate::managers::meetings::slides::store::MeetingSlide;
 use crate::managers::meetings::speakers::SpeakerDirectory;
 use crate::managers::meetings::store::StoredSegment;
 
@@ -189,6 +192,9 @@ impl Excerpt {
                     })
                     .collect();
             }
+            ChunkSource::Slide => {
+                fill_slide(&mut ex, &raw, row.start_ms, row.ref_keys.first().cloned());
+            }
             ChunkSource::UserNotes | ChunkSource::Title => {
                 let one_to_one = raw.len() == row.ref_keys.len();
                 ex.lines = raw
@@ -200,6 +206,35 @@ impl Excerpt {
         }
         ex
     }
+}
+
+/// D5: Zeilen eines Folien-Auszugs. Text: `Folie 7 04:12: <Text>`, danach ggf.
+/// `Bild: <Beschreibung>` (gekennzeichnet, R2). Alle Zeilen tragen die Folien-ID als
+/// Schluessel und die Zeit der ersten Sichtung: ein Zitat fuehrt zur Folie und zur Zeit.
+/// `section` ist die Bezeichnung fuer die Kopfzeile (`Folie 7`).
+fn fill_slide(ex: &mut Excerpt, raw: &[&str], start_ms: Option<u64>, key: Option<String>) {
+    ex.section = raw
+        .first()
+        .and_then(|first| first.strip_prefix("Folie "))
+        .and_then(|rest| rest.split(' ').next())
+        .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        .map(|n| format!("Folie {n}"));
+    ex.lines = raw
+        .iter()
+        .map(|line| {
+            let content = line
+                .split_once(": ")
+                .filter(|(head, _)| head.starts_with("Folie "))
+                .map_or(*line, |(_, text)| text);
+            ExcerptLine {
+                segment_index: None,
+                start_ms,
+                ref_key: key.clone(),
+                text: line.to_string(),
+                content: content.to_string(),
+            }
+        })
+        .collect();
 }
 
 fn plain_line(line: &str, ref_key: Option<String>) -> ExcerptLine {
@@ -305,6 +340,25 @@ pub fn transcript_blocks_with(
         out.push(cur);
     }
     out
+}
+
+/// D5: Folientexte einer Besprechung als Auszuege (nicht ausgeblendete Folien mit
+/// Text), im selben Format wie die Folien-Chunks des Index (`chunk_slides`): so sieht
+/// der Chat dieselben Zeilen, ob er sie aus dem Index oder direkt aus dem Store liest.
+/// Ohne Folien: leer, der Chat bleibt wie vorher.
+pub fn slide_excerpts(meeting: &MeetingRef, slides: &[MeetingSlide]) -> Vec<Excerpt> {
+    chunk_slides(slides, &ChunkHead::default())
+        .into_iter()
+        .map(|draft| {
+            let mut ex = Excerpt::empty(meeting, ChunkSource::Slide, 0);
+            ex.ref_keys = draft.ref_keys.clone();
+            ex.start_ms = draft.start_ms;
+            ex.end_ms = draft.end_ms;
+            let raw: Vec<&str> = draft.text.lines().filter(|l| !l.trim().is_empty()).collect();
+            fill_slide(&mut ex, &raw, draft.start_ms, draft.ref_keys.first().cloned());
+            ex
+        })
+        .collect()
 }
 
 /// Notizblock als Auszuege (je hoechstens `max_chars`), eine Zeile je Block
@@ -573,8 +627,10 @@ pub fn source_priority(source: ChunkSource) -> u8 {
     match source {
         ChunkSource::AiNotes => 0,
         ChunkSource::UserNotes => 1,
-        ChunkSource::Transcript => 2,
-        ChunkSource::Title => 3,
+        // D5: Folientext ist dicht wie Notizen, aber Rohtext: hinter den Notizen, vor dem Transkript.
+        ChunkSource::Slide => 2,
+        ChunkSource::Transcript => 3,
+        ChunkSource::Title => 4,
     }
 }
 
@@ -801,6 +857,7 @@ pub(crate) mod tests {
             text: text.into(),
             note_id: None,
             source_segment_ids: vec![1],
+            source_slide_ids: Vec::new(),
             assignee: None,
             due: None,
             flags: EntryFlags::default(),

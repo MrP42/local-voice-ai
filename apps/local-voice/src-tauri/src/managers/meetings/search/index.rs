@@ -515,6 +515,38 @@ impl MeetingStore {
         Ok(ids)
     }
 
+    /// D5: Weichen die Folien-Chunks im Index von den Entwuerfen ab (Text, Folie, Zeit)?
+    /// So erkennt der Indexer eine Aenderung der Folien (neuer OCR-Text, ausgeblendet,
+    /// neu erkannt), ohne eine Spalte im Index-Zustand zu brauchen.
+    pub fn slide_chunks_differ(&self, meeting_id: &str, drafts: &[ChunkDraft]) -> Result<bool> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT ref_keys, start_ms, text FROM meeting_chunks
+             WHERE meeting_id = ?1 AND source = 'slide' ORDER BY id",
+        )?;
+        let stored = stmt
+            .query_map(params![meeting_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let wanted = drafts
+            .iter()
+            .filter(|d| !d.text.trim().is_empty())
+            .map(|d| {
+                Ok((
+                    json_ids(&d.ref_keys)?,
+                    d.start_ms.map(|v| v as i64),
+                    d.text.clone(),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(stored != wanted)
+    }
+
     pub fn index_state(&self, meeting_id: &str) -> Result<Option<IndexState>> {
         let conn = self.get_connection()?;
         Ok(conn
@@ -580,7 +612,15 @@ impl MeetingStore {
                     OR COALESCE(s.notes_revision, 0) <> COALESCE(n.revision, 0)
                     OR COALESCE(s.enhanced_doc_id, '') <> COALESCE(d.id, '')
                     OR COALESCE(s.enhanced_updated_at, 0) <> COALESCE(d.updated_at, 0)
-                    OR COALESCE(s.title, '') <> m.title)
+                    OR COALESCE(s.title, '') <> m.title
+                    -- D5: Folien mit Text, aber noch keine Folien-Chunks (Folien vor
+                    -- dem Index erkannt, oder die Auftraege gingen verloren).
+                    OR (EXISTS (SELECT 1 FROM meeting_slides sl
+                                 WHERE sl.meeting_id = m.id AND sl.deleted_at IS NULL
+                                   AND sl.hidden = 0 AND sl.kind IS NOT 'ohne_text'
+                                   AND TRIM(COALESCE(sl.ocr_text, '')) <> '')
+                        AND NOT EXISTS (SELECT 1 FROM meeting_chunks c
+                                         WHERE c.meeting_id = m.id AND c.source = 'slide')))
              ORDER BY m.created_at DESC, m.id
              LIMIT ?1",
         )?;
@@ -3730,7 +3770,7 @@ pub(crate) mod tests {
             .expect("Typen muessen exportierbar sein");
         for expected in [
             "export type MeetingSearchPage",
-            "export type ChunkSource = \"title\" | \"transcript\" | \"user_notes\" | \"ai_notes\"",
+            "export type ChunkSource = \"title\" | \"transcript\" | \"user_notes\" | \"ai_notes\" | \"slide\"",
             "export type MeetingFilter",
             "export type Folder",
         ] {
