@@ -23,3 +23,4 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | B1 | M5 | #67 Workflow-Engine-Kern + Trockenlauf-CLI — lv-coder-xhigh | workflows:: ≥30 Tests, --dry-run JSON | in_arbeit | |
 | C1 | M6 | #68 Eval-Harness + Messung lokaler Modelle — lv-architect | Bericht eval-2026-10-01.md | in_arbeit | |
 | D0 | M7 | #69 Spike OCR/Bildanalyse/Folien — lv-architect | Spike-Bericht mit Messung | in_arbeit | |
+| A7 | M4 | #66 Agentenbrücke (Named Pipe, Token, Werkzeug-Rechte, Freigaben, ctl) — lv-coder-xhigh | AK9 agent_bridge:: ≥15 | in_arbeit | |
