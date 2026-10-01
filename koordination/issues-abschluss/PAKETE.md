@@ -48,3 +48,4 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | B8 | M5 | #67 Agenten-Zugriff auf Workflows (MCP/CLI list_workflows, run_workflow, get_run), n8n-Brücke Doku + Beispiel — lv-coder (D:) | AK10 mcp_smoke --workflows, ctl workflow run | abgenommen | 4a317a45 |
 | C5 | M6 | #68 Oberfläche Agent-Schritt im Editor, Trockenlauf mit Modellausgabe (preview-Command), Herkunft — lv-coder (D:) | AK8 Playwright | abgenommen | 303103c5 |
 | S1 | M8 | QG5-Nacharbeit B20–B23 (Sandbox handle-basiert, Anhang-Bytes gebunden, M365-Abmelde-Race, Pipe-Schreibfristen) — lv-coder-xhigh (D:) | je Befund Test rot→grün | in_arbeit | |
+| R1 | M8 | Version 0.21.0, Notices/SBOM, Hilfe + AUTOMATIONEN.md + Release-Notizen, make-slides-video.py, Installer auf D: — lv-coder (D:) | Installer-Pfad + SHA-256, tsc, i18n | in_arbeit | |
