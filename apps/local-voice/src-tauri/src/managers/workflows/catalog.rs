@@ -408,6 +408,19 @@ static ACTIONS: &[ActionSpec] = &[
         needs: NeedsSpec::None,
     },
     ActionSpec {
+        id: "agent.extract",
+        title: "Aufgaben, Fristen und Entscheidungen extrahieren",
+        effect_text: "Aus dem Transkript To-dos, Fristen und Entscheidungen mit dem lokalen Sprachmodell ziehen (mit Belegen, ohne Aussenwirkung)",
+        fields: &[
+            // Welche Listen: `todos`, `deadlines`, `decisions` (ohne Angabe alle drei).
+            field("kinds", FieldKind::TextList, false),
+        ],
+        // Liest nur: das Ergebnis steht im Laufprotokoll, beliebig wiederholbar.
+        effect: EffectKind::Pure,
+        heavy: Some(LLM),
+        needs: NeedsSpec::None,
+    },
+    ActionSpec {
         id: "export.document",
         title: "Dokument ablegen",
         effect_text: "Dokument als {{p.format}} in {{p.target}} ablegen",

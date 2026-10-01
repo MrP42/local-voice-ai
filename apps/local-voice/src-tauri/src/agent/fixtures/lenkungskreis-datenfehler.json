@@ -1,0 +1,95 @@
+{
+  "id": "lenkungskreis-datenfehler",
+  "title": "Lenkungskreis Q4",
+  "meeting_date": "2026-10-14",
+  "note": "Mittwoch. Das simulierte Modell macht Datumsfehler: Kalenderwoche falsch, unmoegliches Datum, Frist in der Vergangenheit, Frist in drei Jahren, ein 'irgendwann' mit altem Datum. Der Code ersetzt, verwirft und vermerkt.",
+  "segments": [
+    { "i": 0, "start_ms": 0, "text": "Wir eröffnen den Lenkungskreis. Ich habe vier Themen auf der Agenda." },
+    { "i": 1, "start_ms": 8000, "text": "Erstens: Das Budget für das vierte Quartal ist freigegeben, 120.000 Euro." },
+    { "i": 2, "start_ms": 16000, "text": "Das ist beschlossen, die Freigabe gilt ab sofort." },
+    { "i": 3, "start_ms": 23000, "text": "Zweitens: Der Pilotbetrieb startet in KW 46." },
+    { "i": 4, "start_ms": 30000, "text": "Drittens: Die Altsysteme werden in drei Jahren abgeschaltet." },
+    { "i": 5, "start_ms": 38000, "text": "Das Sicherheitskonzept hätte gestern fertig sein müssen." },
+    { "i": 6, "start_ms": 46000, "text": "Herr Albrecht prüft irgendwann die Lizenzen." },
+    { "i": 7, "start_ms": 53000, "text": "Die Wartungsverträge müssen bis Ende Februar verlängert werden." },
+    { "i": 8, "start_ms": 62000, "text": "Viertens: Wer informiert die Mitarbeiter? Das Kommunikationsteam übernimmt das bis zum 2. November." },
+    { "i": 9, "start_ms": 72000, "text": "Damit sind wir durch. Danke." }
+  ],
+  "responses": [
+    {
+      "todos": [
+        {
+          "text": "Herr Albrecht prüft die Lizenzen.",
+          "assignee": "Herr Albrecht",
+          "due_phrase": "irgendwann",
+          "due_date": "2024-01-01",
+          "segments": ["S6"],
+          "quote": "Herr Albrecht prüft irgendwann die Lizenzen"
+        },
+        {
+          "text": "Das Kommunikationsteam informiert die Mitarbeiter.",
+          "assignee": "Kommunikationsteam",
+          "due_phrase": "bis zum 2. November",
+          "due_date": "2026-11-02",
+          "segments": ["S8"],
+          "quote": "Das Kommunikationsteam übernimmt das bis zum 2. November"
+        }
+      ],
+      "deadlines": [
+        {
+          "text": "Der Pilotbetrieb startet.",
+          "due_phrase": "in KW 46",
+          "due_date": "2026-11-16",
+          "segments": ["S3"],
+          "quote": "Der Pilotbetrieb startet in KW 46"
+        },
+        {
+          "text": "Die Altsysteme werden abgeschaltet.",
+          "due_phrase": "in drei Jahren",
+          "due_date": "2029-10-14",
+          "segments": ["S4"],
+          "quote": "Die Altsysteme werden in drei Jahren abgeschaltet"
+        },
+        {
+          "text": "Das Sicherheitskonzept ist fertig.",
+          "due_phrase": "gestern",
+          "due_date": "2026-10-13",
+          "segments": ["S5"],
+          "quote": "Das Sicherheitskonzept hätte gestern fertig sein müssen"
+        },
+        {
+          "text": "Die Wartungsverträge werden verlängert.",
+          "due_phrase": "bis Ende Februar",
+          "due_date": "2027-02-30",
+          "segments": ["S7"],
+          "quote": "Die Wartungsverträge müssen bis Ende Februar verlängert werden"
+        }
+      ],
+      "decisions": [
+        {
+          "text": "Das Budget von 120.000 Euro für das vierte Quartal ist freigegeben.",
+          "segments": ["S1", "S2"],
+          "quote": "Das ist beschlossen, die Freigabe gilt ab sofort"
+        }
+      ]
+    }
+  ],
+  "golden": {
+    "outcome": "extracted",
+    "chunks": 1,
+    "todos": [
+      { "text_has": "Lizenzen", "assignee": "Herr Albrecht", "due": null, "segments": [6] },
+      { "text_has": "Mitarbeiter", "assignee": "Kommunikationsteam", "due": "2026-11-02", "segments": [8] }
+    ],
+    "deadlines": [
+      { "text_has": "Pilotbetrieb", "due": "2026-11-13", "segments": [3] },
+      { "text_has": "Wartungsverträge", "due": "2027-02-28", "segments": [7] }
+    ],
+    "decisions": [
+      { "text_has": "Budget", "segments": [1, 2] }
+    ],
+    "dropped": ["date_too_far", "date_in_past"],
+    "notes": ["date_in_past", "date_too_far", "date_in_past", "model_date_replaced", "model_date_replaced"],
+    "min_confidence": 0.5
+  }
+}

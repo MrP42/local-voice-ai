@@ -60,6 +60,19 @@ impl AppServices for AppServicesImpl {
             .unwrap_or(true)
     }
 
+    fn agent_target(&self) -> Result<crate::agent::runtime::Target, ServiceError> {
+        let settings = crate::settings::get_settings(&self.app);
+        let (provider, model, _key) =
+            crate::managers::meetings::llm_call::resolve_provider(&settings)
+                .map_err(|e| classify_generation_error(&e))?;
+        if !crate::managers::llm::is_local(&provider) {
+            return Err(ServiceError::Permanent(
+                "Der lokale Agent läuft nur mit einem lokalen Sprachmodell: unter Einstellungen → Nachbearbeitung ein lokales Modell wählen.".to_string(),
+            ));
+        }
+        Ok(crate::agent::runtime::Target::Local { model })
+    }
+
     fn generate_notes(
         &self,
         req: &GenRequest,

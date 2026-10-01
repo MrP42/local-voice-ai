@@ -168,6 +168,7 @@
 #![allow(dead_code)]
 
 pub mod action;
+pub mod agent_actions; // C2
 pub mod app_actions; // B4
 pub mod app_services; // B4
 pub mod builtin;

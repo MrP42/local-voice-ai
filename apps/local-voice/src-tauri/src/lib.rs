@@ -2438,6 +2438,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.eval_diarization.is_some() // M3-P3a
         || cli_args.eval_chat.is_some() // M4-P4f
         || cli_args.eval_agent // C1
+        || cli_args.agent_extract.is_some() // C2
         || cli_args.export_meeting.is_some() // M6-P6a
         || cli_args.followup_draft.is_some() // P6f
         || cli_args.translate_meeting.is_some() // G5
@@ -2832,6 +2833,23 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_eval_agent(&app_handle, &args)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // C2: Extraktion auf einer Fixture mit dem echten lokalen Modell;
+                // braucht nur das Sprachmodell.
+                if let Some(path) = cli_args.agent_extract.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_agent_extract(&app_handle, &args, &path)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -4127,6 +4145,59 @@ fn run_headless_eval_agent(app: &AppHandle, args: &CliArgs) -> i32 {
         for line in agent::eval::summary_lines(&payload) {
             println!("{line}");
         }
+        if let Some(path) = args.out.as_deref() {
+            match std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                Ok(()) => eprintln!("wrote {}", path.display()),
+                Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
+    code
+}
+
+// C2 (Goal Lokaler Agent): `--agent-extract <datei> --model <id>`. `agent.extract` auf einer
+// Fixture mit dem echten lokalen Modell. Der Server startet nur ueber den Manager (RAM-Gate,
+// Job-Objekt), mit Speicherwaechter wie bei `--eval-agent`, und wird am Ende gestoppt. Keine
+// Einstellungen, keine Besprechungsdaten. Exit 0 Ergebnis, 3 no_action, 1 Fehler, 2 ohne --model.
+fn run_headless_agent_extract(app: &AppHandle, args: &CliArgs, path: &std::path::Path) -> i32 {
+    crate::selftest::begin_headless_run();
+    let Some(model) = args.model.as_deref().map(str::trim).filter(|m| !m.is_empty()) else {
+        eprintln!("error: --agent-extract needs --model <id> (see --list-models)");
+        return 2;
+    };
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("error: could not read {}: {}", path.display(), e);
+            return 1;
+        }
+    };
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+    let (code, payload) = tauri::async_runtime::block_on(agent::extract::run_cli(model, &text));
+    llm_server.stop();
+
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        println!("{}", payload["summary"].as_str().unwrap_or("agent-extract: kein Ergebnis"));
         if let Some(path) = args.out.as_deref() {
             match std::fs::write(
                 path,
