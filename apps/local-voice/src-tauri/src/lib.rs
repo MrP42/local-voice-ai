@@ -2050,6 +2050,11 @@ pub fn run(cli_args: CliArgs) {
             commands::project_minutes::project_minutes_state,
             commands::project_minutes::project_minutes_cancel,
             commands::project_minutes::project_minutes_generate,
+            // D1 (#70, M7): Folien aus Videos
+            commands::meeting_slides::detect_meeting_slides,
+            commands::meeting_slides::list_meeting_slides,
+            commands::meeting_slides::set_meeting_slide_hidden,
+            commands::meeting_slides::meeting_slides_dir,
             commands::meetings::meetings_export_document,
             // M1-P1c
             commands::provenance::provenance_get, // A1
@@ -2318,6 +2323,8 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_minutes::MinutesEvent,
             // G3 (#70)
             commands::project_minutes::ProjectMinutesEvent,
+            // D1 (#70, M7)
+            commands::meeting_slides::MeetingSlidesEvent,
             // M4-P4b
             managers::meetings::search::indexer::MeetingIndexEvent,
             // M5-P5c

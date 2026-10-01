@@ -2009,6 +2009,54 @@ async projectMinutesGenerate(folderId: string, meetingIds: string[], templateId:
 }
 },
 /**
+ * Startet die Folienerkennung fuer eine fertige Besprechung mit Videodatei. Kehrt
+ * sofort zurueck; Fortschritt und Ende kommen als Ereignisse (siehe Modulkopf).
+ * Wiederholbar: ein zweiter Lauf fuegt nichts doppelt ein.
+ */
+async detectMeetingSlides(meetingId: string, options: SlideOptions) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("detect_meeting_slides", { meetingId, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Folien einer Besprechung, nach Nummer (auch ausgeblendete; die Oberflaeche
+ * filtert). Bildpfade sind relativ zum Ordner aus `meeting_slides_dir`.
+ */
+async listMeetingSlides(meetingId: string) : Promise<Result<MeetingSlide[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_meeting_slides", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Blendet eine Folie aus oder wieder ein. `slide_not_found`, wenn es sie nicht gibt.
+ */
+async setMeetingSlideHidden(slideId: string, hidden: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_meeting_slide_hidden", { slideId, hidden }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Besprechungsordner (absolut), in dem `slides/` liegt: davor setzt die
+ * Oberflaeche den relativen `image_path` einer Folie zusammen.
+ */
+async meetingSlidesDir(meetingId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_slides_dir", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Writes a document the user assembled in the app to a path they picked in
  * the system save dialog — as Markdown, plain text or Word, chosen by the
  * file extension.
@@ -4622,6 +4670,7 @@ meetingEvent: MeetingEvent,
 meetingIndexEvent: MeetingIndexEvent,
 meetingNotesEvent: MeetingNotesEvent,
 meetingPromptEvent: MeetingPromptEvent,
+meetingSlidesEvent: MeetingSlidesEvent,
 minutesEvent: MinutesEvent,
 projectMinutesEvent: ProjectMinutesEvent,
 speakersChanged: SpeakersChanged,
@@ -4638,6 +4687,7 @@ meetingEvent: "meeting-event",
 meetingIndexEvent: "meeting-index-event",
 meetingNotesEvent: "meeting-notes-event",
 meetingPromptEvent: "meeting-prompt-event",
+meetingSlidesEvent: "meeting-slides-event",
 minutesEvent: "minutes-event",
 projectMinutesEvent: "project-minutes-event",
 speakersChanged: "speakers-changed",
@@ -5834,7 +5884,12 @@ export type JobPhase =
 /**
  * G5: Uebersetzung einer Transkript-Fassung (Bloecke statt Audiodauer).
  */
-"translation"
+"translation" | 
+/**
+ * D1 (#70, M7): Folien aus einem Video erkennen. `done`/`total` zaehlen ms
+ * POSITION IM VIDEO (Abtastung, danach die Bilder, jeweils von vorn).
+ */
+"slides"
 /**
  * Fortschritt eines Auftrags: Ereignis und Abfrage haben dieselben Felder.
  * `done`/`total` zaehlen Millisekunden Audio, in den Phasen `notes` und
@@ -6161,6 +6216,38 @@ total: number;
  * Die Trefferliste wurde bei `SEARCH_CANDIDATES` Chunks gekappt (Allerwelts-Suchwort).
  */
 truncated: boolean }
+/**
+ * Eine Folie, wie die Oberflaeche sie liest.
+ */
+export type MeetingSlide = { id: string; meeting_id: string; 
+/**
+ * 1..n in der Reihenfolge der Anlage (bei der ersten Erkennung: nach dem
+ * ersten Auftreten im Video).
+ */
+number: number; 
+/**
+ * `video` | `image`.
+ */
+origin: string; 
+/**
+ * Relativ zum Besprechungsordner: `slides/0007.jpg`.
+ */
+image_path: string; thumb_path: string | null; 
+/**
+ * Wo im Video die Folie zu sehen ist; Ruecksprung = mehrere Bereiche.
+ */
+occurrences: SlideOccurrence[]; ocr_text: string | null; ocr_engine: string | null; kind: string | null; description: string | null; description_model: string | null; 
+/**
+ * Vom Nutzer ausgeblendet (Sprecherbild, Dublette).
+ */
+hidden: boolean }
+/**
+ * Ende eines Folienlaufs. `Done` und `Stopped` tragen die Zaehler des Laufs: die
+ * Oberflaeche laedt danach `list_meeting_slides` neu. `Skipped` ist kein Fehler
+ * (keine Videospur, ffmpeg fehlt): ein Hinweis. `Failed` traegt einen Code aus
+ * `SlideError::code`. Der Fortschritt kommt als `MeetingEvent::Progress`.
+ */
+export type MeetingSlidesEvent = { kind: "done"; meeting_id: string; slides: number; added: number } | { kind: "stopped"; meeting_id: string; slides: number; added: number } | { kind: "skipped"; meeting_id: string; code: string } | { kind: "failed"; meeting_id: string; code: string }
 /**
  * Ein Sprecher einer Besprechung, wie das Popover ihn braucht.
  */
@@ -6660,6 +6747,22 @@ export type SecretMap = Partial<{ [key in string]: string }>
 export type SecretSlotView = { slot: string; status: string }
 export type SectionKind = "text" | "tasks"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
+/**
+ * Ein Zeitbereich, in dem eine Folie zu sehen ist (ms im Video).
+ */
+export type SlideOccurrence = { start_ms: number; end_ms: number }
+/**
+ * Optionen eines Starts von der Oberflaeche (`detect_meeting_slides`).
+ */
+export type SlideOptions = { 
+/**
+ * Videodatei; ohne Angabe die Quelle des Imports (`Meeting::source_path`).
+ */
+video_path: string | null; 
+/**
+ * Abtastabstand in Sekunden (Voreinstellung 1, zulaessig 0,25 bis 10).
+ */
+sample_interval_s: number | null }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
  * Eine Aufnahme, die in das Projekt-Protokoll einging. `index` zaehlt ab 1 in

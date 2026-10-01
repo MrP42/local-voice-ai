@@ -61,6 +61,7 @@ fn parse_phase(name: &str) -> Option<JobPhase> {
         "speakers" => Some(JobPhase::Speakers),
         "notes" => Some(JobPhase::Notes),
         "minutes" => Some(JobPhase::Minutes),
+        "slides" => Some(JobPhase::Slides),
         _ => None,
     }
 }
