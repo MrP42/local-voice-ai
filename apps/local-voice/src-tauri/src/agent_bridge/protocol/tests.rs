@@ -107,3 +107,38 @@ async fn invalid_utf8_is_reported_not_panicked_on() {
     assert_eq!(got[0], LineRead::InvalidUtf8);
     assert_eq!(got[1], LineRead::Line("ok".into()));
 }
+
+// --- B23 (QG5): Kennung und Antwort sind begrenzt -----------------------------------------------
+
+#[test]
+fn an_overlong_id_is_refused_and_never_reflected() {
+    let long = "x".repeat(MAX_ID_BYTES + 1);
+    match parse_request(&json!({"id": long, "method": "status"}).to_string()) {
+        Incoming::Invalid { id, message } => {
+            assert_eq!(id, Value::Null, "die zu lange Kennung kommt nicht zurueck");
+            assert!(message.contains("Kennung"), "{message}");
+            assert!(!message.contains("xxxx"));
+        }
+        other => panic!("{other:?}"),
+    }
+    // Genau an der Grenze (mit den Anfuehrungszeichen) geht es noch.
+    let at_limit = "x".repeat(MAX_ID_BYTES - 2);
+    let (id, _, _) = req(&json!({"id": at_limit.clone(), "method": "status"}).to_string());
+    assert_eq!(id, json!(at_limit));
+    // Zahlen und null sind kurz genug.
+    let (id, _, _) = req(r#"{"id": 1234567890123, "method": "status"}"#);
+    assert_eq!(id, json!(1234567890123u64));
+}
+
+#[test]
+fn a_reply_over_the_cap_becomes_a_short_error_with_the_same_id() {
+    let id = json!("abc");
+    let small = ok_line(&id, json!({"a": 1}));
+    assert_eq!(cap_reply(&id, small.clone(), 1024), small, "kleine Antworten bleiben");
+    let big = ok_line(&id, json!({"blob": "x".repeat(5000)}));
+    let capped = cap_reply(&id, big, 1024);
+    assert!(capped.len() < 300, "{}", capped.len());
+    let v: Value = serde_json::from_str(&capped).unwrap();
+    assert_eq!(v["id"], id);
+    assert_eq!(v["error"]["code"], code::REPLY_TOO_LARGE);
+}

@@ -634,3 +634,67 @@ async fn two_connections_asking_the_same_get_one_approval_and_it_runs_once() {
     assert_eq!(ok, 1, "die Genehmigung gilt fuer genau eine Ausfuehrung");
     assert_eq!(f.calls.len(), 1);
 }
+
+// --- B23 (QG5): Gegenstelle, die nie liest ---------------------------------------------------
+
+/// Eine Verbindung mit winzigem Puffer: jede Antwort ueber ein paar Bytes bleibt stecken, bis die
+/// Gegenstelle liest. Der Test-Client behaelt sein Ende, liest aber nie.
+fn connect_never_reading(server: &Arc<Server>) -> (DuplexStream, JoinHandle<()>) {
+    let (a, b) = duplex(16);
+    let handle = tokio::spawn(server.clone().handle(a));
+    (b, handle)
+}
+
+#[tokio::test]
+async fn a_client_that_never_reads_does_not_hold_a_slot_beyond_the_write_deadline() {
+    let cfg = Config {
+        max_connections: 2,
+        write_timeout: Duration::from_millis(300),
+        ..fast_config()
+    };
+    let f = Fixture::with(cfg, &ALL_TOOLS);
+    let server = Server::new(f.bridge.clone());
+    let mut clients = Vec::new();
+    let mut handles = Vec::new();
+    for _ in 0..2 {
+        let (mut b, h) = connect_never_reading(&server);
+        // Eine anonyme Anfrage mit grosser Kennung; die Antwort liest niemand.
+        let line = json!({"id": "x".repeat(4000), "method": "status"}).to_string() + "\n";
+        b.write_all(line.as_bytes()).await.unwrap();
+        clients.push(b);
+        handles.push(h);
+    }
+    // Innerhalb der Frist (plus Spielraum) sind beide Verbindungen zu und die Plaetze frei.
+    let all = async {
+        for h in handles {
+            h.await.unwrap();
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), all)
+        .await
+        .expect("die Verbindungen enden innerhalb der Schreibfrist");
+    assert_eq!(server.free_slots(), 2, "die Plaetze sind wieder frei");
+    drop(clients);
+    // Und es wird weiter bedient.
+    let (mut c, _h) = connect(&server);
+    assert_eq!(c.request("status", json!({})).await["result"]["ok"], json!(true));
+}
+
+#[tokio::test]
+async fn a_rejected_connection_that_never_reads_is_let_go_after_the_write_deadline() {
+    let cfg = Config {
+        max_connections: 1,
+        write_timeout: Duration::from_millis(300),
+        ..fast_config()
+    };
+    let f = Fixture::with(cfg, &ALL_TOOLS);
+    let server = Server::new(f.bridge.clone());
+    let (mut first, _h1) = connect(&server);
+    assert_eq!(first.request("status", json!({})).await["result"]["ok"], json!(true));
+    // Der Platz ist belegt: die zweite Verbindung wird abgewiesen; die Gegenstelle liest nie.
+    let (_never, h2) = connect_never_reading(&server);
+    tokio::time::timeout(Duration::from_secs(5), h2)
+        .await
+        .expect("auch die Abweisung haengt nicht an einer Gegenstelle, die nicht liest")
+        .unwrap();
+}

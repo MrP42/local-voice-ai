@@ -14,6 +14,15 @@
 //! gleichzeitige 401 ergeben einen Aufruf am Token-Endpunkt, nicht zwei, die sich
 //! beim Schreiben des neuen Erneuerungs-Tokens ueberholen).
 //!
+//! Abmelden waehrend des Erneuerns (B22, QG5): Jedes Konto hat eine **Generation**
+//! (`generations`). Anmelden, Abmelden und das Loeschen eines toten Tokens erhoehen sie, jeweils
+//! unter derselben Sperre, unter der das Konto geschrieben oder geloescht wird. Ein Erneuern merkt
+//! sich die Generation VOR dem Lesen des Kontos und legt sein Ergebnis (neues Erneuerungs-Token,
+//! Zugriffstoken im Speicher) nur ab, wenn sie unter derselben Sperre noch stimmt. Sonst wird das
+//! Ergebnis verworfen und mit dem aktuellen Stand neu begonnen: ein abgemeldetes Konto bleibt
+//! abgemeldet (`NeedsSignIn`, kein Zugriff mit dem spaet gelieferten Token), ein neu angemeldetes
+//! wird nicht mit dem Token des alten ueberschrieben.
+//!
 //! Sicherheit: Umleitungen werden nie verfolgt, das Zugriffstoken geht nur an den
 //! Graph-Host aus den Endpunkten (nie an `uploadUrl` oder `@odata.nextLink`).
 
@@ -102,6 +111,8 @@ pub struct M365Service {
     /// Laufende Anmeldung (nur eine gleichzeitig) und Drosselung.
     pub graph: GraphState,
     cache: Mutex<std::collections::HashMap<String, Cached>>,
+    /// Kontogeneration je Integration (B22): siehe Moduldoku. Fehlt ein Eintrag, ist es 0.
+    generations: Mutex<std::collections::HashMap<String, u64>>,
     refresh_gate: tokio::sync::Mutex<()>,
     /// Pause zwischen zwei Versuchen eines Upload-Stuecks (mal Versuchsnummer).
     pub retry_pause: Duration,
@@ -125,6 +136,7 @@ impl M365Service {
             vault,
             graph: GraphState::default(),
             cache: Mutex::new(Default::default()),
+            generations: Mutex::new(Default::default()),
             refresh_gate: tokio::sync::Mutex::new(()),
             retry_pause: super::drive::DEFAULT_RETRY_PAUSE,
         }
@@ -199,8 +211,7 @@ impl M365Service {
             Some(me.address.clone()),
             me.name.clone(),
         );
-        self.vault
-            .save(&a.integ, &account)
+        self.install_account(&a.integ, &account)
             .map_err(M365Error::Store)?;
         self.cache_put(
             &a.integ.id,
@@ -214,6 +225,27 @@ impl M365Service {
         })
     }
 
+    /// Die aktuelle Generation des Kontos (siehe Moduldoku).
+    fn generation(&self, id: &str) -> u64 {
+        lock(&self.generations).get(id).copied().unwrap_or(0)
+    }
+
+    /// Legt das Konto einer neuen Anmeldung ab und beginnt eine neue Generation: ein gerade
+    /// laufendes Erneuern des alten Kontos darf es nicht mehr ueberschreiben. Scheitert das
+    /// Schreiben, bleibt alles wie es war (auch die Generation).
+    pub(super) fn install_account(
+        &self,
+        i: &Integration,
+        account: &StoredAccount,
+    ) -> Result<(), String> {
+        let mut generations = lock(&self.generations);
+        self.vault.save(i, account)?;
+        *generations.entry(i.id.clone()).or_insert(0) += 1;
+        // Das Zugriffstoken des alten Kontos gilt nicht fuer das neue.
+        self.forget(&i.id);
+        Ok(())
+    }
+
     /// Bricht eine laufende Anmeldung ab; `false`, wenn keine laeuft.
     pub fn cancel_sign_in(&self) -> bool {
         self.graph.cancel_sign_in()
@@ -224,8 +256,11 @@ impl M365Service {
         self.graph.is_signing_in()
     }
 
-    /// Abmelden: Token loeschen, Zugriffstoken vergessen. Die Integration bleibt.
+    /// Abmelden: Token loeschen, Zugriffstoken vergessen. Die Integration bleibt. Die neue
+    /// Generation macht ein gerade laufendes Erneuern wirkungslos (B22).
     pub fn sign_out(&self, a: &Integration) {
+        let mut generations = lock(&self.generations);
+        *generations.entry(a.id.clone()).or_insert(0) += 1;
         self.vault.clear(a);
         self.forget(&a.id);
     }
@@ -242,60 +277,76 @@ impl M365Service {
     ) -> Result<Zeroizing<String>, M365Error> {
         let required = a.cfg.required_scopes();
         let scope = required.join(" ");
-        let account = self.load_checked(a, &required)?;
+        self.load_checked(a, &required)?;
         if stale.is_none() {
             if let Some(token) = self.cache_get(&a.integ.id, &scope) {
                 return Ok(token);
             }
         }
         let _gate = self.refresh_gate.lock().await;
-        // Wer vor uns erneuert hat, hat das Token schon in den Speicher gelegt.
-        if let Some(token) = self.cache_get(&a.integ.id, &scope) {
-            if Some(token.as_str()) != stale {
-                return Ok(token);
-            }
-        }
-        // Das Konto neu lesen: der Vorgaenger kann das Erneuerungs-Token ersetzt haben.
-        let account = if stale.is_some() {
-            self.load_checked(a, &required)?
-        } else {
-            account
-        };
-        let tokens = match graph::refresh_tokens_scoped(
-            &self.ep,
-            &account.client_id,
-            &account.tenant,
-            account.refresh_token(),
-            &scope,
-        )
-        .await
-        {
-            Ok(t) => t,
-            Err(graph::GraphError::NeedsSignIn) => {
-                // Microsoft hat das Token widerrufen oder es ist abgelaufen: es ist tot.
-                self.vault.clear(&a.integ);
-                self.forget(&a.integ.id);
-                return Err(M365Error::NeedsSignIn);
-            }
-            Err(e) => return Err(e.into()),
-        };
-        if let Some(new) = &tokens.refresh_token {
-            if new.as_str() != account.refresh_token() {
-                let updated = account.with_refresh_token(new.to_string());
-                // Scheitert das Schreiben (Platte voll), laeuft dieser Aufruf mit dem
-                // Zugriffstoken weiter und das alte Erneuerungs-Token bleibt gueltig.
-                if let Err(e) = self.vault.save(&a.integ, &updated) {
-                    log::warn!("m365: neues Erneuerungs-Token nicht gespeichert: {e}");
+        // Hoechstens zwei Runden: wurde das Konto waehrend des Erneuerns abgemeldet oder ersetzt,
+        // wird das Ergebnis verworfen und mit dem aktuellen Stand neu begonnen (B22).
+        for _round in 0..2 {
+            // Wer vor uns erneuert hat, hat das Token schon in den Speicher gelegt.
+            if let Some(token) = self.cache_get(&a.integ.id, &scope) {
+                if Some(token.as_str()) != stale {
+                    return Ok(token);
                 }
             }
+            // Erst die Generation, dann das Konto: ein Wechsel dazwischen faellt beim Ablegen auf.
+            let generation = self.generation(&a.integ.id);
+            // Das Konto neu lesen: der Vorgaenger kann das Erneuerungs-Token ersetzt haben.
+            let account = self.load_checked(a, &required)?;
+            let tokens = match graph::refresh_tokens_scoped(
+                &self.ep,
+                &account.client_id,
+                &account.tenant,
+                account.refresh_token(),
+                &scope,
+            )
+            .await
+            {
+                Ok(t) => t,
+                Err(graph::GraphError::NeedsSignIn) => {
+                    let mut generations = lock(&self.generations);
+                    if generations.get(&a.integ.id).copied().unwrap_or(0) == generation {
+                        // Microsoft hat das Token widerrufen oder es ist abgelaufen: es ist tot.
+                        *generations.entry(a.integ.id.clone()).or_insert(0) += 1;
+                        self.vault.clear(&a.integ);
+                        self.forget(&a.integ.id);
+                        return Err(M365Error::NeedsSignIn);
+                    }
+                    // Das Konto ist inzwischen ein anderes (neu angemeldet) oder weg: das tote
+                    // Token gehoerte dem alten, das aktuelle bleibt unangetastet.
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
+            let generations = lock(&self.generations);
+            if generations.get(&a.integ.id).copied().unwrap_or(0) != generation {
+                // Abgemeldet oder neu angemeldet, waehrend Microsoft antwortete: nichts ablegen,
+                // kein Zugriffstoken herausgeben.
+                continue;
+            }
+            if let Some(new) = &tokens.refresh_token {
+                if new.as_str() != account.refresh_token() {
+                    let updated = account.with_refresh_token(new.to_string());
+                    // Scheitert das Schreiben (Platte voll), laeuft dieser Aufruf mit dem
+                    // Zugriffstoken weiter und das alte Erneuerungs-Token bleibt gueltig.
+                    if let Err(e) = self.vault.save(&a.integ, &updated) {
+                        log::warn!("m365: neues Erneuerungs-Token nicht gespeichert: {e}");
+                    }
+                }
+            }
+            self.cache_put(
+                &a.integ.id,
+                &scope,
+                tokens.access_token.clone(),
+                tokens.expires_in,
+            );
+            return Ok(tokens.access_token.clone());
         }
-        self.cache_put(
-            &a.integ.id,
-            &scope,
-            tokens.access_token.clone(),
-            tokens.expires_in,
-        );
-        Ok(tokens.access_token.clone())
+        Err(M365Error::NeedsSignIn)
     }
 
     /// Das Konto aus dem Geheimnisspeicher; fehlt es, ist es kaputt oder passt es nicht

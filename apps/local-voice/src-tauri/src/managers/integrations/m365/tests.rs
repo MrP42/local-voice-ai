@@ -865,6 +865,140 @@ async fn concurrent_401s_refresh_only_once() {
 }
 
 // ---------------------------------------------------------------------------
+// B22 (QG5): Abmelden waehrend eines Erneuerns
+// ---------------------------------------------------------------------------
+
+/// Anmelde-Server mit Verzoegerung: die ERSTE Anfrage am Token-Endpunkt meldet sich beim Test
+/// (`entered`) und wartet auf dessen Freigabe (`release`); weitere werden sofort beantwortet
+/// (Erneuerungs-Token `<alt>-2`).
+struct SlowToken {
+    entered: std::sync::mpsc::Receiver<()>,
+    release: std::sync::mpsc::Sender<()>,
+}
+
+async fn slow_token_server(first_reply_rt: &'static str) -> (String, Seen, SlowToken) {
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let entered_tx = Mutex::new(entered_tx);
+    let release_rx = Mutex::new(release_rx);
+    let calls = AtomicUsize::new(0);
+    let (base, seen) = serve(move |req| {
+        if is_token(req) {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                let _ = entered_tx.lock().unwrap().send(());
+                let _ = release_rx
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(30));
+                return token_resp("AT-spaet", Some(first_reply_rt));
+            }
+            let used = req.form().get("refresh_token").cloned().unwrap_or_default();
+            return token_resp("AT-2", Some(&format!("{used}-2")));
+        }
+        if req.method == "POST" && req.path() == "/v1.0/me/sendMail" {
+            return Resp::empty(202);
+        }
+        Resp::empty(404)
+    })
+    .await;
+    (
+        base,
+        seen,
+        SlowToken {
+            entered: entered_rx,
+            release: release_tx,
+        },
+    )
+}
+
+impl SlowToken {
+    /// Wartet (ohne den Lauf zu blockieren), bis der Token-Endpunkt die erste Anfrage hat.
+    async fn wait_entered(self) -> std::sync::mpsc::Sender<()> {
+        let SlowToken { entered, release } = self;
+        tokio::task::spawn_blocking(move || {
+            entered
+                .recv_timeout(Duration::from_secs(30))
+                .expect("das Erneuern erreicht den Token-Endpunkt");
+        })
+        .await
+        .unwrap();
+        release
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sign_out_during_a_refresh_is_not_undone_by_the_late_answer() {
+    let (base, seen, slow) = slow_token_server("RT-rotiert").await;
+    let w = World::new(&base, &[MAIL], true);
+    let (svc, a) = (w.svc.clone(), w.acct());
+    let call = tokio::spawn(async move { svc.send_mail(&a, &msg("a@example.com")).await });
+
+    let release = slow.wait_entered().await;
+    // Der Nutzer meldet das Konto ab, waehrend Microsoft noch antwortet.
+    w.svc.sign_out(&w.integration());
+    release.send(()).unwrap();
+
+    let r = call.await.unwrap();
+    assert_eq!(r, Err(M365Error::NeedsSignIn), "{r:?}");
+    assert!(
+        w.vault.load(&w.integration()).unwrap().is_none(),
+        "die Abmeldung wurde durch die spaete Antwort rueckgaengig gemacht"
+    );
+    let s = status_of(&w.integration(), &w.vault, false).unwrap();
+    assert_eq!(s.state, AccountState::NeedsSignIn);
+    // Weder jetzt noch danach geht etwas an Graph, und das spaete Zugriffstoken liegt nirgends.
+    assert_eq!(
+        w.svc.send_mail(&w.acct(), &msg("b@example.com")).await,
+        Err(M365Error::NeedsSignIn)
+    );
+    assert_eq!(count_path(&seen, "POST", "/v1.0/me/sendMail"), 0);
+    assert_eq!(count(&seen, is_token), 1, "kein zweites Erneuern fuer ein abgemeldetes Konto");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_sign_in_during_a_refresh_is_not_overwritten_by_the_old_accounts_answer() {
+    let (base, seen, slow) = slow_token_server("RT-alt-rotiert").await;
+    let w = World::new(&base, &[MAIL], true);
+    let (svc, a) = (w.svc.clone(), w.acct());
+    let call = tokio::spawn(async move { svc.send_mail(&a, &msg("a@example.com")).await });
+
+    let release = slow.wait_entered().await;
+    // Waehrend der Erneuerung meldet sich der Nutzer neu an (anderes Konto, anderes Token).
+    let cfg = w.cfg();
+    let fresh = StoredAccount::new(
+        cfg.client_id.clone(),
+        cfg.tenant.clone(),
+        cfg.scope_string(),
+        "RT-neu".to_string(),
+        Some("neu@example.com".to_string()),
+        None,
+    );
+    w.svc.install_account(&w.integration(), &fresh).unwrap();
+    release.send(()).unwrap();
+
+    let r = call.await.unwrap();
+    assert!(r.is_ok(), "{r:?}");
+    let account = w.vault.load(&w.integration()).unwrap().unwrap();
+    assert_ne!(
+        account.refresh_token(),
+        "RT-alt-rotiert",
+        "das neue Konto wurde mit dem Token des alten Kontos ueberschrieben"
+    );
+    assert_eq!(account.address.as_deref(), Some("neu@example.com"));
+    // Der Aufruf lief mit dem Token des NEUEN Kontos weiter.
+    let second = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| is_token(r))
+        .nth(1)
+        .cloned()
+        .expect("zweites Erneuern mit dem neuen Konto");
+    assert_eq!(second.form()["refresh_token"], "RT-neu");
+}
+
+// ---------------------------------------------------------------------------
 // Mail
 // ---------------------------------------------------------------------------
 

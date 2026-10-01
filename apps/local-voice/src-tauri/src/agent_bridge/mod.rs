@@ -53,6 +53,7 @@
 //! | 10 | Werkzeug stuerzt ab (Panik) | `catch_unwind` -> `failed`, Audit `error`, Bruecke laeuft weiter | `bridge::tests::a_panicking_tool_is_contained` |
 //! | 11 | App laeuft nicht (Pipe fehlt) | `ctl` Exit 2, keine Wartezeit | `ctl::tests::no_app_is_exit_2` |
 //! | 12 | Flut: viele Verbindungen, viele Aufrufe, riesige Zeilen, Verbindung ohne Anmeldung | Obergrenze Verbindungen (8), Aufrufe je Minute je Zugang, Zeilen 1 MiB, Anmeldefrist 10 s, Leerlauf, Antwortgroesse; Verweigerungen werden im Audit zusammengefasst (A1) | `limits::tests`, `server::tests::*cap*`, `*timeout*`, `*too_long*` |
+//! | 12a | **Gegenstelle liest nie** (B23, QG5): viele Verbindungen mit grossen Kennungen, Antworten werden nicht abgeholt, der Pipe-Puffer laeuft voll | Schreiben, Leeren und Schliessen haben eine Frist (`write_timeout`, 10 s): danach Verbindung zu, ueberlappendes Schreiben abgebrochen, Platz frei; auch die Abweisung bei vollen Plaetzen; Kennung hoechstens 128 Bytes, Antwortzeile hoechstens `MAX_REPLY_BYTES` | `server::tests::a_client_that_never_reads_*`, `a_rejected_connection_that_never_reads_*`, `protocol::tests::an_overlong_id_*`, `a_reply_over_the_cap_*` |
 //! | 13 | Fehlerhafte Eingaben (kein JSON, falscher Typ, unbekannte Methode/Werkzeug, Argumente keine Objekte) | strukturierter Fehler, nie Panik, Verbindung bleibt (ausser Zeile zu lang) | `protocol::tests`, `server::tests::malformed_*` |
 //! | 14 | Agent versucht, sich selbst Rechte zu geben oder eine Freigabe zu entscheiden | es gibt weder eine Methode noch ein Werkzeug dafuer; die Entscheidung liegt in den Tauri-Commands der Oberflaeche | `server::tests::there_is_no_way_to_decide_an_approval_over_the_pipe` |
 //! | 15 | Migration auf bestehender Datenbank, Abbruch mitten im Schritt | nur CREATE, eine Transaktion; Altdaten unveraendert, bei Abbruch Stand wie vorher | `schema::tests::*`, `meetings::migration_chain::tests` |
@@ -111,6 +112,9 @@ pub struct Config {
     pub idle_timeout: Duration,
     /// Fehlversuche bei der Anmeldung, nach denen die Verbindung geschlossen wird.
     pub max_auth_failures_per_connection: u32,
+    /// So lange darf das Schreiben einer Antwort (samt Leeren und Schliessen) dauern. Liest die
+    /// Gegenstelle nicht, wird die Verbindung geschlossen und der Platz frei (B23).
+    pub write_timeout: Duration,
 }
 
 impl Default for Config {
@@ -126,6 +130,7 @@ impl Default for Config {
             anonymous_idle_timeout: Duration::from_secs(30),
             idle_timeout: Duration::from_secs(600),
             max_auth_failures_per_connection: 3,
+            write_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -134,6 +139,9 @@ impl Default for Config {
 pub const MAX_LINE_BYTES: usize = 1 << 20;
 /// Laengste Antwort eines Werkzeugs (serialisiert).
 pub const MAX_RESULT_BYTES: usize = 1 << 20;
+/// Laengste Antwortzeile der Bruecke: das Werkzeugergebnis plus Platz fuer den Umschlag (Kennung,
+/// Status). Laenger wird durch den Fehler `reply_too_large` ersetzt (B23).
+pub const MAX_REPLY_BYTES: usize = MAX_RESULT_BYTES + 16 * 1024;
 
 #[cfg(test)]
 mod tests {

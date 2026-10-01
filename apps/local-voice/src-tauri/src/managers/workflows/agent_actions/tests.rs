@@ -233,6 +233,7 @@ impl Direct {
             context: &self.context,
             step_started_at: T0,
             approved: false,
+            gate_args: None,
             cancel: &self.cancel,
             clock,
             db_path: &w.fx.db_path,
