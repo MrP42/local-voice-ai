@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/issues-abschluss
 iteration: 1
 erstellt: 2026-10-01
-aktualisiert: 2026-10-01T16:49
+aktualisiert: 2026-10-01T18:13
 ---
 
 # Goal: Offene Issues abschliessen, neue Features, Version 0.21.0
@@ -97,7 +97,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - 2026-10-01 Patrick (/goal-planner-worker): alle offenen Issues abschließen, neue Features umsetzen, testen, neue Version, Ergebnisse in GitHub; zuerst leerer Eintrag im Projekt.
 
 ## Nächste empfohlene Aktion
-Nach Freigabe durch Patrick: Integrationslauf auf HEAD (cargo build, --list-models, cargo test --lib, tsc, volle Playwright), Codex-Sicherheitsreview (A7/A8/B5/B7n Gate+Einwilligung), Fenster-Block m10-verify, Version 0.21.0 + Installer; offen: B6, B8, C3-C5, D3 (Owner O1), D8, Webhook-Formular
+C4-Merge, dann B6-Merge, S1 abnehmen, Integrationslauf D:, Fenster-Block #10, Version 0.21.0, Installer, Merge #71 nach main, Tag app-v0.21.0
 
 ## Verlauf
 - 2026-10-01T10:38 DISCOVERY — Goal State angelegt
@@ -107,4 +107,5 @@ Nach Freigabe durch Patrick: Integrationslauf auf HEAD (cargo build, --list-mode
 - 2026-10-01T10:39 EXECUTING (Runde 1) — G1 laeuft (wt-goal)
 - 2026-10-01T11:59 EXECUTING (Runde 1) — G2b, G5, G2f (wt-u7), G3 (wt-g2c) laufen; G2d abgenommen
 - 2026-10-01T16:49 EXECUTING (Runde 1) — Rechner auf Patricks Wunsch frei: keine Worker/Tests aktiv. Integrationslauf 97f3c24b: build ok, 3766/3767 (Katalog-Test, behoben 02b9a296)
+- 2026-10-01T18:13 EXECUTING (Runde 1) — Budget-Meldung: Runde Abschluss geschätzt ~3 MTok, verbraucht ~3,1 MTok (B6 0,75, C3 0,5, C4 0,4, B8 0,39, D3 0,35, C5 0,35, K1 0,21, R0 0,16); Rest bis Release ~0,8 → Hochrechnung ~3,9 MTok (130 %)
 

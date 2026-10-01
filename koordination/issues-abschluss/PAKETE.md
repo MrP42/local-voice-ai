@@ -39,7 +39,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | B7 | M5 | #67 Oberfläche Automationen (Liste, Editor, Vorlagen, Lauf mit Herkunft, Freigaben, JSON-Import/Export) — lv-coder | AK9 automations.spec | abgenommen (B7n Einwilligung im Freigabedialog) | bd8d7a6f |
 | C2 | M6 | #68 Agent-Laufzeit (Schema, Denken aus, Validierung, Retry, Rückfall) + agent.extract (To-dos/Fristen/Entscheidungen mit Belegen) + Provenienz — lv-coder-xhigh | AK3, AK4 | abgenommen (Echtlauf gegen llama-server vor C3) | 2c66d731 |
 | B7n | M5 | Einwilligung zur Aufnahme im allgemeinen Freigabedialog nur mit demselben Häkchen wie im Hinweisfenster (oder dorthin verweisen) — lv-coder | Playwright + Rust: ohne Häkchen keine Freigabe | abgenommen | 76260fb8 |
-| B6 | M5 | #67 Wissens-Aktionen (Relevanz, Abgleich, Vault ohne Dubletten, Kanal-Summary), Vorlage Kanal → Wissen — lv-coder-xhigh (D:) | AK11 workflows::knowledge | in_arbeit | |
+| B6 | M5 | #67 Wissens-Aktionen (Relevanz, Abgleich, Vault ohne Dubletten, Kanal-Summary), Vorlage Kanal → Wissen — lv-coder-xhigh (D:) | AK11 workflows::knowledge | geliefert, Merge nach C4 | d55946e6 |
 | C3 | M6 | #68 agent.route + policy.rs (Whitelist, Empfänger, Obergrenzen, Injection), Router Qwen3.5-9B — lv-coder-xhigh (D:) | AK5, AK9 | abgenommen (QG5-Review, Eval-Neumessung vor Scharfschalten) | 0bd4bca2 |
 | D3 | M7 | #69 Bildanalyse für Folien (mmproj optional, nur Folienaufträge) — lv-coder (D:) | slides::vision llm::server | abgenommen (Echtlauf mit Gemma optional) | 117895c0 |
 | K1 | M8 | Webhook-Formular, Lizenzhinweise NC-Stimmen/espeak-ng, KNOWN-LIMITATIONS — lv-coder (D:) | tsc, Specs, gen-notices --check | abgenommen | cf6b5a13 |
