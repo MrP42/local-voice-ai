@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/issues-abschluss
 iteration: 1
 erstellt: 2026-10-01
-aktualisiert: 2026-10-01T18:38
+aktualisiert: 2026-10-01T19:15
 ---
 
 # Goal: Offene Issues abschliessen, neue Features, Version 0.21.0
@@ -48,7 +48,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - [x] QG3 — Systemschutz: neue Prozesse/Modelle hinter process_guard + RAM-Gate.
 - [x] QG4 — i18n de+en, echte Umlaute (check_i18n_meetings.py).
 - [x] QG5 — Sicherheitsreview für schreibende MCP/CLI-Werkzeuge und Workflow-Aktionen (Gate-Logik).
-- [ ] QG6 — Doku/Hilfe aktualisiert, Handoff geschrieben.
+- [x] QG6 — Doku/Hilfe aktualisiert, Handoff geschrieben.
 - [ ] QG7 — Budget: Schätzung ~10,6 MTok (M1 0,3 · M2 1,5 · M3 0,4 · M4 1,7 · M5 2,6 · M6 1,6 · M7 2,0 · M8 0,5); Meldung 50/80 %.
 
 ## Constraints
@@ -88,6 +88,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - 2026-10-01T18:38 QG5 erfüllt — Codex-Review review-qg5-codex.md: 4 Befunde B20-B23 → S1 5f9a6b91 behoben, je Test rot→grün; Integrationslauf c0e22923: cargo build ok, 1061 Tests grün
 - 2026-10-01T18:38 QG3 erfüllt — Neue Prozesse/Modelle nur über process_guard/RAM-Gate/HeavyGate (D1 ffmpeg Job-Objekt, D3 mmproj im RAM-Gate, C2/C3 ensure_local, B1 HeavyGate); je Paket Fehlerfall-Tabelle
 - 2026-10-01T18:38 QG4 erfüllt — check_i18n_meetings.py OK (de/en gleiche Schlüssel, echte Umlaute) nach D4/G5/K1/B6
+- 2026-10-01T19:15 QG6 erfüllt — R1 d9251630: Hilfe integrationen/aufnahmen de+en, docs/AUTOMATIONEN.md, docs/AGENTEN-ANBINDEN.md, docs/releases/0.21.0.md, In-App-Notes 0.21.0; Handoff folgt
 
 ## Blocker
 -
