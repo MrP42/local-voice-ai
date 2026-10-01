@@ -400,6 +400,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         let calendar =
             managers::calendar::service::CalendarService::spawn(app_handle.clone(), calendar_store);
         app_handle.manage(calendar);
+        // A5: Microsoft-365-Konto (Zugriffstoken im Arbeitsspeicher, eine Anmeldung zur Zeit).
+        app_handle.manage(Arc::new(
+            managers::integrations::m365::M365Service::production(),
+        ));
     }
 
     // M5-P5c: Ad-hoc-Erkennung laufender Besprechungen (nur Hinweis).
@@ -2157,6 +2161,18 @@ pub fn run(cli_args: CliArgs) {
             commands::calendar::calendar_graph_sign_out,
             commands::calendar::change_calendar_graph_client_id_setting,
             commands::calendar::change_calendar_graph_tenant_setting,
+            // A5: Microsoft-365-Konto
+            commands::integrations_m365::m365_status,
+            commands::integrations_m365::m365_create,
+            commands::integrations_m365::m365_update_settings,
+            commands::integrations_m365::m365_sign_in,
+            commands::integrations_m365::m365_cancel_sign_in,
+            commands::integrations_m365::m365_sign_out,
+            commands::integrations_m365::m365_test,
+            commands::integrations_m365::m365_send_test_mail,
+            commands::integrations_m365::m365_upload_test_file,
+            commands::integrations_m365::meeting_followup_send_m365,
+            commands::integrations_m365::m365_event_note,
             // M6-P6e
             commands::meeting_mcp::change_meeting_mcp_enabled_setting,
             commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,

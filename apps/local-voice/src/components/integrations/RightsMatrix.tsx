@@ -38,7 +38,11 @@ export const RightsMatrix: React.FC<RightsMatrixProps> = ({
         const blockedReasons = Array.from(
           new Set(
             cap.modes
-              .filter((m) => m.off_reason === "direction_blocks")
+              .filter(
+                (m) =>
+                  m.off_reason === "direction_blocks" ||
+                  m.off_reason === "capability_not_enabled",
+              )
               .map((m) => m.off_reason as string),
           ),
         );

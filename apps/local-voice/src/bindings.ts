@@ -3172,6 +3172,140 @@ async changeCalendarGraphTenantSetting(tenant: string | null) : Promise<Result<n
 }
 },
 /**
+ * Zustand des Kontos: Einstellungen, Scopes und was noch fehlt.
+ */
+async m365Status(id: string) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_status", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt ein Microsoft-365-Konto an (ohne Anmeldung). Leere Client-ID und leeres
+ * Verzeichnis uebernehmen die Einstellungen des Kalenders (E14), wenn dort etwas
+ * steht; sonst bleibt das Konto „nicht eingerichtet“, bis eine Client-ID folgt.
+ * Fehler: `m365_invalid|<Text>` oder der Klartext des Registers.
+ */
+async m365Create(label: string, clientId: string | null, tenant: string | null, capabilities: Capability[], filesMode: FilesMode | null, filesFolder: string | null) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_create", { label, clientId, tenant, capabilities, filesMode, filesFolder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aendert Client-ID, Verzeichnis, eingeschaltete Faehigkeiten oder Ablageort
+ * (`None` = unveraendert). Eine andere Client-ID oder ein anderes Verzeichnis
+ * verwirft das Token (neu anmelden); eine zusaetzliche Faehigkeit verlangt beim
+ * naechsten Anmelden die Zustimmung zu ihrem Scope (`needs_consent`).
+ */
+async m365UpdateSettings(id: string, clientId: string | null, tenant: string | null, capabilities: Capability[] | null, filesMode: FilesMode | null, filesFolder: string | null) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_update_settings", { id, clientId, tenant, capabilities, filesMode, filesFolder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anmelden: oeffnet den Systembrowser (Microsoft-Anmeldung mit PKCE, Umleitung auf
+ * einen Listener auf `127.0.0.1`), wartet bis zu 5 Minuten und legt das Konto
+ * verschluesselt ab. Es werden nur die Scopes der eingeschalteten Faehigkeiten
+ * angefragt. Fehler: `m365_*` (siehe `M365Error::code`).
+ */
+async m365SignIn(id: string) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_sign_in", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht eine laufende Anmeldung ab; `false`, wenn keine laeuft.
+ */
+async m365CancelSignIn() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_cancel_sign_in") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Abmelden: das Token wird geloescht, die Integration bleibt.
+ */
+async m365SignOut(id: string) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_sign_out", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verbindung testen: fragt das eigene Profil ab (`GET /me`). Das Ergebnis steht
+ * auch am Eintrag (`last_ok_at`/`last_error`).
+ */
+async m365Test(id: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_test", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Testmail an die eigene Adresse des Kontos (Owner-Pruefung: kommt die Mail an?).
+ */
+async m365SendTestMail(id: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_send_test_mail", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kleine Testdatei in den eingestellten OneDrive-Ordner legen (Owner-Pruefung).
+ */
+async m365UploadTestFile(id: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_upload_test_file", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Follow-up-Mail einer Besprechung ueber das Microsoft-365-Konto senden („senden
+ * über“). Der Entwurf kommt aus dem Dialog; eine unbrauchbare Adresse bricht ab.
+ */
+async meetingFollowupSendM365(integrationId: string, draft: MailDraft) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_followup_send_m365", { integrationId, draft }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Haengt eine Notiz an den Outlook-Termin einer Kalenderzeile (`event_key` aus dem
+ * Kalender-Cache). Ist die Notiz schon im Termin, geschieht nichts (`detail`:
+ * `already_there`).
+ */
+async m365EventNote(integrationId: string, eventKey: string, note: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_event_note", { integrationId, eventKey, note }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * „Lokaler MCP-Server (nur lesend)“ ein- oder ausschalten. Wirkt sofort auch in
  * einer laufenden Sitzung: der Server liest die Einstellung bei jedem Aufruf.
  */
@@ -4517,6 +4651,7 @@ streamTextEvent: "stream-text-event"
 
 /** user-defined types **/
 
+export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
  * Verknuepfung mit der `humans`-Tabelle folgt in M9.
@@ -5493,6 +5628,18 @@ recording: number; meeting_id: string; segment_index: number; start_ms: number }
  * Fehlende Felder gelten als „an“: ein Aufruf ohne Auswahl exportiert alles.
  */
 export type ExportParts = { ai_notes: boolean; notes: boolean; minutes: boolean; transcript: boolean; participants: boolean }
+/**
+ * Wo in OneDrive geschrieben wird.
+ */
+export type FilesMode = 
+/**
+ * Das ganze OneDrive (`Files.ReadWrite`): Arbeits-/Schulkonten und private Konten.
+ */
+"full" | 
+/**
+ * Nur der App-Ordner (`Files.ReadWrite.AppFolder`): nur private Konten.
+ */
+"app_folder"
 export type FitReport = { estimate: MemoryEstimate; 
 /**
  * Freies Budget des massgeblichen Speichers (MiB) -- GPU, sonst RAM.
@@ -5807,6 +5954,20 @@ export type LocalUpdate = { version: string; path: string; file_name: string }
  */
 export type Locality = "local" | "remote"
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * Ergebnis einer Aktion fuer die Oberflaeche: `ok`, sonst ein Fehlercode
+ * (`m365_*` oder `m365_gate|<grund>`), dazu ein Hinweis (z. B. der Ablageort).
+ */
+export type M365ActionResult = { ok: boolean; code: string; detail: string | null }
+export type M365Status = { state: AccountState; client_id: string; tenant: string; account: string | null; display_name: string | null; enabled_capabilities: Capability[]; 
+/**
+ * Faehigkeiten, die sich an diesem Konto einschalten lassen.
+ */
+available_capabilities: Capability[]; files_mode: FilesMode; files_folder: string; required_scopes: string[]; granted_scopes: string[]; missing_scopes: string[]; 
+/**
+ * Zustand des Geheimnisses: `present`, `missing` oder `broken`.
+ */
+secret: string; signing_in: boolean }
 /**
  * Ein bearbeitbarer Mailentwurf. `body_html` wird beim Kopieren und Speichern
  * aus `body_text` neu gebaut (`finalize`), damit Änderungen im Dialog nie

@@ -49,7 +49,7 @@ export const CATALOG: CatalogEntry[] = [
   { id: "folder", kind: "folder", status: "available" },
   { id: "youtube", kind: "youtube", status: "auto" },
   { id: "mcp", kind: "agent", status: "available" },
-  { id: "m365", kind: "m365", status: "soon" },
+  { id: "m365", kind: "m365", status: "available" },
   { id: "smtp", kind: "smtp", status: "soon" },
   { id: "obsidian", kind: "obsidian", status: "soon" },
   { id: "wissen", kind: "wissen", status: "soon" },
