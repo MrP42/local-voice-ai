@@ -205,6 +205,21 @@ Zahlen stammen aus den Messläufen im Branch, Belege in `koordination/granola-be
 vollständige Liste steht in [m2-evidence/ATTRIBUTION.md](m2-evidence/ATTRIBUTION.md). Sortformer steht unter
 der NVIDIA Open Model License und wird geladen, nicht mitgeliefert. Im ASR-Katalog liegt seit früher ein
 Modell mit CC-BY-NC-4.0 (Canary 1B); es ist nicht vorgewählt und wird nicht für Besprechungen empfohlen.
+Unter den Piper-Stimmen sind seit K1 Lessac (Blizzard-2013-Forschungslizenz), Ryan (CC-BY-NC-SA-4.0) und die
+davon abgeleiteten Thorsten, Kerstin, Amy, Alan und Alba als „nur nicht-kommerziell“ gekennzeichnet. Beim
+Einrichten der Piper-Laufzeit legt die App den espeak-ng-Lizenztext (GPL-3.0-or-later) in deren Ordner.
+
+## Folien-OCR, Workflows und Integrationen (Stand 2026-10-01)
+
+Bekannte Grenzen aus dem Goal „Issues-Abschluss“ (#70), Belege im
+Spike-Bericht `koordination/bild-video/spike/spike-bericht.md`.
+
+| Grenze | Stand | Umgang |
+|---|---|---|
+| **OCR liest „§“ und Tabellen schwach** | Die Folientexterkennung nutzt die Windows-Texterkennung (`Windows.Media.Ocr`, de-DE und en-US). Im Spike verwechselte sie „§ 3“ mit „5 3“ und „27 %“ mit „270/0“, las Tabellen spaltenweise und ließ Zellen fallen (Zahlentreue 47 von 60). Eine genauere Erkennung (RapidOCR, Bildanalyse mit Gemma) ist nicht eingebaut. | Zahlen, Paragrafen und Tabellen aus Folien im Protokoll gegen das Bild prüfen; Fließtext und Überschriften sind belastbar. |
+| **Englische Oberfläche zeigt deutsche Meldungen des Programmkerns** | Fehler- und Hinweistexte, die der Rust-Teil selbst formuliert (Workflows, Integrationen: etwa „Der Webhook muss https verwenden“, Läufe und Protokoll), sind deutsch und werden nicht übersetzt. Nur Meldungen mit festem Code (`integrations.errors.*`, `integrations.test.*`) erscheinen in der Sprache der Oberfläche. | Kein Datenverlust, nur Sprachmischung; Eine Übersetzung der Meldungen des Programmkerns steht aus. |
+| **Toast-Meldungen nur im Installer geprüft** | Hinweise als Toast sind am echten Fenster nur im Installer-Build abgenommen; die Playwright-Tests prüfen sie gegen die Tauri-Attrappe (`[data-sonner-toast]`). | Bei Änderungen an Toasts den Installer-Build ansehen. |
+| **Ein Webhook wird nie durch Senden getestet** | „Verbindung testen“ gibt es für Webhooks bewusst nicht, weil jeder Test den Ablauf in n8n wirklich auslösen würde. Die Adresse wird beim Eintragen auf Form (https, http nur auf diesem Rechner) geprüft, ob sie ankommt, zeigt erst der erste Lauf im Protokoll. | Ablauf in n8n zuerst mit einem harmlosen Schritt anlegen. |
 
 ## Segment-Modus (segment_injection) — abgesichert nach D14
 

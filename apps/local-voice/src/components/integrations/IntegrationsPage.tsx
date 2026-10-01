@@ -88,7 +88,8 @@ export const IntegrationsPage: React.FC = () => {
       entry.kind &&
       (entry.id === "smtp" ||
         entry.id === "obsidian" ||
-        entry.id === "wissen") &&
+        entry.id === "wissen" ||
+        entry.id === "webhook") &&
       isTargetKind(entry.kind)
     ) {
       setTargetKind(entry.kind);

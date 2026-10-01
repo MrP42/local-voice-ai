@@ -1,6 +1,6 @@
 # Third-Party-Notices
 
-Local Voice AI 0.20.11 enthält Software und nutzt Modelle Dritter. Diese Datei nennt sie mit ihren Lizenzen und wird mit `apps/local-voice/scripts/gen-notices.mjs` aus `Cargo.lock`, `pnpm-lock.yaml`, dem Modellkatalog und `docs/m2-evidence/ATTRIBUTION.md` erzeugt. Nicht von Hand ändern.
+Local Voice AI 0.20.12 enthält Software und nutzt Modelle Dritter. Diese Datei nennt sie mit ihren Lizenzen und wird mit `apps/local-voice/scripts/gen-notices.mjs` aus `Cargo.lock`, `pnpm-lock.yaml`, dem Modellkatalog und `docs/m2-evidence/ATTRIBUTION.md` erzeugt. Nicht von Hand ändern.
 
 ## Hinweise
 
@@ -18,6 +18,11 @@ Local Voice AI 0.20.11 enthält Software und nutzt Modelle Dritter. Diese Datei 
 **Modelle mit nicht-kommerzieller Lizenz (im Katalog wählbar, nicht vorgewählt):**
 
 - Canary 1B — CC-BY-NC-4.0
+- Kerstin (Low Quality) — CC0-1.0
+- Thorsten (High Quality) — CC0-1.0
+- Thorsten (Medium Quality) — CC0-1.0
+- Alan (Medium Quality) — Unklar (Mimic-3-Repo CC-BY-SA-4.0, Stimmen-Datei: All Rights Reserved)
+- Amy (Medium Quality) — CC-BY-SA-4.0
 - Lessac (High Quality) — Blizzard-2013-Research-Licence
 - Lessac (Medium Quality) — Blizzard-2013-Research-Licence
 - Ryan (High Quality) — CC-BY-NC-SA-4.0
@@ -39,8 +44,8 @@ Modelle werden bei Bedarf geladen und nicht mit dem Installer ausgeliefert; Ausn
 | Gemma 4 E4B und 12B (Google) | lokales Sprachmodell (Katalog, wählbar) | Apache-2.0 (Gemma-4-Lizenz) | <https://ai.google.dev/gemma/docs/gemma_4_license> |
 | Gemma 3 4B (Google) | lokales Sprachmodell (Katalog, wählbar, vorbestehend) | Gemma Terms of Use (eigene Lizenz mit Nutzungsauflagen, Modellkarte: `gemma`) | <https://huggingface.co/google/gemma-3-4b-it> |
 | Piper (Michael Hansen / Rhasspy) | Sprachausgabe-Laufzeit (Katalog, wählbar, Download von GitHub) | MIT; das Paket enthält espeak-ng (GPL-3.0-or-later), piper-phonemize (MIT), onnxruntime 1.14.1 (MIT) | <https://github.com/rhasspy/piper> |
-| espeak-ng (Teil des Piper-Pakets) | Phonemisierung, `espeak-ng.dll` (Windows) | GPL-3.0-or-later | <https://github.com/espeak-ng/espeak-ng> |
-| Piper-Stimmen (10 im Katalog, `rhasspy/piper-voices`) | Sprachausgabe (Katalog, wählbar) | je Stimme verschieden, siehe Katalogeintrag: CC0-1.0 (Thorsten, Kerstin), BSD-3-Clause (Eva K., M-AILABS), CC-BY-4.0 (Alba), CC-BY-SA-4.0 bzw. unklar (Amy, Alan), nicht kommerziell: Lessac (Blizzard-2013-Forschungslizenz), Ryan (CC-BY-NC-SA-4.0); mehrere Stimmen sind von Lessac bzw. Ryan feinabgestimmt | <https://huggingface.co/rhasspy/piper-voices> |
+| espeak-ng (Teil des Piper-Pakets) | Phonemisierung, `espeak-ng.dll` (Windows); das Piper-Archiv enthält keine Lizenzdateien, deshalb legt die App beim Einrichten Hinweis und GPL-3.0-Text als `LICENSE-espeak-ng-GPL-3.0.txt` in den Laufzeitordner | GPL-3.0-or-later | <https://github.com/espeak-ng/espeak-ng> |
+| Piper-Stimmen (10 im Katalog, `rhasspy/piper-voices`) | Sprachausgabe (Katalog, wählbar) | je Stimme verschieden, siehe Katalogeintrag: CC0-1.0 (Thorsten, Kerstin), BSD-3-Clause (Eva K., M-AILABS), CC-BY-4.0 (Alba), CC-BY-SA-4.0 bzw. unklar (Amy, Alan), nur nicht-kommerziell (im Katalog gekennzeichnet): Lessac (Blizzard-2013-Forschungslizenz), Ryan (CC-BY-NC-SA-4.0) sowie die davon feinabgestimmten Thorsten, Amy, Alan, Alba (von Lessac) und Kerstin (von Ryan): deren Datensatz ist frei, das Modell aber abgeleitet und in der Lizenzlage ungeklärt | <https://huggingface.co/rhasspy/piper-voices> |
 | llama.cpp b10938 (ggml-Autoren) | Sprachmodell-Laufzeit (Katalog, wählbar, Download von GitHub) | MIT; Windows-Pakete enthalten libomp.dll (Apache-2.0 mit LLVM-Ausnahme); CUDA-Paket zusätzlich NVIDIA-CUDA-Bibliotheken (CUDA Toolkit EULA) | <https://github.com/ggml-org/llama.cpp> |
 | Nemotron 3.5 ASR Streaming (NVIDIA) | Spracherkennung (Katalog, wählbar) | OpenMDW-1.1 | <https://openmdw.ai/license/1-1/> |
 | Nemotron Speech Streaming EN, Multitalker Parakeet Streaming (NVIDIA) | Spracherkennung (Katalog, wählbar) | NVIDIA Open Model License | <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/> |
@@ -55,13 +60,13 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - SenseVoice Small (`handy-computer/SenseVoiceSmall-gguf`) — FunASR Model License 1.1 — <https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE>
 - Canary 1B (`handy-computer/canary-1b-gguf`) — cc-by-nc-4.0 — **nur nicht-kommerziell** — <https://creativecommons.org/licenses/by-nc/4.0/>
 - Eva K. (Very Low Quality) (`de_DE-eva_k-x_low`) — BSD-3-Clause — <https://github.com/MycroftAI/mimic3-voices/blob/master/voices/en_US/m-ailabs_low/LICENSE>. Datensatz M-AILABS Speech Dataset (datenspezifische BSD-3-Clause-Lizenz: kommerzielle Nutzung erlaubt, Urheberhinweis beibehalten); von Grund auf trainiert.
-- Kerstin (Low Quality) (`de_DE-kerstin-low`) — CC0-1.0 — <https://github.com/rhasspy/dataset-voice-kerstin>. Datensatz Kerstin (CC0). Modell von der englischen Ryan-Stimme feinabgestimmt; deren Datensatz steht unter CC-BY-NC-SA-4.0 (nicht kommerziell). Lizenzlage des Modells ungeklärt.
-- Thorsten (High Quality) (`de_DE-thorsten-high`) — CC0-1.0 — <https://github.com/thorstenMueller/Thorsten-Voice>. Datensatz Thorsten-Voice (CC0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
-- Thorsten (Medium Quality) (`de_DE-thorsten-medium`) — CC0-1.0 — <https://github.com/thorstenMueller/Thorsten-Voice>. Datensatz Thorsten-Voice (CC0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
+- Kerstin (Low Quality) (`de_DE-kerstin-low`) — CC0-1.0 — **nur nicht-kommerziell** — <https://github.com/rhasspy/dataset-voice-kerstin>. Datensatz Kerstin (CC0). Modell von der englischen Ryan-Stimme feinabgestimmt; deren Datensatz steht unter CC-BY-NC-SA-4.0 (nicht kommerziell). Lizenzlage des Modells ungeklärt.
+- Thorsten (High Quality) (`de_DE-thorsten-high`) — CC0-1.0 — **nur nicht-kommerziell** — <https://github.com/thorstenMueller/Thorsten-Voice>. Datensatz Thorsten-Voice (CC0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
+- Thorsten (Medium Quality) (`de_DE-thorsten-medium`) — CC0-1.0 — **nur nicht-kommerziell** — <https://github.com/thorstenMueller/Thorsten-Voice>. Datensatz Thorsten-Voice (CC0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
 - Sortformer 4spk v2.1 (Sprechertrennung) (`diar-sortformer-4spk-v2.1-q8`) — NVIDIA Open Model License — <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/>
-- Alan (Medium Quality) (`en_GB-alan-medium`) — Unklar (Mimic-3-Repo CC-BY-SA-4.0, Stimmen-Datei: All Rights Reserved) — <https://github.com/MycroftAI/mimic3-voices/tree/master/voices/en_UK/apope_low>. Mimic-3-Stimme apope (Alan Pope): das Repo steht unter CC-BY-SA-4.0, die LICENSE-Datei der Stimme nennt "Copyright 2022 Mycroft AI, All Rights Reserved". Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
-- Alba (Medium Quality) (`en_GB-alba-medium`) — CC-BY-4.0 — <https://creativecommons.org/licenses/by/4.0/>. Datensatz Alba (CSTR, Univ. Edinburgh, CC-BY-4.0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
-- Amy (Medium Quality) (`en_US-amy-medium`) — CC-BY-SA-4.0 (laut Piper-Maintainer; Datensatz unklar) — <https://github.com/MycroftAI/mimic3-voices>. Mimic-3-Stimme. Laut Piper-Maintainer stehen die Mycroft-Modelle unter CC-BY-SA-4.0, die Lizenz des Datensatzes ist unbekannt (rhasspy/piper#253). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
+- Alan (Medium Quality) (`en_GB-alan-medium`) — Unklar (Mimic-3-Repo CC-BY-SA-4.0, Stimmen-Datei: All Rights Reserved) — **nur nicht-kommerziell** — <https://github.com/MycroftAI/mimic3-voices/tree/master/voices/en_UK/apope_low>. Mimic-3-Stimme apope (Alan Pope): das Repo steht unter CC-BY-SA-4.0, die LICENSE-Datei der Stimme nennt "Copyright 2022 Mycroft AI, All Rights Reserved". Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
+- Alba (Medium Quality) (`en_GB-alba-medium`) — CC-BY-4.0 — **nur nicht-kommerziell** — <https://creativecommons.org/licenses/by/4.0/>. Datensatz Alba (CSTR, Univ. Edinburgh, CC-BY-4.0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
+- Amy (Medium Quality) (`en_US-amy-medium`) — CC-BY-SA-4.0 (laut Piper-Maintainer; Datensatz unklar) — **nur nicht-kommerziell** — <https://github.com/MycroftAI/mimic3-voices>. Mimic-3-Stimme. Laut Piper-Maintainer stehen die Mycroft-Modelle unter CC-BY-SA-4.0, die Lizenz des Datensatzes ist unbekannt (rhasspy/piper#253). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.
 - Lessac (High Quality) (`en_US-lessac-high`) — Blizzard-2013-Research-Licence — **nur nicht-kommerziell** — <https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html>. Lessac-Blizzard-2013-Datensatz: Forschungslizenz, kommerzielle Nutzung ausdrücklich ausgeschlossen.
 - Lessac (Medium Quality) (`en_US-lessac-medium`) — Blizzard-2013-Research-Licence — **nur nicht-kommerziell** — <https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html>. Lessac-Blizzard-2013-Datensatz: Forschungslizenz, kommerzielle Nutzung ausdrücklich ausgeschlossen.
 - Ryan (High Quality) (`en_US-ryan-high`) — CC-BY-NC-SA-4.0 — **nur nicht-kommerziell** — <https://creativecommons.org/licenses/by-nc-sa/4.0/>. Datensatz RyanSpeech (Kaggle): nur nicht-kommerziell, Weitergabe unter gleichen Bedingungen.
@@ -82,7 +87,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - FLEURS (Google) — CC-BY-4.0 — <https://huggingface.co/datasets/google/fleurs>
 - AMI Meeting Corpus — CC-BY-4.0 — <https://groups.inf.ed.ac.uk/ami/corpus/>
 
-## Rust-Bibliotheken (677)
+## Rust-Bibliotheken (676)
 
 - Inflector 0.11.4 — BSD-2-Clause
 - adler2 2.0.1 — MIT
@@ -93,6 +98,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - aho-corasick 1.1.4 — MIT
 - alloc-no-stdlib 2.0.4 — BSD-3-Clause
 - alloc-stdlib 0.2.2 — BSD-3-Clause
+- allocator-api2 0.2.21 — MIT
 - anstream 0.6.21 — MIT
 - anstyle 1.0.14 — MIT
 - anstyle-parse 0.2.7 — MIT
@@ -329,7 +335,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - libm 0.2.16 — MIT
 - libsqlite3-sys 0.35.0 — MIT
 - litemap 0.8.1 — Unicode-3.0
-- local-voice-ai 0.20.11 — MIT
+- local-voice-ai 0.20.12 — MIT
 - lock_api 0.4.14 — MIT
 - log 0.4.29 — MIT
 - lopdf 0.42.0 — MIT
@@ -694,6 +700,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - webview2-com-macros 0.8.1 — MIT
 - webview2-com-sys 0.38.2 — MIT
 - weezl 0.1.12 — MIT
+- whatlang 0.18.0 — MIT
 - widestring 1.2.1 — MIT
 - winapi 0.3.9 — MIT
 - winapi-util 0.1.11 — MIT
@@ -726,17 +733,14 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - windows-strings 0.1.0 — MIT
 - windows-strings 0.4.2 — MIT
 - windows-strings 0.5.1 — MIT
-- windows-sys 0.48.0 — MIT
 - windows-sys 0.59.0 — MIT
 - windows-sys 0.60.2 — MIT
 - windows-sys 0.61.2 — MIT
-- windows-targets 0.48.5 — MIT
 - windows-targets 0.52.6 — MIT
 - windows-targets 0.53.5 — MIT
 - windows-threading 0.1.0 — MIT
 - windows-threading 0.2.1 — MIT
 - windows-version 0.1.7 — MIT
-- windows_x86_64_msvc 0.48.5 — MIT
 - windows_x86_64_msvc 0.52.6 — MIT
 - windows_x86_64_msvc 0.53.1 — MIT
 - winnow 0.7.14 — MIT
@@ -4362,7 +4366,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — adobe-cmap-parser 0.4.1, block 0.1.6, block2 0.6.2, brotli-decompressor 5.0.0, cargo_toml 0.22.3, chrono 0.4.43, chrono-tz 0.10.4, convert_case 0.4.0, dasp_sample 0.11.0, dispatch 0.2.0, dispatch2 0.3.0, dpi 0.1.2, fax 0.2.6, fax_derive 0.2.0, fxhash 0.2.1, libm 0.2.16, local-voice-ai 0.20.11, mac 0.1.1, macos-accessibility-client 0.0.1, malloc_buf 0.0.6, match_token 0.1.0, minisign-verify 0.2.5, objc2 0.6.4, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-text 0.3.2, objc2-core-video 0.3.2, objc2-encode 4.1.0, objc2-exception-helper 0.1.1, objc2-foundation 0.3.2, objc2-io-kit 0.3.2, objc2-metal 0.3.2, objc2-osa-kit 0.3.2, objc2-quartz-core 0.3.2, objc2-web-kit 0.3.2, pdf-extract 0.12.0, phf 0.10.1, phf 0.8.0, phf_codegen 0.8.0, phf_generator 0.10.0, phf_generator 0.8.0, phf_macros 0.10.0, phf_shared 0.10.0, phf_shared 0.8.0, postscript 0.14.1, realfft 3.5.0, siphasher 0.3.11, siphasher 1.0.2, specta 2.0.0-rc.22, specta-macros 2.0.0-rc.18, specta-serde 0.0.9, specta-typescript 0.0.9, tauri 2.11.5, tauri-build 2.6.3, tauri-codegen 2.6.3, tauri-macros 2.6.3, tauri-plugin 2.5.3, tauri-plugin-autostart 2.5.1, tauri-plugin-clipboard-manager 2.3.2, tauri-plugin-dialog 2.6.0, tauri-plugin-fs 2.4.5, tauri-plugin-global-shortcut 2.3.2, tauri-plugin-log 2.8.0, tauri-plugin-opener 2.5.3, tauri-plugin-os 2.3.2, tauri-plugin-process 2.3.1, tauri-plugin-single-instance 2.4.0, tauri-plugin-store 2.4.2, tauri-plugin-updater 2.10.1, tauri-plugin-window-state 2.4.1, tauri-runtime 2.11.3, tauri-runtime-wry 2.11.4, tauri-specta 2.0.0-rc.21, tauri-specta-macros 2.0.0-rc.16, tauri-utils 2.9.3, type1-encoding-parser 0.1.1, unic-char-property 0.9.0, unic-char-range 0.9.0, unic-common 0.9.0, unic-ucd-ident 0.9.0, unic-ucd-version 0.9.0, vad-rs 0.1.6, webview2-com 0.38.2, webview2-com-macros 0.8.1, webview2-com-sys 0.38.2, windows 0.54.0, windows 0.58.0, windows 0.61.3, windows 0.62.2, windows-collections 0.2.0, windows-collections 0.3.2, windows-core 0.54.0, windows-core 0.58.0, windows-core 0.61.2, windows-core 0.62.2, windows-future 0.2.1, windows-future 0.3.2, windows-implement 0.58.0, windows-implement 0.60.2, windows-interface 0.58.0, windows-interface 0.59.3, windows-link 0.1.3, windows-link 0.2.1, windows-numerics 0.2.0, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.1.2, windows-result 0.2.0, windows-result 0.3.4, windows-result 0.4.1, windows-strings 0.1.0, windows-strings 0.4.2, windows-strings 0.5.1, windows-sys 0.48.0, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.48.5, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.1.0, windows-threading 0.2.1, windows-version 0.1.7, windows_x86_64_msvc 0.48.5, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1, zune-core 0.4.12, zune-jpeg 0.4.21
+#### MIT License (MIT) — adobe-cmap-parser 0.4.1, block 0.1.6, block2 0.6.2, brotli-decompressor 5.0.0, cargo_toml 0.22.3, chrono 0.4.43, chrono-tz 0.10.4, convert_case 0.4.0, dasp_sample 0.11.0, dispatch 0.2.0, dispatch2 0.3.0, dpi 0.1.2, fax 0.2.6, fax_derive 0.2.0, fxhash 0.2.1, libm 0.2.16, local-voice-ai 0.20.12, mac 0.1.1, macos-accessibility-client 0.0.1, malloc_buf 0.0.6, match_token 0.1.0, minisign-verify 0.2.5, objc2 0.6.4, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-text 0.3.2, objc2-core-video 0.3.2, objc2-encode 4.1.0, objc2-exception-helper 0.1.1, objc2-foundation 0.3.2, objc2-io-kit 0.3.2, objc2-metal 0.3.2, objc2-osa-kit 0.3.2, objc2-quartz-core 0.3.2, objc2-web-kit 0.3.2, pdf-extract 0.12.0, phf 0.10.1, phf 0.8.0, phf_codegen 0.8.0, phf_generator 0.10.0, phf_generator 0.8.0, phf_macros 0.10.0, phf_shared 0.10.0, phf_shared 0.8.0, postscript 0.14.1, realfft 3.5.0, siphasher 0.3.11, siphasher 1.0.2, specta 2.0.0-rc.22, specta-macros 2.0.0-rc.18, specta-serde 0.0.9, specta-typescript 0.0.9, tauri 2.11.5, tauri-build 2.6.3, tauri-codegen 2.6.3, tauri-macros 2.6.3, tauri-plugin 2.5.3, tauri-plugin-autostart 2.5.1, tauri-plugin-clipboard-manager 2.3.2, tauri-plugin-dialog 2.6.0, tauri-plugin-fs 2.4.5, tauri-plugin-global-shortcut 2.3.2, tauri-plugin-log 2.8.0, tauri-plugin-opener 2.5.3, tauri-plugin-os 2.3.2, tauri-plugin-process 2.3.1, tauri-plugin-single-instance 2.4.0, tauri-plugin-store 2.4.2, tauri-plugin-updater 2.10.1, tauri-plugin-window-state 2.4.1, tauri-runtime 2.11.3, tauri-runtime-wry 2.11.4, tauri-specta 2.0.0-rc.21, tauri-specta-macros 2.0.0-rc.16, tauri-utils 2.9.3, type1-encoding-parser 0.1.1, unic-char-property 0.9.0, unic-char-range 0.9.0, unic-common 0.9.0, unic-ucd-ident 0.9.0, unic-ucd-version 0.9.0, vad-rs 0.1.6, webview2-com 0.38.2, webview2-com-macros 0.8.1, webview2-com-sys 0.38.2, whatlang 0.18.0, windows 0.54.0, windows 0.58.0, windows 0.61.3, windows 0.62.2, windows-collections 0.2.0, windows-collections 0.3.2, windows-core 0.54.0, windows-core 0.58.0, windows-core 0.61.2, windows-core 0.62.2, windows-future 0.2.1, windows-future 0.3.2, windows-implement 0.58.0, windows-implement 0.60.2, windows-interface 0.58.0, windows-interface 0.59.3, windows-link 0.1.3, windows-link 0.2.1, windows-numerics 0.2.0, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.1.2, windows-result 0.2.0, windows-result 0.3.4, windows-result 0.4.1, windows-strings 0.1.0, windows-strings 0.4.2, windows-strings 0.5.1, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.1.0, windows-threading 0.2.1, windows-version 0.1.7, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1, zune-core 0.4.12, zune-jpeg 0.4.21
 
 ```
 MIT License
@@ -4500,6 +4504,34 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+#### MIT License (MIT) — allocator-api2 0.2.21
+
+```
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 ```
 
 #### MIT License (MIT) — anstream 0.6.21, anstyle 1.0.14, anstyle-parse 0.2.7, anstyle-query 1.1.5, anstyle-wincon 3.0.11, clap 4.5.60, clap_builder 4.5.60, clap_derive 4.5.55, clap_lex 1.1.0, colorchoice 1.0.5, env_filter 0.1.4, env_logger 0.10.2, is_terminal_polyfill 1.70.2, once_cell_polyfill 1.70.2, serde_spanned 1.0.4, toml 0.9.12+spec-1.1.0, toml_datetime 0.7.5+spec-1.1.0, toml_parser 1.0.9+spec-1.1.0, toml_writer 1.0.6+spec-1.1.0

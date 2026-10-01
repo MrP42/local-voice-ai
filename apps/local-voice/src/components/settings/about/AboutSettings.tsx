@@ -100,6 +100,17 @@ export const AboutSettings: React.FC = () => {
         </SettingContainer>
 
         <SettingContainer
+          title={t("settings.about.acknowledgments.piper.title")}
+          description={t("settings.about.acknowledgments.piper.description")}
+          grouped={true}
+          layout="stacked"
+        >
+          <div className="text-sm text-mid-gray">
+            {t("settings.about.acknowledgments.piper.details")}
+          </div>
+        </SettingContainer>
+
+        <SettingContainer
           title={t("settings.about.acknowledgments.libraries.title")}
           description={t(
             "settings.about.acknowledgments.libraries.description",

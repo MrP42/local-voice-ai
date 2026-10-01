@@ -318,6 +318,35 @@ test("models: non-commercial Piper voices and Canary 1B carry a clear license wa
   await expect(page.getByTestId("tts-nc-note")).toContainText("CC-BY-NC-SA-4.0");
 });
 
+test("models: Piper voices derived from a research/NC voice are marked non-commercial and say why (K1)", async ({ page }) => {
+  await setup(page, {
+    engine: "piper",
+    piperVoice: null,
+    downloads: [
+      piperRow({ is_downloaded: false, is_usable: false }),
+      // Datensatz CC0, aber vom Lessac-Modell (Blizzard-2013-Forschungslizenz) abgeleitet.
+      voiceRow({ id: "de_DE-thorsten-high", name: "Thorsten (High Quality)", is_downloaded: false, is_usable: false, license_non_commercial: true }),
+      voiceRow({ id: "de_DE-kerstin-low", name: "Kerstin (Low Quality)", is_downloaded: false, is_usable: false, license_non_commercial: true }),
+      // Von Grund auf trainiert (M-AILABS, BSD-3-Clause): frei.
+      voiceRow({ id: "de_DE-eva_k-x_low", name: "Eva K.", is_downloaded: false, is_usable: false, license: "BSD-3-Clause" }),
+    ],
+    runtime: runtimeState(false, false),
+    models: [],
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
+  const notes = page.getByTestId("tts-nc-note");
+  await expect(notes).toHaveCount(2);
+  await expect(notes.nth(0)).toContainText("von der Lessac-Stimme abgeleitet");
+  await expect(notes.nth(0)).toContainText("Blizzard 2013");
+  await expect(notes.nth(1)).toContainText("von der Ryan-Stimme abgeleitet");
+  await expect(notes.nth(1)).toContainText("CC-BY-NC-SA-4.0");
+  const thorsten = page.locator("div.px-4.py-3", { has: notes.nth(0) });
+  await expect(thorsten.getByText("Nur nicht-kommerziell").first()).toBeVisible();
+  const eva = page.locator("div.px-4.py-3", { hasText: "Eva K." });
+  await expect(eva.getByText("Nur nicht-kommerziell")).toHaveCount(0);
+});
+
 test("help hides Fish content when Fish is not set up and shows it when it is", async ({ page }) => {
   await setup(page, {
     engine: "piper",

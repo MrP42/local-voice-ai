@@ -71,6 +71,16 @@ fn runtime_dir(piper_dir: &Path, platform: &str) -> PathBuf {
     piper_dir.join(platform)
 }
 
+/// Name der Lizenzdatei, die beim Einrichten in den Laufzeitordner kommt (K1).
+pub(crate) const RUNTIME_LICENSE_FILE: &str = "LICENSE-espeak-ng-GPL-3.0.txt";
+
+/// Hinweis zu espeak-ng (GPL-3.0-or-later) samt vollem GPL-3.0-Text. Das offizielle Piper-Archiv
+/// enthaelt keine Lizenzdateien (siehe `license_note` im Katalog).
+const RUNTIME_LICENSE_TEXT: &str = concat!(
+    include_str!("licenses/espeak-ng-NOTICE.txt"),
+    include_str!("licenses/GPL-3.0.txt")
+);
+
 /// Whether a COMPLETE Piper runtime sits at `runtime_dir(piper_dir, platform)`
 /// -- the binary, its `espeak-ng-data` and every library it is linked against
 /// (`availability::piper_ready`). A bare `is_dir()` or "binary exists" also
@@ -549,6 +559,11 @@ impl TtsModelManager {
         } else {
             fs::rename(&temp_dir, dest_dir)?;
         }
+        // Die Installation selbst ist fertig; ein nicht schreibbarer Lizenzhinweis kippt sie nicht,
+        // wird aber gemeldet.
+        if let Err(e) = fs::write(dest_dir.join(RUNTIME_LICENSE_FILE), RUNTIME_LICENSE_TEXT) {
+            log::warn!("Lizenzhinweis zu espeak-ng konnte nicht abgelegt werden: {e}");
+        }
         Ok(())
     }
 
@@ -800,8 +815,11 @@ mod tests {
         assert!(ryan.license_non_commercial);
         assert_eq!(ryan.license.as_deref(), Some("CC-BY-NC-SA-4.0"));
         let thorsten = downloads.iter().find(|d| d.id == "de_DE-thorsten-high").unwrap();
-        assert!(!thorsten.license_non_commercial);
+        // Datensatz CC0, aber vom Lessac-Modell (Blizzard-2013-Forschungslizenz) abgeleitet (K1).
+        assert!(thorsten.license_non_commercial);
         assert_eq!(thorsten.license.as_deref(), Some("CC0-1.0"));
+        let eva = downloads.iter().find(|d| d.id == "de_DE-eva_k-x_low").unwrap();
+        assert!(!eva.license_non_commercial);
     }
 
     #[test]
@@ -846,6 +864,34 @@ mod tests {
             "das top-level piper/-Verzeichnis wird weggeflacht, das Binary liegt direkt in dest"
         );
         assert!(dest_dir.join("espeak-ng-data").is_dir());
+    }
+
+    /// K1: das Piper-Archiv enthaelt keine Lizenzdateien, espeak-ng steht aber unter
+    /// GPL-3.0-or-later; beim Einrichten kommt deshalb Hinweis plus Lizenztext in den Ordner.
+    #[test]
+    fn die_entpackte_laufzeit_traegt_den_espeak_ng_lizenztext() {
+        use std::io::Write as _;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let archive_path = dir.path().join("windows-x64.download");
+        let file = File::create(&archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let opts: zip::write::SimpleFileOptions = Default::default();
+        writer.start_file("piper/piper.exe", opts).unwrap();
+        writer.write_all(b"fake binary").unwrap();
+        writer.finish().unwrap();
+
+        let dest_dir = dir.path().join("windows-x64");
+        TtsModelManager::extract_runtime_archive(&archive_path, &dest_dir, true).unwrap();
+
+        let text = fs::read_to_string(dest_dir.join(RUNTIME_LICENSE_FILE)).unwrap();
+        assert!(text.contains("espeak-ng"), "Hinweis auf espeak-ng fehlt");
+        assert!(text.contains("GPL-3.0-or-later"));
+        assert!(text.contains("https://github.com/espeak-ng/espeak-ng"));
+        assert!(
+            text.contains("GNU GENERAL PUBLIC LICENSE") && text.contains("Version 3, 29 June 2007"),
+            "der volle GPL-3.0-Text fehlt"
+        );
     }
 
     /// Gegenprobe: dasselbe ZIP im tar.gz-Zweig ist genau der alte Fehler.
