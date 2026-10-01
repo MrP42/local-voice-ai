@@ -32,6 +32,13 @@ Während einer Aufnahme ist das Diktat gesperrt. Dateien (Audio, Video, VTT, SRT
 **Datei importieren** (auch mehrere auf einmal) oder indem Sie sie auf die Arbeitsfläche ziehen; sie landen im
 gewählten Projekt. Bei laufender Verarbeitung: **Pausieren** gibt den Rechner frei, **Stoppen** behält das bisherige Transkript.
 
+**Wiederholungsschleifen:** Die Erkennungsmodelle Nemotron und Parakeet bleiben an unsicheren Stellen manchmal an einem
+Wort hängen und wiederholen es bis zu zehnmal („if if if if if“, „s s s s sort“). Beim Erzeugen eines Transkripts
+(Aufnahme, Neu-Transkription, Import, YouTube, Diktat) fasst die App solche Läufe zusammen: ab **vier** gleichen Wörtern
+in Folge bleibt eines, ein Wortbruchstück vor seinem Wort („cre cre cre created“) entfällt. Bis zu drei Wiederholungen
+(„no no no“), Zahlen, Lachen („ha ha ha“) und getrennte Sätze („Go. Go. Go. Go.“) bleiben unverändert. Bereits gespeicherte
+Transkripte, Anzeige und Export werden **nicht** nachträglich verändert; **Neu transkribieren** wendet die Zusammenfassung an.
+
 ### Import-Warteschlange und gleichzeitige Transkriptionen
 
 - Weitere Dateien lassen sich **jederzeit** hinzufügen. Jede bekommt sofort ihre Besprechung (Status **Wartet**, Platz in
