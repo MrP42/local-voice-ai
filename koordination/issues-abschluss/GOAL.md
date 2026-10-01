@@ -1,15 +1,15 @@
 ---
 thema: issues-abschluss
 titel: Offene Issues abschliessen, neue Features, Version 0.21.0
-state: EXECUTING
-vorzustand: -
+state: BLOCKED
+vorzustand: EXECUTING
 pausengrund: -
 issue: 70
 repo: MrP42/local-voice-ai
-branch: feat/issues-abschluss
+branch: docs/goal-0.21.0-abschluss
 iteration: 1
 erstellt: 2026-10-01
-aktualisiert: 2026-10-01T19:15
+aktualisiert: 2026-10-01T19:53
 ---
 
 # Goal: Offene Issues abschliessen, neue Features, Version 0.21.0
@@ -36,20 +36,20 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - [x] AK1 — Leerer Eintrag: Playwright → im gewählten Projekt „Neue Besprechung“ anlegen (Plus/Kontextmenü), Eintrag erscheint ohne Audio im Projekt; darin „Aufnahme starten“, „Datei importieren“ und „Link einfügen“ füllen DIESEN Eintrag (keine zweite Besprechung); Rust-Test für leere Besprechung + spätere Quelle.
 - [ ] AK2 — Ältere Issues: je Issue Befehl/Test als Beleg im Issue-Kommentar, Issue geschlossen; Owner-Punkte (#6 Löschen, #11 Ignore-Entscheidungen) mit Vorschlag und ausfüllfertigem Befehl kommentiert.
 - [x] AK3 — U9: Playwright project-minutes grün; Rust-Test Mehrfach-Blocklogik; Quellen je Aufnahme mit Audio-Sprung.
-- [ ] AK4 — #66 Bündel 2: AK7–AK11 aus koordination/integrationen/GOAL.md erfüllt.
-- [ ] AK5 — #67: AK aus koordination/workflow-automation/GOAL.md erfüllt.
-- [ ] AK6 — #68: AK aus koordination/lokaler-agent/GOAL.md erfüllt (oder nach Messung C1 begründet beendet).
-- [ ] AK7 — #69: Spike-Messung lokal (OCR + Bildanalyse) dokumentiert; Folien eines Videos in der Besprechung sichtbar und im Protokoll verwendet.
-- [ ] AK8 — Release: Version 0.21.0, Installer gebaut, `cargo test --lib`, tsc, volle Playwright-Suite grün; PR offen; `gh issue list --state open` nur noch Owner-Restpunkte mit Kommentar.
+- [x] AK4 — #66 Bündel 2: AK7–AK11 aus koordination/integrationen/GOAL.md erfüllt.
+- [x] AK5 — #67: AK aus koordination/workflow-automation/GOAL.md erfüllt.
+- [x] AK6 — #68: AK aus koordination/lokaler-agent/GOAL.md erfüllt (oder nach Messung C1 begründet beendet).
+- [x] AK7 — #69: Spike-Messung lokal (OCR + Bildanalyse) dokumentiert; Folien eines Videos in der Besprechung sichtbar und im Protokoll verwendet.
+- [x] AK8 — Release: Version 0.21.0, Installer gebaut, `cargo test --lib`, tsc, volle Playwright-Suite grün; PR offen; `gh issue list --state open` nur noch Owner-Restpunkte mit Kommentar.
 
 ## Quality Gates
-- [ ] QG1 — Rust komplett grün (`cargo test --lib`, 2x).
+- [x] QG1 — Rust komplett grün (`cargo test --lib`, 2x).
 - [x] QG2 — Frontend: tsc 0, Playwright komplett grün.
 - [x] QG3 — Systemschutz: neue Prozesse/Modelle hinter process_guard + RAM-Gate.
 - [x] QG4 — i18n de+en, echte Umlaute (check_i18n_meetings.py).
 - [x] QG5 — Sicherheitsreview für schreibende MCP/CLI-Werkzeuge und Workflow-Aktionen (Gate-Logik).
 - [x] QG6 — Doku/Hilfe aktualisiert, Handoff geschrieben.
-- [ ] QG7 — Budget: Schätzung ~10,6 MTok (M1 0,3 · M2 1,5 · M3 0,4 · M4 1,7 · M5 2,6 · M6 1,6 · M7 2,0 · M8 0,5); Meldung 50/80 %.
+- [x] QG7 — Budget: Schätzung ~10,6 MTok (M1 0,3 · M2 1,5 · M3 0,4 · M4 1,7 · M5 2,6 · M6 1,6 · M7 2,0 · M8 0,5); Meldung 50/80 %.
 
 ## Constraints
 - Basis `release/0.20.11`; Branch + PR, keine Formatierläufe über fremde Dateien, kein Installieren über Patricks App.
@@ -89,9 +89,16 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - 2026-10-01T18:38 QG3 erfüllt — Neue Prozesse/Modelle nur über process_guard/RAM-Gate/HeavyGate (D1 ffmpeg Job-Objekt, D3 mmproj im RAM-Gate, C2/C3 ensure_local, B1 HeavyGate); je Paket Fehlerfall-Tabelle
 - 2026-10-01T18:38 QG4 erfüllt — check_i18n_meetings.py OK (de/en gleiche Schlüssel, echte Umlaute) nach D4/G5/K1/B6
 - 2026-10-01T19:15 QG6 erfüllt — R1 d9251630: Hilfe integrationen/aufnahmen de+en, docs/AUTOMATIONEN.md, docs/AGENTEN-ANBINDEN.md, docs/releases/0.21.0.md, In-App-Notes 0.21.0; Handoff folgt
+- 2026-10-01T19:53 AK4 erfüllt — #66 geschlossen: A4-A8, K1, S1; integrations:: 347+, agent_bridge:: 221, mcp_smoke --write 44/44; Owner-Schritte (Entra, Testmail, Vault, Wissens-Schlüssel) in docs
+- 2026-10-01T19:53 AK5 erfüllt — #67 geschlossen: B1-B8, B7n; workflows:: 590 grün, mcp_smoke --workflows 41/41, AK6 docx-Test, AK7 Termin→Mail, AK11 Kanal→Wissen
+- 2026-10-01T19:53 AK6 erfüllt — #68 geschlossen: C1 Eval (Qwen3.5-9B Gate bestanden), C2-C5; agent:: + workflows::agent* grün, Playwright automations-agent 11/11
+- 2026-10-01T19:53 AK7 erfüllt — #69 geschlossen: Spike-Bericht koordination/bild-video/spike, D1-D5 (Folien sichtbar D4, im Protokoll mit [Fn] D5), slides:: 93+, meeting-slides 43/43
+- 2026-10-01T19:53 AK8 erfüllt — Release app-v0.21.0 veröffentlicht (https://github.com/MrP42/local-voice-ai/releases/tag/app-v0.21.0, Windows-Workflow success, Assets inkl. latest.json, SBOM, Notices); PR #71 nach main gemergt (133cad86); offen nur #6/#10 (Owner) und #70
+- 2026-10-01T19:53 QG1 erfüllt — Volle cargo test --lib grün: 3565 (3481e6f5), 3401/3678 (A7/B7n-Merges), 3766/3767→Fix (97f3c24b); Endstand c0e22923: cargo build + 1061 betroffene Tests grün; weitere Volläufe auf Patricks Weisung (C: nicht belasten, Tests minimal) entfallen
+- 2026-10-01T19:53 QG7 erfüllt — Budget gemeldet (Session-Limit 15:30, 50/80 %-Meldungen); Runde Abschluss ~3,9 MTok (130 % der Schätzung 3 MTok), unter 150 %-Stopp
 
 ## Blocker
--
+- B1 [offen] 2026-10-01T19:53 Ursache: #10 braucht Fenster-Lauf (Chrome/Word/VS Code öffnen sich 1-2 min), #6 Löschen einer Logdatei mit Klartext-Diktaten · Owner: Patrick · entsperrt, wenn: Patrick gibt den Fenster-Lauf frei und entscheidet über das Löschen der Logdatei (oder löscht selbst) · nächste Prüfung: beim nächsten Sessionstart
 
 ## Entscheidungen
 - 2026-10-01 Patrick (/goal-planner-worker): "schließe alle noch offenen punkte (issues) erfolgreich ab und liefer ein neues release aus" – Release 0.21.0 ist damit freigegeben. Annahmen (Vorschläge übernommen, widerrufbar): Agent-Router Qwen3.5-9B (E4B nur extract); mmproj-Download auf Wunsch im Katalog, Projektor nur für Folienaufträge; macOS ohne OCR; Lizenz: espeak-ng-Lizenztext beim Runtime-Download ablegen, Piper-Stimmen Lessac/Ryan und Ableitungen mit Hinweis "nur nicht-kommerziell". Arbeitsweise: Builds/Tests nur auf D:\lv-build, Tests minimal (Build + betroffene Gruppen + tsc), keine sichtbaren Fenster ohne Ankündigung.
@@ -103,7 +110,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - 2026-10-01 Patrick (/goal-planner-worker): alle offenen Issues abschließen, neue Features umsetzen, testen, neue Version, Ergebnisse in GitHub; zuerst leerer Eintrag im Projekt.
 
 ## Nächste empfohlene Aktion
-C4-Merge, dann B6-Merge, S1 abnehmen, Integrationslauf D:, Fenster-Block #10, Version 0.21.0, Installer, Merge #71 nach main, Tag app-v0.21.0
+B1 auflösen (Patrick): Patrick gibt den Fenster-Lauf frei und entscheidet über das Löschen der Logdatei (oder löscht selbst). Dann `goal.py resolve-blocker --id B1 --beleg …` und `goal.py set --state PLANNING`.
 
 ## Verlauf
 - 2026-10-01T10:38 DISCOVERY — Goal State angelegt
@@ -114,4 +121,6 @@ C4-Merge, dann B6-Merge, S1 abnehmen, Integrationslauf D:, Fenster-Block #10, Ve
 - 2026-10-01T11:59 EXECUTING (Runde 1) — G2b, G5, G2f (wt-u7), G3 (wt-g2c) laufen; G2d abgenommen
 - 2026-10-01T16:49 EXECUTING (Runde 1) — Rechner auf Patricks Wunsch frei: keine Worker/Tests aktiv. Integrationslauf 97f3c24b: build ok, 3766/3767 (Katalog-Test, behoben 02b9a296)
 - 2026-10-01T18:13 EXECUTING (Runde 1) — Budget-Meldung: Runde Abschluss geschätzt ~3 MTok, verbraucht ~3,1 MTok (B6 0,75, C3 0,5, C4 0,4, B8 0,39, D3 0,35, C5 0,35, K1 0,21, R0 0,16); Rest bis Release ~0,8 → Hochrechnung ~3,9 MTok (130 %)
+- 2026-10-01T19:53 EXECUTING (Runde 1) — Metadaten: branch=docs/goal-0.21.0-abschluss
+- 2026-10-01T19:53 BLOCKED (Runde 1) — BLOCKIERT B1 (global, keine unabhängige Arbeit mehr): #10 braucht Fenster-Lauf (Chrome/Word/VS Code öffnen sich 1-2 min), #6 Löschen einer Logdatei mit Klartext-Diktaten
 
