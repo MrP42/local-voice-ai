@@ -20,7 +20,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | G6 | M2 | Sprecher-Dialog: Speichern wirkt im Transkript, Anhören → Stopp (Patrick 01.10.) — lv-coder | Playwright rot→grün | abgenommen (Nachtest Installer) | 507a2feb |
 | G7 | M2 | ASR-Wiederholungsschleifen (if if if, s s s, I I I) – Decoder + Nachfilter hallucination.rs — lv-coder-xhigh | Rust ≥12 Fälle, Messung echtes Audio | abgenommen | 5c6bca8f |
 | A4 | M4 | #66 Seite Integrationen (Liste, Katalog, Rechte-Matrix, Audit, Freigaben, Kalender/MCP-Umzug) — lv-coder | AK7 integrations:: integrations.spec | abgenommen | a77920e3 |
-| B1 | M5 | #67 Workflow-Engine-Kern + Trockenlauf-CLI — lv-coder-xhigh | workflows:: ≥30 Tests, --dry-run JSON | abgenommen (Merge nach G5) | f8bf7b22 |
+| B1 | M5 | #67 Workflow-Engine-Kern + Trockenlauf-CLI — lv-coder-xhigh | workflows:: ≥30 Tests, --dry-run JSON | abgenommen | c850b73a |
 | C1 | M6 | #68 Eval-Harness + Messung lokaler Modelle — lv-architect | Bericht eval-2026-10-01.md | abgenommen | 3f66fbdd |
 | D0 | M7 | #69 Spike OCR/Bildanalyse/Folien — lv-architect | Spike-Bericht mit Messung | abgenommen | koordination/bild-video/spike |
 | A7 | M4 | #66 Agentenbrücke (Named Pipe, Token, Werkzeug-Rechte, Freigaben, ctl) — lv-coder-xhigh | AK9 agent_bridge:: ≥15 | in_arbeit | |
@@ -28,6 +28,6 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | A6 | M4 | #66 SMTP, Ordner-Sandbox, Obsidian, Wissensbasis, Export ablegen — lv-coder | AK8 Rest, AK11 | abgenommen (Owner: Testmail, Vault, Wissens-Schlüssel) | fa0e5870 |
 | D1 | M7 | #69 Folienerkennung Kern (dHash, meeting_slides, Job-Phase) — lv-coder-xhigh | cargo test slides | abgenommen | fc478c2e |
 | G8 | M8 | Wackelige Tests unter Last: Ursachen beheben (SQLite busy_timeout, Zeitabhängigkeit, Prozess-Timeouts) — lv-coder-xhigh | 3x volle Suite unter Last grün | abgenommen | 09ca4341 |
-| B2 | M5 | #67 Auslöser Kalender/Ereignisse/Zeitplan/manuell, Arbeiter in lib.rs, Einwilligungsweg — lv-coder-xhigh | AK3, AK4 | in_arbeit | |
+| B2 | M5 | #67 Auslöser Kalender/Ereignisse/Zeitplan/manuell, Arbeiter in lib.rs, Einwilligungsweg — lv-coder-xhigh | AK3, AK4 | abgenommen (Abnahme Hinweisfenster im Installer) | c850b73a |
 | D2 | M7 | #69 OCR je Folie (Windows-OCR), Text-Dubletten — lv-coder | cargo test slides::ocr | in_arbeit | |
 | D4 | M7 | #69 Folien-Oberfläche (Leiste, Sprung, Ausblenden, Großansicht, Folien erkennen) — lv-coder | meeting-slides.spec | in_arbeit | |

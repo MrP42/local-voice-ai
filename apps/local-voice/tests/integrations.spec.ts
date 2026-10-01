@@ -794,7 +794,7 @@ test.describe("Katalog der Ziele und Konten", () => {
       .evaluateAll((els) =>
         els.map((el) => (el as HTMLElement).dataset.catalogId),
       );
-    expect(soon).toEqual(["m365", "webhook"]);
+    expect(soon).toEqual(["webhook"]);
     const available = await page
       .locator('[data-testid="catalog-item"][data-status="available"]')
       .count();
