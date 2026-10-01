@@ -149,6 +149,11 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
   target = null,
 }) => {
   const { t } = useTranslation();
+  // Der Ereignis-Listener unten lebt ueber den Sprachwechsel hinweg (Abhaengigkeiten
+  // `[]`): ein `t` aus dem ersten Render waere fuer immer in der alten Sprache
+  // (#15). Die Referenz zeigt immer auf das aktuelle `t`.
+  const tRef = useRef(t);
+  tRef.current = t;
   const { getSetting, updateSetting } = useSettings();
   const [title, setTitle] = useState("");
   // Vorgabe und letzte Wahl liegen in den Einstellungen (`meeting_capture_system`,
@@ -243,7 +248,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
         setMicLevel(payload.mic);
         setSystemLevel(payload.system);
       } else if (payload.kind === "error") {
-        setError(translateMeetingError(payload.message, t));
+        setError(translateMeetingError(payload.message, tRef.current));
         setBusy(false);
       } else if (payload.kind === "health") {
         setHealth((v) => applyHealth(v, payload.channel, payload.state));
@@ -350,7 +355,9 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
           targetId,
         )
       : await commands.meetingsStart(
-          typed || t("meetings.record.titlePlaceholder"),
+          // Ohne Eingabe der Standardtitel, nicht der Platzhaltertext des Feldes
+          // ("Titel der Besprechung" waere sonst der Name der Besprechung).
+          typed || t("meetings.empty.defaultTitle"),
           true,
           captureSetting,
           targetId,

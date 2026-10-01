@@ -11,6 +11,8 @@ interface ToggleSwitchProps {
   descriptionMode?: "inline" | "tooltip";
   grouped?: boolean;
   tooltipPosition?: "top" | "bottom";
+  /** `data-testid` des Eingabefelds (das Kontrollkästchen unter dem Schalter). */
+  testId?: string;
 }
 
 export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
@@ -23,6 +25,7 @@ export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
   descriptionMode = "tooltip",
   grouped = false,
   tooltipPosition = "top",
+  testId,
 }) => {
   return (
     <SettingContainer
@@ -43,6 +46,7 @@ export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
           checked={checked}
           disabled={disabled || isUpdating}
           onChange={(e) => onChange(e.target.checked)}
+          data-testid={testId}
         />
         {/* Aktiver Zustand: Ink-Knopf auf Gelb (Design-System) — ein weißer
             Knopf wäre auf Signalgelb kaum sichtbar. */}

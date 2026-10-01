@@ -1747,6 +1747,7 @@
       "resume": "Weiter",
       "titlePlaceholder": "Titel der Besprechung",
       "captureSystem": "System-Audio (Gegenseite) mitschneiden",
+      "captureSystemHint": "Nimmt zusätzlich den Ton auf, der über Lautsprecher oder Kopfhörer läuft, zum Beispiel die Gegenseite einer Videokonferenz.",
       "diarizeMic": "Mehrere Personen am Mikrofon",
       "diarizeMicHint": "Mehrere Personen sprechen in Ihr Mikrofon (z. B. ein Besprechungsraum): Das Mikrofon wird nach der Aufnahme ebenfalls in Sprecher getrennt. Am besten mit Kopfhörern oder Echo-Unterdrückung, sonst kann die Gegenseite als „Raum“ erscheinen.",
       "micLevel": "Mikrofon",
@@ -1977,6 +1978,10 @@
       "finalPassSkipped": "Enddurchlauf übersprungen – das Live-Transkript bleibt gültig (Modell fehlt, zu wenig Speicher oder abgebrochen).",
       "finalPassStopped": "Nachbearbeitung gestoppt – das Live-Transkript bleibt gültig.",
       "meetingBusy": "Diese Besprechung wird gerade verarbeitet.",
+      "meetingsUnavailable": "Besprechungen sind gerade nicht verfügbar: Die Datenbank ließ sich beim Start nicht öffnen. Bitte die App neu starten; hilft das nicht, steht die Ursache in der Protokolldatei.",
+      "storeFailed": "Die Änderung konnte nicht gespeichert werden.",
+      "subtitleUnreadable": "Die Untertiteldatei konnte nicht gelesen werden.",
+      "subtitleInvalid": "Kein gültiges Untertitelformat erkannt (VTT oder SRT erwartet).",
       "listFailed": "Die Besprechungsliste konnte nicht geladen werden: {{error}}"
     },
     "retention": {

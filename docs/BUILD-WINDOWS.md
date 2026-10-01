@@ -128,9 +128,16 @@ Nachweis am Artefakt:
 ```powershell
 $t = [System.Text.Encoding]::ASCII.GetString(
        [System.IO.File]::ReadAllBytes("src-tauri\target\release\local-voice-ai.exe"))
-$t.Contains("localhost:1420")     # darf NICHT True sein
 $t.Contains("index-<hash>.js")    # ein Asset aus dist\assets\ - muss True sein
+$t.Contains("localhost:1420")     # nur Auskunft: auch ein gutes Build enthaelt es (Icon-URL)
 ```
+
+Entscheidend ist das eingebettete Asset: eine EXE mit dem `dev`-Flag bettet kein
+Frontend ein. `localhost:1420` allein beweist nichts: auch die installierte Release-EXE
+(`%LOCALAPPDATA%\Local Voice AI\local-voice-ai.exe`) enthaelt es, als Icon-URL
+`http://localhost:1420/icons/128x128.png` aus der eingebetteten Konfiguration, neben
+dem Asset `index-<hash>.js` (gemessen 01.10.2026). `scripts\lib\m8-harness.ps1` (`Test-EmbeddedFrontend`) macht
+genau diese Pruefung; `m8-verify.ps1` warnt damit vor dem Lauf.
 
 Ursache: Das `dev`-Flag setzt `tauri-build` in `build.rs` — und dessen
 Ergebnis wird von cargo gecacht. Ein Cache aus einer früheren

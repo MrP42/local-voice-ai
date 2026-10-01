@@ -195,6 +195,31 @@ pub fn delete_audio_files(paths: &[String]) -> u32 {
         .count() as u32
 }
 
+/// #15: der Ordner einer geloeschten Besprechung (`<meetings>/<id>`). `meetings_delete`
+/// loeschte bisher nur die Audiodateien aus der Datenbank; der Ordner blieb mit
+/// allem, was die App daneben ablegt (Protokoll als Markdown, `import.wav` ohne
+/// DB-Eintrag, Reste), fuer immer liegen. Gibt `Ok(true)` zurueck, wenn er
+/// entfernt wurde, `Ok(false)`, wenn es ihn nicht gab. Eine `meeting_id`, die kein
+/// einzelner Ordnername ist (`..`, Trennzeichen, leer, absolut), wird abgelehnt,
+/// ohne etwas zu loeschen: die ID kommt zwar aus der Datenbank, aber ein
+/// `remove_dir_all` auf einem zusammengesetzten Pfad prueft sich selbst.
+pub fn remove_meeting_dir(base: &std::path::Path, meeting_id: &str) -> Result<bool, String> {
+    use std::path::Component;
+    let mut parts = std::path::Path::new(meeting_id).components();
+    let one_name = matches!((parts.next(), parts.next()), (Some(Component::Normal(_)), None));
+    // Auch ein Rueckwaertsstrich (unter Linux ein gueltiger Name) zaehlt als Trenner:
+    // die IDs sind ULIDs, nie etwas anderes.
+    if !one_name || meeting_id.contains(['/', '\\']) {
+        return Err("meeting_dir_invalid_id".to_string());
+    }
+    match std::fs::remove_dir_all(base.join(meeting_id)) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        // Nur der Pfad im Detail, nie Inhalt (Log-Datenschutz).
+        Err(e) => Err(format!("meeting_dir_remove_failed: {e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::store::MeetingSource;
@@ -294,6 +319,13 @@ mod tests {
         let stored = s.get_meeting(&meeting.id).unwrap().unwrap();
         assert_eq!(stored.mic_audio_path, None);
         assert_eq!(stored.system_audio_path, None);
+        // #15: sind beide Dateien weg, faellt auch die Marke; sonst meldete sich
+        // die Besprechung bei jedem Start erneut als "faellig".
+        assert_eq!(stored.audio_retention_until, None, "Marke wird geleert");
+        assert!(
+            s.meetings_with_due_audio(1_000_000).unwrap().is_empty(),
+            "nichts mehr faellig"
+        );
     }
 
     // -- Review finding #2: purge must not claim deletion that didn't happen --
@@ -444,5 +476,55 @@ mod tests {
         let paths = s.soft_delete_meeting(&meeting.id).unwrap();
         assert_eq!(delete_audio_files(&paths), 2);
         assert!(!aec_path.exists());
+    }
+
+    // -- #15: der Ordner einer geloeschten Besprechung geht mit --
+
+    #[test]
+    fn deleting_a_meeting_removes_its_whole_folder_including_what_the_db_does_not_know() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("01ABC");
+        std::fs::create_dir_all(folder.join("unter")).unwrap();
+        std::fs::write(folder.join("mic.wav"), b"RIFF").unwrap();
+        std::fs::write(folder.join("Protokoll.md"), b"# Protokoll").unwrap();
+        std::fs::write(folder.join("import.wav"), b"RIFF").unwrap();
+        std::fs::write(folder.join("unter").join("rest.bin"), b"x").unwrap();
+        let other = dir.path().join("01XYZ");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("mic.wav"), b"RIFF").unwrap();
+
+        assert_eq!(remove_meeting_dir(dir.path(), "01ABC"), Ok(true));
+        assert!(!folder.exists());
+        assert!(other.join("mic.wav").exists(), "eine andere Besprechung bleibt");
+        // Idempotent: den Ordner gibt es nicht mehr.
+        assert_eq!(remove_meeting_dir(dir.path(), "01ABC"), Ok(false));
+    }
+
+    #[test]
+    fn a_meeting_id_that_is_not_one_folder_name_deletes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("meetings");
+        std::fs::create_dir_all(base.join("01ABC")).unwrap();
+        let victim = dir.path().join("fremd");
+        std::fs::create_dir_all(&victim).unwrap();
+        std::fs::write(victim.join("wichtig.txt"), b"x").unwrap();
+
+        for bad in ["", ".", "..", "../fremd", "01ABC/..", "a/b", "a\\b", "C:\\Windows", "/etc"] {
+            assert!(
+                remove_meeting_dir(&base, bad).is_err(),
+                "{bad:?} muss abgelehnt werden"
+            );
+        }
+        assert!(victim.join("wichtig.txt").exists());
+        assert!(base.join("01ABC").exists());
+    }
+
+    #[test]
+    fn a_missing_base_directory_is_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            remove_meeting_dir(&dir.path().join("gibt-es-nicht"), "01ABC"),
+            Ok(false)
+        );
     }
 }

@@ -35,6 +35,7 @@ import { formatMeetingDate } from "@/lib/meetingDate";
 import type { PersonRef } from "./people/PersonPopover";
 import { FolderPickerDialog } from "./search/FolderPickerDialog";
 import { JobBar } from "./JobProgress";
+import { translateMeetingError } from "./meetingErrors";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 import { useImportQueue } from "@/hooks/useImportQueue";
 import { heldForRecording, queuePlace } from "@/lib/meetingQueue";
@@ -247,7 +248,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({
             // A failing list used to render as "no meetings yet" — visually
             // indistinguishable from data loss. Say what actually happened.
             setListError(
-              t("meetings.errors.listFailed", { error: result.error }),
+              t("meetings.errors.listFailed", {
+                error: translateMeetingError(result.error, t),
+              }),
             );
             setHasMore(false);
             return;
