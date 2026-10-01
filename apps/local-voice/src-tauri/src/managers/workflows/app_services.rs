@@ -18,6 +18,9 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::commands::{meeting_enhance, meeting_minutes};
+use crate::managers::integrations::m365::M365Service;
+use crate::managers::integrations::model::Integration;
+use crate::managers::integrations::secrets;
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 use crate::managers::meetings::store::{MeetingDocument, MeetingStore};
 use crate::managers::tts::TtsManager;
@@ -162,5 +165,23 @@ impl AppServices for AppServicesImpl {
     fn notify(&self, title: &str, body: &str) -> Result<(), ServiceError> {
         toast::show(&self.app.config().identifier, title, body)
             .map_err(|e| ServiceError::Transient(format!("Die Mitteilung ließ sich nicht anzeigen ({e}).")))
+    }
+
+    fn self_emails(&self) -> Vec<String> {
+        crate::settings::get_settings(&self.app).meeting_self_emails
+    }
+
+    fn m365(&self) -> Option<Arc<M365Service>> {
+        self.app
+            .try_state::<Arc<M365Service>>()
+            .map(|s| Arc::clone(&s))
+    }
+
+    fn secret(
+        &self,
+        integration: &Integration,
+        slot: &str,
+    ) -> Result<Option<zeroize::Zeroizing<String>>, String> {
+        secrets::get_text(integration, slot)
     }
 }

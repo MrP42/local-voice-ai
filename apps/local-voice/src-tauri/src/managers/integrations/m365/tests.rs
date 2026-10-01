@@ -21,7 +21,9 @@ use super::drive::{
 };
 use super::error::M365Error;
 use super::event::{EventRef, NoteOutcome};
-use super::mail::{message_from_draft, MailBody, MailMessage};
+use super::mail::{
+    message_from_draft, MailAttachment, MailBody, MailMessage, MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES,
+};
 use super::service::{Acct, M365Service};
 use super::status::{status_of, AccountState};
 use super::test_server::{serve, Req, Resp, Seen};
@@ -2260,4 +2262,98 @@ fn only_the_m365_kind_is_accepted_and_the_config_must_parse() {
         Acct::from_integration(i),
         Err(M365Error::Config(_))
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Anhaenge (B5)
+// ---------------------------------------------------------------------------
+
+fn attachment(name: &str, bytes: &[u8]) -> MailAttachment {
+    MailAttachment {
+        name: name.to_string(),
+        content_type: "application/pdf".to_string(),
+        bytes: bytes.to_vec(),
+    }
+}
+
+#[test]
+fn attachments_are_checked_before_the_network_and_nothing_is_cut() {
+    let base = msg("a@example.com");
+    assert!(base
+        .clone()
+        .with_attachments(vec![attachment("Protokoll.pdf", b"%PDF-1")])
+        .is_ok());
+    let many: Vec<MailAttachment> = (0..=MAX_ATTACHMENTS)
+        .map(|i| attachment(&format!("{i}.pdf"), b"x"))
+        .collect();
+    assert!(matches!(
+        base.clone().with_attachments(many),
+        Err(M365Error::Invalid(m)) if m.contains("Zu viele")
+    ));
+    assert!(matches!(
+        base.clone().with_attachments(vec![attachment("leer.pdf", b"")]),
+        Err(M365Error::Invalid(m)) if m.contains("leer")
+    ));
+    for bad in ["", "   ", "a\nb.pdf", &"x".repeat(200)] {
+        assert!(
+            matches!(
+                base.clone().with_attachments(vec![attachment(bad, b"x")]),
+                Err(M365Error::Invalid(_))
+            ),
+            "{bad:?}"
+        );
+    }
+    let big = vec![0u8; MAX_ATTACHMENT_BYTES / 2 + 1];
+    assert!(matches!(
+        base.with_attachments(vec![attachment("a.pdf", &big), attachment("b.pdf", &big)]),
+        Err(M365Error::Invalid(m)) if m.contains("zu groß")
+    ));
+}
+
+#[tokio::test]
+async fn an_attachment_goes_into_the_graph_request_as_a_file_attachment() {
+    let tokens = Arc::new(AtomicUsize::new(0));
+    let (base, seen) = serve(ok_mail_server(tokens)).await;
+    let w = World::new(&base, &[MAIL], true);
+    let m = msg("a@example.com")
+        .with_attachments(vec![attachment("Protokoll Überprüfung.pdf", b"%PDF-1.7 Inhalt")])
+        .unwrap();
+    w.svc.send_mail(&w.acct(), &m).await.unwrap();
+    let sent = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|r| r.path() == "/v1.0/me/sendMail")
+        .cloned()
+        .unwrap()
+        .json();
+    let a = &sent["message"]["attachments"][0];
+    assert_eq!(a["@odata.type"], "#microsoft.graph.fileAttachment");
+    assert_eq!(a["name"], "Protokoll Überprüfung.pdf");
+    assert_eq!(a["contentType"], "application/pdf");
+    use base64::Engine as _;
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(a["contentBytes"].as_str().unwrap())
+            .unwrap(),
+        b"%PDF-1.7 Inhalt"
+    );
+    // Ohne Anhang gibt es das Feld nicht.
+    assert!(msg("a@example.com").to_graph_json()["message"]
+        .get("attachments")
+        .is_none());
+}
+
+#[test]
+fn the_gate_arguments_name_the_attachments_but_never_carry_their_content() {
+    let m = msg("a@example.com")
+        .with_attachments(vec![attachment("Protokoll.pdf", b"GEHEIMER-INHALT")])
+        .unwrap();
+    let args = m.gate_args();
+    assert_eq!(args["attachments"], json!(["Protokoll.pdf"]));
+    assert!(!args.to_string().contains("GEHEIMER-INHALT"));
+    assert!(
+        !format!("{m:?}").contains("GEHEIMER-INHALT"),
+        "auch nicht im Debug-Text"
+    );
 }

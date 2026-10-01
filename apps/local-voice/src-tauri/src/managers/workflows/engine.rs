@@ -60,8 +60,8 @@ use crate::managers::provenance::{
 };
 
 use super::action::{
-    actor_ref, output_json, Action, ActionRegistry, EffectKind, NeedsError, RunCtx, StepError,
-    StepOutput,
+    actor_ref, output_json, Action, ActionRegistry, EffectKind, GateEnv, NeedsError, RunCtx,
+    StepError, StepOutput,
 };
 use super::expr;
 use super::heavy::{HeavyGate, LocalHeavyGate};
@@ -1312,7 +1312,42 @@ impl Engine {
         // Freigabe (das Register fasst gleiche offene Anfragen zusammen), und der
         // zweite Lauf scheiterte an der schon eingeloesten. Die Bindung ist stabil:
         // Lauf und Schritt aendern sich beim Wiederaufnehmen nicht.
-        let mut gate_args = params.clone();
+        let policy = step.retry_policy();
+        // Hangt die Wirkung von Daten des Laufs ab (Empfaenger einer Mail), bildet der Baustein
+        // die vollstaendige Ansicht fuer das Tor: SIE bindet die Freigabe und steht in der Vorschau.
+        let view = match &needs {
+            Some(_) => match action.gate_view(
+                &GateEnv {
+                    conn,
+                    context: &sc.ctx,
+                    planning: false,
+                },
+                &params,
+            ) {
+                Ok(v) => v,
+                Err(e) => {
+                    return self.handle_error(
+                        sc,
+                        step,
+                        ordinal,
+                        attempt,
+                        action.effect(),
+                        e,
+                        &policy,
+                    );
+                }
+            },
+            None => None,
+        };
+        let gate_target: Option<String> = view
+            .as_ref()
+            .and_then(|v| v.target.clone())
+            .or_else(|| needs.as_ref().and_then(|n| n.target.clone()));
+        let gate_cap = view.as_ref().and_then(|v| v.max_mode);
+        let mut gate_args = view
+            .as_ref()
+            .map(|v| v.args.clone())
+            .unwrap_or_else(|| params.clone());
         if let Some(obj) = gate_args.as_object_mut() {
             obj.insert("lauf".to_string(), json!(format!("{}/{}", run.id, step.id)));
         }
@@ -1377,9 +1412,9 @@ impl Engine {
                         caller: Caller::Workflow,
                         integration_id: &n.integration_id,
                         capability: n.capability,
-                        target: n.target.as_deref(),
+                        target: gate_target.as_deref(),
                         args: Some(&gate_args),
-                        tool_mode: None,
+                        tool_mode: gate_cap,
                     };
                     match &awaiting {
                         None => Gated::Outcome(Box::new(gate::run(conn, &req, now, work))),
@@ -1420,7 +1455,6 @@ impl Engine {
         };
         let result = stash.into_inner();
 
-        let policy = step.retry_policy();
         match gated {
             Gated::StillPending => {
                 // Zurueck auf `awaiting_approval` (die Zeile wurde oben geoeffnet).

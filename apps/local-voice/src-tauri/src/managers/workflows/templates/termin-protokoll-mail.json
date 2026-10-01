@@ -1,0 +1,78 @@
+{
+  "schema": "lva-workflow@1",
+  "name": "Termin: aufzeichnen, Protokoll, Mail",
+  "description": "Beim Beginn eines Termins im gewählten Kalender: Aufnahme starten (erst nach Bestätigung der Einwilligung), danach Protokoll erzeugen, als Word ablegen und per Mail senden. Die Variable „empfaenger“ legt je Kalender fest, wer die Mail bekommt: „ich“ (nur ich) oder „alle“ (alle Teilnehmenden). Mails an andere als mich gehen nie ohne Freigabe hinaus, solange der Schritt nicht ausdrücklich „auto“ setzt.",
+  "trigger": {
+    "type": "calendar.event_starting",
+    "integration": "cal-1",
+    "lead_min": 1,
+    "only_meetings": true
+  },
+  "variables": {
+    "protokoll_vorlage": {
+      "type": "string",
+      "default": "",
+      "description": "Name oder Kennung der Protokollvorlage (leer: die Standardvorlage; auto: nach Inhalt wählen)"
+    },
+    "empfaenger": {
+      "type": "string",
+      "default": "ich",
+      "description": "Wer das Protokoll per Mail bekommt: ich (nur ich) oder alle (alle Teilnehmenden des Termins)"
+    }
+  },
+  "steps": [
+    {
+      "id": "rec",
+      "action": "recording.start",
+      "label": "Aufnahme starten",
+      "params": {
+        "via": "app-automation",
+        "stop": "event_end",
+        "title": "{{trigger.title}}"
+      }
+    },
+    {
+      "id": "min",
+      "action": "meeting.minutes",
+      "label": "Protokoll erzeugen",
+      "params": { "template": "{{vars.protokoll_vorlage}}" }
+    },
+    {
+      "id": "doc",
+      "action": "export.document",
+      "label": "Als Word ablegen",
+      "params": {
+        "format": "docx",
+        "target": "folder-protokolle",
+        "content": "minutes",
+        "name": "{{meeting.title}} – Protokoll"
+      }
+    },
+    {
+      "id": "mail_ich",
+      "action": "mail.send",
+      "label": "Mail an mich",
+      "when": "vars.empfaenger == 'ich'",
+      "params": {
+        "via": "m365-1",
+        "to": "me",
+        "subject": "Protokoll: {{meeting.title}}",
+        "body": "Hallo,\n\nanbei das Protokoll zu „{{meeting.title}}“.\n\nDiese Nachricht wurde automatisch von Local Voice AI erstellt.",
+        "attach": ["{{steps.doc.path}}"]
+      }
+    },
+    {
+      "id": "mail_alle",
+      "action": "mail.send",
+      "label": "Mail an alle Teilnehmenden",
+      "when": "vars.empfaenger == 'alle'",
+      "params": {
+        "via": "m365-1",
+        "to": "all",
+        "subject": "Protokoll: {{meeting.title}}",
+        "body": "Hallo zusammen,\n\nanbei das Protokoll zu „{{meeting.title}}“.\n\nDiese Nachricht wurde automatisch von Local Voice AI erstellt.",
+        "attach": ["{{steps.doc.path}}"]
+      }
+    }
+  ]
+}

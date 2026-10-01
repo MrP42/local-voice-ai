@@ -596,3 +596,164 @@ fn the_real_secret_namespace_round_trips_a_smtp_password() {
     }
     assert!(secrets::get_text_in(&dir, &i, "other").unwrap().is_none());
 }
+
+// ---------------------------------------------------------------------------
+// Webhook (B5): die Adresse ist das Geheimnis, die Konfiguration traegt nur den Server
+// ---------------------------------------------------------------------------
+
+fn webhook_settings(url: &str) -> TargetSettings {
+    TargetSettings {
+        secret: Some(url.into()),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_webhook_keeps_its_address_in_the_secret_store_and_only_the_host_in_the_register() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let saved = RefCell::new(Vec::new());
+    let url = "https://n8n.example.org:8443/webhook/GEHEIM-4711?sig=abc";
+    let i = create_with_secret(
+        &conn,
+        Kind::Webhook,
+        "n8n Protokolle",
+        None,
+        &webhook_settings(url),
+        &recording_put(&saved),
+        1_000,
+    )
+    .unwrap();
+    assert_eq!(i.kind, Kind::Webhook);
+    assert_eq!(i.direction, Direction::Write, "ein Webhook nimmt nur Daten entgegen");
+    assert_eq!(i.account_hint.as_deref(), Some("n8n.example.org:8443"));
+    assert!(!i.config_json.contains("GEHEIM") && !i.config_json.contains("sig="), "{}", i.config_json);
+    assert_eq!(i.config_json, r#"{"host":"n8n.example.org:8443"}"#);
+    let saved = saved.borrow();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0], (i.id.clone(), "url".to_string(), url.to_string()));
+    // Die Art bietet nur das Senden an.
+    assert_eq!(Kind::Webhook.capabilities(), &[Capability::WebhookPost]);
+    assert_eq!(secrets::required_slots(Kind::Webhook), &["url"]);
+}
+
+#[test]
+fn a_webhook_with_a_missing_or_unsafe_address_is_refused_and_nothing_is_stored() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let saved = RefCell::new(Vec::new());
+    let put = recording_put(&saved);
+    let none = TargetSettings::default();
+    assert!(create_with_secret(&conn, Kind::Webhook, "X", None, &none, &put, 1).is_err());
+    for bad in [
+        "http://n8n.example.org/webhook/x",
+        "https://u:p@n8n.example.org/x",
+        "ftp://n8n.example.org/x",
+        "kein url",
+    ] {
+        let err =
+            create_with_secret(&conn, Kind::Webhook, "X", None, &webhook_settings(bad), &put, 1)
+                .unwrap_err();
+        assert!(!err.is_empty(), "{bad}");
+    }
+    assert!(saved.borrow().is_empty(), "kein Geheimnis ohne gueltige Adresse");
+    assert!(store::list(&conn).unwrap().iter().all(|i| i.kind != Kind::Webhook));
+    // Loopback-http ist erlaubt (lokaler n8n).
+    let ok = create_with_secret(
+        &conn,
+        Kind::Webhook,
+        "lokal",
+        None,
+        &webhook_settings("http://127.0.0.1:5678/webhook/x"),
+        &put,
+        1,
+    )
+    .unwrap();
+    assert_eq!(ok.account_hint.as_deref(), Some("127.0.0.1:5678"));
+}
+
+#[test]
+fn changing_a_webhook_keeps_or_replaces_the_address_and_follows_the_host() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let saved = RefCell::new(Vec::new());
+    let put = recording_put(&saved);
+    let i = create_with_secret(
+        &conn,
+        Kind::Webhook,
+        "n8n",
+        None,
+        &webhook_settings("https://alt.example.org/webhook/a"),
+        &put,
+        1,
+    )
+    .unwrap();
+    // Ohne neue Adresse bleibt alles, wie es ist.
+    let same = update_settings(&conn, &i.id, &TargetSettings::default(), &put, 2).unwrap();
+    assert_eq!(same.config_json, r#"{"host":"alt.example.org"}"#);
+    assert_eq!(saved.borrow().len(), 1);
+    // Eine neue Adresse ersetzt das Geheimnis und die Anzeige.
+    let changed = update_settings(
+        &conn,
+        &i.id,
+        &webhook_settings("https://neu.example.org/webhook/b"),
+        &put,
+        3,
+    )
+    .unwrap();
+    assert_eq!(changed.config_json, r#"{"host":"neu.example.org"}"#);
+    assert_eq!(changed.account_hint.as_deref(), Some("neu.example.org"));
+    assert_eq!(saved.borrow().len(), 2);
+    assert_eq!(saved.borrow()[1].2, "https://neu.example.org/webhook/b");
+    // Eine falsche neue Adresse aendert nichts.
+    let err = update_settings(&conn, &i.id, &webhook_settings("http://boese.example.org/x"), &put, 4)
+        .unwrap_err();
+    assert!(err.contains("https"), "{err}");
+    assert_eq!(saved.borrow().len(), 2);
+    assert_eq!(
+        store::get(&conn, &i.id).unwrap().unwrap().config_json,
+        r#"{"host":"neu.example.org"}"#
+    );
+}
+
+#[test]
+fn a_webhook_is_never_tested_by_sending_something() {
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let saved = RefCell::new(Vec::new());
+    let i = create_with_secret(
+        &conn,
+        Kind::Webhook,
+        "n8n",
+        None,
+        &webhook_settings("http://127.0.0.1:1/webhook/x"),
+        &recording_put(&saved),
+        1,
+    )
+    .unwrap();
+    let r = test_target(
+        &conn,
+        &i.id,
+        &|_, _| panic!("beim Testen wird das Geheimnis nicht gelesen"),
+        &ConnectOpts::default(),
+        &HttpOpts::default(),
+        5,
+    )
+    .unwrap();
+    assert!(!r.ok);
+    assert_eq!(r.code, "test_not_available", "ein Test wuerde Daten an den Dienst schicken");
+}
+
+#[test]
+fn the_default_right_for_a_webhook_is_to_ask_and_the_register_can_create_it() {
+    use crate::managers::integrations::grants::default_mode;
+    assert_eq!(default_mode(Capability::WebhookPost, Caller::Workflow), GrantMode::Ask);
+    assert_eq!(default_mode(Capability::WebhookPost, Caller::AgentExternal), GrantMode::Off);
+    assert_eq!(default_mode(Capability::WebhookPost, Caller::AgentLocal), GrantMode::Ask);
+    assert!(Capability::ALL.contains(&Capability::WebhookPost));
+    assert!(Kind::ALL.contains(&Kind::Webhook));
+    assert_eq!(Capability::parse("webhook.post"), Some(Capability::WebhookPost));
+    assert_eq!(Kind::parse("webhook"), Some(Kind::Webhook));
+    assert!(view::UI_CREATABLE.contains(&Kind::Webhook));
+    assert_eq!(Kind::Webhook.allowed_directions(), &[Direction::Write]);
+}

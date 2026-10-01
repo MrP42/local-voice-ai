@@ -4219,7 +4219,8 @@
       "folder": "Folder",
       "obsidian": "Obsidian vault",
       "wissen": "WAI knowledge base",
-      "agent": "Agent access"
+      "agent": "Agent access",
+      "webhook": "Webhook (n8n)"
     },
     "calendar": {
       "rights": "Rights and direction"
@@ -4454,6 +4455,10 @@
       "tts_render": {
         "title": "Render read-aloud audio",
         "description": "Render a read-aloud page as an audio file."
+      },
+      "webhook_post": {
+        "title": "Send data to a webhook",
+        "description": "Send data to the webhook address (for example n8n)."
       }
     },
     "approvals": {

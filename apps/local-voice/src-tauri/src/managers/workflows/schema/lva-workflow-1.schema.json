@@ -587,6 +587,9 @@
                 "additionalProperties": false,
                 "properties": {
                   "attach": {},
+                  "auto": {
+                    "type": "boolean"
+                  },
                   "body": {
                     "maxLength": 4000,
                     "type": "string"
@@ -618,20 +621,13 @@
                       "me",
                       "participants",
                       "all",
+                      "internal",
                       "list"
                     ]
                   },
                   "via": {
-                    "anyOf": [
-                      {
-                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
-                        "type": "string"
-                      },
-                      {
-                        "pattern": "\\{\\{",
-                        "type": "string"
-                      }
-                    ]
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -701,16 +697,8 @@
                     "type": "string"
                   },
                   "via": {
-                    "anyOf": [
-                      {
-                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
-                        "type": "string"
-                      },
-                      {
-                        "pattern": "\\{\\{",
-                        "type": "string"
-                      }
-                    ]
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -1462,13 +1450,13 @@
                 "additionalProperties": false,
                 "properties": {
                   "body": {},
-                  "url": {
-                    "maxLength": 4000,
+                  "via": {
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
                     "type": "string"
                   }
                 },
                 "required": [
-                  "url"
+                  "via"
                 ],
                 "type": "object"
               },

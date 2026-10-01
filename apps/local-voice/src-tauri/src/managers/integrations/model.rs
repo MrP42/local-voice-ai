@@ -21,10 +21,13 @@ pub enum Kind {
     Obsidian,
     Wissen,
     Agent,
+    /// Webhook als Ziel (B5): Adresse eines n8n-Ablaufs o. ae., die Adresse liegt im
+    /// Geheimnisspeicher.
+    Webhook,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 9] = [
+    pub const ALL: [Kind; 10] = [
         Kind::Youtube,
         Kind::Ics,
         Kind::Graph,
@@ -34,6 +37,7 @@ impl Kind {
         Kind::Obsidian,
         Kind::Wissen,
         Kind::Agent,
+        Kind::Webhook,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -47,6 +51,7 @@ impl Kind {
             Kind::Obsidian => "obsidian",
             Kind::Wissen => "wissen",
             Kind::Agent => "agent",
+            Kind::Webhook => "webhook",
         }
     }
 
@@ -66,7 +71,7 @@ impl Kind {
     pub fn allowed_directions(self) -> &'static [Direction] {
         match self {
             Kind::Youtube | Kind::Ics | Kind::Wissen => &[Direction::Read],
-            Kind::Smtp => &[Direction::Write],
+            Kind::Smtp | Kind::Webhook => &[Direction::Write],
             Kind::Graph | Kind::M365 | Kind::Folder | Kind::Obsidian | Kind::Agent => {
                 &[Direction::Read, Direction::Write, Direction::Both]
             }
@@ -77,7 +82,7 @@ impl Kind {
     pub fn default_direction(self) -> Direction {
         match self {
             Kind::Youtube | Kind::Ics | Kind::Wissen | Kind::Graph => Direction::Read,
-            Kind::Smtp => Direction::Write,
+            Kind::Smtp | Kind::Webhook => Direction::Write,
             Kind::M365 | Kind::Folder | Kind::Obsidian | Kind::Agent => Direction::Both,
         }
     }
@@ -101,6 +106,7 @@ impl Kind {
                 TtsRender,
                 YoutubeAdd,
             ],
+            Kind::Webhook => &[WebhookPost],
         }
     }
 }
@@ -184,10 +190,13 @@ pub enum Capability {
     TranscribeFile,
     #[serde(rename = "tts.render")]
     TtsRender,
+    /// Daten an einen Webhook senden (B5, n8n-Bruecke).
+    #[serde(rename = "webhook.post")]
+    WebhookPost,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 14] = [
+    pub const ALL: [Capability; 15] = [
         Capability::CalendarRead,
         Capability::CalendarWrite,
         Capability::MailSend,
@@ -202,6 +211,7 @@ impl Capability {
         Capability::RecordingStart,
         Capability::TranscribeFile,
         Capability::TtsRender,
+        Capability::WebhookPost,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -220,6 +230,7 @@ impl Capability {
             Capability::RecordingStart => "recording.start",
             Capability::TranscribeFile => "transcribe.file",
             Capability::TtsRender => "tts.render",
+            Capability::WebhookPost => "webhook.post",
         }
     }
 

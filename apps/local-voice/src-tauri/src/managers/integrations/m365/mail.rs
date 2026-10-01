@@ -22,6 +22,13 @@ use crate::managers::meetings::mail::{finalize, valid_address, MailDraft};
 pub const MAX_RECIPIENTS: usize = 30;
 pub const MAX_SUBJECT_CHARS: usize = 255;
 pub const MAX_BODY_BYTES: usize = 1024 * 1024;
+/// Anhaenge (B5): hoechstens so viele, zusammen hoechstens so gross. Sie gehen als
+/// `fileAttachment` im Koerper von `sendMail` mit (base64 macht daraus gut ein Drittel mehr,
+/// Graph erlaubt dafuer rund 4 MB je Anfrage); groessere Dateien brauchen eine Upload-Sitzung
+/// an einem Entwurf, die dieses Konto nicht kennt (Scope `Mail.ReadWrite`).
+pub const MAX_ATTACHMENTS: usize = 5;
+pub const MAX_ATTACHMENT_BYTES: usize = 2_560 * 1024;
+const MAX_ATTACHMENT_NAME_CHARS: usize = 150;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MailBody {
@@ -37,12 +44,34 @@ impl MailBody {
     }
 }
 
+/// Ein Anhang (Inhalt im Speicher, hoechstens [`MAX_ATTACHMENT_BYTES`] zusammen).
+#[derive(Clone, PartialEq, Eq)]
+pub struct MailAttachment {
+    pub name: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for MailAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Nie den Inhalt in ein Protokoll.
+        write!(
+            f,
+            "MailAttachment {{ name: {:?}, content_type: {:?}, bytes: {} }}",
+            self.name,
+            self.content_type,
+            self.bytes.len()
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MailMessage {
     pub to: Vec<String>,
     pub cc: Vec<String>,
     pub subject: String,
     pub body: MailBody,
+    pub attachments: Vec<MailAttachment>,
 }
 
 fn clean_list(list: &[String], what: &str) -> Result<Vec<String>, M365Error> {
@@ -117,7 +146,42 @@ impl MailMessage {
             cc,
             subject,
             body,
+            attachments: Vec::new(),
         })
+    }
+
+    /// Haengt Anhaenge an (B5). Zu viele, zu grosse, leere oder unbenannte Anhaenge sind ein
+    /// Fehler; nichts wird gekuerzt oder weggelassen.
+    pub fn with_attachments(mut self, list: Vec<MailAttachment>) -> Result<Self, M365Error> {
+        if list.len() > MAX_ATTACHMENTS {
+            return Err(M365Error::Invalid(format!(
+                "Zu viele Anhänge (höchstens {MAX_ATTACHMENTS})."
+            )));
+        }
+        let mut total = 0usize;
+        for a in &list {
+            let name = a.name.trim();
+            if name.is_empty()
+                || name.chars().count() > MAX_ATTACHMENT_NAME_CHARS
+                || name.chars().any(char::is_control)
+            {
+                return Err(M365Error::Invalid(
+                    "Der Name eines Anhangs ist ungültig.".to_string(),
+                ));
+            }
+            if a.bytes.is_empty() {
+                return Err(M365Error::Invalid(format!("Der Anhang „{name}“ ist leer.")));
+            }
+            total += a.bytes.len();
+        }
+        if total > MAX_ATTACHMENT_BYTES {
+            return Err(M365Error::Invalid(format!(
+                "Die Anhänge sind zu groß (höchstens {} KiB zusammen).",
+                MAX_ATTACHMENT_BYTES / 1024
+            )));
+        }
+        self.attachments = list;
+        Ok(self)
     }
 
     /// Der Koerper der Anfrage an `sendMail`.
@@ -138,6 +202,22 @@ impl MailMessage {
         });
         if !self.cc.is_empty() {
             message["ccRecipients"] = Value::Array(recipients(&self.cc));
+        }
+        if !self.attachments.is_empty() {
+            use base64::Engine as _;
+            let files: Vec<Value> = self
+                .attachments
+                .iter()
+                .map(|a| {
+                    json!({
+                        "@odata.type": "#microsoft.graph.fileAttachment",
+                        "name": a.name.trim(),
+                        "contentType": a.content_type,
+                        "contentBytes": base64::engine::general_purpose::STANDARD.encode(&a.bytes),
+                    })
+                })
+                .collect();
+            message["attachments"] = Value::Array(files);
         }
         json!({ "message": message, "saveToSentItems": true })
     }
@@ -162,6 +242,13 @@ impl MailMessage {
         });
         if !self.cc.is_empty() {
             args["cc"] = json!(self.cc);
+        }
+        if !self.attachments.is_empty() {
+            args["attachments"] = json!(self
+                .attachments
+                .iter()
+                .map(|a| a.name.trim().to_string())
+                .collect::<Vec<_>>());
         }
         args
     }

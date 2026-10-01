@@ -21,6 +21,12 @@
 //! - Rechte: `needs` nennt Integration und Faehigkeit; die Engine fragt das Tor
 //!   (`integrations::gate`) VOR `run`. Ein Baustein prueft keine Rechte selbst und
 //!   ruft nie ein Register-Schreibwerk am Tor vorbei.
+//! - Tor-Ansicht (`gate_view`): haengt die Wirkung eines Bausteins von Daten des Laufs ab
+//!   (Empfaenger einer Mail aus den Teilnehmenden eines Termins), bildet der BAUSTEIN daraus die
+//!   vollstaendige, vom Code gebildete Fassung, die das Tor sieht: Ziel, Argumente (sie binden
+//!   die Freigabe und stehen in der Vorschau) und eine Obergrenze fuer das Recht (`max_mode`).
+//!   Die Freigabe gilt dann fuer GENAU diese Empfaenger; aendern sie sich bis zur Entscheidung,
+//!   passt die Bindung nicht mehr und der Schritt wird abgelehnt.
 //! - Schwere Bausteine (`heavy`): STT, LLM, TTS. Die Engine holt vorher einen Platz am
 //!   `HeavyGate` (seriell, mit RAM-Tor); ohne Platz wartet der Lauf, er scheitert nicht.
 //! - Kindprozesse und Server (Modell, Whisper, Fish Speech) gehen NUR ueber
@@ -39,7 +45,7 @@ use std::sync::Arc;
 use rusqlite::Connection;
 use serde_json::{json, Map, Value};
 
-use crate::managers::integrations::model::Capability;
+use crate::managers::integrations::model::{Capability, GrantMode};
 use crate::managers::provenance::{self, ActorKind, NewProvenance, ProvenanceError, SourceRef};
 
 use super::engine::Clock;
@@ -91,6 +97,29 @@ pub enum NeedsError {
     Invalid(String),
     /// Das Register kennt fuer diese Wirkung noch kein Recht: fail closed, abgelehnt.
     Unmodeled(String),
+}
+
+/// Umgebung, in der ein Baustein seine Tor-Ansicht bildet (siehe Moduldoku, `gate_view`).
+pub struct GateEnv<'a> {
+    pub conn: &'a Connection,
+    /// Der Laufkontext (`trigger`, `vars`, `steps`, `meeting`, ...), nur lesend.
+    pub context: &'a Value,
+    /// Trockenlauf (Plan): Verweise auf Ergebnisse spaeterer Schritte stehen noch als `{{...}}`
+    /// in den Parametern und sind kein Fehler.
+    pub planning: bool,
+}
+
+/// Was das Tor sieht und der Nutzer in der Freigabe: vom Baustein aus den Laufdaten gebildet.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GateView {
+    /// Ersetzt das Ziel des Rechts (Audit und Vorschau); `None`: `Needs::target`.
+    pub target: Option<String>,
+    /// Ersetzt die Argumente der Anfrage (Bindung der Freigabe und Vorschau). Enthaelt alles, was
+    /// den Empfaenger oder Ort der Wirkung bestimmt, vollstaendig.
+    pub args: Value,
+    /// Hoechstens dieses Recht, egal was der Nutzer eingestellt hat: `Some(Ask)` laesst die
+    /// Wirkung nie ohne Freigabe zu (E3: Mail an Dritte), `Off` bleibt `Off`.
+    pub max_mode: Option<GrantMode>,
 }
 
 /// Wie ein Schritt scheiterte (siehe Moduldoku).
@@ -235,6 +264,17 @@ pub trait Action: Send + Sync {
     /// Baustein ist im Register noch kein Recht vorgesehen (dann wird abgelehnt,
     /// nie ohne Recht ausgefuehrt).
     fn needs(&self, params: &Value) -> Result<Option<Needs>, NeedsError>;
+
+    /// Die Tor-Ansicht aus den eingesetzten Parametern und dem Laufkontext (siehe Moduldoku);
+    /// `Ok(None)`: Ziel und Parameter aus `needs` und den Parametern genuegen. Nur lesend,
+    /// ohne Aussenwirkung. Ein Fehler beendet den Schritt wie ein Fehler von `run`.
+    fn gate_view(
+        &self,
+        _env: &GateEnv<'_>,
+        _params: &Value,
+    ) -> Result<Option<GateView>, StepError> {
+        Ok(None)
+    }
 
     /// Zusaetzliche Pruefung der (noch nicht eingesetzten) Parameter beim Speichern.
     fn validate(&self, _params: &Map<String, Value>) -> Result<(), String> {

@@ -5854,7 +5854,11 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
 /**
  * Aufnahme starten: nie `allow` (Einwilligungsdialog, § 201 StGB).
  */
-"recording.start" | "transcribe.file" | "tts.render"
+"recording.start" | "transcribe.file" | "tts.render" | 
+/**
+ * Daten an einen Webhook senden (B5, n8n-Bruecke).
+ */
+"webhook.post"
 /**
  * Eine Zeile der Rechte-Matrix.
  */
@@ -6328,7 +6332,12 @@ export type KeyboardImplementation = "tauri" | "handy_keys"
  * Art einer Integration. `Ics` und `Graph` sind die Kalenderquellen, die das
  * Register aus `calendar_sources` uebernimmt (gleiche ID).
  */
-export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "obsidian" | "wissen" | "agent"
+export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "obsidian" | "wissen" | "agent" | 
+/**
+ * Webhook als Ziel (B5): Adresse eines n8n-Ablaufs o. ae., die Adresse liegt im
+ * Geheimnisspeicher.
+ */
+"webhook"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 /**
  * Was der Chip im Kopf der Besprechung braucht.
