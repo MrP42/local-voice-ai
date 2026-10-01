@@ -88,6 +88,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 -
 
 ## Entscheidungen
+- 2026-10-01 Patrick (/goal-planner-worker): "schließe alle noch offenen punkte (issues) erfolgreich ab und liefer ein neues release aus" – Release 0.21.0 ist damit freigegeben. Annahmen (Vorschläge übernommen, widerrufbar): Agent-Router Qwen3.5-9B (E4B nur extract); mmproj-Download auf Wunsch im Katalog, Projektor nur für Folienaufträge; macOS ohne OCR; Lizenz: espeak-ng-Lizenztext beim Runtime-Download ablegen, Piper-Stimmen Lessac/Ryan und Ableitungen mit Hinweis "nur nicht-kommerziell". Arbeitsweise: Builds/Tests nur auf D:\lv-build, Tests minimal (Build + betroffene Gruppen + tsc), keine sichtbaren Fenster ohne Ankündigung.
 - 2026-10-01 Patrick: "Vollgas" – maximale Parallelisierung, alle offenen Issues und Restpunkte; M4–M7 damit freigegeben. Neue Befunde: Sprecher-Dialog (G6), ASR-Wiederholungen (G7). Keine sichtbaren Fenster, solange Patrick am Rechner arbeitet.
 - 2026-10-01 Patrick: G5 Mehrsprachigkeit/Übersetzung aufnehmen (vor 0.21.0); Rahmen dadurch ~3,2 MTok.
 - 2026-10-01 Patrick: mp3lame LGPL als Ausnahme zulassen; Canary 1B mit Hinweis „nur nicht-kommerziell“ behalten; 12 unmaintained-Ignores übernehmen.
