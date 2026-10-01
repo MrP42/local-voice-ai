@@ -1893,6 +1893,13 @@
         "start": "Start recording",
         "decline": "Do not record",
         "confirm": "Start recording"
+      },
+      "agent": {
+        "title": "An agent wants to record",
+        "intro": "The agent “{{name}}” wants to start a recording now. Nothing starts until you agree.",
+        "start": "Start recording",
+        "decline": "Do not record",
+        "confirm": "Start recording"
       }
     },
     "live": {
@@ -4148,6 +4155,14 @@
       },
       "unavailable": "Tools marked “Not available yet” do not exist in this version: the right is prepared, but they cannot be called until later.",
       "unavailableBadge": "Not available yet",
+      "connect": {
+        "title": "Connect a program (Claude Code, Codex, script)",
+        "intro": "Create an access above, copy its key and put it in place of <TOKEN>. The key belongs only in the environment variable LVA_AGENT_TOKEN, never in a file inside a project.",
+        "claude": "Claude Code",
+        "codex": "Codex",
+        "ctl": "Command line (ctl)",
+        "note": "The app has to be running. You decide below which tools a program may use; a recording never starts without your consent."
+      },
       "neverAllowShort": "Never “Allowed”: the app shows the consent dialog before every recording (§ 201 StGB).",
       "tools": {
         "add_youtube_source": {

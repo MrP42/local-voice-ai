@@ -84,12 +84,17 @@ pub struct WorkflowHub {
     feed: Arc<dyn channel_trigger::FeedFetcher>,
 }
 
-/// Der echte Recorder hinter `RecordingControl`.
-struct AppRecording {
+/// Der echte Recorder hinter `RecordingControl`. Auch die Werkzeuge der Agentenbruecke (A8)
+/// starten darueber, nach derselben Einwilligung.
+pub(crate) struct AppRecording {
     app: AppHandle,
 }
 
 impl AppRecording {
+    pub(crate) fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+
     fn recorder(&self) -> Option<Arc<MeetingRecorderManager>> {
         self.app
             .try_state::<Arc<MeetingRecorderManager>>()
@@ -243,6 +248,12 @@ impl WorkflowHub {
         self.channels.status()
     }
 
+    /// Merkt das Ende einer Aufnahme vor (A8: auch die Aufnahme eines Agenten hat ein Ende,
+    /// damit eine vergessene nicht die Platte fuellt). Der gemeinsame Takt beendet sie.
+    pub fn schedule_stop(&self, meeting_id: &str, at_ms: i64) {
+        self.stops.add(meeting_id, at_ms);
+    }
+
     /// Beendet die Arbeiter (siehe Moduldoku). Mehrfaches Rufen ist harmlos.
     pub fn shutdown(&self) {
         let handle = self.handle.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -377,6 +388,7 @@ impl WorkflowHub {
             event.as_ref().map(distinct_attendees).unwrap_or(0) as u32,
             c.workflow_name.clone(),
             c.title.clone(),
+            c.agent,
             c.approval_id,
         );
     }

@@ -240,3 +240,78 @@ test("Der Hinweis zu einem gewöhnlichen Termin bleibt unverändert", async ({
     .toBe(1);
   expect(await calls(page, "meeting_prompt_workflow_decide")).toHaveLength(0);
 });
+
+// A8: Dieselbe Bitte, wenn ein externer Agent (Claude Code, Codex ...) ueber die
+// Agentenbruecke um eine Aufnahme bittet. Gleiche Schritte, gleiches Haekchen; nur der
+// Wortlaut nennt den Agenten. Gegenstueck mit der echten Bruecke:
+// `cargo test --lib agent_bridge::tools` und `workflows::consent`.
+const agentPrompt = () =>
+  workflowPrompt({
+    prompt_id: "p9",
+    event: null,
+    attendee_count: 0,
+    workflow: { name: "Claude Code", title: "Jour fixe Vertrieb", agent: true },
+  });
+
+test("A8: Die Bitte eines Agenten nennt den Agenten, und es geschieht nichts von selbst", async ({
+  page,
+}) => {
+  await setup(page, agentPrompt());
+  await expect(page.getByTestId("prompt-workflow-title")).toHaveText(
+    "Ein Agent möchte aufnehmen",
+  );
+  await expect(page.getByTestId("prompt-workflow-intro")).toHaveText(
+    "Der Agent „Claude Code“ möchte jetzt eine Aufnahme starten. Es beginnt nichts, bevor Sie zustimmen.",
+  );
+  await expect(page.getByTestId("prompt-title")).toHaveText(
+    "Jour fixe Vertrieb",
+  );
+  await expect(page.getByTestId("prompt-start")).toHaveText("Aufnahme starten");
+  await expect(page.getByTestId("prompt-decline")).toHaveText(
+    "Nicht aufnehmen",
+  );
+  await expect(page.getByTestId("prompt-later")).toHaveCount(0);
+  expect(await calls(page, "meeting_prompt_workflow_decide")).toHaveLength(0);
+  expect(await startCalls(page)).toBe(0);
+});
+
+test("A8: Auch für einen Agenten gilt: ohne Häkchen keine Entscheidung, mit Häkchen genau eine, nie der Direktstart", async ({
+  page,
+}) => {
+  await setup(page, agentPrompt());
+  await toConsent(page);
+  const confirm = page.getByTestId("prompt-confirm");
+  await expect(confirm).toBeDisabled();
+  await confirm.evaluate((el) => (el as HTMLButtonElement).click());
+  expect(await calls(page, "meeting_prompt_workflow_decide")).toHaveLength(0);
+  await expect(page.getByText("Einwilligung erforderlich")).toBeVisible();
+  await expect(page.getByText("(§ 201 StGB)")).toBeVisible();
+  await page.getByTestId("prompt-consent").check();
+  await confirm.click();
+  await expect
+    .poll(
+      async () => (await calls(page, "meeting_prompt_workflow_decide")).length,
+    )
+    .toBe(1);
+  expect((await calls(page, "meeting_prompt_workflow_decide"))[0].args).toEqual(
+    { promptId: "p9", approve: true },
+  );
+  expect(await startCalls(page)).toBe(0);
+});
+
+test("A8: „Nicht aufnehmen“ verneint die Bitte eines Agenten sofort", async ({
+  page,
+}) => {
+  await setup(page, agentPrompt());
+  await page.getByTestId("prompt-decline").click();
+  await expect
+    .poll(
+      async () => (await calls(page, "meeting_prompt_workflow_decide")).length,
+    )
+    .toBe(1);
+  expect((await calls(page, "meeting_prompt_workflow_decide"))[0].args).toEqual(
+    { promptId: "p9", approve: false },
+  );
+  expect(await run(page)).toEqual({ state: "failed", recordings: 0 });
+  expect(await startCalls(page)).toBe(0);
+});

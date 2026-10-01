@@ -31,6 +31,8 @@ export interface AgentClientsMockOptions {
     running: boolean;
     pipe_name?: string | null;
     error?: string | null;
+    /** A8: Pfad der Programmdatei (fertige Anbindungsbefehle). */
+    exe_path?: string | null;
   };
   /** Werkzeuge, die diese App-Version ausführen kann (Standard: zwei). */
   available?: string[];
@@ -160,6 +162,7 @@ export const installAgentClientsMock = async (
                 running: true,
                 pipe_name: pipe,
                 error: null,
+                exe_path: "C:\Program Files\Local Voice AI\local-voice-ai.exe",
               }
             );
           case "agent_client_create": {

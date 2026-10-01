@@ -55,6 +55,49 @@ const FRESH = {
 };
 
 test.describe("Zugänge der Agentenbrücke", () => {
+  // A8: die fertigen Befehle zum Anbinden von Claude Code, Codex und `ctl`. Der Schlüssel
+  // bleibt ein Platzhalter: er gehört in die Umgebungsvariable, nie in eine Datei im Projekt.
+  test("A8: „Programm anbinden“ zeigt fertige Befehle mit dem Pfad der App und ohne Schlüssel", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openAgentDetail(page);
+    const connect = page.getByTestId("agent-connect");
+    await expect(connect).toBeVisible();
+    await connect.locator("summary").click();
+    const exe = "C:\Program Files\Local Voice AI\local-voice-ai.exe";
+    await expect(page.getByTestId("agent-connect-claude")).toHaveText(
+      `claude mcp add --env LVA_AGENT_TOKEN=<TOKEN> local-voice -- "${exe}" --mcp`,
+    );
+    await expect(page.getByTestId("agent-connect-codex")).toHaveText(
+      `codex mcp add local-voice --env LVA_AGENT_TOKEN=<TOKEN> -- "${exe}" --mcp`,
+    );
+    await expect(page.getByTestId("agent-connect-ctl")).toContainText(
+      `"${exe}" ctl status`,
+    );
+    await expect(connect).toContainText("nie ohne deine Einwilligung");
+    // Kein Schluessel in den Befehlen, auch nach dem Anlegen eines Zugangs nicht.
+    await page.getByTestId("agent-client-create-open").click();
+    await page.getByTestId("agent-client-name").fill("Claude Code");
+    await page.getByTestId("agent-client-create-submit").click();
+    const token = await page.getByTestId("agent-token-value").innerText();
+    expect(token.startsWith("lvat_")).toBe(true);
+    await expect(connect).not.toContainText(token);
+  });
+
+  test("A8: ohne bekannten Pfad steht ein Platzhalter statt eines falschen Pfads", async ({
+    page,
+  }) => {
+    await setup(page, {
+      bridge: { running: true, pipe_name: PIPE, error: null, exe_path: null },
+    });
+    await openAgentDetail(page);
+    await page.getByTestId("agent-connect").locator("summary").click();
+    await expect(page.getByTestId("agent-connect-claude")).toContainText(
+      '"<Pfad zu local-voice-ai.exe>" --mcp',
+    );
+  });
+
   test("der Platzhalter ist weg: Brückenstatus, leere Liste und Knopf zum Anlegen", async ({
     page,
   }) => {

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tokio::sync::oneshot;
 
-use super::bridge::Bridge;
+use super::bridge::{ApprovalNotifier, Bridge};
 use super::catalog::{ToolHandler, ToolRegistry};
 use super::server::Server;
 use super::{pipe, Config};
@@ -27,6 +27,10 @@ pub struct BridgeStatus {
     pub pipe_name: Option<String>,
     /// Warum sie nicht laeuft.
     pub error: Option<String>,
+    /// Pfad der laufenden Programmdatei: die Oberflaeche zeigt damit die fertigen Befehle zum
+    /// Anbinden (`claude mcp add ... -- "<Pfad>" --mcp`). Kein Geheimnis.
+    #[serde(default)]
+    pub exe_path: Option<String>,
 }
 
 /// Zustand und Zugriff fuer die Commands. Als Tauri-State verwaltet.
@@ -37,7 +41,11 @@ pub struct AppBridge {
 
 impl AppBridge {
     pub fn status(&self) -> BridgeStatus {
-        self.status.lock().map(|s| s.clone()).unwrap_or_default()
+        let mut s = self.status.lock().map(|s| s.clone()).unwrap_or_default();
+        s.exe_path = std::env::current_exe()
+            .ok()
+            .map(|p| p.display().to_string());
+        s
     }
 
     fn set(&self, status: BridgeStatus) {
@@ -63,13 +71,26 @@ pub fn start_for_app(
     store: Arc<MeetingStore>,
     handlers: Vec<Arc<dyn ToolHandler>>,
 ) -> Arc<AppBridge> {
+    start_for_app_with(store, handlers, None)
+}
+
+/// Wie `start_for_app`, mit einem Rueckruf fuer neue Freigaben (A8: Bitte um Einwilligung zeigen).
+pub fn start_for_app_with(
+    store: Arc<MeetingStore>,
+    handlers: Vec<Arc<dyn ToolHandler>>,
+    notifier: Option<ApprovalNotifier>,
+) -> Arc<AppBridge> {
     let mut registry = ToolRegistry::new();
     for h in handlers {
         if let Err(e) = registry.register(h) {
             log::error!("agent_bridge: Werkzeug nicht registriert: {e}");
         }
     }
-    let bridge = Arc::new(Bridge::new(store, registry, Config::default()));
+    let mut bridge = Bridge::new(store, registry, Config::default());
+    if let Some(n) = notifier {
+        bridge = bridge.with_notifier(n);
+    }
+    let bridge = Arc::new(bridge);
     let server = Server::new(bridge);
     let app = Arc::new(AppBridge {
         status: Mutex::new(BridgeStatus::default()),
@@ -83,6 +104,7 @@ pub fn start_for_app(
                 running: false,
                 pipe_name: None,
                 error: Some(e.to_string()),
+                ..BridgeStatus::default()
             });
             return app;
         }
@@ -99,6 +121,7 @@ pub fn start_for_app(
                     running: true,
                     pipe_name: Some(name.clone()),
                     error: None,
+                    ..BridgeStatus::default()
                 });
             }
             Ok(Err(e)) => {
@@ -107,6 +130,7 @@ pub fn start_for_app(
                     running: false,
                     pipe_name: Some(name.clone()),
                     error: Some(e.to_string()),
+                    ..BridgeStatus::default()
                 });
                 return;
             }
@@ -118,6 +142,7 @@ pub fn start_for_app(
                 running: false,
                 pipe_name: Some(name),
                 error: Some(e.to_string()),
+                ..BridgeStatus::default()
             });
         }
     });

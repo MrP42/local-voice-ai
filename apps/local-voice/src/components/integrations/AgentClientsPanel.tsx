@@ -18,6 +18,29 @@ interface AgentClientsPanelProps {
   integrationId: string;
 }
 
+/**
+ * Die fertigen Befehle zum Anbinden. Der Schluessel bleibt ein Platzhalter: er steht nur einmal
+ * beim Anlegen im Klartext zur Verfuegung und gehoert in die Umgebungsvariable, nie in die
+ * Befehlszeile eines Programms im Projekt. Ohne bekannten Pfad steht ein Platzhalter.
+ */
+const CONNECT_COMMANDS = (exe: string | null) => {
+  const path = exe ?? "<Pfad zu local-voice-ai.exe>";
+  return [
+    {
+      id: "claude",
+      text: `claude mcp add --env LVA_AGENT_TOKEN=<TOKEN> local-voice -- "${path}" --mcp`,
+    },
+    {
+      id: "codex",
+      text: `codex mcp add local-voice --env LVA_AGENT_TOKEN=<TOKEN> -- "${path}" --mcp`,
+    },
+    {
+      id: "ctl",
+      text: `set LVA_AGENT_TOKEN=<TOKEN>\n"${path}" ctl status`,
+    },
+  ];
+};
+
 type Confirm = { id: string; kind: "revoke" | "delete" } | null;
 type CopyState = "idle" | "copied" | "failed";
 
@@ -230,6 +253,36 @@ export const AgentClientsPanel: React.FC<AgentClientsPanelProps> = ({
           )}
         </div>
       )}
+
+      <details
+        className="rounded-lg border border-mid-gray/20 p-3"
+        data-testid="agent-connect"
+      >
+        <summary className="cursor-pointer text-sm font-medium">
+          {t("integrations.agentClients.connect.title")}
+        </summary>
+        <div className="mt-2 space-y-2">
+          <p className="text-xs text-text-muted">
+            {t("integrations.agentClients.connect.intro")}
+          </p>
+          {CONNECT_COMMANDS(bridge?.exe_path ?? null).map((c) => (
+            <div key={c.id} className="space-y-1">
+              <p className="text-xs font-medium">
+                {t(`integrations.agentClients.connect.${c.id}`)}
+              </p>
+              <pre
+                className="overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-mid-gray/20 p-2 font-mono text-xs"
+                data-testid={`agent-connect-${c.id}`}
+              >
+                {c.text}
+              </pre>
+            </div>
+          ))}
+          <p className="text-xs text-text-muted">
+            {t("integrations.agentClients.connect.note")}
+          </p>
+        </div>
+      </details>
 
       {error && (
         <p

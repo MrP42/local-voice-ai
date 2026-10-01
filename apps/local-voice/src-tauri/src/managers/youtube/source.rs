@@ -80,6 +80,33 @@ pub struct AddedSource {
     pub video: YoutubeRef,
 }
 
+/// Wer den Link anlegt (A8): der Nutzer per Knopfdruck oder ein externer Agent. Es bestimmt, unter
+/// welchem Aufrufer der Abruf im Audit steht und von wem die Herkunft des Transkripts
+/// stammt. Das RECHT des Agenten (`youtube.add`) prueft die Agentenbruecke VOR dem Aufruf; hier
+/// geht es nur um die richtige Zuordnung.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Origin {
+    pub actor: ActorKind,
+    /// Kennung des Zugangs bei einem Agenten.
+    pub actor_ref: Option<String>,
+}
+
+impl Origin {
+    pub fn user() -> Self {
+        Self {
+            actor: ActorKind::User,
+            actor_ref: None,
+        }
+    }
+
+    pub fn agent_external(client_id: &str) -> Self {
+        Self {
+            actor: ActorKind::AgentExternal,
+            actor_ref: Some(client_id.to_string()),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Sperre je Video
 // ---------------------------------------------------------------------------
@@ -179,7 +206,9 @@ pub fn create_meeting(
 /// ein vorhandener LEERER Eintrag zur YouTube-Besprechung: Id, Projekte und
 /// Notizen bleiben, `project_id` entfaellt, der Titel wird nur ersetzt, solange
 /// er noch der vorgeschlagene ist. Ein anderes Ziel bricht mit
-/// `Target("target_not_empty")` ab (nichts geschrieben).
+/// `Target("target_not_empty")` ab (nichts geschrieben). Der Nutzer ist der Anleger; die
+/// App ruft `create_meeting_for` (A8), diese Kurzform gibt es fuer die Tests.
+#[cfg(test)]
 pub fn create_meeting_into(
     conn: &mut Connection,
     video: &YoutubeRef,
@@ -187,6 +216,19 @@ pub fn create_meeting_into(
     project_id: Option<&str>,
     target: Option<&str>,
     now_ms: i64,
+) -> Result<String, YoutubeError> {
+    create_meeting_for(conn, video, meta, project_id, target, now_ms, &Origin::user())
+}
+
+/// Wie `create_meeting_into`, mit Angabe, wer anlegt (A8).
+pub fn create_meeting_for(
+    conn: &mut Connection,
+    video: &YoutubeRef,
+    meta: &VideoMeta,
+    project_id: Option<&str>,
+    target: Option<&str>,
+    now_ms: i64,
+    origin: &Origin,
 ) -> Result<String, YoutubeError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if target.is_none() {
@@ -254,8 +296,9 @@ pub fn create_meeting_into(
         SubjectKind::Transcript,
         &id,
         "youtube_source",
-        ActorKind::User,
+        origin.actor,
     );
+    entry.actor_ref = origin.actor_ref.clone();
     entry.provider = Some("youtube".to_string());
     entry.sources = vec![source];
     entry.params = Some(json!({ "channel": meta.channel, "start_s": video.start_s }));
@@ -272,6 +315,7 @@ fn prepare(
     project_id: Option<&str>,
     target: Option<&str>,
     now_ms: i64,
+    origin: &Origin,
 ) -> Result<(String, i64), YoutubeError> {
     let conn = store
         .get_connection()
@@ -325,12 +369,15 @@ fn prepare(
     let audit_id = audit::record_at(
         &conn,
         &NewAudit {
-            caller: Caller::User.as_str().to_string(),
+            caller: origin.actor.as_str().to_string(),
             integration_id: Some(integration.id.clone()),
             capability: Some(Capability::MediaFetch.as_str().to_string()),
             target: Some(format!("youtube:{}", video.video_id)),
             outcome: AuditOutcome::Pending,
-            detail: Some(json!({ "phase": "oembed" })),
+            detail: Some(match &origin.actor_ref {
+                Some(client) => json!({ "phase": "oembed", "client": client }),
+                None => json!({ "phase": "oembed" }),
+            }),
         },
         now_ms,
     )?;
@@ -393,10 +440,24 @@ pub async fn add_youtube_source_into(
     target: Option<&str>,
     opts: &AddOptions,
 ) -> Result<AddedSource, YoutubeError> {
+    add_youtube_source_for(store, raw_url, project_id, target, opts, &Origin::user()).await
+}
+
+/// Wie `add_youtube_source_into`, mit Angabe, wer anlegt (A8: ein externer Agent). Audit-Aufrufer
+/// und Herkunft folgen `origin`; sonst ist alles gleich (kein Netz ausser dem einen
+/// oEmbed-Abruf, nie yt-dlp).
+pub async fn add_youtube_source_for(
+    store: &MeetingStore,
+    raw_url: &str,
+    project_id: Option<&str>,
+    target: Option<&str>,
+    opts: &AddOptions,
+    origin: &Origin,
+) -> Result<AddedSource, YoutubeError> {
     let video = normalize_link(raw_url)?;
     let _flight = acquire(store, &video.video_id)?;
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let (integration_id, audit_id) = prepare(store, &video, project_id, target, now_ms)?;
+    let (integration_id, audit_id) = prepare(store, &video, project_id, target, now_ms, origin)?;
 
     let fetched = oembed::fetch(&opts.oembed_base, &video, &opts.fetch).await;
     finish(
@@ -411,13 +472,14 @@ pub async fn add_youtube_source_into(
     let mut conn = store
         .get_connection()
         .map_err(|e| YoutubeError::Store(e.to_string()))?;
-    let id = create_meeting_into(
+    let id = create_meeting_for(
         &mut conn,
         &video,
         &meta,
         project_id,
         target,
         chrono::Utc::now().timestamp_millis(),
+        origin,
     )?;
     drop(conn);
     let meeting = store

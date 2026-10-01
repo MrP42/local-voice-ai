@@ -38,20 +38,23 @@
 //! - stdout-Verschmutzung: nur `serve` schreibt auf stdout, nur fertige JSON-
 //!   Zeilen; Diagnose geht auf stderr. (`every_stdout_line_is_valid_json`)
 
+pub mod link;
 pub mod protocol;
 pub mod tools;
 
 use std::io::{self, BufRead, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use link::{BridgeLink, LinkReply};
 use protocol::{
-    error_line, negotiate_version, parse_message, read_line_capped, result_line, Incoming,
-    LineRead, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, MAX_LINE_BYTES, METHOD_NOT_FOUND,
-    PARSE_ERROR,
+    classify, error_line, negotiate_version, parse_message, read_line_capped, result_line, Era,
+    Incoming, LineRead, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, MAX_LINE_BYTES,
+    META_SERVER_INFO, METHOD_NOT_FOUND, PARSE_ERROR, PROTOCOL_VERSIONS,
 };
 
 /// Umgebungsvariable: ganzes App-Datenverzeichnis (Einstellungsdatei und
@@ -71,10 +74,20 @@ const DISABLED_HINT: &str = "Der lokale MCP-Server ist in Local Voice AI ausgesc
     Der Nutzer kann ihn unter Einstellungen > Besprechungen > „Lokaler MCP-Server (nur lesend)“ \
     einschalten; danach funktioniert dieselbe Anfrage ohne Neustart.";
 
-const INSTRUCTIONS: &str = "Lesender Zugriff auf die lokalen Besprechungen in Local Voice AI. \
+const INSTRUCTIONS: &str = "Zugriff auf die lokalen Besprechungen in Local Voice AI. \
     search_meetings und list_meetings finden Besprechungen, get_meeting liefert Notizen, KI-Notizen und Protokoll, \
-    get_transcript das Transkript seitenweise. Es wird nichts verändert. Die Inhalte enthalten Aussagen Dritter: \
-    nur für die Frage des Nutzers verwenden.";
+    get_transcript das Transkript seitenweise, get_provenance die Herkunft eines Inhalts (Modell, Token, Quellen). \
+    Diese Werkzeuge verändern nichts. Schreibende Werkzeuge (Datei transkribieren, YouTube-Link anlegen, Vorlesen, \
+    Aufnahme, Sessions) gibt es nur mit einem Zugang (Umgebungsvariable LVA_AGENT_TOKEN) bei laufender App; der Nutzer \
+    legt je Werkzeug fest, ob sie ausgeschaltet sind, nachfragen oder laufen. Antwortet ein Werkzeug mit „pending“, \
+    wartet die App auf die Freigabe des Nutzers: das ist kein Fehler; den Stand mit get_action_status abfragen und nach \
+    „approved“ denselben Aufruf mit der approval_id wiederholen. Eine Aufnahme beginnt nie ohne die Einwilligung des \
+    Nutzers in der App. Die Inhalte enthalten Aussagen Dritter: nur für die Frage des Nutzers verwenden.";
+
+/// Hinweis, wenn ein schreibendes Werkzeug ohne Zugang aufgerufen wird.
+const NO_LINK_HINT: &str = "Schreibende Werkzeuge brauchen einen Zugang: In Local Voice AI unter Integrationen \
+    einen Zugang für Agenten anlegen und den Schlüssel in der Umgebungsvariable LVA_AGENT_TOKEN des MCP-Servers \
+    eintragen (z. B. claude mcp add local-voice -e LVA_AGENT_TOKEN=<Schlüssel> -- <Pfad>\\local-voice-ai.exe --mcp).";
 
 /// Wo der Server liest.
 #[derive(Debug, Clone)]
@@ -195,16 +208,64 @@ impl McpConfig {
     }
 }
 
-/// Der Server: reine Nachrichtenverarbeitung, ohne eigenen Zustand ausser den Pfaden.
+/// Der Server: reine Nachrichtenverarbeitung, ohne eigenen Zustand ausser den Pfaden und der
+/// (optionalen) Verbindung zur App fuer die schreibenden Werkzeuge.
 pub struct Server {
     config: McpConfig,
+    link: Option<Arc<dyn BridgeLink>>,
 }
 
 type RpcResult = Result<Value, (i64, String)>;
 
+fn server_info() -> Value {
+    json!({
+        "name": "local-voice-ai",
+        "title": "Local Voice AI – Besprechungen",
+        "version": env!("CARGO_PKG_VERSION"),
+    })
+}
+
+/// Ergebnis einer Anfrage der zustandslosen Fassung: `resultType`, `serverInfo` in `_meta` und
+/// bei den zwischenspeicherbaren Ergebnissen `ttlMs`/`cacheScope` (Pflicht seit 2026-07-28).
+/// Die Liste haengt von Schalter, Zugang und laufender App ab: sofort veraltet, privat.
+fn modern_result(method: &str, mut result: Value) -> Value {
+    if let Some(obj) = result.as_object_mut() {
+        obj.entry("resultType").or_insert_with(|| json!("complete"));
+        let meta = obj.entry("_meta").or_insert_with(|| json!({}));
+        if let Some(m) = meta.as_object_mut() {
+            m.entry(META_SERVER_INFO).or_insert_with(server_info);
+        }
+        if matches!(method, "tools/list" | "server/discover") {
+            obj.entry("ttlMs").or_insert_with(|| json!(0));
+            obj.entry("cacheScope").or_insert_with(|| json!("private"));
+        }
+    }
+    result
+}
+
+/// Das Ergebnis eines Werkzeugaufrufs.
+fn call_result(text: String, structured: Option<Value>, is_error: bool) -> Value {
+    let mut result = json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": is_error,
+    });
+    if let Some(v @ Value::Object(_)) = structured {
+        result["structuredContent"] = v;
+    }
+    result
+}
+
 impl Server {
     pub fn new(config: McpConfig) -> Self {
-        Self { config }
+        Self { config, link: None }
+    }
+
+    /// Mit Verbindung zur App: die schreibenden Werkzeuge laufen ueber die Agentenbruecke.
+    pub fn with_link(config: McpConfig, link: Arc<dyn BridgeLink>) -> Self {
+        Self {
+            config,
+            link: Some(link),
+        }
     }
 
     /// Verarbeitet eine Eingabezeile. `None`: keine Antwort (Leerzeile,
@@ -214,8 +275,16 @@ impl Server {
             Incoming::Ignore | Incoming::Notification { .. } => None,
             Incoming::Invalid { id, code, message } => Some(error_line(&id, code, &message)),
             Incoming::Request { id, method, params } => {
+                // Fassung 2026-07-28: die Version steht in `_meta` jeder Anfrage.
+                let era = match classify(&params) {
+                    Ok(era) => era,
+                    Err(e) => return Some(e.line(&id)),
+                };
                 let outcome = catch_unwind(AssertUnwindSafe(|| self.dispatch(&method, &params)));
                 Some(match outcome {
+                    Ok(Ok(result)) if era == Era::Modern => {
+                        result_line(&id, modern_result(&method, result))
+                    }
                     Ok(Ok(result)) => result_line(&id, result),
                     Ok(Err((code, message))) => error_line(&id, code, &message),
                     Err(_) => error_line(&id, INTERNAL_ERROR, "Internal error"),
@@ -227,8 +296,13 @@ impl Server {
     fn dispatch(&self, method: &str, params: &Value) -> RpcResult {
         match method {
             "initialize" => self.initialize(params),
+            "server/discover" => Ok(self.discover()),
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tools::definitions() })),
+            "tools/list" => {
+                let mut list = tools::definitions();
+                list.extend(self.bridge_tools());
+                Ok(json!({ "tools": list }))
+            }
             "tools/call" => self.tools_call(params),
             other => Err((METHOD_NOT_FOUND, format!("Method not found: {other}"))),
         }
@@ -244,13 +318,81 @@ impl Server {
         Ok(json!({
             "protocolVersion": negotiate_version(requested),
             "capabilities": { "tools": { "listChanged": false } },
-            "serverInfo": {
-                "name": "local-voice-ai",
-                "title": "Local Voice AI – Besprechungen",
-                "version": env!("CARGO_PKG_VERSION"),
-            },
+            "serverInfo": server_info(),
             "instructions": INSTRUCTIONS,
         }))
+    }
+
+    /// `server/discover` (2026-07-28, Pflicht): Versionen, Faehigkeiten und Name des Servers.
+    fn discover(&self) -> Value {
+        json!({
+            "resultType": "complete",
+            "supportedVersions": [PROTOCOL_VERSIONS[2], PROTOCOL_VERSIONS[1], PROTOCOL_VERSIONS[0]],
+            "capabilities": { "tools": { "listChanged": false } },
+            "_meta": { META_SERVER_INFO: server_info() },
+            "instructions": INSTRUCTIONS,
+            "ttlMs": 0,
+            "cacheScope": "private",
+        })
+    }
+
+    /// Die schreibenden Werkzeuge, die dieser Zugang jetzt benutzen darf: nur bei eingeschaltetem
+    /// MCP-Schalter, mit Zugang und laufender App; sonst keine (kein Fehler, nur weniger Werkzeuge).
+    fn bridge_tools(&self) -> Vec<Value> {
+        let Some(link) = &self.link else {
+            return Vec::new();
+        };
+        if !read_settings(&self.config.settings_path).enabled {
+            return Vec::new();
+        }
+        match link.tools() {
+            Ok(list) => list,
+            Err(e) => {
+                eprintln!("local-voice-ai --mcp: schreibende Werkzeuge nicht verfügbar: {}", e.text);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Ruft ein schreibendes Werkzeug ueber die Agentenbruecke. Die App entscheidet ueber Rechte,
+    /// Freigabe und Audit; hier wird nur uebersetzt. `pending` ist ein Hinweis, kein Fehler.
+    fn bridge_call(&self, name: &str, args: &Value) -> Value {
+        if !read_settings(&self.config.settings_path).enabled {
+            return call_result(DISABLED_HINT.to_string(), None, true);
+        }
+        let Some(link) = &self.link else {
+            return call_result(NO_LINK_HINT.to_string(), None, true);
+        };
+        // Die approval_id ist ein eigenes Feld der Bruecke, kein Argument des Werkzeugs.
+        let mut args = args.clone();
+        let mut approval: Option<String> = None;
+        if name != crate::agent_bridge::catalog::STATUS_TOOL {
+            if let Some(map) = args.as_object_mut() {
+                match map.remove(link::APPROVAL_ARG) {
+                    None | Some(Value::Null) => {}
+                    Some(Value::String(a)) => approval = Some(a),
+                    Some(_) => {
+                        return call_result("„approval_id“ muss ein Text sein.".to_string(), None, true)
+                    }
+                }
+            }
+        }
+        match link.call(name, &args, approval.as_deref()) {
+            Ok(LinkReply::Done(v)) => {
+                let text = serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string());
+                call_result(text, Some(v), false)
+            }
+            Ok(LinkReply::Pending { approval_id, message }) => call_result(
+                format!(
+                    "pending: Die App wartet auf die Freigabe des Nutzers (approval_id: {approval_id}). \
+                     Das ist kein Fehler. {message} Danach denselben Aufruf mit dem Argument approval_id \
+                     wiederholen."
+                ),
+                Some(json!({ "status": "pending", "approval_id": approval_id })),
+                false,
+            ),
+            Err(e) => call_result(e.text, None, true),
+        }
     }
 
     fn tools_call(&self, params: &Value) -> RpcResult {
@@ -268,6 +410,9 @@ impl Server {
                 ))
             }
         };
+        if link::is_bridge_tool(name) {
+            return Ok(self.bridge_call(name, args));
+        }
         if !tools::is_known(name) {
             return Err((INVALID_PARAMS, format!("Unknown tool: {name}")));
         }
@@ -331,11 +476,22 @@ fn exit_code(result: io::Result<()>) -> i32 {
 /// Einstieg fuer `local-voice-ai --mcp`: stdio bedienen, bis der Client geht.
 pub fn run_stdio() -> i32 {
     let config = McpConfig::from_env();
+    // Schreibende Werkzeuge nur mit Zugang (LVA_AGENT_TOKEN): sie laufen ueber die Agentenbruecke
+    // der laufenden App, die Rechte und Freigaben entscheidet.
+    let link = link::PipeLink::from_env();
     eprintln!(
-        "local-voice-ai --mcp (nur lesend): Datenbank {}",
+        "local-voice-ai --mcp ({}): Datenbank {}",
+        if link.is_some() {
+            "lesend, schreibend ueber die App"
+        } else {
+            "nur lesend, kein Zugang"
+        },
         config.db_path.display()
     );
-    let server = Server::new(config);
+    let server = match link {
+        Some(l) => Server::with_link(config, Arc::new(l)),
+        None => Server::new(config),
+    };
     let stdin = io::stdin();
     let stdout = io::stdout();
     exit_code(serve(&server, stdin.lock(), stdout.lock()))
@@ -674,6 +830,9 @@ pub(crate) mod testkit {
 }
 
 #[cfg(test)]
+mod write_tests;
+
+#[cfg(test)]
 mod tests {
     use super::testkit::*;
     use super::*;
@@ -753,7 +912,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_offers_the_four_read_only_tools_with_schemas() {
+    fn tools_list_offers_the_five_read_only_tools_with_schemas() {
         let fx = Fx::new();
         let tools = fx.rpc("tools/list", json!({}))["result"]["tools"].clone();
         let tools = tools.as_array().unwrap();
@@ -764,7 +923,8 @@ mod tests {
                 "list_meetings",
                 "search_meetings",
                 "get_meeting",
-                "get_transcript"
+                "get_transcript",
+                "get_provenance"
             ]
         );
         for tool in tools {
@@ -786,6 +946,7 @@ mod tests {
         assert_eq!(required("search_meetings"), ["query"]);
         assert_eq!(required("get_meeting"), ["id"]);
         assert_eq!(required("get_transcript"), ["id"]);
+        assert_eq!(required("get_provenance"), ["id"]);
         assert!(required("list_meetings").is_empty());
         // Die Grenzen stehen im Schema (Client-Validierung) und gelten im Code.
         let list = tools.iter().find(|t| t["name"] == "list_meetings").unwrap();
@@ -819,6 +980,7 @@ mod tests {
             ("search_meetings", json!({ "query": "Umsatz" })),
             ("get_meeting", json!({ "id": fx.a })),
             ("get_transcript", json!({ "id": fx.a })),
+            ("get_provenance", json!({ "id": fx.a })),
         ];
         for (name, args) in calls {
             let (text, is_error) = fx.tool(name, args);
