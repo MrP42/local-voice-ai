@@ -1934,7 +1934,9 @@
         "rowName": "Name for {{label}}",
         "listen": "Listen",
         "listenHint": "Jumps to a longer sentence of this speaker",
-        "listenFor": "Listen to {{label}}"
+        "listenFor": "Listen to {{label}}",
+        "stop": "Stop",
+        "stopFor": "Stop {{label}}"
       },
       "notices": {
         "disabled": "Speaker separation was switched off for this meeting.",

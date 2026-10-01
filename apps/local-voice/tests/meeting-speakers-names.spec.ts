@@ -794,6 +794,264 @@ test.describe("Der Name gilt überall", () => {
   });
 });
 
+/**
+ * Abspielbare Audio-Attrappe (G6): `play()`/`pause()` senden wie ein echtes
+ * Audioelement `play`/`pause`; `__advance(s)` lässt die Zeit der laufenden
+ * Elemente fortschreiten (`timeupdate`), `__playing()` zählt die laufenden.
+ */
+const withPlayableAudio = (page: Page) =>
+  page.addInitScript(() => {
+    const w = window as any;
+    const state = new WeakMap<object, { t: number; playing: boolean }>();
+    const st = (el: object) => {
+      let s = state.get(el);
+      if (!s) {
+        s = { t: 0, playing: false };
+        state.set(el, s);
+      }
+      return s;
+    };
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      configurable: true,
+      get() {
+        return st(this).t;
+      },
+      set(v: number) {
+        st(this).t = v;
+      },
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "paused", {
+      configurable: true,
+      get() {
+        return !st(this).playing;
+      },
+    });
+    HTMLMediaElement.prototype.play = function () {
+      const s = st(this);
+      if (!s.playing) {
+        s.playing = true;
+        w.__played.push(s.t);
+        this.dispatchEvent(new Event("play"));
+      }
+      return Promise.resolve();
+    };
+    HTMLMediaElement.prototype.pause = function () {
+      const s = st(this);
+      if (s.playing) {
+        s.playing = false;
+        this.dispatchEvent(new Event("pause"));
+      }
+    };
+    w.__advance = (seconds: number) => {
+      for (const el of Array.from(document.querySelectorAll("audio"))) {
+        const s = st(el);
+        if (!s.playing) continue;
+        s.t += seconds;
+        el.dispatchEvent(new Event("timeupdate"));
+      }
+    };
+    w.__playing = () =>
+      Array.from(document.querySelectorAll("audio")).filter(
+        (el) => st(el).playing,
+      ).length;
+    w.__meetings[0].mic_audio_path = "C:/audio/m1-mic.wav";
+    w.__meetings[0].system_audio_path = "C:/audio/m1-system.wav";
+  });
+
+/** "Fertig" im Fuß des Dialogs (steht außerhalb von `speakers-dialog`). */
+const done = (page: Page) =>
+  page.getByRole("dialog").getByRole("button", { name: "Fertig" });
+const playing = (page: Page) =>
+  page.evaluate(() => (window as any).__playing() as number);
+const advance = (page: Page, seconds: number) =>
+  page.evaluate((s) => (window as any).__advance(s), seconds);
+
+test.describe("Sprecher benennen: Namen übernehmen (G6, #64)", () => {
+  test("Fertig übernimmt eingegebene Namen auch ohne Speichern", async ({
+    page,
+  }) => {
+    await openDetail(page);
+    await menuItem(page, "menu-speakers");
+    const rows = dialog(page).getByTestId("speakers-dialog-row");
+    await rows.nth(1).getByTestId("speakers-dialog-input").fill("Ben Müller");
+    await rows.nth(2).getByTestId("speakers-dialog-input").fill("Carla Roth");
+    await done(page).click();
+
+    await expect(dialog(page)).toBeHidden();
+    await expect(who(page, 2)).toHaveText("Ben Müller");
+    await expect(who(page, 4)).toHaveText("Carla Roth");
+    const rename = await calls(page, "meeting_speaker_rename");
+    expect(rename.map((c) => c.args.name).sort()).toEqual([
+      "Ben Müller",
+      "Carla Roth",
+    ]);
+    await expect(page.getByTestId("participants-chip")).toContainText(
+      "Ben Müller",
+    );
+  });
+
+  test("Speichern in einer Zeile und Fertig: auch der Entwurf der anderen gilt", async ({
+    page,
+  }) => {
+    await openDetail(page);
+    await menuItem(page, "menu-speakers");
+    const rows = dialog(page).getByTestId("speakers-dialog-row");
+    await rows.nth(1).getByTestId("speakers-dialog-input").fill("Ben Müller");
+    await rows.nth(1).getByTestId("speakers-dialog-save").click();
+    await expect(who(page, 2)).toHaveText("Ben Müller");
+    await rows.nth(2).getByTestId("speakers-dialog-input").fill("Carla Roth");
+    await done(page).click();
+    await expect(who(page, 4)).toHaveText("Carla Roth");
+    expect(await calls(page, "meeting_speaker_rename")).toHaveLength(2);
+  });
+
+  test("Escape und Schließen-Kreuz übernehmen ebenfalls", async ({ page }) => {
+    await openDetail(page);
+    await menuItem(page, "menu-speakers");
+    const rows = dialog(page).getByTestId("speakers-dialog-row");
+    await rows.nth(1).getByTestId("speakers-dialog-input").fill("Ben Müller");
+    await page.keyboard.press("Escape");
+    await expect(dialog(page)).toBeHidden();
+    await expect(who(page, 2)).toHaveText("Ben Müller");
+
+    await menuItem(page, "menu-speakers");
+    await rows.nth(2).getByTestId("speakers-dialog-input").fill("Carla Roth");
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Schließen" })
+      .click();
+    await expect(dialog(page)).toBeHidden();
+    await expect(who(page, 4)).toHaveText("Carla Roth");
+  });
+
+  test("ohne Eingabe löst Fertig keinen Speicheraufruf aus", async ({
+    page,
+  }) => {
+    await openDetail(page);
+    await menuItem(page, "menu-speakers");
+    await done(page).click();
+    await expect(dialog(page)).toBeHidden();
+    expect(await calls(page, "meeting_speaker_rename")).toHaveLength(0);
+  });
+});
+
+test.describe("Sprecher benennen: Import mit einer Spur (G6, #64)", () => {
+  // Patricks Fall: ein importiertes Video (Kanal 2, nur eine Audiospur,
+  // Sprechertrennung). Speichern im Dialog und Fertig gelten im Transkript;
+  // die Probe läuft über die Importspur und lässt sich stoppen.
+  test("Speichern und Fertig gelten im Transkript, Anhören stoppt", async ({
+    page,
+  }) => {
+    await withPlayableAudio(page);
+    await page.addInitScript(() => {
+      const w = window as any;
+      for (const s of w.__segments) {
+        s.channel = 2;
+        if (s.speaker_index === null) s.speaker_index = 1;
+      }
+      w.__meetings[0].system_audio_path = null;
+    });
+    await openDetail(page);
+    await menuItem(page, "menu-speakers");
+    const rows = dialog(page).getByTestId("speakers-dialog-row");
+    const listen = rows.nth(1).getByTestId("speakers-dialog-listen");
+    await listen.click();
+    await expect(listen).toHaveText("Stopp");
+    expect(await playing(page)).toBe(1);
+    await listen.click();
+    await expect(listen).toHaveText("Anhören");
+    expect(await playing(page)).toBe(0);
+
+    await rows.nth(1).getByTestId("speakers-dialog-input").fill("Ben Müller");
+    await rows.nth(1).getByTestId("speakers-dialog-save").click();
+    await expect(who(page, 2)).toHaveText("Ben Müller");
+    await rows.nth(2).getByTestId("speakers-dialog-input").fill("Carla Roth");
+    await done(page).click();
+    await expect(who(page, 4)).toHaveText("Carla Roth");
+  });
+});
+
+test.describe("Sprecher benennen: Anhören mit Stopp (G6, #64)", () => {
+  const listen = (page: Page, index: number) =>
+    dialog(page)
+      .getByTestId("speakers-dialog-row")
+      .nth(index)
+      .getByTestId("speakers-dialog-listen");
+
+  test("der Knopf wird beim Abspielen zu Stopp und hält beim Klick an", async ({
+    page,
+  }) => {
+    await withPlayableAudio(page);
+    await openDetail(page);
+    await menuItem(page, "menu-speakers");
+    await expect(listen(page, 0)).toHaveText("Anhören");
+    await listen(page, 0).click();
+    await expect(listen(page, 0)).toHaveText("Stopp");
+    await expect(listen(page, 0)).toHaveAttribute(
+      "aria-label",
+      "Gegenseite 1 stoppen",
+    );
+    expect(await playing(page)).toBe(1);
+    await listen(page, 0).click();
+    await expect(listen(page, 0)).toHaveText("Anhören");
+    expect(await playing(page)).toBe(0);
+  });
+
+  test("am Ende der Probe steht wieder Anhören", async ({ page }) => {
+    await withPlayableAudio(page);
+    await openDetail(page);
+    await menuItem(page, "menu-speakers");
+    // Gegenseite 1: längster Satz 4 s bis 9 s.
+    await listen(page, 0).click();
+    await expect(listen(page, 0)).toHaveText("Stopp");
+    await advance(page, 3);
+    await expect(listen(page, 0)).toHaveText("Stopp");
+    await advance(page, 2.5);
+    await expect(listen(page, 0)).toHaveText("Anhören");
+    expect(await playing(page)).toBe(0);
+  });
+
+  test("eine andere Person abspielen stoppt die vorige", async ({ page }) => {
+    await withPlayableAudio(page);
+    await openDetail(page);
+    await menuItem(page, "menu-speakers");
+    await listen(page, 0).click();
+    await expect(listen(page, 0)).toHaveText("Stopp");
+    await listen(page, 1).click();
+    await expect(listen(page, 1)).toHaveText("Stopp");
+    await expect(listen(page, 0)).toHaveText("Anhören");
+    // Nur eine Probe läuft; ihre Länge gilt für die neue Person (9,5 s bis 13 s).
+    expect(await playing(page)).toBe(1);
+    await advance(page, 4);
+    await expect(listen(page, 1)).toHaveText("Anhören");
+    expect(await playing(page)).toBe(0);
+  });
+
+  test("Schließen des Dialogs stoppt die Wiedergabe", async ({ page }) => {
+    await withPlayableAudio(page);
+    await openDetail(page);
+    await menuItem(page, "menu-speakers");
+    await listen(page, 0).click();
+    expect(await playing(page)).toBe(1);
+    await done(page).click();
+    await expect(dialog(page)).toBeHidden();
+    expect(await playing(page)).toBe(0);
+  });
+
+  test("ein Zeitsprung im Transkript läuft nach dem Schließen weiter, der Dialog stoppt nichts fremdes", async ({
+    page,
+  }) => {
+    await withPlayableAudio(page);
+    await openDetail(page);
+    await row(page, 3).locator('[data-act="seek"]').click();
+    expect(await playing(page)).toBe(1);
+    await menuItem(page, "menu-speakers");
+    await done(page).click();
+    await expect(dialog(page)).toBeHidden();
+    expect(await playing(page)).toBe(1);
+  });
+});
+
 // Abnahmebild (U8): nur mit `U8_SCREENSHOT=1`, damit volle Läufe nichts überschreiben.
 test("Abnahmebild: Namensvorschlag, Popover und Dialog", async ({ page }) => {
   test.skip(!process.env.U8_SCREENSHOT, "nur mit U8_SCREENSHOT=1");

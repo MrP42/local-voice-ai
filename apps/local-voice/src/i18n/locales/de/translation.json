@@ -1934,7 +1934,9 @@
         "rowName": "Name für {{label}}",
         "listen": "Anhören",
         "listenHint": "Springt zu einem längeren Satz dieses Sprechers",
-        "listenFor": "{{label}} anhören"
+        "listenFor": "{{label}} anhören",
+        "stop": "Stopp",
+        "stopFor": "{{label}} stoppen"
       },
       "notices": {
         "disabled": "Die Sprechertrennung war für diese Besprechung ausgeschaltet.",
