@@ -411,14 +411,13 @@ test("die Dauer wird aus dem Player nachgetragen, wenn sie fehlt", async ({
 });
 
 // ---------------------------------------------------------------------------
-// Barrierefreiheit der neuen Teile (axe, ohne den app-weiten Kontrastbefund)
+// Barrierefreiheit der neuen Teile (axe, inkl. color-contrast seit G2e)
 // ---------------------------------------------------------------------------
 
 const axeSevere = async (page: Page) =>
   (
     await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
-      .disableRules(["color-contrast"])
       .analyze()
   ).violations
     .filter((v) => v.impact === "critical" || v.impact === "serious")

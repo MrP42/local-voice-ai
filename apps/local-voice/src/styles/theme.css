@@ -8,6 +8,25 @@
      light/dark pair; the active tokens below and the `data-theme` overrides
      in App.css reference these, so a hex value lives in exactly one place. */
   --light-color-text: #1f2937;
+  /* Gedaempfter Text (Zeitmarken, Spaltenueberschriften, Leerhinweise,
+     Navigation). Feste Farbe statt abgeblendeter Schrift: WCAG 2.1 AA verlangt
+     4,5:1, auch auf den leicht getoenten Flaechen (mid-gray/10 bis /20).
+     Hell #5a6472: 5,69:1 auf dem Hintergrund, 4,58:1 auf mid-gray/20. */
+  --light-color-text-muted: #5a6472;
+  /* Markengelb als SCHRIFT: auf hell nur als dunkles Bernstein lesbar
+     (#ffdd00 auf #f8f9fb waere 1,28:1). Hell #7a5c00: 5,94:1 auf dem
+     Hintergrund, 5,43:1 auf logo-primary/30. Dunkel bleibt Signalgelb. */
+  --light-color-accent-text: #7a5c00;
+  /* Statusfarben als SCHRIFT (Fehler, Warnung, Erfolg, Info). Die Tailwind-
+     Stufen -300 bis -600 erreichen auf hell keine 4,5:1 (red-400 auf #f8f9fb:
+     2,8:1). Hell: Stufe 700/800, 4,6:1 bis 6,1:1 auch auf der eigenen Toenung
+     (bg-*-500/20) und auf mid-gray/30. Dunkel: Stufe 300/400. */
+  --light-color-status-red: #b91c1c;
+  --light-color-status-orange: #9a3412;
+  --light-color-status-amber: #92400e;
+  --light-color-status-yellow: #854d0e;
+  --light-color-status-green: #166534;
+  --light-color-status-blue: #1d4ed8;
   --light-color-background: #f8f9fb;
   /* Yellow is the brand accent in both themes. On light it needs the ink
      outline (see .logo-primary in App.css) — yellow on light alone is too
@@ -16,6 +35,15 @@
   --light-color-logo-stroke: #111418;
 
   --dark-color-text: #edede7;
+  /* Dunkel #9a9a95: 6,96:1 auf dem Hintergrund, 4,79:1 auf mid-gray/30. */
+  --dark-color-text-muted: #9a9a95;
+  --dark-color-accent-text: #ffdd00;
+  --dark-color-status-red: #f87171;
+  --dark-color-status-orange: #fb923c;
+  --dark-color-status-amber: #fbbf24;
+  --dark-color-status-yellow: #facc15;
+  --dark-color-status-green: #4ade80;
+  --dark-color-status-blue: #60a5fa;
   --dark-color-background: #0b0b0c;
   --dark-color-logo-primary: #ffdd00;
   --dark-color-logo-stroke: #15161a;
@@ -30,6 +58,14 @@
   /* Active palette — defaults to light, follows the OS via the media query
      below, or is forced by `data-theme` (see App.css). */
   --color-text: var(--light-color-text);
+  --color-text-muted: var(--light-color-text-muted);
+  --color-accent-text: var(--light-color-accent-text);
+  --color-status-red: var(--light-color-status-red);
+  --color-status-orange: var(--light-color-status-orange);
+  --color-status-amber: var(--light-color-status-amber);
+  --color-status-yellow: var(--light-color-status-yellow);
+  --color-status-green: var(--light-color-status-green);
+  --color-status-blue: var(--light-color-status-blue);
   --color-background: var(--light-color-background);
   --color-logo-primary: var(--light-color-logo-primary);
   --color-logo-stroke: var(--light-color-logo-stroke);
@@ -38,6 +74,14 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --color-text: var(--dark-color-text);
+    --color-text-muted: var(--dark-color-text-muted);
+    --color-accent-text: var(--dark-color-accent-text);
+    --color-status-red: var(--dark-color-status-red);
+    --color-status-orange: var(--dark-color-status-orange);
+    --color-status-amber: var(--dark-color-status-amber);
+    --color-status-yellow: var(--dark-color-status-yellow);
+    --color-status-green: var(--dark-color-status-green);
+    --color-status-blue: var(--dark-color-status-blue);
     --color-background: var(--dark-color-background);
     --color-logo-primary: var(--dark-color-logo-primary);
     --color-logo-stroke: var(--dark-color-logo-stroke);
