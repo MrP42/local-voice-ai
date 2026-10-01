@@ -13,15 +13,17 @@
 //!    „fragen“, verlangt die Mail selbst eine Freigabe (`Checked::read_mode`);
 //! 5. hoechstens [`MAX_ATTACHMENTS`] Dateien, zusammen hoechstens `MAX_TOTAL_BYTES`, keine leere.
 //!
-//! Der Anhang ist an den Inhalt gebunden: Groesse und Pruefsumme stehen in den Argumenten des
-//! Tors (und damit in der Freigabe). Aendert sich die Datei, bis der Nutzer entschieden hat,
-//! passt die Bindung nicht mehr, und der Schritt wird abgelehnt.
+//! Der Anhang ist an den Inhalt gebunden: Groesse und vollstaendiges SHA-256 stehen in den
+//! Argumenten des Tors (und damit in der Freigabe). Aendert sich die Datei, bis der Nutzer
+//! entschieden hat, passt die Bindung nicht mehr, und der Schritt wird abgelehnt. Gelesen wird
+//! handle-basiert (`folder::read_file_exact`, B20): die Datei wird einmal geoeffnet, das Handle
+//! muss auf den geprueften Pfad zeigen, und genau diese Bytes werden gehasht und versendet.
 
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::managers::integrations::folder::{FolderConfig, Sandbox};
+use crate::managers::integrations::folder::{self, FolderConfig, FolderError, Sandbox};
 use crate::managers::integrations::grants::explain;
 use crate::managers::integrations::model::{Caller, Capability, GrantMode, Kind};
 use crate::managers::integrations::smtp;
@@ -108,7 +110,7 @@ pub struct Checked {
     /// Recht zum Lesen fuer Workflows an diesem Ordner.
     pub read_mode: GrantMode,
     pub size: u64,
-    /// Erste 16 Hexzeichen von SHA-256 (zur Bindung der Freigabe, kein Sicherheitsmerkmal).
+    /// Vollstaendiges SHA-256 der gelesenen Bytes (64 Hexzeichen): die Bindung der Freigabe (B21).
     pub sha256: String,
     pub bytes: Vec<u8>,
 }
@@ -262,13 +264,22 @@ pub fn check(conn: &rusqlite::Connection, paths: &[String]) -> Result<Vec<Checke
         if total > MAX_TOTAL_BYTES {
             return Err(AttachError::TooBig);
         }
-        let bytes = std::fs::read(&canonical).map_err(|e| AttachError::Io(e.to_string()))?;
+        // Die Datei wird EINMAL geoeffnet; das Handle muss auf den geprueften Pfad zeigen.
+        let bytes = match folder::read_file_exact(&canonical, MAX_TOTAL_BYTES) {
+            Ok(b) => b,
+            // Unterwegs ausgetauscht (Junction, Verknuepfung) oder gewachsen: nicht mehr die geprueft-gebundene.
+            Err(FolderError::Escape(_) | FolderError::TooLarge) => {
+                return Err(AttachError::Changed(name));
+            }
+            Err(FolderError::Io(m)) => return Err(AttachError::Io(m)),
+            Err(e) => return Err(AttachError::Io(e.to_string())),
+        };
         // Waechst die Datei zwischen Pruefung und Lesen, zaehlt, was gelesen wurde.
-        if bytes.len() as u64 > MAX_TOTAL_BYTES || bytes.len() as u64 != meta.len() {
+        if bytes.len() as u64 != meta.len() {
             return Err(AttachError::Changed(name));
         }
         let digest = Sha256::digest(&bytes);
-        let sha256: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
+        let sha256: String = digest.iter().map(|b| format!("{b:02x}")).collect();
         out.push(Checked {
             display: display_path(&canonical),
             content_type: content_type_of(&name),

@@ -16,9 +16,16 @@
 //! (weitere werden mit `too_many_connections` abgewiesen), Anmeldefrist, Leerlauf-Fristen,
 //! Zeilen bis 1 MiB, nach `max_auth_failures_per_connection` Fehlanmeldungen wird die
 //! Verbindung geschlossen, jede Anfrage prueft Zugang und Grenzen neu.
+//!
+//! Gegenstelle, die nie liest (B23, QG5): Jedes Schreiben einer Antwort, das Leeren des Puffers und
+//! das Schliessen haben eine Frist (`Config::write_timeout`, 10 s). Liest die Gegenstelle nicht, bleibt
+//! das Schreiben irgendwann stecken (voller Pipe-Puffer): nach der Frist wird die Verbindung
+//! geschlossen, das ueberlappende Schreiben abgebrochen und der Platz frei. Das gilt auch fuer die
+//! Abweisung bei vollen Plaetzen. Die Kennung einer Anfrage ist auf `protocol::MAX_ID_BYTES`
+//! begrenzt (sie kommt in der Antwort zurueck), eine Antwortzeile auf `MAX_REPLY_BYTES`.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tokio::io::{
@@ -28,7 +35,7 @@ use tokio::sync::{watch, OwnedSemaphorePermit, Semaphore};
 
 use super::bridge::{Bridge, BridgeError, CallStep, ClientCtx, Phase};
 use super::protocol::{self, code, Incoming, LineRead};
-use super::MAX_LINE_BYTES;
+use super::{MAX_LINE_BYTES, MAX_REPLY_BYTES};
 
 pub struct Server {
     bridge: Arc<Bridge>,
@@ -101,9 +108,14 @@ impl Server {
                     )
                 };
                 let line = protocol::err_line(&Value::Null, c, m, None) + "\n";
-                let _ = stream.write_all(line.as_bytes()).await;
-                let _ = stream.flush().await;
-                let _ = stream.shutdown().await;
+                // Eine Gegenstelle, die nie liest, haelt auch die Abweisung nicht ewig fest.
+                let limit = self.bridge.config().write_timeout;
+                let _ = tokio::time::timeout(limit, async {
+                    stream.write_all(line.as_bytes()).await?;
+                    stream.flush().await?;
+                    stream.shutdown().await
+                })
+                .await;
             }
         }
     }
@@ -136,7 +148,7 @@ impl Server {
                     Ok(Err(_)) | Err(_) => break,
                 },
                 _ = shutdown.changed() => {
-                    let _ = send(&mut wr, &protocol::err_line(&Value::Null, code::SHUTTING_DOWN, "Local Voice AI wird beendet.", None)).await;
+                    let _ = send(&mut wr, &protocol::err_line(&Value::Null, code::SHUTTING_DOWN, "Local Voice AI wird beendet.", None), cfg.write_timeout).await;
                     break;
                 }
             };
@@ -151,6 +163,7 @@ impl Server {
                             "Die Zeile ist zu lang (höchstens 1 MiB).",
                             None,
                         ),
+                        cfg.write_timeout,
                     )
                     .await;
                     break;
@@ -159,6 +172,7 @@ impl Server {
                     if send(
                         &mut wr,
                         &protocol::err_line(&Value::Null, code::BAD_REQUEST, "Die Zeile ist kein gültiges UTF-8.", None),
+                        cfg.write_timeout,
                     )
                     .await
                     .is_err()
@@ -173,17 +187,23 @@ impl Server {
                 continue;
             }
             session.seen_request = true;
-            let (reply, next) = match protocol::parse_request(&line) {
+            let (reply_id, (reply, next)) = match protocol::parse_request(&line) {
                 Incoming::Invalid { id, message } => (
-                    Some(protocol::err_line(&id, code::BAD_REQUEST, &message, None)),
-                    Next::Continue,
+                    id.clone(),
+                    (
+                        Some(protocol::err_line(&id, code::BAD_REQUEST, &message, None)),
+                        Next::Continue,
+                    ),
                 ),
-                Incoming::Request { id, method, params } => {
-                    self.dispatch(&mut session, &mut rd, &mut shutdown, &id, &method, &params).await
-                }
+                Incoming::Request { id, method, params } => (
+                    id.clone(),
+                    self.dispatch(&mut session, &mut rd, &mut shutdown, &id, &method, &params).await,
+                ),
             };
             if let Some(line) = reply {
-                if send(&mut wr, &line).await.is_err() {
+                let line = protocol::cap_reply(&reply_id, line, MAX_REPLY_BYTES);
+                if send(&mut wr, &line, cfg.write_timeout).await.is_err() {
+                    // Fehler oder Frist (die Gegenstelle liest nicht): Verbindung zu, Platz frei.
                     break;
                 }
             }
@@ -191,7 +211,8 @@ impl Server {
                 break;
             }
         }
-        let _ = wr.shutdown().await;
+        // Auch das Schliessen darf nicht haengen.
+        let _ = tokio::time::timeout(cfg.write_timeout, wr.shutdown()).await;
     }
 
     async fn dispatch<S>(
@@ -460,12 +481,24 @@ enum Wait {
     Failed(BridgeError),
 }
 
-async fn send<W: AsyncWrite + Unpin>(wr: &mut W, line: &str) -> std::io::Result<()> {
+/// Schreibt eine Zeile samt Leeren des Puffers, hoechstens `limit` lang. Ablauf der Frist ist ein
+/// Fehler (`TimedOut`): der Aufrufer schliesst die Verbindung. Das Schreiben ist ueberlappend
+/// (async) und wird beim Ablauf abgebrochen, haelt also keinen Arbeitsthread fest.
+async fn send<W: AsyncWrite + Unpin>(wr: &mut W, line: &str, limit: Duration) -> std::io::Result<()> {
     let mut out = String::with_capacity(line.len() + 1);
     out.push_str(line);
     out.push('\n');
-    wr.write_all(out.as_bytes()).await?;
-    wr.flush().await
+    let write = async {
+        wr.write_all(out.as_bytes()).await?;
+        wr.flush().await
+    };
+    match tokio::time::timeout(limit, write).await {
+        Ok(r) => r,
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "Die Gegenstelle liest nicht (Schreibfrist abgelaufen).",
+        )),
+    }
 }
 
 /// Fuehrt Datenbank- und Werkzeugarbeit auf einem Arbeitsthread aus; ein Absturz dort wird

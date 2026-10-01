@@ -54,7 +54,7 @@ fn a_file_inside_an_enabled_folder_is_checked_and_read_once() {
         GrantMode::Allow,
         "Vorgabe: Lesen ist fuer Ablaeufe erlaubt"
     );
-    assert_eq!(a.sha256.len(), 16);
+    assert_eq!(a.sha256.len(), 64, "vollstaendiges SHA-256 (B21)");
     assert!(a.content_type.contains("wordprocessingml"));
     assert!(!a.display.starts_with(r"\\?\"), "{}", a.display);
     assert!(a.display.ends_with("Protokoll Überprüfung.docx"));
@@ -294,4 +294,68 @@ fn control_characters_in_a_file_name_cannot_reach_a_header() {
         file_name_of(Path::new("C:\\x\\a\u{7}b\nc.txt")),
         "a_b_c.txt"
     );
+}
+
+// ---------------------------------------------------------------------------
+// B20 (QG5): Junction-Tausch zwischen Pruefung und Lesen
+// ---------------------------------------------------------------------------
+
+fn junction(link: &Path, target: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+}
+
+/// Tauscht `dir` gegen eine Verknuepfung auf `outside` (ein Prozess mit Schreibrecht im Baum).
+fn swap_for_junction(dir: &Path, outside: &Path) -> bool {
+    let parked = dir.with_file_name("sub-weg");
+    if std::fs::rename(dir, &parked).is_err() {
+        return false;
+    }
+    if junction(dir, outside) {
+        return true;
+    }
+    let _ = std::fs::rename(&parked, dir);
+    false
+}
+
+#[test]
+fn a_directory_swapped_for_a_junction_after_the_check_never_leaks_a_foreign_file() {
+    use crate::managers::integrations::folder::race;
+    let w = w();
+    let sub = w.root.join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    let original = b"ORIGINAL-FASSUNG-0001";
+    let foreign = b"FREMDE-DATEI-GEHEIM-0";
+    assert_eq!(original.len(), foreign.len(), "gleiche Laenge: die Groessenpruefung faengt es nicht");
+    let path = write(&sub, "a.docx", original);
+    let outside = temp_dir();
+    write(&outside, "a.docx", foreign);
+
+    let (s2, o2) = (sub.clone(), outside.clone());
+    race::install(move |stage| {
+        if stage == "before_read" {
+            swap_for_junction(&s2, &o2);
+        }
+    });
+    let r = check(&w.fx.conn(), &[path]);
+    race::clear();
+    match r {
+        Ok(got) => assert_eq!(
+            got[0].bytes, original,
+            "gelesen wurde die Datei ausserhalb der Wurzel"
+        ),
+        Err(e) => eprintln!("abgelehnt: {e}"),
+    }
 }

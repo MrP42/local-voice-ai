@@ -1258,6 +1258,19 @@ impl Direct {
         step_id: &str,
         params: &Value,
     ) -> Result<StepOutput, StepError> {
+        self.run_bound(w, action, run_id, step_id, params, None)
+    }
+
+    /// Wie `run`, mit den Argumenten, die das Tor gebunden hat (`RunCtx::gate_args`).
+    fn run_bound(
+        &self,
+        w: &World,
+        action: &dyn Action,
+        run_id: &str,
+        step_id: &str,
+        params: &Value,
+        gate_args: Option<&Value>,
+    ) -> Result<StepOutput, StepError> {
         let clock: &dyn Clock = &*w.clock;
         let ctx = RunCtx {
             workflow_id: "wf-test",
@@ -1268,6 +1281,7 @@ impl Direct {
             context: &self.context,
             step_started_at: T0,
             approved: false,
+            gate_args,
             cancel: &self.cancel,
             clock,
             db_path: &w.fx.db_path,
@@ -1618,6 +1632,132 @@ fn a_changed_attachment_breaks_the_approval() {
         w.graph.mails().is_empty(),
         "die genehmigte Fassung ist nicht die gesendete"
     );
+}
+
+/// Die Tor-Ansicht der Mail, wie die Engine sie bindet (ohne `lauf`).
+fn bound_view(w: &World, action: &dyn Action, ctx: &Value, params: &Value) -> Value {
+    action
+        .gate_view(
+            &GateEnv {
+                conn: &w.conn(),
+                context: ctx,
+                planning: false,
+            },
+            params,
+        )
+        .unwrap()
+        .unwrap()
+        .args
+}
+
+#[test]
+fn an_attachment_swapped_between_the_gate_and_the_send_is_refused_and_audited() {
+    // B21 (QG5): Das Tor hat Fassung A gesehen und die Freigabe daran gebunden; bis der Baustein
+    // die Datei fuer den Versand liest, wurde sie durch B ersetzt. Gesendet wird nichts.
+    let w = world();
+    let path = doc_in(&w, "Protokoll.docx", b"genehmigte Fassung");
+    let action = action_of(&w, "mail.send");
+    let ctx = json!({"trigger": w.trigger("cal-a"), "steps": {}});
+    let params = json!({
+        "via": "smtp-1", "to": "me", "subject": "x", "body": "y", "attach": [path.clone()]
+    });
+    let bound = bound_view(&w, &*action, &ctx, &params);
+    assert_eq!(
+        bound["attachments"][0]["sha256"].as_str().unwrap().len(),
+        64,
+        "die Freigabe bindet das vollstaendige SHA-256"
+    );
+
+    std::fs::write(&path, b"ausgetauschte Fassung").unwrap();
+    let d = Direct::new(ctx);
+    let r = d.run_bound(&w, &*action, "R1", "m", &params, Some(&bound));
+    assert!(matches!(r, Err(StepError::Permanent(_))), "{r:?}");
+    assert!(
+        w.smtp.mails.lock().unwrap().is_empty(),
+        "die genehmigte Fassung ist nicht die gesendete"
+    );
+    let audit = w.audit();
+    let row = audit
+        .iter()
+        .find(|a| {
+            a.outcome == "denied"
+                && a.detail_json
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("attachment_changed_after_approval")
+        })
+        .expect("Audit der Ablehnung");
+    assert_eq!(row.caller, "workflow");
+    assert_eq!(row.target.as_deref(), Some("Protokoll.docx"));
+}
+
+#[test]
+fn the_bound_attachment_is_sent_byte_for_byte() {
+    let w = world();
+    let path = doc_in(&w, "Protokoll.docx", b"genehmigte Fassung");
+    let action = action_of(&w, "mail.send");
+    let ctx = json!({"trigger": w.trigger("cal-a"), "steps": {}});
+    let params = json!({
+        "via": "smtp-1", "to": "me", "subject": "x", "body": "y", "attach": [path]
+    });
+    let bound = bound_view(&w, &*action, &ctx, &params);
+    let d = Direct::new(ctx);
+    d.run_bound(&w, &*action, "R1", "m", &params, Some(&bound))
+        .unwrap();
+    let mails = w.smtp.mails.lock().unwrap();
+    assert_eq!(mails.len(), 1);
+    assert_eq!(smtp_attachment(&mails[0].data), b"genehmigte Fassung");
+}
+
+#[test]
+fn a_swap_between_the_gate_check_and_the_send_in_a_real_run_is_never_sent() {
+    use crate::managers::integrations::folder::race;
+    // Derselbe Durchgang der Engine: Tor liest den Anhang (1. Lesen), der Baustein liest ihn fuer
+    // den Versand (2. Lesen); dazwischen wird er gegen eine Fassung gleicher Laenge getauscht.
+    let w = world();
+    let path = doc_in(&w, "Protokoll.docx", b"genehmigte Fassung");
+    let wf = armed_workflow(
+        &w.engine,
+        &w.mail_only(json!({
+            "via": "m365-1", "to": "me", "subject": "x", "body": "y", "attach": [path.clone()]
+        })),
+    );
+    let run = w.fire(&wf, "cal-a");
+    assert_eq!(w.tick()[0].1, RunOutcome::AwaitingApproval);
+    let pending = w.pending();
+    approvals::decide(&w.conn(), &pending[0].id, true, T0).unwrap();
+
+    let reads = std::rc::Rc::new(std::cell::Cell::new(0u32));
+    let (seen, p2) = (reads.clone(), path.clone());
+    race::install(move |stage| {
+        if stage == "before_read" {
+            seen.set(seen.get() + 1);
+            if seen.get() == 2 {
+                std::fs::write(&p2, b"GENEHMIGTE FASSUNG").unwrap();
+            }
+        }
+    });
+    let outcomes = w.tick();
+    race::clear();
+    assert_eq!(reads.get(), 2, "Tor und Baustein lesen den Anhang je einmal");
+    assert!(
+        matches!(outcomes[0].1, RunOutcome::Failed { .. }),
+        "{outcomes:?}"
+    );
+    assert!(
+        w.graph.mails().is_empty(),
+        "die genehmigte Fassung ist nicht die gesendete"
+    );
+    assert!(w
+        .detail(&run)
+        .steps
+        .iter()
+        .any(|s| s.error.as_deref().unwrap_or("").contains("seit die Freigabe erteilt wurde")));
+    assert!(w.audit().iter().any(|a| a.outcome == "denied"
+        && a.detail_json
+            .as_deref()
+            .unwrap_or("")
+            .contains("attachment_changed_after_approval")));
 }
 
 #[test]

@@ -22,26 +22,35 @@
 //!    abgelehnt; eine, die innerhalb der Wurzel bleibt, ist harmlos und erlaubt
 //!    (OneDrive-Platzhalter sind solche Reparse-Punkte). Eine Datei, die selbst ein
 //!    Symlink ist, wird nie ueberschrieben.
-//! 4. **Schreiben**: der Name wird exklusiv angelegt (`create_new`), nie wird eine
-//!    vorhandene Datei ueberschrieben (`name (2).md`). Nach dem Schreiben wird der
-//!    Pfad noch einmal geprueft; scheitert das oder der Schreiber, bleibt keine
-//!    Datei zurueck.
+//! 4. **Schreiben (B20, QG5: handle-basiert)**: der Zielordner wird EINMAL geoeffnet und
+//!    festgehalten (`handle::PinnedDir`), sein tatsaechlicher Pfad am Handle gegen die Wurzel
+//!    geprueft. Der Name wird exklusiv angelegt (`create_new`), nie wird eine vorhandene Datei
+//!    geoeffnet, ueberschrieben oder abgeschnitten (`name (2).md`). Bevor ein Byte geschrieben wird,
+//!    prueft `final_path` des Datei-Handles, dass sie im festgehaltenen Ordner liegt; geschrieben
+//!    wird nur ueber dieses Handle. Pfad-Schreiber (PDF, Word) arbeiten in einem eigenen
+//!    Zwischenordner ausserhalb der Ablage. Scheitert etwas, wird NUR die selbst angelegte Datei
+//!    ueber ihr Handle entfernt, nie, was inzwischen unter dem Pfad liegt.
+//! 5. **Lesen (`read_file_exact`)**: eine Datei wird einmal geoeffnet, der tatsaechliche Pfad des
+//!    Handles muss der geprueft-kanonische sein, gelesen wird nur ueber das Handle.
 //!
-//! Restrisiko (benannt, nicht geloest): Zwischen Pruefung und Schreiben kann ein
-//! anderer Prozess mit Schreibrecht im Ordner eine Junction austauschen. Wer das
-//! kann, kann im Ordner ohnehin beliebig schreiben; die Nachpruefung entfernt eine
-//! so entstandene Datei wieder, ein Abfluss vor der Pruefung laesst sich ohne
-//! handle-basierte Dateisystem-API nicht ausschliessen.
+//! Restrisiko (benannt, nicht geloest): Die Wurzel selbst wird beim Oeffnen einmal kanonisiert;
+//! wird sie danach durch jemanden mit Schreibrecht oberhalb der Wurzel ersetzt, gilt die
+//! Entscheidung des Nutzers nicht mehr. Wo die Datei im Ordner noch von anderen Teilen der App
+//! per Pfad gelesen wird (Import, Ordner-Ausloeser), schuetzt diese Sandbox nur die Auswahl, nicht
+//! das spaetere Lesen. Auf macOS ist der Pfad eines Handles nicht abfragbar (Pruefung per Pfad).
 //!
 //! Speicher: Dateien sind auf `MAX_FILE_BYTES` begrenzt; eine voll gelaufene Platte
 //! bricht das Schreiben mit einem Fehler ab (die halbe Datei wird entfernt).
 
-use std::fs::OpenOptions;
-use std::io::Write;
+use std::fs::File;
+use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+mod handle;
+use handle::PinnedDir;
 
 /// Groesste Datei, die dieses Ziel schreibt (Protokolle, Dokumente; kein Audio).
 pub const MAX_FILE_BYTES: u64 = 100 * 1024 * 1024;
@@ -307,72 +316,40 @@ impl Sandbox {
             .unwrap_or_default()
     }
 
-    /// Legt eine NEUE Datei an (`rel_dir/<name>`, bei Kollision `name (2).ext`) und
-    /// laesst `writer` sie fuellen. Der Schreiber bekommt den Pfad (Exporte wie PDF
-    /// schreiben selbst). Scheitert er oder die Nachpruefung, wird die Datei entfernt.
+    /// Legt eine NEUE Datei an (`rel_dir/<name>`, bei Kollision `name (2).ext`) und laesst
+    /// `writer` sie fuellen. Der Schreiber bekommt einen Pfad (Exporte wie PDF schreiben selbst),
+    /// aber in einem EIGENEN Zwischenordner ausserhalb der Ablage; erst danach wird der Inhalt
+    /// ueber das Handle der frisch angelegten Zieldatei uebernommen (B20: kein Pfadzugriff eines
+    /// Schreibers in einen Baum, in dem jemand Junctions tauschen kann). Scheitert der Schreiber
+    /// oder eine Pruefung, bleibt in der Ablage nichts zurueck.
     pub fn write_new(
         &self,
         rel_dir: &str,
         file_name: &str,
         writer: impl FnOnce(&Path) -> Result<(), String>,
     ) -> Result<PlacedFile, FolderError> {
-        let dir = self.resolve_dir(rel_dir, true)?;
+        // Formal pruefen, bevor der (teure) Schreiber laeuft.
+        check_relative(rel_dir)?;
         let name = sanitize_file_name(file_name).ok_or(FolderError::BadName)?;
-        let (stem, ext) = split_name(&name);
-        let mut reserved: Option<PathBuf> = None;
-        for n in 0..MAX_UNIQUE_TRIES {
-            let candidate = if n == 0 {
-                name.clone()
-            } else {
-                format!("{stem} ({}){ext}", n + 1)
-            };
-            let path = dir.join(&candidate);
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(file) => {
-                    drop(file);
-                    reserved = Some(path);
-                    break;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(io_err(e)),
-            }
-        }
-        let path = reserved.ok_or(FolderError::NoFreeName)?;
-        let cleanup = |p: &Path| {
-            let _ = std::fs::remove_file(p);
-        };
-        // Letzte Pruefung vor dem Schreiben: die frisch angelegte Datei liegt wirklich hier.
-        match std::fs::canonicalize(&path) {
-            Ok(c) if self.contains(&c) => {}
-            _ => {
-                cleanup(&path);
-                return Err(FolderError::Escape("Verknüpfung nach außen"));
-            }
-        }
-        if let Err(e) = writer(&path) {
-            cleanup(&path);
-            return Err(FolderError::Io(e));
-        }
-        let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-        let still_inside = std::fs::canonicalize(&path)
-            .map(|c| self.contains(&c))
-            .unwrap_or(false);
-        if !still_inside {
-            cleanup(&path);
-            return Err(FolderError::Escape("Verknüpfung nach außen"));
-        }
-        if bytes > MAX_FILE_BYTES {
-            cleanup(&path);
+        let staging = tempfile::Builder::new()
+            .prefix("lva-export-")
+            .tempdir()
+            .map_err(io_err)?;
+        let staged = staging.path().join(&name);
+        // Wie bisher gilt: die Datei ist da (leer), der Schreiber fuellt sie.
+        File::create_new(&staged).map_err(io_err)?;
+        writer(&staged).map_err(FolderError::Io)?;
+        let mut src = File::open(&staged).map_err(io_err)?;
+        if src.metadata().map_err(io_err)?.len() > MAX_FILE_BYTES {
             return Err(FolderError::TooLarge);
         }
-        Ok(PlacedFile {
-            rel: self.rel_of(&path),
-            path,
-            bytes,
+        self.place(rel_dir, &name, |dst| {
+            io::copy(&mut (&mut src).take(MAX_FILE_BYTES + 1), dst).map_err(|e| e.to_string())?;
+            dst.sync_all().map_err(|e| e.to_string())
         })
     }
 
-    /// Wie `write_new` mit fertigen Bytes.
+    /// Wie `write_new` mit fertigen Bytes (geschrieben ueber das Handle der neuen Datei).
     pub fn write_bytes_new(
         &self,
         rel_dir: &str,
@@ -382,20 +359,85 @@ impl Sandbox {
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return Err(FolderError::TooLarge);
         }
-        self.write_new(rel_dir, file_name, |path| {
-            let mut f = OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(path)
-                .map_err(|e| e.to_string())?;
-            f.write_all(bytes).map_err(|e| e.to_string())?;
-            f.sync_all().map_err(|e| e.to_string())
+        let name = sanitize_file_name(file_name).ok_or(FolderError::BadName)?;
+        self.place(rel_dir, &name, |dst| {
+            dst.write_all(bytes).map_err(|e| e.to_string())?;
+            dst.sync_all().map_err(|e| e.to_string())
         })
+    }
+
+    /// Kern von `write_new` und `write_bytes_new`: Ordner aufloesen, FESTHALTEN und seinen
+    /// tatsaechlichen Pfad am Handle pruefen; die Datei mit `create_new` anlegen, ihr Handle
+    /// pruefen, bevor irgendein Byte geschrieben wird; `fill` schreibt ausschliesslich ueber
+    /// dieses Handle. Jeder Fehler raeumt NUR die selbst angelegte Datei ueber ihr Handle weg.
+    fn place(
+        &self,
+        rel_dir: &str,
+        name: &str,
+        fill: impl FnOnce(&mut File) -> Result<(), String>,
+    ) -> Result<PlacedFile, FolderError> {
+        let dir_path = self.resolve_dir(rel_dir, true)?;
+        race::point("after_resolve");
+        let dir = PinnedDir::open(&dir_path).map_err(io_err)?;
+        if !self.contains(dir.path()) {
+            return Err(FolderError::Escape("Verknüpfung nach außen"));
+        }
+        race::point("after_pin");
+        let (stem, ext) = split_name(name);
+        let mut reserved = None;
+        for n in 0..MAX_UNIQUE_TRIES {
+            let candidate = if n == 0 {
+                name.to_string()
+            } else {
+                format!("{stem} ({}){ext}", n + 1)
+            };
+            if let Some(created) = handle::create_new_in(&dir, &candidate).map_err(io_err)? {
+                reserved = Some(created);
+                break;
+            }
+        }
+        let mut created = reserved.ok_or(FolderError::NoFreeName)?;
+        // Vor dem ersten Byte: die frisch angelegte Datei liegt wirklich im festgehaltenen Ordner.
+        if !self.holds(&dir, &created) {
+            created.discard();
+            return Err(FolderError::Escape("Verknüpfung nach außen"));
+        }
+        race::point("after_check");
+        if let Err(e) = fill(&mut created.file) {
+            created.discard();
+            return Err(FolderError::Io(e));
+        }
+        let bytes = created.file.metadata().map(|m| m.len()).unwrap_or(0);
+        if !self.holds(&dir, &created) {
+            created.discard();
+            return Err(FolderError::Escape("Verknüpfung nach außen"));
+        }
+        if bytes > MAX_FILE_BYTES {
+            created.discard();
+            return Err(FolderError::TooLarge);
+        }
+        let path = created.path.clone();
+        Ok(PlacedFile {
+            rel: self.rel_of(&path),
+            path,
+            bytes,
+        })
+    }
+
+    /// Liegt die von uns angelegte Datei laut IHREM HANDLE im festgehaltenen Ordner (und damit
+    /// unter der Wurzel)?
+    fn holds(&self, dir: &PinnedDir, created: &handle::Created) -> bool {
+        match handle::final_path(&created.file, &created.path) {
+            Ok(p) => self.contains(&p) && p.parent() == Some(dir.path()),
+            Err(_) => false,
+        }
     }
 
     /// Ersetzt eine VORHANDENE Datei (z. B. die Notiz im Vault) atomar: erst in eine
     /// Nachbardatei, dann umbenennen. `path` muss von `resolve_file` stammen oder aus
-    /// einem Fund unter der Wurzel (wird erneut geprueft).
+    /// einem Fund unter der Wurzel (wird erneut geprueft). Der Ordner wird festgehalten und die
+    /// Zwischendatei mit `create_new` angelegt und ueber ihr Handle beschrieben (B20); scheitert
+    /// etwas, wird nur die Zwischendatei entfernt.
     pub fn replace_bytes(&self, path: &Path, bytes: &[u8]) -> Result<PlacedFile, FolderError> {
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return Err(FolderError::TooLarge);
@@ -409,28 +451,64 @@ impl Sandbox {
             return Err(FolderError::Escape("Verknüpfung nach außen"));
         }
         let parent = canonical.parent().ok_or(FolderError::BadName)?;
-        let tmp = parent.join(format!(
-            ".lva-{}-{}.tmp",
-            std::process::id(),
-            ulid::Ulid::new()
-        ));
-        let result = (|| -> Result<(), std::io::Error> {
-            let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
-            f.write_all(bytes)?;
-            f.sync_all()?;
-            drop(f);
-            std::fs::rename(&tmp, &canonical)
-        })();
-        if let Err(e) = result {
-            let _ = std::fs::remove_file(&tmp);
+        let file_name = canonical.file_name().ok_or(FolderError::BadName)?;
+        race::point("after_resolve");
+        let dir = PinnedDir::open(parent).map_err(io_err)?;
+        // Der festgehaltene Ordner muss genau der geprueft-kanonische sein.
+        if dir.path() != parent || !self.contains(dir.path()) {
+            return Err(FolderError::Escape("Verknüpfung nach außen"));
+        }
+        race::point("after_check");
+        let tmp_name = format!(".lva-{}-{}.tmp", std::process::id(), ulid::Ulid::new());
+        let mut tmp = handle::create_new_in(&dir, &tmp_name)
+            .map_err(io_err)?
+            .ok_or_else(|| FolderError::Io("Die Zwischendatei gibt es schon.".to_string()))?;
+        if !self.holds(&dir, &tmp) {
+            tmp.discard();
+            return Err(FolderError::Escape("Verknüpfung nach außen"));
+        }
+        let target = dir.path().join(file_name);
+        let written = tmp
+            .file
+            .write_all(bytes)
+            .and_then(|_| tmp.file.sync_all())
+            .and_then(|_| std::fs::rename(&tmp.path, &target));
+        if let Err(e) = written {
+            tmp.discard();
             return Err(io_err(e));
         }
         Ok(PlacedFile {
-            rel: self.rel_of(&canonical),
-            path: canonical,
+            rel: self.rel_of(&target),
+            path: target,
             bytes: bytes.len() as u64,
         })
     }
+}
+
+/// Liest eine vorhandene Datei mit EINEM Handle (B20): `expected` ist der geprueft-kanonische
+/// Pfad; das geoeffnete Handle muss tatsaechlich dorthin zeigen, sonst wurde unterwegs ein Ordner
+/// oder die Datei selbst durch eine Verknuepfung ersetzt (`Escape`). Gelesen wird nur ueber dieses
+/// Handle, hoechstens `max_bytes` (mehr: `TooLarge`).
+pub fn read_file_exact(expected: &Path, max_bytes: u64) -> Result<Vec<u8>, FolderError> {
+    race::point("before_read");
+    let mut file = handle::open_read(expected).map_err(io_err)?;
+    let actual = handle::final_path(&file, expected).map_err(io_err)?;
+    if actual != expected {
+        return Err(FolderError::Escape("Pfad hat sich geändert"));
+    }
+    race::point("after_open");
+    if !file.metadata().map_err(io_err)?.is_file() {
+        return Err(FolderError::Escape("kein Dokument"));
+    }
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(io_err)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(FolderError::TooLarge);
+    }
+    Ok(bytes)
 }
 
 fn check_component(c: &str) -> Result<(), FolderError> {
@@ -501,6 +579,48 @@ fn split_name(name: &str) -> (String, String) {
         Some(i) if i > 0 && name.len() - i <= 8 => (name[..i].to_string(), name[i..].to_string()),
         _ => (name.to_string(), String::new()),
     }
+}
+
+/// Testhaken fuer Wettlaeufe (B20): ein Test bestimmt, was „ein anderer Prozess mit Schreibrecht
+/// im Baum“ genau an dieser Stelle tut (etwa einen Ordner gegen eine Junction tauschen). In
+/// Produktion ist `point` leer.
+#[cfg(test)]
+pub(crate) mod race {
+    use std::cell::RefCell;
+
+    type Hook = Box<dyn FnMut(&str)>;
+
+    thread_local! {
+        static HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    pub fn install(f: impl FnMut(&str) + 'static) {
+        HOOK.with(|h| *h.borrow_mut() = Some(Box::new(f)));
+    }
+
+    pub fn clear() {
+        HOOK.with(|h| *h.borrow_mut() = None);
+    }
+
+    pub fn point(stage: &str) {
+        // Haken herausnehmen, solange er laeuft: er darf selbst Dateisystem-Aufrufe machen.
+        let taken = HOOK.with(|h| h.borrow_mut().take());
+        if let Some(mut f) = taken {
+            f(stage);
+            HOOK.with(|h| {
+                let mut slot = h.borrow_mut();
+                if slot.is_none() {
+                    *slot = Some(f);
+                }
+            });
+        }
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) mod race {
+    #[inline(always)]
+    pub fn point(_stage: &str) {}
 }
 
 #[cfg(test)]

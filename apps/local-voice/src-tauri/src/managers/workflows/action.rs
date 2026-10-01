@@ -211,6 +211,11 @@ pub struct RunCtx<'a> {
     /// pruefen das zusaetzlich zum Tor: wer das Recht je auf „erlaubt“ stellt (die
     /// Regel `never_allow` verhindert es), faende hier die zweite Sperre.
     pub approved: bool,
+    /// Die Argumente, die das Tor fuer DIESEN Durchgang geprueft hat (die Tor-Ansicht des
+    /// Bausteins samt `lauf`) und an die eine Freigabe gebunden ist. Ein Baustein, dessen Wirkung
+    /// an gelesenen Inhalten haengt (Anhang der Mail, B21), vergleicht damit, was er selbst
+    /// gelesen hat, bevor er wirkt. `None` nur bei Direktaufrufen ohne Tor (Tests).
+    pub gate_args: Option<&'a Value>,
     pub(crate) cancel: &'a AtomicBool,
     pub(crate) clock: &'a dyn Clock,
     pub(crate) db_path: &'a std::path::Path,

@@ -21,6 +21,10 @@ use std::io;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 
+/// Laengste Kennung (`id`), die eine Anfrage tragen darf, serialisiert in Bytes. Die Antwort
+/// traegt sie zurueck: ohne Grenze liesse sich mit einer 1-MiB-Kennung jede Antwort aufblasen (B23).
+pub const MAX_ID_BYTES: usize = 128;
+
 /// Fehlercodes (stabil, von `ctl` und dem MCP-Proxy ausgewertet).
 pub mod code {
     pub const BAD_REQUEST: &str = "bad_request";
@@ -43,6 +47,7 @@ pub mod code {
     pub const STORE_UNAVAILABLE: &str = "store_unavailable";
     pub const FAILED: &str = "failed";
     pub const SHUTTING_DOWN: &str = "shutting_down";
+    pub const REPLY_TOO_LARGE: &str = "reply_too_large";
 }
 
 /// Eine gelesene Anfrage oder der Grund, warum die Zeile keine ist.
@@ -75,6 +80,14 @@ pub fn parse_request(line: &str) -> Incoming {
     if !matches!(id, Value::Null | Value::String(_) | Value::Number(_)) {
         return invalid(Value::Null, "Die Kennung (id) muss Text, Zahl oder null sein.");
     }
+    // Die Kennung kommt in jeder Antwort zurueck: ohne Grenze liesse sich eine Antwort mit
+    // bis zu 1 MiB aufblasen (B23). Zu lang: abgelehnt, ohne sie zu spiegeln.
+    if id.to_string().len() > MAX_ID_BYTES {
+        return invalid(
+            Value::Null,
+            &format!("Die Kennung (id) ist zu lang (höchstens {MAX_ID_BYTES} Zeichen)."),
+        );
+    }
     let Some(Value::String(method)) = map.remove("method") else {
         return invalid(id, "Die Methode (method) fehlt oder ist kein Text.");
     };
@@ -101,6 +114,21 @@ pub fn err_line(id: &Value, code: &str, message: &str, data: Option<&Value>) -> 
         error["data"] = d.clone();
     }
     json!({ "id": id, "error": error }).to_string()
+}
+
+/// Begrenzt eine Antwortzeile auf `max` Bytes; zu lange wird durch einen kurzen Fehler mit
+/// derselben Kennung ersetzt (B23). Die Kennung ist durch `MAX_ID_BYTES` klein, der Ersatz also
+/// immer kurz.
+pub fn cap_reply(id: &Value, line: String, max: usize) -> String {
+    if line.len() <= max {
+        return line;
+    }
+    err_line(
+        id,
+        code::REPLY_TOO_LARGE,
+        "Die Antwort ist zu groß und wird nicht übertragen.",
+        None,
+    )
 }
 
 /// Was `read_line_capped` gelesen hat.

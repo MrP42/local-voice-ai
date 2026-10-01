@@ -53,9 +53,12 @@
 //! | 9 | **Integration aus / fragen** (AK8) | „aus“: Schritt `denied`, Lauf endet sauber, Audit `denied`; „fragen“: Freigabe mit Vorschau | `ak8_*` |
 //! | 10 | **Echtzeit-Audiopfad, Arbeitsspeicher** | unberuehrt (kein Audio); Anhaenge hoechstens 2,5 MiB, Antwort hoechstens 1 MiB, Anfrage 256 KiB; nichts Schweres | Grenzen in `attachments`, `webhook` |
 //!
-//! Offenes Fenster (benannt, nicht geloest): zwischen dem Pruefen des Anhangs (Tor) und seinem
-//! Lesen (`run`) liegen Millisekunden; die Pruefsumme der Freigabe schliesst den Zeitraum der
-//! Entscheidung (Minuten bis Stunden), nicht diese Millisekunden.
+//! Anhang und Freigabe (B21, QG5): Das Tor liest den Anhang fuer die Tor-Ansicht (Pfad, Groesse,
+//! vollstaendiges SHA-256), die Freigabe haengt daran. `run` liest ihn GENAU EINMAL (handle-basiert,
+//! `attachments::check`), vergleicht Bindung und gelesene Bytes mit den Argumenten, die das Tor fuer
+//! diesen Durchgang geprueft hat (`RunCtx::gate_args`), und versendet exakt diese Bytes. Weicht
+//! etwas ab (Datei zwischen Tor und Lesen ausgetauscht), ist der Schritt `Permanent` abgelehnt, im
+//! Audit steht `attachment_changed_after_approval`, gesendet wird nichts.
 
 pub mod attachments;
 pub mod recipients;
@@ -385,6 +388,44 @@ struct Built {
 }
 
 impl Built {
+    /// B21 (QG5): Die Anhaenge wurden eben EINMAL gelesen (`attachments::check`, handle-basiert);
+    /// ihre Bindung (Pfad, Groesse, vollstaendiges SHA-256) muss der entsprechen, die das Tor fuer
+    /// diesen Durchgang geprueft hat und an die die Freigabe gebunden ist (`RunCtx::gate_args`).
+    /// Abweichung: der Schritt wird abgelehnt (`Permanent`, Audit `denied`), gesendet wird nichts.
+    /// Ohne Tor-Argumente (Direktaufruf in Tests) gibt es nichts, wogegen man pruefen koennte.
+    fn check_bound(&self, conn: &Connection, ctx: &RunCtx<'_>) -> Result<(), StepError> {
+        let Some(bound) = ctx.gate_args else {
+            return Ok(());
+        };
+        let now = self.view().args;
+        let (was, is) = (bound.get("attachments"), now.get("attachments"));
+        if was == is {
+            return Ok(());
+        }
+        // Wessen Bindung weicht ab? (Nur der Name kommt in Audit und Meldung.)
+        let bound_list = was.and_then(Value::as_array).cloned().unwrap_or_default();
+        let current_list = is.and_then(Value::as_array).cloned().unwrap_or_default();
+        let first = (0..current_list.len().max(bound_list.len()))
+            .find(|i| bound_list.get(*i) != current_list.get(*i))
+            .unwrap_or(0);
+        let name = self
+            .attachments
+            .get(first)
+            .or_else(|| self.attachments.first())
+            .map(|a| a.name.clone())
+            .unwrap_or_else(|| "(Anhang)".to_string());
+        audit_refusal(
+            conn,
+            Some(&self.integration.id),
+            Some(Capability::MailSend),
+            &name,
+            "attachment_changed_after_approval",
+        );
+        Err(StepError::Permanent(format!(
+            "Der Anhang „{name}“ hat sich geändert, seit die Freigabe erteilt wurde; die Mail wurde nicht gesendet."
+        )))
+    }
+
     /// Hoechstens „fragen“, wenn die Mail an Dritte geht (E3) oder ein Anhang aus einem Ordner
     /// stammt, dessen Lesen auf „fragen“ steht.
     fn max_mode(&self) -> Option<GrantMode> {
@@ -618,6 +659,8 @@ impl Action for MailSend {
         }
         let conn = ctx.conn().map_err(db_err)?;
         let built = self.build(&conn, ctx.context, params, false)?;
+        // Die Bytes, die jetzt gesendet werden, muessen die sein, woran die Freigabe haengt (B21).
+        built.check_bound(&conn, ctx)?;
         let names: Vec<String> = built.attachments.iter().map(|a| a.name.clone()).collect();
         let via = built.integration.id.clone();
 
