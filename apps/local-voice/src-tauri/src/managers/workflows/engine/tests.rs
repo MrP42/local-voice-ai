@@ -1509,3 +1509,152 @@ fn the_background_worker_runs_the_queue_and_stops_cleanly() {
     assert_eq!(notify.call_count(), 2);
     handle.stop();
 }
+
+// ---------------------------------------------------------------------------
+// B2: Beobachter und Beenden mit Frist
+// ---------------------------------------------------------------------------
+
+struct CountingObserver {
+    runs: std::sync::Mutex<Vec<String>>,
+    panic: AtomicBool,
+}
+
+impl EngineObserver for CountingObserver {
+    fn run_awaiting_approval(&self, run_id: &str) {
+        self.runs.lock().unwrap().push(run_id.to_string());
+        if self.panic.load(Ordering::SeqCst) {
+            panic!("absichtlicher Absturz des Beobachters");
+        }
+    }
+}
+
+#[test]
+fn the_observer_hears_once_each_time_a_run_parks_for_an_approval() {
+    let w = world();
+    smtp(&w, None);
+    let mail = mail_action();
+    w.engine.register_action(mail.clone());
+    let obs = Arc::new(CountingObserver {
+        runs: Default::default(),
+        panic: AtomicBool::new(false),
+    });
+    w.engine.set_observer(obs.clone());
+    let (wf, first) = w.live(&def(vec![mail_step("m")]));
+    w.engine.tick().unwrap();
+    assert_eq!(*obs.runs.lock().unwrap(), vec![first.clone()]);
+    // Weitere Takte ohne Aenderung melden nichts.
+    for _ in 0..3 {
+        w.engine.tick().unwrap();
+    }
+    assert_eq!(obs.runs.lock().unwrap().len(), 1);
+    // Ein zweiter Lauf parkt: eine zweite Meldung.
+    let mut req = EnqueueRequest::manual(&wf);
+    req.trigger_key = "zweiter".into();
+    let second = w.engine.enqueue(&req).unwrap().run_id;
+    w.engine.tick().unwrap();
+    assert_eq!(*obs.runs.lock().unwrap(), vec![first.clone(), second]);
+    // Nach der Freigabe laeuft der Lauf zu Ende: keine weitere Meldung.
+    let conn = w.conn();
+    for a in approvals::list_pending(&conn, T0).unwrap() {
+        approvals::decide(&conn, &a.id, true, T0).unwrap();
+    }
+    w.engine.tick().unwrap();
+    assert_eq!(obs.runs.lock().unwrap().len(), 2);
+    assert_eq!(mail.call_count(), 2);
+}
+
+#[test]
+fn a_panicking_observer_does_not_take_the_engine_down() {
+    let w = world();
+    smtp(&w, None);
+    w.engine.register_action(mail_action());
+    let obs = Arc::new(CountingObserver {
+        runs: Default::default(),
+        panic: AtomicBool::new(true),
+    });
+    w.engine.set_observer(obs.clone());
+    let (_, run) = w.live(&def(vec![mail_step("m")]));
+    let report = w.engine.tick().unwrap();
+    assert_eq!(outcome_of(&report, &run), RunOutcome::AwaitingApproval);
+    assert_eq!(obs.runs.lock().unwrap().len(), 1);
+    assert_eq!(
+        w.run(&run).state,
+        RunState::AwaitingApproval,
+        "der Lauf ist unberuehrt"
+    );
+}
+
+fn fast_engine(fx: &Fx) -> Engine {
+    let cfg = EngineConfig {
+        idle_wait_ms: 20,
+        heartbeat_ms: 50,
+        ..EngineConfig::default()
+    };
+    Engine::new(fx.db_path.clone(), roomy_gate(), Arc::new(SystemClock), cfg)
+}
+
+#[test]
+fn stop_within_ends_an_idle_engine_at_once() {
+    let fx = Fx::new();
+    let engine = fast_engine(&fx);
+    let handle = engine.spawn();
+    let t = std::time::Instant::now();
+    assert!(handle.stop_within(Duration::from_secs(5)));
+    assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+}
+
+#[test]
+fn stop_within_does_not_wait_for_a_long_step_and_the_run_is_not_cancelled() {
+    let fx = Fx::new();
+    let engine = fast_engine(&fx);
+    let entered = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(AtomicBool::new(false));
+    let slow = Scripted::new("notify.local", EffectKind::Idempotent);
+    {
+        let (entered, release) = (entered.clone(), release.clone());
+        slow.set_hook(Box::new(move |_| {
+            entered.store(true, Ordering::SeqCst);
+            let t = std::time::Instant::now();
+            while !release.load(Ordering::SeqCst) && t.elapsed() < Duration::from_secs(30) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }));
+    }
+    engine.register_action(slow.clone());
+    let wf = armed_workflow(&engine, &def(vec![note("a")]));
+    let handle = engine.spawn();
+    let run = engine.enqueue(&EnqueueRequest::manual(&wf)).unwrap().run_id;
+    for _ in 0..500 {
+        if entered.load(Ordering::SeqCst) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        entered.load(Ordering::SeqCst),
+        "der Schritt hat nie begonnen"
+    );
+    // Beenden mit Frist: der Arbeiter steckt im Schritt, die App darf trotzdem enden.
+    let t = std::time::Instant::now();
+    assert!(!handle.stop_within(Duration::from_millis(150)));
+    assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+    // Der Lauf ist NICHT abgebrochen: er laeuft weiter (hier: Schritt ist fertig, wenn er loskommt).
+    assert_eq!(
+        engine.run_detail(&run).unwrap().run.state,
+        RunState::Running
+    );
+    release.store(true, Ordering::SeqCst);
+    let mut state = RunState::Running;
+    for _ in 0..500 {
+        state = engine.run_detail(&run).unwrap().run.state;
+        if state != RunState::Running {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_ne!(
+        state,
+        RunState::Cancelled,
+        "ein Lauf wird beim Beenden nie abgebrochen"
+    );
+}

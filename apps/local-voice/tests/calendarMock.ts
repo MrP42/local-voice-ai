@@ -59,6 +59,12 @@ export const installTauriMock = async (
     w.__prompt = null;
     w.__addError = null;
     w.__startError = null;
+    // B2: Bitte eines Ablaufs um die Einwilligung zur Aufnahme. Die Attrappe bildet nach,
+    // was das Backend tut: ohne Entscheidung bleibt der Lauf `awaiting_approval` und es
+    // laeuft keine Aufnahme; nach „Ja“ geht der Lauf weiter und startet EINE Aufnahme,
+    // nach „Nein“ endet er ohne Aufnahme.
+    w.__workflowRun = { state: "awaiting_approval", recordings: 0 };
+    w.__decideError = null;
     // M5-P5e: Brief-Zuschnitt, den `people_brief_info` liefert (null = Fehler).
     w.__brief = null;
     w.__addDelay = 0;
@@ -274,6 +280,14 @@ export const installTauriMock = async (
               return w.__prompt;
             case "meeting_prompt_ready":
             case "meeting_prompt_dismiss":
+              return null;
+            case "meeting_prompt_workflow_decide":
+              if (w.__decideError) throw w.__decideError;
+              if (args.approve) {
+                w.__workflowRun = { state: "done", recordings: 1 };
+              } else {
+                w.__workflowRun = { state: "failed", recordings: 0 };
+              }
               return null;
             case "tts_server_status":
               return { phase: "stopped", message: null };

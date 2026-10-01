@@ -1757,7 +1757,9 @@ async meetingsDelete(meetingId: string) : Promise<Result<null, string>> {
 },
 /**
  * Imports a local audio/video file or a VTT/SRT subtitle file as a new
- * meeting. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
+ * meeting. Einwilligung (#15): `consent_confirmed = false` wird im Backend
+ * bewusst NICHT abgelehnt (Oberflaechen-Gate; nur die Live-Aufnahme prueft
+ * `consent_gate` im Recorder), siehe `import_media_file`. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
  * LEEREN Eintrag (Titel, Projekte und Notizen bleiben; der Titel wird nur
  * ersetzt, solange er der vorgeschlagene ist) und kehrt mit dessen Id zurueck;
  * ist das Ziel nicht (mehr) leer, kommt `target_not_empty`.
@@ -2972,6 +2974,21 @@ async meetingPromptReady(height: number) : Promise<Result<null, string>> {
 async meetingPromptDismiss(promptId: string, action: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_prompt_dismiss", { promptId, action }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * B2: Der Nutzer entscheidet die Bitte eines Ablaufs um Einwilligung zur Aufnahme:
+ * `approve = true` ist die Einwilligung (das Fenster hat das Haekchen verlangt), `false`
+ * das Nein. Entschieden wird die Freigabe, die dieser Hinweis im Backend haelt; die
+ * Aufnahme startet erst, wenn der Ablauf danach weiterlaeuft. Fehler: `consent_not_pending`
+ * (schon entschieden, verfallen oder der Lauf wurde abgebrochen), `consent_invalid`.
+ */
+async meetingPromptWorkflowDecide(promptId: string, approve: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_prompt_workflow_decide", { promptId, approve }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5503,7 +5520,14 @@ attendee_count: number;
 /**
  * Name der erkannten Anwendung (P5c), sonst `None`.
  */
-app_label: string | null }
+app_label: string | null; 
+/**
+ * B2: nur bei `kind == "workflow_recording"`: ein Ablauf bittet um die Einwilligung
+ * zur Aufnahme. Entschieden wird ueber `meeting_prompt_workflow_decide`, nie ueber
+ * `meetings_start*`: die Aufnahme startet erst, wenn der Ablauf nach der Freigabe
+ * weiterlaeuft.
+ */
+workflow?: PromptWorkflow | null }
 export type MeetingSearchItem = { meeting: Meeting; 
 /**
  * HTML-sicher: alles ausser den Treffermarkierungen `<mark>...</mark>` ist maskiert.
@@ -5775,6 +5799,18 @@ is_self: boolean;
  */
 meeting_count: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+/**
+ * Der Ablauf hinter einer Bitte um Einwilligung (B2).
+ */
+export type PromptWorkflow = { 
+/**
+ * Name des Ablaufs („Kundentermin protokollieren“).
+ */
+name: string; 
+/**
+ * Titel des Termins bzw. der Besprechung, wenn der Ausloeser einen hat.
+ */
+title: string | null }
 /**
  * Ein Eintrag, wie die Oberflaeche ihn zeigt.
  */

@@ -1885,7 +1885,14 @@
       "later": "Später",
       "confirm": "Starten",
       "starting": "Wird gestartet …",
-      "back": "Zurück"
+      "back": "Zurück",
+      "workflow": {
+        "title": "Ein Ablauf möchte aufnehmen",
+        "intro": "Der Ablauf „{{name}}“ möchte jetzt eine Aufnahme starten. Es beginnt nichts, bevor Sie zustimmen.",
+        "start": "Aufnahme starten",
+        "decline": "Nicht aufnehmen",
+        "confirm": "Aufnahme starten"
+      }
     },
     "live": {
       "empty": "Noch keine Segmente — das erste erscheint nach ~20 Sekunden.",
@@ -1982,7 +1989,9 @@
       "storeFailed": "Die Änderung konnte nicht gespeichert werden.",
       "subtitleUnreadable": "Die Untertiteldatei konnte nicht gelesen werden.",
       "subtitleInvalid": "Kein gültiges Untertitelformat erkannt (VTT oder SRT erwartet).",
-      "listFailed": "Die Besprechungsliste konnte nicht geladen werden: {{error}}"
+      "listFailed": "Die Besprechungsliste konnte nicht geladen werden: {{error}}",
+      "consentNotPending": "Diese Anfrage ist nicht mehr offen: Sie wurde schon entschieden, ist abgelaufen oder der Ablauf wurde abgebrochen.",
+      "consentInvalid": "Das ist keine Anfrage zur Aufnahme."
     },
     "retention": {
       "title": "Aufbewahrung der Audiodatei",

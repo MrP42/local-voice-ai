@@ -141,6 +141,14 @@ pub struct EngineStats {
     pub queue_full: u64,
 }
 
+/// Meldungen der Engine an die Anwendung (B2). Die Engine kennt weder Fenster noch
+/// Tauri; die Anwendung haengt hier ihr Hinweisfenster an.
+pub trait EngineObserver: Send + Sync {
+    /// Ein Lauf hat angehalten und wartet auf die Entscheidung des Nutzers (genau einmal
+    /// je Anhalten, nicht bei jedem Takt). Aufgerufen vom Arbeiter-Thread: kurz bleiben.
+    fn run_awaiting_approval(&self, run_id: &str);
+}
+
 // ---------------------------------------------------------------------------
 // Oeffentliche Typen
 // ---------------------------------------------------------------------------
@@ -236,6 +244,7 @@ struct Inner {
     active: Mutex<HashMap<String, Arc<AtomicBool>>>,
     queue_full: AtomicU64,
     wake: (Mutex<bool>, Condvar),
+    observer: RwLock<Option<Arc<dyn EngineObserver>>>,
     #[cfg(test)]
     crash: Mutex<Option<(String, CrashPoint)>>,
 }
@@ -308,6 +317,7 @@ impl Engine {
                 active: Mutex::new(HashMap::new()),
                 queue_full: AtomicU64::new(0),
                 wake: (Mutex::new(false), Condvar::new()),
+                observer: RwLock::new(None),
                 #[cfg(test)]
                 crash: Mutex::new(None),
             }),
@@ -374,10 +384,35 @@ impl Engine {
             .cloned()
     }
 
-    fn wake(&self) {
+    /// Weckt den Arbeiter (nach einer Entscheidung des Nutzers, einem neuen Lauf).
+    pub fn wake(&self) {
         let (m, cv) = &self.inner.wake;
         *m.lock().unwrap_or_else(|e| e.into_inner()) = true;
         cv.notify_all();
+    }
+
+    /// Haengt die Anwendung an (ersetzt einen frueheren Beobachter).
+    pub fn set_observer(&self, observer: Arc<dyn EngineObserver>) {
+        *self
+            .inner
+            .observer
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(observer);
+    }
+
+    fn notify_awaiting(&self, run_id: &str) {
+        let observer = self
+            .inner
+            .observer
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(o) = observer {
+            // Ein Fehler der Anwendung darf den Arbeiter nie beenden.
+            if catch_unwind(AssertUnwindSafe(|| o.run_awaiting_approval(run_id))).is_err() {
+                warn!("workflows: der Beobachter ist abgestuerzt (Panik), der Arbeiter laeuft weiter");
+            }
+        }
     }
 
     #[cfg(test)]
@@ -428,6 +463,8 @@ impl Engine {
                 }
             }
         }
+        // B2: Zeitplan-Felder und Variablen automatischer Ausloeser.
+        issues.extend(super::trigger::check_definition(&def));
         if !issues.is_empty() {
             return Err(WorkflowError::Invalid(issues));
         }
@@ -685,7 +722,12 @@ impl Engine {
         }
         for _ in 0..self.inner.config.max_runs_per_tick {
             match self.run_next() {
-                Ok(Some((id, outcome))) => report.outcomes.push((id, outcome)),
+                Ok(Some((id, outcome))) => {
+                    if outcome == RunOutcome::AwaitingApproval {
+                        self.notify_awaiting(&id);
+                    }
+                    report.outcomes.push((id, outcome));
+                }
                 Ok(None) => break,
                 Err(WorkflowError::LeaseLost) => continue,
                 Err(e) => {
@@ -892,6 +934,7 @@ impl Engine {
             idempotency_key: format!("{}:{}", run.id, step.id),
             context: &ctx,
             step_started_at: row.started_at.unwrap_or(0),
+            approved: false,
             cancel: &cancel,
             clock: &*self.inner.clock,
             db_path: &self.inner.db_path,
@@ -1279,6 +1322,7 @@ impl Engine {
                 idempotency_key: format!("{}:{}", run.id, step.id),
                 context: &sc.ctx,
                 step_started_at,
+                approved: awaiting.is_some(),
                 cancel: &sc.cancel,
                 clock: &*self.inner.clock,
                 db_path: &self.inner.db_path,
@@ -1889,6 +1933,32 @@ impl EngineHandle {
 
     pub fn stop(mut self) {
         self.shutdown();
+    }
+
+    /// Beenden beim Schliessen der App (B2): wartet hoechstens `limit` auf die Threads.
+    /// Steckt der Arbeiter in einem langen Schritt (Transkription, Modell), bleibt er
+    /// zurueck und stirbt mit dem Prozess; sein Lauf wird beim naechsten Start ueber den
+    /// abgelaufenen Mietvertrag wieder aufgenommen (`recover_run`), ohne doppelte
+    /// Aussenwirkung. `true`: alle Threads sind beendet.
+    pub fn stop_within(mut self, limit: Duration) -> bool {
+        self.stop.store(true, Ordering::Release);
+        self.engine.wake();
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            if self.threads.iter().all(|t| t.is_finished()) {
+                for t in self.threads.drain(..) {
+                    let _ = t.join();
+                }
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                // Nicht auf den Thread warten (auch nicht beim Loslassen): er sieht das
+                // Stoppzeichen nach dem laufenden Schritt.
+                self.threads.clear();
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn shutdown(&mut self) {

@@ -176,6 +176,12 @@ pub struct RunCtx<'a> {
     pub context: &'a Value,
     /// Wann der Schritt zum ersten Mal begann (bleibt ueber `Defer` gleich).
     pub step_started_at: i64,
+    /// `true` nur, wenn das Tor diesen Lauf ueber eine EINMAL eingeloeste Freigabe des
+    /// Nutzers durchgelassen hat (`gate::run_approved`). Bausteine, die ohne
+    /// ausdrueckliche Zustimmung nie wirken duerfen (Aufnahme starten, § 201 StGB),
+    /// pruefen das zusaetzlich zum Tor: wer das Recht je auf „erlaubt“ stellt (die
+    /// Regel `never_allow` verhindert es), faende hier die zweite Sperre.
+    pub approved: bool,
     pub(crate) cancel: &'a AtomicBool,
     pub(crate) clock: &'a dyn Clock,
     pub(crate) db_path: &'a std::path::Path,

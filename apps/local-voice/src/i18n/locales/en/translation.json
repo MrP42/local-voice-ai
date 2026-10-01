@@ -1885,7 +1885,14 @@
       "later": "Later",
       "confirm": "Start",
       "starting": "Starting …",
-      "back": "Back"
+      "back": "Back",
+      "workflow": {
+        "title": "A workflow wants to record",
+        "intro": "The workflow “{{name}}” wants to start a recording now. Nothing starts until you agree.",
+        "start": "Start recording",
+        "decline": "Do not record",
+        "confirm": "Start recording"
+      }
     },
     "live": {
       "empty": "No segments yet — the first one appears after ~20 seconds.",
@@ -1982,7 +1989,9 @@
       "storeFailed": "The change could not be saved.",
       "subtitleUnreadable": "The subtitle file could not be read.",
       "subtitleInvalid": "No valid subtitle format recognised (VTT or SRT expected).",
-      "listFailed": "The meeting list could not be loaded: {{error}}"
+      "listFailed": "The meeting list could not be loaded: {{error}}",
+      "consentNotPending": "This request is no longer open: it was already decided, has expired or the workflow was cancelled.",
+      "consentInvalid": "This is not a request to record."
     },
     "retention": {
       "title": "Audio file retention",

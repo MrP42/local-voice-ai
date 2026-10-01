@@ -58,6 +58,21 @@ pub struct MeetingPromptPayload {
     pub attendee_count: u32,
     /// Name der erkannten Anwendung (P5c), sonst `None`.
     pub app_label: Option<String>,
+    /// B2: nur bei `kind == "workflow_recording"`: ein Ablauf bittet um die Einwilligung
+    /// zur Aufnahme. Entschieden wird ueber `meeting_prompt_workflow_decide`, nie ueber
+    /// `meetings_start*`: die Aufnahme startet erst, wenn der Ablauf nach der Freigabe
+    /// weiterlaeuft.
+    #[serde(default)]
+    pub workflow: Option<PromptWorkflow>,
+}
+
+/// Der Ablauf hinter einer Bitte um Einwilligung (B2).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+pub struct PromptWorkflow {
+    /// Name des Ablaufs („Kundentermin protokollieren“).
+    pub name: String,
+    /// Titel des Termins bzw. der Besprechung, wenn der Ausloeser einen hat.
+    pub title: Option<String>,
 }
 
 /// Ereignis an das Fenster: `show` = es liegt ein neuer Hinweis vor (die
@@ -74,6 +89,10 @@ pub enum MeetingPromptEvent {
 #[derive(Default)]
 struct Inner {
     current: Option<MeetingPromptPayload>,
+    /// B2: Freigabe, die dieser Hinweis entscheidet (nur bei `workflow_recording`). Sie
+    /// steht im Backend und nicht in der Nutzlast: das Fenster kann keine andere
+    /// Freigabe entscheiden.
+    consent_approval: Option<String>,
 }
 
 /// Verwalteter Zustand des Fensters.
@@ -102,6 +121,27 @@ pub fn payload_for_event(event: CalEvent) -> MeetingPromptPayload {
         attendee_count: distinct_attendees(&event) as u32,
         event: Some(event),
         app_label: None,
+        workflow: None,
+    }
+}
+
+/// B2: Der Hinweis „Ein Ablauf moechte aufnehmen“.
+pub fn payload_for_consent(
+    event: Option<CalEvent>,
+    attendee_count: u32,
+    workflow_name: String,
+    title: Option<String>,
+) -> MeetingPromptPayload {
+    MeetingPromptPayload {
+        prompt_id: format!("p{}", PROMPT_SEQ.fetch_add(1, Ordering::Relaxed) + 1),
+        kind: "workflow_recording".to_string(),
+        attendee_count,
+        event,
+        app_label: None,
+        workflow: Some(PromptWorkflow {
+            name: workflow_name,
+            title,
+        }),
     }
 }
 
@@ -109,14 +149,47 @@ pub fn show_event(app: &AppHandle, event: CalEvent) {
     show(app, payload_for_event(event));
 }
 
+/// Die Freigabe, die der gerade offene Hinweis entscheidet (B2); `None`, wenn keiner offen
+/// ist oder ein anderer Hinweis offen ist.
+pub fn consent_approval(app: &AppHandle) -> Option<String> {
+    app.try_state::<MeetingPromptState>()
+        .and_then(|s| s.lock().consent_approval.clone())
+}
+
+/// B2: Zeigt die Bitte um Einwilligung zur Aufnahme. Sie ersetzt eine Erinnerung (derselbe
+/// Termin, genauer), aber keine andere Bitte: dann wartet sie (der Aufrufer fragt spaeter
+/// wieder).
+pub fn show_consent(
+    app: &AppHandle,
+    event: Option<CalEvent>,
+    attendee_count: u32,
+    workflow_name: String,
+    title: Option<String>,
+    approval_id: String,
+) {
+    if consent_approval(app).is_some() {
+        return;
+    }
+    let payload = payload_for_consent(event, attendee_count, workflow_name, title);
+    show_with(app, payload, Some(approval_id));
+}
+
 /// Legt den Hinweis ab und erzeugt bzw. weckt das Fenster.
 pub fn show(app: &AppHandle, payload: MeetingPromptPayload) {
+    show_with(app, payload, None);
+}
+
+fn show_with(app: &AppHandle, payload: MeetingPromptPayload, consent_approval: Option<String>) {
     let Some(state) = app.try_state::<MeetingPromptState>() else {
         log::warn!("meeting_prompt: state not managed");
         return;
     };
     let prompt_id = payload.prompt_id.clone();
-    state.lock().current = Some(payload);
+    {
+        let mut inner = state.lock();
+        inner.current = Some(payload);
+        inner.consent_approval = consent_approval;
+    }
 
     match app.get_webview_window(LABEL) {
         Some(_) => {
@@ -128,7 +201,9 @@ pub fn show(app: &AppHandle, payload: MeetingPromptPayload) {
         None => {
             if let Err(e) = create_window(app) {
                 log::error!("meeting_prompt: window not created: {e}");
-                state.lock().current = None;
+                let mut inner = state.lock();
+                inner.current = None;
+                inner.consent_approval = None;
                 return;
             }
             // Die neue Oberflaeche holt den Hinweis selbst beim Start.
@@ -151,7 +226,9 @@ pub fn show(app: &AppHandle, payload: MeetingPromptPayload) {
 /// Schliesst den Hinweis: Zustand leeren, Fenster verstecken.
 pub fn close(app: &AppHandle) {
     if let Some(state) = app.try_state::<MeetingPromptState>() {
-        state.lock().current = None;
+        let mut inner = state.lock();
+        inner.current = None;
+        inner.consent_approval = None;
     }
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.hide();
@@ -272,6 +349,52 @@ pub fn meeting_prompt_dismiss(
     }
     close(&app);
     Ok(())
+}
+
+/// B2: Der Nutzer entscheidet die Bitte eines Ablaufs um Einwilligung zur Aufnahme:
+/// `approve = true` ist die Einwilligung (das Fenster hat das Haekchen verlangt), `false`
+/// das Nein. Entschieden wird die Freigabe, die dieser Hinweis im Backend haelt; die
+/// Aufnahme startet erst, wenn der Ablauf danach weiterlaeuft. Fehler: `consent_not_pending`
+/// (schon entschieden, verfallen oder der Lauf wurde abgebrochen), `consent_invalid`.
+#[tauri::command]
+#[specta::specta]
+pub fn meeting_prompt_workflow_decide(
+    app: AppHandle,
+    state: State<'_, MeetingPromptState>,
+    store: State<'_, Arc<MeetingStore>>,
+    prompt_id: String,
+    approve: bool,
+) -> Result<(), String> {
+    let (current_id, approval) = {
+        let inner = state.lock();
+        (
+            inner.current.as_ref().map(|c| c.prompt_id.clone()),
+            inner.consent_approval.clone(),
+        )
+    };
+    if current_id.as_deref() != Some(prompt_id.as_str()) {
+        return Err("consent_not_pending".to_string());
+    }
+    let Some(approval_id) = approval else {
+        return Err("consent_invalid".to_string());
+    };
+    let conn = store
+        .get_connection()
+        .map_err(|e| format!("store_failed: {e}"))?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let result = crate::managers::workflows::consent::decide(&conn, &approval_id, approve, now);
+    // Entschieden oder nicht mehr offen: der Hinweis ist erledigt.
+    close(&app);
+    match result {
+        Ok(()) => {
+            if let Some(hub) = app.try_state::<Arc<crate::managers::workflows::hub::WorkflowHub>>()
+            {
+                hub.after_decision();
+            }
+            Ok(())
+        }
+        Err(e) => Err(e.code().to_string()),
+    }
 }
 
 #[cfg(test)]

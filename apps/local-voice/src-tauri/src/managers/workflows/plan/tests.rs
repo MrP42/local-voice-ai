@@ -9,7 +9,7 @@ use crate::managers::workflows::test_support::{def, register, set_grant, step, F
 /// Das Register, das die Beispielvorlage voraussetzt.
 fn seed_register(conn: &Connection) {
     register(conn, Kind::Graph, "cal-graph-1");
-    register(conn, Kind::Agent, "agent-local");
+    register(conn, Kind::Agent, "app-automation");
     register(conn, Kind::Folder, "folder-onedrive-protokolle");
     register(conn, Kind::M365, "m365-1");
     set_grant(

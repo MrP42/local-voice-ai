@@ -20,7 +20,11 @@
       "id": "rec",
       "action": "recording.start",
       "label": "Aufnahme starten",
-      "params": { "via": "agent-local", "stop": "event_end" }
+      "params": {
+        "via": "app-automation",
+        "stop": "event_end",
+        "title": "{{trigger.title}}"
+      }
     },
     {
       "id": "min",

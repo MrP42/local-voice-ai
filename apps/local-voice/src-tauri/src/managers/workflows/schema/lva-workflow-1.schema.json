@@ -70,6 +70,10 @@
                       }
                     ]
                   },
+                  "title": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
                   "via": {
                     "anyOf": [
                       {
@@ -1657,6 +1661,7 @@
           "properties": {
             "stage": {
               "enum": [
+                "recording",
                 "transcript",
                 "notes",
                 "minutes"

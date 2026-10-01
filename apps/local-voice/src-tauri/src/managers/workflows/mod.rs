@@ -16,10 +16,22 @@
 //! - `plan` / `cli`: der Trockenlauf (`--workflow-run <datei> --dry-run`).
 //! - `builtin`: der eine eingebaute Baustein `wait`.
 //!
-//! Was dieses Paket NICHT tut: keine Ausloeser (B2/B3), keine App-Bausteine ausser
-//! `wait` (B3 bis B6), keine Oberflaeche (B7), keine Agentenbruecke (B8), kein
-//! Eingehaengtwerden in den App-Start (B2). Es liefert die Schnittstellen, an denen sie
-//! einrasten.
+//! Bausteine von Paket B2 (Ausloeser und Einwilligung):
+//! - `trigger`: Kalender „Termin beginnt/endet“ (`trigger::calendar`, am Takt der Erinnerung,
+//!   kein zweiter Poller), Besprechungsereignisse (`trigger::meeting_events`), Zeitplan
+//!   (`trigger::schedule`, feste Uhr testbar), manuell (`trigger::manual`). Jeder bildet einen
+//!   stabilen Schluessel; die Engine macht daraus hoechstens einen Lauf.
+//! - `recording`: die Bausteine `recording.start`/`recording.stop`, der Traeger des Rechts
+//!   (Integration `app-automation`, Entscheidung dort dokumentiert) und die vier Sperren, die
+//!   „ohne Klick keine Aufnahme“ sichern.
+//! - `consent`: die offenen Bitten um Einwilligung und ihre Entscheidung (Hinweisfenster).
+//! - `hub`: der Kleber an die App: Engine starten und beenden, Takt, Hoerer an den
+//!   Besprechungsereignissen, Hinweisfenster. Eingehaengt in `lib.rs`
+//!   (`initialize_core_logic`, `RunEvent::Exit`) und in `CalendarService::remind_tick`.
+//!
+//! Was die Pakete NICHT tun: keine Ordner-/YouTube-Ausloeser (B3), keine App-Bausteine ausser
+//! `wait` und der Aufnahme (B3 bis B6), keine Oberflaeche (B7), keine Agentenbruecke (B8).
+//! Sie liefern die Schnittstellen, an denen die naechsten einrasten.
 //!
 //! # Fehlerfaelle (B1) und ihre Absicherung
 //!
@@ -53,6 +65,31 @@
 //!   (abgelehnt und gezaehlt), Aufbewahrung beendeter Laeufe gedeckelt (200 je Ablauf,
 //!   5000 gesamt), Ausgaben je Schritt hoechstens 64 KiB
 //!   (`store::tests::*`, `engine::tests::*`).
+//!
+//! # Fehlerfaelle (B2) und ihre Absicherung
+//!
+//! - **Nebenlaeufigkeit**: derselbe Termin/Zeitpunkt/dasselbe Ereignis aus zwei Takten, zwei
+//!   Threads oder nach einem Neustart ergibt einen Lauf (Schluessel + `UNIQUE`):
+//!   `trigger::calendar::tests::it_fires_exactly_once_*`, `trigger::schedule::tests::two_schedules_*`,
+//!   `trigger::meeting_events::tests::the_same_event_twice_*`. Zwei Ablaeufe, die denselben Termin
+//!   aufnehmen wollen: zwei Bitten, EINE Aufnahme (`recording::tests::two_runs_for_the_same_event_*`).
+//! - **Abbruch mitten im Vorgang**: Absturz nach dem Aufnahmestart wird ueber den Recorder
+//!   bestaetigt oder ist `effect_uncertain`, nie ein zweiter Start (`recording::tests::a_crash_*`);
+//!   die Entscheidung des Nutzers ueberlebt einen Neustart (`an_app_restart_between_*`); das
+//!   Beenden der App bricht Laeufe nicht ab (`engine::tests::stop_within_*`).
+//! - **Voller Datentraeger / gesperrte Datenbank**: ein gescheitertes Einreihen steht im Bericht und
+//!   wird vom naechsten Takt wiederholt, solange der Ausloeser gilt (`a_failed_enqueue_*` je Ausloeser,
+//!   `a_full_queue_*`); eine vergessene Aufnahme hat immer ein Ende (Sicherheitsnetz 480 min).
+//! - **Fehlendes Geraet**: Mikrofon/Systemton fehlen -> `Permanent`, der Lauf fragt nicht erneut
+//!   (`recording::tests::a_missing_microphone_*`).
+//! - **Absturz eines Kindprozesses**: B2 startet keinen Prozess (der Recorder laeuft im Prozess).
+//! - **Echtzeit-Audiopfad**: unberuehrt. Kein Code der Ausloeser oder Bausteine laeuft im
+//!   Audio-Callback; der Start ist derselbe Aufruf wie von Hand.
+//! - **Voller Arbeitsspeicher**: `recording.start` braucht kein Tor (leichter Mitschnitt); Live-
+//!   Transkript und Enddurchlauf haben die vorhandenen Tore, schwere Schritte danach das `HeavyGate`.
+//! - **Einwilligung**: ohne Klick, nach „Nein“, nach Verfall (1 h), bei „aus“, im Trockenlauf und
+//!   bei einer Freigabe fuer einen beendeten Termin startet keine Aufnahme (`recording::tests::*`,
+//!   `consent::tests::*`, Playwright `workflow-consent.spec.ts`).
 
 #![allow(dead_code)]
 
@@ -60,21 +97,25 @@ pub mod action;
 pub mod builtin;
 pub mod catalog;
 pub mod cli;
+pub mod consent; // B2
 pub mod engine;
 pub mod expr;
 pub mod heavy;
+pub mod hub; // B2
 pub mod jsonschema;
 pub mod model;
 pub mod plan;
+pub mod recording; // B2
 pub mod schema;
 pub mod store;
 pub mod templates;
+pub mod trigger; // B2
 pub mod validate;
 
 #[allow(unused_imports)]
 pub use action::{Action, ActionRegistry, EffectKind, StepError, StepOutput};
 #[allow(unused_imports)]
-pub use engine::{Engine, EngineConfig, EnqueueRequest, RunOutcome};
+pub use engine::{Engine, EngineConfig, EngineObserver, EnqueueRequest, RunOutcome};
 #[allow(unused_imports)]
 pub use model::{RunState, StepState, WorkflowDef};
 #[allow(unused_imports)]

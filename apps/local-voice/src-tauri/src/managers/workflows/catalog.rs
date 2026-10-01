@@ -220,7 +220,7 @@ static TRIGGERS: &[TriggerSpec] = &[
         title: "Besprechung fertig",
         fields: &[field(
             "stage",
-            FieldKind::Choice(&["transcript", "notes", "minutes"]),
+            FieldKind::Choice(&["recording", "transcript", "notes", "minutes"]),
             true,
         )],
         provides: &["meeting_id", "title", "stage", "meeting"],
@@ -323,13 +323,15 @@ static ACTIONS: &[ActionSpec] = &[
                 false,
             ),
             field("max_minutes", FieldKind::Int { min: 1, max: 720 }, false),
+            // Titel der Besprechung; Vorgabe: der Titel des Ausloesers (Termin, Besprechung).
+            field("title", FieldKind::Text, false),
         ],
         effect: EffectKind::External,
         heavy: None,
         needs: NeedsSpec::Cap {
             capability: Capability::RecordingStart,
             via: "via",
-            target: None,
+            target: Some("title"),
         },
     },
     ActionSpec {

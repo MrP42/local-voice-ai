@@ -371,6 +371,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         }
         let index_store = store.clone(); // M4-P4b
         let calendar_store = store.clone(); // M5-P5b
+        let workflow_store = store.clone(); // B2
         // U7: die Import-Warteschlange (Aufnahme hat Vorrang, Enddurchlauf und
         // Wiederherstellung halten die gemeinsame Engine).
         let queue = {
@@ -399,6 +400,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         let calendar =
             managers::calendar::service::CalendarService::spawn(app_handle.clone(), calendar_store);
         app_handle.manage(calendar);
+        // B2: Workflow-Engine (Arbeiter, Ausloeser, Einwilligungsweg). Haengt am Takt der
+        // Erinnerung (`CalendarService::remind_tick`); beendet wird sie bei `RunEvent::Exit`.
+        let workflows = managers::workflows::hub::WorkflowHub::start(app_handle, &workflow_store);
+        app_handle.manage(workflows);
     }
 
     // M5-P5c: Ad-hoc-Erkennung laufender Besprechungen (nur Hinweis).
@@ -2132,6 +2137,7 @@ pub fn run(cli_args: CliArgs) {
             meeting_prompt::meeting_prompt_current,
             meeting_prompt::meeting_prompt_ready,
             meeting_prompt::meeting_prompt_dismiss,
+            meeting_prompt::meeting_prompt_workflow_decide, // B2
             // M5-P5d/P5e
             commands::people::people_list,
             commands::people::people_get,
@@ -2944,6 +2950,11 @@ pub fn run(cli_args: CliArgs) {
             }
             // Teardown transcribe.cpp before exit
             tauri::RunEvent::Exit => {
+                // B2: die Workflow-Arbeiter zuerst (hoechstens 3 s); ein laufender Lauf wird
+                // beim naechsten Start fortgesetzt.
+                if let Some(hub) = app.try_state::<Arc<managers::workflows::hub::WorkflowHub>>() {
+                    hub.shutdown();
+                }
                 if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                     let _ = tm.unload_model();
                 }
