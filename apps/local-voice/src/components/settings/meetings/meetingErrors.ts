@@ -57,6 +57,9 @@ const ERROR_KEY_MAP: Record<string, string> = {
   store_failed: "meetings.errors.storeFailed",
   subtitle_unreadable: "meetings.errors.subtitleUnreadable",
   subtitle_invalid: "meetings.errors.subtitleInvalid",
+  // B2: Bitte eines Ablaufs um die Einwilligung zur Aufnahme
+  consent_not_pending: "meetings.errors.consentNotPending",
+  consent_invalid: "meetings.errors.consentInvalid",
 };
 
 /** U7: Fehlercodes beim Bearbeiten der Metadaten als i18n-Schluessel. */

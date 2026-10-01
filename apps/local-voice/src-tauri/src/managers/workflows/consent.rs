@@ -1,0 +1,171 @@
+//! Die Bitte um Einwilligung zur Aufnahme (B2, AK4): welche Freigaben des Bausteins
+//! `recording.start` offen sind, zu welchem Ablauf und Termin sie gehoeren, und die
+//! Entscheidung des Nutzers.
+//!
+//! Das Hinweisfenster (`meeting_prompt`) zeigt die Bitte und ruft `decide`. `decide`
+//! entscheidet NUR Freigaben dieser einen Art (Aufrufer `workflow`, Faehigkeit
+//! `recording.start`): ein Fenster, das eine beliebige Freigabe-Kennung schickt, kann damit
+//! keine Mail genehmigen. Die Engine merkt die Entscheidung beim naechsten Takt
+//! (`poll_approvals`) und setzt den Lauf fort; `Engine::wake` beschleunigt das.
+//!
+//! Verfallene, zurueckgezogene (Lauf abgebrochen) und schon entschiedene Freigaben sind
+//! nicht mehr offen: `decide` meldet dann `NotPending`, das Fenster schliesst sich.
+
+use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::Value;
+
+use crate::managers::integrations::approvals::{self, ApprovalError};
+use crate::managers::integrations::model::Approval;
+
+use super::model::RunState;
+use super::store;
+
+pub const CALLER: &str = "workflow";
+pub const CAPABILITY: &str = "recording.start";
+
+/// Eine offene Bitte um Einwilligung samt dem, was das Fenster zeigt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Consent {
+    pub approval_id: String,
+    /// Wann die Freigabe angelegt wurde (ms UTC).
+    pub created_at: i64,
+    pub run_id: String,
+    pub workflow_id: String,
+    pub workflow_name: String,
+    /// Kalendertermin des Ausloesers, falls es einer ist.
+    pub event_key: Option<String>,
+    /// Titel des Termins bzw. der Besprechung aus den Ausloeserdaten.
+    pub title: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConsentError {
+    /// Es gibt keine Freigabe mit dieser Kennung.
+    NotFound,
+    /// Die Freigabe gehoert nicht zu einer Aufnahme (andere Faehigkeit oder anderer Aufrufer).
+    NotAConsent,
+    /// Schon entschieden, verfallen oder zurueckgezogen.
+    NotPending,
+    Store(String),
+}
+
+impl ConsentError {
+    /// Code fuer die Oberflaeche (`"<code>"`, siehe Fehlerkonvention der Befehle).
+    pub fn code(&self) -> &'static str {
+        match self {
+            ConsentError::NotFound | ConsentError::NotPending => "consent_not_pending",
+            ConsentError::NotAConsent => "consent_invalid",
+            ConsentError::Store(_) => "store_failed",
+        }
+    }
+}
+
+impl std::fmt::Display for ConsentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConsentError::NotFound | ConsentError::NotPending => {
+                write!(f, "Die Anfrage ist nicht mehr offen.")
+            }
+            ConsentError::NotAConsent => write!(f, "Das ist keine Anfrage zur Aufnahme."),
+            ConsentError::Store(m) => write!(f, "Speicherfehler: {m}"),
+        }
+    }
+}
+
+impl std::error::Error for ConsentError {}
+
+fn store_err(e: impl std::fmt::Display) -> ConsentError {
+    ConsentError::Store(e.to_string())
+}
+
+/// Der Lauf, dessen Schritt auf diese Freigabe wartet.
+fn run_waiting_for(
+    conn: &Connection,
+    approval_id: &str,
+) -> Result<Option<store::RunRow>, ConsentError> {
+    let run_id: Option<String> = conn
+        .query_row(
+            "SELECT run_id FROM workflow_run_steps WHERE approval_id = ?1
+             ORDER BY started_at DESC, attempt DESC LIMIT 1",
+            params![approval_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(store_err)?;
+    let Some(run_id) = run_id else {
+        return Ok(None);
+    };
+    Ok(store::get_run(conn, &run_id)
+        .map_err(store_err)?
+        .filter(|r| r.state == RunState::AwaitingApproval))
+}
+
+fn consent_of(conn: &Connection, a: &Approval) -> Result<Option<Consent>, ConsentError> {
+    let Some(run) = run_waiting_for(conn, &a.id)? else {
+        return Ok(None);
+    };
+    let ctx: Value = serde_json::from_str(&run.context_json).unwrap_or(Value::Null);
+    let text = |key: &str| {
+        ctx["trigger"][key]
+            .as_str()
+            .map(str::to_string)
+            .filter(|s| !s.trim().is_empty())
+    };
+    Ok(Some(Consent {
+        approval_id: a.id.clone(),
+        created_at: a.created_at,
+        run_id: run.id,
+        workflow_id: run.workflow_id,
+        workflow_name: run.workflow_name,
+        event_key: text("event_id"),
+        title: text("title"),
+    }))
+}
+
+/// Alle offenen Bitten um Einwilligung, aelteste zuerst. Eine Freigabe, zu der (noch) kein
+/// wartender Lauf gehoert, fehlt hier: der Takt findet sie, sobald der Lauf sie vermerkt hat.
+pub fn pending(conn: &Connection, now_ms: i64) -> Result<Vec<Consent>, ConsentError> {
+    let mut out = Vec::new();
+    for a in approvals::list_pending(conn, now_ms).map_err(store_err)? {
+        if a.caller != CALLER || a.tool_or_capability != CAPABILITY {
+            continue;
+        }
+        if let Some(c) = consent_of(conn, &a)? {
+            out.push(c);
+        }
+    }
+    Ok(out)
+}
+
+/// Ist die Bitte noch offen?
+pub fn is_pending(conn: &Connection, approval_id: &str, now_ms: i64) -> bool {
+    pending(conn, now_ms)
+        .map(|p| p.iter().any(|c| c.approval_id == approval_id))
+        .unwrap_or(false)
+}
+
+/// Der Nutzer entscheidet: `approve = true` ist die Einwilligung („Aufnahme starten“),
+/// `false` das Nein („Nicht aufnehmen“). Nur Freigaben des Bausteins `recording.start`.
+pub fn decide(
+    conn: &Connection,
+    approval_id: &str,
+    approve: bool,
+    now_ms: i64,
+) -> Result<(), ConsentError> {
+    let Some(a) = approvals::get(conn, approval_id).map_err(store_err)? else {
+        return Err(ConsentError::NotFound);
+    };
+    if a.caller != CALLER || a.tool_or_capability != CAPABILITY {
+        return Err(ConsentError::NotAConsent);
+    }
+    approvals::decide(conn, approval_id, approve, now_ms)
+        .map(|_| ())
+        .map_err(|e| match e {
+            ApprovalError::NotFound => ConsentError::NotFound,
+            ApprovalError::Store(m) => ConsentError::Store(m),
+            _ => ConsentError::NotPending,
+        })
+}
+
+#[cfg(test)]
+mod tests;

@@ -30,6 +30,12 @@ export const minutesUntil = (startsAt: number, now: number): number =>
  * (§ 201 StGB) - ohne Haekchen startet nichts. Das Fenster hat keinen Fokus;
  * bedient wird es mit der Maus.
  *
+ * B2: Bittet ein Ablauf der Automationen um die Aufnahme (`payload.workflow`),
+ * zeigt dasselbe Fenster dieselben zwei Zustaende, entscheidet aber die
+ * Freigabe des Ablaufs (`meetingPromptWorkflowDecide`) statt die Aufnahme
+ * selbst zu starten: die Aufnahme beginnt erst, wenn der Ablauf danach
+ * weiterlaeuft. Ohne Haekchen und Klick geschieht nichts.
+ *
  * Der Inhalt liegt im Backend (`meeting_prompt_current`); ein Ereignis meldet
  * nur, dass es einen neuen gibt. So geht nichts verloren, wenn das Fenster
  * erst nach dem Ereignis fertig geladen ist.
@@ -86,8 +92,12 @@ const MeetingPrompt: React.FC = () => {
   if (!payload) return <div ref={rootRef} />;
 
   const event = payload.event;
+  const workflow = payload.workflow ?? null;
   const title =
-    event?.title ?? payload.app_label ?? t("meetings.prompt.noEvent");
+    event?.title ??
+    workflow?.title ??
+    payload.app_label ??
+    t("meetings.prompt.noEvent");
   const minutes = event ? minutesUntil(event.starts_at, now) : null;
 
   const whenText = (): string | null => {
@@ -97,7 +107,29 @@ const MeetingPrompt: React.FC = () => {
     return t("meetings.prompt.runningSince", { count: -minutes });
   };
 
+  /** B2: die Bitte eines Ablaufs entscheiden (Ja nach dem Haekchen, Nein sofort). */
+  const decideWorkflow = async (approve: boolean) => {
+    if (busy || (approve && !agreed)) return; // ohne Haekchen kein Aufruf
+    setBusy(true);
+    setError(null);
+    const result = await commands.meetingPromptWorkflowDecide(
+      payload.prompt_id,
+      approve,
+    );
+    setBusy(false);
+    if (result.status === "error") {
+      setError(translateMeetingError(result.error, t));
+      // Nicht mehr offen (anderswo entschieden, abgelaufen): das Fenster hat nichts mehr zu tun.
+      if (result.error.startsWith("consent_")) {
+        setTimeout(() => setPayload(null), 2500);
+      }
+      return;
+    }
+    setPayload(null);
+  };
+
   const start = async () => {
+    if (workflow) return decideWorkflow(true);
     if (!agreed || busy) return; // ohne Haekchen kein Aufruf
     setBusy(true);
     setError(null);
@@ -137,6 +169,14 @@ const MeetingPrompt: React.FC = () => {
       {step === "offer" ? (
         <>
           <div className="space-y-0.5">
+            {workflow && (
+              <p
+                className="text-xs font-semibold uppercase tracking-wide text-logo-primary"
+                data-testid="prompt-workflow-title"
+              >
+                {t("meetings.prompt.workflow.title")}
+              </p>
+            )}
             <p
               className="text-base font-semibold leading-snug break-words"
               data-testid="prompt-title"
@@ -155,13 +195,25 @@ const MeetingPrompt: React.FC = () => {
                 .filter(Boolean)
                 .join(" · ")}
             </p>
+            {workflow && (
+              <p
+                className="text-sm text-text/80 break-words"
+                data-testid="prompt-workflow-intro"
+              >
+                {t("meetings.prompt.workflow.intro", { name: workflow.name })}
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={() => setStep("consent")}
               data-testid="prompt-start"
             >
-              {t("meetings.prompt.start")}
+              {t(
+                workflow
+                  ? "meetings.prompt.workflow.start"
+                  : "meetings.prompt.start",
+              )}
             </Button>
             {event?.join_url && (
               <Button
@@ -180,10 +232,34 @@ const MeetingPrompt: React.FC = () => {
                 size="md"
               />
             )}
-            <Button variant="ghost" onClick={later} data-testid="prompt-later">
-              {t("meetings.prompt.later")}
-            </Button>
+            {workflow ? (
+              <Button
+                variant="ghost"
+                onClick={() => void decideWorkflow(false)}
+                disabled={busy}
+                data-testid="prompt-decline"
+              >
+                {t("meetings.prompt.workflow.decline")}
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                onClick={later}
+                data-testid="prompt-later"
+              >
+                {t("meetings.prompt.later")}
+              </Button>
+            )}
           </div>
+          {error && workflow && (
+            <p
+              className="text-sm text-red-500"
+              role="alert"
+              data-testid="prompt-error"
+            >
+              {error}
+            </p>
+          )}
         </>
       ) : (
         <>
@@ -231,7 +307,11 @@ const MeetingPrompt: React.FC = () => {
             >
               {busy
                 ? t("meetings.prompt.starting")
-                : t("meetings.prompt.confirm")}
+                : t(
+                    workflow
+                      ? "meetings.prompt.workflow.confirm"
+                      : "meetings.prompt.confirm",
+                  )}
             </Button>
             <Button
               variant="secondary"

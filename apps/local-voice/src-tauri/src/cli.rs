@@ -470,4 +470,24 @@ pub struct CliArgs {
     /// not a single-video link), 3 YouTube unreachable or video unavailable.
     #[arg(long, value_name = "URL")]
     pub add_youtube: Option<String>,
+
+    // B1 (Goal Workflow-Automation)
+    /// Plan a workflow definition file (`lva-workflow@1`, JSON) against the
+    /// integrations register and print the plan, then exit. Needs --dry-run in this
+    /// version: nothing is executed. Per step: the condition (true/false/unknown),
+    /// the resolved parameters, the planned effect, and the permission result
+    /// (allowed / needs_approval with the preview the user would see / denied with
+    /// the reason). Nothing is written (no file, no mail, no audit row, no approval,
+    /// no model start). Trigger data come from the catalog's sample data
+    /// (`trigger_sample: true`). SANDBOX ONLY: requires LVA_MEETINGS_DIR (it opens,
+    /// and therefore migrates, that sandbox store). Honours --json/--out. Exit 0
+    /// every step allowed or asking, 3 plan made but at least one step would be
+    /// denied or is invalid, 2 bad input (no sandbox, no --dry-run, unreadable or
+    /// invalid definition: the issues are printed), 1 error.
+    #[arg(long, value_name = "FILE")]
+    pub workflow_run: Option<PathBuf>,
+
+    /// With --workflow-run: only plan, never execute (required in this version).
+    #[arg(long)]
+    pub dry_run: bool,
 }

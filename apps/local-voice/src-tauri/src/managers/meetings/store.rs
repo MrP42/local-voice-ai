@@ -114,6 +114,11 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // D1 (Folien aus Videos, #70/M7), Index 10: hinter G5. Nur CREATE ... IF NOT EXISTS:
     // vorhandene Zeilen bleiben unveraendert. Der SQL-Text steht in `slides/store.rs`.
     M::up(super::slides::store::SLIDES_MIGRATION),
+    // B1 (Workflow-Automation, #67), Index 11: hinter D1. Ablaeufe, Laeufe (Warteschlange),
+    // Schrittjournal und Ledger. Nur CREATE. Der SQL-Text steht in `workflows/schema.rs`,
+    // damit dieser Schritt beim Zusammenfuehren mit anderen Zweigen nur aus dieser einen
+    // Zeile besteht.
+    M::up(crate::managers::workflows::schema::WORKFLOWS_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
@@ -617,6 +622,17 @@ pub struct MeetingTemplate {
 /// wartendes nur Zeit: also lieber lange warten.
 pub(crate) const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Der zentrale Oeffnungsweg einer Verbindung zur Datenbank der Besprechungen (auch fuer
+/// Module, die nur den Pfad kennen, wie die Workflow-Engine): `BUSY_TIMEOUT` gilt je
+/// Verbindung, der WAL-Modus steht seit `init_database` in der Datei. Wer eine eigene
+/// Verbindung per `Connection::open` aufmacht, wartet nur 0 bis 5 s und verliert unter
+/// Last ein Schreiben (G8).
+pub(crate) fn open_connection(path: &Path) -> rusqlite::Result<Connection> {
+    let conn = Connection::open(path)?;
+    conn.busy_timeout(BUSY_TIMEOUT)?;
+    Ok(conn)
+}
+
 /// Stellt die Datenbank auf WAL um (der Modus steht danach in der Datei und gilt
 /// fuer jede weitere Verbindung, auch fuer Tests und den lokalen MCP-Server).
 ///
@@ -951,9 +967,7 @@ impl MeetingStore {
             conn.busy_timeout(busy)?;
             return Ok(conn);
         }
-        let conn = Connection::open(&self.db_path)?;
-        conn.busy_timeout(BUSY_TIMEOUT)?;
-        Ok(conn)
+        Ok(open_connection(&self.db_path)?)
     }
 
     /// M6-P6e: oeffnet die Datenbank NUR LESEND (`SQLITE_OPEN_READ_ONLY`), ohne

@@ -161,7 +161,11 @@ fn the_chain_is_register_then_variants_then_queue() {
         MIGRATIONS.len() >= 11,
         "G3 ist Index 8, G5 Index 9, D1 (Folien) Index 10 (dahinter)"
     );
-    let steps: [(usize, &[&str], &[&str]); 7] = [
+    assert!(
+        MIGRATIONS.len() >= 12,
+        "B1 (Workflow-Tabellen) ist Index 11, hinter D1"
+    );
+    let steps: [(usize, &[&str], &[&str]); 8] = [
         (
             5,
             &[],
@@ -170,22 +174,23 @@ fn the_chain_is_register_then_variants_then_queue() {
                 "transcript_variants",
                 "import_queue",
                 "meeting_slides",
+                "workflows",
             ],
         ),
         (
             6,
             &["integrations", "provenance"],
-            &["transcript_variants", "import_queue", "meeting_slides"],
+            &["transcript_variants", "import_queue", "meeting_slides", "workflows"],
         ),
         (
             7,
             &["integrations", "transcript_variants"],
-            &["import_queue", "meeting_slides"],
+            &["import_queue", "meeting_slides", "workflows"],
         ),
         (
             8,
             &["integrations", "transcript_variants", "import_queue"],
-            &["project_minutes", "transcript_variants_g5", "meeting_slides"],
+            &["project_minutes", "transcript_variants_g5", "meeting_slides", "workflows"],
         ),
         // Stufe 9 = G3 (Projekt-Protokolle, Index 8): die Tabelle ist da.
         (
@@ -196,7 +201,7 @@ fn the_chain_is_register_then_variants_then_queue() {
                 "import_queue",
                 "project_minutes",
             ],
-            &["transcript_variants_g5", "meeting_slides"],
+            &["transcript_variants_g5", "meeting_slides", "workflows"],
         ),
         // Stufe 10 = G5 (Fassungsart Uebersetzung, Index 9): die Tabelle ist neu gebaut, die
         // Ersatztabelle heisst wieder `transcript_variants`.
@@ -208,7 +213,7 @@ fn the_chain_is_register_then_variants_then_queue() {
                 "import_queue",
                 "project_minutes",
             ],
-            &["transcript_variants_g5", "meeting_slides"],
+            &["transcript_variants_g5", "meeting_slides", "workflows"],
         ),
         // Stufe 11 = D1 (Folien aus Videos, Index 10): die Tabelle ist da, alles Fruehere bleibt.
         (
@@ -219,6 +224,22 @@ fn the_chain_is_register_then_variants_then_queue() {
                 "import_queue",
                 "project_minutes",
                 "meeting_slides",
+            ],
+            &["transcript_variants_g5", "workflows"],
+        ),
+        // Stufe 12 = B1 (Workflow-Tabellen, Index 11): alle vier sind da, alles Fruehere bleibt.
+        (
+            12,
+            &[
+                "integrations",
+                "transcript_variants",
+                "import_queue",
+                "project_minutes",
+                "meeting_slides",
+                "workflows",
+                "workflow_runs",
+                "workflow_run_steps",
+                "workflow_file_ledger",
             ],
             &["transcript_variants_g5"],
         ),
