@@ -47,3 +47,4 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | C4 | M6 | #68 Wissens- und Fristaktionen (Vault-Notiz mit Frontmatter, Dublettenschutz, Mitteilung zur Frist, Kalender nur nach Freigabe) — lv-coder (D:) | AK6, AK7 | in_arbeit | |
 | B8 | M5 | #67 Agenten-Zugriff auf Workflows (MCP/CLI list_workflows, run_workflow, get_run), n8n-Brücke Doku + Beispiel — lv-coder (D:) | AK10 mcp_smoke --workflows, ctl workflow run | in_arbeit | |
 | C5 | M6 | #68 Oberfläche Agent-Schritt im Editor, Trockenlauf mit Modellausgabe (preview-Command), Herkunft — lv-coder (D:) | AK8 Playwright | in_arbeit | |
+| S1 | M8 | QG5-Nacharbeit B20–B23 (Sandbox handle-basiert, Anhang-Bytes gebunden, M365-Abmelde-Race, Pipe-Schreibfristen) — lv-coder-xhigh (D:) | je Befund Test rot→grün | in_arbeit | |
