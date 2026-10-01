@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/issues-abschluss
 iteration: 1
 erstellt: 2026-10-01
-aktualisiert: 2026-10-01T18:13
+aktualisiert: 2026-10-01T18:38
 ---
 
 # Goal: Offene Issues abschliessen, neue Features, Version 0.21.0
@@ -35,7 +35,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 ## Akzeptanzkriterien
 - [x] AK1 — Leerer Eintrag: Playwright → im gewählten Projekt „Neue Besprechung“ anlegen (Plus/Kontextmenü), Eintrag erscheint ohne Audio im Projekt; darin „Aufnahme starten“, „Datei importieren“ und „Link einfügen“ füllen DIESEN Eintrag (keine zweite Besprechung); Rust-Test für leere Besprechung + spätere Quelle.
 - [ ] AK2 — Ältere Issues: je Issue Befehl/Test als Beleg im Issue-Kommentar, Issue geschlossen; Owner-Punkte (#6 Löschen, #11 Ignore-Entscheidungen) mit Vorschlag und ausfüllfertigem Befehl kommentiert.
-- [ ] AK3 — U9: Playwright project-minutes grün; Rust-Test Mehrfach-Blocklogik; Quellen je Aufnahme mit Audio-Sprung.
+- [x] AK3 — U9: Playwright project-minutes grün; Rust-Test Mehrfach-Blocklogik; Quellen je Aufnahme mit Audio-Sprung.
 - [ ] AK4 — #66 Bündel 2: AK7–AK11 aus koordination/integrationen/GOAL.md erfüllt.
 - [ ] AK5 — #67: AK aus koordination/workflow-automation/GOAL.md erfüllt.
 - [ ] AK6 — #68: AK aus koordination/lokaler-agent/GOAL.md erfüllt (oder nach Messung C1 begründet beendet).
@@ -83,6 +83,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 
 ## Evidence
 - 2026-10-01T11:15 AK1 erfüllt — G1 307e7ac7: meeting-empty-entry 13 passed, Rust empty 76 passed, Suite 579 passed
+- 2026-10-01T18:38 AK3 erfüllt — G3 79417c0c: project-minutes.spec 15/15, minutes::project 51 + project_minutes_store 12 Rust-Tests, Quellen mit Audio-Sprung
 
 ## Blocker
 -
