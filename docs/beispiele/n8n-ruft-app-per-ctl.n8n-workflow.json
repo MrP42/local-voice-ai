@@ -1,0 +1,63 @@
+{
+  "name": "Local Voice AI: Ablauf per ctl starten",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Local Voice AI per ctl rufen\n\nNur für ein n8n, das **direkt unter Windows** läuft (Desktop-App oder npm), nicht im Docker-Container: der Knoten „Execute Command“ startet `local-voice-ai.exe` auf diesem Rechner.\n\n1. In Local Voice AI unter Integrationen einen Zugang anlegen und die Rechte „Ablauf starten“ (und zum Nachlesen „Automationen lesen“) auf **Fragen** oder **Erlaubt** stellen.\n2. Den Schlüssel (`lvat_…`) in einer Datei ablegen, die nur dein Windows-Benutzer lesen kann, und den Pfad unten bei `--token-file` eintragen. Nie in den Befehl schreiben.\n3. `ABLAUF-ID` durch die Kennung aus `ctl workflow list --json` ersetzen.\n\nOhne `--live` läuft ein Trockenlauf. Scharf läuft nur ein eingeschalteter, scharf geschalteter Ablauf mit dem Auslöser „Durch einen Agenten starten“ oder „Von Hand“.\n\nExit-Codes: 0 gestartet, 3 nicht erlaubt, 5 wartet auf deine Freigabe in der App.",
+        "height": 380,
+        "width": 520
+      },
+      "id": "11111111-1111-4111-8111-111111111101",
+      "name": "Hinweis",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-220, -200]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lva-ereignis",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-111111111102",
+      "name": "Webhook (von der App oder einem Skript)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [360, 0],
+      "webhookId": "00000000-0000-4000-8000-000000000000"
+    },
+    {
+      "parameters": {
+        "command": "=\"C:\\Program Files\\Local Voice AI\\local-voice-ai.exe\" ctl workflow run ABLAUF-ID --request-id {{ $json.body.run || $execution.id }} --token-file \"C:\\Users\\DEIN-NAME\\lva-agent.token\" --json"
+      },
+      "id": "11111111-1111-4111-8111-111111111103",
+      "name": "Local Voice AI: Ablauf starten (Trockenlauf)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [620, 0],
+      "notesInFlow": true,
+      "notes": "Ohne --live nur ein Trockenlauf. --request-id macht eine Wiederholung zum selben Lauf."
+    }
+  ],
+  "connections": {
+    "Webhook (von der App oder einem Skript)": {
+      "main": [
+        [
+          {
+            "node": "Local Voice AI: Ablauf starten (Trockenlauf)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

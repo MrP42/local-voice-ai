@@ -84,6 +84,24 @@ pub const CATALOG: &[CatalogEntry] = &[
         title: "Audio erzeugen",
         description: "Erzeugt aus einer Vorlesen-Seite eine Audiodatei.",
     },
+    CatalogEntry {
+        name: "list_workflows",
+        capability: Capability::WorkflowRead,
+        title: "Automationen auflisten",
+        description: "Listet die Abläufe der Automationen mit Auslöser, Schaltzustand und letztem Lauf.",
+    },
+    CatalogEntry {
+        name: "get_run",
+        capability: Capability::WorkflowRead,
+        title: "Laufprotokoll lesen",
+        description: "Liest das Protokoll eines Laufs: Zustand, Schritte, Fehler (ohne Geheimnisse und ohne Auslöserdaten).",
+    },
+    CatalogEntry {
+        name: "run_workflow",
+        capability: Capability::WorkflowRun,
+        title: "Ablauf starten",
+        description: "Startet einen Ablauf als Trockenlauf; scharf nur, wenn der Ablauf scharf geschaltet ist und das Recht es erlaubt.",
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static CatalogEntry> {

@@ -58,6 +58,9 @@ export const installAgentClientsMock = async (
         ["create_meeting", "meeting.create"],
         ["tts_page_create", "tts.render"],
         ["tts_render_audio", "tts.render"],
+        ["list_workflows", "workflow.read"],
+        ["run_workflow", "workflow.run"],
+        ["get_run", "workflow.read"],
       ];
       const ALPHABET =
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";

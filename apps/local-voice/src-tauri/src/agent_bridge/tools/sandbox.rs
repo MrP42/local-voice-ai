@@ -14,12 +14,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
 use super::{Host, PageRef, QueuedImport, Rendered};
 use crate::managers::meetings::store::MeetingStore;
+use crate::managers::workflows::engine::{Engine, EngineHandle};
 use crate::managers::workflows::recording::RecordingControl;
 use crate::managers::youtube::source::AddOptions;
 
@@ -31,14 +32,31 @@ pub struct SandboxHost {
     store: Arc<MeetingStore>,
     dir: PathBuf,
     counter: AtomicU64,
+    /// B8: die Engine der Automationen gegen die Sandbox-Datenbank (ohne Bausteine der App: ein
+    /// Trockenlauf plant, ein scharfer Lauf kann nur Bausteine ohne App-Anbindung wie `wait`).
+    engine: Engine,
+    workers: Mutex<Option<EngineHandle>>,
 }
 
 impl SandboxHost {
     pub fn new(store: Arc<MeetingStore>, dir: PathBuf) -> Self {
+        let engine = Engine::with_defaults(store.db_path().to_path_buf());
         Self {
             store,
             dir,
             counter: AtomicU64::new(0),
+            engine,
+            workers: Mutex::new(None),
+        }
+    }
+
+    /// Startet den Arbeiter der Engine (nur die headless Sandbox-Instanz; Tests takten die
+    /// Engine selbst), damit ein eingereihter Lauf fertig wird.
+    pub fn start_workflow_worker(&self) {
+        if let Ok(mut w) = self.workers.lock() {
+            if w.is_none() {
+                *w = Some(self.engine.spawn());
+            }
         }
     }
 
@@ -158,5 +176,9 @@ impl Host for SandboxHost {
 
     fn youtube_options(&self) -> AddOptions {
         AddOptions::production()
+    }
+
+    fn workflow_engine(&self) -> Option<Engine> {
+        Some(self.engine.clone())
     }
 }

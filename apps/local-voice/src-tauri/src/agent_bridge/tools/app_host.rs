@@ -13,6 +13,7 @@ use super::{Host, PageRef, QueuedImport, Rendered};
 use crate::managers::meetings::queue::ImportQueue;
 use crate::managers::meetings::search::indexer::{self, IndexJob};
 use crate::managers::tts::TtsManager;
+use crate::managers::workflows::engine::Engine;
 use crate::managers::workflows::hub::{AppRecording, WorkflowHub};
 use crate::managers::workflows::recording::RecordingControl;
 use crate::managers::youtube::source::AddOptions;
@@ -151,5 +152,12 @@ impl Host for AppHost {
 
     fn youtube_options(&self) -> AddOptions {
         AddOptions::production()
+    }
+
+    fn workflow_engine(&self) -> Option<Engine> {
+        // Der Hub startet nach der Bruecke: bis dahin gibt es die Automationen noch nicht.
+        self.app
+            .try_state::<Arc<WorkflowHub>>()
+            .map(|hub| hub.engine().clone())
     }
 }
