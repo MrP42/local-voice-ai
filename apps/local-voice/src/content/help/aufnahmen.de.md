@@ -51,6 +51,23 @@ Seltene Aktionen stehen im Menü ☰: Neu transkribieren, KI-Notizen und Protoko
 
 Mit **Bearbeiten** im Details-Dialog änderst du **Titel**, **Beschreibung** (mehrzeilig), **Datum und Uhrzeit**, die **Teilnehmenden** (aus den vorhandenen Personen) und die **Projekte**. Gespeichert wird alles oder nichts; Dateiname und Quelle bleiben, wie sie sind. Die Beschreibung ist durchsuchbar und steht dem Chat, den KI-Notizen, dem Protokoll und dem lokalen MCP-Server als Hintergrund zur Verfügung.
 
+## Sprache und Übersetzung
+
+- Beim Import und bei „Neu transkribieren“ erkennt die App die **Sprache** der Aufnahme und zeigt sie als Chip im Kopf. Ein Klick darauf zeigt die Herkunft und lässt dich die Sprache korrigieren, auf Wunsch gleich mit Neu-Transkription. Deine eigene Wahl (Modell, feste Sprache) hat immer Vorrang.
+- Menü ☰, **Übersetzen nach …**, legt das Transkript als **neue Fassung** in der Zielsprache an. Das **Original bleibt unverändert**; den Fassungs-Chip stellst du jederzeit zurück. Zeitmarken und Sprecher bleiben.
+- Jeder übersetzte Satz wird auf Zahlen, Eigennamen und Satzanzahl geprüft. Abweichungen stehen im Reiter **Vergleich** Satz für Satz neben dem Original. Sinnfehler findet die Prüfung nicht; markierte Sätze also selbst ansehen.
+- Beim Neu-Erzeugen von Protokoll und KI-Notizen wählst du die **Fassung** als Grundlage und die **Sprache des Dokuments**.
+
+## Folien und Bildanalyse
+
+- Bei Videos (Bildschirmaufnahmen, Präsentationen) sucht die App nach dem Import die **Folien** und legt sie als Vorschaubilder in den Reiter **Folien**. „Folien erkennen“ im Menü ☰ holt das später nach. Ein Klick öffnet die Großansicht oder spielt ab dieser Stelle ab; einzelne Folien lassen sich ausblenden.
+- Der Text der Folien wird mit der Windows-Texterkennung gelesen und fließt, mit Beleg, ins Protokoll ein. Zahlen, Paragrafen und Tabellen bitte gegen das Bild prüfen.
+- Optional, unter Einstellungen, Diktat, Besprechungen: **Bildanalyse für Folien**. Ein lokales Bildmodell liest die Folien genauer und beschreibt sie in einem Satz. Es braucht eine Grafikkarte (mindestens 6 GB frei) und den Bild-Projektor (rund 1 GB, nur auf Knopfdruck geladen) und wird nach dem Auftrag wieder entladen. Ohne das bleibt es bei der Windows-Texterkennung. Dazu braucht die App ffmpeg im Pfad.
+
+## Mehrere Aufnahmen gemeinsam protokollieren
+
+Im Projekt: Menü ☰ oder Rechtsklick auf das Projekt, **Gemeinsam protokollieren**. Hake mindestens zwei Aufnahmen **mit Transkript** an, wähle Vorlage und **Protokoll** (ausführlich) oder **Zusammenfassung** (knapp). Das Ergebnis steht als „Projekt-Protokoll“ im Projekt; jede Aussage nennt Aufnahme und Zeit, ein Klick springt dorthin. **Stopp** gibt es während des Laufs; ohne Transkript in einer Aufnahme wird nichts halb geschrieben.
+
 ## Kleines Fenster
 
 Wird das Fenster schmal, etwa neben einem Videocall, klappen die Projekte in eine Schublade („Projekte öffnen“), und Arbeitsfläche (Transkript, Protokoll) und Notizen teilen sich die Höhe. Den Trenner dazwischen stellst du mit der Maus oder mit Pfeil hoch/runter ein. Aufnehmen, mitschreiben und das Live-Transkript lesen geht auch so, ohne Seitenwechsel.
