@@ -3489,6 +3489,7 @@ dependencies = [
  "log",
  "mail-builder",
  "mp3lame-encoder",
+ "native-tls",
  "natural",
  "once_cell",
  "pdf-extract",

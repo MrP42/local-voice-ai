@@ -2808,7 +2808,17 @@
       "copyError": "Copy failed: {{error}}",
       "saved": "Exported to {{path}}",
       "error": "Export failed: {{error}}",
-      "pdfFallback": "Alternative: save as HTML and print the file from your browser."
+      "pdfFallback": "Alternative: save as HTML and print the file from your browser.",
+      "placeTitle": "File in",
+      "placeHint": "Put it into a set-up folder or vault without overwriting.",
+      "placeFolder": "Folder \"{{label}}\"",
+      "placeVault": "As a note in \"{{label}}\"",
+      "placeVaultButton": "File as note",
+      "placed": "Filed in \"{{label}}\": {{path}}",
+      "vaultCreated": "Note created in \"{{label}}\": {{path}}",
+      "vaultUpdated": "Note updated in \"{{label}}\": {{path}}",
+      "vaultUnchanged": "Note in \"{{label}}\" is already up to date: {{path}}",
+      "placeError": "Could not file it: {{error}}"
     },
     "people": {
       "chipsLabel": "Participants",
@@ -3372,15 +3382,18 @@
         },
         "smtp": {
           "name": "Mailbox (SMTP)",
-          "description": "Send mail through your own mailbox with an app password."
+          "description": "Send mail through your own mailbox with an app password (STARTTLS or TLS).",
+          "action": "Set up mailbox"
         },
         "obsidian": {
           "name": "Obsidian vault",
-          "description": "Save and read notes with frontmatter in your vault."
+          "description": "Save meetings as notes with frontmatter in your vault, without duplicates.",
+          "action": "Connect vault"
         },
         "wissen": {
           "name": "WAI knowledge base",
-          "description": "Search the knowledge base and read its pages."
+          "description": "Search the knowledge base (MCP endpoint with an access key).",
+          "action": "Connect knowledge base"
         },
         "webhook": {
           "name": "n8n webhook",
@@ -3421,7 +3434,29 @@
       "removeConfirm": "Remove “{{label}}” with its rights? The log stays.",
       "removeYes": "Yes, remove",
       "switchOn": "Switch on",
-      "switchOff": "Switch off"
+      "switchOff": "Switch off",
+      "settings": "Settings",
+      "editSettings": "Change settings",
+      "settingHost": "Server",
+      "settingFrom": "Sender",
+      "settingLogin": "Login",
+      "settingEndpoint": "Endpoint",
+      "settingTool": "Tool",
+      "settingVault": "Vault",
+      "settingSubfolder": "Subfolder",
+      "settingArea": "Area",
+      "mailTest": "Send test mail to myself",
+      "mailTesting": "Sending …",
+      "mailSent": "Test mail sent to {{address}}.",
+      "mailPending": "A test mail goes to your own sender address.",
+      "searchTitle": "Try a search",
+      "searchPlaceholder": "Search term",
+      "searchButton": "Search",
+      "searching": "Searching …",
+      "searchNone": "No hits.",
+      "searchHits_one": "{{count}} hit",
+      "searchHits_other": "{{count}} hits",
+      "testDetail": "Message: {{detail}}"
     },
     "secret": {
       "present": "stored",
@@ -3433,7 +3468,45 @@
       "folder_path_not_found": "The folder was not found.",
       "folder_path_not_a_folder": "The path is not a folder.",
       "folder_unreadable": "The folder cannot be read.",
-      "test_not_available": "There is no test for this kind yet."
+      "test_not_available": "There is no test for this kind yet.",
+      "smtp_ok": "Connection and login are fine (no mail was sent).",
+      "smtp_connect_failed": "The mail server cannot be reached.",
+      "smtp_timeout": "The mail server does not respond.",
+      "smtp_tls_failed": "The encrypted connection could not be established.",
+      "smtp_starttls_unsupported": "The server does not offer STARTTLS.",
+      "smtp_auth_failed": "The login was rejected.",
+      "smtp_auth_unsupported": "The server offers no login with a password.",
+      "smtp_password_missing": "The password is missing.",
+      "smtp_password_broken": "The stored password is unreadable.",
+      "smtp_config_invalid": "The settings are incomplete.",
+      "smtp_plain_not_allowed": "Unencrypted is only allowed to this computer.",
+      "smtp_rejected": "The server rejected the request.",
+      "smtp_protocol": "Unexpected answer from the server.",
+      "smtp_message_invalid": "The message is invalid.",
+      "vault_ok": "The vault is reachable and writable.",
+      "vault_path_missing": "No vault folder is set.",
+      "vault_path_relative": "The path is not complete.",
+      "vault_path_not_found": "The vault was not found.",
+      "vault_path_not_a_folder": "The path is not a folder.",
+      "folder_path_escape": "The subfolder is not allowed.",
+      "folder_io": "The vault cannot be written to.",
+      "obsidian_config_invalid": "The vault settings are incomplete.",
+      "obsidian_io": "The vault cannot be written to.",
+      "wissen_ok": "Address, key and search tool are fine.",
+      "wissen_unreachable": "The knowledge base cannot be reached.",
+      "wissen_tls_failed": "The encrypted connection could not be established.",
+      "wissen_timeout": "The knowledge base does not respond.",
+      "wissen_unauthorized": "The access key was rejected.",
+      "wissen_scope_missing": "The key lacks the scope \"wissen:read\".",
+      "wissen_rate_limited": "Too many requests, please wait a moment.",
+      "wissen_endpoint_not_found": "There is no MCP endpoint at this address.",
+      "wissen_server_error": "The knowledge base reports a server error.",
+      "wissen_protocol": "Unexpected answer from the knowledge base.",
+      "wissen_tool_missing": "The search tool does not exist there.",
+      "wissen_tool_error": "The knowledge base reports an error.",
+      "wissen_token_missing": "The access key is missing.",
+      "wissen_token_broken": "The stored key is unreadable.",
+      "wissen_config_invalid": "The settings are incomplete."
     },
     "matrix": {
       "reads": "reads",
@@ -3573,7 +3646,20 @@
       "folder_path_relative": "Please enter a full path, for example C:\\Files\\Reports.",
       "folder_path_not_found": "The folder was not found.",
       "folder_path_not_a_folder": "The path is not a folder.",
-      "kind_not_available": "This kind cannot be set up yet."
+      "kind_not_available": "This kind cannot be set up yet.",
+      "folder_path_escape": "The subfolder is not allowed: no \"..\", no drive, no special characters.",
+      "folder_config_invalid": "The folder settings are incomplete.",
+      "folder_name_invalid": "The file name is not allowed.",
+      "folder_io": "Writing to the folder is not possible.",
+      "folder_file_too_large": "The file is too large for this target.",
+      "folder_no_free_name": "There are already too many files with this name.",
+      "vault_path_missing": "Please enter the vault folder.",
+      "vault_path_relative": "Please enter a full path, for example C:\\Users\\you\\AI-OS\\vault.",
+      "vault_path_not_found": "The vault was not found.",
+      "vault_path_not_a_folder": "The path is not a folder.",
+      "obsidian_scan_limit": "The vault is too large to check safely whether the note already exists. Nothing was written.",
+      "export_format_unsupported": "This format cannot be filed.",
+      "approval_required": "This needs an approval."
     },
     "moved": {
       "open": "Manage on the “Integrations” page",
@@ -3585,6 +3671,77 @@
         "title": "Local MCP server",
         "description": "The switch for the MCP server and the configuration snippet are now on the “Integrations” page."
       }
+    },
+    "target": {
+      "create": "Create",
+      "save": "Save",
+      "name": "Name",
+      "secretKeep": "Leave empty to keep the stored {{what}}",
+      "pick": "Choose folder",
+      "smtp": {
+        "title": "Set up mailbox (SMTP)",
+        "titleEdit": "Mailbox settings",
+        "description": "For sending through your own mailbox. The password is stored encrypted in your Windows account, never in the database.",
+        "host": "Server",
+        "hostPlaceholder": "smtp.example.com",
+        "port": "Port",
+        "security": "Encryption",
+        "starttls": "STARTTLS (port 587)",
+        "tls": "TLS (port 465)",
+        "username": "User name",
+        "fromAddress": "Sender address",
+        "fromName": "Sender name (optional)",
+        "password": "Password",
+        "passwordWhat": "password",
+        "passwordHint": "Gmail and most providers need an app password, not your sign-in password. Microsoft 365 uses account sign-in instead of SMTP."
+      },
+      "obsidian": {
+        "title": "Connect Obsidian vault",
+        "titleEdit": "Vault settings",
+        "description": "Meetings are written to the vault as Markdown notes with frontmatter; the AI-OS index picks them up on the next rescan.",
+        "path": "Vault folder",
+        "pathPlaceholder": "C:\\Users\\you\\AI-OS\\vault",
+        "subfolder": "Subfolder for new notes",
+        "contextArea": "Context area",
+        "tier": "Write autonomy",
+        "hint": "A note that was already filed is updated when you file it again (ID in the frontmatter), never created twice. Your additions outside the app's block are kept."
+      },
+      "wissen": {
+        "title": "Connect knowledge base",
+        "titleEdit": "Knowledge base settings",
+        "description": "MCP endpoint of the AI-OS. https only; the key is stored encrypted in your Windows account.",
+        "endpoint": "Endpoint address",
+        "endpointPlaceholder": "https://os.example.com/mcp",
+        "tool": "Search tool",
+        "area": "Area (optional)",
+        "token": "Access key",
+        "tokenWhat": "key",
+        "tokenHint": "The key needs the scope \"wissen:read\" (or \"wissen:read:<area>\")."
+      },
+      "folder": {
+        "title": "Folder settings",
+        "path": "Folder",
+        "subfolder": "Subfolder for exports (optional)",
+        "subfolderHint": "Exports land in this subfolder of the root; it is created when needed."
+      }
+    },
+    "areas": {
+      "privat": "Private",
+      "familie": "Family",
+      "beruf": "Work",
+      "wai": "WAI",
+      "schule_uni": "School and university",
+      "finanzen": "Finance",
+      "gesundheit": "Health",
+      "behoerden": "Authorities",
+      "projekte": "Projects",
+      "kunden": "Customers"
+    },
+    "tiers": {
+      "auto": "auto (app may write freely)",
+      "logged": "logged (with log)",
+      "propose": "propose (suggestion for triage)",
+      "untouchable": "untouchable (do not change)"
     }
   }
 }

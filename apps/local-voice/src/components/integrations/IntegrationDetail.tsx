@@ -13,7 +13,15 @@ import {
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { RightsMatrix } from "./RightsMatrix";
-import { DIRECTIONS, errorText, folderPathOf } from "./model";
+import { TargetActions } from "./TargetActions";
+import { TargetDialog } from "./TargetDialog";
+import {
+  DIRECTIONS,
+  configText,
+  errorText,
+  folderPathOf,
+  isTargetKind,
+} from "./model";
 import { KindIcon } from "./KindIcon";
 
 interface IntegrationDetailProps {
@@ -52,6 +60,7 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [editingSettings, setEditingSettings] = useState(false);
 
   const explain = (raw: string) => {
     const key = `integrations.errors.${raw}`;
@@ -133,19 +142,21 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
     setBusy(false);
   };
 
+  /** Das Backend hat `last_ok_at`/`last_error` gesetzt: Zeile neu holen. */
+  const refresh = async () => {
+    const list = await commands.integrationsList();
+    if (list.status === "ok") {
+      const fresh = list.data?.find((v) => v.integration.id === integration.id);
+      if (fresh) onChanged(fresh);
+    }
+  };
+
   const test = async () => {
     setTesting(true);
     setTestResult(null);
     try {
       setTestResult(await call(commands.integrationTest(integration.id)));
-      // Das Backend hat `last_ok_at`/`last_error` gesetzt.
-      const list = await commands.integrationsList();
-      if (list.status === "ok") {
-        const fresh = list.data?.find(
-          (v) => v.integration.id === integration.id,
-        );
-        if (fresh) onChanged(fresh);
-      }
+      await refresh();
     } catch (e) {
       setError(explain(errorText(e)));
     }
@@ -165,6 +176,44 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
   };
 
   const path = folderPathOf(integration.config_json);
+  const cfg = (key: string) => configText(integration.config_json, key);
+  const settingRows: { label: string; value: string }[] = (() => {
+    const row = (label: string, value: string) =>
+      value ? [{ label, value }] : [];
+    switch (integration.kind) {
+      case "smtp":
+        return [
+          ...row(
+            t("integrations.detail.settingHost"),
+            `${cfg("host")}:${cfg("port")} (${t(`integrations.target.smtp.${cfg("security") === "tls" ? "tls" : "starttls"}`)})`,
+          ),
+          ...row(t("integrations.detail.settingFrom"), cfg("from_address")),
+          ...row(t("integrations.detail.settingLogin"), cfg("username")),
+        ];
+      case "obsidian":
+        return [
+          ...row(t("integrations.detail.settingSubfolder"), cfg("subfolder")),
+          ...row(
+            t("integrations.detail.settingArea"),
+            cfg("context_area")
+              ? t(`integrations.areas.${cfg("context_area")}`, {
+                  defaultValue: cfg("context_area"),
+                })
+              : "",
+          ),
+        ];
+      case "wissen":
+        return [
+          ...row(t("integrations.detail.settingEndpoint"), cfg("endpoint")),
+          ...row(t("integrations.detail.settingTool"), cfg("search_tool")),
+          ...row(t("integrations.detail.settingArea"), cfg("area")),
+        ];
+      case "folder":
+        return row(t("integrations.detail.settingSubfolder"), cfg("subfolder"));
+      default:
+        return [];
+    }
+  })();
   const hasStored = view.capabilities.some((c) =>
     c.modes.some((m) => m.stored !== null),
   );
@@ -277,6 +326,14 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
               t("integrations.detail.notTested")
             )}
           </dd>
+          {settingRows.map((row) => (
+            <React.Fragment key={row.label}>
+              <dt className="text-text-muted">{row.label}</dt>
+              <dd className="break-all" data-testid="integration-setting">
+                {row.value}
+              </dd>
+            </React.Fragment>
+          ))}
           {view.secrets.map((s) => (
             <React.Fragment key={s.slot}>
               <dt className="text-text-muted">
@@ -286,30 +343,50 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
             </React.Fragment>
           ))}
         </dl>
-        {integration.kind === "folder" && (
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={testing}
-              onClick={() => void test()}
-              data-testid="integration-test"
-            >
-              {testing
-                ? t("integrations.detail.testing")
-                : t("integrations.detail.test")}
-            </Button>
-            {testResult && (
-              <span
-                role="status"
-                data-testid="integration-test-result"
-                className={`text-sm ${testResult.ok ? "text-status-green" : "text-status-red"}`}
+        {isTargetKind(integration.kind) && (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={testing}
+                onClick={() => void test()}
+                data-testid="integration-test"
               >
-                {t(`integrations.test.${testResult.code}`, {
-                  defaultValue: testResult.code,
-                })}
-              </span>
+                {testing
+                  ? t("integrations.detail.testing")
+                  : t("integrations.detail.test")}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={busy}
+                onClick={() => setEditingSettings(true)}
+                data-testid="integration-edit-settings"
+              >
+                {t("integrations.detail.editSettings")}
+              </Button>
+              {testResult && (
+                <span
+                  role="status"
+                  data-testid="integration-test-result"
+                  className={`text-sm ${testResult.ok ? "text-status-green" : "text-status-red"}`}
+                >
+                  {t(`integrations.test.${testResult.code}`, {
+                    defaultValue: testResult.code,
+                  })}
+                </span>
+              )}
+            </div>
+            {testResult?.detail && (
+              <p
+                className="rounded-lg bg-red-500/10 px-3 py-2 text-sm break-words text-status-red"
+                data-testid="integration-test-detail"
+              >
+                {testResult.detail}
+              </p>
             )}
+            <TargetActions view={view} onTouched={() => void refresh()} />
           </div>
         )}
       </section>
@@ -440,6 +517,16 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
             </Button>
           ))}
       </section>
+
+      {isTargetKind(integration.kind) && (
+        <TargetDialog
+          open={editingSettings}
+          onOpenChange={setEditingSettings}
+          kind={integration.kind}
+          editing={view}
+          onSaved={onChanged}
+        />
+      )}
     </div>
   );
 };

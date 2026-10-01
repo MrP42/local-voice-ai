@@ -36,8 +36,10 @@ use super::model::{
 };
 use super::{secrets, store};
 
-/// Arten, die die Oberflaeche selbst anlegen darf (alle ohne Konto/Geheimnis).
-pub const UI_CREATABLE: [Kind; 1] = [Kind::Folder];
+/// Arten, die die Oberflaeche selbst anlegen darf. A6 ergaenzt SMTP, Obsidian und die
+/// Wissensbasis; ihr Geheimnis (Passwort, Schluessel) legt `targets::create_with_secret`
+/// ab, die Konfiguration pruefen `targets::normalize_config` und die Art selbst.
+pub const UI_CREATABLE: [Kind; 4] = [Kind::Folder, Kind::Smtp, Kind::Obsidian, Kind::Wissen];
 
 /// Aufrufer-Spalten der Rechte-Matrix, in Anzeigereihenfolge.
 pub const MATRIX_CALLERS: [Caller; 3] =
@@ -106,8 +108,11 @@ pub struct PendingApproval {
 pub struct TestResult {
     pub ok: bool,
     /// `folder_ok`, `folder_path_not_found`, `folder_path_not_a_folder`,
-    /// `folder_unreadable`, `test_not_available`.
+    /// `folder_unreadable`, `test_not_available`; SMTP `smtp_*`, Vault `vault_*`,
+    /// Wissensbasis `wissen_*` (A6).
     pub code: String,
+    /// Klartext zum Fehler (geschwaerzt), soweit der Code allein nicht reicht.
+    pub detail: Option<String>,
 }
 
 /// Zeitstempel in Millisekunden UTC.
@@ -198,7 +203,7 @@ pub fn get_view(
 }
 
 /// Schreibt, was der Nutzer getan hat, ins Audit (Best Effort, siehe Moduldoku).
-fn audit_user(
+pub(crate) fn audit_user(
     conn: &Connection,
     integration_id: &str,
     capability: Option<&str>,
@@ -262,7 +267,23 @@ pub fn create_from_ui(
         Kind::Folder => {
             let raw = config.get("path").and_then(Value::as_str).unwrap_or("");
             let path = check_folder_path(raw).map_err(str::to_string)?;
-            json!({ "path": path })
+            let subfolder = config
+                .get("subfolder")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            super::folder::check_relative(&subfolder).map_err(|e| e.code().to_string())?;
+            if subfolder.is_empty() {
+                json!({ "path": path })
+            } else {
+                json!({ "path": path, "subfolder": subfolder })
+            }
+        }
+        Kind::Smtp | Kind::Obsidian | Kind::Wissen => {
+            let (checked, hint) = super::targets::normalize_config(kind, &config)?;
+            n.account_hint = hint;
+            checked
         }
         _ => config,
     };
@@ -446,6 +467,7 @@ pub fn test_integration(
         return Ok(TestResult {
             ok: false,
             code: "test_not_available".to_string(),
+            detail: None,
         });
     }
     let cfg: Value = serde_json::from_str(&i.config_json).unwrap_or(Value::Null);
@@ -467,6 +489,7 @@ pub fn test_integration(
     Ok(TestResult {
         ok,
         code: code.to_string(),
+        detail: None,
     })
 }
 

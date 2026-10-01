@@ -44,6 +44,10 @@ export interface MockIntegration {
   last_error?: string | null;
   /** "<faehigkeit>|<aufrufer>" -> Modus */
   grants?: Record<string, string>;
+  /** Weitere Konfiguration (A6: Server, Vault, Endpunkt ...), ohne Geheimnis. */
+  config?: Record<string, unknown>;
+  /** Ein Geheimnis (Passwort, Schluessel) ist hinterlegt. */
+  secret?: boolean;
 }
 
 export interface IntegrationsMockOptions {
@@ -54,6 +58,18 @@ export interface IntegrationsMockOptions {
   testCode?: string;
   /** Pfad, den der Ordnerdialog liefert. */
   pickedPath?: string;
+  /** Ergebnis von `integration_test` je Art (A6); Standard je Art ok. */
+  tests?: Record<string, { code: string; detail?: string }>;
+  /** Fehlertext von `integration_send_test_mail` (Standard: Erfolg). */
+  mailError?: string;
+  /** Treffer von `wissen_suchen` (Standard: zwei Beispiele). */
+  wissenHits?: Array<Record<string, unknown>>;
+  /** Fehlertext von `wissen_suchen`. */
+  wissenError?: string;
+  /** Fehlertext von „ablegen in“ (Ordner und Vault). */
+  placeError?: string;
+  /** Ergebnis von „Notiz in den Vault“ (Standard: created). */
+  vaultResult?: "created" | "updated" | "unchanged";
 }
 
 export const installIntegrationsMock = async (
@@ -74,6 +90,14 @@ export const installIntegrationsMock = async (
         },
         ics: { directions: ["read"], caps: ["calendar.read"], managed: true },
         smtp: { directions: ["write"], caps: ["mail.send"] },
+        obsidian: {
+          directions: ["read", "write", "both"],
+          caps: ["vault.write", "files.read"],
+        },
+        wissen: {
+          directions: ["read"],
+          caps: ["knowledge.search", "knowledge.read"],
+        },
         youtube: { directions: ["read"], caps: ["media.fetch", "youtube.add"] },
         agent: {
           directions: ["read", "write", "both"],
@@ -152,8 +176,11 @@ export const installIntegrationsMock = async (
         label: i.label,
         enabled: i.enabled,
         direction: i.direction,
-        config_json: JSON.stringify(i.path ? { path: i.path } : {}),
-        account_hint: null,
+        config_json: JSON.stringify({
+          ...(i.path ? { path: i.path } : {}),
+          ...(i.config ?? {}),
+        }),
+        account_hint: (i.config?.host as string) ?? null,
         data_class: null,
         created_at: now,
         updated_at: now,
@@ -195,7 +222,15 @@ export const installIntegrationsMock = async (
               };
             }),
           })),
-          secrets: [],
+          secrets:
+            i.kind === "smtp" || i.kind === "wissen"
+              ? [
+                  {
+                    slot: i.kind === "smtp" ? "password" : "token",
+                    status: i.secret ? "present" : "missing",
+                  },
+                ]
+              : [],
           calendar_managed: !!kind.managed,
           pending_approvals: state.approvals.filter(
             (a: any) => a.state === "pending" && a.integration_id === i.id,
@@ -299,9 +334,22 @@ export const installIntegrationsMock = async (
           }
           case "integration_test": {
             w.__calls.push({ cmd, args });
-            find(args.id as string);
-            const code = options.testCode ?? "folder_ok";
-            return { ok: code === "folder_ok", code };
+            const i = find(args.id as string);
+            const per = options.tests?.[i.kind];
+            if (per) {
+              return {
+                ok: per.code.endsWith("_ok"),
+                code: per.code,
+                detail: per.detail ?? null,
+              };
+            }
+            const okCode: Record<string, string> = {
+              smtp: "smtp_ok",
+              obsidian: "vault_ok",
+              wissen: "wissen_ok",
+            };
+            const code = options.testCode ?? okCode[i.kind] ?? "folder_ok";
+            return { ok: code.endsWith("_ok"), code, detail: null };
           }
           case "integrations_audit_list": {
             w.__calls.push({ cmd, args });
@@ -362,6 +410,176 @@ export const installIntegrationsMock = async (
               args_preview: a.args_preview,
               state: a.state,
               decided_at: now,
+            };
+          }
+          case "integration_create_with_settings": {
+            w.__calls.push({ cmd, args });
+            const st = (args.settings ?? {}) as Record<string, any>;
+            const kind = String(args.kind);
+            const label = String(args.label ?? "").trim();
+            if (!label) throw "Der Name darf nicht leer sein.";
+            const cfg: Record<string, unknown> = {};
+            let secret = false;
+            if (kind === "smtp") {
+              if (!String(st.host ?? "").trim()) throw "Der Server fehlt.";
+              if (st.security === "plain")
+                throw "Eine unverschlüsselte Verbindung ist nur zu diesem Rechner erlaubt. Bitte STARTTLS oder TLS wählen.";
+              if (String(st.username ?? "") && !st.secret)
+                throw "Das Passwort fehlt. Bitte in der Integration neu eintragen.";
+              Object.assign(cfg, {
+                host: st.host,
+                port: st.port || 587,
+                security: st.security ?? "starttls",
+                username: st.username ?? "",
+                from_address: st.from_address ?? "",
+                from_name: st.from_name ?? "",
+              });
+              secret = !!st.secret;
+            } else if (kind === "obsidian") {
+              const path = String(st.path ?? "").trim();
+              if (!path) throw "vault_path_missing";
+              if (!/^[A-Za-z]:[\\/]/.test(path)) throw "vault_path_relative";
+              if (path.includes("gibt-es-nicht")) throw "vault_path_not_found";
+              Object.assign(cfg, {
+                path,
+                subfolder: st.subfolder || "00_inbox",
+                context_area: st.context_area || "beruf",
+                tier: st.tier || "propose",
+              });
+            } else if (kind === "wissen") {
+              const endpoint = String(st.endpoint ?? "").trim();
+              if (!endpoint) throw "Die Adresse des Endpunkts fehlt.";
+              if (
+                !/^https:\/\//.test(endpoint) &&
+                !/^http:\/\/(127\.0\.0\.1|localhost)/.test(endpoint)
+              ) {
+                throw "Der Endpunkt muss https verwenden (http nur auf diesem Rechner).";
+              }
+              if (!st.secret)
+                throw "Der Zugangsschlüssel fehlt. Bitte in der Integration neu eintragen.";
+              Object.assign(cfg, {
+                endpoint,
+                search_tool: st.search_tool || "wissen_suchen",
+                area: st.area ?? "",
+              });
+              secret = true;
+            } else {
+              throw "kind_not_available";
+            }
+            const i = {
+              id: `int-${state.nextId++}`,
+              kind,
+              label,
+              enabled: true,
+              direction:
+                args.direction ??
+                KINDS[kind].directions[
+                  KINDS[kind].directions.length === 1 ? 0 : 2
+                ],
+              path: null,
+              last_error: null,
+              grants: {},
+              config: cfg,
+              secret,
+            };
+            state.integrations.push(i);
+            audit(i.id, null, { phase: "created", kind });
+            save();
+            return toView(i);
+          }
+          case "integration_update_settings": {
+            w.__calls.push({ cmd, args });
+            const i = find(args.id as string);
+            const st = (args.settings ?? {}) as Record<string, any>;
+            const map: Record<string, string> = {
+              host: "host",
+              port: "port",
+              security: "security",
+              username: "username",
+              from_address: "from_address",
+              from_name: "from_name",
+              subfolder: "subfolder",
+              context_area: "context_area",
+              tier: "tier",
+              endpoint: "endpoint",
+              search_tool: "search_tool",
+              area: "area",
+            };
+            i.config = i.config ?? {};
+            if (i.kind === "obsidian" || i.kind === "folder") {
+              const path = String(st.path ?? "").trim();
+              if (path && !/^[A-Za-z]:[\\/]/.test(path)) {
+                throw i.kind === "obsidian"
+                  ? "vault_path_relative"
+                  : "folder_path_relative";
+              }
+              if (path) i.path = path;
+            }
+            for (const [k, v] of Object.entries(map)) {
+              if (st[k] != null) i.config[v] = st[k];
+            }
+            if (st.secret) i.secret = true;
+            audit(i.id, null, {
+              phase: "updated",
+              changes: { settings: true, secret: !!st.secret },
+            });
+            save();
+            return toView(i);
+          }
+          case "integration_send_test_mail": {
+            w.__calls.push({ cmd, args });
+            find(args.id as string);
+            if (options.mailError) throw options.mailError;
+            audit(args.id as string, "mail.send", { phase: "done" });
+            save();
+            return null;
+          }
+          case "wissen_suchen": {
+            w.__calls.push({ cmd, args });
+            find(args.id as string);
+            if (options.wissenError) throw options.wissenError;
+            return (
+              options.wissenHits ?? [
+                {
+                  title: "Preisliste 2026",
+                  path: "10_contexts/wai/preise.md",
+                  area: "wai",
+                  snippet: "Der Tagessatz beträgt 1.200 EUR.",
+                  score: 0.91,
+                  source: "vault",
+                  page: null,
+                  document_id: "d1",
+                },
+                {
+                  title: "Handbuch",
+                  path: "buch:handbuch",
+                  area: "wai",
+                  snippet: "Kapitel 3",
+                  score: 0.5,
+                  source: "buch",
+                  page: 42,
+                  document_id: "d2",
+                },
+              ]
+            );
+          }
+          case "integration_export_to_folder": {
+            w.__calls.push({ cmd, args });
+            const i = find(args.id as string);
+            if (options.placeError) throw options.placeError;
+            audit(i.id, "files.write", { phase: "done" });
+            save();
+            return { rel: `Besprechung.${args.format}`, bytes: 1234 };
+          }
+          case "integration_save_to_vault": {
+            w.__calls.push({ cmd, args });
+            const i = find(args.id as string);
+            if (options.placeError) throw options.placeError;
+            audit(i.id, "vault.write", { phase: "done" });
+            save();
+            return {
+              rel: "00_inbox/2026-10-01 Besprechung.md",
+              result: options.vaultResult ?? "created",
             };
           }
           case "plugin:dialog|open":

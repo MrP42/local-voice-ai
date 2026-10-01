@@ -2808,7 +2808,17 @@
       "copyError": "Kopieren fehlgeschlagen: {{error}}",
       "saved": "Exportiert nach {{path}}",
       "error": "Export fehlgeschlagen: {{error}}",
-      "pdfFallback": "Alternative: als HTML speichern und die Datei im Browser drucken."
+      "pdfFallback": "Alternative: als HTML speichern und die Datei im Browser drucken.",
+      "placeTitle": "Ablegen in",
+      "placeHint": "In einen eingerichteten Ordner oder Vault legen, ohne zu überschreiben.",
+      "placeFolder": "Ordner „{{label}}“",
+      "placeVault": "Als Notiz in „{{label}}“",
+      "placeVaultButton": "Notiz ablegen",
+      "placed": "Abgelegt in „{{label}}“: {{path}}",
+      "vaultCreated": "Notiz angelegt in „{{label}}“: {{path}}",
+      "vaultUpdated": "Notiz aktualisiert in „{{label}}“: {{path}}",
+      "vaultUnchanged": "Notiz in „{{label}}“ ist schon aktuell: {{path}}",
+      "placeError": "Ablegen nicht möglich: {{error}}"
     },
     "people": {
       "chipsLabel": "Teilnehmende",
@@ -3372,15 +3382,18 @@
         },
         "smtp": {
           "name": "Postfach (SMTP)",
-          "description": "Mails über ein eigenes Postfach mit App-Passwort senden."
+          "description": "Mails über ein eigenes Postfach mit App-Passwort senden (STARTTLS oder TLS).",
+          "action": "Postfach einrichten"
         },
         "obsidian": {
           "name": "Obsidian-Vault",
-          "description": "Notizen mit Frontmatter in deinem Vault ablegen und lesen."
+          "description": "Besprechungen als Notiz mit Frontmatter in deinem Vault ablegen, ohne Dubletten.",
+          "action": "Vault verbinden"
         },
         "wissen": {
           "name": "WAI-Wissensbasis",
-          "description": "In der Wissensbasis suchen und Seiten lesen."
+          "description": "In der Wissensbasis suchen (MCP-Endpunkt mit Zugangsschlüssel).",
+          "action": "Wissensbasis verbinden"
         },
         "webhook": {
           "name": "n8n-Webhook",
@@ -3421,7 +3434,29 @@
       "removeConfirm": "„{{label}}“ samt Rechten entfernen? Das Protokoll bleibt.",
       "removeYes": "Ja, entfernen",
       "switchOn": "Einschalten",
-      "switchOff": "Ausschalten"
+      "switchOff": "Ausschalten",
+      "settings": "Einstellungen",
+      "editSettings": "Einstellungen ändern",
+      "settingHost": "Server",
+      "settingFrom": "Absender",
+      "settingLogin": "Anmeldung",
+      "settingEndpoint": "Endpunkt",
+      "settingTool": "Werkzeug",
+      "settingVault": "Vault",
+      "settingSubfolder": "Unterordner",
+      "settingArea": "Bereich",
+      "mailTest": "Testmail an mich senden",
+      "mailTesting": "Sende …",
+      "mailSent": "Testmail gesendet an {{address}}.",
+      "mailPending": "Eine Testmail geht an deine eigene Absenderadresse.",
+      "searchTitle": "Suche ausprobieren",
+      "searchPlaceholder": "Suchbegriff",
+      "searchButton": "Suchen",
+      "searching": "Suche …",
+      "searchNone": "Keine Treffer.",
+      "searchHits_one": "{{count}} Treffer",
+      "searchHits_other": "{{count}} Treffer",
+      "testDetail": "Meldung: {{detail}}"
     },
     "secret": {
       "present": "hinterlegt",
@@ -3433,7 +3468,45 @@
       "folder_path_not_found": "Der Ordner wurde nicht gefunden.",
       "folder_path_not_a_folder": "Der Pfad ist kein Ordner.",
       "folder_unreadable": "Der Ordner lässt sich nicht lesen.",
-      "test_not_available": "Für diese Art gibt es noch keinen Test."
+      "test_not_available": "Für diese Art gibt es noch keinen Test.",
+      "smtp_ok": "Verbindung und Anmeldung sind in Ordnung (es wurde keine Mail gesendet).",
+      "smtp_connect_failed": "Der Mailserver ist nicht erreichbar.",
+      "smtp_timeout": "Der Mailserver antwortet nicht.",
+      "smtp_tls_failed": "Die verschlüsselte Verbindung kam nicht zustande.",
+      "smtp_starttls_unsupported": "Der Server bietet kein STARTTLS an.",
+      "smtp_auth_failed": "Die Anmeldung wurde abgelehnt.",
+      "smtp_auth_unsupported": "Der Server bietet keine Anmeldung mit Passwort an.",
+      "smtp_password_missing": "Das Passwort fehlt.",
+      "smtp_password_broken": "Das gespeicherte Passwort ist unlesbar.",
+      "smtp_config_invalid": "Die Einstellungen sind unvollständig.",
+      "smtp_plain_not_allowed": "Unverschlüsselt ist nur zu diesem Rechner erlaubt.",
+      "smtp_rejected": "Der Server hat die Anfrage abgelehnt.",
+      "smtp_protocol": "Unerwartete Antwort des Servers.",
+      "smtp_message_invalid": "Die Nachricht ist ungültig.",
+      "vault_ok": "Der Vault ist erreichbar und beschreibbar.",
+      "vault_path_missing": "Es ist kein Vault-Ordner angegeben.",
+      "vault_path_relative": "Der Pfad ist nicht vollständig.",
+      "vault_path_not_found": "Der Vault wurde nicht gefunden.",
+      "vault_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "folder_path_escape": "Der Unterordner ist nicht zulässig.",
+      "folder_io": "Im Vault lässt sich nicht schreiben.",
+      "obsidian_config_invalid": "Die Vault-Einstellungen sind unvollständig.",
+      "obsidian_io": "Im Vault lässt sich nicht schreiben.",
+      "wissen_ok": "Adresse, Schlüssel und Suchwerkzeug sind in Ordnung.",
+      "wissen_unreachable": "Die Wissensbasis ist nicht erreichbar.",
+      "wissen_tls_failed": "Die verschlüsselte Verbindung kam nicht zustande.",
+      "wissen_timeout": "Die Wissensbasis antwortet nicht.",
+      "wissen_unauthorized": "Der Zugangsschlüssel wurde abgelehnt.",
+      "wissen_scope_missing": "Dem Schlüssel fehlt der Scope „wissen:read“.",
+      "wissen_rate_limited": "Zu viele Anfragen, bitte kurz warten.",
+      "wissen_endpoint_not_found": "Unter dieser Adresse gibt es keinen MCP-Endpunkt.",
+      "wissen_server_error": "Die Wissensbasis meldet einen Serverfehler.",
+      "wissen_protocol": "Unerwartete Antwort der Wissensbasis.",
+      "wissen_tool_missing": "Das Suchwerkzeug gibt es dort nicht.",
+      "wissen_tool_error": "Die Wissensbasis meldet einen Fehler.",
+      "wissen_token_missing": "Der Zugangsschlüssel fehlt.",
+      "wissen_token_broken": "Der gespeicherte Schlüssel ist unlesbar.",
+      "wissen_config_invalid": "Die Einstellungen sind unvollständig."
     },
     "matrix": {
       "reads": "lesend",
@@ -3573,7 +3646,20 @@
       "folder_path_relative": "Bitte gib einen vollständigen Pfad an, etwa C:\\Ablage\\Berichte.",
       "folder_path_not_found": "Der Ordner wurde nicht gefunden.",
       "folder_path_not_a_folder": "Der Pfad ist kein Ordner.",
-      "kind_not_available": "Diese Art lässt sich noch nicht einrichten."
+      "kind_not_available": "Diese Art lässt sich noch nicht einrichten.",
+      "folder_path_escape": "Der Unterordner ist nicht zulässig: kein „..“, kein Laufwerk, keine Sonderzeichen.",
+      "folder_config_invalid": "Die Ordner-Einstellungen sind unvollständig.",
+      "folder_name_invalid": "Der Dateiname ist nicht zulässig.",
+      "folder_io": "Schreiben in den Ordner ist nicht möglich.",
+      "folder_file_too_large": "Die Datei ist zu groß für dieses Ziel.",
+      "folder_no_free_name": "Es gibt schon zu viele Dateien mit diesem Namen.",
+      "vault_path_missing": "Bitte gib den Ordner des Vaults an.",
+      "vault_path_relative": "Bitte gib einen vollständigen Pfad an, etwa C:\\Users\\du\\AI-OS\\vault.",
+      "vault_path_not_found": "Der Vault wurde nicht gefunden.",
+      "vault_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "obsidian_scan_limit": "Der Vault ist zu groß, um sicher zu prüfen, ob die Notiz schon existiert. Es wurde nichts geschrieben.",
+      "export_format_unsupported": "Dieses Format lässt sich nicht ablegen.",
+      "approval_required": "Dafür ist eine Freigabe nötig."
     },
     "moved": {
       "open": "Auf der Seite „Integrationen“ verwalten",
@@ -3585,6 +3671,77 @@
         "title": "Lokaler MCP-Server",
         "description": "Der Schalter für den MCP-Server und der Konfigurations-Schnipsel stehen jetzt auf der Seite „Integrationen“."
       }
+    },
+    "target": {
+      "create": "Anlegen",
+      "save": "Speichern",
+      "name": "Name",
+      "secretKeep": "Leer lassen, um das gespeicherte {{what}} zu behalten",
+      "pick": "Ordner wählen",
+      "smtp": {
+        "title": "Postfach (SMTP) einrichten",
+        "titleEdit": "Postfach-Einstellungen",
+        "description": "Zum Senden über dein eigenes Postfach. Das Passwort wird verschlüsselt im Windows-Konto abgelegt, nie in der Datenbank.",
+        "host": "Server",
+        "hostPlaceholder": "smtp.example.de",
+        "port": "Port",
+        "security": "Verschlüsselung",
+        "starttls": "STARTTLS (Port 587)",
+        "tls": "TLS (Port 465)",
+        "username": "Benutzername",
+        "fromAddress": "Absenderadresse",
+        "fromName": "Absendername (optional)",
+        "password": "Passwort",
+        "passwordWhat": "Passwort",
+        "passwordHint": "Bei Gmail und den meisten Anbietern brauchst du ein App-Passwort, nicht das Anmeldepasswort. Microsoft 365 nutzt die Anmeldung mit Konto statt SMTP."
+      },
+      "obsidian": {
+        "title": "Obsidian-Vault verbinden",
+        "titleEdit": "Vault-Einstellungen",
+        "description": "Besprechungen werden als Markdown-Notiz mit Frontmatter in den Vault geschrieben; der AI-OS-Index übernimmt sie beim nächsten Rescan.",
+        "path": "Vault-Ordner",
+        "pathPlaceholder": "C:\\Users\\du\\AI-OS\\vault",
+        "subfolder": "Unterordner für neue Notizen",
+        "contextArea": "Kontextbereich",
+        "tier": "Schreib-Autonomie",
+        "hint": "Eine schon abgelegte Notiz wird beim erneuten Ablegen aktualisiert (Kennung im Frontmatter), nie doppelt angelegt. Deine Ergänzungen außerhalb des Blocks der App bleiben erhalten."
+      },
+      "wissen": {
+        "title": "Wissensbasis verbinden",
+        "titleEdit": "Einstellungen der Wissensbasis",
+        "description": "MCP-Endpunkt des AI-OS. Nur https, der Schlüssel liegt verschlüsselt im Windows-Konto.",
+        "endpoint": "Adresse des Endpunkts",
+        "endpointPlaceholder": "https://os.example.de/mcp",
+        "tool": "Suchwerkzeug",
+        "area": "Bereich (optional)",
+        "token": "Zugangsschlüssel",
+        "tokenWhat": "Schlüssel",
+        "tokenHint": "Der Schlüssel braucht den Scope „wissen:read“ (oder „wissen:read:<bereich>“)."
+      },
+      "folder": {
+        "title": "Ordner-Einstellungen",
+        "path": "Ordner",
+        "subfolder": "Unterordner für Exporte (optional)",
+        "subfolderHint": "Exporte landen in diesem Unterordner der Wurzel; er wird bei Bedarf angelegt."
+      }
+    },
+    "areas": {
+      "privat": "Privat",
+      "familie": "Familie",
+      "beruf": "Beruf",
+      "wai": "WAI",
+      "schule_uni": "Schule und Uni",
+      "finanzen": "Finanzen",
+      "gesundheit": "Gesundheit",
+      "behoerden": "Behörden",
+      "projekte": "Projekte",
+      "kunden": "Kunden"
+    },
+    "tiers": {
+      "auto": "auto (App darf frei schreiben)",
+      "logged": "logged (mit Protokoll)",
+      "propose": "propose (Vorschlag zur Triage)",
+      "untouchable": "untouchable (nicht ändern)"
     }
   }
 }

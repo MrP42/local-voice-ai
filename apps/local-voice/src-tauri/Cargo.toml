@@ -137,6 +137,10 @@ calcard = { version = "=0.3.14", default-features = false }
 # M6-P6c: .eml der Follow-up-Mail (kommt schon mit calcard, Apache-2.0/MIT;
 # ohne gethostname: die Message-ID setzt mail.rs selbst).
 mail-builder = { version = "=1.0.0", default-features = false }
+# A6 (Integrationen): SMTP-Versand mit STARTTLS/TLS. Schon im Lock (kommt ueber
+# reqwest); hier direkt, weil der SMTP-Client die Verbindung selbst hochstuft
+# (Windows: Schannel, Zertifikat und Hostname werden immer geprueft).
+native-tls = "0.2"
 
 [features]
 # GPU acceleration for the Whisper/GGUF backend on Windows x86_64. Opt-in because

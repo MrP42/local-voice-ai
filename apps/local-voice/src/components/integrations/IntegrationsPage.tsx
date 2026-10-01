@@ -15,7 +15,8 @@ import { FolderDialog } from "./FolderDialog";
 import { IntegrationCard } from "./IntegrationCard";
 import { IntegrationCatalog } from "./IntegrationCatalog";
 import { IntegrationDetail } from "./IntegrationDetail";
-import type { CatalogEntry } from "./model";
+import { TargetDialog } from "./TargetDialog";
+import { isTargetKind, type CatalogEntry, type TargetKind } from "./model";
 import { useIntegrations, usePendingApprovals } from "./useIntegrations";
 
 type Screen =
@@ -47,6 +48,7 @@ export const IntegrationsPage: React.FC = () => {
     useState<AuditFilter>(EMPTY_AUDIT_FILTER);
   const [calendarDialog, setCalendarDialog] = useState(false);
   const [folderDialog, setFolderDialog] = useState(false);
+  const [targetKind, setTargetKind] = useState<TargetKind | null>(null);
   const [approvalsOpen, setApprovalsOpen] = useState(false);
   const approvals = usePendingApprovals(true);
 
@@ -75,6 +77,14 @@ export const IntegrationsPage: React.FC = () => {
       setCalendarDialog(true);
     } else if (entry.id === "folder") {
       setFolderDialog(true);
+    } else if (
+      entry.kind &&
+      (entry.id === "smtp" ||
+        entry.id === "obsidian" ||
+        entry.id === "wissen") &&
+      isTargetKind(entry.kind)
+    ) {
+      setTargetKind(entry.kind);
     } else if (entry.id === "mcp") {
       setTab("connections");
       toList();
@@ -265,6 +275,18 @@ export const IntegrationsPage: React.FC = () => {
           upsert(view);
           setTab("connections");
           setScreen({ name: "list" });
+        }}
+      />
+      <TargetDialog
+        open={targetKind !== null}
+        onOpenChange={(next) => {
+          if (!next) setTargetKind(null);
+        }}
+        kind={targetKind ?? "smtp"}
+        onSaved={(view) => {
+          upsert(view);
+          setTab("connections");
+          setScreen({ name: "detail", id: view.integration.id });
         }}
       />
       <ApprovalDialog

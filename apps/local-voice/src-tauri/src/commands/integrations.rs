@@ -14,6 +14,9 @@ use crate::managers::integrations::model::{
     Approval, AuditEntry, Caller, Capability, Direction, GrantMode, Integration, Kind,
 };
 use crate::managers::integrations::secrets;
+use crate::managers::integrations::smtp::ConnectOpts;
+use crate::managers::integrations::targets;
+use crate::managers::integrations::wissen::HttpOpts;
 use crate::managers::integrations::view::{self, IntegrationView, PendingApproval, TestResult};
 use crate::managers::meetings::store::MeetingStore;
 
@@ -102,15 +105,30 @@ pub async fn integration_set_grant(
     view::get_view(&conn, &id, &secret_state, now).map_err(|e| e.to_string())
 }
 
-/// Probiert die Verbindung aus (heute: der Ordner).
+/// Probiert die Verbindung aus: Ordner, SMTP (Verbindung, Verschluesselung, Anmeldung,
+/// ohne Mail), Vault, Wissensbasis (Adresse, Schluessel, Werkzeug; A6). Das Ergebnis
+/// steht auch am Eintrag. Netzwerk und Dateisystem laufen auf einem Arbeitsthread.
 #[tauri::command]
 #[specta::specta]
 pub async fn integration_test(
     store: State<'_, Arc<MeetingStore>>,
     id: String,
 ) -> Result<TestResult, String> {
-    let conn = conn(&store)?;
-    view::test_integration(&conn, &id, view::now_ms()).map_err(|e| e.to_string())
+    let store = Arc::clone(&store);
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = conn(&store)?;
+        targets::test_target(
+            &conn,
+            &id,
+            &|i, slot| secrets::get_text(i, slot),
+            &ConnectOpts::default(),
+            &HttpOpts::default(),
+            view::now_ms(),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("integration_test panicked: {e}"))?
 }
 
 /// Das Protokoll: die neuesten Eintraege zuerst, hoechstens `limit` (1 bis 500).

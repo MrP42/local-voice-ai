@@ -2051,6 +2051,13 @@ pub fn run(cli_args: CliArgs) {
             commands::integrations::integrations_audit_list,
             commands::integrations::approvals_pending,
             commands::integrations::approval_decide,
+            // A6: SMTP, Ordner, Obsidian-Vault, Wissensbasis
+            commands::integration_targets::integration_create_with_settings,
+            commands::integration_targets::integration_update_settings,
+            commands::integration_targets::integration_send_test_mail,
+            commands::integration_targets::wissen_suchen,
+            commands::integration_targets::integration_export_to_folder,
+            commands::integration_targets::integration_save_to_vault,
             // A2: YouTube als Quelle
             commands::youtube::youtube_normalize_link,
             commands::youtube::youtube_add_source,

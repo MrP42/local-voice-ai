@@ -67,14 +67,19 @@ pub mod adopt;
 pub mod approvals;
 pub mod audit;
 pub mod dump;
+pub mod folder; // A6
 pub mod gate;
 pub mod grants;
 pub mod model;
+pub mod obsidian; // A6
 pub mod preview;
 pub mod schema;
 pub mod secrets;
+pub mod smtp; // A6
 pub mod store;
+pub mod targets; // A6
 pub mod view; // A4
+pub mod wissen; // A6
 
 #[cfg(test)]
 pub(crate) mod test_support;
