@@ -1,7 +1,8 @@
 /**
  * Reiter der Aufnahmen-Seite (G4, #70).
  *
- * - Mitte: Transkript, Protokoll (und bei zwei Fassungen: Vergleich).
+ * - Mitte: Transkript, Protokoll (bei zwei Fassungen: Vergleich; sobald es Folien
+ *   aus einem Video gibt: Folien).
  * - Rechts unter der Bedienung: Notizen, KI-Notizen, Fragen.
  *
  * Vorher (bis 0.20.9) standen Notizen, KI-Notizen und Protokoll in der Mitte
@@ -10,7 +11,7 @@
  * Start sinngemaess uebernommen.
  */
 
-export type CenterTab = "transcript" | "minutes" | "compare";
+export type CenterTab = "transcript" | "minutes" | "compare" | "slides";
 export type NotesTab = "notes" | "ai";
 export type LowerTab = NotesTab | "chat";
 
@@ -18,7 +19,10 @@ export const CENTER_TAB_KEY = "meetings.centerTab";
 export const LOWER_TAB_KEY = "meetings.lowerTab";
 
 export const isCenterTab = (value: string): value is CenterTab =>
-  value === "transcript" || value === "minutes" || value === "compare";
+  value === "transcript" ||
+  value === "minutes" ||
+  value === "compare" ||
+  value === "slides";
 export const isLowerTab = (value: string): value is LowerTab =>
   value === "notes" || value === "ai" || value === "chat";
 

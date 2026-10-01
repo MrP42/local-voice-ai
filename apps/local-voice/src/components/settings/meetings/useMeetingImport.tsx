@@ -10,6 +10,8 @@ import { Dialog } from "../../ui/Dialog";
 import { translateMeetingError } from "./meetingErrors";
 import { useSelectedProject } from "./projects/selectedProject";
 import { findMeeting } from "./findMeeting";
+import { isVideoPath } from "@/lib/meetingSlides";
+import { queueSlideDetection } from "./slides/useSlidesBackground";
 
 /** Dieselben Endungen fuer Auswahl und Ablage (gleiche Import-Pipeline). */
 export const IMPORT_EXTENSIONS = [
@@ -54,10 +56,10 @@ export async function importIntoProject(
   projectId: string | null,
   onCreated: (meeting: Meeting) => void,
   targetId: string | null = null,
-): Promise<{ error: string | null }> {
+): Promise<{ error: string | null; id: string | null }> {
   const result = await commands.meetingsImportFile(path, true, targetId);
   if (result.status === "error") {
-    return { error: result.error };
+    return { error: result.error, id: null };
   }
   const id = result.data;
   if (projectId && targetId === null) {
@@ -74,7 +76,7 @@ export async function importIntoProject(
       list.status === "ok" ? list.data.find((m) => m.id === id) : undefined;
   }
   if (meeting) onCreated(meeting);
-  return { error: null };
+  return { error: null, id };
 }
 
 interface ImportRequest {
@@ -108,6 +110,8 @@ export function useMeetingImport(
   createdRef.current = onCreated;
   const [request, setRequest] = useState<ImportRequest | null>(null);
   const [busy, setBusy] = useState(false);
+  // D4: "Folien erkennen" beim Import von Videos (nur gefragt, wenn eines dabei ist).
+  const [detectSlides, setDetectSlides] = useState(false);
 
   /** Einwilligung einholen; das Projekt gilt so, wie es jetzt links gewaehlt ist. */
   const ask = useCallback(async (paths: string[]) => {
@@ -124,6 +128,7 @@ export function useMeetingImport(
       else id = null;
     }
     const entry = targetRef.current;
+    setDetectSlides(false);
     setRequest({
       paths,
       projectId: id,
@@ -153,7 +158,7 @@ export function useMeetingImport(
     setBusy(true);
     try {
       for (const [index, path] of current.paths.entries()) {
-        const { error } = await importIntoProject(
+        const { error, id } = await importIntoProject(
           path,
           current.projectId,
           (meeting) => {
@@ -165,6 +170,10 @@ export function useMeetingImport(
           index === 0 ? (current.target?.id ?? null) : null,
         );
         if (error) toast.error(translateMeetingError(error, t));
+        // Die Folienerkennung folgt dem Import: sie startet, sobald er fertig ist.
+        else if (id && detectSlides && isVideoPath(path)) {
+          queueSlideDetection(id);
+        }
         notifyMeetingsChanged();
       }
     } finally {
@@ -204,6 +213,23 @@ export function useMeetingImport(
                 </li>
               ))}
             </ul>
+            {request.paths.some(isVideoPath) && (
+              <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  data-testid="import-detect-slides"
+                  checked={detectSlides}
+                  onChange={(e) => setDetectSlides(e.target.checked)}
+                />
+                <span>
+                  {t("meetings.slides.importOption")}
+                  <span className="block text-xs text-text/60">
+                    {t("meetings.slides.importOptionHint")}
+                  </span>
+                </span>
+              </label>
+            )}
             <p className="mt-2 text-sm font-medium" data-testid="import-target">
               {request.target
                 ? t("meetings.empty.importFirst", {

@@ -14,6 +14,7 @@ import {
   Menu,
   MessageSquare,
   Pencil,
+  Presentation,
   RefreshCw,
   Sparkles,
   Trash2,
@@ -44,6 +45,8 @@ export interface MeetingActionHandlers {
   onRegenWithTemplate: () => void;
   /** U8: "Sprecher benennen ..." (Dialog mit allen Sprechern). */
   onSpeakers: () => void;
+  /** D4: "Folien erkennen" (nur bei Besprechungen mit Videodatei, siehe `canDetectSlides`). */
+  onDetectSlides?: () => void;
   onRename: () => void;
   onMove: () => void;
   onCopyPlain: () => void;
@@ -62,6 +65,8 @@ interface MeetingActionsProps extends MeetingActionHandlers {
   /** Läuft eine Verarbeitung? Dann sind Neu-Transkription und Neu-Erzeugen gesperrt. */
   busy: boolean;
   hasAudio: boolean;
+  /** D4: Quelle ist ein Video; nur dann steht "Folien erkennen" im Menü. */
+  canDetectSlides?: boolean;
   /** Die Besprechung wird gerade aufgenommen: Löschen ist gesperrt. */
   live?: boolean;
   /**
@@ -85,6 +90,7 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
   copied,
   busy,
   hasAudio,
+  canDetectSlides = false,
   live = false,
   mode = "toolbar",
   onExport,
@@ -100,6 +106,7 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
   onManageTemplates,
   onRegenWithTemplate,
   onSpeakers,
+  onDetectSlides,
   onRename,
   onMove,
   onCopyPlain,
@@ -181,6 +188,21 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
       title: hasSpeakers ? undefined : t("meetings.actions.speakersNone"),
       testId: "menu-speakers",
     },
+    ...(canDetectSlides && onDetectSlides
+      ? [
+          {
+            id: "detect-slides",
+            label: t("meetings.slides.detect"),
+            icon: Presentation,
+            onSelect: onDetectSlides,
+            disabled: busy || live,
+            title: busy
+              ? t("meetings.slides.detectBusy")
+              : t("meetings.slides.detectHint"),
+            testId: "menu-detect-slides",
+          } satisfies ActionMenuItem,
+        ]
+      : []),
     {
       id: "rename",
       label: t("meetings.actions.rename"),

@@ -42,6 +42,7 @@ import { ChatPanel } from "./chat/ChatPanel";
 import { EMPTY_SCOPE } from "./chat/ScopeChips";
 import type { PersonRef } from "./people/PersonPopover";
 import { useImportDrop, useMeetingImport } from "./useMeetingImport";
+import { useSlidesBackground } from "./slides/useSlidesBackground";
 import { useSelectedProject } from "./projects/selectedProject";
 import { findMeeting } from "./findMeeting";
 import { isEmptyEntry, requestStartDialog } from "./emptyEntry";
@@ -121,6 +122,8 @@ export const MeetingsSettings: React.FC = () => {
     text: string;
   } | null>(null);
   const progressMap = useMeetingProgress();
+  // D4: Hinweis am Ende jeder Folienerkennung, Start der beim Import vorgemerkten.
+  useSlidesBackground();
   const select = useCallback(
     (meeting: Meeting | null) => {
       setSelected(meeting);
