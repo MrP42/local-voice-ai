@@ -14,6 +14,7 @@ use specta::Type;
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
+use super::big_stack;
 use crate::managers::meetings::basis::DocBasis;
 use crate::managers::meetings::job::{self, JobPhase};
 use crate::managers::meetings::llm_call::resolve_provider_coded;
@@ -98,7 +99,46 @@ const MIN_STEPS_TO_PAUSE: u32 = 3;
 /// Bloecken mit Laufzeit und Restdauer, Pause zwischen den Bloecken, Stopp
 /// jederzeit (das Future faellt, die Anfrage an das Modell endet, nichts wird
 /// gespeichert). Der Zustand liegt im Backend und ueberlebt einen Reiterwechsel.
+///
+/// Hotfix 0.21.1: der Lauf (sein Future war im Release 0.21.0 575 KiB gross, die Huelle des
+/// Commands brauchte 1,4 MiB Stack) laeuft auf einem eigenen Thread mit grossem Stack
+/// (`big_stack`), nie auf dem Haupt-Thread des Webview mit seinem 1 MiB. Das gilt fuer den
+/// Knopf wie fuer den Auto-Lauf nach der Aufnahme.
 pub async fn enhance_and_notify(
+    app: &AppHandle,
+    store: Arc<MeetingStore>,
+    recording_active: bool,
+    meeting_id: &str,
+    template_id: Option<&str>,
+    doc_basis: &DocBasis,
+) -> Result<MeetingDocument, String> {
+    let (job_app, job_meeting, job_template, job_basis) = (
+        app.clone(),
+        meeting_id.to_string(),
+        template_id.map(str::to_string),
+        doc_basis.clone(),
+    );
+    let result = big_stack::run_result("meeting-enhance", move || async move {
+        enhance_and_notify_inner(
+            &job_app,
+            store,
+            recording_active,
+            &job_meeting,
+            job_template.as_deref(),
+            &job_basis,
+        )
+        .await
+    })
+    .await;
+    if matches!(&result, Err(code) if code == big_stack::CODE_THREAD) {
+        // Der Lauf selbst konnte nichts melden (Thread nicht gestartet oder Panik).
+        emit_failed(app, meeting_id, big_stack::CODE_THREAD);
+    }
+    result
+}
+
+/// Der Lauf selbst; sein Future ist gross, deshalb nie direkt auf dem Haupt-Thread bauen.
+async fn enhance_and_notify_inner(
     app: &AppHandle,
     store: Arc<MeetingStore>,
     recording_active: bool,

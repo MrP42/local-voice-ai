@@ -3269,6 +3269,7 @@
         "translate_llm_failed": "Das Sprachmodell hat nicht geantwortet. Es ist keine Fassung entstanden. {{detail}}",
         "translate_rejected": "Mehr als die Hälfte der Abschnitte war unbrauchbar. Es ist keine Fassung entstanden.",
         "translate_timeout": "Die Übersetzung hat zu lange gedauert.",
+        "job_thread_failed": "Der Auftrag konnte nicht gestartet werden oder ist unerwartet abgebrochen. Es ist keine Fassung entstanden. Bitte versuche es erneut.",
         "no_provider": "Es ist kein Sprachmodell eingerichtet.",
         "no_model": "Es ist kein Sprachmodell gewählt."
       },

@@ -17,6 +17,7 @@ use specta::Type;
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
+use super::big_stack;
 use crate::managers::meetings::basis::DocBasis;
 use crate::managers::meetings::job::{self, JobPhase};
 use crate::managers::meetings::minutes::{
@@ -56,7 +57,47 @@ pub enum MinutesEvent {
 /// Statusbereich der Besprechung, und ein Stopp von dort ruft
 /// `minutes::request_cancel` (derselbe Weg wie `meetings_minutes_cancel`).
 /// Pausieren gibt es hier nicht: geschrieben wird erst am Ende.
+///
+/// Hotfix 0.21.1: der Lauf (Future 161 KiB, Huelle des Commands 402 KiB Stack im Release
+/// 0.21.0, also die Haelfte des 1-MiB-Haupt-Threads) laeuft auf einem eigenen Thread mit
+/// grossem Stack (`big_stack`), wie Uebersetzen und KI-Notizen.
 pub async fn generate_and_notify(
+    app: &AppHandle,
+    store: Arc<MeetingStore>,
+    meeting_id: &str,
+    template_id: Option<&str>,
+    doc_basis: &DocBasis,
+) -> Result<MeetingDocument, String> {
+    let (job_app, job_meeting, job_template, job_basis) = (
+        app.clone(),
+        meeting_id.to_string(),
+        template_id.map(str::to_string),
+        doc_basis.clone(),
+    );
+    let result = big_stack::run_result("meeting-minutes", move || async move {
+        generate_and_notify_inner(
+            &job_app,
+            store,
+            &job_meeting,
+            job_template.as_deref(),
+            &job_basis,
+        )
+        .await
+    })
+    .await;
+    if matches!(&result, Err(code) if code == big_stack::CODE_THREAD) {
+        // Der Lauf selbst konnte nichts melden (Thread nicht gestartet oder Panik).
+        let _ = MinutesEvent::Failed {
+            meeting_id: meeting_id.to_string(),
+            code: error_code(big_stack::CODE_THREAD).to_string(),
+        }
+        .emit(app);
+    }
+    result
+}
+
+/// Der Lauf selbst; sein Future ist gross, deshalb nie direkt auf dem Haupt-Thread bauen.
+async fn generate_and_notify_inner(
     app: &AppHandle,
     store: Arc<MeetingStore>,
     meeting_id: &str,

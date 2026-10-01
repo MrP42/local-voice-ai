@@ -51,6 +51,10 @@ export const translateVariantError = (raw: string, t: TFunction): string => {
     return t(`meetings.variants.errors.${code}`);
   }
   if (code === "job_busy") return t("meetings.progress.errors.busy");
+  // Hotfix 0.21.1: der Thread des Auftrags startete nicht oder brach ab (`big_stack`).
+  if (code === "job_thread_failed") {
+    return t("meetings.variants.errors.job_thread_failed");
+  }
   return raw;
 };
 

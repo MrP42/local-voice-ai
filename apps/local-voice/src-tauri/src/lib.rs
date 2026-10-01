@@ -3631,7 +3631,6 @@ fn run_headless_export_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> i32
 // keine Zielsprache).
 fn run_headless_translate_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> i32 {
     use managers::meetings::store::MeetingStore;
-    use managers::meetings::translate::{translate_variant, Control};
     use managers::meetings::variants;
     use std::hash::{Hash, Hasher};
 
@@ -3723,15 +3722,42 @@ fn run_headless_translate_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> 
         (active, segments, hasher.finish())
     };
     let started = std::time::Instant::now();
-    let result = tauri::async_runtime::block_on(translate_variant(
-        &settings,
-        &store,
-        id,
-        &source.id,
-        &target,
-        || std::future::ready(Control::Go),
-        |done, total| eprintln!("translate: block {done}/{total}"),
-    ));
+    // Hotfix 0.21.1 (#73): derselbe Weg wie der Command `transcript_variant_translate`
+    // (`translate_job`: Auftrag auf eigenem Thread mit grossem Stack), aufgerufen wie die
+    // Huelle des Commands es tut -- per `spawn` von einem Thread mit nur 1 MiB Stack (der
+    // Haupt-Thread unter Windows). Beleg, dass das Release-Binary den Aufruf ohne
+    // Stack-Ueberlauf uebersteht (`STATUS_STACK_OVERFLOW` in 0.21.0).
+    let emit: managers::meetings::job::EmitFn = Arc::new(|event| {
+        if let managers::meetings::recorder::MeetingEvent::Progress { done, total, .. } = event {
+            eprintln!("translate: block {done}/{total}");
+        }
+    });
+    let result = {
+        let (store, settings, id, source_id, target) = (
+            Arc::clone(&store),
+            Arc::new(settings),
+            id.to_string(),
+            source.id.clone(),
+            target.clone(),
+        );
+        let caller = std::thread::Builder::new()
+            .name("translate-command-caller".to_string())
+            .stack_size(1024 * 1024)
+            .spawn(move || {
+                tauri::async_runtime::block_on(tauri::async_runtime::spawn(async move {
+                    commands::meeting_variants::translate_job(
+                        emit, settings, store, id, source_id, target,
+                    )
+                    .await
+                }))
+            });
+        match caller.map(|handle| handle.join()) {
+            Ok(Ok(Ok(result))) => result,
+            Ok(Ok(Err(e))) => Err(format!("translate_task_failed: {e}")),
+            Ok(Err(_)) => Err("translate_caller_panicked".to_string()),
+            Err(e) => Err(format!("translate_caller_not_started: {e}")),
+        }
+    };
     llm_server.stop();
     let elapsed_ms = started.elapsed().as_millis() as u64;
     match result {

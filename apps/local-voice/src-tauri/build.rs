@@ -4,6 +4,20 @@ fn main() {
 
     generate_tray_translations();
 
+    // Windows gives the main thread only 1 MiB of stack by default, and that thread builds
+    // the future of every `#[tauri::command] async fn` (the webview calls the command
+    // handler there). In 0.21.0 the commands for translating, AI notes and minutes needed
+    // 400 KiB to 1.4 MiB of frame each: STATUS_STACK_OVERFLOW (0xc00000fd) on the first click,
+    // without a log line (#70, #73). The long jobs now run on their own thread
+    // (`commands::big_stack`); this raises the main thread's reserve for every other
+    // command, present and future. Only reserved address space, nothing is committed up
+    // front. `scripts/check-exe-stack.mjs` verifies the built exe.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        println!("cargo:rustc-link-arg-bins=/STACK:16777216");
+    }
+
     // Linux ships transcribe-cpp as a shared libtranscribe + loadable ggml
     // backend modules (the `dynamic-backends` posture in Cargo.toml). Bake an
     // $ORIGIN-relative rpath into the `handy` binary so it finds libtranscribe

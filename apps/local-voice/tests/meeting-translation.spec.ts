@@ -855,3 +855,92 @@ test.describe("Barrierefreiheit", () => {
     ).toBeVisible();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 8. Fussleisten der Dialoge liegen im Dialog (Hotfix 0.21.1)
+// ---------------------------------------------------------------------------
+
+test.describe("Dialog-Fussleisten", () => {
+  /** Alle Knoepfe der Fussleiste liegen in der Box des Dialogs (kein Abschneiden links). */
+  const expectFooterInside = async (
+    page: Page,
+    name: string,
+    buttons: number,
+  ) => {
+    const dialog = page.getByRole("dialog", { name });
+    await expect(dialog).toBeVisible();
+    const footer = dialog.getByTestId("dialog-footer");
+    await expect(footer.getByRole("button")).toHaveCount(buttons);
+    const box = await dialog.boundingBox();
+    expect(box).not.toBeNull();
+    const all = await footer.getByRole("button").all();
+    for (const button of all) {
+      const b = await button.boundingBox();
+      expect(b, await button.innerText()).not.toBeNull();
+      const label = await button.innerText();
+      expect(b!.x, `${label}: links im Dialog`).toBeGreaterThanOrEqual(
+        box!.x - 0.5,
+      );
+      expect(b!.x + b!.width, `${label}: rechts im Dialog`).toBeLessThanOrEqual(
+        box!.x + box!.width + 0.5,
+      );
+      expect(b!.y, `${label}: oben im Dialog`).toBeGreaterThanOrEqual(
+        box!.y - 0.5,
+      );
+      expect(b!.y + b!.height, `${label}: unten im Dialog`).toBeLessThanOrEqual(
+        box!.y + box!.height + 0.5,
+      );
+    }
+    // "Abbrechen" ist sichtbar und nicht von der Dialogkante verdeckt.
+    await expect(
+      footer.getByRole("button", { name: "Abbrechen" }),
+    ).toBeVisible();
+    return footer;
+  };
+
+  for (const width of [1920, 1280]) {
+    test(`Sprache der Besprechung: drei Knoepfe im Dialog bei ${width} px`, async ({
+      page,
+    }) => {
+      await setup(page, {}, width, 900);
+      await chip(page).click();
+      const footer = await expectFooterInside(
+        page,
+        "Sprache der Besprechung",
+        3,
+      );
+      await expect(
+        footer.getByRole("button", { name: "Sprache speichern" }),
+      ).toBeVisible();
+      await expect(
+        footer.getByRole("button", {
+          name: "Speichern und neu transkribieren",
+        }),
+      ).toBeVisible();
+      await shoot(page, `f1-sprach-dialog-fussleiste-${width}`);
+    });
+
+    test(`Uebersetzen nach: Knoepfe im Dialog bei ${width} px`, async ({
+      page,
+    }) => {
+      await setup(page, {}, width, 900);
+      await chooseMenu(page, "menu-translate");
+      await expectFooterInside(page, "Übersetzen nach …", 2);
+    });
+  }
+
+  test("rechtsbuendig und bei schmaler Breite im Dialog (umbrochen)", async ({
+    page,
+  }) => {
+    await setup(page, {}, 480, 800);
+    await chip(page).click();
+    const footer = await expectFooterInside(page, "Sprache der Besprechung", 3);
+    const dialog = page.getByRole("dialog", {
+      name: "Sprache der Besprechung",
+    });
+    const box = (await dialog.boundingBox())!;
+    // Rechtsbuendig: der letzte Knopf der letzten Zeile endet am rechten Innenrand.
+    const last = (await footer.getByRole("button").last().boundingBox())!;
+    expect(box.x + box.width - (last.x + last.width)).toBeLessThanOrEqual(24);
+  });
+});
