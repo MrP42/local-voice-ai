@@ -1818,7 +1818,12 @@ test.describe("KI-Notizen", () => {
     await expect(page.getByTestId("enhance-error")).toHaveCount(0);
     const enhance = await calls(page, "meeting_notes_enhance");
     expect(enhance).toHaveLength(2);
-    expect(enhance[1].args).toEqual({ meetingId: "m1", templateId: null });
+    expect(enhance[1].args).toEqual({
+      meetingId: "m1",
+      templateId: null,
+      // G5: aktive Fassung, Ausgabesprache = Sprache der App
+      basis: { variant_id: null, output_language: "de" },
+    });
     await expect(
       page.getByRole("button", { name: "KI-Notizen neu erzeugen" }),
     ).toBeVisible();

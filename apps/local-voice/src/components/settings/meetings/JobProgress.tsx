@@ -178,7 +178,10 @@ export const JobPanel: React.FC<JobPanelProps> = ({
   const holding = progress.state === "pausing" || progress.state === "paused";
   const stopping = progress.state === "stopping";
   const pauseDisabled = busy || stopping || (!holding && !progress.pausable);
-  const generating = progress.phase === "notes" || progress.phase === "minutes";
+  const generating =
+    progress.phase === "notes" ||
+    progress.phase === "minutes" ||
+    progress.phase === "translation";
 
   const statusText =
     progress.state === "running"

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
 import type { TranscriptVariant } from "@/bindings";
 import { ContextMenu, type ContextMenuItem } from "../search/FolderChips";
-import { variantKindLabel } from "./useVariants";
+import { variantKindLabel, variantListLabel } from "./useVariants";
 
 interface VariantChipProps {
   variants: TranscriptVariant[];
@@ -40,11 +40,7 @@ export const VariantChip: React.FC<VariantChipProps> = ({
 
   const items: ContextMenuItem[] = [
     ...variants.map((v) => {
-      const label = t("meetings.variants.itemLabel", {
-        number: v.number,
-        kind: variantKindLabel(v, t),
-        count: v.segment_count,
-      });
+      const label = variantListLabel(v, t);
       return {
         label: v.active ? t("meetings.variants.itemActive", { label }) : label,
         disabled: v.active,

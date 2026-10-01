@@ -792,7 +792,8 @@ test.describe("Protokoll und KI-Notizen kompakt", () => {
       name: "Neu erzeugen mit Vorlage",
     });
     await expect(dialog).toBeVisible();
-    await dialog.locator(".app-select__control").click();
+    // G5: unter der Vorlage stehen jetzt auch Grundlage und Sprache; die Vorlage ist die erste Liste.
+    await dialog.locator(".app-select__control").first().click();
     await page
       .getByRole("option", { name: "Kundengespräch / Vertrieb", exact: true })
       .click();
@@ -806,6 +807,8 @@ test.describe("Protokoll und KI-Notizen kompakt", () => {
     expect((await calls(page, "meetings_generate_minutes"))[0].args).toEqual({
       meetingId: "m2",
       templateId: null,
+      // G5: Grundlage und Sprache aus dem Dialog (Standard: aktive Fassung, Sprache der App)
+      basis: { variant_id: null, output_language: "de" },
     });
     await expect(centerTab(page, "Protokoll")).toHaveAttribute(
       "aria-selected",

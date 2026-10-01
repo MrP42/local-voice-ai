@@ -17,6 +17,7 @@ use specta::Type;
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
+use crate::managers::meetings::basis::DocBasis;
 use crate::managers::meetings::job::{self, JobPhase};
 use crate::managers::meetings::minutes::{
     self, error_code, MinutesMeta, MinutesPhase, MinutesRunState, CODE_BUSY,
@@ -60,6 +61,7 @@ pub async fn generate_and_notify(
     store: Arc<MeetingStore>,
     meeting_id: &str,
     template_id: Option<&str>,
+    doc_basis: &DocBasis,
 ) -> Result<MeetingDocument, String> {
     let job = match job::global().try_start(meeting_id, job::app_emit(app)) {
         Ok(job) => job,
@@ -89,7 +91,7 @@ pub async fn generate_and_notify(
     // lieferte der Fortschritt scheinbar rueckwaerts.
     let bridge = Arc::clone(&handle);
     let last_phase = std::sync::Mutex::new(None::<(MinutesPhase, u32)>);
-    let result = minutes::generate_minutes(app, store, meeting_id, template_id, &move |p| {
+    let result = minutes::generate_minutes(app, store, meeting_id, template_id, doc_basis, &move |p| {
         let _ = MinutesEvent::Progress {
             meeting_id: progress_id.clone(),
             phase: p.phase,

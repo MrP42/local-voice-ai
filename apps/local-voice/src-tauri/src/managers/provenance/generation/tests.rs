@@ -862,6 +862,7 @@ fn every_purpose_has_its_own_stable_snake_case_name() {
         (Purpose::Followup, "followup"),
         // A1: die Zwecke der naechsten Pakete stehen schon in der festen Liste.
         (Purpose::TranscriptMerge, "transcript_merge"),
+        (Purpose::TranscriptTranslation, "transcript_translation"),
         (Purpose::Relevance, "relevance"),
         (Purpose::Reconcile, "reconcile"),
         (Purpose::FactCheck, "fact_check"),

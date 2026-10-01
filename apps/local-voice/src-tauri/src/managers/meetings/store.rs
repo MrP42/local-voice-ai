@@ -107,6 +107,10 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // G3 (Projekt-Protokolle, #70). Nur CREATE: vorhandene Zeilen bleiben unveraendert.
     // Der SQL-Text steht in `project_minutes_store.rs`.
     M::up(super::project_minutes_store::PROJECT_MINUTES_MIGRATION),
+    // G5 (Fassungsart `translation`, Herkunft einer Uebersetzung), Index 9: hinter G3.
+    // Baut `transcript_variants` neu (CHECK-Bedingung), kopiert jede Zeile unveraendert.
+    // Der SQL-Text steht in `variants.rs`; Naeheres dort.
+    M::up(super::variants::VARIANTS_TRANSLATION_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
