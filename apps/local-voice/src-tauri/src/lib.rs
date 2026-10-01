@@ -1,4 +1,5 @@
 mod actions;
+mod agent; // C1 (Goal Lokaler Agent)
 pub mod agent_bridge; // A7
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -372,6 +373,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         }
         let index_store = store.clone(); // M4-P4b
         let calendar_store = store.clone(); // M5-P5b
+        let workflow_store = store.clone(); // B2
         // A7: Agentenbruecke (Named Pipe, nur aktueller Benutzer). Die Werkzeuge der App
         // (A8: schreibende MCP-Werkzeuge) haengen als Handler an dieser Liste.
         app_handle.manage(agent_bridge::runtime::start_for_app(
@@ -406,6 +408,14 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         let calendar =
             managers::calendar::service::CalendarService::spawn(app_handle.clone(), calendar_store);
         app_handle.manage(calendar);
+        // B2: Workflow-Engine (Arbeiter, Ausloeser, Einwilligungsweg). Haengt am Takt der
+        // Erinnerung (`CalendarService::remind_tick`); beendet wird sie bei `RunEvent::Exit`.
+        let workflows = managers::workflows::hub::WorkflowHub::start(app_handle, &workflow_store);
+        app_handle.manage(workflows);
+        // A5: Microsoft-365-Konto (Zugriffstoken im Arbeitsspeicher, eine Anmeldung zur Zeit).
+        app_handle.manage(Arc::new(
+            managers::integrations::m365::M365Service::production(),
+        ));
     }
 
     // M5-P5c: Ad-hoc-Erkennung laufender Besprechungen (nur Hinweis).
@@ -1459,6 +1469,14 @@ fn meeting_payload(
         "last_end_ms": segments.last().map(|s| s.end_ms),
         "total_text_chars": segments.iter().map(|s| s.text.len()).sum::<usize>(),
         "document_kinds": documents.iter().map(|d| d.kind.clone()).collect::<Vec<_>>(),
+        // G5: Sprache (Spalte und gespeicherte Herkunft), Modell der Transkription, Fassungen.
+        "language": meeting.language,
+        "language_detail": managers::meetings::language_run::stored_language(store, id),
+        "variants": store
+            .get_connection()
+            .ok()
+            .and_then(|mut conn| managers::meetings::variants::list(&mut conn, id).ok())
+            .unwrap_or_default(),
         "segments": segments,
     }))
 }
@@ -2036,9 +2054,39 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_minutes::meetings_minutes_cancel,
             commands::meeting_minutes::meetings_minutes_meta,
             commands::meeting_minutes::meetings_get_auto_template,
+            // G3 (#70): Projekt-Protokoll
+            commands::project_minutes::project_minutes_candidates,
+            commands::project_minutes::project_minutes_list,
+            commands::project_minutes::project_minutes_get,
+            commands::project_minutes::project_minutes_delete,
+            commands::project_minutes::project_minutes_state,
+            commands::project_minutes::project_minutes_cancel,
+            commands::project_minutes::project_minutes_generate,
+            // D1 (#70, M7): Folien aus Videos
+            commands::meeting_slides::detect_meeting_slides,
+            commands::meeting_slides::list_meeting_slides,
+            commands::meeting_slides::set_meeting_slide_hidden,
+            commands::meeting_slides::meeting_slides_dir,
             commands::meetings::meetings_export_document,
             // M1-P1c
             commands::provenance::provenance_get, // A1
+            // A4: Seite Integrationen
+            commands::integrations::integrations_list,
+            commands::integrations::integration_create,
+            commands::integrations::integration_update,
+            commands::integrations::integration_delete,
+            commands::integrations::integration_set_grant,
+            commands::integrations::integration_test,
+            commands::integrations::integrations_audit_list,
+            commands::integrations::approvals_pending,
+            commands::integrations::approval_decide,
+            // A6: SMTP, Ordner, Obsidian-Vault, Wissensbasis
+            commands::integration_targets::integration_create_with_settings,
+            commands::integration_targets::integration_update_settings,
+            commands::integration_targets::integration_send_test_mail,
+            commands::integration_targets::wissen_suchen,
+            commands::integration_targets::integration_export_to_folder,
+            commands::integration_targets::integration_save_to_vault,
             // A2: YouTube als Quelle
             commands::youtube::youtube_normalize_link,
             commands::youtube::youtube_add_source,
@@ -2052,6 +2100,12 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_variants::transcript_variant_activate,
             commands::meeting_variants::transcript_variant_segments,
             commands::meeting_variants::transcript_variants_merge,
+            commands::meeting_variants::transcript_variant_translate, // G5
+            commands::meeting_variants::transcript_variant_report,
+            commands::meeting_language::meetings_language_info,
+            commands::meeting_language::meetings_set_language,
+            commands::meeting_language::meetings_model_for_language,
+            commands::meeting_language::meetings_document_basis,
             commands::youtube::change_meeting_youtube_private_setting,
             commands::youtube::change_meeting_youtube_tool_path_setting,
             commands::meeting_notes::meeting_notes_get,
@@ -2131,6 +2185,18 @@ pub fn run(cli_args: CliArgs) {
             commands::calendar::calendar_graph_sign_out,
             commands::calendar::change_calendar_graph_client_id_setting,
             commands::calendar::change_calendar_graph_tenant_setting,
+            // A5: Microsoft-365-Konto
+            commands::integrations_m365::m365_status,
+            commands::integrations_m365::m365_create,
+            commands::integrations_m365::m365_update_settings,
+            commands::integrations_m365::m365_sign_in,
+            commands::integrations_m365::m365_cancel_sign_in,
+            commands::integrations_m365::m365_sign_out,
+            commands::integrations_m365::m365_test,
+            commands::integrations_m365::m365_send_test_mail,
+            commands::integrations_m365::m365_upload_test_file,
+            commands::integrations_m365::meeting_followup_send_m365,
+            commands::integrations_m365::m365_event_note,
             // M6-P6e
             commands::meeting_mcp::change_meeting_mcp_enabled_setting,
             commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,
@@ -2146,6 +2212,7 @@ pub fn run(cli_args: CliArgs) {
             meeting_prompt::meeting_prompt_current,
             meeting_prompt::meeting_prompt_ready,
             meeting_prompt::meeting_prompt_dismiss,
+            meeting_prompt::meeting_prompt_workflow_decide, // B2
             // M5-P5d/P5e
             commands::people::people_list,
             commands::people::people_get,
@@ -2281,6 +2348,10 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_enhance::MeetingNotesEvent,
             // P1k
             commands::meeting_minutes::MinutesEvent,
+            // G3 (#70)
+            commands::project_minutes::ProjectMinutesEvent,
+            // D1 (#70, M7)
+            commands::meeting_slides::MeetingSlidesEvent,
             // M4-P4b
             managers::meetings::search::indexer::MeetingIndexEvent,
             // M5-P5c
@@ -2325,11 +2396,14 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.reindex_meetings // M4-P4b
         || cli_args.eval_diarization.is_some() // M3-P3a
         || cli_args.eval_chat.is_some() // M4-P4f
+        || cli_args.eval_agent // C1
         || cli_args.export_meeting.is_some() // M6-P6a
         || cli_args.followup_draft.is_some() // P6f
+        || cli_args.translate_meeting.is_some() // G5
         || cli_args.calendar_dump.is_some() // M5-P5a
         || cli_args.integrations_dump // A1
         || cli_args.add_youtube.is_some() // A2
+        || cli_args.workflow_run.is_some() // B1
         || cli_args.agent_bridge_serve // A7
         || cli_args.detect_mic; // M5-P5c
 
@@ -2576,6 +2650,22 @@ pub fn run(cli_args: CliArgs) {
                     return Ok(());
                 }
 
+                // B1: Trockenlauf einer Workflow-Definition (nur Sandbox, nur lesend).
+                if cli_args.workflow_run.is_some() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_workflow_run(&app_handle, &args)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
                 // A7: Agentenbruecke headless bedienen (nur Sandbox; fuer ctl-Tests gegen die EXE).
                 if cli_args.agent_bridge_serve {
                     let app_handle = app.handle().clone();
@@ -2676,6 +2766,23 @@ pub fn run(cli_args: CliArgs) {
                     return Ok(());
                 }
 
+                // C1: Werkzeugwahl des lokalen Agenten (60 eingebettete Aufgaben);
+                // braucht nur das Sprachmodell.
+                if cli_args.eval_agent {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_eval_agent(&app_handle, &args)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
                 // M4-P4f: Chat-Eval (AK8) auf synthetischen Fixtures in einem
                 // Sandbox-Store; Sprachmodell und Embedding-Server werden am
                 // Ende beendet.
@@ -2705,6 +2812,22 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_eval_diarization(&app_handle, &args, &dir)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // G5: Uebersetzung einer Sandbox-Besprechung als neue Fassung.
+                if let Some(id) = cli_args.translate_meeting.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_translate_meeting(&app_handle, &args, &id)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -2958,6 +3081,11 @@ pub fn run(cli_args: CliArgs) {
             }
             // Teardown transcribe.cpp before exit
             tauri::RunEvent::Exit => {
+                // B2: die Workflow-Arbeiter zuerst (hoechstens 3 s); ein laufender Lauf wird
+                // beim naechsten Start fortgesetzt.
+                if let Some(hub) = app.try_state::<Arc<managers::workflows::hub::WorkflowHub>>() {
+                    hub.shutdown();
+                }
                 if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                     let _ = tm.unload_model();
                 }
@@ -3176,6 +3304,70 @@ fn run_headless_add_youtube(app: &AppHandle, args: &CliArgs) -> i32 {
     }
 }
 
+// B1: `--workflow-run FILE --dry-run [--json] [--out F]`. Nur mit Sandbox
+// (`LVA_MEETINGS_DIR`): der Aufruf oeffnet und migriert den Store dort und liest nur
+// das Register. Plant die Definition (kein Baustein laeuft, nichts wird geschrieben,
+// kein Modell startet). Exit 0 / 3 siehe `managers::workflows::cli`, 2 falscher Aufruf.
+fn run_headless_workflow_run(app: &AppHandle, args: &CliArgs) -> i32 {
+    use managers::meetings::store::MeetingStore;
+    use managers::workflows::cli as wf_cli;
+
+    crate::selftest::begin_headless_run();
+    let Some(path) = args.workflow_run.clone() else {
+        return 2;
+    };
+    if !args.dry_run {
+        eprintln!("error: --workflow-run runs only together with --dry-run in this version (nothing is executed)");
+        return 2;
+    }
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if sandbox.is_none() {
+        eprintln!(
+            "error: --workflow-run requires {} (sandbox); it never reads the productive store",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("error: could not read {}: {e}", path.display());
+            return 2;
+        }
+    };
+    let store = match MeetingStore::new(app) {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    let conn = match store.get_connection() {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    };
+    let result = wf_cli::dry_run(&conn, &text);
+    if args.json {
+        emit_headless_payload(&result.payload, args.out.as_deref());
+    } else {
+        println!("{}", wf_cli::format_text(&result));
+        if let Some(path) = args.out.as_deref() {
+            if let Err(e) = std::fs::write(
+                path,
+                serde_json::to_string_pretty(&result.payload).unwrap_or_default(),
+            ) {
+                eprintln!("error: could not write {}: {}", path.display(), e);
+            }
+        }
+    }
+    result.exit_code
+}
+
 // M5-P5c: `--detect-mic --seconds N [--all-apps] [--json] [--out F]`. Beobachtet
 // N Sekunden lang, welche Programme das Mikrofon oeffnen, mit denselben Regeln
 // wie der Watcher (5 s Entprellung, Eigenfilter, Leichen, webview2), nur mit
@@ -3278,6 +3470,191 @@ fn run_headless_export_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> i32
         Err(e) => {
             eprintln!("error: {e}");
             1
+        }
+    }
+}
+
+// G5: `--translate-meeting <id> --target-language <code>`. Uebersetzt die aktive Fassung einer
+// Sandbox-Besprechung (`LVA_MEETINGS_DIR` ist Pflicht) mit dem eingestellten oder per `--model`
+// gewaehlten lokalen Sprachmodell als NEUE Fassung. Beweis fuer "nie destruktiv": Hash der
+// Original-Segmente vor und nach dem Lauf, Fassungsliste (das Original bleibt aktiv). Server und
+// Speicherwaechter wie in `run_headless_followup_draft`; der Server wird am Ende gestoppt.
+// Ausgabe: JSON auf stdout, mit `--out` auch in eine Datei. Exit 0 uebersetzt, 3 nichts zu
+// uebersetzen oder verworfen, 1 Fehler, 2 Eingabe (keine Sandbox, unbekannte Besprechung,
+// keine Zielsprache).
+fn run_headless_translate_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> i32 {
+    use managers::meetings::store::MeetingStore;
+    use managers::meetings::translate::{translate_variant, Control};
+    use managers::meetings::variants;
+    use std::hash::{Hash, Hasher};
+
+    crate::selftest::begin_headless_run();
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if sandbox.is_none() {
+        eprintln!(
+            "error: --translate-meeting requires {} (sandbox); it never reads the productive store",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let Some(target) = args
+        .target_language
+        .as_deref()
+        .and_then(managers::meetings::language::normalize_code)
+    else {
+        eprintln!("error: --translate-meeting needs --target-language <code> (for example de)");
+        return 2;
+    };
+    let mut settings = get_settings(app);
+    if let Some(model) = args.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        managers::meetings::notes::eval::apply_model_override(&mut settings, model.trim());
+    }
+    let store = match MeetingStore::new(app) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    match store.get_meeting(id) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            eprintln!("error: no meeting {id}");
+            return 2;
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    }
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+    let (source, original_segments, hash_before) = {
+        let mut conn = match store.get_connection() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        };
+        let list = match variants::list(&mut conn, id) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        };
+        let Some(active) = list.into_iter().find(|v| v.active) else {
+            eprintln!("error: meeting {id} has no transcript");
+            return 3;
+        };
+        let (_, segments) = match variants::get_segments(&conn, &active.id) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        };
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_string(&segments).unwrap_or_default().hash(&mut hasher);
+        (active, segments, hasher.finish())
+    };
+    let started = std::time::Instant::now();
+    let result = tauri::async_runtime::block_on(translate_variant(
+        &settings,
+        &store,
+        id,
+        &source.id,
+        &target,
+        || std::future::ready(Control::Go),
+        |done, total| eprintln!("translate: block {done}/{total}"),
+    ));
+    llm_server.stop();
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(variant) => {
+            let (hash_after, excerpt, report) = {
+                let conn = match store.get_connection() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return 1;
+                    }
+                };
+                let after = variants::get_segments(&conn, &source.id)
+                    .map(|(_, s)| s)
+                    .unwrap_or_default();
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                serde_json::to_string(&after).unwrap_or_default().hash(&mut hasher);
+                let translated = variants::get_segments(&conn, &variant.id)
+                    .map(|(_, s)| s)
+                    .unwrap_or_default();
+                let excerpt: Vec<serde_json::Value> = original_segments
+                    .iter()
+                    .zip(translated.iter())
+                    .take(12)
+                    .map(|(o, t)| {
+                        serde_json::json!({
+                            "segment_index": o.segment_index,
+                            "start_ms": o.start_ms,
+                            "original": o.text,
+                            "translation": t.text,
+                        })
+                    })
+                    .collect();
+                let report = variants::get_meta(&conn, &variant.id)
+                    .ok()
+                    .flatten()
+                    .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok());
+                (hasher.finish(), excerpt, report)
+            };
+            let all = store
+                .get_connection()
+                .ok()
+                .and_then(|mut conn| variants::list(&mut conn, id).ok())
+                .unwrap_or_default();
+            let payload = serde_json::json!({
+                "meeting_id": id,
+                "source_variant": source.id,
+                "source_language": source.language,
+                "target_language": target,
+                "original_unchanged": hash_before == hash_after,
+                "original_still_active": all.iter().any(|v| v.id == source.id && v.active),
+                "translation": variant,
+                "variants": all,
+                "report": report,
+                "excerpt": excerpt,
+                "elapsed_ms": elapsed_ms,
+            });
+            emit_headless_payload(&payload, args.out.as_deref());
+            0
+        }
+        Err(code) => {
+            eprintln!("error: translation failed: {code}");
+            if code.starts_with("translate_empty")
+                || code.starts_with("translate_rejected")
+                || code.starts_with("translate_same_language")
+            {
+                3
+            } else {
+                1
+            }
         }
     }
 }
@@ -3574,6 +3951,55 @@ fn run_headless_eval_chat(app: &AppHandle, args: &CliArgs, dir: &std::path::Path
         emit_headless_payload(&payload, args.out.as_deref());
     } else {
         for line in eval::summary_lines(&payload) {
+            println!("{line}");
+        }
+        if let Some(path) = args.out.as_deref() {
+            match std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                Ok(()) => eprintln!("wrote {}", path.display()),
+                Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
+    code
+}
+
+// C1 (Goal Lokaler Agent): `--eval-agent --model <id>`. Werkzeugwahl im
+// Schema-Modus auf dem eingebetteten Datensatz. Der lokale Server startet nur
+// ueber den Manager (RAM-Gate, Job-Objekt), mit Speicherwaechter wie in
+// `run_headless_eval_notes`, und wird am Ende gestoppt. Keine Einstellungen,
+// keine Besprechungsdaten. Exit 0 Gate erfuellt, 3 verfehlt, 1 Fehler, 2 ohne --model.
+fn run_headless_eval_agent(app: &AppHandle, args: &CliArgs) -> i32 {
+    crate::selftest::begin_headless_run();
+    let Some(model) = args.model.as_deref().map(str::trim).filter(|m| !m.is_empty()) else {
+        eprintln!("error: --eval-agent needs --model <id> (see --list-models)");
+        return 2;
+    };
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+    let (code, payload) = tauri::async_runtime::block_on(agent::eval::run_cli(model));
+    llm_server.stop();
+
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        for line in agent::eval::summary_lines(&payload) {
             println!("{line}");
         }
         if let Some(path) = args.out.as_deref() {

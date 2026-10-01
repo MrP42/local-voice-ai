@@ -70,6 +70,11 @@ pub enum JobPhase {
     Notes,
     /// Protokoll (Bloecke statt Audiodauer).
     Minutes,
+    /// G5: Uebersetzung einer Transkript-Fassung (Bloecke statt Audiodauer).
+    Translation,
+    /// D1 (#70, M7): Folien aus einem Video erkennen. `done`/`total` zaehlen ms
+    /// POSITION IM VIDEO (Abtastung, danach die Bilder, jeweils von vorn).
+    Slides,
 }
 
 impl JobPhase {
@@ -77,11 +82,18 @@ impl JobPhase {
     /// Sprechertrennung ist ein einziger Modelllauf je Kanal, das Lesen der
     /// Datei ein Kindprozess: dort waere "Pause" ein leeres Versprechen.
     /// Notizen und Protokoll sind es nur, wenn sie in Bloecken laufen; das
-    /// meldet der Lauf selbst ([`JobHandle::begin_phase_ex`]).
+    /// meldet der Lauf selbst ([`JobHandle::begin_phase_ex`]). Die Folienerkennung
+    /// hat in jeder Sekunde Video einen Kontrollpunkt (Pause = Gegendruck auf die
+    /// Pipe, ffmpeg schlaeft) und einen je Folie.
     pub fn pausable(self) -> bool {
         matches!(
             self,
-            JobPhase::Transcription | JobPhase::FinalPass | JobPhase::Notes | JobPhase::Minutes
+            JobPhase::Transcription
+                | JobPhase::FinalPass
+                | JobPhase::Notes
+                | JobPhase::Minutes
+                | JobPhase::Translation
+                | JobPhase::Slides
         )
     }
 }
@@ -1245,6 +1257,9 @@ mod tests {
         assert!(JobPhase::FinalPass.pausable());
         assert!(JobPhase::Notes.pausable());
         assert!(JobPhase::Minutes.pausable());
+        // G5: eine Uebersetzung laeuft in Bloecken und laesst sich anhalten.
+        assert!(JobPhase::Translation.pausable());
+        assert!(JobPhase::Slides.pausable());
         assert!(!JobPhase::Prepare.pausable());
         assert!(!JobPhase::Speakers.pausable());
     }

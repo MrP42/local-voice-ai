@@ -130,3 +130,49 @@ impl Default for Config {
 pub const MAX_LINE_BYTES: usize = 1 << 20;
 /// Laengste Antwort eines Werkzeugs (serialisiert).
 pub const MAX_RESULT_BYTES: usize = 1 << 20;
+
+#[cfg(test)]
+mod tests {
+    /// Verbindungen zur Meetings-Datenbank laufen nur ueber `meetings::store::open_connection`
+    /// (G8: WAL und 30 s Wartezeit). Eine blanke `Connection::open` wartet nur 0 bis 5 s und
+    /// verliert unter Last ein Schreiben (Audit, Freigabe, Zugang).
+    #[test]
+    fn production_code_opens_connections_only_through_open_connection() {
+        let files: [(&str, &str); 14] = [
+            ("bridge.rs", include_str!("bridge.rs")),
+            ("catalog.rs", include_str!("catalog.rs")),
+            ("client.rs", include_str!("client.rs")),
+            ("clients.rs", include_str!("clients.rs")),
+            ("ctl.rs", include_str!("ctl.rs")),
+            ("limits.rs", include_str!("limits.rs")),
+            ("pipe.rs", include_str!("pipe.rs")),
+            ("protocol.rs", include_str!("protocol.rs")),
+            ("runtime.rs", include_str!("runtime.rs")),
+            ("schema.rs", include_str!("schema.rs")),
+            ("server.rs", include_str!("server.rs")),
+            ("view.rs", include_str!("view.rs")),
+            ("test_tools.rs", include_str!("test_tools.rs")),
+            (
+                "commands/agent_bridge.rs",
+                include_str!("../commands/agent_bridge.rs"),
+            ),
+        ];
+        for (name, src) in files {
+            let production = src.split("#[cfg(test)]").next().unwrap();
+            assert!(
+                !production.contains("Connection::open("),
+                "{name}: Verbindungen nur ueber meetings::store::open_connection"
+            );
+        }
+        // Der Weg der Bruecke (MeetingStore::get_connection) haengt das Zeitlimit an.
+        let fx = crate::managers::integrations::test_support::Fx::new();
+        let conn = fx.store.get_connection().unwrap();
+        let ms: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            ms,
+            crate::managers::meetings::store::BUSY_TIMEOUT.as_millis() as i64
+        );
+    }
+}

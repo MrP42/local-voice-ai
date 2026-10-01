@@ -62,6 +62,9 @@ pub enum Purpose {
     Followup,
     /// A1: KI-Zusammenfuehrung zweier Transkript-Fassungen (A3).
     TranscriptMerge,
+    /// G5: Uebersetzung einer Transkript-Fassung (neue Fassung, deterministisch wie die
+    /// Zusammenfuehrung).
+    TranscriptTranslation,
     /// A1: Relevanzpruefung (Workflow-Bausteine, Goal B).
     Relevance,
     /// A1: Abgleich zweier Staende (Goal B).
@@ -86,6 +89,7 @@ impl Purpose {
             Purpose::Chat => "chat",
             Purpose::Followup => "followup",
             Purpose::TranscriptMerge => "transcript_merge",
+            Purpose::TranscriptTranslation => "transcript_translation",
             Purpose::Relevance => "relevance",
             Purpose::Reconcile => "reconcile",
             Purpose::FactCheck => "fact_check",

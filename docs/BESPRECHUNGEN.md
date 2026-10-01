@@ -32,6 +32,13 @@ Während einer Aufnahme ist das Diktat gesperrt. Dateien (Audio, Video, VTT, SRT
 **Datei importieren** (auch mehrere auf einmal) oder indem Sie sie auf die Arbeitsfläche ziehen; sie landen im
 gewählten Projekt. Bei laufender Verarbeitung: **Pausieren** gibt den Rechner frei, **Stoppen** behält das bisherige Transkript.
 
+**Wiederholungsschleifen:** Die Erkennungsmodelle Nemotron und Parakeet bleiben an unsicheren Stellen manchmal an einem
+Wort hängen und wiederholen es bis zu zehnmal („if if if if if“, „s s s s sort“). Beim Erzeugen eines Transkripts
+(Aufnahme, Neu-Transkription, Import, YouTube, Diktat) fasst die App solche Läufe zusammen: ab **vier** gleichen Wörtern
+in Folge bleibt eines, ein Wortbruchstück vor seinem Wort („cre cre cre created“) entfällt. Bis zu drei Wiederholungen
+(„no no no“), Zahlen, Lachen („ha ha ha“) und getrennte Sätze („Go. Go. Go. Go.“) bleiben unverändert. Bereits gespeicherte
+Transkripte, Anzeige und Export werden **nicht** nachträglich verändert; **Neu transkribieren** wendet die Zusammenfassung an.
+
 ### Import-Warteschlange und gleichzeitige Transkriptionen
 
 - Weitere Dateien lassen sich **jederzeit** hinzufügen. Jede bekommt sofort ihre Besprechung (Status **Wartet**, Platz in
@@ -72,6 +79,54 @@ sonst per **KI-Notizen erzeugen**.
   Projekt-Kickoff, Interview, Workshop, Lenkungskreis). Gewechselt wird im Menü ☰ (**Vorlage wechseln …**); „Automatisch“ wählt nach Inhalt.
   **Vorlagen verwalten …**: eigene anlegen, duplizieren, als Datei (`.lvtemplate.json`) austauschen.
   Die Standardvorlage wählen Sie in den Einstellungen.
+
+## Sprache, Übersetzung und Grundlage
+
+**Sprache.** Beim Import und bei der Neu-Transkription bestimmt die App die Sprache der Aufnahme (Einstellung
+„Transkriptionssprache: Automatisch erkennen“): eine kurze Hörprobe läuft durch das geladene Modell; hat es eine eigene
+Spracherkennung (Whisper, Qwen3-ASR, Parakeet v3 als GGUF), zählt sie, sonst wird die Sprache am Text geschätzt. Das
+Modell bleibt, wenn es die Sprache kann (Deutsch: das bisherige Standardmodell); sonst nimmt die App ein installiertes
+mehrsprachiges Modell, nur wenn der Speicher reicht. **Ihre Wahl hat immer Vorrang**: ein von Ihnen gewähltes Modell, eine feste
+Sprache in den Einstellungen und eine im Chip gesetzte Sprache werden nie überstimmt (widerspricht der Text einer festen
+Einstellung deutlich, zeigt der Chip die Sprache des Textes und nennt die Einstellung). Die Sprache steht als **Chip im
+Kopf** (z. B. „Englisch“); ein Klick zeigt die Herkunft (Spracherkennung des Modells, am Text geschätzt, von Ihnen gewählt)
+und erlaubt die Korrektur, auf Wunsch gleich mit **Neu transkribieren** und dem passenden Modell. Die Neu-Transkription legt
+eine neue Fassung an; die bisherige bleibt.
+
+**Übersetzen.** Menü ☰ → **Übersetzen nach …** (auch im Fassungs-Chip und im Sprach-Dialog): Das lokale Sprachmodell übersetzt
+das Transkript Satz für Satz in die Zielsprache und legt eine **neue Fassung** („Übersetzung“) an. Zeitmarken und Sprecher
+bleiben, das **Original bleibt unverändert und aktiv** und ist jederzeit über den Fassungs-Chip wählbar. Der Lauf ist ein
+Auftrag mit Fortschritt, Pause und Stopp; ein Stopp, ein Fehler oder ein Absturz legt keine Fassung an. Jeder Satz wird auf
+**Zahlen, Eigennamen und Satzanzahl** geprüft; Abweichungen sind im Reiter **Vergleich** Satz für Satz neben dem Original
+markiert (mit Zeitmarke und Grund), nie still verworfen. Die Herkunft (Modell, Token, Ausgangsfassung, Zeitpunkt) steht
+im Menü **Herkunft**.
+
+**Grundlage und Sprache von Protokoll und KI-Notizen.** Beim Erzeugen (Menü ☰ → **Neu erzeugen mit Vorlage …**) wählen Sie
+die **Fassung** (Original oder Übersetzung; Standard: die aktive) und die **Sprache des Dokuments** (Standard: Ihre letzte Wahl,
+sonst die Sprache der App). Der Prompt fordert die Sprache ausdrücklich. Beides steht im Kopf des Protokolls
+(„Grundlage: Original (Englisch) · Protokoll auf Deutsch“), über den KI-Notizen und im Info-Dialog.
+## Mehrere Aufnahmen gemeinsam protokollieren (Projekt-Protokoll)
+
+In einem Projekt lassen sich mehrere Aufnahmen zu **einem** Protokoll oder **einer** Zusammenfassung verbinden.
+
+1. Projekt wählen, dann ☰ → **Gemeinsam protokollieren** (oder Rechtsklick auf das Projekt). In der Liste erscheinen Häkchen,
+   oben stehen der Zähler sowie **Alle** und **Keine**. Nur Aufnahmen **mit Transkript** sind wählbar; die anderen stehen
+   ausgegraut mit ihrem Grund („Kein Transkript“, „Läuft noch“, „Leer“).
+2. **Gemeinsam protokollieren …** (ab zwei Aufnahmen): Vorlage wählen (auch **Automatisch**, dann nach dem Inhalt aller
+   Aufnahmen) und die Art, **Protokoll** (die Abschnitte der Vorlage, ausführlich) oder **Zusammenfassung** (dieselben
+   Abschnitte, knapp).
+3. Die Aufnahmen werden nach Datum zusammengeführt, je Aufnahme ein Block mit Kopfzeile; ist alles zu lang für einen
+   Durchlauf, nutzt die App dieselbe Block- und Verdichtungslogik wie beim Einzelprotokoll. Fortschritt und **Stopp** stehen
+   wie bei der Einzelverarbeitung in der Arbeitsfläche und im Projekt; Pausieren gibt es wie dort nicht. Der Lauf gehört
+   dem Programm, ein Seitenwechsel ändert nichts daran.
+4. Das Ergebnis steht **im Projekt** als Eintrag „Projekt-Protokoll“ (oder „Projekt-Zusammenfassung“), lässt sich erneut
+   öffnen, kopieren und als Word, Text oder Markdown herunterladen. **Jede Aussage nennt ihre Quelle** (Aufnahme und Zeit);
+   ein Klick öffnet die Aufnahme und springt im Transkript und im Ton an die Stelle. Aussagen ohne Beleg sind markiert.
+   **Herkunft** zeigt Modell, Vorlage, Zeitpunkt und Verfahren; Lücken (ein Teil ließ sich nicht auswerten) stehen im Dokument.
+
+Eine Aufnahme ohne Transkript weist den ganzen Lauf ab, es wird nichts halb geschrieben. Löschen Sie das Dokument, bleiben
+die Aufnahmen unverändert; Löschen Sie das Projekt, verschwinden seine Projekt-Protokolle aus der Liste (die Zeilen bleiben
+in der Datenbank).
 
 ## Sprecher
 

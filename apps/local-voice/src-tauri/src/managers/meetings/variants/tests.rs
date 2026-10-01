@@ -83,8 +83,11 @@ fn new_variant(f: &Fx, kind: &'static str, texts: &[&str], activate: bool) -> Ne
 
 #[test]
 fn migration_6_is_the_next_index_after_the_register() {
-    // A1 endet bei Index 5, A3 ist Index 6, U7 (Warteschlange) folgt als Index 7, A7 als Index 8.
-    assert_eq!(MIGRATIONS.len(), 9, "A1 = 5, A3 = 6, U7 = 7, A7 = 8");
+    // A1 endet bei Index 5, A3 ist Index 6, U7 (Warteschlange) folgt als Index 7.
+    assert!(
+        MIGRATIONS.len() >= 8,
+        "A1 = 5, A3 = 6, U7 = 7; spaetere Schritte haengen hinten an"
+    );
     let mut c = Connection::open_in_memory().unwrap();
     Migrations::new(MIGRATIONS[..7].to_vec())
         .to_latest(&mut c)

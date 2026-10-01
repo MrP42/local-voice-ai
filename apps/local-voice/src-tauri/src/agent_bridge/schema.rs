@@ -23,10 +23,11 @@
 //! - `agent_approvals`: welche Freigabe zu welchem Zugang und Werkzeug gehoert, damit
 //!   ein Zugang nur den Stand seiner eigenen Freigaben erfaehrt.
 
-/// Stelle des Schritts in `MIGRATIONS` (nach A1 = 5, A3 = 6, U7 = 7). Beim
+/// Stelle des Schritts in `MIGRATIONS` (nach A1 = 5, A3 = 6, U7 = 7, G3 = 8, G5 = 9, D1 = 10,
+/// B1 = 11). Beim
 /// Zusammenfuehren mit Zweigen, die ebenfalls Schritte anhaengen, zusammen mit der
 /// Zeile in `store.rs` anpassen; die Tests richten sich danach.
-pub const MIGRATION_INDEX: usize = 8;
+pub const MIGRATION_INDEX: usize = 12;
 
 pub const AGENT_BRIDGE_MIGRATION: &str = "
 CREATE TABLE agent_clients (

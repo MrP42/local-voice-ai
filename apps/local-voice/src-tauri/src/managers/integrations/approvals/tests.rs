@@ -87,11 +87,12 @@ fn only_one_of_two_concurrent_deciders_wins() {
     let fx = Fx::new();
     let a = create(&fx.conn(), &new("h1"), T0).unwrap();
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+    // Verbindungen ueber den Weg des Produkts (`get_connection`: 30 s Wartezeit,
+    // WAL), nicht blank geoeffnet: unter Last reichten die 5 s der blanken nicht.
     let threads: Vec<_> = (0..8)
         .map(|n| {
-            let (path, id, barrier) = (fx.db_path.clone(), a.id.clone(), barrier.clone());
+            let (conn, id, barrier) = (fx.conn(), a.id.clone(), barrier.clone());
             std::thread::spawn(move || {
-                let conn = rusqlite::Connection::open(&path).unwrap();
                 barrier.wait();
                 decide(&conn, &id, n % 2 == 0, T0 + 5).is_ok()
             })
@@ -450,11 +451,8 @@ fn concurrent_identical_requests_end_up_as_one_row() {
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
     let threads: Vec<_> = (0..8)
         .map(|_| {
-            let (path, barrier) = (fx.db_path.clone(), barrier.clone());
+            let (conn, barrier) = (fx.conn(), barrier.clone());
             std::thread::spawn(move || {
-                let conn = rusqlite::Connection::open(&path).unwrap();
-                conn.busy_timeout(std::time::Duration::from_secs(10))
-                    .unwrap();
                 barrier.wait();
                 open(&conn, &new("gleich"), T0).unwrap()
             })

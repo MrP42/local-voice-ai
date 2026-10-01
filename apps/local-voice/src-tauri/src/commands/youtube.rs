@@ -201,6 +201,8 @@ pub async fn youtube_own_transcription(
         transcription,
         meeting_id,
         model_id,
+        // G5: die Sprache des Videos wird erkannt (Einstellung `auto`) oder gilt wie eingestellt.
+        None,
         RerunSource::Youtube {
             exe,
             video_id,

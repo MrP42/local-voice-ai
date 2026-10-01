@@ -4,8 +4,10 @@
 //! Tests und Sicherheitsreview lesen. Die Regel, von streng nach locker:
 //!
 //! 1. Integration aus -> `Off`, fuer jeden, auch den Nutzer.
-//! 2. Die Art bietet die Faehigkeit nicht an, oder die Richtung der Integration
-//!    erlaubt ihre Zugriffsart nicht (lesend/schreibend) -> `Off`.
+//! 2. Die Art bietet die Faehigkeit nicht an, die Integration hat sie nicht
+//!    eingeschaltet (`enabled_capabilities` in der Konfiguration, A5: Konto mit
+//!    Scopes nur fuer eingeschaltete Faehigkeiten), oder die Richtung der
+//!    Integration erlaubt ihre Zugriffsart nicht (lesend/schreibend) -> `Off`.
 //! 3. Der Nutzer in der Oberflaeche -> `Allow` (er braucht keine Freigabe).
 //! 4. Sonst das gespeicherte Recht, bei fehlender Zeile die Vorgabe
 //!    (`default_mode`); bei externen Agenten gilt zusaetzlich das Recht je
@@ -16,6 +18,27 @@
 use std::collections::HashMap;
 
 use super::model::{Caller, Capability, GrantMode, Integration};
+
+/// Hat der Nutzer diese Faehigkeit an der Integration eingeschaltet? Ohne den
+/// Schluessel `enabled_capabilities` in der Konfiguration gilt alles, was die Art
+/// anbietet (Altbestand, Ordner). Mit dem Schluessel ist es eine Liste der
+/// eingeschalteten Faehigkeiten; ist die Konfiguration dann nicht lesbar oder der
+/// Wert keine Liste, ist NICHTS eingeschaltet (fail closed).
+pub fn capability_enabled(i: &Integration, cap: Capability) -> bool {
+    const KEY: &str = "enabled_capabilities";
+    if !i.config_json.contains(KEY) {
+        return true;
+    }
+    match serde_json::from_str::<serde_json::Value>(&i.config_json)
+        .ok()
+        .and_then(|v| v.get(KEY).cloned())
+    {
+        Some(serde_json::Value::Array(list)) => {
+            list.iter().any(|c| c.as_str() == Some(cap.as_str()))
+        }
+        _ => false,
+    }
+}
 
 /// Gespeicherte Rechte EINER Integration: (Faehigkeit, Aufrufer) -> Modus.
 pub type GrantSet = HashMap<(Capability, Caller), GrantMode>;
@@ -44,6 +67,8 @@ pub fn default_mode(cap: Capability, caller: Caller) -> GrantMode {
 pub enum OffReason {
     IntegrationDisabled,
     CapabilityNotOffered,
+    /// Die Art bietet sie an, an dieser Integration ist sie aber nicht eingeschaltet.
+    CapabilityNotEnabled,
     DirectionBlocks,
     GrantOff,
     ToolOff,
@@ -54,6 +79,7 @@ impl OffReason {
         match self {
             OffReason::IntegrationDisabled => "integration_disabled",
             OffReason::CapabilityNotOffered => "capability_not_offered",
+            OffReason::CapabilityNotEnabled => "capability_not_enabled",
             OffReason::DirectionBlocks => "direction_blocks",
             OffReason::GrantOff => "grant_off",
             OffReason::ToolOff => "tool_off",
@@ -65,6 +91,9 @@ impl OffReason {
         match self {
             OffReason::IntegrationDisabled => "Die Integration ist ausgeschaltet.",
             OffReason::CapabilityNotOffered => "Diese Integration bietet die Fähigkeit nicht an.",
+            OffReason::CapabilityNotEnabled => {
+                "Die Fähigkeit ist an dieser Integration nicht eingeschaltet."
+            }
             OffReason::DirectionBlocks => {
                 "Die Richtung der Integration erlaubt diese Fähigkeit nicht."
             }
@@ -87,6 +116,9 @@ pub fn explain(
     }
     if !i.kind.capabilities().contains(&cap) {
         return (GrantMode::Off, Some(OffReason::CapabilityNotOffered));
+    }
+    if !capability_enabled(i, cap) {
+        return (GrantMode::Off, Some(OffReason::CapabilityNotEnabled));
     }
     if !i.direction.permits(cap.access()) {
         return (GrantMode::Off, Some(OffReason::DirectionBlocks));

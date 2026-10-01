@@ -1,0 +1,71 @@
+{
+  "schema": "lva-workflow@1",
+  "name": "Termin: aufzeichnen, Protokoll, Mail",
+  "description": "Beim Beginn eines Termins im gewählten Kalender: Aufnahme starten (erst nach Bestätigung der Einwilligung), danach Protokoll erzeugen, als Word ablegen und per Mail senden.",
+  "trigger": {
+    "type": "calendar.event_starting",
+    "integration": "cal-graph-1",
+    "lead_min": 1,
+    "only_meetings": true
+  },
+  "variables": {
+    "protokoll_vorlage": {
+      "type": "string",
+      "default": "kunde",
+      "description": "Name der Protokollvorlage"
+    }
+  },
+  "steps": [
+    {
+      "id": "rec",
+      "action": "recording.start",
+      "label": "Aufnahme starten",
+      "params": {
+        "via": "app-automation",
+        "stop": "event_end",
+        "title": "{{trigger.title}}"
+      }
+    },
+    {
+      "id": "min",
+      "action": "meeting.minutes",
+      "label": "Protokoll erzeugen",
+      "params": { "template": "{{vars.protokoll_vorlage}}" }
+    },
+    {
+      "id": "doc",
+      "action": "export.document",
+      "label": "Als Word ablegen",
+      "params": {
+        "format": "docx",
+        "target": "folder-onedrive-protokolle",
+        "name": "{{meeting.title}} – Protokoll"
+      }
+    },
+    {
+      "id": "mail_me",
+      "action": "mail.send",
+      "label": "Mail an mich",
+      "params": {
+        "via": "m365-1",
+        "to": "me",
+        "subject": "Protokoll: {{meeting.title}}",
+        "body": "Das Protokoll zu „{{meeting.title}}“ liegt in {{steps.doc.path}}.",
+        "attach": ["{{steps.doc.path}}"]
+      }
+    },
+    {
+      "id": "mail_all",
+      "action": "mail.send",
+      "label": "Mail an alle Teilnehmenden",
+      "when": "{{trigger.calendar}} == 'cal-graph-1' and trigger.external_attendees > 0",
+      "on_error": "continue",
+      "params": {
+        "via": "m365-1",
+        "to": "participants",
+        "subject": "Protokoll: {{meeting.title}}",
+        "attach": ["{{steps.doc.path}}"]
+      }
+    }
+  ]
+}

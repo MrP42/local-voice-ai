@@ -55,14 +55,29 @@ pub fn distinct_attendees(event: &CalEvent) -> usize {
     seen.len()
 }
 
-fn is_meeting_like(event: &CalEvent, ctx: &ReminderCtx<'_>) -> bool {
-    ctx.all_events
-        || event
-            .join_url
-            .as_deref()
-            .is_some_and(|u| !u.trim().is_empty())
-        || !(ctx.attendee_data)(&event.source_id)
+/// Granola-Regel (E11): ein Termin mit Gegenueber ist eine Besprechung. Geteilt mit
+/// dem Workflow-Ausloeser „Termin beginnt“ (B2), damit beide dieselbe Antwort geben.
+pub fn meeting_like(event: &CalEvent, attendee_data: &dyn Fn(&str) -> bool) -> bool {
+    event
+        .join_url
+        .as_deref()
+        .is_some_and(|u| !u.trim().is_empty())
+        || !attendee_data(&event.source_id)
         || distinct_attendees(event) >= 2
+}
+
+fn is_meeting_like(event: &CalEvent, ctx: &ReminderCtx<'_>) -> bool {
+    ctx.all_events || meeting_like(event, ctx.attendee_data)
+}
+
+/// Liegt `jetzt` im Fenster `[Beginn - Vorlauf, Beginn + CATCH_UP_MS)` eines Termins, der
+/// weder ganztaegig noch abgesagt ist? Die Zeitregel der Erinnerung; der Workflow-
+/// Ausloeser „Termin beginnt“ (B2) nutzt genau diese Funktion, nicht eine Kopie.
+pub fn in_start_window(event: &CalEvent, lead_ms: i64, now_ms: i64) -> bool {
+    !event.all_day
+        && !event.cancelled
+        && event.starts_at - lead_ms <= now_ms
+        && now_ms < event.starts_at + CATCH_UP_MS
 }
 
 /// Die Termine, zu denen jetzt erinnert werden soll, nach Beginn sortiert.
@@ -73,10 +88,7 @@ pub fn due_reminders<'e>(events: &'e [CalEvent], ctx: &ReminderCtx<'_>) -> Vec<&
     let mut due: Vec<&CalEvent> = events
         .iter()
         .filter(|e| {
-            !e.all_day
-                && !e.cancelled
-                && e.starts_at - ctx.lead_ms <= ctx.now_ms
-                && ctx.now_ms < e.starts_at + CATCH_UP_MS
+            in_start_window(e, ctx.lead_ms, ctx.now_ms)
                 && !(ctx.handled)(&e.key)
                 && is_meeting_like(e, ctx)
         })

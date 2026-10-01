@@ -248,6 +248,16 @@ fn start_failures_carry_their_code() {
 mod process {
     use super::*;
 
+    /// Frist fuer Laeufe, die gelingen sollen: nur die Grenze, ab der ein Tool als
+    /// haengend gilt. Das Job-Objekt startet Kinder mit BELOW_NORMAL-Prioritaet; auf
+    /// einem ausgelasteten Rechner (parallele Builds) verhungert selbst ein
+    /// `cmd /c echo` Sekunden lang (gemessen 11 bis 21 s statt 0,1 s). Ein gesundes
+    /// Tool braucht Millisekunden, die Frist kostet also nichts.
+    const PATIENCE: Duration = Duration::from_secs(180);
+    /// Ein haengendes Skript lebt laenger als jede Frist unten (200 s): nur das
+    /// Beenden durch den Job kann den Aufruf vorher zurueckbringen.
+    const HANG: &str = "ping -n 200 127.0.0.1 >nul";
+
     fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
         let p = dir.join(name);
         std::fs::write(&p, format!("@echo off\r\n{body}\r\n")).unwrap();
@@ -258,7 +268,7 @@ mod process {
     fn a_tool_that_prints_its_version_is_read() {
         let d = tempfile::tempdir().unwrap();
         let exe = script(d.path(), "fake.cmd", "echo 2026.09.01");
-        let out = run_version(&exe, Duration::from_secs(20)).unwrap();
+        let out = run_version(&exe, PATIENCE).unwrap();
         assert_eq!(parse_version(&out).as_deref(), Some("2026.09.01"));
     }
 
@@ -267,7 +277,7 @@ mod process {
         let d = tempfile::tempdir().unwrap();
         // Die Attrappe gibt ihre Argumente aus: genau diese zwei, nichts vom Nutzer.
         let exe = script(d.path(), "args.cmd", "echo %*");
-        let out = run_version(&exe, Duration::from_secs(20)).unwrap();
+        let out = run_version(&exe, PATIENCE).unwrap();
         assert_eq!(out.trim(), "--ignore-config --version");
     }
 
@@ -276,7 +286,7 @@ mod process {
         let d = tempfile::tempdir().unwrap();
         let exe = script(d.path(), "fail.cmd", "exit /b 3");
         assert_eq!(
-            run_version(&exe, Duration::from_secs(20)).unwrap_err(),
+            run_version(&exe, PATIENCE).unwrap_err(),
             ToolError::Failed(3)
         );
     }
@@ -285,12 +295,12 @@ mod process {
     fn a_hanging_tool_is_killed_at_the_time_limit() {
         let d = tempfile::tempdir().unwrap();
         // ping erzeugt ein Kind des Skripts: auch das muss mit dem Job-Objekt gehen.
-        let exe = script(d.path(), "hang.cmd", "ping -n 60 127.0.0.1 >nul");
+        let exe = script(d.path(), "hang.cmd", HANG);
         let started = Instant::now();
         let err = run_version(&exe, Duration::from_millis(1500)).unwrap_err();
         assert_eq!(err, ToolError::Timeout);
         assert!(
-            started.elapsed() < Duration::from_secs(10),
+            started.elapsed() < Duration::from_secs(120),
             "kein Haenger: {:?}",
             started.elapsed()
         );
@@ -304,7 +314,7 @@ mod process {
             "flood.cmd",
             "for /L %%i in (1,1,6000) do echo 2026.09.01 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         );
-        let out = run_version(&exe, Duration::from_secs(40)).unwrap();
+        let out = run_version(&exe, PATIENCE).unwrap();
         assert!(out.len() <= MAX_OUTPUT_BYTES, "{}", out.len());
         assert!(
             parse_version(&out).is_none(),
@@ -335,9 +345,7 @@ mod process {
         let d = tempfile::tempdir().unwrap();
         let exe = d.path().join("yt-dlp.exe");
         std::fs::copy(whoami, &exe).unwrap();
-        let status = detect_with(exe.to_str(), None, |p| {
-            run_version(p, Duration::from_secs(20))
-        });
+        let status = detect_with(exe.to_str(), None, |p| run_version(p, PATIENCE));
         assert!(!status.found, "{status:?}");
         assert!(
             matches!(status.error.as_deref(), Some("not_ytdlp") | Some("failed")),

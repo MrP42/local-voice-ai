@@ -695,21 +695,23 @@ fn a_failing_audit_write_leaves_no_open_approval_behind() {
 }
 
 #[test]
-fn a_locked_database_reports_unavailable_and_runs_nothing() {
+fn a_briefly_locked_database_makes_the_call_wait_and_then_go_through() {
     let f = Fixture::new();
     f.grant("create_meeting", GrantMode::Allow);
-    // Ein anderer Schreiber haelt die Datenbank gesperrt; die Bruecke wartet nur die
-    // Standardwartezeit (5 s) und meldet dann einen Fehler statt ewig zu haengen.
+    // Ein anderer Schreiber haelt die Datenbank kurz gesperrt. Die Bruecke oeffnet ihre Verbindungen
+    // ueber `meetings::store::open_connection` (Wartezeit 30 s, G8) und wartet, statt zu scheitern.
     let blocker = f.conn();
-    blocker.execute_batch("BEGIN EXCLUSIVE;").unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        blocker.execute_batch("ROLLBACK;").unwrap();
+    });
     let started = std::time::Instant::now();
-    let e = err(f.bridge.call(&f.ctx(), "create_meeting", &json!({}), None));
-    assert_eq!(e.code, code::STORE_UNAVAILABLE);
-    assert!(started.elapsed() < std::time::Duration::from_secs(20), "kein Warten ohne Ende");
-    assert_eq!(f.calls.len(), 0);
-    blocker.execute_batch("ROLLBACK;").unwrap();
-    // Danach geht derselbe Aufruf wieder.
-    assert!(f.bridge.call(&f.ctx(), "create_meeting", &json!({}), None).is_ok());
+    let step = f.bridge.call(&f.ctx(), "create_meeting", &json!({}), None).unwrap();
+    release.join().unwrap();
+    assert!(matches!(step, CallStep::Done(_)));
+    assert!(started.elapsed() >= std::time::Duration::from_millis(400), "es wurde gewartet");
+    assert_eq!(f.calls.len(), 1, "genau einmal ausgefuehrt");
 }
 
 // --- Grenzen --------------------------------------------------------------------------------

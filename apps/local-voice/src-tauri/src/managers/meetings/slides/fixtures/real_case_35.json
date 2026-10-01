@@ -1,0 +1,352 @@
+[
+ {
+  "start_ms": 0,
+  "end_ms": 20000,
+  "rep_ms": 19000,
+  "hash": "0000000000000000",
+  "black": true,
+  "kind": "black",
+  "slide": null,
+  "text": ""
+ },
+ {
+  "start_ms": 20000,
+  "end_ms": 51000,
+  "rep_ms": 50000,
+  "hash": "824908d9ad2d5cef",
+  "black": false,
+  "kind": "slide",
+  "slide": "s12_kreis_en",
+  "text": "Market Share 2026\nAcme Corp: 38%\nGlobex:\nInitech:\nOthers:\n270/0\n140/0"
+ },
+ {
+  "start_ms": 51000,
+  "end_ms": 60000,
+  "rep_ms": 59000,
+  "hash": "9ba7dcc4564deacf",
+  "black": false,
+  "kind": "residual",
+  "slide": "s09_code_en",
+  "text": "Example: With Backoff fetch_with_retry(url: - attempt 1.. Error> =>"
+ },
+ {
+  "start_ms": 60000,
+  "end_ms": 78000,
+  "rep_ms": 77000,
+  "hash": "b47866cbcf7f3562",
+  "black": false,
+  "kind": "variant",
+  "slide": "s10_dunkel_en",
+  "text": "Summary Revenue up quarter over quarter Customer satisfaction at record 8.3 Two open risks need decision by October 15"
+ },
+ {
+  "start_ms": 78000,
+  "end_ms": 111000,
+  "rep_ms": 110000,
+  "hash": "c25ae136c4a40393",
+  "black": false,
+  "kind": "variant",
+  "slide": "s13_sonderzeichen_de",
+  "text": "Rechtlicher Rahmen nach 5 3 „Angepasste Geschwindigkeit\" - nicht nur Höchstwerte ÄNDERUNGEN ÜBER ÖFFENTLICHE STRASSEN beachten 70 € 680 € je nach Überschreitung Gültig ab 01.01.2027 (Entwurf, Größe/Maße)"
+ },
+ {
+  "start_ms": 111000,
+  "end_ms": 136000,
+  "rep_ms": 135000,
+  "hash": "d0c37408b1e4edbc",
+  "black": false,
+  "kind": "variant",
+  "slide": "s14_zeitplan_de",
+  "text": "Einführung Jan Schulung Rollout Rollout Nord Abnahme Mär Apr Mai Jun Jul Aug Okt Nov Dez"
+ },
+ {
+  "start_ms": 136000,
+  "end_ms": 151000,
+  "rep_ms": 150000,
+  "hash": "bfea1ad174e2c0f3",
+  "black": false,
+  "kind": "slide",
+  "slide": "s14_zeitplan_de",
+  "text": "Zeitplan Einführung\nFeb\nJan\nPilotphase\nSchulung\nRollout Süd\nRollout Nord\nAbnahme\nMär\nApr\nMai\nJun\nJul\nAug\nSep\nOkt\nNov\nDez"
+ },
+ {
+  "start_ms": 151000,
+  "end_ms": 182000,
+  "rep_ms": 181000,
+  "hash": "a18cf1d29266889c",
+  "black": false,
+  "kind": "slide",
+  "slide": "s08_kleintext_de",
+  "text": "Hinweise und Fußnoten\nDie Angaben beruhen auf vorläufigen Zahlen und können sich nach der Prüfung\ndurch den Abschlussprüfer noch ändern. Währungseffekte wurden zum Stichtag\n30. September bewertet; Sondereinflüsse aus der Schließung des Standorts\nFürth sind gesondert ausgewiesen. Für Rückfragen steht die Abteilung\nUnternehmensentwicklung (Frau Bäumer, Durchwahl 4711) zur Verfügung."
+ },
+ {
+  "start_ms": 182000,
+  "end_ms": 194000,
+  "rep_ms": 193000,
+  "hash": "c2947e9dea9a02a6",
+  "black": false,
+  "kind": "image",
+  "slide": null,
+  "text": "Abb. 3"
+ },
+ {
+  "start_ms": 194000,
+  "end_ms": 218000,
+  "rep_ms": 217000,
+  "hash": "c25ae116c4a40393",
+  "black": false,
+  "kind": "return",
+  "slide": "s13_sonderzeichen_de",
+  "text": "Rechtlicher Rahmen nach 5 3 „Angepasste Geschwindigkeit\" - nicht nur Höchstwerte ÄNDERUNGEN ÜBER ÖFFENTLICHE STRASSEN beachten 70 € 680 € je nach Überschreitung Gültig ab 01.01.2027 (Entwurf, Größe/Maße)"
+ },
+ {
+  "start_ms": 218000,
+  "end_ms": 241000,
+  "rep_ms": 240000,
+  "hash": "8546c3574736ae5e",
+  "black": false,
+  "kind": "slide",
+  "slide": "s10_dunkel_en",
+  "text": "Summary\nRevenue up 5.6% quarter over quarter\nCustomer satisfaction at record 8.3\nTwo open risks need a decision by October 15"
+ },
+ {
+  "start_ms": 241000,
+  "end_ms": 274000,
+  "rep_ms": 273000,
+  "hash": "73ba5c7053850b7c",
+  "black": false,
+  "kind": "variant",
+  "slide": "s12_kreis_en",
+  "text": "Market Share 2026 Acme Corp: 38% Initech: Others: 270/0 140/0"
+ },
+ {
+  "start_ms": 274000,
+  "end_ms": 291000,
+  "rep_ms": 290000,
+  "hash": "bfea1ad174e2c0f3",
+  "black": false,
+  "kind": "return",
+  "slide": "s14_zeitplan_de",
+  "text": "Zeitplan Einführung\nFeb\nJan\nPilotphase\nSchulung\nRollout Süd\nRollout Nord\nAbnahme\nMär\nApr\nMai\nJun\nJul\nAug\nSep\nOkt\nNov\nDez"
+ },
+ {
+  "start_ms": 291000,
+  "end_ms": 319000,
+  "rep_ms": 318000,
+  "hash": "a58cf1d29266889c",
+  "black": false,
+  "kind": "return",
+  "slide": "s08_kleintext_de",
+  "text": "Hinweise und Fußnoten\nDie Angaben beruhen auf vorläufigen Zahlen und können sich nach der Prüfung\ndurch den Abschlussprüfer noch ändern. Währungseffekte wurden zum Stichtag\n30. September bewertet; Sondereinflüsse aus der Schließung des Standorts\nFürth sind gesondert ausgewiesen. Für Rückfragen steht die Abteilung\nUnternehmensentwicklung (Frau Bäumer, Durchwahl 4711) zur Verfügung."
+ },
+ {
+  "start_ms": 319000,
+  "end_ms": 352000,
+  "rep_ms": 351000,
+  "hash": "d022d0b6f4197a78",
+  "black": false,
+  "kind": "slide",
+  "slide": "s05_pipeline_en",
+  "text": "Data Pipeline Architecture\nIngest\nKafka topics\nValidate\nSchema checks\nTransform\nSparkjobs\nStore\nParquet on S3\nFig. 2: End-to-end latency budget is 450 ms per event."
+ },
+ {
+  "start_ms": 352000,
+  "end_ms": 370000,
+  "rep_ms": 369000,
+  "hash": "8546c3574736ae5e",
+  "black": false,
+  "kind": "return",
+  "slide": "s10_dunkel_en",
+  "text": "Summary\nRevenue up 5.6% quarter over quarter\nCustomer satisfaction at record 8.3\nTwo open risks need a decision by October 15"
+ },
+ {
+  "start_ms": 370000,
+  "end_ms": 406000,
+  "rep_ms": 405000,
+  "hash": "39ea5eb32e205369",
+  "black": false,
+  "kind": "slide",
+  "slide": "s04_tabelle_de",
+  "text": "Kennzahlen im Vergleich\nKennzahl\nUmsatz (Mio. €)\nBruttomarge\nKundenzufriedenheit\nRücksendungen\nMitarbeitende\nQ2 2026\n41,2 %\n214\nQ3 2026\n13,1\n43,0 %\n227\nVeränderung\n+ Pkt.\n+0,4\n-0,4 Pkt."
+ },
+ {
+  "start_ms": 406000,
+  "end_ms": 423000,
+  "rep_ms": 422000,
+  "hash": "0000000000000000",
+  "black": true,
+  "kind": "black",
+  "slide": null,
+  "text": ""
+ },
+ {
+  "start_ms": 423000,
+  "end_ms": 447000,
+  "rep_ms": 446000,
+  "hash": "d022d0b6f4197a78",
+  "black": false,
+  "kind": "return",
+  "slide": "s05_pipeline_en",
+  "text": "Data Pipeline Architecture\nIngest\nKafka topics\nValidate\nSchema checks\nTransform\nSparkjobs\nStore\nParquet on S3\nFig. 2: End-to-end latency budget is 450 ms per event."
+ },
+ {
+  "start_ms": 447000,
+  "end_ms": 460000,
+  "rep_ms": 459000,
+  "hash": "426aa890be952fcc",
+  "black": false,
+  "kind": "slide",
+  "slide": "s03_balken_de",
+  "text": "Umsatz nach Region (Mio. €)\n4,2\nNord\n6,8\nSüd\n3,1\nOst\nWest\n2,4\nÜbersee"
+ },
+ {
+  "start_ms": 460000,
+  "end_ms": 484000,
+  "rep_ms": 483000,
+  "hash": "dff7fb32969de0d0",
+  "black": false,
+  "kind": "slide",
+  "slide": "s13_sonderzeichen_de",
+  "text": "Rechtlicher Rahmen nach 5 3 StVO\n„Angepasste Geschwindigkeit\" - nicht nur Höchstwerte\nÄNDERUNGEN ÜBER ÖFFENTLICHE STRASSEN beachten\nBußgeld: 70 € bis 680 € je nach Überschreitung\nGültig ab 01.01.2027 (Entwurf, Stand: Größe/Maße)"
+ },
+ {
+  "start_ms": 484000,
+  "end_ms": 502000,
+  "rep_ms": 501000,
+  "hash": "b04435535f5a0ec7",
+  "black": false,
+  "kind": "residual",
+  "slide": "s04_tabelle_de",
+  "text": "Kennzahlen (Mio. Veränderung Pkt."
+ },
+ {
+  "start_ms": 502000,
+  "end_ms": 513000,
+  "rep_ms": 512000,
+  "hash": "626aa890be952fcc",
+  "black": false,
+  "kind": "return",
+  "slide": "s03_balken_de",
+  "text": "Umsatz nach Region (Mio. €)\n4,2\nNord\n6,8\nSüd\n3,1\nOst\nWest\n2,4\nÜbersee"
+ },
+ {
+  "start_ms": 513000,
+  "end_ms": 543000,
+  "rep_ms": 542000,
+  "hash": "652ef4e11ac83054",
+  "black": false,
+  "kind": "slide",
+  "slide": "s09_code_en",
+  "text": "Example: Retry With Backoff\nfn fetch_with_retry(url: &str)\n- > Result<String,\nlet mut delay = Duration: :\nfor attempt in 1.. 5 {\nmatch client.get(url).send() {\nOk(resp)\n=> return resp.text(),\nError> {\nErr(e) if attempt < 5 => sleep(delay),\nErr(e)\n=> return Err(e.into()),\ndelay"
+ },
+ {
+  "start_ms": 543000,
+  "end_ms": 562000,
+  "rep_ms": 561000,
+  "hash": "746074e1ab03a447",
+  "black": false,
+  "kind": "slide",
+  "slide": "s02_agenda_de",
+  "text": "Agenda\nErgebnisse im Überblick\nKundenzufriedenheit und Rückmeldungen\nMaßnahmen für das nächste Quartal\nGrößere Risiken und Abhängigkeiten\nOffene Fragen und Nächste Schritte"
+ },
+ {
+  "start_ms": 562000,
+  "end_ms": 579000,
+  "rep_ms": 578000,
+  "hash": "5c31ab1b0d4bb7bb",
+  "black": false,
+  "kind": "variant",
+  "slide": "s03_balken_de",
+  "text": "Umsatz nach Region (Mio. €) 4,2 Nord 3,1 2,4 Übersee"
+ },
+ {
+  "start_ms": 579000,
+  "end_ms": 615000,
+  "rep_ms": 614000,
+  "hash": "880743694d6ded98",
+  "black": false,
+  "kind": "variant",
+  "slide": "s02_agenda_de",
+  "text": "Ergebnisse im Überblick und Rückmeldungen Maßnahmen für das nächste Quartal Größere Risiken und Abhängigkeiten Offene Fragen und Nächste"
+ },
+ {
+  "start_ms": 615000,
+  "end_ms": 624000,
+  "rep_ms": 623000,
+  "hash": "442ad800d9645c33",
+  "black": false,
+  "kind": "slide",
+  "slide": "s01_titel_de",
+  "text": "Quartalsbericht Q3 2026 — Überblick\nPräsentiert von Jürgen Größmann\nMüller & Söhne GmbH • Düsseldorf"
+ },
+ {
+  "start_ms": 624000,
+  "end_ms": 654000,
+  "rep_ms": 653000,
+  "hash": "fc045df1eb55cf9c",
+  "black": false,
+  "kind": "slide",
+  "slide": "s06_findings_en",
+  "text": "Key Findings\nLatency reduced by 37% after caching\nThroughput: 1,250 req/s at p95 < 80 ms\nError rate down from 0.42% to 0.07 %\nRollout to EU-West completed on Sep 14\nNext: multi-region failover (Q4)"
+ },
+ {
+  "start_ms": 654000,
+  "end_ms": 660000,
+  "rep_ms": 659000,
+  "hash": "d87a5c64c5cd6a07",
+  "black": false,
+  "kind": "image",
+  "slide": null,
+  "text": ""
+ },
+ {
+  "start_ms": 660000,
+  "end_ms": 680000,
+  "rep_ms": 679000,
+  "hash": "880743694d6ded98",
+  "black": false,
+  "kind": "return",
+  "slide": "s02_agenda_de",
+  "text": "Ergebnisse im Überblick und Rückmeldungen Maßnahmen für das nächste Quartal Größere Risiken und Abhängigkeiten Offene Fragen und Nächste"
+ },
+ {
+  "start_ms": 680000,
+  "end_ms": 710000,
+  "rep_ms": 709000,
+  "hash": "443ad800d9645c33",
+  "black": false,
+  "kind": "return",
+  "slide": "s01_titel_de",
+  "text": "Quartalsbericht Q3 2026 — Überblick\nPräsentiert von Jürgen Größmann\nMüller & Söhne GmbH • Düsseldorf"
+ },
+ {
+  "start_ms": 710000,
+  "end_ms": 728000,
+  "rep_ms": 727000,
+  "hash": "5cfe5fdb0ebbd459",
+  "black": false,
+  "kind": "variant",
+  "slide": "s01_titel_de",
+  "text": "Quartalsbericht Q3 2026 — Überblick Präsentiert von Jürgen Größmann Müller & Söhne GmbH Düsseldorf"
+ },
+ {
+  "start_ms": 728000,
+  "end_ms": 745000,
+  "rep_ms": 744000,
+  "hash": "1d44963f77c6b207",
+  "black": false,
+  "kind": "variant",
+  "slide": "s05_pipeline_en",
+  "text": "Data Pipeline Architecture Ingest Schema Transform Sparkjobs Store Parquet on S3 2: latency budget is event."
+ },
+ {
+  "start_ms": 745000,
+  "end_ms": 751000,
+  "rep_ms": 750000,
+  "hash": "1d44963f77c6b207",
+  "black": false,
+  "kind": "return",
+  "slide": "s05_pipeline_en",
+  "text": "Data Pipeline Architecture Ingest Schema Transform Sparkjobs Store Parquet on S3 2: latency budget is event."
+ }
+]

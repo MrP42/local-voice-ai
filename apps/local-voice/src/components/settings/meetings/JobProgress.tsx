@@ -178,7 +178,10 @@ export const JobPanel: React.FC<JobPanelProps> = ({
   const holding = progress.state === "pausing" || progress.state === "paused";
   const stopping = progress.state === "stopping";
   const pauseDisabled = busy || stopping || (!holding && !progress.pausable);
-  const generating = progress.phase === "notes" || progress.phase === "minutes";
+  const generating =
+    progress.phase === "notes" ||
+    progress.phase === "minutes" ||
+    progress.phase === "translation";
 
   const statusText =
     progress.state === "running"
@@ -259,10 +262,15 @@ export const JobPanel: React.FC<JobPanelProps> = ({
         {progress.total > 0 &&
           (countsAudio(progress) ? (
             <span data-testid="job-amount">
-              {t("meetings.progress.audioOf", {
-                done: formatClock(progress.done),
-                total: formatClock(progress.total),
-              })}
+              {t(
+                progress.phase === "slides"
+                  ? "meetings.progress.videoOf"
+                  : "meetings.progress.audioOf",
+                {
+                  done: formatClock(progress.done),
+                  total: formatClock(progress.total),
+                },
+              )}
             </span>
           ) : (
             <span data-testid="job-amount">
@@ -312,9 +320,11 @@ export const JobPanel: React.FC<JobPanelProps> = ({
         }
       >
         <p className="text-sm text-text/80">
-          {generating
-            ? t("meetings.progress.stopBodyGenerate")
-            : t("meetings.progress.stopBody")}
+          {progress.phase === "slides"
+            ? t("meetings.progress.stopBodySlides")
+            : generating
+              ? t("meetings.progress.stopBodyGenerate")
+              : t("meetings.progress.stopBody")}
         </p>
       </Dialog>
     </div>

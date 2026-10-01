@@ -48,6 +48,9 @@ test.beforeEach(async ({ page }) => {
     w.__calls = [];
     w.__exportResult = { ok: true };
     w.__copyResult = { ok: true };
+    w.__integrations = []; // A6: Ziele fuer „Ablegen in“
+    w.__placeResult = { ok: true };
+    w.__vaultResult = "created";
     w.__savePath = null; // null: Pfad aus dem Filter bilden
     w.__meetings = [
       {
@@ -157,6 +160,24 @@ test.beforeEach(async ({ page }) => {
               const r = w.__copyResult;
               if (r.ok) return null;
               throw r.error;
+            }
+            case "integrations_list":
+              return w.__integrations;
+            case "integration_export_to_folder": {
+              const r = w.__placeResult;
+              if (!r.ok) throw r.error;
+              return {
+                rel: `Protokolle/Kundentermin.${args.format}`,
+                bytes: 100,
+              };
+            }
+            case "integration_save_to_vault": {
+              const r = w.__placeResult;
+              if (!r.ok) throw r.error;
+              return {
+                rel: "00_inbox/2026-10-01 Kundentermin.md",
+                result: w.__vaultResult,
+              };
             }
             case "get_selected_model":
               return "";
@@ -433,4 +454,169 @@ test("Export-Dialog (Screenshot)", async ({ page }) => {
     path: "../../koordination/granola-besprechungen/abnahme/p6d-export.png",
     animations: "disabled",
   });
+});
+
+// ---------------------------------------------------------------------------
+// A6: Ablegen in einen Ordner oder Obsidian-Vault
+// ---------------------------------------------------------------------------
+
+const target = (
+  id: string,
+  kind: string,
+  label: string,
+  extra: Record<string, unknown> = {},
+) => ({
+  integration: {
+    id,
+    kind,
+    label,
+    enabled: true,
+    direction: "both",
+    ...extra,
+  },
+});
+
+const setTargets = (page: Page, list: unknown[]) =>
+  page.evaluate((l) => ((window as any).__integrations = l), list);
+
+test("Ablegen in: Ordner und Vault erscheinen, ausgeschaltete und lesende nicht", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).__integrations = [];
+  });
+  await openExport(page);
+  await expect(page.getByTestId("export-place")).toHaveCount(0);
+  await page.getByRole("button", { name: "Schließen" }).first().click();
+  await setTargets(page, [
+    target("f1", "folder", "Ablage Berichte"),
+    target("v1", "obsidian", "AI-OS Vault"),
+    target("f2", "folder", "Ausgeschaltet", { enabled: false }),
+    target("f3", "folder", "Nur lesen", { direction: "read" }),
+    target("y1", "youtube", "YouTube"),
+  ]);
+  await page.getByTestId("export-open").click();
+  const rows = page.getByTestId("export-place-target");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Ordner „Ablage Berichte“");
+  await expect(rows.nth(1)).toContainText("Als Notiz in „AI-OS Vault“");
+  await expect(rows.nth(0).getByRole("button")).toHaveText([
+    "Markdown",
+    "Word",
+    "PDF",
+  ]);
+});
+
+test("Ablegen in einen Ordner: Format und gewählte Teile gehen ans Backend, der Pfad steht in der Meldung", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).__integrations = [
+      {
+        integration: {
+          id: "f1",
+          kind: "folder",
+          label: "Ablage Berichte",
+          enabled: true,
+          direction: "both",
+        },
+      },
+    ];
+  });
+  await openExport(page);
+  await page
+    .getByTestId("export-dialog")
+    .getByLabel("Transkript", { exact: true })
+    .uncheck();
+  await page.getByTestId("place-f1-docx").click();
+  await expect
+    .poll(
+      async () => (await calls(page, "integration_export_to_folder")).length,
+    )
+    .toBe(1);
+  const [call] = await calls(page, "integration_export_to_folder");
+  expect(call.args).toEqual({
+    id: "f1",
+    meetingId: "m1",
+    format: "docx",
+    parts: { ...ALL, transcript: false },
+  });
+  await expect(toasts(page).last()).toContainText(
+    "Abgelegt in „Ablage Berichte“: Protokolle/Kundentermin.docx",
+  );
+  // Kein Speichern-Dialog: das Ziel steht fest.
+  expect(await calls(page, "plugin:dialog|save")).toHaveLength(0);
+});
+
+test("Notiz im Vault: angelegt, aktualisiert und unverändert werden unterschieden", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).__integrations = [
+      {
+        integration: {
+          id: "v1",
+          kind: "obsidian",
+          label: "AI-OS Vault",
+          enabled: true,
+          direction: "both",
+        },
+      },
+    ];
+  });
+  await openExport(page);
+  for (const [result, text] of [
+    [
+      "created",
+      "Notiz angelegt in „AI-OS Vault“: 00_inbox/2026-10-01 Kundentermin.md",
+    ],
+    ["updated", "Notiz aktualisiert in „AI-OS Vault“"],
+    ["unchanged", "ist schon aktuell"],
+  ] as const) {
+    await page.evaluate((r) => ((window as any).__vaultResult = r), result);
+    await page.getByTestId("place-v1-vault").click();
+    await expect(toasts(page).filter({ hasText: text })).toHaveCount(1);
+  }
+  const saves = await calls(page, "integration_save_to_vault");
+  expect(saves).toHaveLength(3);
+  expect(saves[0].args).toEqual({ id: "v1", meetingId: "m1", parts: ALL });
+});
+
+test("Ablegen scheitert verständlich: Code wird übersetzt, Klartext bleibt stehen", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).__integrations = [
+      {
+        integration: {
+          id: "f1",
+          kind: "folder",
+          label: "Ablage",
+          enabled: true,
+          direction: "both",
+        },
+      },
+    ];
+  });
+  await openExport(page);
+  await setResult(page, "__placeResult", {
+    ok: false,
+    error: "folder_path_escape",
+  });
+  await page.getByTestId("place-f1-md").click();
+  await expect(
+    toasts(page).filter({
+      hasText: "Ablegen nicht möglich: Der Unterordner ist nicht zulässig",
+    }),
+  ).toHaveCount(1);
+  await setResult(page, "__placeResult", {
+    ok: false,
+    error: "Der Ordner wurde nicht gefunden.",
+  });
+  await page.getByTestId("place-f1-pdf").click();
+  await expect(
+    toasts(page).filter({
+      hasText: "Ablegen nicht möglich: Der Ordner wurde nicht gefunden.",
+    }),
+  ).toHaveCount(1);
 });

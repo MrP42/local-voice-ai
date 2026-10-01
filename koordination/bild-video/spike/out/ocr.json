@@ -1,0 +1,146 @@
+[
+ {
+  "set": "sauber",
+  "engine": "Windows OCR de-DE",
+  "recall": 0.947,
+  "precision": 0.975,
+  "cer": 0.113,
+  "uml": "70/70",
+  "special": "13/23",
+  "ms_per_img": 47,
+  "worst": [
+   [
+    0.66,
+    "s04_tabelle_de"
+   ],
+   [
+    0.75,
+    "s12_kreis_en"
+   ],
+   [
+    0.89,
+    "s03_balken_de"
+   ]
+  ]
+ },
+ {
+  "set": "sauber",
+  "engine": "Tesseract 5.4 deu+eng",
+  "recall": 0.961,
+  "precision": 0.965,
+  "cer": 0.075,
+  "uml": "70/70",
+  "special": "20/23",
+  "ms_per_img": 337,
+  "worst": [
+   [
+    0.58,
+    "s03_balken_de"
+   ],
+   [
+    0.82,
+    "s04_tabelle_de"
+   ],
+   [
+    0.98,
+    "s09_code_en"
+   ]
+  ]
+ },
+ {
+  "set": "sauber",
+  "engine": "RapidOCR v5 latin (4 Thr)",
+  "recall": 0.98,
+  "precision": 0.995,
+  "cer": 0.089,
+  "uml": "66/70",
+  "special": "21/23",
+  "ms_per_img": 1751,
+  "worst": [
+   [
+    0.68,
+    "s11_build3_de"
+   ],
+   [
+    1.0,
+    "s01_titel_de"
+   ],
+   [
+    1.0,
+    "s02_agenda_de"
+   ]
+  ]
+ },
+ {
+  "set": "video",
+  "engine": "Windows OCR de-DE",
+  "recall": 0.945,
+  "precision": 0.972,
+  "cer": 0.123,
+  "uml": "69/70",
+  "special": "13/23",
+  "ms_per_img": 70,
+  "worst": [
+   [
+    0.68,
+    "s04_tabelle_de"
+   ],
+   [
+    0.75,
+    "s12_kreis_en"
+   ],
+   [
+    0.84,
+    "s03_balken_de"
+   ]
+  ]
+ },
+ {
+  "set": "video",
+  "engine": "Tesseract 5.4 deu+eng",
+  "recall": 0.981,
+  "precision": 0.973,
+  "cer": 0.07,
+  "uml": "68/70",
+  "special": "20/23",
+  "ms_per_img": 700,
+  "worst": [
+   [
+    0.82,
+    "s04_tabelle_de"
+   ],
+   [
+    0.95,
+    "s03_balken_de"
+   ],
+   [
+    0.95,
+    "s14_zeitplan_de"
+   ]
+  ]
+ },
+ {
+  "set": "video",
+  "engine": "RapidOCR v5 latin (4 Thr)",
+  "recall": 0.991,
+  "precision": 0.997,
+  "cer": 0.049,
+  "uml": "69/70",
+  "special": "22/23",
+  "ms_per_img": 2256,
+  "worst": [
+   [
+    0.9,
+    "s14_zeitplan_de"
+   ],
+   [
+    0.95,
+    "s03_balken_de"
+   ],
+   [
+    1.0,
+    "s01_titel_de"
+   ]
+  ]
+ }
+]

@@ -1,4 +1,5 @@
 import type { TFunction } from "i18next";
+import { SLIDE_ERROR_KEYS } from "@/lib/meetingSlides";
 
 /**
  * Backend error/status codes for meeting recording and import, mapped to
@@ -57,6 +58,11 @@ const ERROR_KEY_MAP: Record<string, string> = {
   store_failed: "meetings.errors.storeFailed",
   subtitle_unreadable: "meetings.errors.subtitleUnreadable",
   subtitle_invalid: "meetings.errors.subtitleInvalid",
+  // B2: Bitte eines Ablaufs um die Einwilligung zur Aufnahme
+  consent_not_pending: "meetings.errors.consentNotPending",
+  consent_invalid: "meetings.errors.consentInvalid",
+  // D4: Folienerkennung (recording_active, meeting_not_finished, slides_*)
+  ...SLIDE_ERROR_KEYS,
 };
 
 /** U7: Fehlercodes beim Bearbeiten der Metadaten als i18n-Schluessel. */

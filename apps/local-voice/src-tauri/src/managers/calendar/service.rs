@@ -378,8 +378,28 @@ impl CalendarService {
         service
     }
 
+    /// B2: derselbe Takt treibt die Workflow-Ausloeser (Kalender, Zeitplan, Enden von
+    /// Aufnahmen, Bitten um Einwilligung). Kein zweiter Zeitgeber: `WorkflowHub::on_tick`
+    /// laeuft hier, VOR den Erinnerungen und unabhaengig von deren Einstellungen (Vorlauf 0,
+    /// offenes Hinweisfenster). Eine Panik dort darf die Erinnerung nicht verhindern.
+    fn workflow_tick(&self, now_ms: i64) {
+        let Some(hub) = self
+            .app
+            .try_state::<Arc<crate::managers::workflows::hub::WorkflowHub>>()
+        else {
+            return;
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            hub.on_tick(&self.store, now_ms)
+        }));
+        if result.is_err() {
+            log::error!("calendar: workflow tick panicked");
+        }
+    }
+
     /// Ein Zeitgebertakt der Erinnerung; zeigt hoechstens EINEN Hinweis.
     pub fn remind_tick(&self, now_ms: i64) {
+        self.workflow_tick(now_ms);
         let settings = crate::settings::get_settings(&self.app);
         let lead_ms = i64::from(settings.meeting_reminder_lead_s) * 1_000;
         if lead_ms <= 0 || crate::meeting_prompt::is_open(&self.app) {

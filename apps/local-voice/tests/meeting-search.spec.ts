@@ -231,10 +231,20 @@ test.describe("Besprechungsliste: Suche, Filter, Ordner", () => {
   test("Suche ist entprellt: genau ein Aufruf je Tippserie", async ({
     page,
   }) => {
+    // Die Uhr der Seite steht still, solange getippt wird: ein Timer feuert erst,
+    // wenn der Test die Zeit vorstellt. So haengt das Ergebnis nicht davon ab, wie
+    // schnell der Rechner die Tasten abarbeitet (mit echten 60 ms zwischen den
+    // Tasten und 250 ms Entprellung reisst unter Last die Serie mitten durch).
+    await page.clock.install();
     await openRecordings(page);
-    await searchbox(page).pressSequentially("Budget", { delay: 60 });
+    await page.clock.pauseAt(Date.now() + 10_000);
+    await searchbox(page).pressSequentially("Budget");
+    expect(
+      await calls(page, "meetings_search"),
+      "waehrend des Tippens kein Aufruf",
+    ).toHaveLength(0);
+    await page.clock.runFor(1_000);
     await expect(page.getByTestId("meeting-search-snippet")).toBeVisible();
-    await page.waitForTimeout(600);
     let search = await calls(page, "meetings_search");
     expect(search).toHaveLength(1);
     expect(search[0].args.query).toBe("Budget");
@@ -251,13 +261,23 @@ test.describe("Besprechungsliste: Suche, Filter, Ordner", () => {
     });
 
     // Zweite Tippserie: wieder genau ein Aufruf, mit dem ganzen Text.
-    await searchbox(page).pressSequentially(" 2027", { delay: 60 });
-    await page.waitForTimeout(600);
+    await searchbox(page).pressSequentially(" 2027");
+    expect(
+      await calls(page, "meetings_search"),
+      "waehrend des Tippens kein weiterer Aufruf",
+    ).toHaveLength(1);
+    await page.clock.runFor(1_000);
+    await expect
+      .poll(async () => (await calls(page, "meetings_search")).length)
+      .toBe(2);
     search = await calls(page, "meetings_search");
-    expect(search).toHaveLength(2);
     expect(search[1].args.query).toBe("Budget 2027");
+    // Weitere Zeit vergeht: kein dritter Aufruf, es steht nichts mehr aus.
+    await page.clock.runFor(5_000);
+    expect(await calls(page, "meetings_search")).toHaveLength(2);
 
     // Treffer ohne Snippet in der Attrappe: kein Treffer -> Hinweis.
+    await page.clock.resume();
     await searchbox(page).fill("Xylophon");
     await expect(
       page.getByText("Keine Treffer.", { exact: false }),

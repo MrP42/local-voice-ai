@@ -129,14 +129,25 @@ test("all action buttons are the same size and show no text", async ({
   page,
 }) => {
   await openReadAloud(page);
+  // Die Knoepfe stehen nicht schon beim ersten Bild da: erst warten, dann messen.
+  await expect.poll(() => actions(page).count()).toBeGreaterThanOrEqual(5);
   const boxes = await actions(page).evaluateAll((els) =>
     els.map((el) => {
       const r = el.getBoundingClientRect();
+      // Der Zaehler am Menue (`*-badge`: Pruefbefunde) ist gewollt Text. Er
+      // erscheint erst, wenn die entprellte Skriptpruefung fertig ist, also je
+      // nach Rechnerlast vor oder nach dieser Messung; zur Aussage "Symbol-
+      // Knoepfe ohne Beschriftung" gehoert er nicht (eigener Test: "the error
+      // count shows on the menu button").
+      const label = el.cloneNode(true) as HTMLElement;
+      label
+        .querySelectorAll('[data-testid$="-badge"]')
+        .forEach((badge) => badge.remove());
       return {
         id: el.getAttribute("data-testid"),
         w: r.width,
         h: r.height,
-        text: (el.textContent ?? "").trim(),
+        text: (label.textContent ?? "").trim(),
       };
     }),
   );

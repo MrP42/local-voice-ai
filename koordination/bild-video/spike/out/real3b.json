@@ -1,0 +1,110 @@
+[
+ {
+  "frame": "r00_0000s.png",
+  "s": 1.1,
+  "art": "leer",
+  "beschreibung": "Das Bild ist komplett schwarz."
+ },
+ {
+  "frame": "r05_0044s.png",
+  "s": 0.51,
+  "art": "textfolie",
+  "beschreibung": "Auf der Folie ist ein gelber Kürbis mit dem Text \"Pattypan Metadata and Commons uploading\" zu sehen."
+ },
+ {
+  "frame": "r12_0115s.png",
+  "s": 0.43,
+  "art": "bildfolie",
+  "beschreibung": "Das Bild zeigt eine Präsentation über Inkscape Vector Image Editing mit einem Screenshot der Software."
+ },
+ {
+  "frame": "r13_0122s.png",
+  "s": 0.48,
+  "art": "bildfolie",
+  "beschreibung": "Es ist ein Screenshot der Inkscape-Software, die für Vektorgrafikbearbeitung verwendet wird."
+ },
+ {
+  "frame": "r18_0166s.png",
+  "s": 0.36,
+  "art": "kamera",
+  "beschreibung": "Es ist eine Kamera mit einem Objektiv und einem Display zu sehen."
+ },
+ {
+  "frame": "r19_0176s.png",
+  "s": 0.4,
+  "art": "bildfolie",
+  "beschreibung": "Es ist ein Bild eines externen Mikrofons mit einem Display zu sehen."
+ },
+ {
+  "frame": "r21_0194s.png",
+  "s": 0.52,
+  "art": "bildfolie",
+  "beschreibung": "Auf dem weißen Untergrund liegen Kopfhörer, ein Kabel und ein 3,5-mm-Klinkenstecker."
+ },
+ {
+  "frame": "r22_0198s.png",
+  "s": 0.51,
+  "art": "bildfolie",
+  "beschreibung": "Auf der linken Seite ist eine Szene mit einem Mikrofon und Kabeln zu sehen, während rechts ein Smartphone mit einem Sprecher im Hintergrund abgebildet ist."
+ },
+ {
+  "frame": "r25_0214s.png",
+  "s": 0.4,
+  "art": "kamera",
+  "beschreibung": "Im Raum sind Stühle, Vorhänge und ein Mann zu sehen, der vor einem Bildschirm steht."
+ },
+ {
+  "frame": "r26_0216s.png",
+  "s": 0.39,
+  "art": "kamera",
+  "beschreibung": "Es ist eine Kamera, die an einem großen, runden Gerät befestigt ist."
+ },
+ {
+  "frame": "r27_0218s.png",
+  "s": 0.41,
+  "art": "bildfolie",
+  "beschreibung": "Es ist eine Nahaufnahme eines Geräts, das mit einem Stift verbunden ist."
+ },
+ {
+  "frame": "r28_0243s.png",
+  "s": 0.47,
+  "art": "kamera",
+  "beschreibung": "Ein Mann steht an einem Rednerpult vor einem dunklen Vorhang. Im Hintergrund sind Fenster mit Blick auf Gebäude zu sehen."
+ },
+ {
+  "frame": "r29_0246s.png",
+  "s": 0.43,
+  "art": "kamera",
+  "beschreibung": "Eine Kamera ist auf einem Stativ montiert und filmt eine Präsentation."
+ },
+ {
+  "frame": "r30_0300s.png",
+  "s": 0.44,
+  "art": "bildfolie",
+  "beschreibung": "Ein Mann steht an einem Rednerpult vor einem großen Bildschirm."
+ },
+ {
+  "frame": "r31_0322s.png",
+  "s": 0.41,
+  "art": "kamera",
+  "beschreibung": "Ein Mann hält eine Folie vor einem Rednerpult in einem Raum mit Vorhängen."
+ },
+ {
+  "frame": "r32_0351s.png",
+  "s": 0.5,
+  "art": "bildfolie",
+  "beschreibung": "Ein Sprecher steht vor einer Projektionsfläche in einem Raum mit Vorhängen und Sitzreihen."
+ },
+ {
+  "frame": "r33_0353s.png",
+  "s": 0.45,
+  "art": "kamera",
+  "beschreibung": "Ein Mann hält einen Vortrag an einem Rednerpult vor einem dunklen Vorhang."
+ },
+ {
+  "frame": "r34_0358s.png",
+  "s": 0.26,
+  "art": "leer",
+  "beschreibung": "Das Bild ist komplett schwarz."
+ }
+]
