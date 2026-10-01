@@ -22,6 +22,7 @@ pub mod mcp; // M6-P6e
 mod meeting_prompt; // M5-P5b
 mod overlay;
 mod paste_guard;
+mod paste_session;
 pub mod portable;
 mod process_guard;
 mod refinement;

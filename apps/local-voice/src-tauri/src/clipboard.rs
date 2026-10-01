@@ -652,6 +652,32 @@ fn write_clipboard_verified(app_handle: &AppHandle, text: &str) -> bool {
     false
 }
 
+/// Leave `text` in the clipboard because inserting it is off the table, and
+/// name the reason to show. For text a multi-insert run (sentence mode, live
+/// injection) kept back: the run already knows it must not insert, or an
+/// insertion attempt has an unknown outcome and a second one could duplicate
+/// the text (D7). Returns `reason` when the clipboard verifiably holds the
+/// text, `ClipboardUnverified` otherwise (then it only survives in the
+/// history).
+pub fn park_in_clipboard(
+    text: &str,
+    app_handle: &AppHandle,
+    reason: PasteFallback,
+) -> PasteFallback {
+    // Same transform as the guarded paste applies, so parked content and a
+    // delivered paste are byte-identical.
+    let parked = if get_settings(app_handle).append_trailing_space {
+        format!("{} ", text)
+    } else {
+        text.to_string()
+    };
+    if write_clipboard_verified(app_handle, &parked) {
+        reason
+    } else {
+        PasteFallback::ClipboardUnverified
+    }
+}
+
 /// Paste a finished dictation with fail-closed guards (Windows).
 ///
 /// The contract behind it: a successfully finished dictation either lands in

@@ -9,6 +9,7 @@ use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
 use crate::paste_guard::PasteFallback;
+use crate::paste_session::HeldOutcome;
 use crate::settings::{get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
@@ -41,6 +42,9 @@ struct RecordingErrorEvent {
 struct PasteFallbackEvent {
     reason: String,
     transcript_in_clipboard: bool,
+    /// Only the rest of a continuous-injection run (sentence mode, live
+    /// injection) was kept back; the earlier part IS in the target window.
+    partial: bool,
 }
 
 /// Stable event key per fallback reason; the frontend maps it to a localized
@@ -55,6 +59,83 @@ fn paste_fallback_reason(reason: PasteFallback) -> &'static str {
         PasteFallback::AccessibilityDenied => "accessibility_denied",
         PasteFallback::ClipboardUnverified => "clipboard_unverified",
     }
+}
+
+/// Reason keys for a run that inserted continuously. They differ from the
+/// batch wording where "when the recording stopped" / "while transcribing"
+/// would be wrong: here the target is the window of the FIRST insertion and
+/// the focus moved while the user was still speaking.
+fn live_fallback_reason(reason: PasteFallback) -> &'static str {
+    match reason {
+        PasteFallback::NoTarget => "live_no_target",
+        PasteFallback::FocusChanged => "live_focus_changed",
+        other => paste_fallback_reason(other),
+    }
+}
+
+/// What the user is told when the injection worker could not hand over its
+/// buffer (worker gone or stuck): the text then only exists in the history.
+const LOST_REMAINDER_REASON: PasteFallback = PasteFallback::ClipboardUnverified;
+
+/// Tell the user that (the rest of) a dictation was not inserted: an event for
+/// the main window (toast) plus the overlay notice, which is the one that
+/// reliably reaches the screen. The caller must not hide the overlay
+/// afterwards, the notice hides itself.
+fn announce_paste_fallback(ah: &AppHandle, reason: PasteFallback, partial: bool) {
+    let key = if partial {
+        live_fallback_reason(reason)
+    } else {
+        paste_fallback_reason(reason)
+    };
+    let in_clipboard = reason.transcript_in_clipboard();
+    let _ = ah.emit(
+        "paste-fallback",
+        PasteFallbackEvent {
+            reason: key.to_string(),
+            transcript_in_clipboard: in_clipboard,
+            partial,
+        },
+    );
+    utils::show_paste_fallback_notice(ah, key, in_clipboard, partial);
+}
+
+/// End of a continuous-injection run (sentence mode or live injection): hand
+/// over the text the guard kept out of the target window, once. Returns `true`
+/// when a notice took over the overlay (it must then not be hidden).
+///
+/// Where nothing was attempted for the buffered text (focus had moved, target
+/// elevated), the guarded paste gets ONE more try at the run's target window:
+/// if the user is back there it simply lands, otherwise the guard parks it in
+/// the clipboard. Where an attempt with an unknown outcome came first, the text
+/// is only parked, so it can never be inserted twice (D7).
+fn finish_held_remainder(ah: &AppHandle, held: HeldOutcome) -> bool {
+    let reason = match held {
+        HeldOutcome::Nothing => return false,
+        HeldOutcome::Lost => {
+            error!("Continuous injection: buffered remainder could not be retrieved");
+            LOST_REMAINDER_REASON
+        }
+        HeldOutcome::Held(remainder) => {
+            if remainder.untouched() {
+                match crate::clipboard::paste_transcript_guarded(
+                    remainder.text,
+                    ah.clone(),
+                    remainder.target,
+                ) {
+                    GuardedPasteOutcome::Pasted | GuardedPasteOutcome::NothingToDo => {
+                        debug!("Continuous injection: remainder inserted at the end");
+                        return false;
+                    }
+                    GuardedPasteOutcome::Fallback(reason) => reason,
+                }
+            } else {
+                crate::clipboard::park_in_clipboard(&remainder.text, ah, remainder.reason)
+            }
+        }
+    };
+    error!("Continuous injection: rest of the dictation not inserted: {reason:?}");
+    announce_paste_fallback(ah, reason, true);
+    true
 }
 
 /// Drop guard that notifies the [`TranscriptionCoordinator`] when the
@@ -743,6 +824,9 @@ impl ShortcutAction for TranscribeAction {
         // whatever happens to be focused later is exactly the silent data loss
         // this path must avoid.
         let paste_target = crate::paste_guard::capture_paste_target();
+        // Which live-injection run this stop belongs to. Read here, not in the
+        // task: a new dictation may start while this one is still finishing.
+        let injection_run_id = tm.injection_run_id();
 
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
@@ -798,15 +882,21 @@ impl ShortcutAction for TranscribeAction {
                     // returns its engine.
                     let transcription_source =
                         TranscriptionSource::for_segmenter(rm.segmenter.is_running());
+                    // Text a continuous-injection run kept out of the target
+                    // window (focus moved, elevated target, failed paste).
+                    let mut held = HeldOutcome::Nothing;
                     let transcription_result =
                         if transcription_source == TranscriptionSource::Segmenter {
-                            let text = rm.segmenter.finish(&ah, &tm);
+                            let finished = rm.segmenter.finish(&ah, &tm);
                             debug!(
                                 "Segment mode: {} segment(s) emitted, combined {} chars",
                                 rm.segmenter.segments_emitted(),
-                                text.len()
+                                finished.text.len()
                             );
-                            Ok(text)
+                            if let Some(remainder) = finished.remainder {
+                                held = HeldOutcome::Held(remainder);
+                            }
+                            Ok(finished.text)
                         } else {
                             match tm.finalize_stream() {
                                 // A finalized stream with usable text wins. An empty result
@@ -822,6 +912,13 @@ impl ShortcutAction for TranscribeAction {
                         };
                     let suppress_final_paste =
                         should_suppress_final_paste(transcription_source, tm.stream_injected_any());
+                    if transcription_source == TranscriptionSource::StreamOrBatch
+                        && tm.stream_injected_any()
+                    {
+                        // Drains the injection queue first: every fragment of
+                        // this run is inserted or buffered when this returns.
+                        held = tm.take_held_stream_text(injection_run_id).await;
+                    }
 
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {
@@ -927,7 +1024,8 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             }
 
-                            if processed.final_text.is_empty() {
+                            let has_held = !matches!(held, HeldOutcome::Nothing);
+                            if processed.final_text.is_empty() && !has_held {
                                 utils::hide_recording_overlay(&ah);
                                 change_tray_icon(&ah, TrayIconState::Idle);
                             } else {
@@ -946,8 +1044,12 @@ impl ShortcutAction for TranscribeAction {
                                     if suppress_final_paste {
                                         // Streaming committed text or sentence-mode
                                         // segments already landed in the target app.
+                                        // What the guard kept back is reported once,
+                                        // and the notice then owns the overlay.
                                         debug!("Continuous injection: skipping final paste");
-                                        utils::hide_recording_overlay(&ah_clone);
+                                        if !finish_held_remainder(&ah_clone, held) {
+                                            utils::hide_recording_overlay(&ah_clone);
+                                        }
                                         change_tray_icon(&ah_clone, TrayIconState::Idle);
                                         return;
                                     }
@@ -969,25 +1071,11 @@ impl ShortcutAction for TranscribeAction {
                                             // transcript is parked and the user
                                             // is told what happened.
                                             error!("Automatic paste not performed: {:?}", reason);
-                                            let key = paste_fallback_reason(reason);
-                                            let in_clipboard = reason.transcript_in_clipboard();
-                                            let _ = ah_clone.emit(
-                                                "paste-fallback",
-                                                PasteFallbackEvent {
-                                                    reason: key.to_string(),
-                                                    transcript_in_clipboard: in_clipboard,
-                                                },
-                                            );
                                             // The overlay owns the visible
                                             // notice and hides itself again;
-                                            // the toast above only reaches the
-                                            // main window when it happens to
-                                            // be open.
-                                            utils::show_paste_fallback_notice(
-                                                &ah_clone,
-                                                key,
-                                                in_clipboard,
-                                            );
+                                            // the toast only reaches the main
+                                            // window when it happens to be open.
+                                            announce_paste_fallback(&ah_clone, reason, false);
                                             change_tray_icon(&ah_clone, TrayIconState::Idle);
                                             return;
                                         }
@@ -1155,9 +1243,9 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 #[cfg(test)]
 mod tests {
     use super::{
-        complete_unless_cancelled, is_blank_transcription, paste_fallback_reason,
-        should_start_segmenter, should_suppress_final_paste, should_use_streaming_overlay,
-        TranscriptionSource,
+        complete_unless_cancelled, is_blank_transcription, live_fallback_reason,
+        paste_fallback_reason, should_start_segmenter, should_suppress_final_paste,
+        should_use_streaming_overlay, TranscriptionSource, LOST_REMAINDER_REASON,
     };
     use crate::paste_guard::PasteFallback;
     use crate::settings::OverlayStyle;
@@ -1268,5 +1356,74 @@ mod tests {
         unique.dedup();
         assert_eq!(unique.len(), keys.len(), "duplicate keys in {keys:?}");
         assert!(keys.iter().all(|key| !key.is_empty()));
+    }
+
+    const ALL_REASONS: [PasteFallback; 7] = [
+        PasteFallback::NoTarget,
+        PasteFallback::FocusChanged,
+        PasteFallback::FocusChangedDuringPaste,
+        PasteFallback::TargetElevated,
+        PasteFallback::InjectionFailed,
+        PasteFallback::AccessibilityDenied,
+        PasteFallback::ClipboardUnverified,
+    ];
+
+    /// Continuous runs reuse the batch keys except where the batch wording
+    /// ("when the recording stopped", "while transcribing") would be wrong.
+    #[test]
+    fn live_runs_have_their_own_wording_for_target_and_focus_only() {
+        assert_eq!(
+            live_fallback_reason(PasteFallback::NoTarget),
+            "live_no_target"
+        );
+        assert_eq!(
+            live_fallback_reason(PasteFallback::FocusChanged),
+            "live_focus_changed"
+        );
+        for reason in ALL_REASONS {
+            if !matches!(
+                reason,
+                PasteFallback::NoTarget | PasteFallback::FocusChanged
+            ) {
+                assert_eq!(live_fallback_reason(reason), paste_fallback_reason(reason));
+            }
+        }
+    }
+
+    #[test]
+    fn an_unreachable_remainder_is_announced_as_history_only() {
+        // The worker could not hand the text over, so the clipboard never got
+        // it: the notice must point at the history, not claim the clipboard.
+        assert!(!LOST_REMAINDER_REASON.transcript_in_clipboard());
+    }
+
+    /// The overlay and the toast fall back to the "injection failed" advice for
+    /// an unknown key, which would be wrong advice for the notice they replace.
+    #[test]
+    fn every_notice_key_is_translated_in_german_and_english() {
+        for lang in ["de", "en"] {
+            let path = format!(
+                "{}/../src/i18n/locales/{lang}/translation.json",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let json: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).expect("translation file"))
+                    .expect("valid json");
+            let notice = &json["overlay"]["notice"];
+            for reason in ALL_REASONS {
+                for key in [paste_fallback_reason(reason), live_fallback_reason(reason)] {
+                    assert!(
+                        notice["reason"][key].is_string(),
+                        "{lang}: overlay.notice.reason.{key} missing"
+                    );
+                }
+            }
+            for key in ["titlePartial", "partialInClipboard", "partialInHistory"] {
+                assert!(
+                    notice[key].is_string(),
+                    "{lang}: overlay.notice.{key} missing"
+                );
+            }
+        }
     }
 }

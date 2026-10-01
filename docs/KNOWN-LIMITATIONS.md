@@ -82,7 +82,7 @@ Transkripttext bewusst liegen.
 - Fenster ohne Eingabefeld (z. B. der Explorer): Der Versuch läuft durch, meldet Erfolg, und
   der Text landet nirgends. Er bleibt aber im Verlauf erhalten.
 
-## Live-Injektion des Streams (stream_injection) — funktioniert, mit einer Lücke
+## Live-Injektion des Streams (stream_injection) — funktioniert, abgesichert nach D14
 
 **Der frühere Eintrag „defekt" war überholt und ist am 2026-08-17 durch Messung
 widerlegt worden.** Er beschrieb den Stand von Commit `32ee6d3`; beide Ursachen
@@ -109,18 +109,26 @@ höchstens um den Rest (etwa den Schlusspunkt) und wird nicht erneut eingefügt.
 Die Funktion ist deshalb ein normaler Opt-in-Schalter und nicht mehr zusätzlich
 hinter `experimental_enabled` gesperrt.
 
-### Offene Lücke: beim Streaming prüft niemand den Fokus
+### Fokus- und Rechteprüfung je Fragment (seit D14, Issue #9)
 
-Der abgesicherte Einfügepfad (`paste_guard`) gilt für den **finalen**
-Einfügevorgang. Beim Streaming ist dieser unterdrückt, und die einzelnen
-Fragmente gehen über den Injection-Worker ohne Fokus- oder Rechteprüfung per
-Ctrl+V hinaus — `RunState::wants_context()` hängt an der Refinement-Stufe, nicht
-am Streaming.
+Jedes Fragment geht vor dem Ctrl+V durch denselben Guard wie der Batch-Pfad
+(`paste_session.rs`, unabhängig vom Refinement): Zielfenster ist das Fenster beim
+ersten Fragment; wechselt der Fokus, ist das Ziel erhöht oder schlägt ein Einfügen fehl,
+wird dieses und jedes weitere Fragment **gepuffert statt getippt**. Am Ende erscheint
+**ein** Hinweis; der noch nicht eingefügte Rest liegt in der Zwischenablage (oder wird,
+falls der Nutzer ins Zielfenster zurückkehrte, dort abgesichert eingefügt). Das
+Transkript im Verlauf bleibt vollständig.
 
-Praktische Folge: **Wechselt der Fokus während des Sprechens, landen die
-folgenden Fragmente im neuen Fenster.** Kein stiller Verlust — der Text ist
-sichtbar, nur am falschen Ort — aber unkontrolliert, und der Grund, warum der
-Batch-Pfad die empfohlene Betriebsart bleibt.
+Was bleibt:
+
+- **Ein Fragment, dessen Einfügen genau beim Fokuswechsel läuft,** kann im alten oder im
+  neuen Fenster angekommen sein. Der Guard erkennt es nachträglich, meldet es
+  (`focus_changed_during_paste`) und legt es in die Zwischenablage — **nicht** erneut
+  einfügen, sonst droht Doppelung; ob es schon im Zielfenster steht, muss der Nutzer prüfen.
+- Der Guard kann nicht beobachten, ob die Zielanwendung Strg+V verarbeitet hat (wie beim
+  Batch-Pfad).
+- Das Verhalten ist mit simuliertem Desktop getestet; eine Messung am echten Fenstersystem
+  und die Abnahme am Installer stehen aus.
 
 ### Modellabhängigkeit
 
@@ -197,14 +205,24 @@ vollständige Liste steht in [m2-evidence/ATTRIBUTION.md](m2-evidence/ATTRIBUTIO
 der NVIDIA Open Model License und wird geladen, nicht mitgeliefert. Im ASR-Katalog liegt seit früher ein
 Modell mit CC-BY-NC-4.0 (Canary 1B); es ist nicht vorgewählt und wird nicht für Besprechungen empfohlen.
 
+## Segment-Modus (segment_injection) — abgesichert nach D14
+
+Standardmäßig aus. Seit 2026-10-01 (Issue #3) geht jeder Satz durch denselben Guard wie die
+Live-Injektion (`paste_session.rs`) und danach durch `paste_transcript_guarded`; der alte,
+ungeschützte Pfad `clipboard::paste` wird hier nicht mehr benutzt. Weicht etwas ab (Fokus
+gewechselt, Ziel erhöht, Einfügen fehlgeschlagen), werden die folgenden Sätze weiter
+transkribiert und im Verlauf gespeichert, aber **nicht mehr eingefügt**. Am Ende erscheint
+**ein** Hinweis, der noch nicht eingefügte Rest liegt in der Zwischenablage.
+
+Was bleibt: Jeder Satz wird einzeln transkribiert (weniger Kontext, schwächere Zeichensetzung
+als im Batch-Pfad). Ein Abbruch (Esc) verwirft auch den gepufferten Rest. Abnahme am echten
+Fenstersystem steht aus.
+
 ## Noch nicht implementiert (Stand 2026-08-17)
 
 - Abnahme gegen Browser-Textfeld, Microsoft Word und VS Code. Verifiziert ist bisher
   **Notepad** (UI-Automation-Rücklesung), der Explorer als Fenster ohne Eingabefeld und
   ein erhöhter Task-Manager.
-- Der Segment-Modus (`segment_injection`, standardmäßig aus) nutzt weiterhin den **alten,
-  ungeschützten** Einfügepfad `clipboard::paste`. Nur der Abschluss-Einfügevorgang der
-  Standard-Diktatstrecke ist abgesichert.
 - Regelbasierte Nachbearbeitung, Wörterbuch, Snippets, Formatierungsprofile
 - Windows-Installer, SBOM, Third-Party-Notices (die Danksagungen unter Info und `m2-evidence/ATTRIBUTION.md` nennen seit dem 29.09.2026 die für Besprechungen hinzugekommenen Modelle und Bibliotheken; eine vollständige, maschinell erzeugte Liste aller Abhängigkeiten gibt es weiter nicht)
 - Benchmarks über die eine gemessene Transkription hinaus

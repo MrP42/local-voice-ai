@@ -567,6 +567,10 @@ pub fn show_processing_overlay(app_handle: &AppHandle) {
 
 /// Show the paste-fallback notice: a finished dictation that was not inserted.
 ///
+/// `partial` marks a run that inserted continuously (sentence mode, live
+/// injection) and kept back only the rest: the notice then says that the rest
+/// is in the clipboard, not the whole text.
+///
 /// The overlay carries this rather than a toast in the main window, because
 /// the main window is normally hidden while dictating — a notice nobody can
 /// see is the same as no notice at all. It hides itself after [`NOTICE_VISIBLE`].
@@ -574,6 +578,7 @@ pub fn show_paste_fallback_notice(
     app_handle: &AppHandle,
     reason: &str,
     transcript_in_clipboard: bool,
+    partial: bool,
 ) {
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
         // Payload first, so the webview already has it when the state flips.
@@ -582,6 +587,7 @@ pub fn show_paste_fallback_notice(
             serde_json::json!({
                 "reason": reason,
                 "transcriptInClipboard": transcript_in_clipboard,
+                "partial": partial,
             }),
         );
     }

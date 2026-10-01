@@ -123,9 +123,9 @@ falsch", sondern: **eine Einschränkung, die als Text weiterlebt, nachdem ihre
 Ursache behoben wurde, kostet die Funktion.** Ein „defekt"-Eintrag braucht ein
 Ablaufdatum oder einen Test, der ihn widerlegen kann.
 
-Was bleibt: Beim Streaming greift der `paste_guard` nicht (der finale Einfügevorgang
-ist unterdrückt), es gibt also keine Fokusprüfung pro Fragment. Das ist in
-`KNOWN-LIMITATIONS.md` als offene Lücke festgehalten.
+Was blieb: Beim Streaming griff der `paste_guard` nicht (der finale Einfügevorgang
+ist unterdrückt), es gab keine Fokusprüfung pro Fragment. Diese Lücke ist mit D14
+geschlossen.
 
 ## D9 — Transkript-Klartext nur in Debug-Builds
 **Datum:** 2026-08-17 · **Status:** entschieden und implementiert
@@ -206,3 +206,47 @@ nicht überspielen), das Dokument trägt einen sichtbaren Hinweis und
 
 Nur wenn **kein einziger** Block durchkommt, schlägt die Erzeugung fehl — dann gäbe es
 nichts zu verdichten. Das vollständige Transkript bleibt in jedem Fall erhalten.
+
+## D14 — Mehrfach-Einfügen (Segment-Modus, Live-Injektion) ist fail-closed mit Puffer
+**Datum:** 2026-10-01 · **Status:** entschieden und implementiert (Issues #3 und #9)
+
+D7 regelt den **einen** Einfügeversuch nach dem Stopp. Zwei Betriebsarten fügen aber
+mehrfach pro Aufnahme ein: der Segment-Modus (`segmenter.rs`, ging über den alten
+`clipboard::paste` ohne jede Prüfung) und die Live-Injektion (`stream_injection`, die
+Kontextprüfung hing an `RunState::wants_context()` und damit an `refinement_enabled`,
+ohne Refinement prüfte niemand etwas). „Genau ein Versuch" ist dort falsch, und eine
+Fallback-Meldung pro Satz wäre unbrauchbar. Beide Pfade teilen jetzt ein Modell
+(`paste_session.rs`, reine Zustandsmaschine über einen austauschbaren Desktop):
+
+1. **Ziel** ist das Vordergrundfenster beim ersten Einfügen des Laufs. (Batch erfasst beim
+   Stopp, damit der Nutzer noch hinwechseln kann; Live-Text erscheint beim Sprechen, das
+   erste Einfügen ist der entsprechende Moment.)
+2. **Jedes Fragment** durchläuft dieselbe `paste_guard::preflight` wie der Batch-Pfad:
+   gleiches Fenster, Ziel nicht erhöht, nicht abfragbare Rechtelage gilt als erhöht. Der
+   Segment-Modus geht zusätzlich durch `paste_transcript_guarded` (Prüfung unmittelbar vor
+   und nach dem Tastendruck, Zwischenablage-Rücklesen).
+3. **Die erste Abweichung sperrt den Lauf dauerhaft.** Dieses und jedes weitere Fragment
+   wird gepuffert statt eingefügt. Das ist Absicht: so bleibt die Reihenfolge, nichts wird
+   in ein fremdes Fenster getippt, und es wird nicht mitten in eine Arbeit des Nutzers
+   hineingefügt, nur weil er kurz zurückgekehrt ist. Wiederaufnahme wäre Raten.
+4. **Ein Hinweis am Ende**, nicht je Satz (Overlay + Toast). Der Rest ist exakt der
+   gepufferte Text; der Wortlaut sagt „der Rest liegt in der Zwischenablage", weil der
+   frühere Teil im Zielfenster steht. Das Transkript im Verlauf bleibt in jedem Fall
+   vollständig.
+5. **Ausgabe des Rests:** Wurde für den gepufferten Text nie ein Tastendruck versucht
+   (Fokus gewechselt, Ziel erhöht, kein Ziel), bekommt er **einen** weiteren abgesicherten
+   Versuch ins Ziel — ist der Nutzer zurück, landet er dort, sonst parkt ihn der Guard in
+   der Zwischenablage. Ging ein Versuch mit unbekanntem Ausgang voraus (Tastendruck
+   fehlgeschlagen, Fokus wechselte währenddessen), wird **nur geparkt, nie wiederholt**
+   (D7: doppelter Text ist schlimmer als fehlender Text mit Hinweis).
+6. **Abbruch** (Esc) verwirft den Puffer: der ganze Diktatlauf entfällt, so wie bereits
+   Eingefügtes auch nicht zurückgenommen wird.
+7. **Segment-Modus, Nebenläufigkeit:** Aufnehmen → Transkribieren → Einfügen eines Segments
+   ist serialisiert. `finish` wartet auf das gerade laufende Segment, bevor es den Rest
+   liest — sonst wäre der Rest unvollständig und der Schluss könnte vor einem Satz landen.
+8. **Nicht-Windows:** Fokus und Rechte sind nicht beobachtbar; die Pfade verhalten sich
+   wie vor D14 (wie auch der Batch-Pfad dort).
+
+Nicht gemessen: Das Verhalten wurde bisher mit einem simulierten Desktop getestet, nicht
+auf einem echten Windows-Fenstersystem (Issue #9 verlangt eine Messung, wie oft der Fall
+auftritt). Die Abnahme am Installer steht aus.
