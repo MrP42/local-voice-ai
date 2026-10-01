@@ -44,10 +44,10 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 
 ## Quality Gates
 - [ ] QG1 — Rust komplett grün (`cargo test --lib`, 2x).
-- [ ] QG2 — Frontend: tsc 0, Playwright komplett grün.
-- [ ] QG3 — Systemschutz: neue Prozesse/Modelle hinter process_guard + RAM-Gate.
-- [ ] QG4 — i18n de+en, echte Umlaute (check_i18n_meetings.py).
-- [ ] QG5 — Sicherheitsreview für schreibende MCP/CLI-Werkzeuge und Workflow-Aktionen (Gate-Logik).
+- [x] QG2 — Frontend: tsc 0, Playwright komplett grün.
+- [x] QG3 — Systemschutz: neue Prozesse/Modelle hinter process_guard + RAM-Gate.
+- [x] QG4 — i18n de+en, echte Umlaute (check_i18n_meetings.py).
+- [x] QG5 — Sicherheitsreview für schreibende MCP/CLI-Werkzeuge und Workflow-Aktionen (Gate-Logik).
 - [ ] QG6 — Doku/Hilfe aktualisiert, Handoff geschrieben.
 - [ ] QG7 — Budget: Schätzung ~10,6 MTok (M1 0,3 · M2 1,5 · M3 0,4 · M4 1,7 · M5 2,6 · M6 1,6 · M7 2,0 · M8 0,5); Meldung 50/80 %.
 
@@ -84,6 +84,10 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 ## Evidence
 - 2026-10-01T11:15 AK1 erfüllt — G1 307e7ac7: meeting-empty-entry 13 passed, Rust empty 76 passed, Suite 579 passed
 - 2026-10-01T18:38 AK3 erfüllt — G3 79417c0c: project-minutes.spec 15/15, minutes::project 51 + project_minutes_store 12 Rust-Tests, Quellen mit Audio-Sprung
+- 2026-10-01T18:38 QG2 erfüllt — tsc 0 auf D:\lv-build\int; gezielte Playwright je Paket grün; volle Suite zuletzt 717 passed (A6) – auf Patricks Wunsch keine weiteren Volläufe
+- 2026-10-01T18:38 QG5 erfüllt — Codex-Review review-qg5-codex.md: 4 Befunde B20-B23 → S1 5f9a6b91 behoben, je Test rot→grün; Integrationslauf c0e22923: cargo build ok, 1061 Tests grün
+- 2026-10-01T18:38 QG3 erfüllt — Neue Prozesse/Modelle nur über process_guard/RAM-Gate/HeavyGate (D1 ffmpeg Job-Objekt, D3 mmproj im RAM-Gate, C2/C3 ensure_local, B1 HeavyGate); je Paket Fehlerfall-Tabelle
+- 2026-10-01T18:38 QG4 erfüllt — check_i18n_meetings.py OK (de/en gleiche Schlüssel, echte Umlaute) nach D4/G5/K1/B6
 
 ## Blocker
 -
