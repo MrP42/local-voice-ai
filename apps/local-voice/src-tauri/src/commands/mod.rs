@@ -18,6 +18,7 @@ pub mod models;
 pub mod people; // M5-P5d
 pub mod pages;
 pub mod pages_package;
+pub mod project_minutes; // G3 (#70)
 pub mod provenance; // A1
 pub mod transcription;
 pub mod tts;

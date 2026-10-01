@@ -104,6 +104,9 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // `queue_store.rs`, damit dieser Schritt beim Zusammenfuehren mit anderen
     // Zweigen nur aus dieser einen Zeile besteht.
     M::up(super::queue_store::QUEUE_MIGRATION),
+    // G3 (Projekt-Protokolle, #70). Nur CREATE: vorhandene Zeilen bleiben unveraendert.
+    // Der SQL-Text steht in `project_minutes_store.rs`.
+    M::up(super::project_minutes_store::PROJECT_MINUTES_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).

@@ -1920,6 +1920,91 @@ async meetingsGetAutoTemplate(meetingId: string) : Promise<Result<AutoTemplateIn
 }
 },
 /**
+ * Welche Aufnahmen eines Projekts in ein Projekt-Protokoll eingehen koennen, mit
+ * dem Grund bei den anderen (`meeting_not_finished`, `no_transcript`,
+ * `empty_entry`). Chronologisch.
+ */
+async projectMinutesCandidates(folderId: string) : Promise<Result<ProjectCandidate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_candidates", { folderId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Projekt-Protokolle eines Projekts, das juengste zuerst.
+ */
+async projectMinutesList(folderId: string) : Promise<Result<ProjectMinutesSummary[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_list", { folderId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein Projekt-Protokoll mit Abschnitten, Belegen und Herkunft.
+ */
+async projectMinutesGet(id: string) : Promise<Result<ProjectMinutes | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_get", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Loescht ein Projekt-Protokoll (weich). Die Quellaufnahmen bleiben.
+ */
+async projectMinutesDelete(id: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laeuft fuer das Projekt gerade ein Lauf? Beim Einblenden abfragen; danach
+ * halten `MeetingEvent::Progress` und `ProjectMinutesEvent` den Stand aktuell.
+ */
+async projectMinutesState(folderId: string) : Promise<Result<MinutesRunState, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_state", { folderId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stopp anfordern: `true`, wenn ein Lauf besteht. Er endet vor dem naechsten
+ * Modellaufruf mit `minutes_cancelled` und schreibt nichts.
+ */
+async projectMinutesCancel(folderId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_cancel", { folderId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Projekt-Protokoll erzeugen: die gewaehlten Aufnahmen gemeinsam, mit Vorlage
+ * (`"auto"`, eine ID oder `None` = Standard) und Art (`"minutes"` oder
+ * `"summary"`). Kehrt erst am Ende zurueck (wie `meetings_generate_minutes`); die
+ * Oberflaeche ruft ihn nicht blockierend und liest Fortschritt und Ende aus den
+ * Ereignissen.
+ */
+async projectMinutesGenerate(folderId: string, meetingIds: string[], templateId: string | null, kind: string) : Promise<Result<ProjectMinutes, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_generate", { folderId, meetingIds, templateId, kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Writes a document the user assembled in the app to a path they picked in
  * the system save dialog — as Markdown, plain text or Word, chosen by the
  * file extension.
@@ -4212,6 +4297,7 @@ meetingIndexEvent: MeetingIndexEvent,
 meetingNotesEvent: MeetingNotesEvent,
 meetingPromptEvent: MeetingPromptEvent,
 minutesEvent: MinutesEvent,
+projectMinutesEvent: ProjectMinutesEvent,
 speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
@@ -4227,6 +4313,7 @@ meetingIndexEvent: "meeting-index-event",
 meetingNotesEvent: "meeting-notes-event",
 meetingPromptEvent: "meeting-prompt-event",
 minutesEvent: "minutes-event",
+projectMinutesEvent: "project-minutes-event",
 speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event"
@@ -5085,6 +5172,15 @@ export type EntryFlags = {
  */
 unsupported: boolean; dropped_sources: number; placed_by_fallback: boolean; edited: boolean }
 /**
+ * Wo ein Eintrag herkommt: Aufnahme und Stelle darin. Ein Klick darauf oeffnet
+ * die Aufnahme und springt zur Audiostelle (`segment_index`, `start_ms`).
+ */
+export type EntrySource = { 
+/**
+ * `SourceRecording::index`.
+ */
+recording: number; meeting_id: string; segment_index: number; start_ms: number }
+/**
  * Welche Teile in den Export kommen (`meetings_export`, Zwischenablage).
  * Fehlende Felder gelten als „an“: ein Aufruf ohne Auswahl exportiert alles.
  */
@@ -5776,6 +5872,90 @@ is_self: boolean;
 meeting_count: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
+ * Eine Aufnahme der Auswahl in der Liste der Oberflaeche.
+ */
+export type ProjectCandidate = { meeting_id: string; 
+/**
+ * Waehlbar? Sonst `reason`.
+ */
+eligible: boolean; 
+/**
+ * `meeting_not_finished` | `no_transcript` | `empty_entry`.
+ */
+reason: string | null; 
+/**
+ * Zahl der Segmente mit Text.
+ */
+segments: number }
+export type ProjectEntry = { text: string; assignee: string | null; due: string | null; 
+/**
+ * Gueltige Belege, chronologisch. Leer = `unsupported`.
+ */
+sources: EntrySource[]; 
+/**
+ * Das Modell hat keinen gueltigen Beleg genannt (der Eintrag bleibt, ist
+ * aber markiert; sonst waere die Belegquote geschoent).
+ */
+unsupported: boolean }
+/**
+ * Protokoll oder Zusammenfassung.
+ */
+export type ProjectKind = "minutes" | "summary"
+/**
+ * Ein gespeichertes Projekt-Protokoll samt allem, was die Anzeige braucht.
+ */
+export type ProjectMinutes = { id: string; folder_id: string; kind: ProjectKind; title: string; 
+/**
+ * Das Markdown (Export, Kopieren).
+ */
+body: string; sections: ProjectSection[]; recordings: SourceRecording[]; meta: ProjectMinutesMeta; 
+/**
+ * Erzeugungszeitpunkt (Sekunden).
+ */
+created_at: number }
+/**
+ * Ende eines Projekt-Protokoll-Laufs. `code` von `Failed` ist einer der Codes aus
+ * `minutes::ALL_CODES` oder `project::EXTRA_CODES`; die Oberflaeche uebersetzt ihn.
+ * Ein abgewiesener zweiter Start (`minutes_busy`) sendet KEIN Ereignis: der laufende
+ * Lauf gehoert dem ersten Start. Der Fortschritt kommt als `MeetingEvent::Progress`
+ * unter dem Schluessel `project-minutes:<projekt>`.
+ */
+export type ProjectMinutesEvent = { kind: "done"; folder_id: string; minutes_id: string } | { kind: "failed"; folder_id: string; code: string; 
+/**
+ * Kurzer Grund (z. B. die ID der abgewiesenen Aufnahme); nie Inhalt.
+ */
+detail: string }
+/**
+ * Herkunft eines Projekt-Protokolls (wie bei Einzelprotokollen): Modell,
+ * Anbieter, Vorlage, Verfahren, Luecken.
+ */
+export type ProjectMinutesMeta = { model: string; provider: string; template_id: string; template_title: string; 
+/**
+ * Die automatische Wahl, wenn "Automatisch" gewaehlt war.
+ */
+auto: AutoTemplateInfo | null; single_pass: boolean; chunks_total: number; chunks_split: number; 
+/**
+ * Teile des Transkripts konnten nicht ausgewertet werden.
+ */
+incomplete: boolean; 
+/**
+ * Die fehlenden Stellen (`Aufnahme 2, 03:15-07:40`).
+ */
+gaps: string[]; 
+/**
+ * Quellen-IDs des Modells, die es im Transkript nicht gab.
+ */
+dropped_sources: number; 
+/**
+ * Eintraege ohne gueltigen Beleg.
+ */
+unsupported_entries: number }
+/**
+ * Eine Zeile der Liste im Projekt.
+ */
+export type ProjectMinutesSummary = { id: string; folder_id: string; kind: ProjectKind; title: string; created_at: number; recordings: number; template_title: string; incomplete: boolean }
+export type ProjectSection = { id: string; title: string; kind: SectionKind; entries: ProjectEntry[] }
+/**
  * Ein Eintrag, wie die Oberflaeche ihn zeigt.
  */
 export type ProvenanceEntry = { id: string; subject_kind: SubjectKind; subject_id: string; subject_revision: number | null; 
@@ -5922,6 +6102,19 @@ export type SecretMap = Partial<{ [key in string]: string }>
 export type SectionKind = "text" | "tasks"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
+/**
+ * Eine Aufnahme, die in das Projekt-Protokoll einging. `index` zaehlt ab 1 in
+ * chronologischer Reihenfolge (`R1`, `R2` im Prompt, `A1`, `A2` im Markdown).
+ */
+export type SourceRecording = { index: number; meeting_id: string; title: string; 
+/**
+ * Startzeit der Aufnahme (Sekunden); Importe ohne Start: Anlagezeit.
+ */
+started_at: number; duration_ms: number | null; 
+/**
+ * Zahl der ausgewerteten Transkriptsegmente.
+ */
+segments: number }
 /**
  * Eine Quelle des Inhalts. `kind`: `transcript`, `meeting`, `notes`, `audio`,
  * `subtitle`, `youtube`, `rag`, `vault`, `web` (frei erweiterbar, nur

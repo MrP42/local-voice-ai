@@ -2100,6 +2100,121 @@
         "notCancelled": "Diese Besprechung ist nicht abgebrochen."
       }
     },
+    "projectMinutes": {
+      "menu": "Gemeinsam protokollieren",
+      "menuHint": "Mehrere Aufnahmen dieses Projekts wählen und daraus ein gemeinsames Protokoll oder eine Zusammenfassung erzeugen",
+      "needProject": "Wähle zuerst ein Projekt in der Liste.",
+      "bar": {
+        "label": "Aufnahmen für ein gemeinsames Protokoll wählen",
+        "selected_one": "{{count}} Aufnahme gewählt",
+        "selected_other": "{{count}} Aufnahmen gewählt",
+        "all": "Alle",
+        "allHint": "Alle wählbaren Aufnahmen des Projekts auswählen",
+        "none": "Keine",
+        "noneHint": "Die Auswahl aufheben",
+        "start": "Gemeinsam protokollieren …",
+        "needTwo": "Wähle mindestens zwei Aufnahmen.",
+        "cancel": "Abbrechen",
+        "loading": "Aufnahmen werden geprüft …",
+        "loadFailed": "Die Aufnahmen des Projekts konnten nicht geprüft werden."
+      },
+      "reason": {
+        "meeting_not_finished": "Läuft noch",
+        "no_transcript": "Kein Transkript",
+        "empty_entry": "Leer"
+      },
+      "reasonHint": {
+        "meeting_not_finished": "Diese Aufnahme wird noch aufgenommen oder verarbeitet. Sie lässt sich wählen, sobald sie fertig ist.",
+        "no_transcript": "Diese Aufnahme hat kein Transkript, daraus kann nichts protokolliert werden.",
+        "empty_entry": "Ein leerer Eintrag hat noch keine Aufnahme und kein Transkript."
+      },
+      "dialog": {
+        "title": "Gemeinsames Protokoll erzeugen",
+        "body_one": "Aus {{count}} Aufnahme des Projekts „{{project}}“ entsteht ein gemeinsames Dokument. Jede Aussage nennt ihre Quelle.",
+        "body_other": "Aus {{count}} Aufnahmen des Projekts „{{project}}“ entsteht ein gemeinsames Dokument. Die Aufnahmen werden nach Datum zusammengeführt, jede Aussage nennt ihre Quelle.",
+        "kind": "Art",
+        "start": "Erzeugen",
+        "cancel": "Abbrechen"
+      },
+      "kind": {
+        "minutes": "Protokoll",
+        "minutesHint": "Die Abschnitte der Vorlage, ausführlich",
+        "summary": "Zusammenfassung",
+        "summaryHint": "Dieselben Abschnitte, knapp: wenige zusammengefasste Aussagen"
+      },
+      "list": {
+        "heading": "Projekt-Protokolle",
+        "titleMinutes": "Projekt-Protokoll",
+        "titleSummary": "Projekt-Zusammenfassung",
+        "meta_one": "{{date}} · {{count}} Aufnahme",
+        "meta_other": "{{date}} · {{count}} Aufnahmen",
+        "incomplete": "unvollständig",
+        "running": "Projekt-Protokoll wird erzeugt"
+      },
+      "view": {
+        "toolbar": "Projekt-Protokoll: Werkzeuge",
+        "copy": "Kopieren",
+        "copyHint": "Kopiert das Dokument formatiert (für Word und Mail) und als Markdown",
+        "copied": "Kopiert",
+        "copyError": "Das Dokument konnte nicht kopiert werden",
+        "download": "Herunterladen",
+        "downloadHint": "Als Word, Text oder Markdown speichern",
+        "exportError": "Export fehlgeschlagen",
+        "exportSaved": "Gespeichert unter {{path}}",
+        "delete": "Löschen",
+        "deleteHint": "Das Dokument aus dem Projekt löschen; die Aufnahmen bleiben",
+        "deleteTitle": "Projekt-Protokoll löschen?",
+        "deleteBody": "Das Dokument wird gelöscht. Die Aufnahmen, aus denen es entstand, bleiben unverändert.",
+        "deleteCancel": "Abbrechen",
+        "loadError": "Das Dokument konnte nicht geladen werden: {{error}}",
+        "gone": "Dieses Projekt-Protokoll gibt es nicht mehr.",
+        "empty": "keine",
+        "assignee": "Wer: {{name}}",
+        "due": "Bis: {{date}}",
+        "noProof": "ohne Beleg",
+        "noProofHint": "Für diese Aussage hat das Modell keine Stelle im Transkript genannt.",
+        "sourceHint": "{{title}}, {{time}}: öffnet die Aufnahme an dieser Stelle",
+        "sourceDeleted": "Diese Aufnahme gibt es nicht mehr.",
+        "sourcesLabel": "Quellen",
+        "recordings": "Aufnahmen",
+        "recordingOpen": "{{title}} öffnen",
+        "origin": "Herkunft",
+        "originModel": "Modell",
+        "originTemplate": "Vorlage",
+        "originAuto": "automatisch gewählt",
+        "originCreated": "Erzeugt",
+        "originMode": "Verfahren",
+        "modeSingle": "ein Durchlauf",
+        "modeBlocks_one": "{{count}} Block",
+        "modeBlocks_other": "{{count}} Blöcke",
+        "incomplete": "Das Dokument ist unvollständig: {{gaps}} konnte nicht ausgewertet werden. Die vollständigen Transkripte bleiben erhalten.",
+        "droppedSources_one": "Eine vom Modell genannte Quelle gab es im Transkript nicht und wurde verworfen.",
+        "droppedSources_other": "{{count}} vom Modell genannte Quellen gab es im Transkript nicht und wurden verworfen.",
+        "unsupportedEntries_one": "Eine Aussage hat keinen Beleg.",
+        "unsupportedEntries_other": "{{count}} Aussagen haben keinen Beleg."
+      },
+      "run": {
+        "title": "Gemeinsames Protokoll wird erzeugt",
+        "body": "Die gewählten Aufnahmen werden ausgewertet. Du kannst währenddessen andere Aufnahmen ansehen; das Ergebnis erscheint im Projekt.",
+        "starting": "Wird gestartet …",
+        "close": "Schließen",
+        "cancelled": "Die Erzeugung wurde abgebrochen.",
+        "failed": "Das gemeinsame Protokoll konnte nicht erzeugt werden."
+      },
+      "errors": {
+        "minutes_busy": "Für dieses Projekt wird schon ein gemeinsames Protokoll erzeugt.",
+        "folder_not_found": "Das Projekt gibt es nicht mehr.",
+        "no_selection": "Wähle mindestens eine Aufnahme.",
+        "too_many_recordings": "Zu viele Aufnahmen auf einmal. Wähle weniger.",
+        "not_in_project": "Eine der gewählten Aufnahmen gehört nicht (mehr) zu diesem Projekt.",
+        "kind_invalid": "Unbekannte Art des Dokuments.",
+        "meeting_not_found": "Eine der gewählten Aufnahmen gibt es nicht mehr.",
+        "meeting_not_finished": "Eine der gewählten Aufnahmen wird noch verarbeitet.",
+        "meeting_not_finished_named": "„{{title}}“ wird noch verarbeitet.",
+        "no_transcript": "Eine der gewählten Aufnahmen hat kein Transkript.",
+        "no_transcript_named": "„{{title}}“ hat kein Transkript."
+      }
+    },
     "minutes": {
       "empty": "Noch kein Protokoll erzeugt.",
       "generating": "Protokoll wird erzeugt…",
