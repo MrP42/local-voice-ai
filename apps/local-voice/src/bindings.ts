@@ -1662,12 +1662,12 @@ async meetingsRename(meetingId: string, title: string) : Promise<Result<null, st
 },
 /**
  * Re-runs the transcription of a finished meeting from its stored audio,
- * optionally with a different model. Discards the old segments — see
- * `retranscribe_meeting`.
+ * optionally with a different model and language (G5; `auto`/`None`: detect). The old
+ * transcript stays as a version — see `retranscribe_meeting`.
  */
-async meetingsRetranscribe(meetingId: string, modelId: string | null) : Promise<Result<null, string>> {
+async meetingsRetranscribe(meetingId: string, modelId: string | null, language: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_retranscribe", { meetingId, modelId }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_retranscribe", { meetingId, modelId, language }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1851,11 +1851,13 @@ async changeMeetingImportParallelSetting(value: number) : Promise<Result<null, s
  * (chosen by content) or `None` (the meeting's own choice, else the standard
  * template). The meeting status stays untouched — a failed generation leaves a
  * 'ready' meeting 'ready' and only returns the error. One run per meeting: a
- * second start is refused with `minutes_busy` (P1k, B14).
+ * second start is refused with `minutes_busy` (P1k, B14). G5: `basis` chooses the
+ * transcript version the minutes are written from (default: the active one) and the
+ * language they are written in (default: like the transcript).
  */
-async meetingsGenerateMinutes(meetingId: string, templateId: string | null) : Promise<Result<MeetingDocument, string>> {
+async meetingsGenerateMinutes(meetingId: string, templateId: string | null, basis: DocBasis | null) : Promise<Result<MeetingDocument, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_generate_minutes", { meetingId, templateId }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_generate_minutes", { meetingId, templateId, basis }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2348,6 +2350,88 @@ async transcriptVariantsMerge(meetingId: string, baseId: string, otherId: string
 }
 },
 /**
+ * G5: „Übersetzen nach …“: das lokale Modell übersetzt die Fassung `source_variant_id`
+ * Satz für Satz nach `target_language` und legt eine NEUE Fassung `translation` an (nicht
+ * aktiv). Die Quelle bleibt unverändert und jederzeit wählbar. Läuft als Auftrag der
+ * Besprechung (Phase Übersetzung): Fortschritt in Blöcken, Pause, Stopp; bei Stopp, Fehler
+ * oder Absturz entsteht keine Fassung. Fehler: `translate_*`, `variant_*`, `no_provider`,
+ * `no_model`, `job_busy`.
+ */
+async transcriptVariantTranslate(meetingId: string, sourceVariantId: string, targetLanguage: string) : Promise<Result<TranscriptVariant, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variant_translate", { meetingId, sourceVariantId, targetLanguage }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * G5: der Prüfbericht einer Übersetzung (markierte Sätze mit Grund, Quelle, Sprachen).
+ * `None` bei jeder anderen Fassung.
+ */
+async transcriptVariantReport(variantId: string) : Promise<Result<TranslationReport | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variant_report", { variantId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Chip im Kopf: die Sprache der Besprechung mit Herkunft, das Modell der
+ * Transkription und, wenn es die Sprache nicht abdeckt, ein besseres.
+ */
+async meetingsLanguageInfo(meetingId: string) : Promise<Result<LanguageInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_language_info", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Sprache korrigieren“: der Nutzer setzt die Sprache (Chip im Kopf). Gilt fuer die
+ * Besprechung, das aktive Transkript und die aktive Fassung, mit Herkunft `user`; andere
+ * Fassungen behalten ihre Sprache. Nicht waehrend einer Verarbeitung (`meeting_busy`).
+ * Das Transkript selbst aendert sich nicht: eine Neu-Transkription mit dem passenden Modell
+ * bietet die Oberflaeche danach an (`meetings_retranscribe` mit dieser Sprache).
+ */
+async meetingsSetLanguage(meetingId: string, language: string) : Promise<Result<LanguageInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_set_language", { meetingId, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Das Modell, das die App fuer `language` waehlen wuerde (installiert und genau, sonst
+ * ein Vorschlag aus dem Katalog), vom Modell `current_model` aus gesehen. Fuer die
+ * Vorbelegung im Dialog der Neu-Transkription. `None`: keine Antwort.
+ */
+async meetingsModelForLanguage(currentModel: string | null, language: string) : Promise<Result<ModelSuggestion | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_model_for_language", { currentModel, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * G5: Grundlage und Ausgabesprache einer Version von Protokoll (`minutes`) oder KI-Notizen
+ * (`enhanced_notes`): aus welcher Fassung des Transkripts, in welcher Sprache. `document_id`
+ * waehlt die Version, ohne ist es die juengste. `None` ohne Dokument und bei Versionen aus
+ * der Zeit davor.
+ */
+async meetingsDocumentBasis(meetingId: string, kind: string, documentId: string | null) : Promise<Result<DocumentBasis | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_document_basis", { meetingId, kind, documentId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Schalter „privat/experimentell“ (Standard aus).
  */
 async changeMeetingYoutubePrivateSetting(enabled: boolean) : Promise<Result<null, string>> {
@@ -2492,11 +2576,13 @@ async actionItemsSetStatus(id: string, done: boolean) : Promise<Result<null, str
  * Erzeugt KI-Notizen fuer eine fertige Besprechung aus Notizblock,
  * Transkript und Vorlage (`None` = Vorlage der Besprechung, sonst die
  * Standardvorlage) und legt sie als neue Version ab. Fehler tragen einen
- * Code als Praefix (`no_provider`, `enhance_busy`, ...).
+ * Code als Praefix (`no_provider`, `enhance_busy`, ...). G5: `basis` waehlt die Fassung des
+ * Transkripts (Standard: die aktive) und die Sprache der Notizen (Standard: wie das
+ * Transkript).
  */
-async meetingNotesEnhance(meetingId: string, templateId: string | null) : Promise<Result<MeetingDocument, string>> {
+async meetingNotesEnhance(meetingId: string, templateId: string | null, basis: DocBasis | null) : Promise<Result<MeetingDocument, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_enhance", { meetingId, templateId }) };
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_enhance", { meetingId, templateId, basis }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3128,6 +3214,140 @@ async changeCalendarGraphClientIdSetting(clientId: string | null) : Promise<Resu
 async changeCalendarGraphTenantSetting(tenant: string | null) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_calendar_graph_tenant_setting", { tenant }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zustand des Kontos: Einstellungen, Scopes und was noch fehlt.
+ */
+async m365Status(id: string) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_status", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt ein Microsoft-365-Konto an (ohne Anmeldung). Leere Client-ID und leeres
+ * Verzeichnis uebernehmen die Einstellungen des Kalenders (E14), wenn dort etwas
+ * steht; sonst bleibt das Konto „nicht eingerichtet“, bis eine Client-ID folgt.
+ * Fehler: `m365_invalid|<Text>` oder der Klartext des Registers.
+ */
+async m365Create(label: string, clientId: string | null, tenant: string | null, capabilities: Capability[], filesMode: FilesMode | null, filesFolder: string | null) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_create", { label, clientId, tenant, capabilities, filesMode, filesFolder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aendert Client-ID, Verzeichnis, eingeschaltete Faehigkeiten oder Ablageort
+ * (`None` = unveraendert). Eine andere Client-ID oder ein anderes Verzeichnis
+ * verwirft das Token (neu anmelden); eine zusaetzliche Faehigkeit verlangt beim
+ * naechsten Anmelden die Zustimmung zu ihrem Scope (`needs_consent`).
+ */
+async m365UpdateSettings(id: string, clientId: string | null, tenant: string | null, capabilities: Capability[] | null, filesMode: FilesMode | null, filesFolder: string | null) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_update_settings", { id, clientId, tenant, capabilities, filesMode, filesFolder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anmelden: oeffnet den Systembrowser (Microsoft-Anmeldung mit PKCE, Umleitung auf
+ * einen Listener auf `127.0.0.1`), wartet bis zu 5 Minuten und legt das Konto
+ * verschluesselt ab. Es werden nur die Scopes der eingeschalteten Faehigkeiten
+ * angefragt. Fehler: `m365_*` (siehe `M365Error::code`).
+ */
+async m365SignIn(id: string) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_sign_in", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht eine laufende Anmeldung ab; `false`, wenn keine laeuft.
+ */
+async m365CancelSignIn() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_cancel_sign_in") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Abmelden: das Token wird geloescht, die Integration bleibt.
+ */
+async m365SignOut(id: string) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_sign_out", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verbindung testen: fragt das eigene Profil ab (`GET /me`). Das Ergebnis steht
+ * auch am Eintrag (`last_ok_at`/`last_error`).
+ */
+async m365Test(id: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_test", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Testmail an die eigene Adresse des Kontos (Owner-Pruefung: kommt die Mail an?).
+ */
+async m365SendTestMail(id: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_send_test_mail", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kleine Testdatei in den eingestellten OneDrive-Ordner legen (Owner-Pruefung).
+ */
+async m365UploadTestFile(id: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_upload_test_file", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Follow-up-Mail einer Besprechung ueber das Microsoft-365-Konto senden („senden
+ * über“). Der Entwurf kommt aus dem Dialog; eine unbrauchbare Adresse bricht ab.
+ */
+async meetingFollowupSendM365(integrationId: string, draft: MailDraft) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_followup_send_m365", { integrationId, draft }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Haengt eine Notiz an den Outlook-Termin einer Kalenderzeile (`event_key` aus dem
+ * Kalender-Cache). Ist die Notiz schon im Termin, geschieht nichts (`detail`:
+ * `already_there`).
+ */
+async m365EventNote(integrationId: string, eventKey: string, note: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_event_note", { integrationId, eventKey, note }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4481,6 +4701,7 @@ streamTextEvent: "stream-text-event"
 
 /** user-defined types **/
 
+export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
 /**
  * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
  * Verknuepfung mit der `humans`-Tabelle folgt in M9.
@@ -5383,6 +5604,34 @@ export type DictationAudio =
  * Fluss der Daten: was die Integration lesen darf, was sie schreiben darf.
  */
 export type Direction = "read" | "write" | "both"
+/**
+ * Die Wahl beim Erzeugen.
+ */
+export type DocBasis = { 
+/**
+ * Kennung der Fassung, aus der erzeugt wird; `None`: die aktive Fassung.
+ */
+variant_id: string | null; 
+/**
+ * Sprache des Dokuments (Code); `None` oder `auto`: wie das Transkript.
+ */
+output_language: string | null }
+/**
+ * Was in den Metadaten der Dokumentversion steht und der Oberflaeche gemeldet wird.
+ */
+export type DocumentBasis = { variant_id: string | null; variant_number: number | null; 
+/**
+ * `translation`, `stt`, `retranscribed`, ...
+ */
+variant_kind: string | null; 
+/**
+ * Sprache der Grundlage.
+ */
+language: string | null; 
+/**
+ * Ausgabesprache; `None`: wie die Grundlage.
+ */
+output_language: string | null }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -5429,6 +5678,18 @@ recording: number; meeting_id: string; segment_index: number; start_ms: number }
  * Fehlende Felder gelten als „an“: ein Aufruf ohne Auswahl exportiert alles.
  */
 export type ExportParts = { ai_notes: boolean; notes: boolean; minutes: boolean; transcript: boolean; participants: boolean }
+/**
+ * Wo in OneDrive geschrieben wird.
+ */
+export type FilesMode = 
+/**
+ * Das ganze OneDrive (`Files.ReadWrite`): Arbeits-/Schulkonten und private Konten.
+ */
+"full" | 
+/**
+ * Nur der App-Ordner (`Files.ReadWrite.AppFolder`): nur private Konten.
+ */
+"app_folder"
 export type FitReport = { estimate: MemoryEstimate; 
 /**
  * Freies Budget des massgeblichen Speichers (MiB) -- GPU, sonst RAM.
@@ -5451,6 +5712,14 @@ export type FitVerdict =
  * Kein GPU-Budget messbar -- Urteil nur gegen den RAM.
  */
 "unknown"
+/**
+ * Ein Satz, den die Treuepruefung markiert hat.
+ */
+export type FlaggedSentence = { segment_index: number; 
+/**
+ * `numbers`, `names`, `sentences`, `empty`, `length`, `not_translated`.
+ */
+reasons: string[] }
 export type Folder = { id: string; name: string; color: string | null; sort: number; meeting_count: number; created_at: number; updated_at: number }
 /**
  * Zaehler der Projekte-Spalte neben den Ordnern: alle lebenden Besprechungen
@@ -5613,6 +5882,10 @@ export type JobPhase =
  */
 "minutes" | 
 /**
+ * G5: Uebersetzung einer Transkript-Fassung (Bloecke statt Audiodauer).
+ */
+"translation" | 
+/**
  * D1 (#70, M7): Folien aus einem Video erkennen. `done`/`total` zaehlen ms
  * POSITION IM VIDEO (Abtastung, danach die Bilder, jeweils von vorn).
  */
@@ -5651,6 +5924,34 @@ export type KeyboardImplementation = "tauri" | "handy_keys"
  */
 export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "obsidian" | "wissen" | "agent"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+/**
+ * Was der Chip im Kopf der Besprechung braucht.
+ */
+export type LanguageInfo = { 
+/**
+ * Die Sprache der Besprechung (Code); `None`: unbekannt.
+ */
+code: string | null; 
+/**
+ * `probe`, `text`, `user`, `setting`; `None`: nichts gespeichert (Altbestand).
+ */
+source: string | null; confidence: number | null; 
+/**
+ * Die feste Einstellung, gegen die der Text widersprach.
+ */
+forced: string | null; 
+/**
+ * Der Text widersprach der gewaehlten Sprache.
+ */
+mismatch: string | null; 
+/**
+ * Das Modell, das transkribiert hat, und ob es die Sprache abdeckt.
+ */
+model_id: string | null; model_name: string | null; model_covers: boolean | null; 
+/**
+ * Bessere Wahl, wenn das Modell die Sprache nicht abdeckt.
+ */
+suggestion: ModelSuggestion | null }
 /**
  * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter.
  * 
@@ -5708,6 +6009,20 @@ export type LocalUpdate = { version: string; path: string; file_name: string }
  */
 export type Locality = "local" | "remote"
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * Ergebnis einer Aktion fuer die Oberflaeche: `ok`, sonst ein Fehlercode
+ * (`m365_*` oder `m365_gate|<grund>`), dazu ein Hinweis (z. B. der Ablageort).
+ */
+export type M365ActionResult = { ok: boolean; code: string; detail: string | null }
+export type M365Status = { state: AccountState; client_id: string; tenant: string; account: string | null; display_name: string | null; enabled_capabilities: Capability[]; 
+/**
+ * Faehigkeiten, die sich an diesem Konto einschalten lassen.
+ */
+available_capabilities: Capability[]; files_mode: FilesMode; files_folder: string; required_scopes: string[]; granted_scopes: string[]; missing_scopes: string[]; 
+/**
+ * Zustand des Geheimnisses: `present`, `missing` oder `broken`.
+ */
+secret: string; signing_in: boolean }
 /**
  * Ein bearbeitbarer Mailentwurf. `body_html` wird beim Kopieren und Speichern
  * aus `body_text` neu gebaut (`finalize`), damit Änderungen im Dialog nie
@@ -6089,6 +6404,14 @@ sha256: string | null } } |
  * in a shared cache. Nothing to download.
  */
 "Local"
+/**
+ * Ein Modellvorschlag fuer die Sprache.
+ */
+export type ModelSuggestion = { model_id: string; name: string; 
+/**
+ * Schon installiert (sonst muss es erst unter Modelle geladen werden).
+ */
+downloaded: boolean }
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
 /**
  * Eine Belegstelle: der Satz, in dem die Person angesprochen wird.
@@ -6243,11 +6566,7 @@ created_at: number }
  * Lauf gehoert dem ersten Start. Der Fortschritt kommt als `MeetingEvent::Progress`
  * unter dem Schluessel `project-minutes:<projekt>`.
  */
-export type ProjectMinutesEvent = { kind: "done"; folder_id: string; minutes_id: string } | { kind: "failed"; folder_id: string; code: string; 
-/**
- * Kurzer Grund (z. B. die ID der abgewiesenen Aufnahme); nie Inhalt.
- */
-detail: string }
+export type ProjectMinutesEvent = { kind: "done"; folder_id: string; minutes_id: string } | { kind: "failed"; folder_id: string; code: string; detail: string }
 /**
  * Herkunft eines Projekt-Protokolls (wie bei Einzelprotokollen): Modell,
  * Anbieter, Vorlage, Verfahren, Luecken.
@@ -6676,7 +6995,7 @@ export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
  */
 export type TranscriptVariant = { id: string; meeting_id: string; 
 /**
- * `subtitles_manual`, `subtitles_auto`, `stt`, `merged`, `retranscribed`.
+ * `subtitles_manual`, `subtitles_auto`, `stt`, `merged`, `retranscribed`, `translation`.
  */
 kind: string; language: string | null; model: string | null; 
 /**
@@ -6686,8 +7005,36 @@ number: number;
 /**
  * Sekunden UTC.
  */
-created_at: number; active: boolean; segment_count: number }
+created_at: number; active: boolean; segment_count: number; 
+/**
+ * G5: bei einer Uebersetzung die Fassung, aus der sie entstand.
+ */
+source_variant_id: string | null; 
+/**
+ * G5: bei einer Uebersetzung die Sprache der Quellfassung.
+ */
+source_language: string | null; 
+/**
+ * G5: bei einer Uebersetzung die Zahl der Saetze, die die Treuepruefung markiert hat.
+ */
+flagged: number }
 export type TranslateOutcome = { transcript: string; translation: string }
+/**
+ * Der Pruefbericht einer Uebersetzung (steht in der Fassung, `meta_json`).
+ */
+export type TranslationReport = { source_variant_id: string; source_language: string | null; target_language: string; model: string | null; 
+/**
+ * Geprueft wurden alle Saetze.
+ */
+checked: number; 
+/**
+ * Die markierten Saetze (der Name `flagged` wird von `variants` gezaehlt).
+ */
+flagged: FlaggedSentence[]; 
+/**
+ * Bloecke, in denen mindestens die Haelfte der Zeilen fehlte.
+ */
+failed_blocks: number; blocks: number }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.

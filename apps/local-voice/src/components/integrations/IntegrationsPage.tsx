@@ -15,6 +15,7 @@ import { FolderDialog } from "./FolderDialog";
 import { IntegrationCard } from "./IntegrationCard";
 import { IntegrationCatalog } from "./IntegrationCatalog";
 import { IntegrationDetail } from "./IntegrationDetail";
+import { M365Dialog } from "./M365Dialog";
 import type { CatalogEntry } from "./model";
 import { useIntegrations, usePendingApprovals } from "./useIntegrations";
 
@@ -47,6 +48,7 @@ export const IntegrationsPage: React.FC = () => {
     useState<AuditFilter>(EMPTY_AUDIT_FILTER);
   const [calendarDialog, setCalendarDialog] = useState(false);
   const [folderDialog, setFolderDialog] = useState(false);
+  const [m365Dialog, setM365Dialog] = useState(false);
   const [approvalsOpen, setApprovalsOpen] = useState(false);
   const approvals = usePendingApprovals(true);
 
@@ -75,6 +77,8 @@ export const IntegrationsPage: React.FC = () => {
       setCalendarDialog(true);
     } else if (entry.id === "folder") {
       setFolderDialog(true);
+    } else if (entry.id === "m365") {
+      setM365Dialog(true);
     } else if (entry.id === "mcp") {
       setTab("connections");
       toList();
@@ -265,6 +269,16 @@ export const IntegrationsPage: React.FC = () => {
           upsert(view);
           setTab("connections");
           setScreen({ name: "list" });
+        }}
+      />
+      <M365Dialog
+        open={m365Dialog}
+        onOpenChange={setM365Dialog}
+        onCreated={(view) => {
+          upsert(view);
+          setTab("connections");
+          // Weiter zum Anmelden: das Detail des neuen Kontos.
+          setScreen({ name: "detail", id: view.integration.id });
         }}
       />
       <ApprovalDialog

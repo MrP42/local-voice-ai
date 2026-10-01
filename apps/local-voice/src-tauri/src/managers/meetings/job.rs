@@ -70,6 +70,8 @@ pub enum JobPhase {
     Notes,
     /// Protokoll (Bloecke statt Audiodauer).
     Minutes,
+    /// G5: Uebersetzung einer Transkript-Fassung (Bloecke statt Audiodauer).
+    Translation,
     /// D1 (#70, M7): Folien aus einem Video erkennen. `done`/`total` zaehlen ms
     /// POSITION IM VIDEO (Abtastung, danach die Bilder, jeweils von vorn).
     Slides,
@@ -90,6 +92,7 @@ impl JobPhase {
                 | JobPhase::FinalPass
                 | JobPhase::Notes
                 | JobPhase::Minutes
+                | JobPhase::Translation
                 | JobPhase::Slides
         )
     }
@@ -1254,6 +1257,8 @@ mod tests {
         assert!(JobPhase::FinalPass.pausable());
         assert!(JobPhase::Notes.pausable());
         assert!(JobPhase::Minutes.pausable());
+        // G5: eine Uebersetzung laeuft in Bloecken und laesst sich anhalten.
+        assert!(JobPhase::Translation.pausable());
         assert!(JobPhase::Slides.pausable());
         assert!(!JobPhase::Prepare.pausable());
         assert!(!JobPhase::Speakers.pausable());

@@ -80,6 +80,31 @@ sonst per **KI-Notizen erzeugen**.
   **Vorlagen verwalten …**: eigene anlegen, duplizieren, als Datei (`.lvtemplate.json`) austauschen.
   Die Standardvorlage wählen Sie in den Einstellungen.
 
+## Sprache, Übersetzung und Grundlage
+
+**Sprache.** Beim Import und bei der Neu-Transkription bestimmt die App die Sprache der Aufnahme (Einstellung
+„Transkriptionssprache: Automatisch erkennen“): eine kurze Hörprobe läuft durch das geladene Modell; hat es eine eigene
+Spracherkennung (Whisper, Qwen3-ASR, Parakeet v3 als GGUF), zählt sie, sonst wird die Sprache am Text geschätzt. Das
+Modell bleibt, wenn es die Sprache kann (Deutsch: das bisherige Standardmodell); sonst nimmt die App ein installiertes
+mehrsprachiges Modell, nur wenn der Speicher reicht. **Ihre Wahl hat immer Vorrang**: ein von Ihnen gewähltes Modell, eine feste
+Sprache in den Einstellungen und eine im Chip gesetzte Sprache werden nie überstimmt (widerspricht der Text einer festen
+Einstellung deutlich, zeigt der Chip die Sprache des Textes und nennt die Einstellung). Die Sprache steht als **Chip im
+Kopf** (z. B. „Englisch“); ein Klick zeigt die Herkunft (Spracherkennung des Modells, am Text geschätzt, von Ihnen gewählt)
+und erlaubt die Korrektur, auf Wunsch gleich mit **Neu transkribieren** und dem passenden Modell. Die Neu-Transkription legt
+eine neue Fassung an; die bisherige bleibt.
+
+**Übersetzen.** Menü ☰ → **Übersetzen nach …** (auch im Fassungs-Chip und im Sprach-Dialog): Das lokale Sprachmodell übersetzt
+das Transkript Satz für Satz in die Zielsprache und legt eine **neue Fassung** („Übersetzung“) an. Zeitmarken und Sprecher
+bleiben, das **Original bleibt unverändert und aktiv** und ist jederzeit über den Fassungs-Chip wählbar. Der Lauf ist ein
+Auftrag mit Fortschritt, Pause und Stopp; ein Stopp, ein Fehler oder ein Absturz legt keine Fassung an. Jeder Satz wird auf
+**Zahlen, Eigennamen und Satzanzahl** geprüft; Abweichungen sind im Reiter **Vergleich** Satz für Satz neben dem Original
+markiert (mit Zeitmarke und Grund), nie still verworfen. Die Herkunft (Modell, Token, Ausgangsfassung, Zeitpunkt) steht
+im Menü **Herkunft**.
+
+**Grundlage und Sprache von Protokoll und KI-Notizen.** Beim Erzeugen (Menü ☰ → **Neu erzeugen mit Vorlage …**) wählen Sie
+die **Fassung** (Original oder Übersetzung; Standard: die aktive) und die **Sprache des Dokuments** (Standard: Ihre letzte Wahl,
+sonst die Sprache der App). Der Prompt fordert die Sprache ausdrücklich. Beides steht im Kopf des Protokolls
+(„Grundlage: Original (Englisch) · Protokoll auf Deutsch“), über den KI-Notizen und im Info-Dialog.
 ## Mehrere Aufnahmen gemeinsam protokollieren (Projekt-Protokoll)
 
 In einem Projekt lassen sich mehrere Aufnahmen zu **einem** Protokoll oder **einer** Zusammenfassung verbinden.

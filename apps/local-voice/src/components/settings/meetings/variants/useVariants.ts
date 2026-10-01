@@ -37,7 +37,11 @@ export const translateVariantError = (raw: string, t: TFunction): string => {
   const detail = raw.includes(":")
     ? raw.slice(raw.indexOf(":") + 1).trim()
     : "";
-  if (code.startsWith("variant_") || code.startsWith("merge_")) {
+  if (
+    code.startsWith("variant_") ||
+    code.startsWith("merge_") ||
+    code.startsWith("translate_")
+  ) {
     return t(`meetings.variants.errors.${code}`, {
       detail,
       defaultValue: raw,
@@ -46,6 +50,7 @@ export const translateVariantError = (raw: string, t: TFunction): string => {
   if (code === "no_provider" || code === "no_model") {
     return t(`meetings.variants.errors.${code}`);
   }
+  if (code === "job_busy") return t("meetings.progress.errors.busy");
   return raw;
 };
 
@@ -54,3 +59,18 @@ export const variantKindLabel = (v: TranscriptVariant, t: TFunction) =>
   `${t(`meetings.variants.kinds.${v.kind}`, { defaultValue: v.kind })}${
     v.language ? ` (${v.language})` : ""
   }`;
+
+/**
+ * Eine Zeile der Fassungsliste: `v2 · Übersetzung (de) · 12 Segmente`, bei einer
+ * Übersetzung mit markierten Sätzen (Treuepruefung) dazu deren Zahl.
+ */
+export const variantListLabel = (v: TranscriptVariant, t: TFunction) => {
+  const label = t("meetings.variants.itemLabel", {
+    number: v.number,
+    kind: variantKindLabel(v, t),
+    count: v.segment_count,
+  });
+  return (v.flagged ?? 0) > 0
+    ? t("meetings.variants.itemLabelFlagged", { label, flagged: v.flagged })
+    : label;
+};

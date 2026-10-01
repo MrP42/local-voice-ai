@@ -676,16 +676,15 @@ mod tests {
 
     // -- Migration -------------------------------------------------------------
 
-    /// Index dieses Schritts (G3) in `MIGRATIONS`. Feste Zahl statt "der letzte":
-    /// hinter G3 haengen weitere Schritte (D1 und spaetere).
-    const STEP: usize = 8;
+    /// G3 ist der Schritt mit Index 8; spaetere Schritte (G5 = Index 9) haengen dahinter.
+    const G3_INDEX: usize = 8;
 
-    /// Der Stand vor diesem Schritt: alle Migrationen davor, mit
-    /// Altdaten in den Tabellen, an die der Schritt grenzt.
+    /// Der Stand vor diesem Schritt: alle Migrationen vor Index 8, mit Altdaten in den
+    /// Tabellen, an die der Schritt grenzt.
     fn db_before_the_step(dir: &tempfile::TempDir) -> std::path::PathBuf {
         let path = dir.path().join("meetings.db");
         let mut conn = Connection::open(&path).unwrap();
-        let before = STEP;
+        let before = G3_INDEX;
         Migrations::new(MIGRATIONS[..before].to_vec())
             .to_latest(&mut conn)
             .unwrap();
@@ -713,17 +712,13 @@ mod tests {
     }
 
     #[test]
-    fn the_migration_is_the_last_step_and_keeps_every_existing_row() {
-        assert_eq!(
-            MIGRATIONS.last().map(|_| ()),
-            Some(()),
-            "es gibt Migrationen"
-        );
+    fn the_migration_keeps_every_existing_row() {
+        assert!(MIGRATIONS.len() > G3_INDEX, "G3 ist Index 8");
         let dir = tempfile::tempdir().unwrap();
         let path = db_before_the_step(&dir);
         {
             let conn = Connection::open(&path).unwrap();
-            assert_eq!(user_version(&conn), STEP as i64);
+            assert_eq!(user_version(&conn), G3_INDEX as i64);
             assert_eq!(
                 scalar(
                     &conn,
@@ -777,7 +772,7 @@ mod tests {
     fn opening_the_old_database_leaves_a_backup_of_the_old_state() {
         let dir = tempfile::tempdir().unwrap();
         let path = db_before_the_step(&dir);
-        let before = STEP as i64;
+        let before = G3_INDEX as i64;
         let _store = MeetingStore::open_at(&path).unwrap();
         let backup = dir.path().join(format!("meetings.db.bak-v{before}"));
         assert!(backup.is_file(), "Sicherung des Standes vor dem Schritt");
@@ -796,7 +791,7 @@ mod tests {
     fn an_aborted_migration_leaves_the_old_database_untouched() {
         let dir = tempfile::tempdir().unwrap();
         let path = db_before_the_step(&dir);
-        let before = STEP;
+        let before = G3_INDEX;
         // Der Schritt bricht an seinem Ende ab: alles davor rollt mit zurueck.
         let broken_sql: &'static str = Box::leak(
             format!("{PROJECT_MINUTES_MIGRATION}\nINSERT INTO gibt_es_nicht VALUES (1);")

@@ -2086,7 +2086,8 @@
         "final_pass": "Enddurchlauf",
         "speakers": "Sprecher",
         "notes": "KI-Notizen",
-        "minutes": "Protokoll"
+        "minutes": "Protokoll",
+        "translation": "Übersetzung"
       },
       "state": {
         "pausing": "Pause wird eingelegt …",
@@ -2263,7 +2264,7 @@
     },
     "language": {
       "title": "Transkriptionssprache",
-      "description": "Sprache der Meeting-Transkription — unabhängig von der Diktat-Einstellung. Meetings werden nie übersetzt.",
+      "description": "Sprache der Meeting-Transkription — unabhängig von der Diktat-Einstellung. „Automatisch erkennen“ bestimmt die Sprache je Aufnahme aus einer Hörprobe und wählt das passende Modell; eine feste Sprache gilt vor jeder Erkennung. Die Transkription übersetzt nie: Übersetzungen entstehen als eigene Fassung.",
       "auto": "Automatisch erkennen"
     },
     "meta": {
@@ -2350,6 +2351,9 @@
       "templateDefault": "Standardvorlage",
       "minutesOrigin": "Protokoll erzeugt",
       "minutesNone": "Noch kein Protokoll",
+      "minutesBasis": "Grundlage des Protokolls",
+      "notesBasis": "Grundlage der KI-Notizen",
+      "basisNone": "keine Angabe (erzeugt vor dieser Funktion)",
       "minutesFile": "Protokoll-Ablage",
       "minutesFileNone": "Noch nicht abgelegt",
       "minutesFileOpen": "Im Ordner zeigen",
@@ -2399,6 +2403,8 @@
       "menuHint": "Neu transkribieren, Vorlage, Verschieben, Details, Löschen …",
       "menuLabel": "Weitere Aktionen",
       "retranscribe": "Neu transkribieren …",
+      "translate": "Übersetzen nach …",
+      "translateHint": "Übersetzt das Transkript Satz für Satz in eine andere Sprache. Das Original bleibt als eigene Fassung erhalten.",
       "retranscribeBusy": "Läuft gerade eine Verarbeitung, kann nicht neu transkribiert werden.",
       "retranscribeNoAudio": "Ohne Audiodatei gibt es nichts neu zu transkribieren.",
       "regenNotes": "KI-Notizen neu erzeugen",
@@ -2562,6 +2568,10 @@
     "retranscribe": {
       "description": "Diese Besprechung erneut aus der Aufzeichnung transkribieren — zum Beispiel mit einem anderen Modell.",
       "configuredModel": "Eingestelltes Besprechungsmodell",
+      "language": "Sprache",
+      "languageAuto": "Automatisch erkennen",
+      "suggestInstalled": "Passend für diese Sprache: {{model}} (installiert, ausgewählt).",
+      "suggestMissing": "Passend für diese Sprache wäre {{model}}. Es ist noch nicht installiert: unter Modelle laden und hier wählen.",
       "start": "Neu transkribieren",
       "running": "Transkribiere…",
       "runningHint": "Das bisherige Transkript bleibt als Fassung erhalten. Während der Lauf fortschreitet, zeigt die Ansicht den neuen Text; erst am Ende wird er die aktive Fassung. Stoppst du vorher, bleibt das bisherige Transkript aktiv. Bei langen Aufzeichnungen dauert das eine Weile."
@@ -2909,6 +2919,15 @@
       "opened": "Im Mailprogramm geöffnet.",
       "mailtoClipped": "Der Text war zu lang für den Mail-Link und liegt in der Zwischenablage – im Mailprogramm mit Strg+V einfügen.",
       "emlSaved": "Gespeichert: {{path}}",
+      "m365": {
+        "via": "Über {{label}} senden",
+        "noRecipients": "Zum Senden braucht die Mail mindestens einen Empfänger.",
+        "confirmTitle": "Senden bestätigen",
+        "confirm": "Die Mail jetzt an {{count}} Empfänger über „{{label}}“ senden? Das lässt sich nicht zurückholen.",
+        "send": "Jetzt senden",
+        "cancel": "Abbrechen",
+        "sent": "Gesendet über „{{label}}“. Die Mail liegt in deinem Ordner „Gesendet“."
+      },
       "errors": {
         "followup_empty": "Das Sprachmodell hat auch beim zweiten Versuch keinen Text geliefert. Ein anderes Sprachmodell in den Einstellungen kann helfen.",
         "followup_no_content": "Kein Inhalt für eine Nachbereitung gefunden – die Aufnahme enthält keine Besprechungspunkte.",
@@ -3093,6 +3112,74 @@
         "generic": "Speichern fehlgeschlagen: {{error}}"
       }
     },
+    "langChip": {
+      "chipLabel": "Sprache der Besprechung: {{name}}. Zum Ändern öffnen.",
+      "chipUnknown": "Sprache unbekannt. Zum Festlegen öffnen.",
+      "unknownShort": "Sprache?",
+      "title": "Sprache der Besprechung",
+      "body": "Die Sprache bestimmt, welches Modell passend transkribiert. Das Transkript ändert sich erst mit einer Neu-Transkription; die bisherige Fassung bleibt erhalten.",
+      "select": "Sprache",
+      "source": {
+        "probe": "Erkannt: Spracherkennung des Modells an einer Hörprobe",
+        "text": "Erkannt: am Text geschätzt",
+        "user": "Von dir gewählt",
+        "setting": "Aus der Einstellung „Sprache“ übernommen",
+        "none": "Keine Herkunft gespeichert (ältere Besprechung)"
+      },
+      "model": "Modell: {{model}}",
+      "forcedHint": "Eingestellt war {{forced}}, der Text ist aber {{language}}. Angezeigt wird die Sprache des Textes.",
+      "mismatchHint": "Der Text wirkt wie {{language}}, gewählt ist {{chosen}}. Die Wahl bleibt, bis du sie änderst.",
+      "notCovered": "Das Modell {{model}} deckt {{language}} nicht ab.",
+      "suggestInstalled": "Besser geeignet: {{model}} (installiert).",
+      "suggestMissing": "Besser geeignet: {{model}} (noch nicht installiert, unter Modelle laden).",
+      "save": "Sprache speichern",
+      "saveRetranscribe": "Speichern und neu transkribieren",
+      "translate": "Übersetzen nach …",
+      "cancel": "Abbrechen",
+      "close": "Schließen",
+      "saved": "Sprache auf {{language}} gesetzt."
+    },
+    "translate": {
+      "title": "Übersetzen nach …",
+      "body": "Das lokale Modell übersetzt das Transkript Satz für Satz. Zeitmarken und Sprecher bleiben, das Original bleibt unverändert und jederzeit wählbar.",
+      "source": "Übersetzen aus Fassung",
+      "target": "Zielsprache",
+      "hint": "Zahlen, Eigennamen und die Satzanzahl werden je Satz geprüft; Abweichungen werden markiert, nie still verworfen. Der Fortschritt steht in der Bedienspalte, ein Stopp legt keine Fassung an.",
+      "start": "Übersetzen",
+      "cancel": "Abbrechen",
+      "close": "Schließen",
+      "done": "Fassung v{{number}} ({{language}}) ist fertig.",
+      "compare": "Vergleichen",
+      "noMerge": "Original und Übersetzung lassen sich nicht zusammenführen.",
+      "allChecked": "Alle Sätze haben die Prüfung auf Zahlen, Namen und Satzanzahl bestanden.",
+      "flaggedSummary_one": "{{count}} Satz ist markiert: bitte prüfen.",
+      "flaggedSummary_other": "{{count}} Sätze sind markiert: bitte prüfen.",
+      "onlyFlagged": "Nur markierte Sätze zeigen",
+      "region": "Original und Übersetzung Satz für Satz",
+      "original": "Original {{language}}",
+      "translation": "Übersetzung {{language}}",
+      "reasons": {
+        "numbers": "Zahl weicht ab",
+        "names": "Name fehlt",
+        "sentences": "Satzanzahl weicht ab",
+        "empty": "leer",
+        "length": "Länge auffällig",
+        "not_translated": "nicht übersetzt"
+      }
+    },
+    "basis": {
+      "variant": "Grundlage (Fassung des Transkripts)",
+      "outputLanguage": "Sprache des Dokuments",
+      "sameAsBasis": "Wie die Grundlage",
+      "hint": "Die Wahl steht im Kopf des Protokolls und im Info-Dialog. Standard ist die aktive Fassung und die Sprache der App bzw. deine letzte Wahl.",
+      "original": "Original",
+      "translation": "Übersetzung",
+      "withLanguage": "{{variant}} ({{language}})",
+      "lineMinutes": "Grundlage: {{basis}} · Protokoll auf {{language}}",
+      "lineMinutesSame": "Grundlage: {{basis}} · Protokoll in der Sprache der Grundlage",
+      "lineNotes": "Grundlage: {{basis}} · KI-Notizen auf {{language}}",
+      "lineNotesSame": "Grundlage: {{basis}} · KI-Notizen in der Sprache der Grundlage"
+    },
     "variants": {
       "compareTab": "Vergleich",
       "chip": "Fassung v{{number}} · {{kind}}",
@@ -3100,6 +3187,7 @@
       "menuLabel": "Fassungen",
       "itemLabel": "v{{number}} · {{kind}} · {{count}} Segmente",
       "itemActive": "{{label}} (aktiv)",
+      "itemLabelFlagged": "{{label}} · {{flagged}} markiert",
       "compare": "Vergleichen",
       "activated": "Fassung v{{number}} ist jetzt aktiv.",
       "kinds": {
@@ -3107,7 +3195,8 @@
         "subtitles_auto": "Untertitel (automatisch)",
         "stt": "Eigene Transkription",
         "merged": "Zusammengeführt",
-        "retranscribed": "Neu transkribiert"
+        "retranscribed": "Neu transkribiert",
+        "translation": "Übersetzung"
       },
       "errors": {
         "variant_busy": "Die Besprechung wird gerade verarbeitet. Bitte warten, bis es fertig ist.",
@@ -3120,6 +3209,12 @@
         "merge_llm_failed": "Das Sprachmodell hat nicht geantwortet. {{detail}}",
         "merge_rejected": "Die Zusammenführung wurde verworfen: Das Modell hat Text erfunden oder das Format verletzt. Es entsteht keine neue Fassung.",
         "merge_timeout": "Die Zusammenführung hat zu lange gedauert.",
+        "translate_empty": "Es gibt keinen Text zu übersetzen.",
+        "translate_same_language": "Die Zielsprache ist die Sprache der Fassung. Bitte eine andere Zielsprache wählen.",
+        "translate_cancelled": "Die Übersetzung wurde gestoppt. Es ist keine Fassung entstanden.",
+        "translate_llm_failed": "Das Sprachmodell hat nicht geantwortet. Es ist keine Fassung entstanden. {{detail}}",
+        "translate_rejected": "Mehr als die Hälfte der Abschnitte war unbrauchbar. Es ist keine Fassung entstanden.",
+        "translate_timeout": "Die Übersetzung hat zu lange gedauert.",
         "no_provider": "Es ist kein Sprachmodell eingerichtet.",
         "no_model": "Es ist kein Sprachmodell gewählt."
       },
@@ -3279,6 +3374,93 @@
     "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
   },
   "integrations": {
+    "m365": {
+      "dialog": {
+        "title": "Microsoft-365-Konto einrichten",
+        "description": "Mails senden, Dateien in OneDrive ablegen und Notizen an Termine hängen, über deine eigene App-Registrierung in Microsoft Entra. Angemeldet wird im Browser; die App fragt nur die Berechtigungen der eingeschalteten Fähigkeiten an.",
+        "name": "Name",
+        "defaultName": "Microsoft 365",
+        "clientId": "Anwendungs-ID (Client-ID)",
+        "clientIdHint": "Die Anwendungs-ID deiner App-Registrierung. Leer lassen, um die Client-ID des Microsoft-365-Kalenders zu übernehmen. Anleitung: docs/INTEGRATIONEN-M365.md.",
+        "tenant": "Verzeichnis (Mandant)",
+        "tenantHint": "Leer heißt „common“ (Arbeits-, Schul- und private Konten). „consumers“ nur für private Konten.",
+        "capabilities": "Fähigkeiten",
+        "capabilitiesHint": "Die Anmeldung fragt nur die Berechtigungen der eingeschalteten Fähigkeiten an. Eine später eingeschaltete Fähigkeit braucht eine erneute Zustimmung.",
+        "filesMode": "OneDrive-Zugriff",
+        "filesFull": "Ganzes OneDrive (Files.ReadWrite): für Arbeits-, Schul- und private Konten",
+        "filesApp": "Nur der App-Ordner (Files.ReadWrite.AppFolder): nur für private Konten",
+        "filesFolder": "Ordner in OneDrive",
+        "create": "Anlegen"
+      },
+      "caps": {
+        "mail_send": "Follow-up-Mails und Berichte als Mail aus deinem Postfach senden.",
+        "files_write": "Protokolle und Dateien in einen OneDrive-Ordner legen, große Dateien in Stücken.",
+        "calendar_write": "Eine Notiz an den Outlook-Termin einer Besprechung hängen; die Einladung bleibt unverändert."
+      },
+      "panel": {
+        "title": "Microsoft-365-Konto",
+        "loading": "Lade …",
+        "states": {
+          "not_configured": "Nicht eingerichtet: Es fehlt die Client-ID.",
+          "no_capabilities": "Keine Fähigkeit eingeschaltet.",
+          "needs_sign_in": "Anmeldung nötig.",
+          "needs_consent": "Zustimmung erweitern: Eine eingeschaltete Fähigkeit braucht neue Berechtigungen.",
+          "ready": "Angemeldet und bereit."
+        },
+        "account": "Konto: {{account}}",
+        "missing": "Es fehlt die Zustimmung zu: {{scopes}}",
+        "scopes": "Angefragte Berechtigungen",
+        "scopesHint": "Nur die der eingeschalteten Fähigkeiten, dazu die Anmeldung selbst (offline_access) und dein Profil (User.Read).",
+        "save": "Speichern",
+        "saved": "Gespeichert.",
+        "signIn": "Mit Microsoft anmelden",
+        "signInAgain": "Erneut anmelden",
+        "extend": "Zustimmung erweitern",
+        "waiting": "Warte auf die Anmeldung im Browser …",
+        "signOut": "Abmelden",
+        "signedIn": "Angemeldet.",
+        "signedOut": "Abgemeldet. Das Token ist gelöscht.",
+        "checks": "Ausprobieren",
+        "testOk": "Verbunden als {{account}}.",
+        "testMail": "Testmail an mich senden",
+        "testMailOk": "Testmail gesendet. Sieh in deinem Posteingang nach.",
+        "testFile": "Testdatei in OneDrive ablegen",
+        "testFileOk": "Die Datei „{{name}}“ liegt in OneDrive im Ordner „{{folder}}“."
+      },
+      "gate": {
+        "grant_off": "das Recht steht auf „aus“",
+        "integration_disabled": "die Integration ist ausgeschaltet",
+        "capability_not_enabled": "die Fähigkeit ist an diesem Konto nicht eingeschaltet",
+        "capability_not_offered": "das Konto bietet die Fähigkeit nicht an",
+        "direction_blocks": "die Richtung des Kontos erlaubt es nicht",
+        "pending": "es braucht eine Freigabe"
+      },
+      "errors": {
+        "m365_not_configured": "Es ist keine Client-ID eingetragen. Lege eine App-Registrierung an und trage ihre Anwendungs-ID ein.",
+        "m365_no_capability": "Es ist keine Fähigkeit eingeschaltet. Schalte mindestens eine ein, bevor du dich anmeldest.",
+        "m365_capability_off": "Diese Fähigkeit ist an diesem Konto nicht eingeschaltet.",
+        "m365_needs_sign_in": "Die Anmeldung ist abgelaufen oder wurde widerrufen. Bitte melde dich unter Integrationen neu an.",
+        "m365_needs_consent": "Für die eingeschalteten Fähigkeiten fehlen noch Berechtigungen ({{detail}}). Bitte unter Integrationen erneut anmelden und zustimmen.",
+        "m365_denied": "Microsoft hat den Zugriff abgelehnt: {{detail}}",
+        "m365_not_found": "Nicht gefunden: {{detail}}",
+        "m365_storage_full": "Der OneDrive-Speicher ist voll.",
+        "m365_throttled": "Microsoft drosselt die Abfragen. Nächster Versuch in {{detail}} min.",
+        "m365_http": "Microsoft Graph antwortet mit einem Fehler (HTTP {{detail}}).",
+        "m365_network": "Keine Verbindung: {{detail}}",
+        "m365_timeout": "Zeitüberschreitung bei Microsoft.",
+        "m365_uncertain": "Unklar, ob die Aktion ausgeführt wurde ({{detail}}). Bitte erst prüfen (z. B. Ordner „Gesendet“), bevor du es erneut versuchst.",
+        "m365_parse": "Die Antwort von Microsoft ist nicht lesbar.",
+        "m365_invalid": "{{detail}}",
+        "m365_cancelled": "Abgebrochen.",
+        "m365_sign_in_timeout": "Die Anmeldung wurde nicht innerhalb von 5 Minuten abgeschlossen.",
+        "m365_browser": "Der Browser konnte nicht geöffnet werden: {{detail}}",
+        "m365_listener": "Die lokale Anmelde-Schnittstelle konnte nicht gestartet werden: {{detail}}",
+        "m365_config": "{{detail}}",
+        "m365_store": "Speicherfehler: {{detail}}",
+        "m365_memory_low": "{{detail}}",
+        "m365_gate": "Die Rechte erlauben das nicht: {{detail}}."
+      }
+    },
     "title": "Integrationen",
     "description": "Verbindungen zu Kalendern, Ordnern und Agenten, jede mit Richtung und einem Recht je Fähigkeit.",
     "add": "Integration hinzufügen",
@@ -3368,7 +3550,8 @@
         },
         "m365": {
           "name": "Microsoft 365 (Mail, OneDrive)",
-          "description": "Mails senden, Dateien in OneDrive ablegen, Termine anlegen."
+          "description": "Mails senden, Dateien in OneDrive ablegen und Notizen an Termine hängen, über deine eigene App-Registrierung. Jede Fähigkeit lässt sich einzeln einschalten.",
+          "action": "Konto einrichten"
         },
         "smtp": {
           "name": "Postfach (SMTP)",
@@ -3442,7 +3625,8 @@
       "effective": "Wirkt jetzt: {{mode}}",
       "blocked": {
         "direction_blocks": "Die Richtung der Integration erlaubt dies nicht: ändere die Richtung, damit die Rechte wirken.",
-        "integration_disabled": "Die Integration ist ausgeschaltet: kein Zugriff, solange sie aus ist."
+        "integration_disabled": "Die Integration ist ausgeschaltet: kein Zugriff, solange sie aus ist.",
+        "capability_not_enabled": "Die Fähigkeit ist an diesem Konto nicht eingeschaltet: schalte sie im Abschnitt „Microsoft-365-Konto“ ein, damit die Rechte wirken."
       }
     },
     "capabilities": {

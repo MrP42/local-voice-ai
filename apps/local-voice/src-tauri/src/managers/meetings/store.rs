@@ -107,8 +107,12 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // G3 (Projekt-Protokolle, #70). Nur CREATE: vorhandene Zeilen bleiben unveraendert.
     // Der SQL-Text steht in `project_minutes_store.rs`.
     M::up(super::project_minutes_store::PROJECT_MINUTES_MIGRATION),
-    // D1 (Folien aus Videos, #70/M7). Nur CREATE ... IF NOT EXISTS: vorhandene Zeilen
-    // bleiben unveraendert. Der SQL-Text steht in `slides/store.rs`.
+    // G5 (Fassungsart `translation`, Herkunft einer Uebersetzung), Index 9: hinter G3.
+    // Baut `transcript_variants` neu (CHECK-Bedingung), kopiert jede Zeile unveraendert.
+    // Der SQL-Text steht in `variants.rs`; Naeheres dort.
+    M::up(super::variants::VARIANTS_TRANSLATION_MIGRATION),
+    // D1 (Folien aus Videos, #70/M7), Index 10: hinter G5. Nur CREATE ... IF NOT EXISTS:
+    // vorhandene Zeilen bleiben unveraendert. Der SQL-Text steht in `slides/store.rs`.
     M::up(super::slides::store::SLIDES_MIGRATION),
 ];
 

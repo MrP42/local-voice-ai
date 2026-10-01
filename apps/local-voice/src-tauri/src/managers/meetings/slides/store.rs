@@ -320,7 +320,7 @@ mod tests {
     /// Der Index von [`SLIDES_MIGRATION`] in `MIGRATIONS`. Nach dem Zusammenfuehren
     /// mit anderen Zweigen kann er sich verschieben: dann schlaegt
     /// `the_slides_migration_sits_at_its_index` mit einem klaren Hinweis fehl.
-    const STEP: usize = 9;
+    const STEP: usize = 10;
 
     struct Fx {
         _dir: tempfile::TempDir,

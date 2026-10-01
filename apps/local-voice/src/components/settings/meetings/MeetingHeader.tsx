@@ -154,6 +154,8 @@ interface MeetingHeaderProps {
   progress?: LiveProgress;
   /** G4: Chip "N Teilnehmende: ..." mit Popover (`ParticipantsPopover`). */
   participantsSlot: React.ReactNode;
+  /** G5: Chip mit der Sprache des Transkripts (`LanguageChip`); fehlt: kein Chip. */
+  languageSlot?: React.ReactNode;
   /** G4: Name der gewaehlten Vorlage fuer den Chip "Vorlage: X" (`null` = kein Chip). */
   templateName: string | null;
   /** G4: Klick auf den Vorlagen-Chip (Vorlage wechseln). */
@@ -194,6 +196,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
   progress,
   queue,
   participantsSlot,
+  languageSlot,
   templateName,
   onOpenTemplate,
   projectNames,
@@ -399,6 +402,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
               })}
             </span>
           )}
+          {languageSlot}
         </div>
         <div
           data-testid="rec-detail-chips-people"

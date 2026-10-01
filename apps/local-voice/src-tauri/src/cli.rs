@@ -444,6 +444,21 @@ pub struct CliArgs {
     #[arg(long)]
     pub integrations_dump: bool,
 
+    // G5 (Goal Issues-Abschluss #70)
+    /// Translate the ACTIVE transcript version of one meeting into --target-language with the
+    /// configured language model (--model picks a local one for this run), store the result as a
+    /// NEW version (the original stays active and unchanged) and print a JSON report: the
+    /// original check (hash before/after), the new version, the fidelity report and an excerpt
+    /// of original/translation per sentence. SANDBOX ONLY: requires LVA_MEETINGS_DIR (prepare
+    /// the meeting with --import-meeting). Stops the local llama-server at the end. Exit 0
+    /// translated, 3 nothing to translate or rejected, 1 error, 2 bad input.
+    #[arg(long, value_name = "ID")]
+    pub translate_meeting: Option<String>,
+
+    /// Target language code (de, en, fr ...) for --translate-meeting.
+    #[arg(long, value_name = "CODE")]
+    pub target_language: Option<String>,
+
     // A2 (Goal Integrationen)
     /// Add a YouTube link as a meeting source headlessly and exit: one oEmbed
     /// request (title, channel; no API key, time-limited) creates a meeting with
