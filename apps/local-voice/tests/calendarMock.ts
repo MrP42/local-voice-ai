@@ -283,6 +283,9 @@ export const installTauriMock = async (
               return null;
             case "meeting_prompt_workflow_decide":
               if (w.__decideError) throw w.__decideError;
+              // Wie das Backend (B7n): Ja nur mit der Einwilligungsbestaetigung.
+              if (args.approve && !args.consentConfirmed)
+                throw "consent_required";
               if (args.approve) {
                 w.__workflowRun = { state: "done", recordings: 1 };
               } else {

@@ -1,5 +1,5 @@
-//! Die vier lesenden Werkzeuge des lokalen MCP-Servers: `list_meetings`,
-//! `search_meetings`, `get_meeting`, `get_transcript`.
+//! Die fuenf lesenden Werkzeuge des lokalen MCP-Servers: `list_meetings`,
+//! `search_meetings`, `get_meeting`, `get_transcript` und (A8) `get_provenance`.
 //!
 //! Sicherheitsgrenzen (Entwurf `m5-m6-kalender-export.md` F21, E13):
 //! - Nur lesen: der Store ist `SQLITE_OPEN_READ_ONLY` geoeffnet
@@ -34,6 +34,7 @@ use crate::managers::meetings::search::index::{MeetingFilter, ScopeFilter};
 use crate::managers::meetings::speakers::SpeakerDirectory;
 use crate::managers::meetings::store::{Meeting, MeetingStore, ReadOnlyOpenError};
 use crate::managers::meetings::subtitle::speaker_label;
+use crate::managers::provenance::{self, ProvenanceEntry, ProvenanceOrigin, SubjectKind};
 
 /// Zeichen je Seite von `get_transcript`.
 pub const TRANSCRIPT_PAGE_CHARS: usize = 40_000;
@@ -182,8 +183,34 @@ pub fn definitions() -> Vec<Value> {
             },
             "annotations": read_only_annotations()
         }),
+        json!({
+            "name": "get_provenance",
+            "title": "Herkunft eines Inhalts",
+            "description": "Zeigt zu einer fertigen Besprechung, woher Transkript, Protokoll und KI-Notizen stammen: \
+                Modell, Token, Dauer, Zeitpunkt, Quellen, Auslöser (Nutzer, App, Ablauf, Agent) und Konfidenz, falls \
+                vorhanden. Es kommen nie Inhalte, nur die Angaben zur Entstehung.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "ID aus list_meetings oder search_meetings." },
+                    "part": {
+                        "type": "string",
+                        "enum": PROVENANCE_PARTS,
+                        "description": "Welcher Inhalt; Standard: alle drei."
+                    }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+            },
+            "annotations": read_only_annotations()
+        }),
     ]
 }
+
+/// Inhalte, zu denen `get_provenance` die Herkunft nennt.
+const PROVENANCE_PARTS: [&str; 3] = ["transcript", "minutes", "ai_notes"];
+/// Hoechstzahl Eintraege je Inhalt.
+const PROVENANCE_LIMIT: usize = 50;
 
 const PARTS: [&str; 5] = [
     "ai_notes",
@@ -197,7 +224,7 @@ const PARTS: [&str; 5] = [
 pub fn is_known(name: &str) -> bool {
     matches!(
         name,
-        "list_meetings" | "search_meetings" | "get_meeting" | "get_transcript"
+        "list_meetings" | "search_meetings" | "get_meeting" | "get_transcript" | "get_provenance"
     )
 }
 
@@ -208,6 +235,7 @@ pub fn call(name: &str, args: &Value, backend: &Backend) -> ToolOutcome {
         "search_meetings" => search_meetings(args, backend),
         "get_meeting" => get_meeting(args, backend),
         "get_transcript" => get_transcript(args, backend),
+        "get_provenance" => get_provenance(args, backend),
         other => Err(ToolOutcome::error(format!("Unbekanntes Werkzeug: {other}"))),
     };
     outcome.unwrap_or_else(|e| e)
@@ -394,6 +422,78 @@ fn resolve_folder(store: &MeetingStore, wanted: &str) -> Res<String> {
             names.join(", ")
         )
     }))
+}
+
+// ---------------------------------------------------------------------------
+// get_provenance
+// ---------------------------------------------------------------------------
+
+fn provenance_json(part: &str, e: &ProvenanceEntry) -> Value {
+    json!({
+        "part": part,
+        "created": iso(e.created_at / 1_000),
+        "operation": e.operation,
+        "actor": e.actor_kind.map(|a| a.as_str()),
+        "provider": e.provider,
+        "locality": e.locality.map(|l| l.as_str()),
+        "model": e.model_label.as_ref().or(e.model_id.as_ref()),
+        "prompt_tokens": e.prompt_tokens,
+        "completion_tokens": e.completion_tokens,
+        "duration_ms": e.duration_ms,
+        "sources": e.sources.iter().map(|s| json!({
+            "kind": s.kind, "ref": s.reference, "title": s.title,
+        })).collect::<Vec<_>>(),
+        "confidence": e.confidence,
+        "origin": match e.origin {
+            ProvenanceOrigin::Recorded => "recorded",
+            ProvenanceOrigin::Derived => "derived",
+        },
+    })
+}
+
+fn get_provenance(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
+    let id = req_id(args)?;
+    let part = opt_str(args, "part")?;
+    if let Some(p) = part {
+        if !PROVENANCE_PARTS.contains(&p) {
+            return Err(arg_error(format!(
+                "„part“ muss eines von {} sein.",
+                PROVENANCE_PARTS.join(", ")
+            )));
+        }
+    }
+    let Some(store) = open(backend)? else {
+        return Ok(ToolOutcome::json(json!({
+            "entries": [], "note": NO_DATABASE_NOTE
+        })));
+    };
+    ready_meeting(&store, id)?;
+    let conn = store.get_connection().map_err(|e| store_error(&e))?;
+    let docs = store.get_documents(id).map_err(|e| store_error(&e))?;
+    let wanted = |name: &str| part.is_none_or(|p| p == name);
+    let mut entries: Vec<Value> = Vec::new();
+    let mut note = |kind: SubjectKind, subject: &str, label: &str| -> Res<()> {
+        let list = provenance::get(&conn, kind, subject)
+            .map_err(|e| ToolOutcome::error(format!("Die Herkunft ließ sich nicht lesen ({e}).")))?;
+        entries.extend(list.iter().take(PROVENANCE_LIMIT).map(|e| provenance_json(label, e)));
+        Ok(())
+    };
+    if wanted("transcript") {
+        note(SubjectKind::Transcript, id, "transcript")?;
+    }
+    for (label, kind) in [("minutes", "minutes"), ("ai_notes", "enhanced_notes")] {
+        if !wanted(label) {
+            continue;
+        }
+        for doc in docs.iter().filter(|d| d.kind == kind) {
+            note(SubjectKind::Document, &doc.id, label)?;
+        }
+    }
+    Ok(ToolOutcome::json(json!({
+        "meeting_id": id,
+        "returned": entries.len(),
+        "entries": entries,
+    })))
 }
 
 // ---------------------------------------------------------------------------

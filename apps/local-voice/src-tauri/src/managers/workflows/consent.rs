@@ -3,9 +3,14 @@
 //! Entscheidung des Nutzers.
 //!
 //! Das Hinweisfenster (`meeting_prompt`) zeigt die Bitte und ruft `decide`. `decide`
-//! entscheidet NUR Freigaben dieser einen Art (Aufrufer `workflow`, Faehigkeit
-//! `recording.start`): ein Fenster, das eine beliebige Freigabe-Kennung schickt, kann damit
-//! keine Mail genehmigen. Die Engine merkt die Entscheidung beim naechsten Takt
+//! entscheidet NUR Freigaben dieser einen Art (Faehigkeit `recording.start`, Aufrufer `workflow`
+//! oder, A8, ein externer Agent mit dem Werkzeug `start_recording`): ein Fenster, das eine
+//! beliebige Freigabe-Kennung schickt, kann damit keine Mail genehmigen und kein Beenden einer
+//! Aufnahme freigeben.
+//!
+//! A8: Bittet ein externer Agent ueber die Agentenbruecke um eine Aufnahme (`start_recording`),
+//! erscheint dieselbe Bitte im selben Fenster mit demselben Haekchen („Alle Beteiligten haben
+//! zugestimmt“); ohne Klick geschieht nichts, und der Agent bekommt nach 30 s `pending`. Die Engine merkt die Entscheidung beim naechsten Takt
 //! (`poll_approvals`) und setzt den Lauf fort; `Engine::wake` beschleunigt das.
 //!
 //! Verfallene, zurueckgezogene (Lauf abgebrochen) und schon entschiedene Freigaben sind
@@ -14,6 +19,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
+use crate::agent_bridge::clients as agent_clients;
 use crate::managers::integrations::approvals::{self, ApprovalError};
 use crate::managers::integrations::model::Approval;
 
@@ -21,6 +27,10 @@ use super::model::RunState;
 use super::store;
 
 pub const CALLER: &str = "workflow";
+/// A8: ein externer Agent ueber die Agentenbruecke.
+pub const AGENT_CALLER: &str = "agent_external";
+/// Das Werkzeug der Agentenbruecke, dessen Freigabe eine Bitte um Einwilligung ist.
+pub const AGENT_START_TOOL: &str = "start_recording";
 pub const CAPABILITY: &str = "recording.start";
 
 /// Eine offene Bitte um Einwilligung samt dem, was das Fenster zeigt.
@@ -34,8 +44,11 @@ pub struct Consent {
     pub workflow_name: String,
     /// Kalendertermin des Ausloesers, falls es einer ist.
     pub event_key: Option<String>,
-    /// Titel des Termins bzw. der Besprechung aus den Ausloeserdaten.
+    /// Titel des Termins bzw. der Besprechung aus den Ausloeserdaten (beim Agenten: sein Titel).
     pub title: Option<String>,
+    /// A8: die Bitte kommt von einem externen Agenten; `workflow_name` ist dann sein Name,
+    /// `workflow_id` die Kennung des Zugangs und `run_id` leer.
+    pub agent: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,7 +119,46 @@ fn run_waiting_for(
         .filter(|r| r.state == RunState::AwaitingApproval))
 }
 
+/// Der Titel aus der Vorschau einer Freigabe (`• title: ...`), falls der Agent einen nannte.
+fn preview_title(preview: Option<&str>) -> Option<String> {
+    preview?
+        .lines()
+        .find_map(|l| l.strip_prefix("• title: "))
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+}
+
+/// A8: die Bitte eines Agenten. `None`, wenn die Freigabe zu einem anderen Werkzeug gehoert
+/// (Beenden einer Aufnahme ist keine Einwilligung zum Aufnehmen) oder nicht zugeordnet ist.
+fn agent_consent_of(conn: &Connection, a: &Approval) -> Result<Option<Consent>, ConsentError> {
+    let Some((client_id, tool)) = agent_clients::approval_link(conn, &a.id).map_err(store_err)?
+    else {
+        return Ok(None);
+    };
+    if tool != AGENT_START_TOOL {
+        return Ok(None);
+    }
+    let label = agent_clients::get(conn, &client_id)
+        .map_err(store_err)?
+        .map(|c| c.label)
+        .unwrap_or_else(|| client_id.clone());
+    Ok(Some(Consent {
+        approval_id: a.id.clone(),
+        created_at: a.created_at,
+        run_id: String::new(),
+        workflow_id: client_id,
+        workflow_name: label,
+        event_key: None,
+        title: preview_title(a.args_preview.as_deref()),
+        agent: true,
+    }))
+}
+
 fn consent_of(conn: &Connection, a: &Approval) -> Result<Option<Consent>, ConsentError> {
+    if a.caller == AGENT_CALLER {
+        return agent_consent_of(conn, a);
+    }
     let Some(run) = run_waiting_for(conn, &a.id)? else {
         return Ok(None);
     };
@@ -125,6 +177,7 @@ fn consent_of(conn: &Connection, a: &Approval) -> Result<Option<Consent>, Consen
         workflow_name: run.workflow_name,
         event_key: text("event_id"),
         title: text("title"),
+        agent: false,
     }))
 }
 
@@ -133,7 +186,7 @@ fn consent_of(conn: &Connection, a: &Approval) -> Result<Option<Consent>, Consen
 pub fn pending(conn: &Connection, now_ms: i64) -> Result<Vec<Consent>, ConsentError> {
     let mut out = Vec::new();
     for a in approvals::list_pending(conn, now_ms).map_err(store_err)? {
-        if a.caller != CALLER || a.tool_or_capability != CAPABILITY {
+        if (a.caller != CALLER && a.caller != AGENT_CALLER) || a.tool_or_capability != CAPABILITY {
             continue;
         }
         if let Some(c) = consent_of(conn, &a)? {
@@ -164,7 +217,11 @@ pub fn decide(
     let Some(a) = approvals::get(conn, approval_id).map_err(store_err)? else {
         return Err(ConsentError::NotFound);
     };
-    if a.caller != CALLER || a.tool_or_capability != CAPABILITY {
+    if (a.caller != CALLER && a.caller != AGENT_CALLER) || a.tool_or_capability != CAPABILITY {
+        return Err(ConsentError::NotAConsent);
+    }
+    if a.caller == AGENT_CALLER && agent_consent_of(conn, &a)?.is_none() {
+        // Nur die Bitte „Aufnahme starten“ ist eine Einwilligung, nie ein „Beenden“.
         return Err(ConsentError::NotAConsent);
     }
     if approve && !consent_confirmed {

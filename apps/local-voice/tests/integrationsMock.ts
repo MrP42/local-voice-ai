@@ -393,6 +393,15 @@ export const installIntegrationsMock = async (
             const a = state.approvals.find((x: any) => x.id === args.id);
             if (!a) throw "approval_not_found";
             if (a.state !== "pending") throw "approval_already_decided";
+            // Wie das Backend (B7n): eine Freigabe zum Aufnehmen gilt nur mit der Bestaetigung
+            // der Einwilligung; das Beenden einer Aufnahme und das Ablehnen brauchen sie nicht.
+            if (
+              args.approve &&
+              !args.consentConfirmed &&
+              a.tool_or_capability === "recording.start" &&
+              !String(a.args_preview ?? "").startsWith("Ziel: stop_recording")
+            )
+              throw "consent_required";
             a.state = args.approve ? "approved" : "denied";
             audit(a.integration_id, a.tool_or_capability, {
               phase: "approval_decided",

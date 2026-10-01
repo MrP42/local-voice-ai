@@ -13,6 +13,18 @@ interface ApprovalDialogProps {
   onDecided: () => Promise<void> | void;
 }
 
+/** Die Faehigkeit „Aufnahme starten“: nie ohne Einwilligung (§ 201 StGB). */
+const RECORDING = "recording.start";
+
+/**
+ * Braucht die Freigabe das Haekchen der Einwilligung? Jede Freigabe zum Aufnehmen. „Aufnahme
+ * beenden“ teilt sich die Faehigkeit (Agentenbruecke), ist aber keine Einwilligung zum Aufnehmen:
+ * das Ziel der Anfrage nennt das Werkzeug („Ziel: stop_recording · ...“).
+ */
+const needsConsent = (approval: PendingApproval["approval"]): boolean =>
+  approval.tool_or_capability === RECORDING &&
+  !(approval.args_preview ?? "").startsWith("Ziel: stop_recording");
+
 const stamp = (ms: number, language: string): string =>
   new Date(ms).toLocaleString(language, {
     dateStyle: "short",
@@ -33,12 +45,21 @@ export const ApprovalDialog: React.FC<ApprovalDialogProps> = ({
   const { t, i18n } = useTranslation();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Freigaben fuer eine Aufnahme gelten erst mit dem Haekchen der Einwilligung (§ 201 StGB),
+  // genau wie im Hinweisfenster und beim Start von Hand.
+  const [agreed, setAgreed] = useState<Record<string, boolean>>({});
 
   const decide = async (id: string, approve: boolean) => {
+    const item = pending.find((p) => p.approval.id === id);
+    // Ohne Haekchen kein Erlauben, auch nicht per erzwungenem Klick.
+    const confirmed =
+      !!item && needsConsent(item.approval) && agreed[id] === true;
+    if (approve && item && needsConsent(item.approval) && !confirmed) return;
     setBusy(id);
     setError(null);
     try {
-      const result = await commands.approvalDecide(id, approve);
+      // Das Backend verlangt die Bestaetigung zusaetzlich (`consent_required`).
+      const result = await commands.approvalDecide(id, approve, confirmed);
       if (result.status === "error") {
         const code = errorText(result.error);
         setError(
@@ -119,10 +140,35 @@ export const ApprovalDialog: React.FC<ApprovalDialogProps> = ({
                   time: stamp(approval.created_at, i18n.language),
                 })}
               </p>
+              {needsConsent(approval) && (
+                <div className="space-y-1" data-testid="approval-consent-box">
+                  <p className="text-xs text-text/80">
+                    {t("meetings.consent.body")}
+                  </p>
+                  <label className="flex cursor-pointer items-start gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={agreed[approval.id] === true}
+                      onChange={(e) =>
+                        setAgreed((prev) => ({
+                          ...prev,
+                          [approval.id]: e.target.checked,
+                        }))
+                      }
+                      className="mt-1 accent-logo-primary"
+                      data-testid="approval-consent"
+                    />
+                    <span>{t("meetings.consent.confirm")}</span>
+                  </label>
+                </div>
+              )}
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
-                  disabled={busy !== null}
+                  disabled={
+                    busy !== null ||
+                    (needsConsent(approval) && agreed[approval.id] !== true)
+                  }
                   onClick={() => void decide(approval.id, true)}
                   data-testid="approval-allow"
                 >

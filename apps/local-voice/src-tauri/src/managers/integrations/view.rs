@@ -421,6 +421,20 @@ fn approval_error_code(e: &ApprovalError) -> String {
     }
 }
 
+/// Braucht die Freigabe die Einwilligungsbestaetigung? Jede Freigabe der Faehigkeit
+/// `recording.start` (Ablauf, Agent), ausser dem Beenden einer Aufnahme (`stop_recording` teilt
+/// sich die Faehigkeit, ist aber keine Einwilligung zum Aufnehmen). Im Zweifel (Freigabe ohne
+/// erkennbares Werkzeug) ja.
+fn needs_consent(conn: &Connection, a: &Approval) -> bool {
+    if a.tool_or_capability != Capability::RecordingStart.as_str() {
+        return false;
+    }
+    !matches!(
+        crate::agent_bridge::clients::approval_link(conn, &a.id),
+        Ok(Some((_, tool))) if tool == "stop_recording"
+    )
+}
+
 /// Fehlercode: eine Freigabe zum Aufnehmen wurde ohne die Einwilligungsbestaetigung erlaubt.
 pub const ERR_CONSENT_REQUIRED: &str = "consent_required";
 
@@ -439,7 +453,7 @@ pub fn decide_approval(
 ) -> Result<Approval, String> {
     if approve && !consent_confirmed {
         if let Ok(Some(a)) = approvals::get(conn, id) {
-            if a.tool_or_capability == Capability::RecordingStart.as_str() {
+            if needs_consent(conn, &a) {
                 return Err(ERR_CONSENT_REQUIRED.to_string());
             }
         }

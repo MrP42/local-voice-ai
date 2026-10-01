@@ -69,10 +69,14 @@ pub struct MeetingPromptPayload {
 /// Der Ablauf hinter einer Bitte um Einwilligung (B2).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 pub struct PromptWorkflow {
-    /// Name des Ablaufs („Kundentermin protokollieren“).
+    /// Name des Ablaufs („Kundentermin protokollieren“); bei einem Agenten sein Name.
     pub name: String,
     /// Titel des Termins bzw. der Besprechung, wenn der Ausloeser einen hat.
     pub title: Option<String>,
+    /// A8: die Bitte kommt von einem externen Agenten (Claude Code, Codex, ein Skript) statt
+    /// von einem Ablauf; `name` ist der Name seines Zugangs.
+    #[serde(default)]
+    pub agent: bool,
 }
 
 /// Ereignis an das Fenster: `show` = es liegt ein neuer Hinweis vor (die
@@ -131,6 +135,7 @@ pub fn payload_for_consent(
     attendee_count: u32,
     workflow_name: String,
     title: Option<String>,
+    agent: bool,
 ) -> MeetingPromptPayload {
     MeetingPromptPayload {
         prompt_id: format!("p{}", PROMPT_SEQ.fetch_add(1, Ordering::Relaxed) + 1),
@@ -141,6 +146,7 @@ pub fn payload_for_consent(
         workflow: Some(PromptWorkflow {
             name: workflow_name,
             title,
+            agent,
         }),
     }
 }
@@ -165,12 +171,13 @@ pub fn show_consent(
     attendee_count: u32,
     workflow_name: String,
     title: Option<String>,
+    agent: bool,
     approval_id: String,
 ) {
     if consent_approval(app).is_some() {
         return;
     }
-    let payload = payload_for_consent(event, attendee_count, workflow_name, title);
+    let payload = payload_for_consent(event, attendee_count, workflow_name, title, agent);
     show_with(app, payload, Some(approval_id));
 }
 

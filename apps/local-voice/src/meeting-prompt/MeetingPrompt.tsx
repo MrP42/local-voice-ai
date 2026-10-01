@@ -30,6 +30,10 @@ export const minutesUntil = (startsAt: number, now: number): number =>
  * (§ 201 StGB) - ohne Haekchen startet nichts. Das Fenster hat keinen Fokus;
  * bedient wird es mit der Maus.
  *
+ * A8: Dasselbe gilt, wenn ein externer Agent (Claude Code, Codex, ein Skript) ueber die
+ * Agentenbruecke um eine Aufnahme bittet (`payload.workflow.agent`): gleiche Zustaende, gleiches
+ * Haekchen, nur der Wortlaut nennt den Agenten statt eines Ablaufs.
+ *
  * B2: Bittet ein Ablauf der Automationen um die Aufnahme (`payload.workflow`),
  * zeigt dasselbe Fenster dieselben zwei Zustaende, entscheidet aber die
  * Freigabe des Ablaufs (`meetingPromptWorkflowDecide`) statt die Aufnahme
@@ -93,6 +97,10 @@ const MeetingPrompt: React.FC = () => {
 
   const event = payload.event;
   const workflow = payload.workflow ?? null;
+  // A8: derselbe Weg, anderer Wortlaut, wenn ein Agent um die Aufnahme bittet.
+  const wk = workflow?.agent
+    ? "meetings.prompt.agent"
+    : "meetings.prompt.workflow";
   const title =
     event?.title ??
     workflow?.title ??
@@ -115,12 +123,17 @@ const MeetingPrompt: React.FC = () => {
     const result = await commands.meetingPromptWorkflowDecide(
       payload.prompt_id,
       approve,
+      // Das Haekchen ist oben schon verlangt; das Backend verlangt es zusaetzlich.
+      agreed,
     );
     setBusy(false);
     if (result.status === "error") {
       setError(translateMeetingError(result.error, t));
       // Nicht mehr offen (anderswo entschieden, abgelaufen): das Fenster hat nichts mehr zu tun.
-      if (result.error.startsWith("consent_")) {
+      if (
+        result.error.startsWith("consent_") &&
+        result.error !== "consent_required"
+      ) {
         setTimeout(() => setPayload(null), 2500);
       }
       return;
@@ -174,7 +187,7 @@ const MeetingPrompt: React.FC = () => {
                 className="text-xs font-semibold uppercase tracking-wide text-logo-primary"
                 data-testid="prompt-workflow-title"
               >
-                {t("meetings.prompt.workflow.title")}
+                {t(`${wk}.title`)}
               </p>
             )}
             <p
@@ -200,7 +213,7 @@ const MeetingPrompt: React.FC = () => {
                 className="text-sm text-text/80 break-words"
                 data-testid="prompt-workflow-intro"
               >
-                {t("meetings.prompt.workflow.intro", { name: workflow.name })}
+                {t(`${wk}.intro`, { name: workflow.name })}
               </p>
             )}
           </div>
@@ -209,11 +222,7 @@ const MeetingPrompt: React.FC = () => {
               onClick={() => setStep("consent")}
               data-testid="prompt-start"
             >
-              {t(
-                workflow
-                  ? "meetings.prompt.workflow.start"
-                  : "meetings.prompt.start",
-              )}
+              {t(workflow ? `${wk}.start` : "meetings.prompt.start")}
             </Button>
             {event?.join_url && (
               <Button
@@ -239,7 +248,7 @@ const MeetingPrompt: React.FC = () => {
                 disabled={busy}
                 data-testid="prompt-decline"
               >
-                {t("meetings.prompt.workflow.decline")}
+                {t(`${wk}.decline`)}
               </Button>
             ) : (
               <Button
@@ -307,11 +316,7 @@ const MeetingPrompt: React.FC = () => {
             >
               {busy
                 ? t("meetings.prompt.starting")
-                : t(
-                    workflow
-                      ? "meetings.prompt.workflow.confirm"
-                      : "meetings.prompt.confirm",
-                  )}
+                : t(workflow ? `${wk}.confirm` : "meetings.prompt.confirm")}
             </Button>
             <Button
               variant="secondary"

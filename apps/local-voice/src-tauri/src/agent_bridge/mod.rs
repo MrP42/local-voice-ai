@@ -22,6 +22,9 @@
 //! - `view`: Ansichten fuer die Tauri-Commands (`commands/agent_bridge.rs`).
 //! - `runtime`: Start mit der App, Zustand fuer die Oberflaeche, headless Sandbox-Instanz.
 //! - `test_tools`: Echo-Werkzeuge nur fuer die headless Sandbox-Instanz.
+//! - `tools` (A8): die echten Werkzeuge (Datei transkribieren, YouTube-Quelle, Vorlesen, Aufnahme,
+//!   Sessions) mit Pfadpruefung (`tools::paths`), App-Anbindung (`tools::app_host`) und Attrappe
+//!   fuer die Sandbox (`tools::sandbox`).
 //!
 //! # Rechte (E3)
 //! Wirksamer Modus eines Aufrufs = `grants::effective_mode` (A1) fuer die Agent-Integration
@@ -53,7 +56,7 @@
 //! | 13 | Fehlerhafte Eingaben (kein JSON, falscher Typ, unbekannte Methode/Werkzeug, Argumente keine Objekte) | strukturierter Fehler, nie Panik, Verbindung bleibt (ausser Zeile zu lang) | `protocol::tests`, `server::tests::malformed_*` |
 //! | 14 | Agent versucht, sich selbst Rechte zu geben oder eine Freigabe zu entscheiden | es gibt weder eine Methode noch ein Werkzeug dafuer; die Entscheidung liegt in den Tauri-Commands der Oberflaeche | `server::tests::there_is_no_way_to_decide_an_approval_over_the_pipe` |
 //! | 15 | Migration auf bestehender Datenbank, Abbruch mitten im Schritt | nur CREATE, eine Transaktion; Altdaten unveraendert, bei Abbruch Stand wie vorher | `schema::tests::*`, `meetings::migration_chain::tests` |
-//! | 16 | Kindprozess / Audio / fehlendes Geraet | die Bruecke startet keinen Kindprozess und beruehrt weder Audio-Callback noch Geraete; Aufnahme starten gehoert A8 und bleibt hinter dem Einwilligungsdialog | entfaellt (Begruendung); `grants::never_allow` (A1) |
+//! | 16 | Kindprozess / Audio / fehlendes Geraet | die Bruecke startet keinen Kindprozess und beruehrt weder Audio-Callback noch Geraete; die Werkzeuge (A8, `tools`) starten die Aufnahme nur ueber den vorhandenen Recorder und nur nach der Zustimmung des Nutzers, Tabelle dort | `grants::never_allow` (A1), `tools::tests` |
 //! | 17 | Voller Arbeitsspeicher | je Verbindung hoechstens eine Zeile (1 MiB) und eine Antwort (1 MiB) im Speicher, hoechstens 8 Verbindungen: unter 20 MiB; keine Modellstarts, daher weder `process_guard` noch RAM-Gate noetig | `server::tests::*cap*`, Obergrenzen als Konstanten |
 //!
 //! Was die Bruecke NICHT schuetzt: ein Agent mit freiem Shell-Zugriff unter demselben
@@ -74,6 +77,7 @@ pub mod server;
 pub mod test_tools;
 #[cfg(test)]
 pub(crate) mod testkit;
+pub mod tools;
 pub mod view;
 
 use std::time::Duration;
@@ -138,7 +142,7 @@ mod tests {
     /// verliert unter Last ein Schreiben (Audit, Freigabe, Zugang).
     #[test]
     fn production_code_opens_connections_only_through_open_connection() {
-        let files: [(&str, &str); 14] = [
+        let files: [(&str, &str); 18] = [
             ("bridge.rs", include_str!("bridge.rs")),
             ("catalog.rs", include_str!("catalog.rs")),
             ("client.rs", include_str!("client.rs")),
@@ -152,6 +156,10 @@ mod tests {
             ("server.rs", include_str!("server.rs")),
             ("view.rs", include_str!("view.rs")),
             ("test_tools.rs", include_str!("test_tools.rs")),
+            ("tools.rs", include_str!("tools.rs")),
+            ("tools/app_host.rs", include_str!("tools/app_host.rs")),
+            ("tools/paths.rs", include_str!("tools/paths.rs")),
+            ("tools/sandbox.rs", include_str!("tools/sandbox.rs")),
             (
                 "commands/agent_bridge.rs",
                 include_str!("../commands/agent_bridge.rs"),

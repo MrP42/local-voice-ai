@@ -844,3 +844,52 @@ fn denying_a_recording_never_needs_the_confirmation_and_other_approvals_do_not_e
         ApprovalState::Approved
     );
 }
+
+#[test]
+fn an_agents_start_recording_needs_the_confirmation_but_stopping_does_not() {
+    use crate::agent_bridge::clients as agent_clients;
+    use crate::managers::integrations::approvals::{self, NewApproval};
+    use crate::managers::integrations::model::ApprovalState;
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let (client, _token) = agent_clients::create(&conn, "Claude Code", None, 9_000).unwrap();
+    let linked = |tool: &str, hash: &str| {
+        let a = approvals::create(
+            &conn,
+            &NewApproval {
+                caller: "agent_external",
+                integration_id: Some(&client.integration_id),
+                capability: "recording.start",
+                args_preview: Some(&format!("Ziel: {tool}")),
+                args_hash: Some(hash),
+            },
+            10_000,
+        )
+        .unwrap();
+        agent_clients::link_approval(&conn, &a.id, &client.id, tool, 10_000).unwrap();
+        a.id
+    };
+    let start = linked("start_recording", "h1");
+    let stop = linked("stop_recording", "h2");
+    assert_eq!(
+        decide_approval(&conn, &start, true, false, 12_000).unwrap_err(),
+        ERR_CONSENT_REQUIRED
+    );
+    assert_eq!(
+        approvals::get(&conn, &start).unwrap().unwrap().state,
+        ApprovalState::Pending
+    );
+    // Das Beenden einer Aufnahme ist keine Einwilligung zum Aufnehmen.
+    assert_eq!(
+        decide_approval(&conn, &stop, true, false, 12_000)
+            .unwrap()
+            .state,
+        ApprovalState::Approved
+    );
+    assert_eq!(
+        decide_approval(&conn, &start, true, true, 12_000)
+            .unwrap()
+            .state,
+        ApprovalState::Approved
+    );
+}

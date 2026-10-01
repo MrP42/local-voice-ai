@@ -14,10 +14,25 @@
 use serde_json::{json, Value};
 use std::io::{self, BufRead};
 
-/// Protokollversionen, die dieser Server spricht (aelteste zuerst).
-pub const PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-11-25"];
-/// Antwort auf eine unbekannte angefragte Version: die neueste.
+/// Protokollversionen mit `initialize`-Handshake („alt“).
+pub const LEGACY_VERSIONS: [&str; 2] = ["2025-06-18", "2025-11-25"];
+/// Die zustandslose Fassung (A8, R9): jede Anfrage traegt Version und Faehigkeiten des Clients in
+/// `_meta`, es gibt keinen Handshake; `server/discover` nennt die Versionen des Servers.
+pub const MODERN_PROTOCOL: &str = "2026-07-28";
+/// Alle Versionen, die dieser Server spricht (aelteste zuerst). Er ist „dual-era“: eine Anfrage
+/// mit `_meta` wird zustandslos nach 2026-07-28 bedient, ein `initialize` waehlt den alten
+/// Ablauf (eine Anfrage ganz ohne beides wird wie bisher tolerant als alt behandelt).
+pub const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-11-25", "2026-07-28"];
+/// Antwort auf ein `initialize` mit unbekannter Version: die neueste Handshake-Version. Ein
+/// Handshake kann keine zustandslose Version waehlen.
 pub const LATEST_PROTOCOL: &str = "2025-11-25";
+
+/// Schluessel in `_meta` (Fassung 2026-07-28).
+pub const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
+pub const META_CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
+pub const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
+/// Fehlercode „Protokollversion nicht unterstuetzt“ (Fassung 2026-07-28).
+pub const UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
 
 pub const PARSE_ERROR: i64 = -32700;
 pub const INVALID_REQUEST: i64 = -32600;
@@ -122,14 +137,91 @@ pub fn error_line(id: &Value, code: i64, message: &str) -> String {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }).to_string()
 }
 
-/// Versionsaushandlung: die angefragte Version, wenn wir sie sprechen, sonst
-/// die neueste eigene (der Client entscheidet dann, ob er damit leben kann).
+/// Versionsaushandlung des alten Handshakes: die angefragte Version, wenn wir sie mit
+/// Handshake sprechen, sonst die neueste Handshake-Version (der Client entscheidet dann, ob er
+/// damit leben kann).
 pub fn negotiate_version(requested: &str) -> &'static str {
-    PROTOCOL_VERSIONS
+    LEGACY_VERSIONS
         .iter()
         .copied()
         .find(|v| *v == requested)
         .unwrap_or(LATEST_PROTOCOL)
+}
+
+/// Fehlerantwort mit `data` (z. B. die unterstuetzten Versionen) als eine Zeile.
+pub fn error_line_data(id: &Value, code: i64, message: &str, data: Value) -> String {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message, "data": data } })
+        .to_string()
+}
+
+/// Wie eine Anfrage sich ausgibt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Era {
+    /// Ohne Versionsangabe in `_meta` (oder mit einer Handshake-Version): Verhalten wie bisher.
+    Legacy,
+    /// Mit `_meta` der Fassung 2026-07-28: zustandslos, Ergebnisse tragen `resultType`.
+    Modern,
+}
+
+/// Warum eine Anfrage wegen ihres `_meta` abgewiesen wird.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MetaError {
+    pub code: i64,
+    pub message: String,
+    pub data: Option<Value>,
+}
+
+impl MetaError {
+    pub fn line(&self, id: &Value) -> String {
+        match &self.data {
+            Some(d) => error_line_data(id, self.code, &self.message, d.clone()),
+            None => error_line(id, self.code, &self.message),
+        }
+    }
+}
+
+/// Ordnet eine Anfrage nach ihrem `_meta` ein (Fassung 2026-07-28):
+/// - keine Version in `_meta`: `Legacy` (kein Handshake noetig, wie bisher);
+/// - eine Handshake-Version: `Legacy`;
+/// - `2026-07-28`: `Modern`, dann ist `clientCapabilities` Pflicht (sonst `-32602`);
+/// - jede andere Version: `-32022` mit `data.supported` und `data.requested`.
+pub fn classify(params: &Value) -> Result<Era, MetaError> {
+    let Some(requested) = params
+        .get("_meta")
+        .and_then(|m| m.get(META_PROTOCOL_VERSION))
+    else {
+        return Ok(Era::Legacy);
+    };
+    let Some(version) = requested.as_str() else {
+        return Err(MetaError {
+            code: INVALID_PARAMS,
+            message: format!("Invalid params: _meta.{META_PROTOCOL_VERSION} must be a string"),
+            data: None,
+        });
+    };
+    if LEGACY_VERSIONS.contains(&version) {
+        return Ok(Era::Legacy);
+    }
+    if version == MODERN_PROTOCOL {
+        let caps = params["_meta"].get(META_CLIENT_CAPABILITIES);
+        if !caps.is_some_and(Value::is_object) {
+            return Err(MetaError {
+                code: INVALID_PARAMS,
+                message: format!("Invalid params: _meta.{META_CLIENT_CAPABILITIES} missing"),
+                data: None,
+            });
+        }
+        return Ok(Era::Modern);
+    }
+    let shown: String = version.chars().take(40).collect();
+    Err(MetaError {
+        code: UNSUPPORTED_PROTOCOL_VERSION,
+        message: "Unsupported protocol version".to_string(),
+        data: Some(json!({
+            "supported": [MODERN_PROTOCOL, LEGACY_VERSIONS[1], LEGACY_VERSIONS[0]],
+            "requested": shown,
+        })),
+    })
 }
 
 /// Ergebnis von [`read_line_capped`].
@@ -198,9 +290,80 @@ mod tests {
     fn the_requested_version_wins_when_known_else_the_latest() {
         assert_eq!(negotiate_version("2025-06-18"), "2025-06-18");
         assert_eq!(negotiate_version("2025-11-25"), "2025-11-25");
+        // Ein Handshake kann keine zustandslose Version waehlen.
+        assert_eq!(negotiate_version("2026-07-28"), LATEST_PROTOCOL);
         assert_eq!(negotiate_version("2024-11-05"), LATEST_PROTOCOL);
         assert_eq!(negotiate_version("gibt-es-nicht"), LATEST_PROTOCOL);
         assert_eq!(negotiate_version(""), LATEST_PROTOCOL);
+    }
+
+    #[test]
+    fn the_versions_list_matches_its_parts() {
+        let mut all: Vec<&str> = LEGACY_VERSIONS.to_vec();
+        all.push(MODERN_PROTOCOL);
+        assert_eq!(all, PROTOCOL_VERSIONS);
+        assert!(LEGACY_VERSIONS.contains(&LATEST_PROTOCOL));
+    }
+
+    fn with_meta(version: Option<Value>, caps: Option<Value>) -> Value {
+        let mut meta = serde_json::Map::new();
+        if let Some(v) = version {
+            meta.insert(META_PROTOCOL_VERSION.into(), v);
+        }
+        if let Some(c) = caps {
+            meta.insert(META_CLIENT_CAPABILITIES.into(), c);
+        }
+        json!({ "_meta": meta, "name": "x" })
+    }
+
+    #[test]
+    fn a_request_is_modern_only_with_the_new_version_and_capabilities() {
+        assert_eq!(classify(&Value::Null), Ok(Era::Legacy));
+        assert_eq!(classify(&json!({})), Ok(Era::Legacy));
+        assert_eq!(classify(&json!({"_meta": {}})), Ok(Era::Legacy), "kein Handshake noetig, wie bisher");
+        assert_eq!(classify(&json!({"_meta": {"progressToken": 1}})), Ok(Era::Legacy));
+        for old in ["2025-06-18", "2025-11-25"] {
+            assert_eq!(classify(&with_meta(Some(json!(old)), None)), Ok(Era::Legacy), "{old}");
+        }
+        assert_eq!(
+            classify(&with_meta(Some(json!("2026-07-28")), Some(json!({})))),
+            Ok(Era::Modern)
+        );
+        assert_eq!(
+            classify(&with_meta(Some(json!("2026-07-28")), Some(json!({"roots": {}})))),
+            Ok(Era::Modern)
+        );
+    }
+
+    #[test]
+    fn a_modern_request_without_capabilities_is_invalid_params() {
+        for caps in [None, Some(json!(null)), Some(json!("x")), Some(json!([]))] {
+            let e = classify(&with_meta(Some(json!("2026-07-28")), caps)).unwrap_err();
+            assert_eq!(e.code, INVALID_PARAMS);
+            assert!(e.message.contains("clientCapabilities"), "{}", e.message);
+            assert!(e.data.is_none());
+        }
+        let e = classify(&with_meta(Some(json!(20260728)), Some(json!({})))).unwrap_err();
+        assert_eq!(e.code, INVALID_PARAMS);
+    }
+
+    #[test]
+    fn an_unknown_version_is_refused_with_the_supported_list() {
+        for v in ["1900-01-01", "2026-07-29", "gibt-es-nicht", "2024-11-05"] {
+            let e = classify(&with_meta(Some(json!(v)), Some(json!({})))).unwrap_err();
+            assert_eq!(e.code, UNSUPPORTED_PROTOCOL_VERSION, "{v}");
+            let data = e.data.as_ref().unwrap();
+            assert_eq!(data["requested"], v);
+            assert_eq!(data["supported"], json!(["2026-07-28", "2025-11-25", "2025-06-18"]));
+            let line: Value = serde_json::from_str(&e.line(&json!(3))).unwrap();
+            assert_eq!(line["error"]["code"], -32022);
+            assert_eq!(line["error"]["data"]["supported"][0], "2026-07-28");
+            assert_eq!(line["id"], 3);
+        }
+        // Eine riesige „Version“ wird nicht zurueckgespiegelt.
+        let big = "x".repeat(10_000);
+        let e = classify(&with_meta(Some(json!(big)), Some(json!({})))).unwrap_err();
+        assert!(e.data.unwrap()["requested"].as_str().unwrap().len() <= 40);
     }
 
     #[test]

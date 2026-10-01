@@ -600,15 +600,86 @@ test.describe("Freigabedialog", () => {
     expect((await calls(page, "approval_decide"))[0].args).toEqual({
       id: "ap-1",
       approve: true,
+      consentConfirmed: false,
     });
     await items.first().getByTestId("approval-deny").click();
     expect((await calls(page, "approval_decide"))[1].args).toEqual({
       id: "ap-2",
       approve: false,
+      consentConfirmed: false,
     });
     // Nichts mehr offen: Dialog zu, Hinweis weg.
     await expect(page.getByTestId("approval-dialog")).toHaveCount(0);
     await expect(page.getByTestId("approvals-banner")).toHaveCount(0);
+  });
+
+  // A8: Eine Freigabe zum Aufnehmen gilt erst mit dem Haekchen der Einwilligung (§ 201 StGB),
+  // wie im Hinweisfenster. „Aufnahme beenden“ teilt sich die Faehigkeit, ist aber keine
+  // Einwilligung zum Aufnehmen und braucht das Haekchen nicht.
+  test("A8: eine Aufnahme-Freigabe verlangt das Häkchen der Einwilligung, das Beenden nicht", async ({
+    page,
+  }) => {
+    await setup(page, {
+      integrations: DEMO.integrations,
+      approvals: [
+        {
+          id: "ap-rec",
+          caller: "agent_external",
+          integration_id: "ordner-berichte",
+          tool_or_capability: "recording.start",
+          args_preview:
+            "Ziel: start_recording · Claude Code (C1)\n• title: Jour fixe",
+        },
+        {
+          id: "ap-stop",
+          caller: "agent_external",
+          integration_id: "ordner-berichte",
+          tool_or_capability: "recording.start",
+          args_preview: "Ziel: stop_recording · Claude Code (C1)",
+        },
+      ],
+    });
+    await openIntegrations(page);
+    await page.getByTestId("approvals-open").click();
+    const items = page.getByTestId("approval-item");
+    await expect(items).toHaveCount(2);
+    const start = items.nth(0);
+    const stop = items.nth(1);
+    // Aufnehmen: Einwilligungstext, Haekchen, Knopf gesperrt.
+    await expect(start.getByTestId("approval-consent-box")).toContainText(
+      "(§ 201 StGB)",
+    );
+    await expect(start.getByTestId("approval-allow")).toBeDisabled();
+    await start
+      .getByTestId("approval-allow")
+      .evaluate((el) => (el as HTMLButtonElement).click());
+    expect(await calls(page, "approval_decide")).toHaveLength(0);
+    await start.getByTestId("approval-consent").check();
+    await expect(start.getByTestId("approval-allow")).toBeEnabled();
+    // Beenden: kein Haekchen, sofort bedienbar.
+    await expect(stop.getByTestId("approval-consent-box")).toHaveCount(0);
+    await expect(stop.getByTestId("approval-allow")).toBeEnabled();
+    // Ablehnen braucht nie ein Haekchen.
+    await start.getByTestId("approval-consent").uncheck();
+    await expect(start.getByTestId("approval-deny")).toBeEnabled();
+    await start.getByTestId("approval-consent").check();
+    await start.getByTestId("approval-allow").click();
+    // Das Backend bekommt die Bestaetigung mit (und verlangt sie selbst: `consent_required`).
+    expect((await calls(page, "approval_decide"))[0].args).toEqual({
+      id: "ap-rec",
+      approve: true,
+      consentConfirmed: true,
+    });
+    // Beenden und Ablehnen gehen ohne Bestaetigung.
+    await page
+      .locator('[data-approval-id="ap-stop"]')
+      .getByTestId("approval-allow")
+      .click();
+    expect((await calls(page, "approval_decide"))[1].args).toEqual({
+      id: "ap-stop",
+      approve: true,
+      consentConfirmed: false,
+    });
   });
 
   test("ohne offene Freigaben gibt es keinen Hinweis", async ({ page }) => {

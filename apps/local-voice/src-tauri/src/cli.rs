@@ -458,6 +458,23 @@ pub struct CliArgs {
     #[arg(long)]
     pub integrations_dump: bool,
 
+    // A8 (Goal Integrationen)
+    /// Print the audit log of the integrations register as JSON and exit: every action of
+    /// an agent, workflow or the user that went through the gate (caller, integration,
+    /// capability, target, outcome, detail), oldest first, plus totals per outcome, caller
+    /// and capability over the WHOLE table. The table keeps at most 20 000 rows (the oldest
+    /// fall first, denials before real actions); the dump returns the newest --audit-limit
+    /// rows (default 1000) and says whether it is truncated. SANDBOX ONLY: requires
+    /// LVA_MEETINGS_DIR, so it can never read the productive meetings.db (it opens, and
+    /// therefore migrates, that sandbox store). Honours --json/--out. Exit 0 ok, 1 error,
+    /// 2 no sandbox.
+    #[arg(long)]
+    pub audit_dump: bool,
+
+    /// With --audit-dump: how many of the newest rows (1 to 20 000, default 1000).
+    #[arg(long, value_name = "N")]
+    pub audit_limit: Option<u32>,
+
     // G5 (Goal Issues-Abschluss #70)
     /// Translate the ACTIVE transcript version of one meeting into --target-language with the
     /// configured language model (--model picks a local one for this run), store the result as a

@@ -374,11 +374,31 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         let index_store = store.clone(); // M4-P4b
         let calendar_store = store.clone(); // M5-P5b
         let workflow_store = store.clone(); // B2
-        // A7: Agentenbruecke (Named Pipe, nur aktueller Benutzer). Die Werkzeuge der App
-        // (A8: schreibende MCP-Werkzeuge) haengen als Handler an dieser Liste.
-        app_handle.manage(agent_bridge::runtime::start_for_app(
+        // A7: Agentenbruecke (Named Pipe, nur aktueller Benutzer). A8: die Werkzeuge der App
+        // (Datei transkribieren, YouTube-Quelle, Vorlesen, Aufnahme, Sessions) sind die Handler;
+        // sie loesen Warteschlange, Recorder und Sprachausgabe erst beim Aufruf auf. Eine neue
+        // Freigabe fuer `start_recording` zeigt sofort die Bitte um Einwilligung (dasselbe
+        // Hinweisfenster wie bei den Ablaeufen); alles andere entscheidet der Nutzer auf der
+        // Seite Integrationen.
+        let agent_tools: Arc<dyn agent_bridge::catalog::ToolHandler> =
+            Arc::new(agent_bridge::tools::AppTools::new(
+                store.clone(),
+                Arc::new(agent_bridge::tools::app_host::AppHost::new(app_handle)),
+            ));
+        let approval_app = app_handle.clone();
+        let approval_notifier: agent_bridge::bridge::ApprovalNotifier = Arc::new(move |tool| {
+            if tool == managers::workflows::consent::AGENT_START_TOOL {
+                if let Some(hub) =
+                    approval_app.try_state::<Arc<managers::workflows::hub::WorkflowHub>>()
+                {
+                    hub.show_pending_consents(chrono::Utc::now().timestamp_millis());
+                }
+            }
+        });
+        app_handle.manage(agent_bridge::runtime::start_for_app_with(
             store.clone(),
-            Vec::new(),
+            vec![agent_tools],
+            Some(approval_notifier),
         ));
         // U7: die Import-Warteschlange (Aufnahme hat Vorrang, Enddurchlauf und
         // Wiederherstellung halten die gemeinsame Engine).
@@ -2423,6 +2443,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.translate_meeting.is_some() // G5
         || cli_args.calendar_dump.is_some() // M5-P5a
         || cli_args.integrations_dump // A1
+        || cli_args.audit_dump // A8
         || cli_args.add_youtube.is_some() // A2
         || cli_args.workflow_run.is_some() // B1
         || cli_args.agent_bridge_serve // A7
@@ -2678,6 +2699,22 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_workflow_run(&app_handle, &args)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // A8: Audit-Dump (nur Sandbox, nur lesend).
+                if cli_args.audit_dump {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_audit_dump(&app_handle, &args)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -3224,6 +3261,64 @@ fn run_headless_integrations_dump(app: &AppHandle, args: &CliArgs) -> i32 {
     0
 }
 
+// A8: `--audit-dump [--audit-limit N] [--json] [--out F]`. Nur mit Sandbox
+// (`LVA_MEETINGS_DIR`): der Aufruf oeffnet und migriert den Store dort und liest nie die
+// produktive Datenbank. Das Audit enthaelt nie Geheimnisse.
+fn run_headless_audit_dump(app: &AppHandle, args: &CliArgs) -> i32 {
+    use managers::meetings::store::MeetingStore;
+
+    crate::selftest::begin_headless_run();
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if sandbox.is_none() {
+        eprintln!(
+            "error: --audit-dump requires {} (sandbox); it never reads the productive store",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let store = match MeetingStore::new(app) {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    let conn = match store.get_connection() {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    };
+    let payload = match managers::integrations::dump::build_audit(
+        &conn,
+        Some(store.db_path()),
+        args.audit_limit,
+    ) {
+        Ok(payload) => payload,
+        Err(e) => {
+            eprintln!("error: audit-dump failed: {e}");
+            return 1;
+        }
+    };
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        println!("{}", managers::integrations::dump::format_audit_table(&payload));
+        if let Some(path) = args.out.as_deref() {
+            if let Err(e) = std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                eprintln!("error: could not write {}: {}", path.display(), e);
+            }
+        }
+    }
+    0
+}
+
 // A7: `--agent-bridge-serve [--seconds N]`. Nur mit Sandbox (`LVA_MEETINGS_DIR`): bedient die
 // Pipe der Agentenbruecke gegen die Sandbox-Datenbank und meldet `AGENT_BRIDGE_READY pipe=...`.
 // Mit `LVA_AGENT_TEST_TOOLS=1` stehen Echo-Werkzeuge bereit; sonst gibt es keine Werkzeuge.
@@ -3250,7 +3345,16 @@ fn run_headless_agent_bridge(app: &AppHandle, args: &CliArgs) -> i32 {
     };
     let mut handlers: Vec<Arc<dyn agent_bridge::catalog::ToolHandler>> = Vec::new();
     if agent_bridge::test_tools::test_tools_enabled() {
+        // A7: nur Echo-Werkzeuge (ctl-Exit-Codes, Rechte, Freigaben ohne echte Wirkung).
         handlers.push(Arc::new(agent_bridge::test_tools::EchoTools));
+    } else if let Some(dir) = sandbox.as_deref() {
+        // A8: die echten Handler gegen die Sandbox-Datenbank, mit der Attrappe des Hosts
+        // (keine Warteschlange, kein Recorder, ein Testton statt der Sprach-Engine).
+        let pages = agent_bridge::tools::sandbox::SandboxHost::pages_dir_for(std::path::Path::new(dir));
+        handlers.push(Arc::new(agent_bridge::tools::AppTools::new(
+            store.clone(),
+            Arc::new(agent_bridge::tools::sandbox::SandboxHost::new(store.clone(), pages)),
+        )));
     }
     agent_bridge::runtime::run_headless(store, handlers, args.seconds)
 }
