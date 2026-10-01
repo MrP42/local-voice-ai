@@ -1,9 +1,23 @@
 use clap::Parser;
 use std::path::PathBuf;
 
+/// Unterbefehle der EXE (A7). Sie laufen vor jeder Tauri-Initialisierung (`main.rs`).
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum Command {
+    /// Agentenbruecke steuern: `ctl status`, `ctl tools`, `ctl call <werkzeug>`,
+    /// `ctl approval <id>`. Spricht ueber eine Named Pipe mit der laufenden App; Token aus
+    /// LVA_AGENT_TOKEN oder --token-file. Exit 0 ok, 1 Fehler, 2 App nicht erreichbar,
+    /// 3 nicht erlaubt (Werkzeug aus oder Freigabe abgelehnt), 4 Anmeldung fehlgeschlagen,
+    /// 5 wartet auf Freigabe des Nutzers.
+    Ctl(crate::agent_bridge::ctl::CtlArgs),
+}
+
 #[derive(Parser, Debug, Clone, Default)]
 #[command(name = "local-voice-ai", about = "Local Voice AI - lokale Sprach-KI")]
 pub struct CliArgs {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// Start with the main window hidden
     #[arg(long)]
     pub start_hidden: bool,
@@ -490,4 +504,14 @@ pub struct CliArgs {
     /// With --workflow-run: only plan, never execute (required in this version).
     #[arg(long)]
     pub dry_run: bool,
+
+    // A7 (Goal Integrationen)
+    /// Serve the agent bridge (named pipe) headlessly and print
+    /// `AGENT_BRIDGE_READY pipe=<name>` once it is listening; runs until the process is
+    /// ended or --seconds elapse. For tests of the `ctl` exit codes against the real EXE.
+    /// SANDBOX ONLY: requires LVA_MEETINGS_DIR; a custom pipe name via LVA_AGENT_PIPE; with
+    /// LVA_AGENT_TEST_TOOLS=1 the echo tools `transcribe_file` and `create_meeting` are
+    /// registered. Exit 0 ended, 1 error, 2 no sandbox.
+    #[arg(long, hide = true)]
+    pub agent_bridge_serve: bool,
 }

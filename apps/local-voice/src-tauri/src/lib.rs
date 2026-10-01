@@ -1,5 +1,6 @@
 mod actions;
 mod agent; // C1 (Goal Lokaler Agent)
+pub mod agent_bridge; // A7
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
@@ -373,6 +374,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         let index_store = store.clone(); // M4-P4b
         let calendar_store = store.clone(); // M5-P5b
         let workflow_store = store.clone(); // B2
+        // A7: Agentenbruecke (Named Pipe, nur aktueller Benutzer). Die Werkzeuge der App
+        // (A8: schreibende MCP-Werkzeuge) haengen als Handler an dieser Liste.
+        app_handle.manage(agent_bridge::runtime::start_for_app(
+            store.clone(),
+            Vec::new(),
+        ));
         // U7: die Import-Warteschlange (Aufnahme hat Vorrang, Enddurchlauf und
         // Wiederherstellung halten die gemeinsame Engine).
         let queue = {
@@ -2194,6 +2201,13 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_mcp::change_meeting_mcp_enabled_setting,
             commands::meeting_mcp::change_meeting_mcp_include_transcript_setting,
             commands::meeting_mcp::meeting_mcp_info,
+            // A7: Agentenbruecke (Zugaenge, Werkzeugrechte, Zustand)
+            commands::agent_bridge::agent_client_create,
+            commands::agent_bridge::agent_client_list,
+            commands::agent_bridge::agent_client_revoke,
+            commands::agent_bridge::agent_client_delete,
+            commands::agent_bridge::agent_client_set_tool_mode,
+            commands::agent_bridge::agent_bridge_status,
             commands::meetings::meetings_start_from_event,
             meeting_prompt::meeting_prompt_current,
             meeting_prompt::meeting_prompt_ready,
@@ -2390,6 +2404,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.integrations_dump // A1
         || cli_args.add_youtube.is_some() // A2
         || cli_args.workflow_run.is_some() // B1
+        || cli_args.agent_bridge_serve // A7
         || cli_args.detect_mic; // M5-P5c
 
     #[allow(unused_mut)]
@@ -2642,6 +2657,22 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_workflow_run(&app_handle, &args)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // A7: Agentenbruecke headless bedienen (nur Sandbox; fuer ctl-Tests gegen die EXE).
+                if cli_args.agent_bridge_serve {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_agent_bridge(&app_handle, &args)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -3170,6 +3201,37 @@ fn run_headless_integrations_dump(app: &AppHandle, args: &CliArgs) -> i32 {
         }
     }
     0
+}
+
+// A7: `--agent-bridge-serve [--seconds N]`. Nur mit Sandbox (`LVA_MEETINGS_DIR`): bedient die
+// Pipe der Agentenbruecke gegen die Sandbox-Datenbank und meldet `AGENT_BRIDGE_READY pipe=...`.
+// Mit `LVA_AGENT_TEST_TOOLS=1` stehen Echo-Werkzeuge bereit; sonst gibt es keine Werkzeuge.
+fn run_headless_agent_bridge(app: &AppHandle, args: &CliArgs) -> i32 {
+    use managers::meetings::store::MeetingStore;
+
+    crate::selftest::begin_headless_run();
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if sandbox.is_none() {
+        eprintln!(
+            "error: --agent-bridge-serve requires {} (sandbox); it never serves the productive store",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let store = match MeetingStore::new(app) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    let mut handlers: Vec<Arc<dyn agent_bridge::catalog::ToolHandler>> = Vec::new();
+    if agent_bridge::test_tools::test_tools_enabled() {
+        handlers.push(Arc::new(agent_bridge::test_tools::EchoTools));
+    }
+    agent_bridge::runtime::run_headless(store, handlers, args.seconds)
 }
 
 // A2: `--add-youtube URL [--json] [--out F]`. Nur mit Sandbox
