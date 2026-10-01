@@ -32,6 +32,7 @@ use tauri_specta::Event;
 use crate::commands::meetings::{require_managed, store_err};
 use crate::managers::meetings::job::{self, JobGuard};
 use crate::managers::meetings::recorder::MeetingRecorderManager;
+use crate::managers::meetings::slides::ocr::{self, OcrBackend};
 use crate::managers::meetings::slides::run::{self, SlideOutcome, SlideRun};
 use crate::managers::meetings::slides::store::MeetingSlide;
 use crate::managers::meetings::slides::{SlideDetectConfig, SlideError, SlideOptions};
@@ -162,6 +163,15 @@ fn execute(
 ) {
     let handle = Arc::clone(job.handle());
     let outcome = catch_unwind(AssertUnwindSafe(|| {
+        // Texterkennung des Systems (D2); ohne sie laeuft die Erkennung ohne Folientext.
+        let backend = ocr::default_backend(ocr::PREFERRED_LANGUAGES);
+        let reader: Option<&dyn OcrBackend> = match &backend {
+            Ok(b) => Some(b.as_ref()),
+            Err(e) => {
+                log::info!("slides: keine Texterkennung ({e}), Folien ohne Text");
+                None
+            }
+        };
         run::run(
             &handle,
             &SlideRun {
@@ -170,6 +180,7 @@ fn execute(
                 video,
                 meeting_dir,
                 cfg,
+                ocr: reader,
                 pid_out: None,
             },
         )
@@ -351,6 +362,10 @@ mod tests {
             added: 3,
             updated: 1,
             duration_ms: Some(1),
+            ocr_engine: None,
+            text_slides: 0,
+            ohne_text: 0,
+            ocr_failed: 0,
         };
         assert_eq!(
             event_for("m", &Ok(summary(SlideOutcome::Done))),

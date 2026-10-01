@@ -11,6 +11,19 @@
 //! durchgehend: in der Abtastung als Gegendruck auf die Pipe (ffmpeg schlaeft,
 //! nichts wird eingefroren), bei den Bildern zwischen zwei Folien.
 //!
+//! D2 haengt die Texterkennung ein ([`super::ocr`]): zwischen Zusammenfassen nach Hash
+//! und dem Ablegen wird je Hash-Gruppe EIN Bild gelesen (Windows-OCR, ~70 ms),
+//! danach fuehrt der Textabgleich Folien mit weit entferntem Hash, aber gleichem Text
+//! (Webcam, Ueberblendung) zusammen. Ohne Texterkennung (`SlideRun::ocr == None`,
+//! andere Plattform, keine OCR-Sprache) bleibt der Lauf der von D1. Die Phase hat
+//! damit drei Teile (Abtastung, Lesen, Bilder), jeder mit Fortschritt von vorn und
+//! Kontrollpunkt je Bild: pausierbar und stoppbar. Ein Fehler beim Lesen EINER
+//! Folie ist kein Fehler des Laufs (fail-open): die Folie bleibt ohne Text und ohne
+//! Art, die naechste Wiederholung liest sie nach. Die Bilder der gelesenen Folien
+//! liegen bis zum Ablegen in `slides/.cand/` (wird am Ende, auch bei Stopp und
+//! Fehler, geraeumt); ein Text, der schon gespeichert ist, wird nicht noch einmal
+//! gelesen.
+//!
 //! Wiederholung: derselbe Lauf noch einmal (nach einem Stopp, Absturz oder auf
 //! Wunsch) fuegt nichts doppelt ein. Eine erkannte Folie wird einer vorhandenen
 //! zugeordnet, wenn der Hash hoechstens die Schwelle abweicht; dann wachsen nur
@@ -23,6 +36,7 @@ use std::sync::Arc;
 use log::{info, warn};
 
 use super::ffmpeg::{self, Flow, SampleHook, SampleTick};
+use super::ocr::{self, OcrBackend};
 use super::store::{NewSlide, SlideRecord, ORIGIN_VIDEO};
 use super::{
     clamp_last_end, group_by_hash, hamming, merge_occurrences, segment, SlideDetectConfig,
@@ -39,6 +53,9 @@ pub struct SlideRun<'a> {
     /// Der Besprechungsordner; die Bilder kommen nach `<meeting_dir>/slides/`.
     pub meeting_dir: &'a Path,
     pub cfg: &'a SlideDetectConfig,
+    /// Texterkennung (D2); `None`: Folien ohne Text (andere Plattform, keine
+    /// OCR-Sprache, Tests der Erkennung allein).
+    pub ocr: Option<&'a dyn OcrBackend>,
     /// Bekommt die PID des Abtast-ffmpeg (Diagnose, Tests); in der App `None`.
     pub pid_out: Option<&'a AtomicU32>,
 }
@@ -67,6 +84,14 @@ pub struct SlideSummary {
     /// nachgeholt wurde.
     pub updated: u32,
     pub duration_ms: Option<u64>,
+    /// Kennung der Texterkennung dieses Laufs (`windows-ocr`); `None`: es gab keine.
+    pub ocr_engine: Option<&'static str>,
+    /// Folien dieses Laufs mit lesbarem Text (Art `text`).
+    pub text_slides: u32,
+    /// Folien dieses Laufs ohne Text (Art `ohne_text`).
+    pub ohne_text: u32,
+    /// Hash-Gruppen, deren Text nicht gelesen werden konnte (bleiben ohne Art).
+    pub ocr_failed: u32,
 }
 
 impl SlideSummary {
@@ -78,6 +103,10 @@ impl SlideSummary {
             added: 0,
             updated: 0,
             duration_ms: None,
+            ocr_engine: None,
+            text_slides: 0,
+            ohne_text: 0,
+            ocr_failed: 0,
         }
     }
 }
@@ -130,6 +159,150 @@ fn nearest_existing(
         .map(|(_, i)| i)
 }
 
+/// Was beim Lesen einer Hash-Gruppe herauskam.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TextRead {
+    text: String,
+    /// Engine, die gerade gelesen hat; `None`: der Text stammt aus der Datenbank
+    /// (nichts zu schreiben).
+    engine: Option<&'static str>,
+}
+
+/// Ordner fuer die Bilder, die zum Lesen gebraucht werden, bevor feststeht, welche
+/// Folien bleiben (`slides/.cand/`). Wird beim Anlegen (Reste eines Absturzes) und
+/// beim Verlassen des Laufs geraeumt, auch bei Stopp und Fehler.
+struct CandidateDir {
+    dir: PathBuf,
+}
+
+impl CandidateDir {
+    fn new(slides_dir: &Path) -> Self {
+        let dir = slides_dir.join(".cand");
+        let _ = std::fs::remove_dir_all(&dir);
+        Self { dir }
+    }
+
+    fn full(&self, index: usize) -> PathBuf {
+        self.dir.join(format!("{index:04}.jpg"))
+    }
+
+    fn thumb(&self, index: usize) -> PathBuf {
+        self.dir.join(format!("{index:04}_t.jpg"))
+    }
+
+    fn ensure(&self) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.dir)
+    }
+
+    /// Verschiebt das Kandidatenbild samt Vorschau an den endgueltigen Platz.
+    /// `false`, wenn es keines gibt oder das Verschieben scheitert (dann nichts
+    /// Halbes am Ziel): der Aufrufer holt das Bild aus dem Video.
+    fn take(&self, index: usize, full: &Path, thumb: &Path) -> bool {
+        let (from_full, from_thumb) = (self.full(index), self.thumb(index));
+        if !from_full.is_file() || !from_thumb.is_file() {
+            return false;
+        }
+        // Erst die Vorschau, dann das Vollbild (wie `extract_frame`).
+        if std::fs::rename(&from_thumb, thumb).is_err() {
+            return false;
+        }
+        if std::fs::rename(&from_full, full).is_err() {
+            let _ = std::fs::remove_file(thumb);
+            return false;
+        }
+        true
+    }
+}
+
+impl Drop for CandidateDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Liest je Hash-Gruppe EIN Bild. Gespeicherter Text einer vorhandenen Folie wird
+/// wiederverwendet; hat die Folie noch keinen (Art fehlt), wird ihr Bild gelesen;
+/// sonst kommt das Bild als Kandidat aus dem Video. `Ok(None)`: gestoppt.
+/// Ein Fehler beim Lesen einer Folie zaehlt in `ocr_failed` und laesst sie ohne Text.
+fn read_groups(
+    job: &Arc<JobHandle>,
+    ctx: &SlideRun<'_>,
+    backend: &dyn OcrBackend,
+    groups: &[SlideGroup],
+    existing: &[SlideRecord],
+    candidates: &CandidateDir,
+    stop: &AtomicBool,
+    summary: &mut SlideSummary,
+) -> Result<Option<Vec<Option<TextRead>>>, SlideError> {
+    let mut reads: Vec<Option<TextRead>> = vec![None; groups.len()];
+    let unclaimed = vec![false; existing.len()];
+    for (gi, group) in groups.iter().enumerate() {
+        match job.checkpoint(&|| false) {
+            Gate::Go { .. } => {}
+            Gate::Stopped | Gate::Cancelled => return Ok(None),
+        }
+        let stored = nearest_existing(existing, &unclaimed, group.hash, ctx.cfg.hash_threshold)
+            .map(|i| &existing[i]);
+        if let Some(record) = stored.filter(|r| r.slide.kind.is_some()) {
+            reads[gi] = Some(TextRead {
+                text: record.slide.ocr_text.clone().unwrap_or_default(),
+                engine: None,
+            });
+            job.advance(group.rep_ms);
+            continue;
+        }
+        let stored_image = stored
+            .map(|r| ctx.meeting_dir.join(&r.slide.image_path))
+            .filter(|p| p.is_file());
+        let source = match stored_image {
+            Some(path) => path,
+            None => {
+                candidates.ensure()?;
+                let (full, thumb) = (candidates.full(gi), candidates.thumb(gi));
+                match ffmpeg::extract_frame(ctx.video, group.rep_ms, &full, Some(&thumb), stop) {
+                    Ok(()) => full,
+                    Err(SlideError::Cancelled) => return Ok(None),
+                    Err(e) => return Err(e),
+                }
+            }
+        };
+        match backend.recognize(&source) {
+            Ok(read) => {
+                reads[gi] = Some(TextRead {
+                    text: read.text,
+                    engine: Some(read.engine),
+                });
+            }
+            Err(e) => {
+                warn!("slides: Text einer Folie nicht gelesen ({e})");
+                summary.ocr_failed += 1;
+            }
+        }
+        job.advance(group.rep_ms);
+    }
+    Ok(Some(reads))
+}
+
+/// Schreibt den frisch gelesenen Text einer Folie; ein Fehler beim Speichern ist
+/// keiner des Laufs (die Folie bleibt ohne Art, die Wiederholung holt es nach).
+fn store_text(ctx: &SlideRun<'_>, slide_id: &str, read: &TextRead) -> bool {
+    let Some(engine) = read.engine else {
+        return false;
+    };
+    match ctx.store.slide_set_text(
+        slide_id,
+        Some(&read.text),
+        Some(engine),
+        Some(ocr::kind_of(&read.text)),
+    ) {
+        Ok(found) => found,
+        Err(e) => {
+            warn!("slides: Text der Folie {slide_id} nicht gespeichert ({e})");
+            false
+        }
+    }
+}
+
 /// Wie [`run`], aber `after_slide` wird nach jeder verarbeiteten Folie gerufen
 /// (Index ab 0): in der App ein leerer Haken, in Tests ein Stopp an einer
 /// bestimmten Stelle.
@@ -169,30 +342,32 @@ pub fn run_with(
     };
     let duration_ms = sampled.info.duration_ms;
 
-    // 2./3. Segmentieren und zusammenfassen (rein, schnell).
+    // 2./3. Segmentieren und nach Hash zusammenfassen (rein, schnell).
     let mut segments = segment(&sampled.samples, ctx.cfg.sample_fps, ctx.cfg);
     clamp_last_end(&mut segments, duration_ms);
     let kept = segments.iter().filter(|s| !s.black).count() as u32;
-    let groups: Vec<SlideGroup> = group_by_hash(&segments, ctx.cfg);
+    let hash_groups: Vec<SlideGroup> = group_by_hash(&segments, ctx.cfg);
     let mut summary = SlideSummary {
         outcome: SlideOutcome::Done,
         segments: kept,
-        groups: groups.len() as u32,
+        groups: hash_groups.len() as u32,
         added: 0,
         updated: 0,
         duration_ms,
+        ocr_engine: ctx.ocr.map(|o| o.id()),
+        text_slides: 0,
+        ohne_text: 0,
+        ocr_failed: 0,
     };
 
-    // 4. Bilder und Zeilen.
+    // Ordner, Reste, vorhandene Folien.
     let slides_dir = ctx.meeting_dir.join(SLIDES_DIR);
     std::fs::create_dir_all(&slides_dir)?;
     let leftovers = ffmpeg::clean_partial_files(&slides_dir);
     if leftovers > 0 {
         warn!("slides: {leftovers} halbfertige Bilder eines frueheren Laufs entfernt");
     }
-    let total_ms = duration_ms.unwrap_or_else(|| groups.last().map_or(0, |g| g.rep_ms));
-    job.begin_phase_ex(JobPhase::Slides, total_ms, true);
-
+    let total_ms = duration_ms.unwrap_or_else(|| hash_groups.last().map_or(0, |g| g.rep_ms));
     let existing: Vec<SlideRecord> = ctx
         .store
         .slide_records(ctx.meeting_id)
@@ -200,6 +375,61 @@ pub fn run_with(
         .into_iter()
         .filter(|r| r.slide.origin == ORIGIN_VIDEO)
         .collect();
+
+    // 3b. Lesen (D2): je Hash-Gruppe ein Bild, danach Textabgleich der Gruppen.
+    let candidates = CandidateDir::new(&slides_dir);
+    let mut hash_group_of = vec![0usize; segments.len()];
+    for (gi, g) in hash_groups.iter().enumerate() {
+        for &i in &g.segments {
+            hash_group_of[i] = gi;
+        }
+    }
+    let mut reads: Vec<Option<TextRead>> = vec![None; hash_groups.len()];
+    let groups: Vec<SlideGroup> = match ctx.ocr {
+        None => hash_groups.clone(),
+        Some(backend) => {
+            info!(
+                "slides: Texterkennung {} ({})",
+                backend.id(),
+                backend.language()
+            );
+            job.begin_phase_ex(JobPhase::Slides, total_ms, true);
+            match read_groups(
+                job,
+                ctx,
+                backend,
+                &hash_groups,
+                &existing,
+                &candidates,
+                &stop,
+                &mut summary,
+            )? {
+                Some(done) => reads = done,
+                None => {
+                    summary.outcome = SlideOutcome::Stopped;
+                    return Ok(summary);
+                }
+            }
+            // Jeder Abschnitt traegt den Text seiner Hash-Gruppe; der Abgleich
+            // vergleicht die ersten Abschnitte der Folien.
+            let texts: Vec<Option<String>> = (0..segments.len())
+                .map(|i| reads[hash_group_of[i]].as_ref().map(|r| r.text.clone()))
+                .collect();
+            ocr::group_with_text(&segments, &texts, ctx.cfg)
+        }
+    };
+    summary.groups = groups.len() as u32;
+    for group in &groups {
+        if let Some(read) = &reads[hash_group_of[group.first]] {
+            match ocr::kind_of(&read.text) {
+                ocr::KIND_TEXT => summary.text_slides += 1,
+                _ => summary.ohne_text += 1,
+            }
+        }
+    }
+
+    // 4. Bilder und Zeilen.
+    job.begin_phase_ex(JobPhase::Slides, total_ms, true);
     let mut claimed = vec![false; existing.len()];
 
     for (index, group) in groups.iter().enumerate() {
@@ -245,6 +475,12 @@ pub fn run_with(
                         Err(e) => return Err(e),
                     }
                 }
+                // Text nachtragen: die Folie hat noch keine Art (OCR fehlte oder scheiterte).
+                if record.slide.kind.is_none() {
+                    if let Some(read) = &reads[hash_group_of[group.first]] {
+                        changed |= store_text(ctx, &record.slide.id, read);
+                    }
+                }
                 if changed {
                     summary.updated += 1;
                 }
@@ -259,13 +495,24 @@ pub fn run_with(
                     ctx.meeting_dir.join(&image_rel),
                     ctx.meeting_dir.join(&thumb_rel),
                 );
-                match ffmpeg::extract_frame(ctx.video, group.rep_ms, &image, Some(&thumb), &stop) {
-                    Ok(()) => {}
-                    Err(SlideError::Cancelled) => {
-                        summary.outcome = SlideOutcome::Stopped;
-                        return Ok(summary);
+                // Das Bild liegt schon als Kandidat da, wenn gelesen wurde.
+                let placed = ctx.ocr.is_some()
+                    && candidates.take(hash_group_of[group.first], &image, &thumb);
+                if !placed {
+                    match ffmpeg::extract_frame(
+                        ctx.video,
+                        group.rep_ms,
+                        &image,
+                        Some(&thumb),
+                        &stop,
+                    ) {
+                        Ok(()) => {}
+                        Err(SlideError::Cancelled) => {
+                            summary.outcome = SlideOutcome::Stopped;
+                            return Ok(summary);
+                        }
+                        Err(e) => return Err(e),
                     }
-                    Err(e) => return Err(e),
                 }
                 let inserted = ctx.store.slide_insert(&NewSlide {
                     meeting_id: ctx.meeting_id.to_string(),
@@ -276,11 +523,18 @@ pub fn run_with(
                     dhash: group.hash,
                     occurrences: group.occurrences.clone(),
                 });
-                if let Err(e) = inserted {
-                    // Keine Zeile ohne Datei und keine Datei ohne Zeile.
-                    let _ = std::fs::remove_file(&image);
-                    let _ = std::fs::remove_file(&thumb);
-                    return Err(store_error(&e));
+                match inserted {
+                    Ok(slide) => {
+                        if let Some(read) = &reads[hash_group_of[group.first]] {
+                            store_text(ctx, &slide.id, read);
+                        }
+                    }
+                    Err(e) => {
+                        // Keine Zeile ohne Datei und keine Datei ohne Zeile.
+                        let _ = std::fs::remove_file(&image);
+                        let _ = std::fs::remove_file(&thumb);
+                        return Err(store_error(&e));
+                    }
                 }
                 summary.added += 1;
             }
@@ -290,8 +544,13 @@ pub fn run_with(
     }
     job.advance(total_ms);
     info!(
-        "slides: {} Folien erkannt ({} neu, {} aktualisiert)",
-        summary.groups, summary.added, summary.updated
+        "slides: {} Folien erkannt ({} neu, {} aktualisiert; Text {}, ohne Text {}, nicht gelesen {})",
+        summary.groups,
+        summary.added,
+        summary.updated,
+        summary.text_slides,
+        summary.ohne_text,
+        summary.ocr_failed
     );
     Ok(summary)
 }
@@ -335,6 +594,7 @@ mod tests {
                 video: &self.video.path,
                 meeting_dir,
                 cfg,
+                ocr: None,
                 pid_out: None,
             }
         }
@@ -748,6 +1008,7 @@ mod tests {
             video: &gone,
             meeting_dir: &md,
             cfg: &cfg,
+            ocr: None,
             pid_out: None,
         };
         assert_eq!(run(&handle, &ctx).unwrap_err(), SlideError::VideoMissing);
@@ -785,6 +1046,379 @@ mod tests {
         assert!(files(&dir.join(SLIDES_DIR))
             .iter()
             .all(|n| !n.contains(".part")));
+    }
+
+    // -- D2: Texterkennung im Lauf -------------------------------------------------
+
+    use crate::managers::meetings::slides::ocr::{OcrError, OcrText};
+    use std::sync::atomic::AtomicUsize;
+
+    /// Ein Texterkenner nach Drehbuch: der n-te Aufruf liefert den n-ten Eintrag
+    /// (danach ein leerer Text); `on_call` laeuft vor der Antwort (Stopp, Pause).
+    struct ScriptedOcr {
+        script: Mutex<Vec<Result<String, OcrError>>>,
+        calls: AtomicUsize,
+        on_call: Box<dyn Fn(usize) + Send + Sync>,
+    }
+
+    impl ScriptedOcr {
+        fn new(script: Vec<Result<&str, OcrError>>) -> Self {
+            Self::with_hook(script, |_| {})
+        }
+
+        fn with_hook(
+            script: Vec<Result<&str, OcrError>>,
+            on_call: impl Fn(usize) + Send + Sync + 'static,
+        ) -> Self {
+            Self {
+                script: Mutex::new(script.into_iter().map(|r| r.map(str::to_string)).collect()),
+                calls: AtomicUsize::new(0),
+                on_call: Box::new(on_call),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::Acquire)
+        }
+    }
+
+    impl OcrBackend for ScriptedOcr {
+        fn id(&self) -> &'static str {
+            "fake-ocr"
+        }
+
+        fn language(&self) -> String {
+            "de-DE".to_string()
+        }
+
+        fn recognize(&self, image: &Path) -> Result<OcrText, OcrError> {
+            assert!(
+                image.is_file(),
+                "das Bild muss beim Lesen da sein: {image:?}"
+            );
+            let n = self.calls.fetch_add(1, Ordering::AcqRel);
+            (self.on_call)(n);
+            let next = {
+                let script = self.script.lock().unwrap();
+                script.get(n).cloned().unwrap_or(Ok(String::new()))
+            };
+            next.map(|text| OcrText {
+                text,
+                engine: "fake-ocr",
+                language: "de-DE".to_string(),
+            })
+        }
+    }
+
+    const AGENDA: &str = "Agenda Ergebnisse Kundenzufriedenheit Risiken";
+    const AGENDA_PLUS: &str = "Agenda Ergebnisse Kundenzufriedenheit Risiken Ausblick";
+    const OTHER: &str = "Zeitplan Einfuehrung Pilotphase Rollout";
+
+    fn run_with_ocr(
+        f: &Fx,
+        ocr: &dyn OcrBackend,
+        dir: &Path,
+    ) -> (SlideSummary, Arc<JobHandle>, Events) {
+        let cfg = SlideDetectConfig::default();
+        let (handle, events) = job(&f.meeting);
+        let ctx = SlideRun {
+            ocr: Some(ocr),
+            ..f.ctx(&cfg, dir)
+        };
+        let summary = run(&handle, &ctx).unwrap();
+        (summary, handle, events)
+    }
+
+    /// Ohne Texterkennung ist der Lauf der von D1: keine Art, kein Text, kein Kandidatenordner.
+    #[test]
+    fn without_a_backend_the_run_is_the_d1_run() {
+        let Some(f) = fixture() else { return };
+        let cfg = SlideDetectConfig::default();
+        let dir = f.meeting_dir();
+        let (handle, _) = job(&f.meeting);
+        let summary = run(&handle, &f.ctx(&cfg, &dir)).unwrap();
+        assert_eq!((summary.groups, summary.added), (3, 3));
+        assert_eq!(
+            (
+                summary.ocr_engine,
+                summary.text_slides,
+                summary.ohne_text,
+                summary.ocr_failed
+            ),
+            (None, 0, 0, 0)
+        );
+        for slide in f.store.slides_list(&f.meeting).unwrap() {
+            assert_eq!(
+                (slide.ocr_text, slide.ocr_engine, slide.kind),
+                (None, None, None)
+            );
+        }
+        assert!(!dir.join(SLIDES_DIR).join(".cand").exists());
+    }
+
+    /// Text-Dubletten werden zusammengefuehrt (die Hashes liegen weit auseinander),
+    /// eine Folie mit kurzem Text bekommt `ohne_text`; Engine und Art stehen in der Zeile.
+    #[test]
+    fn equal_text_merges_slides_and_a_short_text_is_ohne_text() {
+        let Some(f) = fixture() else { return };
+        let dir = f.meeting_dir();
+        let fake = ScriptedOcr::new(vec![Ok(AGENDA), Ok(AGENDA_PLUS), Ok("Foto")]);
+        let (summary, _, _) = run_with_ocr(&f, &fake, &dir);
+        assert_eq!(fake.calls(), 3, "je Hash-Gruppe ein Bild");
+        assert_eq!(summary.outcome, SlideOutcome::Done);
+        assert_eq!((summary.groups, summary.added), (2, 2), "{summary:?}");
+        assert_eq!(
+            (
+                summary.ocr_engine,
+                summary.text_slides,
+                summary.ohne_text,
+                summary.ocr_failed
+            ),
+            (Some("fake-ocr"), 1, 1, 0)
+        );
+        let slides = f.store.slides_list(&f.meeting).unwrap();
+        assert_eq!(slides.len(), 2);
+        assert_eq!(slides[0].ocr_text.as_deref(), Some(AGENDA));
+        assert_eq!(slides[0].ocr_engine.as_deref(), Some("fake-ocr"));
+        assert_eq!(slides[0].kind.as_deref(), Some("text"));
+        assert_eq!(
+            slides[0].occurrences.len(),
+            1,
+            "beide Vorkommen aneinander: ein Bereich"
+        );
+        assert!(
+            slides[0].occurrences[0].end_ms >= 19_000,
+            "die Folie ist zu Beginn UND in der Mitte zu sehen: {:?}",
+            slides[0].occurrences
+        );
+        assert_eq!(slides[1].ocr_text.as_deref(), Some("Foto"));
+        assert_eq!(slides[1].kind.as_deref(), Some("ohne_text"));
+        assert_eq!(slides[1].number, 2);
+        assert_eq!(slides[1].image_path, "slides/0002.jpg");
+        assert_eq!(
+            files(&dir.join(SLIDES_DIR)),
+            vec!["0001.jpg", "0001_t.jpg", "0002.jpg", "0002_t.jpg"],
+            "die Kandidatenbilder (auch das der zusammengefuehrten Folie) sind weg"
+        );
+        // Das Bild der Folie ist das gelesene: es liegt gross genug da.
+        assert!(
+            std::fs::metadata(dir.join("slides/0002.jpg"))
+                .unwrap()
+                .len()
+                > 1_000
+        );
+    }
+
+    /// fail-open: ein Fehler an EINER Folie stoppt den Lauf nicht; die Folie bleibt ohne Art.
+    /// Die Wiederholung liest nur sie nach (die anderen haben ihren Text).
+    #[test]
+    fn a_failing_slide_does_not_stop_the_run() {
+        let Some(f) = fixture() else { return };
+        let dir = f.meeting_dir();
+        let fake = ScriptedOcr::new(vec![
+            Ok(AGENDA),
+            Err(OcrError::Image("kaputt".into())),
+            Ok(OTHER),
+        ]);
+        let (summary, _, _) = run_with_ocr(&f, &fake, &dir);
+        assert_eq!(summary.outcome, SlideOutcome::Done);
+        assert_eq!(
+            (summary.groups, summary.added, summary.ocr_failed),
+            (3, 3, 1)
+        );
+        let slides = f.store.slides_list(&f.meeting).unwrap();
+        assert_eq!(slides[0].kind.as_deref(), Some("text"));
+        assert_eq!(
+            slides[1].kind, None,
+            "ohne Art: die Wiederholung versucht es erneut"
+        );
+        assert_eq!(slides[1].ocr_text, None);
+        assert_eq!(slides[2].kind.as_deref(), Some("text"));
+        assert_eq!(files(&dir.join(SLIDES_DIR)).len(), 6, "alle drei Bilder da");
+    }
+
+    #[test]
+    fn a_rerun_reads_nothing_twice_and_fills_gaps() {
+        let Some(f) = fixture() else { return };
+        let dir = f.meeting_dir();
+        let first = ScriptedOcr::new(vec![
+            Ok(AGENDA),
+            Err(OcrError::Engine("kurz weg".into())),
+            Ok(OTHER),
+        ]);
+        run_with_ocr(&f, &first, &dir);
+        let before = f.store.slides_list(&f.meeting).unwrap();
+        let image_stamp = std::fs::metadata(dir.join(&before[1].image_path))
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        // Zweiter Lauf: nur die Folie ohne Art wird gelesen (aus ihrem gespeicherten Bild).
+        let second = ScriptedOcr::new(vec![Ok("Nachgeholter Text der zweiten Folie")]);
+        let (summary, _, _) = run_with_ocr(&f, &second, &dir);
+        assert_eq!(second.calls(), 1, "nichts doppelt gelesen");
+        assert_eq!(
+            (summary.added, summary.updated, summary.ocr_failed),
+            (0, 1, 0),
+            "{summary:?}"
+        );
+        let after = f.store.slides_list(&f.meeting).unwrap();
+        assert_eq!(after.len(), 3);
+        assert_eq!(
+            after[0].ocr_text.as_deref(),
+            Some(AGENDA),
+            "gespeicherter Text bleibt"
+        );
+        assert_eq!(
+            after[1].ocr_text.as_deref(),
+            Some("Nachgeholter Text der zweiten Folie")
+        );
+        assert_eq!(after[1].kind.as_deref(), Some("text"));
+        assert_eq!(after[1].ocr_engine.as_deref(), Some("fake-ocr"));
+        assert_eq!(
+            std::fs::metadata(dir.join(&after[1].image_path))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            image_stamp,
+            "das Bild wird nicht neu geschrieben"
+        );
+
+        // Dritter Lauf: alles hat Text, es wird nichts mehr gelesen und nichts geaendert.
+        let third = ScriptedOcr::new(vec![]);
+        let (summary, _, _) = run_with_ocr(&f, &third, &dir);
+        assert_eq!(third.calls(), 0);
+        assert_eq!((summary.added, summary.updated), (0, 0));
+        assert_eq!(f.store.slides_list(&f.meeting).unwrap(), after);
+    }
+
+    /// Stopp mitten im Lesen: keine Zeile, kein Bild, kein Kandidatenordner; die Wiederholung klappt.
+    #[test]
+    fn a_stop_while_reading_leaves_no_candidates_and_no_rows() {
+        let Some(f) = fixture() else { return };
+        let cfg = SlideDetectConfig::default();
+        let dir = f.meeting_dir();
+        let (handle, _) = job(&f.meeting);
+        let stopper = Arc::clone(&handle);
+        let fake = ScriptedOcr::with_hook(vec![Ok(AGENDA), Ok(OTHER)], move |n| {
+            if n == 0 {
+                stopper.stop().unwrap();
+            }
+        });
+        let ctx = SlideRun {
+            ocr: Some(&fake),
+            ..f.ctx(&cfg, &dir)
+        };
+        let summary = run(&handle, &ctx).unwrap();
+        assert_eq!(summary.outcome, SlideOutcome::Stopped);
+        assert_eq!(fake.calls(), 1, "nach dem Stopp wird nichts mehr gelesen");
+        assert!(f.store.slides_list(&f.meeting).unwrap().is_empty());
+        assert!(
+            files(&dir.join(SLIDES_DIR)).is_empty(),
+            "weder Bilder noch .cand"
+        );
+
+        let again = ScriptedOcr::new(vec![Ok(AGENDA), Ok(OTHER), Ok(OTHER)]);
+        let (summary, _, _) = run_with_ocr(&f, &again, &dir);
+        assert_eq!(summary.outcome, SlideOutcome::Done);
+        assert_eq!(
+            f.store.slides_list(&f.meeting).unwrap().len(),
+            2,
+            "OTHER zweimal: zusammengefuehrt"
+        );
+    }
+
+    /// Pause mitten im Lesen haelt den Lauf an, Fortsetzen laesst ihn fertig werden.
+    #[test]
+    fn a_pause_while_reading_holds_the_run_and_resume_lets_it_finish() {
+        let Some(f) = fixture() else { return };
+        let cfg = SlideDetectConfig::default();
+        let dir = f.meeting_dir();
+        let (handle, _) = job(&f.meeting);
+        let pauser = Arc::clone(&handle);
+        let fake = ScriptedOcr::with_hook(
+            vec![Ok(AGENDA), Ok(OTHER), Ok("Dritte Folie mit Text")],
+            move |n| {
+                if n == 0 {
+                    pauser.pause().unwrap();
+                }
+            },
+        );
+        let waiter = release_when_paused(Arc::clone(&handle), |h| {
+            let _ = h.resume();
+        });
+        let ctx = SlideRun {
+            ocr: Some(&fake),
+            ..f.ctx(&cfg, &dir)
+        };
+        let summary = run(&handle, &ctx).unwrap();
+        assert_eq!(waiter.join().unwrap(), Ok(()));
+        assert_eq!((summary.outcome, summary.added), (SlideOutcome::Done, 3));
+        assert_eq!(fake.calls(), 3);
+    }
+
+    /// Die ganze Kette mit der ECHTEN Windows-OCR: ein Video aus der PNG-Folie
+    /// (Umlaute, Euro) -> Lauf -> Text, Engine und Art in der Zeile.
+    #[cfg(windows)]
+    #[test]
+    fn the_real_windows_ocr_reads_a_slide_out_of_a_video() {
+        let Some(f) = fixture() else { return };
+        let Ok(backend) = ocr::default_backend(ocr::PREFERRED_LANGUAGES) else {
+            eprintln!("keine Windows-OCR-Sprache - Test uebersprungen");
+            return;
+        };
+        let png = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/managers/meetings/slides/fixtures/ocr_slide.png");
+        let video = f.dir.path().join("folie.mp4");
+        let made = ["libx264", "mpeg4"].iter().any(|codec| {
+            std::process::Command::new("ffmpeg")
+                .args(["-hide_banner", "-loglevel", "error", "-y", "-loop", "1"])
+                .args(["-framerate", "5", "-i"])
+                .arg(&png)
+                .args([
+                    "-t", "6", "-c:v", codec, "-threads", "2", "-pix_fmt", "yuv420p",
+                ])
+                .arg(&video)
+                .status()
+                .is_ok_and(|s| s.success())
+        });
+        assert!(made, "Video aus der PNG-Folie erzeugt");
+        let cfg = SlideDetectConfig::default();
+        let dir = f.meeting_dir();
+        let (handle, _) = job(&f.meeting);
+        let ctx = SlideRun {
+            video: &video,
+            ocr: Some(backend.as_ref()),
+            ..f.ctx(&cfg, &dir)
+        };
+        let summary = run(&handle, &ctx).unwrap();
+        assert_eq!(summary.outcome, SlideOutcome::Done);
+        assert_eq!(
+            (summary.groups, summary.added, summary.text_slides),
+            (1, 1, 1),
+            "{summary:?}"
+        );
+        let slides = f.store.slides_list(&f.meeting).unwrap();
+        assert_eq!(slides[0].ocr_engine.as_deref(), Some("windows-ocr"));
+        assert_eq!(slides[0].kind.as_deref(), Some("text"));
+        let text = slides[0].ocr_text.clone().unwrap();
+        eprintln!("Text aus dem Video: {text}");
+        assert!(text.to_lowercase().contains("70"), "{text}");
+    }
+
+    /// Das Lesen meldet Fortschritt in der Phase `Slides`, nie rueckwaerts je Teil.
+    #[test]
+    fn reading_reports_progress_in_the_slides_phase() {
+        let Some(f) = fixture() else { return };
+        let dir = f.meeting_dir();
+        let fake = ScriptedOcr::new(vec![Ok(AGENDA), Ok(OTHER), Ok("Dritte Folie mit Text")]);
+        let (_, _, events) = run_with_ocr(&f, &fake, &dir);
+        let seen = progress(&events);
+        assert!(seen.iter().all(|(p, _, _)| *p == JobPhase::Slides));
+        assert_eq!(
+            seen.last().map(|(_, d, t)| (*d, *t)),
+            Some((30_000, 30_000))
+        );
     }
 
     #[test]
