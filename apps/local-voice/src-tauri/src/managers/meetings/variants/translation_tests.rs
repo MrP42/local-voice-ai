@@ -470,3 +470,30 @@ fn no_language_correction_while_a_rerun_is_marked() {
     begin_rerun(&mut c, &f.meeting).unwrap();
     assert_eq!(set_language(&mut c, &f.meeting, "fr").unwrap_err(), VariantError::Busy);
 }
+
+#[test]
+fn a_write_failure_leaves_no_half_variant_and_the_original_untouched() {
+    // Volle oder schreibgeschuetzte Platte: der Schreibversuch scheitert, es entsteht nichts.
+    let f = fixture();
+    let mut c = conn(&f);
+    let source = list(&mut c, &f.meeting).unwrap()[0].id.clone();
+    drop(c);
+    let path = f._dir.path().join("m.db");
+    let mut read_only = Connection::open_with_flags(
+        &path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .unwrap();
+    let err = add_translation(&mut read_only, translation(&f, false), extra(&source)).unwrap_err();
+    assert!(matches!(err, VariantError::Store(_)), "{err:?}");
+    drop(read_only);
+
+    let mut c = conn(&f);
+    let all = list(&mut c, &f.meeting).unwrap();
+    assert_eq!(all.len(), 1, "keine halbe Fassung");
+    assert!(all[0].active);
+    assert_eq!(
+        f.store.get_segments(&f.meeting).unwrap()[0].text,
+        "We pay 120 euros."
+    );
+}

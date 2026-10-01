@@ -336,3 +336,28 @@ fn the_info_of_an_unknown_meeting_is_an_error_code() {
     let f = fixture(&EN);
     assert_eq!(info(&f.store, &catalog(), "gibt-es-nicht").unwrap_err(), "meeting_not_found");
 }
+
+// ---------------------------------------------------------------------------
+// Probe: wann das dritte Fenster entfaellt
+// ---------------------------------------------------------------------------
+
+fn probe_of(native: &[Option<&str>]) -> ProbeResult {
+    ProbeResult {
+        native: native.iter().map(|c| c.map(str::to_string)).collect(),
+        text: String::new(),
+    }
+}
+
+#[test]
+fn two_agreeing_windows_end_the_probe_early() {
+    assert!(probe_agrees(&probe_of(&[Some("en"), Some("en-US")])));
+    assert!(probe_agrees(&probe_of(&[Some("de"), None, Some("de")])));
+}
+
+#[test]
+fn one_window_or_a_disagreement_keeps_probing() {
+    assert!(!probe_agrees(&probe_of(&[Some("en")])), "ein Fenster entscheidet nicht");
+    assert!(!probe_agrees(&probe_of(&[Some("en"), Some("de")])), "Widerspruch: weiter");
+    assert!(!probe_agrees(&probe_of(&[None, None])), "ohne eigene Erkennung gibt es nichts zu bestaetigen");
+    assert!(!probe_agrees(&probe_of(&[])));
+}

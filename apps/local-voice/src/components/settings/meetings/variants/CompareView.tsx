@@ -331,7 +331,7 @@ export const CompareView: React.FC<CompareViewProps> = ({
               className="@container space-y-1.5"
               data-testid="sentence-rows"
             >
-              <div className="hidden gap-2 text-xs font-medium text-text/60 @[40rem]:grid @[40rem]:grid-cols-[2.5rem_1fr_1fr]">
+              <div className="hidden gap-2 text-xs font-medium text-text/60 @[30rem]:grid @[30rem]:grid-cols-[2.5rem_1fr_1fr]">
                 <span />
                 <span data-testid="sentence-head-original">
                   {t("meetings.translate.original", {
@@ -351,7 +351,7 @@ export const CompareView: React.FC<CompareViewProps> = ({
                     key={row.index}
                     data-testid="sentence-row"
                     data-flagged={row.reasons.length > 0 ? "true" : undefined}
-                    className={`grid grid-cols-1 gap-x-2 gap-y-0.5 rounded-md px-1 text-sm @[40rem]:grid-cols-[2.5rem_1fr_1fr] ${
+                    className={`grid grid-cols-1 gap-x-2 gap-y-0.5 rounded-md px-1 text-sm @[30rem]:grid-cols-[2.5rem_1fr_1fr] ${
                       row.reasons.length > 0
                         ? "border-s-2 border-yellow-500 bg-yellow-500/10"
                         : ""

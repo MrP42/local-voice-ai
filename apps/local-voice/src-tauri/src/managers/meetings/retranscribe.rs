@@ -422,6 +422,13 @@ fn run_retranscribe(
     };
     let target_owned = plan.model_id.clone();
     let target = target_owned.as_str();
+    // Ein Stopp waehrend der Probe: noch nichts ist veraendert, das alte Transkript bleibt.
+    if job.is_stopped() {
+        restore_dictation_model(app, tm);
+        return Ok(RetranscribeEnd::Stopped {
+            transcript_replaced: false,
+        });
+    }
 
     let result = (move || -> Result<RetranscribeEnd, String> {
         // B17: das alte Transkript als Fassung sichern, bevor der Lauf in

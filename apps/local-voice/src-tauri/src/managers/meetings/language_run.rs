@@ -136,8 +136,24 @@ pub fn probe(tm: &TranscriptionManager, windows: Vec<Vec<f32>>) -> ProbeResult {
                 result.native.push(None);
             }
         }
+        // Zwei Fenster mit derselben eigenen Erkennung entscheiden: das dritte (je ein voller
+        // Modelllauf, bei Whisper auf der CPU Sekunden) braeuchte es nicht mehr.
+        if probe_agrees(&result) {
+            break;
+        }
     }
     result
+}
+
+/// Haben mindestens zwei Fenster dieselbe eigene Erkennung geliefert, und keines eine andere?
+pub(crate) fn probe_agrees(result: &ProbeResult) -> bool {
+    let found: Vec<String> = result
+        .native
+        .iter()
+        .flatten()
+        .filter_map(|code| normalize_code(code))
+        .collect();
+    found.len() >= 2 && found.iter().all(|code| *code == found[0])
 }
 
 /// Ein Modellwechsel mit Tor und Rueckweg: nie unter einer eigenen Engine der

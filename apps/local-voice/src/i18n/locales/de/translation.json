@@ -2991,7 +2991,7 @@
       "start": "Übersetzen",
       "cancel": "Abbrechen",
       "close": "Schließen",
-      "done": "Übersetzung nach {{language}} ist fertig: Fassung v{{number}}. Das Original bleibt aktiv.",
+      "done": "Fassung v{{number}} ({{language}}) ist fertig.",
       "compare": "Vergleichen",
       "noMerge": "Original und Übersetzung lassen sich nicht zusammenführen.",
       "allChecked": "Alle Sätze haben die Prüfung auf Zahlen, Namen und Satzanzahl bestanden.",

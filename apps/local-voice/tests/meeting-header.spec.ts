@@ -360,10 +360,11 @@ test.describe("Symbolzeile und Menue", () => {
     await openM2(page);
     await page.getByTestId("meeting-menu").click();
     const items = page.getByRole("menuitem");
-    await expect(items).toHaveCount(13);
+    await expect(items).toHaveCount(14);
     const labels = (await items.allTextContents()).map((t) => t.trim());
     expect(labels).toEqual([
       "Neu transkribieren …",
+      "Übersetzen nach …",
       "KI-Notizen neu erzeugen",
       "Protokoll neu erzeugen",
       "Neu erzeugen mit Vorlage …",
@@ -422,6 +423,8 @@ test.describe("Symbolzeile und Menue", () => {
     expect((await calls(page, "meeting_notes_enhance"))[0].args).toEqual({
       meetingId: "m2",
       templateId: null,
+      // G5: aktive Fassung, Ausgabesprache = Sprache der App
+      basis: { variant_id: null, output_language: "de" },
     });
     await expect(
       page.getByTestId("rec-lower").getByRole("tab", { name: "KI-Notizen" }),
@@ -433,6 +436,8 @@ test.describe("Symbolzeile und Menue", () => {
     expect((await calls(page, "meetings_generate_minutes"))[0].args).toEqual({
       meetingId: "m2",
       templateId: null,
+      // G5: aktive Fassung, Ausgabesprache = Sprache der App
+      basis: { variant_id: null, output_language: "de" },
     });
     await expect(
       head(page).getByRole("tab", { name: "Protokoll" }),
@@ -512,6 +517,8 @@ test.describe("Neu transkribieren", () => {
     expect((await calls(page, "meetings_retranscribe"))[0].args).toEqual({
       meetingId: "m2",
       modelId: null,
+      // G5: Sprache automatisch erkennen
+      language: null,
     });
   });
 

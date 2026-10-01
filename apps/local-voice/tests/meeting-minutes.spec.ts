@@ -386,6 +386,8 @@ test("Protokoll: Vorlagenwahl (Menue) bietet die Vorlagen und Automatisch, Erzeu
   expect((await calls(page, "meetings_generate_minutes"))[0].args).toEqual({
     meetingId: "m1",
     templateId: null,
+    // G5: aktive Fassung, Ausgabesprache = Sprache der App
+    basis: { variant_id: null, output_language: "de" },
   });
   await expect(page.getByText("Fertig.")).toBeVisible();
   await expect(generateButton(page)).toBeEnabled();

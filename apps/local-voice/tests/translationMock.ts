@@ -37,6 +37,8 @@ export interface TranslationMockOptions {
   holdTranslate?: boolean;
   /** Der Server faellt aus: die Uebersetzung endet mit `translate_llm_failed`. */
   failTranslate?: boolean;
+  /** Schon eine zweite Fassung (zusammengefuehrt, ohne Beziehung zu einer Uebersetzung). */
+  withMerged?: boolean;
 }
 
 export const installTranslationMock = async (
@@ -71,8 +73,26 @@ export const installTranslationMock = async (
         ...over,
       });
       const tr: any = (w.__tr = {
-        variants: [variant({})],
-        texts: { v1: en } as Record<string, string[]>,
+        variants: [
+          variant({}),
+          ...(opts.withMerged
+            ? [
+                variant({
+                  id: "vm",
+                  kind: "merged",
+                  model: null,
+                  number: 2,
+                  active: false,
+                }),
+              ]
+            : []),
+        ],
+        texts: {
+          v1: en,
+          ...(opts.withMerged
+            ? { vm: en.map((t: string) => t.replace("Anna", "Hanna")) }
+            : {}),
+        } as Record<string, string[]>,
         reports: {} as Record<string, unknown>,
         info: {
           code: "en",
@@ -162,7 +182,9 @@ export const installTranslationMock = async (
             return tr.reports[args.variantId] ?? null;
           case "transcript_variant_activate": {
             w.__calls.push({ cmd, args });
-            tr.variants.forEach((v: any) => (v.active = v.id === args.variantId));
+            tr.variants.forEach(
+              (v: any) => (v.active = v.id === args.variantId),
+            );
             return tr.variants.find((v: any) => v.id === args.variantId);
           }
           case "meetings_get_segments":
@@ -184,7 +206,9 @@ export const installTranslationMock = async (
               confidence: 1,
               forced: null,
               mismatch: null,
-              model_covers: opts.modelNotCovering ? args.language === "de" : covers,
+              model_covers: opts.modelNotCovering
+                ? args.language === "de"
+                : covers,
               suggestion:
                 args.language === "en"
                   ? null
@@ -214,7 +238,8 @@ export const installTranslationMock = async (
             if (opts.holdTranslate) {
               await new Promise<void>((resolve) => (tr.release = resolve));
             }
-            if (opts.failTranslate) throw "translate_llm_failed: connection reset";
+            if (opts.failTranslate)
+              throw "translate_llm_failed: connection reset";
             const number = tr.variants.length + 1;
             const id = `v${number}`;
             tr.texts[id] = de;
@@ -253,27 +278,27 @@ export const installTranslationMock = async (
             w.__calls.push({ cmd, args });
             // Ein Lauf der Attrappe endet sofort mit einem Fehlerhinweis des Backends nicht;
             // geprueft werden die Argumente. Die Grundlage gilt fuer die Anzeige danach.
-            w.__docBasis[cmd === "meetings_generate_minutes" ? "minutes" : "enhanced_notes"] =
-              {
-                variant_id: args.basis?.variant_id ?? active().id,
-                variant_number:
-                  (tr.variants.find(
-                    (v: any) =>
-                      v.id === (args.basis?.variant_id ?? active().id),
-                  )?.number as number) ?? 1,
-                variant_kind:
-                  tr.variants.find(
-                    (v: any) =>
-                      v.id === (args.basis?.variant_id ?? active().id),
-                  )?.kind ?? "stt",
-                language:
-                  tr.variants.find(
-                    (v: any) =>
-                      v.id === (args.basis?.variant_id ?? active().id),
-                  )?.language ?? "en",
-                output_language: args.basis?.output_language ?? null,
-              };
-            throw "minutes_cancelled";
+            w.__docBasis[
+              cmd === "meetings_generate_minutes" ? "minutes" : "enhanced_notes"
+            ] = {
+              variant_id: args.basis?.variant_id ?? active().id,
+              variant_number:
+                (tr.variants.find(
+                  (v: any) => v.id === (args.basis?.variant_id ?? active().id),
+                )?.number as number) ?? 1,
+              variant_kind:
+                tr.variants.find(
+                  (v: any) => v.id === (args.basis?.variant_id ?? active().id),
+                )?.kind ?? "stt",
+              language:
+                tr.variants.find(
+                  (v: any) => v.id === (args.basis?.variant_id ?? active().id),
+                )?.language ?? "en",
+              output_language: args.basis?.output_language ?? null,
+            };
+            throw cmd === "meetings_generate_minutes"
+              ? "minutes_cancelled"
+              : "stopped";
           case "provenance_get":
             w.__calls.push({ cmd, args });
             return w.__provenance[`${args.contentType}:${args.id}`] ?? [];

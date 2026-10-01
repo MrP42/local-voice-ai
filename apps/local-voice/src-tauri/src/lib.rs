@@ -1452,6 +1452,14 @@ fn meeting_payload(
         "last_end_ms": segments.last().map(|s| s.end_ms),
         "total_text_chars": segments.iter().map(|s| s.text.len()).sum::<usize>(),
         "document_kinds": documents.iter().map(|d| d.kind.clone()).collect::<Vec<_>>(),
+        // G5: Sprache (Spalte und gespeicherte Herkunft), Modell der Transkription, Fassungen.
+        "language": meeting.language,
+        "language_detail": managers::meetings::language_run::stored_language(store, id),
+        "variants": store
+            .get_connection()
+            .ok()
+            .and_then(|mut conn| managers::meetings::variants::list(&mut conn, id).ok())
+            .unwrap_or_default(),
         "segments": segments,
     }))
 }
@@ -2317,6 +2325,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.eval_chat.is_some() // M4-P4f
         || cli_args.export_meeting.is_some() // M6-P6a
         || cli_args.followup_draft.is_some() // P6f
+        || cli_args.translate_meeting.is_some() // G5
         || cli_args.calendar_dump.is_some() // M5-P5a
         || cli_args.integrations_dump // A1
         || cli_args.add_youtube.is_some() // A2
@@ -2678,6 +2687,22 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_eval_diarization(&app_handle, &args, &dir)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // G5: Uebersetzung einer Sandbox-Besprechung als neue Fassung.
+                if let Some(id) = cli_args.translate_meeting.clone() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_translate_meeting(&app_handle, &args, &id)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -3220,6 +3245,191 @@ fn run_headless_export_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> i32
         Err(e) => {
             eprintln!("error: {e}");
             1
+        }
+    }
+}
+
+// G5: `--translate-meeting <id> --target-language <code>`. Uebersetzt die aktive Fassung einer
+// Sandbox-Besprechung (`LVA_MEETINGS_DIR` ist Pflicht) mit dem eingestellten oder per `--model`
+// gewaehlten lokalen Sprachmodell als NEUE Fassung. Beweis fuer "nie destruktiv": Hash der
+// Original-Segmente vor und nach dem Lauf, Fassungsliste (das Original bleibt aktiv). Server und
+// Speicherwaechter wie in `run_headless_followup_draft`; der Server wird am Ende gestoppt.
+// Ausgabe: JSON auf stdout, mit `--out` auch in eine Datei. Exit 0 uebersetzt, 3 nichts zu
+// uebersetzen oder verworfen, 1 Fehler, 2 Eingabe (keine Sandbox, unbekannte Besprechung,
+// keine Zielsprache).
+fn run_headless_translate_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> i32 {
+    use managers::meetings::store::MeetingStore;
+    use managers::meetings::translate::{translate_variant, Control};
+    use managers::meetings::variants;
+    use std::hash::{Hash, Hasher};
+
+    crate::selftest::begin_headless_run();
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if sandbox.is_none() {
+        eprintln!(
+            "error: --translate-meeting requires {} (sandbox); it never reads the productive store",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let Some(target) = args
+        .target_language
+        .as_deref()
+        .and_then(managers::meetings::language::normalize_code)
+    else {
+        eprintln!("error: --translate-meeting needs --target-language <code> (for example de)");
+        return 2;
+    };
+    let mut settings = get_settings(app);
+    if let Some(model) = args.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        managers::meetings::notes::eval::apply_model_override(&mut settings, model.trim());
+    }
+    let store = match MeetingStore::new(app) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    match store.get_meeting(id) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            eprintln!("error: no meeting {id}");
+            return 2;
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    }
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+    let (source, original_segments, hash_before) = {
+        let mut conn = match store.get_connection() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        };
+        let list = match variants::list(&mut conn, id) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        };
+        let Some(active) = list.into_iter().find(|v| v.active) else {
+            eprintln!("error: meeting {id} has no transcript");
+            return 3;
+        };
+        let (_, segments) = match variants::get_segments(&conn, &active.id) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        };
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_string(&segments).unwrap_or_default().hash(&mut hasher);
+        (active, segments, hasher.finish())
+    };
+    let started = std::time::Instant::now();
+    let result = tauri::async_runtime::block_on(translate_variant(
+        &settings,
+        &store,
+        id,
+        &source.id,
+        &target,
+        || std::future::ready(Control::Go),
+        |done, total| eprintln!("translate: block {done}/{total}"),
+    ));
+    llm_server.stop();
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(variant) => {
+            let (hash_after, excerpt, report) = {
+                let conn = match store.get_connection() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return 1;
+                    }
+                };
+                let after = variants::get_segments(&conn, &source.id)
+                    .map(|(_, s)| s)
+                    .unwrap_or_default();
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                serde_json::to_string(&after).unwrap_or_default().hash(&mut hasher);
+                let translated = variants::get_segments(&conn, &variant.id)
+                    .map(|(_, s)| s)
+                    .unwrap_or_default();
+                let excerpt: Vec<serde_json::Value> = original_segments
+                    .iter()
+                    .zip(translated.iter())
+                    .take(12)
+                    .map(|(o, t)| {
+                        serde_json::json!({
+                            "segment_index": o.segment_index,
+                            "start_ms": o.start_ms,
+                            "original": o.text,
+                            "translation": t.text,
+                        })
+                    })
+                    .collect();
+                let report = variants::get_meta(&conn, &variant.id)
+                    .ok()
+                    .flatten()
+                    .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok());
+                (hasher.finish(), excerpt, report)
+            };
+            let all = store
+                .get_connection()
+                .ok()
+                .and_then(|mut conn| variants::list(&mut conn, id).ok())
+                .unwrap_or_default();
+            let payload = serde_json::json!({
+                "meeting_id": id,
+                "source_variant": source.id,
+                "source_language": source.language,
+                "target_language": target,
+                "original_unchanged": hash_before == hash_after,
+                "original_still_active": all.iter().any(|v| v.id == source.id && v.active),
+                "translation": variant,
+                "variants": all,
+                "report": report,
+                "excerpt": excerpt,
+                "elapsed_ms": elapsed_ms,
+            });
+            emit_headless_payload(&payload, args.out.as_deref());
+            0
+        }
+        Err(code) => {
+            eprintln!("error: translation failed: {code}");
+            if code.starts_with("translate_empty")
+                || code.starts_with("translate_rejected")
+                || code.starts_with("translate_same_language")
+            {
+                3
+            } else {
+                1
+            }
         }
     }
 }

@@ -2991,7 +2991,7 @@
       "start": "Translate",
       "cancel": "Cancel",
       "close": "Close",
-      "done": "Translation to {{language}} is done: version v{{number}}. The original stays active.",
+      "done": "Version v{{number}} ({{language}}) is ready.",
       "compare": "Compare",
       "noMerge": "An original and its translation cannot be merged.",
       "allChecked": "All sentences passed the check for numbers, names and sentence count.",

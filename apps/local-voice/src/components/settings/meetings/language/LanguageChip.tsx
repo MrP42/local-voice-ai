@@ -8,6 +8,7 @@ import { Button } from "../../../ui/Button";
 import { Dialog } from "../../../ui/Dialog";
 import { Select } from "../../../ui/Select";
 import { translateMeetingError } from "../meetingErrors";
+import { translateVariantError } from "../variants/useVariants";
 import { languageName, languageOptions } from "./languages";
 
 const CHIP =
@@ -86,7 +87,12 @@ export const LanguageChip: React.FC<LanguageChipProps> = ({
     const result = await commands.meetingsSetLanguage(meetingId, choice);
     setSaving(false);
     if (result.status !== "ok") {
-      setError(translateMeetingError(result.error, t));
+      // `variant_busy` (eine Neu-Transkription ist markiert) hat seinen Text bei den Fassungen.
+      setError(
+        result.error.startsWith("variant_")
+          ? translateVariantError(result.error, t)
+          : translateMeetingError(result.error, t),
+      );
       return;
     }
     onInfo(result.data);
