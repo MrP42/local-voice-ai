@@ -28,7 +28,7 @@ pub const MAX_QUEUED_PER_WORKFLOW: i64 = 500;
 pub const MAX_RUNS_PER_WORKFLOW: i64 = 200;
 /// Aufbewahrung beendeter Laeufe insgesamt.
 pub const MAX_RUNS_TOTAL: i64 = 5_000;
-/// Groesste Auslosdaten-Angabe eines Laufs (JSON-Text, Bytes).
+/// Groesste Ausloeserdaten-Angabe eines Laufs (JSON-Text, Bytes).
 pub const MAX_CONTEXT_BYTES: usize = 64 * 1024;
 /// Laengster Schluessel eines Ausloesers.
 pub const MAX_TRIGGER_KEY_CHARS: usize = 300;
@@ -80,7 +80,10 @@ impl std::fmt::Display for WorkflowError {
             WorkflowError::NotFound(id) => write!(f, "Nicht gefunden: {id}"),
             WorkflowError::Disabled(m) => write!(f, "{m}"),
             WorkflowError::LeaseLost => {
-                write!(f, "Der Lauf gehört einem anderen Arbeiter (Mietvertrag verloren).")
+                write!(
+                    f,
+                    "Der Lauf gehört einem anderen Arbeiter (Mietvertrag verloren)."
+                )
             }
             WorkflowError::Store(m) => write!(f, "Speicherfehler: {m}"),
             #[cfg(test)]
@@ -280,7 +283,14 @@ pub fn save_workflow(
                 "UPDATE workflows SET name = ?2, definition_json = ?3, schema_version = ?4,
                         dry_run = CASE WHEN ?5 THEN 1 ELSE dry_run END, updated_at = ?6
                  WHERE id = ?1",
-                params![existing, def.name, definition_json, SCHEMA_VERSION, changed, now_ms],
+                params![
+                    existing,
+                    def.name,
+                    definition_json,
+                    SCHEMA_VERSION,
+                    changed,
+                    now_ms
+                ],
             )?;
             existing.to_string()
         }
@@ -347,7 +357,10 @@ pub fn delete_workflow(conn: &Connection, id: &str) -> Result<()> {
            (SELECT id FROM workflow_runs WHERE workflow_id = ?1)",
         params![id],
     )?;
-    tx.execute("DELETE FROM workflow_runs WHERE workflow_id = ?1", params![id])?;
+    tx.execute(
+        "DELETE FROM workflow_runs WHERE workflow_id = ?1",
+        params![id],
+    )?;
     tx.execute("DELETE FROM workflows WHERE id = ?1", params![id])?;
     tx.commit()?;
     Ok(())
@@ -503,11 +516,25 @@ pub fn claim_next(
     }
 }
 
-/// Verlaengert den Mietvertrag aller Laeufe von `owner`. Gibt die Zahl zurueck.
-pub fn renew_leases(conn: &Connection, owner: &str, now_ms: i64, lease_ttl_ms: i64) -> Result<usize> {
+/// Verlaengert den Mietvertrag der genannten Laeufe von `owner` (nur die, die der
+/// Arbeiter wirklich noch bearbeitet: ein aufgegebener Lauf verfaellt). Gibt die
+/// Zahl zurueck.
+pub fn renew_leases(
+    conn: &Connection,
+    owner: &str,
+    run_ids: &[String],
+    now_ms: i64,
+    lease_ttl_ms: i64,
+) -> Result<usize> {
+    if run_ids.is_empty() {
+        return Ok(0);
+    }
+    let json = serde_json::to_string(run_ids).unwrap_or_else(|_| "[]".to_string());
     Ok(conn.execute(
-        "UPDATE workflow_runs SET lease_until = ?2 WHERE lease_owner = ?1 AND state = 'running'",
-        params![owner, now_ms + lease_ttl_ms],
+        "UPDATE workflow_runs SET lease_until = ?2
+         WHERE lease_owner = ?1 AND state = 'running'
+           AND id IN (SELECT value FROM json_each(?3))",
+        params![owner, now_ms + lease_ttl_ms, json],
     )?)
 }
 
@@ -555,12 +582,22 @@ pub fn park_run(
     wait_reason: Option<&str>,
     now_ms: i64,
 ) -> Result<()> {
-    debug_assert!(matches!(state, RunState::Queued | RunState::AwaitingApproval));
+    debug_assert!(matches!(
+        state,
+        RunState::Queued | RunState::AwaitingApproval
+    ));
     fenced(conn.execute(
         "UPDATE workflow_runs SET state = ?3, next_run_at = ?4, wait_reason = ?5,
                 lease_owner = NULL, lease_until = NULL, updated_at = ?6
          WHERE id = ?1 AND lease_owner = ?2 AND state = 'running'",
-        params![run_id, owner, state.as_str(), next_run_at, wait_reason, now_ms],
+        params![
+            run_id,
+            owner,
+            state.as_str(),
+            next_run_at,
+            wait_reason,
+            now_ms
+        ],
     )?)
 }
 
@@ -636,6 +673,107 @@ pub fn cancel_requested(conn: &Connection, run_id: &str) -> Result<bool> {
         .optional()?
         .unwrap_or(0)
         != 0)
+}
+
+// ---------------------------------------------------------------------------
+// Wiederaufnahme (Mietvertrag abgelaufen)
+// ---------------------------------------------------------------------------
+
+const EXPIRED: &str = "state = 'running' AND (lease_until IS NULL OR lease_until < ?2)";
+
+/// Nimmt einen Lauf mit abgelaufenem Vertrag zurueck in die Warteschlange. Ein
+/// bedingtes UPDATE: bei zwei gleichzeitigen Uebernehmern gewinnt genau einer.
+pub fn recover_requeue(conn: &Connection, run_id: &str, now_ms: i64) -> Result<bool> {
+    Ok(conn.execute(
+        &format!(
+            "UPDATE workflow_runs SET state = 'queued', lease_owner = NULL, lease_until = NULL,
+                    next_run_at = NULL, wait_reason = NULL, updated_at = ?2
+             WHERE id = ?1 AND {EXPIRED}"
+        ),
+        params![run_id, now_ms],
+    )? == 1)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn recover_step(
+    tx: &Connection,
+    run_id: &str,
+    row: &StepRow,
+    state: StepState,
+    class: Option<&str>,
+    output_json: Option<&str>,
+    error: Option<&str>,
+    now_ms: i64,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE workflow_run_steps
+            SET state = ?4, error_class = ?5, output_json = ?6, error = ?7, ended_at = ?8
+          WHERE run_id = ?1 AND step_id = ?2 AND attempt = ?3 AND state = 'running'",
+        params![
+            run_id,
+            row.step_id,
+            row.attempt,
+            state.as_str(),
+            class,
+            output_json,
+            error,
+            now_ms
+        ],
+    )?;
+    Ok(())
+}
+
+/// Uebernimmt den Lauf UND schreibt den unterbrochenen Schritt um (eine Transaktion):
+/// der Lauf wartet wieder, der Schritt steht auf `state` (z. B. `interrupted`,
+/// oder `done`, wenn die Wirkung belegt ist). `false`: ein anderer war schneller.
+#[allow(clippy::too_many_arguments)]
+pub fn recover_step_and_requeue(
+    conn: &Connection,
+    run_id: &str,
+    row: &StepRow,
+    state: StepState,
+    class: Option<&str>,
+    output_json: Option<&str>,
+    error: Option<&str>,
+    now_ms: i64,
+) -> Result<bool> {
+    let tx = rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    if !recover_requeue(&tx, run_id, now_ms)? {
+        return Ok(false);
+    }
+    recover_step(&tx, run_id, row, state, class, output_json, error, now_ms)?;
+    tx.commit()?;
+    Ok(true)
+}
+
+/// Wie `recover_step_and_requeue`, aber der Lauf endet `failed` mit `error_code`.
+#[allow(clippy::too_many_arguments)]
+pub fn recover_step_and_fail(
+    conn: &Connection,
+    run_id: &str,
+    row: &StepRow,
+    state: StepState,
+    class: Option<&str>,
+    message: &str,
+    error_code: &str,
+    now_ms: i64,
+) -> Result<bool> {
+    let tx = rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    let changed = tx.execute(
+        &format!(
+            "UPDATE workflow_runs SET state = 'failed', error = ?3, error_code = ?4, ended_at = ?2,
+                    lease_owner = NULL, lease_until = NULL, next_run_at = NULL, wait_reason = NULL,
+                    updated_at = ?2
+             WHERE id = ?1 AND {EXPIRED}"
+        ),
+        params![run_id, now_ms, message, error_code],
+    )?;
+    if changed != 1 {
+        return Ok(false);
+    }
+    recover_step(&tx, run_id, row, state, class, None, Some(message), now_ms)?;
+    tx.commit()?;
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------

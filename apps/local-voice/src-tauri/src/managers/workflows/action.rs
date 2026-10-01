@@ -40,9 +40,7 @@ use rusqlite::Connection;
 use serde_json::{json, Map, Value};
 
 use crate::managers::integrations::model::Capability;
-use crate::managers::provenance::{
-    self, ActorKind, NewProvenance, ProvenanceError, SourceRef, SubjectKind,
-};
+use crate::managers::provenance::{self, ActorKind, NewProvenance, ProvenanceError, SourceRef};
 
 use super::engine::Clock;
 
@@ -106,7 +104,10 @@ pub enum StepError {
     Unknown(String),
     /// Nicht jetzt: der Lauf wartet `retry_after_ms` und der Baustein laeuft danach
     /// erneut (kein Versuch verbraucht). Fuer "warten bis ...".
-    Defer { retry_after_ms: u64, reason: String },
+    Defer {
+        retry_after_ms: u64,
+        reason: String,
+    },
     /// Der Baustein ist (noch) nicht eingebaut.
     NotAvailable(String),
 }

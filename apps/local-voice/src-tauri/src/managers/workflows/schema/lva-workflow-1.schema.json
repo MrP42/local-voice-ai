@@ -1,0 +1,1777 @@
+{
+  "$id": "urn:local-voice-ai:workflow:1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Ablauf mit Ausloeser, Variablen und linearen Schritten. Bezuege (steps.<id> nur auf fruehere Schritte, deklarierte Variablen, gueltige Ausdruecke) prueft die App beim Speichern.",
+  "properties": {
+    "description": {
+      "maxLength": 500,
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 120,
+      "minLength": 1,
+      "type": "string"
+    },
+    "schema": {
+      "const": "lva-workflow@1"
+    },
+    "steps": {
+      "items": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "recording.start"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "max_minutes": {
+                    "anyOf": [
+                      {
+                        "maximum": 720,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "stop": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "event_end",
+                          "manual",
+                          "duration"
+                        ]
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "via": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "via"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Aufnahme starten",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "recording.stop"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {},
+                "required": [],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Aufnahme beenden",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "meeting.import"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "path": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "via",
+                  "path"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Datei importieren und transkribieren",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "meeting.notes"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "template": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "KI-Notizen erzeugen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "meeting.minutes"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "template": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Protokoll erzeugen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "text.summarize"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "source": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "style": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Zusammenfassen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "export.document"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "format": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "docx",
+                          "pdf",
+                          "md"
+                        ]
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "subfolder": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "target": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "format",
+                  "target"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Dokument ablegen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "mail.send"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "attach": {},
+                  "body": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "draft": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "list": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "subject": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "to": {
+                    "enum": [
+                      "me",
+                      "participants",
+                      "all",
+                      "list"
+                    ]
+                  },
+                  "via": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "via",
+                  "to",
+                  "subject"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Mail senden",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "calendar.note"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "event": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "text": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "via",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Notiz in den Termin schreiben",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "obsidian.note"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "content": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "mode": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "create",
+                          "append"
+                        ]
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "path": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "section": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "via",
+                  "path",
+                  "content"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Obsidian-Notiz schreiben",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "knowledge.search"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "limit": {
+                    "anyOf": [
+                      {
+                        "maximum": 50,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "query": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "via",
+                  "query"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Wissen durchsuchen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "knowledge.rate"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "profile": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "source": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Relevanz bewerten",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "knowledge.reconcile"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "folder": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "source": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "video_id": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "via",
+                  "source"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Mit der Wissensbasis abgleichen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "channel.report"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "channel": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "source": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "via",
+                  "channel"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Kanal-Management-Summary",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "youtube.add_source"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "via",
+                  "url"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "YouTube-Quelle anlegen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "youtube.transcript"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "via": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "video": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "via",
+                  "video"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "YouTube-Transkript holen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "notify.local"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "body": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Windows-Mitteilung",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "tts.render"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "text": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "voice": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Vorlesen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "webhook.post"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "body": {},
+                  "url": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Webhook senden",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "wait"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "minutes": {
+                    "anyOf": [
+                      {
+                        "maximum": 10080,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "minutes"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Warten",
+            "type": "object"
+          }
+        ]
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "type": "array"
+    },
+    "trigger": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "manual"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "Von Hand starten",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "agent"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "Durch einen Agenten starten",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "every": {
+              "enum": [
+                "daily",
+                "weekly"
+              ]
+            },
+            "type": {
+              "const": "schedule"
+            },
+            "weekdays": {}
+          },
+          "required": [
+            "type",
+            "every",
+            "at"
+          ],
+          "title": "Zeitplan",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "integration": {
+              "pattern": "^[A-Za-z0-9_-]{1,40}$",
+              "type": "string"
+            },
+            "lead_min": {
+              "maximum": 120,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_attendees": {
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "only_meetings": {
+              "type": "boolean"
+            },
+            "title_contains": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "type": {
+              "const": "calendar.event_starting"
+            }
+          },
+          "required": [
+            "type",
+            "integration"
+          ],
+          "title": "Termin beginnt",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "integration": {
+              "pattern": "^[A-Za-z0-9_-]{1,40}$",
+              "type": "string"
+            },
+            "min_attendees": {
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "only_meetings": {
+              "type": "boolean"
+            },
+            "title_contains": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "type": {
+              "const": "calendar.event_ended"
+            }
+          },
+          "required": [
+            "type",
+            "integration"
+          ],
+          "title": "Termin endet",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "stage": {
+              "enum": [
+                "transcript",
+                "notes",
+                "minutes"
+              ]
+            },
+            "type": {
+              "const": "meeting.finished"
+            }
+          },
+          "required": [
+            "type",
+            "stage"
+          ],
+          "title": "Besprechung fertig",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "extensions": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
+            "integration": {
+              "pattern": "^[A-Za-z0-9_-]{1,40}$",
+              "type": "string"
+            },
+            "stable_seconds": {
+              "maximum": 300,
+              "minimum": 2,
+              "type": "integer"
+            },
+            "subfolder": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "type": {
+              "const": "folder.file_added"
+            }
+          },
+          "required": [
+            "type",
+            "integration"
+          ],
+          "title": "Datei im Ordner",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "channel_id": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "integration": {
+              "pattern": "^[A-Za-z0-9_-]{1,40}$",
+              "type": "string"
+            },
+            "poll_minutes": {
+              "maximum": 1440,
+              "minimum": 15,
+              "type": "integer"
+            },
+            "type": {
+              "const": "youtube.channel_new_video"
+            }
+          },
+          "required": [
+            "type",
+            "channel_id"
+          ],
+          "title": "Neues Video im Kanal",
+          "type": "object"
+        }
+      ]
+    },
+    "variables": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "default": {},
+          "description": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "string",
+              "number",
+              "bool",
+              "list"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,31}$"
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "name",
+    "trigger",
+    "steps"
+  ],
+  "title": "lva-workflow@1",
+  "type": "object"
+}

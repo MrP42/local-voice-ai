@@ -223,7 +223,13 @@ fn permission_of(conn: &Connection, action: &dyn super::action::Action, params: 
             return perm;
         }
     };
-    let (mode, reason) = explain(&integration, needs.capability, Caller::Workflow, &grants, None);
+    let (mode, reason) = explain(
+        &integration,
+        needs.capability,
+        Caller::Workflow,
+        &grants,
+        None,
+    );
     perm["mode"] = json!(mode.as_str());
     match mode {
         GrantMode::Allow => perm["result"] = json!("allowed"),
@@ -342,11 +348,7 @@ pub fn format_table(plan: &Value) -> String {
     let sum = &plan["summary"];
     out.push_str(&format!(
         "\n{} Schritte: {} erlaubt, {} fragen, {} abgelehnt, {} ungültig\n",
-        sum["steps"],
-        sum["allowed"],
-        sum["needs_approval"],
-        sum["denied"],
-        sum["invalid"]
+        sum["steps"], sum["allowed"], sum["needs_approval"], sum["denied"], sum["invalid"]
     ));
     out
 }

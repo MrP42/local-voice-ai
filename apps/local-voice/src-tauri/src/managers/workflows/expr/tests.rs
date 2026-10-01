@@ -34,7 +34,10 @@ fn comparisons_and_the_wrapped_form_of_the_design_sketch_work() {
     assert!(!cond("{{trigger.calendar}} == 'cal-2'"));
     assert!(cond("trigger.minutes >= 45 and trigger.minutes < 60"));
     assert!(cond("trigger.minutes != 30"));
-    assert!(cond("vars.limit == 3.0"), "Zahlen werden als Zahl verglichen");
+    assert!(
+        cond("vars.limit == 3.0"),
+        "Zahlen werden als Zahl verglichen"
+    );
     assert!(cond("steps.doc.pages > 3"));
 }
 
@@ -67,7 +70,10 @@ fn a_missing_path_is_null_in_a_condition_and_exists_says_so() {
     assert!(cond("trigger.nothing == null"));
     assert!(!cond("exists(trigger.nothing)"));
     assert!(cond("exists(trigger.title)"));
-    assert!(!cond("trigger.nothing > 3"), "Vergleich ohne Wert ist falsch, kein Fehler");
+    assert!(
+        !cond("trigger.nothing > 3"),
+        "Vergleich ohne Wert ist falsch, kein Fehler"
+    );
     assert!(cond("not exists(steps.other.path)"));
     assert!(cond("default(trigger.nothing, 'x') == 'x'"));
 }
@@ -117,7 +123,10 @@ fn type_mismatches_are_errors_not_guesses() {
     let e = parse_condition("trigger.title > 3").unwrap().eval_bool(&c);
     assert!(matches!(e, Err(ExprError::Type(_))), "{e:?}");
     let e = parse_condition("trigger.title").unwrap().eval_bool(&c);
-    assert!(matches!(e, Err(ExprError::Type(_))), "ein Text ist keine Bedingung: {e:?}");
+    assert!(
+        matches!(e, Err(ExprError::Type(_))),
+        "ein Text ist keine Bedingung: {e:?}"
+    );
     let e = parse_condition("len(5)").unwrap().eval_bool(&c);
     assert!(matches!(e, Err(ExprError::Type(_))), "{e:?}");
 }
@@ -125,7 +134,10 @@ fn type_mismatches_are_errors_not_guesses() {
 #[test]
 fn a_template_keeps_the_type_of_a_single_expression() {
     assert_eq!(render("{{trigger.minutes}}").unwrap(), json!(45));
-    assert_eq!(render("{{trigger.tags}}").unwrap(), json!(["kunde", "angebot"]));
+    assert_eq!(
+        render("{{trigger.tags}}").unwrap(),
+        json!(["kunde", "angebot"])
+    );
     assert_eq!(
         render("{{ steps.doc }}").unwrap(),
         json!({"path": "C:/Ablage/Protokoll.docx", "pages": 4})
@@ -136,8 +148,10 @@ fn a_template_keeps_the_type_of_a_single_expression() {
 #[test]
 fn a_template_with_text_around_it_produces_text() {
     assert_eq!(
-        render("Protokoll: {{meeting.title}} ({{trigger.minutes}} Min., {{trigger.minutes >= 45}})")
-            .unwrap(),
+        render(
+            "Protokoll: {{meeting.title}} ({{trigger.minutes}} Min., {{trigger.minutes >= 45}})"
+        )
+        .unwrap(),
         json!("Protokoll: Wochenrunde (45 Min., true)")
     );
     assert_eq!(
@@ -159,7 +173,10 @@ fn a_missing_value_in_a_template_is_an_error_never_an_empty_text() {
     );
     // Auch ein vorhandenes `null` wird nicht zu Text.
     let c = json!({"trigger": {"x": null}});
-    let e = parse_template("a{{trigger.x}}b").unwrap().render(&c).unwrap_err();
+    let e = parse_template("a{{trigger.x}}b")
+        .unwrap()
+        .render(&c)
+        .unwrap_err();
     assert!(matches!(e, ExprError::Type(_)), "{e:?}");
 }
 

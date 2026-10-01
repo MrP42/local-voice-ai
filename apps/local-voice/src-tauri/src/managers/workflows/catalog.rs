@@ -664,9 +664,7 @@ pub fn check_field(spec: &FieldSpec, v: &Value, allow_templates: bool) -> Result
             Value::Array(items) if items.len() <= 100 && items.iter().all(Value::is_string) => {
                 Ok(())
             }
-            Value::Array(items) if items.len() > 100 => {
-                Err("höchstens 100 Einträge".to_string())
-            }
+            Value::Array(items) if items.len() > 100 => Err("höchstens 100 Einträge".to_string()),
             _ => Err("Liste aus Texten erwartet".to_string()),
         },
         FieldKind::Choice(options) => match v {
@@ -729,9 +727,7 @@ pub fn needs_from_spec(spec: &ActionSpec, params: &Value) -> Result<Option<Needs
             target,
         } => {
             let id = param_text(params, via).ok_or_else(|| {
-                NeedsError::Invalid(format!(
-                    "Parameter „{via}“ (Kennung der Integration) fehlt"
-                ))
+                NeedsError::Invalid(format!("Parameter „{via}“ (Kennung der Integration) fehlt"))
             })?;
             if !valid_id(&id) {
                 return Err(NeedsError::Invalid(format!(

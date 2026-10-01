@@ -13,4 +13,5 @@ pub mod provenance; // A1 (Goal Integrationen)
 pub mod transcription;
 pub mod tts;
 pub mod usage;
+pub mod workflows; // B1 (Goal Workflow-Automation)
 pub mod youtube; // A2 (Goal Integrationen)

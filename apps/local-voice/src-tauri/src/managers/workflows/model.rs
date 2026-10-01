@@ -236,7 +236,10 @@ impl RunState {
     }
 
     pub fn is_terminal(self) -> bool {
-        matches!(self, RunState::Done | RunState::Failed | RunState::Cancelled)
+        matches!(
+            self,
+            RunState::Done | RunState::Failed | RunState::Cancelled
+        )
     }
 }
 

@@ -74,7 +74,10 @@ fn check_unknown_keys(obj: &Map<String, Value>, allowed: &[&str], at: &str, issu
         if !allowed.contains(&key.as_str()) {
             issues.add(
                 &format!("{at}/{key}"),
-                format!("Unbekanntes Feld „{key}“ (erlaubt: {}).", allowed.join(", ")),
+                format!(
+                    "Unbekanntes Feld „{key}“ (erlaubt: {}).",
+                    allowed.join(", ")
+                ),
             );
         }
     }
@@ -193,7 +196,10 @@ fn check_trigger(v: Option<&Value>, issues: &mut Issues) -> Option<&'static Trig
         let known: Vec<&str> = catalog::triggers().iter().map(|t| t.id).collect();
         issues.add(
             "/trigger/type",
-            format!("Unbekannter Auslöser „{kind}“ (bekannt: {}).", known.join(", ")),
+            format!(
+                "Unbekannter Auslöser „{kind}“ (bekannt: {}).",
+                known.join(", ")
+            ),
         );
         return None;
     };
@@ -332,7 +338,10 @@ fn check_params(
 
 fn check_retry(v: &Value, at: &str, issues: &mut Issues) {
     let Value::Object(o) = v else {
-        issues.add(at, "Objekt erwartet ({\"max_attempts\": 3, \"backoff_ms\": 2000}).");
+        issues.add(
+            at,
+            "Objekt erwartet ({\"max_attempts\": 3, \"backoff_ms\": 2000}).",
+        );
         return;
     };
     check_unknown_keys(o, &["max_attempts", "backoff_ms"], at, issues);
@@ -392,7 +401,9 @@ fn check_steps(
         };
         check_unknown_keys(
             obj,
-            &["id", "action", "label", "when", "params", "on_error", "retry"],
+            &[
+                "id", "action", "label", "when", "params", "on_error", "retry",
+            ],
             &at,
             issues,
         );
@@ -458,7 +469,10 @@ fn check_steps(
                     let known: Vec<&str> = catalog::actions().iter().map(|a| a.id).collect();
                     issues.add(
                         &format!("{at}/action"),
-                        format!("Unbekannter Baustein „{action}“ (bekannt: {}).", known.join(", ")),
+                        format!(
+                            "Unbekannter Baustein „{action}“ (bekannt: {}).",
+                            known.join(", ")
+                        ),
                     );
                 }
                 Some(spec) => {
@@ -491,7 +505,14 @@ pub fn check(v: &Value) -> Vec<Issue> {
     }
     check_unknown_keys(
         obj,
-        &["schema", "name", "description", "trigger", "variables", "steps"],
+        &[
+            "schema",
+            "name",
+            "description",
+            "trigger",
+            "variables",
+            "steps",
+        ],
         "",
         &mut issues,
     );

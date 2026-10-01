@@ -2316,6 +2316,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.calendar_dump.is_some() // M5-P5a
         || cli_args.integrations_dump // A1
         || cli_args.add_youtube.is_some() // A2
+        || cli_args.workflow_run.is_some() // B1
         || cli_args.detect_mic; // M5-P5c
 
     #[allow(unused_mut)]
@@ -2553,6 +2554,22 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code =
                             run_headless_guarded(|| run_headless_add_youtube(&app_handle, &args));
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // B1: Trockenlauf einer Workflow-Definition (nur Sandbox, nur lesend).
+                if cli_args.workflow_run.is_some() {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_workflow_run(&app_handle, &args)
+                        });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -3112,6 +3129,70 @@ fn run_headless_add_youtube(app: &AppHandle, args: &CliArgs) -> i32 {
             }
         }
     }
+}
+
+// B1: `--workflow-run FILE --dry-run [--json] [--out F]`. Nur mit Sandbox
+// (`LVA_MEETINGS_DIR`): der Aufruf oeffnet und migriert den Store dort und liest nur
+// das Register. Plant die Definition (kein Baustein laeuft, nichts wird geschrieben,
+// kein Modell startet). Exit 0 / 3 siehe `managers::workflows::cli`, 2 falscher Aufruf.
+fn run_headless_workflow_run(app: &AppHandle, args: &CliArgs) -> i32 {
+    use managers::meetings::store::MeetingStore;
+    use managers::workflows::cli as wf_cli;
+
+    crate::selftest::begin_headless_run();
+    let Some(path) = args.workflow_run.clone() else {
+        return 2;
+    };
+    if !args.dry_run {
+        eprintln!("error: --workflow-run runs only together with --dry-run in this version (nothing is executed)");
+        return 2;
+    }
+    let sandbox = std::env::var(managers::meetings::MEETINGS_DIR_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if sandbox.is_none() {
+        eprintln!(
+            "error: --workflow-run requires {} (sandbox); it never reads the productive store",
+            managers::meetings::MEETINGS_DIR_ENV
+        );
+        return 2;
+    }
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("error: could not read {}: {e}", path.display());
+            return 2;
+        }
+    };
+    let store = match MeetingStore::new(app) {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!("error: meetings store unavailable: {e}");
+            return 1;
+        }
+    };
+    let conn = match store.get_connection() {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    };
+    let result = wf_cli::dry_run(&conn, &text);
+    if args.json {
+        emit_headless_payload(&result.payload, args.out.as_deref());
+    } else {
+        println!("{}", wf_cli::format_text(&result));
+        if let Some(path) = args.out.as_deref() {
+            if let Err(e) = std::fs::write(
+                path,
+                serde_json::to_string_pretty(&result.payload).unwrap_or_default(),
+            ) {
+                eprintln!("error: could not write {}: {}", path.display(), e);
+            }
+        }
+    }
+    result.exit_code
 }
 
 // M5-P5c: `--detect-mic --seconds N [--all-apps] [--json] [--out F]`. Beobachtet

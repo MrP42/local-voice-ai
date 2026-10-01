@@ -104,6 +104,10 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // `queue_store.rs`, damit dieser Schritt beim Zusammenfuehren mit anderen
     // Zweigen nur aus dieser einen Zeile besteht.
     M::up(super::queue_store::QUEUE_MIGRATION),
+    // B1 (Workflow-Automation, #67): Ablaeufe, Laeufe (Warteschlange), Schrittjournal und
+    // Ledger. Nur CREATE. Der SQL-Text steht in `workflows/schema.rs`, damit dieser
+    // Schritt beim Zusammenfuehren mit anderen Zweigen nur aus dieser einen Zeile besteht.
+    M::up(crate::managers::workflows::schema::WORKFLOWS_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).

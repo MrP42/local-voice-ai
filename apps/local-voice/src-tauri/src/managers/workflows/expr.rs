@@ -363,7 +363,8 @@ fn tokenize(src: &str) -> Result<Vec<Spanned>, ExprError> {
                         j += 1;
                     }
                     let mut is_float = false;
-                    if chars.get(j) == Some(&'.') && chars.get(j + 1).is_some_and(|x| x.is_ascii_digit())
+                    if chars.get(j) == Some(&'.')
+                        && chars.get(j + 1).is_some_and(|x| x.is_ascii_digit())
                     {
                         is_float = true;
                         j += 1;
@@ -402,7 +403,9 @@ fn tokenize(src: &str) -> Result<Vec<Spanned>, ExprError> {
         };
         out.push(Spanned { tok, pos: start });
         if out.len() > 4 * MAX_NODES {
-            return Err(ExprError::TooComplex("zu viele Zeichen-Einheiten".to_string()));
+            return Err(ExprError::TooComplex(
+                "zu viele Zeichen-Einheiten".to_string(),
+            ));
         }
     }
     Ok(out)
@@ -1178,9 +1181,7 @@ fn render_depth(v: &Value, ctx: &Value, depth: usize) -> Result<Value, ExprError
         )));
     }
     match v {
-        Value::String(s) if s.contains("{{") || s.contains("}}") => {
-            parse_template(s)?.render(ctx)
-        }
+        Value::String(s) if s.contains("{{") || s.contains("}}") => parse_template(s)?.render(ctx),
         Value::Array(items) => items
             .iter()
             .map(|i| render_depth(i, ctx, depth + 1))
@@ -1209,9 +1210,7 @@ pub fn collect_value_refs(v: &Value) -> Result<Vec<Path>, (String, ExprError)> {
         if depth > MAX_VALUE_DEPTH {
             return Err((
                 pointer.to_string(),
-                ExprError::TooComplex(format!(
-                    "tiefer als {MAX_VALUE_DEPTH} Ebenen verschachtelt"
-                )),
+                ExprError::TooComplex(format!("tiefer als {MAX_VALUE_DEPTH} Ebenen verschachtelt")),
             ));
         }
         match v {

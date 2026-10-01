@@ -135,7 +135,10 @@ impl HeavyGate for LocalHeavyGate {
         {
             return Err(HeavyWait {
                 reason: HeavyWaitReason::Slot,
-                message: format!("Wartet: ein anderer schwerer Schritt läuft ({}).", need.label),
+                message: format!(
+                    "Wartet: ein anderer schwerer Schritt läuft ({}).",
+                    need.label
+                ),
                 retry_after_ms: SLOT_RETRY_MS,
             });
         }
@@ -152,3 +155,6 @@ impl HeavyGate for LocalHeavyGate {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

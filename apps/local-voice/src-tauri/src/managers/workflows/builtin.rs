@@ -8,9 +8,7 @@
 
 use serde_json::{json, Value};
 
-use super::action::{
-    Action, EffectKind, Needs, NeedsError, RunCtx, StepError, StepOutput,
-};
+use super::action::{Action, EffectKind, Needs, NeedsError, RunCtx, StepError, StepOutput};
 
 pub struct WaitAction;
 
