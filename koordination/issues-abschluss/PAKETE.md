@@ -35,7 +35,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | D5 | M7 | #69 Folien in Protokoll, KI-Notizen, Chat, Suche ([Folie n · mm:ss], Belege) — lv-coder-xhigh | cargo test minutes notes search slides | abgenommen | a1c20633 |
 | B4 | M5 | #67 App-Aktionen (Notizen, Protokoll, Zusammenfassung, Export, TTS, Mitteilung, Warten) + Vorlage Eingangsordner → Word — lv-coder | AK6 | abgenommen (Toast im Installer prüfen) | cf388ec1 |
 | A8 | M4 | #66 MCP schreibend (transcribe_file, tts, add_youtube_source, get_provenance, start/stop_recording mit Einwilligung), mcp_smoke --write, --audit-dump — lv-coder-xhigh | AK10, AK11 | abgenommen (QG5-Review, Installer-Abnahme Einwilligungsfenster) | b21643fb |
-| B5 | M5 | #67 Integrations-Aktionen Mail (Empfängerregeln, Freigabe), Termin-Notiz, Webhook (n8n); Vorlage Termin → Mail — lv-coder-xhigh | AK7, AK8 | in_arbeit | |
+| B5 | M5 | #67 Integrations-Aktionen Mail (Empfängerregeln, Freigabe), Termin-Notiz, Webhook (n8n); Vorlage Termin → Mail — lv-coder-xhigh | AK7, AK8 | abgenommen (Webhook-Formular fehlt → A4n) | 73cf5910 |
 | B7 | M5 | #67 Oberfläche Automationen (Liste, Editor, Vorlagen, Lauf mit Herkunft, Freigaben, JSON-Import/Export) — lv-coder | AK9 automations.spec | abgenommen (B7n Einwilligung im Freigabedialog) | bd8d7a6f |
 | C2 | M6 | #68 Agent-Laufzeit (Schema, Denken aus, Validierung, Retry, Rückfall) + agent.extract (To-dos/Fristen/Entscheidungen mit Belegen) + Provenienz — lv-coder-xhigh | AK3, AK4 | in_arbeit | |
 | B7n | M5 | Einwilligung zur Aufnahme im allgemeinen Freigabedialog nur mit demselben Häkchen wie im Hinweisfenster (oder dorthin verweisen) — lv-coder | Playwright + Rust: ohne Häkchen keine Freigabe | in_arbeit | |
