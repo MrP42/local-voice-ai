@@ -6156,11 +6156,7 @@ created_at: number }
  * Lauf gehoert dem ersten Start. Der Fortschritt kommt als `MeetingEvent::Progress`
  * unter dem Schluessel `project-minutes:<projekt>`.
  */
-export type ProjectMinutesEvent = { kind: "done"; folder_id: string; minutes_id: string } | { kind: "failed"; folder_id: string; code: string; 
-/**
- * Kurzer Grund (z. B. die ID der abgewiesenen Aufnahme); nie Inhalt.
- */
-detail: string }
+export type ProjectMinutesEvent = { kind: "done"; folder_id: string; minutes_id: string } | { kind: "failed"; folder_id: string; code: string; detail: string }
 /**
  * Herkunft eines Projekt-Protokolls (wie bei Einzelprotokollen): Modell,
  * Anbieter, Vorlage, Verfahren, Luecken.
