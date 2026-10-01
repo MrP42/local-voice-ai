@@ -421,6 +421,65 @@ static ACTIONS: &[ActionSpec] = &[
         needs: NeedsSpec::None,
     },
     ActionSpec {
+        id: "agent.note",
+        title: "Besprechungsergebnis als Vault-Notiz ablegen",
+        effect_text: "To-dos, Fristen und Entscheidungen aus Schritt „{{p.from}}“ mit Belegen als Notiz in den Vault {{p.via}} schreiben (eine Notiz je Besprechung, ein zweiter Lauf aktualisiert sie)",
+        fields: &[
+            // Der Vault ist ein fester Wert: Daten aus dem Transkript waehlen kein Ziel.
+            literal("via", FieldKind::Id, true),
+            // Kennung des Extraktionsschritts (`agent.extract`), Vorgabe `extract`.
+            literal("from", FieldKind::Text, false),
+        ],
+        // Die Notiz traegt eine feste Kennung (`lva_id`): ein zweiter Lauf ersetzt den
+        // verwalteten Block derselben Datei, er legt keine zweite an.
+        effect: EffectKind::Idempotent,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::VaultWrite,
+            via: "via",
+            target: Some("from"),
+        },
+    },
+    ActionSpec {
+        id: "deadline.remind",
+        title: "Frist-Erinnerung",
+        effect_text: "Zu jeder Frist aus Schritt „{{p.from}}“ eine Windows-Mitteilung zum eingestellten Zeitpunkt davor anzeigen; der Lauf wartet bis dahin",
+        fields: &[
+            literal("from", FieldKind::Text, false),
+            // So viele Tage vor der Frist (0 = am Tag der Frist), Vorgabe 1.
+            field("days_before", FieldKind::Int { min: 0, max: 30 }, false),
+            // Uhrzeit der Mitteilung (`HH:MM`, Ortszeit), Vorgabe `09:00`.
+            field("at", FieldKind::Text, false),
+            // Auch To-dos mit Faelligkeitsdatum erinnern (Vorgabe: nur Fristen).
+            field("todos", FieldKind::Bool, false),
+            // Fristen, deren Datum das Sprachmodell geschaetzt hat, nicht erinnern.
+            field("skip_model_dates", FieldKind::Bool, false),
+        ],
+        // Eine Mitteilung je Frist, hoechstens einmal (Herkunftsregister): eine Wiederholung
+        // nach einem Absturz zeigt nichts doppelt.
+        effect: EffectKind::Idempotent,
+        heavy: None,
+        needs: NeedsSpec::None,
+    },
+    ActionSpec {
+        id: "deadline.calendar",
+        title: "Kalendereintrag zur Frist",
+        effect_text: "Fristen aus Schritt „{{p.from}}“ als ganztägige Termine in {{p.via}} eintragen (immer erst nach Ihrer Freigabe, mit Liste der Einträge)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            literal("from", FieldKind::Text, false),
+            field("todos", FieldKind::Bool, false),
+            field("skip_model_dates", FieldKind::Bool, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::CalendarWrite,
+            via: "via",
+            target: Some("from"),
+        },
+    },
+    ActionSpec {
         id: "export.document",
         title: "Dokument ablegen",
         effect_text: "Dokument als {{p.format}} in {{p.target}} ablegen",

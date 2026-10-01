@@ -1,0 +1,55 @@
+{
+  "schema": "lva-workflow@1",
+  "name": "Besprechung fertig: Ergebnis in den Vault, Fristen erinnern",
+  "description": "Ist das Transkript einer Besprechung fertig, zieht das lokale Sprachmodell To-dos, Fristen und Entscheidungen mit Belegen heraus. Daraus entstehen eine Obsidian-Notiz mit AI-OS-Frontmatter (eine je Besprechung), auf Wunsch ein Kalendereintrag je Frist (nur nach Freigabe) und eine Windows-Mitteilung am Vortag um 09:00 Uhr. Der Lauf wartet auf die Erinnerungen. Geschätzte Daten sind gekennzeichnet.",
+  "trigger": {
+    "type": "meeting.finished",
+    "stage": "transcript"
+  },
+  "variables": {
+    "kalender": {
+      "type": "string",
+      "default": "nein",
+      "description": "ja: zu jeder Frist einen ganztägigen Kalendereintrag vorschlagen (wird immer erst nach Ihrer Freigabe angelegt); nein: nur Notiz und Erinnerung"
+    }
+  },
+  "steps": [
+    {
+      "id": "extract",
+      "action": "agent.extract",
+      "label": "To-dos, Fristen und Entscheidungen extrahieren",
+      "params": {}
+    },
+    {
+      "id": "note",
+      "action": "agent.note",
+      "label": "Ergebnis als Vault-Notiz ablegen",
+      "when": "steps.extract.counts.items > 0",
+      "params": {
+        "via": "vault-1",
+        "from": "extract"
+      }
+    },
+    {
+      "id": "kalender",
+      "action": "deadline.calendar",
+      "label": "Fristen in den Kalender eintragen (nach Freigabe)",
+      "when": "vars.kalender == 'ja' and steps.extract.counts.deadlines > 0",
+      "params": {
+        "via": "m365-1",
+        "from": "extract"
+      }
+    },
+    {
+      "id": "erinnerung",
+      "action": "deadline.remind",
+      "label": "An jede Frist erinnern",
+      "when": "steps.extract.counts.deadlines > 0",
+      "params": {
+        "from": "extract",
+        "days_before": 1,
+        "at": "09:00"
+      }
+    }
+  ]
+}

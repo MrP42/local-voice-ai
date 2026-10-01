@@ -21,7 +21,7 @@
 //! - `config`: Konfiguration und Scopes je Faehigkeit.
 //! - `account`: das verschluesselte Konto (Erneuerungs-Token) im Geheimnis-Namensraum.
 //! - `service`: Anmeldung (PKCE, Loopback), Zugriffstoken, Anfragen mit 401 -> Erneuern.
-//! - `mail`, `drive`, `event`: die drei Faehigkeiten.
+//! - `mail`, `drive`, `event`: die drei Faehigkeiten (`event_create`: neuer ganztaegiger Termin, C4).
 //! - `actions`: dieselben Faehigkeiten hinter `gate::run` (Grants, Freigabe, Audit).
 //! - `status`: Zustand fuer die Seite Integrationen.
 //!
@@ -65,6 +65,7 @@ pub mod config;
 pub mod drive;
 pub mod error;
 pub mod event;
+pub mod event_create; // C4: ganztaegiger Termin (Frist)
 pub mod mail;
 pub mod service;
 pub mod status;
