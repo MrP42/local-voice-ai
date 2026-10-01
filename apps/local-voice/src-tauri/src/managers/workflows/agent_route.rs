@@ -223,7 +223,7 @@ fn parse_params(params: &Value, templated: bool) -> Result<RouteParams, String> 
     })
 }
 
-fn today(now_ms: i64) -> NaiveDate {
+pub(super) fn today(now_ms: i64) -> NaiveDate {
     Local
         .timestamp_millis_opt(now_ms)
         .single()

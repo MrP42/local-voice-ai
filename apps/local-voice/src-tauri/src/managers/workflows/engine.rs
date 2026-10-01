@@ -366,6 +366,12 @@ impl Engine {
             .register(action);
     }
 
+    /// Das Tor fuer schwere Schritte (C5: die Vorschau der Agent-Bausteine nimmt denselben
+    /// Platz wie ein Lauf).
+    pub fn heavy_gate(&self) -> Arc<dyn HeavyGate> {
+        self.inner.heavy.clone()
+    }
+
     pub fn registry(&self) -> ActionRegistry {
         self.inner
             .registry

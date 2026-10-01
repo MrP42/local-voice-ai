@@ -3847,6 +3847,31 @@ async workflowStatus() : Promise<Result<WorkflowStatus, string>> {
 }
 },
 /**
+ * Die Werkzeuge, die ein Schritt „Werkzeug wählen“ anbieten darf (Mehrfachauswahl im Editor).
+ */
+async workflowAgentTools() : Promise<Result<WorkflowAgentTool[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_agent_tools") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Mit Beispieltext ausprobieren“ (C5): die Modellentscheidung eines KI-Schritts, ohne Wirkung
+ * (kein Lauf, keine Freigabe, keine Provenienz). `definition_json`: der Entwurf aus dem Editor;
+ * ohne ihn gilt der gespeicherte Ablauf `workflow_id`. Ergebnis als JSON-Text; `busy: true`, wenn
+ * der schwere Platz belegt ist.
+ */
+async workflowAgentPreview(workflowId: string | null, definitionJson: string | null, stepId: string, sampleText: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_agent_preview", { workflowId, definitionJson, stepId, sampleText }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Alle Personen, die meisten Besprechungen zuerst; `query` filtert nach Name,
  * Adresse oder Firma.
  */
@@ -7881,6 +7906,30 @@ effect: string; heavy_label: string | null;
  * Faehigkeit der Integration, die der Baustein braucht (`mail.send`), sonst leer.
  */
 capability: string | null }
+/**
+ * Ein Werkzeug, das ein `agent.route`-Schritt anbieten darf.
+ */
+export type WorkflowAgentTool = { name: string; 
+/**
+ * Der Baustein, der es ausfuehrt (hat sein eigenes Recht und seine Freigabe).
+ */
+action: string; description: string; 
+/**
+ * `true`: geht an andere; dann ist die Empfaengerregel Pflicht.
+ */
+sends_mail: boolean; params: WorkflowAgentToolParam[] }
+/**
+ * Ein Argument eines Werkzeugs, das das Modell fuellt.
+ */
+export type WorkflowAgentToolParam = { key: string; 
+/**
+ * `text` oder `date` (Zeitangabe, das Datum rechnet der Code).
+ */
+kind: string; required: boolean; description: string; 
+/**
+ * Hoechstzahl Zeichen (nur `text`).
+ */
+max_chars: number | null }
 export type WorkflowCatalog = { schema: string; max_steps: number; triggers: WorkflowTriggerSpec[]; actions: WorkflowActionSpec[] }
 /**
  * Stand eines beobachteten YouTube-Kanals.

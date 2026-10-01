@@ -81,6 +81,156 @@ export const installAutomationsMock = async (
       };
       w.__wf = state;
       w.__wfCalls = [];
+      // C5: Vorschau der KI-Schritte. `busy`: der schwere Platz ist belegt; `delayMs`: Antwortzeit.
+      w.__agent = { busy: false, delayMs: 0 };
+
+      // Abzug von `agent::policy::catalog()` (Rust: `workflows::agent_preview::tools`).
+      const agentTools = [
+        {
+          name: "notify_local",
+          action: "notify.local",
+          description:
+            "Zeigt eine Mitteilung auf diesem Rechner (Erinnerung, Hinweis zu einer Frist).",
+          sends_mail: false,
+          params: [
+            { key: "title", kind: "text", required: true, description: "kurzer Titel der Mitteilung", max_chars: 80 },
+            { key: "body", kind: "text", required: false, description: "Text der Mitteilung", max_chars: 240 },
+            { key: "due_phrase", kind: "date", required: false, description: "Frist, falls eine genannt ist", max_chars: null },
+          ],
+        },
+        {
+          name: "send_mail",
+          action: "mail.send",
+          description:
+            "Sendet eine Mail an die vom Programm festgelegten Empfänger. Keine Adressen nennen.",
+          sends_mail: true,
+          params: [
+            { key: "subject", kind: "text", required: true, description: "Betreff", max_chars: 150 },
+            { key: "body", kind: "text", required: false, description: "Text der Mail", max_chars: 4000 },
+          ],
+        },
+        {
+          name: "calendar_note",
+          action: "calendar.note",
+          description: "Schreibt eine kurze Notiz in den Termin des Auslösers.",
+          sends_mail: false,
+          params: [
+            { key: "text", kind: "text", required: true, description: "Text der Notiz", max_chars: 2000 },
+          ],
+        },
+      ];
+
+      // Nachbildung der Modellentscheidung (Rust: `agent_route::preview`, `preview_extract`).
+      const agentPreview = (def: any, stepId: string, sample: string | null) => {
+        const step = (def.steps ?? []).find((s: any) => s.id === stepId);
+        if (!step) throw `Der Schritt „${stepId}“ ist im Entwurf nicht vorhanden.`;
+        if (step.action !== "agent.route" && step.action !== "agent.extract")
+          throw "Die Vorschau gibt es nur für die KI-Schritte „Werkzeug wählen“ und „Extrahieren“.";
+        const kind = step.action === "agent.route" ? "route" : "extract";
+        const base = { kind, dry_run: true, writes: "nothing" };
+        if (w.__agent.busy)
+          return {
+            ...base,
+            busy: true,
+            retry_after_ms: 3000,
+            message: "Sprachmodell (Agent) läuft schon (anderer Schritt)",
+          };
+        const meta = {
+          model: "llm-qwen3.5-9b-q4",
+          local: true,
+          attempts: 1,
+          prompt_tokens: 812,
+          completion_tokens: 64,
+          duration_ms: 2300,
+          confidence: 0.92,
+        };
+        if (kind === "extract") {
+          if (!sample)
+            return {
+              ...base,
+              skipped: true,
+              reason: "sample_required",
+              reason_text:
+                "Der Schritt liest das Transkript der Besprechung des Laufs: für die Vorschau einen Beispieltext angeben.",
+            };
+          const lines = sample.split("\n").filter((l) => l.trim());
+          const todos = lines
+            .map((l, i) => ({ l, i }))
+            .filter((x) => /bis /i.test(x.l))
+            .map((x) => ({
+              text: x.l.trim(),
+              assignee: null,
+              due: "2026-10-03",
+              due_phrase: "bis übermorgen",
+              due_source: "Aussage",
+              segments: [`S${x.i}`],
+              quote: x.l.trim(),
+              confidence: 0.9,
+            }));
+          return {
+            ...base,
+            outcome: "extracted",
+            todos,
+            deadlines: [],
+            decisions: [],
+            counts: { todos: todos.length, deadlines: 0, decisions: 0, items: todos.length },
+            notes: [],
+            provenance: meta,
+            summary: `${todos.length} To-dos, 0 Fristen, 0 Entscheidungen.`,
+          };
+        }
+        const tools: string[] = step.params?.tools ?? [];
+        if (tools.length === 0) throw "tools: die Liste ist leer";
+        if (sample && /ignoriere alle regeln/i.test(sample))
+          return {
+            ...base,
+            agent_route: true,
+            outcome: "no_action",
+            tool: "no_action",
+            action: "",
+            arguments: {},
+            recipients: [],
+            effect: false,
+            reason: "injection_suspected",
+            reason_text:
+              "Der Text enthält eine Aufforderung an die KI; deshalb wird kein Werkzeug gewählt.",
+            signals: ["ignore_instructions"],
+            notes: [],
+            model_called: false,
+            provenance: { ...meta, model: "", prompt_tokens: 0, completion_tokens: 0, duration_ms: 0, confidence: null },
+          };
+        const tool = agentTools.find((x) => x.name === tools[0]) ?? agentTools[0];
+        const args: Record<string, string> =
+          tool.name === "send_mail"
+            ? { subject: "Protokoll Jour fixe", body: "Anbei das Protokoll." }
+            : tool.name === "calendar_note"
+              ? { text: "Angebot bis Freitag verschicken." }
+              : {
+                  title: "Angebot verschicken",
+                  body: "Frist: Freitag",
+                  due_phrase: "Freitag",
+                  due_date: "2026-10-02",
+                };
+        const recipients =
+          tool.name === "send_mail" ? ["anna@firma.example", "bernd@firma.example"] : [];
+        return {
+          ...base,
+          agent_route: true,
+          outcome: "tool",
+          tool: tool.name,
+          action: tool.action,
+          arguments: args,
+          recipients,
+          effect: true,
+          reason: "",
+          reason_text: "",
+          signals: [],
+          notes: [],
+          model_called: true,
+          provenance: meta,
+          would_run: { action: tool.action, tool: tool.name, arguments: args, recipients },
+        };
+      };
 
       const titleOf = (id: string) =>
         catalog.actions.find((a: any) => a.id === id)?.title ?? id;
@@ -386,6 +536,25 @@ export const installAutomationsMock = async (
         args: Record<string, unknown> = {},
       ) => {
         switch (cmd) {
+          case "workflow_agent_tools":
+            return agentTools;
+          case "workflow_agent_preview": {
+            record(cmd, args);
+            const text =
+              (args.definitionJson as string | null) ??
+              JSON.stringify(findWf(String(args.workflowId)).def);
+            let def: any;
+            try {
+              def = JSON.parse(text);
+            } catch {
+              throw "Kein gültiges JSON (Zeile 1, Spalte 1).";
+            }
+            if (w.__agent.delayMs)
+              await new Promise((r) => setTimeout(r, w.__agent.delayMs));
+            return JSON.stringify(
+              agentPreview(def, String(args.stepId), (args.sampleText as string | null) ?? null),
+            );
+          }
           case "workflow_catalog":
             return catalog;
           case "workflow_templates":

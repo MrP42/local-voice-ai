@@ -2257,6 +2257,8 @@ pub fn run(cli_args: CliArgs) {
             commands::workflows::workflow_read_file,
             commands::workflows::workflow_import,
             commands::workflows::workflow_status,
+            commands::workflows::workflow_agent_tools,
+            commands::workflows::workflow_agent_preview,
             // M5-P5d/P5e
             commands::people::people_list,
             commands::people::people_get,

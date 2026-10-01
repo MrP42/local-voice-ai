@@ -25,7 +25,7 @@ interface FieldInputProps {
   testPrefix: string;
 }
 
-const LONG_TEXT = new Set(["body", "text", "content"]);
+const LONG_TEXT = new Set(["body", "text", "content", "task", "context"]);
 
 /**
  * Ein Feld des Katalogs als Formularfeld. Die Art des Felds (Text, Zahl, Ja/Nein, Auswahl,

@@ -225,6 +225,122 @@
         "title": "Zusammenfassen"
       },
       {
+        "capability": null,
+        "effect": "pure",
+        "effect_text": "Aus dem Transkript To-dos, Fristen und Entscheidungen mit dem lokalen Sprachmodell ziehen (mit Belegen, ohne Aussenwirkung)",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text_list",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "kinds",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachmodell",
+        "id": "agent.extract",
+        "title": "Aufgaben, Fristen und Entscheidungen extrahieren"
+      },
+      {
+        "capability": null,
+        "effect": "pure",
+        "effect_text": "Das lokale Sprachmodell wählt aus den freigegebenen Werkzeugen höchstens eines; es führt nichts selbst aus, die folgenden Schritte wirken nur nach ihrer Bedingung und mit ihren Rechten",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "task",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "context",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text_list",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "tools",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "choice",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "recipients",
+            "options": [
+              "me",
+              "participants",
+              "all",
+              "internal",
+              "list"
+            ],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text_list",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "list",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": true,
+            "max": 10,
+            "min": 1,
+            "name": "max_actions",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "model",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "reference_date",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachmodell",
+        "id": "agent.route",
+        "title": "Werkzeug wählen (lokaler Agent)"
+      },
+      {
         "capability": "files.write",
         "effect": "idempotent",
         "effect_text": "Dokument als {{p.format}} in {{p.target}} ablegen",
