@@ -69,6 +69,7 @@ pub mod audit;
 pub mod dump;
 pub mod gate;
 pub mod grants;
+pub mod m365; // A5
 pub mod model;
 pub mod preview;
 pub mod schema;

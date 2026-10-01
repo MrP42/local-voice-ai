@@ -15,6 +15,7 @@ import { Input } from "../ui/Input";
 import { RightsMatrix } from "./RightsMatrix";
 import { DIRECTIONS, errorText, folderPathOf } from "./model";
 import { KindIcon } from "./KindIcon";
+import { M365Panel } from "./M365Panel";
 
 interface IntegrationDetailProps {
   view: IntegrationView;
@@ -150,6 +151,15 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
       setError(explain(errorText(e)));
     }
     setTesting(false);
+  };
+
+  /** Nach einer Aktion des Kontos: die Zeile neu laden (Zustand, letzter Fehler). */
+  const refresh = async () => {
+    const list = await commands.integrationsList();
+    if (list.status === "ok") {
+      const fresh = list.data?.find((v) => v.integration.id === integration.id);
+      if (fresh) onChanged(fresh);
+    }
   };
 
   const remove = async () => {
@@ -313,6 +323,10 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
           </div>
         )}
       </section>
+
+      {integration.kind === "m365" && (
+        <M365Panel view={view} onChanged={refresh} />
+      )}
 
       <section className="space-y-2" aria-labelledby="int-dir">
         <h3 id="int-dir" className="text-sm font-semibold">

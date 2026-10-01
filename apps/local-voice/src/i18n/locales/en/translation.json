@@ -2909,6 +2909,15 @@
       "opened": "Opened in the email app.",
       "mailtoClipped": "The text was too long for the mail link and is on the clipboard – paste it in the email app with Ctrl+V.",
       "emlSaved": "Saved: {{path}}",
+      "m365": {
+        "via": "Send via {{label}}",
+        "noRecipients": "The mail needs at least one recipient to be sent.",
+        "confirmTitle": "Confirm sending",
+        "confirm": "Send the mail to {{count}} recipient(s) via “{{label}}” now? This cannot be taken back.",
+        "send": "Send now",
+        "cancel": "Cancel",
+        "sent": "Sent via “{{label}}”. The mail is in your Sent folder."
+      },
       "errors": {
         "followup_empty": "The language model returned no text even on the second try. Another language model in the settings may help.",
         "followup_no_content": "No content found for a follow-up – the recording contains no meeting points.",
@@ -3279,6 +3288,93 @@
     "memoryLow": "Memory almost full: the read-aloud and language-model servers were stopped to keep the computer responsive."
   },
   "integrations": {
+    "m365": {
+      "dialog": {
+        "title": "Set up a Microsoft 365 account",
+        "description": "Send mail, save files to OneDrive and attach notes to calendar events, through your own app registration in Microsoft Entra. You sign in in the browser; the app only asks for the permissions of the capabilities you switch on.",
+        "name": "Name",
+        "defaultName": "Microsoft 365",
+        "clientId": "Application (client) ID",
+        "clientIdHint": "The application ID of your app registration. Leave empty to reuse the client ID of the Microsoft 365 calendar. Guide: docs/INTEGRATIONEN-M365.md.",
+        "tenant": "Directory (tenant)",
+        "tenantHint": "Empty means “common” (work, school and personal accounts). “consumers” for personal accounts only.",
+        "capabilities": "Capabilities",
+        "capabilitiesHint": "Signing in only asks for the permissions of the capabilities that are switched on. A capability switched on later needs consent again.",
+        "filesMode": "OneDrive access",
+        "filesFull": "Whole OneDrive (Files.ReadWrite): for work, school and personal accounts",
+        "filesApp": "App folder only (Files.ReadWrite.AppFolder): personal accounts only",
+        "filesFolder": "Folder in OneDrive",
+        "create": "Create"
+      },
+      "caps": {
+        "mail_send": "Send follow-up mails and reports as mail from your mailbox.",
+        "files_write": "Put minutes and files into a OneDrive folder, large files in chunks.",
+        "calendar_write": "Attach a note to the Outlook event of a meeting; the invitation stays unchanged."
+      },
+      "panel": {
+        "title": "Microsoft 365 account",
+        "loading": "Loading …",
+        "states": {
+          "not_configured": "Not set up: the client ID is missing.",
+          "no_capabilities": "No capability switched on.",
+          "needs_sign_in": "Sign-in needed.",
+          "needs_consent": "Extend consent: a capability that is switched on needs new permissions.",
+          "ready": "Signed in and ready."
+        },
+        "account": "Account: {{account}}",
+        "missing": "Consent is missing for: {{scopes}}",
+        "scopes": "Requested permissions",
+        "scopesHint": "Only those of the capabilities that are switched on, plus the sign-in itself (offline_access) and your profile (User.Read).",
+        "save": "Save",
+        "saved": "Saved.",
+        "signIn": "Sign in with Microsoft",
+        "signInAgain": "Sign in again",
+        "extend": "Extend consent",
+        "waiting": "Waiting for the sign-in in the browser …",
+        "signOut": "Sign out",
+        "signedIn": "Signed in.",
+        "signedOut": "Signed out. The token is deleted.",
+        "checks": "Try it out",
+        "testOk": "Connected as {{account}}.",
+        "testMail": "Send a test mail to me",
+        "testMailOk": "Test mail sent. Check your inbox.",
+        "testFile": "Put a test file in OneDrive",
+        "testFileOk": "The file “{{name}}” is in OneDrive, in the folder “{{folder}}”."
+      },
+      "gate": {
+        "grant_off": "the right is set to “off”",
+        "integration_disabled": "the integration is switched off",
+        "capability_not_enabled": "the capability is not switched on for this account",
+        "capability_not_offered": "the account does not offer the capability",
+        "direction_blocks": "the direction of the account does not allow it",
+        "pending": "it needs an approval"
+      },
+      "errors": {
+        "m365_not_configured": "No client ID is entered. Create an app registration and enter its application ID.",
+        "m365_no_capability": "No capability is switched on. Switch on at least one before signing in.",
+        "m365_capability_off": "This capability is not switched on for this account.",
+        "m365_needs_sign_in": "The sign-in has expired or was revoked. Please sign in again under Integrations.",
+        "m365_needs_consent": "Permissions are still missing for the capabilities that are switched on ({{detail}}). Please sign in again under Integrations and consent.",
+        "m365_denied": "Microsoft refused access: {{detail}}",
+        "m365_not_found": "Not found: {{detail}}",
+        "m365_storage_full": "The OneDrive storage is full.",
+        "m365_throttled": "Microsoft is throttling requests. Next attempt in {{detail}} min.",
+        "m365_http": "Microsoft Graph answered with an error (HTTP {{detail}}).",
+        "m365_network": "No connection: {{detail}}",
+        "m365_timeout": "Microsoft did not answer in time.",
+        "m365_uncertain": "It is unclear whether the action was carried out ({{detail}}). Please check first (e.g. the Sent folder) before trying again.",
+        "m365_parse": "The answer from Microsoft cannot be read.",
+        "m365_invalid": "{{detail}}",
+        "m365_cancelled": "Cancelled.",
+        "m365_sign_in_timeout": "The sign-in was not completed within 5 minutes.",
+        "m365_browser": "The browser could not be opened: {{detail}}",
+        "m365_listener": "The local sign-in interface could not be started: {{detail}}",
+        "m365_config": "{{detail}}",
+        "m365_store": "Storage error: {{detail}}",
+        "m365_memory_low": "{{detail}}",
+        "m365_gate": "The rights do not allow this: {{detail}}."
+      }
+    },
     "title": "Integrations",
     "description": "Connections to calendars, folders and agents, each with a direction and one right per capability.",
     "add": "Add integration",
@@ -3368,7 +3464,8 @@
         },
         "m365": {
           "name": "Microsoft 365 (mail, OneDrive)",
-          "description": "Send mail, save files to OneDrive, create appointments."
+          "description": "Send mail, save files to OneDrive and attach notes to calendar events, through your own app registration. Each capability can be switched on separately.",
+          "action": "Set up account"
         },
         "smtp": {
           "name": "Mailbox (SMTP)",
@@ -3442,7 +3539,8 @@
       "effective": "Currently in effect: {{mode}}",
       "blocked": {
         "direction_blocks": "The direction of the integration does not allow this: change the direction for the rights to apply.",
-        "integration_disabled": "The integration is switched off: no access while it is off."
+        "integration_disabled": "The integration is switched off: no access while it is off.",
+        "capability_not_enabled": "The capability is not switched on for this account: switch it on in the “Microsoft 365 account” section for the rights to apply."
       }
     },
     "capabilities": {

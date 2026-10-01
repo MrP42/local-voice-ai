@@ -166,7 +166,7 @@ impl std::fmt::Display for GraphError {
 impl std::error::Error for GraphError {}
 
 /// Fehler von `reqwest` ohne die Adresse (sie kann `state`/`skiptoken` tragen).
-fn map_reqwest(e: reqwest::Error) -> GraphError {
+pub(crate) fn map_reqwest(e: reqwest::Error) -> GraphError {
     let e = e.without_url();
     if e.is_timeout() {
         return GraphError::Timeout;
@@ -181,7 +181,7 @@ fn map_reqwest(e: reqwest::Error) -> GraphError {
 
 /// Erste Zeile einer Fehlerbeschreibung, gekuerzt (Microsoft haengt Trace-ID und
 /// Zeitstempel in weiteren Zeilen an).
-fn short_description(desc: &str) -> String {
+pub(crate) fn short_description(desc: &str) -> String {
     let first = desc.split(['\r', '\n']).next().unwrap_or("").trim();
     first.chars().take(240).collect()
 }
@@ -340,7 +340,7 @@ impl Endpoints {
     }
 }
 
-fn http_client(ep: &Endpoints) -> Result<reqwest::Client, GraphError> {
+pub(crate) fn http_client(ep: &Endpoints) -> Result<reqwest::Client, GraphError> {
     let mut builder = reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
         // Keine Umleitung verfolgen: das Zugriffstoken darf nirgends anders hin.
@@ -358,7 +358,7 @@ fn http_client(ep: &Endpoints) -> Result<reqwest::Client, GraphError> {
         .map_err(|e| GraphError::Network(e.without_url().to_string()))
 }
 
-/// Die Anmelde-Adresse fuer den Systembrowser.
+/// Die Anmelde-Adresse fuer den Systembrowser (Kalender: Lese-Scopes `SCOPES`).
 pub fn authorize_url(
     ep: &Endpoints,
     tenant: &str,
@@ -367,6 +367,28 @@ pub fn authorize_url(
     state: &str,
     challenge: &str,
 ) -> Result<String, GraphError> {
+    authorize_url_scoped(
+        ep,
+        tenant,
+        client_id,
+        redirect_uri,
+        state,
+        challenge,
+        SCOPES,
+    )
+}
+
+/// Wie `authorize_url`, mit frei gewaehlten Scopes (Microsoft-365-Konto, A5: nur die
+/// Scopes der eingeschalteten Faehigkeiten).
+pub fn authorize_url_scoped(
+    ep: &Endpoints,
+    tenant: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    state: &str,
+    challenge: &str,
+    scope: &str,
+) -> Result<String, GraphError> {
     let mut url = url::Url::parse(&ep.authorize_endpoint(tenant))
         .map_err(|_| GraphError::Config("Ungültige Anmelde-Adresse.".to_string()))?;
     url.query_pairs_mut()
@@ -374,7 +396,7 @@ pub fn authorize_url(
         .append_pair("response_type", "code")
         .append_pair("redirect_uri", redirect_uri)
         .append_pair("response_mode", "query")
-        .append_pair("scope", SCOPES)
+        .append_pair("scope", scope)
         .append_pair("state", state)
         .append_pair("code_challenge", challenge)
         .append_pair("code_challenge_method", "S256")
@@ -704,7 +726,10 @@ fn token_error(status: u16, body: &[u8], kind: TokenKind) -> GraphError {
 }
 
 /// Liest den Koerper einer Antwort mit Obergrenze (auch ohne `Content-Length`).
-async fn read_limited(mut resp: reqwest::Response, max: usize) -> Result<Vec<u8>, GraphError> {
+pub(crate) async fn read_limited(
+    mut resp: reqwest::Response,
+    max: usize,
+) -> Result<Vec<u8>, GraphError> {
     if resp.content_length().is_some_and(|l| l > max as u64) {
         return Err(GraphError::Parse("Antwort zu groß".to_string()));
     }
@@ -767,12 +792,25 @@ pub async fn exchange_code(
     verifier: &str,
     redirect_uri: &str,
 ) -> Result<Tokens, GraphError> {
+    exchange_code_scoped(ep, client_id, tenant, code, verifier, redirect_uri, SCOPES).await
+}
+
+/// Wie `exchange_code`, mit frei gewaehlten Scopes (dieselben wie in der Anmelde-Adresse).
+pub async fn exchange_code_scoped(
+    ep: &Endpoints,
+    client_id: &str,
+    tenant: &str,
+    code: &str,
+    verifier: &str,
+    redirect_uri: &str,
+    scope: &str,
+) -> Result<Tokens, GraphError> {
     post_token(
         ep,
         tenant,
         &[
             ("client_id", client_id),
-            ("scope", SCOPES),
+            ("scope", scope),
             ("code", code),
             ("redirect_uri", redirect_uri),
             ("grant_type", "authorization_code"),
@@ -790,12 +828,23 @@ pub async fn refresh_tokens(
     tenant: &str,
     refresh_token: &str,
 ) -> Result<Tokens, GraphError> {
+    refresh_tokens_scoped(ep, client_id, tenant, refresh_token, SCOPES).await
+}
+
+/// Wie `refresh_tokens`, mit frei gewaehlten Scopes (hoechstens die der Anmeldung).
+pub async fn refresh_tokens_scoped(
+    ep: &Endpoints,
+    client_id: &str,
+    tenant: &str,
+    refresh_token: &str,
+    scope: &str,
+) -> Result<Tokens, GraphError> {
     post_token(
         ep,
         tenant,
         &[
             ("client_id", client_id),
-            ("scope", SCOPES),
+            ("scope", scope),
             ("refresh_token", refresh_token),
             ("grant_type", "refresh_token"),
         ],
@@ -987,24 +1036,47 @@ pub async fn sign_in(
     timeout: Duration,
     cancel: &Notify,
 ) -> Result<SignedIn, GraphError> {
+    sign_in_scoped(ep, client_id, tenant, SCOPES, open, timeout, cancel).await
+}
+
+/// Wie `sign_in`, mit frei gewaehlten Scopes (Microsoft-365-Konto, A5).
+pub async fn sign_in_scoped(
+    ep: &Endpoints,
+    client_id: &str,
+    tenant: &str,
+    scope: &str,
+    open: impl FnOnce(String) -> Result<(), String>,
+    timeout: Duration,
+    cancel: &Notify,
+) -> Result<SignedIn, GraphError> {
     let client_id = validate_client_id(client_id).map_err(GraphError::Config)?;
     let tenant = validate_tenant(tenant).map_err(GraphError::Config)?;
     let listener = Loopback::bind().await?;
     let redirect_uri = listener.redirect_uri();
     let verifier = new_verifier();
     let state = new_state();
-    let url = authorize_url(
+    let url = authorize_url_scoped(
         ep,
         &tenant,
         &client_id,
         &redirect_uri,
         &state,
         &challenge_s256(&verifier),
+        scope,
     )?;
     // Scheitert das Oeffnen, wird der Listener beim Verlassen geschlossen.
     open(url).map_err(GraphError::Browser)?;
     let code = listener.wait_for_code(&state, timeout, cancel).await?;
-    let tokens = exchange_code(ep, &client_id, &tenant, &code, &verifier, &redirect_uri).await?;
+    let tokens = exchange_code_scoped(
+        ep,
+        &client_id,
+        &tenant,
+        &code,
+        &verifier,
+        &redirect_uri,
+        scope,
+    )
+    .await?;
     let Some(refresh) = tokens.refresh_token.as_ref() else {
         return Err(GraphError::Denied(
             "Microsoft hat kein Erneuerungs-Token geliefert. Prüfe, ob die App die Berechtigung offline_access nutzen darf."
@@ -1055,6 +1127,11 @@ impl GraphState {
         let cancel = Arc::new(Notify::new());
         *active = Some(cancel.clone());
         Ok((cancel, ActiveSignIn { state: self }))
+    }
+
+    /// Laeuft gerade eine Anmeldung?
+    pub fn is_signing_in(&self) -> bool {
+        lock(&self.active).is_some()
     }
 
     /// Bricht die laufende Anmeldung ab; `false`, wenn keine laeuft.
