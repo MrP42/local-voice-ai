@@ -8,7 +8,15 @@ Tastenkürzel, Push-to-Talk oder Umschalten, Sprachaktivitätserkennung, eigene 
 
 ## Vorlesen
 
-Fish-Speech-Ordner und Port, Leerlauf-Stopp, maximale Zeichen, Turbo-Modus, Lautstärke, Tempo, Exportformat. Ganz unten: **Stimmen anhören, aufnehmen, klonen, importieren**. Engine und Stimme wählst du auf der Vorlesen-Seite im Stimmen-Dropdown.
+Maximale Zeichen, Lautstärke, Tempo, Exportformat. Engine und Stimme wählst du auf der Vorlesen-Seite im Stimmen-Dropdown.
+
+<!--if:fish-->
+Mit eingerichtetem Fish Speech kommen Ordner und Port, Leerlauf-Stopp und Turbo-Modus dazu, ganz unten **Stimmen anhören, aufnehmen, klonen, importieren**.
+<!--/if:fish-->
+<!--if:nofish-->
+**Fish Speech** ist optional und nicht eingerichtet. Wer es nutzen möchte, trägt hier seinen Installationsordner ein; danach erscheinen seine weiteren Einstellungen.
+<!--/if:nofish-->
+
 
 ## Mikrofon & Töne
 

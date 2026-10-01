@@ -241,7 +241,13 @@ Fenstersystem steht aus.
   Referenzaufnahmen sind auf -20 LUFS ausgeglichen (ITU-R BS.1770-4), dieser eine Pfad nicht.
 - **Kein Benutzerkonto, keine Telemetrie, kein Update-Server.**
 - **Keine automatische LLM-Nachbearbeitung im Standardpfad.** Die Refinement-Stufe
-  (`refine_enabled`) ist standardmäßig aus und für den stabilen Pfad nicht vorgesehen.
+  (`refine_enabled`) ist standardmäßig aus. Seit Issue #5 gibt es sie als **optionalen
+  Schalter** (Einstellungen → Diktat → Ausgabe: „Live-Text nachträglich mit Ollama glätten"),
+  der nur erscheint, solange die Live-Einfügung (`stream_injection`) an ist. Real gegen ein
+  laufendes Ollama geprüft (Modell qwen3:0.6b, privater Dienst): ein Satz kommt als Kandidat
+  zurück; wird der Dienst mitten im Diktat beendet, liefert der nächste Satz nach unter 1 s
+  `None`, der Originaltext bleibt stehen. Offen bleibt die Ende-zu-Ende-Abnahme des
+  Ersetzens in einer Zielanwendung (Notepad, Browser, Word): nicht Teil dieser Prüfung.
 
 ## Unsicherheiten, die noch gemessen werden müssen
 

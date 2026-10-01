@@ -176,6 +176,11 @@
       "piperOption": "{{name}} · Piper",
       "piperNoVoice": "Piper – no voice selected",
       "piperVoiceMissing": "Piper – voice “{{id}}” unavailable",
+      "piperNotSetUp": "{{name}} · Piper – not set up",
+      "fishNotSetUp": "Fish Speech – not set up",
+      "notSetUpHint": "This voice is not set up and cannot read aloud. Pick a voice that is set up, or set it up under Models > Read-aloud voices.",
+      "noEngineHint": "No speech output set up yet. Under Models > Read-aloud voices you can download the lightweight Piper voice – no graphics card and no extra software needed.",
+      "setUp": "Set up speech output",
       "manage": "Manage voices …",
       "umlautSuggestion": "Display name with umlauts: use “{{name}}”",
       "scriptVoices": "Script with speakers",
@@ -186,6 +191,8 @@
     "settings": {
       "fishDir": "Fish Speech folder",
       "fishDirDescription": "Installation folder containing .venv and tools/api_server.py.",
+      "fishOptionalTitle": "Fish Speech (optional, not set up)",
+      "fishOptionalDescription": "Fish Speech is an additional GPU speech output with voice cloning. It is not required: Piper reads aloud without it. To set it up, enter the installation folder. Missing: {{missing}}",
       "port": "Server port",
       "portDescription": "Local port on 127.0.0.1 the TTS server listens on.",
       "seed": "Voice seed",
@@ -801,6 +808,8 @@
   "modelSelector": {
     "custom": "Custom",
     "legacy": "Legacy",
+    "nonCommercial": "Non-commercial only",
+    "nonCommercialHint": "License {{license}}: for non-commercial use only. Do not use it for work, clients or business purposes.",
     "streaming": "Streaming",
     "active": "Active",
     "switching": "Switching...",
@@ -993,12 +1002,24 @@
         },
         "status": {
           "installed": "Installed",
-          "downloading": "Downloading… {{percentage}}%"
+          "downloading": "Downloading… {{percentage}}%",
+          "runtimeMissing": "Program missing – not usable",
+          "unsupported": "Not available on this system"
         },
         "actions": {
           "download": "Download",
           "cancel": "Cancel",
-          "delete": "Delete"
+          "delete": "Delete",
+          "installRuntime": "Install program"
+        },
+        "unsupported": {
+          "incomplete_archive": "The official Piper archive for this system is incomplete (libraries are missing). Piper cannot be set up here yet."
+        },
+        "license": {
+          "label": "License: {{license}}",
+          "nonCommercial": "Non-commercial only",
+          "nonCommercialHint": "This voice may only be used non-commercially ({{license}}).",
+          "source": "License text"
         },
         "deleteConfirm": "Delete {{name}}? You will need to download it again to use it.",
         "deleteTitle": "Delete"
@@ -1095,6 +1116,10 @@
       "experimentalToggle": {
         "label": "Experimental Features",
         "description": "Enable experimental features that are still in development."
+      },
+      "refineStream": {
+        "label": "Polish live text afterwards with Ollama",
+        "description": "While inserting live, a locally running Ollama polishes each sentence (grammar, punctuation, filler words) and replaces it in the target document. Numbers, negations, rare terms and word order are protected. If a sentence is not ready in time (4 s per sentence, 12 s at the end) or Ollama is not running, the original text stays. Ollama is never required for recording, recognition or insertion. Default: off."
       },
       "lazyStreamClose": {
         "label": "Keep Mic Open Between Dictations",

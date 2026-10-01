@@ -8,7 +8,15 @@ Shortcuts, push-to-talk or toggle, voice activity detection, custom words, paste
 
 ## Read aloud
 
-Fish Speech folder and port, idle stop, maximum characters, turbo mode, volume, speed, export format. At the bottom: **listen to, record, clone and import voices**. Engine and voice are chosen on the Read aloud page in the voice list.
+Maximum characters, volume, speed, export format. Engine and voice are chosen on the Read aloud page in the voice list.
+
+<!--if:fish-->
+With Fish Speech set up, the folder and port, idle stop and turbo mode appear too, and at the bottom **listen to, record, clone and import voices**.
+<!--/if:fish-->
+<!--if:nofish-->
+**Fish Speech** is optional and not set up. To use it, enter its installation folder here; its further settings then appear.
+<!--/if:nofish-->
+
 
 ## Microphone & sounds
 

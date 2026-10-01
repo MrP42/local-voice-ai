@@ -1675,6 +1675,18 @@ pub fn change_append_trailing_space_setting(app: AppHandle, enabled: bool) -> Re
     Ok(())
 }
 
+/// Optionale Ollama-Glaettung beim Live-Einfuegen (Issue #5). Standard aus;
+/// wirkt nur, solange `stream_injection` an ist. Ollama bleibt nie Voraussetzung
+/// fuer Aufnahme, Transkription oder Einfuegung.
+#[tauri::command]
+#[specta::specta]
+pub fn change_refine_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.refine_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_lazy_stream_close_setting(app: AppHandle, enabled: bool) -> Result<(), String> {

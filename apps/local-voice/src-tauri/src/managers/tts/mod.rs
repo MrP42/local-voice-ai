@@ -5,6 +5,7 @@
 //! einen Mock-Server getestet; `TtsManager` ergänzt AppHandle-Belange:
 //! Settings, Events, Prozess-Spawn, Idle-Watchdog und Exit-Teardown.
 
+pub mod availability;
 pub mod builder;
 pub mod compile_cache;
 pub mod notes;
@@ -2002,10 +2003,7 @@ impl TtsManager {
         let python = fish_dir.join(r".venv\Scripts\python.exe");
         let api_script = fish_dir.join("tools").join("api_server.py");
         if !python.exists() || !api_script.exists() {
-            let msg = format!(
-                "Fish Speech nicht gefunden unter '{}'. Erwartet: .venv\\Scripts\\python.exe und tools\\api_server.py — siehe C:\\AI\\fish-speech\\INSTALL-REPORT.md",
-                fish_dir.display()
-            );
+            let msg = availability::fish_not_set_up_message(&fish_dir);
             self.core.set_phase(TtsPhase::Error, Some(msg.clone()));
             return Err(msg);
         }
@@ -2152,6 +2150,17 @@ impl TtsManager {
 
     fn fish_dir(&self) -> std::path::PathBuf {
         std::path::PathBuf::from(crate::settings::get_settings(&self.app).tts_fish_dir)
+    }
+
+    /// Zustand der Laufzeiten (Piper, Fish) -- nur Dateisystem, startet nichts.
+    /// Grundlage dafuer, nur wirklich verwendbare Stimmen anzubieten (#29).
+    pub fn runtime_status(&self) -> availability::TtsRuntimeStatus {
+        let data = self.data_base_dir().unwrap_or_default();
+        availability::runtime_status(
+            &data,
+            &self.fish_dir(),
+            availability::current_platform_id(),
+        )
     }
 
     /// `fish_dir` fuer die Command-Schicht: die Commands brauchen den Pfad,

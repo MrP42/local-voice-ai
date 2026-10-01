@@ -63,6 +63,10 @@ export type ModelCardStatus =
   | "active"
   | "available";
 
+// Lizenzkennung fuer den Hinweis: der Katalog fuehrt sie klein ("cc-by-nc-4.0").
+const formatLicense = (license?: string | null): string =>
+  (license ?? "").toUpperCase();
+
 interface ModelCardProps {
   model: ModelInfo;
   variant?: "default" | "featured";
@@ -190,6 +194,11 @@ const ModelCard: React.FC<ModelCardProps> = ({
             {isLegacySource(model) && (
               <Badge variant="secondary">{t("modelSelector.legacy")}</Badge>
             )}
+            {model.license_non_commercial && (
+              <Badge variant="warning">
+                {t("modelSelector.nonCommercial")}
+              </Badge>
+            )}
             {status === "switching" && (
               <Badge variant="secondary">
                 <Loader2 className="w-3 h-3 mr-1 animate-spin" />
@@ -200,6 +209,16 @@ const ModelCard: React.FC<ModelCardProps> = ({
           <p className="text-text/60 text-sm leading-relaxed">
             {displayDescription}
           </p>
+          {model.license_non_commercial && (
+            <p
+              className="text-amber-700 dark:text-amber-400 text-sm leading-relaxed"
+              data-testid="model-nc-note"
+            >
+              {t("modelSelector.nonCommercialHint", {
+                license: formatLicense(model.license),
+              })}
+            </p>
+          )}
         </div>
         {(model.accuracy_score > 0 || model.speed_score > 0) && (
           <div className="hidden sm:flex items-center ms-4">

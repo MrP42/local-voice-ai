@@ -46,6 +46,10 @@ pub const PIPER_TIMEOUT: Duration = Duration::from_secs(60);
 /// und übersetzt — NICHT umformulieren).
 pub const ERR_BINARY_MISSING: &str = "Piper-Programm fehlt — unter Modelle > Vorlesestimmen laden";
 pub const ERR_VOICE_MISSING: &str = "Piper-Stimme fehlt — unter Modelle > Vorlesestimmen laden";
+/// Programm vorhanden, aber eine Bibliothek oder die Sprachdaten fehlen: der
+/// Start scheiterte sonst erst beim Vorlesen (`dyld: Library not loaded`).
+pub const ERR_BINARY_INCOMPLETE: &str =
+    "Piper-Laufzeit unvollständig — unter Modelle > Vorlesestimmen erneut laden";
 
 /// Aufgelöste, existierende Pfade eines startklaren Piper.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,6 +92,21 @@ pub fn piper_binary_path(app_data: &Path) -> PathBuf {
         .join(binary_name())
 }
 
+/// Ist die Piper-Laufzeit startfaehig? Ok = Pfad des Programms; sonst die
+/// konstante Fehler-ID: `ERR_BINARY_MISSING` (kein Programm) oder
+/// `ERR_BINARY_INCOMPLETE` (Programm da, Bibliotheken/Sprachdaten fehlen).
+fn runtime_check(app_data: &Path) -> Result<PathBuf, &'static str> {
+    let binary = piper_binary_path(app_data);
+    if !binary.is_file() {
+        return Err(ERR_BINARY_MISSING);
+    }
+    let dir = binary.parent().unwrap_or(app_data);
+    if !super::availability::piper_ready(dir, platform_subdir()) {
+        return Err(ERR_BINARY_INCOMPLETE);
+    }
+    Ok(binary)
+}
+
 /// Wo Modell und Konfiguration einer Stimme liegen.
 pub fn piper_voice_paths(app_data: &Path, voice_id: &str) -> (PathBuf, PathBuf) {
     let dir = app_data.join("tts").join("piper").join("voices");
@@ -101,10 +120,7 @@ pub fn piper_voice_paths(app_data: &Path, voice_id: &str) -> (PathBuf, PathBuf) 
 /// Fehler-ID dessen, was fehlt. Kein Setting-Override (`tts_piper_dir` o. Ä.)
 /// — der Katalog (E3) ist der einzige Weg, Dateien hierher zu bekommen.
 pub fn piper_paths(app_data: &Path, voice_id: &str) -> Result<PiperPaths, &'static str> {
-    let binary = piper_binary_path(app_data);
-    if !binary.is_file() {
-        return Err(ERR_BINARY_MISSING);
-    }
+    let binary = runtime_check(app_data)?;
     let (model, config) = piper_voice_paths(app_data, voice_id);
     if !model.is_file() || !config.is_file() {
         return Err(ERR_VOICE_MISSING);
@@ -320,13 +336,10 @@ impl PiperEngine {
     pub fn resolve(app_data: Option<&Path>, voice_id: Option<&str>) -> Self {
         let resolved = match (app_data, voice_id) {
             (None, _) => Err(ERR_BINARY_MISSING),
-            (Some(data), None) => {
-                if piper_binary_path(data).is_file() {
-                    Err(ERR_VOICE_MISSING)
-                } else {
-                    Err(ERR_BINARY_MISSING)
-                }
-            }
+            (Some(data), None) => match runtime_check(data) {
+                Ok(_) => Err(ERR_VOICE_MISSING),
+                Err(reason) => Err(reason),
+            },
             (Some(data), Some(voice)) => piper_paths(data, voice),
         };
         Self {
@@ -350,8 +363,14 @@ impl PiperEngine {
             engine.alternatives = all;
         }
         // Ohne gewählte Stimme, aber mit geladenen: die erste ist gut genug —
-        // besser als „Stimme fehlt", wenn eine im Ordner liegt.
-        if engine.resolved.is_err() && app_data.is_some_and(|d| piper_binary_path(d).is_file()) {
+        // besser als „Stimme fehlt", wenn eine im Ordner liegt. NUR ohne Wahl:
+        // wurde die gewählte Stimme entfernt oder ist defekt, bleibt es beim
+        // Fehler — still eine andere Stimme zu nehmen hiesse, dem Nutzer eine
+        // Stimme unterzuschieben, die er nicht gewählt hat (Issue #29).
+        if engine.resolved.is_err()
+            && voice_id.is_none()
+            && app_data.is_some_and(|d| runtime_check(d).is_ok())
+        {
             if let Some((id, _, paths)) = engine.alternatives.first().cloned() {
                 engine.voice_id = Some(id);
                 engine.resolved = Ok(paths);
@@ -457,13 +476,20 @@ mod tests {
         assert_eq!(config, voices.join("eva.onnx.json"));
     }
 
+    /// Eine vollstaendige Laufzeit (Programm, Sprachdaten, Bibliotheken).
+    fn write_runtime(data: &Path) {
+        let bin = piper_binary_path(data);
+        crate::managers::tts::availability::write_piper_fixture(
+            bin.parent().unwrap(),
+            platform_subdir(),
+        );
+    }
+
     /// Ein tempdir-Baukasten: legt wahlweise Binary und/oder Stimme an.
     fn data_dir(binary: bool, voice: Option<&str>) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         if binary {
-            let bin = piper_binary_path(dir.path());
-            std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
-            std::fs::write(&bin, b"fake").unwrap();
+            write_runtime(dir.path());
         }
         if let Some(id) = voice {
             let (model, config) = piper_voice_paths(dir.path(), id);
@@ -492,6 +518,35 @@ mod tests {
         assert_eq!(piper_paths(dir.path(), "eva"), Err(ERR_VOICE_MISSING));
     }
 
+    /// Issue #29: Programm und Stimme sind da, aber eine Bibliothek fehlt --
+    /// das darf nicht als startklar gelten (sonst scheitert erst das Vorlesen).
+    #[test]
+    fn fehlende_bibliothek_meldet_unvollstaendige_laufzeit() {
+        let dir = data_dir(true, Some("eva"));
+        let lib = crate::managers::tts::availability::piper_libraries(platform_subdir())[0];
+        let bin = piper_binary_path(dir.path());
+        std::fs::remove_file(bin.parent().unwrap().join(lib)).unwrap();
+        assert_eq!(piper_paths(dir.path(), "eva"), Err(ERR_BINARY_INCOMPLETE));
+        let e = PiperEngine::resolve(Some(dir.path()), Some("eva"));
+        assert_eq!(e.unavailable_reason(), Some(ERR_BINARY_INCOMPLETE));
+        // Ohne gewaehlte Stimme meldet die unvollstaendige Laufzeit sich zuerst.
+        let e = PiperEngine::resolve(Some(dir.path()), None);
+        assert_eq!(e.unavailable_reason(), Some(ERR_BINARY_INCOMPLETE));
+    }
+
+    /// Issue #29: "keine stille andere Stimme" -- wurde die gewaehlte Stimme
+    /// entfernt, bleibt es beim Fehler, auch wenn andere Stimmen geladen sind.
+    #[test]
+    fn entfernte_gewaehlte_stimme_wird_nicht_still_ersetzt() {
+        let dir = data_dir(true, Some("en_US-lessac-medium"));
+        let e = PiperEngine::resolve_auto(Some(dir.path()), Some("de_DE-thorsten-high"), true);
+        assert_eq!(e.unavailable_reason(), Some(ERR_VOICE_MISSING));
+        assert_eq!(e.paths_for("Hallo Welt."), Err(ERR_VOICE_MISSING));
+        // Ohne jede Wahl springt weiterhin die erste geladene Stimme ein.
+        let ohne = PiperEngine::resolve_auto(Some(dir.path()), None, true);
+        assert!(ohne.unavailable_reason().is_none());
+    }
+
     #[test]
     fn vollstaendige_ablage_liefert_die_drei_pfade() {
         let dir = data_dir(true, Some("eva"));
@@ -504,9 +559,7 @@ mod tests {
     #[test]
     fn auto_sprache_nimmt_die_stimme_der_erkannten_sprache() {
         let dir = tempfile::tempdir().unwrap();
-        let bin = piper_binary_path(dir.path());
-        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
-        std::fs::write(&bin, b"exe").unwrap();
+        write_runtime(dir.path());
         for id in ["de_DE-thorsten-high", "en_US-lessac-medium"] {
             let (m, c) = piper_voice_paths(dir.path(), id);
             std::fs::create_dir_all(m.parent().unwrap()).unwrap();

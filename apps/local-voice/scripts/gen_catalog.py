@@ -253,7 +253,10 @@ def build(repo):
         "parameters": gg.get("general.size_label"),          # "0.6B" / "1.7B" / "62M"
         "description": cur.get("desc") or auto_desc(langs, caps),
         "base_model": cd.get("base_model"),
-        "license": cd.get("license"),
+        # Card license "other" is no information: carry the card's own license_name and
+        # link instead, so the notices and the model list can name the real terms.
+        "license": (cd.get("license_name") or cd.get("license")) if cd.get("license") == "other" else cd.get("license"),
+        "license_url": cd.get("license_link") if cd.get("license") == "other" else None,
         "language_count": len(langs),
         "languages": langs,
         "capabilities": caps,

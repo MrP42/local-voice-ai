@@ -944,6 +944,19 @@ async changeLazyStreamCloseSetting(enabled: boolean) : Promise<Result<null, stri
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Optionale Ollama-Glaettung beim Live-Einfuegen (Issue #5). Standard aus;
+ * wirkt nur, solange `stream_injection` an ist. Ollama bleibt nie Voraussetzung
+ * fuer Aufnahme, Transkription oder Einfuegung.
+ */
+async changeRefineEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_refine_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeVadEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_vad_enabled_setting", { enabled }) };
@@ -3852,6 +3865,19 @@ async ttsListDownloads() : Promise<Result<TtsDownloadInfo[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Zustand der Sprachausgabe-Laufzeiten (Piper, Fish Speech): vorhanden,
+ * vollstaendig, auf dieser Plattform unterstuetzt. Nur Dateisystem -- startet
+ * keinen Prozess und laedt kein Modell, darf also beim Zeichnen laufen.
+ */
+async ttsRuntimeStatus() : Promise<Result<TtsRuntimeStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_runtime_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsDownloadModel(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_download_model", { id }) };
@@ -5609,7 +5635,20 @@ export type ModelInfo = { id: string; name: string; description: string; filenam
  * to any other engine makes the stream refuse to start, so this gates the
  * control rather than letting the user discover the failure mid-dictation.
  */
-supports_stream_lookahead: boolean }
+supports_stream_lookahead: boolean; 
+/**
+ * Lizenz laut Katalog/Modellkarte (None bei lokalen und Altmodellen).
+ */
+license?: string | null; 
+/**
+ * Link auf den Lizenztext.
+ */
+license_url?: string | null; 
+/**
+ * Nur nicht-kommerziell nutzbar (z. B. CC-BY-NC-4.0): die Oberflaeche
+ * zeigt dann einen deutlichen Hinweis (Issue #7, Canary 1B).
+ */
+license_non_commercial?: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 /**
  * Where a model comes from and how Handy obtains it — the routing discriminant
@@ -5842,6 +5881,22 @@ export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "
  * übernommen werden.
  */
 export type ReferenceAnalysis = { quiet: boolean; suggested_tags: string[] }
+/**
+ * Zustand einer Laufzeit fuer die Oberflaeche.
+ */
+export type RuntimeState = { 
+/**
+ * Gibt es diese Laufzeit fuer die Plattform/Architektur ueberhaupt?
+ */
+supported: boolean; 
+/**
+ * Vollstaendig vorhanden und startfaehig.
+ */
+ready: boolean; 
+/**
+ * Fehlende Dateien (leer, wenn bereit oder nicht unterstuetzt).
+ */
+missing: string[] }
 /**
  * Eingrenzung fuer Chat und Suche ueber viele Besprechungen (M4 §6). Alle
  * gesetzten Felder gelten zugleich (UND).
@@ -6092,9 +6147,38 @@ export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string;
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.
  */
-language: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean }
+language: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean; 
+/**
+ * Heruntergeladen UND startfaehig: bei einer Stimme zusaetzlich zu den
+ * beiden Dateien eine vollstaendige Piper-Laufzeit (sonst scheitert das
+ * Vorlesen erst spaet); bei der Laufzeit gleich `is_downloaded`. Nur
+ * verwendbare Stimmen darf die Oberflaeche zur Auswahl anbieten.
+ */
+is_usable: boolean; 
+/**
+ * Grund, warum es diesen Eintrag auf dieser Plattform nicht gibt (z. B.
+ * `incomplete_archive`); dann kein Download-Angebot. `None` = normal.
+ */
+unsupported_reason: string | null; 
+/**
+ * Lizenz laut Katalog (Issue #7) und Link auf den Text.
+ */
+license: string | null; license_url: string | null; 
+/**
+ * Nur nicht-kommerziell nutzbar: die Oberflaeche warnt deutlich.
+ */
+license_non_commercial: boolean }
 export type TtsDownloadKind = "runtime" | "voice"
 export type TtsPhase = "stopped" | "starting" | "ready" | "speaking" | "error"
+export type TtsRuntimeStatus = { 
+/**
+ * `windows-x64`, `macos-aarch64`, ... (wie im Katalog).
+ */
+platform: string; piper: RuntimeState; fish: RuntimeState; 
+/**
+ * Ordner, in dem Fish erwartet wird (Einstellung `tts_fish_dir`).
+ */
+fish_dir: string }
 export type TtsStatus = { phase: TtsPhase; owns_server: boolean; message: string | null }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 /**
