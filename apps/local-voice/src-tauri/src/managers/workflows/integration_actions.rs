@@ -102,7 +102,7 @@ fn spec_of(id: &str) -> &'static ActionSpec {
     catalog::action_spec(id).unwrap_or_else(|| panic!("Katalogeintrag {id} fehlt"))
 }
 
-fn db_err(e: impl std::fmt::Display) -> StepError {
+pub(super) fn db_err(e: impl std::fmt::Display) -> StepError {
     StepError::Transient(format!("Das Register ist nicht erreichbar ({e})."))
 }
 
@@ -144,7 +144,7 @@ fn seed_of(key: &str) -> u128 {
 }
 
 /// Die Integration `via` aus dem Register; Art muss in `kinds` stehen.
-fn integration_of(
+pub(super) fn integration_of(
     conn: &Connection,
     params: &Value,
     kinds: &[Kind],
@@ -164,7 +164,7 @@ fn integration_of(
     Ok(i)
 }
 
-fn m365_error(e: M365Error) -> StepError {
+pub(super) fn m365_error(e: M365Error) -> StepError {
     let text = e.to_string();
     match e {
         // Ob die Anfrage ankam, ist unklar: nie von selbst wiederholen.
@@ -204,7 +204,7 @@ fn webhook_error(e: webhook::WebhookError) -> StepError {
     }
 }
 
-fn m365_service(services: &dyn AppServices) -> Result<Arc<M365Service>, StepError> {
+pub(super) fn m365_service(services: &dyn AppServices) -> Result<Arc<M365Service>, StepError> {
     services.m365().ok_or_else(|| {
         StepError::NotAvailable(
             "Das Microsoft-365-Konto ist in dieser Umgebung nicht bereit.".to_string(),

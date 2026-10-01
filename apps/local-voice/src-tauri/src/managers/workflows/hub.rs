@@ -49,6 +49,7 @@ use crate::managers::meetings::recorder::{MeetingEvent, MeetingRecorderManager};
 use crate::managers::meetings::store::MeetingStore;
 
 use super::agent_actions; // C2
+use super::agent_notes; // C4
 use super::app_actions;
 use super::app_services::AppServicesImpl;
 use super::consent;
@@ -218,7 +219,8 @@ impl WorkflowHub {
         let services = Arc::new(AppServicesImpl::new(app));
         app_actions::install(&engine, services.clone());
         integration_actions::install(&engine, services.clone());
-        agent_actions::install(&engine, services); // C2
+        agent_actions::install(&engine, services.clone()); // C2
+        agent_notes::install(&engine, services); // C4
         engine.set_observer(Arc::new(PromptObserver { app: app.clone() }));
         let handle = engine.spawn();
         register_meeting_listeners(app);

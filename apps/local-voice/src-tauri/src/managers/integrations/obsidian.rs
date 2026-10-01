@@ -200,7 +200,7 @@ pub fn note_id(meeting_id: &str) -> String {
 
 /// YAML-String in doppelten Anfuehrungszeichen (Zeilenumbrueche und Steuerzeichen
 /// werden zu Leerzeichen, `\` und `"` maskiert).
-fn yq(s: &str) -> String {
+pub(crate) fn yq(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
@@ -308,7 +308,13 @@ pub fn render_note(cfg: &ObsidianConfig, n: &NoteInput) -> String {
 /// Bringt eine vorhandene Notiz auf den neuen Stand: der verwaltete Block und
 /// `updated` werden ersetzt, alles andere bleibt. `None`: nichts zu aendern.
 pub fn merge_existing(existing: &str, n: &NoteInput) -> Option<String> {
-    let block = managed_block(n);
+    merge_block(existing, &managed_block(n), &n.date_iso)
+}
+
+/// Wie `merge_existing` fuer einen fertigen verwalteten Block (mit Marken, mit Zeilenende):
+/// ersetzt ihn (oder haengt ihn an) und zieht `updated` nach. Gemeinsam mit den Notizen anderer
+/// Bausteine (Besprechungsergebnis, C4), die dieselbe Handarbeit-Regel brauchen.
+pub fn merge_block(existing: &str, block: &str, date_iso: &str) -> Option<String> {
     let mut text = match (existing.find(BEGIN_MARK), existing.find(END_MARK)) {
         (Some(b), Some(e)) if b < e => {
             let end = e + END_MARK.len();
@@ -325,7 +331,7 @@ pub fn merge_existing(existing: &str, n: &NoteInput) -> Option<String> {
         _ => {
             let mut t = existing.trim_end().to_string();
             t.push_str("\n\n");
-            t.push_str(&block);
+            t.push_str(block);
             t
         }
     };
@@ -338,7 +344,7 @@ pub fn merge_existing(existing: &str, n: &NoteInput) -> Option<String> {
                 .map(|l| {
                     if l.trim_end().starts_with("updated:") {
                         let cr = if l.ends_with('\r') { "\r" } else { "" };
-                        format!("updated: {}{cr}", yq(&n.date_iso))
+                        format!("updated: {}{cr}", yq(date_iso))
                     } else {
                         l.to_string()
                     }

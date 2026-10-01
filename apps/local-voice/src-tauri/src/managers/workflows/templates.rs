@@ -10,6 +10,7 @@ pub fn all() -> Vec<(&'static str, &'static str)> {
         ("vorlage-besprechung", MEETING_SAMPLE),
         ("eingangsordner-word", FOLDER_TO_WORD),
         ("termin-protokoll-mail", TERMIN_MAIL),
+        ("besprechung-ergebnis", BESPRECHUNG_ERGEBNIS),
     ]
 }
 
@@ -27,3 +28,8 @@ pub const FOLDER_TO_WORD: &str = include_str!("templates/eingangsordner-word.jso
 /// `empfaenger` (`ich` oder `alle`) legt je Kalender fest, wer die Mail bekommt (zwei Ablaeufe aus
 /// derselben Vorlage: Kalender A mit `ich`, Kalender B mit `alle`).
 pub const TERMIN_MAIL: &str = include_str!("templates/termin-protokoll-mail.json");
+
+/// Besprechung fertig -> extrahieren -> Vault-Notiz, (Kalender), Frist-Erinnerungen (C4, AK6, AK7). Die
+/// Kennungen `vault-1` und `m365-1` sind Platzhalter fuer die Integrationen des Nutzers; der Editor
+/// laesst sie waehlen. Die Erinnerung steht zuletzt, weil der Lauf auf sie wartet.
+pub const BESPRECHUNG_ERGEBNIS: &str = include_str!("templates/besprechung-ergebnis.json");
