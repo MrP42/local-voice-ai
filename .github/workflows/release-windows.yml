@@ -180,3 +180,27 @@ jobs:
           # SPIRV-Headers der Schritte oben; build.rs buendelt ggml-vulkan.dll
           # ueber transcribe-libs/ (tauri.windows.conf.json), keine Extra-Ressource.
           args: --features gpu-vulkan --bundles nsis,updater
+
+      # Issue #7: SBOM (CycloneDX 1.5) and the licence notices ship with every
+      # release. The notices file is the committed one (resources/, also inside
+      # the installer; kept current by `gen-notices.mjs --check`). The SBOM is a
+      # build artefact, so it is generated here. A failed SBOM must not undo the
+      # release that tauri-action already published: continue-on-error, and the
+      # upload below attaches whatever exists.
+      - name: Generate SBOM
+        continue-on-error: true
+        shell: bash
+        run: |
+          cargo install cargo-cyclonedx --locked
+          node scripts/gen-notices.mjs --only sbom
+
+      - name: Attach SBOM and third-party notices to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          FILES=(src-tauri/resources/THIRD-PARTY-NOTICES.md)
+          SBOM="src-tauri/target/sbom/local-voice-ai-${VERSION}.cdx.json"
+          if [ -f "$SBOM" ]; then FILES+=("$SBOM"); else echo "::warning::SBOM $SBOM missing, uploading notices only"; fi
+          gh release upload "app-v${VERSION}" "${FILES[@]}" --clobber --repo "$GITHUB_REPOSITORY"

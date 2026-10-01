@@ -51,6 +51,23 @@ Rarely used actions live in the menu ☰: re-transcribe, regenerate AI notes and
 
 **Edit** in the details dialog changes the **title**, the **description** (multi-line), **date and time**, the **participants** (from the existing people) and the **projects**. Saving is all or nothing; file name and source stay as they are. The description is searchable and available to chat, AI notes, minutes and the local MCP server as background.
 
+## Language and translation
+
+- On import and on "Re-transcribe" the app detects the **language** of the recording and shows it as a chip in the header. A click shows where it came from and lets you correct it, optionally with an immediate re-transcription. Your own choice (model, fixed language) always wins.
+- Menu ☰, **Translate to …**, creates the transcript as a **new version** in the target language. The **original stays untouched**; switch back with the version chip at any time. Timestamps and speakers are kept.
+- Every translated sentence is checked for numbers, proper names and sentence count. Deviations are marked sentence by sentence next to the original in the **Compare** tab. The check does not catch errors of meaning, so look at marked sentences yourself.
+- When regenerating minutes and AI notes you choose the **version** to base them on and the **language of the document**.
+
+## Slides and image analysis
+
+- For videos (screen recordings, presentations) the app looks for the **slides** after the import and stores them as thumbnails in the **Slides** tab. "Detect slides" in the menu ☰ does it later. A click opens the large view or plays from that point; single slides can be hidden.
+- Slide text is read with Windows text recognition and flows into the minutes, with its source. Please check numbers, section signs and tables against the image.
+- Optional, under Settings, Dictation, Meetings: **Image analysis for slides**. A local vision model reads the slides more precisely and describes each in one sentence. It needs a graphics card (at least 6 GB free) and the image projector (about 1 GB, downloaded only on request) and is unloaded after the job. Without it, Windows text recognition stays in use. The app also needs ffmpeg on the path.
+
+## Minutes across several recordings
+
+In a project: menu ☰ or right click on the project, **Minutes together**. Tick at least two recordings **with a transcript**, pick a template and **Minutes** (detailed) or **Summary** (short). The result appears as "Project minutes" in the project; every statement names the recording and time, a click jumps there. **Stop** is available during the run; if one recording has no transcript nothing is written halfway.
+
 ## Small window
 
 When the window gets narrow, for example next to a video call, the projects fold into a drawer ("Open projects") and workspace (transcript, minutes) and notes share the height. Adjust the divider between them with the mouse or Up/Down arrows. Recording, taking notes and reading the live transcript all work this way, without changing pages.

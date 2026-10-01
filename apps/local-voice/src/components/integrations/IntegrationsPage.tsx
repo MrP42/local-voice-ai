@@ -122,6 +122,7 @@ export const IntegrationsPage: React.FC = () => {
     <PageShell
       title={t("integrations.title")}
       description={t("integrations.description")}
+      help="integrationen"
       actions={
         inList && tab === "connections" ? (
           <Button
