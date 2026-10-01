@@ -26,6 +26,6 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | A7 | M4 | #66 Agentenbrücke (Named Pipe, Token, Werkzeug-Rechte, Freigaben, ctl) — lv-coder-xhigh | AK9 agent_bridge:: ≥15 | in_arbeit | |
 | A5 | M4 | #66 Microsoft-365-Konto (OAuth PKCE, Mail, OneDrive, Termin-Notiz) — lv-coder-xhigh | AK8 m365 ≥12 Tests | abgenommen (Owner: Entra-Registrierung, Testmail) | 7b9656dc |
 | A6 | M4 | #66 SMTP, Ordner-Sandbox, Obsidian, Wissensbasis, Export ablegen — lv-coder | AK8 Rest, AK11 | in_arbeit | |
-| D1 | M7 | #69 Folienerkennung Kern (dHash, meeting_slides, Job-Phase) — lv-coder-xhigh | cargo test slides | in_arbeit | |
+| D1 | M7 | #69 Folienerkennung Kern (dHash, meeting_slides, Job-Phase) — lv-coder-xhigh | cargo test slides | abgenommen | fc478c2e |
 | G8 | M8 | Wackelige Tests unter Last: Ursachen beheben (SQLite busy_timeout, Zeitabhängigkeit, Prozess-Timeouts) — lv-coder-xhigh | 3x volle Suite unter Last grün | abgenommen | 09ca4341 |
 | B2 | M5 | #67 Auslöser Kalender/Ereignisse/Zeitplan/manuell, Arbeiter in lib.rs, Einwilligungsweg — lv-coder-xhigh | AK3, AK4 | in_arbeit | |
