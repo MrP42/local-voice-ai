@@ -66,6 +66,8 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - R1 Budget ~10,6 MTok – Vorschlag: gestaffelt freigeben (M1–M3 zuerst ~2,2 MTok). Owner: Patrick.
 - R2 #6 Löschen alter Logdatei und #11 Ignore-Liste: Owner-Aktion, Vorschlag kommt fertig.
 - R3 #10 Abnahme in Word/VS Code/Browser: automatisiert per UI Automation soweit möglich, Rest manuell durch Patrick.
+- R4 Lizenz (G2d): Piper-Windows-Runtime bringt espeak-ng.dll (GPL-3.0-or-later) mit, nur Download auf Wunsch, Subprozess, nicht im Installer. Vorschlag: so lassen und Lizenztext beim Download ablegen. Owner: Patrick.
+- R5 Lizenz (G2d): Piper-Stimmen Lessac/Ryan nicht-kommerziell, Thorsten/Amy/Alan/Alba/Kerstin abgeleitet und ungeklaert. Vorschlag: Hinweis "nur nicht-kommerziell" wie bei Canary. Owner: Patrick.
 
 ## Meilensteine
 | M | Ergebnis (anfassbar) | Status |
