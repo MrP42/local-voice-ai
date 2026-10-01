@@ -86,6 +86,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 -
 
 ## Entscheidungen
+- 2026-10-01 Patrick: Budget gestaffelt – jetzt M1–M3 + M8 Release (~2,7 MTok); M4–M7 je einzeln freigeben.
 - 2026-10-01 Patrick (/goal-planner-worker): alle offenen Issues abschließen, neue Features umsetzen, testen, neue Version, Ergebnisse in GitHub; zuerst leerer Eintrag im Projekt.
 
 ## Nächste empfohlene Aktion
