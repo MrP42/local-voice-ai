@@ -25,9 +25,12 @@ use super::store::{WorkflowError, WorkflowRow};
 use super::validate::{self, Issue};
 
 pub mod calendar;
+pub mod folder; // B3
+pub mod ledger; // B3
 pub mod manual;
 pub mod meeting_events;
 pub mod schedule;
+pub mod youtube_channel; // B3
 
 /// Das, was die Ausloeser von der Engine brauchen. Tests setzen eine Attrappe dazwischen
 /// (Fehler beim Einreihen), die Anwendung die Engine selbst.
@@ -103,14 +106,16 @@ impl TickReport {
     }
 }
 
-/// Reiht einen Lauf eines Ausloesers ein und verbucht das Ergebnis im Bericht.
+/// Reiht einen Lauf eines Ausloesers ein und verbucht das Ergebnis im Bericht. Gibt die Kennung
+/// des Laufs zurueck, wenn der Ausloeser jetzt einen Lauf HAT (neu oder schon vorhanden), und
+/// `None`, wenn das Einreihen scheiterte (Ausloeser mit Ledger schreiben nur im ersten Fall).
 pub(crate) fn fire(
     sink: &dyn RunSink,
     report: &mut TickReport,
     workflow_id: &str,
     trigger_key: String,
     trigger: Value,
-) {
+) -> Option<String> {
     let req = EnqueueRequest {
         workflow_id: workflow_id.to_string(),
         trigger_key: trigger_key.clone(),
@@ -120,13 +125,22 @@ pub(crate) fn fire(
         force_dry_run: false,
     };
     match sink.enqueue(&req) {
-        Ok(e) if e.created => report.started.push((workflow_id.to_string(), e.run_id)),
-        Ok(_) => report.duplicates += 1,
+        Ok(e) if e.created => {
+            report
+                .started
+                .push((workflow_id.to_string(), e.run_id.clone()));
+            Some(e.run_id)
+        }
+        Ok(e) => {
+            report.duplicates += 1;
+            Some(e.run_id)
+        }
         Err(e) => {
             log::warn!(
                 "workflows: Ausloeser {trigger_key} fuer {workflow_id} nicht eingereiht: {e}"
             );
             report.errors.push(format!("{workflow_id}: {e}"));
+            None
         }
     }
 }
@@ -151,6 +165,22 @@ pub fn check_definition(def: &WorkflowDef) -> Vec<Issue> {
     let mut out = Vec::new();
     if def.trigger.kind == "schedule" {
         for (field, message) in schedule::check(&def.trigger.params) {
+            out.push(Issue {
+                path: format!("/trigger/{field}"),
+                message,
+            });
+        }
+    }
+    if def.trigger.kind == folder::KIND {
+        for (field, message) in folder::check(&def.trigger.params) {
+            out.push(Issue {
+                path: format!("/trigger/{field}"),
+                message,
+            });
+        }
+    }
+    if def.trigger.kind == youtube_channel::KIND {
+        for (field, message) in youtube_channel::check(&def.trigger.params) {
             out.push(Issue {
                 path: format!("/trigger/{field}"),
                 message,

@@ -245,6 +245,9 @@ static TRIGGERS: &[TriggerSpec] = &[
             field("integration", FieldKind::Id, false),
             field("channel_id", FieldKind::Text, true),
             field("poll_minutes", FieldKind::Int { min: 15, max: 1440 }, false),
+            // Beim ersten Abruf die neuesten n Videos verarbeiten (Vorgabe 0: alle vorhandenen
+            // gelten als bekannt, es startet kein Lauf).
+            field("backfill", FieldKind::Int { min: 0, max: 15 }, false),
         ],
         provides: &[
             "channel_id",
@@ -351,6 +354,8 @@ static ACTIONS: &[ActionSpec] = &[
             field("via", FieldKind::Id, true),
             field("path", FieldKind::Text, true),
             field("title", FieldKind::Text, false),
+            // Kennung des Projekts (Ordner), in das die Besprechung kommt.
+            field("project", FieldKind::Text, false),
         ],
         effect: EffectKind::External,
         heavy: Some(STT),
@@ -540,6 +545,8 @@ static ACTIONS: &[ActionSpec] = &[
         fields: &[
             field("via", FieldKind::Id, true),
             field("url", FieldKind::Text, true),
+            // Kennung des Projekts (Ordner), in das die Besprechung kommt.
+            field("project", FieldKind::Text, false),
         ],
         effect: EffectKind::External,
         heavy: None,

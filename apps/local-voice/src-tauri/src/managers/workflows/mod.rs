@@ -29,8 +29,17 @@
 //!   Besprechungsereignissen, Hinweisfenster. Eingehaengt in `lib.rs`
 //!   (`initialize_core_logic`, `RunEvent::Exit`) und in `CalendarService::remind_tick`.
 //!
-//! Was die Pakete NICHT tun: keine Ordner-/YouTube-Ausloeser (B3), keine App-Bausteine ausser
-//! `wait` und der Aufnahme (B3 bis B6), keine Oberflaeche (B7), keine Agentenbruecke (B8).
+//! Bausteine von Paket B3 (Ordner, YouTube-Kanal, Import):
+//! - `trigger::folder`: „Datei im Ordner“ (Takt-Scan, Stabilitaet, Dateiledger, OneDrive-
+//!   Platzhalter), `trigger::youtube_channel`: „Neues Video im Kanal“ (RSS, Intervall, Ledger,
+//!   Ausfall), `trigger::ledger`: die Tabelle `workflow_file_ledger`.
+//! - `import`: die Bausteine `meeting.import` (Datei -> Besprechung ueber die vorhandene
+//!   Import-Warteschlange) und `youtube.add_source` (Video -> Quelle ueber den Weg aus A2).
+//! - `queue_gate`: das Tor der schweren Schritte, das Aufnahme und Import-Warteschlange kennt;
+//!   `import_app`: der Kleber an die App (Warteschlange, Speicher, `AppHandle`).
+//!
+//! Was die Pakete NICHT tun: keine App-Bausteine ausser `wait`, Aufnahme und Import (B4 bis B6),
+//! kein `youtube.transcript` (B6), keine Oberflaeche (B7), keine Agentenbruecke (B8).
 //! Sie liefern die Schnittstellen, an denen die naechsten einrasten.
 //!
 //! # Fehlerfaelle (B1) und ihre Absicherung
@@ -91,6 +100,48 @@
 //!   bei einer Freigabe fuer einen beendeten Termin startet keine Aufnahme (`recording::tests::*`,
 //!   `consent::tests::*`, Playwright `workflow-consent.spec.ts`).
 
+//! # Fehlerfaelle (B3) und ihre Absicherung
+//!
+//! - **Nebenlaeufigkeit**: dieselbe Datei/dasselbe Video aus zwei Takten, zwei Threads oder nach
+//!   einem Neustart ergibt einen Lauf (Schluessel `file:<sha256>` bzw. `yt:<kanal>:<video>` +
+//!   `UNIQUE`, dazu das Ledger): `trigger::folder::tests::the_ledger_*`, `without_a_ledger_*`,
+//!   `trigger::youtube_channel::tests::ak11_*`, `a_restart_*`. Zwei Scans/Abrufrunden zugleich
+//!   gibt es nie (`State::try_begin`, `a_second_scan_*`, `a_second_round_*`). Zwei Ablaeufe auf
+//!   demselben Ordner/Kanal bekommen je ihre Laeufe (`two_workflows_*`). Dieselbe Datei in der
+//!   Import-Warteschlange zweimal verhindert die Suche nach der Quelldatei seit Schrittbeginn
+//!   (`import::tests::a_repeated_step_reuses_*`).
+//! - **Abbruch mitten im Vorgang**: Einreihen zuerst, Ledger danach; scheitert das Einreihen,
+//!   bleibt die Datei/das Video ungesehen und der naechste Takt/Abruf holt es nach, scheitert das
+//!   Ledger, ist der naechste Versuch ein Duplikat der Engine (`a_failed_enqueue_*` je Ausloeser).
+//!   Eine Datei, die waehrend des Hashens waechst, zaehlt nicht als fertig. Nach einem Absturz
+//!   zwischen Einreihen in die Import-Warteschlange und Journal belegt `confirm` die Besprechung
+//!   (`External` wird nie blind wiederholt).
+//! - **Voller Datentraeger / gesperrte Datenbank**: jeder Ledger-Zugriff ist ein Statement; ein
+//!   Fehler steht im Bericht (`TickReport::errors`), nichts geht verloren. Das Ledger ist
+//!   gedeckelt (20 000 Dateien, 50 000 Videos, aelteste zuerst).
+//! - **Fehlendes Geraet / OneDrive**: Ordner nicht eingehaengt oder Integration geloescht: ein
+//!   Hinweis je Aenderung statt alle 15 s (`a_missing_integration_or_folder_*`). Platzhalter
+//!   (nur in der Cloud) werden nie gelesen oder heruntergeladen, einmal gemeldet
+//!   (`a_cloud_only_placeholder_*`); als Import-Quelle ein dauerhafter Fehler mit Hinweis.
+//! - **Netz**: YouTube-Feed nicht erreichbar/404/429: Zaehler, nach 3 Fehlschlaegen in Folge
+//!   EIN Ausfallbericht plus Audit-Eintrag, Wiederholung nach 5 min mal Fehlerzahl (hoechstens
+//!   `poll_minutes`), Rueckkehr wird gemeldet (`repeated_failures_*`). Zeitlimit 10 s, Antwort
+//!   hoechstens 1 MiB, keine Umleitung, DTD abgelehnt (`hostile_or_broken_feeds_*`,
+//!   `the_http_fetcher_*`).
+//! - **Absturz eines Kindprozesses**: B3 startet keinen Prozess (Hashen und Abruf laufen im
+//!   Prozess; Transkription und `yt-dlp` gehoeren der Import-Warteschlange bzw. A3).
+//! - **Voller Arbeitsspeicher**: Hashen liest in 1-MiB-Bloecken (kein Laden der Datei),
+//!   hoechstens zwei Dateien je Takt und Ablauf. Die Transkription steht hinter dem RAM-Tor der
+//!   Import-Warteschlange; das Tor der Engine (`queue_gate`) laesst nichts Schweres beginnen,
+//!   solange eine Aufnahme laeuft oder die Warteschlange arbeitet, danach gilt das RAM-Start-Tor
+//!   von `process_guard`: bei vollem RAM WARTET der Schritt (Rueckstau), der Rechner bleibt
+//!   bedienbar (`queue_gate::tests::*`).
+//! - **Echtzeit-Audiopfad**: unberuehrt. Kein Code von B3 laeuft im Audio-Callback; waehrend einer
+//!   Aufnahme beginnt kein schwerer Schritt, und die Import-Warteschlange haelt selbst an.
+//! - **Feindliche Eingaben**: Pfade nur unter der Wurzel der Ordner-Integration (Sandbox, kein
+//!   `..`, keine Verknuepfung nach aussen), Feed-Texte untrusted (Steuerzeichen, Laenge, nur
+//!   `watch?v=<ID>`-Adressen aus gueltigen IDs), Kanal-Kennung streng (`UC` + 22 Zeichen).
+
 #![allow(dead_code)]
 
 pub mod action;
@@ -102,9 +153,12 @@ pub mod engine;
 pub mod expr;
 pub mod heavy;
 pub mod hub; // B2
+pub mod import; // B3
+pub mod import_app; // B3
 pub mod jsonschema;
 pub mod model;
 pub mod plan;
+pub mod queue_gate; // B3
 pub mod recording; // B2
 pub mod schema;
 pub mod store;
