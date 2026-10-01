@@ -37,3 +37,4 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | A8 | M4 | #66 MCP schreibend (transcribe_file, tts, add_youtube_source, get_provenance, start/stop_recording mit Einwilligung), mcp_smoke --write, --audit-dump — lv-coder-xhigh | AK10, AK11 | in_arbeit | |
 | B5 | M5 | #67 Integrations-Aktionen Mail (Empfängerregeln, Freigabe), Termin-Notiz, Webhook (n8n); Vorlage Termin → Mail — lv-coder-xhigh | AK7, AK8 | in_arbeit | |
 | B7 | M5 | #67 Oberfläche Automationen (Liste, Editor, Vorlagen, Lauf mit Herkunft, Freigaben, JSON-Import/Export) — lv-coder | AK9 automations.spec | in_arbeit | |
+| C2 | M6 | #68 Agent-Laufzeit (Schema, Denken aus, Validierung, Retry, Rückfall) + agent.extract (To-dos/Fristen/Entscheidungen mit Belegen) + Provenienz — lv-coder-xhigh | AK3, AK4 | in_arbeit | |
