@@ -32,7 +32,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | D2 | M7 | #69 OCR je Folie (Windows-OCR), Text-Dubletten — lv-coder | cargo test slides::ocr | abgenommen | 219043ea |
 | D4 | M7 | #69 Folien-Oberfläche (Leiste, Sprung, Ausblenden, Großansicht, Folien erkennen) — lv-coder | meeting-slides.spec | abgenommen | cc097c92 |
 | B3 | M5 | #67 Auslöser Ordner (Stabilität, Ledger, OneDrive) und YouTube-Kanal (RSS) + Aktion Import — lv-coder | AK5, AK11 Auslöser | abgenommen | effa3670 |
-| D5 | M7 | #69 Folien in Protokoll, KI-Notizen, Chat, Suche ([Folie n · mm:ss], Belege) — lv-coder-xhigh | cargo test minutes notes search slides | in_arbeit | |
+| D5 | M7 | #69 Folien in Protokoll, KI-Notizen, Chat, Suche ([Folie n · mm:ss], Belege) — lv-coder-xhigh | cargo test minutes notes search slides | abgenommen | a1c20633 |
 | B4 | M5 | #67 App-Aktionen (Notizen, Protokoll, Zusammenfassung, Export, TTS, Mitteilung, Warten) + Vorlage Eingangsordner → Word — lv-coder | AK6 | abgenommen (Toast im Installer prüfen) | cf388ec1 |
 | A8 | M4 | #66 MCP schreibend (transcribe_file, tts, add_youtube_source, get_provenance, start/stop_recording mit Einwilligung), mcp_smoke --write, --audit-dump — lv-coder-xhigh | AK10, AK11 | in_arbeit | |
 | B5 | M5 | #67 Integrations-Aktionen Mail (Empfängerregeln, Freigabe), Termin-Notiz, Webhook (n8n); Vorlage Termin → Mail — lv-coder-xhigh | AK7, AK8 | in_arbeit | |
