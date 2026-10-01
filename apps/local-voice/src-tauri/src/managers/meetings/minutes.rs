@@ -361,14 +361,12 @@ fn transcript_line(segment: &StoredSegment, labels: &SpeakerDirectory) -> String
 /// Startzeit. Reihenfolge übernimmt der Aufrufer (siehe `sorted_segments`).
 /// Der Lauf selbst baut die Zeilen einzeln (`transcript_line`, die Bloecke
 /// brauchen sie getrennt); diese beiden Funktionen halten das Format fest.
-#[cfg(test)]
 pub fn render_transcript_for_prompt(segments: &[StoredSegment]) -> String {
     render_transcript_for_prompt_with(segments, &SpeakerDirectory::from_segments(segments))
 }
 
 /// Wie [`render_transcript_for_prompt`], mit den Sprechernamen der Besprechung
 /// (M3-P3b): "Anna Berg [03:15]: ...", sonst "Gegenseite 2 [03:15]: ...".
-#[cfg(test)]
 pub fn render_transcript_for_prompt_with(
     segments: &[StoredSegment],
     labels: &SpeakerDirectory,
