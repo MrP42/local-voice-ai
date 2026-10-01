@@ -1,0 +1,1163 @@
+{
+  "catalog": {
+    "actions": [
+      {
+        "capability": "recording.start",
+        "effect": "external",
+        "effect_text": "Aufnahme starten, erst nach Bestätigung der Einwilligung im Hinweisfenster",
+        "fields": [
+          {
+            "capability": "recording.start",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "choice",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "stop",
+            "options": [
+              "event_end",
+              "manual",
+              "duration"
+            ],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 720,
+            "min": 1,
+            "name": "max_minutes",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "title",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": null,
+        "id": "recording.start",
+        "title": "Aufnahme starten"
+      },
+      {
+        "capability": null,
+        "effect": "idempotent",
+        "effect_text": "Laufende Aufnahme beenden",
+        "fields": [],
+        "heavy_label": null,
+        "id": "recording.stop",
+        "title": "Aufnahme beenden"
+      },
+      {
+        "capability": "files.read",
+        "effect": "external",
+        "effect_text": "Datei {{p.path}} aus {{p.via}} importieren und transkribieren",
+        "fields": [
+          {
+            "capability": "files.read",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "path",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "title",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "project",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Transkription",
+        "id": "meeting.import",
+        "title": "Datei importieren und transkribieren"
+      },
+      {
+        "capability": null,
+        "effect": "idempotent",
+        "effect_text": "KI-Notizen zur Besprechung erzeugen",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "template",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "variant_id",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "output_language",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachmodell",
+        "id": "meeting.notes",
+        "title": "KI-Notizen erzeugen"
+      },
+      {
+        "capability": null,
+        "effect": "idempotent",
+        "effect_text": "Protokoll zur Besprechung erzeugen",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "template",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "variant_id",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "output_language",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachmodell",
+        "id": "meeting.minutes",
+        "title": "Protokoll erzeugen"
+      },
+      {
+        "capability": null,
+        "effect": "idempotent",
+        "effect_text": "Zusammenfassung erzeugen (Quelle: {{p.source}})",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "source",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "style",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachmodell",
+        "id": "text.summarize",
+        "title": "Zusammenfassen"
+      },
+      {
+        "capability": "files.write",
+        "effect": "idempotent",
+        "effect_text": "Dokument als {{p.format}} in {{p.target}} ablegen",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "choice",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "format",
+            "options": [
+              "docx",
+              "pdf",
+              "md"
+            ],
+            "required": true
+          },
+          {
+            "capability": "files.write",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "target",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "name",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "subfolder",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "choice",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "content",
+            "options": [
+              "minutes",
+              "notes",
+              "all"
+            ],
+            "required": false
+          }
+        ],
+        "heavy_label": null,
+        "id": "export.document",
+        "title": "Dokument ablegen"
+      },
+      {
+        "capability": "mail.send",
+        "effect": "external",
+        "effect_text": "Mail über {{p.via}} an die Empfängerregel „{{p.to}}“ senden, Betreff „{{p.subject}}“",
+        "fields": [
+          {
+            "capability": "mail.send",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "choice",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "to",
+            "options": [
+              "me",
+              "participants",
+              "all",
+              "list"
+            ],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text_list",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "list",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "subject",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "body",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "any",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "attach",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "bool",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "draft",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": null,
+        "id": "mail.send",
+        "title": "Mail senden"
+      },
+      {
+        "capability": "calendar.write",
+        "effect": "external",
+        "effect_text": "Notiz über {{p.via}} in den Termin schreiben",
+        "fields": [
+          {
+            "capability": "calendar.write",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "event",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "text",
+            "options": [],
+            "required": true
+          }
+        ],
+        "heavy_label": null,
+        "id": "calendar.note",
+        "title": "Notiz in den Termin schreiben"
+      },
+      {
+        "capability": "vault.write",
+        "effect": "external",
+        "effect_text": "Notiz {{p.path}} in {{p.via}} schreiben",
+        "fields": [
+          {
+            "capability": "vault.write",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "path",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "content",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "choice",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "mode",
+            "options": [
+              "create",
+              "append"
+            ],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "section",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": null,
+        "id": "obsidian.note",
+        "title": "Obsidian-Notiz schreiben"
+      },
+      {
+        "capability": "knowledge.search",
+        "effect": "pure",
+        "effect_text": "Wissensbasis {{p.via}} nach „{{p.query}}“ durchsuchen",
+        "fields": [
+          {
+            "capability": "knowledge.search",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "query",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 50,
+            "min": 1,
+            "name": "limit",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": null,
+        "id": "knowledge.search",
+        "title": "Wissen durchsuchen"
+      },
+      {
+        "capability": null,
+        "effect": "idempotent",
+        "effect_text": "Relevanz des Inhalts nach dem Themenprofil bewerten",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "source",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "profile",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachmodell",
+        "id": "knowledge.rate",
+        "title": "Relevanz bewerten"
+      },
+      {
+        "capability": "vault.write",
+        "effect": "external",
+        "effect_text": "Aussagen mit {{p.via}} abgleichen (neu / vorhanden / ergänzt / widerspricht) und Ergänzungen schreiben",
+        "fields": [
+          {
+            "capability": "vault.write",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "source",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "folder",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "video_id",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachmodell",
+        "id": "knowledge.reconcile",
+        "title": "Mit der Wissensbasis abgleichen"
+      },
+      {
+        "capability": "vault.write",
+        "effect": "external",
+        "effect_text": "Management-Summary zum Kanal {{p.channel}} in {{p.via}} ablegen",
+        "fields": [
+          {
+            "capability": "vault.write",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "channel",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "source",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachmodell",
+        "id": "channel.report",
+        "title": "Kanal-Management-Summary"
+      },
+      {
+        "capability": "youtube.add",
+        "effect": "external",
+        "effect_text": "YouTube-Video {{p.url}} als Quelle über {{p.via}} anlegen",
+        "fields": [
+          {
+            "capability": "youtube.add",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "url",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "project",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": null,
+        "id": "youtube.add_source",
+        "title": "YouTube-Quelle anlegen"
+      },
+      {
+        "capability": "media.fetch",
+        "effect": "idempotent",
+        "effect_text": "Transkript des Videos {{p.video}} über {{p.via}} holen",
+        "fields": [
+          {
+            "capability": "media.fetch",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "video",
+            "options": [],
+            "required": true
+          }
+        ],
+        "heavy_label": "Transkription",
+        "id": "youtube.transcript",
+        "title": "YouTube-Transkript holen"
+      },
+      {
+        "capability": null,
+        "effect": "idempotent",
+        "effect_text": "Mitteilung „{{p.title}}“ anzeigen",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "title",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "body",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": null,
+        "id": "notify.local",
+        "title": "Windows-Mitteilung"
+      },
+      {
+        "capability": null,
+        "effect": "idempotent",
+        "effect_text": "Text als Audiodatei sprechen lassen",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "text",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "voice",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachausgabe",
+        "id": "tts.render",
+        "title": "Vorlesen"
+      },
+      {
+        "capability": null,
+        "effect": "external",
+        "effect_text": "Daten an {{p.url}} senden",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "url",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "any",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "body",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": null,
+        "id": "webhook.post",
+        "title": "Webhook senden"
+      },
+      {
+        "capability": null,
+        "effect": "pure",
+        "effect_text": "{{p.minutes}} Minuten warten",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 10080,
+            "min": 1,
+            "name": "minutes",
+            "options": [],
+            "required": true
+          }
+        ],
+        "heavy_label": null,
+        "id": "wait",
+        "title": "Warten"
+      }
+    ],
+    "max_steps": 50,
+    "schema": "lva-workflow@1",
+    "triggers": [
+      {
+        "automatic": false,
+        "fields": [],
+        "id": "manual",
+        "provides": [],
+        "title": "Von Hand starten"
+      },
+      {
+        "automatic": false,
+        "fields": [],
+        "id": "agent",
+        "provides": [],
+        "title": "Durch einen Agenten starten"
+      },
+      {
+        "automatic": true,
+        "fields": [
+          {
+            "capability": null,
+            "kind": "choice",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "every",
+            "options": [
+              "daily",
+              "weekly"
+            ],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "at",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "any",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "weekdays",
+            "options": [],
+            "required": false
+          }
+        ],
+        "id": "schedule",
+        "provides": [
+          "scheduled_for"
+        ],
+        "title": "Zeitplan"
+      },
+      {
+        "automatic": true,
+        "fields": [
+          {
+            "capability": "calendar.read",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "integration",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 120,
+            "min": 0,
+            "name": "lead_min",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "bool",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "only_meetings",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "title_contains",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 500,
+            "min": 1,
+            "name": "min_attendees",
+            "options": [],
+            "required": false
+          }
+        ],
+        "id": "calendar.event_starting",
+        "provides": [
+          "calendar",
+          "event_id",
+          "title",
+          "start",
+          "end",
+          "attendees",
+          "external_attendees",
+          "online",
+          "meeting"
+        ],
+        "title": "Termin beginnt"
+      },
+      {
+        "automatic": true,
+        "fields": [
+          {
+            "capability": "calendar.read",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "integration",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "bool",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "only_meetings",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "title_contains",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 500,
+            "min": 1,
+            "name": "min_attendees",
+            "options": [],
+            "required": false
+          }
+        ],
+        "id": "calendar.event_ended",
+        "provides": [
+          "calendar",
+          "event_id",
+          "title",
+          "start",
+          "end",
+          "attendees",
+          "external_attendees",
+          "online",
+          "meeting"
+        ],
+        "title": "Termin endet"
+      },
+      {
+        "automatic": true,
+        "fields": [
+          {
+            "capability": null,
+            "kind": "choice",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "stage",
+            "options": [
+              "recording",
+              "transcript",
+              "notes",
+              "minutes"
+            ],
+            "required": true
+          }
+        ],
+        "id": "meeting.finished",
+        "provides": [
+          "meeting_id",
+          "title",
+          "stage",
+          "meeting"
+        ],
+        "title": "Besprechung fertig"
+      },
+      {
+        "automatic": true,
+        "fields": [
+          {
+            "capability": "files.read",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "integration",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "subfolder",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text_list",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "extensions",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 300,
+            "min": 2,
+            "name": "stable_seconds",
+            "options": [],
+            "required": false
+          }
+        ],
+        "id": "folder.file_added",
+        "provides": [
+          "integration",
+          "path",
+          "name",
+          "extension",
+          "size"
+        ],
+        "title": "Datei im Ordner"
+      },
+      {
+        "automatic": true,
+        "fields": [
+          {
+            "capability": "media.fetch",
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "integration",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "channel_id",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 1440,
+            "min": 15,
+            "name": "poll_minutes",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 15,
+            "min": 0,
+            "name": "backfill",
+            "options": [],
+            "required": false
+          }
+        ],
+        "id": "youtube.channel_new_video",
+        "provides": [
+          "channel_id",
+          "channel_title",
+          "video_id",
+          "title",
+          "url",
+          "published"
+        ],
+        "title": "Neues Video im Kanal"
+      }
+    ]
+  },
+  "templates": [
+    {
+      "definition_json": "{\r\n  \"schema\": \"lva-workflow@1\",\r\n  \"name\": \"Termin: aufzeichnen, Protokoll, Mail\",\r\n  \"description\": \"Beim Beginn eines Termins im gewählten Kalender: Aufnahme starten (erst nach Bestätigung der Einwilligung), danach Protokoll erzeugen, als Word ablegen und per Mail senden.\",\r\n  \"trigger\": {\r\n    \"type\": \"calendar.event_starting\",\r\n    \"integration\": \"cal-graph-1\",\r\n    \"lead_min\": 1,\r\n    \"only_meetings\": true\r\n  },\r\n  \"variables\": {\r\n    \"protokoll_vorlage\": {\r\n      \"type\": \"string\",\r\n      \"default\": \"kunde\",\r\n      \"description\": \"Name der Protokollvorlage\"\r\n    }\r\n  },\r\n  \"steps\": [\r\n    {\r\n      \"id\": \"rec\",\r\n      \"action\": \"recording.start\",\r\n      \"label\": \"Aufnahme starten\",\r\n      \"params\": {\r\n        \"via\": \"app-automation\",\r\n        \"stop\": \"event_end\",\r\n        \"title\": \"{{trigger.title}}\"\r\n      }\r\n    },\r\n    {\r\n      \"id\": \"min\",\r\n      \"action\": \"meeting.minutes\",\r\n      \"label\": \"Protokoll erzeugen\",\r\n      \"params\": { \"template\": \"{{vars.protokoll_vorlage}}\" }\r\n    },\r\n    {\r\n      \"id\": \"doc\",\r\n      \"action\": \"export.document\",\r\n      \"label\": \"Als Word ablegen\",\r\n      \"params\": {\r\n        \"format\": \"docx\",\r\n        \"target\": \"folder-onedrive-protokolle\",\r\n        \"name\": \"{{meeting.title}} – Protokoll\"\r\n      }\r\n    },\r\n    {\r\n      \"id\": \"mail_me\",\r\n      \"action\": \"mail.send\",\r\n      \"label\": \"Mail an mich\",\r\n      \"params\": {\r\n        \"via\": \"m365-1\",\r\n        \"to\": \"me\",\r\n        \"subject\": \"Protokoll: {{meeting.title}}\",\r\n        \"body\": \"Das Protokoll zu „{{meeting.title}}“ liegt in {{steps.doc.path}}.\",\r\n        \"attach\": [\"{{steps.doc.path}}\"]\r\n      }\r\n    },\r\n    {\r\n      \"id\": \"mail_all\",\r\n      \"action\": \"mail.send\",\r\n      \"label\": \"Mail an alle Teilnehmenden\",\r\n      \"when\": \"{{trigger.calendar}} == 'cal-graph-1' and trigger.external_attendees > 0\",\r\n      \"on_error\": \"continue\",\r\n      \"params\": {\r\n        \"via\": \"m365-1\",\r\n        \"to\": \"participants\",\r\n        \"subject\": \"Protokoll: {{meeting.title}}\",\r\n        \"attach\": [\"{{steps.doc.path}}\"]\r\n      }\r\n    }\r\n  ]\r\n}\r\n",
+      "description": "Beim Beginn eines Termins im gewählten Kalender: Aufnahme starten (erst nach Bestätigung der Einwilligung), danach Protokoll erzeugen, als Word ablegen und per Mail senden.",
+      "id": "vorlage-besprechung",
+      "name": "Termin: aufzeichnen, Protokoll, Mail"
+    },
+    {
+      "definition_json": "{\r\n  \"schema\": \"lva-workflow@1\",\r\n  \"name\": \"Eingangsordner: transkribieren, Protokoll als Word\",\r\n  \"description\": \"Landet eine Audio- oder Videodatei im Eingangsordner, wird sie transkribiert, daraus ein Protokoll erzeugt und als Word-Datei im Zielordner abgelegt.\",\r\n  \"trigger\": {\r\n    \"type\": \"folder.file_added\",\r\n    \"integration\": \"folder-eingang\",\r\n    \"extensions\": [\"wav\", \"mp3\", \"m4a\", \"mp4\", \"mkv\"]\r\n  },\r\n  \"variables\": {\r\n    \"protokoll_vorlage\": {\r\n      \"type\": \"string\",\r\n      \"default\": \"\",\r\n      \"description\": \"Name oder Kennung der Protokollvorlage (leer: die der Besprechung bzw. die Standardvorlage; auto: nach Inhalt wählen)\"\r\n    }\r\n  },\r\n  \"steps\": [\r\n    {\r\n      \"id\": \"import\",\r\n      \"action\": \"meeting.import\",\r\n      \"label\": \"Datei importieren und transkribieren\",\r\n      \"params\": {\r\n        \"via\": \"{{trigger.integration}}\",\r\n        \"path\": \"{{trigger.path}}\"\r\n      }\r\n    },\r\n    {\r\n      \"id\": \"protokoll\",\r\n      \"action\": \"meeting.minutes\",\r\n      \"label\": \"Protokoll erzeugen\",\r\n      \"params\": { \"template\": \"{{vars.protokoll_vorlage}}\" }\r\n    },\r\n    {\r\n      \"id\": \"word\",\r\n      \"action\": \"export.document\",\r\n      \"label\": \"Als Word ablegen\",\r\n      \"params\": {\r\n        \"format\": \"docx\",\r\n        \"target\": \"folder-protokolle\",\r\n        \"content\": \"minutes\",\r\n        \"name\": \"{{steps.protokoll.meeting.title}} – Protokoll\"\r\n      }\r\n    }\r\n  ]\r\n}\r\n",
+      "description": "Landet eine Audio- oder Videodatei im Eingangsordner, wird sie transkribiert, daraus ein Protokoll erzeugt und als Word-Datei im Zielordner abgelegt.",
+      "id": "eingangsordner-word",
+      "name": "Eingangsordner: transkribieren, Protokoll als Word"
+    }
+  ]
+}

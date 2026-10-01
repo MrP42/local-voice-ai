@@ -148,6 +148,14 @@
 //! `toast` die Windows-Mitteilung. Vorlage `eingangsordner-word` in `templates`.
 //! Fehlerfaelle, Idempotenz und Rechte stehen im Kopf von `app_actions`.
 //!
+//! Baustein von Paket B7 (Oberflaeche): `ui` ist die Rechnung hinter den Kommandos `workflow_*`
+//! (`commands::workflows`): Katalog fuer das Formular, Pruefung mit JSON-Zeiger, Trockenlauf,
+//! Listen, Laufprotokoll, Export/Import. Die Oberflaeche (`src/components/automations`, Reiter
+//! „Automationen“ auf der Seite „Integrationen“) entscheidet nichts selbst: Pruefung, Rechte,
+//! Einwilligung und Idempotenz bleiben in der Engine; Freigaben werden im Freigabedialog der
+//! Seite entschieden. Neu: `Engine::check_definition` (Pruefung ohne Speichern),
+//! `WorkflowHub::{cloud_only_files, channel_status}`.
+//!
 #![allow(dead_code)]
 
 pub mod action;
@@ -172,6 +180,7 @@ pub mod schema;
 pub mod store;
 pub mod templates;
 pub mod toast; // B4
+pub mod ui; // B7
 pub mod trigger; // B2
 pub mod validate;
 
