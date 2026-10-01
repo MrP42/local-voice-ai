@@ -1757,7 +1757,9 @@ async meetingsDelete(meetingId: string) : Promise<Result<null, string>> {
 },
 /**
  * Imports a local audio/video file or a VTT/SRT subtitle file as a new
- * meeting. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
+ * meeting. Einwilligung (#15): `consent_confirmed = false` wird im Backend
+ * bewusst NICHT abgelehnt (Oberflaechen-Gate; nur die Live-Aufnahme prueft
+ * `consent_gate` im Recorder), siehe `import_media_file`. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
  * LEEREN Eintrag (Titel, Projekte und Notizen bleiben; der Titel wird nur
  * ersetzt, solange er der vorgeschlagene ist) und kehrt mit dessen Id zurueck;
  * ist das Ziel nicht (mehr) leer, kommt `target_not_empty`.
@@ -2924,6 +2926,72 @@ async meetingMcpInfo() : Promise<Result<McpInfo, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Legt einen Zugang an. Das Token steht NUR in dieser Antwort (gespeichert wird sein Hash);
+ * der Nutzer traegt es in den Agenten ein. `integration_id` `None`: die Agent-Integration
+ * „Externe Agenten“ (wird bei Bedarf angelegt).
+ */
+async agentClientCreate(label: string, integrationId: string | null) : Promise<Result<NewAgentClient, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_client_create", { label, integrationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle Zugaenge (auch zurueckgezogene) mit ihren Werkzeugen: Recht des Zugangs, wirksames
+ * Recht und Grund, wenn es „aus“ ist.
+ */
+async agentClientList() : Promise<Result<AgentClientView[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_client_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zieht einen Zugang zurueck: sein Token gilt sofort nicht mehr, auch nicht in einer
+ * laufenden Verbindung.
+ */
+async agentClientRevoke(id: string) : Promise<Result<AgentClient, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_client_revoke", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt einen Zugang samt seinen Werkzeugrechten.
+ */
+async agentClientDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_client_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt das Recht eines Zugangs fuer ein Werkzeug (`off`, `ask`, `allow`). „Aufnahme starten“
+ * nie `allow`. Die Antwort ist die aktualisierte Ansicht des Zugangs.
+ */
+async agentClientSetToolMode(clientId: string, tool: string, mode: GrantMode) : Promise<Result<AgentClientView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_client_set_tool_mode", { clientId, tool, mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laeuft die Pipe der Agentenbruecke? Sonst warum nicht.
+ */
+async agentBridgeStatus() : Promise<BridgeStatus> {
+    return await TAURI_INVOKE("agent_bridge_status");
 },
 /**
  * Startet eine Aufnahme mit dem Bezug zu einem Termin: Titel = was der Nutzer
@@ -4272,6 +4340,15 @@ export type ActorKind =
  */
 "auto" | "workflow" | "agent_external" | "agent_local"
 /**
+ * Ein Zugang (ohne Token).
+ */
+export type AgentClient = { id: string; label: string; 
+/**
+ * Agent-Integration, deren Rechte als Obergrenze gelten.
+ */
+integration_id: string; created_at: number; last_used_at: number | null; revoked_at: number | null }
+export type AgentClientView = { client: AgentClient; tools: ToolView[] }
+/**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
  * its `get_default_settings()` value when missing from a stored settings
@@ -4794,6 +4871,18 @@ export type BookCharacter = { name: string;
 voice_id: string | null; description: string }
 export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
 /**
+ * Zustand der Bruecke fuer die Oberflaeche.
+ */
+export type BridgeStatus = { running: boolean; 
+/**
+ * Name der Pipe (nie ein Geheimnis; der Nutzer traegt ihn bei Bedarf in Skripte ein).
+ */
+pipe_name: string | null; 
+/**
+ * Warum sie nicht laeuft.
+ */
+error: string | null }
+/**
  * Was die Oberflaeche fuer den Knopf „Vorbereiten“ braucht.
  */
 export type BriefInfo = { event_key: string; event_title: string; 
@@ -4922,6 +5011,19 @@ export type CandidateSource =
  * Aus einer vorhandenen WAV-Datei uebernommen.
  */
 "Import"
+/**
+ * Eine Faehigkeit, fuer die es je Integration und Aufrufer ein Recht gibt.
+ * Die Schreibweise mit Punkt ist die der Oberflaeche und des Audit-Logs.
+ */
+export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "files.read" | "files.write" | "knowledge.search" | "knowledge.read" | "vault.write" | 
+/**
+ * YouTube-Datei holen (externes Werkzeug, Schalter „privat“, E1).
+ */
+"media.fetch" | "youtube.add" | "meeting.create" | 
+/**
+ * Aufnahme starten: nie `allow` (Einwilligungsdialog, § 201 StGB).
+ */
+"recording.start" | "transcribe.file" | "tts.render"
 export type ChatAnswer = { thread_id: string; message_id: string; 
 /**
  * Antworttext mit `[1]`, `[2]` ... (leer bei `not_found`).
@@ -5157,6 +5259,11 @@ dedicated_mb: number;
  * Gemeinsamer Speicher mit der CPU (iGPU, Apple Silicon).
  */
 shared: boolean }
+/**
+ * Recht: aus, nachfragen oder erlaubt. Die Ordnung `Off < Ask < Allow` macht
+ * „das Strengste gewinnt“ zu `min`.
+ */
+export type GrantMode = "off" | "ask" | "allow"
 /**
  * Ein Kanalzustand fuer die Oberflaeche (`MeetingEvent::Health`).
  * `Recovered` nimmt die Bedingung des Kanals zurueck; `VadUnavailable` und
@@ -5692,6 +5799,10 @@ export type NameSuggestion = { channel: number; speaker_index: number; name: str
  */
 confidence: number; evidence: NameEvidence[] }
 /**
+ * Ergebnis von `create`: der Zugang und sein Token (nur dieses eine Mal sichtbar).
+ */
+export type NewAgentClient = { client: AgentClient; token: string }
+/**
  * Ein Block des Notizblocks. Die ID erzeugt das Frontend (ULID); `at_ms` ist
  * die Audioposition beim Anlegen (`None` = importiert oder nach dem Stopp
  * geschrieben) auf derselben Zeitachse wie `StoredSegment.start_ms`.
@@ -6125,6 +6236,26 @@ source: string | null;
  * Code eines Fehlers (siehe `ToolError::code`), sonst `None`.
  */
 error: string | null }
+/**
+ * Ein Werkzeug aus Sicht eines Zugangs.
+ */
+export type ToolView = { name: string; title: string; description: string; capability: Capability; 
+/**
+ * Recht des Zugangs (ohne Zeile: `off`).
+ */
+client_mode: GrantMode; 
+/**
+ * Was das Tor tatsaechlich entscheidet (Obergrenze der Agent-Integration eingerechnet).
+ */
+effective_mode: GrantMode; 
+/**
+ * Warum `effective_mode` „aus“ ist (`grant_off`, `tool_off`, `integration_disabled`, ...).
+ */
+off_reason: string | null; 
+/**
+ * Hat diese App-Version das Werkzeug? Ohne Handler fehlt es in `tools/list`, auch wenn erlaubt.
+ */
+available: boolean }
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 /**
  * Eine Fassung, wie die Oberflaeche sie liest.

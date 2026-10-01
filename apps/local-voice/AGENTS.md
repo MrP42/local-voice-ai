@@ -242,6 +242,7 @@ Handy supports command-line parameters on all platforms for integration with scr
 | `--start-hidden`         | Launch without showing the main window (tray icon visible) |
 | `--no-tray`              | Launch without system tray (closing window quits the app)  |
 | `--debug`                | Enable debug mode with verbose (Trace) logging             |
+| `ctl status\|tools\|call\|approval` | Agent bridge client (A7, `src/agent_bridge/`): talks to the running instance over a named pipe, token from `LVA_AGENT_TOKEN` or `--token-file`. Exit 0 ok, 1 error, 2 app not running, 3 tool off or approval denied, 4 login failed, 5 waiting for the user's approval. Runs before any Tauri start-up (like `--mcp`). Evidence against the real EXE: `python scripts/ctl_smoke.py` |
 
 **Key design decisions:**
 
