@@ -3557,6 +3557,94 @@
       "write": "Write only",
       "both": "Read and write"
     },
+    "agentClients": {
+      "intro": "One access per program (Claude Code, Codex, a script), each with its own key. An access may only use the tools you set to “Ask” or “Allowed” for it here – and only as far as the rights matrix above (“External agent”) permits.",
+      "bridge": {
+        "running": "Agent bridge is running",
+        "stopped": "Agent bridge is not running",
+        "pipe": "Pipe: {{name}}",
+        "reason": "Reason: {{error}}",
+        "safe": "Only you can reach it (current Windows user), not over the network."
+      },
+      "create": {
+        "open": "Add access",
+        "name": "Name of the access",
+        "placeholder": "e.g. Claude Code",
+        "submit": "Create"
+      },
+      "token": {
+        "title": "Key for “{{label}}”",
+        "warning": "This key is shown only now. Afterwards it cannot be read again (only a fingerprint is stored). Copy it now.",
+        "use": "Enter it in the program, e.g. as the environment variable LVA_AGENT_TOKEN. You can only get a new key by adding a new access.",
+        "copy": "Copy",
+        "copied": "Copied",
+        "copyFailed": "Copying did not work: select the key and copy it by hand.",
+        "done": "Done, I copied it"
+      },
+      "loadError": "The accesses could not be loaded.",
+      "empty": "No access yet. Add one so a program can sign in.",
+      "client": {
+        "active": "Active",
+        "revoked": "Revoked",
+        "created": "Created {{time}}",
+        "lastUsed": "Last used {{time}}",
+        "neverUsed": "Never used",
+        "revokedAt": "Revoked {{time}}",
+        "revoke": "Revoke",
+        "revokeConfirm": "Revoke “{{label}}”? Its key stops working immediately, even in a running connection.",
+        "revokeYes": "Yes, revoke",
+        "delete": "Remove",
+        "deleteConfirm": "Remove “{{label}}” with its tool rights? The log stays.",
+        "deleteYes": "Yes, remove",
+        "tools": "Tools",
+        "toolsHint": "Everything is off by default. “Ask”: you decide in the app every time. “Allowed”: the tool runs without asking.",
+        "frozen": "The access is revoked: its rights are frozen and can no longer be changed."
+      },
+      "offReason": {
+        "grant_off": "Not in effect yet: the integration's upper limit is “Off”. In the rights matrix above, set “External agent” to “Ask” or “Allowed”.",
+        "tool_off": "Switched off for this access.",
+        "integration_disabled": "Not in effect: the integration is switched off.",
+        "direction_blocks": "Not in effect: the direction of the integration does not allow this.",
+        "capability_not_offered": "Not in effect: this integration does not offer the capability."
+      },
+      "unavailable": "Tools marked “Not available yet” do not exist in this version: the right is prepared, but they cannot be called until later.",
+      "unavailableBadge": "Not available yet",
+      "neverAllowShort": "Never “Allowed”: the app shows the consent dialog before every recording (§ 201 StGB).",
+      "tools": {
+        "add_youtube_source": {
+          "title": "Add a YouTube link as a source",
+          "description": "Creates a meeting with the source YouTube for a YouTube link."
+        },
+        "start_recording": {
+          "title": "Start recording",
+          "description": "Asks the app for a recording; the app always shows the consent dialog."
+        },
+        "stop_recording": {
+          "title": "Stop recording",
+          "description": "Ends the running recording (same right as “Start recording”)."
+        },
+        "transcribe_file": {
+          "title": "Transcribe a file",
+          "description": "Transcribes an audio or video file and creates a meeting."
+        },
+        "create_session": {
+          "title": "Create a session",
+          "description": "Creates a session (a folder for recordings)."
+        },
+        "create_meeting": {
+          "title": "Create a meeting",
+          "description": "Creates an empty meeting."
+        },
+        "tts_page_create": {
+          "title": "Create a read-aloud page",
+          "description": "Creates a page in the read-aloud library."
+        },
+        "tts_render_audio": {
+          "title": "Create audio",
+          "description": "Creates an audio file from a read-aloud page."
+        }
+      }
+    },
     "modes": {
       "off": "Off",
       "ask": "Ask",
@@ -3666,7 +3754,6 @@
       "rightsHint": "Per capability and caller: off, ask (you decide every time) or allowed. You yourself need no approval in the app.",
       "resetRights": "Reset to defaults",
       "clients": "Access",
-      "clientsPlaceholder": "Access for external agents (one access per program, with its own key and rights per tool) is set up here as soon as the agent bridge is in place.",
       "showAudit": "Show log",
       "remove": "Remove",
       "removeConfirm": "Remove “{{label}}” with its rights? The log stays.",

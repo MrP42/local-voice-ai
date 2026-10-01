@@ -3557,6 +3557,94 @@
       "write": "Nur schreiben",
       "both": "Lesen und schreiben"
     },
+    "agentClients": {
+      "intro": "Je Programm (Claude Code, Codex, ein Skript) ein Zugang mit eigenem Schlüssel. Ein Zugang darf nur die Werkzeuge benutzen, die du hier für ihn auf „Fragen“ oder „Erlaubt“ stellst – und nur, soweit die Rechte-Matrix oben („Externer Agent“) es zulässt.",
+      "bridge": {
+        "running": "Agentenbrücke läuft",
+        "stopped": "Agentenbrücke läuft nicht",
+        "pipe": "Pipe: {{name}}",
+        "reason": "Grund: {{error}}",
+        "safe": "Sie ist nur für dich erreichbar (aktueller Windows-Benutzer), nicht über das Netzwerk."
+      },
+      "create": {
+        "open": "Zugang anlegen",
+        "name": "Name des Zugangs",
+        "placeholder": "z. B. Claude Code",
+        "submit": "Anlegen"
+      },
+      "token": {
+        "title": "Schlüssel für „{{label}}“",
+        "warning": "Dieser Schlüssel wird nur jetzt angezeigt. Danach ist er nicht mehr lesbar (gespeichert wird nur ein Fingerabdruck). Kopiere ihn jetzt.",
+        "use": "Im Programm eintragen, z. B. als Umgebungsvariable LVA_AGENT_TOKEN. Neu ausstellen kannst du ihn nur, indem du einen neuen Zugang anlegst.",
+        "copy": "Kopieren",
+        "copied": "Kopiert",
+        "copyFailed": "Das Kopieren hat nicht geklappt: markiere den Schlüssel und kopiere ihn von Hand.",
+        "done": "Fertig, ich habe ihn kopiert"
+      },
+      "loadError": "Die Zugänge lassen sich nicht laden.",
+      "empty": "Noch kein Zugang. Lege einen an, damit sich ein Programm anmelden kann.",
+      "client": {
+        "active": "Aktiv",
+        "revoked": "Zurückgezogen",
+        "created": "Angelegt {{time}}",
+        "lastUsed": "Zuletzt benutzt {{time}}",
+        "neverUsed": "Noch nie benutzt",
+        "revokedAt": "Zurückgezogen {{time}}",
+        "revoke": "Zurückziehen",
+        "revokeConfirm": "„{{label}}“ zurückziehen? Der Schlüssel gilt sofort nicht mehr, auch nicht in einer laufenden Verbindung.",
+        "revokeYes": "Ja, zurückziehen",
+        "delete": "Entfernen",
+        "deleteConfirm": "„{{label}}“ samt Werkzeugrechten entfernen? Das Protokoll bleibt.",
+        "deleteYes": "Ja, entfernen",
+        "tools": "Werkzeuge",
+        "toolsHint": "Alles ist standardmäßig aus. „Fragen“: du entscheidest in der App jedes Mal. „Erlaubt“: das Werkzeug läuft ohne Rückfrage.",
+        "frozen": "Der Zugang ist zurückgezogen: die Rechte sind eingefroren und lassen sich nicht mehr ändern."
+      },
+      "offReason": {
+        "grant_off": "Wirkt noch nicht: die Obergrenze der Integration steht auf „Aus“. Stelle in der Rechte-Matrix oben bei „Externer Agent“ „Fragen“ oder „Erlaubt“ ein.",
+        "tool_off": "Für diesen Zugang ausgeschaltet.",
+        "integration_disabled": "Wirkt nicht: die Integration ist ausgeschaltet.",
+        "direction_blocks": "Wirkt nicht: die Richtung der Integration erlaubt dies nicht.",
+        "capability_not_offered": "Wirkt nicht: diese Integration bietet die Fähigkeit nicht an."
+      },
+      "unavailable": "Werkzeuge mit „Noch nicht verfügbar“ gibt es in dieser Version noch nicht: das Recht ist vorbereitet, aufrufen lassen sie sich erst später.",
+      "unavailableBadge": "Noch nicht verfügbar",
+      "neverAllowShort": "Nie „Erlaubt“: die App zeigt vor jeder Aufnahme den Einwilligungsdialog (§ 201 StGB).",
+      "tools": {
+        "add_youtube_source": {
+          "title": "YouTube-Link als Quelle anlegen",
+          "description": "Legt zu einem YouTube-Link eine Besprechung mit der Quelle YouTube an."
+        },
+        "start_recording": {
+          "title": "Aufnahme starten",
+          "description": "Fragt die App nach einer Aufnahme; die App zeigt immer den Einwilligungsdialog."
+        },
+        "stop_recording": {
+          "title": "Aufnahme beenden",
+          "description": "Beendet die laufende Aufnahme (gleiches Recht wie „Aufnahme starten“)."
+        },
+        "transcribe_file": {
+          "title": "Datei transkribieren",
+          "description": "Transkribiert eine Audio- oder Videodatei und legt eine Besprechung an."
+        },
+        "create_session": {
+          "title": "Session anlegen",
+          "description": "Legt eine Session (Ordner für Aufnahmen) an."
+        },
+        "create_meeting": {
+          "title": "Besprechung anlegen",
+          "description": "Legt eine leere Besprechung an."
+        },
+        "tts_page_create": {
+          "title": "Vorlesen-Seite anlegen",
+          "description": "Legt eine Seite in der Vorlesen-Bibliothek an."
+        },
+        "tts_render_audio": {
+          "title": "Audio erzeugen",
+          "description": "Erzeugt aus einer Vorlesen-Seite eine Audiodatei."
+        }
+      }
+    },
     "modes": {
       "off": "Aus",
       "ask": "Fragen",
@@ -3666,7 +3754,6 @@
       "rightsHint": "Je Fähigkeit und Aufrufer: aus, fragen (du entscheidest jedes Mal) oder erlaubt. Du selbst brauchst in der App keine Freigabe.",
       "resetRights": "Auf Standard zurücksetzen",
       "clients": "Zugänge",
-      "clientsPlaceholder": "Zugänge für externe Agenten (je Programm ein Zugang mit eigenem Schlüssel und Rechten je Werkzeug) legst du hier an, sobald die Agentenbrücke eingerichtet ist.",
       "showAudit": "Protokoll anzeigen",
       "remove": "Entfernen",
       "removeConfirm": "„{{label}}“ samt Rechten entfernen? Das Protokoll bleibt.",
