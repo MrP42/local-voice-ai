@@ -15,6 +15,10 @@
 //!    nie zur Folie.
 //! 3. **Zusammenfassen** ([`group_by_hash`]): kehrt ein Vortrag zu einer Folie
 //!    zurueck, ist das ein weiteres Vorkommen DERSELBEN Folie, keine neue.
+//!    D2 ([`ocr`]): je Hash-Gruppe wird ein Bild gelesen (Windows-OCR); Folien mit
+//!    gleichem Text (Wort-Jaccard, [`SlideDetectConfig::text_jaccard`]) werden
+//!    trotz weit entferntem Hash zusammengefuehrt, Folien unter 3 Woertern sind
+//!    `ohne_text`. Ohne Texterkennung bleibt es beim Hash.
 //! 4. **Bilder** ([`ffmpeg::extract_frame`]) je Folie als Vollbild und Vorschau in
 //!    `<Besprechungsordner>/slides/`, danach die Zeile in `meeting_slides`
 //!    ([`store`]). Der Auftrag ([`run`]) ist die Job-Phase
@@ -41,6 +45,7 @@
 //! `KILL_ON_JOB_CLOSE`), und der Speicherwaechter der App betrifft nur Server.
 
 pub mod ffmpeg;
+pub mod ocr;
 pub mod run;
 pub mod store;
 #[cfg(test)]

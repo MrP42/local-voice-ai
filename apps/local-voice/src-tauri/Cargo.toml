@@ -199,6 +199,12 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Performance",
   # M5-P5a: DPAPI (CryptProtectData) fuer die Kalender-Geheimnisse.
   "Win32_Security_Cryptography",
+  # D2 (Folien-OCR): Windows.Media.Ocr, Bild dekodieren (BitmapDecoder), Datei/Strom.
+  "Media_Ocr",
+  "Globalization",
+  "Graphics_Imaging",
+  "Storage",
+  "Storage_Streams",
 ] }
 winreg = "0.55"
 # M6-P6b: PDF-Export ueber ein verstecktes WebView2-Fenster (PrintToPdf). Gleiche
