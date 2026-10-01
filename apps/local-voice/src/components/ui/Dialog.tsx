@@ -199,7 +199,13 @@ export const Dialog: React.FC<DialogProps> = ({
           {children}
         </div>
         {footer && (
-          <div className="flex shrink-0 justify-end gap-2 border-t border-mid-gray/20 px-4 py-3">
+          // flex-wrap: drei lange Knoepfe ("Abbrechen", "Sprache speichern", "Speichern und neu
+          // transkribieren") sind breiter als die 32 rem des Dialogs; ohne Umbruch ragte die
+          // Leiste nach links hinaus und "Abbrechen" war abgeschnitten (0.21.0).
+          <div
+            data-testid="dialog-footer"
+            className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-mid-gray/20 px-4 py-3"
+          >
             {footer}
           </div>
         )}

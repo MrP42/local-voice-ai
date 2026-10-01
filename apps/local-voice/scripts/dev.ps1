@@ -181,6 +181,15 @@ try {
                 }
                 Invoke-Step 'tauri build (Installer)' { npx tauri build @featureArgs @Rest }
             }
+            # Hotfix 0.21.1 (#73): ein Haupt-Thread mit nur 1 MiB Stack liess 0.21.0 beim
+            # Klick auf Uebersetzen/KI-Notizen abstuerzen. Die gebaute EXE muss die grosse
+            # Reserve haben (build.rs); sonst bricht der Lauf hier ab, nicht erst beim Nutzer.
+            $builtExe = Join-Path $TauriDir 'target\release\local-voice-ai.exe'
+            if (Test-Path -LiteralPath $builtExe) {
+                Invoke-Step 'Stack-Pruefung der EXE (check-exe-stack.mjs)' {
+                    node (Join-Path $PSScriptRoot 'check-exe-stack.mjs') $builtExe
+                }
+            }
         }
     }
 } finally {

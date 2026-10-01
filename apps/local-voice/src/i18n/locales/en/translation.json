@@ -3269,6 +3269,7 @@
         "translate_llm_failed": "The language model did not answer. No version was created. {{detail}}",
         "translate_rejected": "More than half of the sections were unusable. No version was created.",
         "translate_timeout": "The translation took too long.",
+        "job_thread_failed": "The job could not be started or stopped unexpectedly. No version was created. Please try again.",
         "no_provider": "No language model is set up.",
         "no_model": "No language model is selected."
       },
