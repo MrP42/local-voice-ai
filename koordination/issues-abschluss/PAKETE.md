@@ -34,3 +34,4 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | B3 | M5 | #67 Auslöser Ordner (Stabilität, Ledger, OneDrive) und YouTube-Kanal (RSS) + Aktion Import — lv-coder | AK5, AK11 Auslöser | in_arbeit | |
 | D5 | M7 | #69 Folien in Protokoll, KI-Notizen, Chat, Suche ([Folie n · mm:ss], Belege) — lv-coder-xhigh | cargo test minutes notes search slides | in_arbeit | |
 | B4 | M5 | #67 App-Aktionen (Notizen, Protokoll, Zusammenfassung, Export, TTS, Mitteilung, Warten) + Vorlage Eingangsordner → Word — lv-coder | AK6 | in_arbeit | |
+| A8 | M4 | #66 MCP schreibend (transcribe_file, tts, add_youtube_source, get_provenance, start/stop_recording mit Einwilligung), mcp_smoke --write, --audit-dump — lv-coder-xhigh | AK10, AK11 | in_arbeit | |
