@@ -134,6 +134,8 @@ interface AudioPlayerProps {
   /** Schmale Spalte: Transport, Lautstärke und Tempo oben, der Zeitstrahl
    *  darunter über die volle Breite (statt alles in einer Zeile). */
   compact?: boolean;
+  /** Meldet die Abspielposition (Sekunden) bei jeder Aenderung: Wiedergabe, Sprung, Ziehen. */
+  onTimeChange?: (seconds: number) => void;
 }
 
 interface AudioPlayerGroupContextValue {
@@ -175,11 +177,17 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   className = "",
   autoPlay = false,
   compact = false,
+  onTimeChange,
 }) => {
   const group = useContext(AudioPlayerGroupContext);
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const onTimeChangeRef = useRef(onTimeChange);
+  onTimeChangeRef.current = onTimeChange;
+  useEffect(() => {
+    onTimeChangeRef.current?.(currentTime);
+  }, [currentTime]);
   const [isDragging, setIsDragging] = useState(false);
   const [loadedSrc, setLoadedSrc] = useState<string | null>(initialSrc ?? null);
   const [isLoading, setIsLoading] = useState(false);
@@ -424,6 +432,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         }
         audio.currentTime = Math.max(0, seconds);
         setCurrentTime(audio.currentTime);
+        // Auch ein Sprung auf dieselbe Zeit (etwa 0:00) ist eine Meldung wert.
+        onTimeChangeRef.current?.(audio.currentTime);
         await audio.play();
       } catch (error) {
         console.error("Playback failed:", error);

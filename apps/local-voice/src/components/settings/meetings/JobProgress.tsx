@@ -262,10 +262,15 @@ export const JobPanel: React.FC<JobPanelProps> = ({
         {progress.total > 0 &&
           (countsAudio(progress) ? (
             <span data-testid="job-amount">
-              {t("meetings.progress.audioOf", {
-                done: formatClock(progress.done),
-                total: formatClock(progress.total),
-              })}
+              {t(
+                progress.phase === "slides"
+                  ? "meetings.progress.videoOf"
+                  : "meetings.progress.audioOf",
+                {
+                  done: formatClock(progress.done),
+                  total: formatClock(progress.total),
+                },
+              )}
             </span>
           ) : (
             <span data-testid="job-amount">
@@ -315,9 +320,11 @@ export const JobPanel: React.FC<JobPanelProps> = ({
         }
       >
         <p className="text-sm text-text/80">
-          {generating
-            ? t("meetings.progress.stopBodyGenerate")
-            : t("meetings.progress.stopBody")}
+          {progress.phase === "slides"
+            ? t("meetings.progress.stopBodySlides")
+            : generating
+              ? t("meetings.progress.stopBodyGenerate")
+              : t("meetings.progress.stopBody")}
         </p>
       </Dialog>
     </div>

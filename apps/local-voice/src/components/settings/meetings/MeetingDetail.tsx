@@ -2,6 +2,7 @@ import React, {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -59,6 +60,14 @@ import {
   type NotesTab,
 } from "@/lib/meetingTabs";
 import { mergeSegments } from "@/lib/meetingSegments";
+import {
+  canDetectSlides,
+  marksBySegment,
+  slideAt,
+  slideMarks,
+  slidesErrorKey,
+  visibleSlides,
+} from "@/lib/meetingSlides";
 import { FollowupDialog } from "./FollowupDialog";
 import { MeetingExportDialog } from "./MeetingExportDialog";
 import { PeopleDialog } from "./people/PeopleDialog";
@@ -70,6 +79,11 @@ import { usePersistentState } from "@/hooks/usePersistentState";
 import { JobPanel } from "./JobProgress";
 import { QueuePanel } from "./QueueStatus";
 import { audioTranscriptPlayer } from "./transcriptPlayer";
+import { SlideMarkRow } from "./slides/SlideMark";
+import { SlideViewer } from "./slides/SlideViewer";
+import { SlidesPanel } from "./slides/SlidesPanel";
+import { startSlideDetection } from "./slides/useSlidesBackground";
+import { useMeetingSlides } from "./slides/useMeetingSlides";
 import { useYoutubeSource } from "./youtube/useYoutubeSource";
 import { CompareView } from "./variants/CompareView";
 import { ProvenanceArea } from "./variants/ProvenanceArea";
@@ -222,9 +236,30 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       .map((v) => `${v.id}:${v.active ? 1 : 0}:${v.language ?? ""}`)
       .join(",")}`,
   );
+  // D4: Folien aus dem Video; der Reiter erscheint, sobald es welche gibt. Ein
+  // Lauf, den der Nutzer hier gestartet hat, holt den Reiter nach vorn.
+  const slidesStartedHere = useRef(false);
+  const slidesState = useMeetingSlides(meetingId, (event, list) => {
+    if (
+      slidesStartedHere.current &&
+      event.kind === "done" &&
+      visibleSlides(list).length > 0
+    ) {
+      setCenterTab("slides");
+    }
+    slidesStartedHere.current = false;
+  });
+  const { slides } = slidesState;
+  const [slideViewerId, setSlideViewerId] = useState<string | null>(null);
+  const [activeSlideId, setActiveSlideId] = useState<string | null>(null);
+  const slidesRef = useRef(slides);
+  slidesRef.current = slides;
   const centerTabs = [
     { id: "transcript" as const, label: t("meetings.detail.transcriptTab") },
     { id: "minutes" as const, label: t("meetings.detail.minutesTab") },
+    ...(slides.length > 0
+      ? [{ id: "slides" as const, label: t("meetings.slides.tab") }]
+      : []),
     ...(variants.length >= 2
       ? [{ id: "compare" as const, label: t("meetings.variants.compareTab") }]
       : []),
@@ -234,6 +269,15 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     if (centerTab === "compare" && variants.length < 2)
       setCenterTab("transcript");
   }, [centerTab, variants.length, setCenterTab]);
+  // Ohne Folien (nach dem Laden) gibt es den Reiter nicht.
+  useEffect(() => {
+    if (centerTab === "slides" && slidesState.loaded && slides.length === 0)
+      setCenterTab("transcript");
+  }, [centerTab, slidesState.loaded, slides.length, setCenterTab]);
+  useEffect(() => {
+    setSlideViewerId(null);
+    setActiveSlideId(null);
+  }, [meetingId]);
   const [segments, setSegments] = useState<StoredSegment[]>([]);
   // M3-P3c: Sprecher (Namen, Anteile), Epoche der Segmentnummern und Hinweise
   // zur Sprechertrennung (`metadata_json.diarize`).
@@ -269,7 +313,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     (jobProgress !== undefined &&
       jobProgress.phase !== "notes" &&
       jobProgress.phase !== "minutes" &&
-      jobProgress.phase !== "translation");
+      jobProgress.phase !== "translation" &&
+      jobProgress.phase !== "slides");
   // Das Transkript waechst gerade: Aufnahme oder Verarbeitung.
   const growing = live || transcribing;
   // Automatisch mitscrollen: Schalter (gemerkt) und "folgt gerade". Blaettert
@@ -302,6 +347,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const player =
     youtube.player ??
     audioTranscriptPlayer(micPlayerRef, systemPlayerRef, hasAudio);
+  // D4: die aktuelle Folie folgt der Abspielzeit des Audios; der Zustand springt
+  // nur bei einem Folienwechsel um, nicht bei jedem Zeitschritt.
+  const onPlayTime = useCallback((seconds: number) => {
+    const id = slideAt(slidesRef.current, seconds * 1000);
+    setActiveSlideId((prev) => (prev === id ? prev : id));
+  }, []);
+  const slideMarksBySegment = useMemo(
+    () => marksBySegment(segments, slideMarks(slides)),
+    [segments, slides],
+  );
 
   /**
    * Quelle einer KI-Notiz: das Segment im Transkript (Mitte) markieren und
@@ -874,6 +929,29 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     }
   };
 
+  /** D4: Folienerkennung starten; Fortschritt, Pause und Stopp zeigt die Auftragsleiste. */
+  const detectSlides = async () => {
+    slidesStartedHere.current = true;
+    const result = await startSlideDetection(meetingId);
+    if (result.status === "error") {
+      slidesStartedHere.current = false;
+      toast.error(t(slidesErrorKey(result.error)));
+    }
+  };
+
+  /** D4: Klick auf eine Folie oder Marke: im Audio an die Stelle springen. */
+  const seekSlide = (ms: number) => {
+    if (player.canSeek) player.seek(ms);
+  };
+  const hideSlide = async (slideId: string, hidden: boolean) => {
+    const error = await slidesState.setHidden(slideId, hidden);
+    if (error) toast.error(t(slidesErrorKey(error)));
+  };
+  // Die Grossansicht blaettert durch die sichtbaren Folien (und die gezeigte).
+  const viewerSlides = slides
+    .filter((s) => !s.hidden || s.id === slideViewerId)
+    .sort((a, b) => a.number - b.number);
+
   /** Symbolzeile (Bedienspalte) oder Menue im Kopf (schmal: mit allen Aktionen). */
   const actions = (mode: "toolbar" | "menu" | "menu-all") => (
     <MeetingActions
@@ -881,6 +959,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       hasSegments={segments.length > 0}
       hasSpeakers={speakers.length > 0}
       hasAudio={hasAudio}
+      canDetectSlides={canDetectSlides(meeting)}
+      onDetectSlides={() => void detectSlides()}
       busy={
         live ||
         meeting.status === "processing" ||
@@ -1045,107 +1125,118 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             className="min-h-0 flex-1 space-y-2 overflow-y-auto"
           >
             {segments.map((segment) => (
-              <div
-                key={segment.segment_index}
-                data-segment-index={segment.segment_index}
-                data-highlighted={
-                  highlightIndex === segment.segment_index ? "true" : undefined
-                }
-                className={`flex gap-2 items-start text-sm group rounded-md px-1 -mx-1 transition-colors ${
-                  highlightIndex === segment.segment_index
-                    ? "bg-logo-primary/25 ring-1 ring-logo-primary/50"
-                    : ""
-                }`}
-              >
-                {player.canSeek ? (
-                  <button
-                    type="button"
-                    data-act="seek"
-                    data-seek-ms={segment.start_ms}
-                    onClick={() =>
-                      player.seek(segment.start_ms, segment.channel)
-                    }
-                    title={t("meetings.detail.playFrom")}
-                    className="text-xs text-text/60 w-10 shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer"
-                  >
-                    {formatMmSs(segment.start_ms)}
-                  </button>
-                ) : (
-                  <span className="text-xs text-text/60 w-10 shrink-0 pt-0.5">
-                    {formatMmSs(segment.start_ms)}
-                  </span>
-                )}
-                {showChannels && (
-                  <span
-                    className={`text-xs text-text/50 shrink-0 pt-0.5 truncate ${
-                      hasSpeakers ? "w-24" : "w-16"
-                    }`}
-                    title={whoLabel(segment)}
-                  >
-                    {speakerOf(segment) ? (
-                      <SpeakerPopover
-                        meetingId={meetingId}
-                        segment={segment}
-                        speaker={speakerOf(segment)!}
-                        speakers={speakers}
-                        epoch={segmentEpoch}
-                        onChanged={onSpeakersChanged}
-                        suggestion={nameHints.forSpeaker(
-                          segment.channel,
-                          segment.speaker_index!,
-                        )}
-                        onDismissSuggestion={(s) => void nameHints.dismiss(s)}
-                        className="max-w-full"
+              <React.Fragment key={segment.segment_index}>
+                {slideMarksBySegment.get(segment.segment_index)?.map((mark) => (
+                  <SlideMarkRow
+                    key={`${mark.slideId}-${mark.startMs}`}
+                    mark={mark}
+                    active={mark.slideId === activeSlideId}
+                    onOpen={setSlideViewerId}
+                  />
+                ))}
+                <div
+                  data-segment-index={segment.segment_index}
+                  data-highlighted={
+                    highlightIndex === segment.segment_index
+                      ? "true"
+                      : undefined
+                  }
+                  className={`flex gap-2 items-start text-sm group rounded-md px-1 -mx-1 transition-colors ${
+                    highlightIndex === segment.segment_index
+                      ? "bg-logo-primary/25 ring-1 ring-logo-primary/50"
+                      : ""
+                  }`}
+                >
+                  {player.canSeek ? (
+                    <button
+                      type="button"
+                      data-act="seek"
+                      data-seek-ms={segment.start_ms}
+                      onClick={() =>
+                        player.seek(segment.start_ms, segment.channel)
+                      }
+                      title={t("meetings.detail.playFrom")}
+                      className="text-xs text-text/60 w-10 shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer"
+                    >
+                      {formatMmSs(segment.start_ms)}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-text/60 w-10 shrink-0 pt-0.5">
+                      {formatMmSs(segment.start_ms)}
+                    </span>
+                  )}
+                  {showChannels && (
+                    <span
+                      className={`text-xs text-text/50 shrink-0 pt-0.5 truncate ${
+                        hasSpeakers ? "w-24" : "w-16"
+                      }`}
+                      title={whoLabel(segment)}
+                    >
+                      {speakerOf(segment) ? (
+                        <SpeakerPopover
+                          meetingId={meetingId}
+                          segment={segment}
+                          speaker={speakerOf(segment)!}
+                          speakers={speakers}
+                          epoch={segmentEpoch}
+                          onChanged={onSpeakersChanged}
+                          suggestion={nameHints.forSpeaker(
+                            segment.channel,
+                            segment.speaker_index!,
+                          )}
+                          onDismissSuggestion={(s) => void nameHints.dismiss(s)}
+                          className="max-w-full"
+                        />
+                      ) : (
+                        channelLabel(segment.channel)
+                      )}
+                    </span>
+                  )}
+                  {editingIndex === segment.segment_index ? (
+                    <div className="flex-1 space-y-1">
+                      <Textarea
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        rows={2}
+                        className="w-full"
+                        autoFocus
                       />
-                    ) : (
-                      channelLabel(segment.channel)
-                    )}
-                  </span>
-                )}
-                {editingIndex === segment.segment_index ? (
-                  <div className="flex-1 space-y-1">
-                    <Textarea
-                      value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
-                      rows={2}
-                      className="w-full"
-                      autoFocus
-                    />
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => saveEdit(segment.segment_index)}
-                        disabled={saving}
-                      >
-                        {t("meetings.detail.save")}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={cancelEdit}
-                      >
-                        {t("meetings.detail.cancel")}
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => saveEdit(segment.segment_index)}
+                          disabled={saving}
+                        >
+                          {t("meetings.detail.save")}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={cancelEdit}
+                        >
+                          {t("meetings.detail.cancel")}
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-text/90 break-words flex-1">
-                      {segment.text}
-                    </p>
-                    {!live && (
-                      <button
-                        type="button"
-                        onClick={() => startEdit(segment)}
-                        title={t("meetings.detail.editSegment")}
-                        className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-text/50 hover:text-logo-primary cursor-pointer shrink-0"
-                      >
-                        <Pencil width={14} height={14} />
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
+                  ) : (
+                    <>
+                      <p className="text-text/90 break-words flex-1">
+                        {segment.text}
+                      </p>
+                      {!live && (
+                        <button
+                          type="button"
+                          onClick={() => startEdit(segment)}
+                          title={t("meetings.detail.editSegment")}
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-text/50 hover:text-logo-primary cursor-pointer shrink-0"
+                        >
+                          <Pencil width={14} height={14} />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </React.Fragment>
             ))}
           </div>
           {growing && !following && (
@@ -1279,7 +1370,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         </div>
       )}
 
-      {centerTab !== "minutes" && variantRow}
+      {centerTab !== "minutes" && centerTab !== "slides" && variantRow}
 
       {/* Das Transkript bleibt eingehaengt und wird nur verborgen: ein
           Live-Transkript sammelt Saetze, die Liste behaelt ihre Stelle. */}
@@ -1307,6 +1398,23 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           >
             <MinutesView meetingId={meetingId} meetingTitle={meetingTitle} />
           </ProvenanceArea>
+        </div>
+      )}
+      {centerTab === "slides" && (
+        <div
+          role="tabpanel"
+          data-testid="mid-panel-slides"
+          className="flex min-h-[5rem] min-w-0 flex-1 flex-col"
+        >
+          <SlidesPanel
+            slides={slides}
+            imageUrl={slidesState.imageUrl}
+            activeId={activeSlideId}
+            canSeek={player.canSeek}
+            onSeek={seekSlide}
+            onHide={(id, hidden) => void hideSlide(id, hidden)}
+            onOpen={setSlideViewerId}
+          />
         </div>
       )}
       {centerTab === "compare" && (
@@ -1369,6 +1477,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
               <AudioPlayer
                 compact
                 controlRef={micPlayerRef}
+                onTimeChange={onPlayTime}
                 src={convertFileSrc(meeting.mic_audio_path, "asset")}
                 className="w-full"
               />
@@ -1410,6 +1519,17 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       {slots.content && createPortal(contentPart, slots.content)}
       {slots.controls && createPortal(controlsPart, slots.controls)}
       {slots.notes && createPortal(notesPart, slots.notes)}
+      <SlideViewer
+        slides={viewerSlides}
+        total={slides.length}
+        slideId={slideViewerId}
+        imageUrl={slidesState.imageUrl}
+        canSeek={player.canSeek}
+        onClose={() => setSlideViewerId(null)}
+        onNavigate={setSlideViewerId}
+        onSeek={seekSlide}
+        onHide={(id, hidden) => void hideSlide(id, hidden)}
+      />
       <MeetingExportDialog
         open={exportOpen}
         onOpenChange={setExportOpen}

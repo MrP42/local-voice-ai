@@ -86,11 +86,15 @@ export const isIndeterminate = (p: JobProgress) =>
   p.phase === "prepare" ||
   (p.phase === "speakers" && p.done === 0);
 
-/** Zaehlt `done`/`total` Millisekunden Audio (sonst Schritte oder Bloecke)? */
+/**
+ * Zaehlt `done`/`total` Millisekunden Audio (sonst Schritte oder Bloecke)? Die
+ * Folienerkennung zaehlt Millisekunden Position im Video, die Anzeige ist dieselbe.
+ */
 export const countsAudio = (p: Pick<JobProgress, "phase">) =>
   p.phase === "transcription" ||
   p.phase === "final_pass" ||
-  p.phase === "speakers";
+  p.phase === "speakers" ||
+  p.phase === "slides";
 
 /** Steht die Zeit? (Pause haelt Laufzeit und Restdauer an.) */
 const clockStopped = (p: JobProgress) => p.state === "paused";
