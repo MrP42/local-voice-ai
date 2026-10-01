@@ -3808,6 +3808,66 @@
       "backfill": {
         "label": "Beim ersten Abruf nachholen",
         "hint": "Anzahl der neuesten Videos; 0: nur künftige."
+      },
+      "key": {
+        "label": "Schlüssel der Notiz",
+        "hint": "Eine Kennung je Notiz, z. B. video-<ID>: dieselbe Kennung ergibt nie eine zweite Notiz."
+      },
+      "date": {
+        "label": "Datum",
+        "hint": "JJJJ-MM-TT; Vorgabe: Veröffentlichung des Videos."
+      },
+      "entry": {
+        "label": "Eintrag (Sammelnotiz)",
+        "hint": "Z. B. die Video-Kennung: derselbe Eintrag wird ersetzt, ein neuer kommt oben dazu."
+      },
+      "source_title": {
+        "label": "Titel der Quelle"
+      },
+      "source_url": {
+        "label": "Link der Quelle"
+      },
+      "origin": {
+        "label": "Herkunft",
+        "hint": "Ablauf, Lauf und Modell: ein Satz am Ende des Eintrags."
+      },
+      "tags": {
+        "label": "Tags"
+      },
+      "meta": {
+        "label": "Weitere Felder im Frontmatter",
+        "hint": "Objekt aus Namen und Werten, z. B. video_id oder relevanz."
+      },
+      "data_class": {
+        "label": "Datenklasse"
+      },
+      "auto": {
+        "label": "Ohne Freigabe ergänzen",
+        "hint": "Eine vorhandene Notiz auch ohne Freigabe ergänzen, wenn das Recht „erlaubt“ ist. Ohne diese Angabe fragt jede Änderung."
+      },
+      "vault": {
+        "label": "Vault (zusätzlich durchsuchen)",
+        "hint": "Findet auch Notizen, die der Index der Wissensbasis noch nicht kennt."
+      },
+      "threshold": {
+        "label": "Schwelle für „relevant“",
+        "hint": "1 bis 10; Vorgabe 6."
+      },
+      "max_claims": {
+        "label": "Höchstens Aussagen"
+      },
+      "claims": {
+        "label": "Aussagen",
+        "hint": "Ergebnis von „Mit der Wissensbasis abgleichen“ (steps.<id>.claims)."
+      },
+      "score": {
+        "label": "Relevanz (Zahl)"
+      },
+      "reason": {
+        "label": "Begründung"
+      },
+      "published": {
+        "label": "Veröffentlicht"
       }
     },
     "choices": {

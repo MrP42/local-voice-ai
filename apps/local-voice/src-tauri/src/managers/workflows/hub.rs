@@ -55,6 +55,7 @@ use super::consent;
 use super::engine::{Clock, Engine, EngineConfig, EngineHandle, EngineObserver, SystemClock};
 use super::import_app;
 use super::integration_actions;
+use super::knowledge; // B6
 use super::recording::{
     self, CurrentRecording, RecordingControl, StartRequest, StartedRecording, StopSchedule,
 };
@@ -218,7 +219,8 @@ impl WorkflowHub {
         let services = Arc::new(AppServicesImpl::new(app));
         app_actions::install(&engine, services.clone());
         integration_actions::install(&engine, services.clone());
-        agent_actions::install(&engine, services); // C2
+        agent_actions::install(&engine, services.clone()); // C2
+        knowledge::install(&engine, services); // B6
         engine.set_observer(Arc::new(PromptObserver { app: app.clone() }));
         let handle = engine.spawn();
         register_meeting_listeners(app);

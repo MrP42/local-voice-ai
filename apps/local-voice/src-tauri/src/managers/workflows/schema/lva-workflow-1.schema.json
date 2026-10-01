@@ -828,16 +828,19 @@
               "params": {
                 "additionalProperties": false,
                 "properties": {
+                  "auto": {
+                    "type": "boolean"
+                  },
                   "content": {
                     "maxLength": 4000,
                     "type": "string"
                   },
-                  "mode": {
+                  "data_class": {
                     "anyOf": [
                       {
                         "enum": [
-                          "create",
-                          "append"
+                          "internal",
+                          "confidential"
                         ]
                       },
                       {
@@ -846,11 +849,55 @@
                       }
                     ]
                   },
-                  "path": {
+                  "date": {
                     "maxLength": 4000,
                     "type": "string"
                   },
-                  "section": {
+                  "entry": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "folder": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "key": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "meta": {},
+                  "name": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "origin": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "source_title": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "source_url": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "tags": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 100,
+                        "type": "array"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "title": {
                     "maxLength": 4000,
                     "type": "string"
                   },
@@ -869,7 +916,8 @@
                 },
                 "required": [
                   "via",
-                  "path",
+                  "key",
+                  "title",
                   "content"
                 ],
                 "type": "object"
@@ -1019,10 +1067,24 @@
                   "source": {
                     "maxLength": 4000,
                     "type": "string"
+                  },
+                  "threshold": {
+                    "anyOf": [
+                      {
+                        "maximum": 10,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
                   }
                 },
                 "required": [
-                  "source"
+                  "source",
+                  "profile"
                 ],
                 "type": "object"
               },
@@ -1077,13 +1139,51 @@
               "params": {
                 "additionalProperties": false,
                 "properties": {
-                  "folder": {
-                    "maxLength": 4000,
-                    "type": "string"
+                  "limit": {
+                    "anyOf": [
+                      {
+                        "maximum": 10,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "max_claims": {
+                    "anyOf": [
+                      {
+                        "maximum": 20,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
                   },
                   "source": {
                     "maxLength": 4000,
                     "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "vault": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
                   },
                   "via": {
                     "anyOf": [
@@ -1163,26 +1263,35 @@
                     "maxLength": 4000,
                     "type": "string"
                   },
+                  "claims": {},
+                  "published": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "reason": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "score": {},
                   "source": {
                     "maxLength": 4000,
                     "type": "string"
                   },
-                  "via": {
-                    "anyOf": [
-                      {
-                        "pattern": "^[A-Za-z0-9_-]{1,40}$",
-                        "type": "string"
-                      },
-                      {
-                        "pattern": "\\{\\{",
-                        "type": "string"
-                      }
-                    ]
+                  "title": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "url": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "video_id": {
+                    "maxLength": 4000,
+                    "type": "string"
                   }
                 },
                 "required": [
-                  "via",
-                  "channel"
+                  "source"
                 ],
                 "type": "object"
               },

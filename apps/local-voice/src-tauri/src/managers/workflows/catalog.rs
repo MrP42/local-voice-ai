@@ -502,20 +502,48 @@ static ACTIONS: &[ActionSpec] = &[
     ActionSpec {
         id: "obsidian.note",
         title: "Obsidian-Notiz schreiben",
-        effect_text: "Notiz {{p.path}} in {{p.via}} schreiben",
+        effect_text: "Notiz „{{p.title}}“ in {{p.via}} schreiben (je Schlüssel eine Notiz, nie doppelt; eine vorhandene nur nach Freigabe ändern)",
         fields: &[
             field("via", FieldKind::Id, true),
-            field("path", FieldKind::Text, true),
+            // Stabiler Schluessel der Notiz (steht als `lva_id` im Frontmatter): dieselbe Kennung ergibt
+            // nie eine zweite Notiz, z. B. `video-<ID>`.
+            field("key", FieldKind::Text, true),
+            field("title", FieldKind::Text, true),
+            // Markdown des Textes; die App schreibt ihn zwischen ihre Marken, nie darueber hinaus.
             field("content", FieldKind::Text, true),
-            field("mode", FieldKind::Choice(&["create", "append"]), false),
-            field("section", FieldKind::Text, false),
+            // Dateiname ohne `.md` (Vorgabe: Datum und Titel) und Unterordner im Vault (Vorgabe: der der
+            // Integration, meist `00_inbox`).
+            field("name", FieldKind::Text, false),
+            field("folder", FieldKind::Text, false),
+            // JJJJ-MM-TT (Vorgabe: Datum der Veroeffentlichung des Ausloesers).
+            field("date", FieldKind::Text, false),
+            // Sammelnotiz: `entry` nennt den Eintrag (z. B. die Video-ID); derselbe Eintrag wird ersetzt,
+            // ein neuer kommt oben dazu.
+            field("entry", FieldKind::Text, false),
+            field("source_title", FieldKind::Text, false),
+            field("source_url", FieldKind::Text, false),
+            // Herkunft (Ablauf, Lauf, Modell) als ein Satz am Ende des Eintrags.
+            field("origin", FieldKind::Text, false),
+            field("tags", FieldKind::TextList, false),
+            // Weitere Felder im Frontmatter (`video_id`, `relevanz`, ...): Objekt aus Namen und Werten.
+            field("meta", FieldKind::Any, false),
+            field(
+                "data_class",
+                FieldKind::Choice(&["internal", "confidential"]),
+                false,
+            ),
+            // `true`: eine vorhandene Notiz auch ohne Freigabe ergaenzen, wenn das Recht „erlaubt“ ist
+            // (je Ablauf aenderbar; ohne diese Angabe verlangt jede Aenderung eine Freigabe).
+            literal("auto", FieldKind::Bool, false),
         ],
-        effect: EffectKind::External,
+        // Gleicher Schluessel und gleicher Inhalt ergeben dieselbe Datei: eine Wiederholung ist ein
+        // Nichtstun, auch nach einem Absturz mitten im Schreiben (atomar ersetzt).
+        effect: EffectKind::Idempotent,
         heavy: None,
         needs: NeedsSpec::Cap {
             capability: Capability::VaultWrite,
             via: "via",
-            target: Some("path"),
+            target: Some("title"),
         },
     },
     ActionSpec {
@@ -538,49 +566,70 @@ static ACTIONS: &[ActionSpec] = &[
     ActionSpec {
         id: "knowledge.rate",
         title: "Relevanz bewerten",
-        effect_text: "Relevanz des Inhalts nach dem Themenprofil bewerten",
+        effect_text: "Relevanz des Inhalts nach dem Themenprofil bewerten (0 bis 10, mit Begründung)",
         fields: &[
+            // `transcript` (der Besprechung des Laufs) oder ein Text, meist `{{steps.<id>.text}}`.
             field("source", FieldKind::Text, true),
-            field("profile", FieldKind::Text, false),
+            // Das Themenprofil: Themen und Ausschluesse als Text (der Nutzer pflegt ihn).
+            field("profile", FieldKind::Text, true),
+            // Ab dieser Zahl gilt der Inhalt als relevant (Vorgabe 6).
+            field("threshold", FieldKind::Int { min: 1, max: 10 }, false),
         ],
-        effect: EffectKind::Idempotent,
+        // Liest nur: das Ergebnis steht im Laufprotokoll, beliebig wiederholbar.
+        effect: EffectKind::Pure,
         heavy: Some(LLM),
         needs: NeedsSpec::None,
     },
     ActionSpec {
         id: "knowledge.reconcile",
         title: "Mit der Wissensbasis abgleichen",
-        effect_text: "Aussagen mit {{p.via}} abgleichen (neu / vorhanden / ergänzt / widerspricht) und Ergänzungen schreiben",
+        effect_text: "Aussagen mit der Wissensbasis {{p.via}} abgleichen (neu / vorhanden / ergänzt / widerspricht); schreibt nichts",
         fields: &[
+            // Die Wissensbasis (Integration der Art `wissen`, MCP `wissen_suchen`).
             field("via", FieldKind::Id, true),
+            // Zusaetzlich der Vault (Integration der Art `obsidian`): findet auch Notizen, die der Index der
+            // Wissensbasis noch nicht kennt.
+            field("vault", FieldKind::Id, false),
+            // `transcript` (der Besprechung des Laufs) oder ein Text, meist `{{steps.<id>.text}}`.
             field("source", FieldKind::Text, true),
-            field("folder", FieldKind::Text, false),
+            // Notizen zu diesem Video zaehlen nicht als „vorhanden“.
             field("video_id", FieldKind::Text, false),
+            field("title", FieldKind::Text, false),
+            field("max_claims", FieldKind::Int { min: 1, max: 20 }, false),
+            field("limit", FieldKind::Int { min: 1, max: 10 }, false),
         ],
-        effect: EffectKind::External,
+        // Liest nur (Suche und Modell); die Notiz schreibt `obsidian.note` mit eigenem Recht.
+        effect: EffectKind::Pure,
         heavy: Some(LLM),
         needs: NeedsSpec::Cap {
-            capability: Capability::VaultWrite,
+            capability: Capability::KnowledgeSearch,
             via: "via",
-            target: Some("folder"),
+            target: Some("video_id"),
         },
     },
     ActionSpec {
         id: "channel.report",
         title: "Kanal-Management-Summary",
-        effect_text: "Management-Summary zum Kanal {{p.channel}} in {{p.via}} ablegen",
+        effect_text: "Management-Summary zum Video „{{p.title}}“ erzeugen (Neuigkeiten, Erkenntnisse, Handlungsempfehlungen, Quellen)",
         fields: &[
-            field("via", FieldKind::Id, true),
-            field("channel", FieldKind::Text, true),
-            field("source", FieldKind::Text, false),
+            // Die Zusammenfassung des Videos (`{{steps.<id>.text}}`).
+            field("source", FieldKind::Text, true),
+            // Aussagen und Einordnung aus `knowledge.reconcile` (`{{steps.<id>.claims}}`).
+            field("claims", FieldKind::Any, false),
+            // Ergebnis von `knowledge.rate` (`{{steps.<id>.score}}`) und seine Begruendung.
+            field("score", FieldKind::Any, false),
+            field("reason", FieldKind::Text, false),
+            // Vorgabe: die Angaben des Ausloesers (`trigger.*`).
+            field("title", FieldKind::Text, false),
+            field("video_id", FieldKind::Text, false),
+            field("url", FieldKind::Text, false),
+            field("published", FieldKind::Text, false),
+            field("channel", FieldKind::Text, false),
         ],
-        effect: EffectKind::External,
+        // Erzeugt nur Text; geschrieben wird er von `obsidian.note` mit eigenem Recht.
+        effect: EffectKind::Pure,
         heavy: Some(LLM),
-        needs: NeedsSpec::Cap {
-            capability: Capability::VaultWrite,
-            via: "via",
-            target: Some("channel"),
-        },
+        needs: NeedsSpec::None,
     },
     ActionSpec {
         id: "youtube.add_source",
@@ -603,13 +652,15 @@ static ACTIONS: &[ActionSpec] = &[
     ActionSpec {
         id: "youtube.transcript",
         title: "YouTube-Transkript holen",
-        effect_text: "Transkript des Videos {{p.video}} über {{p.via}} holen",
+        effect_text: "Untertitel des Videos {{p.video}} über {{p.via}} als Transkript holen",
         fields: &[
             field("via", FieldKind::Id, true),
             field("video", FieldKind::Text, true),
         ],
         effect: EffectKind::Idempotent,
-        heavy: Some(STT),
+        // Untertitel sind klein (ein Aufruf des selbst installierten yt-dlp, im Job-Objekt): kein Platz am
+        // Tor fuer schwere Schritte, keine Wartezeit hinter einer Aufnahme.
+        heavy: None,
         needs: NeedsSpec::Cap {
             capability: Capability::MediaFetch,
             via: "via",

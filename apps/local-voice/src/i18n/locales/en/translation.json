@@ -3808,6 +3808,66 @@
       "backfill": {
         "label": "Catch up on first check",
         "hint": "Number of newest videos; 0: only future ones."
+      },
+      "key": {
+        "label": "Note key",
+        "hint": "One identifier per note, e.g. video-<ID>: the same key never produces a second note."
+      },
+      "date": {
+        "label": "Date",
+        "hint": "YYYY-MM-DD; default: publication date of the video."
+      },
+      "entry": {
+        "label": "Entry (collection note)",
+        "hint": "E.g. the video identifier: the same entry is replaced, a new one is added on top."
+      },
+      "source_title": {
+        "label": "Source title"
+      },
+      "source_url": {
+        "label": "Source link"
+      },
+      "origin": {
+        "label": "Origin",
+        "hint": "Workflow, run and model: one sentence at the end of the entry."
+      },
+      "tags": {
+        "label": "Tags"
+      },
+      "meta": {
+        "label": "Further frontmatter fields",
+        "hint": "Object of names and values, e.g. video_id or relevanz."
+      },
+      "data_class": {
+        "label": "Data class"
+      },
+      "auto": {
+        "label": "Add without approval",
+        "hint": "Also add to an existing note without approval when the right is “allowed”. Without this, every change asks."
+      },
+      "vault": {
+        "label": "Vault (also search)",
+        "hint": "Also finds notes the knowledge base index does not know yet."
+      },
+      "threshold": {
+        "label": "Threshold for “relevant”",
+        "hint": "1 to 10; default 6."
+      },
+      "max_claims": {
+        "label": "Maximum claims"
+      },
+      "claims": {
+        "label": "Claims",
+        "hint": "Result of “Compare with the knowledge base” (steps.<id>.claims)."
+      },
+      "score": {
+        "label": "Relevance (number)"
+      },
+      "reason": {
+        "label": "Reason"
+      },
+      "published": {
+        "label": "Published"
       }
     },
     "choices": {

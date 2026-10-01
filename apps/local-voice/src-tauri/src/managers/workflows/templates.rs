@@ -10,6 +10,7 @@ pub fn all() -> Vec<(&'static str, &'static str)> {
         ("vorlage-besprechung", MEETING_SAMPLE),
         ("eingangsordner-word", FOLDER_TO_WORD),
         ("termin-protokoll-mail", TERMIN_MAIL),
+        ("kanal-wissen", KANAL_WISSEN),
     ]
 }
 
@@ -27,3 +28,12 @@ pub const FOLDER_TO_WORD: &str = include_str!("templates/eingangsordner-word.jso
 /// `empfaenger` (`ich` oder `alle`) legt je Kalender fest, wer die Mail bekommt (zwei Ablaeufe aus
 /// derselben Vorlage: Kalender A mit `ich`, Kalender B mit `alle`).
 pub const TERMIN_MAIL: &str = include_str!("templates/termin-protokoll-mail.json");
+
+/// Neues Video im YouTube-Kanal -> Untertitel -> Zusammenfassung -> Relevanz -> Abgleich mit
+/// Wissensbasis und Vault -> Notiz zum Video und Eintrag in der Management-Summary des Kanals (B6,
+/// AK11). Die Kennungen `wissen-1` (Wissensbasis) und `vault-1` (Obsidian-Vault) sowie die Kanal-Kennung
+/// `UCxxxxxxxxxxxxxxxxxxxxxx` sind Platzhalter, die der Editor waehlen laesst; `youtube` ist die feste
+/// Kennung der YouTube-Integration (Schritt „Untertitel holen“); `app-automation` ist der Traeger der
+/// Rechte der App-Bausteine (B2, Schritt „Video als Quelle anlegen“). Die Variable `profil` ist das
+/// Themenprofil (R10), `schwelle` die Grenze der Relevanz.
+pub const KANAL_WISSEN: &str = include_str!("templates/kanal-wissen.json");

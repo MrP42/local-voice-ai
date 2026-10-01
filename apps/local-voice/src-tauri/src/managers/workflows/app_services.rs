@@ -28,8 +28,9 @@ use crate::summarizer::SummaryOptions;
 
 use super::app_actions::{
     classify_generation_error, finish_generation, run_cancellable, AppServices, GenRequest,
-    ServiceError,
+    ServiceError, SubtitleOutcome,
 };
+use super::knowledge::transcript::service_error_of_youtube;
 use super::toast;
 
 pub struct AppServicesImpl {
@@ -196,5 +197,48 @@ impl AppServices for AppServicesImpl {
         slot: &str,
     ) -> Result<Option<zeroize::Zeroizing<String>>, String> {
         secrets::get_text(integration, slot)
+    }
+
+    fn youtube_subtitles(
+        &self,
+        meeting_id: &str,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<SubtitleOutcome, ServiceError> {
+        use crate::managers::meetings::search::indexer::{self, IndexJob};
+        use crate::managers::youtube::{tool, variants as yt_variants};
+        let store = self.store()?;
+        let settings = crate::settings::get_settings(&self.app);
+        let private = settings.meeting_youtube_private;
+        // Der Arbeiter der Engine ist ein eigener Thread: blockieren (Kindprozess im Job-Objekt) ist erlaubt.
+        let status = tool::detect(settings.meeting_youtube_tool_path.as_deref());
+        let tracks = yt_variants::tracks(&store, meeting_id, private, &status, Some(cancel), None)
+            .map_err(|e| service_error_of_youtube(&e))?;
+        let track = tracks
+            .iter()
+            .find(|t| t.recommended)
+            .or_else(|| tracks.first())
+            .ok_or_else(|| {
+                ServiceError::Permanent(
+                    crate::managers::youtube::YoutubeError::NoSubtitles.to_string(),
+                )
+            })?;
+        let variant_id = yt_variants::fetch_subtitles(
+            &store,
+            meeting_id,
+            private,
+            &status,
+            track,
+            Some(cancel),
+            None,
+        )
+        .map_err(|e| service_error_of_youtube(&e))?;
+        indexer::submit(&self.app, IndexJob::Meeting(meeting_id.to_string()));
+        let segments = store.get_segments(meeting_id).map(|s| s.len()).unwrap_or(0);
+        Ok(SubtitleOutcome {
+            variant_id,
+            language: track.language.clone(),
+            auto: track.auto,
+            segments,
+        })
     }
 }

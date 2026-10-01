@@ -223,6 +223,29 @@ pub trait AppServices: Send + Sync {
     ) -> Result<Option<zeroize::Zeroizing<String>>, String> {
         Ok(None)
     }
+
+    // ---- B6: Kanal -> Wissen ---------------------------------------------------------------
+
+    /// Holt die Untertitel der YouTube-Besprechung ueber den Weg aus A3 (selbst installiertes
+    /// yt-dlp hinter dem Schalter „privat“, Tor und Audit `media.fetch`) und legt sie als aktive
+    /// Fassung an. Blockiert; `cancel` bricht den Kindprozess ab. Ohne App `NotAvailable`.
+    fn youtube_subtitles(
+        &self,
+        _meeting_id: &str,
+        _cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<SubtitleOutcome, ServiceError> {
+        unavailable()
+    }
+}
+
+/// Was `AppServices::youtube_subtitles` angelegt hat.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubtitleOutcome {
+    pub variant_id: String,
+    pub language: String,
+    /// Von YouTube automatisch erzeugt (Spracherkennung), nicht hochgeladen.
+    pub auto: bool,
+    pub segments: usize,
 }
 
 /// Die Dienste, wo es keine App gibt: jeder Aufruf meldet „nicht eingebaut“.

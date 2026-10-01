@@ -38,7 +38,7 @@
 //! - `queue_gate`: das Tor der schweren Schritte, das Aufnahme und Import-Warteschlange kennt;
 //!   `import_app`: der Kleber an die App (Warteschlange, Speicher, `AppHandle`).
 //!
-//! Was die Pakete NICHT tun: keine App-Bausteine ausser `wait`, Aufnahme und Import (B4 bis B6),
+//! Was die Pakete B1 bis B3 NICHT tun: keine App-Bausteine ausser `wait`, Aufnahme und Import (B4 bis B6),
 //! kein `youtube.transcript` (B6), keine Oberflaeche (B7), keine Agentenbruecke (B8).
 //! Sie liefern die Schnittstellen, an denen die naechsten einrasten.
 //!
@@ -165,6 +165,15 @@
 //! `termin-protokoll-mail` in `templates`. Fehlerfaelle und Rechte stehen im Kopf von
 //! `integration_actions`.
 //!
+//! Bausteine von Paket B6 (Wissens-Bausteine, Vorlage „Kanal -> Wissen“): `knowledge`
+//! (`youtube.transcript`, `knowledge.rate`, `knowledge.reconcile`, `channel.report`, `obsidian.note`).
+//! Modell und Schreiben sind getrennte Schritte: die ersten Bausteine sind `Pure` und liefern Daten und
+//! fertiges Markdown, `obsidian.note` schreibt mit EINEM Recht ohne Dublette (Schluessel in `lva_id`,
+//! Video-ID im Frontmatter); eine vorhandene Notiz zu aendern verlangt immer die Freigabe
+//! (`GateView::max_mode`, wie E3 bei der Mail). Neu in den Schnittstellen: `AppServices::youtube_subtitles`
+//! (der A3-Weg) und `SubtitleOutcome`. Vorlage `kanal-wissen` in `templates`. Fehlerfaelle und Rechte stehen im
+//! Kopf von `knowledge`.
+//!
 #![allow(dead_code)]
 
 pub mod action;
@@ -183,6 +192,7 @@ pub mod import; // B3
 pub mod import_app; // B3
 pub mod integration_actions; // B5
 pub mod jsonschema;
+pub mod knowledge; // B6
 pub mod model;
 pub mod plan;
 pub mod queue_gate; // B3
