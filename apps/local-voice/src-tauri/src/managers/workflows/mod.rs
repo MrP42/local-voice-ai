@@ -173,6 +173,7 @@
 
 pub mod action;
 pub mod agent_actions; // C2
+pub mod agent_preview; // C5
 pub mod agent_route; // C3
 pub mod app_actions; // B4
 pub mod app_services; // B4

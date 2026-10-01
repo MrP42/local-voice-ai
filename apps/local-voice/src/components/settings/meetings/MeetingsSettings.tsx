@@ -46,7 +46,7 @@ import { useSlidesBackground } from "./slides/useSlidesBackground";
 import { useSelectedProject } from "./projects/selectedProject";
 import { findMeeting } from "./findMeeting";
 import { isEmptyEntry, requestStartDialog } from "./emptyEntry";
-import { notifyMeetingsChanged } from "@/lib/meetingsBus";
+import { notifyMeetingsChanged, useOpenSegment } from "@/lib/meetingsBus";
 import { openYoutubeLinkDialog } from "./youtube/linkBus";
 import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 import {
@@ -403,6 +403,23 @@ export const MeetingsSettings: React.FC = () => {
     },
     [selected, t, select],
   );
+
+  // C5 (#68): Sprung aus dem Laufprotokoll der Automationen zu einem Segment, das ein
+  // Agent-Schritt als Quelle nennt (Herkunft).
+  useOpenSegment((request) => {
+    void openCitation({
+      n: 0,
+      meeting_id: request.meetingId,
+      meeting_title: "",
+      started_at: null,
+      source: "transcript",
+      epoch: 0,
+      segment_index: request.segmentIndex,
+      start_ms: null,
+      ref_key: null,
+      quote: "",
+    });
+  });
 
   // ---- G3 (#70, U9): Projekt-Protokoll ----------------------------------------
 

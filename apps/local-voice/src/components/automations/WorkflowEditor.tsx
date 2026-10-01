@@ -324,6 +324,8 @@ export const WorkflowEditor: React.FC<WorkflowEditorProps> = ({
               catalog={catalog}
               integrations={integrations}
               issues={shown}
+              definitionJson={json}
+              workflowId={workflowId}
               onChange={(s) =>
                 update({
                   ...def,

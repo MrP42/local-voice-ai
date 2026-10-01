@@ -8,6 +8,8 @@ import {
   type WorkflowRunSummary,
 } from "@/bindings";
 import { Button } from "../ui/Button";
+import { AgentOutcome, ProvenanceCard } from "./AgentViews";
+import { isAgentAction, parseAgentPreview } from "./agentModel";
 import { StateBadge } from "./StateBadge";
 import { errorOf, useRuns } from "./useAutomations";
 import { prettyJson } from "./model";
@@ -247,6 +249,19 @@ export const RunDetail: React.FC<RunDetailProps> = ({
   const waiting = detail.steps.filter((s) => s.state === "awaiting_approval");
   const attemptsOf = (id: string) =>
     detail.steps.filter((s) => s.step_id === id).length;
+  // Die Herkunft eines Agent-Schritts steht bei seinem Schritt (Eintrag `<Lauf>:<Schritt>`); die
+  // Liste unten zeigt den Rest.
+  const provenanceOf = (stepId: string) =>
+    detail.provenance.find((e) => e.subject_id.endsWith(`:${stepId}`));
+  const inlineProvenance = new Set(
+    detail.steps
+      .filter((s) => isAgentAction(s.action) && s.output_json)
+      .map((s) => provenanceOf(s.step_id)?.id)
+      .filter((id): id is string => !!id),
+  );
+  const listedProvenance = detail.provenance.filter(
+    (e) => !inlineProvenance.has(e.id),
+  );
 
   return (
     <div className="space-y-4" data-testid="run-detail" data-run-id={run.id}>
@@ -433,6 +448,13 @@ export const RunDetail: React.FC<RunDetailProps> = ({
                   {s.ended_at != null ? ` – ${stamp(s.ended_at)}` : ""}
                 </p>
               )}
+              {isAgentAction(s.action) && s.output_json && (
+                <AgentStepResult
+                  action={s.action}
+                  output={s.output_json}
+                  entry={provenanceOf(s.step_id)}
+                />
+              )}
               {(s.input_json || s.output_json) && (
                 <details>
                   <summary className="cursor-pointer text-xs text-text-muted">
@@ -481,31 +503,20 @@ export const RunDetail: React.FC<RunDetailProps> = ({
               ? t("automations.runs.provenanceDry")
               : t("automations.runs.provenanceNone")}
           </p>
-        ) : (
+        ) : listedProvenance.length > 0 ? (
           <ul className="space-y-2">
-            {detail.provenance.map((e) => (
-              <li
-                key={e.id}
-                className="rounded-lg border border-mid-gray/30 px-3 py-2 text-sm"
-                data-testid="run-provenance"
-              >
-                <p className="font-medium">{e.operation}</p>
-                <p className="text-xs text-text-muted">
-                  {e.model_label ?? e.model_id ?? t("automations.runs.noModel")}
-                  {e.provider ? ` · ${e.provider}` : ""}
-                  {e.locality
-                    ? ` · ${t(e.locality === "local" ? "automations.runs.local" : "automations.runs.remote")}`
-                    : ""}
-                  {e.duration_ms != null
-                    ? ` · ${(e.duration_ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} s`
-                    : ""}
-                  {e.sources.length > 0
-                    ? ` · ${t("automations.runs.sources", { count: e.sources.length })}`
-                    : ""}
-                </p>
-              </li>
+            {listedProvenance.map((e) => (
+              <ProvenanceCard key={e.id} entry={e} />
             ))}
           </ul>
+        ) : null}
+        {detail.provenance.length > 0 && listedProvenance.length === 0 && (
+          <p
+            className="text-sm text-text-muted"
+            data-testid="run-provenance-inline"
+          >
+            {t("automations.runs.provenanceInline")}
+          </p>
         )}
         <details>
           <summary className="cursor-pointer text-xs text-text-muted">
@@ -516,6 +527,33 @@ export const RunDetail: React.FC<RunDetailProps> = ({
           </pre>
         </details>
       </section>
+    </div>
+  );
+};
+
+/** Ergebnis und Herkunft eines Agent-Schritts: Entscheidung bzw. gezogene Listen, Modell, Token, Dauer, Konfidenz, Quellen. */
+const AgentStepResult: React.FC<{
+  action: string;
+  output: string;
+  entry: WorkflowRunDetail["provenance"][number] | undefined;
+}> = ({ action, output, entry }) => {
+  const { t } = useTranslation();
+  const result = parseAgentPreview(
+    output,
+    action === "agent.extract" ? "extract" : "route",
+  );
+  if (!result) return null;
+  return (
+    <div className="space-y-2" data-testid="run-agent-step">
+      <AgentOutcome result={result} testId="run-agent-outcome" meta={false} />
+      {entry ? (
+        <div className="space-y-1">
+          <p className="text-xs font-medium">{t("automations.agent.origin")}</p>
+          <ul>
+            <ProvenanceCard entry={entry} />
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 };

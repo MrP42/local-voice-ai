@@ -3472,6 +3472,47 @@
     "memoryLow": "Memory almost full: the read-aloud and language-model servers were stopped to keep the computer responsive."
   },
   "automations": {
+    "agent": {
+      "operation": {
+        "agent_route": "Tool chosen (local agent)",
+        "agent_extract": "Tasks, deadlines and decisions extracted"
+      },
+      "kinds": {
+        "todos": "To-dos",
+        "deadlines": "Deadlines",
+        "decisions": "Decisions"
+      },
+      "sendsMail": "sends to others",
+      "runsAction": "Action: {{action}}",
+      "toolFields": "Fields the model fills in: {{fields}}",
+      "dateKind": "date phrase",
+      "unknownTool": "This tool does not exist (any more). Please deselect it.",
+      "modelDefault": "Default router",
+      "modelNotLoaded": "{{id}} (not downloaded)",
+      "previewTitle": "Try it with a sample text",
+      "previewHintRoute": "The model now decides for this step without anything happening: no notification, no mail, no approval, no provenance entry. Without a sample text the “Data for the choice” field applies.",
+      "previewHintExtract": "The model pulls to-dos, deadlines and decisions out of the sample text (one line per sentence) without anything happening. In a run the step reads the meeting transcript.",
+      "sample": "Sample text",
+      "samplePlaceholder": "For example: Ms Berg sends the offer to the customer by the day after tomorrow.",
+      "try": "Try it with a sample text",
+      "trying": "The model is deciding …",
+      "noEffect": "No effect (dry run)",
+      "busy": "The slot for heavy steps is busy ({{reason}}). Please try again in about {{seconds}} s.",
+      "previewUnreadable": "The answer of the preview could not be read.",
+      "chosen": "Chosen tool: {{tool}}",
+      "recipients": "Recipients (formed by the program): {{list}}",
+      "passed": "Reason: the policy checked the choice (tool list, recipients, limit, fields) and let it pass. It is only carried out if a following step with a matching condition picks it up.",
+      "noAction": "No action chosen",
+      "noReason": "The model gave no reason.",
+      "signals": "Detected instruction to the AI in the text: {{list}}",
+      "noItems": "Nothing found.",
+      "counts": "{{todos}} to-dos, {{deadlines}} deadlines, {{decisions}} decisions",
+      "tokens": "Tokens: {{input}} in, {{output}} out",
+      "confidence": "Confidence {{value}} %",
+      "origin": "Provenance",
+      "segment": "Segment {{n}}",
+      "openSegment": "Open the meeting at this place"
+    },
     "title": "Automations",
     "loading": "Loading automations …",
     "loadError": "The automations could not be loaded.",
@@ -3668,6 +3709,38 @@
       "add": "Add variable"
     },
     "fields": {
+      "task": {
+        "label": "Task",
+        "hint": "What the model should decide, in one sentence. Fixed text, never from data."
+      },
+      "context": {
+        "label": "Data for the choice",
+        "hint": "For example the result of an earlier step. The model treats it as data, never as an instruction."
+      },
+      "tools": {
+        "label": "Approved tools",
+        "hint": "The model may only choose from this list (at most {{max}}). Only what a following step with a matching condition does is carried out, with its own right and approval."
+      },
+      "recipients": {
+        "label": "Recipient rule",
+        "hint": "The program forms the recipients from this rule, never the model."
+      },
+      "max_actions": {
+        "label": "Most actions per run",
+        "hint": "1 to 10; counts across all “Choose a tool” steps of the run."
+      },
+      "model": {
+        "label": "Model",
+        "hint": "Only a downloaded local model; the default router if empty."
+      },
+      "reference_date": {
+        "label": "Reference date",
+        "hint": "For “tomorrow”, “Friday” and so on (YYYY-MM-DD); empty: today."
+      },
+      "kinds": {
+        "label": "What to pull out",
+        "hint": "No selection: to-dos, deadlines and decisions."
+      },
       "via": {
         "label": "Integration",
         "hint": "The account or folder the step runs through."
@@ -3833,6 +3906,13 @@
       }
     },
     "choices": {
+      "recipients": {
+        "me": "Only me",
+        "participants": "Participants",
+        "all": "Everyone",
+        "internal": "Internal participants only",
+        "list": "Fixed list"
+      },
       "every": {
         "daily": "Daily",
         "weekly": "Weekly"
@@ -3967,6 +4047,7 @@
       "output": "Result",
       "provenance": "Origin of the results",
       "provenanceDry": "A dry run produces nothing, so there is no origin.",
+      "provenanceInline": "The provenance of the AI steps is shown with the steps above.",
       "provenanceNone": "This run has not (yet) produced any content with an origin.",
       "noModel": "no model",
       "local": "local",
