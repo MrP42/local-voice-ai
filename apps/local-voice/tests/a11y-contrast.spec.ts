@@ -13,6 +13,7 @@ const PAGES = [
   { name: "Aufnahmen", nav: "Aufnahmen" },
   { name: "Vorlesen", nav: "Vorlesen" },
   { name: "Modelle", nav: "Modelle" },
+  { name: "Integrationen", nav: "Integrationen" },
   { name: "Einstellungen", nav: "Einstellungen" },
 ] as const;
 

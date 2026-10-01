@@ -12,6 +12,7 @@
   "sidebar": {
     "general": "General",
     "models": "Models",
+    "integrations": "Integrations",
     "advanced": "Advanced",
     "postProcessing": "Post Process",
     "history": "History",
@@ -3159,5 +3160,312 @@
   },
   "guard": {
     "memoryLow": "Memory almost full: the read-aloud and language-model servers were stopped to keep the computer responsive."
+  },
+  "integrations": {
+    "title": "Integrations",
+    "description": "Connections to calendars, folders and agents, each with a direction and one right per capability.",
+    "add": "Add integration",
+    "back": "Back to the list",
+    "open": "Rights and details",
+    "cancel": "Cancel",
+    "close": "Close",
+    "loadError": "The integrations could not be loaded.",
+    "empty": "No integration set up yet.",
+    "emptyHint": "Use “Add integration” to set up a folder or connect a calendar.",
+    "tabs": {
+      "connections": "Connections",
+      "audit": "Log"
+    },
+    "sections": {
+      "connections": "Set up",
+      "calendars": "Calendars",
+      "calendarsHint": "Calendar sources provide appointments for title suggestions, reminders and “Up next”.",
+      "mcp": "MCP and agents",
+      "mcpHint": "Lets AI clients on this computer read your meetings. Writing access with rights per tool will follow."
+    },
+    "status": {
+      "off": "Off",
+      "pending_one": "{{count}} approval open",
+      "pending_other": "{{count}} approvals open"
+    },
+    "directions": {
+      "read": "Read only",
+      "write": "Write only",
+      "both": "Read and write"
+    },
+    "modes": {
+      "off": "Off",
+      "ask": "Ask",
+      "allow": "Allowed"
+    },
+    "callers": {
+      "user": "You",
+      "workflow": "Workflow",
+      "agent_external": "External agent",
+      "agent_local": "Local agent"
+    },
+    "kinds": {
+      "youtube": "YouTube",
+      "ics": "Calendar (ICS)",
+      "graph": "Microsoft 365 calendar",
+      "m365": "Microsoft 365",
+      "smtp": "Mailbox (SMTP)",
+      "folder": "Folder",
+      "obsidian": "Obsidian vault",
+      "wissen": "WAI knowledge base",
+      "agent": "Agent access"
+    },
+    "calendar": {
+      "rights": "Rights and direction"
+    },
+    "catalog": {
+      "title": "Add integration",
+      "description": "Choose what the app should connect to. Every connection gets a direction and one right per capability; anything that changes something asks first by default, external agents are off.",
+      "soon": "soon",
+      "auto": "automatic",
+      "items": {
+        "calendar_ics": {
+          "name": "Calendar (ICS address)",
+          "description": "Read appointments from Outlook, Google or Nextcloud through a secret ICS address. Read only.",
+          "action": "Connect calendar"
+        },
+        "calendar_graph": {
+          "name": "Microsoft 365 calendar",
+          "description": "Outlook appointments with attendees through your Microsoft sign-in (your own Entra app).",
+          "action": "Sign in with Microsoft"
+        },
+        "folder": {
+          "name": "Folder",
+          "description": "A local or OneDrive-synced folder as a place for minutes and exports.",
+          "action": "Set up folder"
+        },
+        "youtube": {
+          "name": "YouTube",
+          "description": "Bring videos into Recordings by link, watch and transcribe them.",
+          "note": "Sets itself up as soon as you paste the first YouTube link in Recordings."
+        },
+        "mcp": {
+          "name": "MCP and agents",
+          "description": "Lets AI clients such as Claude or Codex on this computer read your meetings.",
+          "action": "Go to the MCP switch"
+        },
+        "m365": {
+          "name": "Microsoft 365 (mail, OneDrive)",
+          "description": "Send mail, save files to OneDrive, create appointments."
+        },
+        "smtp": {
+          "name": "Mailbox (SMTP)",
+          "description": "Send mail through your own mailbox with an app password."
+        },
+        "obsidian": {
+          "name": "Obsidian vault",
+          "description": "Save and read notes with frontmatter in your vault."
+        },
+        "wissen": {
+          "name": "WAI knowledge base",
+          "description": "Search the knowledge base and read its pages."
+        },
+        "webhook": {
+          "name": "n8n webhook",
+          "description": "Trigger flows in n8n. Comes with the workflows."
+        }
+      }
+    },
+    "folder": {
+      "title": "Set up folder",
+      "description": "A folder on this computer, also one synced by OneDrive.",
+      "name": "Name",
+      "path": "Path",
+      "pathPlaceholder": "C:\\Files\\Reports",
+      "pick": "Choose folder",
+      "create": "Create",
+      "directionHint": "Read: fetch files from the folder. Write: save files there."
+    },
+    "detail": {
+      "connection": "Connection",
+      "managedByCalendar": "Name, switch and removal belong to the card under “Calendars”. Here you set direction and rights.",
+      "name": "Name",
+      "rename": "Rename",
+      "status": "Status",
+      "okAt": "OK, checked {{time}}",
+      "notTested": "Not checked yet",
+      "secret": "Access key",
+      "test": "Test connection",
+      "testing": "Checking …",
+      "direction": "Direction",
+      "directionHint": "What the integration may do before rights apply: read, write or both. A capability the direction does not allow is off.",
+      "rights": "Rights",
+      "rightsHint": "Per capability and caller: off, ask (you decide every time) or allowed. You yourself need no approval in the app.",
+      "resetRights": "Reset to defaults",
+      "showAudit": "Show log",
+      "remove": "Remove",
+      "removeConfirm": "Remove “{{label}}” with its rights? The log stays.",
+      "removeYes": "Yes, remove",
+      "switchOn": "Switch on",
+      "switchOff": "Switch off"
+    },
+    "secret": {
+      "present": "stored",
+      "missing": "missing, please set up again",
+      "broken": "unreadable, please set up again"
+    },
+    "test": {
+      "folder_ok": "The folder is reachable.",
+      "folder_path_not_found": "The folder was not found.",
+      "folder_path_not_a_folder": "The path is not a folder.",
+      "folder_unreadable": "The folder cannot be read.",
+      "test_not_available": "There is no test for this kind yet."
+    },
+    "matrix": {
+      "reads": "reads",
+      "writes": "changes things",
+      "neverAllow": "Recording never starts on its own: the app shows the consent dialog before every recording (§ 201 StGB). That is why there is no “Allowed” here.",
+      "effective": "Currently in effect: {{mode}}",
+      "blocked": {
+        "direction_blocks": "The direction of the integration does not allow this: change the direction for the rights to apply.",
+        "integration_disabled": "The integration is switched off: no access while it is off."
+      }
+    },
+    "capabilities": {
+      "calendar_read": {
+        "title": "Read calendar",
+        "description": "Read appointments and attendees."
+      },
+      "calendar_write": {
+        "title": "Create appointments",
+        "description": "Create or change appointments."
+      },
+      "mail_send": {
+        "title": "Send mail",
+        "description": "Send e-mail in your name."
+      },
+      "files_read": {
+        "title": "Read files",
+        "description": "Fetch files from the folder."
+      },
+      "files_write": {
+        "title": "Write files",
+        "description": "Save or overwrite files."
+      },
+      "knowledge_search": {
+        "title": "Search knowledge",
+        "description": "Search the knowledge base."
+      },
+      "knowledge_read": {
+        "title": "Read knowledge",
+        "description": "Read pages of the knowledge base."
+      },
+      "vault_write": {
+        "title": "Save note in vault",
+        "description": "Write notes with frontmatter."
+      },
+      "media_fetch": {
+        "title": "Download YouTube file",
+        "description": "Download video or audio with the tool you installed yourself."
+      },
+      "youtube_add": {
+        "title": "Add YouTube link as source",
+        "description": "Turn a link into a meeting."
+      },
+      "meeting_create": {
+        "title": "Create meeting",
+        "description": "Create a new meeting or session."
+      },
+      "recording_start": {
+        "title": "Start recording",
+        "description": "Begin a recording."
+      },
+      "transcribe_file": {
+        "title": "Transcribe file",
+        "description": "Transcribe an audio or video file."
+      },
+      "tts_render": {
+        "title": "Render read-aloud audio",
+        "description": "Render a read-aloud page as an audio file."
+      }
+    },
+    "approvals": {
+      "banner_one": "{{count}} approval is waiting for you",
+      "banner_other": "{{count}} approvals are waiting for you",
+      "review": "Review",
+      "title": "Approvals",
+      "description": "These actions want to run and ask you first.",
+      "none": "Nothing open any more.",
+      "request": "{{caller}} wants to run “{{action}}”. Target: {{target}}.",
+      "unknown": "unknown",
+      "asked": "Asked {{time}}",
+      "allow": "Allow",
+      "deny": "Deny",
+      "once": "An approval applies to this one action only and expires after an hour.",
+      "errors": {
+        "approval_not_found": "This approval no longer exists.",
+        "approval_expired": "This approval has expired.",
+        "approval_already_decided": "This approval has already been decided."
+      }
+    },
+    "audit": {
+      "filterIntegration": "Integration",
+      "filterOutcome": "Result",
+      "filterCaller": "Who",
+      "all": "All",
+      "empty": "No entries yet. Every action of a workflow or agent and every change to rights shows up here.",
+      "loadError": "The log could not be loaded.",
+      "noIntegration": "no integration",
+      "default": "default",
+      "outcome": {
+        "ok": "done",
+        "denied": "denied",
+        "error": "error",
+        "pending": "waiting"
+      },
+      "decision": {
+        "approved": "granted",
+        "denied": "denied"
+      },
+      "phase": {
+        "created": "Integration created",
+        "updated": "Integration changed",
+        "deleted": "Integration removed",
+        "grant_changed": "Right changed: {{mode}} for {{caller}}",
+        "approval_decided": "Approval {{decision}}",
+        "approval": "Waiting for your approval",
+        "running": "Running",
+        "done": "Finished"
+      },
+      "reason": {
+        "grant_off": "The right is set to “off”",
+        "direction_blocks": "The direction does not allow this",
+        "integration_disabled": "The integration is switched off",
+        "capability_not_offered": "The integration does not offer this",
+        "tool_off": "The tool is switched off",
+        "unknown_integration": "Unknown integration",
+        "preview_unsafe": "Cannot be shown in full, denied",
+        "too_many_pending": "Too many open approvals",
+        "too_many_pending_caller": "Too many open approvals from this access",
+        "approval_not_found": "Approval not found",
+        "approval_expired": "Approval expired",
+        "approval_mismatch": "Approval does not match the action",
+        "approval_not_granted": "Approval not granted"
+      }
+    },
+    "errors": {
+      "generic": "That did not work.",
+      "folder_path_missing": "Please enter the path of the folder.",
+      "folder_path_relative": "Please enter a full path, for example C:\\Files\\Reports.",
+      "folder_path_not_found": "The folder was not found.",
+      "folder_path_not_a_folder": "The path is not a folder.",
+      "kind_not_available": "This kind cannot be set up yet."
+    },
+    "moved": {
+      "open": "Manage on the “Integrations” page",
+      "calendar": {
+        "title": "Calendar sources",
+        "description": "Connecting calendars, checking their status and removing them now happens on the “Integrations” page."
+      },
+      "mcp": {
+        "title": "Local MCP server",
+        "description": "The switch for the MCP server and the configuration snippet are now on the “Integrations” page."
+      }
+    }
   }
 }

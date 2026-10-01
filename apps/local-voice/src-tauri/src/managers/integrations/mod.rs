@@ -74,6 +74,7 @@ pub mod preview;
 pub mod schema;
 pub mod secrets;
 pub mod store;
+pub mod view; // A4
 
 #[cfg(test)]
 pub(crate) mod test_support;

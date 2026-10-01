@@ -12,6 +12,7 @@
   "sidebar": {
     "general": "Allgemein",
     "models": "Modelle",
+    "integrations": "Integrationen",
     "advanced": "Erweitert",
     "postProcessing": "Nachbearbeitung",
     "history": "Verlauf",
@@ -3159,5 +3160,312 @@
   },
   "guard": {
     "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
+  },
+  "integrations": {
+    "title": "Integrationen",
+    "description": "Verbindungen zu Kalendern, Ordnern und Agenten, jede mit Richtung und einem Recht je Fähigkeit.",
+    "add": "Integration hinzufügen",
+    "back": "Zurück zur Liste",
+    "open": "Rechte und Details",
+    "cancel": "Abbrechen",
+    "close": "Schließen",
+    "loadError": "Die Integrationen konnten nicht geladen werden.",
+    "empty": "Noch keine Integration eingerichtet.",
+    "emptyHint": "Mit „Integration hinzufügen“ richtest du einen Ordner ein oder verbindest einen Kalender.",
+    "tabs": {
+      "connections": "Verbindungen",
+      "audit": "Protokoll"
+    },
+    "sections": {
+      "connections": "Eingerichtet",
+      "calendars": "Kalender",
+      "calendarsHint": "Kalenderquellen liefern Termine für Titelvorschläge, Erinnerungen und „Als Nächstes“.",
+      "mcp": "MCP und Agenten",
+      "mcpHint": "Lässt KI-Clients auf diesem Rechner deine Besprechungen lesen. Schreibende Zugänge mit Rechten je Werkzeug folgen."
+    },
+    "status": {
+      "off": "Aus",
+      "pending_one": "{{count}} Freigabe offen",
+      "pending_other": "{{count}} Freigaben offen"
+    },
+    "directions": {
+      "read": "Nur lesen",
+      "write": "Nur schreiben",
+      "both": "Lesen und schreiben"
+    },
+    "modes": {
+      "off": "Aus",
+      "ask": "Fragen",
+      "allow": "Erlaubt"
+    },
+    "callers": {
+      "user": "Du",
+      "workflow": "Workflow",
+      "agent_external": "Externer Agent",
+      "agent_local": "Lokaler Agent"
+    },
+    "kinds": {
+      "youtube": "YouTube",
+      "ics": "Kalender (ICS)",
+      "graph": "Microsoft-365-Kalender",
+      "m365": "Microsoft 365",
+      "smtp": "Postfach (SMTP)",
+      "folder": "Ordner",
+      "obsidian": "Obsidian-Vault",
+      "wissen": "WAI-Wissensbasis",
+      "agent": "Agentenzugang"
+    },
+    "calendar": {
+      "rights": "Rechte und Richtung"
+    },
+    "catalog": {
+      "title": "Integration hinzufügen",
+      "description": "Wähle, womit sich die App verbinden soll. Jede Verbindung bekommt eine Richtung und ein Recht je Fähigkeit; Schreibendes fragt standardmäßig nach, externe Agenten sind aus.",
+      "soon": "bald",
+      "auto": "automatisch",
+      "items": {
+        "calendar_ics": {
+          "name": "Kalender (ICS-Adresse)",
+          "description": "Termine aus Outlook, Google oder Nextcloud lesen, über eine geheime ICS-Adresse. Nur lesend.",
+          "action": "Kalender verbinden"
+        },
+        "calendar_graph": {
+          "name": "Microsoft-365-Kalender",
+          "description": "Outlook-Termine mit Teilnehmenden über deine Microsoft-Anmeldung (eigene Entra-App).",
+          "action": "Mit Microsoft anmelden"
+        },
+        "folder": {
+          "name": "Ordner",
+          "description": "Ein lokaler oder per OneDrive synchronisierter Ordner als Ablage für Protokolle und Exporte.",
+          "action": "Ordner einrichten"
+        },
+        "youtube": {
+          "name": "YouTube",
+          "description": "Videos per Link in Aufnahmen holen, ansehen und transkribieren.",
+          "note": "Legt sich selbst an, sobald du in Aufnahmen den ersten YouTube-Link einfügst."
+        },
+        "mcp": {
+          "name": "MCP und Agenten",
+          "description": "Lässt KI-Clients wie Claude oder Codex auf diesem Rechner deine Besprechungen lesen.",
+          "action": "Zum MCP-Schalter"
+        },
+        "m365": {
+          "name": "Microsoft 365 (Mail, OneDrive)",
+          "description": "Mails senden, Dateien in OneDrive ablegen, Termine anlegen."
+        },
+        "smtp": {
+          "name": "Postfach (SMTP)",
+          "description": "Mails über ein eigenes Postfach mit App-Passwort senden."
+        },
+        "obsidian": {
+          "name": "Obsidian-Vault",
+          "description": "Notizen mit Frontmatter in deinem Vault ablegen und lesen."
+        },
+        "wissen": {
+          "name": "WAI-Wissensbasis",
+          "description": "In der Wissensbasis suchen und Seiten lesen."
+        },
+        "webhook": {
+          "name": "n8n-Webhook",
+          "description": "Abläufe in n8n anstoßen. Kommt mit den Workflows."
+        }
+      }
+    },
+    "folder": {
+      "title": "Ordner einrichten",
+      "description": "Ein Ordner auf diesem Rechner, auch ein per OneDrive synchronisierter.",
+      "name": "Name",
+      "path": "Pfad",
+      "pathPlaceholder": "C:\\Ablage\\Berichte",
+      "pick": "Ordner wählen",
+      "create": "Anlegen",
+      "directionHint": "Lesen: Dateien aus dem Ordner holen. Schreiben: Dateien dort ablegen."
+    },
+    "detail": {
+      "connection": "Verbindung",
+      "managedByCalendar": "Name, Schalter und Entfernen gehören zur Karte unter „Kalender“. Hier stellst du Richtung und Rechte ein.",
+      "name": "Name",
+      "rename": "Umbenennen",
+      "status": "Zustand",
+      "okAt": "In Ordnung, geprüft {{time}}",
+      "notTested": "Noch nicht geprüft",
+      "secret": "Zugangsschlüssel",
+      "test": "Verbindung testen",
+      "testing": "Prüfe …",
+      "direction": "Richtung",
+      "directionHint": "Was die Integration darf, bevor Rechte greifen: lesen, schreiben oder beides. Eine Fähigkeit, die die Richtung nicht erlaubt, ist aus.",
+      "rights": "Rechte",
+      "rightsHint": "Je Fähigkeit und Aufrufer: aus, fragen (du entscheidest jedes Mal) oder erlaubt. Du selbst brauchst in der App keine Freigabe.",
+      "resetRights": "Auf Standard zurücksetzen",
+      "showAudit": "Protokoll anzeigen",
+      "remove": "Entfernen",
+      "removeConfirm": "„{{label}}“ samt Rechten entfernen? Das Protokoll bleibt.",
+      "removeYes": "Ja, entfernen",
+      "switchOn": "Einschalten",
+      "switchOff": "Ausschalten"
+    },
+    "secret": {
+      "present": "hinterlegt",
+      "missing": "fehlt, bitte neu einrichten",
+      "broken": "unlesbar, bitte neu einrichten"
+    },
+    "test": {
+      "folder_ok": "Der Ordner ist erreichbar.",
+      "folder_path_not_found": "Der Ordner wurde nicht gefunden.",
+      "folder_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "folder_unreadable": "Der Ordner lässt sich nicht lesen.",
+      "test_not_available": "Für diese Art gibt es noch keinen Test."
+    },
+    "matrix": {
+      "reads": "lesend",
+      "writes": "verändernd",
+      "neverAllow": "Aufnahmen starten nie von allein: die App zeigt vor jeder Aufnahme den Einwilligungsdialog (§ 201 StGB). „Erlaubt“ gibt es hier deshalb nicht.",
+      "effective": "Wirkt jetzt: {{mode}}",
+      "blocked": {
+        "direction_blocks": "Die Richtung der Integration erlaubt dies nicht: ändere die Richtung, damit die Rechte wirken.",
+        "integration_disabled": "Die Integration ist ausgeschaltet: kein Zugriff, solange sie aus ist."
+      }
+    },
+    "capabilities": {
+      "calendar_read": {
+        "title": "Kalender lesen",
+        "description": "Termine und Teilnehmende lesen."
+      },
+      "calendar_write": {
+        "title": "Termine anlegen",
+        "description": "Termine anlegen oder ändern."
+      },
+      "mail_send": {
+        "title": "Mail senden",
+        "description": "E-Mails in deinem Namen versenden."
+      },
+      "files_read": {
+        "title": "Dateien lesen",
+        "description": "Dateien aus dem Ordner holen."
+      },
+      "files_write": {
+        "title": "Dateien schreiben",
+        "description": "Dateien ablegen oder überschreiben."
+      },
+      "knowledge_search": {
+        "title": "Wissen durchsuchen",
+        "description": "In der Wissensbasis suchen."
+      },
+      "knowledge_read": {
+        "title": "Wissen lesen",
+        "description": "Seiten der Wissensbasis lesen."
+      },
+      "vault_write": {
+        "title": "Notiz im Vault ablegen",
+        "description": "Notizen mit Frontmatter schreiben."
+      },
+      "media_fetch": {
+        "title": "YouTube-Datei laden",
+        "description": "Video oder Ton über das selbst installierte Werkzeug laden."
+      },
+      "youtube_add": {
+        "title": "YouTube-Link als Quelle anlegen",
+        "description": "Aus einem Link eine Besprechung machen."
+      },
+      "meeting_create": {
+        "title": "Besprechung anlegen",
+        "description": "Neue Besprechung oder Sitzung erzeugen."
+      },
+      "recording_start": {
+        "title": "Aufnahme starten",
+        "description": "Eine Aufnahme beginnen."
+      },
+      "transcribe_file": {
+        "title": "Datei transkribieren",
+        "description": "Eine Audio- oder Videodatei transkribieren."
+      },
+      "tts_render": {
+        "title": "Vorlesen als Audio erzeugen",
+        "description": "Eine Vorlesen-Seite als Tondatei erzeugen."
+      }
+    },
+    "approvals": {
+      "banner_one": "{{count}} Freigabe wartet auf dich",
+      "banner_other": "{{count}} Freigaben warten auf dich",
+      "review": "Prüfen",
+      "title": "Freigaben",
+      "description": "Diese Aktionen wollen ausgeführt werden und fragen dich vorher.",
+      "none": "Nichts mehr offen.",
+      "request": "{{caller}} möchte „{{action}}“ ausführen. Ziel: {{target}}.",
+      "unknown": "unbekannt",
+      "asked": "Angefragt {{time}}",
+      "allow": "Erlauben",
+      "deny": "Ablehnen",
+      "once": "Eine Freigabe gilt nur für diese eine Aktion und verfällt nach einer Stunde.",
+      "errors": {
+        "approval_not_found": "Diese Freigabe gibt es nicht mehr.",
+        "approval_expired": "Diese Freigabe ist abgelaufen.",
+        "approval_already_decided": "Diese Freigabe ist bereits entschieden."
+      }
+    },
+    "audit": {
+      "filterIntegration": "Integration",
+      "filterOutcome": "Ergebnis",
+      "filterCaller": "Wer",
+      "all": "Alle",
+      "empty": "Noch keine Einträge. Hier erscheint jede Aktion eines Workflows oder Agenten und jede Änderung an Rechten.",
+      "loadError": "Das Protokoll konnte nicht geladen werden.",
+      "noIntegration": "ohne Integration",
+      "default": "Standard",
+      "outcome": {
+        "ok": "erledigt",
+        "denied": "verweigert",
+        "error": "Fehler",
+        "pending": "wartet"
+      },
+      "decision": {
+        "approved": "erteilt",
+        "denied": "abgelehnt"
+      },
+      "phase": {
+        "created": "Integration angelegt",
+        "updated": "Integration geändert",
+        "deleted": "Integration entfernt",
+        "grant_changed": "Recht geändert: {{mode}} für {{caller}}",
+        "approval_decided": "Freigabe {{decision}}",
+        "approval": "Wartet auf deine Freigabe",
+        "running": "Läuft",
+        "done": "Abgeschlossen"
+      },
+      "reason": {
+        "grant_off": "Das Recht steht auf „aus“",
+        "direction_blocks": "Die Richtung erlaubt dies nicht",
+        "integration_disabled": "Die Integration ist ausgeschaltet",
+        "capability_not_offered": "Die Integration bietet das nicht an",
+        "tool_off": "Das Werkzeug ist ausgeschaltet",
+        "unknown_integration": "Unbekannte Integration",
+        "preview_unsafe": "Nicht vollständig darstellbar, abgelehnt",
+        "too_many_pending": "Zu viele offene Freigaben",
+        "too_many_pending_caller": "Zu viele offene Freigaben dieses Zugangs",
+        "approval_not_found": "Freigabe nicht gefunden",
+        "approval_expired": "Freigabe abgelaufen",
+        "approval_mismatch": "Freigabe passt nicht zur Aktion",
+        "approval_not_granted": "Freigabe nicht erteilt"
+      }
+    },
+    "errors": {
+      "generic": "Das hat nicht geklappt.",
+      "folder_path_missing": "Bitte gib den Pfad des Ordners an.",
+      "folder_path_relative": "Bitte gib einen vollständigen Pfad an, etwa C:\\Ablage\\Berichte.",
+      "folder_path_not_found": "Der Ordner wurde nicht gefunden.",
+      "folder_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "kind_not_available": "Diese Art lässt sich noch nicht einrichten."
+    },
+    "moved": {
+      "open": "Auf der Seite „Integrationen“ verwalten",
+      "calendar": {
+        "title": "Kalenderquellen",
+        "description": "Kalender verbinden, Stand ansehen und entfernen: das geht jetzt auf der Seite „Integrationen“."
+      },
+      "mcp": {
+        "title": "Lokaler MCP-Server",
+        "description": "Der Schalter für den MCP-Server und der Konfigurations-Schnipsel stehen jetzt auf der Seite „Integrationen“."
+      }
+    }
   }
 }

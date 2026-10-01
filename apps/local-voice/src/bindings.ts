@@ -1757,7 +1757,9 @@ async meetingsDelete(meetingId: string) : Promise<Result<null, string>> {
 },
 /**
  * Imports a local audio/video file or a VTT/SRT subtitle file as a new
- * meeting. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
+ * meeting. Einwilligung (#15): `consent_confirmed = false` wird im Backend
+ * bewusst NICHT abgelehnt (Oberflaechen-Gate; nur die Live-Aufnahme prueft
+ * `consent_gate` im Recorder), siehe `import_media_file`. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
  * LEEREN Eintrag (Titel, Projekte und Notizen bleiben; der Titel wird nur
  * ersetzt, solange er der vorgeschlagene ist) und kehrt mit dessen Id zurueck;
  * ist das Ziel nicht (mehr) leer, kommt `target_not_empty`.
@@ -1952,6 +1954,110 @@ async meetingsExportDocument(path: string, body: string) : Promise<Result<null, 
 async provenanceGet(contentType: SubjectKind, id: string) : Promise<Result<ProvenanceEntry[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("provenance_get", { contentType, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle Integrationen mit Rechte-Matrix, Richtungen und Zustand der Geheimnisse.
+ */
+async integrationsList() : Promise<Result<IntegrationView[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integrations_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt eine Integration an. Heute nur ein Ordner (`kind = folder`); Fehler sind
+ * Codes (`folder_path_missing`, `folder_path_relative`, `folder_path_not_found`,
+ * `folder_path_not_a_folder`, `kind_not_available`) oder der Klartext des Registers.
+ */
+async integrationCreate(kind: Kind, label: string, direction: Direction | null, path: string | null) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_create", { kind, label, direction, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aendert Name, Schalter oder Richtung. Kalenderquellen: Name und Schalter gehoeren
+ * dem Kalender.
+ */
+async integrationUpdate(id: string, label: string | null, enabled: boolean | null, direction: Direction | null) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_update", { id, label, enabled, direction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt eine Integration samt Rechten und Geheimnissen. Das Audit-Log bleibt.
+ */
+async integrationDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt das Recht eines Aufrufers fuer eine Faehigkeit (`mode = None`: zurueck
+ * auf die Vorgabe). „Aufnahme starten“ lehnt `allow` ab.
+ */
+async integrationSetGrant(id: string, capability: Capability, caller: Caller, mode: GrantMode | null) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_set_grant", { id, capability, caller, mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Probiert die Verbindung aus (heute: der Ordner).
+ */
+async integrationTest(id: string) : Promise<Result<TestResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_test", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Das Protokoll: die neuesten Eintraege zuerst, hoechstens `limit` (1 bis 500).
+ */
+async integrationsAuditList(integrationId: string | null, outcome: string | null, caller: string | null, limit: number | null) : Promise<Result<AuditEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integrations_audit_list", { integrationId, outcome, caller, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Offene Freigaben („fragen“) mit dem Namen der Integration.
+ */
+async approvalsPending() : Promise<Result<PendingApproval[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("approvals_pending") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Nutzer entscheidet eine Freigabe. Fehler: `approval_not_found`,
+ * `approval_expired`, `approval_already_decided`.
+ */
+async approvalDecide(id: string, approve: boolean) : Promise<Result<Approval, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("approval_decide", { id, approve }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4675,6 +4781,26 @@ meeting_youtube_private?: boolean;
  * im PATH suchen. Bleibt auf dem Geraet.
  */
 meeting_youtube_tool_path?: string | null }
+/**
+ * Eine Freigabe-Anfrage: ein Aufrufer will etwas tun, das „fragen“ verlangt.
+ */
+export type Approval = { id: string; created_at: number; caller: string; integration_id: string | null; 
+/**
+ * Faehigkeit oder Werkzeugname.
+ */
+tool_or_capability: string; 
+/**
+ * Fuer den Menschen: Ziel und Kurzfassung der Argumente, ohne Geheimnisse.
+ */
+args_preview: string | null; state: ApprovalState; decided_at: number | null }
+/**
+ * Zustand einer Freigabe-Anfrage.
+ */
+export type ApprovalState = "pending" | "approved" | "denied" | "expired" | 
+/**
+ * Eine genehmigte Anfrage wurde eingeloest (einmalig).
+ */
+"used"
 export type Attendee = { 
 /**
  * Klein geschrieben, ohne `mailto:`; `None`, wenn die Quelle keine
@@ -4722,6 +4848,14 @@ export type AudioSegment = { text: string;
  * Sprecher dieses Satzes; `None` ist die Stimme des Stuecks.
  */
 voice: string | null; start_ms: number; end_ms: number }
+/**
+ * Ein Eintrag des Audit-Logs.
+ */
+export type AuditEntry = { id: number; ts: number; caller: string; integration_id: string | null; capability: string | null; target: string | null; 
+/**
+ * `ok`, `denied`, `error` oder `pending`.
+ */
+outcome: string; detail_json: string | null }
 /**
  * Wie eine automatische Wahl zustande kam.
  */
@@ -4882,6 +5016,33 @@ export type CalendarSource = { id: string; kind: CalendarKind; label: string; ac
  */
 export type CalendarSyncEvent = { source_id: string; ok: boolean; count: number }
 /**
+ * Wer eine Faehigkeit benutzt. `User` ist der Nutzer in der Oberflaeche; er
+ * braucht keine Freigabe und hat keine Zeile in `integration_grants`.
+ */
+export type Caller = "user" | "workflow" | "agent_external" | "agent_local"
+/**
+ * Das Recht EINES Aufrufers fuer EINE Faehigkeit.
+ */
+export type CallerMode = { caller: Caller; 
+/**
+ * Die gespeicherte Zeile; `None`: es gilt die Vorgabe (E3).
+ */
+stored: GrantMode | null; 
+/**
+ * Die Vorgabe (E3), wenn keine Zeile gespeichert ist; auch dann sichtbar, wenn
+ * die Richtung die Faehigkeit sperrt und `effective` deshalb „aus“ ist.
+ */
+default_mode: GrantMode; 
+/**
+ * Was tatsaechlich gilt (Richtung, Schalter und Sperren eingerechnet).
+ */
+effective: GrantMode; 
+/**
+ * Maschinenlesbarer Grund, wenn `effective` = aus (`grant_off`,
+ * `direction_blocks`, `integration_disabled`, ...).
+ */
+off_reason: string | null }
+/**
  * Ein Kandidat: ein Wurf, der als Datei auf der Platte liegt.
  */
 export type Candidate = { 
@@ -4922,6 +5083,35 @@ export type CandidateSource =
  * Aus einer vorhandenen WAV-Datei uebernommen.
  */
 "Import"
+/**
+ * Eine Faehigkeit, fuer die es je Integration und Aufrufer ein Recht gibt.
+ * Die Schreibweise mit Punkt ist die der Oberflaeche und des Audit-Logs.
+ */
+export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "files.read" | "files.write" | "knowledge.search" | "knowledge.read" | "vault.write" | 
+/**
+ * YouTube-Datei holen (externes Werkzeug, Schalter „privat“, E1).
+ */
+"media.fetch" | "youtube.add" | "meeting.create" | 
+/**
+ * Aufnahme starten: nie `allow` (Einwilligungsdialog, § 201 StGB).
+ */
+"recording.start" | "transcribe.file" | "tts.render"
+/**
+ * Eine Zeile der Rechte-Matrix.
+ */
+export type CapabilityView = { capability: Capability; 
+/**
+ * Veraendert diese Faehigkeit etwas (Mail senden, Datei schreiben)?
+ */
+writes: boolean; 
+/**
+ * Nie dauerhaft erlaubt (Aufnahme starten): die Oberflaeche bietet „erlaubt“ nicht an.
+ */
+never_allow: boolean; 
+/**
+ * Erlaubt die Richtung der Integration diese Faehigkeit ueberhaupt?
+ */
+direction_allows: boolean; modes: CallerMode[] }
 export type ChatAnswer = { thread_id: string; message_id: string; 
 /**
  * Antworttext mit `[1]`, `[2]` ... (leer bei `not_found`).
@@ -5052,6 +5242,10 @@ export type DictationAudio =
  * resume it afterwards. Elsewhere this falls back to `Mute`.
  */
 "pause"
+/**
+ * Fluss der Daten: was die Integration lesen darf, was sie schreiben darf.
+ */
+export type Direction = "read" | "write" | "both"
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -5158,6 +5352,11 @@ dedicated_mb: number;
  */
 shared: boolean }
 /**
+ * Recht: aus, nachfragen oder erlaubt. Die Ordnung `Off < Ask < Allow` macht
+ * „das Strengste gewinnt“ zu `min`.
+ */
+export type GrantMode = "off" | "ask" | "allow"
+/**
  * Ein Kanalzustand fuer die Oberflaeche (`MeetingEvent::Health`).
  * `Recovered` nimmt die Bedingung des Kanals zurueck; `VadUnavailable` und
  * `LoopbackDied` sind einmalige Meldungen des Recorders und bleiben stehen.
@@ -5211,6 +5410,34 @@ server_running: boolean;
  * Code des letzten Fehlers der Vektorstufe (`memory_low`, `no_model`, ...).
  */
 last_error: string | null }
+/**
+ * Eine Integration, wie Oberflaeche und Dump sie sehen. Enthaelt kein Geheimnis.
+ */
+export type Integration = { id: string; kind: Kind; label: string; enabled: boolean; direction: Direction; 
+/**
+ * Art-spezifische Einstellungen als JSON-Objekt, ohne Geheimnisse.
+ */
+config_json: string; 
+/**
+ * Konto/Host zur Anzeige (z. B. `outlook.office365.com`), nie die Adresse.
+ */
+account_hint: string | null; data_class: string | null; created_at: number; updated_at: number; last_ok_at: number | null; last_error: string | null }
+/**
+ * Eine Integration mit allem, was die Seite zeigt.
+ */
+export type IntegrationView = { integration: Integration; 
+/**
+ * Richtungen, die diese Art kennt (ICS nur lesen, SMTP nur schreiben).
+ */
+directions: Direction[]; capabilities: CapabilityView[]; secrets: SecretSlotView[]; 
+/**
+ * Name und Schalter gehoeren dem Kalender (Karte „Kalender“).
+ */
+calendar_managed: boolean; 
+/**
+ * Offene Freigaben zu dieser Integration.
+ */
+pending_approvals: number }
 /**
  * Was ein Auftrag gerade tut. Die Oberflaeche benennt daran den Fortschritt.
  */
@@ -5267,6 +5494,11 @@ export type JobRunState = "running" |
  */
 "stopping"
 export type KeyboardImplementation = "tauri" | "handy_keys"
+/**
+ * Art einer Integration. `Ics` und `Graph` sind die Kalenderquellen, die das
+ * Register aus `calendar_sources` uebernimmt (gleiche ID).
+ */
+export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "obsidian" | "wissen" | "agent"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 /**
  * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter.
@@ -5748,6 +5980,10 @@ role: string;
  */
 source: string; is_self: boolean; meeting_count: number }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
+/**
+ * Eine offene Freigabe mit dem Namen der Integration.
+ */
+export type PendingApproval = { approval: Approval; integration_label: string | null; integration_kind: Kind | null }
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 /**
  * Eine Person mit allem fuer das Popover.
@@ -5919,6 +6155,10 @@ export type ScriptTemplate = { id: string; name: string; body: string; builtin: 
  */
 modified: boolean }
 export type SecretMap = Partial<{ [key in string]: string }>
+/**
+ * Ein Fach fuer ein Geheimnis und sein Zustand (`present`, `missing`, `broken`).
+ */
+export type SecretSlotView = { slot: string; status: string }
 export type SectionKind = "text" | "tasks"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
@@ -6104,6 +6344,15 @@ export type TemplateSection = { id: string; title: string; instruction: string; 
  * abgelegt. `version` ist heute immer 1.
  */
 export type TemplateSpec = { version: number; context: string; sections: TemplateSection[] }
+/**
+ * Ergebnis von „Verbindung testen“: Code fuer die Oberflaeche, kein Freitext.
+ */
+export type TestResult = { ok: boolean; 
+/**
+ * `folder_ok`, `folder_path_not_found`, `folder_path_not_a_folder`,
+ * `folder_unreadable`, `test_not_available`.
+ */
+code: string }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.
