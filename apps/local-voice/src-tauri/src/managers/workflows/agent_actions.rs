@@ -58,6 +58,7 @@ use crate::agent::extract::{
 };
 use crate::agent::runtime::{AgentError, AgentRuntime};
 use crate::managers::meetings::speakers::SpeakerDirectory;
+use crate::managers::meetings::store::StoredSegment;
 use crate::managers::provenance::{Locality, NewProvenance, SourceRef, SubjectKind};
 
 use super::action::{
@@ -69,6 +70,7 @@ use super::app_actions::{
     run_cancellable, spec_of, svc, AppServices,
 };
 use super::catalog;
+use super::heavy::HeavyGate;
 
 /// Reserve unter dem Hoechstmass der Engine fuer `status`, `ok` und `error`.
 const OUTPUT_MARGIN_BYTES: usize = 4 * 1024;
@@ -92,6 +94,115 @@ fn kinds_of(params: &Value) -> Result<Kinds, String> {
         }
         Some(_) => Err("kinds: Liste aus Texten erwartet".to_string()),
     }
+}
+
+/// Was kein Ergebnis ist, aber auch kein Schritt-Erfolg: Server, Speicher, Einrichtung.
+/// `None`: die Extraktion zaehlt (auch ein `no_action` mit unbrauchbarer Antwort).
+fn blocking_error(outcome: &Outcome) -> Option<StepError> {
+    let Outcome::NoAction(reason) = outcome else {
+        return None;
+    };
+    match reason {
+        NoActionReason::EmptyTranscript => Some(StepError::Permanent(
+            "Die Besprechung hat kein Transkript, aus dem sich etwas ziehen ließe.".to_string(),
+        )),
+        NoActionReason::Failed(error) => match error {
+            AgentError::NotConfigured(m) => Some(StepError::Permanent(m.clone())),
+            AgentError::Rejected { .. } => Some(StepError::Permanent(error.describe())),
+            AgentError::Busy {
+                retry_after_ms,
+                reason,
+            } => Some(StepError::Defer {
+                retry_after_ms: *retry_after_ms,
+                reason: reason.clone(),
+            }),
+            // Server weg oder Zeit: nichts geschrieben, ein neuer Versuch ist sicher.
+            _ if reason.is_retryable() => Some(StepError::Transient(error.describe())),
+            // Eine unbrauchbare Antwort ist ein gueltiges `no_action`.
+            _ => None,
+        },
+    }
+}
+
+/// Laengster Beispieltext der Vorschau (Zeichen) und Zahl der Zeilen (je Zeile ein Segment).
+pub const MAX_SAMPLE_CHARS: usize = 20_000;
+const MAX_SAMPLE_SEGMENTS: usize = 400;
+
+/// Vorschau (C5): was wuerde `agent.extract` aus diesem Beispieltext ziehen? Dieselbe
+/// Extraktion wie im Lauf, aber ohne Besprechung und ohne jede Wirkung: kein Journal, keine
+/// Provenienz, kein Vault, keine Mitteilung. Je nicht leerer Zeile ein Segment (`S0`, `S1`, ...),
+/// Bezugsdatum ist heute. Der Aufruf nimmt den Platz am `HeavyGate` (belegt: `Defer`, das Modell
+/// wird nicht gefragt). Ohne Beispieltext keine Entscheidung (der Schritt liest das Transkript
+/// der Besprechung des Laufs, die es im Editor nicht gibt).
+pub fn preview_extract(
+    services: &dyn AppServices,
+    gate: &dyn HeavyGate,
+    params: &Value,
+    sample_text: Option<&str>,
+    now_ms: i64,
+    cancel: &dyn Fn() -> bool,
+) -> Result<Value, StepError> {
+    let kinds = kinds_of(params).map_err(StepError::Permanent)?;
+    let sample = sample_text.map(str::trim).filter(|s| !s.is_empty());
+    let Some(sample) = sample else {
+        return Ok(json!({
+            "kind": "extract",
+            "dry_run": true,
+            "writes": "nothing",
+            "skipped": true,
+            "reason": "sample_required",
+            "reason_text": "Der Schritt liest das Transkript der Besprechung des Laufs: für die Vorschau einen Beispieltext angeben.",
+        }));
+    };
+    let _permit = gate
+        .try_enter(&llm_need(services))
+        .map_err(|w| StepError::Defer {
+            retry_after_ms: w.retry_after_ms,
+            reason: w.message,
+        })?;
+    let text: String = sample.chars().take(MAX_SAMPLE_CHARS).collect();
+    let segments: Vec<StoredSegment> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .take(MAX_SAMPLE_SEGMENTS)
+        .enumerate()
+        .map(|(i, line)| StoredSegment {
+            segment_index: i as u32,
+            text: line.to_string(),
+            start_ms: i as u64 * 5_000,
+            end_ms: i as u64 * 5_000 + 5_000,
+            channel: 1,
+            speaker_index: None,
+            words: None,
+        })
+        .collect();
+    let source = Source {
+        meeting_id: "sample".to_string(),
+        title: "Beispieltext".to_string(),
+        date: super::agent_route::today(now_ms),
+        labels: SpeakerDirectory::from_segments(&segments),
+        segments,
+    };
+    let runtime = AgentRuntime::new(services.agent_target().map_err(svc)?);
+    let opts = ExtractOptions {
+        kinds,
+        ..ExtractOptions::default()
+    };
+    let extraction = run_cancellable(cancel, extract::extract(&runtime, &source, &opts))
+        .ok_or_else(|| StepError::Transient("Der Lauf wurde abgebrochen.".to_string()))?;
+    if let Some(e) = blocking_error(&extraction.outcome) {
+        return Err(e);
+    }
+    let mut data = fit_json(
+        extraction.to_json("sample"),
+        MAX_OUTPUT_BYTES - OUTPUT_MARGIN_BYTES,
+    );
+    data["kind"] = json!("extract");
+    data["dry_run"] = json!(true);
+    data["writes"] = json!("nothing");
+    data["summary"] = json!(extraction.summary());
+    Ok(data)
 }
 
 pub struct AgentExtract {
@@ -214,37 +325,8 @@ impl Action for AgentExtract {
         let extraction = run_cancellable(&cancel, extract::extract(&runtime, &source, &opts))
             .ok_or_else(|| StepError::Transient("Der Lauf wurde abgebrochen.".to_string()))?;
 
-        // Was kein Ergebnis ist, aber auch kein Schritt-Erfolg: Server, Speicher, Einrichtung.
-        if let Outcome::NoAction(reason) = &extraction.outcome {
-            match reason {
-                NoActionReason::EmptyTranscript => {
-                    return Err(StepError::Permanent(
-                        "Die Besprechung hat kein Transkript, aus dem sich etwas ziehen ließe."
-                            .to_string(),
-                    ))
-                }
-                NoActionReason::Failed(error) => match error {
-                    AgentError::NotConfigured(m) => return Err(StepError::Permanent(m.clone())),
-                    AgentError::Rejected { .. } => {
-                        return Err(StepError::Permanent(error.describe()))
-                    }
-                    AgentError::Busy {
-                        retry_after_ms,
-                        reason,
-                    } => {
-                        return Err(StepError::Defer {
-                            retry_after_ms: *retry_after_ms,
-                            reason: reason.clone(),
-                        })
-                    }
-                    // Server weg oder Zeit: nichts geschrieben, ein neuer Versuch ist sicher.
-                    _ if reason.is_retryable() => {
-                        return Err(StepError::Transient(error.describe()))
-                    }
-                    // Eine unbrauchbare Antwort ist ein gueltiges `no_action`.
-                    _ => {}
-                },
-            }
+        if let Some(e) = blocking_error(&extraction.outcome) {
+            return Err(e);
         }
 
         let mut sources = vec![meeting_source(&meeting)];

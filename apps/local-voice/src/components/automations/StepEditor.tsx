@@ -5,10 +5,19 @@ import type {
   IntegrationView,
   WorkflowActionSpec,
   WorkflowCatalog,
+  WorkflowFieldSpec,
 } from "@/bindings";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
+import {
+  AgentPreviewPanel,
+  KindsField,
+  ModelField,
+  ToolsField,
+  useAgentTools,
+} from "./AgentFields";
+import { asList, isAgentAction } from "./agentModel";
 import { FieldInput } from "./FieldInput";
 import {
   isValidIdent,
@@ -26,10 +35,16 @@ interface StepEditorProps {
   catalog: WorkflowCatalog;
   integrations: IntegrationView[];
   issues: Issue[];
+  /** Der ganze Entwurf als JSON-Text und die Kennung des Ablaufs (`null`: neu): fuer die Vorschau der KI-Schritte. */
+  definitionJson?: string;
+  workflowId?: string | null;
   onChange: (step: StepDef) => void;
   onMove: (delta: -1 | 1) => void;
   onRemove: () => void;
 }
+
+/** Felder, die bei KI-Schritten die ganze Breite brauchen. */
+const WIDE_AGENT_FIELDS = new Set(["task", "context", "tools", "kinds"]);
 
 export const actionTitle = (
   t: (key: string, options?: Record<string, unknown>) => string,
@@ -52,12 +67,15 @@ export const StepEditor: React.FC<StepEditorProps> = ({
   catalog,
   integrations,
   issues,
+  definitionJson,
+  workflowId = null,
   onChange,
   onMove,
   onRemove,
 }) => {
   const { t } = useTranslation();
   const uid = useId();
+  const agentTools = useAgentTools();
   const spec = catalog.actions.find((a) => a.id === step.action);
   const base = `/steps/${index}`;
   const prefix = `step-${index}`;
@@ -80,6 +98,77 @@ export const StepEditor: React.FC<StepEditorProps> = ({
 
   const setParam = (name: string, value: unknown) =>
     onChange({ ...step, params: withParam(step.params, name, value) });
+
+  // KI-Schritte (C5): Felder mit eigener Bedienung. Die Empfaengerregel gilt nur mit einem Werkzeug,
+  // das Mail sendet; wer es abwaehlt, verliert Regel und Liste (sonst lehnt die Pruefung ab).
+  const agent = isAgentAction(step.action) ? step.action : null;
+  const chosenTools = asList(step.params?.tools);
+  const sendsMail = (name: string) =>
+    agentTools?.find((x) => x.name === name)?.sends_mail ??
+    name === "send_mail";
+  const mailChosen = chosenTools.some(sendsMail);
+  const setTools = (next: string[]) => {
+    let params = withParam(step.params, "tools", next);
+    if (!next.some(sendsMail)) {
+      params = withParam(withParam(params, "recipients", undefined), "list", undefined);
+    }
+    onChange({ ...step, params });
+  };
+  const setRecipients = (value: unknown) => {
+    let params = withParam(step.params, "recipients", value);
+    if (value !== "list") params = withParam(params, "list", undefined);
+    onChange({ ...step, params });
+  };
+
+  const renderField = (f: WorkflowFieldSpec): React.ReactNode => {
+    const fieldIssues = issuesAt(issues, `${base}/params/${f.name}`);
+    if (agent === "agent.route") {
+      if (f.name === "tools")
+        return (
+          <ToolsField
+            value={step.params?.tools}
+            issues={fieldIssues}
+            testPrefix={prefix}
+            onChange={setTools}
+          />
+        );
+      if (f.name === "recipients" && !mailChosen) return null;
+      if (f.name === "list" && !(mailChosen && step.params?.recipients === "list"))
+        return null;
+      if (f.name === "model")
+        return (
+          <ModelField
+            value={step.params?.model}
+            issues={fieldIssues}
+            testPrefix={prefix}
+            onChange={(v) => setParam("model", v)}
+          />
+        );
+    }
+    if (agent === "agent.extract" && f.name === "kinds")
+      return (
+        <KindsField
+          value={step.params?.kinds}
+          issues={fieldIssues}
+          testPrefix={prefix}
+          onChange={(v) => setParam("kinds", v)}
+        />
+      );
+    return (
+      <FieldInput
+        spec={f}
+        value={step.params?.[f.name]}
+        onChange={(v) =>
+          agent === "agent.route" && f.name === "recipients"
+            ? setRecipients(v)
+            : setParam(f.name, v)
+        }
+        issues={fieldIssues}
+        integrations={integrations}
+        testPrefix={prefix}
+      />
+    );
+  };
 
   return (
     <li
@@ -231,28 +320,31 @@ export const StepEditor: React.FC<StepEditorProps> = ({
           </p>
         </div>
 
-        {(spec?.fields ?? []).map((f) => (
-          <div
-            key={f.name}
-            className={
-              ["body", "text", "content", "subject", "path", "name"].includes(
-                f.name,
-              )
-                ? "sm:col-span-2"
-                : ""
-            }
-          >
-            <FieldInput
-              spec={f}
-              value={step.params?.[f.name]}
-              onChange={(v) => setParam(f.name, v)}
-              issues={issuesAt(issues, `${base}/params/${f.name}`)}
-              integrations={integrations}
-              testPrefix={prefix}
-            />
-          </div>
-        ))}
+        {(spec?.fields ?? []).map((f) => {
+          const field = renderField(f);
+          if (field === null) return null;
+          const wide =
+            ["body", "text", "content", "subject", "path", "name"].includes(
+              f.name,
+            ) ||
+            (agent !== null && WIDE_AGENT_FIELDS.has(f.name));
+          return (
+            <div key={f.name} className={wide ? "sm:col-span-2" : ""}>
+              {field}
+            </div>
+          );
+        })}
       </div>
+
+      {agent && definitionJson !== undefined && (
+        <AgentPreviewPanel
+          action={agent}
+          definitionJson={definitionJson}
+          workflowId={workflowId}
+          stepId={step.id}
+          testPrefix={prefix}
+        />
+      )}
 
       {(rest.length > 0 || unknownParams.length > 0) && (
         <ul className="space-y-0.5 text-xs text-status-red">

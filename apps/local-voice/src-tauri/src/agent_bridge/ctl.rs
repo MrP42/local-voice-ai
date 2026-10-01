@@ -5,6 +5,10 @@
 //! local-voice-ai.exe ctl tools  [--json]                 welche Werkzeuge darf dieser Zugang benutzen?
 //! local-voice-ai.exe ctl call <werkzeug> [--args JSON|@datei] [--approval ID] [--json]
 //! local-voice-ai.exe ctl approval <ID> [--json]          Stand einer Freigabe
+//! local-voice-ai.exe ctl workflow list [--json]          Abläufe der Automationen (Werkzeug list_workflows)
+//! local-voice-ai.exe ctl workflow run <ID> [--live] [--vars JSON|@datei] [--request-id ID] [--json]
+//!                                                        Ablauf starten, Standard Trockenlauf (run_workflow)
+//! local-voice-ai.exe ctl workflow get <RUN-ID> [--json]  Laufprotokoll (get_run)
 //! ```
 //!
 //! Das Token kommt aus der Umgebungsvariable `LVA_AGENT_TOKEN` oder aus `--token-file DATEI`
@@ -23,6 +27,7 @@
 //! | 4 | Anmeldung fehlgeschlagen: Token fehlt, ungueltig oder zurueckgezogen |
 //! | 5 | wartet auf die Freigabe des Nutzers (`approval_id` steht in der Ausgabe) |
 
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -87,6 +92,71 @@ pub enum Verb {
         /// Kennung aus der Antwort `pending`.
         id: String,
     },
+    /// Automationen (B8): Abläufe auflisten, starten, Laufprotokoll lesen.
+    Workflow {
+        #[command(subcommand)]
+        action: WorkflowVerb,
+    },
+}
+
+/// `ctl workflow ...`: dieselben Rechte, Freigaben und Exit-Codes wie `ctl call` (die Werkzeuge
+/// `list_workflows`, `run_workflow`, `get_run`).
+#[derive(Subcommand, Debug, Clone)]
+pub enum WorkflowVerb {
+    /// Die Abläufe mit Auslöser, Schaltzustand und letztem Lauf.
+    List,
+    /// Einen Ablauf starten. Ohne `--live` ein Trockenlauf (nichts wird ausgeführt).
+    Run {
+        /// Kennung des Ablaufs (siehe `workflow list`).
+        id: String,
+        /// Echter Lauf: nur bei eingeschaltetem, scharf geschaltetem Ablauf und mit dem Recht
+        /// `workflow.run`; sonst Fehler, es entsteht kein Lauf.
+        #[arg(long)]
+        live: bool,
+        /// Werte für die deklarierten Variablen als JSON-Objekt, oder `@datei.json`.
+        #[arg(long, value_name = "JSON")]
+        vars: Option<String>,
+        /// Eigene Kennung: dieselbe Kennung startet keinen zweiten Lauf.
+        #[arg(long, value_name = "ID")]
+        request_id: Option<String>,
+        /// Kennung einer erteilten Freigabe (Recht „fragen“): führt den früher angefragten Aufruf aus.
+        #[arg(long, value_name = "ID")]
+        approval: Option<String>,
+    },
+    /// Das Protokoll eines Laufs.
+    Get {
+        /// Kennung des Laufs (aus `workflow run`).
+        run_id: String,
+    },
+}
+
+impl WorkflowVerb {
+    /// Werkzeug, Argumente und Freigabe, auf die dieser Befehl abgebildet wird.
+    fn as_call(&self) -> Result<(&'static str, Value, Option<String>), String> {
+        Ok(match self {
+            WorkflowVerb::List => ("list_workflows", json!({}), None),
+            WorkflowVerb::Get { run_id } => ("get_run", json!({ "run_id": run_id }), None),
+            WorkflowVerb::Run {
+                id,
+                live,
+                vars,
+                request_id,
+                approval,
+            } => {
+                let mut args = json!({ "workflow_id": id });
+                if *live {
+                    args["live"] = json!(true);
+                }
+                if let Some(v) = vars {
+                    args["vars"] = parse_args(v)?;
+                }
+                if let Some(r) = request_id {
+                    args["request_id"] = json!(r);
+                }
+                ("run_workflow", args, approval.clone())
+            }
+        })
+    }
 }
 
 /// Alles, was `execute` von aussen braucht (in Tests ersetzbar).
@@ -223,6 +293,13 @@ fn run_verb(args: &CtlArgs, env: &CtlEnv) -> CtlResult {
         },
         _ => None,
     };
+    let workflow_call = match &args.verb {
+        Verb::Workflow { action } => match action.as_call() {
+            Ok(c) => Some(c),
+            Err(m) => return CtlResult::failure(EXIT_ERROR, "bad_args", &m),
+        },
+        _ => None,
+    };
     if !matches!(args.verb, Verb::Status) && token.is_none() {
         return CtlResult::failure(EXIT_AUTH, "no_token", NO_TOKEN);
     }
@@ -251,33 +328,15 @@ fn run_verb(args: &CtlArgs, env: &CtlEnv) -> CtlResult {
             }
             Err(e) => from_error(&e),
         },
-        Verb::Call { tool, approval, .. } => {
-            let mut params = json!({
-                "name": tool,
-                "arguments": call_args.unwrap_or_else(|| json!({})),
-            });
-            if let Some(a) = approval {
-                params["approval_id"] = json!(a);
-            }
-            match client.request("tools/call", params) {
-                Ok(v) => match v["status"].as_str() {
-                    Some("done") => {
-                        let text = serde_json::to_string_pretty(&v["result"]).unwrap_or_default();
-                        CtlResult::ok(v, text)
-                    }
-                    Some("pending") => {
-                        let text = format!(
-                            "Freigabe ausstehend: {}\nDie App wartet auf die Entscheidung des Nutzers. Stand: ctl approval {}; nach „approved“: denselben Aufruf mit --approval {} wiederholen.",
-                            v["approval_id"].as_str().unwrap_or("?"),
-                            v["approval_id"].as_str().unwrap_or("?"),
-                            v["approval_id"].as_str().unwrap_or("?"),
-                        );
-                        CtlResult::with_exit(EXIT_PENDING, v, text)
-                    }
-                    _ => CtlResult::failure(EXIT_ERROR, "protocol", "Unerwartete Antwort."),
-                },
-                Err(e) => from_error(&e),
-            }
+        Verb::Call { tool, approval, .. } => call_tool(
+            &mut client,
+            tool,
+            call_args.unwrap_or_else(|| json!({})),
+            approval.as_deref(),
+        ),
+        Verb::Workflow { .. } => {
+            let (tool, wf_args, approval) = workflow_call.expect("vorab gebildet");
+            call_tool(&mut client, tool, wf_args, approval.as_deref())
         }
         Verb::Approval { id } => match client.request("approval/status", json!({ "approval_id": id })) {
             Ok(v) => {
@@ -296,6 +355,38 @@ fn run_verb(args: &CtlArgs, env: &CtlEnv) -> CtlResult {
             }
             Err(e) => from_error(&e),
         },
+    }
+}
+
+/// Ruft ein Werkzeug und bildet die Antwort auf Exit-Code und Text ab (`call` und `workflow`).
+fn call_tool<R: BufRead, W: Write>(
+    client: &mut Client<R, W>,
+    tool: &str,
+    args: Value,
+    approval: Option<&str>,
+) -> CtlResult {
+    let mut params = json!({ "name": tool, "arguments": args });
+    if let Some(a) = approval {
+        params["approval_id"] = json!(a);
+    }
+    match client.request("tools/call", params) {
+        Ok(v) => match v["status"].as_str() {
+            Some("done") => {
+                let text = serde_json::to_string_pretty(&v["result"]).unwrap_or_default();
+                CtlResult::ok(v, text)
+            }
+            Some("pending") => {
+                let text = format!(
+                    "Freigabe ausstehend: {}\nDie App wartet auf die Entscheidung des Nutzers. Stand: ctl approval {}; nach „approved“: denselben Aufruf mit --approval {} wiederholen.",
+                    v["approval_id"].as_str().unwrap_or("?"),
+                    v["approval_id"].as_str().unwrap_or("?"),
+                    v["approval_id"].as_str().unwrap_or("?"),
+                );
+                CtlResult::with_exit(EXIT_PENDING, v, text)
+            }
+            _ => CtlResult::failure(EXIT_ERROR, "protocol", "Unerwartete Antwort."),
+        },
+        Err(e) => from_error(&e),
     }
 }
 
@@ -381,7 +472,6 @@ pub fn finish(args: &CtlArgs, result: &CtlResult) -> i32 {
             eprintln!("Die Ausgabedatei lässt sich nicht schreiben: {e}");
         }
     }
-    use std::io::Write;
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
     result.exit

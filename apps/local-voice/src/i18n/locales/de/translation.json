@@ -3472,6 +3472,47 @@
     "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
   },
   "automations": {
+    "agent": {
+      "operation": {
+        "agent_route": "Werkzeug gewählt (lokaler Agent)",
+        "agent_extract": "Aufgaben, Fristen und Entscheidungen extrahiert"
+      },
+      "kinds": {
+        "todos": "To-dos",
+        "deadlines": "Fristen",
+        "decisions": "Entscheidungen"
+      },
+      "sendsMail": "sendet an andere",
+      "runsAction": "Baustein: {{action}}",
+      "toolFields": "Felder, die das Modell füllt: {{fields}}",
+      "dateKind": "Zeitangabe",
+      "unknownTool": "Dieses Werkzeug gibt es nicht (mehr). Bitte abwählen.",
+      "modelDefault": "Standard-Router",
+      "modelNotLoaded": "{{id}} (nicht geladen)",
+      "previewTitle": "Mit Beispieltext ausprobieren",
+      "previewHintRoute": "Das Modell entscheidet jetzt für diesen Schritt, ohne dass etwas geschieht: keine Mitteilung, keine Mail, keine Freigabe, kein Eintrag in der Herkunft. Ohne Beispieltext gilt das Feld „Daten für die Wahl“.",
+      "previewHintExtract": "Das Modell zieht aus dem Beispieltext (eine Zeile je Satz) To-dos, Fristen und Entscheidungen, ohne dass etwas geschieht. Im Lauf liest der Schritt das Transkript der Besprechung.",
+      "sample": "Beispieltext",
+      "samplePlaceholder": "Zum Beispiel: Frau Berg schickt das Angebot bis übermorgen an den Kunden.",
+      "try": "Mit Beispieltext ausprobieren",
+      "trying": "Das Modell entscheidet …",
+      "noEffect": "Keine Wirkung (Trockenlauf)",
+      "busy": "Der Platz für schwere Schritte ist belegt ({{reason}}). Bitte in etwa {{seconds}} s noch einmal versuchen.",
+      "previewUnreadable": "Die Antwort der Vorschau ließ sich nicht lesen.",
+      "chosen": "Gewähltes Werkzeug: {{tool}}",
+      "recipients": "Empfänger (vom Programm gebildet): {{list}}",
+      "passed": "Begründung: Die Politik hat die Wahl geprüft (Werkzeugliste, Empfänger, Obergrenze, Felder) und durchgelassen. Ausgeführt wird sie nur, wenn ein folgender Schritt mit passender Bedingung sie aufgreift.",
+      "noAction": "Keine Aktion gewählt",
+      "noReason": "Das Modell nannte keinen Grund.",
+      "signals": "Erkannte Aufforderung an die KI im Text: {{list}}",
+      "noItems": "Nichts gefunden.",
+      "counts": "{{todos}} To-dos, {{deadlines}} Fristen, {{decisions}} Entscheidungen",
+      "tokens": "Token: {{input}} ein, {{output}} aus",
+      "confidence": "Konfidenz {{value}} %",
+      "origin": "Herkunft",
+      "segment": "Segment {{n}}",
+      "openSegment": "In der Besprechung an dieser Stelle öffnen"
+    },
     "title": "Automationen",
     "loading": "Automationen werden geladen …",
     "loadError": "Die Automationen ließen sich nicht laden.",
@@ -3668,6 +3709,38 @@
       "add": "Variable hinzufügen"
     },
     "fields": {
+      "task": {
+        "label": "Aufgabe",
+        "hint": "Was das Modell entscheiden soll, in einem Satz. Ein fester Text, nie aus Daten."
+      },
+      "context": {
+        "label": "Daten für die Wahl",
+        "hint": "Zum Beispiel das Ergebnis eines früheren Schritts. Das Modell behandelt sie als Daten, nie als Anweisung."
+      },
+      "tools": {
+        "label": "Freigegebene Werkzeuge",
+        "hint": "Das Modell darf nur aus dieser Liste wählen (höchstens {{max}}). Ausgeführt wird nur, was ein folgender Schritt mit passender Bedingung tut – mit eigenem Recht und eigener Freigabe."
+      },
+      "recipients": {
+        "label": "Empfängerregel",
+        "hint": "Die Empfänger bildet das Programm aus dieser Regel, nie das Modell."
+      },
+      "max_actions": {
+        "label": "Höchstens Aktionen je Lauf",
+        "hint": "1 bis 10; zählt über alle „Werkzeug wählen“-Schritte des Laufs."
+      },
+      "model": {
+        "label": "Modell",
+        "hint": "Nur ein geladenes lokales Modell; ohne Angabe der Standard-Router."
+      },
+      "reference_date": {
+        "label": "Bezugsdatum",
+        "hint": "Für „morgen“, „Freitag“ usw. (JJJJ-MM-TT); leer: heute."
+      },
+      "kinds": {
+        "label": "Was gezogen wird",
+        "hint": "Ohne Auswahl: To-dos, Fristen und Entscheidungen."
+      },
       "via": {
         "label": "Integration",
         "hint": "Das Konto oder der Ordner, über den der Schritt läuft."
@@ -3833,6 +3906,13 @@
       }
     },
     "choices": {
+      "recipients": {
+        "me": "Nur ich",
+        "participants": "Teilnehmende",
+        "all": "Alle",
+        "internal": "Nur interne Teilnehmende",
+        "list": "Feste Liste"
+      },
       "every": {
         "daily": "Täglich",
         "weekly": "Wöchentlich"
@@ -3967,6 +4047,7 @@
       "output": "Ergebnis",
       "provenance": "Herkunft der Ergebnisse",
       "provenanceDry": "Ein Trockenlauf erzeugt nichts, deshalb gibt es keine Herkunft.",
+      "provenanceInline": "Die Herkunft der KI-Schritte steht bei den Schritten oben.",
       "provenanceNone": "Dieser Lauf hat (noch) keine Inhalte mit Herkunft erzeugt.",
       "noModel": "ohne Modell",
       "local": "lokal",
@@ -4218,6 +4299,18 @@
         "tts_render_audio": {
           "title": "Audio erzeugen",
           "description": "Erzeugt aus einer Vorlesen-Seite eine Audiodatei."
+        },
+        "list_workflows": {
+          "title": "Automationen auflisten",
+          "description": "Listet die Abläufe der Automationen mit Auslöser, Schaltzustand und letztem Lauf."
+        },
+        "run_workflow": {
+          "title": "Ablauf starten",
+          "description": "Startet einen Ablauf als Trockenlauf; scharf nur, wenn der Ablauf scharf geschaltet ist und das Recht es erlaubt."
+        },
+        "get_run": {
+          "title": "Laufprotokoll lesen",
+          "description": "Liest das Protokoll eines Laufs: Zustand, Schritte, Fehler (ohne Geheimnisse und ohne Auslöserdaten)."
         }
       }
     },
@@ -4483,6 +4576,14 @@
       "webhook_post": {
         "title": "Daten an Webhook senden",
         "description": "Daten an die Adresse des Webhooks schicken (zum Beispiel an n8n)."
+      },
+      "workflow_read": {
+        "title": "Automationen lesen",
+        "description": "Abläufe auflisten und Laufprotokolle lesen."
+      },
+      "workflow_run": {
+        "title": "Ablauf starten",
+        "description": "Einen Ablauf als Trockenlauf oder, wenn er scharf geschaltet ist, echt starten."
       }
     },
     "approvals": {
