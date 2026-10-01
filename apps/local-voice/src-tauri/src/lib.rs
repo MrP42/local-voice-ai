@@ -1,4 +1,5 @@
 mod actions;
+mod agent; // C1 (Goal Lokaler Agent)
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
@@ -2311,6 +2312,7 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.reindex_meetings // M4-P4b
         || cli_args.eval_diarization.is_some() // M3-P3a
         || cli_args.eval_chat.is_some() // M4-P4f
+        || cli_args.eval_agent // C1
         || cli_args.export_meeting.is_some() // M6-P6a
         || cli_args.followup_draft.is_some() // P6f
         || cli_args.calendar_dump.is_some() // M5-P5a
@@ -2636,6 +2638,23 @@ pub fn run(cli_args: CliArgs) {
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             run_headless_eval_minutes(&app_handle, &args, &dir)
+                        });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // C1: Werkzeugwahl des lokalen Agenten (60 eingebettete Aufgaben);
+                // braucht nur das Sprachmodell.
+                if cli_args.eval_agent {
+                    let app_handle = app.handle().clone();
+                    let args = cli_args.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            run_headless_eval_agent(&app_handle, &args)
                         });
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
@@ -3512,6 +3531,55 @@ fn run_headless_eval_chat(app: &AppHandle, args: &CliArgs, dir: &std::path::Path
         emit_headless_payload(&payload, args.out.as_deref());
     } else {
         for line in eval::summary_lines(&payload) {
+            println!("{line}");
+        }
+        if let Some(path) = args.out.as_deref() {
+            match std::fs::write(
+                path,
+                serde_json::to_string_pretty(&payload).unwrap_or_default(),
+            ) {
+                Ok(()) => eprintln!("wrote {}", path.display()),
+                Err(e) => eprintln!("error: could not write {}: {}", path.display(), e),
+            }
+        }
+    }
+    code
+}
+
+// C1 (Goal Lokaler Agent): `--eval-agent --model <id>`. Werkzeugwahl im
+// Schema-Modus auf dem eingebetteten Datensatz. Der lokale Server startet nur
+// ueber den Manager (RAM-Gate, Job-Objekt), mit Speicherwaechter wie in
+// `run_headless_eval_notes`, und wird am Ende gestoppt. Keine Einstellungen,
+// keine Besprechungsdaten. Exit 0 Gate erfuellt, 3 verfehlt, 1 Fehler, 2 ohne --model.
+fn run_headless_eval_agent(app: &AppHandle, args: &CliArgs) -> i32 {
+    crate::selftest::begin_headless_run();
+    let Some(model) = args.model.as_deref().map(str::trim).filter(|m| !m.is_empty()) else {
+        eprintln!("error: --eval-agent needs --model <id> (see --list-models)");
+        return 2;
+    };
+    let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
+        Ok(runtime) => Arc::new(runtime),
+        Err(e) => {
+            eprintln!("error: LLM runtime unavailable: {e}");
+            return 1;
+        }
+    };
+    let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
+    managers::llm::install_globals(llm_runtime, llm_server.clone());
+    {
+        let llm = llm_server.clone();
+        process_guard::spawn_memory_watchdog(move |free_mb| {
+            llm.stop();
+            eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
+        });
+    }
+    let (code, payload) = tauri::async_runtime::block_on(agent::eval::run_cli(model));
+    llm_server.stop();
+
+    if args.json {
+        emit_headless_payload(&payload, args.out.as_deref());
+    } else {
+        for line in agent::eval::summary_lines(&payload) {
             println!("{line}");
         }
         if let Some(path) = args.out.as_deref() {

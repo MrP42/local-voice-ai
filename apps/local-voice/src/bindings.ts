@@ -1757,7 +1757,9 @@ async meetingsDelete(meetingId: string) : Promise<Result<null, string>> {
 },
 /**
  * Imports a local audio/video file or a VTT/SRT subtitle file as a new
- * meeting. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
+ * meeting. Einwilligung (#15): `consent_confirmed = false` wird im Backend
+ * bewusst NICHT abgelehnt (Oberflaechen-Gate; nur die Live-Aufnahme prueft
+ * `consent_gate` im Recorder), siehe `import_media_file`. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
  * LEEREN Eintrag (Titel, Projekte und Notizen bleiben; der Titel wird nur
  * ersetzt, solange er der vorgeschlagene ist) und kehrt mit dessen Id zurueck;
  * ist das Ziel nicht (mehr) leer, kommt `target_not_empty`.

@@ -328,6 +328,17 @@ pub struct CliArgs {
     #[arg(long)]
     pub lexical_only: bool,
 
+    // C1 (Goal Lokaler Agent)
+    /// Evaluate the local agent's tool choice (60 built-in German tasks: tool,
+    /// arguments, dates, abstention, injection) with the local model given by
+    /// --model (catalog id, e.g. llm-gemma4-e4b-q4; must be downloaded) and
+    /// exit. Schema-bound output, thinking off, temperature 0. The llama-server
+    /// is started through the app's manager (RAM gate, job object) and stopped
+    /// at the end. Output via --json/--out. Exit 0 gate met (tool >= 95 %,
+    /// arguments >= 90 %), 3 missed, 1 error, 2 no --model.
+    #[arg(long)]
+    pub eval_agent: bool,
+
     // M3-P3a
     /// Measure speaker diarization (DER, acceptance AK7) on every pair
     /// <name>.wav + <name>.rttm in DIR and exit. --model picks the diarization
