@@ -5901,7 +5901,15 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
 /**
  * Daten an einen Webhook senden (B5, n8n-Bruecke).
  */
-"webhook.post"
+"webhook.post" | 
+/**
+ * Ablaeufe auflisten und Laufprotokolle lesen (B8, Agentenbruecke).
+ */
+"workflow.read" | 
+/**
+ * Einen Ablauf starten (B8): Trockenlauf oder, bei scharfem Ablauf, ein echter Lauf.
+ */
+"workflow.run"
 /**
  * Eine Zeile der Rechte-Matrix.
  */

@@ -105,6 +105,8 @@ impl Kind {
                 TranscribeFile,
                 TtsRender,
                 YoutubeAdd,
+                WorkflowRead,
+                WorkflowRun,
             ],
             Kind::Webhook => &[WebhookPost],
         }
@@ -193,10 +195,16 @@ pub enum Capability {
     /// Daten an einen Webhook senden (B5, n8n-Bruecke).
     #[serde(rename = "webhook.post")]
     WebhookPost,
+    /// Ablaeufe auflisten und Laufprotokolle lesen (B8, Agentenbruecke).
+    #[serde(rename = "workflow.read")]
+    WorkflowRead,
+    /// Einen Ablauf starten (B8): Trockenlauf oder, bei scharfem Ablauf, ein echter Lauf.
+    #[serde(rename = "workflow.run")]
+    WorkflowRun,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 15] = [
+    pub const ALL: [Capability; 17] = [
         Capability::CalendarRead,
         Capability::CalendarWrite,
         Capability::MailSend,
@@ -212,6 +220,8 @@ impl Capability {
         Capability::TranscribeFile,
         Capability::TtsRender,
         Capability::WebhookPost,
+        Capability::WorkflowRead,
+        Capability::WorkflowRun,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -231,6 +241,8 @@ impl Capability {
             Capability::TranscribeFile => "transcribe.file",
             Capability::TtsRender => "tts.render",
             Capability::WebhookPost => "webhook.post",
+            Capability::WorkflowRead => "workflow.read",
+            Capability::WorkflowRun => "workflow.run",
         }
     }
 
@@ -246,7 +258,8 @@ impl Capability {
             | Capability::FilesRead
             | Capability::KnowledgeSearch
             | Capability::KnowledgeRead
-            | Capability::MediaFetch => Access::Read,
+            | Capability::MediaFetch
+            | Capability::WorkflowRead => Access::Read,
             _ => Access::Write,
         }
     }

@@ -108,6 +108,8 @@ export const installIntegrationsMock = async (
             "transcribe.file",
             "tts.render",
             "youtube.add",
+            "workflow.read",
+            "workflow.run",
           ],
         },
       };
@@ -117,6 +119,7 @@ export const installIntegrationsMock = async (
         "knowledge.search",
         "knowledge.read",
         "media.fetch",
+        "workflow.read",
       ]);
       const CALLERS = ["workflow", "agent_external", "agent_local"];
 

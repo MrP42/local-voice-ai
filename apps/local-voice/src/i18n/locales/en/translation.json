@@ -4218,6 +4218,18 @@
         "tts_render_audio": {
           "title": "Create audio",
           "description": "Creates an audio file from a read-aloud page."
+        },
+        "list_workflows": {
+          "title": "List automations",
+          "description": "Lists the automation workflows with trigger, switch state and last run."
+        },
+        "run_workflow": {
+          "title": "Start a workflow",
+          "description": "Starts a workflow as a dry run; a real run only if the workflow is armed and the right allows it."
+        },
+        "get_run": {
+          "title": "Read run log",
+          "description": "Reads the log of a run: state, steps, errors (without secrets and trigger data)."
         }
       }
     },
@@ -4483,6 +4495,14 @@
       "webhook_post": {
         "title": "Send data to a webhook",
         "description": "Send data to the webhook address (for example n8n)."
+      },
+      "workflow_read": {
+        "title": "Read automations",
+        "description": "List workflows and read run logs."
+      },
+      "workflow_run": {
+        "title": "Start a workflow",
+        "description": "Start a workflow as a dry run or, if it is armed, for real."
       }
     },
     "approvals": {

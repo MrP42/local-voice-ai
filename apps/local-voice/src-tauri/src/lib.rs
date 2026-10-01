@@ -3372,10 +3372,9 @@ fn run_headless_agent_bridge(app: &AppHandle, args: &CliArgs) -> i32 {
         // A8: die echten Handler gegen die Sandbox-Datenbank, mit der Attrappe des Hosts
         // (keine Warteschlange, kein Recorder, ein Testton statt der Sprach-Engine).
         let pages = agent_bridge::tools::sandbox::SandboxHost::pages_dir_for(std::path::Path::new(dir));
-        handlers.push(Arc::new(agent_bridge::tools::AppTools::new(
-            store.clone(),
-            Arc::new(agent_bridge::tools::sandbox::SandboxHost::new(store.clone(), pages)),
-        )));
+        let host = Arc::new(agent_bridge::tools::sandbox::SandboxHost::new(store.clone(), pages));
+        host.start_workflow_worker(); // B8: Laeufe der Automationen werden fertig
+        handlers.push(Arc::new(agent_bridge::tools::AppTools::new(store.clone(), host)));
     }
     agent_bridge::runtime::run_headless(store, handlers, args.seconds)
 }

@@ -33,6 +33,7 @@
 pub mod app_host;
 pub mod paths;
 pub mod sandbox;
+pub mod workflows; // B8
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -43,6 +44,7 @@ use serde_json::{json, Value};
 use super::catalog::{self, CallContext, ToolHandler, ToolSpec};
 use crate::managers::meetings::store::MeetingStore;
 use crate::managers::provenance::{self, ActorKind, NewProvenance, SubjectKind};
+use crate::managers::workflows::engine::Engine;
 use crate::managers::workflows::recording::{self, RecordingControl, StartRequest};
 use crate::managers::youtube::source::{self, AddOptions, Origin};
 
@@ -102,6 +104,11 @@ pub trait Host: Send + Sync {
     /// Nach dem Anlegen einer Besprechung (Such-Index anstossen o. ae.).
     fn meeting_created(&self, _meeting_id: &str) {}
     fn youtube_options(&self) -> AddOptions;
+    /// Die Engine der Automationen (B8); `None`, wenn es hier keine gibt oder sie noch nicht
+    /// bereit ist. Die Werkzeuge melden das als Klartext.
+    fn workflow_engine(&self) -> Option<Engine> {
+        None
+    }
 }
 
 /// Die Handler. Haelt den Store (Besprechungen, Ordner, Provenienz) und den `Host`.
@@ -384,6 +391,9 @@ pub fn all_specs() -> Vec<ToolSpec> {
             json!({ "type": "object", "additionalProperties": false }),
         ),
     ]
+    .into_iter()
+    .chain(workflows::specs())
+    .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -634,6 +644,9 @@ impl ToolHandler for AppTools {
             "tts_render_audio" => self.tts_render_audio(ctx, a),
             "start_recording" => self.start_recording(ctx, a),
             "stop_recording" => self.stop_recording(a),
+            "list_workflows" => self.list_workflows(a),
+            "run_workflow" => self.run_workflow(ctx, a),
+            "get_run" => self.get_run(a),
             other => Err(format!("Das Werkzeug „{other}“ gibt es nicht.")),
         }
     }
