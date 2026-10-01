@@ -25,6 +25,7 @@ import { usePersistentState } from "./hooks/usePersistentState";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
+import { pasteNoticeKeys } from "@/lib/utils/pasteNotice";
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -191,16 +192,14 @@ function App() {
     const unlisten = listen<{
       reason: string;
       transcript_in_clipboard: boolean;
+      partial?: boolean;
     }>("paste-fallback", (event) => {
-      const { reason, transcript_in_clipboard } = event.payload;
-      toast.error(t("errors.pasteFallbackTitle"), {
+      const { reason, transcript_in_clipboard, partial } = event.payload;
+      const keys = pasteNoticeKeys(partial, transcript_in_clipboard);
+      toast.error(partial ? t(keys.title) : t("errors.pasteFallbackTitle"), {
         description: `${t(`overlay.notice.reason.${reason}`, {
           defaultValue: t("overlay.notice.reason.injection_failed"),
-        })} ${
-          transcript_in_clipboard
-            ? t("overlay.notice.inClipboard")
-            : t("overlay.notice.inHistory")
-        }`,
+        })} ${t(keys.action)}`,
       });
     });
     return () => {

@@ -1,6 +1,7 @@
 use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
+use crate::paste_session::HeldOutcome;
 use crate::refinement::injection::InjectionHandle;
 use crate::refinement::ollama::{OllamaRefiner, RefinementStage};
 use crate::refinement::sentences::complete_sentence_ranges;
@@ -1729,6 +1730,27 @@ impl TranscriptionManager {
     /// Whether this run already inserted streamed text into the target app.
     pub fn stream_injected_any(&self) -> bool {
         self.stream_injected_len.load(Ordering::Acquire) > 0
+    }
+
+    /// Id of the live-injection run that is active now. The stop path reads
+    /// it synchronously, because a new dictation may start (and replace the
+    /// id) while the previous one is still being finalised.
+    pub fn injection_run_id(&self) -> u64 {
+        self.active_injection_run_id.load(Ordering::Acquire)
+    }
+
+    /// The text the live injection kept out of the target window because the
+    /// focus moved, the target is elevated or a paste failed (issue #9).
+    /// Waits for the injection worker to drain its queue first, so call it
+    /// after the stream was finalised.
+    pub(crate) async fn take_held_stream_text(&self, run_id: u64) -> HeldOutcome {
+        if run_id == 0 {
+            return HeldOutcome::Nothing;
+        }
+        let injection = self.injection.clone();
+        tauri::async_runtime::spawn_blocking(move || injection.take_held(run_id))
+            .await
+            .unwrap_or(HeldOutcome::Lost)
     }
 
     /// Reset the injection cursor at the start of a run.

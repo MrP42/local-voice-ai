@@ -1,5 +1,6 @@
 use super::injection_state::{ContextKey, PreparedSnapshot, ReplacementPlan, RunState};
 use crate::input::{self, EnigoState, ReplacementContext};
+use crate::paste_session::{HeldOutcome, HeldRemainder, Surroundings, SystemSurroundings};
 use crate::settings::{get_settings, ClipboardHandling, PasteMethod};
 use enigo::{Direction, Key, Keyboard};
 use log::{debug, warn};
@@ -10,6 +11,11 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 const TARGET_PASTE_SETTLE_DELAY: Duration = Duration::from_millis(120);
 const QUEUE_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long the end of a run waits for the worker to drain its queue and hand
+/// over the buffered remainder. The queue is FIFO, so this includes pasting
+/// every fragment queued before the request; far longer than that normally
+/// takes, and a timeout is reported to the user, never swallowed.
+const HELD_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub(crate) struct InjectionHandle {
@@ -35,6 +41,10 @@ enum InjectionCommand {
         sentence_id: u64,
         original: String,
         candidate: String,
+    },
+    TakeHeld {
+        run_id: u64,
+        reply: mpsc::SyncSender<Option<HeldRemainder>>,
     },
     PrepareFinal {
         run_id: u64,
@@ -93,6 +103,30 @@ impl InjectionHandle {
         });
     }
 
+    /// The text the guard kept out of the target window during this run.
+    ///
+    /// Goes through the same FIFO as the fragments, so every fragment queued
+    /// before this call has been inserted or buffered when the answer comes.
+    pub(crate) fn take_held(&self, run_id: u64) -> HeldOutcome {
+        self.take_held_within(run_id, HELD_REPLY_TIMEOUT)
+    }
+
+    fn take_held_within(&self, run_id: u64, timeout: Duration) -> HeldOutcome {
+        let (reply, result) = mpsc::sync_channel(1);
+        if self
+            .tx
+            .send(InjectionCommand::TakeHeld { run_id, reply })
+            .is_err()
+        {
+            return HeldOutcome::Lost;
+        }
+        match result.recv_timeout(timeout) {
+            Ok(Some(remainder)) => HeldOutcome::Held(remainder),
+            Ok(None) => HeldOutcome::Nothing,
+            Err(_) => HeldOutcome::Lost,
+        }
+    }
+
     pub(crate) fn prepare_final(&self, run_id: u64) -> Option<PreparedSnapshot> {
         let (reply, result) = mpsc::sync_channel(1);
         self.tx
@@ -140,11 +174,25 @@ fn run_worker(app: AppHandle, rx: mpsc::Receiver<InjectionCommand>) {
                 let Some(run) = state.as_mut().filter(|run| run.is_run(run_id)) else {
                     continue;
                 };
-                let track_context = run.wants_context();
-                let before = track_context.then(capture_key).flatten();
-                let pasted = paste_fragment(&app, &fragment);
-                let after = track_context.then(capture_key).flatten();
-                run.record_append(&fragment, before, after, pasted);
+                let outcome = append_step(
+                    run,
+                    &fragment,
+                    &SystemSurroundings,
+                    capture_key,
+                    |fragment| paste_fragment(&app, fragment),
+                );
+                if outcome == AppendOutcome::Buffered {
+                    // Length only: the fragment is spoken content. The reason is
+                    // logged once, when the run's remainder is reported.
+                    debug!(
+                        "stream injection: {} bytes buffered instead of inserted",
+                        fragment.len()
+                    );
+                }
+            }
+            InjectionCommand::TakeHeld { run_id, reply } => {
+                let held = state.as_mut().and_then(|run| run.take_held(run_id));
+                let _ = reply.send(held);
             }
             InjectionCommand::RegisterSentence {
                 run_id,
@@ -212,6 +260,38 @@ fn run_worker(app: AppHandle, rx: mpsc::Receiver<InjectionCommand>) {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppendOutcome {
+    /// The fragment went out through the paste path.
+    Inserted,
+    /// The guard refused it; it sits in the run's buffer.
+    Buffered,
+}
+
+/// One `Append` of the worker. The guard decides FIRST and independently of
+/// refinement (issue #9: it used to hang on `RunState::wants_context()`, so a
+/// run without refinement pasted into whatever window had the focus). The
+/// effects are injected so the order "guard, then paste" is testable without
+/// a desktop.
+fn append_step(
+    run: &mut RunState,
+    fragment: &str,
+    env: &dyn Surroundings,
+    capture: impl Fn() -> Option<ContextKey>,
+    paste: impl FnOnce(&str) -> bool,
+) -> AppendOutcome {
+    if !run.admit_fragment(fragment, env) {
+        return AppendOutcome::Buffered;
+    }
+    let track_context = run.wants_context();
+    let before = track_context.then(&capture).flatten();
+    let pasted = paste(fragment);
+    let after = track_context.then(&capture).flatten();
+    run.record_append(fragment, before, after, pasted);
+    run.finish_delivery(fragment, pasted, env);
+    AppendOutcome::Inserted
 }
 
 /// Gibt die Zwischenablage nach einer Injektion wieder her, solange die
@@ -418,5 +498,193 @@ mod clipboard_tests {
     #[test]
     fn dont_modify_is_the_default() {
         assert!(restores_clipboard(ClipboardHandling::default()));
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::{
+        append_step, AppendOutcome, ContextKey, HeldOutcome, HeldRemainder, InjectionCommand,
+        InjectionHandle,
+    };
+    use crate::paste_guard::PasteFallback;
+    use crate::paste_session::testing::{window, FakeDesktop};
+    use crate::refinement::injection_state::RunState;
+    use std::cell::RefCell;
+    use std::sync::mpsc;
+
+    fn no_context() -> Option<ContextKey> {
+        None
+    }
+
+    /// Pastes recorded by the fake paste effect.
+    struct Pastes(RefCell<Vec<String>>);
+
+    impl Pastes {
+        fn new() -> Self {
+            Self(RefCell::new(Vec::new()))
+        }
+        fn record(&self, fragment: &str) -> bool {
+            self.0.borrow_mut().push(fragment.to_string());
+            true
+        }
+        fn all(&self) -> Vec<String> {
+            self.0.borrow().clone()
+        }
+    }
+
+    fn handle_with_receiver() -> (InjectionHandle, mpsc::Receiver<InjectionCommand>) {
+        let (tx, rx) = mpsc::channel();
+        (
+            InjectionHandle {
+                tx: std::sync::Arc::new(tx),
+            },
+            rx,
+        )
+    }
+
+    #[test]
+    fn a_vanished_worker_is_reported_as_lost_not_as_nothing_held() {
+        let (handle, rx) = handle_with_receiver();
+        drop(rx); // the worker thread is gone
+
+        assert_eq!(handle.take_held(1), HeldOutcome::Lost);
+    }
+
+    #[test]
+    fn a_stuck_worker_is_reported_as_lost_after_the_timeout() {
+        let (handle, _rx) = handle_with_receiver(); // never answers
+
+        assert_eq!(
+            handle.take_held_within(1, std::time::Duration::from_millis(30)),
+            HeldOutcome::Lost
+        );
+    }
+
+    #[test]
+    fn the_remainder_the_worker_hands_over_is_passed_on() {
+        let (handle, rx) = handle_with_receiver();
+        let worker = std::thread::spawn(move || match rx.recv().unwrap() {
+            InjectionCommand::TakeHeld { run_id, reply } => {
+                assert_eq!(run_id, 4);
+                let _ = reply.send(Some(HeldRemainder {
+                    text: " Rest.".into(),
+                    reason: PasteFallback::FocusChanged,
+                    target: None,
+                }));
+            }
+            _ => panic!("expected TakeHeld"),
+        });
+
+        match handle.take_held(4) {
+            HeldOutcome::Held(rest) => assert_eq!(rest.text, " Rest."),
+            other => panic!("unexpected {other:?}"),
+        }
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn nothing_held_is_reported_as_nothing() {
+        let (handle, rx) = handle_with_receiver();
+        let worker = std::thread::spawn(move || {
+            if let InjectionCommand::TakeHeld { reply, .. } = rx.recv().unwrap() {
+                let _ = reply.send(None);
+            }
+        });
+
+        assert_eq!(handle.take_held(4), HeldOutcome::Nothing);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn the_streaming_path_pastes_only_what_the_guard_admits() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        let pastes = Pastes::new();
+        // Refinement OFF: the configuration that had no check at all.
+        let mut run = RunState::new(1, false);
+
+        let first = append_step(&mut run, "Eins.", &desk, no_context, |f| pastes.record(f));
+        assert_eq!(first, AppendOutcome::Inserted);
+
+        desk.focus(Some(window(12, 43)));
+        let second = append_step(&mut run, " Zwei.", &desk, no_context, |f| pastes.record(f));
+        let third = append_step(&mut run, " Drei.", &desk, no_context, |f| pastes.record(f));
+
+        assert_eq!(second, AppendOutcome::Buffered);
+        assert_eq!(third, AppendOutcome::Buffered);
+        assert_eq!(pastes.all(), vec!["Eins."], "nothing into the new window");
+        let rest = run.take_held(1).expect("remainder");
+        assert_eq!(rest.text, " Zwei. Drei.");
+        assert_eq!(rest.reason, PasteFallback::FocusChanged);
+    }
+
+    #[test]
+    fn an_elevated_target_gets_no_keystroke_at_all() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        desk.set_elevated(42, true);
+        let pastes = Pastes::new();
+        let mut run = RunState::new(1, false);
+
+        let outcome = append_step(&mut run, "Eins.", &desk, no_context, |f| pastes.record(f));
+
+        assert_eq!(outcome, AppendOutcome::Buffered);
+        assert!(pastes.all().is_empty());
+        assert_eq!(
+            run.take_held(1).expect("remainder").reason,
+            PasteFallback::TargetElevated
+        );
+    }
+
+    #[test]
+    fn normal_case_pastes_every_fragment_in_order() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        let pastes = Pastes::new();
+        let mut run = RunState::new(1, false);
+
+        for fragment in ["Eins.", " Zwei.", " Drei."] {
+            let outcome = append_step(&mut run, fragment, &desk, no_context, |f| pastes.record(f));
+            assert_eq!(outcome, AppendOutcome::Inserted);
+        }
+
+        assert_eq!(pastes.all(), vec!["Eins.", " Zwei.", " Drei."]);
+        assert_eq!(run.take_held(1), None);
+    }
+
+    #[test]
+    fn a_failed_paste_is_kept_and_nothing_is_typed_behind_the_gap() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        let pastes = Pastes::new();
+        let mut run = RunState::new(1, false);
+
+        let failed = append_step(&mut run, "Eins.", &desk, no_context, |_| false);
+        let later = append_step(&mut run, " Zwei.", &desk, no_context, |f| pastes.record(f));
+
+        assert_eq!(failed, AppendOutcome::Inserted, "the attempt was made");
+        assert_eq!(later, AppendOutcome::Buffered);
+        assert!(pastes.all().is_empty());
+        let rest = run.take_held(1).expect("remainder");
+        assert_eq!(rest.text, "Eins. Zwei.");
+        assert_eq!(rest.reason, PasteFallback::InjectionFailed);
+    }
+
+    #[test]
+    fn focus_moving_while_a_fragment_is_in_flight_stops_the_following_ones() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        let pastes = Pastes::new();
+        let mut run = RunState::new(1, false);
+
+        // The user switches window during the paste of the first fragment.
+        let first = append_step(&mut run, "Eins.", &desk, no_context, |f| {
+            desk.focus(Some(window(12, 43)));
+            pastes.record(f)
+        });
+        let second = append_step(&mut run, " Zwei.", &desk, no_context, |f| pastes.record(f));
+
+        assert_eq!(first, AppendOutcome::Inserted);
+        assert_eq!(second, AppendOutcome::Buffered);
+        assert_eq!(pastes.all(), vec!["Eins."]);
+        let rest = run.take_held(1).expect("remainder");
+        assert_eq!(rest.reason, PasteFallback::FocusChangedDuringPaste);
+        assert!(!rest.untouched(), "never pasted a second time");
     }
 }

@@ -11,6 +11,7 @@ import type {
 } from "@/bindings";
 import i18n, { syncLanguageFromSettings } from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
+import { pasteNoticeKeys } from "@/lib/utils/pasteNotice";
 
 type OverlayState =
   "recording" | "streaming" | "transcribing" | "processing" | "notice";
@@ -18,6 +19,8 @@ type OverlayState =
 type PasteFallbackNotice = {
   reason: string;
   transcriptInClipboard: boolean;
+  // Only the rest of a continuously inserting run was kept back.
+  partial?: boolean;
 };
 
 // Number of reactive bars in the waveform (the simple, smoothed style shared by
@@ -260,23 +263,23 @@ const RecordingOverlay: React.FC = () => {
 
   if (state === "notice") {
     const reason = notice?.reason ?? "injection_failed";
+    const keys = pasteNoticeKeys(
+      notice?.partial,
+      notice?.transcriptInClipboard ?? false,
+    );
     return (
       <div
         dir={direction}
         className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
       >
         <div className="scard snotice">
-          <div className="snotice-title">{t("overlay.notice.title")}</div>
+          <div className="snotice-title">{t(keys.title)}</div>
           <div className="snotice-body">
             {t(`overlay.notice.reason.${reason}`, {
               defaultValue: t("overlay.notice.reason.injection_failed"),
             })}
           </div>
-          <div className="snotice-action">
-            {notice?.transcriptInClipboard
-              ? t("overlay.notice.inClipboard")
-              : t("overlay.notice.inHistory")}
-          </div>
+          <div className="snotice-action">{t(keys.action)}</div>
         </div>
       </div>
     );
