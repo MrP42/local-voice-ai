@@ -29,3 +29,5 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | D1 | M7 | #69 Folienerkennung Kern (dHash, meeting_slides, Job-Phase) — lv-coder-xhigh | cargo test slides | abgenommen | fc478c2e |
 | G8 | M8 | Wackelige Tests unter Last: Ursachen beheben (SQLite busy_timeout, Zeitabhängigkeit, Prozess-Timeouts) — lv-coder-xhigh | 3x volle Suite unter Last grün | abgenommen | 09ca4341 |
 | B2 | M5 | #67 Auslöser Kalender/Ereignisse/Zeitplan/manuell, Arbeiter in lib.rs, Einwilligungsweg — lv-coder-xhigh | AK3, AK4 | in_arbeit | |
+| D2 | M7 | #69 OCR je Folie (Windows-OCR), Text-Dubletten — lv-coder | cargo test slides::ocr | in_arbeit | |
+| D4 | M7 | #69 Folien-Oberfläche (Leiste, Sprung, Ausblenden, Großansicht, Folien erkennen) — lv-coder | meeting-slides.spec | in_arbeit | |
