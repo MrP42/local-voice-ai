@@ -160,6 +160,13 @@ pub trait AppServices: Send + Sync {
         true
     }
 
+    /// Wohin der lokale Agent (`agent.extract`, Goal C) seine Anfragen schickt: der lokale
+    /// Server ueber den Modellverwalter (RAM-Start-Tor, Job-Objekt). Ohne lokales Modell
+    /// `Permanent`; ohne App (Trockenlauf-Kommandozeile, Tests) `NotAvailable`.
+    fn agent_target(&self) -> Result<crate::agent::runtime::Target, ServiceError> {
+        unavailable()
+    }
+
     fn generate_notes(
         &self,
         req: &GenRequest,
@@ -198,7 +205,7 @@ pub trait AppServices: Send + Sync {
 /// Die Dienste, wo es keine App gibt: jeder Aufruf meldet „nicht eingebaut“.
 pub struct UnavailableServices;
 
-fn unavailable<T>() -> Result<T, ServiceError> {
+pub(super) fn unavailable<T>() -> Result<T, ServiceError> {
     Err(ServiceError::NotAvailable(
         "Dieser Baustein läuft nur in der App, nicht in dieser Umgebung.".to_string(),
     ))
@@ -342,7 +349,7 @@ fn has_template(s: &str) -> bool {
 
 /// Die Besprechung dieses Laufs: `meeting.id` im Laufkontext (setzt jeder Baustein, der eine
 /// Besprechung anlegt oder liefert), sonst `trigger.meeting_id`.
-fn meeting_id_of(ctx: &RunCtx<'_>) -> Option<String> {
+pub(super) fn meeting_id_of(ctx: &RunCtx<'_>) -> Option<String> {
     let c = ctx.context;
     c.pointer("/meeting/id")
         .and_then(Value::as_str)
@@ -352,7 +359,7 @@ fn meeting_id_of(ctx: &RunCtx<'_>) -> Option<String> {
         .map(str::to_string)
 }
 
-fn no_meeting() -> StepError {
+pub(super) fn no_meeting() -> StepError {
     StepError::Permanent(
         "Dieser Schritt braucht eine Besprechung: davor muss ein Schritt stehen, der eine anlegt \
          (Import, Aufnahme), oder der Auslöser nennt eine."
@@ -360,12 +367,12 @@ fn no_meeting() -> StepError {
     )
 }
 
-fn svc(e: ServiceError) -> StepError {
+pub(super) fn svc(e: ServiceError) -> StepError {
     e.into_step_error()
 }
 
 /// Die Besprechung, sobald sie fertig ist; vorher `Defer`.
-fn ready_meeting(
+pub(super) fn ready_meeting(
     ctx: &RunCtx<'_>,
     services: &dyn AppServices,
     meeting_id: &str,
@@ -410,7 +417,7 @@ fn meeting_value(m: &Meeting) -> Value {
 
 /// Ergebnis, das ein frueherer Versuch DIESES Schritts hinterlassen hat (Provenienz mit dem
 /// Akteur `workflow/<lauf>/<schritt>`): Inhalts-ID und Parameter.
-fn previous_result(
+pub(super) fn previous_result(
     ctx: &RunCtx<'_>,
     kind: SubjectKind,
     operation: &str,
@@ -462,7 +469,7 @@ fn record(
     }
 }
 
-fn meeting_source(m: &Meeting) -> SourceRef {
+pub(super) fn meeting_source(m: &Meeting) -> SourceRef {
     SourceRef::new("meeting", &m.id, Some(&m.title))
 }
 
@@ -478,7 +485,7 @@ fn display_path(p: &Path) -> String {
     }
 }
 
-fn llm_need(services: &dyn AppServices) -> HeavyNeed {
+pub(super) fn llm_need(services: &dyn AppServices) -> HeavyNeed {
     if services.llm_is_local() {
         HeavyNeed {
             ram_mb: 6_144,
@@ -492,7 +499,7 @@ fn llm_need(services: &dyn AppServices) -> HeavyNeed {
     }
 }
 
-fn spec_of(id: &str) -> &'static ActionSpec {
+pub(super) fn spec_of(id: &str) -> &'static ActionSpec {
     catalog::action_spec(id).unwrap_or_else(|| panic!("Katalogeintrag {id} fehlt"))
 }
 

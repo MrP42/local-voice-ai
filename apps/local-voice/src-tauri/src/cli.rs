@@ -353,6 +353,17 @@ pub struct CliArgs {
     #[arg(long)]
     pub eval_agent: bool,
 
+    // C2 (Goal Lokaler Agent)
+    /// Run agent.extract (to-dos, deadlines, decisions with segment evidence) on a
+    /// transcript fixture FILE (JSON: title, meeting_date, segments[{i,start_ms,text}])
+    /// with the local model given by --model (catalog id; must be downloaded) and
+    /// exit. Same request as the workflow block: schema-bound, thinking off,
+    /// temperature 0, one retry, dates resolved in code. The llama-server starts
+    /// through the app's manager (RAM gate, job object) and is stopped at the end.
+    /// Output via --json/--out. Exit 0 result, 3 no_action, 1 error, 2 no --model.
+    #[arg(long, value_name = "FILE")]
+    pub agent_extract: Option<PathBuf>,
+
     // M3-P3a
     /// Measure speaker diarization (DER, acceptance AK7) on every pair
     /// <name>.wav + <name>.rttm in DIR and exit. --model picks the diarization

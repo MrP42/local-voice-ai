@@ -1,0 +1,155 @@
+{
+  "id": "vertriebsrunde-zwei-teile",
+  "title": "Vertriebsrunde Q4",
+  "meeting_date": "2026-10-19",
+  "context_tokens": 4400,
+  "note": "Montag. Lange Besprechung: das Transkript passt nicht in einen Aufruf und laeuft in zwei Teilen. Die Antwort je Teil zitiert nur Segmente des eigenen Teils; ein Zitat auf ein Segment des anderen Teils wird verworfen.",
+  "segments": [
+    { "i": 0, "start_ms": 0, "channel": 1, "text": "Willkommen zur Vertriebsrunde für das vierte Quartal. Ich habe die Zahlen der letzten Wochen zusammengestellt und möchte mit Ihnen vier Dinge durchgehen: die Pipeline, die Großkunden, die Messe im November und die Besetzung der offenen Stelle im Innendienst. Wir haben dafür etwa eine Stunde Zeit eingeplant." },
+    { "i": 1, "start_ms": 40000, "channel": 1, "text": "Zur Pipeline: Wir liegen bei rund 1,8 Millionen Euro im Angebotsstatus, das ist etwas weniger als im Vorjahr. Frau Neumann, Sie wollten die drei größten offenen Angebote noch einmal nachfassen. Bitte melden Sie sich bis Freitag bei den Kunden und tragen Sie die Rückmeldungen ins CRM ein, damit wir am Montag Klarheit haben." },
+    { "i": 2, "start_ms": 85000, "channel": 1, "text": "Das mache ich, Freitag ist machbar. Ich rufe die Kunden am Mittwoch und Donnerstag an und trage die Ergebnisse noch am selben Tag ein. Beim Kunden Hellmann wird es vermutlich länger dauern, weil dort der Einkauf erst Ende des Monats wieder erreichbar ist." },
+    { "i": 3, "start_ms": 120000, "channel": 1, "text": "Verstanden. Dann zu den Großkunden: Herr Albrecht hat vorgeschlagen, die Rahmenverträge mit den fünf größten Kunden bis zum 6. November zu verlängern. Wir haben darüber gesprochen und beschlossen, dass wir die Verlängerung aktiv anbieten und dafür ein einheitliches Anschreiben verwenden." },
+    { "i": 4, "start_ms": 165000, "channel": 1, "text": "Das Anschreiben entwirft Frau Neumann gemeinsam mit der Rechtsabteilung. Ich hätte gern einen ersten Entwurf in zwei Wochen, damit wir noch Zeit für Anmerkungen haben. Die Rechtsabteilung hat angekündigt, dass sie die Prüfung innerhalb von drei Werktagen schafft, wenn der Entwurf vollständig ist." },
+    { "i": 5, "start_ms": 210000, "channel": 1, "text": "Zur Messe im November: Der Stand ist gebucht, die Standgebühr ist bezahlt. Offen ist noch die Frage, welche Produkte wir zeigen. Ich würde vorschlagen, dass wir die neue Serie in den Mittelpunkt stellen, aber das sollten wir mit dem Produktmanagement abstimmen, bevor wir es festlegen." },
+    { "i": 6, "start_ms": 255000, "channel": 1, "text": "Ich stimme zu, wir sollten die Entscheidung nicht allein treffen. Das Produktmanagement hat nächste Woche Dienstag einen Termin frei, da können wir die Auswahl klären. Bis dahin sammeln alle ihre Wünsche und schicken sie mir als kurze Liste, nichts Aufwendiges." },
+    { "i": 7, "start_ms": 300000, "channel": 1, "text": "Gut. Die Reisekosten für die Messe sind noch nicht freigegeben, das ist ein Punkt für die Geschäftsführung. Ich spreche das im nächsten Management-Meeting an. Wenn wir bis Ende des Monats keine Freigabe haben, müssen wir die Anzahl der Teilnehmer reduzieren." },
+    { "i": 8, "start_ms": 345000, "channel": 1, "text": "Dann bitte die Teilnehmerliste schon jetzt in zwei Varianten vorbereiten, mit sechs und mit vier Personen. Das ist reine Vorarbeit, dafür muss niemand etwas entscheiden. Wir kommen darauf zurück, sobald die Freigabe da ist oder eben nicht." },
+    { "i": 9, "start_ms": 390000, "channel": 1, "text": "Zur Stelle im Innendienst: Wir haben drei Bewerbungen, zwei davon sind vielversprechend. Die Gespräche führen Herr Albrecht und Frau Neumann. Wir haben uns darauf geeinigt, dass die Entscheidung bis zum 30. Oktober fallen soll, weil die Kandidatin sonst ein anderes Angebot annimmt." },
+    { "i": 10, "start_ms": 435000, "channel": 1, "text": "Ja, das ist der Plan: Entscheidung bis zum 30. Oktober, danach Vertragsangebot. Ich bitte Herrn Albrecht, die Termine für die Gespräche bis morgen zu vereinbaren und den Kandidaten Bescheid zu geben, damit wir nicht noch einmal Zeit verlieren." },
+    { "i": 11, "start_ms": 480000, "channel": 1, "text": "Dann sind wir durch. Vielen Dank an alle, wir sehen uns in der nächsten Woche wieder. Bitte denken Sie an die kurze Liste mit den Produktwünschen für die Messe." }
+  ],
+  "responses": [
+    {
+      "todos": [
+        {
+          "text": "Frau Neumann fasst die drei größten offenen Angebote nach und trägt die Rückmeldungen ins CRM ein.",
+          "assignee": "Frau Neumann",
+          "due_phrase": "bis Freitag",
+          "due_date": "2026-10-23",
+          "segments": ["S1", "S2"],
+          "quote": "Bitte melden Sie sich bis Freitag bei den Kunden und tragen Sie die Rückmeldungen ins CRM ein"
+        },
+        {
+          "text": "Frau Neumann entwirft das Anschreiben für die Rahmenverträge gemeinsam mit der Rechtsabteilung.",
+          "assignee": "Frau Neumann",
+          "due_phrase": "in zwei Wochen",
+          "due_date": "2026-11-02",
+          "segments": ["S4"],
+          "quote": "Ich hätte gern einen ersten Entwurf in zwei Wochen"
+        },
+        {
+          "text": "Alle sammeln ihre Produktwünsche für die Messe und schicken eine kurze Liste.",
+          "assignee": null,
+          "due_phrase": null,
+          "due_date": null,
+          "segments": ["S6"],
+          "quote": "sammeln alle ihre Wünsche und schicken sie mir als kurze Liste"
+        },
+        {
+          "text": "Das Produktmanagement stimmt die Produktauswahl ab.",
+          "assignee": null,
+          "due_phrase": null,
+          "due_date": null,
+          "segments": ["S11"],
+          "quote": "Bitte denken Sie an die kurze Liste mit den Produktwünschen für die Messe"
+        }
+      ],
+      "deadlines": [
+        {
+          "text": "Die Rahmenverträge der fünf größten Kunden sind verlängert.",
+          "due_phrase": "bis zum 6. November",
+          "due_date": "2026-11-06",
+          "segments": ["S3"],
+          "quote": "die Rahmenverträge mit den fünf größten Kunden bis zum 6. November zu verlängern"
+        },
+        {
+          "text": "Die Reisekosten für die Messe sind freigegeben.",
+          "due_phrase": "bis Ende des Monats",
+          "due_date": "2026-10-31",
+          "segments": ["S7"],
+          "quote": "Wenn wir bis Ende des Monats keine Freigabe haben, müssen wir die Anzahl der Teilnehmer reduzieren"
+        }
+      ],
+      "decisions": [
+        {
+          "text": "Die Rahmenverträge werden aktiv zur Verlängerung angeboten, mit einem einheitlichen Anschreiben.",
+          "segments": ["S3"],
+          "quote": "beschlossen, dass wir die Verlängerung aktiv anbieten und dafür ein einheitliches Anschreiben verwenden"
+        },
+        {
+          "text": "Die Produktauswahl für die Messe wird nicht allein getroffen, sondern mit dem Produktmanagement geklärt.",
+          "segments": ["S5", "S6"],
+          "quote": "wir sollten die Entscheidung nicht allein treffen"
+        }
+      ]
+    },
+    {
+      "todos": [
+        {
+          "text": "Herr Albrecht vereinbart die Gesprächstermine und informiert die Kandidaten.",
+          "assignee": "Herr Albrecht",
+          "due_phrase": "bis morgen",
+          "due_date": "2026-10-20",
+          "segments": ["S10"],
+          "quote": "die Termine für die Gespräche bis morgen zu vereinbaren"
+        },
+        {
+          "text": "Alle schicken ihre Produktwünsche für die Messe.",
+          "assignee": null,
+          "due_phrase": null,
+          "due_date": null,
+          "segments": ["S11"],
+          "quote": "Bitte denken Sie an die kurze Liste mit den Produktwünschen für die Messe"
+        },
+        {
+          "text": "Die Kunden anrufen.",
+          "assignee": null,
+          "due_phrase": null,
+          "due_date": null,
+          "segments": ["S2"],
+          "quote": "Ich rufe die Kunden am Mittwoch und Donnerstag an"
+        }
+      ],
+      "deadlines": [
+        {
+          "text": "Die Entscheidung über die Stelle im Innendienst fällt.",
+          "due_phrase": "bis zum 30. Oktober",
+          "due_date": "2026-10-30",
+          "segments": ["S9", "S10"],
+          "quote": "Entscheidung bis zum 30. Oktober, danach Vertragsangebot"
+        }
+      ],
+      "decisions": [
+        {
+          "text": "Die Entscheidung über die Besetzung der Stelle soll bis zum 30. Oktober fallen.",
+          "segments": ["S9"],
+          "quote": "die Entscheidung bis zum 30. Oktober fallen soll"
+        }
+      ]
+    }
+  ],
+  "golden": {
+    "outcome": "extracted",
+    "chunks": 2,
+    "todos": [
+      { "text_has": "Angebote", "assignee": "Frau Neumann", "due": "2026-10-23", "segments": [1, 2] },
+      { "text_has": "Anschreiben", "assignee": "Frau Neumann", "due": "2026-11-02", "segments": [4] },
+      { "text_has": "sammeln", "assignee": null, "due": null, "segments": [6] },
+      { "text_has": "Gesprächstermine", "assignee": "Herr Albrecht", "due": "2026-10-20", "segments": [10] },
+      { "text_has": "schicken ihre", "assignee": null, "due": null, "segments": [11] }
+    ],
+    "deadlines": [
+      { "text_has": "Rahmenverträge", "due": "2026-11-06", "segments": [3] },
+      { "text_has": "Reisekosten", "due": "2026-10-31", "segments": [7] },
+      { "text_has": "Innendienst", "due": "2026-10-30", "segments": [9, 10] }
+    ],
+    "decisions": [
+      { "text_has": "Rahmenverträge", "segments": [3] },
+      { "text_has": "Produktauswahl", "segments": [5, 6] },
+      { "text_has": "Besetzung", "segments": [9] }
+    ],
+    "dropped": ["unknown_segment", "unknown_segment"],
+    "notes": [],
+    "min_confidence": 0.8
+  }
+}

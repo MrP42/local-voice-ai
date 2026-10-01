@@ -459,6 +459,76 @@
             "additionalProperties": false,
             "properties": {
               "action": {
+                "const": "agent.extract"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "kinds": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 100,
+                        "type": "array"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Aufgaben, Fristen und Entscheidungen extrahieren",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
                 "const": "export.document"
               },
               "id": {
