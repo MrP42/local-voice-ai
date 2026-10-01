@@ -44,7 +44,7 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | D3 | M7 | #69 Bildanalyse für Folien (mmproj optional, nur Folienaufträge) — lv-coder (D:) | slides::vision llm::server | abgenommen (Echtlauf mit Gemma optional) | 117895c0 |
 | K1 | M8 | Webhook-Formular, Lizenzhinweise NC-Stimmen/espeak-ng, KNOWN-LIMITATIONS — lv-coder (D:) | tsc, Specs, gen-notices --check | abgenommen | cf6b5a13 |
 | R0 | M8 | PR-Triage #21/#32/#60/#63 vor Release (Regel 7) — lv-coder-xhigh (D:) | cargo build, Entscheidung je PR | abgenommen (#60,#63 drin, #21 überholt, #32 ausgeklammert) | d2ca22ba |
-| C4 | M6 | #68 Wissens- und Fristaktionen (Vault-Notiz mit Frontmatter, Dublettenschutz, Mitteilung zur Frist, Kalender nur nach Freigabe) — lv-coder (D:) | AK6, AK7 | in_arbeit | |
+| C4 | M6 | #68 Wissens- und Fristaktionen (Vault-Notiz mit Frontmatter, Dublettenschutz, Mitteilung zur Frist, Kalender nur nach Freigabe) — lv-coder (D:) | AK6, AK7 | abgenommen | 1cc85478 |
 | B8 | M5 | #67 Agenten-Zugriff auf Workflows (MCP/CLI list_workflows, run_workflow, get_run), n8n-Brücke Doku + Beispiel — lv-coder (D:) | AK10 mcp_smoke --workflows, ctl workflow run | abgenommen | 4a317a45 |
 | C5 | M6 | #68 Oberfläche Agent-Schritt im Editor, Trockenlauf mit Modellausgabe (preview-Command), Herkunft — lv-coder (D:) | AK8 Playwright | abgenommen | 303103c5 |
 | S1 | M8 | QG5-Nacharbeit B20–B23 (Sandbox handle-basiert, Anhang-Bytes gebunden, M365-Abmelde-Race, Pipe-Schreibfristen) — lv-coder-xhigh (D:) | je Befund Test rot→grün | in_arbeit | |
