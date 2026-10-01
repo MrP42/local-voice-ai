@@ -193,6 +193,29 @@ pub trait AppServices: Send + Sync {
 
     /// Zeigt eine Mitteilung des Betriebssystems.
     fn notify(&self, title: &str, body: &str) -> Result<(), ServiceError>;
+
+    // ---- B5: Integrations-Bausteine (Mail, Termin-Notiz, Webhook) ------------------------
+
+    /// Einstellung „Meine E-Mail-Adressen“ (Empfaengerregeln „ich“ und „intern“).
+    fn self_emails(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Der Dienst des Microsoft-365-Kontos (Mail, Termin-Notiz); `None`: nicht bereit.
+    fn m365(&self) -> Option<Arc<crate::managers::integrations::m365::M365Service>> {
+        None
+    }
+
+    /// Ein Geheimnis (Fach) einer Integration aus dem Geheimnisspeicher; `Ok(None)`: fehlt.
+    /// Der Inhalt verlaesst den Baustein nur Richtung Mailserver bzw. Webhook, nie in Ausgabe,
+    /// Audit oder Protokoll.
+    fn secret(
+        &self,
+        _integration: &crate::managers::integrations::model::Integration,
+        _slot: &str,
+    ) -> Result<Option<zeroize::Zeroizing<String>>, String> {
+        Ok(None)
+    }
 }
 
 /// Die Dienste, wo es keine App gibt: jeder Aufruf meldet „nicht eingebaut“.
@@ -328,7 +351,7 @@ pub fn finish_generation<T>(result: Option<Result<T, String>>) -> Result<T, Serv
 // ---------------------------------------------------------------------------
 
 /// Ein nicht leerer, getrimmter Textparameter.
-fn text_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
+pub(super) fn text_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
     params
         .get(key)
         .and_then(Value::as_str)
@@ -336,13 +359,13 @@ fn text_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
-fn has_template(s: &str) -> bool {
+pub(super) fn has_template(s: &str) -> bool {
     s.contains("{{")
 }
 
 /// Die Besprechung dieses Laufs: `meeting.id` im Laufkontext (setzt jeder Baustein, der eine
 /// Besprechung anlegt oder liefert), sonst `trigger.meeting_id`.
-fn meeting_id_of(ctx: &RunCtx<'_>) -> Option<String> {
+pub(super) fn meeting_id_of(ctx: &RunCtx<'_>) -> Option<String> {
     let c = ctx.context;
     c.pointer("/meeting/id")
         .and_then(Value::as_str)
@@ -410,7 +433,7 @@ fn meeting_value(m: &Meeting) -> Value {
 
 /// Ergebnis, das ein frueherer Versuch DIESES Schritts hinterlassen hat (Provenienz mit dem
 /// Akteur `workflow/<lauf>/<schritt>`): Inhalts-ID und Parameter.
-fn previous_result(
+pub(super) fn previous_result(
     ctx: &RunCtx<'_>,
     kind: SubjectKind,
     operation: &str,
@@ -437,7 +460,7 @@ fn previous_result(
 }
 
 /// Schreibt den Provenienz-Eintrag eines erzeugten Inhalts; ein Fehler wird nur geloggt.
-fn record(
+pub(super) fn record(
     ctx: &RunCtx<'_>,
     kind: SubjectKind,
     subject_id: &str,

@@ -26,6 +26,8 @@ pub fn required_slots(kind: Kind) -> &'static [&'static str] {
         Kind::M365 => &["token"],
         Kind::Smtp => &["password"],
         Kind::Wissen => &["token"],
+        // Die Adresse eines Webhooks traegt oft den Schluessel im Pfad (n8n).
+        Kind::Webhook => &["url"],
         Kind::Youtube | Kind::Folder | Kind::Obsidian | Kind::Agent => &[],
     }
 }

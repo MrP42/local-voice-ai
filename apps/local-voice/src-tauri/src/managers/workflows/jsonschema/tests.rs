@@ -84,7 +84,7 @@ fn required_fields_and_literal_fields_follow_the_catalog() {
     // Der Empfaenger ist eine feste Auswahl OHNE Vorlagen-Ausweg.
     assert_eq!(
         params["properties"]["to"],
-        serde_json::json!({"enum": ["me", "participants", "all", "list"]})
+        serde_json::json!({"enum": ["me", "participants", "all", "internal", "list"]})
     );
     assert_eq!(params["additionalProperties"], false);
     // Eine nicht feste Zahl darf dagegen eine Vorlage sein.

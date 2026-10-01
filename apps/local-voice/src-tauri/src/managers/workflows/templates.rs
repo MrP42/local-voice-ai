@@ -9,6 +9,7 @@ pub fn all() -> Vec<(&'static str, &'static str)> {
     vec![
         ("vorlage-besprechung", MEETING_SAMPLE),
         ("eingangsordner-word", FOLDER_TO_WORD),
+        ("termin-protokoll-mail", TERMIN_MAIL),
     ]
 }
 
@@ -20,3 +21,9 @@ pub const MEETING_SAMPLE: &str = include_str!("templates/vorlage-besprechung.jso
 /// (B4, AK6). Die Kennungen `folder-eingang` und `folder-protokolle` sind Platzhalter fuer die
 /// Ordner-Integrationen des Nutzers; der Editor (B7) laesst sie waehlen.
 pub const FOLDER_TO_WORD: &str = include_str!("templates/eingangsordner-word.json");
+
+/// Termin beginnt -> Aufnahme -> Protokoll -> Word -> Mail (B5, AK7). Die Kennungen `cal-1`,
+/// `m365-1`, `folder-protokolle` sind Platzhalter fuer die Integrationen des Nutzers; die Variable
+/// `empfaenger` (`ich` oder `alle`) legt je Kalender fest, wer die Mail bekommt (zwei Ablaeufe aus
+/// derselben Vorlage: Kalender A mit `ich`, Kalender B mit `alle`).
+pub const TERMIN_MAIL: &str = include_str!("templates/termin-protokoll-mail.json");

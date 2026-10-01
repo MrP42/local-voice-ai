@@ -148,6 +148,15 @@
 //! `toast` die Windows-Mitteilung. Vorlage `eingangsordner-word` in `templates`.
 //! Fehlerfaelle, Idempotenz und Rechte stehen im Kopf von `app_actions`.
 //!
+//! Bausteine von Paket B5 (Integrations-Bausteine): `integration_actions` (`mail.send` ueber
+//! Microsoft 365 oder SMTP mit Empfaengerregeln und Anhaengen, `calendar.note` am Termin,
+//! `webhook.post` an eine Webhook-Integration, n8n-Bruecke). Neu in den Schnittstellen von B1:
+//! `Action::gate_view` (der Baustein bildet aus den Laufdaten die vollstaendige Ansicht, die das
+//! Tor sieht und die Freigabe bindet) und `GateView::max_mode` (Obergrenze fuer das Recht, E3).
+//! Im Register gibt es die Art `webhook` mit der Faehigkeit `webhook.post`. Vorlage
+//! `termin-protokoll-mail` in `templates`. Fehlerfaelle und Rechte stehen im Kopf von
+//! `integration_actions`.
+//!
 #![allow(dead_code)]
 
 pub mod action;
@@ -163,6 +172,7 @@ pub mod heavy;
 pub mod hub; // B2
 pub mod import; // B3
 pub mod import_app; // B3
+pub mod integration_actions; // B5
 pub mod jsonschema;
 pub mod model;
 pub mod plan;

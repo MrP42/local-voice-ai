@@ -161,11 +161,16 @@ fn recipients_can_only_come_from_the_rule_never_from_data() {
         "{found:?}"
     );
 
-    // Ein Webhook-Ziel ist ebenfalls fest.
+    // Der Kanal (Konto, Webhook) ist ebenfalls fest: Daten waehlen kein Ziel.
     v["steps"] = json!([{
-        "id": "w", "action": "webhook.post", "params": {"url": "http://127.0.0.1:5678/{{vars.pfad}}"}
+        "id": "w", "action": "webhook.post", "params": {"via": "{{vars.ziel}}"}
     }]);
-    assert!(has(&issues(&v), "/steps/0/params/url", "nur feste Werte"));
+    assert!(has(&issues(&v), "/steps/0/params/via", "nur feste Werte"));
+    v["steps"] = json!([{
+        "id": "m", "action": "mail.send",
+        "params": {"via": "{{trigger.title}}", "to": "me", "subject": "x"}
+    }]);
+    assert!(has(&issues(&v), "/steps/0/params/via", "nur feste Werte"));
 }
 
 #[test]

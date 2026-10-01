@@ -25,6 +25,7 @@ use super::model::{
 use super::obsidian::{self, NoteInput, ObsidianConfig, ObsidianError, SaveResult};
 use super::smtp::{self, ConnectOpts, MailMessage, SendReceipt, SmtpConfig};
 use super::view::{self, TestResult};
+use super::webhook;
 use super::wissen::{self, HttpOpts, WissenConfig, WissenHit};
 use super::{audit, store};
 
@@ -40,13 +41,15 @@ pub fn secret_slot(kind: Kind) -> Option<&'static str> {
     match kind {
         Kind::Smtp => Some("password"),
         Kind::Wissen => Some("token"),
+        // Die Adresse des Webhooks (B5): sie traegt oft den Schluessel im Pfad.
+        Kind::Webhook => Some("url"),
         _ => None,
     }
 }
 
 /// Einstellungen, wie die Oberflaeche sie schickt. Felder, die eine Art nicht kennt,
-/// werden ignoriert. `secret` ist das Passwort (SMTP) oder der Schluessel (Wissen);
-/// leer oder fehlend bedeutet beim Aendern „unveraendert“.
+/// werden ignoriert. `secret` ist das Passwort (SMTP), der Schluessel (Wissen) oder die
+/// Adresse (Webhook); leer oder fehlend bedeutet beim Aendern „unveraendert“.
 #[derive(Clone, Default, Serialize, Deserialize, Type)]
 pub struct TargetSettings {
     /// Ordner oder Vault (absoluter Pfad).
@@ -126,6 +129,19 @@ pub fn config_from_settings(kind: Kind, s: &TargetSettings, existing: Option<&Va
             "search_tool": text_or(opt(&s.search_tool), "search_tool", wissen::DEFAULT_TOOL),
             "area": text(opt(&s.area), "area"),
         }),
+        // Webhook: in der Konfiguration steht nur der Server (zur Anzeige); die Adresse selbst
+        // kommt als `secret` und geht in den Geheimnisspeicher.
+        Kind::Webhook => {
+            let host = s
+                .secret
+                .as_deref()
+                .filter(|v| !v.trim().is_empty())
+                .and_then(|v| webhook::parse_url(v).ok())
+                .map(|u| webhook::host_of(&u))
+                .or_else(|| old("host").and_then(|v| v.as_str().map(str::to_string)))
+                .unwrap_or_default();
+            json!({ "host": host })
+        }
         _ => existing.cloned().unwrap_or_else(|| json!({})),
     }
 }
@@ -162,8 +178,24 @@ pub fn normalize_config(kind: Kind, raw: &Value) -> Result<(Value, Option<String
                 .and_then(|u| u.host_str().map(str::to_string));
             Ok((cfg.to_json(), host))
         }
+        Kind::Webhook => {
+            let host = webhook::host_from_config(&text);
+            if host.is_empty() {
+                return Err(webhook::WebhookError::UrlMissing.to_string());
+            }
+            Ok((json!({ "host": host }), Some(host)))
+        }
         _ => Err(view::ERR_KIND_NOT_AVAILABLE.to_string()),
     }
+}
+
+/// Prueft das Geheimnis, wo es selbst eine Eingabe ist (Webhook: die Adresse): eine falsche
+/// Adresse wird beim Eintragen abgelehnt, nicht erst beim ersten Lauf.
+fn check_secret_input(kind: Kind, secret: Option<&str>) -> Result<(), String> {
+    if let (Kind::Webhook, Some(value)) = (kind, secret) {
+        webhook::parse_url(value).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Braucht diese Konfiguration ein Geheimnis? SMTP nur mit Benutzername (ohne
@@ -174,7 +206,7 @@ fn needs_secret(kind: Kind, config: &Value) -> bool {
             .get("username")
             .and_then(Value::as_str)
             .is_some_and(|u| !u.is_empty()),
-        Kind::Wissen => true,
+        Kind::Wissen | Kind::Webhook => true,
         _ => false,
     }
 }
@@ -182,6 +214,7 @@ fn needs_secret(kind: Kind, config: &Value) -> bool {
 fn missing_secret_text(kind: Kind) -> String {
     match kind {
         Kind::Smtp => smtp::SmtpError::PasswordMissing.to_string(),
+        Kind::Webhook => webhook::WebhookError::UrlMissing.to_string(),
         _ => wissen::WissenError::TokenMissing.to_string(),
     }
 }
@@ -202,6 +235,7 @@ pub fn create_with_secret(
     if needs_secret(kind, &raw) && secret.is_none() {
         return Err(missing_secret_text(kind));
     }
+    check_secret_input(kind, secret)?;
     let created = view::create_from_ui(conn, kind, label, direction, raw, now_ms)?;
     if let (Some(slot), Some(value)) = (secret_slot(kind), secret) {
         if let Err(e) = put(&created, slot, value) {
@@ -231,6 +265,7 @@ pub fn update_settings(
     let raw = config_from_settings(current.kind, settings, Some(&existing));
     let (config, hint) = normalize_config(current.kind, &raw)?;
     let secret = settings.secret.as_deref().filter(|s| !s.is_empty());
+    check_secret_input(current.kind, secret)?;
     if let (Some(slot), Some(value)) = (secret_slot(current.kind), secret) {
         put(&current, slot, value)?;
     }

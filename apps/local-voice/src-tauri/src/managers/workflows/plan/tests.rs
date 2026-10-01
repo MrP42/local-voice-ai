@@ -196,21 +196,57 @@ fn a_switched_off_integration_denies_every_step_that_uses_it() {
     assert_eq!(doc["permission"]["reason"], "integration_disabled");
 }
 
+/// Ein Baustein, fuer den das Register keine Faehigkeit kennt (seit B5 gibt es im Katalog keinen
+/// mehr; der Mechanismus „fail closed“ bleibt und wird hier mit einem Stand-in geprueft).
+struct Unmodeled;
+
+impl crate::managers::workflows::action::Action for Unmodeled {
+    fn id(&self) -> &str {
+        "notify.local"
+    }
+    fn effect(&self) -> crate::managers::workflows::action::EffectKind {
+        crate::managers::workflows::action::EffectKind::External
+    }
+    fn needs(
+        &self,
+        _params: &Value,
+    ) -> Result<
+        Option<crate::managers::workflows::action::Needs>,
+        crate::managers::workflows::action::NeedsError,
+    > {
+        Err(crate::managers::workflows::action::NeedsError::Unmodeled(
+            "Für diese Wirkung ist im Register noch kein Recht vorgesehen.".to_string(),
+        ))
+    }
+    fn describe(&self, _params: &Value) -> String {
+        "Wirkung ohne Recht".to_string()
+    }
+    fn run(
+        &self,
+        _ctx: &crate::managers::workflows::action::RunCtx<'_>,
+        _params: &Value,
+    ) -> Result<
+        crate::managers::workflows::action::StepOutput,
+        crate::managers::workflows::action::StepError,
+    > {
+        panic!("ein Baustein ohne Recht darf nie laufen");
+    }
+}
+
 #[test]
 fn an_action_without_a_register_capability_is_denied_fail_closed() {
     let fx = Fx::new();
     let conn = fx.conn();
-    let d = def(vec![step(
-        "w",
-        "webhook.post",
-        json!({"url": "http://127.0.0.1:5678/webhook/test", "body": {"a": 1}}),
-    )]);
-    let (code, plan) = plan_of(&conn, &d.to_string());
-    assert_eq!(code, EXIT_WOULD_BE_DENIED);
+    let d = def(vec![step("w", "notify.local", json!({"title": "x"}))]);
+    let parsed = crate::managers::workflows::validate::parse_definition(&d).unwrap();
+    let mut registry = crate::managers::workflows::action::ActionRegistry::with_catalog();
+    registry.register(std::sync::Arc::new(Unmodeled));
+    let plan = crate::managers::workflows::plan::plan_definition(&conn, &registry, &parsed, None);
     let w = step_of(&plan, "w");
     assert_eq!(w["permission"]["result"], "denied");
     assert_eq!(w["permission"]["reason"], "capability_not_modeled");
     assert_eq!(w["effect_kind"], "external");
+    assert_eq!(plan["summary"]["would_run_without_intervention"], false);
 }
 
 #[test]

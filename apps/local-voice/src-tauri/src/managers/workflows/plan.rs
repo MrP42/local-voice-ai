@@ -26,7 +26,7 @@ use crate::managers::integrations::grants::explain;
 use crate::managers::integrations::model::{Caller, GrantMode};
 use crate::managers::integrations::{preview, store as register};
 
-use super::action::{ActionRegistry, EffectKind, NeedsError};
+use super::action::{ActionRegistry, EffectKind, GateEnv, NeedsError, StepError};
 use super::catalog;
 use super::expr::{self, Path};
 use super::model::{StepDef, WorkflowDef};
@@ -177,11 +177,16 @@ pub fn plan_step(
         Some(h) => json!({"label": h.label, "ram_mb": h.ram_mb}),
         None => Value::Null,
     };
-    out["permission"] = permission_of(conn, action.as_ref(), &params);
+    out["permission"] = permission_of(conn, action.as_ref(), &params, ctx);
     out
 }
 
-fn permission_of(conn: &Connection, action: &dyn super::action::Action, params: &Value) -> Value {
+fn permission_of(
+    conn: &Connection,
+    action: &dyn super::action::Action,
+    params: &Value,
+    ctx: &Value,
+) -> Value {
     let needs = match action.needs(params) {
         Ok(None) => {
             return json!({"required": false, "result": "not_required"});
@@ -195,11 +200,47 @@ fn permission_of(conn: &Connection, action: &dyn super::action::Action, params: 
                 "reason": "capability_not_modeled", "message": m});
         }
     };
+    // Haengt die Wirkung von Daten des Laufs ab (Empfaenger einer Mail), steht hier, was das
+    // Tor beim echten Lauf sieht, mit den Beispieldaten des Ausloesers.
+    let view = match action.gate_view(
+        &GateEnv {
+            conn,
+            context: ctx,
+            planning: true,
+        },
+        params,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            let (result, reason) = match &e {
+                StepError::Denied(_) => ("denied", Some("denied")),
+                _ => ("invalid", None),
+            };
+            let mut perm = json!({
+                "required": true,
+                "integration": needs.integration_id,
+                "capability": needs.capability.as_str(),
+                "target": needs.target,
+                "result": result,
+                "message": e.to_string(),
+            });
+            if let Some(r) = reason {
+                perm["reason"] = json!(r);
+            }
+            return perm;
+        }
+    };
+    let target = view
+        .as_ref()
+        .and_then(|v| v.target.clone())
+        .or_else(|| needs.target.clone());
+    let args = view.as_ref().map(|v| v.args.clone());
+    let cap = view.as_ref().and_then(|v| v.max_mode);
     let mut perm = json!({
         "required": true,
         "integration": needs.integration_id,
         "capability": needs.capability.as_str(),
-        "target": needs.target,
+        "target": target,
     });
     let integration = match register::get(conn, &needs.integration_id) {
         Ok(Some(i)) => i,
@@ -228,9 +269,23 @@ fn permission_of(conn: &Connection, action: &dyn super::action::Action, params: 
         needs.capability,
         Caller::Workflow,
         &grants,
-        None,
+        cap,
     );
     perm["mode"] = json!(mode.as_str());
+    if cap.is_some()
+        && mode
+            != explain(
+                &integration,
+                needs.capability,
+                Caller::Workflow,
+                &grants,
+                None,
+            )
+            .0
+    {
+        // Der Nutzer hat „erlaubt“ eingestellt, der Baustein verlangt trotzdem die Freigabe.
+        perm["capped_to"] = json!(mode.as_str());
+    }
     match mode {
         GrantMode::Allow => perm["result"] = json!("allowed"),
         GrantMode::Off => {
@@ -240,17 +295,19 @@ fn permission_of(conn: &Connection, action: &dyn super::action::Action, params: 
                 perm["message"] = json!(r.message());
             }
         }
-        GrantMode::Ask => match preview::build(needs.target.as_deref(), Some(params)) {
-            Ok(text) => {
-                perm["result"] = json!("needs_approval");
-                perm["preview"] = json!(text);
+        GrantMode::Ask => {
+            match preview::build(target.as_deref(), Some(args.as_ref().unwrap_or(params))) {
+                Ok(text) => {
+                    perm["result"] = json!("needs_approval");
+                    perm["preview"] = json!(text);
+                }
+                Err(e) => {
+                    perm["result"] = json!("denied");
+                    perm["reason"] = json!("preview_unsafe");
+                    perm["message"] = json!(e.to_string());
+                }
             }
-            Err(e) => {
-                perm["result"] = json!("denied");
-                perm["reason"] = json!("preview_unsafe");
-                perm["message"] = json!(e.to_string());
-            }
-        },
+        }
     }
     perm
 }

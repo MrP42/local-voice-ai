@@ -988,3 +988,148 @@ fn the_test_command_marks_success_and_failure_at_the_entry() {
         .last_error
         .is_some());
 }
+
+// ---------------------------------------------------------------------------
+// Anhaenge, feste Message-ID, Zustellung unklar? (B5)
+// ---------------------------------------------------------------------------
+
+fn pdf(name: &str, bytes: &[u8]) -> Attachment {
+    Attachment {
+        name: name.to_string(),
+        content_type: "application/pdf".to_string(),
+        bytes: bytes.to_vec(),
+    }
+}
+
+#[test]
+fn an_attachment_travels_as_a_base64_mime_part_with_an_encoded_name() {
+    let mock = Mock::start(Script::default());
+    send_with(
+        &cfg(mock.port, Security::Plain),
+        PASSWORD,
+        &msg(),
+        &[pdf("Protokoll Überprüfung.pdf", b"%PDF-1.7 Inhalt")],
+        &opts(),
+        None,
+    )
+    .unwrap();
+    let (_, message) = mock.finish();
+    let message = message.expect("die Nachricht kam an");
+    assert!(message.contains("Content-Type: application/pdf"), "{message}");
+    assert!(message.contains("Content-Disposition: attachment"), "{message}");
+    assert!(message.contains("Content-Transfer-Encoding: base64"), "{message}");
+    assert!(
+        message.contains("JVBERi0xLjcgSW5oYWx0"),
+        "base64 von %PDF-1.7 Inhalt: {message}"
+    );
+    assert!(!message.contains("%PDF-1.7"), "der Inhalt steht nie im Klartext");
+}
+
+#[test]
+fn attachments_are_checked_before_any_connection_and_nothing_is_cut() {
+    let good = vec![pdf("a.pdf", b"x")];
+    assert!(validate_attachments(&good).is_ok());
+    let many: Vec<Attachment> = (0..=MAX_ATTACHMENTS)
+        .map(|i| pdf(&format!("{i}.pdf"), b"x"))
+        .collect();
+    assert!(validate_attachments(&many).is_err());
+    assert!(validate_attachments(&[pdf("leer.pdf", b"")]).is_err());
+    for bad in ["", "  ", "a\r\nBcc: x@y.de.pdf", &"x".repeat(200)] {
+        assert!(validate_attachments(&[pdf(bad, b"x")]).is_err(), "{bad:?}");
+    }
+    let big = vec![0u8; MAX_ATTACHMENT_BYTES / 2 + 1];
+    assert!(validate_attachments(&[pdf("a.pdf", &big), pdf("b.pdf", &big)]).is_err());
+    // Mit einem Fehler im Anhang gibt es nicht einmal eine Verbindung.
+    let mock = Mock::start(Script::default());
+    let failure = send_with(
+        &cfg(mock.port, Security::Plain),
+        PASSWORD,
+        &msg(),
+        &[pdf("leer.pdf", b"")],
+        &opts(),
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(failure.error, SmtpError::InvalidMessage(_)));
+    assert!(!failure.maybe_delivered);
+    // (Der Mock wartet auf eine Verbindung: eine leere beenden ihn.)
+    let _ = std::net::TcpStream::connect(("127.0.0.1", mock.port));
+    let (log, _) = mock.finish();
+    assert!(log.is_empty(), "{log:?}");
+}
+
+#[test]
+fn the_same_seed_makes_the_same_message_id_and_another_seed_another() {
+    let (cfg_a, cfg_b) = (cfg(1, Security::Plain), cfg(1, Security::Plain));
+    let date = Utc::now();
+    let (_, a) = build_message_with(&cfg_a, &msg(), &[], date, 7).unwrap();
+    let (_, b) = build_message_with(&cfg_b, &msg(), &[], date, 7).unwrap();
+    let (_, c) = build_message_with(&cfg_a, &msg(), &[], date, 8).unwrap();
+    assert_eq!(a, b, "ein Wiederholungsversuch ist als dieselbe Nachricht erkennbar");
+    assert_ne!(a, c);
+    assert!(a.starts_with("lva-") && a.ends_with("@example.de"), "{a}");
+}
+
+#[test]
+fn a_failure_before_the_data_never_leaves_the_delivery_open() {
+    // Empfaenger abgelehnt: vor den Daten.
+    let mock = Mock::start(Script {
+        reject_rcpt: vec!["kunde@example.com"],
+        ..Script::default()
+    });
+    let failure = send_with(
+        &cfg(mock.port, Security::Plain),
+        PASSWORD,
+        &msg(),
+        &[],
+        &opts(),
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        failure.error,
+        SmtpError::Rejected {
+            stage: "recipient",
+            ..
+        }
+    ));
+    assert!(!failure.maybe_delivered);
+    // Daten ausdruecklich abgelehnt: nicht zugestellt.
+    let mock = Mock::start(Script {
+        reject_data: true,
+        ..Script::default()
+    });
+    let failure = send_with(
+        &cfg(mock.port, Security::Plain),
+        PASSWORD,
+        &msg(),
+        &[],
+        &opts(),
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        failure.error,
+        SmtpError::Rejected { stage: "data", .. }
+    ));
+    assert!(
+        !failure.maybe_delivered,
+        "der Server hat sie ausdruecklich abgelehnt"
+    );
+    // Server nicht erreichbar: nichts gesendet.
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let failure = send_with(
+        &cfg(port, Security::Plain),
+        PASSWORD,
+        &msg(),
+        &[],
+        &opts(),
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(failure.error, SmtpError::Connect(_)));
+    assert!(!failure.maybe_delivered);
+}

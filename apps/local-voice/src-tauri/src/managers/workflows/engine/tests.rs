@@ -561,14 +561,38 @@ fn a_denied_step_ends_the_run_cleanly_with_an_audit_row_and_can_be_retried_after
     assert_eq!(w.notify.call_count(), 1);
 }
 
+/// Ein Baustein, fuer den das Register keine Faehigkeit kennt (seit B5 gibt es im Katalog keinen
+/// mehr; der Mechanismus „fail closed“ bleibt und wird hier mit einem Stand-in geprueft).
+struct Unmodeled;
+
+impl Action for Unmodeled {
+    fn id(&self) -> &str {
+        "notify.local"
+    }
+    fn effect(&self) -> EffectKind {
+        EffectKind::External
+    }
+    fn needs(
+        &self,
+        _params: &Value,
+    ) -> std::result::Result<Option<crate::managers::workflows::action::Needs>, NeedsError> {
+        Err(NeedsError::Unmodeled(
+            "Für diese Wirkung ist im Register noch kein Recht vorgesehen.".to_string(),
+        ))
+    }
+    fn describe(&self, _params: &Value) -> String {
+        "Wirkung ohne Recht".to_string()
+    }
+    fn run(&self, _ctx: &RunCtx<'_>, _params: &Value) -> std::result::Result<StepOutput, StepError> {
+        panic!("ein Baustein ohne Recht darf nie laufen");
+    }
+}
+
 #[test]
 fn an_action_without_a_register_capability_is_denied_and_audited() {
     let w = world();
-    let d = def(vec![step(
-        "hook",
-        "webhook.post",
-        json!({"url": "http://127.0.0.1:5678/webhook/x"}),
-    )]);
+    w.engine.register_action(Arc::new(Unmodeled));
+    let d = def(vec![step("hook", "notify.local", json!({"title": "x"}))]);
     let (_, run) = w.live(&d);
     let report = w.engine.tick().unwrap();
     assert_eq!(

@@ -436,17 +436,29 @@ static ACTIONS: &[ActionSpec] = &[
         title: "Mail senden",
         effect_text: "Mail über {{p.via}} an die Empfängerregel „{{p.to}}“ senden, Betreff „{{p.subject}}“",
         fields: &[
-            field("via", FieldKind::Id, true),
+            // Kanal und Empfaengerregel sind feste Werte: Daten (Termin, Modellausgabe) bestimmen
+            // nie, ueber welches Konto und an wen gesendet wird. Die Empfaenger bildet der
+            // Baustein aus der Regel: `me` (nur ich), `participants` (die anderen Teilnehmenden
+            // des Termins), `all` (Teilnehmende und ich), `internal` (Teilnehmende mit der
+            // Domaene der eigenen Adressen), `list` (die feste Liste in `list`).
+            literal("via", FieldKind::Id, true),
             literal(
                 "to",
-                FieldKind::Choice(&["me", "participants", "all", "list"]),
+                FieldKind::Choice(&["me", "participants", "all", "internal", "list"]),
                 true,
             ),
             literal("list", FieldKind::TextList, false),
             field("subject", FieldKind::Text, true),
             field("body", FieldKind::Text, false),
+            // Pfad oder Liste von Pfaden; nur Dateien in den Ordner-Integrationen des Nutzers.
             field("attach", FieldKind::Any, false),
+            // Entwuerfe anlegen ist noch nicht moeglich (Scope `Mail.ReadWrite`); `true` wird
+            // beim Speichern abgelehnt. Die Freigabe mit Vorschau ersetzt den Entwurf.
             field("draft", FieldKind::Bool, false),
+            // `true`: auch an andere als mich ohne Freigabe senden, wenn das Recht „erlaubt“
+            // ist (E3: je Ablauf aenderbar). Ohne diese Angabe verlangt jede Mail an Dritte
+            // eine Freigabe, auch bei „erlaubt“.
+            literal("auto", FieldKind::Bool, false),
         ],
         effect: EffectKind::External,
         heavy: None,
@@ -461,7 +473,8 @@ static ACTIONS: &[ActionSpec] = &[
         title: "Notiz in den Termin schreiben",
         effect_text: "Notiz über {{p.via}} in den Termin schreiben",
         fields: &[
-            field("via", FieldKind::Id, true),
+            literal("via", FieldKind::Id, true),
+            // Kennung des Termins (`trigger.event_id`); ohne Angabe der Termin des Ausloesers.
             field("event", FieldKind::Text, false),
             field("text", FieldKind::Text, true),
         ],
@@ -617,16 +630,20 @@ static ACTIONS: &[ActionSpec] = &[
     ActionSpec {
         id: "webhook.post",
         title: "Webhook senden",
-        effect_text: "Daten an {{p.url}} senden",
+        effect_text: "Daten an den Webhook „{{p.via}}“ senden",
         fields: &[
-            literal("url", FieldKind::Text, true),
+            // Das Ziel ist eine Webhook-Integration des Registers (Art `webhook`); ihre Adresse
+            // steht im Geheimnisspeicher, nie im Ablauf. Fest: Daten waehlen kein Ziel.
+            literal("via", FieldKind::Id, true),
             field("body", FieldKind::Any, false),
         ],
         effect: EffectKind::External,
         heavy: None,
-        needs: NeedsSpec::Unmodeled(
-            "Für Webhooks ist im Register noch kein Recht vorgesehen (Paket B5); bis dahin wird abgelehnt.",
-        ),
+        needs: NeedsSpec::Cap {
+            capability: Capability::WebhookPost,
+            via: "via",
+            target: Some("via"),
+        },
     },
     ActionSpec {
         id: "wait",

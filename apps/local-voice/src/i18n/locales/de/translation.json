@@ -3665,7 +3665,8 @@
       "folder": "Ordner",
       "obsidian": "Obsidian-Vault",
       "wissen": "WAI-Wissensbasis",
-      "agent": "Agentenzugang"
+      "agent": "Agentenzugang",
+      "webhook": "Webhook (n8n)"
     },
     "calendar": {
       "rights": "Rechte und Richtung"
@@ -3900,6 +3901,10 @@
       "tts_render": {
         "title": "Vorlesen als Audio erzeugen",
         "description": "Eine Vorlesen-Seite als Tondatei erzeugen."
+      },
+      "webhook_post": {
+        "title": "Daten an Webhook senden",
+        "description": "Daten an die Adresse des Webhooks schicken (zum Beispiel an n8n)."
       }
     },
     "approvals": {

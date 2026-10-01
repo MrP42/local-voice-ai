@@ -75,7 +75,7 @@ pub use service::{Acct, M365Service};
 pub use status::M365Status;
 
 #[cfg(test)]
-mod test_server;
+pub(crate) mod test_server;
 
 #[cfg(test)]
 mod tests;

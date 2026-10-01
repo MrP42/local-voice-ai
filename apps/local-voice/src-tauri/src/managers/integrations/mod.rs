@@ -80,6 +80,7 @@ pub mod smtp; // A6
 pub mod store;
 pub mod targets; // A6
 pub mod view; // A4
+pub mod webhook; // B5
 pub mod wissen; // A6
 
 #[cfg(test)]

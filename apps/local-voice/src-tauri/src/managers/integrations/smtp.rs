@@ -316,6 +316,59 @@ impl MailMessage {
     }
 }
 
+/// Anhaenge (B5): hoechstens so viele, zusammen hoechstens so gross (die Nachricht ist mit
+/// base64 hoechstens `MAX_MESSAGE_BYTES` gross).
+pub const MAX_ATTACHMENTS: usize = 5;
+pub const MAX_ATTACHMENT_BYTES: usize = 2_560 * 1024;
+const MAX_ATTACHMENT_NAME_CHARS: usize = 150;
+
+/// Ein Anhang einer Mail (Inhalt im Speicher).
+#[derive(Clone, PartialEq, Eq)]
+pub struct Attachment {
+    pub name: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for Attachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Nie den Inhalt in ein Protokoll.
+        write!(
+            f,
+            "Attachment {{ name: {:?}, content_type: {:?}, bytes: {} }}",
+            self.name,
+            self.content_type,
+            self.bytes.len()
+        )
+    }
+}
+
+/// Prueft die Anhaenge (Anzahl, Namen, Groesse); nichts wird gekuerzt oder weggelassen.
+pub fn validate_attachments(list: &[Attachment]) -> Result<(), SmtpError> {
+    let bad = |m: &'static str| Err(SmtpError::InvalidMessage(m));
+    if list.len() > MAX_ATTACHMENTS {
+        return bad("Zu viele Anhänge (höchstens 5).");
+    }
+    let mut total = 0usize;
+    for a in list {
+        let name = a.name.trim();
+        if name.is_empty()
+            || name.chars().count() > MAX_ATTACHMENT_NAME_CHARS
+            || name.chars().any(char::is_control)
+        {
+            return bad("Der Name eines Anhangs ist ungültig.");
+        }
+        if a.bytes.is_empty() {
+            return bad("Ein Anhang ist leer.");
+        }
+        total += a.bytes.len();
+    }
+    if total > MAX_ATTACHMENT_BYTES {
+        return bad("Die Anhänge sind zu groß (höchstens 2,5 MiB zusammen).");
+    }
+    Ok(())
+}
+
 /// Baut die Nachricht (RFC 5322, MIME). Rein: Datum und Kennung kommen von aussen.
 pub fn build_message(
     cfg: &SmtpConfig,
@@ -323,7 +376,19 @@ pub fn build_message(
     date: DateTime<Utc>,
     id_seed: u128,
 ) -> Result<(Vec<u8>, String), SmtpError> {
+    build_message_with(cfg, msg, &[], date, id_seed)
+}
+
+/// Wie [`build_message`], mit Anhaengen.
+pub fn build_message_with(
+    cfg: &SmtpConfig,
+    msg: &MailMessage,
+    attachments: &[Attachment],
+    date: DateTime<Utc>,
+    id_seed: u128,
+) -> Result<(Vec<u8>, String), SmtpError> {
     msg.validate()?;
+    validate_attachments(attachments)?;
     let domain = cfg
         .from_address
         .rsplit('@')
@@ -354,6 +419,13 @@ pub fn build_message(
     }
     if let Some(html) = msg.body_html.as_deref().filter(|h| !h.trim().is_empty()) {
         b = b.html_body(html.to_string());
+    }
+    for a in attachments {
+        b = b.attachment(
+            a.content_type.clone(),
+            a.name.trim().to_string(),
+            a.bytes.clone(),
+        );
     }
     let bytes = b
         .write_to_vec()
@@ -730,6 +802,16 @@ pub struct SendReceipt {
     pub message_id: String,
 }
 
+/// Warum ein Versand scheiterte, und ob die Nachricht trotzdem angekommen sein kann.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SendFailure {
+    pub error: SmtpError,
+    /// Die Nachricht war schon unterwegs (Daten gesendet), als es scheiterte, und der Server hat
+    /// sie nicht ausdruecklich abgelehnt: ob sie ankam, ist unklar. Wer sicher sein will, dass
+    /// nichts geschah (`false`), darf es erneut versuchen; bei `true` nie von selbst.
+    pub maybe_delivered: bool,
+}
+
 /// Sendet eine Mail. Gebaut wird zuerst (Fehler in der Nachricht kosten keine
 /// Verbindung), dann Verbindung, TLS, Anmeldung, Umschlag, Daten.
 pub fn send(
@@ -738,25 +820,52 @@ pub fn send(
     msg: &MailMessage,
     opts: &ConnectOpts,
 ) -> Result<SendReceipt, SmtpError> {
-    let seed = u128::from_le_bytes(rand::random::<[u8; 16]>());
-    let (message, message_id) = build_message(cfg, msg, Utc::now(), seed)?;
-    let mut conn = session(cfg, password, opts)?;
+    send_with(cfg, password, msg, &[], opts, None).map_err(|f| f.error)
+}
+
+/// Wie [`send`], mit Anhaengen und einer festen Kennung fuer die `Message-ID` (`id_seed`:
+/// dieselbe Kennung ergibt dieselbe `Message-ID`, damit ein Wiederholungsversuch fuer Server
+/// und Postfaecher als dieselbe Nachricht erkennbar ist; `None`: zufaellig).
+pub fn send_with(
+    cfg: &SmtpConfig,
+    password: &str,
+    msg: &MailMessage,
+    attachments: &[Attachment],
+    opts: &ConnectOpts,
+    id_seed: Option<u128>,
+) -> Result<SendReceipt, SendFailure> {
+    let early = |error: SmtpError| SendFailure {
+        error,
+        maybe_delivered: false,
+    };
+    let seed = id_seed.unwrap_or_else(|| u128::from_le_bytes(rand::random::<[u8; 16]>()));
+    let (message, message_id) =
+        build_message_with(cfg, msg, attachments, Utc::now(), seed).map_err(early)?;
+    let mut conn = session(cfg, password, opts).map_err(early)?;
     conn.expect(
         &format!("MAIL FROM:<{}>", cfg.from_address),
         &[250],
         "sender",
-    )?;
+    )
+    .map_err(early)?;
     let recipients = msg.recipients();
     for rcpt in &recipients {
-        conn.expect(&format!("RCPT TO:<{rcpt}>"), &[250, 251], "recipient")?;
+        conn.expect(&format!("RCPT TO:<{rcpt}>"), &[250, 251], "recipient")
+            .map_err(early)?;
     }
-    let r = conn.command("DATA")?;
-    conn.check(r, &[354], "data")?;
+    let r = conn.command("DATA").map_err(early)?;
+    conn.check(r, &[354], "data").map_err(early)?;
     let body = dot_stuff(&message);
-    conn.send_raw(&body)?;
-    conn.send_raw(b".\r\n")?;
-    let r = conn.read_reply()?;
-    conn.check(r, &[250], "data")?;
+    // Ab hier ist die Nachricht unterwegs: jeder Fehler ausser einer ausdruecklichen
+    // Ablehnung der Daten laesst offen, ob sie ankam.
+    let late = |error: SmtpError| SendFailure {
+        maybe_delivered: !matches!(&error, SmtpError::Rejected { stage: "data", .. }),
+        error,
+    };
+    conn.send_raw(&body).map_err(late)?;
+    conn.send_raw(b".\r\n").map_err(late)?;
+    let r = conn.read_reply().map_err(late)?;
+    conn.check(r, &[250], "data").map_err(late)?;
     let _ = conn.command("QUIT");
     Ok(SendReceipt {
         recipients: recipients.len(),

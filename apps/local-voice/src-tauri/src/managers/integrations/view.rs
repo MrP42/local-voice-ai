@@ -37,9 +37,15 @@ use super::model::{
 use super::{secrets, store};
 
 /// Arten, die die Oberflaeche selbst anlegen darf. A6 ergaenzt SMTP, Obsidian und die
-/// Wissensbasis; ihr Geheimnis (Passwort, Schluessel) legt `targets::create_with_secret`
+/// Wissensbasis, B5 den Webhook (seine Adresse ist das Geheimnis); ihr Geheimnis (Passwort, Schluessel) legt `targets::create_with_secret`
 /// ab, die Konfiguration pruefen `targets::normalize_config` und die Art selbst.
-pub const UI_CREATABLE: [Kind; 4] = [Kind::Folder, Kind::Smtp, Kind::Obsidian, Kind::Wissen];
+pub const UI_CREATABLE: [Kind; 5] = [
+    Kind::Folder,
+    Kind::Smtp,
+    Kind::Obsidian,
+    Kind::Wissen,
+    Kind::Webhook,
+];
 
 /// Aufrufer-Spalten der Rechte-Matrix, in Anzeigereihenfolge.
 pub const MATRIX_CALLERS: [Caller; 3] =
@@ -280,7 +286,7 @@ pub fn create_from_ui(
                 json!({ "path": path, "subfolder": subfolder })
             }
         }
-        Kind::Smtp | Kind::Obsidian | Kind::Wissen => {
+        Kind::Smtp | Kind::Obsidian | Kind::Wissen | Kind::Webhook => {
             let (checked, hint) = super::targets::normalize_config(kind, &config)?;
             n.account_hint = hint;
             checked
