@@ -107,6 +107,9 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // G3 (Projekt-Protokolle, #70). Nur CREATE: vorhandene Zeilen bleiben unveraendert.
     // Der SQL-Text steht in `project_minutes_store.rs`.
     M::up(super::project_minutes_store::PROJECT_MINUTES_MIGRATION),
+    // D1 (Folien aus Videos, #70/M7). Nur CREATE ... IF NOT EXISTS: vorhandene Zeilen
+    // bleiben unveraendert. Der SQL-Text steht in `slides/store.rs`.
+    M::up(super::slides::store::SLIDES_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
@@ -1760,6 +1763,11 @@ impl MeetingStore {
         )?;
         tx.execute(
             "UPDATE meeting_notes SET deleted_at = ?1, updated_at = ?1 WHERE meeting_id = ?2",
+            params![now, id],
+        )?;
+        // D1: Folien gehoeren zur Besprechung; die Bilder gehen mit ihrem Ordner.
+        tx.execute(
+            "UPDATE meeting_slides SET deleted_at = ?1, updated_at = ?1 WHERE meeting_id = ?2",
             params![now, id],
         )?;
 
