@@ -47,5 +47,5 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | C4 | M6 | #68 Wissens- und Fristaktionen (Vault-Notiz mit Frontmatter, Dublettenschutz, Mitteilung zur Frist, Kalender nur nach Freigabe) — lv-coder (D:) | AK6, AK7 | abgenommen | 1cc85478 |
 | B8 | M5 | #67 Agenten-Zugriff auf Workflows (MCP/CLI list_workflows, run_workflow, get_run), n8n-Brücke Doku + Beispiel — lv-coder (D:) | AK10 mcp_smoke --workflows, ctl workflow run | abgenommen | 4a317a45 |
 | C5 | M6 | #68 Oberfläche Agent-Schritt im Editor, Trockenlauf mit Modellausgabe (preview-Command), Herkunft — lv-coder (D:) | AK8 Playwright | abgenommen | 303103c5 |
-| S1 | M8 | QG5-Nacharbeit B20–B23 (Sandbox handle-basiert, Anhang-Bytes gebunden, M365-Abmelde-Race, Pipe-Schreibfristen) — lv-coder-xhigh (D:) | je Befund Test rot→grün | in_arbeit | |
+| S1 | M8 | QG5-Nacharbeit B20–B23 (Sandbox handle-basiert, Anhang-Bytes gebunden, M365-Abmelde-Race, Pipe-Schreibfristen) — lv-coder-xhigh (D:) | je Befund Test rot→grün | abgenommen | 5f9a6b91 |
 | R1 | M8 | Version 0.21.0, Notices/SBOM, Hilfe + AUTOMATIONEN.md + Release-Notizen, make-slides-video.py, Installer auf D: — lv-coder (D:) | Installer-Pfad + SHA-256, tsc, i18n | in_arbeit | |
