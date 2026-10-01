@@ -40,6 +40,20 @@ allow = [
 
 exceptions = []
 
+# OFFEN (Issue #7, Entscheidung Patrick): `cargo deny check licenses` ist ROT, weil
+# mp3lame-encoder 0.2.5 und mp3lame-sys 0.1.11 (MP3-Export, LAME als C-Quellen)
+# unter LGPL-3.0 stehen - die Aussage im Kopf dieser Datei ("kein LGPL-Crate auf dem
+# Windows-Ziel") stimmt dafuer nicht. Beide Crates werden statisch gelinkt.
+# Entweder bewusst zulassen (dann als eigener Commit, Vorschlag):
+#
+#   exceptions = [
+#       { allow = ["LGPL-3.0"], crate = "mp3lame-encoder" },
+#       { allow = ["LGPL-3.0"], crate = "mp3lame-sys" },
+#   ]
+#
+# oder den MP3-Export auf eine permissive Bibliothek umstellen bzw. entfernen.
+# THIRD-PARTY-NOTICES.md fuehrt beide Crates unabhaengig davon auf.
+
 [advisories]
 version = 2
 yanked = "warn"
@@ -58,6 +72,36 @@ ignore = [
     # app never parses. Re-check when Tauri bumps plist.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+
+    # --- Issue #11 (Triage 01.10.2026): "unmaintained"-Hinweise ohne bekannte
+    # Schwachstelle. Es gibt keine nutzbare Version (die Crates sind aufgegeben)
+    # und ein Austausch liegt bei den Oberkrates. Jede Zeile: Weg im Graphen und
+    # warum es hier hinnehmbar ist. Neu pruefen, wenn das Oberkrate wechselt.
+    #
+    # bincode 2.0.1 <- ferrous-opencc (Chinesisch-Konvertierung, Woerterbuecher).
+    # Liest nur die eigenen, mitgebauten Woerterbuecher, keine fremden Eingaben.
+    "RUSTSEC-2025-0141",
+    # fxhash <- selectors <- kuchikiki <- tauri-utils. Nur Hash-Funktion im
+    # HTML-Parser, den Tauri beim Bauen fuer das Frontend nutzt.
+    "RUSTSEC-2025-0057",
+    # gtk-layer-shell, gtk-layer-shell-sys, proc-macro-error (GTK3-Stack):
+    # nur auf Linux (cfg(target_os = "linux")); im Windows-Graphen nicht vorhanden.
+    "RUSTSEC-2024-0422",
+    "RUSTSEC-2024-0423",
+    "RUSTSEC-2024-0370",
+    # paste <- specta =2.0.0-rc.22 (von tauri-specta rc.21 fest verlangt). Reines
+    # Proc-Makro, laeuft nur beim Kompilieren.
+    "RUSTSEC-2024-0436",
+    # ttf-parser <- lopdf <- pdf-extract (Text aus PDF-Anhaengen). Aufgegeben, aber
+    # ohne gemeldete Luecke; pdf-extract 0.12.1 haengt weiter daran.
+    "RUSTSEC-2026-0192",
+    # unic-* (fuenf Crates) <- unic-ucd-ident <- urlpattern <- tauri-utils.
+    # Unicode-Tabellen fuer die Tauri-URL-Muster, keine Eingabe von aussen.
+    "RUSTSEC-2025-0075",
+    "RUSTSEC-2025-0080",
+    "RUSTSEC-2025-0081",
+    "RUSTSEC-2025-0098",
+    "RUSTSEC-2025-0100",
 ]
 
 [bans]
