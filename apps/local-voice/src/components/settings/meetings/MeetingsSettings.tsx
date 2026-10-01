@@ -10,8 +10,11 @@ import {
   events,
   type BriefInfo,
   type Citation,
+  type EntrySource,
   type Meeting,
+  type ProjectMinutes,
   type ScopeFilter,
+  type SourceRecording,
 } from "@/bindings";
 import { RecorderCard } from "./RecorderCard";
 import { MeetingList } from "./MeetingList";
@@ -44,6 +47,19 @@ import { findMeeting } from "./findMeeting";
 import { isEmptyEntry, requestStartDialog } from "./emptyEntry";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
 import { openYoutubeLinkDialog } from "./youtube/linkBus";
+import { useMeetingProgress } from "@/hooks/useMeetingJobs";
+import {
+  notifyProjectMinutesChanged,
+  projectMinutesErrorCode,
+  projectMinutesErrorDetail,
+  projectMinutesJobKey,
+  sourceToCitation,
+} from "@/lib/projectMinutes";
+import {
+  ProjectMinutesRun,
+  ProjectMinutesView,
+  type OpenProjectMinutes,
+} from "./projectMinutes/ProjectMinutesView";
 
 type JumpRequest = { citation: Citation; nonce: number };
 
@@ -85,7 +101,7 @@ const liveStub = (id: string, title: string): Meeting => {
 const FIND_RECORDING_WAITS_MS = [0, 250, 700];
 
 export const MeetingsSettings: React.FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [selected, setSelected] = useState<Meeting | null>(null);
   const selectedRef = useRef<Meeting | null>(null);
   selectedRef.current = selected;
@@ -97,10 +113,19 @@ export const MeetingsSettings: React.FC = () => {
     "meetings.selected",
     "",
   );
+  // G3 (#70): ein Projekt-Protokoll (oder der laufende Lauf) in der Arbeitsflaeche.
+  // Es verdraengt die Detailansicht und weicht, sobald eine Besprechung gewaehlt wird.
+  const [openPm, setOpenPm] = useState<OpenProjectMinutes | null>(null);
+  const [pmRunError, setPmRunError] = useState<{
+    folderId: string;
+    text: string;
+  } | null>(null);
+  const progressMap = useMeetingProgress();
   const select = useCallback(
     (meeting: Meeting | null) => {
       setSelected(meeting);
       setSelectedId(meeting?.id ?? "");
+      if (meeting) setOpenPm(null);
     },
     [setSelectedId],
   );
@@ -376,6 +401,170 @@ export const MeetingsSettings: React.FC = () => {
     [selected, t, select],
   );
 
+  // ---- G3 (#70, U9): Projekt-Protokoll ----------------------------------------
+
+  /** Fehlertext zu einem Code des Projekt-Protokolls (eigene Texte, sonst die des Protokolls). */
+  const pmErrorText = useCallback(
+    async (raw: string): Promise<string> => {
+      const code = projectMinutesErrorCode(raw);
+      const detail = projectMinutesErrorDetail(raw);
+      const own = `meetings.projectMinutes.errors.${code}`;
+      if (i18n.exists(own)) {
+        // Die abgewiesene Aufnahme beim Namen nennen, wenn sie sich finden laesst.
+        if (
+          (code === "no_transcript" || code === "meeting_not_finished") &&
+          detail
+        ) {
+          const meeting = await findMeeting(detail);
+          if (meeting) return t(`${own}_named`, { title: meeting.title });
+        }
+        return t(own);
+      }
+      return t(`meetings.minutes.errors.${code}`, {
+        error: detail,
+        defaultValue: raw,
+      });
+    },
+    [i18n, t],
+  );
+
+  const closeRun = useCallback((folderId: string) => {
+    setOpenPm((cur) =>
+      cur?.kind === "run" && cur.folderId === folderId ? null : cur,
+    );
+    setPmRunError((cur) => (cur?.folderId === folderId ? null : cur));
+  }, []);
+
+  const showRunFailure = useCallback(
+    async (folderId: string, raw: string) => {
+      const code = projectMinutesErrorCode(raw);
+      // Ein zweiter Start: der erste Lauf laeuft weiter und bleibt zu sehen.
+      if (code === "minutes_busy") return;
+      if (code === "minutes_cancelled") {
+        closeRun(folderId);
+        toast.info(t("meetings.projectMinutes.run.cancelled"));
+        return;
+      }
+      const text = await pmErrorText(raw);
+      setPmRunError({ folderId, text });
+    },
+    [closeRun, pmErrorText, t],
+  );
+
+  /** Ende eines Laufs (auch eines, den ein frueher geoeffneter Reiter gestartet hat). */
+  useEffect(() => {
+    const un = events.projectMinutesEvent.listen((event) => {
+      const payload = event.payload;
+      if (payload.kind === "done") {
+        setOpenPm((cur) =>
+          cur?.kind === "run" && cur.folderId === payload.folder_id
+            ? { kind: "doc", id: payload.minutes_id }
+            : cur,
+        );
+      } else {
+        void showRunFailure(
+          payload.folder_id,
+          payload.detail ? `${payload.code}: ${payload.detail}` : payload.code,
+        );
+      }
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [showRunFailure]);
+
+  const startProjectMinutes = useCallback(
+    async (request: {
+      folderId: string;
+      meetingIds: string[];
+      templateId: string;
+      kind: "minutes" | "summary";
+    }) => {
+      setPmRunError(null);
+      select(null);
+      setOpenPm({ kind: "run", folderId: request.folderId });
+      layout.drawer.setOpen(false);
+      const result = await commands.projectMinutesGenerate(
+        request.folderId,
+        request.meetingIds,
+        request.templateId,
+        request.kind,
+      );
+      if (result.status === "ok") {
+        notifyProjectMinutesChanged();
+        setOpenPm((cur) =>
+          cur?.kind === "run" && cur.folderId === request.folderId
+            ? { kind: "doc", id: result.data.id }
+            : cur,
+        );
+        return;
+      }
+      await showRunFailure(request.folderId, String(result.error));
+    },
+    [select, showRunFailure, layout.drawer],
+  );
+
+  const openPmDoc = useCallback(
+    (id: string) => {
+      select(null);
+      setOpenPm({ kind: "doc", id });
+      layout.drawer.setOpen(false);
+    },
+    [select, layout.drawer],
+  );
+
+  const openPmRun = useCallback(
+    (folderId: string) => {
+      select(null);
+      setOpenPm({ kind: "run", folderId });
+      layout.drawer.setOpen(false);
+    },
+    [select, layout.drawer],
+  );
+
+  /** Ein Beleg: die Aufnahme oeffnen und zur Stelle springen (Sprungmechanik der Einzelansicht). */
+  const openPmSource = useCallback(
+    (source: EntrySource, doc: ProjectMinutes) => {
+      const title =
+        doc.recordings.find((r) => r.index === source.recording)?.title ?? "";
+      void openCitation(sourceToCitation(source, title));
+    },
+    [openCitation],
+  );
+
+  const openPmRecording = useCallback(
+    async (recording: SourceRecording) => {
+      const meeting = await findMeeting(recording.meeting_id);
+      if (!meeting) {
+        toast.error(t("meetings.projectMinutes.view.sourceDeleted"));
+        return;
+      }
+      select(meeting);
+    },
+    [select, t],
+  );
+
+  const pmContent = openPm ? (
+    openPm.kind === "doc" ? (
+      <ProjectMinutesView
+        key={openPm.id}
+        id={openPm.id}
+        onOpenSource={openPmSource}
+        onOpenRecording={(recording) => void openPmRecording(recording)}
+        onDeleted={() => setOpenPm(null)}
+      />
+    ) : (
+      <ProjectMinutesRun
+        key={openPm.folderId}
+        progress={progressMap[projectMinutesJobKey(openPm.folderId)]}
+        error={
+          pmRunError?.folderId === openPm.folderId ? pmRunError.text : null
+        }
+        onClose={() => closeRun(openPm.folderId)}
+      />
+    )
+  ) : null;
+
   const chatOpen = rightTab === "chat" && globalFilter === null;
   const toggleChat = useCallback(() => {
     if (chatOpen) {
@@ -480,6 +669,12 @@ export const MeetingsSettings: React.FC = () => {
             personFilter={personFilter}
             onPersonFilterChange={setPersonFilter}
             onNewMeeting={(folderId, view) => void createEmpty(folderId, view)}
+            onStartProjectMinutes={(request) =>
+              void startProjectMinutes(request)
+            }
+            onOpenProjectMinutes={openPmDoc}
+            onOpenProjectRun={openPmRun}
+            activeProjectMinutes={openPm}
           />
         }
         detailActive={selected !== null}
@@ -488,7 +683,7 @@ export const MeetingsSettings: React.FC = () => {
           controls: setControlsEl,
           notes: setNotesEl,
         }}
-        idleContent={hint(t("meetings.layout.emptyContent"))}
+        idleContent={pmContent ?? hint(t("meetings.layout.emptyContent"))}
         controls={
           <RecorderCard
             target={emptyTarget}

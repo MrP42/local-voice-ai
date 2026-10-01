@@ -73,6 +73,29 @@ sonst per **KI-Notizen erzeugen**.
   **Vorlagen verwalten …**: eigene anlegen, duplizieren, als Datei (`.lvtemplate.json`) austauschen.
   Die Standardvorlage wählen Sie in den Einstellungen.
 
+## Mehrere Aufnahmen gemeinsam protokollieren (Projekt-Protokoll)
+
+In einem Projekt lassen sich mehrere Aufnahmen zu **einem** Protokoll oder **einer** Zusammenfassung verbinden.
+
+1. Projekt wählen, dann ☰ → **Gemeinsam protokollieren** (oder Rechtsklick auf das Projekt). In der Liste erscheinen Häkchen,
+   oben stehen der Zähler sowie **Alle** und **Keine**. Nur Aufnahmen **mit Transkript** sind wählbar; die anderen stehen
+   ausgegraut mit ihrem Grund („Kein Transkript“, „Läuft noch“, „Leer“).
+2. **Gemeinsam protokollieren …** (ab zwei Aufnahmen): Vorlage wählen (auch **Automatisch**, dann nach dem Inhalt aller
+   Aufnahmen) und die Art, **Protokoll** (die Abschnitte der Vorlage, ausführlich) oder **Zusammenfassung** (dieselben
+   Abschnitte, knapp).
+3. Die Aufnahmen werden nach Datum zusammengeführt, je Aufnahme ein Block mit Kopfzeile; ist alles zu lang für einen
+   Durchlauf, nutzt die App dieselbe Block- und Verdichtungslogik wie beim Einzelprotokoll. Fortschritt und **Stopp** stehen
+   wie bei der Einzelverarbeitung in der Arbeitsfläche und im Projekt; Pausieren gibt es wie dort nicht. Der Lauf gehört
+   dem Programm, ein Seitenwechsel ändert nichts daran.
+4. Das Ergebnis steht **im Projekt** als Eintrag „Projekt-Protokoll“ (oder „Projekt-Zusammenfassung“), lässt sich erneut
+   öffnen, kopieren und als Word, Text oder Markdown herunterladen. **Jede Aussage nennt ihre Quelle** (Aufnahme und Zeit);
+   ein Klick öffnet die Aufnahme und springt im Transkript und im Ton an die Stelle. Aussagen ohne Beleg sind markiert.
+   **Herkunft** zeigt Modell, Vorlage, Zeitpunkt und Verfahren; Lücken (ein Teil ließ sich nicht auswerten) stehen im Dokument.
+
+Eine Aufnahme ohne Transkript weist den ganzen Lauf ab, es wird nichts halb geschrieben. Löschen Sie das Dokument, bleiben
+die Aufnahmen unverändert; Löschen Sie das Projekt, verschwinden seine Projekt-Protokolle aus der Liste (die Zeilen bleiben
+in der Datenbank).
+
 ## Sprecher
 
 Nach dem Stopp, beim Import und bei der Neu-Transkription trennt ein lokales Modell die Sprecher je Kanal

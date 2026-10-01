@@ -2107,6 +2107,121 @@
         "notCancelled": "This meeting is not cancelled."
       }
     },
+    "projectMinutes": {
+      "menu": "Minutes together",
+      "menuHint": "Pick several recordings of this project and create one joint set of minutes or a summary",
+      "needProject": "Pick a project in the list first.",
+      "bar": {
+        "label": "Pick recordings for joint minutes",
+        "selected_one": "{{count}} recording picked",
+        "selected_other": "{{count}} recordings picked",
+        "all": "All",
+        "allHint": "Pick every eligible recording of the project",
+        "none": "None",
+        "noneHint": "Clear the selection",
+        "start": "Create joint minutes …",
+        "needTwo": "Pick at least two recordings.",
+        "cancel": "Cancel",
+        "loading": "Checking recordings …",
+        "loadFailed": "The recordings of the project could not be checked."
+      },
+      "reason": {
+        "meeting_not_finished": "Still running",
+        "no_transcript": "No transcript",
+        "empty_entry": "Empty"
+      },
+      "reasonHint": {
+        "meeting_not_finished": "This recording is still being recorded or processed. You can pick it once it is done.",
+        "no_transcript": "This recording has no transcript, so nothing can be minuted from it.",
+        "empty_entry": "An empty entry has no recording and no transcript yet."
+      },
+      "dialog": {
+        "title": "Create joint minutes",
+        "body_one": "{{count}} recording of the project “{{project}}” becomes a joint document. Every statement names its source.",
+        "body_other": "{{count}} recordings of the project “{{project}}” become one joint document. The recordings are merged by date, and every statement names its source.",
+        "kind": "Type",
+        "start": "Create",
+        "cancel": "Cancel"
+      },
+      "kind": {
+        "minutes": "Minutes",
+        "minutesHint": "The sections of the template, in detail",
+        "summary": "Summary",
+        "summaryHint": "The same sections, brief: a few condensed statements"
+      },
+      "list": {
+        "heading": "Project minutes",
+        "titleMinutes": "Project minutes",
+        "titleSummary": "Project summary",
+        "meta_one": "{{date}} · {{count}} recording",
+        "meta_other": "{{date}} · {{count}} recordings",
+        "incomplete": "incomplete",
+        "running": "Project minutes are being created"
+      },
+      "view": {
+        "toolbar": "Project minutes: tools",
+        "copy": "Copy",
+        "copyHint": "Copies the document formatted (for Word and mail) and as Markdown",
+        "copied": "Copied",
+        "copyError": "The document could not be copied",
+        "download": "Download",
+        "downloadHint": "Save as Word, text or Markdown",
+        "exportError": "Export failed",
+        "exportSaved": "Saved to {{path}}",
+        "delete": "Delete",
+        "deleteHint": "Delete the document from the project; the recordings stay",
+        "deleteTitle": "Delete project minutes?",
+        "deleteBody": "The document will be deleted. The recordings it was made from stay untouched.",
+        "deleteCancel": "Cancel",
+        "loadError": "The document could not be loaded: {{error}}",
+        "gone": "These project minutes no longer exist.",
+        "empty": "none",
+        "assignee": "Owner: {{name}}",
+        "due": "Due: {{date}}",
+        "noProof": "no proof",
+        "noProofHint": "The model named no passage in the transcript for this statement.",
+        "sourceHint": "{{title}}, {{time}}: opens the recording at this point",
+        "sourceDeleted": "This recording no longer exists.",
+        "sourcesLabel": "Sources",
+        "recordings": "Recordings",
+        "recordingOpen": "Open {{title}}",
+        "origin": "Origin",
+        "originModel": "Model",
+        "originTemplate": "Template",
+        "originAuto": "chosen automatically",
+        "originCreated": "Created",
+        "originMode": "Method",
+        "modeSingle": "one pass",
+        "modeBlocks_one": "{{count}} block",
+        "modeBlocks_other": "{{count}} blocks",
+        "incomplete": "The document is incomplete: {{gaps}} could not be evaluated. The full transcripts are kept.",
+        "droppedSources_one": "One source named by the model did not exist in the transcript and was dropped.",
+        "droppedSources_other": "{{count}} sources named by the model did not exist in the transcript and were dropped.",
+        "unsupportedEntries_one": "One statement has no proof.",
+        "unsupportedEntries_other": "{{count}} statements have no proof."
+      },
+      "run": {
+        "title": "Joint minutes are being created",
+        "body": "The picked recordings are being evaluated. You can look at other recordings meanwhile; the result appears in the project.",
+        "starting": "Starting …",
+        "close": "Close",
+        "cancelled": "Creation was cancelled.",
+        "failed": "The joint minutes could not be created."
+      },
+      "errors": {
+        "minutes_busy": "Joint minutes are already being created for this project.",
+        "folder_not_found": "The project no longer exists.",
+        "no_selection": "Pick at least one recording.",
+        "too_many_recordings": "Too many recordings at once. Pick fewer.",
+        "not_in_project": "One of the picked recordings does not (or no longer) belong to this project.",
+        "kind_invalid": "Unknown document type.",
+        "meeting_not_found": "One of the picked recordings no longer exists.",
+        "meeting_not_finished": "One of the picked recordings is still being processed.",
+        "meeting_not_finished_named": "“{{title}}” is still being processed.",
+        "no_transcript": "One of the picked recordings has no transcript.",
+        "no_transcript_named": "“{{title}}” has no transcript."
+      }
+    },
     "minutes": {
       "empty": "No minutes generated yet.",
       "generating": "Generating minutes…",

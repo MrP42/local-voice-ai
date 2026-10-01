@@ -59,6 +59,9 @@ use super::store::{MeetingDocument, MeetingStore, StoredSegment};
 use crate::managers::usage::Purpose;
 use crate::settings::AppSettings;
 
+/// G3 (#70): Projekt-Protokoll (mehrere Aufnahmen), nutzt die Mechanik dieses Moduls.
+pub mod project;
+
 /// Kopfdaten eines Protokolls; die Definition lebt in `llm_call`, weil auch
 /// die KI-Notizen sie nutzen.
 pub use super::llm_call::MeetingHead as MinutesHead;
