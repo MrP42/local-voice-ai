@@ -46,6 +46,8 @@ pub enum ConsentError {
     NotAConsent,
     /// Schon entschieden, verfallen oder zurueckgezogen.
     NotPending,
+    /// Zugestimmt ohne die Einwilligungsbestaetigung (B7n): nichts wurde entschieden.
+    ConsentRequired,
     Store(String),
 }
 
@@ -55,6 +57,7 @@ impl ConsentError {
         match self {
             ConsentError::NotFound | ConsentError::NotPending => "consent_not_pending",
             ConsentError::NotAConsent => "consent_invalid",
+            ConsentError::ConsentRequired => "consent_required",
             ConsentError::Store(_) => "store_failed",
         }
     }
@@ -67,6 +70,9 @@ impl std::fmt::Display for ConsentError {
                 write!(f, "Die Anfrage ist nicht mehr offen.")
             }
             ConsentError::NotAConsent => write!(f, "Das ist keine Anfrage zur Aufnahme."),
+            ConsentError::ConsentRequired => {
+                write!(f, "Die Einwilligung aller Beteiligten wurde nicht bestätigt.")
+            }
             ConsentError::Store(m) => write!(f, "Speicherfehler: {m}"),
         }
     }
@@ -146,10 +152,13 @@ pub fn is_pending(conn: &Connection, approval_id: &str, now_ms: i64) -> bool {
 
 /// Der Nutzer entscheidet: `approve = true` ist die Einwilligung („Aufnahme starten“),
 /// `false` das Nein („Nicht aufnehmen“). Nur Freigaben des Bausteins `recording.start`.
+/// Das Ja gilt nur mit `consent_confirmed` (das Haekchen „Alle Beteiligten haben zugestimmt“):
+/// ohne sie `ConsentRequired`, die Freigabe bleibt offen. Das Nein geht immer.
 pub fn decide(
     conn: &Connection,
     approval_id: &str,
     approve: bool,
+    consent_confirmed: bool,
     now_ms: i64,
 ) -> Result<(), ConsentError> {
     let Some(a) = approvals::get(conn, approval_id).map_err(store_err)? else {
@@ -157,6 +166,9 @@ pub fn decide(
     };
     if a.caller != CALLER || a.tool_or_capability != CAPABILITY {
         return Err(ConsentError::NotAConsent);
+    }
+    if approve && !consent_confirmed {
+        return Err(ConsentError::ConsentRequired);
     }
     approvals::decide(conn, approval_id, approve, now_ms)
         .map(|_| ())

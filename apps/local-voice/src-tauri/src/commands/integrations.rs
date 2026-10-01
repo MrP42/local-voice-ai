@@ -157,14 +157,16 @@ pub async fn approvals_pending(
 }
 
 /// Der Nutzer entscheidet eine Freigabe. Fehler: `approval_not_found`,
-/// `approval_expired`, `approval_already_decided`.
+/// `approval_expired`, `approval_already_decided`, `consent_required` (Freigabe zum Aufnehmen
+/// ohne `consent_confirmed = true`: die Einwilligungsbestaetigung, B7n).
 #[tauri::command]
 #[specta::specta]
 pub async fn approval_decide(
     store: State<'_, Arc<MeetingStore>>,
     id: String,
     approve: bool,
+    consent_confirmed: bool,
 ) -> Result<Approval, String> {
     let conn = conn(&store)?;
-    view::decide_approval(&conn, &id, approve, view::now_ms())
+    view::decide_approval(&conn, &id, approve, consent_confirmed, view::now_ms())
 }
