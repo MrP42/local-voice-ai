@@ -1,0 +1,365 @@
+//! Prompts des Chats (M4 §6). Rein, keine I/O.
+//!
+//! Reihenfolge im Nutzerprompt: `Heute` · `Auszüge` · `Überblick` · `Verlauf`
+//! · `Frage`. Die Auszuege stehen vorn, damit eine Folgefrage im selben
+//! Verlauf (gleiche Auszuege zuerst) den Prompt-Cache von llama-server trifft
+//! (M6: Folgefragen 4-13 s statt 111 s auf CPU); was sich je Frage aendert
+//! (Karten, Verlauf, Frage), steht dahinter. Freitext statt JSON-Schema,
+//! damit gestreamt werden kann.
+
+use super::context::{clip_chars, Excerpt, MeetingCard};
+use super::ChunkSource;
+use crate::managers::meetings::search::chunking::clock;
+use crate::managers::meetings::search::index::ChatMessageRow;
+
+/// System-Prompt (Deutsch; die Antwortsprache folgt der Frage). Der Beispiel-
+/// satz mit `[Q3]` hat sich im Smoke M6 bewaehrt (8/8 korrekt zitiert).
+pub const SYSTEM_PROMPT: &str = "Du beantwortest Fragen zu Besprechungen des Nutzers. Nutze NUR die Auszüge unten.
+Belege jede Aussage direkt dahinter mit der Auszugs-ID in eckigen Klammern, z. B. [Q3]. Mehrere: [Q3][Q7].
+Erfinde keine Namen, Zahlen, Termine. Wenn die Auszüge die Frage nicht beantworten, schreibe genau: KEIN_BELEG
+Antworte knapp, in der Sprache der Frage, ohne Überschriften. Datum der Besprechung angeben, wenn mehrere beteiligt sind.";
+
+/// D5: Zusatz zum System-Prompt, wenn Folien-Auszuege dabei sind. Die Bildbeschreibung
+/// (Zeilen `Bild:`) hat Ablesefehler (R2): Zahlen kommen nur aus dem Folientext.
+pub const SLIDE_RULE: &str = "Auszüge „Folie n“ enthalten den Text einer Folie; Zeilen „Bild:“ sind automatische Bildbeschreibungen mit möglichen Ablesefehlern. Übernimm Zahlen, Daten und Namen nur aus dem Folientext, nie aus einer „Bild:“-Zeile.";
+
+/// Der System-Prompt: unverändert, und nur wenn Folien-Auszüge dabei sind, mit
+/// [`SLIDE_RULE`] (ohne Folien ist der Prompt byteweise wie vorher).
+pub fn system_prompt_for(excerpts: &[Excerpt]) -> String {
+    if excerpts.iter().any(|e| e.source == ChunkSource::Slide) {
+        format!("{SYSTEM_PROMPT}\n{SLIDE_RULE}")
+    } else {
+        SYSTEM_PROMPT.to_string()
+    }
+}
+
+/// Laengster Verlaufsbeitrag im Prompt (eine lange Antwort soll den Verlauf
+/// nicht allein fuellen).
+const HISTORY_ITEM_CHARS: usize = 600;
+
+/// Datum `TT.MM.JJJJ` in Ortszeit; leer bei ungueltigem Zeitstempel.
+pub fn date_de(secs: Option<i64>) -> String {
+    secs.and_then(|s| chrono::DateTime::from_timestamp(s, 0))
+        .map(|utc| {
+            utc.with_timezone(&chrono::Local)
+                .format("%d.%m.%Y")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// Kopfzeile eines Auszugs: `[Q5] B2 · Transkript 03:15–04:40`.
+pub fn excerpt_heading(ex: &Excerpt) -> String {
+    let what = match ex.source {
+        ChunkSource::Transcript => match (ex.start_ms, ex.end_ms) {
+            (Some(s), Some(e)) => format!("Transkript {}–{}", clock(s), clock(e)),
+            (Some(s), None) => format!("Transkript ab {}", clock(s)),
+            _ => "Transkript".to_string(),
+        },
+        ChunkSource::UserNotes => "Meine Notizen".to_string(),
+        ChunkSource::AiNotes => match &ex.section {
+            Some(section) => format!("KI-Notizen, Abschnitt {section}"),
+            None => "KI-Notizen".to_string(),
+        },
+        ChunkSource::Title => "Titel".to_string(),
+        // D5: `Folie 7 · 04:12` (die Bezeichnung steht in `section`).
+        ChunkSource::Slide => match (&ex.section, ex.start_ms) {
+            (Some(section), Some(s)) => format!("{section} · {}", clock(s)),
+            (Some(section), None) => section.clone(),
+            (None, Some(s)) => format!("Folie · {}", clock(s)),
+            _ => "Folie".to_string(),
+        },
+    };
+    format!("[Q{}] {} · {}", ex.qid, ex.meeting_label, what)
+}
+
+/// Karte: `B2 "Titel" 12.09.2026 · Ordner Vertrieb · <Kurzfassung>`.
+pub fn card_line(card: &MeetingCard) -> String {
+    let mut line = format!("{} \"{}\"", card.label, card.meeting.title.trim());
+    let date = date_de(card.meeting.started_at);
+    if !date.is_empty() {
+        line.push(' ');
+        line.push_str(&date);
+    }
+    if !card.folders.is_empty() {
+        line.push_str(" · Ordner ");
+        line.push_str(&card.folders.join(", "));
+    }
+    if !card.summary.is_empty() {
+        line.push_str(" · ");
+        line.push_str(&card.summary);
+    }
+    line
+}
+
+/// Verlauf fuer den Prompt: die juengsten Beitraege, die in `max_chars`
+/// passen, chronologisch. Anzeige-Nummern `[n]` fallen weg (das Modell
+/// kennt nur `[Q<k>]` der aktuellen Auszuege).
+pub fn render_history(messages: &[ChatMessageRow], max_chars: usize) -> String {
+    let marks = regex::Regex::new(r"\s*\[\d+\]").expect("Regex");
+    let mut picked: Vec<String> = Vec::new();
+    let mut used = 0usize;
+    for msg in messages.iter().rev() {
+        let who = if msg.role == "user" {
+            "Nutzer"
+        } else {
+            "Assistent"
+        };
+        let text = marks.replace_all(&msg.content, "");
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let text = if text.is_empty() && msg.role != "user" {
+            "(kein Beleg gefunden)".to_string()
+        } else {
+            clip_chars(&text, HISTORY_ITEM_CHARS)
+        };
+        let line = format!("{who}: {text}");
+        let cost = line.chars().count() + 1;
+        if used + cost > max_chars {
+            break;
+        }
+        used += cost;
+        picked.push(line);
+    }
+    picked.reverse();
+    picked.join("\n")
+}
+
+/// Zeilen eines Auszugs, wie das Modell sie sieht. Transkriptzeilen ohne
+/// die Segmentnummer (`03:15 Ich: ...` statt `S12 03:15 Ich: ...`): die
+/// Nummern sind nur je Besprechung eindeutig, ein kleines Modell zitierte sie
+/// trotzdem (`[S17]`, `[Q2:S44]`) statt der Auszugs-ID, und in einem globalen
+/// Chat ist `[S17]` mehrdeutig (P4g: Eval E4B mit Nummern 0,92-0,96 mit 1-2
+/// Zitatfehlern je Lauf, ohne 0,96-1,00 ohne Zitatfehler). Das Segment
+/// bestimmt `citations` je Satz aus dem Inhalt; intern behaelt jede Zeile
+/// ihren Index.
+pub fn prompt_body(ex: &Excerpt) -> String {
+    ex.lines
+        .iter()
+        .map(|l| {
+            l.segment_index
+                .and_then(|i| l.text.strip_prefix(&format!("S{i} ")))
+                .unwrap_or(&l.text)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub struct PromptInput<'a> {
+    /// `TT.MM.JJJJ`
+    pub today: &'a str,
+    /// Aufnahme laeuft: Position des Transkript-Endes.
+    pub live_position_ms: Option<u64>,
+    pub cards: &'a [MeetingCard],
+    pub excerpts: &'a [Excerpt],
+    /// Bereits gerendert (`render_history`), leer = neuer Verlauf.
+    pub history: &'a str,
+    pub question: &'a str,
+}
+
+pub fn build_user_prompt(p: &PromptInput<'_>) -> String {
+    let mut out = format!("Heute: {}\n", p.today);
+    if let Some(pos) = p.live_position_ms {
+        out.push_str(&format!(
+            "Die Besprechung läuft noch; das Transkript reicht bis {}.\n",
+            clock(pos)
+        ));
+    }
+    out.push_str("\nAuszüge:\n");
+    for ex in p.excerpts {
+        out.push_str(&excerpt_heading(ex));
+        out.push('\n');
+        out.push_str(&prompt_body(ex));
+        out.push_str("\n\n");
+    }
+    if !p.cards.is_empty() {
+        out.push_str("Überblick:\n");
+        for card in p.cards {
+            out.push_str(&card_line(card));
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    if !p.history.trim().is_empty() {
+        out.push_str("Verlauf:\n");
+        out.push_str(p.history.trim());
+        out.push_str("\n\n");
+    }
+    out.push_str("Frage: ");
+    out.push_str(p.question.trim());
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::context::tests::{meeting, seg};
+    use super::super::context::{number_excerpts, transcript_blocks};
+    use super::*;
+
+    fn row(role: &str, content: &str) -> ChatMessageRow {
+        ChatMessageRow {
+            id: "x".into(),
+            thread_id: "t".into(),
+            role: role.into(),
+            content: content.into(),
+            citations_json: None,
+            coverage_json: None,
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn the_system_prompt_demands_ids_and_the_not_found_token() {
+        assert!(SYSTEM_PROMPT.contains("[Q3]"));
+        assert!(SYSTEM_PROMPT.contains("KEIN_BELEG"));
+        assert!(SYSTEM_PROMPT.contains("NUR die Auszüge"));
+    }
+
+    #[test]
+    fn prompt_lists_excerpts_before_overview_history_and_question() {
+        let mut excerpts = transcript_blocks(
+            &meeting("a"),
+            &[seg(12, 195, "Das Budget steht."), seg(13, 280, "Gut.")],
+            0,
+            10_000,
+        );
+        let mut notes = excerpts[0].clone();
+        notes.source = ChunkSource::AiNotes;
+        notes.section = Some("Entscheidungen".into());
+        excerpts.push(notes);
+        let mut cards = vec![MeetingCard {
+            label: String::new(),
+            meeting: meeting("a"),
+            folders: vec!["Vertrieb".into()],
+            summary: "Budget freigegeben".into(),
+        }];
+        number_excerpts(&mut cards, &mut excerpts);
+        let prompt = build_user_prompt(&PromptInput {
+            today: "29.09.2026",
+            live_position_ms: Some(290_000),
+            cards: &cards,
+            excerpts: &excerpts,
+            history: "Nutzer: Vorher?",
+            question: "Wie hoch ist das Budget?",
+        });
+        assert!(prompt.starts_with("Heute: 29.09.2026\n"));
+        assert!(prompt.contains(
+            "[Q1] B1 · Transkript 03:15–04:44\n03:15 Ich: Das Budget steht.\n04:40 Gegenseite: Gut."
+        ));
+        // Keine Segmentnummer, die das Modell statt der Auszugs-ID zitieren koennte.
+        assert!(
+            !prompt.contains("S12") && !prompt.contains("S13"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("[Q2] B1 · KI-Notizen, Abschnitt Entscheidungen"));
+        assert!(prompt
+            .contains("B1 \"Besprechung a\" 12.09.2026 · Ordner Vertrieb · Budget freigegeben"));
+        assert!(prompt.contains("das Transkript reicht bis 04:50"));
+        let pos = |s: &str| prompt.find(s).unwrap();
+        assert!(pos("Auszüge:") < pos("Überblick:"));
+        assert!(pos("Überblick:") < pos("Verlauf:"));
+        assert!(pos("Verlauf:") < pos("Frage: Wie hoch ist das Budget?"));
+        assert!(prompt.ends_with("Frage: Wie hoch ist das Budget?"));
+    }
+
+    #[test]
+    fn the_prompt_body_drops_only_the_segment_number_of_transcript_lines() {
+        let mut ex = transcript_blocks(
+            &meeting("a"),
+            &[seg(12, 195, "Das Budget steht."), seg(130, 280, "Gut.")],
+            0,
+            10_000,
+        )
+        .remove(0);
+        assert_eq!(
+            prompt_body(&ex),
+            "03:15 Ich: Das Budget steht.\n04:40 Ich: Gut."
+        );
+        // Zeile ohne Segment (Notizen) und Text, der nicht mit der Nummer beginnt: unveraendert.
+        ex.lines[0].segment_index = None;
+        ex.lines[1].text = "S131 04:40 Gegenseite: Gut.".into();
+        assert_eq!(
+            prompt_body(&ex),
+            "S12 03:15 Ich: Das Budget steht.\nS131 04:40 Gegenseite: Gut."
+        );
+        // "S1" darf nicht von "S12 ..." abgeschnitten werden (Leerzeichen gehoert zum Praefix).
+        ex.lines[0].segment_index = Some(1);
+        assert!(prompt_body(&ex).starts_with("S12 03:15"));
+        // Der Auszug selbst behaelt seine Zeilen mit Index (Zitat-Verfeinerung).
+        assert_eq!(ex.lines[1].segment_index, Some(130));
+        assert!(ex.body().contains("S12 03:15"));
+    }
+
+    #[test]
+    fn history_keeps_the_newest_turns_within_budget_without_display_numbers() {
+        let msgs = vec![
+            row("user", "Erste Frage ganz alt"),
+            row("assistant", "Alte Antwort [1]"),
+            row("user", "Wie hoch ist das Budget?"),
+            row("assistant", "Es sind 5 000 Euro [1][2]."),
+            row("assistant", ""),
+        ];
+        let all = render_history(&msgs, 10_000);
+        assert_eq!(
+            all,
+            "Nutzer: Erste Frage ganz alt\nAssistent: Alte Antwort\nNutzer: Wie hoch ist das Budget?\nAssistent: Es sind 5 000 Euro.\nAssistent: (kein Beleg gefunden)"
+        );
+        let newest = render_history(&msgs, 100);
+        assert!(newest.starts_with("Nutzer: Wie hoch"), "war: {newest}");
+        assert!(!newest.contains("ganz alt"));
+        assert_eq!(render_history(&[], 100), "");
+    }
+
+    // ---- D5: Folien ----------------------------------------------------------
+
+    fn slide_excerpt() -> Excerpt {
+        use crate::managers::meetings::slides::store::MeetingSlide;
+        use crate::managers::meetings::slides::SlideOccurrence;
+        let slide = MeetingSlide {
+            id: "sl-7".into(),
+            meeting_id: "m1".into(),
+            number: 7,
+            origin: "video".into(),
+            image_path: "slides/0007.jpg".into(),
+            thumb_path: None,
+            occurrences: vec![SlideOccurrence {
+                start_ms: 252_000,
+                end_ms: 270_000,
+            }],
+            ocr_text: Some("Umsatz 13,1 Mio. EUR".into()),
+            ocr_engine: None,
+            kind: Some("text".into()),
+            description: Some("Balkendiagramm".into()),
+            description_model: None,
+            hidden: false,
+        };
+        let mut ex = super::super::context::slide_excerpts(&meeting("m1"), &[slide]).remove(0);
+        ex.qid = 4;
+        ex.meeting_label = "B1".into();
+        ex
+    }
+
+    #[test]
+    fn a_slide_excerpt_reads_folie_number_and_time_and_marks_the_image_description() {
+        let ex = slide_excerpt();
+        assert_eq!(excerpt_heading(&ex), "[Q4] B1 · Folie 7 · 04:12");
+        assert_eq!(
+            prompt_body(&ex),
+            "Folie 7 04:12: Umsatz 13,1 Mio. EUR\nBild: Balkendiagramm"
+        );
+    }
+
+    #[test]
+    fn the_system_prompt_only_grows_when_slide_excerpts_are_in_the_context() {
+        let plain = {
+            let mut ex = transcript_blocks(&meeting("m1"), &[seg(0, 0, "Hallo")], 0, 1_200).remove(0);
+            ex.qid = 1;
+            ex
+        };
+        assert_eq!(system_prompt_for(&[]), SYSTEM_PROMPT);
+        assert_eq!(system_prompt_for(&[plain.clone()]), SYSTEM_PROMPT, "ohne Folien byteweise wie vorher");
+        let with = system_prompt_for(&[plain, slide_excerpt()]);
+        assert!(with.starts_with(SYSTEM_PROMPT));
+        assert!(with.ends_with(SLIDE_RULE));
+        assert!(with.contains("nie aus einer „Bild:“-Zeile"));
+    }
+}

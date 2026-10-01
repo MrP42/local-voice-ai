@@ -52,9 +52,29 @@ static MIGRATIONS: &[M] = &[M::up(
 pub enum Purpose {
     PostProcess,
     Minutes,
+    EnhancedNotes,
     Summary,
     Tagging,
     Translation,
+    /// Chat ueber Besprechungen (M4, P4c).
+    Chat,
+    /// Follow-up-Mail zu einer Besprechung (B13).
+    Followup,
+    /// A1: KI-Zusammenfuehrung zweier Transkript-Fassungen (A3).
+    TranscriptMerge,
+    /// G5: Uebersetzung einer Transkript-Fassung (neue Fassung, deterministisch wie die
+    /// Zusammenfuehrung).
+    TranscriptTranslation,
+    /// A1: Relevanzpruefung (Workflow-Bausteine, Goal B).
+    Relevance,
+    /// A1: Abgleich zweier Staende (Goal B).
+    Reconcile,
+    /// A1: Faktenpruefung eines Textes (Goal B).
+    FactCheck,
+    /// A1: Routing-Entscheidung eines lokalen Agenten (Goal C).
+    AgentRoute,
+    /// A1: Informationen aus einem Text ziehen (Goal B).
+    Extract,
 }
 
 impl Purpose {
@@ -62,9 +82,19 @@ impl Purpose {
         match self {
             Purpose::PostProcess => "post_process",
             Purpose::Minutes => "minutes",
+            Purpose::EnhancedNotes => "enhanced_notes",
             Purpose::Summary => "summary",
             Purpose::Tagging => "tagging",
             Purpose::Translation => "translation",
+            Purpose::Chat => "chat",
+            Purpose::Followup => "followup",
+            Purpose::TranscriptMerge => "transcript_merge",
+            Purpose::TranscriptTranslation => "transcript_translation",
+            Purpose::Relevance => "relevance",
+            Purpose::Reconcile => "reconcile",
+            Purpose::FactCheck => "fact_check",
+            Purpose::AgentRoute => "agent_route",
+            Purpose::Extract => "extract",
         }
     }
 }
@@ -518,9 +548,104 @@ pub fn ledger() -> Option<Arc<UsageLedger>> {
     LEDGER.get().cloned()
 }
 
+// ----------------------------------------------------------------- Capture --
+
+/// Ein Aufruf, den ein Erfassungsbereich (`with_capture`) mitgeschrieben hat:
+/// Futter fuer die Provenienz (Modell, Token, Dauer, Verweis auf das Ereignis).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedCall {
+    pub purpose: String,
+    /// Anbieter-Kennung (`openai`, `local`, `ollama`, ...).
+    pub provider_id: String,
+    /// Laeuft der Anbieter auf diesem Rechner (lokaler Server oder Loopback)?
+    pub local: bool,
+    pub connection_label: String,
+    /// Modellkennung, wie der Anbieter sie kennt.
+    pub model_id: String,
+    pub model_label: String,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub duration_ms: u32,
+    pub ok: bool,
+    /// Nummer des Ledger-Ereignisses; `None` ohne Ledger oder bei Schreibfehler.
+    pub usage_event_id: Option<i64>,
+}
+
+/// Obergrenze je Bereich: ein Protokoll mit Hunderten Bloecken soll den
+/// Speicher nicht mit Kleinkram fuellen; ueber der Grenze zaehlt nur noch
+/// `dropped`.
+pub const MAX_CAPTURED_CALLS: usize = 2_000;
+
+#[derive(Default)]
+pub struct CallCapture {
+    calls: Mutex<Vec<CapturedCall>>,
+    dropped: std::sync::atomic::AtomicU32,
+}
+
+impl CallCapture {
+    fn push(&self, call: CapturedCall) {
+        let mut calls = self.calls.lock().unwrap_or_else(|e| e.into_inner());
+        if calls.len() >= MAX_CAPTURED_CALLS {
+            self.dropped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            calls.push(call);
+        }
+    }
+
+    fn snapshot(&self) -> (Vec<CapturedCall>, u32) {
+        let calls = self.calls.lock().unwrap_or_else(|e| e.into_inner());
+        (
+            calls.clone(),
+            self.dropped.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+}
+
+tokio::task_local! {
+    static CAPTURE: Arc<CallCapture>;
+}
+
+/// Fuehrt `fut` in einem Erfassungsbereich aus: jeder Sprachmodell-Aufruf, den
+/// dieser Task darin macht (auch verschachtelt ueber `.await`), wird in
+/// `captured_calls()` sichtbar. Aufrufe in abgespaltenen Tasks
+/// (`tokio::spawn`, `spawn_blocking`) gehoeren nicht dazu -- die Erzeugungswege
+/// fragen alle im eigenen Task.
+pub async fn with_capture<F: std::future::Future>(fut: F) -> F::Output {
+    CAPTURE.scope(Arc::new(CallCapture::default()), fut).await
+}
+
+/// Bisher erfasste Aufrufe des aktuellen Bereichs (leer ausserhalb eines
+/// Bereichs) und die Zahl der wegen `MAX_CAPTURED_CALLS` nicht gespeicherten.
+pub fn captured_calls() -> (Vec<CapturedCall>, u32) {
+    CAPTURE
+        .try_with(|c| c.snapshot())
+        .unwrap_or_else(|_| (Vec::new(), 0))
+}
+
+/// Laeuft der Anbieter auf diesem Rechner? Der eingebaute lokale Server, oder
+/// jede Adresse auf Loopback (`localhost`, `127.0.0.1`, `::1`): so zaehlt auch
+/// ein selbst betriebener Ollama oder vLLM als lokal.
+pub fn provider_is_local(provider: &PostProcessProvider) -> bool {
+    if crate::managers::llm::is_local(provider) {
+        return true;
+    }
+    match url::Url::parse(provider.base_url.trim()).ok().and_then(|u| u.host().map(|h| h.to_owned())) {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
 /// Bucht einen Aufruf. Laeuft ohne Ledger (Tests, frueher Start) ins Leere
 /// und schluckt Fehler -- die Antwort ist wichtiger als die Buchung.
-pub fn record_call(
+///
+/// Innerhalb eines Erfassungsbereichs (`with_capture`) wartet der Aufruf auf
+/// das Schreiben, damit die Ereignisnummer fuer die Provenienz feststeht (ein
+/// Insert in SQLite, Millisekunden neben einem Aufruf von Sekunden). Sonst wird
+/// wie bisher nicht auf dem Antwortpfad geschrieben.
+pub async fn record_call(
     purpose: Purpose,
     provider: &PostProcessProvider,
     remote_model: &str,
@@ -528,9 +653,11 @@ pub fn record_call(
     duration_ms: u32,
     result: Result<(), String>,
 ) {
-    let Some(ledger) = ledger() else {
+    let capture = CAPTURE.try_with(Arc::clone).ok();
+    let ledger = ledger();
+    if ledger.is_none() && capture.is_none() {
         return;
-    };
+    }
     let settings = SETTINGS.get().map(|source| source());
     let active = settings.as_ref().and_then(|s| s.active_llm_model());
     let event = NewUsageEvent::from_call(
@@ -542,14 +669,47 @@ pub fn record_call(
         duration_ms,
         result,
     );
-    let ledger = ledger.clone();
-    // Nicht auf dem Antwortpfad schreiben: SQLite ist schnell, aber der
-    // Aufrufer wartet auf Text, nicht auf Buchhaltung.
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Err(e) = ledger.record(event) {
-            warn!("Verbrauch nicht gebucht: {e}");
-        }
+    let captured = capture.as_ref().map(|_| CapturedCall {
+        purpose: purpose.as_str().to_string(),
+        provider_id: provider.id.clone(),
+        local: provider_is_local(provider),
+        connection_label: event.connection_label.clone(),
+        model_id: remote_model.to_string(),
+        model_label: event.model_label.clone(),
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        duration_ms,
+        ok: event.ok,
+        usage_event_id: None,
     });
+    match (ledger, capture, captured) {
+        (Some(ledger), Some(capture), Some(mut call)) => {
+            let written = tokio::task::spawn_blocking(move || ledger.record(event)).await;
+            call.usage_event_id = match written {
+                Ok(Ok(id)) => Some(id),
+                Ok(Err(e)) => {
+                    warn!("Verbrauch nicht gebucht: {e}");
+                    None
+                }
+                Err(e) => {
+                    warn!("Verbrauch nicht gebucht (Task): {e}");
+                    None
+                }
+            };
+            capture.push(call);
+        }
+        (None, Some(capture), Some(call)) => capture.push(call),
+        (Some(ledger), _, _) => {
+            // Nicht auf dem Antwortpfad schreiben: SQLite ist schnell, aber der
+            // Aufrufer wartet auf Text, nicht auf Buchhaltung.
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(e) = ledger.record(event) {
+                    warn!("Verbrauch nicht gebucht: {e}");
+                }
+            });
+        }
+        (None, _, _) => {}
+    }
 }
 
 /// Prueft vor einem Aufruf, ob das Monatsbudget der Verbindung des aktiven

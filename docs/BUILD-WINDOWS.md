@@ -26,7 +26,14 @@ pwsh -File apps\local-voice\scripts\dev.ps1 check         # fmt + clippy + test
 pwsh -File apps\local-voice\scripts\dev.ps1 build         # tauri build --no-bundle
 pwsh -File apps\local-voice\scripts\dev.ps1 clean-cmake   # Stolperstein 2
 pwsh -File apps\local-voice\scripts\dev.ps1 harness       # scripts/m8-verify.ps1
+pwsh -File apps\local-voice\scripts\dev.ps1 notices       # THIRD-PARTY-NOTICES + SBOM
+pwsh -File apps\local-voice\scripts\test-dev-guards.ps1   # prueft die Waechter selbst
 ```
+
+`test-dev-guards.ps1` belegt in wenigen Sekunden ohne Build: fehlt cargo, endet
+`dev.ps1` mit Meldung `FEHLT: cargo nicht gefunden` und Exit 2; ein Schritt mit
+Exit != 0 beendet das Skript mit genau diesem Exit-Code; ein fremder
+CMake-Cache wird erkannt.
 
 Die Handarbeit darunter bleibt gültig und erklärt, was der Wrapper tut.
 
@@ -68,6 +75,40 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\tcs"
 
 Danach konfiguriert der Build neu (dauert einmalig ~7 Minuten).
 
+**Warum der Generator ueberhaupt wechselt:** Die `cmake`-Crate, ueber die
+`transcribe-cpp-sys` baut, nimmt den Generator aus der **Umgebung**
+(`CMAKE_GENERATOR`, auch `CMAKE_GENERATOR_<target>` und
+`TARGET_CMAKE_GENERATOR`). Ohne Variable waehlt CMake Visual Studio. Ein Lauf in
+einer Shell mit `CMAKE_GENERATOR=Ninja` (Entwickler-Eingabeaufforderung, ein
+anderes Werkzeug) legt einen Ninja-Cache an, der naechste Lauf ohne die Variable
+scheitert. `dev.ps1` entfernt diese Variablen fuer seine Laeufe (immer derselbe
+Generator wie in der CI; `LVA_KEEP_CMAKE_GENERATOR=1` behaelt sie) und raeumt
+einen vorhandenen Cache mit fremdem Generator vor `test`/`build`/`bundle`/`clippy`
+selbst weg. Ein direktes `cargo` in einer Shell mit gesetzter Variable ist davon
+nicht geschuetzt - dafuer bleibt die Handarbeit oben.
+
+## Lizenzen, Third-Party-Notices und SBOM
+
+`dev.ps1 notices` (bzw. `node apps/local-voice/scripts/gen-notices.mjs`) erzeugt
+aus `Cargo.lock` (cargo-about, `src-tauri/about.toml`), `pnpm licenses`, dem
+Modellkatalog und `docs/m2-evidence/ATTRIBUTION.md`:
+
+- `src-tauri/resources/THIRD-PARTY-NOTICES.md` - im Repository und (ueber
+  `resources`) im Installer; nach jeder Aenderung an Abhaengigkeiten oder
+  ATTRIBUTION.md neu erzeugen und mit committen. `--check` prueft, ob die Datei
+  aktuell ist.
+- `src-tauri/target/sbom/local-voice-ai-<version>.cdx.json` - CycloneDX 1.5,
+  Build-Artefakt (nicht im Repository). Enthaelt Rust-Crates (cargo-cyclonedx),
+  npm-Pakete (Entwicklungswerkzeuge mit `scope: excluded`), Modelle und Datensaetze.
+
+Einmalig noetig (reine Entwicklerwerkzeuge, keine Laufzeitabhaengigkeit):
+`cargo install cargo-about --locked --features cli` (MIT OR Apache-2.0) und
+`cargo install cargo-cyclonedx --locked` (Apache-2.0); dazu `pnpm install`.
+
+`cargo deny --no-default-features check` ist das Gate fuer Lizenzen und
+Sicherheitshinweise; `about.toml` fuehrt dagegen alles auf, was im Graphen liegt,
+damit das Verzeichnis nichts verschweigt.
+
 ## Stolperstein 3 — `cargo build --release` erzeugt kein lauffähiges Produkt
 
 **Das ist der teuerste Fallstrick des Projekts.** Er sieht wie ein Erfolg aus:
@@ -87,9 +128,16 @@ Nachweis am Artefakt:
 ```powershell
 $t = [System.Text.Encoding]::ASCII.GetString(
        [System.IO.File]::ReadAllBytes("src-tauri\target\release\local-voice-ai.exe"))
-$t.Contains("localhost:1420")     # darf NICHT True sein
 $t.Contains("index-<hash>.js")    # ein Asset aus dist\assets\ - muss True sein
+$t.Contains("localhost:1420")     # nur Auskunft: auch ein gutes Build enthaelt es (Icon-URL)
 ```
+
+Entscheidend ist das eingebettete Asset: eine EXE mit dem `dev`-Flag bettet kein
+Frontend ein. `localhost:1420` allein beweist nichts: auch die installierte Release-EXE
+(`%LOCALAPPDATA%\Local Voice AI\local-voice-ai.exe`) enthaelt es, als Icon-URL
+`http://localhost:1420/icons/128x128.png` aus der eingebetteten Konfiguration, neben
+dem Asset `index-<hash>.js` (gemessen 01.10.2026). `scripts\lib\m8-harness.ps1` (`Test-EmbeddedFrontend`) macht
+genau diese Pruefung; `m8-verify.ps1` warnt damit vor dem Lauf.
 
 Ursache: Das `dev`-Flag setzt `tauri-build` in `build.rs` — und dessen
 Ergebnis wird von cargo gecacht. Ein Cache aus einer früheren
@@ -210,11 +258,73 @@ pwsh -File apps\local-voice\scripts\m3-verify.ps1 -Scenario endurance -Runs 100
 Das Skript liest den Hotkey aus `settings_store.json` — es setzt nicht mehr
 Strg+Leertaste voraus. Ergebnisse landen unter `docs/m3-evidence/`.
 
-## GPU (optional)
+### Einfügen in Chrome, Word, VS Code abnehmen (`m10-verify.ps1`)
 
-CPU ist der Standard und für Diktatlängen ausreichend (392 ms für 9,15 s
-Audio). Vulkan ist ein Opt-in und braucht das LunarG Vulkan SDK:
+`m10-verify.ps1` prüft je Ziel (`notepad`, `chrome`, `word`, `vscode`) mit einer
+eigenen Testinstanz, dass der Text nach Strg+V **wirklich** im Feld steht. Es
+liest ihn zurück (UI Automation; Word per COM `Range.Text`; VS Code notfalls
+per Strg+A/Strg+C mit Sentinel) und meldet PASS, FAIL oder SKIP. Ein FAIL
+setzt Exit 1. Beendet werden nur selbst gestartete Prozesse (`taskkill /PID /T`);
+läuft Notepad oder Word schon, wird das Ziel übersprungen.
 
 ```powershell
-cargo build --release --features gpu-vulkan
+pwsh -File apps\local-voice\scripts\m10-verify.ps1 -DryRun                     # nur Plan, öffnet nichts
+pwsh -File apps\local-voice\scripts\m10-verify.ps1 -Target chrome,word,vscode  # öffnet Fenster; währenddessen nicht tippen
+pwsh -File apps\local-voice\scripts\test-m10-verify.ps1                        # Selbsttest ohne Fenster
 ```
+
+### Alte Logdatei mit Klartext-Diktaten prüfen (`check-old-log.ps1`)
+
+Bis 2026-08-17 schrieb die App bei `debug_mode` vollständige Diktate in die
+Logdatei (DECISIONS D9). `check-old-log.ps1` zählt solche Zeilen in den
+Logordnern unter `%LOCALAPPDATA%` (aktueller und früherer App-Identifier),
+**ohne je einen Inhalt auszugeben**, und nennt Größe, Datum und den fertigen
+Löschbefehl. Ohne Schalter wird nur gelesen (Exit 1 = Klartext gefunden).
+
+```powershell
+pwsh -File apps\local-voice\scripts\check-old-log.ps1            # nur lesen, Löschbefehl anzeigen
+pwsh -File apps\local-voice\scripts\check-old-log.ps1 -Delete    # löscht Treffer-Dateien, je Datei nach Rückfrage
+```
+
+`history.db` und die WAV-Aufnahmen sind die gewollte Verlaufsfunktion und
+werden nicht angefasst.
+
+## GPU per Vulkan (Release und lokaler Installer)
+
+Das Release und der lokale Installer rechnen STT (transcribe-cpp: Whisper,
+Parakeet-GGUF, Qwen3-ASR) per Vulkan auf der GPU. Das Cargo-Feature
+`gpu-vulkan` bleibt aber **nicht** Standard: ein frischer Checkout ohne SDK
+baut weiter mit den CPU-Backends.
+
+- **Bauen braucht das LunarG Vulkan SDK** (Header, Import-Bibliothek, `glslc`).
+  Der SDK-Installer setzt `VULKAN_SDK` maschinenweit; eine vorher geöffnete
+  Shell sieht die Variable erst nach einem Neustart.
+- **Zur Laufzeit** genügt der Grafiktreiber (`vulkan-1.dll`). `ggml-vulkan.dll`
+  (≈ 71 MB, im Installer LZMA-gepackt ≈ 6 MB) landet über `build.rs` in
+  `transcribe-libs/` und wird wie `ggml-cpu-*` neben die EXE gebündelt
+  (`tauri.windows.conf.json`), keine eigene Ressource.
+- **Rückfall:** Fehlt der Treiber oder ein Vulkan-Gerät, lädt transcribe-cpp
+  das Modul nicht bzw. registriert kein Vulkan-Gerät; die Einstellung „Auto“
+  bindet dann die CPU. Kein Absturz.
+- **CI:** `release-windows.yml` installiert SDK und SPIRV-Headers und baut mit
+  `--features gpu-vulkan`. Lokal: `dev.ps1 bundle` hängt das Feature an,
+  sobald `VULKAN_SDK` gesetzt ist, und warnt sonst.
+
+```powershell
+# Git Bash: export VULKAN_SDK=/c/VulkanSDK/<version>; PATH="$VULKAN_SDK/Bin:$PATH"
+cargo build --release --features gpu-vulkan          # nur Rust, erster Lauf ~10 min länger
+pwsh -File apps\local-voice\scripts\dev.ps1 bundle   # Installer, Feature automatisch
+.\local-voice-ai.exe --list-devices                   # Vulkan-Geräte mit Index
+.\local-voice-ai.exe -f audio.wav --model <id> --device-index 0 --json
+```
+
+Gemessen am 29.09.2026 (RTX 4090, i9-13900K, `m8_short_de.wav` 60 s,
+beste von 3 Läufen):
+
+| Modell | Vulkan 4090 | CPU |
+|---|---|---|
+| Whisper large-v3-turbo Q8 | 536 ms, RTF 112 | 16,8 s, RTF 3,6 |
+| Parakeet TDT 0.6B v3 Q8 (GGUF) | 429 ms, RTF 140 | 3,4 s, RTF 17,7 |
+
+Der erste Lauf nach dem Laden kann spürbar länger dauern (Parakeet 5,4 s),
+weil Vulkan dann seine Pipelines anlegt.

@@ -2,7 +2,11 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { produce } from "immer";
 import { listen } from "@tauri-apps/api/event";
-import { commands, type TtsDownloadInfo } from "@/bindings";
+import {
+  commands,
+  type TtsDownloadInfo,
+  type TtsRuntimeStatus,
+} from "@/bindings";
 
 interface DownloadProgress {
   model_id: string;
@@ -17,6 +21,10 @@ interface DownloadProgress {
 // `TtsModelManager::run_download`), so there is no new event plumbing.
 interface TtsModelsStore {
   downloads: TtsDownloadInfo[];
+  /** Zustand der Laufzeiten (Piper, Fish Speech); null, solange unbekannt. Wer
+   *  null liest, behandelt alles als vorhanden -- sonst blitzte beim Start
+   *  kurz "nicht eingerichtet" auf (Issue #29). */
+  runtime: TtsRuntimeStatus | null;
   downloadingIds: Record<string, true>;
   verifyingIds: Record<string, true>;
   downloadProgress: Record<string, DownloadProgress>;
@@ -26,6 +34,7 @@ interface TtsModelsStore {
 
   initialize: () => Promise<void>;
   loadDownloads: () => Promise<void>;
+  loadRuntime: () => Promise<void>;
   downloadModel: (id: string) => Promise<boolean>;
   cancelDownload: (id: string) => Promise<boolean>;
   deleteModel: (id: string) => Promise<boolean>;
@@ -34,6 +43,7 @@ interface TtsModelsStore {
 export const useTtsModelStore = create<TtsModelsStore>()(
   subscribeWithSelector((set, get) => ({
     downloads: [],
+    runtime: null,
     downloadingIds: {},
     verifyingIds: {},
     downloadProgress: {},
@@ -41,11 +51,24 @@ export const useTtsModelStore = create<TtsModelsStore>()(
     error: null,
     initialized: false,
 
+    loadRuntime: async () => {
+      try {
+        const result = await commands.ttsRuntimeStatus();
+        if (result && result.status === "ok") set({ runtime: result.data });
+      } catch {
+        /* unbekannt bleibt unbekannt: die Oberflaeche zeigt dann alles wie bisher */
+      }
+    },
+
     loadDownloads: async () => {
+      // Die Laufzeitpruefung haengt an denselben Ausloesern wie die Liste
+      // (Download fertig, Stimme/Laufzeit geloescht, Start): so folgt die
+      // Stimmenauswahl jeder Aenderung sofort.
+      void get().loadRuntime();
       try {
         const result = await commands.ttsListDownloads();
         if (result.status === "ok") {
-          set({ downloads: result.data, error: null });
+          set({ downloads: result.data ?? [], error: null });
         } else {
           set({ error: `Failed to load Piper downloads: ${result.error}` });
         }

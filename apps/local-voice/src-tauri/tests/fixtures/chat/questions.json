@@ -1,0 +1,201 @@
+{
+  "version": 1,
+  "today": "2026-09-29",
+  "meetings": [
+    {
+      "name": "jour_fixe",
+      "file": "../notes/jour_fixe.json",
+      "folder": "Team",
+      "participants": ["Jonas", "Miriam", "Tarek", "Sabine"],
+      "started_at": "2026-09-07T09:00:00+02:00"
+    },
+    {
+      "name": "kundengespraech",
+      "file": "../notes/kundengespraech.json",
+      "folder": "Vertrieb",
+      "participants": ["Lena Vogt", "Herr Albrecht"],
+      "started_at": "2026-06-23T10:00:00+02:00"
+    },
+    {
+      "name": "lenkungskreis_lang",
+      "file": "../notes/lenkungskreis_lang.json",
+      "folder": "Projekte",
+      "participants": ["Dr. Hartmann", "Frau Petersen", "Herr Okafor", "Frau Brandt", "Herr Lindner"],
+      "started_at": "2026-08-20T14:00:00+02:00"
+    },
+    { "name": "nordlicht_folgetermin", "file": "nordlicht_folgetermin.json" },
+    { "name": "projekt_statusrunde", "file": "projekt_statusrunde.json" }
+  ],
+  "questions": [
+    {
+      "id": "m01", "kind": "meeting",
+      "scope": { "kind": "meeting", "meeting": "jour_fixe" },
+      "question": "Bis wann macht Miriam das Review für den Bestellexport?",
+      "expect": { "all_of": [["mittwoch"]], "sources": [
+        { "meeting": "jour_fixe", "segments": [6, 44, 60], "notes": ["01K6EVALJF0000000000000002"] } ] }
+    },
+    {
+      "id": "m02", "kind": "meeting",
+      "scope": { "kind": "meeting", "meeting": "jour_fixe" },
+      "question": "Wann wird die ausgefallene Retrospektive nachgeholt?",
+      "expect": { "all_of": [["dienstag"], ["10"]], "sources": [
+        { "meeting": "jour_fixe", "segments": [54, 62], "notes": ["01K6EVALJF0000000000000009"] } ] }
+    },
+    {
+      "id": "m03", "kind": "meeting",
+      "scope": { "kind": "meeting", "meeting": "kundengespraech" },
+      "question": "Wie viele Monteure hat Brenner Haustechnik im Außendienst?",
+      "expect": { "all_of": [["28"]], "sources": [
+        { "meeting": "kundengespraech", "segments": [3, 26], "notes": ["01K6EVALKG0000000000000001"] } ] }
+    },
+    {
+      "id": "m04", "kind": "meeting",
+      "scope": { "kind": "meeting", "meeting": "kundengespraech" },
+      "question": "Was kostet die einmalige Einrichtung mit Schnittstelle und Schulung?",
+      "expect": { "all_of": [["4500"]], "sources": [
+        { "meeting": "kundengespraech", "segments": [25] } ] }
+    },
+    {
+      "id": "m05", "kind": "meeting",
+      "scope": { "kind": "meeting", "meeting": "lenkungskreis_lang" },
+      "question": "Welche Option wurde für die Datenmigration beschlossen?",
+      "expect": { "all_of": [["option b", "schlank"]], "sources": [
+        { "meeting": "lenkungskreis_lang", "segments": [41, 42, 43, 131], "notes": ["01K6EVALLK0000000000000006"] } ] }
+    },
+    {
+      "id": "m06", "kind": "meeting",
+      "scope": { "kind": "meeting", "meeting": "lenkungskreis_lang" },
+      "question": "Wie viele Schlüsselanwender haben die Grundschulung bisher abgeschlossen?",
+      "expect": { "all_of": [["19"]], "sources": [
+        { "meeting": "lenkungskreis_lang", "segments": [73], "notes": ["01K6EVALLK0000000000000008"] } ] }
+    },
+    {
+      "id": "m07", "kind": "meeting",
+      "scope": { "kind": "meeting", "meeting": "nordlicht_folgetermin" },
+      "question": "Welchen Preis pro Monteur hat Frau Vogt angeboten?",
+      "expect": { "all_of": [["16"]], "sources": [
+        { "meeting": "nordlicht_folgetermin", "segments": [13, 28], "notes": ["01K6EVALNL0000000000000003"] } ] }
+    },
+    {
+      "id": "m08", "kind": "meeting",
+      "scope": { "kind": "meeting", "meeting": "nordlicht_folgetermin" },
+      "question": "Was fehlt Frau Kraus an der Planungstafel?",
+      "expect": { "all_of": [["wochenansicht"]], "sources": [
+        { "meeting": "nordlicht_folgetermin", "segments": [5, 6], "notes": ["01K6EVALNL0000000000000001"] } ] }
+    },
+    {
+      "id": "m09", "kind": "meeting",
+      "scope": { "kind": "meeting", "meeting": "projekt_statusrunde" },
+      "question": "Wie viele offene Tickets gibt es, und wie viele davon sind kritisch?",
+      "expect": { "all_of": [["17"], ["3"]], "sources": [
+        { "meeting": "projekt_statusrunde", "segments": [11] } ] }
+    },
+    {
+      "id": "m10", "kind": "meeting",
+      "scope": { "kind": "meeting", "meeting": "projekt_statusrunde" },
+      "question": "Wer schreibt das Verarbeitungsverzeichnis, und bis wann?",
+      "expect": { "all_of": [["nora"], ["september"]], "sources": [
+        { "meeting": "projekt_statusrunde", "segments": [19, 20, 27], "notes": ["01K6EVALSR0000000000000005"] } ] }
+    },
+    {
+      "id": "g01", "kind": "global",
+      "scope": { "kind": "global" },
+      "question": "Welche Warenwirtschaft nutzt Brenner Haustechnik?",
+      "expect": { "all_of": [["sanitas"]], "sources": [
+        { "meeting": "kundengespraech", "segments": [15, 16], "notes": ["01K6EVALKG0000000000000004"] },
+        { "meeting": "nordlicht_folgetermin", "segments": [22, 23, 26] } ] }
+    },
+    {
+      "id": "g02", "kind": "global",
+      "scope": { "kind": "global" },
+      "question": "Wie lange lädt die Startseite des Kundenportals, und was ist das Ziel?",
+      "expect": { "all_of": [["1.8"], ["1.2"]], "sources": [
+        { "meeting": "projekt_statusrunde", "segments": [8], "notes": ["01K6EVALSR0000000000000003"] } ] }
+    },
+    {
+      "id": "g03", "kind": "global",
+      "scope": { "kind": "global" },
+      "question": "Wie hoch ist die Budgetreserve im ERP-Projekt?",
+      "expect": { "all_of": [["150000", "150 t"]], "sources": [
+        { "meeting": "lenkungskreis_lang", "segments": [12], "notes": ["01K6EVALLK0000000000000004"] } ] }
+    },
+    {
+      "id": "g04", "kind": "global",
+      "scope": { "kind": "global" },
+      "question": "Bei wem werden die fehlenden Zugangsdaten für Single Sign-on eskaliert?",
+      "expect": { "all_of": [["lorenz"]], "sources": [
+        { "meeting": "jour_fixe", "segments": [17, 61], "notes": ["01K6EVALJF0000000000000010"] } ] }
+    },
+    {
+      "id": "g05", "kind": "global",
+      "scope": { "kind": "global" },
+      "question": "Wann ist der Lasttest des Kundenportals angesetzt, und mit wie vielen gleichzeitigen Nutzern?",
+      "expect": { "all_of": [["22 oktober", "22.10"], ["2000"]], "sources": [
+        { "meeting": "projekt_statusrunde", "segments": [12, 15] } ] }
+    },
+    {
+      "id": "t01", "kind": "two_meetings",
+      "scope": { "kind": "global" },
+      "question": "Wie hat sich der geplante Start der Einführung bei Brenner Haustechnik zwischen Erstgespräch und Folgetermin verändert?",
+      "expect": { "all_of": [["august"], ["september"]], "sources": [
+        { "meeting": "kundengespraech", "segments": [44] },
+        { "meeting": "nordlicht_folgetermin", "segments": [17, 18, 19, 26], "notes": ["01K6EVALNL0000000000000004"] } ] }
+    },
+    {
+      "id": "t02", "kind": "two_meetings",
+      "scope": { "kind": "global" },
+      "question": "Welche Go-Live-Termine wurden für das ERP-Projekt und für Brenner Haustechnik festgelegt oder empfohlen?",
+      "expect": { "all_of": [["februar"], ["oktober"]], "sources": [
+        { "meeting": "lenkungskreis_lang", "segments": [65, 69, 132], "notes": ["01K6EVALLK0000000000000007"] },
+        { "meeting": "nordlicht_folgetermin", "segments": [23, 25, 26], "notes": ["01K6EVALNL0000000000000004"] } ] }
+    },
+    {
+      "id": "t03", "kind": "two_meetings",
+      "scope": { "kind": "global" },
+      "question": "Welchen Monatspreis pro Monteur nannte Wolkenfeld im Erstgespräch und welchen im Folgetermin?",
+      "expect": { "all_of": [["19"], ["16"]], "sources": [
+        { "meeting": "kundengespraech", "segments": [24] },
+        { "meeting": "nordlicht_folgetermin", "segments": [12, 13, 28], "notes": ["01K6EVALNL0000000000000003"] } ] }
+    },
+    {
+      "id": "f01", "kind": "filter",
+      "scope": { "kind": "global", "folder": "Vertrieb" },
+      "question": "Bis wann will Herr Brenner unterschreiben?",
+      "expect": { "all_of": [["20 juli", "20.7", "20.07"]], "sources": [
+        { "meeting": "nordlicht_folgetermin", "segments": [29] } ] }
+    },
+    {
+      "id": "f02", "kind": "filter",
+      "scope": { "kind": "global", "person": "Okafor" },
+      "question": "Welche Aufgaben hat Herr Okafor übernommen?",
+      "expect": { "all_of": [["archiv"], ["etikettendrucker"]], "sources": [
+        { "meeting": "lenkungskreis_lang", "segments": [44, 45, 90, 91, 138], "notes": ["01K6EVALLK0000000000000010"] } ] }
+    },
+    {
+      "id": "f03", "kind": "filter",
+      "scope": { "kind": "global", "from": "2026-09-01", "to": "2026-09-30" },
+      "question": "Welche Termine für Release oder Launch wurden festgelegt?",
+      "expect": { "all_of": [["15"], ["3 november", "3.11"]], "sources": [
+        { "meeting": "jour_fixe", "segments": [43, 46], "notes": ["01K6EVALJF0000000000000008"] },
+        { "meeting": "projekt_statusrunde", "segments": [14, 15], "notes": ["01K6EVALSR0000000000000004"] } ] }
+    },
+    {
+      "id": "u01", "kind": "unanswerable",
+      "scope": { "kind": "meeting", "meeting": "jour_fixe" },
+      "question": "Wie viel Euro hat die Geschäftsführung für die mobile App freigegeben?",
+      "expect": { "not_found": true }
+    },
+    {
+      "id": "u02", "kind": "unanswerable",
+      "scope": { "kind": "global" },
+      "question": "Wie viel kostet der Messestand in Hannover?",
+      "expect": { "not_found": true }
+    },
+    {
+      "id": "u03", "kind": "unanswerable",
+      "scope": { "kind": "global" },
+      "question": "Welche Note hat das Team in der letzten Kundenzufriedenheitsumfrage bekommen?",
+      "expect": { "not_found": true }
+    }
+  ]
+}

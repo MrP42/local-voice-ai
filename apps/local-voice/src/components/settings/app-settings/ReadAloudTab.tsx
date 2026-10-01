@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../../../hooks/useSettings";
+import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Select } from "../../ui/Select";
@@ -27,6 +28,17 @@ const EXPORT_BITRATES = [128, 192, 256, 320];
 export const ReadAloudTab = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
+  // Fish Speech ist optional (Issue #29): nur wenn es auf diesem System
+  // eingerichtet ist, erscheinen seine Detail-Einstellungen. Unbekannt
+  // (noch nicht geladen) gilt als eingerichtet -- kein Aufblitzen beim Start.
+  const ttsRuntime = useTtsModelStore((state) => state.runtime);
+  const loadTtsRuntime = useTtsModelStore((state) => state.loadRuntime);
+  const fishDirSetting = getSetting("tts_fish_dir") ?? "";
+  useEffect(() => {
+    void loadTtsRuntime();
+  }, [fishDirSetting, loadTtsRuntime]);
+  const fishSupported = ttsRuntime ? ttsRuntime.fish.supported : true;
+  const fishReady = ttsRuntime ? ttsRuntime.fish.ready : true;
   const hasAnthropicKey =
     (
       (
@@ -162,24 +174,28 @@ export const ReadAloudTab = () => {
           description={t("tts.settings.normalizeDescription")}
           grouped={true}
         />
-        <ToggleSwitch
-          checked={getSetting("tts_prewarm") ?? false}
-          onChange={(checked) => updateSetting("tts_prewarm", checked)}
-          isUpdating={isUpdating("tts_prewarm")}
-          label={t("tts.settings.prewarm")}
-          description={t("tts.settings.prewarmDescription")}
-          grouped={true}
-        />
-        <ToggleSwitch
-          checked={getSetting("tts_reference_auto_transcribe") ?? true}
-          onChange={(checked) =>
-            updateSetting("tts_reference_auto_transcribe", checked)
-          }
-          isUpdating={isUpdating("tts_reference_auto_transcribe")}
-          label={t("tts.settings.autoTranscribe")}
-          description={t("tts.settings.autoTranscribeDescription")}
-          grouped={true}
-        />
+        {fishReady && (
+          <>
+            <ToggleSwitch
+              checked={getSetting("tts_prewarm") ?? false}
+              onChange={(checked) => updateSetting("tts_prewarm", checked)}
+              isUpdating={isUpdating("tts_prewarm")}
+              label={t("tts.settings.prewarm")}
+              description={t("tts.settings.prewarmDescription")}
+              grouped={true}
+            />
+            <ToggleSwitch
+              checked={getSetting("tts_reference_auto_transcribe") ?? true}
+              onChange={(checked) =>
+                updateSetting("tts_reference_auto_transcribe", checked)
+              }
+              isUpdating={isUpdating("tts_reference_auto_transcribe")}
+              label={t("tts.settings.autoTranscribe")}
+              description={t("tts.settings.autoTranscribeDescription")}
+              grouped={true}
+            />
+          </>
+        )}
         <ToggleSwitch
           checked={getSetting("tts_enhance") ?? true}
           onChange={(checked) => updateSetting("tts_enhance", checked)}
@@ -273,70 +289,91 @@ export const ReadAloudTab = () => {
             </div>
           </SettingContainer>
         )}
-        <SettingContainer
-          title={t("tts.settings.fishDir")}
-          description={t("tts.settings.fishDirDescription")}
-          grouped={true}
-          layout="stacked"
-        >
-          <Input
-            type="text"
-            value={getSetting("tts_fish_dir") ?? ""}
-            onChange={(e) => updateSetting("tts_fish_dir", e.target.value)}
-            disabled={isUpdating("tts_fish_dir")}
-            className="w-full"
-          />
-        </SettingContainer>
-        <SettingContainer
-          title={t("tts.settings.port")}
-          description={t("tts.settings.portDescription")}
-          grouped={true}
-          layout="horizontal"
-        >
-          <Input
-            type="number"
-            min="1"
-            max="65535"
-            value={getSetting("tts_port") ?? 8080}
-            onChange={(e) => {
-              const value = parseInt(e.target.value, 10);
-              if (!isNaN(value) && value > 0 && value <= 65535) {
-                updateSetting("tts_port", value);
-              }
-            }}
-            disabled={isUpdating("tts_port")}
-            className="w-24"
-          />
-        </SettingContainer>
-        <SettingContainer
-          title={t("tts.settings.idleMinutes")}
-          description={t("tts.settings.idleMinutesDescription")}
-          grouped={true}
-          layout="horizontal"
-        >
-          <Input
-            type="number"
-            min="0"
-            max="1440"
-            value={getSetting("tts_idle_minutes") ?? 15}
-            onChange={(e) => {
-              const value = parseInt(e.target.value, 10);
-              if (!isNaN(value) && value >= 0) {
-                updateSetting("tts_idle_minutes", value);
-              }
-            }}
-            disabled={isUpdating("tts_idle_minutes")}
-            className="w-24"
-          />
-        </SettingContainer>
-        <ToggleSwitch
-          checked={getSetting("tts_compile") ?? true}
-          onChange={(checked) => updateSetting("tts_compile", checked)}
-          isUpdating={isUpdating("tts_compile")}
-          label={t("tts.settings.compile")}
-          description={t("tts.settings.compileDescription")}
-          grouped={true}
-        />
+        {/* Nicht eingerichtet: eine einzige, kurze Zeile mit dem Weg zum
+          Einrichten (Ordner eintragen) -- Port, Leerlauf und Turbo gehoeren
+          erst dazu, wenn es Fish Speech gibt. Auf Systemen ohne Fish
+          (Intel-Mac) entfaellt auch das. */}
+        {fishSupported && (
+          <SettingContainer
+            title={
+              fishReady
+                ? t("tts.settings.fishDir")
+                : t("tts.settings.fishOptionalTitle")
+            }
+            description={
+              fishReady
+                ? t("tts.settings.fishDirDescription")
+                : t("tts.settings.fishOptionalDescription", {
+                    missing: (ttsRuntime?.fish.missing ?? []).join(", "),
+                  })
+            }
+            grouped={true}
+            layout="stacked"
+          >
+            <Input
+              type="text"
+              data-testid="fish-dir-input"
+              value={getSetting("tts_fish_dir") ?? ""}
+              onChange={(e) => updateSetting("tts_fish_dir", e.target.value)}
+              disabled={isUpdating("tts_fish_dir")}
+              className="w-full"
+            />
+          </SettingContainer>
+        )}
+        {fishReady && (
+          <>
+            <SettingContainer
+              title={t("tts.settings.port")}
+              description={t("tts.settings.portDescription")}
+              grouped={true}
+              layout="horizontal"
+            >
+              <Input
+                type="number"
+                min="1"
+                max="65535"
+                value={getSetting("tts_port") ?? 8080}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value, 10);
+                  if (!isNaN(value) && value > 0 && value <= 65535) {
+                    updateSetting("tts_port", value);
+                  }
+                }}
+                disabled={isUpdating("tts_port")}
+                className="w-24"
+              />
+            </SettingContainer>
+            <SettingContainer
+              title={t("tts.settings.idleMinutes")}
+              description={t("tts.settings.idleMinutesDescription")}
+              grouped={true}
+              layout="horizontal"
+            >
+              <Input
+                type="number"
+                min="0"
+                max="1440"
+                value={getSetting("tts_idle_minutes") ?? 15}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value, 10);
+                  if (!isNaN(value) && value >= 0) {
+                    updateSetting("tts_idle_minutes", value);
+                  }
+                }}
+                disabled={isUpdating("tts_idle_minutes")}
+                className="w-24"
+              />
+            </SettingContainer>
+            <ToggleSwitch
+              checked={getSetting("tts_compile") ?? true}
+              onChange={(checked) => updateSetting("tts_compile", checked)}
+              isUpdating={isUpdating("tts_compile")}
+              label={t("tts.settings.compile")}
+              description={t("tts.settings.compileDescription")}
+              grouped={true}
+            />
+          </>
+        )}
         <ToggleSwitch
           checked={getSetting("tts_context_menu") ?? false}
           onChange={(checked) => updateSetting("tts_context_menu", checked)}
@@ -371,7 +408,7 @@ export const ReadAloudTab = () => {
         Einstellung des Vorlesens, deshalb hier -- nicht auf der Modelle-Seite
         (Entscheidung Patrick 14.09.). Die Vorlesen-Seite verweist ueber den
         Eintrag "Stimmen verwalten" im Stimmen-Dropdown hierher. */}
-      <VoiceLibrary />
+      {fishReady && <VoiceLibrary />}
     </div>
   );
 };

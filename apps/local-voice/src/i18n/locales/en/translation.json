@@ -12,6 +12,7 @@
   "sidebar": {
     "general": "General",
     "models": "Models",
+    "integrations": "Integrations",
     "advanced": "Advanced",
     "postProcessing": "Post Process",
     "history": "History",
@@ -28,6 +29,7 @@
     "serverTitle": "Voice & playback",
     "description": "Local text-to-speech via Fish Speech on your own GPU. The server starts on demand and is stopped again after idle time to free VRAM.",
     "inputPlaceholder": "Type or paste text to read aloud…",
+    "tabsLabel": "Text version",
     "tabOriginal": "Original",
     "tabTranslation": "Translation",
     "tabSummary": "Summary",
@@ -173,6 +175,13 @@
       "previewSentence": "Every preview speaks the same sentence so that voices, not recordings, are compared.",
       "previewNeedsEngine": "No sample yet — creating one starts the speech engine once.",
       "piperOption": "{{name}} · Piper",
+      "piperNoVoice": "Piper – no voice selected",
+      "piperVoiceMissing": "Piper – voice “{{id}}” unavailable",
+      "piperNotSetUp": "{{name}} · Piper – not set up",
+      "fishNotSetUp": "Fish Speech – not set up",
+      "notSetUpHint": "This voice is not set up and cannot read aloud. Pick a voice that is set up, or set it up under Models > Read-aloud voices.",
+      "noEngineHint": "No speech output set up yet. Under Models > Read-aloud voices you can download the lightweight Piper voice – no graphics card and no extra software needed.",
+      "setUp": "Set up speech output",
       "manage": "Manage voices …",
       "umlautSuggestion": "Display name with umlauts: use “{{name}}”",
       "scriptVoices": "Script with speakers",
@@ -183,6 +192,8 @@
     "settings": {
       "fishDir": "Fish Speech folder",
       "fishDirDescription": "Installation folder containing .venv and tools/api_server.py.",
+      "fishOptionalTitle": "Fish Speech (optional, not set up)",
+      "fishOptionalDescription": "Fish Speech is an additional GPU speech output with voice cloning. It is not required: Piper reads aloud without it. To set it up, enter the installation folder. Missing: {{missing}}",
       "port": "Server port",
       "portDescription": "Local port on 127.0.0.1 the TTS server listens on.",
       "seed": "Voice seed",
@@ -286,6 +297,7 @@
     },
     "files": {
       "title": "Files",
+      "tabsLabel": "Side panel",
       "add": "Add file (copied in)",
       "openFolder": "Show folder in Explorer",
       "refresh": "Refresh",
@@ -300,6 +312,12 @@
       "listen": "Listen",
       "useText": "Use this text",
       "defaultVoice": "Default voice"
+    },
+    "layout": {
+      "sideBySide": "Show controls and files side by side",
+      "resizePages": "Resize page list",
+      "resizeRight": "Resize right column",
+      "resizeFiles": "Resize file list"
     },
     "translateAction": "Translate — writes the translation into the second tab, plays nothing",
     "summarizeHint": "Summarize — always summarizes the original and writes the summary into the third tab, plays nothing",
@@ -484,7 +502,10 @@
       "removeAll_other": "Remove all {{count}}",
       "run": "Check script",
       "runHint": "Check speakers and tags in the text and jump to the first spot – independent of playback.",
-      "speakerName": "“{{name}}” is spelled differently from the voice's display name."
+      "speakerName": "“{{name}}” is spelled differently from the voice's display name.",
+      "freeTag": "“{{tag}}” is a free description – Fish follows it. Pick a known tag if you prefer:",
+      "hintCount_one": "{{count}} hint",
+      "hintCount_other": "{{count}} hints"
     },
     "editor": {
       "tagPopoverAria": "Edit tag",
@@ -543,6 +564,21 @@
         "none": "None"
       }
     },
+    "actions": {
+      "menu": "More actions",
+      "menuHint": "Workshop, clean up, check, auto-tagging",
+      "addHint": "Add a document, web page or file",
+      "dictateHint": "Speak instead of typing; the text is appended",
+      "dictateStopHint": "Ends the recording and appends the text",
+      "saveHint": "Save the text as an audio file",
+      "prewarmHint": "Generates changed sentences without playing",
+      "translateHint": "Create the translation in the second tab",
+      "summarizeHint": "Create a short version in the third tab",
+      "summaryOptions": "Adjust summary",
+      "summaryOptionsHint": "Choose length, detail and audience",
+      "targetLang": "Target language",
+      "targetLangHint": "Language to translate into"
+    },
     "writingRules": {
       "title": "Writing rules: speakers & tags",
       "tagsIntro": "Emotion and effect tags go in square brackets exactly where they should be heard:",
@@ -553,7 +589,9 @@
     "serverStartTitle": "Start the Fish Speech server?",
     "serverStartBody": "The server loads the speech model into graphics memory — roughly 17 GB — and takes up to two minutes depending on your settings. While it runs, translation computes on the CPU. Stop it via the same icon, or it stops itself after the configured idle time.",
     "export": {
-      "untitled": "Read-aloud"
+      "untitled": "Read-aloud",
+      "scriptStem": "Script",
+      "summaryStem": "Summary"
     },
     "tidy": "Clean up text",
     "tidyHint": "Clean up the text for reading – removes page numbers, headers, hyphenation and line breaks, nothing is shortened",
@@ -771,6 +809,8 @@
   "modelSelector": {
     "custom": "Custom",
     "legacy": "Legacy",
+    "nonCommercial": "Non-commercial only",
+    "nonCommercialHint": "License {{license}}: for non-commercial use only. Do not use it for work, clients or business purposes.",
     "streaming": "Streaming",
     "active": "Active",
     "switching": "Switching...",
@@ -803,6 +843,54 @@
     }
   },
   "settings": {
+    "meetings": {
+      "captureSystem": "Record system audio by default",
+      "captureSystemDescription": "Default for the “Capture system audio” checkbox when starting. The last choice on the recording page is remembered here.",
+      "autoEnhance": "Create AI notes automatically after the meeting",
+      "autoEnhanceDescription": "As soon as the transcript is complete after stopping, the AI builds the meeting notes from your notes and the transcript. Imports never trigger this. Nothing happens without a configured language-model provider.",
+      "defaultTemplate": "Default template",
+      "defaultTemplateDescription": "Template that is preselected for new meetings.",
+      "semanticSearch": "Semantic search",
+      "semanticSearchDescription": "Finds meetings by meaning, not only by matching words – for search and chat. Needs the search model BGE-M3 (635 MB), which runs locally on this computer. The index is built in the background, never during a recording.",
+      "semanticSearchIndex": "Search model and index",
+      "semanticSearchIndexDescription": "The search model is only downloaded when you click the button. Without it, keyword search keeps working.",
+      "semanticSearchDownload": "Download search model (635 MB)",
+      "semanticSearchDownloading": "Downloading … {{percent}} %",
+      "semanticSearchDownloadFailed": "Download failed. Please try again.",
+      "semanticSearchProgress": "{{done}} / {{total}} meetings",
+      "semanticSearchPaused": "paused, retrying shortly",
+      "semanticSearchOff": "Off – keyword search only",
+      "slideVision": "Image analysis for slides",
+      "slideVisionDescription": "Reads the text of detected slides once more with a local vision model (Gemma 4 E4B) – numbers and tables come out right – and describes every slide in one sentence. Needs a graphics card and the image projector (about 1 GB, only downloaded when you click the button). The model is loaded only for the slide job and unloaded afterwards. Without these requirements, Windows text recognition stays in use.",
+      "slideVisionState": "Image projector",
+      "slideVisionStateDescription": "The image projector is only downloaded when you click the button. Without it, slides are still read with Windows text recognition.",
+      "slideVisionDownload": "Download image projector ({{size}} MB)",
+      "slideVisionDownloading": "Downloading … {{percent}} %",
+      "slideVisionDownloadFailed": "Download failed. Please try again.",
+      "slideVisionNoGpu": "No suitable graphics card found – Windows text recognition stays in use",
+      "slideVisionLowVram": "Not enough free graphics memory (at least 6 GB) – Windows text recognition stays in use",
+      "slideVisionNoModel": "Gemma 4 E4B is missing – download it under “Models”",
+      "slideVisionReady": "Ready",
+      "echoCancellation": "Echo cancellation",
+      "echoCancellationDescription": "Removes the other party, which comes back from your speakers into the microphone, from your track so it does not appear twice as “Me” in the transcript. Needs system audio as the reference. The raw microphone recording is kept unchanged. Takes effect from the next recording.",
+      "echoCancellationAuto": "Automatic (with system audio)",
+      "echoCancellationOn": "On",
+      "echoCancellationOff": "Off",
+      "detect": "Detect ongoing meetings",
+      "detectDescription": "Notices when a program uses the microphone (Teams, Zoom, Webex, Slack, Discord, WhatsApp, Skype, Signal or a browser) and shows a hint. Only Windows' usage log is read, never the microphone itself. It only ever shows a hint and never starts recording on its own.",
+      "detectOff": "Off",
+      "detectMeetingApps": "Meeting apps",
+      "detectAllApps": "All apps",
+      "detectUnavailable": "Not available on this system.",
+      "detectIgnored": "Never report",
+      "detectIgnoredDescription": "Programs that never trigger a hint. Separate names with commas, for example \"obs64.exe, Discord\". Case does not matter and part of a name is enough.",
+      "detectIgnoredPlaceholder": "e.g. obs64.exe, Discord",
+      "diarization": "Separate speakers automatically",
+      "diarizationDescription": "After stopping, on import and on re-transcription, a local model detects who speaks when and labels the transcript with numbered speakers (\"Gegenseite 1\", \"Person 2\", ...). You can name the speakers in the transcript. Nothing that recognises a voice is stored. Takes effect from the next run.",
+      "selfName": "My name",
+      "selfNameDescription": "Your own name in the transcript: your microphone (\"Me\") and, if the microphone is split into several people, the speaker with the largest share always carry this name, even if nobody addresses you. In People you are marked as \"me\". Leave empty to keep \"Me\".",
+      "selfNamePlaceholder": "e.g. Patrick Wolff"
+    },
     "modelSettings": {
       "title": "{{model}} Settings"
     },
@@ -885,15 +973,18 @@
         "voices": {
           "de_DE-thorsten-high": {
             "name": "Thorsten (High Quality)",
-            "description": "German. The best quality, and the largest download."
+            "description": "German. The best quality, and the largest download.",
+            "nonCommercialHint": "Non-commercial only: this voice is derived from the Lessac voice, whose training data (Blizzard 2013) is licensed for research only. The license status of the model is unclear. Do not use it for work, clients or business purposes."
           },
           "de_DE-thorsten-medium": {
             "name": "Thorsten (Medium Quality)",
-            "description": "German. Good quality, smaller download."
+            "description": "German. Good quality, smaller download.",
+            "nonCommercialHint": "Non-commercial only: this voice is derived from the Lessac voice, whose training data (Blizzard 2013) is licensed for research only. The license status of the model is unclear. Do not use it for work, clients or business purposes."
           },
           "de_DE-kerstin-low": {
             "name": "Kerstin (Low Quality)",
-            "description": "German. Fast and small."
+            "description": "German. Fast and small.",
+            "nonCommercialHint": "Non-commercial only: this voice is derived from the Ryan voice, whose dataset is under CC-BY-NC-SA-4.0. The license status of the model is unclear. Do not use it for work, clients or business purposes."
           },
           "de_DE-eva_k-x_low": {
             "name": "Eva K. (Very Low Quality)",
@@ -913,25 +1004,40 @@
           },
           "en_US-amy-medium": {
             "name": "Amy (Medium Quality)",
-            "description": "English (US). Female voice, good quality."
+            "description": "English (US). Female voice, good quality.",
+            "nonCommercialHint": "Non-commercial only: this voice is derived from the Lessac voice, whose training data (Blizzard 2013) is licensed for research only. The license status of the model is unclear. Do not use it for work, clients or business purposes."
           },
           "en_GB-alan-medium": {
             "name": "Alan (Medium Quality)",
-            "description": "English (UK). Male voice, good quality."
+            "description": "English (UK). Male voice, good quality.",
+            "nonCommercialHint": "Non-commercial only: this voice is derived from the Lessac voice, whose training data (Blizzard 2013) is licensed for research only. The license status of the model is unclear. Do not use it for work, clients or business purposes."
           },
           "en_GB-alba-medium": {
             "name": "Alba (Medium Quality)",
-            "description": "English (UK, Scottish). Female voice, good quality."
+            "description": "English (UK, Scottish). Female voice, good quality.",
+            "nonCommercialHint": "Non-commercial only: this voice is derived from the Lessac voice, whose training data (Blizzard 2013) is licensed for research only. The license status of the model is unclear. Do not use it for work, clients or business purposes."
           }
         },
         "status": {
           "installed": "Installed",
-          "downloading": "Downloading… {{percentage}}%"
+          "downloading": "Downloading… {{percentage}}%",
+          "runtimeMissing": "Program missing – not usable",
+          "unsupported": "Not available on this system"
         },
         "actions": {
           "download": "Download",
           "cancel": "Cancel",
-          "delete": "Delete"
+          "delete": "Delete",
+          "installRuntime": "Install program"
+        },
+        "unsupported": {
+          "incomplete_archive": "The official Piper archive for this system is incomplete (libraries are missing). Piper cannot be set up here yet."
+        },
+        "license": {
+          "label": "License: {{license}}",
+          "nonCommercial": "Non-commercial only",
+          "nonCommercialHint": "This voice may only be used non-commercially ({{license}}).",
+          "source": "License text"
         },
         "deleteConfirm": "Delete {{name}}? You will need to download it again to use it.",
         "deleteTitle": "Delete"
@@ -1028,6 +1134,10 @@
       "experimentalToggle": {
         "label": "Experimental Features",
         "description": "Enable experimental features that are still in development."
+      },
+      "refineStream": {
+        "label": "Polish live text afterwards with Ollama",
+        "description": "While inserting live, a locally running Ollama polishes each sentence (grammar, punctuation, filler words) and replaces it in the target document. Numbers, negations, rare terms and word order are protected. If a sentence is not ready in time (4 s per sentence, 12 s at the end) or Ollama is not running, the original text stays. Ollama is never required for recording, recognition or insertion. Default: off."
       },
       "lazyStreamClose": {
         "label": "Keep Mic Open Between Dictations",
@@ -1345,6 +1455,27 @@
           "title": "ggml",
           "description": "High-performance tensor library for on-device machine learning inference",
           "details": "Local Voice AI's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
+        },
+        "models": {
+          "title": "Models",
+          "description": "Downloaded on demand, not bundled (except Silero VAD)",
+          "details": "Parakeet TDT 0.6B v3 (NVIDIA, CC-BY-4.0) · Qwen3-ASR (Alibaba/Qwen, Apache-2.0) · Whisper large-v3 (OpenAI, Apache-2.0 or MIT) · Silero VAD (MIT) · BGE-M3 (BAAI, MIT) · Qwen3 and Qwen3.5 (Alibaba/Qwen, Apache-2.0) · Gemma 4 (Google, Apache-2.0) · Gemma 3 (Google, Gemma Terms of Use). Each model's licence is on its model card."
+        },
+        "sortformer": {
+          "title": "Sortformer (NVIDIA)",
+          "description": "Speaker separation in meetings",
+          "details": "NVIDIA Streaming Sortformer 4spk v2.1 is licensed under the NVIDIA Open Model License. The model is downloaded on demand and is not shipped with the app.",
+          "button": "Read licence text"
+        },
+        "piper": {
+          "title": "Piper and voices",
+          "description": "Read aloud, downloaded on demand",
+          "details": "Piper (Rhasspy, MIT) includes espeak-ng (GPL-3.0-or-later, source: github.com/espeak-ng/espeak-ng); when set up, the app places the license text (LICENSE-espeak-ng-GPL-3.0.txt) in the runtime folder. Voices for non-commercial use only: Lessac (Blizzard 2013 research license), Ryan (CC-BY-NC-SA-4.0) and the voices derived from them, Thorsten, Kerstin, Amy, Alan and Alba; they are marked in the catalog."
+        },
+        "libraries": {
+          "title": "Libraries",
+          "description": "Echo cancellation, calendar and mail export",
+          "details": "sonora (BSD-3-Clause, echo cancellation based on WebRTC AEC3) · calcard (Apache-2.0 or MIT, ICS calendar) · mail-builder (Apache-2.0 or MIT, .eml files). All licences and attributions are in docs/m2-evidence/ATTRIBUTION.md in the source code."
         }
       }
     },
@@ -1445,7 +1576,9 @@
           "minutes": "Minutes",
           "summary": "Summary",
           "tagging": "Tags",
-          "translation": "Translation"
+          "translation": "Translation",
+          "enhanced_notes": "AI notes",
+          "followup": "Follow-up e-mail"
         }
       }
     }
@@ -1521,9 +1654,14 @@
       "title": "Text was not inserted",
       "inClipboard": "The full text is in the clipboard — insert it with Ctrl+V (Cmd+V on Mac).",
       "inHistory": "The clipboard could not be written. The text is in the history window.",
+      "titlePartial": "The rest of the dictation was not inserted",
+      "partialInClipboard": "The text inserted so far is in the target window. The rest is in the clipboard — insert it with Ctrl+V (Cmd+V on Mac).",
+      "partialInHistory": "The rest could not be provided. The full text is in the history window.",
       "reason": {
         "no_target": "No target window could be determined when the recording stopped.",
+        "live_no_target": "No target window could be determined at the first insertion.",
         "focus_changed": "The focus moved to a different window while transcribing.",
+        "live_focus_changed": "The focus moved to a different window while dictating.",
         "focus_changed_during_paste": "The focus moved to a different window while inserting.",
         "target_elevated": "The target application runs with administrator rights; Windows blocks input from Local Voice AI.",
         "injection_failed": "The insertion keystroke could not be delivered.",
@@ -1558,6 +1696,73 @@
     "recordingIndicator": "Meeting recording is running",
     "dictationBlocked": "Dictation is blocked while a meeting is recording.",
     "title": "Meetings",
+    "projects": {
+      "title": "Projects",
+      "collapse": "Collapse projects",
+      "expand": "Expand projects",
+      "open": "Open projects",
+      "close": "Close projects",
+      "resize": "Width of the projects column",
+      "nameLabel": "Project name",
+      "namePlaceholder": "New project",
+      "new": "New project",
+      "newHint": "Create a project such as “Private” or “Client Utilities”",
+      "newMeeting": "New meeting",
+      "newMeetingHint": "Create an empty meeting in the selected project – write notes, record, import a file or paste a link there",
+      "newMeetingHere": "New meeting here",
+      "askHint": "Chat about all meetings in the selected project",
+      "more": "More",
+      "moreHint": "Import and select several meetings",
+      "filter": {
+        "label": "Filter",
+        "hint": "Narrow by period, source and notes",
+        "reset": "Reset filters"
+      },
+      "searchIn": "Search in “{{name}}” …",
+      "hitsIn_one": "{{count}} hit in “{{name}}”",
+      "hitsIn_other": "{{count}} hits in “{{name}}”",
+      "all": "All recordings",
+      "none": "No project",
+      "meetingCount_one": "{{count}} meeting",
+      "meetingCount_other": "{{count}} meetings",
+      "emptyProject": "Empty so far. Drag a meeting here.",
+      "moveTo": "Move to project …",
+      "rename": "Rename",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "delete": "Delete",
+      "deleteTitle": "Delete project?",
+      "deleteBody": "The project “{{name}}” will be deleted. Its meetings are kept; if they are in no other project they will appear under “No project”.",
+      "droppedMoved": "“{{title}}” is now in “{{project}}”.",
+      "droppedAdded": "“{{title}}” is now also in “{{project}}”.",
+      "droppedNone": "“{{title}}” is no longer in any project.",
+      "undo": "Undo",
+      "dragMove": "move",
+      "dragAdd": "add",
+      "nextUp": {
+        "title": "Up next",
+        "today": "Today {{time}}",
+        "tomorrow": "Tomorrow {{time}}",
+        "running": "Running now",
+        "empty": "No appointment in the next 7 days.",
+        "start": "Record appointment",
+        "startHint": "Start a recording for this appointment; title and attendees come from the calendar",
+        "more": "More events today ({{count}})"
+      }
+    },
+    "layout": {
+      "content": "Workspace",
+      "controls": "Controls",
+      "rightCollapse": "Collapse controls",
+      "rightExpand": "Expand controls",
+      "resizeRight": "Width of the right column",
+      "split": "Split between workspace and transcript",
+      "lowerTabs": "Notes, AI notes and questions",
+      "contentTabs": "Transcript and minutes",
+      "emptyNotes": "Notes, AI notes and questions appear here once you pick a recording.",
+      "emptyContent": "Pick a recording from the projects or start a new one.",
+      "emptyChat": "Pick a recording first to ask questions about it."
+    },
     "record": {
       "start": "Start recording",
       "stop": "Stop",
@@ -1565,8 +1770,50 @@
       "resume": "Resume",
       "titlePlaceholder": "Meeting title",
       "captureSystem": "Capture system audio (other party)",
+      "captureSystemHint": "Also records the sound that plays through your speakers or headphones, for example the other side of a video call.",
+      "diarizeMic": "Several people at the microphone",
+      "diarizeMicHint": "Several people speak into your microphone (e.g. a meeting room): after the recording the microphone is separated into speakers as well. Best with headphones or echo cancellation, otherwise the remote side may show up among the room speakers (\"Raum n\").",
       "micLevel": "Microphone",
-      "systemLevel": "System"
+      "systemLevel": "System",
+      "health": {
+          "mic": {
+            "no_data": "The microphone is delivering no data. Please check the connection and the selected device.",
+            "digital_zero": "The microphone has delivered only digital silence for 10 s. Is it muted?",
+            "silent": "The microphone has delivered no signal for 30 s.",
+            "clipping": "The microphone is overdriven. Please lower the input level."
+          },
+          "system": {
+            "no_data": "System audio is delivering no data.",
+            "digital_zero": "System audio is delivering only digital silence.",
+            "silent": "System audio is delivering no signal.",
+            "clipping": "System audio is overdriven."
+          },
+          "queue_overflow": "Live processing cannot keep up. The recording is complete, but the live transcript may have gaps.",
+          "vad_unavailable": "Speech detection (VAD) is unavailable. The live transcript runs in coarse 20-second blocks.",
+          "loopback_died": "System audio failed. The recording continues with the microphone only."
+      },
+      "autoNotes": {
+        "running": "Creating AI notes … {{step}}/{{total}}",
+        "done": "The AI notes are ready. Find them in the meeting under “Notes”.",
+        "failed": {
+          "no_provider": "No AI notes were created: no language-model provider is set up yet. You can create the notes later from the meeting.",
+          "no_model": "No AI notes were created: the selected provider has no model entered.",
+          "memory_low": "No AI notes were created: not enough free memory. Close other programs and create the notes from the meeting.",
+          "recording_active": "The AI notes were not started because a new recording is already running. Create them from the meeting afterwards.",
+          "enhance_busy": "AI notes are already being created. Create this meeting’s notes by hand afterwards.",
+          "no_transcript": "No AI notes were created: the meeting has no transcript.",
+          "llm_failed": "The AI notes could not be created. Please try again from the meeting.",
+          "generic": "The AI notes could not be created. Please try again from the meeting."
+        }
+      },
+      "chatNotice": {
+        "title": "Notice for the meeting chat",
+        "copy": "Copy",
+        "copied": "Copied",
+        "copyError": "Copying failed – please select the text by hand.",
+        "local": "Note: I am transcribing this meeting locally on my computer with Local Voice AI to create notes. No data is sent to third parties.",
+        "remote": "Note: I am transcribing this meeting locally on my computer with Local Voice AI to create notes. For the notes, the text is sent to {{provider}}."
+      }
     },
     "consent": {
       "title": "Consent required",
@@ -1575,11 +1822,176 @@
       "cancel": "Cancel",
       "importBody": "You are importing an existing recording. The file's existence is not proof of consent — confirm that everyone in this conversation agreed to being recorded."
     },
+    "calendar": {
+      "title": "Calendar",
+      "description": "Connects a calendar through a Microsoft sign-in (Outlook) or an ICS address (Outlook, Google, Nextcloud, iCloud). Events are fetched every 15 minutes, stay on this computer and supply the title and attendees for a recording.",
+      "connect": "Connect calendar",
+      "refresh": "Refresh now",
+      "refreshing": "Refreshing …",
+      "remove": "Remove",
+      "removeConfirm": "Remove calendar “{{label}}”? The address and the stored events are deleted; existing meetings keep their link to the event.",
+      "removeConfirmYes": "Yes, remove",
+      "cancel": "Cancel",
+      "empty": "No calendar connected yet.",
+      "neverSynced": "not fetched yet",
+      "syncOk": "{{count}} events · {{time}} ✓",
+      "attendeeDataMissing": "No attendee data: reminders come for every event with a join link.",
+      "loadError": "The calendars could not be read.",
+      "dialog": {
+        "title": "Connect calendar",
+        "icsTitle": "Paste an ICS address",
+        "name": "Name",
+        "namePlaceholder": "e.g. Outlook work",
+        "url": "ICS address",
+        "urlPlaceholder": "https://… or webcal://…",
+        "show": "Show address",
+        "hide": "Hide address",
+        "connect": "Connect",
+        "checking": "Checking the calendar …",
+        "privacy": "The address grants read access to the whole calendar. It is stored encrypted (Windows user account) on this computer and only sent to the calendar provider.",
+        "helpTitle": "Where do I find the address?",
+        "outlookTitle": "Outlook (Microsoft 365, Outlook on the web)",
+        "outlookSteps": "Settings → Calendar → Shared calendars → “Publish a calendar”. Pick the calendar, permission “Can view all details” (otherwise attendees are missing), “Publish” and copy the ICS link. If IT blocks publishing, the option does not appear. Published calendars refresh with a delay of a few hours, depending on the provider.",
+        "googleTitle": "Google Calendar",
+        "googleSteps": "calendar.google.com → Settings → pick the calendar on the left → “Integrate calendar” → copy “Secret address in iCal format”. Do not share this address: anyone who knows it sees the whole calendar.",
+        "otherTitle": "Nextcloud, iCloud and others",
+        "otherSteps": "Share the calendar publicly or by link and paste the ICS or webcal link."
+      },
+      "graph": {
+        "title": "Sign in with Microsoft (Outlook, Microsoft 365)",
+        "intro": "Reads the Outlook calendar directly through Microsoft Graph, including attendees and the Teams link. Read-only (Calendars.Read); sign-in happens in the browser and the sign-in token is stored encrypted (Windows user account) on this computer.",
+        "clientId": "Application (client) ID of your own Entra app",
+        "tenant": "Directory (tenant), optional",
+        "tenantHint": "“common” allows work, school and personal accounts. For a single company enter the directory ID or domain.",
+        "noClientId": "Sign-in is not possible without your own client ID. Register an app in Microsoft Entra as a “Public client” with the redirect URI http://localhost and the permissions Calendars.Read and User.Read, then enter its application ID here.",
+        "invalidClientId": "That is not a valid client ID. The application ID of the Entra app has the format 8-4-4-4-12 (hex digits).",
+        "helpLink": "Microsoft's guide",
+        "signIn": "Sign in with Microsoft",
+        "waiting": "Waiting for sign-in in the browser …",
+        "cancelSignIn": "Cancel sign-in",
+        "or": "or",
+        "reauth": "Sign in again",
+        "signOut": "Sign out",
+        "signOutConfirm": "Sign out account “{{label}}”? The sign-in token and the stored events are deleted; existing meetings keep their calendar link.",
+        "signOutConfirmYes": "Yes, sign out"
+      },
+      "reminder": {
+        "title": "Reminder before events",
+        "description": "A notice window appears before the start and offers to record. It only appears for meetings (2 or more attendees, or with a join link) and never during a recording.",
+        "off": "Off",
+        "minute1": "1 minute before",
+        "minutes2": "2 minutes before",
+        "minutes5": "5 minutes before",
+        "allEvents": "Also events without attendees",
+        "allEventsDescription": "Also reminds about events on your own, without anyone else and without a join link."
+      },
+      "upcoming": {
+        "attendees_one": "{{count}} attendee",
+        "attendees_other": "{{count}} attendees"
+      },
+      "suggestion": {
+        "chip": "from calendar",
+        "chipWithAttendees_one": "from calendar · {{count}} attendee",
+        "chipWithAttendees_other": "from calendar · {{count}} attendees",
+        "clear": "Detach from event"
+      }
+    },
+    "prompt": {
+      "noEvent": "Meeting",
+      "startsIn": "starts in {{count}} min",
+      "startsNow": "starts now",
+      "runningSince": "running for {{count}} min",
+      "attendees_one": "{{count}} attendee",
+      "attendees_other": "{{count}} attendees",
+      "start": "Start recording",
+      "join": "Join",
+      "later": "Later",
+      "confirm": "Start",
+      "starting": "Starting …",
+      "back": "Back",
+      "workflow": {
+        "title": "A workflow wants to record",
+        "intro": "The workflow “{{name}}” wants to start a recording now. Nothing starts until you agree.",
+        "start": "Start recording",
+        "decline": "Do not record",
+        "confirm": "Start recording"
+      },
+      "agent": {
+        "title": "An agent wants to record",
+        "intro": "The agent “{{name}}” wants to start a recording now. Nothing starts until you agree.",
+        "start": "Start recording",
+        "decline": "Do not record",
+        "confirm": "Start recording"
+      }
+    },
     "live": {
       "empty": "No segments yet — the first one appears after ~20 seconds.",
       "me": "Me",
       "remote": "Other party",
       "mixed": "Recording"
+    },
+    "speakers": {
+      "title": "Speaker",
+      "open": "Name or change speaker",
+      "share": "Speaking share {{pct}} %",
+      "nameLabel": "Rename (applies everywhere)",
+      "namePlaceholder": "Enter a name",
+      "save": "Save",
+      "removeName": "Remove name",
+      "mergeTitle": "Merge with another speaker",
+      "mergeWith": "Merge with {{label}}",
+      "mergeConfirm": "\"{{from}}\" merges into \"{{into}}\": all segments switch to \"{{into}}\". This cannot be undone.",
+      "mergeDo": "Merge",
+      "cancel": "Cancel",
+      "moveTitle": "Assign only this sentence",
+      "moveTo": "To {{label}}",
+      "moveNew": "New speaker",
+      "knownPeople": "Known people",
+      "self": "me",
+      "suggestion": {
+        "label": "Name suggestions",
+        "hint_one": "{{label}} is probably {{name}} ({{count}} piece of evidence)",
+        "hint_other": "{{label}} is probably {{name}} ({{count}} pieces of evidence)",
+        "popover_one": "Probably {{name}} ({{count}} piece of evidence in the conversation)",
+        "popover_other": "Probably {{name}} ({{count}} pieces of evidence in the conversation)",
+        "accept": "Accept",
+        "dismiss": "Dismiss",
+        "showEvidence": "Show evidence",
+        "hideEvidence": "Hide evidence",
+        "quote": "\"{{text}}\""
+      },
+      "dialog": {
+        "title": "Name speakers",
+        "hint": "The name applies everywhere: transcript, notes, minutes, export and people.",
+        "close": "Close",
+        "done": "Done",
+        "empty": "No speakers were detected in this meeting.",
+        "sentences_one": "{{count}} sentence",
+        "sentences_other": "{{count}} sentences",
+        "rowName": "Name for {{label}}",
+        "listen": "Listen",
+        "listenHint": "Jumps to a longer sentence of this speaker",
+        "listenFor": "Listen to {{label}}",
+        "stop": "Stop",
+        "stopFor": "Stop {{label}}"
+      },
+      "notices": {
+        "disabled": "Speaker separation was switched off for this meeting.",
+        "model_missing": "The speaker separation model is not installed, so there are no speakers here.",
+        "crash_loop": "Speaker separation was skipped because it crashed before.",
+        "low_memory": "Speaker separation was skipped: not enough free memory.",
+        "failed": "Speaker separation failed.",
+        "too_long": "The recording is too long for speaker separation.",
+        "unreadable": "The audio file could not be read for speaker separation.",
+        "mic_without_aec": "The microphone was separated without echo cancellation: the remote side may show up among the room speakers (\"Raum n\"). Headphones or echo cancellation help."
+      },
+      "errors": {
+        "notFound": "This speaker no longer exists.",
+        "invalid": "This choice is not possible.",
+        "segmentNotFound": "This segment no longer exists.",
+        "staleEpoch": "The transcript has been replaced in the meantime. Please reopen it.",
+        "failed": "The change could not be saved."
+      }
     },
     "errors": {
       "consentRequired": "Recording will not start without confirmed consent.",
@@ -1595,11 +2007,23 @@
       "notRecording": "No recording is currently running.",
       "deleteFailed": "Deletion failed. Please try again.",
       "unsupportedFile": "This file format is not supported (allowed: wav, mp3, m4a, mp4, mkv, mov, flac, ogg, vtt, srt).",
+      "targetNotEmpty": "This entry is no longer empty. Please create a new meeting.",
       "notFound": "This meeting no longer exists.",
       "noAudio": "No recording stored for this meeting — there is nothing to transcribe again.",
       "audioMissing": "The recording is no longer on disk (retention period expired).",
+      "importSourceMissing": "The file was deleted or moved before its turn came.",
+      "importPathInvalid": "The file path contains characters that are not supported.",
       "retranscribeFailed": "Re-transcription failed. The transcript was left unchanged.",
-      "listFailed": "The meeting list could not be loaded: {{error}}"
+      "finalPassSkipped": "Final pass skipped – the live transcript stays valid (model missing, not enough memory, or cancelled).",
+      "finalPassStopped": "Post-processing stopped – the live transcript stays valid.",
+      "meetingBusy": "This meeting is being processed right now.",
+      "meetingsUnavailable": "Meetings are not available right now: the database could not be opened at start-up. Please restart the app; if that does not help, the log file names the cause.",
+      "storeFailed": "The change could not be saved.",
+      "subtitleUnreadable": "The subtitle file could not be read.",
+      "subtitleInvalid": "No valid subtitle format recognised (VTT or SRT expected).",
+      "listFailed": "The meeting list could not be loaded: {{error}}",
+      "consentNotPending": "This request is no longer open: it was already decided, has expired or the workflow was cancelled.",
+      "consentInvalid": "This is not a request to record."
     },
     "retention": {
       "title": "Audio file retention",
@@ -1614,7 +2038,6 @@
     "list": {
       "title": "Meetings",
       "empty": "No meetings yet.",
-      "import": "Import…",
       "importError": "Import failed",
       "loading": "Loading…",
       "date": "Date",
@@ -1622,8 +2045,7 @@
       "deleteConfirmTitle": "Delete meeting?",
       "deleteConfirm": "The meeting, its transcript and minutes will be permanently deleted.",
       "deleteButton": "Delete",
-      "cancel": "Cancel",
-      "dropHint": "Drop files here to import them"
+      "cancel": "Cancel"
     },
     "detail": {
       "transcriptTab": "Transcript",
@@ -1643,13 +2065,205 @@
       "copied": "Copied!",
       "exportTranscript": "Export transcript — as Word (.docx), text or Markdown",
       "renameTitle": "Rename",
-      "titleLabel": "Meeting title"
+      "titleLabel": "Meeting title",
+      "autoscroll": "Scroll along automatically",
+      "autoscrollPaused": "Auto-scroll paused – scroll to the end to resume.",
+      "toLiveEnd": "Jump to live"
     },
     "status": {
       "recording": "Recording",
       "processing": "Processing",
       "ready": "Ready",
-      "failed": "Failed"
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "queued": "Waiting"
+    },
+    "queue": {
+      "place": "Waiting · place {{position}} of {{total}}",
+      "toFront": "Move to front",
+      "toFrontHint": "Transcribe this file next",
+      "remove": "Remove from the queue",
+      "removeHint": "Cancel – the file stays untouched, “Continue” queues it again",
+      "removedTitle": "Removed from the queue",
+      "removedBody": "This file has not been transcribed yet. You can put it back at the end of the queue.",
+      "requeue": "Queue again",
+      "startsSoon": "Starts shortly.",
+      "heldForRecording": "Paused – a recording is running",
+      "reason": {
+        "slot": "Another transcription is running. This file is next after it.",
+        "memory": "Waiting for memory: there is not enough free for another simultaneous transcription.",
+        "recording": "A recording is running and takes priority. The queue continues afterwards."
+      },
+      "errors": {
+        "notInQueue": "The file is no longer in the queue.",
+        "notQueued": "The file is no longer waiting."
+      }
+    },
+    "progress": {
+      "percent": "{{percent}}%",
+      "elapsed": "Running for {{time}}",
+      "audioOf": "{{done}} of {{total}} audio",
+      "videoOf": "{{done}} of {{total}} video",
+      "stepsOf": "Step {{done}} of {{total}}",
+      "pause": "Pause",
+      "resume": "Resume",
+      "stop": "Stop",
+      "pauseHint": "Pause the job, the computer is freed up",
+      "stopHint": "Cancel – the transcript so far is kept",
+      "notPausable": "This phase cannot be paused – stopping works at any time.",
+      "stopTitle": "Stop processing?",
+      "stopBody": "Sections that are already transcribed are kept. The meeting is then marked as cancelled; you can continue it later or transcribe it again.",
+      "stopBodyGenerate": "Generation will be cancelled. Nothing is saved; you can start it again at any time.",
+      "stopBodySlides": "The slides found so far are kept. You can restart the detection later from the meeting menu.",
+      "stopCancel": "Cancel",
+      "stopConfirm": "Stop",
+      "cancelledTitle": "Processing cancelled",
+      "cancelledBody": "{{count}} sections are transcribed. You can pick up where it left off, or transcribe the recording again from the menu.",
+      "continue": "Continue",
+      "phase": {
+        "prepare": "Preparing",
+        "transcription": "Transcription",
+        "final_pass": "Final pass",
+        "speakers": "Speakers",
+        "notes": "AI notes",
+        "minutes": "Minutes",
+        "translation": "Translation",
+        "slides": "Slides"
+      },
+      "state": {
+        "pausing": "Pausing …",
+        "paused": "Paused",
+        "stopping": "Stopping …"
+      },
+      "eta": {
+        "calculating": "Estimating time left …",
+        "few": "a few seconds left",
+        "seconds": "about {{count}} s left",
+        "minutes": "about {{count}} min left",
+        "hours": "about {{hours}} h {{minutes}} min left"
+      },
+      "errors": {
+        "noJob": "The processing has finished in the meantime.",
+        "notPausable": "This phase cannot be paused.",
+        "stopping": "The processing is already being stopped.",
+        "busy": "Something is already being processed for this meeting.",
+        "notCancelled": "This meeting is not cancelled."
+      }
+    },
+    "projectMinutes": {
+      "menu": "Minutes together",
+      "menuHint": "Pick several recordings of this project and create one joint set of minutes or a summary",
+      "needProject": "Pick a project in the list first.",
+      "bar": {
+        "label": "Pick recordings for joint minutes",
+        "selected_one": "{{count}} recording picked",
+        "selected_other": "{{count}} recordings picked",
+        "all": "All",
+        "allHint": "Pick every eligible recording of the project",
+        "none": "None",
+        "noneHint": "Clear the selection",
+        "start": "Create joint minutes …",
+        "needTwo": "Pick at least two recordings.",
+        "cancel": "Cancel",
+        "loading": "Checking recordings …",
+        "loadFailed": "The recordings of the project could not be checked."
+      },
+      "reason": {
+        "meeting_not_finished": "Still running",
+        "no_transcript": "No transcript",
+        "empty_entry": "Empty"
+      },
+      "reasonHint": {
+        "meeting_not_finished": "This recording is still being recorded or processed. You can pick it once it is done.",
+        "no_transcript": "This recording has no transcript, so nothing can be minuted from it.",
+        "empty_entry": "An empty entry has no recording and no transcript yet."
+      },
+      "dialog": {
+        "title": "Create joint minutes",
+        "body_one": "{{count}} recording of the project “{{project}}” becomes a joint document. Every statement names its source.",
+        "body_other": "{{count}} recordings of the project “{{project}}” become one joint document. The recordings are merged by date, and every statement names its source.",
+        "kind": "Type",
+        "start": "Create",
+        "cancel": "Cancel"
+      },
+      "kind": {
+        "minutes": "Minutes",
+        "minutesHint": "The sections of the template, in detail",
+        "summary": "Summary",
+        "summaryHint": "The same sections, brief: a few condensed statements"
+      },
+      "list": {
+        "heading": "Project minutes",
+        "titleMinutes": "Project minutes",
+        "titleSummary": "Project summary",
+        "meta_one": "{{date}} · {{count}} recording",
+        "meta_other": "{{date}} · {{count}} recordings",
+        "incomplete": "incomplete",
+        "running": "Project minutes are being created"
+      },
+      "view": {
+        "toolbar": "Project minutes: tools",
+        "copy": "Copy",
+        "copyHint": "Copies the document formatted (for Word and mail) and as Markdown",
+        "copied": "Copied",
+        "copyError": "The document could not be copied",
+        "download": "Download",
+        "downloadHint": "Save as Word, text or Markdown",
+        "exportError": "Export failed",
+        "exportSaved": "Saved to {{path}}",
+        "delete": "Delete",
+        "deleteHint": "Delete the document from the project; the recordings stay",
+        "deleteTitle": "Delete project minutes?",
+        "deleteBody": "The document will be deleted. The recordings it was made from stay untouched.",
+        "deleteCancel": "Cancel",
+        "loadError": "The document could not be loaded: {{error}}",
+        "gone": "These project minutes no longer exist.",
+        "empty": "none",
+        "assignee": "Owner: {{name}}",
+        "due": "Due: {{date}}",
+        "noProof": "no proof",
+        "noProofHint": "The model named no passage in the transcript for this statement.",
+        "sourceHint": "{{title}}, {{time}}: opens the recording at this point",
+        "sourceDeleted": "This recording no longer exists.",
+        "sourcesLabel": "Sources",
+        "recordings": "Recordings",
+        "recordingOpen": "Open {{title}}",
+        "origin": "Origin",
+        "originModel": "Model",
+        "originTemplate": "Template",
+        "originAuto": "chosen automatically",
+        "originCreated": "Created",
+        "originMode": "Method",
+        "modeSingle": "one pass",
+        "modeBlocks_one": "{{count}} block",
+        "modeBlocks_other": "{{count}} blocks",
+        "incomplete": "The document is incomplete: {{gaps}} could not be evaluated. The full transcripts are kept.",
+        "droppedSources_one": "One source named by the model did not exist in the transcript and was dropped.",
+        "droppedSources_other": "{{count}} sources named by the model did not exist in the transcript and were dropped.",
+        "unsupportedEntries_one": "One statement has no proof.",
+        "unsupportedEntries_other": "{{count}} statements have no proof."
+      },
+      "run": {
+        "title": "Joint minutes are being created",
+        "body": "The picked recordings are being evaluated. You can look at other recordings meanwhile; the result appears in the project.",
+        "starting": "Starting …",
+        "close": "Close",
+        "cancelled": "Creation was cancelled.",
+        "failed": "The joint minutes could not be created."
+      },
+      "errors": {
+        "minutes_busy": "Joint minutes are already being created for this project.",
+        "folder_not_found": "The project no longer exists.",
+        "no_selection": "Pick at least one recording.",
+        "too_many_recordings": "Too many recordings at once. Pick fewer.",
+        "not_in_project": "One of the picked recordings does not (or no longer) belong to this project.",
+        "kind_invalid": "Unknown document type.",
+        "meeting_not_found": "One of the picked recordings no longer exists.",
+        "meeting_not_finished": "One of the picked recordings is still being processed.",
+        "meeting_not_finished_named": "“{{title}}” is still being processed.",
+        "no_transcript": "One of the picked recordings has no transcript.",
+        "no_transcript_named": "“{{title}}” has no transcript."
+      }
     },
     "minutes": {
       "empty": "No minutes generated yet.",
@@ -1657,13 +2271,41 @@
       "exportSaved": "Saved to {{path}}",
       "exportError": "Export failed",
       "copy": "Copy minutes",
+      "toolbar": "Minutes: tools",
+      "regenerateHint": "Generates the minutes again with the chosen template",
+      "copyHint": "Copies the minutes formatted (for Word and mail) and as Markdown",
+      "download": "Download",
       "copyError": "Could not copy the minutes",
       "loadError": "The minutes could not be loaded: {{error}}",
-      "autoSaved": "Automatically filed as:"
+      "createdWith": "Generated with the template: {{title}}",
+      "createdWithAuto": "Generated with the template: {{title}} (chosen automatically)",
+      "incomplete": "The minutes are incomplete: the meeting at {{gaps}} could not be evaluated. The full transcript is kept.",
+      "progressLabel": "Minutes progress",
+      "phase": {
+        "template": "Choosing the template …",
+        "write": "Evaluating the transcript …",
+        "merge": "Merging the parts …"
+      },
+      "stepOf": "Step {{done}} of {{total}}",
+      "cancelled": "Generation was cancelled.",
+      "errors": {
+        "minutes_busy": "Minutes are already being generated for this meeting.",
+        "job_busy": "Another job is already running for this meeting (for example AI notes).",
+        "minutes_cancelled": "Generation was cancelled.",
+        "meeting_not_found": "The meeting no longer exists.",
+        "meeting_not_finished": "The recording is still running. Minutes can only be generated after it has stopped.",
+        "no_transcript": "There is no transcript yet to write minutes from.",
+        "template_not_found": "This template no longer exists. Please choose another one.",
+        "no_provider": "No language model set up (Settings → Post-processing).",
+        "no_model": "No model entered for the provider (Settings → Post-processing → Model).",
+        "memory_low": "Not enough free memory for the language model. Please close other programs and try again.",
+        "llm_failed": "The language model did not deliver usable minutes: {{error}}",
+        "store_failed": "The minutes could not be saved: {{error}}"
+      }
     },
     "language": {
       "title": "Transcription language",
-      "description": "Language for meeting transcription — independent of the dictation setting. Meetings are never translated.",
+      "description": "Language for meeting transcription — independent of the dictation setting. “Detect automatically” determines the language per recording from an audio sample and picks the suitable model; a fixed language wins over any detection. Transcription never translates: translations are created as their own version.",
       "auto": "Detect automatically"
     },
     "meta": {
@@ -1678,20 +2320,1065 @@
       "sourceKind": {
         "live": "Live recording",
         "import": "File import",
-        "subtitle": "Subtitle import"
+        "subtitle": "Subtitle import",
+        "youtube": "YouTube-Link",
+        "empty": "Empty entry"
       }
     },
     "model": {
       "title": "Transcription model",
-      "likeDictation": "Same as dictation (default)",
-      "description": "Dedicated model for meetings and imports. Streaming models are tuned for live dictation — meetings transcribe in batches and profit from batch models like Parakeet V3."
+      "likeDictation": "Automatic (Parakeet V3 GGUF, otherwise same as dictation)",
+      "description": "Dedicated model for meetings and imports. Streaming models are tuned for live dictation — meetings transcribe in batches and profit from batch models like Parakeet V3. Automatic: Parakeet V3 GGUF Q8 (more accurate than the ONNX build) once downloaded under Models; otherwise the dictation model.",
+      "finalTitle": "Final pass after stopping",
+      "finalDescription": "After stopping, a more accurate model rewrites the whole transcript; AI notes are created only afterwards. Automatic: with a graphics card Whisper Large v3 (otherwise Qwen3-ASR 1.7B), without one the live transcript stays. A model picked explicitly also runs without a graphics card; an hour of meeting then takes about a quarter of an hour.",
+      "finalAuto": "Automatic (recommended)",
+      "finalOff": "Off – keep the live transcript",
+      "parallelTitle": "Simultaneous transcriptions",
+      "parallelDescription": "How many files are transcribed at the same time. More than one only while memory (and graphics memory) suffice for each additional one – each loads the model again. Otherwise the next file waits (“waiting for memory”). A running recording always takes priority: the queue pauses then.",
+      "parallel1": "1 (default)",
+      "parallel2": "2",
+      "parallel3": "3"
+    },
+    "header": {
+      "renameName": "Rename",
+      "renameHint": "Click or press F2, save with Enter",
+      "infoName": "Details",
+      "infoHint": "Status, source, consent, model and retention at a glance",
+      "sourceLive": "Recording",
+      "sourceImport": "Import",
+      "sourceSubtitle": "Subtitles",
+      "sourceYoutube": "YouTube",
+      "sourceEmpty": "Notepad",
+      "minutes": "{{count}} min",
+      "projectHint": "Click to move the meeting to another project",
+      "projectMore": "+{{count}}",
+      "peopleMore": "+{{count}}",
+      "peopleMoreLabel": "Show and manage more participants",
+      "chips": "Meeting properties",
+      "participants": "{{count}} participants",
+      "participantsNone": "Add participants",
+      "participantsHint": "Click to add participants",
+      "participantsTitle": "Participants",
+      "participantsEmpty": "Nobody recorded yet.",
+      "participantAddPlaceholder": "Add a person (name)",
+      "participantSpeaker": "Speaker",
+      "participantSpeakerHint": "Link the name to this speaker: “{{label}}” is renamed accordingly",
+      "participantUnknown": "This person is not known yet. They come from a calendar event or a named speaker.",
+      "participantUnknownSpeaker": "This person is not known yet: pick the speaker you name this way.",
+      "participantAlready": "Already a participant.",
+      "participantAdd": "Add",
+      "participantRemoveHint": "Remove from the participants of this meeting",
+      "template": "Template: {{name}}",
+      "templateHint": "Click to change the template"
+    },
+    "detailsDialog": {
+      "title": "Details",
+      "close": "Close",
+      "meetingTitle": "Title",
+      "projects": "Projects",
+      "noProjects": "Not in any project",
+      "file": "File",
+      "tracks": "Tracks",
+      "trackMic": "Microphone",
+      "trackSystem": "Remote side (system audio)",
+      "trackMixed": "File (single channel)",
+      "trackNone": "Audio no longer available",
+      "language": "Language",
+      "languageAuto": "Detected automatically",
+      "model": "Model",
+      "modelNote": "{{name}} (current setting)",
+      "modelDefault": "Configured meeting model",
+      "template": "Template",
+      "templateDefault": "Default template",
+      "minutesOrigin": "Minutes created",
+      "minutesNone": "No minutes yet",
+      "minutesBasis": "Basis of the minutes",
+      "notesBasis": "Basis of the AI notes",
+      "basisNone": "not recorded (created before this feature)",
+      "minutesFile": "Minutes file",
+      "minutesFileNone": "Not filed yet",
+      "minutesFileOpen": "Show in folder",
+      "retentionNever": "never (setting “Keep”)",
+      "description": "Description",
+      "noDescription": "No description",
+      "people": "Participants",
+      "noPeople": "No participants recorded"
+    },
+    "metadata": {
+      "edit": "Edit",
+      "save": "Save",
+      "saving": "Saving …",
+      "cancel": "Cancel",
+      "title": "Title",
+      "description": "Description",
+      "descriptionPlaceholder": "What is it about? Topic, people, goal – searchable and context for chat, AI notes and MCP.",
+      "descriptionCount": "{{count}} of {{max}} characters",
+      "datetime": "Date and time",
+      "participants": "Participants",
+      "participantsSearch": "Search for a person",
+      "participantsNone": "No person selected",
+      "noPeopleFound": "No person found.",
+      "removePerson": "Remove {{name}}",
+      "projects": "Projects",
+      "noProjectsYet": "There are no projects yet.",
+      "fixedHint": "Source and file name cannot be changed.",
+      "errors": {
+        "meetingNotFound": "The meeting no longer exists.",
+        "titleEmpty": "The title must not be empty.",
+        "titleTooLong": "The title is too long.",
+        "descriptionTooLong": "The description is too long.",
+        "dateInvalid": "The date is invalid.",
+        "personNotFound": "One of the people no longer exists.",
+        "folderNotFound": "One of the projects no longer exists.",
+        "unknown": "The changes could not be saved."
+      }
+    },
+    "actions": {
+      "group": "Actions",
+      "copyName": "Copy",
+      "copyHint": "Copy the transcript with timestamps (variants in the menu)",
+      "copied": "Copied",
+      "peopleName": "People",
+      "peopleHint": "Manage participants and speakers",
+      "menuName": "Menu",
+      "menuHint": "Re-transcribe, template, move, details, delete …",
+      "menuLabel": "More actions",
+      "retranscribe": "Re-transcribe …",
+      "translate": "Translate to …",
+      "translateHint": "Translates the transcript sentence by sentence into another language. The original stays as its own version.",
+      "retranscribeBusy": "A job is running for this meeting, it cannot be re-transcribed now.",
+      "retranscribeNoAudio": "Without an audio file there is nothing to re-transcribe.",
+      "regenNotes": "Regenerate AI notes",
+      "regenMinutes": "Regenerate minutes",
+      "regenWithTemplate": "Regenerate with template …",
+      "regenWithTemplateTitle": "Regenerate with template",
+      "regenWithTemplateBody": "Pick the template, then what is regenerated: the minutes or the AI notes.",
+      "template": "Choose template …",
+      "speakers": "Name speakers …",
+      "speakersNone": "No speakers were detected in this meeting.",
+      "rename": "Rename",
+      "move": "Move to project …",
+      "copyPlain": "Copy text only",
+      "exportTranscript": "Transcript as file …",
+      "details": "Details …",
+      "delete": "Delete meeting …",
+      "deleteLive": "The recording is still running – stop it first, then delete.",
+      "templateTitle": "Choose template",
+      "templateBody": "The template decides how the AI notes and the minutes of this meeting are structured.",
+      "close": "Close"
+    },
+    "retranscribeDialog": {
+      "title": "Re-transcribe",
+      "model": "Model",
+      "cancel": "Cancel",
+      "close": "Close"
+    },
+    "youtube": {
+      "link": {
+        "title": "Paste a YouTube link",
+        "urlLabel": "Link to a YouTube video",
+        "urlPlaceholder": "https://www.youtube.com/watch?v=…",
+        "projectLabel": "Project",
+        "projectNone": "No project",
+        "recognized": "Video recognised",
+        "startsAt": "Starts at {{time}}",
+        "notice": "When you add it, the app asks YouTube once for the title and channel, without sign-in and without cookies. The video itself is only loaded when you play it.",
+        "add": "Add",
+        "adding": "Adding …",
+        "cancel": "Cancel",
+        "added": "“{{title}}” was added as a source."
+      },
+      "errors": {
+        "youtube_empty": "Please paste a YouTube link.",
+        "youtube_too_long": "The text is too long for a link.",
+        "youtube_invalid_link": "That is not a valid YouTube link to a single video.",
+        "youtube_not_youtube": "That is not a YouTube link.",
+        "youtube_playlist": "Playlists will follow later. Please paste the link of a single video.",
+        "youtube_channel": "Channels are not supported. Please paste the link of a single video.",
+        "youtube_disabled": "YouTube is switched off under Integrations.",
+        "youtube_busy": "This video is being added right now.",
+        "youtube_project_not_found": "The selected project no longer exists.",
+        "youtube_unavailable": "The video is not available: private, deleted or not allowed to be embedded.",
+        "youtube_rate_limited": "YouTube is not answering further requests right now. Please try again later.",
+        "youtube_timeout": "YouTube did not answer in time. Please try again.",
+        "youtube_network": "No connection to YouTube. {{detail}}",
+        "youtube_http": "YouTube answered with status {{detail}}.",
+        "youtube_bad_response": "The answer from YouTube could not be read.",
+        "youtube_store_failed": "The meeting could not be saved. {{detail}}",
+        "youtube_path_invalid": "The path is invalid.",
+        "youtube_private_off": "For subtitles and transcription, install yt-dlp yourself and switch on “private” in the settings.",
+        "youtube_tool_missing": "yt-dlp was not found. Please install it yourself and enter its path in the settings.",
+        "youtube_tool_outdated": "yt-dlp is out of date – please update it (yt-dlp -U) and try again.",
+        "youtube_tool_failed": "yt-dlp ended with error code {{detail}}.",
+        "youtube_tool_start": "yt-dlp could not be started. {{detail}}",
+        "youtube_no_subtitles": "This video has no subtitles.",
+        "youtube_cancelled": "Cancelled.",
+        "target_not_empty": "This entry is no longer empty. The link was not added.",
+        "meeting_not_found": "The entry the link was meant for no longer exists."
+      },
+      "player": {
+        "region": "YouTube video",
+        "title": "YouTube",
+        "collapse": "Collapse video",
+        "expand": "Expand video",
+        "openExternal": "Open on YouTube",
+        "play": "Play video",
+        "privacy": "Playing connects the app to YouTube. Playback and ads stay unchanged.",
+        "loading": "Loading player …",
+        "retry": "Try again",
+        "resize": "Change the height of the video",
+        "errors": {
+          "api": "The YouTube player could not be loaded. Please check the internet connection.",
+          "2": "YouTube reports an invalid link.",
+          "5": "The player reported an error.",
+          "100": "The video was not found or is private.",
+          "101": "The owner does not allow playback outside YouTube. “Open on YouTube” opens it in the browser.",
+          "150": "The owner does not allow playback outside YouTube. “Open on YouTube” opens it in the browser.",
+          "153": "YouTube rejected the player. “Open on YouTube” opens it in the browser.",
+          "generic": "The video cannot be played here."
+        }
+      },
+      "settings": {
+        "private": "YouTube: use a self-installed yt-dlp (private, experimental)",
+        "privateDescription": "Off (default): videos are only watched in the embedded YouTube player. On: if you installed yt-dlp yourself, the app may later use it to fetch audio and subtitles for your own use. The app does not bundle or download yt-dlp.",
+        "tool": {
+          "title": "Path to yt-dlp",
+          "description": "File or folder of yt-dlp. Empty: the app searches the PATH.",
+          "placeholder": "Leave empty to search the PATH",
+          "browse": "Browse …",
+          "check": "Check",
+          "checking": "Looking for yt-dlp …",
+          "found": "yt-dlp found: version {{version}} ({{path}})",
+          "errors": {
+            "not_found": "yt-dlp not found. Please install it yourself (e.g. with a package manager) or enter the path.",
+            "not_absolute": "Please enter a full path (e.g. C:\\Tools\\yt-dlp.exe).",
+            "bad_name": "The file name must start with “yt-dlp” (Windows: .exe).",
+            "timeout": "yt-dlp did not answer in time.",
+            "failed": "yt-dlp started but reported an error. Please update or reinstall it.",
+            "start_failed": "yt-dlp could not be started.",
+            "not_ytdlp": "This file does not answer like yt-dlp."
+          }
+        },
+        "legal": "Note: downloading YouTube videos may violate YouTube's terms of use and may be relevant under copyright law (Higher Regional Court Hamburg, 21 Nov 2024, 5 U 54/23). Use at your own risk; have this checked legally before passing the app on to third parties. Not legal advice."
+      }
+    },
+    "import": {
+      "target": "Import into the project “{{name}}”",
+      "targetNone": "Import without a project",
+      "dropInto": "Drop the file here – import into “{{name}}”",
+      "dropIntoNone": "Drop the file here – import without a project"
+    },
+    "empty": {
+      "defaultTitle": "New meeting",
+      "chip": "Empty",
+      "startTitle": "Nothing recorded yet",
+      "startBody": "Start a recording, import a file or paste a YouTube link. You can already write notes.",
+      "startGroup": "Fill this entry",
+      "fillsEntry": "The result fills the entry “{{title}}”.",
+      "importFirst": "The first file fills the entry “{{title}}”; further files become new meetings.",
+      "createFailed": "The entry could not be created.",
+      "transcriptEmpty": "The transcript appears here as soon as you record or import a file.",
+      "dropIntoEntry": "Drop the file here – fills “{{title}}”"
+    },
+    "importAction": {
+      "name": "Import file",
+      "hint": "Choose audio, video or subtitles – or drag them onto the work area",
+      "linkName": "Paste link",
+      "linkHint": "Add a YouTube link as a source, or paste the link with Ctrl+V"
+    },
+    "recorder": {
+      "running": "Recording",
+      "paused": "Paused",
+      "clock": "Recording time",
+      "levelsName": "Level",
+      "levelsHint": "microphone on top, remote side below",
+      "pauseHint": "Pause the recording without ending it",
+      "resumeHint": "Resume the recording",
+      "stopHint": "End the recording – AI notes and minutes follow",
+      "noticeName": "Copy notice",
+      "noticeCopied": "Notice copied",
+      "startHint": "Opens the start dialog with title, project, template and consent"
+    },
+    "startDialog": {
+      "title": "Start recording",
+      "titleLabel": "Title",
+      "project": "Project",
+      "projectNone": "No project",
+      "options": "Recording options"
     },
     "retranscribe": {
       "description": "Transcribe this meeting again from its recording — for example with a different model.",
       "configuredModel": "Configured meeting model",
+      "language": "Language",
+      "languageAuto": "Detect automatically",
+      "suggestInstalled": "Suited to this language: {{model}} (installed, selected).",
+      "suggestMissing": "{{model}} would suit this language. It is not installed yet: download it under Models and pick it here.",
       "start": "Re-transcribe",
       "running": "Transcribing…",
-      "runningHint": "The existing transcript is replaced when the run finishes. This can take a while for long recordings."
+      "runningHint": "The existing transcript is kept as a version. While the run progresses the view shows the new text; only at the end does it become the active version. If you stop early, the existing transcript stays active. This can take a while for long recordings."
+    },
+    "notes": {
+      "tab": "Notes",
+      "view": {
+        "mine": "My notes",
+        "ai": "AI notes"
+      },
+      "aiPlaceholder": "The AI notes appear here as soon as they have been created.",
+      "padTitle": "Your notes",
+      "padHint": "Bullet points are enough. Enter saves a point with the recording time; “[ ]” at the start turns it into a task.",
+      "emptyHint": "Bullet points are enough …",
+      "blockLabel": "Note",
+      "todoCheck": "Done",
+      "importedHint": "Imported meeting: notes without timestamps.",
+      "loadError": "The notes could not be loaded: {{error}}",
+      "tooLarge": "The notes are larger than {{limit}} KB and are no longer saved. Please shorten or split them.",
+      "conflict": "The notes were changed in another window. Both versions have been merged.",
+      "status": {
+        "saving": "Saving …",
+        "dirty": "Unsaved changes",
+        "saved": "Saved",
+        "error": "Saving failed – will be retried on the next attempt"
+      }
+    },
+    "templates": {
+      "label": "Template",
+      "auto": "Automatic (by content)",
+      "autoChosen": "Automatic: {{title}}",
+      "autoShort": "{{title}} (automatic)",
+      "autoPending": "Chosen from the content when generating.",
+      "autoUncertain": "Unclear – the standard template is used.",
+      "autoFailed": "The choice by content did not work – the standard template is used.",
+      "autoReason": "Reason: {{reason}}",
+      "manage": "Manage templates …",
+      "title": "Templates",
+      "description": "A template defines how notes and transcript become structured meeting notes.",
+      "close": "Close",
+      "builtin": "Built-in",
+      "sectionCount_one": "{{count}} section",
+      "sectionCount_other": "{{count}} sections",
+      "new": "New template",
+      "import": "Import …",
+      "duplicate": "Duplicate",
+      "edit": "Edit",
+      "editBuiltin": "Edit (creates a copy, built-in templates are read-only)",
+      "editBuiltinNotice": "Built-in templates are read-only. You are editing a copy.",
+      "export": "Export",
+      "delete": "Delete",
+      "deleteConfirm": "Really delete template “{{title}}”?",
+      "deleteYes": "Delete",
+      "cancel": "Cancel",
+      "save": "Save",
+      "saved": "Template “{{title}}” saved.",
+      "duplicated": "Copy “{{title}}” created.",
+      "imported": "Template “{{title}}” imported.",
+      "exported": "Exported to {{path}}",
+      "fileType": "Template (.lvtemplate.json)",
+      "newTitle": "New template",
+      "editTitle": "Edit template",
+      "fieldName": "Name",
+      "fieldContext": "Purpose of the meeting",
+      "fieldContextHint": "One or two sentences on what such meetings are about.",
+      "sectionsTitle": "Sections",
+      "sectionTitle": "Section title",
+      "sectionInstruction": "Instruction: what belongs in this section?",
+      "sectionKind": "Section type",
+      "kindText": "Text",
+      "kindTasks": "Task list",
+      "addSection": "Add section",
+      "removeSection": "Remove section",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "errors": {
+        "generic": "Error: {{error}}",
+        "revision_conflict": "The notes were changed in the meantime.",
+        "template_readonly": "Built-in templates are read-only. Edit a copy.",
+        "template_not_found": "This template no longer exists.",
+        "exportFailed": "The file could not be written.",
+        "import": {
+          "too_large": "The file is too large (64 KB at most).",
+          "invalid_json": "The file is not a valid template file (not readable JSON).",
+          "format": "The file has an unknown format. A Local Voice AI template file (.lvtemplate.json) is expected.",
+          "unreadable": "The file could not be read."
+        },
+        "invalid": {
+          "title": "The name must be 1 to 60 characters long.",
+          "version": "This template version is not supported.",
+          "context_too_long": "The purpose may be at most 1000 characters long.",
+          "sections_count": "A template needs 1 to 10 sections.",
+          "section_id": "A section has an invalid identifier ({{section}}).",
+          "section_id_duplicate": "Two sections share the same identifier ({{section}}).",
+          "section_title": "Every section needs a title of 1 to 60 characters.",
+          "section_instruction_too_long": "A section instruction may be at most 500 characters long.",
+          "tasks_sections": "At most one task list section is allowed."
+        }
+      }
+    },
+    "enhanced": {
+      "empty": "No AI notes yet. They are built from your notes and the transcript once the meeting has finished.",
+      "generate": "Generate AI notes",
+      "regenerate": "Regenerate AI notes",
+      "toolbar": "AI notes: tools",
+      "regenerateHint": "Generates the AI notes again with the chosen template",
+      "export": "Export – as Word (.docx), text or Markdown",
+      "exportSuffix": "AI notes",
+      "exported": "Saved: {{path}}",
+      "versionLabel": "Version {{version}} · {{date}}",
+      "progress": "Creating AI notes … {{step}}/{{total}}",
+      "working": "The AI is working …",
+      "stopped": "AI notes stopped. Nothing was saved.",
+      "providerHint": "Please set one up under Settings → Language models.",
+      "loadError": "The AI notes could not be loaded: {{error}}",
+      "reloaded": "The AI notes were changed in the meantime (another window or a new run) and have been reloaded.",
+      "staleSources": "Sources outdated – regenerate. The transcript was rebuilt after these notes were created; the source references no longer match.",
+      "audioGone": "The audio is no longer available. Clicking a source only jumps to the transcript.",
+      "oldVersion": "Older version, view only. Pick the latest version to make changes.",
+      "chunksFailed": "{{failed}} of {{total}} parts of the transcript could not be processed. The notes are incomplete; regenerating may help.",
+      "unreadable": "This version of the AI notes cannot be read.",
+      "sectionEmpty": "No entries",
+      "addEntry": "Add entry",
+      "newEntry": "New entry",
+      "editEntry": "Edit entry",
+      "editHint": "Click to edit – the entry then counts as your own text",
+      "noEvidence": "no evidence",
+      "noEvidenceHint": "The AI found no passage in the transcript for this entry. Please check it yourself.",
+      "sourceJump": "Jump to {{time}} in the transcript",
+      "sourceStale": "Sources outdated – regenerate",
+      "sourceMore": "Show {{count}} more sources",
+      "slideJump": "Jump to slide {{number}} ({{time}})",
+      "taskDone": "Task done",
+      "due": "due {{due}}",
+      "instruction": {
+        "label": "Instruction for the AI",
+        "placeholder": "Instruction for the AI, e.g. “shorter” or “fix names: Maier → Meyer”",
+        "apply": "Apply",
+        "hint": "Your own notes stay unchanged. The result becomes a new version."
+      },
+      "errors": {
+        "generic": "AI notes: {{error}}",
+        "no_provider": "No language model provider is set up.",
+        "no_model": "No model is selected for the provider.",
+        "memory_low": "Not enough free memory to start the language model. Please close other programs and try again.",
+        "recording_active": "The local language model does not run during a recording. Please try again after stopping, or choose a remote provider.",
+        "enhance_busy": "An AI notes run is already in progress. Please wait for it to finish.",
+        "no_transcript": "There is no transcript yet. Your own notes stay usable and exportable.",
+        "llm_failed": "The language model did not return a usable answer. Please try again.",
+        "meeting_not_finished": "The meeting has not finished yet. AI notes are available after you stop.",
+        "meeting_not_found": "The meeting was not found.",
+        "template_not_found": "The selected template was not found. Please choose another template.",
+        "document_not_found": "This version of the AI notes no longer exists.",
+        "not_enhanced_notes": "This document does not contain AI notes.",
+        "stale_document": "The AI notes were changed in the meantime and have been reloaded. Please repeat your change.",
+        "stale_sources": "The sources of this version are outdated because the transcript was rebuilt. Please regenerate the AI notes.",
+        "edit_invalid": "The change could not be saved (invalid version).",
+        "instruction_invalid": "The instruction is invalid: it must not be empty and at most 500 characters long.",
+        "store_failed": "Saving to the database failed."
+      }
+    },
+    "search": {
+      "placeholder": "Search meetings …",
+      "label": "Search meetings",
+      "clear": "Clear search",
+      "noResults": "No matches. New meetings appear in search once they are indexed.",
+      "noFilterResults": "No meetings match this filter.",
+      "truncated": "Very many matches – narrow the search.",
+      "failed": "Search failed: {{error}}",
+      "filterInvalid": "This filter is invalid.",
+      "filters": "Filters",
+      "range7": "7 days",
+      "range30": "30 days",
+      "range365": "12 months",
+      "sourceLive": "Recording",
+      "sourceImport": "Import",
+      "sourceSubtitle": "Subtitles",
+      "hasNotes": "With notes",
+      "hitIn": "Match in: {{source}}",
+      "hitSource": {
+        "title": "Title or description",
+        "transcript": "Transcript",
+        "user_notes": "My notes",
+        "ai_notes": "AI notes",
+        "slide": "Slide"
+      }
+    },
+    "folders": {
+      "label": "Projects",
+      "all": "All",
+      "add": "New project",
+      "moveTo": "Move to project …",
+      "menu": "Actions",
+      "rename": "Rename",
+      "delete": "Delete",
+      "newTitle": "New project",
+      "renameTitle": "Rename project",
+      "nameLabel": "Name",
+      "namePlaceholder": "e.g. Client Utilities",
+      "save": "Save",
+      "create": "Create",
+      "cancel": "Cancel",
+      "deleteTitle": "Delete project?",
+      "deleteBody": "The project “{{name}}” will be deleted. The meetings in it are kept.",
+      "pickerTitle": "Move to project …",
+      "pickerHint": "A meeting can be in several projects.",
+      "pickerEmpty": "No projects yet. Create one below.",
+      "loadFailed": "Projects could not be loaded.",
+      "errors": {
+        "nameInvalid": "The name must be 1 to 60 characters long.",
+        "nameTaken": "A project with this name already exists.",
+        "notFound": "This project no longer exists.",
+        "failed": "The project could not be saved."
+      }
+    },
+    "export": {
+      "button": "Export",
+      "buttonTitle": "Export the meeting to a file or copy it with formatting",
+      "title": "Export meeting",
+      "close": "Close",
+      "audioHint": "Audio is never exported.",
+      "partsTitle": "Included parts",
+      "parts": {
+        "notes": "My notes",
+        "ai_notes": "AI notes",
+        "minutes": "Minutes",
+        "transcript": "Transcript",
+        "participants": "Participants"
+      },
+      "noParts": "Select at least one part.",
+      "formatsTitle": "Save as file",
+      "formats": {
+        "docx": "Word",
+        "txt": "TXT",
+        "md": "Markdown",
+        "html": "HTML",
+        "pdf": "PDF",
+        "srt": "SRT",
+        "vtt": "VTT",
+        "json": "JSON"
+      },
+      "subtitleHint": "Subtitles (SRT, VTT) only ever contain the transcript.",
+      "copy": "Copy formatted",
+      "copyTitle": "Put the meeting on the clipboard as HTML and plain text - headings and lists survive pasting into Word or an email",
+      "copied": "Copied to the clipboard with formatting.",
+      "copyError": "Copy failed: {{error}}",
+      "saved": "Exported to {{path}}",
+      "error": "Export failed: {{error}}",
+      "pdfFallback": "Alternative: save as HTML and print the file from your browser.",
+      "placeTitle": "File in",
+      "placeHint": "Put it into a set-up folder or vault without overwriting.",
+      "placeFolder": "Folder \"{{label}}\"",
+      "placeVault": "As a note in \"{{label}}\"",
+      "placeVaultButton": "File as note",
+      "placed": "Filed in \"{{label}}\": {{path}}",
+      "vaultCreated": "Note created in \"{{label}}\": {{path}}",
+      "vaultUpdated": "Note updated in \"{{label}}\": {{path}}",
+      "vaultUnchanged": "Note in \"{{label}}\" is already up to date: {{path}}",
+      "placeError": "Could not file it: {{error}}"
+    },
+    "people": {
+      "chipsLabel": "Participants",
+      "you": "me",
+      "role": {
+        "organizer": "Organizer",
+        "attendee": "Attendee",
+        "speaker": "Speaker"
+      },
+      "source": {
+        "calendar": "From the calendar",
+        "speaker": "From the transcript",
+        "manual": "Added by hand"
+      },
+      "popover": {
+        "company": "Company",
+        "email": "Email",
+        "noEmail": "No address known",
+        "meetingsWith_one": "{{count}} meeting with {{name}}",
+        "meetingsWith_other": "{{count}} meetings with {{name}}",
+        "meetingsFilterTitle": "Narrow the list to meetings with {{name}}",
+        "ask": "Ask",
+        "askTitle": "Ask across all meetings with {{name}}",
+        "manage": "Manage people …"
+      },
+      "filter": {
+        "group": "Person filter",
+        "chip": "Person: {{name}}",
+        "remove": "Remove person filter “{{name}}”"
+      },
+      "dialog": {
+        "title": "Manage people",
+        "description": "Rename people or merge two entries for the same person. The app recognises identical email addresses and names on its own; everything else is up to you.",
+        "search": "Search people",
+        "searchLabel": "Search people",
+        "empty": "No people yet. They come from the attendees of your calendar events and from named speakers.",
+        "noHits": "No matches.",
+        "meetings_one": "{{count}} meeting",
+        "meetings_other": "{{count}} meetings",
+        "self": "me",
+        "name": "Name",
+        "email": "Email",
+        "emailHint": "Leave empty to remove the address.",
+        "otherEmails": "Other addresses: {{list}}",
+        "save": "Save",
+        "saved": "Saved.",
+        "mergeTitle": "Merge with another person",
+        "mergeHint": "This person is absorbed by the one you choose: meetings, names and addresses move along.",
+        "mergeTarget": "Merge with",
+        "mergePick": "Choose a person …",
+        "mergeAction": "Merge …",
+        "mergeConfirm": "Merge “{{gone}}” into “{{keep}}”? This cannot be undone.",
+        "mergeDo": "Merge now",
+        "merged": "Merged.",
+        "cancel": "Cancel",
+        "back": "Back to list",
+        "close": "Close"
+      },
+      "errors": {
+        "notFound": "This person no longer exists.",
+        "nameInvalid": "Please enter a name.",
+        "emailInvalid": "That is not a valid email address.",
+        "emailTaken": "This address belongs to another person. Merge the two.",
+        "mergeInvalid": "A person cannot be merged with themselves.",
+        "failed": "That did not work."
+      },
+      "brief": {
+        "question": "Preparation for the meeting with {{names}}",
+        "button": "Prepare",
+        "title_one": "Prepare using {{count}} earlier meeting",
+        "title_other": "Prepare using {{count}} earlier meetings",
+        "saved": "Open the saved brief",
+        "none": "No earlier meetings with these attendees.",
+        "error": "The brief could not be opened."
+      }
+    },
+    "followup": {
+      "button": "Follow-up email",
+      "buttonTitle": "Create an email draft from this meeting that you can review and edit",
+      "title": "Follow-up email",
+      "remote": "The draft is written with {{provider}}: excerpts of the meeting are sent to this provider.",
+      "generate": "Create draft",
+      "generating": "Writing the draft …",
+      "regenerate": "Create again",
+      "retry": "Try again",
+      "to": "To",
+      "toHint": "Separate several addresses with a comma or semicolon.",
+      "noRecipients": "No participants with an email address are known – please enter the recipient.",
+      "subject": "Subject",
+      "body": "Text",
+      "copy": "Copy",
+      "copyTitle": "Put the text on the clipboard, formatted (HTML and plain text)",
+      "mailto": "Open in email app",
+      "eml": "Save as .eml",
+      "emlTitle": "Classic Outlook opens the file as a draft; new Outlook and Thunderbird may open it read-only.",
+      "close": "Close",
+      "copied": "Copied to the clipboard.",
+      "opened": "Opened in the email app.",
+      "mailtoClipped": "The text was too long for the mail link and is on the clipboard – paste it in the email app with Ctrl+V.",
+      "emlSaved": "Saved: {{path}}",
+      "m365": {
+        "via": "Send via {{label}}",
+        "noRecipients": "The mail needs at least one recipient to be sent.",
+        "confirmTitle": "Confirm sending",
+        "confirm": "Send the mail to {{count}} recipient(s) via “{{label}}” now? This cannot be taken back.",
+        "send": "Send now",
+        "cancel": "Cancel",
+        "sent": "Sent via “{{label}}”. The mail is in your Sent folder."
+      },
+      "errors": {
+        "followup_empty": "The language model returned no text even on the second try. Another language model in the settings may help.",
+        "followup_no_content": "No content found for a follow-up – the recording contains no meeting points.",
+        "mailto_failed": "The email app could not be opened. Copy the text instead and paste it there.",
+        "clipboard_failed": "The clipboard is not available right now.",
+        "write_failed": "The file could not be saved.",
+        "path_missing": "No save location was chosen.",
+        "generic": "That went wrong ({{error}})."
+      }
+    },
+    "chat": {
+      "ask": "Ask",
+      "askTitle": "Ask about this meeting (Ctrl+J)",
+      "panelLabel": "Chat",
+      "scope": {
+        "meeting": "This meeting",
+        "live": "Current meeting",
+        "global": "Meetings"
+      },
+      "close": "Close chat",
+      "placeholder": "Ask a question … (\"/\" for recipes)",
+      "inputLabel": "Question",
+      "send": "Send",
+      "cancel": "Cancel",
+      "cancelled": "Cancelled – nothing saved.",
+      "threads": "Threads",
+      "newThread": "New thread",
+      "threadUntitled": "Untitled thread",
+      "threadCount_one": "{{count}} message",
+      "threadCount_other": "{{count}} messages",
+      "deleteThread": "Delete thread",
+      "empty": "Ask a question – every statement in the answer cites a source.",
+      "you": "You",
+      "assistant": "Answer",
+      "stage": {
+        "searching": "Searching for matching passages …",
+        "reading": "Reading excerpts …",
+        "answering": "Answering …",
+        "retry": "Second pass with more passages …"
+      },
+      "notFound": "The searched meetings don't say anything about this.",
+      "uncited": "no source",
+      "uncitedHint": "This answer cites no source – please check it yourself.",
+      "citation": {
+        "label": "Source {{n}}",
+        "jump": "Jump to passage",
+        "deleted": "Meeting deleted",
+        "source": {
+          "title": "Title",
+          "transcript": "Transcript",
+          "user_notes": "My notes",
+          "ai_notes": "AI notes",
+          "slide": "Slide"
+        }
+      },
+      "coverage": {
+        "live": "Live transcript.",
+        "searched_one": "Searched: {{count}} meeting.",
+        "searched_other": "Searched: {{count}} meetings.",
+        "readGlobal": "Read: {{meetings}}, {{excerpts}}.",
+        "read": "Read: {{excerpts}}.",
+        "meetings_one": "{{count}} meeting",
+        "meetings_other": "{{count}} meetings",
+        "excerpts_one": "{{count}} passage",
+        "excerpts_other": "{{count}} passages",
+        "unread_one": "{{count}} more with hits not read – narrow the question.",
+        "unread_other": "{{count}} more with hits not read – narrow the question.",
+        "truncated": "There were more matching passages than could be read.",
+        "secondRound": "Second search pass.",
+        "lexicalOnly": "Keyword search only.",
+        "cpuLimited": "CPU: fewer excerpts read.",
+        "dropped_one": "{{count}} invalid source dropped.",
+        "dropped_other": "{{count}} invalid sources dropped."
+      },
+      "remote": {
+        "bar": "Answers are generated by {{provider}}. Excerpts from your meetings are sent there.",
+        "confirmTitle": "Send excerpts to {{provider}}?",
+        "confirmBody": "To answer, excerpts from transcript and notes are sent to {{provider}}. This confirmation applies to this provider and will not be asked again.",
+        "confirm": "Send",
+        "cancel": "Cancel"
+      },
+      "errors": {
+        "no_provider": "No AI provider set up (Settings → Post-processing).",
+        "no_model": "No model is set for the AI provider.",
+        "memory_low": "Not enough free memory for the local model. Please close other programs.",
+        "recording_active_cpu": "While recording, the local model only answers on a GPU – otherwise the transcript suffers.",
+        "chat_busy": "A question is already running. Please wait a moment.",
+        "empty_scope": "There are no meetings in this scope.",
+        "llm_failed": "The language model did not answer. Please try again.",
+        "cancelled": "Cancelled – nothing saved.",
+        "recipe_invalid": "The recipe doesn't fit here or is incomplete.",
+        "invalid_request": "The question is empty or too long.",
+        "meeting_not_found": "The meeting no longer exists.",
+        "thread_not_found": "The thread was deleted.",
+        "store_failed": "The answer could not be saved.",
+        "unknown": "The question failed ({{code}})."
+      },
+      "list": {
+        "askAll": "Ask all meetings",
+        "select": "Select",
+        "selectDone": "End selection",
+        "selected_one": "{{count}} selected",
+        "selected_other": "{{count}} selected",
+        "askSelection": "Ask selection",
+        "selectRow": "Select {{title}}"
+      },
+      "scopeChips": {
+        "label": "Scope",
+        "all": "All meetings",
+        "folder": "Folder: {{name}}",
+        "from": "From {{date}}",
+        "to": "Until {{date}}",
+        "person": "Person: {{name}}",
+        "selection_one": "{{count}} meeting",
+        "selection_other": "{{count}} meetings",
+        "remove": "Remove {{label}}"
+      }
+    },
+    "mcp": {
+      "title": "Local MCP server (read-only)",
+      "description": "Lets an AI client on this computer (Claude, Codex) search and read your finished meetings. The server only runs while the client starts it, changes nothing and needs no network. Off by default.",
+      "warning": "Your AI client (Claude, Codex) sends the meeting content it reads to its provider. It contains statements of third parties (§ 201 StGB, GDPR): only switch this on if everyone involved agrees.",
+      "transcript": "Share the transcript",
+      "transcriptDescription": "The client may also read the word-for-word transcript (tool get_transcript and hits in the transcript). Without it, it only sees notes, AI notes and minutes.",
+      "connect": "Connect an AI client",
+      "connectDescription": "Enter this in the client. The client starts the server itself; the app does not need a restart.",
+      "clients": {
+        "claude-code": "Claude Code",
+        "claude-desktop": "Claude Desktop",
+        "codex": "Codex"
+      },
+      "copy": "Copy",
+      "copied": "Copied.",
+      "copyFailed": "Could not copy – please select the text."
+    },
+    "recipes": {
+      "bar": "Recipes",
+      "menu": "Choose recipe",
+      "manage": "Manage recipes",
+      "noMatch": "No recipe matches.",
+      "remove": "Remove recipe",
+      "missing": "Please fill in \"{{label}}\".",
+      "chooseFolder": "Choose folder",
+      "builtin": "Built-in",
+      "readonly": "Built-in recipes are read-only – duplicate them to adapt.",
+      "empty": "No recipes yet.",
+      "duplicate": "Duplicate",
+      "edit": "Edit",
+      "delete": "Delete",
+      "new": "New recipe",
+      "save": "Save",
+      "cancel": "Cancel",
+      "close": "Close",
+      "fieldTitle": "Title",
+      "fieldPrompt": "Instruction",
+      "promptHint": "Variables in double curly braces, e.g. {{example}}.",
+      "fieldScope": "Applies to",
+      "scope": {
+        "meeting": "One meeting",
+        "global": "Many meetings",
+        "any": "Both"
+      },
+      "liveOk": "Also offer during recording",
+      "variables": "Variables",
+      "addVariable": "Add variable",
+      "removeVariable": "Remove variable",
+      "varName": "Name",
+      "varLabel": "Label",
+      "varKind": "Kind",
+      "varRequired": "Required",
+      "kind": {
+        "text": "Text",
+        "person": "Person",
+        "folder": "Folder",
+        "date_from": "Date from",
+        "date_to": "Date until",
+        "meeting": "Meeting"
+      },
+      "errors": {
+        "invalid": "The recipe is invalid ({{reason}}).",
+        "readonly": "Built-in recipes cannot be changed.",
+        "not_found": "The recipe no longer exists.",
+        "generic": "Saving failed: {{error}}"
+      }
+    },
+    "langChip": {
+      "chipLabel": "Language of the meeting: {{name}}. Open to change.",
+      "chipUnknown": "Language unknown. Open to set it.",
+      "unknownShort": "Language?",
+      "title": "Language of the meeting",
+      "body": "The language decides which model transcribes it best. The transcript only changes with a re-transcription; the previous version is kept.",
+      "select": "Language",
+      "source": {
+        "probe": "Detected: the model's language detection on an audio sample",
+        "text": "Detected: estimated from the text",
+        "user": "Chosen by you",
+        "setting": "Taken from the “Language” setting",
+        "none": "No origin stored (older meeting)"
+      },
+      "model": "Model: {{model}}",
+      "forcedHint": "The setting was {{forced}}, but the text is {{language}}. The language of the text is shown.",
+      "mismatchHint": "The text reads like {{language}}, but {{chosen}} is chosen. The choice stays until you change it.",
+      "notCovered": "The model {{model}} does not cover {{language}}.",
+      "suggestInstalled": "Better suited: {{model}} (installed).",
+      "suggestMissing": "Better suited: {{model}} (not installed yet, download it under Models).",
+      "save": "Save language",
+      "saveRetranscribe": "Save and re-transcribe",
+      "translate": "Translate to …",
+      "cancel": "Cancel",
+      "close": "Close",
+      "saved": "Language set to {{language}}."
+    },
+    "translate": {
+      "title": "Translate to …",
+      "body": "The local model translates the transcript sentence by sentence. Timestamps and speakers stay, the original stays unchanged and can be chosen at any time.",
+      "source": "Translate from version",
+      "target": "Target language",
+      "hint": "Numbers, proper names and the sentence count are checked per sentence; deviations are flagged, never silently discarded. Progress shows in the control column, stopping creates no version.",
+      "start": "Translate",
+      "cancel": "Cancel",
+      "close": "Close",
+      "done": "Version v{{number}} ({{language}}) is ready.",
+      "compare": "Compare",
+      "noMerge": "An original and its translation cannot be merged.",
+      "allChecked": "All sentences passed the check for numbers, names and sentence count.",
+      "flaggedSummary_one": "{{count}} sentence is flagged: please check.",
+      "flaggedSummary_other": "{{count}} sentences are flagged: please check.",
+      "onlyFlagged": "Show flagged sentences only",
+      "region": "Original and translation, sentence by sentence",
+      "original": "Original {{language}}",
+      "translation": "Translation {{language}}",
+      "reasons": {
+        "numbers": "number differs",
+        "names": "name missing",
+        "sentences": "sentence count differs",
+        "empty": "empty",
+        "length": "unusual length",
+        "not_translated": "not translated"
+      }
+    },
+    "basis": {
+      "variant": "Basis (version of the transcript)",
+      "outputLanguage": "Language of the document",
+      "sameAsBasis": "Same as the basis",
+      "hint": "The choice is shown in the header of the minutes and in the info dialog. The default is the active version and the app language or your last choice.",
+      "original": "Original",
+      "translation": "Translation",
+      "withLanguage": "{{variant}} ({{language}})",
+      "lineMinutes": "Basis: {{basis}} · Minutes in {{language}}",
+      "lineMinutesSame": "Basis: {{basis}} · Minutes in the language of the basis",
+      "lineNotes": "Basis: {{basis}} · AI notes in {{language}}",
+      "lineNotesSame": "Basis: {{basis}} · AI notes in the language of the basis"
+    },
+    "variants": {
+      "compareTab": "Compare",
+      "chip": "Version v{{number}} · {{kind}}",
+      "chipLabel": "Choose transcript version",
+      "menuLabel": "Versions",
+      "itemLabel": "v{{number}} · {{kind}} · {{count}} segments",
+      "itemActive": "{{label}} (active)",
+      "itemLabelFlagged": "{{label}} · {{flagged}} flagged",
+      "compare": "Compare",
+      "activated": "Version v{{number}} is now active.",
+      "kinds": {
+        "subtitles_manual": "Subtitles (manual)",
+        "subtitles_auto": "Subtitles (automatic)",
+        "stt": "Own transcription",
+        "merged": "Merged",
+        "retranscribed": "Re-transcribed",
+        "translation": "Translation"
+      },
+      "errors": {
+        "variant_busy": "The meeting is being processed. Please wait until it is done.",
+        "variant_not_found": "That version no longer exists.",
+        "variant_empty": "The version contains no text.",
+        "variant_no_rerun": "No re-transcription is running.",
+        "variant_store_failed": "The version could not be saved. {{detail}}",
+        "merge_same_variant": "Please choose two different versions.",
+        "merge_empty": "One of the versions contains no text.",
+        "merge_llm_failed": "The language model did not answer. {{detail}}",
+        "merge_rejected": "The merge was discarded: the model invented text or broke the format. No new version is created.",
+        "merge_timeout": "The merge took too long.",
+        "translate_empty": "There is no text to translate.",
+        "translate_same_language": "The target language is the language of the version. Please pick another target language.",
+        "translate_cancelled": "The translation was stopped. No version was created.",
+        "translate_llm_failed": "The language model did not answer. No version was created. {{detail}}",
+        "translate_rejected": "More than half of the sections were unusable. No version was created.",
+        "translate_timeout": "The translation took too long.",
+        "no_provider": "No language model is set up.",
+        "no_model": "No language model is selected."
+      },
+      "diff": {
+        "title": "Compare versions",
+        "baseLabel": "Version A (base)",
+        "otherLabel": "Version B",
+        "chooseA": "Use version A",
+        "chooseB": "Use version B",
+        "merge": "Merge",
+        "merging": "Merging …",
+        "mergeHint": "The local model improves the text of A using B and creates a third version. Invented text is discarded.",
+        "legendDel": "only in A (deleted)",
+        "legendIns": "only in B (inserted)",
+        "same": "The two versions are identical.",
+        "loading": "Loading …",
+        "need": "Comparing needs two versions.",
+        "merged": "Third version v{{number}} created. It is not active yet.",
+        "region": "Differences per line"
+      },
+      "youtube": {
+        "needTool": "For subtitles and transcription, install yt-dlp yourself and switch on “private” in the settings.",
+        "subtitles": "Load subtitles",
+        "subtitlesBusy": "Looking for subtitles …",
+        "pick": "Subtitle language",
+        "load": "Load",
+        "noSubtitles": "This video has no subtitles. Only your own transcription remains.",
+        "own": "Own transcription",
+        "ownBusy": "Transcribing …",
+        "loaded": "Subtitles “{{name}}” were added as a version.",
+        "ownDone": "The own transcription is done.",
+        "trackManual": "{{name}} (uploaded)",
+        "trackAuto": "{{name}} (automatic)",
+        "tools": "Subtitles and transcription"
+      }
+    },
+    "slides": {
+      "tab": "Slides",
+      "summary_one": "{{count}} slide",
+      "summary_other": "{{count}} slides",
+      "showHidden": "Show hidden ({{count}})",
+      "allHidden": "All slides are hidden.",
+      "alt": "Slide {{number}}",
+      "numberTime": "Slide {{number}} · {{time}}",
+      "mark": "Slide {{number}}",
+      "playFrom": "Play from {{time}}",
+      "open": "Open slide in large view",
+      "enlarge": "Large view",
+      "hide": "Hide",
+      "unhide": "Show again",
+      "hiddenNote": "hidden",
+      "viewerTitle": "Slide {{number}} of {{total}}",
+      "close": "Close",
+      "previous": "Previous",
+      "next": "Next",
+      "visibleAt": "Visible: {{ranges}}",
+      "text": "Slide text",
+      "detect": "Detect slides",
+      "detectHint": "Finds the slides in the video and stores them as preview images.",
+      "detectBusy": "This meeting is already being processed.",
+      "done_one": "{{count}} slide detected.",
+      "done_other": "{{count}} slides detected.",
+      "stopped_one": "Slide detection stopped. {{count}} slide is kept.",
+      "stopped_other": "Slide detection stopped. {{count}} slides are kept.",
+      "importOption": "Detect slides",
+      "importOptionHint": "For videos, the slides are looked for after the import. This runs in the background.",
+      "errors": {
+        "recordingActive": "A recording is running. The slides can be detected afterwards.",
+        "notFinished": "The meeting is still being processed. The slides can be detected afterwards.",
+        "noVideo": "This meeting has no video file.",
+        "videoMissing": "The video file was not found.",
+        "ffmpegMissing": "Slide detection needs ffmpeg, which was not found.",
+        "ffmpegFailed": "The video could not be read.",
+        "diskFull": "There is not enough disk space for the slide images.",
+        "tooLong": "The video is too long for slide detection.",
+        "failed": "Slide detection failed.",
+        "slideNotFound": "This slide no longer exists."
+      }
+    },
+    "provenance": {
+      "menu": "Origin",
+      "menuLabel": "Actions",
+      "title": "Origin",
+      "model": "Model",
+      "tokens": "Tokens",
+      "tokensValue": "{{input}} in · {{output}} out",
+      "duration": "Duration",
+      "time": "Time",
+      "sources": "Sources",
+      "openSlide": "Show slide",
+      "confidence": "Confidence",
+      "trigger": "Trigger",
+      "operation": "Operation",
+      "origin": "Record",
+      "originRecorded": "recorded when it was created",
+      "originDerived": "reconstructed from older data",
+      "empty": "There is no origin information for this content.",
+      "unknown": "unknown",
+      "local": "local",
+      "remote": "external",
+      "loading": "Loading …",
+      "failed": "The origin could not be read.",
+      "close": "Close",
+      "actor": {
+        "user": "User",
+        "auto": "Automatic",
+        "workflow": "Workflow",
+        "agent_external": "External agent",
+        "agent_local": "Local agent"
+      }
     }
   },
   "micSelector": {
@@ -1741,9 +3428,11 @@
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",
+    "ramApp": "RAM {{used}} / {{total}} GB (App {{app}})",
     "gpu": "GPU {{used}} / {{total}} GB",
+    "gpuApp": "GPU {{used}} / {{total}} GB (App {{app}})",
     "gpuShared": "GPU (shared) {{used}} / {{total}} GB",
-    "hint": "RAM: used / total. GPU: in use / driver budget — not “free VRAM”."
+    "hint": "RAM: used / total. GPU: in use / driver budget — not “free VRAM”. App = Local Voice AI incl. model servers and web view."
   },
   "help": {
     "title": "Help",
@@ -1781,5 +3470,1359 @@
   },
   "guard": {
     "memoryLow": "Memory almost full: the read-aloud and language-model servers were stopped to keep the computer responsive."
+  },
+  "automations": {
+    "agent": {
+      "operation": {
+        "agent_route": "Tool chosen (local agent)",
+        "agent_extract": "Tasks, deadlines and decisions extracted"
+      },
+      "kinds": {
+        "todos": "To-dos",
+        "deadlines": "Deadlines",
+        "decisions": "Decisions"
+      },
+      "sendsMail": "sends to others",
+      "runsAction": "Action: {{action}}",
+      "toolFields": "Fields the model fills in: {{fields}}",
+      "dateKind": "date phrase",
+      "unknownTool": "This tool does not exist (any more). Please deselect it.",
+      "modelDefault": "Default router",
+      "modelNotLoaded": "{{id}} (not downloaded)",
+      "previewTitle": "Try it with a sample text",
+      "previewHintRoute": "The model now decides for this step without anything happening: no notification, no mail, no approval, no provenance entry. Without a sample text the “Data for the choice” field applies.",
+      "previewHintExtract": "The model pulls to-dos, deadlines and decisions out of the sample text (one line per sentence) without anything happening. In a run the step reads the meeting transcript.",
+      "sample": "Sample text",
+      "samplePlaceholder": "For example: Ms Berg sends the offer to the customer by the day after tomorrow.",
+      "try": "Try it with a sample text",
+      "trying": "The model is deciding …",
+      "noEffect": "No effect (dry run)",
+      "busy": "The slot for heavy steps is busy ({{reason}}). Please try again in about {{seconds}} s.",
+      "previewUnreadable": "The answer of the preview could not be read.",
+      "chosen": "Chosen tool: {{tool}}",
+      "recipients": "Recipients (formed by the program): {{list}}",
+      "passed": "Reason: the policy checked the choice (tool list, recipients, limit, fields) and let it pass. It is only carried out if a following step with a matching condition picks it up.",
+      "noAction": "No action chosen",
+      "noReason": "The model gave no reason.",
+      "signals": "Detected instruction to the AI in the text: {{list}}",
+      "noItems": "Nothing found.",
+      "counts": "{{todos}} to-dos, {{deadlines}} deadlines, {{decisions}} decisions",
+      "tokens": "Tokens: {{input}} in, {{output}} out",
+      "confidence": "Confidence {{value}} %",
+      "origin": "Provenance",
+      "segment": "Segment {{n}}",
+      "openSegment": "Open the meeting at this place"
+    },
+    "title": "Automations",
+    "loading": "Loading automations …",
+    "loadError": "The automations could not be loaded.",
+    "tabs": {
+      "flows": "Workflows",
+      "runs": "Runs"
+    },
+    "new": "New workflow",
+    "empty": "There are no workflows yet.",
+    "emptyHint": "A workflow runs steps when a trigger fires, e.g. “meeting starts → record → minutes → mail”. Start from a template.",
+    "steps_one": "{{count}} step",
+    "steps_other": "{{count}} steps",
+    "enabled": "On",
+    "disabled": "Off",
+    "enabledLabel": "Turn workflow “{{name}}” on",
+    "lastRun": "Last run:",
+    "noRun": "No run yet",
+    "openRuns_one": "{{count}} run open",
+    "openRuns_other": "{{count}} runs open",
+    "mode": {
+      "dry": "Dry run",
+      "armed": "Armed",
+      "dryHint": "In dry-run mode every run only plans: nothing is written, sent or recorded. Arm the workflow once the plan looks right.",
+      "arm": "Arm",
+      "disarm": "Back to dry run",
+      "armAsk": "Really arm “{{name}}”? Its steps will then take real effect. Mails to attendees and recordings still ask first where the right is set to “ask”.",
+      "armedNow": "“{{name}}” is armed.",
+      "disarmedNow": "“{{name}}” is back in dry-run mode."
+    },
+    "edit": "Edit",
+    "planShow": "Show dry run",
+    "exportJson": "Export",
+    "plan": {
+      "title": "Dry run: {{name}}",
+      "description": "What would the workflow do, and would it be allowed to? Nothing is written, sent or recorded.",
+      "failed": "The dry run could not be calculated.",
+      "loading": "Calculating the plan …",
+      "invalid": "The definition is invalid, so there is no plan:",
+      "summary": "{{steps}} steps: {{allowed}} allowed, {{ask}} ask first, {{denied}} denied, {{invalid}} invalid.",
+      "runsThrough": "The workflow would run through without intervention.",
+      "needsWork": "It still needs rights or corrections.",
+      "sample": "The trigger data is sample data.",
+      "varsWithout": "Variables without a default (must be given at start): {{names}}",
+      "condition": "Condition {{expr}}: {{result}}",
+      "heavy": "Heavy work: {{what}} (about {{ram}} GB of memory), runs one at a time.",
+      "unresolved": "Only known during the run: {{refs}}",
+      "params": "Parameters",
+      "status": {
+        "planned": "planned",
+        "skipped": "skipped",
+        "invalid": "invalid"
+      },
+      "cond": {
+        "true": "true",
+        "false": "false, step is dropped",
+        "unknown": "depends on an earlier step",
+        "error": "error"
+      },
+      "perm": {
+        "allowed": "allowed",
+        "needs_approval": "asks first",
+        "denied": "denied",
+        "invalid": "invalid",
+        "not_required": "no right needed"
+      }
+    },
+    "probe": "Start dry run",
+    "startNow": "Start now",
+    "startNowDisabled": "Only for a workflow that is on and armed.",
+    "runsOf": "Runs",
+    "export": {
+      "title": "Export “{{name}}”",
+      "description": "The definition as JSON. It contains no credentials, only identifiers from the integrations register.",
+      "copy": "Copy",
+      "copied": "Copied",
+      "copyFailed": "Copying failed. Select the text by hand.",
+      "toFile": "Save as file …",
+      "saved": "Saved: {{path}}",
+      "text": "Definition as JSON"
+    },
+    "delete": "Delete",
+    "deleteAsk": "Delete “{{name}}” permanently?",
+    "deleted": "“{{name}}” was deleted.",
+    "cancel": "Cancel",
+    "close": "Close",
+    "back": "Back",
+    "errors": {
+      "generic": "That did not work.",
+      "templateBroken": "The template could not be read.",
+      "unreadable": "The definition of this workflow could not be read."
+    },
+    "status": {
+      "cloudTitle_one": "{{count}} file is only in the cloud and will not be processed",
+      "cloudTitle_other": "{{count}} files are only in the cloud and will not be processed",
+      "cloudFile": "{{file}} (workflow “{{workflow}}”)",
+      "cloudHint": "OneDrive placeholders are never downloaded. Set the file to “always keep on this device” and it will be picked up.",
+      "channelTitle_one": "{{count}} YouTube channel is not responding",
+      "channelTitle_other": "{{count}} YouTube channels are not responding",
+      "channelLine": "{{channel}} (workflow “{{workflow}}”): {{failures}} failures in a row",
+      "lastOk": "last reachable {{time}}",
+      "channelHint": "New videos are caught up as soon as the channel responds again. Nothing is lost."
+    },
+    "templates": {
+      "title": "New workflow",
+      "description": "Pick a template. You adjust it in the next step (folders, calendars, accounts); it is only created when you press “Save”.",
+      "use": "Use this template",
+      "blank": "Empty workflow",
+      "blankHint": "You choose the trigger and the steps yourself.",
+      "useBlank": "Start empty",
+      "names": {
+        "vorlage-besprechung": "Meeting: record, minutes, mail",
+        "eingangsordner-word": "Inbox folder: transcribe, minutes as Word"
+      }
+    },
+    "import": {
+      "open": "Import JSON",
+      "title": "Import workflow",
+      "description": "Paste the definition (JSON, lva-workflow@1) or read it from a file. The import is created as a new workflow, switched off and in dry-run mode.",
+      "chooseFile": "Choose file …",
+      "text": "Definition (JSON)",
+      "submit": "Import",
+      "invalid_one": "The definition is invalid ({{count}} finding):",
+      "invalid_other": "The definition is invalid ({{count}} findings):",
+      "done": "“{{name}}” was imported (off, in dry-run mode)."
+    },
+    "editor": {
+      "titleNew": "New workflow",
+      "titleEdit": "Edit workflow",
+      "general": "General",
+      "name": "Name",
+      "description": "Description",
+      "trigger": "Trigger",
+      "triggerType": "What starts the workflow?",
+      "triggerAuto": "Starts by itself as soon as the workflow is on and armed.",
+      "triggerManual": "Starts only on request (here by button, or by an agent).",
+      "provides": "Available in steps: {{fields}}",
+      "variables": "Variables",
+      "steps": "Steps",
+      "noSteps": "No step yet. Add a block below.",
+      "addStep": "Add step",
+      "addStepPlaceholder": "Choose a block …",
+      "stepTitle": "Step {{n}}: {{title}}",
+      "moveUp": "Move step {{n}} up",
+      "moveDown": "Move step {{n}} down",
+      "removeStep": "Remove step {{n}}",
+      "action": "Block",
+      "stepId": "Identifier",
+      "stepIdRule": "Lowercase letters, digits and _, starting with a letter (at most 32 characters).",
+      "stepIdHint": "Later steps refer to this step by the identifier “{{id}}”.",
+      "stepLabel": "Label (optional)",
+      "when": "Condition (optional)",
+      "whenHint": "The step only runs if the condition holds. Empty: always.",
+      "heavy": "needs {{what}} (runs one at a time)",
+      "needsRight": "Right: {{right}}",
+      "errorRules": "Error rule and retries",
+      "onError": "On error",
+      "onErrorFail": "End the run",
+      "onErrorContinue": "Carry on",
+      "maxAttempts": "Attempts (1–10)",
+      "backoff": "Wait in ms",
+      "yes": "Yes",
+      "choose": "Choose …",
+      "chooseIntegration": "Choose an integration …",
+      "unknownIntegration": "{{id}} (not in the register)",
+      "listPlaceholder": "Separate values with commas",
+      "anyPlaceholder": "Text, number or JSON",
+      "fromVariable": "From variable",
+      "fixedValue": "Fixed value",
+      "discardAsk": "There are unsaved changes. Discard them?",
+      "discard": "Discard",
+      "keepEditing": "Keep editing",
+      "issues_one": "{{count}} finding from the check:",
+      "issues_other": "{{count}} findings from the check:",
+      "notSaved_one": "Not saved: {{count}} finding.",
+      "notSaved_other": "Not saved: {{count}} findings.",
+      "save": "Save",
+      "saved": "Saved. A changed workflow stays in dry-run mode until you arm it.",
+      "plan": "Show dry run",
+      "actions": "Actions"
+    },
+    "variables": {
+      "empty": "No variables. Variables make a workflow adjustable, e.g. the name of the minutes template.",
+      "name": "Name",
+      "type": "Type",
+      "types": {
+        "string": "Text",
+        "number": "Number",
+        "bool": "Yes/No",
+        "list": "List"
+      },
+      "default": "Default",
+      "description": "Description",
+      "remove": "Remove variable {{name}}",
+      "add": "Add variable"
+    },
+    "fields": {
+      "task": {
+        "label": "Task",
+        "hint": "What the model should decide, in one sentence. Fixed text, never from data."
+      },
+      "context": {
+        "label": "Data for the choice",
+        "hint": "For example the result of an earlier step. The model treats it as data, never as an instruction."
+      },
+      "tools": {
+        "label": "Approved tools",
+        "hint": "The model may only choose from this list (at most {{max}}). Only what a following step with a matching condition does is carried out, with its own right and approval."
+      },
+      "recipients": {
+        "label": "Recipient rule",
+        "hint": "The program forms the recipients from this rule, never the model."
+      },
+      "max_actions": {
+        "label": "Most actions per run",
+        "hint": "1 to 10; counts across all “Choose a tool” steps of the run."
+      },
+      "model": {
+        "label": "Model",
+        "hint": "Only a downloaded local model; the default router if empty."
+      },
+      "reference_date": {
+        "label": "Reference date",
+        "hint": "For “tomorrow”, “Friday” and so on (YYYY-MM-DD); empty: today."
+      },
+      "kinds": {
+        "label": "What to pull out",
+        "hint": "No selection: to-dos, deadlines and decisions."
+      },
+      "via": {
+        "label": "Integration",
+        "hint": "The account or folder the step runs through."
+      },
+      "stop": {
+        "label": "Stop recording"
+      },
+      "max_minutes": {
+        "label": "At most (minutes)"
+      },
+      "title": {
+        "label": "Title"
+      },
+      "path": {
+        "label": "Path"
+      },
+      "project": {
+        "label": "Project (identifier)"
+      },
+      "template": {
+        "label": "Template",
+        "hint": "Name or identifier; empty: default, auto: by content."
+      },
+      "variant_id": {
+        "label": "Transcript version"
+      },
+      "output_language": {
+        "label": "Document language"
+      },
+      "source": {
+        "label": "Source",
+        "hint": "minutes, notes, transcript or a text."
+      },
+      "style": {
+        "label": "Style",
+        "hint": "kurz, mittel, lang or management."
+      },
+      "format": {
+        "label": "Format"
+      },
+      "target": {
+        "label": "Target folder"
+      },
+      "name": {
+        "label": "File name"
+      },
+      "subfolder": {
+        "label": "Subfolder"
+      },
+      "content": {
+        "label": "Content"
+      },
+      "to": {
+        "label": "Recipients",
+        "hint": "Recipients are never built from data, only from this rule."
+      },
+      "list": {
+        "label": "Fixed list",
+        "hint": "Separate addresses with commas."
+      },
+      "subject": {
+        "label": "Subject"
+      },
+      "body": {
+        "label": "Text"
+      },
+      "attach": {
+        "label": "Attachments",
+        "hint": "List of paths, e.g. the file from an earlier step."
+      },
+      "draft": {
+        "label": "Draft only"
+      },
+      "event": {
+        "label": "Event"
+      },
+      "text": {
+        "label": "Text"
+      },
+      "mode": {
+        "label": "Write mode"
+      },
+      "section": {
+        "label": "Section"
+      },
+      "query": {
+        "label": "Search term"
+      },
+      "limit": {
+        "label": "Maximum hits"
+      },
+      "profile": {
+        "label": "Topic profile"
+      },
+      "folder": {
+        "label": "Subfolder"
+      },
+      "video_id": {
+        "label": "Video identifier"
+      },
+      "channel": {
+        "label": "Channel"
+      },
+      "url": {
+        "label": "Address"
+      },
+      "video": {
+        "label": "Video"
+      },
+      "voice": {
+        "label": "Voice"
+      },
+      "minutes": {
+        "label": "Minutes"
+      },
+      "every": {
+        "label": "How often"
+      },
+      "at": {
+        "label": "Time",
+        "hint": "e.g. 08:00"
+      },
+      "weekdays": {
+        "label": "Weekdays",
+        "hint": "Only for “Weekly”, as a JSON list."
+      },
+      "integration": {
+        "label": "Source (integration)"
+      },
+      "lead_min": {
+        "label": "Minutes before start"
+      },
+      "only_meetings": {
+        "label": "Meetings only"
+      },
+      "title_contains": {
+        "label": "Title contains"
+      },
+      "min_attendees": {
+        "label": "At least attendees"
+      },
+      "stage": {
+        "label": "Stage"
+      },
+      "extensions": {
+        "label": "File extensions",
+        "hint": "Separate with commas, e.g. wav, mp3."
+      },
+      "stable_seconds": {
+        "label": "Seconds unchanged",
+        "hint": "How long the file must stay unchanged."
+      },
+      "channel_id": {
+        "label": "Channel identifier",
+        "hint": "UC… with 24 characters (from the channel address)."
+      },
+      "poll_minutes": {
+        "label": "Check every (minutes)"
+      },
+      "backfill": {
+        "label": "Catch up on first check",
+        "hint": "Number of newest videos; 0: only future ones."
+      },
+      "key": {
+        "label": "Note key",
+        "hint": "One identifier per note, e.g. video-<ID>: the same key never produces a second note."
+      },
+      "date": {
+        "label": "Date",
+        "hint": "YYYY-MM-DD; default: publication date of the video."
+      },
+      "entry": {
+        "label": "Entry (collection note)",
+        "hint": "E.g. the video identifier: the same entry is replaced, a new one is added on top."
+      },
+      "source_title": {
+        "label": "Source title"
+      },
+      "source_url": {
+        "label": "Source link"
+      },
+      "origin": {
+        "label": "Origin",
+        "hint": "Workflow, run and model: one sentence at the end of the entry."
+      },
+      "tags": {
+        "label": "Tags"
+      },
+      "meta": {
+        "label": "Further frontmatter fields",
+        "hint": "Object of names and values, e.g. video_id or relevanz."
+      },
+      "data_class": {
+        "label": "Data class"
+      },
+      "auto": {
+        "label": "Add without approval",
+        "hint": "Also add to an existing note without approval when the right is “allowed”. Without this, every change asks."
+      },
+      "vault": {
+        "label": "Vault (also search)",
+        "hint": "Also finds notes the knowledge base index does not know yet."
+      },
+      "threshold": {
+        "label": "Threshold for “relevant”",
+        "hint": "1 to 10; default 6."
+      },
+      "max_claims": {
+        "label": "Maximum claims"
+      },
+      "claims": {
+        "label": "Claims",
+        "hint": "Result of “Compare with the knowledge base” (steps.<id>.claims)."
+      },
+      "score": {
+        "label": "Relevance (number)"
+      },
+      "reason": {
+        "label": "Reason"
+      },
+      "published": {
+        "label": "Published"
+      }
+    },
+    "choices": {
+      "recipients": {
+        "me": "Only me",
+        "participants": "Participants",
+        "all": "Everyone",
+        "internal": "Internal participants only",
+        "list": "Fixed list"
+      },
+      "every": {
+        "daily": "Daily",
+        "weekly": "Weekly"
+      },
+      "stage": {
+        "recording": "Recording ended",
+        "transcript": "Transcript ready",
+        "notes": "AI notes ready",
+        "minutes": "Minutes ready"
+      },
+      "stop": {
+        "event_end": "At the end of the event",
+        "manual": "By hand",
+        "duration": "After a fixed time"
+      },
+      "format": {
+        "docx": "Word (.docx)",
+        "pdf": "PDF",
+        "md": "Markdown"
+      },
+      "to": {
+        "me": "Only me",
+        "participants": "Attendees",
+        "all": "Everyone",
+        "list": "Fixed list"
+      },
+      "content": {
+        "minutes": "Minutes",
+        "notes": "AI notes",
+        "all": "Everything"
+      },
+      "mode": {
+        "create": "Create new",
+        "append": "Append"
+      }
+    },
+    "triggers": {
+      "manual": "Start by hand",
+      "agent": "Start by an agent",
+      "schedule": "Schedule",
+      "calendar": {
+        "event_starting": "Event starts",
+        "event_ended": "Event ends"
+      },
+      "meeting": {
+        "finished": "Meeting finished"
+      },
+      "folder": {
+        "file_added": "File in folder"
+      },
+      "youtube": {
+        "channel_new_video": "New video in channel"
+      }
+    },
+    "actions": {
+      "recording": {
+        "start": "Start recording",
+        "stop": "Stop recording"
+      },
+      "meeting": {
+        "import": "Import and transcribe file",
+        "notes": "Create AI notes",
+        "minutes": "Create minutes"
+      },
+      "text": {
+        "summarize": "Summarize"
+      },
+      "export": {
+        "document": "Save document"
+      },
+      "mail": {
+        "send": "Send mail"
+      },
+      "calendar": {
+        "note": "Write note into the event"
+      },
+      "obsidian": {
+        "note": "Write Obsidian note"
+      },
+      "knowledge": {
+        "search": "Search knowledge",
+        "rate": "Rate relevance",
+        "reconcile": "Reconcile with the knowledge base"
+      },
+      "channel": {
+        "report": "Channel management summary"
+      },
+      "youtube": {
+        "add_source": "Add YouTube source",
+        "transcript": "Fetch YouTube transcript"
+      },
+      "notify": {
+        "local": "Windows notification"
+      },
+      "tts": {
+        "render": "Read aloud"
+      },
+      "webhook": {
+        "post": "Send webhook"
+      },
+      "wait": "Wait"
+    },
+    "effectKinds": {
+      "pure": "changes nothing",
+      "idempotent": "repeatable",
+      "external": "acts on the outside"
+    },
+    "runs": {
+      "forWorkflow": "Runs of “{{name}}”",
+      "all": "All runs, newest first",
+      "showAll": "Show all",
+      "openOnly": "Open only",
+      "empty": "No runs yet. A dry run shows what a run looks like.",
+      "dry": "Dry run",
+      "open": "Open",
+      "loading": "Loading the run …",
+      "origin": "Started by",
+      "created": "Queued",
+      "started": "Started",
+      "ended": "Ended",
+      "cancelRequested": "The cancellation is noted; the run ends at the next step change.",
+      "cancel": "Cancel",
+      "cancelled": "The run was cancelled.",
+      "cancelPending": "The cancellation is noted; the run ends at the next step change.",
+      "retry": "Retry",
+      "retryAccept": "It is unclear whether the step already took effect (e.g. a mail already went out). I accept that it may take effect twice.",
+      "steps": "Steps",
+      "attempt": "Attempt {{n}}",
+      "wakeAt": "Continues at {{time}}",
+      "data": "Step data",
+      "input": "Input",
+      "output": "Result",
+      "provenance": "Origin of the results",
+      "provenanceDry": "A dry run produces nothing, so there is no origin.",
+      "provenanceInline": "The provenance of the AI steps is shown with the steps above.",
+      "provenanceNone": "This run has not (yet) produced any content with an origin.",
+      "noModel": "no model",
+      "local": "local",
+      "remote": "remote",
+      "sources_one": "{{count}} source",
+      "sources_other": "{{count}} sources",
+      "triggerData": "Trigger data",
+      "approvalWaiting": "This run is waiting for your approval.",
+      "approvalGone": "The approval is no longer open; the run continues or ends shortly.",
+      "approvalOpen": "Review approval"
+    },
+    "runState": {
+      "queued": "waiting",
+      "running": "running",
+      "awaiting_approval": "awaiting approval",
+      "done": "done",
+      "failed": "failed",
+      "cancelled": "cancelled"
+    },
+    "stepState": {
+      "running": "running",
+      "done": "done",
+      "failed": "failed",
+      "retrying": "retrying",
+      "denied": "denied",
+      "skipped": "skipped",
+      "planned": "planned",
+      "awaiting_approval": "awaiting approval",
+      "waiting": "waiting",
+      "uncertain": "effect unclear",
+      "interrupted": "interrupted"
+    },
+    "origin": {
+      "trigger": "Trigger",
+      "manual": "By hand",
+      "agent": "Agent"
+    }
+  },
+  "integrations": {
+    "m365": {
+      "dialog": {
+        "title": "Set up a Microsoft 365 account",
+        "description": "Send mail, save files to OneDrive and attach notes to calendar events, through your own app registration in Microsoft Entra. You sign in in the browser; the app only asks for the permissions of the capabilities you switch on.",
+        "name": "Name",
+        "defaultName": "Microsoft 365",
+        "clientId": "Application (client) ID",
+        "clientIdHint": "The application ID of your app registration. Leave empty to reuse the client ID of the Microsoft 365 calendar. Guide: docs/INTEGRATIONEN-M365.md.",
+        "tenant": "Directory (tenant)",
+        "tenantHint": "Empty means “common” (work, school and personal accounts). “consumers” for personal accounts only.",
+        "capabilities": "Capabilities",
+        "capabilitiesHint": "Signing in only asks for the permissions of the capabilities that are switched on. A capability switched on later needs consent again.",
+        "filesMode": "OneDrive access",
+        "filesFull": "Whole OneDrive (Files.ReadWrite): for work, school and personal accounts",
+        "filesApp": "App folder only (Files.ReadWrite.AppFolder): personal accounts only",
+        "filesFolder": "Folder in OneDrive",
+        "create": "Create"
+      },
+      "caps": {
+        "mail_send": "Send follow-up mails and reports as mail from your mailbox.",
+        "files_write": "Put minutes and files into a OneDrive folder, large files in chunks.",
+        "calendar_write": "Attach a note to the Outlook event of a meeting; the invitation stays unchanged."
+      },
+      "panel": {
+        "title": "Microsoft 365 account",
+        "loading": "Loading …",
+        "states": {
+          "not_configured": "Not set up: the client ID is missing.",
+          "no_capabilities": "No capability switched on.",
+          "needs_sign_in": "Sign-in needed.",
+          "needs_consent": "Extend consent: a capability that is switched on needs new permissions.",
+          "ready": "Signed in and ready."
+        },
+        "account": "Account: {{account}}",
+        "missing": "Consent is missing for: {{scopes}}",
+        "scopes": "Requested permissions",
+        "scopesHint": "Only those of the capabilities that are switched on, plus the sign-in itself (offline_access) and your profile (User.Read).",
+        "save": "Save",
+        "saved": "Saved.",
+        "signIn": "Sign in with Microsoft",
+        "signInAgain": "Sign in again",
+        "extend": "Extend consent",
+        "waiting": "Waiting for the sign-in in the browser …",
+        "signOut": "Sign out",
+        "signedIn": "Signed in.",
+        "signedOut": "Signed out. The token is deleted.",
+        "checks": "Try it out",
+        "testOk": "Connected as {{account}}.",
+        "testMail": "Send a test mail to me",
+        "testMailOk": "Test mail sent. Check your inbox.",
+        "testFile": "Put a test file in OneDrive",
+        "testFileOk": "The file “{{name}}” is in OneDrive, in the folder “{{folder}}”."
+      },
+      "gate": {
+        "grant_off": "the right is set to “off”",
+        "integration_disabled": "the integration is switched off",
+        "capability_not_enabled": "the capability is not switched on for this account",
+        "capability_not_offered": "the account does not offer the capability",
+        "direction_blocks": "the direction of the account does not allow it",
+        "pending": "it needs an approval"
+      },
+      "errors": {
+        "m365_not_configured": "No client ID is entered. Create an app registration and enter its application ID.",
+        "m365_no_capability": "No capability is switched on. Switch on at least one before signing in.",
+        "m365_capability_off": "This capability is not switched on for this account.",
+        "m365_needs_sign_in": "The sign-in has expired or was revoked. Please sign in again under Integrations.",
+        "m365_needs_consent": "Permissions are still missing for the capabilities that are switched on ({{detail}}). Please sign in again under Integrations and consent.",
+        "m365_denied": "Microsoft refused access: {{detail}}",
+        "m365_not_found": "Not found: {{detail}}",
+        "m365_storage_full": "The OneDrive storage is full.",
+        "m365_throttled": "Microsoft is throttling requests. Next attempt in {{detail}} min.",
+        "m365_http": "Microsoft Graph answered with an error (HTTP {{detail}}).",
+        "m365_network": "No connection: {{detail}}",
+        "m365_timeout": "Microsoft did not answer in time.",
+        "m365_uncertain": "It is unclear whether the action was carried out ({{detail}}). Please check first (e.g. the Sent folder) before trying again.",
+        "m365_parse": "The answer from Microsoft cannot be read.",
+        "m365_invalid": "{{detail}}",
+        "m365_cancelled": "Cancelled.",
+        "m365_sign_in_timeout": "The sign-in was not completed within 5 minutes.",
+        "m365_browser": "The browser could not be opened: {{detail}}",
+        "m365_listener": "The local sign-in interface could not be started: {{detail}}",
+        "m365_config": "{{detail}}",
+        "m365_store": "Storage error: {{detail}}",
+        "m365_memory_low": "{{detail}}",
+        "m365_gate": "The rights do not allow this: {{detail}}."
+      }
+    },
+    "title": "Integrations",
+    "description": "Connections to calendars, folders and agents, each with a direction and one right per capability.",
+    "add": "Add integration",
+    "back": "Back to the list",
+    "open": "Rights and details",
+    "cancel": "Cancel",
+    "close": "Close",
+    "loadError": "The integrations could not be loaded.",
+    "empty": "No integration set up yet.",
+    "emptyHint": "Use “Add integration” to set up a folder or connect a calendar.",
+    "tabs": {
+      "connections": "Connections",
+      "automations": "Automations",
+      "audit": "Log"
+    },
+    "sections": {
+      "connections": "Set up",
+      "calendars": "Calendars",
+      "calendarsHint": "Calendar sources provide appointments for title suggestions, reminders and “Up next”.",
+      "mcp": "MCP and agents",
+      "mcpHint": "Lets AI clients on this computer read your meetings. Writing access with rights per tool will follow."
+    },
+    "status": {
+      "off": "Off",
+      "pending_one": "{{count}} approval open",
+      "pending_other": "{{count}} approvals open"
+    },
+    "directions": {
+      "read": "Read only",
+      "write": "Write only",
+      "both": "Read and write"
+    },
+    "agentClients": {
+      "intro": "One access per program (Claude Code, Codex, a script), each with its own key. An access may only use the tools you set to “Ask” or “Allowed” for it here – and only as far as the rights matrix above (“External agent”) permits.",
+      "bridge": {
+        "running": "Agent bridge is running",
+        "stopped": "Agent bridge is not running",
+        "pipe": "Pipe: {{name}}",
+        "reason": "Reason: {{error}}",
+        "safe": "Only you can reach it (current Windows user), not over the network."
+      },
+      "create": {
+        "open": "Add access",
+        "name": "Name of the access",
+        "placeholder": "e.g. Claude Code",
+        "submit": "Create"
+      },
+      "token": {
+        "title": "Key for “{{label}}”",
+        "warning": "This key is shown only now. Afterwards it cannot be read again (only a fingerprint is stored). Copy it now.",
+        "use": "Enter it in the program, e.g. as the environment variable LVA_AGENT_TOKEN. You can only get a new key by adding a new access.",
+        "copy": "Copy",
+        "copied": "Copied",
+        "copyFailed": "Copying did not work: select the key and copy it by hand.",
+        "done": "Done, I copied it"
+      },
+      "loadError": "The accesses could not be loaded.",
+      "empty": "No access yet. Add one so a program can sign in.",
+      "client": {
+        "active": "Active",
+        "revoked": "Revoked",
+        "created": "Created {{time}}",
+        "lastUsed": "Last used {{time}}",
+        "neverUsed": "Never used",
+        "revokedAt": "Revoked {{time}}",
+        "revoke": "Revoke",
+        "revokeConfirm": "Revoke “{{label}}”? Its key stops working immediately, even in a running connection.",
+        "revokeYes": "Yes, revoke",
+        "delete": "Remove",
+        "deleteConfirm": "Remove “{{label}}” with its tool rights? The log stays.",
+        "deleteYes": "Yes, remove",
+        "tools": "Tools",
+        "toolsHint": "Everything is off by default. “Ask”: you decide in the app every time. “Allowed”: the tool runs without asking.",
+        "frozen": "The access is revoked: its rights are frozen and can no longer be changed."
+      },
+      "offReason": {
+        "grant_off": "Not in effect yet: the integration's upper limit is “Off”. In the rights matrix above, set “External agent” to “Ask” or “Allowed”.",
+        "tool_off": "Switched off for this access.",
+        "integration_disabled": "Not in effect: the integration is switched off.",
+        "direction_blocks": "Not in effect: the direction of the integration does not allow this.",
+        "capability_not_offered": "Not in effect: this integration does not offer the capability."
+      },
+      "unavailable": "Tools marked “Not available yet” do not exist in this version: the right is prepared, but they cannot be called until later.",
+      "unavailableBadge": "Not available yet",
+      "connect": {
+        "title": "Connect a program (Claude Code, Codex, script)",
+        "intro": "Create an access above, copy its key and put it in place of <TOKEN>. The key belongs only in the environment variable LVA_AGENT_TOKEN, never in a file inside a project.",
+        "claude": "Claude Code",
+        "codex": "Codex",
+        "ctl": "Command line (ctl)",
+        "note": "The app has to be running. You decide below which tools a program may use; a recording never starts without your consent."
+      },
+      "neverAllowShort": "Never “Allowed”: the app shows the consent dialog before every recording (§ 201 StGB).",
+      "tools": {
+        "add_youtube_source": {
+          "title": "Add a YouTube link as a source",
+          "description": "Creates a meeting with the source YouTube for a YouTube link."
+        },
+        "start_recording": {
+          "title": "Start recording",
+          "description": "Asks the app for a recording; the app always shows the consent dialog."
+        },
+        "stop_recording": {
+          "title": "Stop recording",
+          "description": "Ends the running recording (same right as “Start recording”)."
+        },
+        "transcribe_file": {
+          "title": "Transcribe a file",
+          "description": "Transcribes an audio or video file and creates a meeting."
+        },
+        "create_session": {
+          "title": "Create a session",
+          "description": "Creates a session (a folder for recordings)."
+        },
+        "create_meeting": {
+          "title": "Create a meeting",
+          "description": "Creates an empty meeting."
+        },
+        "tts_page_create": {
+          "title": "Create a read-aloud page",
+          "description": "Creates a page in the read-aloud library."
+        },
+        "tts_render_audio": {
+          "title": "Create audio",
+          "description": "Creates an audio file from a read-aloud page."
+        },
+        "list_workflows": {
+          "title": "List automations",
+          "description": "Lists the automation workflows with trigger, switch state and last run."
+        },
+        "run_workflow": {
+          "title": "Start a workflow",
+          "description": "Starts a workflow as a dry run; a real run only if the workflow is armed and the right allows it."
+        },
+        "get_run": {
+          "title": "Read run log",
+          "description": "Reads the log of a run: state, steps, errors (without secrets and trigger data)."
+        }
+      }
+    },
+    "modes": {
+      "off": "Off",
+      "ask": "Ask",
+      "allow": "Allowed"
+    },
+    "callers": {
+      "user": "You",
+      "workflow": "Workflow",
+      "agent_external": "External agent",
+      "agent_local": "Local agent"
+    },
+    "kinds": {
+      "youtube": "YouTube",
+      "ics": "Calendar (ICS)",
+      "graph": "Microsoft 365 calendar",
+      "m365": "Microsoft 365",
+      "smtp": "Mailbox (SMTP)",
+      "folder": "Folder",
+      "obsidian": "Obsidian vault",
+      "wissen": "WAI knowledge base",
+      "agent": "Agent access",
+      "webhook": "Webhook (n8n)"
+    },
+    "calendar": {
+      "rights": "Rights and direction"
+    },
+    "catalog": {
+      "title": "Add integration",
+      "description": "Choose what the app should connect to. Every connection gets a direction and one right per capability; anything that changes something asks first by default, external agents are off.",
+      "soon": "soon",
+      "auto": "automatic",
+      "items": {
+        "calendar_ics": {
+          "name": "Calendar (ICS address)",
+          "description": "Read appointments from Outlook, Google or Nextcloud through a secret ICS address. Read only.",
+          "action": "Connect calendar"
+        },
+        "calendar_graph": {
+          "name": "Microsoft 365 calendar",
+          "description": "Outlook appointments with attendees through your Microsoft sign-in (your own Entra app).",
+          "action": "Sign in with Microsoft"
+        },
+        "folder": {
+          "name": "Folder",
+          "description": "A local or OneDrive-synced folder as a place for minutes and exports.",
+          "action": "Set up folder"
+        },
+        "youtube": {
+          "name": "YouTube",
+          "description": "Bring videos into Recordings by link, watch and transcribe them.",
+          "note": "Sets itself up as soon as you paste the first YouTube link in Recordings."
+        },
+        "mcp": {
+          "name": "MCP and agents",
+          "description": "Lets AI clients such as Claude or Codex on this computer read your meetings.",
+          "action": "Go to the MCP switch"
+        },
+        "m365": {
+          "name": "Microsoft 365 (mail, OneDrive)",
+          "description": "Send mail, save files to OneDrive and attach notes to calendar events, through your own app registration. Each capability can be switched on separately.",
+          "action": "Set up account"
+        },
+        "smtp": {
+          "name": "Mailbox (SMTP)",
+          "description": "Send mail through your own mailbox with an app password (STARTTLS or TLS).",
+          "action": "Set up mailbox"
+        },
+        "obsidian": {
+          "name": "Obsidian vault",
+          "description": "Save meetings as notes with frontmatter in your vault, without duplicates.",
+          "action": "Connect vault"
+        },
+        "wissen": {
+          "name": "WAI knowledge base",
+          "description": "Search the knowledge base (MCP endpoint with an access key).",
+          "action": "Connect knowledge base"
+        },
+        "webhook": {
+          "name": "n8n webhook",
+          "description": "Send data from a workflow to n8n (or another webhook). The address is a secret and is stored encrypted in your Windows account.",
+          "action": "Set up webhook"
+        }
+      }
+    },
+    "folder": {
+      "title": "Set up folder",
+      "description": "A folder on this computer, also one synced by OneDrive.",
+      "name": "Name",
+      "path": "Path",
+      "pathPlaceholder": "C:\\Files\\Reports",
+      "pick": "Choose folder",
+      "create": "Create",
+      "directionHint": "Read: fetch files from the folder. Write: save files there."
+    },
+    "detail": {
+      "connection": "Connection",
+      "managedByCalendar": "Name, switch and removal belong to the card under “Calendars”. Here you set direction and rights.",
+      "name": "Name",
+      "rename": "Rename",
+      "status": "Status",
+      "okAt": "OK, checked {{time}}",
+      "notTested": "Not checked yet",
+      "secret": "Access key",
+      "test": "Test connection",
+      "testing": "Checking …",
+      "direction": "Direction",
+      "directionHint": "What the integration may do before rights apply: read, write or both. A capability the direction does not allow is off.",
+      "rights": "Rights",
+      "rightsHint": "Per capability and caller: off, ask (you decide every time) or allowed. You yourself need no approval in the app.",
+      "resetRights": "Reset to defaults",
+      "clients": "Access",
+      "showAudit": "Show log",
+      "remove": "Remove",
+      "removeConfirm": "Remove “{{label}}” with its rights? The log stays.",
+      "removeYes": "Yes, remove",
+      "switchOn": "Switch on",
+      "switchOff": "Switch off",
+      "settings": "Settings",
+      "editSettings": "Change settings",
+      "settingHost": "Server",
+      "settingFrom": "Sender",
+      "settingLogin": "Login",
+      "webhookNoTest": "A webhook is not tested by sending, because any test would really trigger the flow in n8n. The first run in the log shows whether it arrives.",
+      "settingEndpoint": "Endpoint",
+      "settingTool": "Tool",
+      "settingVault": "Vault",
+      "settingSubfolder": "Subfolder",
+      "settingArea": "Area",
+      "mailTest": "Send test mail to myself",
+      "mailTesting": "Sending …",
+      "mailSent": "Test mail sent to {{address}}.",
+      "mailPending": "A test mail goes to your own sender address.",
+      "searchTitle": "Try a search",
+      "searchPlaceholder": "Search term",
+      "searchButton": "Search",
+      "searching": "Searching …",
+      "searchNone": "No hits.",
+      "searchHits_one": "{{count}} hit",
+      "searchHits_other": "{{count}} hits",
+      "testDetail": "Message: {{detail}}"
+    },
+    "secret": {
+      "present": "stored",
+      "missing": "missing, please set up again",
+      "broken": "unreadable, please set up again"
+    },
+    "test": {
+      "folder_ok": "The folder is reachable.",
+      "folder_path_not_found": "The folder was not found.",
+      "folder_path_not_a_folder": "The path is not a folder.",
+      "folder_unreadable": "The folder cannot be read.",
+      "test_not_available": "There is no test for this kind yet.",
+      "smtp_ok": "Connection and login are fine (no mail was sent).",
+      "smtp_connect_failed": "The mail server cannot be reached.",
+      "smtp_timeout": "The mail server does not respond.",
+      "smtp_tls_failed": "The encrypted connection could not be established.",
+      "smtp_starttls_unsupported": "The server does not offer STARTTLS.",
+      "smtp_auth_failed": "The login was rejected.",
+      "smtp_auth_unsupported": "The server offers no login with a password.",
+      "smtp_password_missing": "The password is missing.",
+      "smtp_password_broken": "The stored password is unreadable.",
+      "smtp_config_invalid": "The settings are incomplete.",
+      "smtp_plain_not_allowed": "Unencrypted is only allowed to this computer.",
+      "smtp_rejected": "The server rejected the request.",
+      "smtp_protocol": "Unexpected answer from the server.",
+      "smtp_message_invalid": "The message is invalid.",
+      "vault_ok": "The vault is reachable and writable.",
+      "vault_path_missing": "No vault folder is set.",
+      "vault_path_relative": "The path is not complete.",
+      "vault_path_not_found": "The vault was not found.",
+      "vault_path_not_a_folder": "The path is not a folder.",
+      "folder_path_escape": "The subfolder is not allowed.",
+      "folder_io": "The vault cannot be written to.",
+      "obsidian_config_invalid": "The vault settings are incomplete.",
+      "obsidian_io": "The vault cannot be written to.",
+      "wissen_ok": "Address, key and search tool are fine.",
+      "wissen_unreachable": "The knowledge base cannot be reached.",
+      "wissen_tls_failed": "The encrypted connection could not be established.",
+      "wissen_timeout": "The knowledge base does not respond.",
+      "wissen_unauthorized": "The access key was rejected.",
+      "wissen_scope_missing": "The key lacks the scope \"wissen:read\".",
+      "wissen_rate_limited": "Too many requests, please wait a moment.",
+      "wissen_endpoint_not_found": "There is no MCP endpoint at this address.",
+      "wissen_server_error": "The knowledge base reports a server error.",
+      "wissen_protocol": "Unexpected answer from the knowledge base.",
+      "wissen_tool_missing": "The search tool does not exist there.",
+      "wissen_tool_error": "The knowledge base reports an error.",
+      "wissen_token_missing": "The access key is missing.",
+      "wissen_token_broken": "The stored key is unreadable.",
+      "wissen_config_invalid": "The settings are incomplete."
+    },
+    "matrix": {
+      "reads": "reads",
+      "writes": "changes things",
+      "neverAllow": "Recording never starts on its own: the app shows the consent dialog before every recording (§ 201 StGB). That is why there is no “Allowed” here.",
+      "effective": "Currently in effect: {{mode}}",
+      "blocked": {
+        "direction_blocks": "The direction of the integration does not allow this: change the direction for the rights to apply.",
+        "integration_disabled": "The integration is switched off: no access while it is off.",
+        "capability_not_enabled": "The capability is not switched on for this account: switch it on in the “Microsoft 365 account” section for the rights to apply."
+      }
+    },
+    "capabilities": {
+      "calendar_read": {
+        "title": "Read calendar",
+        "description": "Read appointments and attendees."
+      },
+      "calendar_write": {
+        "title": "Create appointments",
+        "description": "Create or change appointments."
+      },
+      "mail_send": {
+        "title": "Send mail",
+        "description": "Send e-mail in your name."
+      },
+      "files_read": {
+        "title": "Read files",
+        "description": "Fetch files from the folder."
+      },
+      "files_write": {
+        "title": "Write files",
+        "description": "Save or overwrite files."
+      },
+      "knowledge_search": {
+        "title": "Search knowledge",
+        "description": "Search the knowledge base."
+      },
+      "knowledge_read": {
+        "title": "Read knowledge",
+        "description": "Read pages of the knowledge base."
+      },
+      "vault_write": {
+        "title": "Save note in vault",
+        "description": "Write notes with frontmatter."
+      },
+      "media_fetch": {
+        "title": "Download YouTube file",
+        "description": "Download video or audio with the tool you installed yourself."
+      },
+      "youtube_add": {
+        "title": "Add YouTube link as source",
+        "description": "Turn a link into a meeting."
+      },
+      "meeting_create": {
+        "title": "Create meeting",
+        "description": "Create a new meeting or session."
+      },
+      "recording_start": {
+        "title": "Start recording",
+        "description": "Begin a recording."
+      },
+      "transcribe_file": {
+        "title": "Transcribe file",
+        "description": "Transcribe an audio or video file."
+      },
+      "tts_render": {
+        "title": "Render read-aloud audio",
+        "description": "Render a read-aloud page as an audio file."
+      },
+      "webhook_post": {
+        "title": "Send data to a webhook",
+        "description": "Send data to the webhook address (for example n8n)."
+      },
+      "workflow_read": {
+        "title": "Read automations",
+        "description": "List workflows and read run logs."
+      },
+      "workflow_run": {
+        "title": "Start a workflow",
+        "description": "Start a workflow as a dry run or, if it is armed, for real."
+      }
+    },
+    "approvals": {
+      "banner_one": "{{count}} approval is waiting for you",
+      "banner_other": "{{count}} approvals are waiting for you",
+      "review": "Review",
+      "title": "Approvals",
+      "description": "These actions want to run and ask you first.",
+      "none": "Nothing open any more.",
+      "request": "{{caller}} wants to run “{{action}}”. Target: {{target}}.",
+      "unknown": "unknown",
+      "asked": "Asked {{time}}",
+      "allow": "Allow",
+      "deny": "Deny",
+      "once": "An approval applies to this one action only and expires after an hour.",
+      "errors": {
+        "approval_not_found": "This approval no longer exists.",
+        "approval_expired": "This approval has expired.",
+        "approval_already_decided": "This approval has already been decided.",
+        "consent_required": "Recording will not start without confirmed consent."
+      }
+    },
+    "audit": {
+      "filterIntegration": "Integration",
+      "filterOutcome": "Result",
+      "filterCaller": "Who",
+      "all": "All",
+      "empty": "No entries yet. Every action of a workflow or agent and every change to rights shows up here.",
+      "loadError": "The log could not be loaded.",
+      "noIntegration": "no integration",
+      "default": "default",
+      "outcome": {
+        "ok": "done",
+        "denied": "denied",
+        "error": "error",
+        "pending": "waiting"
+      },
+      "decision": {
+        "approved": "granted",
+        "denied": "denied"
+      },
+      "phase": {
+        "created": "Integration created",
+        "updated": "Integration changed",
+        "deleted": "Integration removed",
+        "grant_changed": "Right changed: {{mode}} for {{caller}}",
+        "approval_decided": "Approval {{decision}}",
+        "approval": "Waiting for your approval",
+        "running": "Running",
+        "done": "Finished"
+      },
+      "reason": {
+        "grant_off": "The right is set to “off”",
+        "direction_blocks": "The direction does not allow this",
+        "integration_disabled": "The integration is switched off",
+        "capability_not_offered": "The integration does not offer this",
+        "tool_off": "The tool is switched off",
+        "unknown_integration": "Unknown integration",
+        "preview_unsafe": "Cannot be shown in full, denied",
+        "too_many_pending": "Too many open approvals",
+        "too_many_pending_caller": "Too many open approvals from this access",
+        "approval_not_found": "Approval not found",
+        "approval_expired": "Approval expired",
+        "approval_mismatch": "Approval does not match the action",
+        "approval_not_granted": "Approval not granted"
+      }
+    },
+    "errors": {
+      "generic": "That did not work.",
+      "folder_path_missing": "Please enter the path of the folder.",
+      "folder_path_relative": "Please enter a full path, for example C:\\Files\\Reports.",
+      "folder_path_not_found": "The folder was not found.",
+      "folder_path_not_a_folder": "The path is not a folder.",
+      "kind_not_available": "This kind cannot be set up yet.",
+      "folder_path_escape": "The subfolder is not allowed: no \"..\", no drive, no special characters.",
+      "folder_config_invalid": "The folder settings are incomplete.",
+      "folder_name_invalid": "The file name is not allowed.",
+      "folder_io": "Writing to the folder is not possible.",
+      "folder_file_too_large": "The file is too large for this target.",
+      "folder_no_free_name": "There are already too many files with this name.",
+      "vault_path_missing": "Please enter the vault folder.",
+      "vault_path_relative": "Please enter a full path, for example C:\\Users\\you\\AI-OS\\vault.",
+      "vault_path_not_found": "The vault was not found.",
+      "vault_path_not_a_folder": "The path is not a folder.",
+      "obsidian_scan_limit": "The vault is too large to check safely whether the note already exists. Nothing was written.",
+      "export_format_unsupported": "This format cannot be filed.",
+      "approval_required": "This needs an approval."
+    },
+    "moved": {
+      "open": "Manage on the “Integrations” page",
+      "calendar": {
+        "title": "Calendar sources",
+        "description": "Connecting calendars, checking their status and removing them now happens on the “Integrations” page."
+      },
+      "mcp": {
+        "title": "Local MCP server",
+        "description": "The switch for the MCP server and the configuration snippet are now on the “Integrations” page."
+      }
+    },
+    "target": {
+      "create": "Create",
+      "save": "Save",
+      "name": "Name",
+      "secretKeep": "Leave empty to keep the stored {{what}}",
+      "pick": "Choose folder",
+      "smtp": {
+        "title": "Set up mailbox (SMTP)",
+        "titleEdit": "Mailbox settings",
+        "description": "For sending through your own mailbox. The password is stored encrypted in your Windows account, never in the database.",
+        "host": "Server",
+        "hostPlaceholder": "smtp.example.com",
+        "port": "Port",
+        "security": "Encryption",
+        "starttls": "STARTTLS (port 587)",
+        "tls": "TLS (port 465)",
+        "username": "User name",
+        "fromAddress": "Sender address",
+        "fromName": "Sender name (optional)",
+        "password": "Password",
+        "passwordWhat": "password",
+        "passwordHint": "Gmail and most providers need an app password, not your sign-in password. Microsoft 365 uses account sign-in instead of SMTP."
+      },
+      "obsidian": {
+        "title": "Connect Obsidian vault",
+        "titleEdit": "Vault settings",
+        "description": "Meetings are written to the vault as Markdown notes with frontmatter; the AI-OS index picks them up on the next rescan.",
+        "path": "Vault folder",
+        "pathPlaceholder": "C:\\Users\\you\\AI-OS\\vault",
+        "subfolder": "Subfolder for new notes",
+        "contextArea": "Context area",
+        "tier": "Write autonomy",
+        "hint": "A note that was already filed is updated when you file it again (ID in the frontmatter), never created twice. Your additions outside the app's block are kept."
+      },
+      "wissen": {
+        "title": "Connect knowledge base",
+        "titleEdit": "Knowledge base settings",
+        "description": "MCP endpoint of the AI-OS. https only; the key is stored encrypted in your Windows account.",
+        "endpoint": "Endpoint address",
+        "endpointPlaceholder": "https://os.example.com/mcp",
+        "tool": "Search tool",
+        "area": "Area (optional)",
+        "token": "Access key",
+        "tokenWhat": "key",
+        "tokenHint": "The key needs the scope \"wissen:read\" (or \"wissen:read:<area>\")."
+      },
+      "webhook": {
+        "title": "Set up webhook",
+        "titleEdit": "Webhook settings",
+        "description": "A workflow sends data to this address by POST, for example to an n8n flow.",
+        "url": "Webhook address",
+        "urlWhat": "address",
+        "urlPlaceholder": "https://n8n.example.com/webhook/…",
+        "urlHint": "The address is a secret, because it often carries the key in its path. It is stored encrypted in your Windows account; only the server is shown later. Only https is allowed, http only for this computer (localhost).",
+        "n8nHint": "In n8n: open the Webhook node, copy the \"Production URL\" and activate the flow. The app never follows redirects."
+      },
+      "folder": {
+        "title": "Folder settings",
+        "path": "Folder",
+        "subfolder": "Subfolder for exports (optional)",
+        "subfolderHint": "Exports land in this subfolder of the root; it is created when needed."
+      }
+    },
+    "areas": {
+      "privat": "Private",
+      "familie": "Family",
+      "beruf": "Work",
+      "wai": "WAI",
+      "schule_uni": "School and university",
+      "finanzen": "Finance",
+      "gesundheit": "Health",
+      "behoerden": "Authorities",
+      "projekte": "Projects",
+      "kunden": "Customers"
+    },
+    "tiers": {
+      "auto": "auto (app may write freely)",
+      "logged": "logged (with log)",
+      "propose": "propose (suggestion for triage)",
+      "untouchable": "untouchable (do not change)"
+    }
   }
 }

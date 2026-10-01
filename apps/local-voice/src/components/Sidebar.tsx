@@ -4,6 +4,7 @@ import {
   Cog,
   History,
   Cpu,
+  Plug,
   Users,
   Volume2,
   House,
@@ -19,6 +20,7 @@ import {
   TtsSettings,
   MeetingsSettings,
 } from "./settings";
+import { IntegrationsPage } from "./integrations/IntegrationsPage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -56,6 +58,13 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.models",
     icon: Cpu,
     component: ModelsSettings,
+  },
+  // A4 (#66): bewusste Ausnahme von "Einstellungen gehoeren in Einstellungen"
+  // (Patrick, 30.09.): Verbindungen mit Richtung und Rechten brauchen eine Seite.
+  integrations: {
+    labelKey: "sidebar.integrations",
+    icon: Plug,
+    component: IntegrationsPage,
   },
   tts: {
     labelKey: "sidebar.tts",
@@ -155,7 +164,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           aria-expanded={moreOpen}
           aria-controls="workspace-more"
           data-active={
-            activeSection === "models" || activeSection === "settings"
+            activeSection === "models" ||
+            activeSection === "integrations" ||
+            activeSection === "settings"
           }
           onClick={() => setMoreOpen(!moreOpen)}
         >
@@ -167,7 +178,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className="workspace-nav__utilities"
           data-open={moreOpen}
         >
-          {(["models", "settings"] as const).map(item)}
+          {(["models", "integrations", "settings"] as const).map(item)}
         </div>
         {/* Der Schalter sitzt ganz unten, als letzter Eintrag: oben wuerde er
             die Bereiche eine Zeile nach unten druecken, und genau dort soll

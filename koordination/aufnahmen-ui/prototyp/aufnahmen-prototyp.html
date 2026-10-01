@@ -1,0 +1,1030 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aufnahmen Prototyp</title>
+<!-- Klick-Prototyp U1 (Goal aufnahmen-ui, #64). Reines HTML/CSS/JS, keine externen Ressourcen.
+     Farben und Masse aus apps/local-voice/src/styles/theme.css und App.css (Wurzel 15 px,
+     text-xs 11,25 px, text-sm 13,125 px, IconAction 36 px, TabList, .mbtn, ResizeHandle). -->
+<style>
+:root{--p-ink:#111418;--p-chrome:#1a1d22;--p-chrome-text:#e9eaec}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;background:#d9dce1;color:#1f2937;overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+/* ---------- Prototyp-Rahmen (nicht Teil der App) ---------- */
+.pbar{height:48px;display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--p-chrome);color:var(--p-chrome-text);font-size:13px;white-space:nowrap;overflow-x:auto}
+.pbar b{font-weight:600}
+.pseg{display:inline-flex;border:1px solid #3a3f47;border-radius:8px;overflow:hidden}
+.pseg button{background:transparent;border:0;color:#c9ccd1;padding:5px 10px;font-size:12.5px}
+.pseg button[aria-pressed=true]{background:#ffdd00;color:#111418;font-weight:600}
+.pbar .sep{width:1px;height:24px;background:#3a3f47}
+.pinfo{font-size:12px;color:#aab0b8}
+.pcheck{font-size:12px;padding:3px 8px;border-radius:999px;background:#23462e;color:#b8f0c6}
+.pcheck.bad{background:#5a2323;color:#ffd0d0}
+.pbtn{background:transparent;border:1px solid #3a3f47;color:#c9ccd1;border-radius:8px;padding:5px 10px;font-size:12.5px}
+.pdesc{height:26px;display:flex;align-items:center;padding:0 12px;font-size:12px;background:#262a31;color:#c9ccd1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#stage{position:absolute;top:74px;left:0;right:0;bottom:0;overflow:hidden}
+#holder{position:absolute}
+#frame{position:absolute;top:0;left:0;transform-origin:0 0;box-shadow:0 8px 40px rgba(0,0,0,.25);border-radius:8px;overflow:hidden}
+/* ---------- App-Tokens (theme.css) ---------- */
+#frame{--text:#1f2937;--bg:#f8f9fb;--mid:#808080;--yellow:#ffdd00;--ink:#111418;
+  --line:color-mix(in srgb,var(--mid) 22%,transparent);--fill:color-mix(in srgb,var(--mid) 10%,transparent);
+  --hover:color-mix(in srgb,var(--mid) 15%,transparent);--muted:color-mix(in srgb,var(--text) 65%,transparent);
+  --faint:color-mix(in srgb,var(--text) 55%,transparent);--sel:color-mix(in srgb,var(--yellow) 22%,transparent);
+  --ok:#15803d;--okbg:rgba(34,197,94,.16);--red:#dc2626;--redbg:rgba(220,38,38,.1);--card:var(--bg);
+  --shadow:0 10px 30px rgba(17,20,24,.16);
+  background:var(--bg);color:var(--text);font-size:15px;line-height:1.5}
+#frame[data-theme=dark]{--text:#edede7;--bg:#0b0b0c;--ok:#4ade80;--okbg:rgba(74,222,128,.14);--red:#f87171;--redbg:rgba(248,113,113,.13);--card:#111214;--shadow:0 10px 30px rgba(0,0,0,.6)}
+#frame ::-webkit-scrollbar{width:14px;height:14px}
+#frame ::-webkit-scrollbar-track{background:transparent}
+#frame ::-webkit-scrollbar-thumb{background-color:color-mix(in srgb,var(--text),transparent 85%);border-radius:20px;border:3px solid transparent;border-right-width:4px;background-clip:content-box;min-height:32px}
+#frame ::-webkit-scrollbar-thumb:hover{background-color:color-mix(in srgb,var(--text),transparent 70%)}
+.ic{display:block;flex:none}
+/* ---------- App-Schale ---------- */
+.app{position:absolute;inset:0;display:grid;grid-template-columns:var(--navw) minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto}
+.app.nav-bottom{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto auto}
+.nav{grid-row:1/3;border-right:1px solid var(--line);padding:10px;display:flex;flex-direction:column;gap:4px;min-height:0}
+.nav a{display:flex;align-items:center;gap:12px;height:44px;padding:0 10px;border-radius:8px;font-size:15px;font-weight:500;color:var(--text);text-decoration:none;white-space:nowrap}
+.nav a:hover{background:var(--hover)}
+.nav a.on{background:var(--yellow);color:var(--ink);font-weight:600}
+.nav .grow{flex:1}
+.nav a.dim{color:var(--faint)}
+.app.nav-rail .nav a{justify-content:center;padding:0}
+.app.nav-rail .nav a span{display:none}
+.main{min-width:0;min-height:0;padding:16px;display:flex;flex-direction:column;overflow:hidden}
+.app.nav-bottom .main{padding:12px}
+.footer{height:52px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:11.25px;color:var(--muted);gap:12px;white-space:nowrap;overflow:hidden}
+.footer .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;margin-right:5px}
+.bnav{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);height:60px}
+.bnav a{display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11.25px;gap:2px;margin:6px;border-radius:8px;color:var(--text);text-decoration:none}
+.bnav a.on{background:var(--yellow);color:var(--ink);font-weight:600}
+/* ---------- Seite ---------- */
+.page{flex:1;min-height:0;display:flex;flex-direction:column;gap:12px}
+.phead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex:none}
+.phead h1{margin:0;font-size:18.75px;font-weight:600;line-height:1.3}
+.phead p{margin:2px 0 0;font-size:13.125px;color:var(--muted)}
+.phead .acts{display:flex;gap:2px;align-items:center}
+.ws{flex:1;min-height:0;display:flex;gap:16px;position:relative}
+.col{min-width:0;min-height:0;display:flex;flex-direction:column}
+.grow{flex:1}
+.scroll{overflow-y:auto;min-height:0;flex:1;overscroll-behavior:contain}
+.card{border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.lbl{font-size:11.25px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--faint)}
+/* Ziehgriff wie .tts-resize */
+.rh{position:relative;z-index:3;flex:none;width:12px;margin-inline:-14px;align-self:stretch;cursor:col-resize;touch-action:none;outline:none}
+.rh::after{content:"";position:absolute;inset-block:0;inset-inline-start:5px;width:2px;border-radius:1px;background:transparent;transition:background-color .12s}
+.rh:hover::after,.rh:focus-visible::after,.rh.drag::after{background:var(--yellow)}
+.rhv{flex:none;height:12px;margin-block:-9px;cursor:row-resize;position:relative;z-index:3;touch-action:none;outline:none}
+.rhv::after{content:"";position:absolute;inset-inline:0;top:5px;height:2px;border-radius:1px;background:transparent}
+.rhv:hover::after,.rhv:focus-visible::after,.rhv.drag::after{background:var(--yellow)}
+body.resizing,body.resizing *{user-select:none!important}
+/* Knoepfe */
+.ib{width:36px;height:36px;border-radius:8px;border:1px solid var(--line);background:var(--fill);display:inline-grid;place-items:center;flex:none;padding:0;position:relative;transition:background-color .12s,border-color .12s}
+.ib:hover{background:color-mix(in srgb,var(--yellow) 30%,transparent);border-color:var(--yellow)}
+.ib:focus-visible,.tab:focus-visible,.btn:focus-visible,.srow:focus-visible,.mrow:focus-visible,.mbtn:focus-visible,.chip:focus-visible,.src:focus-visible,.ts:focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
+.ib.on{background:var(--sel);border-color:var(--yellow)}
+.ib.gh{border-color:transparent;background:transparent;width:28px;height:28px;border-radius:6px;color:var(--faint)}
+.ib.gh:hover{background:var(--hover);color:var(--text);border-color:transparent}
+.ib.gh.lg{width:32px;height:32px;color:var(--muted)}
+.ib.danger{color:var(--red)}
+.ib.dis{opacity:.45}
+.btn{height:36px;border-radius:8px;border:1px solid var(--line);background:var(--fill);padding:0 14px;font-size:13.125px;font-weight:500;display:inline-flex;align-items:center;gap:6px;justify-content:center;white-space:nowrap}
+.btn:hover{border-color:var(--yellow);background:color-mix(in srgb,var(--yellow) 30%,transparent)}
+.btn.pri{background:var(--yellow);border-color:var(--yellow);color:var(--ink)}
+.btn.pri:hover{background:color-mix(in srgb,var(--yellow) 82%,white)}
+.btn.dng{background:#dc2626;border-color:#dc2626;color:#fff}
+.btn.sm{height:28px;padding:0 10px;font-size:11.25px}
+.recdot{width:9px;height:9px;border-radius:50%;background:#ef4444;flex:none}
+.recdot.pulse{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.recdot.pulse{animation:none}}
+/* Transport (.mediabar/.mbtn) */
+.mediabar{display:flex;align-items:center;gap:6px}
+.mbtn{width:34px;height:34px;border-radius:50%;border:0;background:transparent;display:inline-grid;place-items:center;color:var(--text);padding:0}
+.mbtn:hover{background:var(--hover)}
+.mbtn.play{background:var(--ink);color:var(--yellow);width:36px;height:36px}
+#frame[data-theme=dark] .mbtn.play{background:var(--yellow);color:var(--ink)}
+.tnum{font-variant-numeric:tabular-nums}
+.seek{position:relative;height:4px;border-radius:2px;background:var(--line);cursor:pointer;margin:6px 2px 2px}
+.seek i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--yellow)}
+.seek b{position:absolute;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:var(--text)}
+/* Chips */
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:999px;font-size:11.25px;border:1px solid var(--line);color:var(--muted);background:transparent;white-space:nowrap}
+button.chip:hover{border-color:var(--yellow);color:var(--text)}
+.chip.ok{background:var(--okbg);color:var(--ok);border-color:transparent;font-weight:500}
+.chip.live{background:var(--redbg);color:var(--red);border-color:transparent;font-weight:600}
+.chip.busy{background:var(--hover);color:var(--text);border-color:transparent}
+.chip .mini{width:34px;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
+.chip .mini i{display:block;height:100%;background:var(--yellow)}
+.av{width:22px;height:22px;border-radius:50%;display:inline-grid;place-items:center;font-size:10px;font-weight:600;color:#fff;margin-left:-4px;border:2px solid var(--bg)}
+/* Reiter wie TabList compact */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);flex:none;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{min-height:36px;padding:0 12px;border:0;background:transparent;border-bottom:2px solid transparent;margin-bottom:-1px;font-size:13.125px;font-weight:500;color:var(--muted);white-space:nowrap}
+.tab:hover{color:var(--text)}
+.tab[aria-selected=true]{color:var(--text);border-bottom-color:var(--yellow);font-weight:600}
+.tab .cnt{font-size:11.25px;color:var(--faint);font-weight:500;margin-left:4px}
+/* Sessions */
+.shead{display:flex;align-items:center;gap:2px;height:32px;flex:none}
+.search{display:flex;align-items:center;gap:6px;height:32px;border:1px solid var(--line);background:var(--fill);border-radius:8px;padding:0 8px;margin:4px 0 8px;flex:none;color:var(--faint)}
+.search input{border:0;background:transparent;outline:none;flex:1;min-width:0;font-size:13.125px;color:var(--text)}
+.srow{display:flex;align-items:center;gap:7px;min-height:32px;padding:0 8px;border-radius:8px;font-size:13.125px;cursor:pointer;user-select:none;border:1px solid transparent}
+.srow:hover{background:var(--hover)}
+.srow.sel{background:var(--sel);font-weight:600}
+.srow.drop{border-color:var(--yellow);background:color-mix(in srgb,var(--yellow) 14%,transparent)}
+.srow .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow .c{font-size:11.25px;color:var(--faint);font-weight:500;font-variant-numeric:tabular-nums}
+.srow input{flex:1;min-width:0;height:24px;border:1px solid var(--yellow);border-radius:6px;background:var(--bg);padding:0 6px;font-size:13.125px}
+.mrow{display:block;padding:6px 8px 6px 30px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin:1px 0}
+.mrow:hover{background:var(--hover)}
+.mrow.sel{background:var(--sel)}
+.mrow .t{font-size:13.125px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px}
+.mrow .t span{overflow:hidden;text-overflow:ellipsis}
+.mrow .m{font-size:11.25px;color:var(--muted);display:flex;align-items:center;gap:6px;white-space:nowrap}
+.mrow .bar{flex:1;height:4px;border-radius:2px;background:var(--line);overflow:hidden;max-width:80px}
+.mrow .bar i{display:block;height:100%;background:var(--yellow)}
+.mrow.flat{padding-left:8px}
+.empty{font-size:13.125px;color:var(--muted);padding:12px 8px}
+.upnext{flex:none;border-top:1px solid var(--line);padding:8px 2px 0;margin-top:6px}
+.upnext .ev{display:flex;align-items:center;gap:8px;font-size:13.125px;padding:4px 6px}
+.upnext .ev .tt{flex:1;min-width:0}
+.upnext .ev .tt div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.upnext .ev small{display:block;font-size:11.25px;color:var(--muted)}
+/* Rail */
+.rail{width:44px;flex:none;display:flex;flex-direction:column;align-items:center;gap:6px}
+.rail .ini{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:11.25px;font-weight:600;color:var(--muted);border:1px solid transparent;background:transparent}
+.rail .ini:hover{background:var(--hover)}
+.rail .ini.sel{background:var(--sel);color:var(--text)}
+/* Detailkopf */
+.dhead{flex:none;padding:12px 16px 0;display:flex;flex-direction:column;gap:6px}
+.dh1{display:flex;align-items:center;gap:6px;min-width:0}
+.dh1 h2{margin:0;font-size:16px;font-weight:600;line-height:1.35;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:text;border-radius:6px;padding:1px 4px;margin-left:-4px}
+.dh1 h2:hover{background:var(--hover)}
+.dh1 input{flex:1;min-width:0;height:28px;font-size:16px;font-weight:600;border:1px solid var(--yellow);border-radius:6px;background:var(--bg);padding:0 6px}
+.dhead .tabs{margin:2px -16px 0;padding:0 10px}
+/* Inhalt */
+.pane{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.body{padding:12px 16px 16px}
+.seg{display:grid;grid-template-columns:44px 96px minmax(0,1fr) 28px;gap:8px;align-items:start;padding:4px 6px;margin:0 -6px;border-radius:6px;font-size:13.125px;line-height:1.55}
+.seg:hover{background:var(--hover)}
+.seg .ts{border:0;background:transparent;padding:0;font-size:11.25px;color:var(--muted);text-align:left;font-variant-numeric:tabular-nums;padding-top:2px}
+.seg .ts:hover{color:var(--text);text-decoration:underline}
+.seg .spk{font-size:11.25px;font-weight:600;color:var(--c);padding-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seg p{margin:0;color:color-mix(in srgb,var(--text) 92%,transparent)}
+.seg .ib.gh{width:24px;height:24px;opacity:0}
+.seg:hover .ib.gh,.seg:focus-within .ib.gh{opacity:1}
+.seg.hl{background:color-mix(in srgb,var(--yellow) 28%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--yellow) 60%,transparent)}
+.seg.now{background:color-mix(in srgb,var(--yellow) 12%,transparent)}
+.seg.new{animation:fadein .5s ease}
+@keyframes fadein{from{opacity:0;transform:translateY(4px)}}
+.tx-compact .seg{grid-template-columns:40px minmax(0,1fr) 24px}
+.tx-compact .seg .spk{display:none}
+.tx-compact .seg p b{font-size:11.25px;color:var(--c);margin-right:4px}
+.seg p b{display:none}
+.tx-compact .seg p b{display:inline}
+.follow{position:absolute;right:16px;bottom:12px;z-index:4;display:none;box-shadow:var(--shadow)}
+.follow.show{display:inline-flex}
+.notes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.notes li{display:grid;grid-template-columns:44px 20px minmax(0,1fr);gap:4px;font-size:14px;line-height:1.55;padding:3px 0}
+.notes .nt{font-size:11.25px;color:var(--muted);padding-top:3px;font-variant-numeric:tabular-nums}
+.notes li.h{font-weight:600;font-size:15px;padding-top:8px}
+.notes input[type=checkbox]{margin:5px 0 0;accent-color:var(--yellow)}
+.notes li.done span{text-decoration:line-through;color:var(--muted)}
+.nin{flex:none;border-top:1px solid var(--line);padding:10px 16px;display:flex;gap:8px;align-items:center}
+.nin input{flex:1;min-width:0;height:36px;border:1px solid var(--line);border-radius:8px;background:var(--fill);padding:0 10px;font-size:14px;outline:none}
+.nin input:focus{border-color:var(--yellow)}
+.nin .hint{font-size:11.25px;color:var(--faint);white-space:nowrap}
+.ai h3{font-size:13.125px;font-weight:600;margin:14px 0 6px}
+.ai h3:first-child{margin-top:0}
+.ai ul{margin:0;padding:0 0 0 18px;font-size:14px;line-height:1.55}
+.ai ul.tasks{list-style:none;padding:0}
+.ai li{margin:3px 0}
+.ai ul.tasks li{display:flex;gap:8px;align-items:flex-start}
+.ai ul.tasks input{margin-top:5px;accent-color:var(--yellow)}
+.src{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:999px;border:1px solid var(--line);background:transparent;font-size:10.5px;color:var(--muted);margin-left:4px;vertical-align:1px;font-variant-numeric:tabular-nums}
+.src:hover{border-color:var(--yellow);color:var(--text)}
+.meta{font-size:11.25px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;margin-bottom:10px}
+.doc{font-size:14px;line-height:1.6;max-width:760px}
+.doc h1{font-size:17px;margin:0 0 8px}
+.doc h2{font-size:14px;margin:14px 0 4px}
+.doc ul{margin:0;padding-left:20px}
+.doc p{margin:0 0 6px}
+/* Bedienung */
+.ctl{display:flex;flex-direction:column;gap:12px;flex:none}
+.ctl .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ctl .row.nowrap{flex-wrap:nowrap}
+.recbox{border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.recbox.live{border-color:color-mix(in srgb,#ef4444 45%,transparent);background:var(--redbg)}
+.timer{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.lvl{display:flex;flex-direction:column;gap:3px;flex:1;min-width:50px}
+.lvl i{display:block;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
+.lvl i b{display:block;height:100%;background:#22c55e;transition:width .15s}
+.prog{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.prog .top{display:flex;align-items:center;gap:8px;font-size:13.125px;font-weight:500}
+.prog .top .p{margin-left:auto;font-variant-numeric:tabular-nums}
+.pbar2{height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.pbar2 i{display:block;height:100%;background:var(--yellow);transition:width .4s}
+.prog .sub{display:flex;align-items:center;gap:6px;font-size:11.25px;color:var(--muted)}
+.prog .sub .grow{flex:1}
+.prog .ib{width:28px;height:28px}
+.disc{border-top:1px solid var(--line);padding-top:4px;display:flex;flex-direction:column;min-height:0}
+.disc>button{display:flex;align-items:center;gap:8px;min-height:40px;border:0;background:transparent;font-size:14px;font-weight:500;padding:0 2px;width:100%;text-align:left}
+.chat{display:flex;flex-direction:column;gap:8px;padding:4px 0 8px}
+.msg{font-size:13.125px;line-height:1.55;padding:8px 10px;border-radius:10px;background:var(--fill);border:1px solid var(--line)}
+.msg.me{align-self:flex-end;background:var(--sel);border-color:transparent;max-width:88%}
+.recipes{display:flex;flex-wrap:wrap;gap:6px}
+.cin{display:flex;gap:6px;align-items:flex-end;flex:none;padding-top:6px}
+.cin textarea{flex:1;min-width:0;height:38px;resize:none;border:1px solid var(--line);border-radius:8px;background:var(--fill);padding:8px 10px;font-size:13.125px;outline:none}
+.cin textarea:focus{border-color:var(--yellow)}
+.hintline{font-size:11.25px;color:var(--faint)}
+.drop-over{outline:2px dashed var(--yellow);outline-offset:-6px;background:color-mix(in srgb,var(--yellow) 6%,transparent)}
+.dropmsg{position:absolute;inset:0;display:none;place-items:center;font-size:14px;font-weight:600;z-index:6;pointer-events:none}
+.drop-over .dropmsg{display:grid}
+/* Schmal (gestapelt) */
+.nbar{display:flex;align-items:center;gap:6px;flex:none;min-width:0}
+.nbar .tt{flex:1;min-width:0}
+.nbar .tt div{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nstrip{flex:none;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:6px 8px;min-height:50px}
+.nstrip.live{border-color:color-mix(in srgb,#ef4444 45%,transparent);background:var(--redbg)}
+.nstrip .timer{font-size:18px}
+/* Schublade, Dialog, Menue, Tooltip, Toast */
+.drawer-back{position:absolute;inset:0;background:rgba(0,0,0,.25);z-index:40}
+.drawer{position:absolute;top:0;bottom:0;left:0;width:min(300px,86%);background:var(--bg);z-index:41;box-shadow:var(--shadow);padding:12px;display:flex;flex-direction:column;border-right:1px solid var(--line)}
+.dlg-back{position:absolute;inset:0;background:rgba(0,0,0,.35);display:grid;place-items:center;z-index:50;padding:16px}
+.dlg{width:min(500px,100%);max-height:100%;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:16px 18px}
+.dlg h3{margin:0 0 12px;font-size:16px}
+.dlg .ft{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.dlg dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-size:13.125px}
+.dlg dt{color:var(--muted)}
+.dlg dd{margin:0}
+.dlg label{display:flex;gap:8px;align-items:center;font-size:13.125px;margin:8px 0}
+.dlg input[type=text],.dlg select{width:100%;height:36px;border:1px solid var(--line);border-radius:8px;background:var(--fill);padding:0 10px;font-size:13.125px}
+.dlg p{font-size:13.125px;color:var(--muted);margin:6px 0}
+.dlg .f{margin:10px 0}
+.dlg .f>span{display:block;font-size:11.25px;color:var(--muted);margin-bottom:4px}
+.menu{position:absolute;z-index:60;min-width:250px;background:var(--bg);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:4px}
+.mi{display:flex;gap:10px;align-items:center;width:100%;min-height:34px;padding:0 10px;border-radius:6px;font-size:13.125px;border:0;background:transparent;text-align:left;color:var(--text)}
+.mi:hover,.mi:focus-visible{background:var(--hover);outline:none}
+.mi.danger{color:var(--red)}
+.mi .k{margin-left:auto;font-size:11.25px;color:var(--faint)}
+.mi.sub{padding-left:36px}
+.msep{height:1px;background:var(--line);margin:4px 2px}
+.mhd{font-size:11.25px;color:var(--faint);padding:6px 10px 2px}
+.tip{position:absolute;z-index:70;max-width:250px;background:var(--text);color:var(--bg);padding:6px 9px;border-radius:7px;font-size:12px;line-height:1.4;pointer-events:none;box-shadow:var(--shadow)}
+.tip b{display:block;font-weight:600}
+.toast{position:absolute;left:50%;bottom:72px;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:13px;z-index:80;box-shadow:var(--shadow);white-space:nowrap}
+.yt{border-radius:10px;overflow:hidden;background:#000;aspect-ratio:16/9;display:grid;place-items:center;color:#fff;font-size:13px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="pbar" role="toolbar" aria-label="Prototyp-Steuerung">
+  <b>Aufnahmen · Prototyp U1</b><span class="sep"></span>
+  <span class="pinfo">Variante</span>
+  <span class="pseg" id="pv"><button data-v="A">A · Bedienspalte</button><button data-v="B">B · Transkript rechts</button></span>
+  <span class="sep"></span><span class="pinfo">Fenster</span>
+  <span class="pseg" id="pw"><button data-w="1920">1920</button><button data-w="1366">1366</button><button data-w="900">900</button><button data-w="480">480</button><button data-w="frei">frei</button></span>
+  <span class="pseg" id="pt"><button data-t="light">Hell</button><button data-t="dark">Dunkel</button></span>
+  <span class="pinfo" id="pscale"></span>
+  <span class="pcheck" id="pcheck" title="Prüft laufend: Seite scrollt nicht, keine verschachtelten Scrollflächen mit Überlauf (AK4)">…</span>
+  <span class="grow"></span>
+  <button class="pbtn" id="preset">Zurücksetzen</button>
+</div>
+<div class="pdesc" id="pdesc"></div>
+<div id="stage"><div id="holder"><div id="frame"></div></div></div>
+<script>
+"use strict";
+/* ================= Symbole (Lucide-Pfade, wie in der App) ================= */
+const I={
+home:'<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+history:'<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+speaker:'<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>',
+cpu:'<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/>',
+cog:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+panelL:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
+panelLo:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
+panelR:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/>',
+panelRo:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m10 15-3-3 3-3"/>',
+help:'<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+plus:'<path d="M5 12h14"/><path d="M12 5v14"/>',
+search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+folder:'<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+folders:'<path d="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2a2 2 0 0 0-1.67-.9H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z"/><path d="M2 8v11a2 2 0 0 0 2 2h14"/>',
+chevR:'<path d="m9 18 6-6-6-6"/>',
+chevD:'<path d="m6 9 6 6 6-6"/>',
+mic:'<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
+upload:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>',
+download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+link:'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+sliders:'<line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/>',
+mail:'<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+copy:'<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+msg:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+menu:'<line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/>',
+info:'<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+pause:'<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+stop:'<rect width="14" height="14" x="5" y="5" rx="2"/>',
+play:'<polygon points="7 4 20 12 7 20 7 4" fill="currentColor"/>',
+back:'<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+fwd:'<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
+refresh:'<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+trash:'<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
+pencil:'<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
+file:'<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+move:'<path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H2"/><path d="M2 13h10"/><path d="m9 16 3-3-3-3"/>',
+wand:'<path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/>',
+down:'<path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/>',
+cal:'<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+x:'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+send:'<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+layers:'<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+more:'<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+check:'<path d="M20 6 9 17l-5-5"/>',
+arrowUp:'<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+arrowDn:'<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>'
+};
+const ic=(n,s=16)=>`<svg class="ic" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]||''}</svg>`;
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const mmss=sec=>{sec=Math.max(0,Math.floor(sec));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`};
+const DOW=['So','Mo','Di','Mi','Do','Fr','Sa'];
+const dshort=iso=>{const d=new Date(iso);return `${DOW[d.getDay()]} ${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.`};
+const dlong=iso=>{const d=new Date(iso);return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}, ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`};
+const PAL=['#2563eb','#c2410c','#059669','#7c3aed','#db2777','#0891b2'];
+const colorOf=name=>{let h=0;for(const c of name)h=(h*31+c.charCodeAt(0))>>>0;return name==='Ich'||name==='Patrick'?'#b45309':PAL[h%PAL.length]};
+
+/* ================= Beispieldaten (Attrappe) ================= */
+const SESSIONS=[
+ {id:'s1',name:'Privat'},{id:'s2',name:'Geschäftlich'},{id:'s3',name:'Kunde Stadtwerke'},{id:'s4',name:'Podcast'}];
+const TX_SWK=[[4,'B','Guten Morgen, Herr Wolff, schön, dass es so kurzfristig geklappt hat.'],[12,'P','Gerne. Ich habe mir den Lastgang aus dem dritten Quartal vorab angesehen.'],[62,'B','Uns fällt auf, dass die Spitzen fast immer am frühen Vormittag liegen.'],[120,'P','Genau, werktags zwischen halb acht und neun, montags am deutlichsten.'],[188,'B','Das ist der Schichtbeginn in der Halle, da laufen alle Kompressoren an.'],[245,'P','Das deckt sich mit den Zählerdaten. Die Grundlast ist dagegen recht stabil.'],[300,'B','Die Lastgangdaten als CSV schicke ich Ihnen gerne noch einmal vollständig.'],[372,'P','Danke, das hilft. Dann kann ich die Simulation mit Viertelstundenwerten rechnen.'],[455,'B','Wie groß müsste ein Speicher sein, damit sich das überhaupt lohnt?'],[540,'P','Ich habe drei Größen gerechnet: 200, 400 und 600 Kilowattstunden.'],[612,'B','Und welche Variante würden Sie empfehlen?'],[731,'P','Mit 400 Kilowattstunden kappen wir etwa ein Drittel der Spitzen, das ist der beste Kompromiss.'],[820,'B','Was bedeutet das konkret für den Leistungspreis?'],[905,'P','Grob gerechnet sinkt er um zwölf bis fünfzehn Prozent, je nach Tarif im nächsten Jahr.'],[1010,'B','Das klingt gut, aber ich brauche das schriftlich für die Geschäftsführung.'],[1102,'P','Natürlich. Ich fasse die Annahmen und die drei Varianten auf zwei Seiten zusammen.'],[1234,'B','Bis wann wäre das möglich?'],[1250,'P','Bis Freitag schicke ich Ihnen die Kurzfassung.'],[1390,'B','Wir hatten intern auch über die PV-Anlage auf dem Lagerdach gesprochen.'],[1520,'P','Die ist für den Speicher interessant, weil mittags Überschüsse anfallen.'],[1665,'B','Also könnte der Speicher morgens Spitzen kappen und mittags laden?'],[1850,'P','Im Prinzip ja. Ob sich das rechnet, hängt vom Eigenverbrauchsanteil ab. Das prüfe ich noch.'],[1990,'B','Gibt es Fördermittel, die wir berücksichtigen sollten?'],[2105,'P','Für Speicher in Gewerbebetrieben aktuell nur regional, ich schaue mir das für Rheinland-Pfalz an.'],[2260,'B','Gut. Und der Netzbetreiber muss vorher zustimmen?'],[2340,'P','Eine Anmeldung reicht in dieser Größe, eine Zustimmung braucht es nicht.'],[2410,'B','Das Tarifblatt für 2027 fehlt uns noch, das fordere ich an.'],[2555,'P','Prima, dann rechne ich die Wirtschaftlichkeit mit beiden Tarifständen.'],[2790,'B','Dann warten wir mit der Entscheidung, bis der Tarif da ist.'],[3010,'P','Einverstanden. Ich melde mich mit der Kurzfassung, dann sprechen wir nächste Woche.'],[3380,'B','Vielen Dank, Herr Wolff, bis nächste Woche.']]
+ .map(([t,s,x])=>({t,spk:s==='B'?'Frau Becker':'Patrick',text:x}));
+const LIVE_LINES=[['Anna M.','Guten Morgen zusammen, dann legen wir los mit der Pipeline.'],['Ich','Gerne. Wir haben drei neue Anfragen seit letzter Woche.'],['Jonas K.','Zwei davon kommen aus der Energiebranche, eine aus der Logistik.'],['Anna M.','Bei den Stadtwerken warten wir noch auf das Tarifblatt, richtig?'],['Ich','Ja, die Kurzfassung geht am Freitag raus, danach entscheidet die Geschäftsführung.'],['Jonas K.','Die Logistik-Anfrage ist eher klein, aber strategisch spannend.'],['Anna M.','Können wir dafür bis Mittwoch ein Angebot vorbereiten?'],['Ich','Das schaffe ich, wenn ich die Lastgangdaten bis Montag bekomme.'],['Jonas K.','Ich frage da nach und setze dich in Kopie.'],['Anna M.','Nächster Punkt: die Messe in Essen im November.'],['Jonas K.','Der Stand ist gebucht, wir brauchen noch zwei Personen für den Donnerstag.'],['Ich','Donnerstag kann ich, Freitag leider nicht.'],['Anna M.','Dann nehme ich den Freitag. Jonas, übernimmst du die Flyer?'],['Jonas K.','Mache ich, Entwurf kommt bis Ende der Woche.'],['Anna M.','Gut, dann noch kurz zu den Zahlen für September.'],['Ich','Wir liegen bei 92 Prozent vom Ziel, zwei Abschlüsse hängen noch in der Freigabe.'],['Jonas K.','Die Freigabe für Netzpuls sollte diese Woche kommen.'],['Anna M.','Dann schließen wir für heute. Danke euch!']];
+const GEN={
+ m1:[['Anna M.','Kurzer Blick auf die Pipeline: vier offene Angebote.'],['Ich','Das Angebot für die Brauerei geht heute raus.'],['Jonas K.','Die Messeplanung braucht noch eine Entscheidung zum Stand.']],
+ m3:[['Lea S.','Sprint 12 ist bis auf das Export-Modul fertig.'],['Ich','Die Lastprognose läuft jetzt stabil gegen die Messreihen.'],['Tim B.','Für das Dashboard fehlen noch zwei Kennzahlen.']],
+ m4:[['Frau Kessler','Die Klassenfahrt geht im Mai nach Speyer.'],['Herr Yilmaz','Wie hoch ist der Elternbeitrag dafür?'],['Frau Kessler','Voraussichtlich 95 Euro, Zuschüsse sind möglich.']],
+ m5:[['Herr Brandt','Die Belege für das vierte Quartal fehlen noch.'],['Ich','Die lade ich bis Ende nächster Woche hoch.'],['Herr Brandt','Dann reichen wir den Abschluss im November ein.']],
+ m6:[['Moderatorin','Wo steht der Mittelstand beim Einsatz von KI wirklich?'],['Ich','Viele fangen mit Protokollen und Angeboten an, nicht mit großen Projekten.'],['Moderatorin','Und was ist mit dem Datenschutz?']],
+ m7:[['Herr Vogt','Wir brauchen eine Übersicht über alle Verbraucher je Halle.'],['Ich','Das lässt sich mit acht Messpunkten gut abdecken.'],['Herr Vogt','Schicken Sie uns bitte ein Angebot.']],
+ m8:[['Frau Becker','Wir überlegen, einen Speicher anzuschaffen.'],['Ich','Dann schauen wir zuerst auf den Lastgang.'],['Frau Becker','Die Daten schicke ich Ihnen zu.']],
+ m9:[['Moderatorin','Nächste Folge: Energieeffizienz im Handwerk.'],['Ich','Da habe ich zwei gute Praxisbeispiele.'],['Moderatorin','Dann nehmen wir am 8. Oktober auf.']]
+};
+const genTx=(id,dur)=>{const L=GEN[id]||GEN.m1;const out=[];const n=Math.max(12,Math.min(60,Math.round(dur/70)));for(let i=0;i<n;i++){const [spk,text]=L[i%L.length];out.push({t:Math.round(4+i*(dur-30)/n),spk,text})}return out};
+const M=(o)=>Object.assign({status:'ready',source:'recording',tracks:'Mikrofon + System-Audio',model:'Whisper large-v3 turbo',lang:'Deutsch',notes:[],ai:null,minutes:null,people:[],template:'Allgemein',versions:1},o);
+const MEETINGS=[
+ M({id:'m1',title:'Jour fixe Vertrieb KW 40',session:'s2',date:'2026-09-29T09:00',dur:2280,people:['Anna M.','Jonas K.']}),
+ M({id:'m2',title:'Kundentermin Stadtwerke Kaiserslautern – Lastgang',session:'s3',date:'2026-09-28T10:00',dur:3540,people:['Frau Becker'],template:'Kundengespräch / Vertrieb',versions:2,
+   retention:'2026-10-28T10:00',consent:'2026-09-28T09:58',
+   notes:[{t:122,text:'Lastspitzen werktags 7:30–9:00, montags am höchsten'},{t:731,text:'Speicher 400 kWh → ca. ⅓ der Spitzen'},{t:905,text:'Leistungspreis −12 bis −15 %'},{t:1250,text:'Kurzfassung mit Annahmen bis Freitag',todo:true},{t:2410,text:'Tarifblatt 2027 fehlt noch'}],
+   ai:{sections:[
+     {title:'Kernpunkte',items:[['Lastspitzen treten werktags zwischen 07:30 und 09:00 Uhr auf, montags am stärksten.',[62,120]],['Ein Batteriespeicher mit 400 kWh würde rund ein Drittel der Spitzen kappen.',[731]],['Der Leistungspreis sinkt dadurch voraussichtlich um 12–15 %, abhängig vom Tarif 2027.',[905,2410]]]},
+     {title:'Entscheidungen',items:[['Frau Becker braucht eine schriftliche Kurzfassung für die Geschäftsführung.',[1010]],['Vor einer Investitionsentscheidung wird der Tarif 2027 abgewartet.',[2790]]]},
+     {title:'Offene Fragen',items:[['Lohnt sich der Speicher zusätzlich für den Eigenverbrauch der PV-Anlage?',[1665,1850]]]}],
+     tasks:[['Kurzfassung mit Annahmen an Frau Becker schicken','Patrick','Fr 02.10.',1250,false],['Tarifblatt 2027 anfordern','Frau Becker','',2410,false],['Lastgangdaten Q3 als CSV bereitstellen','Frau Becker','',300,true]]},
+   minutes:true}),
+ M({id:'m3',title:'Projektreview Netzpuls Sprint 12',session:'s2',date:'2026-09-27T14:00',dur:4200,source:'import',file:'Netzpuls-Review-Sprint12.mp4',tracks:'Datei (gemischt)',status:'processing',people:['Lea S.','Tim B.'],
+   job:{phase:'Transkription',pct:42,paused:false}}),
+ M({id:'m4',title:'Elternabend Klasse 3b',session:'s1',date:'2026-09-24T19:30',dur:5100,tracks:'Mikrofon',people:['Frau Kessler']}),
+ M({id:'m5',title:'Steuerberatung Jahresabschluss 2025',session:'s1',date:'2026-09-22T16:00',dur:1980,tracks:'Mikrofon',people:['Herr Brandt']}),
+ M({id:'m6',title:'Podcast-Interview „KI im Mittelstand“',session:'s4',date:'2026-09-19T11:00',dur:2940,source:'import',file:'Folge-17-KI-Mittelstand.wav',tracks:'Datei (gemischt)',people:['Moderatorin']}),
+ M({id:'m7',title:'Angebotsklärung Energiemonitoring',session:'s2',date:'2026-09-21T10:30',dur:1560,people:['Herr Vogt']}),
+ M({id:'m8',title:'Stadtwerke – Vorgespräch Speicher',session:'s3',date:'2026-09-15T13:00',dur:2460,people:['Frau Becker']}),
+ M({id:'m9',title:'Podcast Vorgespräch Folge 18',session:'s4',date:'2026-09-26T17:00',dur:1080,tracks:'Mikrofon',people:['Moderatorin']})
+];
+MEETINGS.forEach(m=>{m.tx=m.id==='m2'?TX_SWK.slice():genTx(m.id,m.dur);if(m.status==='processing')m.tx=m.tx.slice(0,Math.round(m.tx.length*.42));if(!m.consent)m.consent=m.date});
+const MINUTES_HTML=`<h1>Protokoll: Kundentermin Stadtwerke Kaiserslautern</h1>
+<p><b>Datum:</b> 28.09.2026, 10:00–10:59 · <b>Teilnehmende:</b> Patrick Wolff, Frau Becker (SWK)</p>
+<h2>Anlass</h2><p>Auswertung des Lastgangs Q3 und Möglichkeiten zur Glättung der Lastspitzen.</p>
+<h2>Ergebnisse</h2><ul><li>Lastspitzen liegen werktags zwischen 07:30 und 09:00 Uhr, montags am höchsten (Schichtbeginn, Kompressoren).</li><li>Ein Speicher mit 400 kWh kappt rund ein Drittel der Spitzen; 200 und 600 kWh wurden ebenfalls gerechnet.</li><li>Erwartete Senkung des Leistungspreises: 12–15 %, abhängig vom Tarif 2027.</li><li>Für die PV-Anlage auf dem Lagerdach wird der Eigenverbrauchsanteil geprüft.</li></ul>
+<h2>Beschlüsse</h2><ul><li>Die Investitionsentscheidung fällt erst nach Vorliegen des Tarifblatts 2027.</li></ul>
+<h2>Aufgaben</h2><ul><li>Kurzfassung mit Annahmen an Frau Becker – Patrick, bis Fr 02.10.</li><li>Tarifblatt 2027 anfordern – Frau Becker</li><li>Förderprogramme Rheinland-Pfalz prüfen – Patrick</li></ul>`;
+const UPCOMING={time:'14:30',title:'Abstimmung Einkauf Q4',people:3};
+
+/* ================= Zustand (Oberflaeche lokal, wie AK8) ================= */
+const KEY='u1-aufnahmen-prototyp-v1';
+const DEF={variant:'B',size:'1366',theme:'light',session:'s3',meeting:'m2',tabA:'transcript',tabB:'notes',tabR:'transcript',
+  wA:{s:248,c:300},wB:{s:248,r:420},col:{s:false,c:false,r:false},split:0.5,chatA:false};
+let S=Object.assign(structuredClone(DEF),(()=>{try{return JSON.parse(localStorage.getItem(KEY))||{}}catch(e){return {}}})());
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+const V={frameW:0,frameH:0,scale:1,drawer:false,menu:null,dlg:null,rename:null,renameS:null,search:'',live:null,play:{on:false,pos:0},hl:null,follow:true,chat:{},toast:null,lastTx:0};
+const byId=id=>MEETINGS.find(m=>m.id===id);
+const sessName=id=>id==='all'?'Alle Aufnahmen':id===null||id==='none'?'Ohne Session':(SESSIONS.find(s=>s.id===id)||{}).name||'–';
+const inSession=(m,sid)=>sid==='all'||(sid==='none'?!m.session:m.session===sid);
+const sorted=list=>list.slice().sort((a,b)=>b.date.localeCompare(a.date));
+/* ================= Darstellung ================= */
+const frame=document.getElementById('frame');
+function modes(){
+  const w=V.frameW;const nav=w>=1100?'full':w>=768?'rail':'bottom';
+  const navW=nav==='full'?195:nav==='rail'?64:0;const pad=nav==='bottom'?12:16;
+  const pageW=w-navW-2*pad;const ws=pageW>=1000?'wide':pageW>=620?'medium':'narrow';
+  return {nav,navW,pageW,ws};
+}
+const tip=(name,desc)=>`data-tip="${esc(name)}|${esc(desc)}" aria-label="${esc(name)}"`;
+const IB=(act,icon,name,desc,extra='')=>`<button class="ib" data-act="${act}" ${tip(name,desc)} ${extra}>${ic(icon,18)}</button>`;
+
+function navHTML(md){
+  if(md.nav==='bottom')return '';
+  const it=(i,t,on,dim)=>`<a href="#" class="${on?'on':''} ${dim?'dim':''}" data-act="nav" ${md.nav==='rail'?tip(t,'Bereich der App'):''}>${ic(i,20)}<span>${t}</span></a>`;
+  return `<nav class="nav" aria-label="Hauptmenü">${it('home','Start')}${it('history','Verlauf')}${it('users','Aufnahmen',true)}${it('speaker','Vorlesen')}<div class="grow"></div>${it('cpu','Modelle')}${it('cog','Einstellungen')}${it(md.nav==='rail'?'panelLo':'panelL',md.nav==='rail'?'Menü ausklappen':'Menü einklappen',false,true)}</nav>`;
+}
+function footerHTML(md){
+  return `<div class="footer" style="${md.nav==='bottom'?'':'grid-column:2'}"><span><span class="dot"></span>Whisper large-v3 turbo ⌄ &nbsp; ${ic('mic',12).replace('class="ic"','class="ic" style="display:inline;vertical-align:-2px"')} Systemvorgabe ⌄ &nbsp; <span class="dot"></span>Qwen3 8B ⌄</span><span>v0.20.9</span></div>`;
+}
+function bnavHTML(){
+  const it=(i,t,on)=>`<a href="#" class="${on?'on':''}" data-act="nav">${ic(i,20)}${t}</a>`;
+  return `<nav class="bnav" aria-label="Hauptmenü">${it('home','Start')}${it('history','Verlauf')}${it('users','Aufnahmen',true)}${it('speaker','Vorlesen')}${it('more','Mehr')}</nav>`;
+}
+function pageHeadHTML(md){
+  if(md.ws==='narrow')return '';
+  return `<header class="phead"><div><h1>Aufnahmen</h1>${md.ws==='wide'?'<p>Gespräche aufnehmen oder Dateien importieren, transkribieren und auswerten.</p>':''}</div>
+  <div class="acts"><button class="ib gh lg" data-act="help" ${tip('Hilfe','Kurzanleitung zu dieser Seite öffnen')}>${ic('help',20)}</button></div></header>`;
+}
+
+/* ---------- Sessions ---------- */
+function statusMini(m){
+  if(m.status==='recording')return `<span class="recdot pulse" aria-label="Aufnahme läuft"></span>`;
+  if(m.status==='processing'&&m.job)return `<span class="bar"><i style="width:${m.job.pct}%" data-pbar="${m.id}"></i></span><span class="tnum" data-ppct="${m.id}">${Math.floor(m.job.pct)} %</span>`;
+  if(m.status==='cancelled')return `<span>· abgebrochen</span>`;
+  return '';
+}
+function mrowHTML(m,flat){
+  return `<div class="mrow ${flat?'flat':''} ${m.id===S.meeting?'sel':''}" role="option" aria-selected="${m.id===S.meeting}" tabindex="0" draggable="true" data-act="pick" data-id="${m.id}" data-ctx="meeting">
+   <div class="t">${m.source==='import'?'':''}<span>${esc(m.title)}</span></div>
+   <div class="m"><span>${dshort(m.date)}</span><span>·</span><span data-mdur="${m.id}">${m.status==='recording'?mmss(m.dur):Math.max(1,Math.round(m.dur/60))+' Min.'}</span>${m.source==='import'?'<span>· Import</span>':''}${statusMini(m)}</div></div>`;
+}
+function sessionsBody(){
+  const q=V.search.trim().toLowerCase();
+  if(q){
+    const hits=sorted(MEETINGS.filter(m=>inSession(m,S.session)&&(m.title.toLowerCase().includes(q)||m.tx.some(s=>s.text.toLowerCase().includes(q)))));
+    return `<div class="hintline" style="padding:0 8px 6px">${hits.length} Treffer in „${esc(sessName(S.session))}“</div>`+(hits.map(m=>mrowHTML(m,true)).join('')||'<div class="empty">Nichts gefunden.</div>');
+  }
+  const row=(id,name,icon,count,open)=>V.renameS===id
+    ?`<div class="srow sel">${ic(icon,16)}<input id="srename" value="${esc(name)}" aria-label="Name der Session" data-sid="${id}"></div>`
+    :`<div class="srow ${S.session===id?'sel':''}" tabindex="0" role="treeitem" aria-expanded="${open}" data-act="session" data-sid="${id}" ${id.startsWith('s')?'data-ctx="session" data-drop="1"':''}>
+      <span style="color:var(--faint)">${ic(open?'chevD':'chevR',14)}</span>${ic(icon,16)}<span class="n">${esc(name)}</span><span class="c">${count}</span></div>`;
+  let h=`<div role="tree" aria-label="Sessions">`;
+  h+=row('all','Alle Aufnahmen','folders',MEETINGS.length,S.session==='all');
+  if(S.session==='all')h+=sorted(MEETINGS).map(m=>mrowHTML(m)).join('');
+  for(const s of SESSIONS){const list=sorted(MEETINGS.filter(m=>m.session===s.id));const open=S.session===s.id;h+=row(s.id,s.name,'folder',list.length,open);if(open)h+=list.map(m=>mrowHTML(m)).join('')||'<div class="empty" style="padding-left:30px">Noch leer – Besprechung hierher ziehen.</div>'}
+  const none=MEETINGS.filter(m=>!m.session);
+  if(none.length){h+=row('none','Ohne Session','folder',none.length,S.session==='none');if(S.session==='none')h+=sorted(none).map(m=>mrowHTML(m)).join('')}
+  return h+'</div>';
+}
+function sessionsCol(md,inDrawer){
+  return `<div class="col" data-testid="rec-sessions" style="${inDrawer?'flex:1':`width:${S.wA&&S.variant==='A'?S.wA.s:S.wB.s}px;flex:none`}">
+   <div class="shead"><span class="lbl grow">Sessions</span>
+    <button class="ib gh" data-act="newSession" ${tip('Neue Session','Ordner wie „Privat“ oder ein Thema anlegen')}>${ic('plus',16)}</button>
+    <button class="ib gh" data-act="askSession" ${tip('Session fragen','Chat über alle Besprechungen dieser Session')}>${ic('msg',16)}</button>
+    ${inDrawer?`<button class="ib gh" data-act="drawer" ${tip('Schließen','Sessions ausblenden')}>${ic('x',16)}</button>`:`<button class="ib gh" data-act="collapse" data-which="s" ${tip('Einklappen','Sessions-Spalte zur Leiste verkleinern')}>${ic('panelL',16)}</button>`}</div>
+   <label class="search">${ic('search',14)}<input id="ssearch" placeholder="In „${esc(sessName(S.session))}“ suchen …" value="${esc(V.search)}" aria-label="Besprechungen durchsuchen"></label>
+   <div class="scroll" id="sscroll" data-keep>${sessionsBody()}</div>
+   <div class="upnext"><div class="lbl" style="padding:0 6px 2px">Als Nächstes</div>
+    <div class="ev">${ic('cal',16)}<div class="tt"><div>${UPCOMING.title}</div><small>Heute ${UPCOMING.time} · ${UPCOMING.people} Personen</small></div>
+    <button class="ib gh" data-act="startUpcoming" ${tip('Aufnahme starten','Termin aufnehmen – Titel und Teilnehmende aus dem Kalender')}>${ic('mic',16)}</button></div></div>
+  </div>`;
+}
+function sessionsRail(){
+  return `<div class="rail" data-testid="rec-sessions" aria-label="Sessions (eingeklappt)">
+   <button class="ib gh lg" data-act="expandS" ${tip('Sessions einblenden','Spalte mit Sessions und Besprechungen öffnen')}>${ic('panelLo',18)}</button>
+   ${[{id:'all',name:'Alle Aufnahmen'},...SESSIONS].map(s=>`<button class="ini ${S.session===s.id?'sel':''}" data-act="session" data-sid="${s.id}" ${tip(s.name,MEETINGS.filter(m=>inSession(m,s.id)).length+' Besprechungen')}>${s.id==='all'?ic('folders',15):esc(s.name.slice(0,2))}</button>`).join('')}
+  </div>`;
+}
+
+/* ---------- Detailkopf ---------- */
+function statusChip(m){
+  if(m.status==='recording')return `<span class="chip live"><span class="recdot pulse"></span>Aufnahme läuft <span class="tnum" data-livetime>${mmss(m.dur)}</span></span>`;
+  if(m.status==='processing'&&m.job)return `<span class="chip busy">${esc(m.job.phase)} <span class="mini"><i data-pbar="${m.id}" style="width:${m.job.pct}%"></i></span><span class="tnum" data-ppct="${m.id}">${Math.floor(m.job.pct)} %</span></span>`;
+  if(m.status==='cancelled')return `<span class="chip busy">Abgebrochen</span>`;
+  return `<span class="chip ok">${ic('check',12)}Fertig</span>`;
+}
+function detailHead(m,md,tabsHTML){
+  const people=m.people.slice(0,3).map(p=>`<span class="av" style="background:${colorOf(p)}" title="${esc(p)}">${esc(p.split(/[ .]/).filter(Boolean).map(x=>x[0]).join('').slice(0,2))}</span>`).join('');
+  const title=V.rename===m.id?`<input id="mrename" value="${esc(m.title)}" aria-label="Titel der Besprechung">`:`<h2 data-act="rename" tabindex="0" title="Klicken zum Umbenennen">${esc(m.title)}</h2>`;
+  return `<div class="dhead" data-testid="rec-detail-head">
+   <div class="dh1">${title}
+    <button class="ib gh" data-act="details" ${tip('Details','Status, Quelle, Einwilligung, Modell, Aufbewahrung – alles auf einen Blick')}>${ic('info',16)}</button>
+    ${md.ws==='narrow'?'':''}</div>
+   <div class="chips">${statusChip(m)}
+    <span class="chip" ${tip(m.source==='import'?'Datei-Import':'Aufnahme',m.tracks)}>${ic(m.source==='import'?'upload':'mic',12)}${m.source==='import'?'Import':'Aufnahme'}</span>
+    <span class="chip">${dshort(m.date)} ${m.date.slice(11,16)}</span>
+    ${m.status==='recording'?'':`<span class="chip tnum">${Math.max(1,Math.round(m.dur/60))} Min.</span>`}
+    ${md.ws==='wide'&&!S.col.s?'':`<button class="chip" data-act="moveMenu" ${tip('Session','In eine andere Session verschieben')}>${ic('folder',12)}${esc(sessName(m.session))}</button>`}
+    <span style="display:inline-flex;padding-left:4px">${people}</span></div>
+   ${tabsHTML}</div>`;
+}
+function tabsHTML(scope,list,cur){
+  return `<div class="tabs" role="tablist" aria-label="Ansicht">${list.map(([id,label,cnt])=>`<button class="tab" role="tab" id="tab-${scope}-${id}" aria-selected="${cur===id}" tabindex="${cur===id?0:-1}" data-act="tab" data-scope="${scope}" data-tab="${id}">${label}${cnt!=null?`<span class="cnt">${cnt}</span>`:''}</button>`).join('')}</div>`;
+}
+
+/* ---------- Inhalte ---------- */
+function segHTML(s,i,isNew){
+  const now=V.play.on&&V.play.id===S.meeting&&V.play.pos>=s.t&&(i===undefined||true);
+  return `<div class="seg ${isNew?'new':''}" data-t="${s.t}" style="--c:${colorOf(s.spk)}">
+   <button class="ts" data-act="seek" data-t="${s.t}" ${tip('Ab hier abspielen',mmss(s.t))}>${mmss(s.t)}</button>
+   <span class="spk">${esc(s.spk)}</span><p><b>${esc(s.spk)}</b>${esc(s.text)}</p>
+   <button class="ib gh" data-act="toast" data-msg="Satz bearbeiten (wie heute, Stift)" ${tip('Bearbeiten','Satz korrigieren')}>${ic('pencil',14)}</button></div>`;
+}
+function transcriptPane(m,compact){
+  const empty=m.status==='recording'?'Warte auf den ersten Satz …':'Noch kein Transkript.';
+  return `<div class="pane ${compact?'tx-compact':''}" data-testid="rec-transcript">
+   <div class="scroll body" id="txscroll" data-keep>${m.tx.length?m.tx.map((s,i)=>segHTML(s,i)).join(''):`<div class="empty">${empty}</div>`}</div>
+   <button class="btn sm follow" id="followbtn" data-act="follow">${ic('down',14)}Zum Live-Ende</button></div>`;
+}
+function notesPane(m){
+  const items=m.notes.map((n,i)=>`<li class="${n.todo&&n.done?'done':''}"><span class="nt">${m.source==='import'?'':mmss(n.t)}</span>${n.todo?`<input type="checkbox" data-act="noteDone" data-i="${i}" ${n.done?'checked':''} aria-label="Erledigt">`:'<span style="color:var(--faint)">•</span>'}<span>${esc(n.text)}</span></li>`).join('');
+  const live=m.status==='recording';
+  return `<div class="pane" data-testid="rec-notes"><div class="scroll body" id="notescroll" data-keep>
+    ${m.notes.length?`<ul class="notes">${items}</ul>`:`<div class="empty">${live?'Stichpunkte genügen – jeder merkt sich die Aufnahmezeit.':'Noch keine eigenen Notizen.'}</div>`}</div>
+    <div class="nin"><input id="notein" placeholder="${live?'Stichpunkt tippen, Enter speichert · „[ ]“ = Aufgabe':'Notiz ergänzen …'}" aria-label="Notiz">${V.frameW>700?`<span class="hint">${live?ic('mic',12).replace('class="ic"','class="ic" style="display:inline;vertical-align:-2px"')+' '+mmss(m.dur):'Enter'}</span>`:''}</div></div>`;
+}
+function aiPane(m){
+  if(!m.ai)return `<div class="pane"><div class="scroll body" data-keep id="aiscroll"><div class="empty">${m.status==='recording'?'KI-Notizen entstehen nach dem Stopp automatisch aus Transkript und deinen Notizen.':'Noch keine KI-Notizen.'}</div>${m.status==='ready'?`<button class="btn" data-act="genAi">${ic('wand',16)}KI-Notizen erzeugen</button>`:''}</div></div>`;
+  const src=ts=>ts.map(t=>`<button class="src" data-act="jump" data-t="${t}" ${tip('Quelle','Satz im Transkript zeigen')}>${mmss(t)}</button>`).join('');
+  return `<div class="pane" data-testid="rec-ai"><div class="scroll body ai" id="aiscroll" data-keep>
+   <div class="meta"><button class="chip" data-act="menuTpl">${ic('file',12)}Vorlage: ${esc(m.template)} ${ic('chevD',12)}</button><span>Qwen3 8B · 28.09., 11:02</span></div>
+   ${m.ai.sections.map(s=>`<h3>${s.title}</h3><ul>${s.items.map(([t,ts])=>`<li>${esc(t)}${src(ts)}</li>`).join('')}</ul>`).join('')}
+   <h3>Aufgaben</h3><ul class="tasks">${m.ai.tasks.map(([t,who,due,ts,done],i)=>`<li><input type="checkbox" ${done?'checked':''} aria-label="Erledigt"><span>${esc(t)} <span class="chip" style="height:18px">${esc(who)}${due?' · '+due:''}</span>${src([ts])}</span></li>`).join('')}</ul>
+  </div></div>`;
+}
+function minutesPane(m){
+  return `<div class="pane"><div class="scroll body" id="minscroll" data-keep>${m.minutes?`<div class="meta"><button class="chip" data-act="menuTpl">${ic('file',12)}Vorlage: Allgemein ${ic('chevD',12)}</button><span>Qwen3 8B · 28.09., 11:05</span></div><article class="doc">${m.minutesHtml||MINUTES_HTML}</article>`:`<div class="empty">Noch kein Protokoll. Es entsteht nach dem Stopp automatisch (Vorlage wie bei den KI-Notizen) oder über das Menü „☰“.</div><button class="btn" data-act="genMin">${ic('file',16)}Protokoll erzeugen</button>`}</div></div>`;
+}
+function chatInner(m){
+  const c=V.chat[m.id]||[];
+  return `<div class="chat">${c.length?c.map(x=>`<div class="msg ${x.me?'me':''}">${x.html}</div>`).join(''):`<div class="hintline">Frag nach Inhalten dieser Besprechung – jede Aussage der Antwort ist mit einer Stelle belegt.</div>`}
+   <div class="recipes">${(m.status==='recording'?['Was habe ich verpasst?','Offene Fragen bisher']:['Zusammenfassung in 3 Sätzen','Offene Aufgaben','Was wurde entschieden?']).map(r=>`<button class="chip" data-act="recipe" data-q="${esc(r)}">${esc(r)}</button>`).join('')}</div></div>
+   <div class="cin"><textarea id="chatin" placeholder="Frage stellen …" aria-label="Frage"></textarea><button class="ib" data-act="send" ${tip('Senden','Frage an das lokale Sprachmodell')}>${ic('send',16)}</button></div>`;
+}
+function chatPane(m){return `<div class="pane"><div class="scroll body" id="chatscroll" data-keep>${chatInner(m)}</div></div>`}
+function paneFor(tab,m,compact){
+  return tab==='transcript'?transcriptPane(m,compact):tab==='notes'?notesPane(m):tab==='ai'?aiPane(m):tab==='minutes'?minutesPane(m):chatPane(m);
+}
+
+/* ---------- Bedienung ---------- */
+function recordBlock(m,where){
+  const live=V.live&&byId(V.live.id);
+  if(live){
+    return `<div class="recbox live" data-testid="rec-live">
+     <div class="row nowrap"><span class="recdot ${V.live.paused?'':'pulse'}"></span><span style="font-size:13.125px;font-weight:600">${V.live.paused?'Pausiert':'Aufnahme läuft'}</span><span class="grow"></span><span class="timer" data-livetime>${mmss(live.dur)}</span></div>
+     <div class="row nowrap"><div class="lvl" ${tip('Pegel','oben Mikrofon, unten Gegenseite')}><i><b data-lvl="0" style="width:40%"></b></i><i><b data-lvl="1" style="width:60%"></b></i></div>
+      <button class="ib" data-act="pauseRec" ${tip(V.live.paused?'Fortsetzen':'Pausieren','Aufnahme anhalten, ohne sie zu beenden')}>${ic(V.live.paused?'play':'pause',18)}</button>
+      <button class="ib danger" data-act="stopRec" ${tip('Beenden','Aufnahme stoppen – danach entstehen KI-Notizen und Protokoll')}>${ic('stop',18)}</button>
+      <button class="ib" data-act="copyNotice" ${tip('Hinweis kopieren','„Ich transkribiere lokal …“ für den Meeting-Chat')}>${ic('copy',18)}</button></div>
+     ${live.id!==S.meeting?`<button class="btn sm" data-act="pick" data-id="${live.id}">Zur laufenden Aufnahme</button>`:''}</div>`;
+  }
+  return `<div class="row nowrap" data-testid="rec-start"><button class="btn pri grow" data-act="startDlg">${ic('mic',16)}Aufnahme starten</button>
+    ${IB('import','upload','Datei importieren','Audio/Video/VTT wählen – oder in die Mitte ziehen')}
+    ${IB('ytLink','link','Link einfügen','YouTube-Link als Quelle (folgt mit #65)','style="opacity:.6"')}</div>`;
+}
+function playerBlock(m){
+  if(m.status==='recording')return '';
+  const pos=V.play.id===m.id?V.play.pos:0;const pct=Math.min(100,pos/m.dur*100);
+  return `<div data-testid="rec-player"><div class="mediabar">
+   <button class="mbtn" data-act="skip" data-d="-15" ${tip('15 s zurück','')}>${ic('back',18)}</button>
+   <button class="mbtn play" data-act="play" ${tip(V.play.on&&V.play.id===m.id?'Pause':'Abspielen','Aufzeichnung wiedergeben, Transkript läuft mit')}>${ic(V.play.on&&V.play.id===m.id?'pause':'play',18)}</button>
+   <button class="mbtn" data-act="skip" data-d="15" ${tip('15 s vor','')}>${ic('fwd',18)}</button>
+   <span class="tnum" style="font-size:11.25px;color:var(--muted);margin-left:4px"><span data-ppos>${mmss(pos)}</span> / ${mmss(m.dur)}</span><span class="grow"></span>
+   <button class="mbtn" style="width:auto;padding:0 8px;border-radius:999px;font-size:13px" data-act="toast" data-msg="Tempo 0,75× – 2× (wie Vorlesen)" ${tip('Tempo','Wiedergabetempo')}>1,00×</button></div>
+   <div class="seek" data-act="seekbar"><i style="width:${pct}%" data-pfill></i><b style="left:${pct}%" data-pknob></b></div></div>`;
+}
+function symbolRow(m,withChat){
+  return `<div class="row nowrap" role="toolbar" aria-label="Aktionen" data-testid="rec-actions">
+   ${IB('toast','download','Exportieren','Transkript, Notizen und Protokoll als Markdown/DOCX','data-msg="Export-Dialog (wie heute)"')}
+   ${IB('toast','mail','Follow-up-Mail','Entwurf mit Ergebnissen und Aufgaben','data-msg="Follow-up-Dialog (wie heute)"')}
+   ${IB('copyTx','copy','Kopieren','Transkript mit Zeitmarken kopieren (Varianten im Menü)')}
+   ${IB('toast','users','Personen','Teilnehmende und Sprecher zuordnen','data-msg="Personen-Dialog (wie heute)"')}
+   ${withChat?`<button class="ib ${S.chatA?'on':''}" data-act="chatA" ${tip('Fragen','Chat zu dieser Besprechung ein-/ausblenden (Strg+J)')} aria-pressed="${S.chatA}">${ic('msg',18)}</button>`:''}
+   <span class="grow"></span>
+   <button class="ib" data-act="menu" ${tip('Menü','Neu transkribieren, Vorlage, Verschieben, Details, Löschen …')} aria-haspopup="menu">${ic('menu',18)}</button></div>`;
+}
+function progressBlock(m){
+  if(m.status!=='processing'||!m.job)return '';
+  const j=m.job;const total=m.dur;const done=Math.round(total*j.pct/100);
+  return `<div class="prog" data-testid="rec-progress"><div class="top">${esc(j.phase)}${j.paused?' · pausiert':''}<span class="p tnum" data-ppct="${m.id}">${Math.floor(j.pct)} %</span></div>
+   <div class="pbar2" role="progressbar" aria-valuenow="${Math.floor(j.pct)}" aria-valuemin="0" aria-valuemax="100"><i data-pbar="${m.id}" style="width:${j.pct}%"></i></div>
+   <div class="sub"><span class="tnum" data-peta="${m.id}">${j.phase==='Transkription'||j.phase==='Neu-Transkription'?`${mmss(done)} von ${mmss(total)} · `:''}noch ca. ${Math.max(1,Math.round((100-j.pct)*.25))} Min.</span><span class="grow"></span>
+   <button class="ib" data-act="jobPause" ${tip(j.paused?'Fortsetzen':'Pausieren','Verarbeitung anhalten – Rechner wird frei')}>${ic(j.paused?'play':'pause',14)}</button>
+   <button class="ib danger" data-act="jobStop" ${tip('Stoppen','Abbrechen – bisheriges Transkript bleibt erhalten')}>${ic('stop',14)}</button></div></div>`;
+}
+function controlsInner(m,withChat){
+  return `<div class="ctl">${recordBlock(m)}${playerBlock(m)}${progressBlock(m)}${symbolRow(m,withChat)}</div>`;
+}
+/* ---------- Arbeitsflaeche je Variante ---------- */
+const TABS_A=m=>[['transcript','Transkript'],['notes','Notizen',m.notes.length||null],['ai','KI-Notizen'],['minutes','Protokoll']];
+const TABS_B=m=>[['notes','Notizen',m.notes.length||null],['ai','KI-Notizen'],['minutes','Protokoll']];
+const TABS_R=()=>[['transcript','Transkript'],['chat','Fragen']];
+const clampW=(md)=>{
+  const avail=md.pageW-32, minC=380;
+  if(S.variant==='A'){const s=S.col.s||md.ws!=='wide'?44:S.wA.s;let c=S.col.c?44:S.wA.c;if(avail-s-c<minC)c=Math.max(260,avail-s-minC);return {s:S.col.s||md.ws!=='wide'?44:Math.min(S.wA.s,Math.max(180,avail-c-minC)),c}}
+  const s=S.col.s||md.ws!=='wide'?44:S.wB.s;let r=S.col.r?44:S.wB.r;if(avail-s-r<minC)r=Math.max(300,avail-s-minC);return {s:S.col.s||md.ws!=='wide'?44:Math.min(S.wB.s,Math.max(180,avail-r-minC)),r};
+};
+function sep(which,val,min,max,def,label){
+  return `<div class="rh" role="separator" aria-orientation="vertical" tabindex="0" aria-label="${label}" aria-valuenow="${val}" aria-valuemin="${min}" aria-valuemax="${max}" data-rh="${which}" data-def="${def}" data-min="${min}" data-max="${max}" ${tip(label,'Ziehen, Pfeiltasten ±16 px, Doppelklick = Standard')}></div>`;
+}
+function sessionsSlot(md,w){
+  if(md.ws!=='wide')return sessionsRail();
+  if(S.col.s)return sessionsRail();
+  const key=S.variant==='A'?'wA':'wB';
+  return sessionsCol(md)+sep('s',w.s,180,400,248,'Breite der Sessions-Spalte');
+}
+function railRight(which,m){
+  const live=!!V.live;
+  return `<div class="rail" data-testid="${which==='c'?'rec-controls':'rec-right'}">
+   <button class="ib gh lg" data-act="expand" data-which="${which}" ${tip('Spalte einblenden',which==='c'?'Bedienung öffnen':'Bedienung und Transkript öffnen')}>${ic('panelRo',18)}</button>
+   ${live?`<button class="ib danger" data-act="stopRec" ${tip('Beenden','Aufnahme stoppen')}>${ic('stop',18)}</button>`:`<button class="ib" style="background:var(--yellow);border-color:var(--yellow);color:var(--ink)" data-act="startDlg" ${tip('Aufnahme starten','Neue Aufnahme in dieser Session')}>${ic('mic',18)}</button>`}
+   ${IB('import','upload','Datei importieren','Audio/Video wählen')}${IB('menu','menu','Menü','Weitere Aktionen')}</div>`;
+}
+function dropLayer(){return `<div class="dropmsg">${ic('upload',18)}&nbsp;Datei hier ablegen – Import in „${esc(sessName(S.session==='all'?'s2':S.session))}“</div>`}
+function contentCard(m,md,scope,tabs,cur){
+  return `<div class="col card grow" data-testid="rec-content" data-dropzone="1" style="position:relative">${detailHead(m,md,tabsHTML(scope,tabs,cur))}${paneFor(cur,m,md.ws!=='wide')}${dropLayer()}</div>`;
+}
+function wsA(m,md){
+  const w=clampW(md);
+  let h=sessionsSlot(md,w);
+  const cur=S.tabA;
+  h+=contentCard(m,md,'A',TABS_A(m),cur==='chat'?'transcript':cur);
+  if(S.col.c){h+=railRight('c',m);return h}
+  h+=sep('c',w.c,260,440,300,'Breite der Bedienspalte');
+  h+=`<div class="col" data-testid="rec-controls" style="width:${w.c}px;flex:none">
+   <div class="shead"><span class="lbl grow">Bedienung</span><button class="ib gh" data-act="collapse" data-which="c" ${tip('Einklappen','Bedienspalte zur Leiste verkleinern')}>${ic('panelR',16)}</button></div>
+   <div class="scroll" id="ctlscroll" data-keep style="padding-right:2px">${controlsInner(m,true)}
+    <div class="disc" style="margin-top:12px"><button data-act="chatA" aria-expanded="${S.chatA}">${ic(S.chatA?'chevD':'chevR',14)}${ic('msg',16)}Fragen zu dieser Besprechung</button>${S.chatA?chatInner(m):''}</div></div></div>`;
+  return h;
+}
+function wsB(m,md){
+  const w=clampW(md);
+  let h=sessionsSlot(md,w);
+  h+=contentCard(m,md,'B',TABS_B(m),S.tabB);
+  if(S.col.r){h+=railRight('r',m);return h}
+  h+=sep('r',w.r,300,640,420,'Breite der rechten Spalte');
+  const compact=w.r<440;
+  h+=`<div class="col" data-testid="rec-controls" style="width:${w.r}px;flex:none;gap:10px">
+   <div class="shead" style="margin-bottom:-4px"><span class="lbl grow">Bedienung</span><button class="ib gh" data-act="collapse" data-which="r" ${tip('Einklappen','Rechte Spalte zur Leiste verkleinern')}>${ic('panelR',16)}</button></div>
+   ${controlsInner(m,false)}
+   <div class="col card grow" style="min-height:160px">${tabsHTML('R',TABS_R(),S.tabR).replace('class="tabs"','class="tabs" style="padding:0 6px"')}${paneFor(S.tabR,m,compact)}</div></div>`;
+  return h;
+}
+function wsNarrow(m,md){
+  const live=V.live&&byId(V.live.id);
+  let strip;
+  if(live)strip=`<div class="nstrip live" data-testid="rec-live"><span class="recdot ${V.live.paused?'':'pulse'}"></span><span class="timer" data-livetime>${mmss(live.dur)}</span><div class="lvl"><i><b data-lvl="0" style="width:40%"></b></i><i><b data-lvl="1" style="width:60%"></b></i></div>
+     <button class="ib" data-act="pauseRec" ${tip(V.live.paused?'Fortsetzen':'Pausieren','Aufnahme anhalten')}>${ic(V.live.paused?'play':'pause',18)}</button><button class="ib danger" data-act="stopRec" ${tip('Beenden','Aufnahme stoppen')}>${ic('stop',18)}</button></div>`;
+  else strip=`<div class="nstrip" data-testid="rec-start"><button class="btn pri grow" data-act="startDlg">${ic('mic',16)}Aufnahme starten</button>${IB('import','upload','Datei importieren','Audio/Video wählen')}${m.status!=='recording'?`<button class="mbtn play" data-act="play" ${tip('Abspielen','Aufzeichnung wiedergeben')}>${ic(V.play.on&&V.play.id===m.id?'pause':'play',18)}</button>`:''}</div>`;
+  const bar=`<div class="nbar"><button class="ib gh lg" data-act="drawer" ${tip('Sessions','Sessions und Besprechungen')}>${ic('panelLo',20)}</button>
+    <div class="tt"><div>${esc(m.title)}</div></div>
+    <button class="ib gh lg" data-act="details" ${tip('Details','Status, Quelle, Einwilligung, Modell')}>${ic('info',18)}</button>
+    <button class="ib gh lg" data-act="menu" ${tip('Menü','Alle Aktionen')}>${ic('menu',20)}</button></div>`;
+  const prog=m.status==='processing'?progressBlock(m):'';
+  if(S.variant==='A'){
+    const cur=S.tabA;
+    return `<div class="col grow" style="gap:8px">${bar}<div class="chips">${statusChip(m)}<span class="chip">${dshort(m.date)}</span><button class="chip" data-act="moveMenu">${ic('folder',12)}${esc(sessName(m.session))}</button></div>${strip}${prog}
+     <div class="col card grow" data-testid="rec-content" data-dropzone="1" style="position:relative">${tabsHTML('A',[...TABS_A(m),['chat','Fragen']],cur)}${paneFor(cur,m,true)}${dropLayer()}</div></div>`;
+  }
+  const sp=Math.round(S.split*100);
+  return `<div class="col grow" style="gap:8px" id="nsplit">${bar}${strip}${prog}
+    <div class="col card" data-testid="rec-content" data-dropzone="1" style="position:relative;flex:${sp} 1 0;min-height:120px">${tabsHTML('B',TABS_B(m),S.tabB)}${paneFor(S.tabB,m,true)}${dropLayer()}</div>
+    <div class="rhv" role="separator" aria-orientation="horizontal" tabindex="0" aria-label="Aufteilung Notizen / Transkript" aria-valuenow="${sp}" aria-valuemin="25" aria-valuemax="75" data-rhv="1" ${tip('Aufteilung','Ziehen oder Pfeil hoch/runter, Doppelklick = halbe-halbe')}></div>
+    <div class="col card" data-testid="rec-controls" style="flex:${100-sp} 1 0;min-height:120px">${tabsHTML('R',TABS_R(),S.tabR)}${paneFor(S.tabR,m,true)}</div></div>`;
+}
+
+/* ---------- Gesamtaufbau ---------- */
+function renderApp(){
+  const md=modes();
+  // Fokus und Scrollstaende retten
+  const a=document.activeElement;const focus=a&&a.id&&frame.contains(a)?{id:a.id,s:a.selectionStart,e:a.selectionEnd,v:a.value}:null;
+  const scrolls={};frame.querySelectorAll('[data-keep][id]').forEach(el=>scrolls[el.id]=el.scrollTop);
+  const noteVal=(frame.querySelector('#notein')||{}).value;const chatVal=(frame.querySelector('#chatin')||{}).value;
+  let m=byId(S.meeting);if(!m){m=sorted(MEETINGS.filter(x=>inSession(x,S.session)))[0]||sorted(MEETINGS)[0];S.meeting=m.id}
+  frame.dataset.theme=S.theme;
+  frame.innerHTML=`<div class="app nav-${md.nav} ws-${md.ws}" style="--navw:${md.navW}px">${navHTML(md)}
+   <main class="main"><section class="page" aria-label="Aufnahmen">${pageHeadHTML(md)}
+    <div class="ws" id="ws">${md.ws==='narrow'?wsNarrow(m,md):S.variant==='A'?wsA(m,md):wsB(m,md)}</div></section></main>
+   ${footerHTML(md)}${md.nav==='bottom'?bnavHTML():''}</div>
+   ${V.drawer?`<div class="drawer-back" data-act="drawer"></div><div class="drawer">${sessionsCol(md,true)}</div>`:''}
+   <div id="layer"></div>`;
+  frame.querySelectorAll('[data-keep][id]').forEach(el=>{if(scrolls[el.id]!=null)el.scrollTop=scrolls[el.id]});
+  const ni=frame.querySelector('#notein');if(ni&&noteVal)ni.value=noteVal;
+  const ci=frame.querySelector('#chatin');if(ci&&chatVal)ci.value=chatVal;
+  if(focus){const el=frame.querySelector('#'+focus.id);if(el){el.focus();try{if(focus.v!=null&&el.value!==undefined){el.value=focus.v;el.setSelectionRange(focus.s,focus.e)}}catch(e){}}}
+  const r=frame.querySelector('#mrename,#srename');if(r&&document.activeElement!==r){r.focus();r.select()}
+  const tx=frame.querySelector('#txscroll');if(tx&&V.live&&V.live.id===S.meeting&&V.follow)tx.scrollTop=tx.scrollHeight;
+  renderLayer();paintChrome();save();
+}
+function renderLayer(){
+  const L=frame.querySelector('#layer');if(!L)return;let h='';
+  if(V.menu)h+=V.menu.html;
+  if(V.dlg)h+=`<div class="dlg-back" data-act="dlgClose" data-self="1"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgt">${V.dlg}</div></div>`;
+  if(V.toast)h+=`<div class="toast" role="status">${esc(V.toast)}</div>`;
+  L.innerHTML=h;
+  if(V.menu){const mm=L.querySelector('.menu');const fw=V.frameW,fh=V.frameH;let {x,y}=V.menu;const w=mm.offsetWidth,hh=mm.offsetHeight;if(x+w>fw-8)x=Math.max(8,fw-w-8);if(y+hh>fh-8)y=Math.max(8,y-hh-44);mm.style.left=x+'px';mm.style.top=y+'px';const f=mm.querySelector('.mi');f&&f.focus()}
+  if(V.dlg){const f=L.querySelector('.dlg input,.dlg select,.dlg .btn.pri');f&&f.focus()}
+}
+/* Rahmen: Groesse, Skalierung, AK4-Pruefung */
+const SIZES={1920:[1920,1050],1366:[1366,768],900:[900,700],480:[480,800]};
+function layoutFrame(){
+  const st=document.getElementById('stage');const sw=st.clientWidth-24,sh=st.clientHeight-24;
+  const [w,h]=S.size==='frei'?[Math.max(360,sw),Math.max(500,sh)]:SIZES[S.size];
+  const sc=Math.min(1,sw/w,sh/h);V.frameW=w;V.frameH=h;V.scale=sc;
+  frame.style.width=w+'px';frame.style.height=h+'px';frame.style.transform=`scale(${sc})`;
+  const ho=document.getElementById('holder');ho.style.width=w*sc+'px';ho.style.height=h*sc+'px';ho.style.left=Math.max(12,(st.clientWidth-w*sc)/2)+'px';ho.style.top='12px';
+  document.getElementById('pscale').textContent=`${w} × ${h} · ${Math.round(sc*100)} %`;
+}
+function paintChrome(){
+  document.querySelectorAll('#pv button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===S.variant));
+  document.querySelectorAll('#pw button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.w===S.size));
+  document.querySelectorAll('#pt button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.t===S.theme));
+  document.getElementById('pdesc').textContent=S.variant==='A'
+   ?'Variante A: Sessions | Inhalt mit Reitern Transkript · Notizen · KI-Notizen · Protokoll | Bedienspalte (Aufnahme/Import, Wiedergabe, Symbolzeile, Menü ☰, Fortschritt, Fragen als Klappbereich). Schmal: Reiter.'
+   :'Variante B: Sessions | Arbeitsfläche Notizen · KI-Notizen · Protokoll | rechts Bedienung oben, Transkript/Fragen darunter. Schmal: Notizen und Live-Transkript gleichzeitig (geteilt).';
+}
+function checkScroll(){
+  const out=[];let nested=0;
+  frame.querySelectorAll('*').forEach(el=>{const s=getComputedStyle(el);if(/(auto|scroll)/.test(s.overflowY)&&el.scrollHeight>el.clientHeight+1&&!el.classList.contains('tabs')){out.push(el);let p=el.parentElement;while(p&&p!==frame){const ps=getComputedStyle(p);if(/(auto|scroll)/.test(ps.overflowY)&&p.scrollHeight>p.clientHeight+1){nested++;break}p=p.parentElement}}});
+  const main=frame.querySelector('.main');const pageScroll=main&&main.scrollHeight>main.clientHeight+1;
+  const el=document.getElementById('pcheck');const ok=!pageScroll&&nested===0;
+  el.className='pcheck'+(ok?'':' bad');el.textContent=ok?`Eine Scrollbar je Bereich ✓ (${out.length} scrollend)`:`✗ ${pageScroll?'Seite scrollt':''} ${nested?nested+' verschachtelt':''}`;
+}
+/* ================= Menues, Dialoge, Hinweise ================= */
+function frameXY(el){const fr=frame.getBoundingClientRect(),r=el.getBoundingClientRect();return {x:(r.left-fr.left)/V.scale,y:(r.bottom-fr.top)/V.scale+4}}
+function openMenu(anchor,items,pos){
+  const p=pos||frameXY(anchor);
+  const html=`<div class="menu" role="menu">${items.map(it=>it.sep?'<div class="msep"></div>':it.head?`<div class="mhd">${esc(it.head)}</div>`:`<button class="mi ${it.danger?'danger':''} ${it.sub?'sub':''}" role="menuitem" data-act="${it.act}" ${Object.entries(it.data||{}).map(([k,v])=>`data-${k}="${esc(v)}"`).join(' ')}>${it.icon?ic(it.icon,16):''}${esc(it.label)}${it.k?`<span class="k">${esc(it.k)}</span>`:''}</button>`).join('')}</div>`;
+  V.menu={html,x:p.x,y:p.y};renderLayer();
+}
+const closeMenu=()=>{if(V.menu){V.menu=null;renderLayer()}};
+function meetingMenu(anchor,m,md){
+  const narrow=md.ws==='narrow';
+  const items=[];
+  if(narrow)items.push({label:'Exportieren …',icon:'download',act:'toast',data:{msg:'Export-Dialog (wie heute)'}},{label:'Follow-up-Mail …',icon:'mail',act:'toast',data:{msg:'Follow-up-Dialog (wie heute)'}},{label:'Transkript kopieren',icon:'copy',act:'copyTx'},{label:'Personen …',icon:'users',act:'toast',data:{msg:'Personen-Dialog (wie heute)'}},{sep:1});
+  items.push({label:'Neu transkribieren …',icon:'refresh',act:'retrans'},{label:'KI-Notizen neu erzeugen',icon:'wand',act:'genAi'},{label:'Protokoll neu erzeugen',icon:'file',act:'genMin'},{label:'Vorlage wechseln …',icon:'layers',act:'menuTpl'},{sep:1},
+    {label:'Umbenennen',icon:'pencil',act:'rename',k:'F2'},{label:'In Session verschieben …',icon:'move',act:'moveMenu'},{label:'Nur Text kopieren',icon:'copy',act:'toast',data:{msg:'Transkript ohne Zeitmarken kopiert'}},{label:'Details …',icon:'info',act:'details'},{sep:1},
+    {label:'Besprechung löschen …',icon:'trash',act:'delMeeting',danger:1});
+  if(m.status==='cancelled')items.unshift({label:'Verarbeitung fortsetzen',icon:'play',act:'cont'},{sep:1});
+  openMenu(anchor,items);
+}
+function dialog(html){V.dlg=html;V.menu=null;renderLayer()}
+const closeDlg=()=>{V.dlg=null;renderLayer()};
+function toast(msg){V.toast=msg;renderLayer();clearTimeout(V.tt);V.tt=setTimeout(()=>{V.toast=null;renderLayer()},2200)}
+function detailsDlg(m){
+  const row=(k,v)=>`<dt>${k}</dt><dd>${v}</dd>`;
+  dialog(`<h3 id="dlgt">Details</h3><dl>${row('Titel',esc(m.title))}${row('Session',esc(sessName(m.session)))}${row('Status',statusChip(m))}${row('Quelle',m.source==='import'?'Datei-Import · '+esc(m.file||''):'Aufnahme')}${row('Spuren',esc(m.tracks))}${row('Beginn',dlong(m.date))}${row('Dauer',mmss(m.dur))}${row('Sprache',esc(m.lang))}${row('Modell',esc(m.model)+' · Sprechertrennung an')}${row('Fassungen',m.versions>1?m.versions+' (aktuell: v'+m.versions+', vorher v1 mit Parakeet)':'1')}${row('Einwilligung bestätigt',dlong(m.consent))}${row('Audio wird gelöscht am',m.retention?dlong(m.retention):'nie (Einstellung „Behalten“)')}${row('Sätze',m.tx.length)}</dl>
+   <p>Herkunft je Inhalt (Modell, Token, Dauer) folgt mit #66 per Rechtsklick „Herkunft“.</p><div class="ft"><button class="btn" data-act="dlgClose">Schließen</button></div>`);
+}
+function startDlg(title){
+  const now=new Date();const d=`${String(now.getDate()).padStart(2,'0')}.${String(now.getMonth()+1).padStart(2,'0')}., ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  const sid=S.session==='all'||S.session==='none'?'s2':S.session;
+  dialog(`<h3 id="dlgt">Aufnahme starten</h3>
+   <div class="f"><span>Titel</span><input type="text" id="st-title" value="${esc(title||'Besprechung '+d)}"></div>
+   <div class="f"><span>Session</span><select id="st-sess">${SESSIONS.map(s=>`<option value="${s.id}" ${s.id===sid?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
+   <div class="f"><span>Vorlage für KI-Notizen und Protokoll</span><select><option>Automatisch wählen</option><option>Allgemein</option><option>Kundengespräch / Vertrieb</option><option>Jour fixe</option></select></div>
+   <label><input type="checkbox" checked> System-Audio (Gegenseite) mitschneiden</label><label><input type="checkbox"> Mehrere Personen am Mikrofon</label>
+   <p>Alle Teilnehmenden wissen, dass aufgezeichnet wird, und sind einverstanden. Die Aufnahme bleibt auf diesem Rechner.</p>
+   <div class="ft"><button class="btn" data-act="dlgClose">Abbrechen</button><button class="btn pri" data-act="startGo">Einverstanden, starten</button></div>`);
+}
+function importDlg(name){
+  const sid=S.session==='all'||S.session==='none'?'s2':S.session;
+  V.pendingImport=name;
+  dialog(`<h3 id="dlgt">Datei importieren</h3><p><b style="color:var(--text)">${esc(name)}</b> → Session „${esc(sessName(sid))}“</p>
+   <p>Die Personen in der Aufnahme sind mit dem Transkribieren einverstanden. Die Datei wird lokal verarbeitet.</p>
+   <div class="ft"><button class="btn" data-act="dlgClose">Abbrechen</button><button class="btn pri" data-act="importGo">Einverstanden, importieren</button></div>`);
+}
+
+/* ================= Simulation ================= */
+let seq=0;
+const nowIso=()=>{const d=new Date();const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`};
+function startRecording(title,sid){
+  if(V.live){toast('Es läuft bereits eine Aufnahme.');return}
+  sid=!sid||sid==='all'||sid==='none'?'s2':sid;
+  const m=M({id:'live'+(++seq),title,session:sid,date:nowIso(),dur:0,status:'recording',people:['Anna M.','Jonas K.'],tx:[],notes:[],template:'Jour fixe'});
+  m.consent=m.date;MEETINGS.unshift(m);V.live={id:m.id,paused:false,li:0,k:0};
+  S.meeting=m.id;S.session=sid;S.tabA='transcript';S.tabB='notes';S.tabR='transcript';V.follow=true;V.dlg=null;V.drawer=false;
+  renderApp();const ni=frame.querySelector('#notein');if(ni)ni.focus();
+}
+function stopRecording(){
+  const m=byId(V.live.id);V.live=null;m.status='processing';m.job={phase:'Transkription abschließen',pct:0,paused:false,rate:14,queue:['KI-Notizen','Protokoll']};
+  renderApp();toast('Aufnahme beendet – KI-Notizen und Protokoll entstehen jetzt.');
+}
+function importFile(name){
+  const sid=S.session==='all'||S.session==='none'?'s2':S.session;
+  const m=M({id:'imp'+(++seq),title:name.replace(/\.[^.]+$/,'').replace(/[-_]+/g,' '),session:sid,date:nowIso(),dur:1860,source:'import',file:name,tracks:'Datei (gemischt)',status:'processing',people:['Herr Vogt'],
+    job:{phase:'Transkription',pct:0,paused:false,rate:4,queue:['KI-Notizen']}});
+  m.txAll=genTx('m7',1860);m.tx=[];MEETINGS.unshift(m);S.meeting=m.id;S.session=sid;S.tabA='transcript';S.tabR='transcript';V.dlg=null;renderApp();
+}
+function genAiFor(m){
+  const secs=[{title:'Kernpunkte',items:(m.notes.filter(n=>!n.todo).map(n=>[n.text,[n.t]]).concat(m.tx.slice(1,3).map(s=>[s.text,[s.t]]))).slice(0,4)},{title:'Entscheidungen',items:m.tx.slice(-3,-2).map(s=>[s.text,[s.t]])}];
+  const tasks=m.notes.filter(n=>n.todo).map(n=>[n.text,'Ich','',n.t,false]);if(m.tx[8])tasks.push(['Nachfassen: '+m.tx[8].text.slice(0,48)+' …',m.tx[8].spk,'',m.tx[8].t,false]);
+  m.ai={sections:secs,tasks};
+}
+function genMinFor(m){m.minutes=true;m.minutesHtml=`<h1>Protokoll: ${esc(m.title)}</h1><p><b>Datum:</b> ${dlong(m.date)} · <b>Dauer:</b> ${Math.max(1,Math.round(m.dur/60))} Min. · <b>Teilnehmende:</b> ${esc(['Patrick',...m.people].join(', '))}</p><h2>Ergebnisse</h2><ul>${m.tx.slice(0,4).map(s=>`<li>${esc(s.text)}</li>`).join('')}</ul><h2>Aufgaben</h2><ul>${(m.ai?m.ai.tasks:[]).map(t=>`<li>${esc(t[0])} – ${esc(t[1])}</li>`).join('')||'<li>keine</li>'}</ul>`}
+function appendSegs(m,segs){
+  if(m.id!==S.meeting)return;const tx=frame.querySelector('#txscroll');if(!tx)return;
+  const e=tx.querySelector('.empty');if(e)e.remove();
+  tx.insertAdjacentHTML('beforeend',segs.map(s=>segHTML(s,0,true)).join(''));
+  if(V.follow)tx.scrollTop=tx.scrollHeight;else frame.querySelector('#followbtn')?.classList.add('show');
+}
+function setAll(sel,fn){frame.querySelectorAll(sel).forEach(fn)}
+function tick(){
+  if(V.live&&!V.live.paused){
+    const m=byId(V.live.id);m.dur++;V.live.k++;
+    if(V.live.k%3===0){const [spk,text]=LIVE_LINES[V.live.li%LIVE_LINES.length];V.live.li++;const s={t:m.dur,spk,text};m.tx.push(s);appendSegs(m,[s])}
+    setAll('[data-livetime]',el=>el.textContent=mmss(m.dur));setAll(`[data-mdur="${m.id}"]`,el=>el.textContent=mmss(m.dur));
+    setAll('.nin .hint',el=>{if(m.id===S.meeting)el.lastChild.textContent=' '+mmss(m.dur)});
+  }
+  if(V.play.on){const m=byId(V.play.id);V.play.pos=Math.min(m.dur,V.play.pos+1);if(V.play.pos>=m.dur)V.play.on=false;paintPlay()}
+  let rerender=false;
+  for(const m of MEETINGS){
+    if(m.status!=='processing'||!m.job||m.job.paused)continue;
+    const j=m.job;j.pct=Math.min(100,j.pct+(j.rate||0.3));
+    if(m.txAll){const n=Math.floor(m.txAll.length*Math.min(j.pct,100)/100);if(n>m.tx.length&&j.phase==='Transkription'){const add=m.txAll.slice(m.tx.length,n);m.tx.push(...add);appendSegs(m,add)}}
+    setAll(`[data-pbar="${m.id}"]`,el=>el.style.width=j.pct+'%');setAll(`[data-ppct="${m.id}"]`,el=>el.textContent=Math.floor(j.pct)+' %');
+    if(j.pct>=100){
+      if(j.phase==='KI-Notizen')genAiFor(m);if(j.phase==='Protokoll')genMinFor(m);
+      if(j.phase==='Neu-Transkription'){m.versions++;m.model=j.model||m.model}
+      if(j.queue&&j.queue.length){j.phase=j.queue.shift();j.pct=0;j.rate=j.phase==='Protokoll'?20:16}
+      else{m.status='ready';delete m.job;if(m.txAll){m.tx=m.txAll;delete m.txAll}if(m.id===S.meeting)toast(`„${m.title}“ ist fertig.`)}
+      rerender=true;
+    }
+  }
+  if(rerender)renderApp();
+}
+function paintPlay(){
+  const m=byId(V.play.id);if(!m||m.id!==S.meeting)return;const pct=Math.min(100,V.play.pos/m.dur*100);
+  setAll('[data-ppos]',el=>el.textContent=mmss(V.play.pos));setAll('[data-pfill]',el=>el.style.width=pct+'%');setAll('[data-pknob]',el=>el.style.left=pct+'%');
+  const segs=[...frame.querySelectorAll('#txscroll .seg')];let cur=null;segs.forEach(s=>{s.classList.remove('now');if(+s.dataset.t<=V.play.pos)cur=s});
+  if(cur&&V.play.on){cur.classList.add('now')}
+}
+function jumpTo(t){
+  const md=modes();
+  if(S.variant==='A'||md.ws==='narrow'&&S.variant==='A')S.tabA='transcript';else{S.tabR='transcript';if(S.col.r)S.col.r=false}
+  renderApp();
+  const tx=frame.querySelector('#txscroll');if(!tx)return;const segs=[...tx.querySelectorAll('.seg')];let best=segs[0];
+  segs.forEach(s=>{if(+s.dataset.t<=t)best=s});
+  if(best){V.follow=false;best.scrollIntoView({block:'center'});best.classList.add('hl');setTimeout(()=>best.classList.remove('hl'),2600)}
+}
+function answer(m,q){
+  const c=V.chat[m.id]=V.chat[m.id]||[];c.push({me:1,html:esc(q)});
+  const pick=m.tx.length?[m.tx[Math.min(3,m.tx.length-1)],m.tx[Math.min(11,m.tx.length-1)]]:[];
+  const cite=s=>`<button class="src" data-act="jump" data-t="${s.t}">${mmss(s.t)}</button>`;
+  setTimeout(()=>{c.push({html:m.id==='m2'?`Die Lastspitzen liegen werktags zwischen 7:30 und 9:00 Uhr ${cite(m.tx[3])}. Ein Speicher mit 400 kWh würde etwa ein Drittel davon kappen ${cite(m.tx[11])}; offen ist noch der Tarif 2027 ${cite(m.tx[26])}.`:pick.length?`${esc(pick[0].text)} ${cite(pick[0])} Außerdem: ${esc(pick[1].text)} ${cite(pick[1])}`:'Noch nichts transkribiert.'});renderApp()},700);
+  renderApp();
+}
+/* ================= Aktionen ================= */
+const cur=()=>byId(S.meeting);
+const ACT={
+  nav:()=>toast('Nur die Seite „Aufnahmen“ ist Teil des Prototyps.'),
+  help:()=>toast('Hilfe öffnet sich wie heute als Spalte (PageShell help).'),
+  session:el=>{const sid=el.dataset.sid;S.session=sid;V.search='';if(!inSession(cur(),sid)){const f=sorted(MEETINGS.filter(m=>inSession(m,sid)))[0];if(f)S.meeting=f.id}renderApp()},
+  pick:el=>{S.meeting=el.dataset.id;V.rename=null;V.drawer=false;V.follow=true;renderApp()},
+  newSession:()=>{const id='s'+Date.now();SESSIONS.push({id,name:'Neue Session'});S.session=id;V.renameS=id;V.drawer=V.drawer;renderApp()},
+  askSession:()=>{if(S.variant==='A'){S.chatA=true;S.col.c=false}else{S.tabR='chat';S.col.r=false}renderApp();toast(`Chat über „${sessName(S.session)}“ (Umfang: Session)`)},
+  collapse:el=>{S.col[el.dataset.which]=true;renderApp()},
+  expand:el=>{S.col[el.dataset.which]=false;renderApp()},
+  expandS:()=>{if(modes().ws==='wide'){S.col.s=false}else V.drawer=true;renderApp()},
+  drawer:()=>{V.drawer=!V.drawer;renderApp()},
+  startUpcoming:()=>startDlg(UPCOMING.title),
+  startDlg:()=>startDlg(),
+  startGo:()=>{const t=frame.querySelector('#st-title').value.trim()||'Besprechung';const s=frame.querySelector('#st-sess').value;startRecording(t,s)},
+  import:()=>importDlg('Workshop-Energiemonitoring-Halle-3.m4a'),
+  importGo:()=>importFile(V.pendingImport||'Import.m4a'),
+  ytLink:()=>toast('YouTube-Link einfügen: kommt mit #65 – landet als Quelle in dieser Session.'),
+  pauseRec:()=>{V.live.paused=!V.live.paused;renderApp()},
+  stopRec:()=>stopRecording(),
+  copyNotice:()=>toast('Hinweis für den Meeting-Chat kopiert.'),
+  play:()=>{const m=cur();if(V.play.id!==m.id){V.play={on:true,pos:0,id:m.id}}else V.play.on=!V.play.on;renderApp();paintPlay()},
+  skip:el=>{const m=cur();if(V.play.id!==m.id)V.play={on:false,pos:0,id:m.id};V.play.pos=Math.max(0,Math.min(m.dur,V.play.pos+ +el.dataset.d));paintPlay()},
+  seek:el=>{const m=cur();V.play={on:true,pos:+el.dataset.t,id:m.id};renderApp();paintPlay()},
+  seekbar:(el,e)=>{const m=cur();const r=el.getBoundingClientRect();const f=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));V.play={on:V.play.id===m.id&&V.play.on,pos:Math.round(f*m.dur),id:m.id};paintPlay()},
+  menu:el=>meetingMenu(el,cur(),modes()),
+  moveMenu:el=>{const m=cur();openMenu(el,[{head:'Verschieben nach'},...SESSIONS.map(s=>({label:s.name+(m.session===s.id?'  ✓':''),icon:'folder',act:'moveTo',data:{sid:s.id,id:m.id}})),{sep:1},{label:'Ohne Session',icon:'folder',act:'moveTo',data:{sid:'',id:m.id}}],V.menu?{x:V.menu.x,y:V.menu.y}:null)},
+  moveTo:el=>{const m=byId(el.dataset.id)||cur();m.session=el.dataset.sid||null;V.menu=null;renderApp();toast(`Verschoben nach „${sessName(m.session)}“`)},
+  details:()=>detailsDlg(cur()),
+  retrans:()=>dialog(`<h3 id="dlgt">Neu transkribieren</h3><div class="f"><span>Modell</span><select id="rt-model"><option>Whisper large-v3 turbo (eingestellt)</option><option>Parakeet TDT 0.6B v3</option><option>Whisper large-v3</option></select></div><label><input type="checkbox" checked> Sprechertrennung neu berechnen</label><p>Die bisherige Fassung bleibt sichtbar, bis die neue fertig ist, und wird erst dann ersetzt. Eigene Notizen bleiben erhalten; KI-Notizen und Protokoll lassen sich danach neu erzeugen.</p><div class="ft"><button class="btn" data-act="dlgClose">Abbrechen</button><button class="btn pri" data-act="retransGo">Neu transkribieren</button></div>`),
+  retransGo:()=>{const m=cur();const mod=frame.querySelector('#rt-model').value.replace(' (eingestellt)','');m.status='processing';m.job={phase:'Neu-Transkription',pct:0,paused:false,rate:5,queue:[],model:mod};V.dlg=null;renderApp()},
+  rename:()=>{V.rename=S.meeting;V.menu=null;renderApp()},
+  tab:el=>{const sc=el.dataset.scope,t=el.dataset.tab;if(sc==='A')S.tabA=t;else if(sc==='B')S.tabB=t;else S.tabR=t;V.follow=true;renderApp();frame.querySelector(`#tab-${sc}-${t}`)?.focus()},
+  follow:()=>{V.follow=true;const tx=frame.querySelector('#txscroll');if(tx)tx.scrollTop=tx.scrollHeight;frame.querySelector('#followbtn')?.classList.remove('show')},
+  jump:el=>jumpTo(+el.dataset.t),
+  noteDone:el=>{const n=cur().notes[+el.dataset.i];n.done=el.checked;renderApp()},
+  genAi:()=>{const m=cur();if(!m.tx.length){toast('Erst braucht es ein Transkript.');return}m.status='processing';m.job={phase:'KI-Notizen',pct:0,paused:false,rate:18,queue:[]};V.menu=null;S.tabA='ai';S.tabB='ai';renderApp()},
+  genMin:()=>{const m=cur();if(!m.tx.length){toast('Erst braucht es ein Transkript.');return}m.status='processing';m.job={phase:'Protokoll',pct:0,paused:false,rate:20,queue:[]};V.menu=null;S.tabA='minutes';S.tabB='minutes';renderApp()},
+  menuTpl:el=>openMenu(el,[{head:'Vorlage'},...['Automatisch','Allgemein','Kundengespräch / Vertrieb','Jour fixe','Interview'].map(t=>({label:t,icon:'file',act:'toast',data:{msg:`Vorlage „${t}“ – KI-Notizen/Protokoll neu erzeugen?`}})),{sep:1},{label:'Vorlagen verwalten …',icon:'sliders',act:'toast',data:{msg:'Vorlagen-Dialog (wie heute)'}}],V.menu?{x:V.menu.x,y:V.menu.y}:null),
+  chatA:()=>{S.chatA=!S.chatA;renderApp()},
+  recipe:el=>answer(cur(),el.dataset.q),
+  send:()=>{const t=frame.querySelector('#chatin');const q=t&&t.value.trim();if(q){t.value='';answer(cur(),q)}},
+  copyTx:()=>{V.menu=null;toast('Transkript mit Zeitmarken kopiert.')},
+  jobPause:()=>{const j=cur().job;j.paused=!j.paused;renderApp()},
+  jobStop:()=>dialog(`<h3 id="dlgt">Verarbeitung stoppen?</h3><p>Das bisher Transkribierte bleibt erhalten. Über „☰ › Verarbeitung fortsetzen“ geht es später weiter.</p><div class="ft"><button class="btn" data-act="dlgClose">Weiterlaufen lassen</button><button class="btn dng" data-act="jobStopGo">Stoppen</button></div>`),
+  jobStopGo:()=>{const m=cur();m.status='cancelled';m.jobSaved=m.job;delete m.job;V.dlg=null;renderApp()},
+  cont:()=>{const m=cur();m.status='processing';m.job=m.jobSaved||{phase:'Transkription',pct:50,rate:4,queue:[]};m.job.paused=false;V.menu=null;renderApp()},
+  dlgClose:(el,e)=>{if(el.dataset.self&&e.target!==el)return;closeDlg()},
+  toast:el=>{V.menu=null;toast(el.dataset.msg||'Attrappe')},
+  sessRename:el=>{V.renameS=el.dataset.sid;V.menu=null;renderApp()},
+  sessUp:el=>{const i=SESSIONS.findIndex(s=>s.id===el.dataset.sid);if(i>0)[SESSIONS[i-1],SESSIONS[i]]=[SESSIONS[i],SESSIONS[i-1]];V.menu=null;renderApp()},
+  sessDown:el=>{const i=SESSIONS.findIndex(s=>s.id===el.dataset.sid);if(i>=0&&i<SESSIONS.length-1)[SESSIONS[i+1],SESSIONS[i]]=[SESSIONS[i],SESSIONS[i+1]];V.menu=null;renderApp()},
+  sessDel:el=>{const s=SESSIONS.find(x=>x.id===el.dataset.sid);const n=MEETINGS.filter(m=>m.session===s.id).length;V.delS=s.id;dialog(`<h3 id="dlgt">Session „${esc(s.name)}“ löschen?</h3><p>Die ${n} Besprechung${n===1?'':'en'} bleiben erhalten und stehen danach unter „Ohne Session“.</p><div class="ft"><button class="btn" data-act="dlgClose">Abbrechen</button><button class="btn dng" data-act="sessDelGo">Session löschen</button></div>`)},
+  sessDelGo:()=>{const id=V.delS;SESSIONS.splice(SESSIONS.findIndex(s=>s.id===id),1);MEETINGS.forEach(m=>{if(m.session===id)m.session=null});if(S.session===id)S.session='all';V.dlg=null;renderApp()},
+  delMeeting:el=>{const m=byId(el.dataset.id)||cur();V.delM=m.id;dialog(`<h3 id="dlgt">Besprechung löschen?</h3><p>„${esc(m.title)}“ mit Audio, Transkript, Notizen und Protokoll wird gelöscht.</p><div class="ft"><button class="btn" data-act="dlgClose">Abbrechen</button><button class="btn dng" data-act="delMeetingGo">Löschen</button></div>`)},
+  delMeetingGo:()=>{const i=MEETINGS.findIndex(m=>m.id===V.delM);MEETINGS.splice(i,1);if(S.meeting===V.delM)S.meeting=(sorted(MEETINGS.filter(m=>inSession(m,S.session)))[0]||MEETINGS[0]).id;V.dlg=null;renderApp()}
+};
+
+/* ================= Ereignisse (delegiert) ================= */
+frame.addEventListener('click',e=>{
+  hideTip();
+  const a=e.target.closest('[data-act]');
+  if(V.menu&&!e.target.closest('.menu')&&!(a&&/menu|moveMenu|menuTpl/.test(a.dataset.act))){V.menu=null;renderLayer();if(!a)return}
+  if(!a||!frame.contains(a))return;
+  if(a.tagName==='A')e.preventDefault();
+  if(a.type==='checkbox'&&a.dataset.act!=='noteDone')return;
+  const f=ACT[a.dataset.act];if(f){e.stopPropagation();f(a,e)}
+});
+frame.addEventListener('dblclick',e=>{
+  const h=e.target.closest('[data-rh]');if(h){setWidth(h.dataset.rh,+h.dataset.def);return}
+  if(e.target.closest('[data-rhv]')){S.split=.5;renderApp();return}
+  const sr=e.target.closest('.srow[data-ctx=session]');if(sr){V.renameS=sr.dataset.sid;renderApp()}
+});
+frame.addEventListener('contextmenu',e=>{
+  const t=e.target.closest('[data-ctx]');if(!t)return;e.preventDefault();
+  const fr=frame.getBoundingClientRect();const p={x:(e.clientX-fr.left)/V.scale,y:(e.clientY-fr.top)/V.scale};
+  if(t.dataset.ctx==='session'){const sid=t.dataset.sid;openMenu(t,[{label:'Umbenennen',icon:'pencil',act:'sessRename',data:{sid}},{label:'Nach oben',icon:'arrowUp',act:'sessUp',data:{sid}},{label:'Nach unten',icon:'arrowDn',act:'sessDown',data:{sid}},{sep:1},{label:'Session löschen …',icon:'trash',act:'sessDel',danger:1,data:{sid}}],p)}
+  else{const id=t.dataset.id;S.meeting=id;renderApp();openMenu(t,[{label:'In Session verschieben …',icon:'move',act:'moveMenu'},{label:'Umbenennen',icon:'pencil',act:'rename'},{label:'Details …',icon:'info',act:'details'},{sep:1},{label:'Besprechung löschen …',icon:'trash',act:'delMeeting',danger:1,data:{id}}],p)}
+});
+frame.addEventListener('keydown',e=>{
+  const t=e.target;
+  if(e.key==='Escape'){if(V.menu){V.menu=null;renderLayer();return}if(V.dlg){closeDlg();return}if(V.rename||V.renameS){V.rename=V.renameS=null;renderApp();return}if(V.drawer){V.drawer=false;renderApp();return}}
+  if(t.id==='notein'&&e.key==='Enter'&&t.value.trim()){const m=cur();let v=t.value.trim();const todo=/^\[ ?\]\s*/.test(v);v=v.replace(/^\[ ?\]\s*/,'');m.notes.push({t:m.status==='recording'?m.dur:(V.play.id===m.id?V.play.pos:0),text:v,todo});t.value='';renderApp();const ns=frame.querySelector('#notescroll');if(ns)ns.scrollTop=ns.scrollHeight;frame.querySelector('#notein')?.focus();return}
+  if(t.id==='mrename'&&(e.key==='Enter')){const v=t.value.trim();if(v)cur().title=v;V.rename=null;renderApp();return}
+  if(t.id==='srename'&&e.key==='Enter'){const s=SESSIONS.find(x=>x.id===t.dataset.sid);if(s&&t.value.trim())s.name=t.value.trim();V.renameS=null;renderApp();return}
+  if(t.id==='chatin'&&e.key==='Enter'&&!e.shiftKey){e.preventDefault();ACT.send();return}
+  if(e.key==='F2'&&!/INPUT|TEXTAREA/.test(t.tagName)){ACT.rename();return}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='j'){e.preventDefault();ACT.askSession();return}
+  if(t.getAttribute('role')==='tab'&&/Arrow(Left|Right)|Home|End/.test(e.key)){const tabs=[...t.parentElement.querySelectorAll('[role=tab]')];let i=tabs.indexOf(t);i=e.key==='Home'?0:e.key==='End'?tabs.length-1:(i+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;e.preventDefault();ACT.tab(tabs[i]);return}
+  if(t.dataset&&t.dataset.rh&&/Arrow(Left|Right)|Home|End/.test(e.key)){e.preventDefault();const w=+t.getAttribute('aria-valuenow');const dir=t.dataset.rh==='s'?1:-1;const nv=e.key==='Home'?+t.dataset.min:e.key==='End'?+t.dataset.max:w+(e.key==='ArrowRight'?16:-16)*dir;setWidth(t.dataset.rh,nv);frame.querySelector(`[data-rh="${t.dataset.rh}"]`)?.focus();return}
+  if(t.dataset&&t.dataset.rhv&&/Arrow(Up|Down)/.test(e.key)){e.preventDefault();S.split=Math.max(.25,Math.min(.75,S.split+(e.key==='ArrowDown'?.05:-.05)));renderApp();frame.querySelector('[data-rhv]')?.focus();return}
+  if((e.key==='Enter'||e.key===' ')&&t.matches('.srow,.mrow,h2[data-act]')){e.preventDefault();t.click();return}
+  if(t.closest('.menu')&&/Arrow(Up|Down)/.test(e.key)){e.preventDefault();const it=[...frame.querySelectorAll('.menu .mi')];let i=it.indexOf(t);it[(i+(e.key==='ArrowDown'?1:-1)+it.length)%it.length].focus()}
+});
+frame.addEventListener('focusout',e=>{const t=e.target;if(t.id==='srename'&&V.renameS){setTimeout(()=>{if(V.renameS&&!frame.querySelector('#srename:focus')){const s=SESSIONS.find(x=>x.id===t.dataset.sid);if(s&&t.value.trim())s.name=t.value.trim();V.renameS=null;renderApp()}},0)}
+  if(t.id==='mrename'&&V.rename){setTimeout(()=>{if(V.rename&&!frame.querySelector('#mrename:focus')){if(t.value.trim())cur().title=t.value.trim();V.rename=null;renderApp()}},0)}});
+frame.addEventListener('input',e=>{if(e.target.id==='ssearch'){V.search=e.target.value;const sc=frame.querySelector('#sscroll');if(sc)sc.innerHTML=sessionsBody()}});
+frame.addEventListener('scroll',e=>{hideTip();if(e.target.id==='txscroll'){const el=e.target;const atEnd=el.scrollHeight-el.scrollTop-el.clientHeight<24;V.follow=atEnd;const b=frame.querySelector('#followbtn');if(b)b.classList.toggle('show',!atEnd&&(!!V.live&&V.live.id===S.meeting||cur().status==='processing'))}},true);
+/* Ziehen: Besprechung auf Session, Datei auf Inhalt */
+frame.addEventListener('dragstart',e=>{const r=e.target.closest('.mrow');if(r){e.dataTransfer.setData('text/x-meeting',r.dataset.id);e.dataTransfer.effectAllowed='move'}});
+frame.addEventListener('dragover',e=>{
+  const types=[...e.dataTransfer.types];
+  const s=e.target.closest('[data-drop]');if(s&&types.includes('text/x-meeting')){e.preventDefault();frame.querySelectorAll('.srow.drop').forEach(x=>x!==s&&x.classList.remove('drop'));s.classList.add('drop');return}
+  const z=e.target.closest('[data-dropzone]');if(z&&types.includes('Files')){e.preventDefault();z.classList.add('drop-over')}
+});
+frame.addEventListener('dragleave',e=>{const s=e.target.closest('.srow.drop');if(s&&!s.contains(e.relatedTarget))s.classList.remove('drop');const z=e.target.closest('.drop-over');if(z&&!z.contains(e.relatedTarget))z.classList.remove('drop-over')});
+frame.addEventListener('drop',e=>{
+  const s=e.target.closest('[data-drop]');const id=e.dataTransfer.getData('text/x-meeting');
+  if(s&&id){e.preventDefault();const m=byId(id);m.session=s.dataset.sid;toast(`„${m.title}“ → ${sessName(m.session)}`);renderApp();return}
+  const z=e.target.closest('[data-dropzone]');if(z&&e.dataTransfer.files.length){e.preventDefault();z.classList.remove('drop-over');importDlg(e.dataTransfer.files[0].name)}
+});
+/* Ziehgriffe */
+function setWidth(which,v){
+  const lim={s:[180,400],c:[260,440],r:[300,640]}[which];v=Math.max(lim[0],Math.min(lim[1],Math.round(v)));
+  if(which==='s'){S.variant==='A'?S.wA.s=v:S.wB.s=v}else if(which==='c')S.wA.c=v;else S.wB.r=v;renderApp();
+}
+frame.addEventListener('pointerdown',e=>{
+  const h=e.target.closest('[data-rh]');
+  if(h){e.preventDefault();h.setPointerCapture(e.pointerId);h.classList.add('drag');document.body.classList.add('resizing');
+    const which=h.dataset.rh;const col=which==='s'?h.previousElementSibling:h.nextElementSibling;const x0=e.clientX,w0=col.getBoundingClientRect().width/V.scale;const lim={s:[180,400],c:[260,440],r:[300,640]}[which];let w=w0;
+    const mv=ev=>{const d=(ev.clientX-x0)/V.scale;w=Math.max(lim[0],Math.min(lim[1],w0+(which==='s'?d:-d)));col.style.width=w+'px';h.setAttribute('aria-valuenow',Math.round(w))};
+    const up=()=>{h.removeEventListener('pointermove',mv);h.removeEventListener('pointerup',up);document.body.classList.remove('resizing');setWidth(which,w)};
+    h.addEventListener('pointermove',mv);h.addEventListener('pointerup',up);return}
+  const hv=e.target.closest('[data-rhv]');
+  if(hv){e.preventDefault();hv.setPointerCapture(e.pointerId);hv.classList.add('drag');document.body.classList.add('resizing');const box=frame.querySelector('#nsplit');const a=hv.previousElementSibling,b=hv.nextElementSibling;
+    const top=a.getBoundingClientRect().top,bot=b.getBoundingClientRect().bottom;let f=S.split;
+    const mv=ev=>{f=Math.max(.25,Math.min(.75,(ev.clientY-top)/(bot-top)));a.style.flex=`${f*100} 1 0`;b.style.flex=`${(1-f)*100} 1 0`};
+    const up=()=>{hv.removeEventListener('pointermove',mv);hv.removeEventListener('pointerup',up);document.body.classList.remove('resizing');S.split=f;renderApp()};
+    hv.addEventListener('pointermove',mv);hv.addEventListener('pointerup',up)}
+});
+/* Tooltips: Name + Kurzerklaerung, Maus und Tastatur */
+let tipTimer=null;
+function showTip(el){
+  const [n,d]=el.dataset.tip.split('|');let t=frame.querySelector('.tip');if(!t){t=document.createElement('div');t.className='tip';t.setAttribute('role','tooltip');frame.appendChild(t)}
+  t.innerHTML=`<b>${esc(n)}</b>${d?esc(d):''}`;t.style.display='block';
+  const fr=frame.getBoundingClientRect(),r=el.getBoundingClientRect();let x=(r.left-fr.left)/V.scale,y=(r.bottom-fr.top)/V.scale+6;
+  const w=t.offsetWidth,h=t.offsetHeight;if(x+w>V.frameW-8)x=V.frameW-w-8;if(y+h>V.frameH-8)y=(r.top-fr.top)/V.scale-h-6;t.style.left=Math.max(8,x)+'px';t.style.top=y+'px';
+}
+function hideTip(){clearTimeout(tipTimer);const t=frame.querySelector('.tip');if(t)t.style.display='none'}
+frame.addEventListener('mouseover',e=>{const el=e.target.closest('[data-tip]');if(!el){return}clearTimeout(tipTimer);tipTimer=setTimeout(()=>showTip(el),380)});
+frame.addEventListener('mouseout',e=>{const el=e.target.closest('[data-tip]');if(el&&!el.contains(e.relatedTarget))hideTip()});
+frame.addEventListener('focusin',e=>{const el=e.target.closest('[data-tip]');if(el&&el.matches(':focus-visible'))showTip(el);else hideTip()});
+
+/* ================= Rahmen-Steuerung und Start ================= */
+document.getElementById('pv').addEventListener('click',e=>{const b=e.target.closest('button');if(b){S.variant=b.dataset.v;renderApp()}});
+document.getElementById('pw').addEventListener('click',e=>{const b=e.target.closest('button');if(b){S.size=b.dataset.w;V.drawer=false;layoutFrame();renderApp()}});
+document.getElementById('pt').addEventListener('click',e=>{const b=e.target.closest('button');if(b){S.theme=b.dataset.t;renderApp()}});
+document.getElementById('preset').addEventListener('click',()=>{try{localStorage.removeItem(KEY)}catch(e){}S=structuredClone(DEF);V.drawer=false;layoutFrame();renderApp()});
+window.addEventListener('resize',()=>{layoutFrame();renderApp()});
+layoutFrame();renderApp();
+setInterval(tick,1000);
+setInterval(()=>{if(V.live&&!V.live.paused)setAll('[data-lvl]',el=>el.style.width=(15+Math.random()*70)+'%')},250);
+setInterval(checkScroll,1000);
+</script>
+</body>
+</html>

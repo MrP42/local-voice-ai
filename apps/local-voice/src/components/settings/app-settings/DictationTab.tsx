@@ -1,6 +1,10 @@
 import React from "react";
+import { MeetingCalendarSettings } from "../meetings/MeetingCalendarSettings";
 import { MeetingLanguageSetting } from "../meetings/MeetingLanguageSetting";
+import { IntegrationsLinkRow } from "../meetings/IntegrationsLinkRow";
 import { MeetingModelSetting } from "../meetings/MeetingModelSetting";
+import { MeetingNotesSettings } from "../meetings/MeetingNotesSettings";
+import { MeetingYoutubeSettings } from "../meetings/youtube/MeetingYoutubeSettings";
 import { useTranslation } from "react-i18next";
 import { type } from "@tauri-apps/plugin-os";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -13,6 +17,7 @@ import { PasteMethodSetting } from "../PasteMethod";
 import { TypingToolSetting } from "../TypingTool";
 import { ClipboardHandlingSetting } from "../ClipboardHandling";
 import { AutoSubmit } from "../AutoSubmit";
+import { RefineStream } from "../RefineStream";
 import { useSettings } from "../../../hooks/useSettings";
 import { DictationTest } from "../dictation-test/DictationTest";
 
@@ -32,6 +37,7 @@ export const DictationTab: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const pushToTalk = getSetting("push_to_talk");
+  const streamInjection = getSetting("stream_injection") ?? false;
   const isLinux = type() === "linux";
 
   return (
@@ -57,11 +63,20 @@ export const DictationTab: React.FC = () => {
         <TypingToolSetting descriptionMode="tooltip" grouped={true} />
         <ClipboardHandlingSetting descriptionMode="tooltip" grouped={true} />
         <AutoSubmit descriptionMode="tooltip" grouped={true} />
+        {/* Nur mit Live-Einfuegung: ohne sie gibt es keinen Text, den Ollama
+            glaetten koennte (Issue #5, Standard aus). */}
+        {streamInjection && (
+          <RefineStream descriptionMode="tooltip" grouped={true} />
+        )}
       </SettingsGroup>
 
       <SettingsGroup title={t("meetings.title")}>
         <MeetingLanguageSetting />
         <MeetingModelSetting />
+        <MeetingNotesSettings />
+        <MeetingCalendarSettings />
+        <IntegrationsLinkRow topic="mcp" />
+        <MeetingYoutubeSettings />
       </SettingsGroup>
       <DictationTest />
     </div>

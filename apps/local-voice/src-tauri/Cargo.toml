@@ -1,6 +1,6 @@
 [package]
 name = "local-voice-ai"
-version = "0.20.1"
+version = "0.21.0"
 description = "Local Voice AI - lokale Sprach-KI (Diktat, Vorlesen, Stimmen, Übersetzung)"
 authors = ["Patrick Wolff"]
 edition = "2021"
@@ -9,6 +9,26 @@ default-run = "local-voice-ai"
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
+
+# sonora (AEC3) ist reine DSP-Arithmetik und muss im 10-ms-Takt mithalten.
+# Unoptimiert (Dev-Build, cargo test) braucht ein Frame p50 ~1,7 ms und p99
+# ~8,5 ms, also fast das ganze Frame-Budget; optimiert deutlich weniger. Nur
+# diese sieben Crates hochdrehen, der Rest des Dev-Builds bleibt schnell
+# kompilierbar. Release ist davon unberuehrt.
+[profile.dev.package.sonora]
+opt-level = 3
+[profile.dev.package.sonora-aec3]
+opt-level = 3
+[profile.dev.package.sonora-agc2]
+opt-level = 3
+[profile.dev.package.sonora-common-audio]
+opt-level = 3
+[profile.dev.package.sonora-fft]
+opt-level = 3
+[profile.dev.package.sonora-ns]
+opt-level = 3
+[profile.dev.package.sonora-simd]
+opt-level = 3
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -53,10 +73,17 @@ anyhow = "1.0.95"
 # RAM-Messung fuer die Fussleiste (Sprachmodelle: passt es rein?).
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 rubato = "0.16.2"
+# Echo-Unterdrueckung (AEC3, Port von WebRTC M145) fuer die Ich-Spur einer
+# Besprechung: managers/meetings/echo.rs. Reines Rust, BSD-3-Clause. Version
+# festgenagelt (junges Projekt); ohne Feature `examples`, das cpal 0.18
+# mitbringen wuerde.
+sonora = "=0.2.0"
 hound = "3.5.1"
 log = "0.4.25"
 env_filter = "0.1.0"
-tokio = "1.43.0"
+# Feature-Liste ausdruecklich (P5f: Loopback-Listener fuer die Microsoft-Anmeldung):
+# dieselben Features waren bisher nur ueber reqwest/tauri hereinvereinigt.
+tokio = { version = "1.43.0", features = ["net", "io-util", "sync", "time", "macros", "rt"] }
 vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
 enigo = "0.6.1"
 rodio = { git = "https://github.com/cjpais/rodio.git" }
@@ -84,7 +111,10 @@ url = "2"
 # transcribe-rs is now ONNX-only (Parakeet, Moonshine, SenseVoice, GigaAM,
 # Canary, Cohere). Per-platform backend features are added in the target tables.
 transcribe-rs = { version = "0.3.8", features = ["onnx"] }
-transcribe-cpp = { version = "0.1.3", default-features = false }
+transcribe-cpp = { version = "=0.2.4", default-features = false }
+# G5: Sprache eines Textes erkennen (Rueckfall und Gegenprobe, wenn das Modell keine
+# eigene Spracherkennung liefert). Reines Rust, MIT, ohne Modelldatei.
+whatlang = "0.18"
 handy-keys = "0.3.2"
 ferrous-opencc = "0.2.3"
 clap = { version = "4", features = ["derive"] }
@@ -102,6 +132,18 @@ ulid = "1"
 # MP3-Export mit waehlbarer Bitrate. Bringt LAME als vendored C-Quellen mit
 # (cc-Build), baut daher auf Windows-MSVC ohne vorinstallierte Bibliothek.
 mp3lame-encoder = "0.2.5"
+# M5-P5a: ICS-Kalender (Parser + Serienexpansion, Stalwart, Apache-2.0/MIT).
+# Version festgenagelt: junges Projekt, zwei Fehler gefunden (V8 UTC-Serien,
+# V9 globales Expansionslimit), die calendar/ics.rs umgeht. Nur hinter
+# `parse_and_expand` verwendet, damit ein Wechsel lokal bleibt.
+calcard = { version = "=0.3.14", default-features = false }
+# M6-P6c: .eml der Follow-up-Mail (kommt schon mit calcard, Apache-2.0/MIT;
+# ohne gethostname: die Message-ID setzt mail.rs selbst).
+mail-builder = { version = "=1.0.0", default-features = false }
+# A6 (Integrationen): SMTP-Versand mit STARTTLS/TLS. Schon im Lock (kommt ueber
+# reqwest); hier direkt, weil der SMTP-Client die Verbindung selbst hochstuft
+# (Windows: Schannel, Zertifikat und Hostname werden immer geprueft).
+native-tls = "0.2"
 
 [features]
 # GPU acceleration for the Whisper/GGUF backend on Windows x86_64. Opt-in because
@@ -153,8 +195,24 @@ windows = { version = "0.61.3", features = [
   # Job-Objekte: RAM-/CPU-Deckel fuer eigene Kindprozesse (fish-speech,
   # llama-server), damit ein Modellstart nie den ganzen Rechner einfriert.
   "Win32_System_JobObjects",
+  # App-Anteil am GPU-Speicher: PDH-Leistungsindikator "GPU Process Memory".
+  "Win32_System_Performance",
+  # M5-P5a: DPAPI (CryptProtectData) fuer die Kalender-Geheimnisse.
+  "Win32_Security_Cryptography",
+  # D2 (Folien-OCR): Windows.Media.Ocr, Bild dekodieren (BitmapDecoder), Datei/Strom.
+  "Media_Ocr",
+  "Globalization",
+  "Graphics_Imaging",
+  "Storage",
+  "Storage_Streams",
+  # B4 (Workflow-Baustein notify.local): Windows-Mitteilung (Toast) mit XML-Text.
+  "UI_Notifications",
+  "Data_Xml_Dom",
 ] }
 winreg = "0.55"
+# M6-P6b: PDF-Export ueber ein verstecktes WebView2-Fenster (PrintToPdf). Gleiche
+# Version wie im Lock (kommt ueber wry), damit keine zweite Kopie gebaut wird.
+webview2-com = "0.38"
 # WASAPI loopback capture for the M8 meetings feature (system audio).
 # 0.24, not 0.15: 0.15's read_from_device() passes None for GetBuffer's
 # pu64DevicePosition and returns only (frames, flags). The M8 loopback timeline
@@ -183,21 +241,21 @@ wasapi = "0.24"
 # acceleration is a deliberate, documented opt-in:
 #   cargo build --features gpu-vulkan
 [target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
-transcribe-cpp = { version = "0.1.3", default-features = false, features = [
+transcribe-cpp = { version = "=0.2.4", default-features = false, features = [
   "dynamic-backends",
 ] }
 
 [target.'cfg(all(windows, target_arch = "aarch64"))'.dependencies]
-transcribe-cpp = { version = "0.1.3", default-features = false }
+transcribe-cpp = { version = "=0.2.4", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
-transcribe-cpp = { version = "0.1.3", default-features = false, features = ["metal"] }
+transcribe-cpp = { version = "=0.2.4", default-features = false, features = ["metal"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 gtk = "0.18"
-transcribe-cpp = { version = "0.1.3", default-features = false, features = [
+transcribe-cpp = { version = "=0.2.4", default-features = false, features = [
   "dynamic-backends",
   "vulkan",
 ] }

@@ -1,0 +1,128 @@
+{
+  "schema": "lva-workflow@1",
+  "name": "Kanal → Wissen: neue Videos auswerten",
+  "description": "Neues Video im YouTube-Kanal: Untertitel holen, zusammenfassen, nach deinem Themenprofil bewerten und bei Relevanz mit Wissensbasis und Vault abgleichen (neu, vorhanden, ergänzt, widerspricht). Daraus entsteht je Video eine Notiz ohne Dublette (Widersprüche markiert) und ein Eintrag in der Management-Summary des Kanals. Bestehende Notizen ändert der Ablauf nur nach Freigabe. Braucht yt-dlp (Einstellung „privat“), das Recht „Datei holen“ und ein lokales Sprachmodell.",
+  "trigger": {
+    "type": "youtube.channel_new_video",
+    "channel_id": "UCxxxxxxxxxxxxxxxxxxxxxx",
+    "poll_minutes": 60
+  },
+  "variables": {
+    "profil": {
+      "type": "string",
+      "default": "Themen, die mich interessieren: lokale KI und Sprachmodelle auf eigener Hardware, KI-Agenten und Automatisierung, Beratungspraxis im Mittelstand, Datenschutz und Governance bei KI-Einsatz. Ausschlüsse: Kryptowährungen, Gewinnspiele, reine Produktwerbung ohne Inhalt.",
+      "description": "Dein Themenprofil: Themen und Ausschlüsse als Text. Das Modell bewertet jedes Video danach von 0 bis 10."
+    },
+    "schwelle": {
+      "type": "number",
+      "default": 6,
+      "description": "Ab dieser Bewertung (1 bis 10) wird ein Video weiter ausgewertet und in den Vault geschrieben."
+    }
+  },
+  "steps": [
+    {
+      "id": "quelle",
+      "action": "youtube.add_source",
+      "label": "Video als Quelle anlegen",
+      "params": {
+        "via": "app-automation",
+        "url": "{{trigger.url}}"
+      }
+    },
+    {
+      "id": "transkript",
+      "action": "youtube.transcript",
+      "label": "Untertitel als Transkript holen",
+      "params": {
+        "via": "youtube",
+        "video": "{{trigger.video_id}}"
+      }
+    },
+    {
+      "id": "zusammenfassung",
+      "action": "text.summarize",
+      "label": "Zusammenfassen",
+      "params": {
+        "source": "transcript",
+        "style": "management"
+      }
+    },
+    {
+      "id": "relevanz",
+      "action": "knowledge.rate",
+      "label": "Relevanz nach deinem Themenprofil bewerten",
+      "params": {
+        "source": "{{steps.zusammenfassung.text}}",
+        "profile": "{{vars.profil}}",
+        "threshold": "{{vars.schwelle}}"
+      }
+    },
+    {
+      "id": "abgleich",
+      "action": "knowledge.reconcile",
+      "label": "Mit Wissensbasis und Vault abgleichen",
+      "when": "steps.relevanz.relevant == true",
+      "params": {
+        "via": "wissen-1",
+        "vault": "vault-1",
+        "source": "{{steps.zusammenfassung.text}}",
+        "video_id": "{{trigger.video_id}}",
+        "title": "{{trigger.title}}"
+      }
+    },
+    {
+      "id": "notiz",
+      "action": "obsidian.note",
+      "label": "Notiz zum Video im Vault anlegen",
+      "when": "steps.relevanz.relevant == true",
+      "params": {
+        "via": "vault-1",
+        "key": "video-{{trigger.video_id}}",
+        "title": "{{trigger.title}}",
+        "content": "**Relevanz:** {{steps.relevanz.score}}/10 – {{steps.relevanz.reason}}\n\n## Zusammenfassung\n\n{{steps.zusammenfassung.text}}\n\n{{steps.abgleich.markdown}}",
+        "source_title": "{{trigger.title}} ({{trigger.channel_title}})",
+        "source_url": "{{trigger.url}}",
+        "origin": "Ablauf „{{workflow.name}}“, Lauf {{run.id}}, Modell {{steps.abgleich.provenance.model}}",
+        "tags": ["video", "youtube", "wissen"],
+        "meta": {
+          "video_id": "{{trigger.video_id}}",
+          "kanal": "{{trigger.channel_title}}",
+          "relevanz": "{{steps.relevanz.score}}",
+          "widersprueche": "{{steps.abgleich.counts.widerspricht}}"
+        }
+      }
+    },
+    {
+      "id": "bericht",
+      "action": "channel.report",
+      "label": "Management-Summary zum Video erzeugen",
+      "when": "steps.relevanz.relevant == true",
+      "params": {
+        "source": "{{steps.zusammenfassung.text}}",
+        "claims": "{{steps.abgleich.claims}}",
+        "score": "{{steps.relevanz.score}}",
+        "reason": "{{steps.relevanz.reason}}"
+      }
+    },
+    {
+      "id": "kanalnotiz",
+      "action": "obsidian.note",
+      "label": "Eintrag in der Kanal-Management-Summary",
+      "when": "steps.relevanz.relevant == true",
+      "params": {
+        "via": "vault-1",
+        "key": "kanal-{{trigger.channel_id}}",
+        "entry": "{{trigger.video_id}}",
+        "title": "Kanal {{trigger.channel_title}}",
+        "name": "Kanal {{trigger.channel_title}} – Management-Summary",
+        "content": "{{steps.bericht.markdown}}",
+        "origin": "Ablauf „{{workflow.name}}“, Lauf {{run.id}}, Modell {{steps.bericht.provenance.model}}",
+        "tags": ["kanal", "youtube", "management-summary"],
+        "meta": {
+          "kanal_id": "{{trigger.channel_id}}",
+          "kanal": "{{trigger.channel_title}}"
+        }
+      }
+    }
+  ]
+}

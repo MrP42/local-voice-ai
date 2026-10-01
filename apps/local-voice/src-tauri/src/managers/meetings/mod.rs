@@ -1,16 +1,67 @@
+pub mod basis; // G5: Grundlage und Ausgabesprache von Protokoll und KI-Notizen
+pub mod chat; // M4-P4c
 pub mod chunker;
+pub mod diarize; // M3-P3a
+pub mod dsp;
+pub mod echo;
+pub mod empty; // G1 (#70): leerer Eintrag
 pub mod export;
+pub mod final_pass;
+pub mod followup; // P6f (B13)
+pub mod hallucination;
 pub mod import;
+pub mod job; // P8a
+pub mod job_harness; // P8a: Pruefhaken fuer den Headless-Lauf
+pub mod language; // G5: Sprache erkennen, Modell waehlen
+pub mod language_run; // G5: Anbindung an Import, Neu-Transkription, Enddurchlauf
+pub mod llm_call;
+pub mod merge; // A3: KI-Zusammenfuehrung von Fassungen
+pub mod mail; // M6-P6c
+pub mod metadata; // U7
 pub mod mic_capture;
 pub mod minutes;
+pub mod notes;
+pub mod pdf; // M6-P6b
+pub mod project_minutes_store; // G3 (#70): Projekt-Protokolle
+pub mod queue; // U7
+pub mod queue_store; // U7
+#[cfg(test)]
+mod migration_chain; // I1: Migrationskette A1, A3, U7
 pub mod recorder;
 pub mod retention;
 pub mod retranscribe;
+pub mod search;
+pub mod segmenter;
+pub mod signal_watch; // M2-P2e
+pub mod simulate;
+pub mod slides; // D1 (#70, M7): Folien aus Videos
+pub mod speaker_names; // U8
+pub mod speakers; // M3-P3b
 pub mod stats;
 pub mod store;
 pub mod subtitle;
+pub mod translate; // G5: Uebersetzung als neue Fassung
+pub mod variants; // A3: Transkript-Fassungen
 
 use std::path::{Path, PathBuf};
+
+/// M2-P2c2: Dateiname der Mikrofonspur ohne Echo, neben `mic.wav` im
+/// Besprechungsordner. Sie steht in keiner DB-Spalte (keine Migration, B5).
+pub const MIC_AEC_FILE: &str = "mic_aec.wav";
+
+/// Dateien, die aus einer Audiodatei der Besprechung abgeleitet sind und mit
+/// ihr geloescht werden muessen (Aufbewahrung, Loeschen). Heute: `mic_aec.wav`
+/// neben einer `mic.wav`. Pfad als Text, weil die Loeschwege Texte fuehren.
+pub fn derived_audio_paths(path: &str) -> Vec<String> {
+    let p = Path::new(path);
+    if p.file_name().and_then(|n| n.to_str()) != Some("mic.wav") {
+        return Vec::new();
+    }
+    p.with_file_name(MIC_AEC_FILE)
+        .to_str()
+        .map(|s| vec![s.to_string()])
+        .unwrap_or_default()
+}
 
 /// Overrides the meetings data directory (DB + per-meeting audio folders).
 /// Exists so the acceptance harness can run against a sandbox and NEVER
@@ -40,6 +91,22 @@ pub fn meetings_data_dir(app: &tauri::AppHandle) -> anyhow::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_echo_free_track_is_derived_only_from_a_live_mic_wav() {
+        let mic = Path::new("C:/m/01ABC").join("mic.wav");
+        let derived = derived_audio_paths(mic.to_str().unwrap());
+        assert_eq!(
+            derived,
+            vec![Path::new("C:/m/01ABC")
+                .join(MIC_AEC_FILE)
+                .to_str()
+                .unwrap()
+                .to_string()]
+        );
+        assert!(derived_audio_paths("C:/m/01ABC/system.wav").is_empty());
+        assert!(derived_audio_paths("C:/import/interview.wav").is_empty());
+    }
 
     #[test]
     fn without_override_the_meetings_dir_lives_under_the_app_data_dir() {

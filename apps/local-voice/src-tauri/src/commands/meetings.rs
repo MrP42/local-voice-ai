@@ -5,47 +5,128 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{Manager, State};
 
-use crate::managers::meetings::import::import_media_file;
-use crate::managers::meetings::minutes::{generate_minutes, latest_minutes_file};
+use crate::managers::meetings::import::{import_media_file, import_subtitle_file_into};
+use crate::managers::meetings::job;
+use crate::managers::meetings::queue::{self, ImportQueue};
+use crate::managers::meetings::basis::DocBasis;
+use crate::managers::meetings::minutes::latest_minutes_file;
 use crate::managers::meetings::recorder::MeetingRecorderManager;
-use crate::managers::meetings::retention::delete_audio_files;
+use crate::managers::meetings::retention::{delete_audio_files, remove_meeting_dir};
 use crate::managers::meetings::retranscribe::retranscribe_meeting;
+use crate::managers::meetings::search::indexer::{self, IndexJob};
 use crate::managers::meetings::store::{Meeting, MeetingDocument, MeetingStore, StoredSegment};
 use crate::managers::transcription::TranscriptionManager;
 
+/// Fehlercode, wenn die Besprechungen nicht zur Verfuegung stehen, weil der Store
+/// beim Start nicht geoeffnet werden konnte (`lib.rs` verwaltet Store, Recorder
+/// und Warteschlange dann gar nicht, damit Diktat und Vorlesen weiterlaufen).
+/// Die Oberflaeche uebersetzt ihn (`meetingErrors.ts`).
+pub(crate) const MEETINGS_UNAVAILABLE: &str = "meetings_unavailable";
+
+/// Verwalteter Zustand der Besprechungen oder `meetings_unavailable`. Ein
+/// `State`-Parameter schlaegt bei fehlendem Zustand mit einem Tauri-internen
+/// Extraktionsfehler fehl ("state not managed for field ..."): fuer den Nutzer
+/// ein unlesbarer Satz statt "Besprechungen sind nicht verfuegbar" (#15).
+pub(crate) fn require_managed<T>(state: Option<T>) -> Result<T, String> {
+    state.ok_or_else(|| MEETINGS_UNAVAILABLE.to_string())
+}
+
+/// Fehlerkonvention der Befehle (#15): `"<code>"` oder `"<code>: <Detail>"`.
+/// Der Code ist snake_case-ASCII und der einzige Teil, den die Oberflaeche
+/// auswertet (`translateMeetingError`: alles vor dem ersten Doppelpunkt); das
+/// Detail (die Ursache, oft englisch oder aus einer Bibliothek) ist fuer das Log
+/// und die Fehlermeldung an uns, nie fuer den Nutzer. Datenbank- und
+/// Ablagefehler heissen `store_failed`.
+pub(crate) fn store_err(error: impl std::fmt::Display) -> String {
+    format!("store_failed: {error}")
+}
+
+/// Der Store der Besprechungen oder `meetings_unavailable` (siehe `require_managed`).
+fn store_of(app: &tauri::AppHandle) -> Result<Arc<MeetingStore>, String> {
+    require_managed(app.try_state::<Arc<MeetingStore>>().map(|state| Arc::clone(&state)))
+}
+
+/// Der Recorder oder `meetings_unavailable`.
+fn recorder_of(app: &tauri::AppHandle) -> Result<Arc<MeetingRecorderManager>, String> {
+    require_managed(
+        app.try_state::<Arc<MeetingRecorderManager>>()
+            .map(|state| Arc::clone(&state)),
+    )
+}
+
+/// Die Import-Warteschlange oder `meetings_unavailable`.
+fn queue_of(app: &tauri::AppHandle) -> Result<Arc<ImportQueue>, String> {
+    require_managed(app.try_state::<Arc<ImportQueue>>().map(|state| Arc::clone(&state)))
+}
+
 /// Starting touches audio hardware and can block for seconds (loopback
 /// start-up), hence `spawn_blocking` rather than running on the command task.
+///
+/// G1 (#70): mit `target_meeting_id` nimmt die Aufnahme in einem vorhandenen
+/// LEEREN Eintrag auf (Notizen, Projekte und Id bleiben); ist das Ziel nicht
+/// (mehr) leer, kommt `target_not_empty`. Die Einwilligung gilt in jedem Fall.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_start(
-    recorder: State<'_, Arc<MeetingRecorderManager>>,
+    app: tauri::AppHandle,
     title: String,
     consent_confirmed: bool,
     capture_system: bool,
+    target_meeting_id: Option<String>,
 ) -> Result<Meeting, String> {
-    let recorder = Arc::clone(&recorder);
+    let recorder = recorder_of(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        recorder.start(title, consent_confirmed, capture_system)
+        recorder.start_into(
+            title,
+            consent_confirmed,
+            capture_system,
+            target_meeting_id.as_deref(),
+        )
     })
     .await
     .map_err(|e| format!("meetings_start panicked: {e}"))?
 }
 
+/// G1 (#70): legt einen leeren Eintrag an, ein Notizblock ohne Audio und ohne
+/// Quelle, auf Wunsch gleich im Projekt `folder_id`. `title` ist der
+/// vorgeschlagene Titel (die Oberflaeche liefert den lokalisierten). Aufnahme,
+/// Datei und YouTube-Link fuellen den Eintrag spaeter (`target_meeting_id` der
+/// jeweiligen Befehle). Fehler: `title_empty`, `title_too_long`, `folder_not_found`.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_create_empty(
+    app: tauri::AppHandle,
+    title: String,
+    folder_id: Option<String>,
+) -> Result<Meeting, String> {
+    let store = store_of(&app)?;
+    let meeting = tauri::async_runtime::spawn_blocking(move || {
+        store.create_empty_meeting(&title, folder_id.as_deref())
+    })
+    .await
+    .map_err(|e| format!("meetings_create_empty panicked: {e}"))?
+    .map_err(|e| e.to_string())?;
+    indexer::submit(&app, IndexJob::Meeting(meeting.id.clone())); // M4-P4b
+    Ok(meeting)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_pause(
-    recorder: State<'_, Arc<MeetingRecorderManager>>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
+    let recorder = recorder_of(&app)?;
     recorder.pause()
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_resume(
-    recorder: State<'_, Arc<MeetingRecorderManager>>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
+    let recorder = recorder_of(&app)?;
     recorder.resume()
 }
 
@@ -54,9 +135,9 @@ pub async fn meetings_resume(
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_stop(
-    recorder: State<'_, Arc<MeetingRecorderManager>>,
+    app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let recorder = Arc::clone(&recorder);
+    let recorder = recorder_of(&app)?;
     tauri::async_runtime::spawn_blocking(move || recorder.stop())
         .await
         .map_err(|e| format!("meetings_stop panicked: {e}"))?
@@ -64,44 +145,49 @@ pub async fn meetings_stop(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn meetings_is_recording(
-    recorder: State<'_, Arc<MeetingRecorderManager>>,
-) -> Result<bool, String> {
-    Ok(recorder.is_recording())
+pub async fn meetings_is_recording(app: tauri::AppHandle) -> Result<bool, String> {
+    // Ohne Recorder (Store nicht geoeffnet) laeuft keine Aufnahme: die Frage nach dem
+    // Zustand schlaegt nicht fehl.
+    Ok(app
+        .try_state::<Arc<MeetingRecorderManager>>()
+        .is_some_and(|recorder| recorder.is_recording()))
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_list(
-    store: State<'_, Arc<MeetingStore>>,
+    app: tauri::AppHandle,
     offset: u32,
     limit: u32,
 ) -> Result<Vec<Meeting>, String> {
-    store
-        .list_meetings(offset, limit)
-        .map_err(|e| e.to_string())
+    let store = store_of(&app)?;
+    store.list_meetings(offset, limit).map_err(store_err)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_get_segments(
-    store: State<'_, Arc<MeetingStore>>,
+    app: tauri::AppHandle,
     meeting_id: String,
 ) -> Result<Vec<StoredSegment>, String> {
-    store.get_segments(&meeting_id).map_err(|e| e.to_string())
+    let store = store_of(&app)?;
+    store.get_segments(&meeting_id).map_err(store_err)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_update_segment(
-    store: State<'_, Arc<MeetingStore>>,
+    app: tauri::AppHandle,
     meeting_id: String,
     segment_index: u32,
     text: String,
 ) -> Result<(), String> {
+    let store = store_of(&app)?;
     store
         .update_segment_text(&meeting_id, segment_index, &text)
-        .map_err(|e| e.to_string())
+        .map_err(store_err)?;
+    indexer::submit(&app, IndexJob::Meeting(meeting_id)); // M4-P4b
+    Ok(())
 }
 
 /// Renames a meeting. The title is free text and deliberately independent of
@@ -109,39 +195,43 @@ pub async fn meetings_update_segment(
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_rename(
-    store: State<'_, Arc<MeetingStore>>,
+    app: tauri::AppHandle,
     meeting_id: String,
     title: String,
 ) -> Result<(), String> {
+    let store = store_of(&app)?;
     store
         .set_title(&meeting_id, &title)
-        .map_err(|e| e.to_string())
+        .map_err(store_err)?;
+    indexer::submit(&app, IndexJob::Meeting(meeting_id)); // M4-P4b
+    Ok(())
 }
 
 /// Re-runs the transcription of a finished meeting from its stored audio,
-/// optionally with a different model. Discards the old segments — see
-/// `retranscribe_meeting`.
+/// optionally with a different model and language (G5; `auto`/`None`: detect). The old
+/// transcript stays as a version — see `retranscribe_meeting`.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_retranscribe(
     app: tauri::AppHandle,
-    store: State<'_, Arc<MeetingStore>>,
     transcription: State<'_, Arc<TranscriptionManager>>,
     meeting_id: String,
     model_id: Option<String>,
+    language: Option<String>,
 ) -> Result<(), String> {
-    let store = Arc::clone(&store);
+    let store = store_of(&app)?;
     let transcription = Arc::clone(&transcription);
-    retranscribe_meeting(&app, store, transcription, meeting_id, model_id).await
+    retranscribe_meeting(&app, store, transcription, meeting_id, model_id, language).await
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_get_documents(
-    store: State<'_, Arc<MeetingStore>>,
+    app: tauri::AppHandle,
     meeting_id: String,
 ) -> Result<Vec<MeetingDocument>, String> {
-    store.get_documents(&meeting_id).map_err(|e| e.to_string())
+    let store = store_of(&app)?;
+    store.get_documents(&meeting_id).map_err(store_err)
 }
 
 /// Soft-deletes the meeting, then hard-deletes its audio files from disk
@@ -149,28 +239,61 @@ pub async fn meetings_get_documents(
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_delete(
-    store: State<'_, Arc<MeetingStore>>,
+    app: tauri::AppHandle,
     meeting_id: String,
 ) -> Result<(), String> {
+    let store = store_of(&app)?;
+    let queue = queue_of(&app)?;
+    // P8a: eine laufende Verarbeitung (Import, Enddurchlauf, Notizen ...) endet,
+    // bevor ihre Audiodateien verschwinden. Ohne Auftrag ist das ein leerer Aufruf.
+    let _ = job::global().stop(&meeting_id);
+    // U7: aus der Warteschlange nehmen (ein laufender Import endet, ein wartender
+    // wird nie mehr gestartet).
+    queue.forget(&meeting_id);
     let paths = store
         .soft_delete_meeting(&meeting_id)
-        .map_err(|e| e.to_string())?;
+        .map_err(store_err)?;
+    indexer::submit(&app, IndexJob::Deleted(meeting_id.clone())); // M4-P4b
     delete_audio_files(&paths);
+    // #15: der Ordner der Besprechung geht mit (Protokoll als Markdown, Reste ohne
+    // DB-Eintrag). Die Besprechung ist hier schon geloescht: ein Fehler wird nur
+    // geloggt, damit er das Loeschen nicht rueckgaengig aussehen laesst.
+    match crate::managers::meetings::meetings_data_dir(&app) {
+        Ok(base) => {
+            if let Err(e) = remove_meeting_dir(&base, &meeting_id) {
+                log::warn!("meetings_delete: folder of {meeting_id} not removed: {e}");
+            }
+        }
+        Err(e) => log::warn!("meetings_delete: data folder unknown, folder kept: {e}"),
+    }
     Ok(())
 }
 
-/// Generates the standardized minutes for a finished meeting and stores them
-/// as a new document version. The meeting status stays untouched — a failed
-/// generation leaves a 'ready' meeting 'ready' and only returns the error.
+/// Generates the minutes for a finished meeting, following a template, and
+/// stores them as a new document version. `template_id`: a template id, `"auto"`
+/// (chosen by content) or `None` (the meeting's own choice, else the standard
+/// template). The meeting status stays untouched — a failed generation leaves a
+/// 'ready' meeting 'ready' and only returns the error. One run per meeting: a
+/// second start is refused with `minutes_busy` (P1k, B14). G5: `basis` chooses the
+/// transcript version the minutes are written from (default: the active one) and the
+/// language they are written in (default: like the transcript).
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_generate_minutes(
     app: tauri::AppHandle,
-    store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
+    template_id: Option<String>,
+    basis: Option<DocBasis>,
 ) -> Result<MeetingDocument, String> {
-    let store = Arc::clone(&store);
-    generate_minutes(&app, store, &meeting_id).await
+    let store = store_of(&app)?;
+    super::meeting_minutes::generate_and_notify(
+        &app,
+        store,
+        &meeting_id,
+        template_id.as_deref(),
+        &basis.unwrap_or_default(),
+    )
+    .await
 }
 
 /// Where this meeting's minutes were filed as Markdown, if the file is there.
@@ -204,26 +327,377 @@ pub async fn meetings_export_document(path: String, body: String) -> Result<(), 
 }
 
 /// Imports a local audio/video file or a VTT/SRT subtitle file as a new
-/// meeting. Audio/video decoding and transcription can take a while, hence
-/// this stays `async` end to end rather than blocking the command task
-/// (`import_media_file` itself moves the heavy work to `spawn_blocking`).
+/// meeting. Einwilligung (#15): `consent_confirmed = false` wird im Backend
+/// bewusst NICHT abgelehnt (Oberflaechen-Gate; nur die Live-Aufnahme prueft
+/// `consent_gate` im Recorder), siehe `import_media_file`. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
+/// LEEREN Eintrag (Titel, Projekte und Notizen bleiben; der Titel wird nur
+/// ersetzt, solange er der vorgeschlagene ist) und kehrt mit dessen Id zurueck;
+/// ist das Ziel nicht (mehr) leer, kommt `target_not_empty`.
+///
+/// U7: Audio und Video werden in die Import-Warteschlange gestellt und der
+/// Befehl kehrt SOFORT mit der ID der neuen Besprechung (Status `queued`)
+/// zurueck, statt bis zum Ende der Transkription zu laufen: weitere Dateien
+/// lassen sich jederzeit hinzufuegen, sie laufen in der Reihenfolge des
+/// Hinzufuegens. Untertitel (VTT/SRT) brauchen keine Transkription und sind
+/// sofort fertig. Fortschritt, Position und Ende kommen ueber
+/// `MeetingEvent::Progress`/`State` und `ImportQueueEvent`.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_import_file(
     app: tauri::AppHandle,
-    store: State<'_, Arc<MeetingStore>>,
     transcription: State<'_, Arc<TranscriptionManager>>,
     path: String,
     consent_confirmed: bool,
+    target_meeting_id: Option<String>,
 ) -> Result<String, String> {
+    let store = store_of(&app)?;
+    let queue = queue_of(&app)?;
+    let path = PathBuf::from(path);
+    let consent_at = consent_confirmed.then(|| chrono::Utc::now().timestamp());
+    if queue::is_subtitle(&path) {
+        let store = Arc::clone(&store);
+        if target_meeting_id.is_some() {
+            let title = queue::title_from_path(&path);
+            return tauri::async_runtime::spawn_blocking(move || {
+                import_subtitle_file_into(
+                    &store,
+                    &title,
+                    &path,
+                    consent_at,
+                    target_meeting_id.as_deref(),
+                )
+            })
+            .await
+            .map_err(|e| format!("meetings_import_file panicked: {e}"))?;
+        }
+        let transcription = Arc::clone(&transcription);
+        return import_media_file(&app, store, transcription, path, consent_confirmed).await;
+    }
+    let source = path
+        .to_str()
+        .ok_or_else(|| "import_path_invalid".to_string())?
+        .to_string();
+    let title = queue::title_from_path(&path);
+    match target_meeting_id {
+        Some(target) => queue.enqueue_into(&target, &title, &source, consent_at),
+        None => queue.enqueue(&title, &source, consent_at),
+    }
+    .map(|meeting| meeting.id)
+}
+
+// M6-P6a: Export einer ganzen Besprechung.
+
+/// Schreibt die Besprechung in eine vom Nutzer gewählte Datei; das Format
+/// ergibt sich aus der Endung (`md`, `txt`, `docx`, `html`, `pdf`, `srt`,
+/// `vtt`, `json`). `parts` wählt die Teile (SRT/VTT enthalten immer nur das
+/// Transkript). Audio wird nie exportiert.
+///
+/// `pdf` läuft über ein verstecktes WebView2-Fenster (`meetings::pdf`, höchstens
+/// 20 s). Ein Fehler beginnt mit `pdf_unavailable`, `pdf_timeout`,
+/// `pdf_low_memory` oder `pdf_failed`; daran erkennt die Oberfläche, dass sie
+/// „Drucken…" als Rückfall anbieten kann.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_export(
+    app: tauri::AppHandle,
+    meeting_id: String,
+    path: String,
+    parts: crate::managers::meetings::export::ExportParts,
+) -> Result<(), String> {
+    let store = store_of(&app)?;
+    use crate::managers::meetings::export::{build_bundle, write_export, ExportFormat};
     let store = Arc::clone(&store);
-    let transcription = Arc::clone(&transcription);
-    import_media_file(
-        &app,
-        store,
-        transcription,
-        PathBuf::from(path),
-        consent_confirmed,
+    tauri::async_runtime::spawn_blocking(move || {
+        let bundle = build_bundle(&store, &meeting_id)?;
+        let target = PathBuf::from(&path);
+        write_export(&target, ExportFormat::from_path(&target), &bundle, &parts)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Legt die Besprechung formatiert (HTML + Klartext) in die Zwischenablage.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_copy_formatted(
+    app: tauri::AppHandle,
+    meeting_id: String,
+    parts: crate::managers::meetings::export::ExportParts,
+) -> Result<(), String> {
+    let store = store_of(&app)?;
+    use crate::managers::meetings::export::{build_bundle, clipboard_payload};
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let store = Arc::clone(&store);
+    let (html, text) = tauri::async_runtime::spawn_blocking(move || {
+        build_bundle(&store, &meeting_id).map(|b| clipboard_payload(&b, &parts))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    app.clipboard()
+        .write_html(html, Some(text))
+        .map_err(|e| e.to_string())
+}
+
+// M6-P6c: Follow-up-Mail.
+
+/// Ausgang eines Follow-up-Entwurfs für `meeting_followup_open`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowupMode {
+    /// HTML + Text in die Zwischenablage.
+    Copy,
+    /// Mailprogramm per `mailto:` öffnen.
+    Mailto,
+    /// Als .eml-Datei speichern (`path`).
+    Eml,
+}
+
+/// Erzeugt den Follow-up-Entwurf (B13): eigener Prompt über KI-Notizen, eigene
+/// Notizen und Protokoll (soweit vorhanden), sonst das Transkript; das Recipe
+/// "Follow-up-E-Mail an ..." ist die Vorlage. Bewusst NICHT über den Chat: der
+/// hat eine strenge Belegpflicht und antwortet bei Aufnahmen ohne Beschluss
+/// "nicht gefunden". Gleiche Sperren wie der Chat (ein Lauf gleichzeitig, kein
+/// lokales CPU-Modell während einer Aufnahme, KI-Notizen haben Vorrang).
+/// Empfänger sind die Teilnehmenden ohne die eigene Person (leer, wenn keine
+/// bekannt). Fehlercodes: die des Chats (`no_provider`, `no_model`,
+/// `memory_low`, `recording_active_cpu`, `chat_busy`, `llm_failed`,
+/// `meeting_not_found`, `store_failed`) sowie `followup_no_content` (keine
+/// Grundlage, ein neuer Versuch hilft nicht) und `followup_empty` (das Modell
+/// lieferte auch im zweiten Versuch keinen Text).
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_followup_draft(
+    app: tauri::AppHandle,
+    meeting_id: String,
+) -> Result<crate::managers::meetings::mail::MailDraft, String> {
+    let store = store_of(&app)?;
+    let recorder = recorder_of(&app)?;
+    use crate::managers::meetings::chat::controller::{running_flag, CancelFlag, ChatEnv};
+    use crate::managers::meetings::followup::{draft_guarded, RunLimits};
+    use crate::managers::meetings::mail::participant_recipients;
+    let settings = crate::settings::get_settings(&app);
+    let (recipients, addressee) = {
+        let store = Arc::clone(&store);
+        let id = meeting_id.clone();
+        let own = settings.meeting_self_emails.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            store
+                .get_meeting(&id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "meeting_not_found".to_string())?;
+            let recipients =
+                participant_recipients(&store, &id, &own).map_err(|e| e.to_string())?;
+            let addressee = if recipients.names.is_empty() {
+                "die Teilnehmenden".to_string()
+            } else {
+                recipients.names.join(", ")
+            };
+            Ok::<_, String>((recipients, addressee))
+        })
+        .await
+        .map_err(|e| e.to_string())??
+    };
+    let local = crate::managers::meetings::llm_call::resolve_provider_coded(&settings)
+        .map(|(provider, _, _)| crate::managers::llm::is_local(&provider))
+        .unwrap_or(false);
+    let env = ChatEnv {
+        ctx_tokens: crate::managers::llm::DEFAULT_CONTEXT_TOKENS,
+        backend_cpu: local && crate::commands::meeting_chat::local_backend_is_cpu(&app).await,
+        recording_active: recorder.is_recording(),
+        now: chrono::Utc::now().timestamp(),
+        cancel: CancelFlag::default(),
+        enhance_running: Arc::new(crate::commands::meeting_chat::enhance_running),
+    };
+    draft_guarded(
+        running_flag(),
+        &settings,
+        Arc::clone(&store),
+        &meeting_id,
+        &addressee,
+        recipients.emails,
+        &env,
+        RunLimits::default(),
     )
     .await
+    .map_err(|e| {
+        log::warn!("Follow-up fehlgeschlagen: {}", e.code);
+        e.to_string()
+    })
+}
+
+/// Gibt einen (im Dialog bearbeiteten) Entwurf aus. `Copy`: HTML + Text in die
+/// Zwischenablage. `Mailto`: Mailprogramm öffnen; ist die Adresse zu lang
+/// (> 1 800 Zeichen), gehen nur Empfänger und Betreff mit, der Text kommt in
+/// die Zwischenablage und das Ergebnis ist `true` (UI: Hinweis "einfügen").
+/// `Eml`: Datei nach `path` schreiben (Endung `.eml` wird ergänzt).
+/// Fehler: `clipboard_failed`, `mailto_failed` (Kopieren bleibt möglich),
+/// `path_missing`, `write_failed`.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_followup_open(
+    app: tauri::AppHandle,
+    draft: crate::managers::meetings::mail::MailDraft,
+    mode: FollowupMode,
+    path: Option<String>,
+) -> Result<bool, String> {
+    use crate::managers::meetings::mail::{
+        finalize, mailto_url, write_eml, MailDraft, MAILTO_MAX_LEN,
+    };
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    use tauri_plugin_opener::OpenerExt;
+    let d = finalize(&draft);
+    let copy = |d: &MailDraft| {
+        app.clipboard()
+            .write_html(d.body_html.clone(), Some(d.body_text.clone()))
+            .map_err(|e| {
+                log::warn!("Follow-up: Zwischenablage fehlgeschlagen ({e})");
+                "clipboard_failed".to_string()
+            })
+    };
+    match mode {
+        FollowupMode::Copy => copy(&d).map(|()| false),
+        FollowupMode::Mailto => {
+            let (url, clipped) = mailto_url(&d, MAILTO_MAX_LEN);
+            if clipped {
+                copy(&d)?;
+            }
+            app.opener().open_url(url, None::<String>).map_err(|e| {
+                log::warn!("Follow-up: mailto nicht geöffnet ({e})");
+                "mailto_failed".to_string()
+            })?;
+            Ok(clipped)
+        }
+        FollowupMode::Eml => {
+            let raw = path.unwrap_or_default();
+            if raw.trim().is_empty() {
+                return Err("path_missing".to_string());
+            }
+            let mut target = PathBuf::from(raw.trim());
+            if target.extension().is_none() {
+                target.set_extension("eml");
+            }
+            let now = chrono::Utc::now();
+            let seed = now.timestamp_nanos_opt().unwrap_or_default() as u64;
+            let bytes = write_eml(&d, now, seed);
+            tauri::async_runtime::spawn_blocking(move || std::fs::write(&target, bytes))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| {
+                    log::warn!("Follow-up: .eml nicht geschrieben ({e})");
+                    "write_failed".to_string()
+                })?;
+            Ok(false)
+        }
+    }
+}
+
+/// Einstellung `meeting_self_emails` ("Meine E-Mail-Adressen"): gespeichert
+/// wird die bereinigte Liste (klein geschrieben, nur brauchbare, ohne Dubletten).
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_self_emails_setting(
+    app: tauri::AppHandle,
+    emails: Vec<String>,
+) -> Result<(), String> {
+    let mut settings = crate::settings::get_settings(&app);
+    settings.meeting_self_emails = crate::managers::meetings::mail::normalize_self_emails(&emails);
+    crate::settings::write_settings(&app, settings);
+    Ok(())
+}
+
+// M5-P5b: Aufnahme aus einem Kalendertermin.
+
+/// Startet eine Aufnahme mit dem Bezug zu einem Termin: Titel = was der Nutzer
+/// eingegeben hat, sonst der Termintitel; Vorlage = die der letzten Besprechung
+/// derselben Serie (UID), sonst die Standardvorlage; danach Verknuepfung und
+/// Teilnehmenden-Schnappschuss. `meetings_start` bleibt unveraendert.
+///
+/// `link_mode`: `prompt` (Hinweisfenster, Terminkarte; Standard) oder `auto`
+/// (Titelvorschlag der Aufnahmekarte). `app_key` gehoert der Erkennung (P5c) und
+/// wird bis dahin nicht gelesen. Ohne bestaetigte Einwilligung startet nichts
+/// (`consent_required` vom Recorder). Fehler NACH dem Start (Verknuepfung,
+/// Vorlage) kippen die laufende Aufnahme nicht; sie stehen im Log. G1 (#70):
+/// `target_meeting_id` wie bei `meetings_start` (Aufnahme in einen leeren Eintrag).
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub async fn meetings_start_from_event(
+    app: tauri::AppHandle,
+    event_key: Option<String>,
+    app_key: Option<String>,
+    consent_confirmed: bool,
+    capture_system: bool,
+    title: Option<String>,
+    link_mode: Option<String>,
+    target_meeting_id: Option<String>,
+) -> Result<Meeting, String> {
+    let store = store_of(&app)?;
+    let recorder = recorder_of(&app)?;
+    use crate::managers::calendar::service::{finish_start, plan_start};
+    let _ = app_key; // P5c
+    let linked_by = match link_mode.as_deref() {
+        Some("auto") => "auto",
+        _ => "prompt",
+    };
+    let recorder = Arc::clone(&recorder);
+    let store = Arc::clone(&store);
+    let meeting = tauri::async_runtime::spawn_blocking(move || {
+        let plan = plan_start(&store, event_key.as_deref(), title.as_deref())?;
+        let meeting = recorder.start_into(
+            plan.title.clone(),
+            consent_confirmed,
+            capture_system,
+            target_meeting_id.as_deref(),
+        )?;
+        let now = chrono::Utc::now().timestamp_millis();
+        for problem in finish_start(&store, &meeting.id, &plan, linked_by, now) {
+            log::warn!("meetings_start_from_event: {problem}");
+        }
+        Ok::<Meeting, String>(meeting)
+    })
+    .await
+    .map_err(|e| format!("meetings_start_from_event panicked: {e}"))??;
+    crate::meeting_prompt::close(&app);
+    Ok(meeting)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_meetings_state_becomes_a_readable_code_not_a_tauri_extraction_error() {
+        assert_eq!(
+            require_managed::<Arc<MeetingStore>>(None).err(),
+            Some("meetings_unavailable".to_string())
+        );
+        assert_eq!(require_managed(Some(7)), Ok(7));
+    }
+
+    #[test]
+    fn database_errors_follow_the_code_colon_detail_convention() {
+        let message = store_err(anyhow::anyhow!("no such table: transcripts"));
+        assert_eq!(message, "store_failed: no such table: transcripts");
+        // Der Code vor dem ersten Doppelpunkt ist, was die Oberflaeche auswertet.
+        assert_eq!(message.split(':').next().unwrap().trim(), "store_failed");
+    }
+
+    /// Kein Befehl dieser Datei darf Store, Recorder oder Warteschlange noch ueber
+    /// einen `State`-Parameter beziehen: fehlt der Zustand (Store nicht geoeffnet),
+    /// ist die Fehlermeldung sonst wieder der Tauri-Extraktionsfehler.
+    #[test]
+    fn no_command_here_takes_the_meetings_state_as_a_state_parameter() {
+        let source = include_str!("meetings.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        for needle in [
+            concat!("State<'_, ", "Arc<MeetingStore>>"),
+            concat!("State<'_, ", "Arc<MeetingRecorderManager>>"),
+            concat!("State<'_, ", "Arc<ImportQueue>>"),
+        ] {
+            assert!(
+                !production.contains(needle),
+                "{needle} gefunden: require_managed ueber try_state benutzen"
+            );
+        }
+    }
 }

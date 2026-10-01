@@ -73,10 +73,16 @@ export const PageShell: React.FC<PageShellProps> = ({
         )}
       </header>
       {help && helpOpen ? (
-        <div className={`flex gap-4 items-start ${fill ? "flex-1 min-h-0" : ""}`}>
-          <div className="flex-1 min-w-0 space-y-4">{children}</div>
+        <div
+          className={`flex gap-4 ${fill ? "flex-1 min-h-0 items-stretch" : "items-start"}`}
+        >
+          <div className={`flex-1 min-w-0 ${fill ? "min-h-0" : "space-y-4"}`}>
+            {children}
+          </div>
           <aside
-            className="w-72 shrink-0 space-y-2 border-s border-mid-gray/20 ps-4"
+            className={`w-72 shrink-0 space-y-2 border-s border-mid-gray/20 ps-4 ${
+              fill ? "min-h-0 overflow-y-auto" : ""
+            }`}
             aria-label={t("help.title")}
           >
             <div className="flex items-center justify-between">

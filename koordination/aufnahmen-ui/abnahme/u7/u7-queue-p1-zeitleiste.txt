@@ -1,0 +1,15 @@
+Reihenfolge des Hinzufuegens: ['u7_a_lang', 'u7_b_mittel', 'u7_c_mittel']
+
+Beginn / Ende je Datei (ms seit Start der Warteschlange)
+  u7_a_lang      begann    1487 ms  endete   43329 ms  Dauer  41842 ms  Phasen ['prepare', 'transcription', 'speakers']
+  u7_b_mittel    begann   43348 ms  endete   63754 ms  Dauer  20406 ms  Phasen ['prepare', 'transcription', 'speakers']
+  u7_c_mittel    begann   63788 ms  endete   84371 ms  Dauer  20583 ms  Phasen ['prepare', 'transcription', 'speakers']
+
+Hoechstens gleichzeitig laufend (aus Zustandsereignissen): 1
+Begonnen in der Reihenfolge: ['u7_a_lang', 'u7_b_mittel', 'u7_c_mittel']
+
+Stand der Warteschlange (Ereignis 'queue'):
+  t=   1488 ms  wartend=['u7_b_mittel', 'u7_c_mittel']  laufend=['u7_a_lang']  blockiert=slot  limit=1
+  t=  43348 ms  wartend=['u7_c_mittel']  laufend=['u7_b_mittel']  blockiert=slot  limit=1
+  t=  63788 ms  wartend=[]  laufend=['u7_c_mittel']  blockiert=None  limit=1
+  t=  84384 ms  wartend=[]  laufend=[]  blockiert=None  limit=1

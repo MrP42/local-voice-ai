@@ -82,7 +82,7 @@ Transkripttext bewusst liegen.
 - Fenster ohne Eingabefeld (z. B. der Explorer): Der Versuch läuft durch, meldet Erfolg, und
   der Text landet nirgends. Er bleibt aber im Verlauf erhalten.
 
-## Live-Injektion des Streams (stream_injection) — funktioniert, mit einer Lücke
+## Live-Injektion des Streams (stream_injection) — funktioniert, abgesichert nach D14
 
 **Der frühere Eintrag „defekt" war überholt und ist am 2026-08-17 durch Messung
 widerlegt worden.** Er beschrieb den Stand von Commit `32ee6d3`; beide Ursachen
@@ -109,18 +109,26 @@ höchstens um den Rest (etwa den Schlusspunkt) und wird nicht erneut eingefügt.
 Die Funktion ist deshalb ein normaler Opt-in-Schalter und nicht mehr zusätzlich
 hinter `experimental_enabled` gesperrt.
 
-### Offene Lücke: beim Streaming prüft niemand den Fokus
+### Fokus- und Rechteprüfung je Fragment (seit D14, Issue #9)
 
-Der abgesicherte Einfügepfad (`paste_guard`) gilt für den **finalen**
-Einfügevorgang. Beim Streaming ist dieser unterdrückt, und die einzelnen
-Fragmente gehen über den Injection-Worker ohne Fokus- oder Rechteprüfung per
-Ctrl+V hinaus — `RunState::wants_context()` hängt an der Refinement-Stufe, nicht
-am Streaming.
+Jedes Fragment geht vor dem Ctrl+V durch denselben Guard wie der Batch-Pfad
+(`paste_session.rs`, unabhängig vom Refinement): Zielfenster ist das Fenster beim
+ersten Fragment; wechselt der Fokus, ist das Ziel erhöht oder schlägt ein Einfügen fehl,
+wird dieses und jedes weitere Fragment **gepuffert statt getippt**. Am Ende erscheint
+**ein** Hinweis; der noch nicht eingefügte Rest liegt in der Zwischenablage (oder wird,
+falls der Nutzer ins Zielfenster zurückkehrte, dort abgesichert eingefügt). Das
+Transkript im Verlauf bleibt vollständig.
 
-Praktische Folge: **Wechselt der Fokus während des Sprechens, landen die
-folgenden Fragmente im neuen Fenster.** Kein stiller Verlust — der Text ist
-sichtbar, nur am falschen Ort — aber unkontrolliert, und der Grund, warum der
-Batch-Pfad die empfohlene Betriebsart bleibt.
+Was bleibt:
+
+- **Ein Fragment, dessen Einfügen genau beim Fokuswechsel läuft,** kann im alten oder im
+  neuen Fenster angekommen sein. Der Guard erkennt es nachträglich, meldet es
+  (`focus_changed_during_paste`) und legt es in die Zwischenablage — **nicht** erneut
+  einfügen, sonst droht Doppelung; ob es schon im Zielfenster steht, muss der Nutzer prüfen.
+- Der Guard kann nicht beobachten, ob die Zielanwendung Strg+V verarbeitet hat (wie beim
+  Batch-Pfad).
+- Das Verhalten ist mit simuliertem Desktop getestet; eine Messung am echten Fenstersystem
+  und die Abnahme am Installer stehen aus.
 
 ### Modellabhängigkeit
 
@@ -168,16 +176,71 @@ Aufbewahrungseinstellung, nicht dem Logging.
 will, löscht sie von Hand:
 `%LOCALAPPDATA%\de.wolffappliedai.localvoiceai\logs\handy.log`
 
+## Besprechungen (Stand 2026-09-29)
+
+Grenzen der Besprechungsfunktion (Goal #59, Anleitung in [BESPRECHUNGEN.md](BESPRECHUNGEN.md)).
+Zahlen stammen aus den Messläufen im Branch, Belege in `koordination/granola-besprechungen/`
+(GOAL.md, BEFUNDE.md) und `docs/m2-evidence/bench.md`.
+
+| Grenze | Stand | Umgang |
+|---|---|---|
+| **Sprechertrennung: AMI-DER 15,19 %** | Auf dem AMI-Prüfteil (ES2004a, IS1009a) liegt der DER knapp über der Zielmarke von 15 %; die Entwicklungsstücke kommen auf 14,72 %. Patrick wertet das Ziel als erfüllt (B7), es wurde bewusst nicht nachgetunt. | Sprecher lassen sich im Transkript benennen, zusammenführen und einzeln umhängen. Nemotron-3 (bis 8 Sprecher, im Spike 14,0 %) ist ein Folge-Goal. |
+| **Höchstens vier Sprecher je Kanal** | Sortformer 4spk vergibt Labels in Ankunftsreihenfolge. | Mehr Personen lassen sich nicht trennen; Segmente von Hand umhängen. |
+| **Deutsche Echtaufnahme für die Diarisierung fehlt** | Die 0,94 % DER auf Deutsch stammen aus synthetischen Szenen (SAPI-Stimmen). Eine echte Aufnahme mit 3 bis 5 Personen folgt (E23). | Bis dahin keine belastbare Zahl für echte deutsche Mehrsprecher-Besprechungen. |
+| **Wiedererkennen per Stimmprofil fehlt** | Paket P3d ist nicht enthalten; Sprecher werden je Besprechung neu benannt. | Namen überstehen nur die Neu-Transkription derselben Besprechung. |
+| **Echo-Test mit echtem Lautsprecher steht aus** | Die Echo-Unterdrückung ist an einer Fixture gemessen (Gegenseiten-Anteil im Ich-Transkript 0,00 mit, 0,565 ohne AEC). Ein Test mit Lautsprecher und Raum folgt in der Abnahme. | Mit Kopfhörer ist das Problem gegenstandslos; sonst Transkript prüfen. |
+| **Kalender nur per ICS-Adresse** | Google, Outlook, iCloud und Nextcloud über den veröffentlichten Link. Die Anbindung über Microsoft Graph folgt; die Client-ID trägt der Nutzer später in den Einstellungen ein (E14). | Veröffentlichte Outlook-Kalender aktualisieren sich beim Anbieter mit Verzögerung von Stunden. Ohne „Alle Details“ fehlen die Teilnehmenden. |
+| **Personen und Vorbereitungs-Brief fehlen** | Pakete P5d und P5e sind nicht enthalten (Personenliste, Kurzbrief vor dem Termin). | Suche und Chat nach Namen funktionieren über das Transkript. |
+| **Erkennung laufender Besprechungen nur Windows, nur Hinweis** | Liest das Nutzungsprotokoll des Mikrofons (Registry), nie das Mikrofon selbst; startet nie eine Aufnahme. | Auf anderen Systemen erscheint der Punkt als „nicht verfügbar“. |
+| **MCP-Server nicht enthalten** | Paket P6e (lokal, stdio, nur lesend, standardmäßig aus) war beim Schreiben dieser Zeilen noch in Arbeit. | [BESPRECHUNGEN.md](BESPRECHUNGEN.md#mcp-in-arbeit) nach dem Einbau anpassen. |
+| **Live-Transkript ist keine Endfassung** | Live: Parakeet v3, WER 7,86 % auf FLEURS-de (ONNX); die Umstellung auf die GGUF-Fassung (5,5 %) ist in Arbeit (P2g). Enddurchlauf: Qwen3-ASR 1,7B 4,17 %, Whisper large-v3 4,65 %. Gemessen an gelesener Sprache, nicht an spontaner Besprechung. | Der Enddurchlauf ersetzt das Live-Transkript. Ohne GPU dauert er lang (Qwen3-ASR auf der CPU rund 14 Minuten je Stunde Aufnahme); dann kann „Aus“ sinnvoller sein. |
+| **Übersetzung prüft nur Zahlen, Namen und Satzanzahl** | Die Treueprüfung je Satz vergleicht Ziffern (Format-unabhängig), Eigennamen (Großschreibung mitten im Satz, Sprecher, Teilnehmende; im Deutschen nur Abkürzungen) und die Zahl der Sätze. Zahlwörter („zwölf“), umformulierte Zahlen („halb acht“ → „7:30“ wird markiert) und Sinnfehler erkennt sie nicht. Ein Segment aus der Spracherkennung kann mehrere Sätze enthalten (Whisper bis 25 s); dann gilt die Prüfung für das ganze Segment. | Markierte Sätze im Vergleich prüfen; die Übersetzung ist eine Fassung, nie das Original. |
+| **KI-Qualität hängt vom lokalen Modell ab** | Der lokale Kontext beträgt 8192 Token, lange Besprechungen laufen daher in Teilschritten. Chat-Eval: 24 Fragen über 5 synthetische Besprechungen, Gemma 4 E4B 100 %; keine Messung an echten Besprechungen. | Einträge „ohne Beleg“ sind markiert. Während einer Aufnahme antwortet der Chat mit lokalem Modell nur auf einem GPU-Backend, damit die Live-Verarbeitung nicht stockt. |
+| **PDF-Export nur Windows** | Das PDF entsteht über ein verstecktes WebView2-Fenster. | Ausweg: als HTML speichern und im Browser drucken. |
+| **Follow-up-Mail als .eml** | Outlook (klassisch) öffnet die Datei als Entwurf; das neue Outlook und Thunderbird eventuell nur zum Lesen. | „Kopieren“ oder „Im Mailprogramm öffnen“ nutzen. |
+| **System-Audio nur unter Windows** | Auf dem Mac läuft die Aufnahme nur über das Mikrofon; die Echo-Unterdrückung braucht den Windows-Systemton, die Erkennung das Windows-Nutzungsprotokoll. | Nicht angegangen; macOS soll nur nicht brechen. |
+| **Offline-Nachweis steht aus** | Der Besprechungspfad ist so gebaut, dass Netz nur für Modell-Downloads, ICS-Abruf und einen bewusst gewählten externen Anbieter nötig ist. Die Messung mit Aufzeichnung der Verbindungen (QG5) ist noch nicht gelaufen. | Siehe auch „Noch nicht implementiert“. |
+
+**Lizenzhinweise.** Die Danksagungen unter Info nennen die neuen Modelle und Bibliotheken mit Lizenz, die
+vollständige Liste steht in [m2-evidence/ATTRIBUTION.md](m2-evidence/ATTRIBUTION.md). Sortformer steht unter
+der NVIDIA Open Model License und wird geladen, nicht mitgeliefert. Im ASR-Katalog liegt seit früher ein
+Modell mit CC-BY-NC-4.0 (Canary 1B); es ist nicht vorgewählt und wird nicht für Besprechungen empfohlen.
+Unter den Piper-Stimmen sind seit K1 Lessac (Blizzard-2013-Forschungslizenz), Ryan (CC-BY-NC-SA-4.0) und die
+davon abgeleiteten Thorsten, Kerstin, Amy, Alan und Alba als „nur nicht-kommerziell“ gekennzeichnet. Beim
+Einrichten der Piper-Laufzeit legt die App den espeak-ng-Lizenztext (GPL-3.0-or-later) in deren Ordner.
+
+## Folien-OCR, Workflows und Integrationen (Stand 2026-10-01)
+
+Bekannte Grenzen aus dem Goal „Issues-Abschluss“ (#70), Belege im
+Spike-Bericht `koordination/bild-video/spike/spike-bericht.md`.
+
+| Grenze | Stand | Umgang |
+|---|---|---|
+| **OCR liest „§“ und Tabellen schwach** | Die Folientexterkennung nutzt die Windows-Texterkennung (`Windows.Media.Ocr`, de-DE und en-US). Im Spike verwechselte sie „§ 3“ mit „5 3“ und „27 %“ mit „270/0“, las Tabellen spaltenweise und ließ Zellen fallen (Zahlentreue 47 von 60). Eine genauere Erkennung (RapidOCR, Bildanalyse mit Gemma) ist nicht eingebaut. | Zahlen, Paragrafen und Tabellen aus Folien im Protokoll gegen das Bild prüfen; Fließtext und Überschriften sind belastbar. |
+| **Englische Oberfläche zeigt deutsche Meldungen des Programmkerns** | Fehler- und Hinweistexte, die der Rust-Teil selbst formuliert (Workflows, Integrationen: etwa „Der Webhook muss https verwenden“, Läufe und Protokoll), sind deutsch und werden nicht übersetzt. Nur Meldungen mit festem Code (`integrations.errors.*`, `integrations.test.*`) erscheinen in der Sprache der Oberfläche. | Kein Datenverlust, nur Sprachmischung; Eine Übersetzung der Meldungen des Programmkerns steht aus. |
+| **Toast-Meldungen nur im Installer geprüft** | Hinweise als Toast sind am echten Fenster nur im Installer-Build abgenommen; die Playwright-Tests prüfen sie gegen die Tauri-Attrappe (`[data-sonner-toast]`). | Bei Änderungen an Toasts den Installer-Build ansehen. |
+| **Ein Webhook wird nie durch Senden getestet** | „Verbindung testen“ gibt es für Webhooks bewusst nicht, weil jeder Test den Ablauf in n8n wirklich auslösen würde. Die Adresse wird beim Eintragen auf Form (https, http nur auf diesem Rechner) geprüft, ob sie ankommt, zeigt erst der erste Lauf im Protokoll. | Ablauf in n8n zuerst mit einem harmlosen Schritt anlegen. |
+
+## Segment-Modus (segment_injection) — abgesichert nach D14
+
+Standardmäßig aus. Seit 2026-10-01 (Issue #3) geht jeder Satz durch denselben Guard wie die
+Live-Injektion (`paste_session.rs`) und danach durch `paste_transcript_guarded`; der alte,
+ungeschützte Pfad `clipboard::paste` wird hier nicht mehr benutzt. Weicht etwas ab (Fokus
+gewechselt, Ziel erhöht, Einfügen fehlgeschlagen), werden die folgenden Sätze weiter
+transkribiert und im Verlauf gespeichert, aber **nicht mehr eingefügt**. Am Ende erscheint
+**ein** Hinweis, der noch nicht eingefügte Rest liegt in der Zwischenablage.
+
+Was bleibt: Jeder Satz wird einzeln transkribiert (weniger Kontext, schwächere Zeichensetzung
+als im Batch-Pfad). Ein Abbruch (Esc) verwirft auch den gepufferten Rest. Abnahme am echten
+Fenstersystem steht aus.
+
 ## Noch nicht implementiert (Stand 2026-08-17)
 
 - Abnahme gegen Browser-Textfeld, Microsoft Word und VS Code. Verifiziert ist bisher
   **Notepad** (UI-Automation-Rücklesung), der Explorer als Fenster ohne Eingabefeld und
   ein erhöhter Task-Manager.
-- Der Segment-Modus (`segment_injection`, standardmäßig aus) nutzt weiterhin den **alten,
-  ungeschützten** Einfügepfad `clipboard::paste`. Nur der Abschluss-Einfügevorgang der
-  Standard-Diktatstrecke ist abgesichert.
 - Regelbasierte Nachbearbeitung, Wörterbuch, Snippets, Formatierungsprofile
-- Windows-Installer, SBOM, Third-Party-Notices
+- Windows-Installer, SBOM, Third-Party-Notices (die Danksagungen unter Info und `m2-evidence/ATTRIBUTION.md` nennen seit dem 29.09.2026 die für Besprechungen hinzugekommenen Modelle und Bibliotheken; eine vollständige, maschinell erzeugte Liste aller Abhängigkeiten gibt es weiter nicht)
 - Benchmarks über die eine gemessene Transkription hinaus
 - Offline-Test mit Aufzeichnung der Netzwerkverbindungen
 
@@ -194,7 +257,13 @@ will, löscht sie von Hand:
   Referenzaufnahmen sind auf -20 LUFS ausgeglichen (ITU-R BS.1770-4), dieser eine Pfad nicht.
 - **Kein Benutzerkonto, keine Telemetrie, kein Update-Server.**
 - **Keine automatische LLM-Nachbearbeitung im Standardpfad.** Die Refinement-Stufe
-  (`refine_enabled`) ist standardmäßig aus und für den stabilen Pfad nicht vorgesehen.
+  (`refine_enabled`) ist standardmäßig aus. Seit Issue #5 gibt es sie als **optionalen
+  Schalter** (Einstellungen → Diktat → Ausgabe: „Live-Text nachträglich mit Ollama glätten"),
+  der nur erscheint, solange die Live-Einfügung (`stream_injection`) an ist. Real gegen ein
+  laufendes Ollama geprüft (Modell qwen3:0.6b, privater Dienst): ein Satz kommt als Kandidat
+  zurück; wird der Dienst mitten im Diktat beendet, liefert der nächste Satz nach unter 1 s
+  `None`, der Originaltext bleibt stehen. Offen bleibt die Ende-zu-Ende-Abnahme des
+  Ersetzens in einer Zielanwendung (Notepad, Browser, Word): nicht Teil dieser Prüfung.
 
 ## Unsicherheiten, die noch gemessen werden müssen
 
@@ -206,3 +275,6 @@ will, löscht sie von Hand:
 - Verhalten der Injektion in Terminals, Electron-Anwendungen und über RDP.
 - Ob die 150-ms-Untergrenze nach dem Einfügen für langsame Zielanwendungen (Word beim
   Kaltstart, Electron) ausreicht, bevor die Zwischenablage zurückgesetzt wird.
+
+- Besprechungen, Protokoll: rechnet seit P1k (B12) wie die KI-Notizen in Token-Blöcken mit Halbieren; was auch als Viertel nicht auswertbar ist, steht als Hinweis im Protokoll und als Warnung im Reiter statt still zu fehlen. Das Protokoll folgt der Vorlage der Besprechung („Automatisch (nach Inhalt)“ wählt sie anhand eines kurzen Auszugs, „Allgemein“ bei Unsicherheit); Protokolle von vor P1k behalten ihr altes Format. Mit Qwen3.5-9B dauern KI-Notizen einer Stunde rund 3 min, mit Gemma 4 E4B rund 2,5 min nach Stopp.
+- Sprechertrennung: Sehr ähnlich klingende Stimmen (z. B. drei TTS-Stimmen mit fast gleicher Tonhöhe) werden zu einem Sprecher zusammengelegt; Test mit dem Hörspiel „Emilia, Sofie und Mara“: 4 von 7 Stimmen erkannt, DER 33,8 %. Deutlich verschiedene Stimmen werden zuverlässig getrennt. Sprecher lassen sich von Hand korrigieren; eine Nachtrennung per Stimmprofil folgt.

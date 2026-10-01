@@ -1,0 +1,81 @@
+{
+  "gate": "QG3",
+  "variant": "gpu-auto",
+  "tag": "",
+  "cpu_cap_percent": 100,
+  "finished": "2026-09-29T23:56:48",
+  "app_exe": "C:\\Users\\wolff\\local-voice-project\\.claude\\worktrees\\wt-m2b\\apps\\local-voice\\src-tauri\\target\\release\\local-voice-ai.exe",
+  "app_exe_mtime": "2026-09-29T23:42:03",
+  "gpu_backend": true,
+  "scenes": [
+    "scene1_status",
+    "scene2_angebot",
+    "scene3_sprint",
+    "scene1_status",
+    "scene2_angebot",
+    "scene3_sprint",
+    "scene1_status",
+    "scene2_angebot",
+    "scene3_sprint",
+    "scene1_status"
+  ],
+  "audio_ms": 3705053,
+  "audio_min": 61.8,
+  "live_model": "parakeet-tdt-0.6b-v3",
+  "live_load_ms": 938,
+  "live_wall_ms": 203761,
+  "live_segments": 919,
+  "wer_live": 0.07793939393939393,
+  "final_requested": "auto",
+  "final_plan": "Run { model_id: \"handy-computer/whisper-large-v3-gguf/whisper-large-v3-Q5_K_M.gguf\", max_segment_ms: 25000 }",
+  "final_model": "handy-computer/whisper-large-v3-gguf/whisper-large-v3-Q5_K_M.gguf",
+  "final_kept": null,
+  "final_load_ms": 3180,
+  "final_transcribe_ms": 97081,
+  "final_rtf": 39.64483266550612,
+  "final_segments": 599,
+  "speakers_state": "done",
+  "speakers_wall_ms": 11359,
+  "speakers_channels": [
+    {
+      "audio_ms": 3705053,
+      "channel": 1,
+      "model_ms": 10732,
+      "source": "model",
+      "speakers": 2,
+      "turns": 367
+    }
+  ],
+  "stop_to_transcript_final_ms": 130744,
+  "notes": {
+    "document_id": "01M3QJQ4GN1HTFF439AEZZ7Q1N",
+    "error_code": null,
+    "ms": 86259,
+    "ok": true,
+    "provider": "local:llm-gemma4-e4b-q4",
+    "ran": true,
+    "steps": 3,
+    "template": null
+  },
+  "stop_to_notes_ms": 217003,
+  "status_after": "ready",
+  "qg3_limit_ms": 180000,
+  "qg3_pass": false,
+  "run": {
+    "args": "--simulate-meeting --scene-mic mic_echo.wav --final-model auto --json --out C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg3-gpu-auto.sim.json --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene1_status --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene2_angebot --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene3_sprint --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene1_status --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene2_angebot --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene3_sprint --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene1_status --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene2_angebot --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene3_sprint --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene1_status --notes",
+    "env": {
+      "HF_HOME": "C:\\Users\\wolff\\lva-spikes\\p7b\\hf",
+      "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg3-9c7b3a7270204c3b843c45836d5afc32"
+    },
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_ms": 423998,
+    "peak_job_mb": 7328,
+    "free_mb_start": 31058,
+    "leftovers": [],
+    "log": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg3-gpu-auto.log",
+    "started": "2026-09-29T23:49:42"
+  },
+  "sim_json": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg3-gpu-auto.sim.json",
+  "system_note": "job object: below-normal priority, memory cap, CPU hard cap; a parallel cargo build (P5f) was running"
+}

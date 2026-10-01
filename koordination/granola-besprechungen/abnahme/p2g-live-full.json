@@ -1,0 +1,36 @@
+{
+  "mode": "full",
+  "finished": "2026-09-29T22:52:50",
+  "app_exe": "C:\\Users\\wolff\\local-voice-project\\.claude\\worktrees\\wt-m2b\\apps\\local-voice\\src-tauri\\target\\release\\local-voice-ai.exe",
+  "app_exe_mtime": "2026-09-29T22:29:57",
+  "model": "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf",
+  "scenes": [
+    "scene3_sprint",
+    "scene1_status"
+  ],
+  "scene_mic": "mic_echo.wav",
+  "aec": true,
+  "audio_ms": 766709,
+  "wall_ms": 767023,
+  "realtime": true,
+  "segments": 128,
+  "latency_p50_ms": 1068,
+  "latency_p95_ms": 2003,
+  "latency_max_ms": 11333,
+  "ak5_pass": true,
+  "wer_live": 0.06121281464530892,
+  "wer_live_ich": 0.05851063829787234,
+  "wer_live_gegen": 0.06325301204819277,
+  "ich_far_word_leak": 0.022727272727272728,
+  "echo_dropped": 0,
+  "fleurs": {
+    "sentences": 240,
+    "wer": 0.05512869765655013,
+    "errors": 287,
+    "ref_words": 5206,
+    "rtf": 11.312127580750714,
+    "failed": 0
+  },
+  "fleurs_wer": 0.05512869765655013,
+  "sim_json": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\live\\m2-live-full.sim.json"
+}

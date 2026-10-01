@@ -7,6 +7,10 @@ Was hier liegt, in der Reihenfolge, in der man es braucht.
 | Datei | Inhalt |
 |---|---|
 | [SO-STARTEN-SIE.md](SO-STARTEN-SIE.md) | Installation, erste Schritte, Fish-Speech für das Vorlesen mit eigener Stimme |
+| [BESPRECHUNGEN.md](BESPRECHUNGEN.md) | Besprechungen: Aufnahme mit Notizen, KI-Notizen, Sprecher, Chat und Suche, Kalender, Export, Datenschutz |
+| [AUTOMATIONEN.md](AUTOMATIONEN.md) | Abläufe mit Auslösern und Schritten: Vorlagen, Rechte (Aus/Fragen/Erlaubt), Trockenlauf, Einwilligung |
+| [AGENTEN-ANBINDEN.md](AGENTEN-ANBINDEN.md) | Programme anbinden: MCP, Kommandozeile `ctl`, Rechte je Werkzeug, Freigaben |
+| [releases/0.21.0.md](releases/0.21.0.md) | Release-Notizen 0.21.0 für Anwender |
 | [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md) | Was nicht geht oder nicht verifiziert ist — ehrlich gehalten |
 
 ## Für Entwickler

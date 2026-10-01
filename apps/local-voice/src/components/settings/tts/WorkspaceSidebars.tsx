@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -12,11 +12,14 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import { Dialog } from "../../ui/Dialog";
+import { TabList } from "../../ui/TabList";
+import { splitFileNameTail } from "@/lib/utils/exportName";
 import { HelpPanel } from "../../help/HelpPanel";
 import { PageExportDialog, PageImportDialog } from "./pages/PagePackageDialogs";
 import {
   ChevronDown,
   ChevronUp,
+  Columns2,
   FilePlus,
   Play,
   FolderOpen,
@@ -29,6 +32,8 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Rows2,
+  Square,
   Trash2,
 } from "lucide-react";
 
@@ -55,6 +60,21 @@ export const relativeTime = (ms: number, locale: string): string => {
 };
 
 /**
+ * Zeilenaktionen der Leisten: 16-px-Symbol in `p-1` ergibt 24x24 px Klickflaeche
+ * (WCAG 2.5.8) -- vorher 17x17 mit 13-px-Symbol. Feste 4 px statt `p-1`:
+ * bei 15-px-Wurzelschrift waeren das 3,75 px und damit 23,5 px Flaeche. Eingeblendet werden sie
+ * weiterhin erst beim Ueberfahren der Zeile.
+ */
+const ROW_ACTION =
+  "p-[4px] rounded text-text/60 hover:text-text hover:bg-mid-gray/25 disabled:opacity-30 cursor-pointer transition-colors";
+const ROW_ACTION_DANGER =
+  "p-[4px] rounded text-red-400/70 hover:text-red-400 hover:bg-mid-gray/25 cursor-pointer transition-colors";
+/** Dateizeilen: die Aktionen sind immer sichtbar; Loeschen bleibt grau und
+ *  wird erst bei Hover/Fokus rot, damit es nicht die ganze Liste faerbt. */
+const ROW_ACTION_QUIET_DANGER =
+  "p-[4px] rounded text-text/60 hover:text-red-400 focus-visible:text-red-400 hover:bg-mid-gray/25 cursor-pointer transition-colors";
+
+/**
  * Die Seitenliste links: welches Arbeitsblatt gerade offen ist, wie bei den
  * Unterhaltungen einer KI-App. Anlegen, umbenennen (Doppelklick), nach oben
  * und unten schieben, löschen — Löschen fragt nach, denn es nimmt den
@@ -67,7 +87,9 @@ export const PagesSidebar: React.FC<{
   onToggle: () => void;
   onSelect: (id: string) => void;
   onChanged: () => void;
-}> = ({ pages, activeId, collapsed, onToggle, onSelect, onChanged }) => {
+  /** Breite in Pixeln (Ziehgriff); ohne Angabe gilt die Standardbreite. */
+  width?: number;
+}> = ({ pages, activeId, collapsed, onToggle, onSelect, onChanged, width }) => {
   const { t, i18n } = useTranslation();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -121,16 +143,20 @@ export const PagesSidebar: React.FC<{
           aria-label={t("tts.pages.expand")}
           className="p-1.5 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
         >
-          <PanelLeftOpen width={18} height={18} />
+          <PanelLeftOpen width={16} height={16} />
         </button>
       </div>
     );
   }
 
   return (
-    <div className="tts-workspace__pages w-52 shrink-0 space-y-1 min-h-0 overflow-y-auto">
+    <div
+      data-testid="tts-pages"
+      className="tts-workspace__pages shrink-0 space-y-1 min-h-0 overflow-y-auto"
+      style={width ? ({ "--tts-w": `${width}px` } as CSSProperties) : undefined}
+    >
       <div className="flex items-center justify-between pb-1">
-        <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
+        <span className="text-xs font-semibold uppercase tracking-wide text-text/60">
           {t("tts.pages.title")}
         </span>
         <div className="flex items-center">
@@ -168,7 +194,7 @@ export const PagesSidebar: React.FC<{
       {pages.map((page, index) => (
         <div
           key={page.id}
-          className={`group flex items-center gap-1 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
+          className={`group relative flex items-center gap-1 rounded-md px-2 py-1.5 cursor-pointer transition-colors ${
             page.id === activeId
               ? "bg-logo-primary/15 text-text"
               : "text-text/70 hover:bg-mid-gray/15 hover:text-text"
@@ -200,16 +226,19 @@ export const PagesSidebar: React.FC<{
                 <span className="block truncate text-sm">{page.title}</span>
                 {/* Verlauf statt blosser Titel: was drinsteht und wann es
                     zuletzt angefasst wurde, ohne die Seite zu oeffnen. */}
-                <span className="block truncate text-xs text-text/45">
+                <span className="block truncate text-xs text-text/60">
                   {page.preview || t("tts.pages.emptyPreview")}
                 </span>
-                {page.modified_ms > 0 && (
-                  <span className="block text-[11px] text-text/40">
-                    {relativeTime(page.modified_ms, i18n.language)}
+                {(page.modified_ms ?? 0) > 0 && (
+                  <span className="block text-xs text-text/60">
+                    {relativeTime(page.modified_ms ?? 0, i18n.language)}
                   </span>
                 )}
               </span>
-              <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
+              {/* Schwebt über der Zeile statt Platz zu belegen: fünf Aktionen à
+                    24 px würden in der schmalen Leiste Titel und Vorschau auf
+                    wenige Zeichen zusammendrücken. */}
+              <span className="hidden group-hover:flex group-focus-within:flex items-center absolute end-1 top-1 rounded-md border border-mid-gray/20 bg-background shadow-sm">
                 <button
                   type="button"
                   onClick={(e) => {
@@ -219,9 +248,9 @@ export const PagesSidebar: React.FC<{
                   disabled={index === 0}
                   title={t("tts.pages.moveUp")}
                   aria-label={t("tts.pages.moveUp")}
-                  className="p-0.5 text-text/40 hover:text-text disabled:opacity-30 cursor-pointer"
+                  className={ROW_ACTION}
                 >
-                  <ChevronUp width={14} height={14} />
+                  <ChevronUp width={16} height={16} />
                 </button>
                 <button
                   type="button"
@@ -232,9 +261,9 @@ export const PagesSidebar: React.FC<{
                   disabled={index === pages.length - 1}
                   title={t("tts.pages.moveDown")}
                   aria-label={t("tts.pages.moveDown")}
-                  className="p-0.5 text-text/40 hover:text-text disabled:opacity-30 cursor-pointer"
+                  className={ROW_ACTION}
                 >
-                  <ChevronDown width={14} height={14} />
+                  <ChevronDown width={16} height={16} />
                 </button>
                 <button
                   type="button"
@@ -245,9 +274,9 @@ export const PagesSidebar: React.FC<{
                   }}
                   title={t("tts.pages.rename")}
                   aria-label={t("tts.pages.rename")}
-                  className="p-0.5 text-text/40 hover:text-text cursor-pointer"
+                  className={ROW_ACTION}
                 >
-                  <Pencil width={13} height={13} />
+                  <Pencil width={16} height={16} />
                 </button>
                 <button
                   type="button"
@@ -258,9 +287,9 @@ export const PagesSidebar: React.FC<{
                   title={t("tts.pages.package.exportTitle")}
                   aria-label={t("tts.pages.package.exportTitle")}
                   data-testid="page-export-open"
-                  className="p-0.5 text-text/40 hover:text-text cursor-pointer"
+                  className={ROW_ACTION}
                 >
-                  <PackagePlus width={13} height={13} />
+                  <PackagePlus width={16} height={16} />
                 </button>
                 <button
                   type="button"
@@ -270,9 +299,9 @@ export const PagesSidebar: React.FC<{
                   }}
                   title={t("tts.pages.delete")}
                   aria-label={t("tts.pages.delete")}
-                  className="p-0.5 text-red-400/60 hover:text-red-400 cursor-pointer"
+                  className={ROW_ACTION_DANGER}
                 >
-                  <Trash2 width={13} height={13} />
+                  <Trash2 width={16} height={16} />
                 </button>
               </span>
             </>
@@ -355,6 +384,12 @@ export const FilesSidebar: React.FC<{
   tab?: RightTab;
   onTabChange?: (tab: RightTab) => void;
   helpSection?: string;
+  /** Breite in Pixeln (Ziehgriff) im Nebeneinander-Layout. */
+  width?: number;
+  /** Gestapelt unter der Bedienung: volle Spaltenbreite, füllt die Resthöhe. */
+  stacked?: boolean;
+  /** Umschalter Gestapelt/Nebeneinander im Kopf; ohne ihn kein Knopf. */
+  onLayoutToggle?: () => void;
 }> = ({
   pageId,
   collapsed,
@@ -363,8 +398,11 @@ export const FilesSidebar: React.FC<{
   tab = "files",
   onTabChange,
   helpSection = "vorlesen",
+  width,
+  stacked = false,
+  onLayoutToggle,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [files, setFiles] = useState<PageFile[]>([]);
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -447,44 +485,50 @@ export const FilesSidebar: React.FC<{
 
   if (collapsed) {
     return (
-      <div className="shrink-0 pt-1">
+      // Rechtsbuendig: gestapelt ist das eine Flex-Spalte, in der der Knopf
+      // sonst links unter der Bedienung klebte; nebeneinander bleibt er am
+      // rechten Rand. Gleiche Flaeche (p-1) wie die Knoepfe im Leistenkopf.
+      <div className="shrink-0 pt-1 flex justify-end">
         <button
           type="button"
           onClick={onToggle}
           title={t("tts.files.expand")}
           aria-label={t("tts.files.expand")}
-          className="p-1.5 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
+          data-testid="files-expand"
+          className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
         >
-          <PanelRightOpen width={18} height={18} />
+          <PanelRightOpen width={16} height={16} />
         </button>
       </div>
     );
   }
 
   return (
-    <div className="tts-workspace__files w-60 shrink-0 space-y-1 min-h-0 overflow-y-auto">
+    <div
+      data-testid="tts-files"
+      className={`tts-workspace__files space-y-1 min-h-0 overflow-y-auto ${
+        stacked ? "" : "shrink-0"
+      }`}
+      style={
+        !stacked && width
+          ? ({ "--tts-w": `${width}px` } as CSSProperties)
+          : undefined
+      }
+    >
       <div className="flex items-center justify-between pb-1">
         {onTabChange ? (
-          <div className="flex items-center gap-1" role="tablist">
-            {(["files", "help"] as const).map((id) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={tab === id}
-                onClick={() => onTabChange(id)}
-                className={`px-1.5 py-0.5 rounded text-xs font-semibold uppercase tracking-wide cursor-pointer transition-colors ${
-                  tab === id
-                    ? "text-text bg-mid-gray/20"
-                    : "text-text/50 hover:text-text"
-                }`}
-              >
-                {id === "files" ? t("tts.files.title") : t("help.title")}
-              </button>
-            ))}
-          </div>
+          <TabList<RightTab>
+            compact
+            tabs={[
+              { id: "files", label: t("tts.files.title") },
+              { id: "help", label: t("help.title") },
+            ]}
+            value={tab}
+            onChange={onTabChange}
+            ariaLabel={t("tts.files.tabsLabel")}
+          />
         ) : (
-          <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
+          <span className="text-xs font-semibold uppercase tracking-wide text-text/60">
             {t("tts.files.title")}
           </span>
         )}
@@ -498,7 +542,7 @@ export const FilesSidebar: React.FC<{
                 aria-label={t("tts.files.add")}
                 className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
               >
-                <FilePlus width={15} height={15} />
+                <FilePlus width={16} height={16} />
               </button>
               <button
                 type="button"
@@ -507,7 +551,7 @@ export const FilesSidebar: React.FC<{
                 aria-label={t("tts.files.openFolder")}
                 className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
               >
-                <FolderOpen width={15} height={15} />
+                <FolderOpen width={16} height={16} />
               </button>
               <button
                 type="button"
@@ -516,9 +560,26 @@ export const FilesSidebar: React.FC<{
                 aria-label={t("tts.files.refresh")}
                 className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
               >
-                <RefreshCw width={14} height={14} />
+                <RefreshCw width={16} height={16} />
               </button>
             </>
+          )}
+          {onLayoutToggle && (
+            <button
+              type="button"
+              onClick={onLayoutToggle}
+              data-testid="layout-toggle"
+              aria-pressed={!stacked}
+              title={t("tts.layout.sideBySide")}
+              aria-label={t("tts.layout.sideBySide")}
+              className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
+            >
+              {stacked ? (
+                <Rows2 width={16} height={16} />
+              ) : (
+                <Columns2 width={16} height={16} />
+              )}
+            </button>
           )}
           <button
             type="button"
@@ -537,7 +598,7 @@ export const FilesSidebar: React.FC<{
         <>
           {error && <p className="text-xs text-red-400 break-words">{error}</p>}
           {files.length === 0 && (
-            <p className="text-xs text-text/40">{t("tts.files.empty")}</p>
+            <p className="text-xs text-text/60">{t("tts.files.empty")}</p>
           )}
 
           {files.map((file) => (
@@ -569,16 +630,33 @@ export const FilesSidebar: React.FC<{
                   />
                 ) : (
                   <>
-                    <span className="flex-1 min-w-0 truncate text-sm">
-                      {file.name}
+                    {/* Mittig kuerzen: der Anfang schrumpft mit "...", der
+                        Zeitstempel am Ende bleibt lesbar -- er unterscheidet
+                        die Fassungen. Nur CSS, keine Messung. */}
+                    <span className="flex flex-1 min-w-0 flex-col">
+                      <span className="flex text-sm" title={file.name}>
+                        <span className="truncate">
+                          {splitFileNameTail(file.name).head}
+                        </span>
+                        <span className="shrink-0 whitespace-pre">
+                          {splitFileNameTail(file.name).tail}
+                        </span>
+                      </span>
+                      {/* Groesse als eigene Metazeile: frueher tauschte sie beim
+                          Hover den Platz mit den Aktionen, und der Papierkorb
+                          landete dort, wo eben noch "Anhoeren" stand. */}
+                      <span className="text-xs text-text/60">
+                        {formatSize(file.size)}
+                      </span>
                     </span>
-                    <span className="text-[10px] text-text/35 shrink-0 group-hover:hidden group-focus-within:hidden">
-                      {formatSize(file.size)}
-                    </span>
-                    {isAudio(file.name) && (
+                    {isAudio(file.name) ? (
                       <button
                         type="button"
-                        className="shrink-0 p-1 rounded hover:bg-mid-gray/25"
+                        className={`shrink-0 p-[4px] rounded cursor-pointer transition-colors ${
+                          playing === file.name
+                            ? "bg-logo-primary/15 text-text"
+                            : "text-text/60 hover:text-text hover:bg-mid-gray/25"
+                        }`}
                         title={t("tts.files.listen")}
                         aria-label={t("tts.files.listen")}
                         aria-pressed={playing === file.name}
@@ -598,10 +676,20 @@ export const FilesSidebar: React.FC<{
                           }
                         }}
                       >
-                        <Play width={12} height={12} />
+                        {/* Symbol folgt dem Zustand: solange der Player offen
+                            ist, steht dort Stopp -- nicht nur aria-pressed. */}
+                        {playing === file.name ? (
+                          <Square width={16} height={16} fill="currentColor" />
+                        ) : (
+                          <Play width={16} height={16} />
+                        )}
                       </button>
+                    ) : (
+                      // Platz des Anhoeren-Knopfs bleibt frei, damit
+                      // Umbenennen und Loeschen in jeder Zeile gleich stehen.
+                      <span className="w-6 shrink-0" aria-hidden="true" />
                     )}
-                    <span className="hidden group-hover:flex group-focus-within:flex items-center shrink-0">
+                    <span className="flex items-center shrink-0">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -611,9 +699,9 @@ export const FilesSidebar: React.FC<{
                         }}
                         title={t("tts.files.rename")}
                         aria-label={t("tts.files.rename")}
-                        className="p-0.5 text-text/40 hover:text-text cursor-pointer"
+                        className={ROW_ACTION}
                       >
-                        <Pencil width={13} height={13} />
+                        <Pencil width={16} height={16} />
                       </button>
                       <button
                         type="button"
@@ -623,9 +711,9 @@ export const FilesSidebar: React.FC<{
                         }}
                         title={t("tts.files.delete")}
                         aria-label={t("tts.files.delete")}
-                        className="p-0.5 text-red-400/60 hover:text-red-400 cursor-pointer"
+                        className={ROW_ACTION_QUIET_DANGER}
                       >
-                        <Trash2 width={13} height={13} />
+                        <Trash2 width={16} height={16} />
                       </button>
                     </span>
                   </>
@@ -649,17 +737,17 @@ export const FilesSidebar: React.FC<{
               )}
               {playing === file.name && note && (
                 <div className="mb-2 space-y-1">
-                  <p className="text-[10px] text-text/45">
+                  <p className="text-xs text-text/60">
                     {note.voice ?? t("tts.files.defaultVoice")} ·{" "}
-                    {new Date(note.created_ms).toLocaleString()}
+                    {new Date(note.created_ms).toLocaleString(i18n.language)}
                   </p>
-                  {note.segments.length > 0 ? (
+                  {(note.segments ?? []).length > 0 ? (
                     /* Mit Zeitmarken laeuft der Text mit: der klingende Satz
                    steht hervorgehoben da, mit seinem Sprecher davor. Ohne
                    Zeitmarken (Aufnahmen aelterer Fassungen) bleibt der
                    Textanfang. */
                     <ol className="space-y-0.5 max-h-40 overflow-y-auto">
-                      {note.segments.map((segment, index) => {
+                      {(note.segments ?? []).map((segment, index) => {
                         const active =
                           atMs >= segment.start_ms && atMs < segment.end_ms;
                         return (
@@ -668,12 +756,12 @@ export const FilesSidebar: React.FC<{
                             aria-current={active ? "true" : undefined}
                             className={
                               active
-                                ? "text-[11px] text-text bg-logo-primary/25 rounded px-1"
-                                : "text-[11px] text-text/45 px-1"
+                                ? "text-xs text-text bg-logo-primary/25 rounded px-1"
+                                : "text-xs text-text/60 px-1"
                             }
                           >
                             {segment.voice && (
-                              <span className="text-text/40">
+                              <span className="text-text/60">
                                 {segment.voice}:{" "}
                               </span>
                             )}
@@ -683,14 +771,14 @@ export const FilesSidebar: React.FC<{
                       })}
                     </ol>
                   ) : (
-                    <p className="text-[11px] text-text/60 line-clamp-3">
+                    <p className="text-xs text-text/60 line-clamp-3">
                       {note.text}
                     </p>
                   )}
                   {onUseText && (
                     <button
                       type="button"
-                      className="text-[11px] underline text-text/70 hover:text-text"
+                      className="text-xs underline text-text/70 hover:text-text"
                       onClick={(e) => {
                         e.stopPropagation();
                         onUseText(note.text);

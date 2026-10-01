@@ -205,6 +205,11 @@ async changeTtsEnhanceStrengthSetting(value: Strength) : Promise<Result<null, st
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Verbindung anlegen oder ersetzen (nach `id`). Eine leere `id` oder eine
+ * unbekannte Vorlage wird abgewiesen: eine Verbindung ohne Vorlage haette
+ * keine Endpunkte, mit denen die App sprechen koennte.
+ */
 async llmUpsertConnection(connection: LlmConnection) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_upsert_connection", { connection }) };
@@ -213,6 +218,11 @@ async llmUpsertConnection(connection: LlmConnection) : Promise<Result<null, stri
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Verbindung samt ihrer Modelle entfernen. War eines davon aktiv, ist danach
+ * nichts aktiv -- die alten Felder bleiben, wie sie sind, bis der Nutzer neu
+ * waehlt.
+ */
 async llmRemoveConnection(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_remove_connection", { id }) };
@@ -221,6 +231,11 @@ async llmRemoveConnection(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Modell freigeben oder seine Limits/Preise aendern. Die `id` folgt aus
+ * Verbindung und Modellname (`LlmModelConfig::make_id`), damit ein Modell je
+ * Verbindung nur einmal freigegeben sein kann.
+ */
 async llmUpsertModel(model: LlmModelConfig) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_upsert_model", { model }) };
@@ -229,6 +244,9 @@ async llmUpsertModel(model: LlmModelConfig) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Freigabe zuruecknehmen. War es das aktive Modell, ist danach keines aktiv.
+ */
 async llmRemoveModel(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_remove_model", { id }) };
@@ -237,6 +255,11 @@ async llmRemoveModel(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Das aktive Modell setzen. Nur ein freigegebenes Modell einer
+ * eingeschalteten Verbindung ist waehlbar -- alles andere waere ein Verweis
+ * ins Leere, und die Funktionen liefen gegen die Wand.
+ */
 async llmSetActiveModel(id: string | null) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_set_active_model", { id }) };
@@ -245,6 +268,11 @@ async llmSetActiveModel(id: string | null) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Die Modelle, die ein Anbieter ueber seine Verbindung anbietet -- zum
+ * Freigeben. Spricht die Vorlage der Verbindung an, aber mit deren Adresse
+ * und Schluessel, damit zwei Konten derselben Art getrennt bleiben.
+ */
 async llmListRemoteModels(connectionId: string) : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_list_remote_models", { connectionId }) };
@@ -253,6 +281,12 @@ async llmListRemoteModels(connectionId: string) : Promise<Result<string[], strin
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Schluessel einer Verbindung setzen. Abgelegt unter der Verbindungs-`id`,
+ * nicht unter der Vorlage -- zwei Konten derselben Art brauchen zwei
+ * Schluessel. Der aeltere Befehl prueft gegen die Vorlagen und wuerde eine
+ * frei benannte Verbindung abweisen.
+ */
 async llmSetApiKey(connectionId: string, apiKey: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_set_api_key", { connectionId, apiKey }) };
@@ -262,7 +296,7 @@ async llmSetApiKey(connectionId: string, apiKey: string) : Promise<Result<null, 
 }
 },
 async llmLocalList() : Promise<LlmDownloadInfo[]> {
-    return await TAURI_INVOKE("llm_local_list", {  });
+    return await TAURI_INVOKE("llm_local_list");
 },
 async llmLocalDownload(id: string) : Promise<Result<null, string>> {
     try {
@@ -289,8 +323,12 @@ async llmLocalDelete(id: string) : Promise<Result<null, string>> {
 }
 },
 async llmLocalStatus() : Promise<LocalLlmStatus> {
-    return await TAURI_INVOKE("llm_local_status", {  });
+    return await TAURI_INVOKE("llm_local_status");
 },
+/**
+ * Startet den Server fuer ein geladenes Modell (oder wechselt darauf).
+ * Liefert die Adresse -- die Oberflaeche braucht sie nicht, der Test schon.
+ */
 async llmLocalStart(modelId: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_local_start", { modelId }) };
@@ -301,20 +339,29 @@ async llmLocalStart(modelId: string) : Promise<Result<string, string>> {
 },
 async llmLocalStop() : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("llm_local_stop", {  }) };
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_stop") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Welches Backend der Selbsttest gewaehlt hat (oder waehlen wuerde).
+ */
 async llmLocalBackend() : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("llm_local_backend", {  }) };
+    return { status: "ok", data: await TAURI_INVOKE("llm_local_backend") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Ein geladenes lokales Modell zum aktiven Modell machen -- in einem Zug:
+ * die Verbindung "In der App" anlegen, falls sie fehlt, das Modell dort
+ * freigeben, aktiv setzen, Spiegel nachziehen. Drei Klicks in der Oberflaeche
+ * waeren drei Gelegenheiten, auf halbem Weg stehenzubleiben.
+ */
 async llmLocalActivate(modelId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_local_activate", { modelId }) };
@@ -323,6 +370,12 @@ async llmLocalActivate(modelId: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * RAM und GPU-Speicherbudget fuer die Fussleiste, dazu der Anteil der App
+ * (samt Kindprozessen). Auf einem Blocking-Thread: DXGI und die
+ * Prozessliste sind schnell, aber nicht async; die App-Messung ist auf eine
+ * je 5 s gedrosselt.
+ */
 async systemMemory() : Promise<Result<SystemMemory, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("system_memory") };
@@ -331,6 +384,11 @@ async systemMemory() : Promise<Result<SystemMemory, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Passt das Modell in den Speicher? Prognose gegen das freie Budget der
+ * dedizierten Grafikkarte -- oder gegen den RAM, wenn keine messbar ist;
+ * dann ist das Urteil "unbekannt", nicht "passt".
+ */
 async llmLocalFit(modelId: string, contextTokens: number | null) : Promise<Result<FitReport, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_local_fit", { modelId, contextTokens }) };
@@ -363,6 +421,10 @@ async usageClear() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Budgetstand jeder Verbindung mit gesetztem Limit -- fuer die Fussleiste
+ * und die Verbindungsliste. Verbindungen ohne Limit fehlen: nichts zu sagen.
+ */
 async usageBudgetStates() : Promise<Result<BudgetState[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("usage_budget_states") };
@@ -429,6 +491,14 @@ async syncHubStatus() : Promise<Result<HubStatus, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Engine des Vorlesens: "fish" (Grafikkarte) oder "piper" (CPU).
+ * 
+ * Unbekannte Werte werden abgewiesen, statt still auf Fish zurueckzufallen:
+ * ein Schalter, der etwas anderes tut als er sagt, ist schlimmer als ein
+ * Fehler. Angewendet wird die Wahl beim naechsten Auftrag
+ * (`TtsManager::refresh_from_settings`), ohne Neustart.
+ */
 async changeTtsEngineSetting(value: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_engine_setting", { value }) };
@@ -437,6 +507,9 @@ async changeTtsEngineSetting(value: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Welche geladene Piper-Stimme vorliest. `None` heisst: keine gewaehlt.
+ */
 async changeTtsPiperVoiceSetting(value: string | null) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_piper_voice_setting", { value }) };
@@ -484,6 +557,12 @@ async changeTtsExportFormatSetting(value: string) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Bitrate des MP3-Exports. Anders als beim Format wird ein unbekannter
+ * Wert hier NICHT abgewiesen, sondern auf die naechstliegende erlaubte
+ * Stufe gezogen: bei einem Format ist ein fremder Wert sinnlos, bei einer
+ * Bitrate ist 190 eine klare Absicht.
+ */
 async changeTtsExportBitrateSetting(value: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_export_bitrate_setting", { value }) };
@@ -500,10 +579,6 @@ async changeTtsContextMenuSetting(value: boolean) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * T2 Tag-Palette: favorisierte Tag-Ids sichern. Der Aufrufer schickt immer
- * die vollstaendige Liste — dieselbe Form wie `update_custom_words`.
- */
 async changeTtsTagFavoritesSetting(value: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_favorites_setting", { value }) };
@@ -512,17 +587,21 @@ async changeTtsTagFavoritesSetting(value: string[]) : Promise<Result<null, strin
     else return { status: "error", error: e  as any };
 }
 },
-async changeTtsTagLanguageSetting(value: string) : Promise<Result<null, string>> {
+async changeTtsAutotagPresetsSetting(value: AutoTagPreset[]) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_language_setting", { value }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_autotag_presets_setting", { value }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async changeTtsAutotagPresetsSetting(value: AutoTagPreset[]) : Promise<Result<null, string>> {
+/**
+ * T2 Tag-Palette: favorisierte Tag-Ids sichern. Der Aufrufer schickt immer
+ * die vollstaendige Liste — dieselbe Form wie `update_custom_words`.
+ */
+async changeTtsTagLanguageSetting(value: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_tts_autotag_presets_setting", { value }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_language_setting", { value }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -549,22 +628,22 @@ async changeTtsTagProviderSetting(value: string) : Promise<Result<null, string>>
 }
 },
 /**
- * T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
+ * Auto-Tagging-Gerät fürs lokale Ollama: "auto" | "cpu" | "gpu".
  */
-async changeTtsTagModelSetting(value: string) : Promise<Result<null, string>> {
+async changeTtsTagDeviceSetting(value: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_model_setting", { value }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_device_setting", { value }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * Auto-Tagging-Gerät fürs lokale Ollama: "auto" | "cpu" | "gpu".
+ * T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
  */
-async changeTtsTagDeviceSetting(value: string) : Promise<Result<null, string>> {
+async changeTtsTagModelSetting(value: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_device_setting", { value }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_tag_model_setting", { value }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -836,6 +915,11 @@ async localUpdateCheck() : Promise<Result<LocalUpdate | null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Startet den Installer aus dem eingestellten Ordner und beendet die App,
+ * damit der Installer die Dateien ersetzen kann. Nur Dateien, die direkt im
+ * eingestellten Ordner liegen und wie ein Installer heissen, werden gestartet.
+ */
 async localUpdateInstall(path: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("local_update_install", { path }) };
@@ -855,6 +939,19 @@ async changeAppendTrailingSpaceSetting(enabled: boolean) : Promise<Result<null, 
 async changeLazyStreamCloseSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_lazy_stream_close_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Optionale Ollama-Glaettung beim Live-Einfuegen (Issue #5). Standard aus;
+ * wirkt nur, solange `stream_injection` an ist. Ollama bleibt nie Voraussetzung
+ * fuer Aufnahme, Transkription oder Einfuegung.
+ */
+async changeRefineEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_refine_enabled_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -986,6 +1083,69 @@ async changeMeetingModelSetting(model: string | null) : Promise<Result<null, str
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async changeMeetingCaptureSystemSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_capture_system_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMeetingAutoEnhanceSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_auto_enhance_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMeetingDefaultTemplateSetting(templateId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_default_template_setting", { templateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMeetingEchoCancellationSetting(mode: MeetingEchoCancellation) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_echo_cancellation_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMeetingFinalModelSetting(model: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_final_model_setting", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMeetingDetectModeSetting(mode: DetectMode) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_detect_mode_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMeetingDetectIgnoredAppsSetting(apps: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_detect_ignored_apps_setting", { apps }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * M5-P5c: kann diese Maschine die Mikrofonnutzung lesen? Sonst zeigt die
+ * Einstellung "auf diesem System nicht verfuegbar".
+ */
+async meetingDetectAvailable() : Promise<boolean> {
+    return await TAURI_INVOKE("meeting_detect_available");
 },
 /**
  * Start key recording mode
@@ -1400,10 +1560,29 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
 /**
  * Starting touches audio hardware and can block for seconds (loopback
  * start-up), hence `spawn_blocking` rather than running on the command task.
+ * 
+ * G1 (#70): mit `target_meeting_id` nimmt die Aufnahme in einem vorhandenen
+ * LEEREN Eintrag auf (Notizen, Projekte und Id bleiben); ist das Ziel nicht
+ * (mehr) leer, kommt `target_not_empty`. Die Einwilligung gilt in jedem Fall.
  */
-async meetingsStart(title: string, consentConfirmed: boolean, captureSystem: boolean) : Promise<Result<Meeting, string>> {
+async meetingsStart(title: string, consentConfirmed: boolean, captureSystem: boolean, targetMeetingId: string | null) : Promise<Result<Meeting, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_start", { title, consentConfirmed, captureSystem }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_start", { title, consentConfirmed, captureSystem, targetMeetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * G1 (#70): legt einen leeren Eintrag an, ein Notizblock ohne Audio und ohne
+ * Quelle, auf Wunsch gleich im Projekt `folder_id`. `title` ist der
+ * vorgeschlagene Titel (die Oberflaeche liefert den lokalisierten). Aufnahme,
+ * Datei und YouTube-Link fuellen den Eintrag spaeter (`target_meeting_id` der
+ * jeweiligen Befehle). Fehler: `title_empty`, `title_too_long`, `folder_not_found`.
+ */
+async meetingsCreateEmpty(title: string, folderId: string | null) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_create_empty", { title, folderId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1483,12 +1662,74 @@ async meetingsRename(meetingId: string, title: string) : Promise<Result<null, st
 },
 /**
  * Re-runs the transcription of a finished meeting from its stored audio,
- * optionally with a different model. Discards the old segments — see
- * `retranscribe_meeting`.
+ * optionally with a different model and language (G5; `auto`/`None`: detect). The old
+ * transcript stays as a version — see `retranscribe_meeting`.
  */
-async meetingsRetranscribe(meetingId: string, modelId: string | null) : Promise<Result<null, string>> {
+async meetingsRetranscribe(meetingId: string, modelId: string | null, language: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_retranscribe", { meetingId, modelId }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_retranscribe", { meetingId, modelId, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stand aller laufenden Verarbeitungen. Die Oberflaeche fragt beim Oeffnen
+ * (Liste, Detail, Notizen, Protokoll) und haelt sich danach an
+ * `MeetingEvent::Progress` / `JobEnded`; so geht der Laufzustand beim
+ * Reiterwechsel nicht verloren.
+ */
+async meetingsProgressList() : Promise<Result<JobProgress[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_progress_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Haelt die Verarbeitung am naechsten Block an (der laufende wird fertig).
+ */
+async meetingsJobPause(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_job_pause", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt eine pausierte (oder eine noch nicht wirksame) Pause fort.
+ */
+async meetingsJobResume(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_job_resume", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stoppt die Verarbeitung: am naechsten Block, auch aus der Pause. Bereits
+ * transkribierte Segmente bleiben; mehrfaches Stoppen ist harmlos.
+ */
+async meetingsJobStop(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_job_stop", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "Fortsetzen" einer gestoppten Verarbeitung (Status `cancelled`): holt den
+ * Rest nach (wie die Wiederherstellung nach einem Absturz). U7: eine aus der
+ * Warteschlange genommene Datei, die noch kein Audio hat, wird dagegen wieder
+ * hinten eingereiht.
+ */
+async meetingsContinue(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_continue", { meetingId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1516,26 +1757,107 @@ async meetingsDelete(meetingId: string) : Promise<Result<null, string>> {
 },
 /**
  * Imports a local audio/video file or a VTT/SRT subtitle file as a new
- * meeting. Audio/video decoding and transcription can take a while, hence
- * this stays `async` end to end rather than blocking the command task
- * (`import_media_file` itself moves the heavy work to `spawn_blocking`).
+ * meeting. Einwilligung (#15): `consent_confirmed = false` wird im Backend
+ * bewusst NICHT abgelehnt (Oberflaechen-Gate; nur die Live-Aufnahme prueft
+ * `consent_gate` im Recorder), siehe `import_media_file`. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
+ * LEEREN Eintrag (Titel, Projekte und Notizen bleiben; der Titel wird nur
+ * ersetzt, solange er der vorgeschlagene ist) und kehrt mit dessen Id zurueck;
+ * ist das Ziel nicht (mehr) leer, kommt `target_not_empty`.
+ * 
+ * U7: Audio und Video werden in die Import-Warteschlange gestellt und der
+ * Befehl kehrt SOFORT mit der ID der neuen Besprechung (Status `queued`)
+ * zurueck, statt bis zum Ende der Transkription zu laufen: weitere Dateien
+ * lassen sich jederzeit hinzufuegen, sie laufen in der Reihenfolge des
+ * Hinzufuegens. Untertitel (VTT/SRT) brauchen keine Transkription und sind
+ * sofort fertig. Fortschritt, Position und Ende kommen ueber
+ * `MeetingEvent::Progress`/`State` und `ImportQueueEvent`.
  */
-async meetingsImportFile(path: string, consentConfirmed: boolean) : Promise<Result<string, string>> {
+async meetingsImportFile(path: string, consentConfirmed: boolean, targetMeetingId: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_import_file", { path, consentConfirmed }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_import_file", { path, consentConfirmed, targetMeetingId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * Generates the standardized minutes for a finished meeting and stores them
- * as a new document version. The meeting status stays untouched — a failed
- * generation leaves a 'ready' meeting 'ready' and only returns the error.
+ * Der Stand der Warteschlange (Hydrierung der Oberflaeche; danach halten ihn
+ * die `ImportQueueEvent` aktuell).
  */
-async meetingsGenerateMinutes(meetingId: string) : Promise<Result<MeetingDocument, string>> {
+async meetingsQueueList() : Promise<Result<QueueSnapshot, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_generate_minutes", { meetingId }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_queue_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nimmt eine WARTENDE Datei aus der Warteschlange (Besprechung `cancelled`,
+ * "Fortsetzen" reiht sie wieder ein) oder stoppt die LAUFENDE (wie der
+ * Stopp-Knopf). `not_in_queue`, wenn sie weder wartet noch laeuft.
+ */
+async meetingsQueueRemove(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_queue_remove", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zieht eine wartende Datei an die erste Stelle der wartenden (`not_queued`,
+ * wenn sie nicht wartet).
+ */
+async meetingsQueueToFront(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_queue_to_front", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bearbeitet Titel, Beschreibung, Datum, Teilnehmende und Projekte in einem
+ * Schritt (alles oder nichts) und liefert die aktuelle Besprechung. Der
+ * Such-Index wird neu angestossen: die Beschreibung ist durchsuchbar.
+ */
+async meetingsUpdateMetadata(meetingId: string, edit: MetadataEdit) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_update_metadata", { meetingId, edit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_import_parallel`: 1, 2 oder 3 gleichzeitige
+ * Transkriptionen (Werte ausserhalb zaehlen als der naechste gueltige). Wirkt
+ * ab der naechsten Datei; laufende Laeufe werden nie abgebrochen. Mehr als 1
+ * nur, solange Arbeitsspeicher (und Grafikspeicher) fuer die weitere Engine
+ * reichen, sonst wartet die Datei.
+ */
+async changeMeetingImportParallelSetting(value: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_import_parallel_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Generates the minutes for a finished meeting, following a template, and
+ * stores them as a new document version. `template_id`: a template id, `"auto"`
+ * (chosen by content) or `None` (the meeting's own choice, else the standard
+ * template). The meeting status stays untouched — a failed generation leaves a
+ * 'ready' meeting 'ready' and only returns the error. One run per meeting: a
+ * second start is refused with `minutes_busy` (P1k, B14). G5: `basis` chooses the
+ * transcript version the minutes are written from (default: the active one) and the
+ * language they are written in (default: like the transcript).
+ */
+async meetingsGenerateMinutes(meetingId: string, templateId: string | null, basis: DocBasis | null) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_generate_minutes", { meetingId, templateId, basis }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1549,6 +1871,220 @@ async meetingsGenerateMinutes(meetingId: string) : Promise<Result<MeetingDocumen
 async meetingsMinutesFile(meetingId: string) : Promise<Result<string | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_minutes_file", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laeuft fuer die Besprechung gerade ein Protokoll-Lauf? Beim Einblenden des
+ * Reiters abfragen (B14); danach halten `MinutesEvent`s den Stand aktuell.
+ */
+async meetingsMinutesState(meetingId: string) : Promise<Result<MinutesRunState, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_minutes_state", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stopp anfordern: `true`, wenn ein Lauf besteht. Er endet vor dem naechsten
+ * Modellaufruf mit `minutes_cancelled` und schreibt nichts.
+ */
+async meetingsMinutesCancel(meetingId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_minutes_cancel", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mit welcher Vorlage das jüngste Protokoll entstand und ob etwas fehlt.
+ */
+async meetingsMinutesMeta(meetingId: string) : Promise<Result<MinutesMeta | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_minutes_meta", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die zuletzt automatisch gewählte Vorlage der Besprechung ("Automatisch:
+ * Kundengespräch"); `None`, solange noch nie nach Inhalt gewählt wurde.
+ */
+async meetingsGetAutoTemplate(meetingId: string) : Promise<Result<AutoTemplateInfo | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_get_auto_template", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Welche Aufnahmen eines Projekts in ein Projekt-Protokoll eingehen koennen, mit
+ * dem Grund bei den anderen (`meeting_not_finished`, `no_transcript`,
+ * `empty_entry`). Chronologisch.
+ */
+async projectMinutesCandidates(folderId: string) : Promise<Result<ProjectCandidate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_candidates", { folderId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Projekt-Protokolle eines Projekts, das juengste zuerst.
+ */
+async projectMinutesList(folderId: string) : Promise<Result<ProjectMinutesSummary[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_list", { folderId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein Projekt-Protokoll mit Abschnitten, Belegen und Herkunft.
+ */
+async projectMinutesGet(id: string) : Promise<Result<ProjectMinutes | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_get", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Loescht ein Projekt-Protokoll (weich). Die Quellaufnahmen bleiben.
+ */
+async projectMinutesDelete(id: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laeuft fuer das Projekt gerade ein Lauf? Beim Einblenden abfragen; danach
+ * halten `MeetingEvent::Progress` und `ProjectMinutesEvent` den Stand aktuell.
+ */
+async projectMinutesState(folderId: string) : Promise<Result<MinutesRunState, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_state", { folderId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stopp anfordern: `true`, wenn ein Lauf besteht. Er endet vor dem naechsten
+ * Modellaufruf mit `minutes_cancelled` und schreibt nichts.
+ */
+async projectMinutesCancel(folderId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_cancel", { folderId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Projekt-Protokoll erzeugen: die gewaehlten Aufnahmen gemeinsam, mit Vorlage
+ * (`"auto"`, eine ID oder `None` = Standard) und Art (`"minutes"` oder
+ * `"summary"`). Kehrt erst am Ende zurueck (wie `meetings_generate_minutes`); die
+ * Oberflaeche ruft ihn nicht blockierend und liest Fortschritt und Ende aus den
+ * Ereignissen.
+ */
+async projectMinutesGenerate(folderId: string, meetingIds: string[], templateId: string | null, kind: string) : Promise<Result<ProjectMinutes, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("project_minutes_generate", { folderId, meetingIds, templateId, kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Startet die Folienerkennung fuer eine fertige Besprechung mit Videodatei. Kehrt
+ * sofort zurueck; Fortschritt und Ende kommen als Ereignisse (siehe Modulkopf).
+ * Wiederholbar: ein zweiter Lauf fuegt nichts doppelt ein.
+ */
+async detectMeetingSlides(meetingId: string, options: SlideOptions) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("detect_meeting_slides", { meetingId, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Folien einer Besprechung, nach Nummer (auch ausgeblendete; die Oberflaeche
+ * filtert). Bildpfade sind relativ zum Ordner aus `meeting_slides_dir`.
+ */
+async listMeetingSlides(meetingId: string) : Promise<Result<MeetingSlide[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_meeting_slides", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Blendet eine Folie aus oder wieder ein. `slide_not_found`, wenn es sie nicht gibt.
+ */
+async setMeetingSlideHidden(slideId: string, hidden: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_meeting_slide_hidden", { slideId, hidden }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Besprechungsordner (absolut), in dem `slides/` liegt: davor setzt die
+ * Oberflaeche den relativen `image_path` einer Folie zusammen.
+ */
+async meetingSlidesDir(meetingId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_slides_dir", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_slide_vision` (Standard aus). Wirkt beim naechsten Folienlauf.
+ */
+async changeMeetingSlideVisionSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_slide_vision_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zustand der Bildanalyse (Dateien, GPU, freier Grafikspeicher) fuer die Einstellung.
+ */
+async meetingSlideVisionStatus() : Promise<Result<SlideVisionStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_slide_vision_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laedt den Bild-Projektor (990 MB) -- nur auf Knopfdruck, nie von selbst. Das Modell
+ * (Gemma 4 E4B) kommt wie jedes Sprachmodell ueber die Modellliste.
+ */
+async meetingSlideVisionDownload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_slide_vision_download") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1574,33 +2110,1856 @@ async meetingsExportDocument(path: string, body: string) : Promise<Result<null, 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Herkunft eines Inhalts: Modell, Anbieter (lokal/entfernt), Token, Dauer,
+ * Zeitpunkt, Quellen, Konfidenz und Ausloeser. `content_type` ist die Art
+ * (`transcript`, `document`, ...), `id` die Kennung des Inhalts: bei
+ * `transcript` die Besprechung, bei `document` die Dokument-ID.
+ * 
+ * Gibt es keinen gespeicherten Eintrag (Inhalt aus der Zeit vor der
+ * Provenienz), wird die Herkunft aus den alten Daten abgeleitet
+ * (`origin: "derived"`); ist auch das nicht moeglich, ist die Liste leer.
+ */
+async provenanceGet(contentType: SubjectKind, id: string) : Promise<Result<ProvenanceEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("provenance_get", { contentType, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle Integrationen mit Rechte-Matrix, Richtungen und Zustand der Geheimnisse.
+ */
+async integrationsList() : Promise<Result<IntegrationView[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integrations_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt eine Integration an. Heute nur ein Ordner (`kind = folder`); Fehler sind
+ * Codes (`folder_path_missing`, `folder_path_relative`, `folder_path_not_found`,
+ * `folder_path_not_a_folder`, `kind_not_available`) oder der Klartext des Registers.
+ */
+async integrationCreate(kind: Kind, label: string, direction: Direction | null, path: string | null) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_create", { kind, label, direction, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aendert Name, Schalter oder Richtung. Kalenderquellen: Name und Schalter gehoeren
+ * dem Kalender.
+ */
+async integrationUpdate(id: string, label: string | null, enabled: boolean | null, direction: Direction | null) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_update", { id, label, enabled, direction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt eine Integration samt Rechten und Geheimnissen. Das Audit-Log bleibt.
+ */
+async integrationDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt das Recht eines Aufrufers fuer eine Faehigkeit (`mode = None`: zurueck
+ * auf die Vorgabe). „Aufnahme starten“ lehnt `allow` ab.
+ */
+async integrationSetGrant(id: string, capability: Capability, caller: Caller, mode: GrantMode | null) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_set_grant", { id, capability, caller, mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Probiert die Verbindung aus: Ordner, SMTP (Verbindung, Verschluesselung, Anmeldung,
+ * ohne Mail), Vault, Wissensbasis (Adresse, Schluessel, Werkzeug; A6). Das Ergebnis
+ * steht auch am Eintrag. Netzwerk und Dateisystem laufen auf einem Arbeitsthread.
+ */
+async integrationTest(id: string) : Promise<Result<TestResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_test", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Das Protokoll: die neuesten Eintraege zuerst, hoechstens `limit` (1 bis 500).
+ */
+async integrationsAuditList(integrationId: string | null, outcome: string | null, caller: string | null, limit: number | null) : Promise<Result<AuditEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integrations_audit_list", { integrationId, outcome, caller, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Offene Freigaben („fragen“) mit dem Namen der Integration.
+ */
+async approvalsPending() : Promise<Result<PendingApproval[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("approvals_pending") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Nutzer entscheidet eine Freigabe. Fehler: `approval_not_found`,
+ * `approval_expired`, `approval_already_decided`, `consent_required` (Freigabe zum Aufnehmen
+ * ohne `consent_confirmed = true`: die Einwilligungsbestaetigung, B7n).
+ */
+async approvalDecide(id: string, approve: boolean, consentConfirmed: boolean) : Promise<Result<Approval, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("approval_decide", { id, approve, consentConfirmed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt eine Integration mit Einstellungen an (SMTP, Ordner, Vault, Wissensbasis); das
+ * Geheimnis geht in den Geheimnisspeicher, nie in die Datenbank. Fehler: Codes
+ * (`folder_*`, `vault_path_*`) oder Klartext der Pruefung.
+ */
+async integrationCreateWithSettings(kind: Kind, label: string, direction: Direction | null, settings: TargetSettings) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_create_with_settings", { kind, label, direction, settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aendert Einstellungen (und optional das Geheimnis: Passwort bzw. Schluessel) einer
+ * SMTP-, Ordner-, Vault- oder Wissens-Integration. Nicht gesendete Felder bleiben,
+ * ein leeres `secret` laesst das Geheimnis unveraendert.
+ */
+async integrationUpdateSettings(id: string, settings: TargetSettings) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_update_settings", { id, settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sendet eine Testmail vom SMTP-Postfach an dessen eigene Absenderadresse.
+ */
+async integrationSendTestMail(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_send_test_mail", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Antwort der Suche fuer die Oberflaeche.
+ */
+async wissenSuchen(id: string, query: string, limit: number | null, area: string | null) : Promise<Result<WissenHit[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("wissen_suchen", { id, query, limit, area }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt den Export einer Besprechung in einer Ordner-Integration ab („ablegen in“).
+ * Format: `md`, `txt`, `docx`, `html`, `pdf` (die vorhandenen Exporte); Audio nie.
+ * Eine vorhandene Datei wird nie ueberschrieben (`Name (2).md`).
+ */
+async integrationExportToFolder(id: string, meetingId: string, format: string, parts: ExportParts) : Promise<Result<PlacedInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_export_to_folder", { id, meetingId, format, parts }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schreibt die Besprechung als Notiz mit Frontmatter in den Vault (oder
+ * aktualisiert die vorhandene, ohne Dublette). `parts` waehlt die Teile.
+ */
+async integrationSaveToVault(id: string, meetingId: string, parts: ExportParts) : Promise<Result<VaultSaveInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_save_to_vault", { id, meetingId, parts }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Prueft einen eingefuegten Link ohne Netzzugriff: die bereinigte Adresse oder
+ * ein Fehlercode (`youtube_playlist`, `youtube_channel`, `youtube_not_youtube`, ...).
+ */
+async youtubeNormalizeLink(url: string) : Promise<Result<YoutubeLinkInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_normalize_link", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt aus einem Link eine Besprechung mit Quelle YouTube an (ein oEmbed-Abruf
+ * fuer Titel und Kanal, im Audit) im gewaehlten Projekt. Der bewusste Nutzerschritt
+ * „Link einfuegen“; nichts anderes verbindet sich dabei mit YouTube.
+ * G1 (#70): mit `target_meeting_id` fuellt der Link einen vorhandenen LEEREN
+ * Eintrag statt eine neue Besprechung anzulegen (`project_id` entfaellt; ist
+ * das Ziel nicht leer, kommt `target_not_empty` vor jedem Netzzugriff).
+ */
+async youtubeAddSource(url: string, projectId: string | null, targetMeetingId: string | null) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_add_source", { url, projectId, targetMeetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die YouTube-Angaben einer Besprechung, oder nichts (andere Quelle, keine Daten).
+ * Kein Netzzugriff.
+ */
+async youtubeSourceGet(meetingId: string) : Promise<Result<YoutubeSource | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_source_get", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sucht ein selbst installiertes yt-dlp und zeigt seine Version. `path`: der Wert
+ * aus dem Eingabefeld (noch nicht gespeichert); `None` = gespeicherter Pfad.
+ * Startet hoechstens `yt-dlp --version` (im Job-Objekt, mit Zeitlimit); kein
+ * Netzzugriff.
+ */
+async youtubeToolDetect(path: string | null) : Promise<Result<ToolStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_tool_detect", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A3: Untertitelspuren des Videos (ein Seitenabruf ueber das selbst installierte
+ * yt-dlp, im Audit). Nur mit Schalter „privat“ und gefundenem Programm; sonst ein
+ * Fehlercode (`youtube_private_off`, `youtube_tool_missing`).
+ */
+async youtubeSubtitleTracks(meetingId: string) : Promise<Result<SubtitleTrack[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_subtitle_tracks", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A3: laedt eine Untertitelspur und legt sie als Fassung an (die erste wird aktiv).
+ */
+async youtubeSubtitlesFetch(meetingId: string, track: SubtitleTrack) : Promise<Result<TranscriptVariant, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_subtitles_fetch", { meetingId, track }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A3: eigene Transkription des Videos: Audio ueber das selbst installierte yt-dlp
+ * in einen Temp-Ordner, dann die Pipeline der Neu-Transkription (Fortschritt,
+ * Pause, Stopp). Das Ergebnis wird am Ende eine NEUE Fassung und aktiv; ein Stopp
+ * laesst die bisherige aktiv (B17).
+ */
+async youtubeOwnTranscription(meetingId: string, modelId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_own_transcription", { meetingId, modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A3: die Videodauer aus dem Player nachtragen (nur wenn sie fehlt).
+ */
+async youtubeSetDuration(meetingId: string, seconds: number) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_set_duration", { meetingId, seconds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Fassungen einer Besprechung. Eine unterbrochene Neu-Transkription (Absturz)
+ * wird vorher zurueckgenommen, sofern kein Auftrag mehr laeuft.
+ */
+async transcriptVariants(meetingId: string) : Promise<Result<TranscriptVariant[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variants", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Fassung waehlen“: macht die Fassung zum aktiven Transkript.
+ */
+async transcriptVariantActivate(variantId: string) : Promise<Result<TranscriptVariant, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variant_activate", { variantId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Segmente einer Fassung (fuer die Vergleichsansicht). Die aktive Fassung liefert
+ * den Stand von `transcripts`, also auch Korrekturen von Hand.
+ */
+async transcriptVariantSegments(variantId: string) : Promise<Result<StoredSegment[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variant_segments", { variantId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Zusammenfuehren“: das lokale Modell verbessert den Text von Fassung `base_id`
+ * mit Hilfe von `other_id` und legt eine dritte Fassung an (nicht aktiv). Ausgaben,
+ * die das Schema verletzen oder zu viel erfinden, werden verworfen (`merge`).
+ */
+async transcriptVariantsMerge(meetingId: string, baseId: string, otherId: string) : Promise<Result<TranscriptVariant, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variants_merge", { meetingId, baseId, otherId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * G5: „Übersetzen nach …“: das lokale Modell übersetzt die Fassung `source_variant_id`
+ * Satz für Satz nach `target_language` und legt eine NEUE Fassung `translation` an (nicht
+ * aktiv). Die Quelle bleibt unverändert und jederzeit wählbar. Läuft als Auftrag der
+ * Besprechung (Phase Übersetzung): Fortschritt in Blöcken, Pause, Stopp; bei Stopp, Fehler
+ * oder Absturz entsteht keine Fassung. Fehler: `translate_*`, `variant_*`, `no_provider`,
+ * `no_model`, `job_busy`.
+ */
+async transcriptVariantTranslate(meetingId: string, sourceVariantId: string, targetLanguage: string) : Promise<Result<TranscriptVariant, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variant_translate", { meetingId, sourceVariantId, targetLanguage }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * G5: der Prüfbericht einer Übersetzung (markierte Sätze mit Grund, Quelle, Sprachen).
+ * `None` bei jeder anderen Fassung.
+ */
+async transcriptVariantReport(variantId: string) : Promise<Result<TranslationReport | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcript_variant_report", { variantId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Chip im Kopf: die Sprache der Besprechung mit Herkunft, das Modell der
+ * Transkription und, wenn es die Sprache nicht abdeckt, ein besseres.
+ */
+async meetingsLanguageInfo(meetingId: string) : Promise<Result<LanguageInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_language_info", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Sprache korrigieren“: der Nutzer setzt die Sprache (Chip im Kopf). Gilt fuer die
+ * Besprechung, das aktive Transkript und die aktive Fassung, mit Herkunft `user`; andere
+ * Fassungen behalten ihre Sprache. Nicht waehrend einer Verarbeitung (`meeting_busy`).
+ * Das Transkript selbst aendert sich nicht: eine Neu-Transkription mit dem passenden Modell
+ * bietet die Oberflaeche danach an (`meetings_retranscribe` mit dieser Sprache).
+ */
+async meetingsSetLanguage(meetingId: string, language: string) : Promise<Result<LanguageInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_set_language", { meetingId, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Das Modell, das die App fuer `language` waehlen wuerde (installiert und genau, sonst
+ * ein Vorschlag aus dem Katalog), vom Modell `current_model` aus gesehen. Fuer die
+ * Vorbelegung im Dialog der Neu-Transkription. `None`: keine Antwort.
+ */
+async meetingsModelForLanguage(currentModel: string | null, language: string) : Promise<Result<ModelSuggestion | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_model_for_language", { currentModel, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * G5: Grundlage und Ausgabesprache einer Version von Protokoll (`minutes`) oder KI-Notizen
+ * (`enhanced_notes`): aus welcher Fassung des Transkripts, in welcher Sprache. `document_id`
+ * waehlt die Version, ohne ist es die juengste. `None` ohne Dokument und bei Versionen aus
+ * der Zeit davor.
+ */
+async meetingsDocumentBasis(meetingId: string, kind: string, documentId: string | null) : Promise<Result<DocumentBasis | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_document_basis", { meetingId, kind, documentId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schalter „privat/experimentell“ (Standard aus).
+ */
+async changeMeetingYoutubePrivateSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_youtube_private_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Pfad eines selbst installierten yt-dlp. Leer = im PATH suchen.
+ */
+async changeMeetingYoutubeToolPathSetting(path: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_youtube_tool_path_setting", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingNotesGet(meetingId: string) : Promise<Result<MeetingNotes, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_get", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Speichert den gesamten Notizblock; Rueckgabe = neue Revision. Bei
+ * abweichender `base_revision` Fehler `revision_conflict` ohne Schreiben.
+ */
+async meetingNotesSave(meetingId: string, blocks: NoteBlock[], baseRevision: number) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_save", { meetingId, blocks, baseRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Audioposition der laufenden Aufnahme; `None`, wenn keine laeuft.
+ */
+async meetingsRecordingPosition() : Promise<Result<RecordingPosition | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_recording_position") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingsSetTemplate(meetingId: string, templateId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_set_template", { meetingId, templateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vorlage, die fuer die Besprechung gewaehlt wurde (`None` = Standard).
+ */
+async meetingsGetTemplate(meetingId: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_get_template", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingTemplatesList() : Promise<Result<TemplateInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingTemplatesSave(id: string | null, title: string, spec: TemplateSpec) : Promise<Result<TemplateInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_save", { id, title, spec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingTemplatesDuplicate(id: string) : Promise<Result<TemplateInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_duplicate", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingTemplatesDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schreibt die Vorlage als `.lvtemplate.json`. Der Pfad stammt aus dem
+ * Speichern-Dialog; geschrieben wird im Backend (das fs-Plugin laesst nur
+ * `$APPDATA` zu, siehe `export.rs`).
+ */
+async meetingTemplatesExport(id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_export", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingTemplatesImport(path: string) : Promise<Result<TemplateInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_templates_import", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async actionItemsList(meetingId: string) : Promise<Result<ActionItem[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("action_items_list", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async actionItemsSetStatus(id: string, done: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("action_items_set_status", { id, done }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Erzeugt KI-Notizen fuer eine fertige Besprechung aus Notizblock,
+ * Transkript und Vorlage (`None` = Vorlage der Besprechung, sonst die
+ * Standardvorlage) und legt sie als neue Version ab. Fehler tragen einen
+ * Code als Praefix (`no_provider`, `enhance_busy`, ...). G5: `basis` waehlt die Fassung des
+ * Transkripts (Standard: die aktive) und die Sprache der Notizen (Standard: wie das
+ * Transkript).
+ */
+async meetingNotesEnhance(meetingId: string, templateId: string | null, basis: DocBasis | null) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_enhance", { meetingId, templateId, basis }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wendet eine Freitext-Anweisung auf eine Version der KI-Notizen an. Die
+ * eigenen Eintraege des Nutzers bleiben unveraendert; das Ergebnis ist eine
+ * neue Version.
+ */
+async meetingNotesApplyInstruction(documentId: string, instruction: string) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_apply_instruction", { documentId, instruction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Speichert eine handbearbeitete Fassung in die bestehende Version.
+ * `expected_updated_at` ist der Stempel, den die Oberflaeche geladen hat;
+ * weicht er ab (zweites Fenster, neuer Lauf), scheitert der Aufruf mit
+ * `stale_document`. Liefert den neuen Stempel.
+ */
+async meetingNotesUpdateEnhanced(documentId: string, notes: EnhancedNotes, expectedUpdatedAt: number) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_update_enhanced", { documentId, notes, expectedUpdatedAt }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die KI-Notizen als Markdown, zum Speichern oder Kopieren (die Ausgabe
+ * selbst schreibt `meetings_export_document`).
+ */
+async meetingNotesMarkdown(documentId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_notes_markdown", { documentId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aktuelle Segment-Epoche des Transkripts (M1, P1d). Die Oberflaeche
+ * vergleicht sie mit `EnhancedNotes::segment_epoch`: weicht sie ab (Neu-
+ * Transkription), sind die Quellverweise veraltet und Spruenge gesperrt.
+ */
+async meetingsSegmentEpoch(meetingId: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_segment_epoch", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Listensuche: ohne Suchterme eine reine Filterliste (neueste zuerst), sonst
+ * Besprechungen mit Treffern im Such-Index samt Snippet (`<mark>`). Findet nur
+ * Besprechungen, die der Indexer (P4b) schon erfasst hat, auch fuer den Titel.
+ */
+async meetingsSearch(query: string, filter: MeetingFilter, offset: number, limit: number) : Promise<Result<MeetingSearchPage, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_search", { query, filter, offset, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingFoldersList() : Promise<Result<Folder[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_folders_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt einen Ordner an (`id` leer) oder benennt ihn um.
+ */
+async meetingFoldersSave(id: string | null, name: string, color: string | null) : Promise<Result<Folder, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_folders_save", { id, name, color }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Loescht einen Ordner; die Besprechungen darin bleiben.
+ */
+async meetingFoldersDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_folders_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ordnet die Ordner (Projekte) neu; `ids` stehen vorn, der Rest folgt.
+ */
+async meetingFoldersReorder(ids: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_folders_reorder", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zaehler der Projekte-Spalte: alle Besprechungen und die ohne Projekt.
+ */
+async meetingFoldersCounts() : Promise<Result<FolderCounts, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_folders_counts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt die Ordner einer Besprechung auf genau `folder_ids` (n:m).
+ */
+async meetingsSetFolders(meetingId: string, folderIds: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_set_folders", { meetingId, folderIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ordner-IDs einer Besprechung (Vorbelegung des Ordner-Dialogs).
+ */
+async meetingsGetFolders(meetingId: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_get_folders", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingIndexStatus() : Promise<Result<IndexStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_index_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laedt das Embedding-Modell (635 MB) -- nur auf Knopfdruck (E6). Danach
+ * holt der Indexer die Vektoren im Hintergrund nach.
+ */
+async meetingEmbeddingModelDownload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_embedding_model_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_semantic_search`. Ausschalten beendet einen laufenden
+ * Embedding-Server sofort; Einschalten stoesst das Nachholen an.
+ */
+async changeMeetingSemanticSearchSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_semantic_search_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stellt eine Frage an eine Besprechung (auch waehrend der Aufnahme) oder an
+ * viele. Antworttext kommt vorab als `MeetingChatEvent::Delta`; das Ergebnis
+ * ist die fertige Antwort mit Zitaten und Abdeckung (gespeichert im
+ * Verlauf). Fehler: `<code>` oder `<code>: <art>` und `MeetingChatEvent::Failed`.
+ */
+async meetingChatAsk(req: ChatRequest) : Promise<Result<ChatAnswer, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_ask", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht einen laufenden Chat ab (nichts wird gespeichert). `false`, wenn
+ * zu dieser Anfrage kein Lauf (mehr) existiert.
+ */
+async meetingChatCancel(requestId: string) : Promise<boolean> {
+    return await TAURI_INVOKE("meeting_chat_cancel", { requestId });
+},
+/**
+ * Verlaeufe eines Scopes (Besprechung oder global), zuletzt benutzte zuerst.
+ */
+async meetingChatThreads(scope: ChatScope) : Promise<Result<ChatThread[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_threads", { scope }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nachrichten eines Verlaufs mit Zitaten und Abdeckung.
+ */
+async meetingChatThread(threadId: string) : Promise<Result<ChatMessage[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_thread", { threadId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Loescht einen Verlauf (Nachrichten hart).
+ */
+async meetingChatThreadDelete(threadId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_chat_thread_delete", { threadId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mitgelieferte Recipes zuerst, dann die eigenen.
+ */
+async chatRecipesList() : Promise<Result<RecipeItem[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt ein eigenes Recipe an (`id = None`) oder aendert eins. Fehler:
+ * `recipe_invalid:<grund>`, `recipe_readonly`, `recipe_not_found`.
+ */
+async chatRecipesSave(id: string | null, title: string, spec: RecipeSpec) : Promise<Result<RecipeItem, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_save", { id, title, spec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chatRecipesDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kopie eines (auch mitgelieferten) Recipes als eigenes, Titel mit "(Kopie)".
+ */
+async chatRecipesDuplicate(id: string) : Promise<Result<RecipeItem, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_recipes_duplicate", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schreibt die Besprechung in eine vom Nutzer gewählte Datei; das Format
+ * ergibt sich aus der Endung (`md`, `txt`, `docx`, `html`, `pdf`, `srt`,
+ * `vtt`, `json`). `parts` wählt die Teile (SRT/VTT enthalten immer nur das
+ * Transkript). Audio wird nie exportiert.
+ * 
+ * `pdf` läuft über ein verstecktes WebView2-Fenster (`meetings::pdf`, höchstens
+ * 20 s). Ein Fehler beginnt mit `pdf_unavailable`, `pdf_timeout`,
+ * `pdf_low_memory` oder `pdf_failed`; daran erkennt die Oberfläche, dass sie
+ * „Drucken…" als Rückfall anbieten kann.
+ */
+async meetingsExport(meetingId: string, path: string, parts: ExportParts) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_export", { meetingId, path, parts }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt die Besprechung formatiert (HTML + Klartext) in die Zwischenablage.
+ */
+async meetingsCopyFormatted(meetingId: string, parts: ExportParts) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_copy_formatted", { meetingId, parts }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Sprecher einer Besprechung (Popover, Zusammenfuehren, Zuordnen).
+ */
+async meetingSpeakersList(meetingId: string) : Promise<Result<MeetingSpeaker[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speakers_list", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Benennt einen Sprecher; gilt fuer alle seine Segmente.
+ */
+async meetingSpeakerRename(meetingId: string, channel: number, speakerIndex: number, name: string | null) : Promise<Result<MeetingSpeaker, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_rename", { meetingId, channel, speakerIndex, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fuehrt zwei Sprecher eines Kanals zusammen (`from` geht in `into` auf).
+ */
+async meetingSpeakerMerge(meetingId: string, channel: number, from: number, into: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_merge", { meetingId, channel, from, into }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ordnet ein einzelnes Segment einem anderen Sprecher zu (`None`: Zuordnung
+ * aufheben). `epoch` ist die Epoche, auf der die Ansicht das Segment sah.
+ */
+async meetingSegmentSetSpeaker(meetingId: string, segmentIndex: number, epoch: number, speakerIndex: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_segment_set_speaker", { meetingId, segmentIndex, epoch, speakerIndex }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Hinweise zur Sprechertrennung dieser Besprechung (Codes, siehe
+ * [`speaker_notices`]).
+ */
+async meetingSpeakerNotices(meetingId: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_notices", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Namensvorschlaege aus dem Gesagten (Hinweis "Person 2 ist vermutlich Andre").
+ * Der Nutzer uebernimmt mit `meeting_speaker_rename` oder verwirft mit
+ * `meeting_speaker_suggestion_dismiss`; hier wird nichts gespeichert.
+ */
+async meetingSpeakerSuggestions(meetingId: string) : Promise<Result<NameSuggestion[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_suggestions", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verwirft einen Namensvorschlag dauerhaft.
+ */
+async meetingSpeakerSuggestionDismiss(meetingId: string, channel: number, speakerIndex: number, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_suggestion_dismiss", { meetingId, channel, speakerIndex, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_self_name` ("Mein Name"): der Kanal "Ich" und der
+ * dominante Sprecher am Mikrofon tragen ihn; in Personen ist er "ich".
+ * Leer = "Ich". Wirkt sofort in allen Ansichten, Notizen und Exporten, die
+ * danach entstehen.
+ */
+async changeMeetingSelfNameSetting(name: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_self_name_setting", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "Mehrere Personen am Mikrofon": das Mikrofon dieser Besprechung wird
+ * ebenfalls in Sprecher getrennt (`metadata_json.diarize_mic`). Wirkt beim
+ * Enddurchlauf nach dem Stopp.
+ */
+async meetingsSetDiarizeMic(meetingId: string, enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_set_diarize_mic", { meetingId, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_diarization` (`auto` | `off`): wirkt ab dem naechsten
+ * Stopp, Import und der naechsten Neu-Transkription.
+ */
+async changeMeetingDiarizationSetting(mode: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_diarization_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Erzeugt den Follow-up-Entwurf (B13): eigener Prompt über KI-Notizen, eigene
+ * Notizen und Protokoll (soweit vorhanden), sonst das Transkript; das Recipe
+ * "Follow-up-E-Mail an ..." ist die Vorlage. Bewusst NICHT über den Chat: der
+ * hat eine strenge Belegpflicht und antwortet bei Aufnahmen ohne Beschluss
+ * "nicht gefunden". Gleiche Sperren wie der Chat (ein Lauf gleichzeitig, kein
+ * lokales CPU-Modell während einer Aufnahme, KI-Notizen haben Vorrang).
+ * Empfänger sind die Teilnehmenden ohne die eigene Person (leer, wenn keine
+ * bekannt). Fehlercodes: die des Chats (`no_provider`, `no_model`,
+ * `memory_low`, `recording_active_cpu`, `chat_busy`, `llm_failed`,
+ * `meeting_not_found`, `store_failed`) sowie `followup_no_content` (keine
+ * Grundlage, ein neuer Versuch hilft nicht) und `followup_empty` (das Modell
+ * lieferte auch im zweiten Versuch keinen Text).
+ */
+async meetingFollowupDraft(meetingId: string) : Promise<Result<MailDraft, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_followup_draft", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gibt einen (im Dialog bearbeiteten) Entwurf aus. `Copy`: HTML + Text in die
+ * Zwischenablage. `Mailto`: Mailprogramm öffnen; ist die Adresse zu lang
+ * (> 1 800 Zeichen), gehen nur Empfänger und Betreff mit, der Text kommt in
+ * die Zwischenablage und das Ergebnis ist `true` (UI: Hinweis "einfügen").
+ * `Eml`: Datei nach `path` schreiben (Endung `.eml` wird ergänzt).
+ * Fehler: `clipboard_failed`, `mailto_failed` (Kopieren bleibt möglich),
+ * `path_missing`, `write_failed`.
+ */
+async meetingFollowupOpen(draft: MailDraft, mode: FollowupMode, path: string | null) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_followup_open", { draft, mode, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_self_emails` ("Meine E-Mail-Adressen"): gespeichert
+ * wird die bereinigte Liste (klein geschrieben, nur brauchbare, ohne Dubletten).
+ */
+async changeMeetingSelfEmailsSetting(emails: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_self_emails_setting", { emails }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async calendarSourcesList() : Promise<Result<CalendarSource[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_sources_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verbindet eine ICS-Adresse. Der Probeabruf laeuft VOR dem Speichern: eine
+ * Adresse, die keinen lesbaren Kalender liefert, erzeugt weder Quelle noch
+ * Geheimnis, und der Fehler nennt den Grund (nie die Adresse).
+ */
+async calendarSourceAddIcs(label: string, url: string) : Promise<Result<CalendarSource, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_source_add_ics", { label, url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt die Quelle samt Terminen im Cache und ihrem Geheimnis.
+ */
+async calendarSourceRemove(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_source_remove", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Jetzt aktualisieren“: ruft eine (`id`) oder alle Quellen ab und liefert den
+ * Stand danach. Fehler je Quelle stehen in `last_error` der Quelle.
+ */
+async calendarSyncNow(id: string | null) : Promise<Result<CalendarSource[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_sync_now", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Termine der naechsten `hours` Stunden (laufende eingeschlossen), abgesagte nie.
+ */
+async calendarUpcoming(hours: number) : Promise<Result<CalEvent[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_upcoming", { hours }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Termin, dem eine jetzt beginnende Aufnahme gehoert (Beginn +-15 min,
+ * genau einer); Grundlage des Titelvorschlags.
+ */
+async calendarSuggestEvent() : Promise<Result<CalEvent | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_suggest_event") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Oeffnet die Beitritts-Adresse eines Termins im Browser. Die Adresse kommt aus
+ * dem Cache (nicht vom Fenster) und muss mit `https://` beginnen: eine
+ * Kalenderdatei ist fremde Eingabe und darf kein anderes Schema oeffnen.
+ */
+async calendarOpenJoinUrl(eventKey: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_open_join_url", { eventKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vorlauf der Erinnerung in Sekunden; 0 schaltet sie aus.
+ */
+async changeMeetingReminderLeadSetting(seconds: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_reminder_lead_setting", { seconds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Auch Termine ohne Teilnehmende erinnern.“
+ */
+async changeMeetingReminderAllEventsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_reminder_all_events_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Meldet sich mit Microsoft an: Systembrowser, Loopback, Token, Quelle, erster
+ * Abruf. Client-ID und Verzeichnis kommen aus den Einstellungen; ohne Client-ID
+ * gibt es keine Anmeldung (keine eingebaute ID). Laeuft bis zu 5 Minuten, bis der
+ * Nutzer im Browser fertig ist (`calendar_graph_cancel_sign_in` bricht ab).
+ */
+async calendarGraphSignIn() : Promise<Result<CalendarSource, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_graph_sign_in") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht eine laufende Anmeldung ab. `false`, wenn keine laeuft.
+ */
+async calendarGraphCancelSignIn() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_graph_cancel_sign_in") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Meldet ein Microsoft-Konto ab: Quelle, gespeicherte Termine und das
+ * verschluesselte Token werden geloescht. (Den Zugriff der App selbst widerruft man
+ * bei Microsoft unter „Meine Apps“.)
+ */
+async calendarGraphSignOut(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("calendar_graph_sign_out", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `calendar_graph_client_id`: leer = keine; sonst muss es eine GUID sein
+ * (sie steht spaeter in einer Adresse).
+ */
+async changeCalendarGraphClientIdSetting(clientId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_calendar_graph_client_id_setting", { clientId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `calendar_graph_tenant`: leer oder `common` = Standard (`None`).
+ */
+async changeCalendarGraphTenantSetting(tenant: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_calendar_graph_tenant_setting", { tenant }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zustand des Kontos: Einstellungen, Scopes und was noch fehlt.
+ */
+async m365Status(id: string) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_status", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt ein Microsoft-365-Konto an (ohne Anmeldung). Leere Client-ID und leeres
+ * Verzeichnis uebernehmen die Einstellungen des Kalenders (E14), wenn dort etwas
+ * steht; sonst bleibt das Konto „nicht eingerichtet“, bis eine Client-ID folgt.
+ * Fehler: `m365_invalid|<Text>` oder der Klartext des Registers.
+ */
+async m365Create(label: string, clientId: string | null, tenant: string | null, capabilities: Capability[], filesMode: FilesMode | null, filesFolder: string | null) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_create", { label, clientId, tenant, capabilities, filesMode, filesFolder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aendert Client-ID, Verzeichnis, eingeschaltete Faehigkeiten oder Ablageort
+ * (`None` = unveraendert). Eine andere Client-ID oder ein anderes Verzeichnis
+ * verwirft das Token (neu anmelden); eine zusaetzliche Faehigkeit verlangt beim
+ * naechsten Anmelden die Zustimmung zu ihrem Scope (`needs_consent`).
+ */
+async m365UpdateSettings(id: string, clientId: string | null, tenant: string | null, capabilities: Capability[] | null, filesMode: FilesMode | null, filesFolder: string | null) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_update_settings", { id, clientId, tenant, capabilities, filesMode, filesFolder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anmelden: oeffnet den Systembrowser (Microsoft-Anmeldung mit PKCE, Umleitung auf
+ * einen Listener auf `127.0.0.1`), wartet bis zu 5 Minuten und legt das Konto
+ * verschluesselt ab. Es werden nur die Scopes der eingeschalteten Faehigkeiten
+ * angefragt. Fehler: `m365_*` (siehe `M365Error::code`).
+ */
+async m365SignIn(id: string) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_sign_in", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht eine laufende Anmeldung ab; `false`, wenn keine laeuft.
+ */
+async m365CancelSignIn() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_cancel_sign_in") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Abmelden: das Token wird geloescht, die Integration bleibt.
+ */
+async m365SignOut(id: string) : Promise<Result<M365Status, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_sign_out", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verbindung testen: fragt das eigene Profil ab (`GET /me`). Das Ergebnis steht
+ * auch am Eintrag (`last_ok_at`/`last_error`).
+ */
+async m365Test(id: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_test", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Testmail an die eigene Adresse des Kontos (Owner-Pruefung: kommt die Mail an?).
+ */
+async m365SendTestMail(id: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_send_test_mail", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kleine Testdatei in den eingestellten OneDrive-Ordner legen (Owner-Pruefung).
+ */
+async m365UploadTestFile(id: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_upload_test_file", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Follow-up-Mail einer Besprechung ueber das Microsoft-365-Konto senden („senden
+ * über“). Der Entwurf kommt aus dem Dialog; eine unbrauchbare Adresse bricht ab.
+ */
+async meetingFollowupSendM365(integrationId: string, draft: MailDraft) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_followup_send_m365", { integrationId, draft }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Haengt eine Notiz an den Outlook-Termin einer Kalenderzeile (`event_key` aus dem
+ * Kalender-Cache). Ist die Notiz schon im Termin, geschieht nichts (`detail`:
+ * `already_there`).
+ */
+async m365EventNote(integrationId: string, eventKey: string, note: string) : Promise<Result<M365ActionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("m365_event_note", { integrationId, eventKey, note }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Lokaler MCP-Server (nur lesend)“ ein- oder ausschalten. Wirkt sofort auch in
+ * einer laufenden Sitzung: der Server liest die Einstellung bei jedem Aufruf.
+ */
+async changeMeetingMcpEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_mcp_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Transkript freigeben“ fuer den MCP-Server.
+ */
+async changeMeetingMcpIncludeTranscriptSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_mcp_include_transcript_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingMcpInfo() : Promise<Result<McpInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_mcp_info") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt einen Zugang an. Das Token steht NUR in dieser Antwort (gespeichert wird sein Hash);
+ * der Nutzer traegt es in den Agenten ein. `integration_id` `None`: die Agent-Integration
+ * „Externe Agenten“ (wird bei Bedarf angelegt).
+ */
+async agentClientCreate(label: string, integrationId: string | null) : Promise<Result<NewAgentClient, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_client_create", { label, integrationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle Zugaenge (auch zurueckgezogene) mit ihren Werkzeugen: Recht des Zugangs, wirksames
+ * Recht und Grund, wenn es „aus“ ist.
+ */
+async agentClientList() : Promise<Result<AgentClientView[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_client_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zieht einen Zugang zurueck: sein Token gilt sofort nicht mehr, auch nicht in einer
+ * laufenden Verbindung.
+ */
+async agentClientRevoke(id: string) : Promise<Result<AgentClient, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_client_revoke", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt einen Zugang samt seinen Werkzeugrechten.
+ */
+async agentClientDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_client_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt das Recht eines Zugangs fuer ein Werkzeug (`off`, `ask`, `allow`). „Aufnahme starten“
+ * nie `allow`. Die Antwort ist die aktualisierte Ansicht des Zugangs.
+ */
+async agentClientSetToolMode(clientId: string, tool: string, mode: GrantMode) : Promise<Result<AgentClientView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_client_set_tool_mode", { clientId, tool, mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laeuft die Pipe der Agentenbruecke? Sonst warum nicht.
+ */
+async agentBridgeStatus() : Promise<BridgeStatus> {
+    return await TAURI_INVOKE("agent_bridge_status");
+},
+/**
+ * Startet eine Aufnahme mit dem Bezug zu einem Termin: Titel = was der Nutzer
+ * eingegeben hat, sonst der Termintitel; Vorlage = die der letzten Besprechung
+ * derselben Serie (UID), sonst die Standardvorlage; danach Verknuepfung und
+ * Teilnehmenden-Schnappschuss. `meetings_start` bleibt unveraendert.
+ * 
+ * `link_mode`: `prompt` (Hinweisfenster, Terminkarte; Standard) oder `auto`
+ * (Titelvorschlag der Aufnahmekarte). `app_key` gehoert der Erkennung (P5c) und
+ * wird bis dahin nicht gelesen. Ohne bestaetigte Einwilligung startet nichts
+ * (`consent_required` vom Recorder). Fehler NACH dem Start (Verknuepfung,
+ * Vorlage) kippen die laufende Aufnahme nicht; sie stehen im Log. G1 (#70):
+ * `target_meeting_id` wie bei `meetings_start` (Aufnahme in einen leeren Eintrag).
+ */
+async meetingsStartFromEvent(eventKey: string | null, appKey: string | null, consentConfirmed: boolean, captureSystem: boolean, title: string | null, linkMode: string | null, targetMeetingId: string | null) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_start_from_event", { eventKey, appKey, consentConfirmed, captureSystem, title, linkMode, targetMeetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der aktuelle Hinweis; `None`, wenn keiner offen ist.
+ */
+async meetingPromptCurrent() : Promise<MeetingPromptPayload | null> {
+    return await TAURI_INVOKE("meeting_prompt_current");
+},
+/**
+ * Die Oberflaeche hat gerendert und meldet ihre Hoehe (logisch): jetzt wird das
+ * Fenster positioniert und ohne Fokus gezeigt.
+ */
+async meetingPromptReady(height: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_prompt_ready", { height }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Nutzer hat entschieden. `later` = nicht jetzt (der Termin wird als
+ * verworfen gemerkt und erinnert nicht erneut), `close` = nur schliessen (nach
+ * dem Start der Aufnahme). Ein veralteter `prompt_id` wird ignoriert.
+ */
+async meetingPromptDismiss(promptId: string, action: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_prompt_dismiss", { promptId, action }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * B2: Der Nutzer entscheidet die Bitte eines Ablaufs um Einwilligung zur Aufnahme:
+ * `approve = true` ist die Einwilligung (das Fenster hat das Haekchen verlangt), `false`
+ * das Nein. Entschieden wird die Freigabe, die dieser Hinweis im Backend haelt; die
+ * Aufnahme startet erst, wenn der Ablauf danach weiterlaeuft. Fehler: `consent_not_pending`
+ * (schon entschieden, verfallen oder der Lauf wurde abgebrochen), `consent_invalid`.
+ */
+async meetingPromptWorkflowDecide(promptId: string, approve: boolean, consentConfirmed: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_prompt_workflow_decide", { promptId, approve, consentConfirmed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle Ablaeufe mit letztem Lauf und Zahl der offenen Laeufe.
+ */
+async workflowList() : Promise<Result<WorkflowItem[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Katalog der Ausloeser und Bausteine mit ihren Feldern (Grundlage des Formulars).
+ */
+async workflowCatalog() : Promise<Result<WorkflowCatalog, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_catalog") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die mitgelieferten Vorlagen.
+ */
+async workflowTemplates() : Promise<Result<WorkflowTemplate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_templates") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Prueft einen Definitionstext, ohne zu speichern (Fehler mit JSON-Zeiger).
+ */
+async workflowValidate(definitionJson: string) : Promise<Result<WorkflowIssue[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_validate", { definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Speichert einen Ablauf (`id = None`: neu, ausgeschaltet, im Trockenlauf).
+ */
+async workflowSave(id: string | null, definitionJson: string) : Promise<Result<WorkflowSaveResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_save", { id, definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async workflowDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async workflowSetEnabled(id: string, enabled: boolean) : Promise<Result<WorkflowItem, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_set_enabled", { id, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Scharf schalten (`armed = true`) oder zurueck in den Trockenlauf.
+ */
+async workflowSetArmed(id: string, armed: boolean) : Promise<Result<WorkflowItem, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_set_armed", { id, armed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Trockenlauf einer Definition (auch einer noch nicht gespeicherten) als JSON-Text:
+ * jeder Schritt mit Bedingung, geplanter Wirkung und Rechte-Ergebnis. Schreibt nichts.
+ */
+async workflowPlan(definitionJson: string, workflowId: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_plan", { definitionJson, workflowId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Startet einen Ablauf von Hand. `dry_run = true`: er plant nur. `vars_json`: Werte fuer die
+ * deklarierten Variablen als JSON-Objekt.
+ */
+async workflowRunStart(id: string, dryRun: boolean, varsJson: string | null) : Promise<Result<WorkflowStarted, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_run_start", { id, dryRun, varsJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laeufe, neueste zuerst; optional eines Ablaufs und nur offene.
+ */
+async workflowRuns(workflowId: string | null, openOnly: boolean, limit: number | null) : Promise<Result<WorkflowRunSummary[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_runs", { workflowId, openOnly, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein Lauf mit allen Schritten, Versuchen und der Herkunft der Ausgaben.
+ */
+async workflowRunDetail(runId: string) : Promise<Result<WorkflowRunDetail, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_run_detail", { runId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht einen Lauf ab. `true`: sofort; `false`: er endet am naechsten Schrittwechsel.
+ */
+async workflowRunCancel(runId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_run_cancel", { runId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wiederholt einen gescheiterten Lauf ab dem gescheiterten Schritt. Bei unklarer Wirkung
+ * (`retry_needs_confirmation`) nur mit `accept_uncertain = true`.
+ */
+async workflowRunRetry(runId: string, acceptUncertain: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_run_retry", { runId, acceptUncertain }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Nach einer Entscheidung im Freigabedialog: Engine wecken und das Hinweisfenster der
+ * naechsten Bitte zeigen, damit der Lauf ohne Wartezeit weitergeht.
+ */
+async workflowApprovalsChanged() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_approvals_changed") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Definition eines Ablaufs als lesbarer JSON-Text.
+ */
+async workflowExport(id: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_export", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schreibt den Export in eine vom Nutzer gewaehlte Datei.
+ */
+async workflowExportFile(id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_export_file", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Liest eine Importdatei (hoechstens 256 KiB, UTF-8) und gibt den Text zurueck; importiert
+ * wird erst mit `workflow_import` nach der Pruefung durch den Nutzer.
+ */
+async workflowReadFile(path: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_read_file", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Importiert eine Definition als neuen Ablauf (ausgeschaltet, im Trockenlauf).
+ */
+async workflowImport(definitionJson: string) : Promise<Result<WorkflowSaveResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_import", { definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ordner-Platzhalter (nur in der Cloud) und Kanal-Ausfaelle.
+ */
+async workflowStatus() : Promise<Result<WorkflowStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Werkzeuge, die ein Schritt „Werkzeug wählen“ anbieten darf (Mehrfachauswahl im Editor).
+ */
+async workflowAgentTools() : Promise<Result<WorkflowAgentTool[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_agent_tools") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Mit Beispieltext ausprobieren“ (C5): die Modellentscheidung eines KI-Schritts, ohne Wirkung
+ * (kein Lauf, keine Freigabe, keine Provenienz). `definition_json`: der Entwurf aus dem Editor;
+ * ohne ihn gilt der gespeicherte Ablauf `workflow_id`. Ergebnis als JSON-Text; `busy: true`, wenn
+ * der schwere Platz belegt ist.
+ */
+async workflowAgentPreview(workflowId: string | null, definitionJson: string | null, stepId: string, sampleText: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("workflow_agent_preview", { workflowId, definitionJson, stepId, sampleText }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle Personen, die meisten Besprechungen zuerst; `query` filtert nach Name,
+ * Adresse oder Firma.
+ */
+async peopleList(query: string | null) : Promise<Result<PersonSummary[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_list", { query }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Person mit den juengsten Besprechungen (`person_not_found`, wenn es sie
+ * nicht gibt).
+ */
+async peopleGet(id: string) : Promise<Result<PersonDetail, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_get", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fuehrt `gone` in `keep` zusammen.
+ */
+async peopleMerge(keep: string, gone: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_merge", { keep, gone }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Benennt eine Person um; `email`: `None` = unveraendert, leer = entfernen.
+ */
+async peopleUpdate(id: string, name: string, email: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_update", { id, name, email }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Teilnehmende einer Besprechung (Kopfzeile des Details).
+ */
+async meetingParticipants(meetingId: string) : Promise<Result<Participant[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_participants", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async peopleBriefInfo(eventKey: string) : Promise<Result<BriefInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_brief_info", { eventKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Vorbereiten“ im Hinweisfenster: merkt den Termin, holt das Hauptfenster nach
+ * vorn und meldet es ihm. Der Wunsch bleibt gemerkt, bis das Hauptfenster ihn
+ * abholt (`people_brief_pending`): es kann gerade in einem anderen Bereich
+ * stehen oder die Besprechungsseite noch aufbauen. Das Hinweisfenster schliesst
+ * sich.
+ */
+async peopleBriefOpen(eventKey: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("people_brief_open", { eventKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der gemerkte Wunsch „Brief oeffnen“, einmalig.
+ */
+async peopleBriefPending() : Promise<string | null> {
+    return await TAURI_INVOKE("people_brief_pending");
+},
 async ttsSpeakText(text: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_speak_text", { text }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async ttsSpeakTextFrom(text: string, charOffset: number, onlyOne: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_speak_text_from", { text, charOffset, onlyOne }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async ttsPrewarm(text: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_prewarm", { text }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async ttsPrewarmCancel() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_prewarm_cancel") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1625,6 +3984,10 @@ async ttsCancel() : Promise<Result<null, string>> {
 /**
  * Alles beenden, was auf dem TTS-Port lauscht — ohne Gesundheitsprüfung.
  * Der Ausweg, wenn ein hängender Server die Grafikkarte festhält.
+ * 
+ * Asynchron mit `spawn_blocking`: ein synchroner Tauri-Befehl laeuft auf dem
+ * Hauptthread, und dort warteten `taskkill`, `netstat` und das Prozessende —
+ * das Fenster fror fuer die Dauer ein (beobachtet 16.09.2026, Piper wie Fish).
  */
 async ttsServerKill() : Promise<Result<string, string>> {
     try {
@@ -1716,39 +4079,6 @@ async pagesList() : Promise<Result<PageInfo[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async pagesCreate(title: string) : Promise<Result<PageInfo, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("pages_create", { title }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async pagesRename(id: string, title: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("pages_rename", { id, title }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Seite löschen — mitsamt ihrem Ordner und allen Dateien darin. Die
- * Rückfrage dazu stellt die Oberfläche; hier wird nur noch ausgeführt.
- */
-async pagesDelete(id: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("pages_delete", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Neue Reihenfolge, als vollständige Liste der Kennungen. Unbekannte werden
- * übergangen, vergessene hinten angehängt — die Liste der Oberfläche kann
- * einen Moment alt sein, und deshalb darf hier keine Seite verloren gehen.
- */
 async booksList() : Promise<Result<Book[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("books_list") };
@@ -1765,6 +4095,9 @@ async booksCreate(title: string) : Promise<Result<Book, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Titel, Figuren, Sprache, Seitenreihenfolge speichern (Id bleibt).
+ */
 async booksUpdate(book: Book) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("books_update", { book }) };
@@ -1821,6 +4154,9 @@ async booksTemplateSave(template: ScriptTemplate) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Eingebaute Vorlage auf den Standard zurücksetzen, eigene löschen.
+ */
 async booksTemplateReset(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("books_template_reset", { id }) };
@@ -1837,6 +4173,9 @@ async booksGenerate(options: GenerateOptions) : Promise<Result<GeneratedScript, 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Stimmen aller Seiten des Buchs (Vereinigung der Seiten-Vorschauen).
+ */
 async booksExportPreview(id: string) : Promise<Result<BookPreview, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("books_export_preview", { id }) };
@@ -1869,6 +4208,9 @@ async booksImport(path: string, importVoices: boolean) : Promise<Result<Book, st
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Was ein Export enthalten würde: Dateien und die benutzten Stimmen.
+ */
 async pagesExportPreview(id: string) : Promise<Result<PackagePreview, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pages_export_preview", { id }) };
@@ -1877,6 +4219,10 @@ async pagesExportPreview(id: string) : Promise<Result<PackagePreview, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Seite als Paket schreiben. `voice_ids` = mitzunehmende Stimmen; sobald
+ * eine dabei ist, muss `rights_confirmed` gesetzt sein.
+ */
 async pagesExport(id: string, outPath: string, voiceIds: string[], rightsConfirmed: boolean) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pages_export", { id, outPath, voiceIds, rightsConfirmed }) };
@@ -1885,6 +4231,9 @@ async pagesExport(id: string, outPath: string, voiceIds: string[], rightsConfirm
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Was im Paket steckt, ohne es einzuspielen.
+ */
 async pagesPackageInspect(path: string) : Promise<Result<PackagePreview, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pages_package_inspect", { path }) };
@@ -1893,6 +4242,10 @@ async pagesPackageInspect(path: string) : Promise<Result<PackagePreview, string>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Paket als NEUE Seite einspielen (nie eine bestehende überschreiben).
+ * Stimmen nur auf Wunsch und nur, wenn sie hier noch nicht existieren.
+ */
 async pagesImport(path: string, importVoices: boolean) : Promise<Result<PageInfo, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pages_import", { path, importVoices }) };
@@ -1901,6 +4254,39 @@ async pagesImport(path: string, importVoices: boolean) : Promise<Result<PageInfo
     else return { status: "error", error: e  as any };
 }
 },
+async pagesCreate(title: string) : Promise<Result<PageInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pages_create", { title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pagesRename(id: string, title: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pages_rename", { id, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Seite löschen — mitsamt ihrem Ordner und allen Dateien darin. Die
+ * Rückfrage dazu stellt die Oberfläche; hier wird nur noch ausgeführt.
+ */
+async pagesDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pages_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Neue Reihenfolge, als vollständige Liste der Kennungen. Unbekannte werden
+ * übergangen, vergessene hinten angehängt — die Liste der Oberfläche kann
+ * einen Moment alt sein, und deshalb darf hier keine Seite verloren gehen.
+ */
 async pagesReorder(ids: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pages_reorder", { ids }) };
@@ -1933,14 +4319,25 @@ async pageDir(id: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async pageFiles(id: string) : Promise<Result<PageFile[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("page_files", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Die Dateien einer Seite, jüngste zuerst. `state.json` gehört der App und
  * erscheint nicht — für den Nutzer ist sie kein Inhalt, und löschen soll er
  * sie erst recht nicht.
+ * Herkunft einer erzeugten Aufnahme: aus welchem Text sie entstand und wer
+ * sie gesprochen hat. `None`, wenn die Datei vor dieser Fassung entstand
+ * oder von Hand hinzugefuegt wurde.
  */
-async pageFiles(id: string) : Promise<Result<PageFile[], string>> {
+async pageAudioNote(id: string, name: string) : Promise<Result<AudioNote | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("page_files", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("page_audio_note", { id, name }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2025,6 +4422,38 @@ async ttsServerStop() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Ab einem Satz vorlesen (`only_one`: nur diesen). `char_offset` ist der
+ * UTF-16-freie Zeichen-Offset im Text -- das Frontend rechnet ihn um.
+ */
+async ttsSpeakTextFrom(text: string, charOffset: number, onlyOne: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_speak_text_from", { text, charOffset, onlyOne }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Geaenderte Saetze vorab erzeugen (Cache fuellen), ohne Wiedergabe.
+ * Kehrt sofort zurueck; Fortschritt kommt ueber `tts-prewarm-progress`.
+ */
+async ttsPrewarm(text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prewarm", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsPrewarmCancel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prewarm_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsServerStatus() : Promise<Result<TtsStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_server_status") };
@@ -2042,13 +4471,6 @@ async ttsListVoices() : Promise<Result<string[], string>> {
 }
 },
 /**
- * Alle Stimmen samt Metadaten (Anzeigename, Farbe, Stile) — Grundlage der
- * Sprecher-Chips im Vorlese-Editor und der Stimmenuebersicht.
- */
-async ttsListVoiceInfos() : Promise<VoiceInfo[]> {
-    return await TAURI_INVOKE("tts_list_voice_infos");
-},
-/**
  * Erzeugt die Hoerprobe beim ersten Aufruf (und erneut, wenn die Stimme
  * neu aufgenommen wurde); danach kommt sie aus dem Cache. Braucht den
  * Fish-Speech-Server, der bei Bedarf gestartet wird — der erste Aufruf kann
@@ -2062,14 +4484,11 @@ async ttsVoiceDemo(voiceId: string) : Promise<Result<VoiceSample, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async pageAudioNote(id: string, name: string) : Promise<Result<AudioNote | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("page_audio_note", { id, name }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
+/**
+ * Die Hoerprobe einer Stimme, sofern sie ohne laufende Engine abspielbar
+ * ist. `None` heisst: es gibt noch keine, der erste Klick kostet einen
+ * Serverstart. Startet selbst nichts.
+ */
 async ttsVoiceDemoCached(voiceId: string) : Promise<VoiceSample | null> {
     return await TAURI_INVOKE("tts_voice_demo_cached", { voiceId });
 },
@@ -2089,6 +4508,10 @@ async ttsRecordReferenceStop() : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Eine gewaehlte Audiodatei transkribieren, ohne sie schon als Stimme
+ * anzulegen — fuer die Vorschau des Transkripts vor dem Speichern.
+ */
 async ttsTranscribeReference(path: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_transcribe_reference", { path }) };
@@ -2336,6 +4759,19 @@ async ttsListDownloads() : Promise<Result<TtsDownloadInfo[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Zustand der Sprachausgabe-Laufzeiten (Piper, Fish Speech): vorhanden,
+ * vollstaendig, auf dieser Plattform unterstuetzt. Nur Dateisystem -- startet
+ * keinen Prozess und laedt kein Modell, darf also beim Zeichnen laufen.
+ */
+async ttsRuntimeStatus() : Promise<Result<TtsRuntimeStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_runtime_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsDownloadModel(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_download_model", { id }) };
@@ -2360,6 +4796,95 @@ async ttsDeleteModel(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async ttsListVoiceInfos() : Promise<VoiceInfo[]> {
+    return await TAURI_INVOKE("tts_list_voice_infos");
+},
+async ttsGetVoiceMeta(id: string) : Promise<Result<VoiceMeta, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_get_voice_meta", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsSetVoiceMeta(id: string, meta: VoiceMeta) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_set_voice_meta", { id, meta }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Avatar-Bytes kommen roh als `Vec<u8>`, nicht als Base64-String: das
+ * Projekt hat kein direktes base64-Crate, und eines nur fuer den
+ * Avatar-Upload wollte der Auftrag ausdruecklich vermeiden (siehe
+ * `voices::save_avatar`).
+ */
+async ttsSetVoiceAvatar(id: string, bytes: number[], ext: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_set_voice_avatar", { id, bytes, ext }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsClearVoiceAvatar(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_clear_voice_avatar", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsSaveStyleReference(voice: string, styleId: string, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_save_style_reference", { voice, styleId, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsDeleteStyle(voice: string, styleId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_delete_style", { voice, styleId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsAnalyzeReference(voice: string) : Promise<Result<ReferenceAnalysis, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_analyze_reference", { voice }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsAnalyzePendingReference() : Promise<Result<ReferenceAnalysis, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_analyze_pending_reference") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsSeedPreview(seed: number) : Promise<Result<number[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_seed_preview", { seed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async ttsSaveSeedVoiceV2(seed: number, displayName: string, meta: VoiceMeta) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_save_seed_voice_v2", { seed, displayName, meta }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * T4 Auto-Tagging: schlägt Emotions-/Vortrags-Tags fürs `text` vor. Der
  * LLM-Output erreicht die Oberfläche NIE unvalidiert — `crate::tagging`
@@ -2367,6 +4892,14 @@ async ttsDeleteModel(id: string) : Promise<Result<null, string>> {
  * danach ein verständlicher Fehler statt eines möglicherweise veränderten
  * Texts). `provider_override`: `None` = aktiver Post-Processing-Provider,
  * `Some("anthropic")` = fest Claude (Modell aus `tts_tag_model`).
+ * 
+ * Der Text wird ABSCHNITTSWEISE getaggt; je fertigem Abschnitt geht ein
+ * `tts-autotag-progress`-Event `{done, total, insertions}` an die UI —
+ * Tags erscheinen damit fortlaufend statt alle am Ende. Abbrechen:
+ * `tts_auto_tag_cancel`; die Rückgabe ist dann das bis dahin Gesammelte.
+ * 
+ * Gerätewahl (`tts_tag_device`, nur lokales Ollama): "cpu"/"gpu" fest,
+ * "auto" = GPU nur, wenn der TTS-Server sie gerade nicht braucht.
  * 
  * Rückgabe: `offset_in_original` ist ein BYTE-Offset in `text` (Rust-Art);
  * das Frontend arbeitet mit UTF-16-Offsets und muss `offset_chars`
@@ -2455,10 +4988,9 @@ async ttsBuilderCandidateWav(id: string, seed: number) : Promise<Result<number[]
 }
 },
 /**
- * Eine eigene Aufnahme oder WAV-Datei als Kandidat in den Entwurf holen.
- * `startSec`/`endSec` schneiden zu; 0/0 nimmt die ganze Datei. Laenger als
- * 30 Sekunden wird immer gekappt — eine laengere Referenz macht die Stimme
- * nicht besser.
+ * Eine WAV-Datei als Kandidat aufnehmen (Etappe 2). Den Pfad waehlt die
+ * Oberflaeche ueber `tauri-plugin-dialog` oder legt eine eigene Aufnahme
+ * dorthin ab. `start_sec`/`end_sec` schneiden zu, `0.0/0.0` nimmt alles.
  */
 async ttsBuilderAddWav(id: string, wavPath: string, startSec: number, endSec: number) : Promise<Result<BuilderDraft, string>> {
     try {
@@ -2477,31 +5009,8 @@ async ttsBuilderCommit(id: string, meta: VoiceMeta) : Promise<Result<string, str
 }
 },
 /**
- * Metadaten einer Stimme lesen (Anzeigename, Farbe, Beschreibung,
- * Default-Tags, Stile, Klangregler).
- */
-async ttsGetVoiceMeta(id: string) : Promise<Result<VoiceMeta, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_get_voice_meta", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Metadaten einer Stimme schreiben. Das uebergebene Objekt ERSETZT die
- * gespeicherten Angaben — ein weggelassenes Feld ist ein geloeschtes Feld.
- */
-async ttsSetVoiceMeta(id: string, meta: VoiceMeta) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_set_voice_meta", { id, meta }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Eine Stimme als .lvvoice-Archiv schreiben.
+ * Eine Stimme als `.lvvoice`-Archiv schreiben. Den Zielpfad waehlt die
+ * Oberflaeche ueber `tauri-plugin-dialog` und reicht ihn als String durch.
  */
 async ttsExportVoice(id: string, outPath: string) : Promise<Result<null, string>> {
     try {
@@ -2511,6 +5020,11 @@ async ttsExportVoice(id: string, outPath: string) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Mehrere Stimmen sichern — Ordner mit einem Archiv je Stimme oder eine
+ * Zip-Datei mit allen. Ids, die es nicht gibt, landen im Bericht unter
+ * `failed`, statt den ganzen Lauf abzubrechen.
+ */
 async ttsExportVoices(ids: string[], outDir: string, baseName: string, packed: boolean) : Promise<Result<BulkExportReport, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_export_voices", { ids, outDir, baseName, packed }) };
@@ -2520,7 +5034,8 @@ async ttsExportVoices(ids: string[], outDir: string, baseName: string, packed: b
 }
 },
 /**
- * Was in einem Archiv steckt, ohne es auszupacken — fuer die Vorschau.
+ * Was in einem Archiv steckt, ohne es auszupacken — fuer die Vorschau vor
+ * dem Import.
  */
 async ttsInspectVoiceArchive(archivePath: string) : Promise<Result<VoiceMeta, string>> {
     try {
@@ -2531,7 +5046,9 @@ async ttsInspectVoiceArchive(archivePath: string) : Promise<Result<VoiceMeta, st
 }
 },
 /**
- * Archiv als neue Stimme einspielen; liefert die vergebene voice_id.
+ * Archiv als NEUE Stimme einspielen. `display_name_override` erlaubt der
+ * Oberflaeche, bei Namenskollision einen anderen Namen zu setzen.
+ * Rueckgabe: die vergebene `voice_id`.
  */
 async ttsImportVoiceArchive(archivePath: string, displayNameOverride: string | null) : Promise<Result<string, string>> {
     try {
@@ -2542,8 +5059,15 @@ async ttsImportVoiceArchive(archivePath: string, displayNameOverride: string | n
 }
 },
 /**
- * Die voice_id einer Stimme aendern — ein Umzug, kein Feld. Liefert die
- * neue voice_id.
+ * Die `voice_id` einer Stimme aendern — ein Umzug, kein Feld: der Ordner
+ * wandert, die Metadaten bekommen den neuen Anzeigenamen, und die
+ * Einstellung `tts_voice` wird nachgezogen, wenn sie auf die alte id zeigte.
+ * Sonst spraeche die App danach mit einer Stimme, die es nicht mehr gibt.
+ * 
+ * Schlaegt das Schreiben der Metadaten fehl, wird der Ordner
+ * zurueckbenannt — ein halber Umzug waere schlimmer als ein Fehlschlag.
+ * 
+ * Rueckgabe: die neue `voice_id`.
  */
 async ttsRenameVoiceId(oldId: string, newDisplayName: string) : Promise<Result<string, string>> {
     try {
@@ -2571,13 +5095,37 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
+briefRequestEvent: BriefRequestEvent,
+calendarSyncEvent: CalendarSyncEvent,
 historyUpdatePayload: HistoryUpdatePayload,
+importQueueEvent: ImportQueueEvent,
+meetingChatEvent: MeetingChatEvent,
+meetingDetectEvent: MeetingDetectEvent,
 meetingEvent: MeetingEvent,
+meetingIndexEvent: MeetingIndexEvent,
+meetingNotesEvent: MeetingNotesEvent,
+meetingPromptEvent: MeetingPromptEvent,
+meetingSlidesEvent: MeetingSlidesEvent,
+minutesEvent: MinutesEvent,
+projectMinutesEvent: ProjectMinutesEvent,
+speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
 }>({
+briefRequestEvent: "brief-request-event",
+calendarSyncEvent: "calendar-sync-event",
 historyUpdatePayload: "history-update-payload",
+importQueueEvent: "import-queue-event",
+meetingChatEvent: "meeting-chat-event",
+meetingDetectEvent: "meeting-detect-event",
 meetingEvent: "meeting-event",
+meetingIndexEvent: "meeting-index-event",
+meetingNotesEvent: "meeting-notes-event",
+meetingPromptEvent: "meeting-prompt-event",
+meetingSlidesEvent: "meeting-slides-event",
+minutesEvent: "minutes-event",
+projectMinutesEvent: "project-minutes-event",
+speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event"
 })
@@ -2588,6 +5136,49 @@ streamTextEvent: "stream-text-event"
 
 /** user-defined types **/
 
+export type AccountState = "not_configured" | "no_capabilities" | "needs_sign_in" | "needs_consent" | "ready"
+/**
+ * Eine Aufgabe (Zeile in `action_items`). `assignee_label` ist Freitext, die
+ * Verknuepfung mit der `humans`-Tabelle folgt in M9.
+ */
+export type ActionItem = { id: string; meeting_id: string; text: string; 
+/**
+ * `todo` | `done`
+ */
+status: string; assignee_label: string | null; 
+/**
+ * Erzeugende KI-Notizen-Version (`None` bei `manual`).
+ */
+document_id: string | null; 
+/**
+ * Eintrag darin ("E7").
+ */
+entry_id: string | null; source_segment_ids: number[]; 
+/**
+ * `ai` | `user` | `manual`
+ */
+source: string }
+/**
+ * Wer den Inhalt ausgeloest hat (Spalte `provenance.actor_kind`).
+ */
+export type ActorKind = 
+/**
+ * Der Nutzer per Knopfdruck.
+ */
+"user" | 
+/**
+ * Die App von selbst (Enddurchlauf, Automatik nach der Aufnahme).
+ */
+"auto" | "workflow" | "agent_external" | "agent_local"
+/**
+ * Ein Zugang (ohne Token).
+ */
+export type AgentClient = { id: string; label: string; 
+/**
+ * Agent-Integration, deren Rechte als Obergrenze gelten.
+ */
+integration_id: string; created_at: number; last_used_at: number | null; revoked_at: number | null }
+export type AgentClientView = { client: AgentClient; tools: ToolView[] }
 /**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
@@ -2606,14 +5197,35 @@ settings_schema_version?: number;
  * Defaults to empty on partial stores; the load path merges in the
  * default bindings for any missing keys before the settings are used.
  */
-bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean; audio_feedback?: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; show_whats_new_on_update?: boolean; 
+bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean; audio_feedback?: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; 
+/**
+ * Ordner, in dem die App nach neueren Installern sucht (lokale
+ * Abnahmestaende ohne GitHub-Signatur). `None` = aus.
+ */
+local_update_dir?: string | null; show_whats_new_on_update?: boolean; 
 /**
  * The app version whose What's New the user has already seen. Fresh installs
  * default to the current version (nothing is "new" to them). Existing users
  * upgrading from before this key existed are blanked by the migration so they
  * see the current release's notes — see `apply_settings_migrations`.
  */
-whats_new_last_seen_version?: string; selected_model?: string; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; llm_connections?: LlmConnection[]; llm_models?: LlmModelConfig[]; llm_active_model_id?: string | null; mute_while_recording?: boolean; dictation_audio?: DictationAudio; dictation_audio_duck_percent?: number; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; local_update_dir?: string | null; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
+whats_new_last_seen_version?: string; selected_model?: string; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; 
+/**
+ * Sprachmodell-Verbindungen und freigegebene Modelle (Schema 2). Die
+ * aelteren Felder `post_process_provider_id` / `post_process_models`
+ * bleiben als Spiegel des aktiven Modells bestehen, bis alle Verbraucher
+ * auf `active_llm_model` umgestellt sind (siehe `sync_legacy_from_llm`).
+ */
+llm_connections?: LlmConnection[]; llm_models?: LlmModelConfig[]; llm_active_model_id?: string | null; 
+/**
+ * Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
+ * Kept so older stores still deserialize; no longer read by the audio path.
+ */
+mute_while_recording?: boolean; dictation_audio?: DictationAudio; 
+/**
+ * Target master volume in percent while dictating with `Duck`.
+ */
+dictation_audio_duck_percent?: number; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
 /**
  * Emit each spoken sentence as soon as the speaker pauses, instead of
  * pasting the whole dictation in one block when recording stops.
@@ -2735,7 +5347,12 @@ tts_enhance?: boolean;
  */
 tts_enhance_strength?: Strength; 
 /**
- * Referenzaufnahmen fuers Klonen selbst transkribieren.
+ * Referenzaufnahmen fuers Klonen selbst transkribieren. Das
+ * Transkript (`sample.lab`) muss zur Aufnahme passen, sonst lernt
+ * Fish Speech die Stimme an falschem Text — von Hand abzutippen ist
+ * aber die laestigste Stelle des ganzen Ablaufs. Deshalb an per
+ * Vorgabe; aus geschaltet bleibt das Textfeld leer und wartet auf
+ * Eingabe, wie vor diesem Schalter.
  */
 tts_reference_auto_transcribe?: boolean; 
 /**
@@ -2750,7 +5367,8 @@ tts_speed?: number;
 tts_export_format?: string; 
 /**
  * Bitrate des MP3-Exports in kbit/s. Nur 128, 192, 256 und 320 sind
- * erlaubt; ein anderer Wert wird auf die naechstliegende Stufe gezogen.
+ * erlaubt; gelesen wird immer über `clamp_tts_export_bitrate`, damit ein
+ * von Hand verbogener Wert nichts kaputtmacht.
  */
 tts_export_bitrate?: number; 
 /**
@@ -2775,29 +5393,20 @@ tts_piper_voice?: string | null;
 /**
  * Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
  */
-tts_piper_auto_language?: boolean;
+tts_piper_auto_language?: boolean; 
 /**
  * Skript-Pruefung im Vorlesen: vor dem Vorlesen bzw. Speichern werden
  * Sprechermarker ohne Stimme und Tags, die die aktive Engine nicht
  * kennt, gefunden und angezeigt. Ein Befund blockiert nichts, fragt aber
  * nach. Aus = keine Pruefung, keine Anzeige.
  */
-tts_script_check?: boolean;
+tts_script_check?: boolean; 
 /**
  * T2 Tag-Palette: favorisierte Tag-Ids (Registry-`id`, z. B. "whisper").
  * Reine UI-Bequemlichkeit, kein Wirkungsfeld — die Reihenfolge ist die
  * Einfuege-Reihenfolge in der Palette, nicht alphabetisch.
  */
-tts_tag_favorites?: string[];
-/**
- * Auto-Tagging-Vorlagen (Dialog vor dem Lauf).
- */
-tts_tag_language?: string; 
-tts_autotag_presets?: AutoTagPreset[];
-/**
- * Zuletzt benutzte Auto-Tagging-Einstellungen.
- */
-tts_autotag_last?: AutoTagOptions | null; 
+tts_tag_favorites?: string[]; 
 /**
  * T4 Auto-Tagging: welcher Provider die Tag-Vorschläge liefert.
  * "" = aktiver Post-Processing-Provider, "anthropic" = fest Claude
@@ -2808,7 +5417,7 @@ tts_tag_provider?: string;
 /**
  * T4 Auto-Tagging: Claude-Modell, wenn `tts_tag_provider == "anthropic"`.
  */
-tts_tag_model?: string;
+tts_tag_model?: string; 
 /**
  * Auto-Tagging mit einem LOKALEN Ollama: auf welchem Gerät das Modell
  * läuft. "auto" = GPU nur, wenn der TTS-Server sie gerade nicht braucht
@@ -2816,7 +5425,23 @@ tts_tag_model?: string;
  * "gpu" = immer GPU (schnell, kann neben Fish-Speech knapp werden).
  * Bei entfernten Anbietern wirkungslos.
  */
-tts_tag_device?: string;
+tts_tag_device?: string; 
+/**
+ * Sprache der Tags im Vorlesetext: "auto" (= Oberflaeche), "de", "en".
+ * Betrifft nur Anzeige und Einfuegen; die Engine bekommt immer die
+ * englische Form.
+ */
+tts_tag_language?: string; 
+/**
+ * Auto-Tagging-Vorlagen (Dialog vor dem Lauf): benannte Einstellungen,
+ * die ein neues Projekt uebernehmen kann.
+ */
+tts_autotag_presets?: AutoTagPreset[]; 
+/**
+ * Zuletzt benutzte Auto-Tagging-Einstellungen — Vorbelegung fuer eine
+ * Seite, die noch keine eigenen hat.
+ */
+tts_autotag_last?: AutoTagOptions | null; 
 /**
  * M8 Meetings: wie lange Audiodateien nach einer Aufnahme/einem Import
  * aufbewahrt werden, bevor sie hart gelöscht werden. Default: sobald ein
@@ -2838,11 +5463,338 @@ meeting_language?: string;
  * fuers Diktat optimiert; Meetings transkribieren in Batches und
  * profitieren von Batch-Modellen (z. B. Parakeet V3).
  */
-meeting_model?: string | null }
+meeting_model?: string | null; 
+/**
+ * M1-P1f: Systemton (Loopback) ist beim Start einer Besprechung
+ * vorangehakt. Die Oberflaeche merkt sich die letzte Wahl hier; ohne den
+ * Schluessel (aeltere settings.json) gilt `true`.
+ */
+meeting_capture_system?: boolean; 
+/**
+ * M1-P1f (E2): KI-Notizen starten automatisch, sobald das Live-Transkript
+ * endgueltig ist (`MeetingEvent::TranscriptFinal`). Import loest nie aus.
+ */
+meeting_auto_enhance?: boolean; 
+/**
+ * M1-P1f: Vorlage, die neue Besprechungen vorbelegt. `None` = die
+ * Standardvorlage (`builtin:allgemein`).
+ */
+meeting_default_template_id?: string | null; 
+/**
+ * M4-P4b (E6): semantische Suche in Besprechungen (Vektoren ueber das
+ * Embedding-Modell BGE-M3). Wirkt erst, wenn das Modell per Knopf
+ * heruntergeladen ist; ohne den Schluessel gilt `true`.
+ */
+meeting_semantic_search?: boolean; 
+/**
+ * D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
+ * (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server
+ * kurz mit Bild-Projektor. Standard AUS (der Projektor ist ein optionaler 990-MB-
+ * Download, die Analyse braucht eine Grafikkarte); ohne die Voraussetzungen bleibt es
+ * bei der Windows-Texterkennung, auch wenn der Schalter an ist.
+ */
+meeting_slide_vision?: boolean; 
+/**
+ * M2-P2c2: Echo-Unterdrückung der Ich-Spur (`auto` | `on` | `off`). Ohne
+ * den Schlüssel (ältere settings.json) gilt `auto`.
+ */
+meeting_echo_cancellation?: MeetingEchoCancellation; 
+/**
+ * M2-P2d: Enddurchlauf nach dem Stopp: `auto` (mit GPU Qwen3-ASR 1.7B
+ * bzw. Whisper large-v3, nur CPU: Live-Transkript = Endtranskript), `off`
+ * oder eine Modell-ID (laeuft auch auf der CPU). Ohne den Schluessel
+ * (aeltere settings.json) gilt `auto`.
+ */
+meeting_final_model?: string; 
+/**
+ * M3-P3b: Sprechertrennung nach dem Stopp, beim Import und bei der
+ * Neu-Transkription: `auto` (Standard, lokal, keine Speicherung
+ * biometrischer Merkmale) oder `off`. Ohne den Schluessel (aeltere
+ * settings.json) gilt `auto`; jeder andere Wert als `off` zaehlt als `auto`.
+ */
+meeting_diarization?: string; 
+/**
+ * U7: wie viele Dateien der Import-Warteschlange gleichzeitig transkribiert
+ * werden: 1 (Standard), 2 oder 3. Mehr als eine nur, solange Arbeitsspeicher
+ * (und bei GPU-Modellen Grafikspeicher) fuer die weitere Engine reichen;
+ * sonst wartet die naechste Datei. Ohne den Schluessel (aeltere
+ * settings.json) gilt 1; Werte ausserhalb 1 bis 3 zaehlen als der naechste
+ * gueltige.
+ */
+meeting_import_parallel?: number; 
+/**
+ * M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
+ * Mikrofonnutzung: `off` | `meeting_apps` (Standard) | `all_apps`. Nur ein
+ * Hinweis, nie ein automatischer Start.
+ */
+meeting_detect_mode?: DetectMode; 
+/**
+ * M5-P5c: Programme, die nie gemeldet werden (Dateiname, Anzeigename oder
+ * Teil des Registry-Schluessels, ohne Gross-/Kleinschreibung).
+ */
+meeting_detect_ignored_apps?: string[]; 
+/**
+ * M6-P6c: Meine E-Mail-Adressen. Personen mit diesen Adressen zaehlen bei
+ * der Follow-up-Mail als "ich" und werden nicht Empfaenger. Ohne den
+ * Schluessel (aeltere settings.json) leer.
+ */
+meeting_self_emails?: string[]; 
+/**
+ * U8: Mein Name. Der Kanal "Ich" und der dominante Sprecher am Mikrofon
+ * tragen ihn (statt "Ich"); in Personen ist er als "ich" markiert. Ohne den
+ * Schluessel (aeltere settings.json) oder leer: "Ich".
+ */
+meeting_self_name?: string | null; 
+/**
+ * M5-P5b (E11): Vorlauf der Erinnerung vor einem Termin in Sekunden;
+ * 0 = Erinnerung aus. Ohne den Schluessel (aeltere settings.json) gilt 60.
+ */
+meeting_reminder_lead_s?: number; 
+/**
+ * M5-P5b (E11): auch Termine ohne Teilnehmende und ohne Beitritts-Adresse
+ * erinnern. Standard aus: ein Einzeltermin ohne Gegenueber ist keine Besprechung.
+ */
+meeting_reminder_all_events?: boolean; 
+/**
+ * M6-P6e (F21, E13): der lokale MCP-Server (`local-voice-ai.exe --mcp`)
+ * gibt Besprechungsinhalte an einen KI-Client weiter. Standard AUS; der
+ * Server liest diese Datei bei jedem Aufruf frisch (`mcp::read_settings`),
+ * der Name des Feldes ist dort fest verdrahtet (ein Test haelt beide zusammen).
+ */
+meeting_mcp_enabled?: boolean; 
+/**
+ * M6-P6e (E13): darf der MCP-Server auch das Transkript liefern (`get_transcript`,
+ * Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
+ */
+meeting_mcp_include_transcript?: boolean; 
+/**
+ * M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
+ * Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
+ * `http://localhost`). Es gibt keine eingebaute ID: ohne Eintrag ist die
+ * Anmeldung gesperrt. Keine Geheimnisse (das Erneuerungs-Token liegt DPAPI-
+ * verschluesselt in `secrets/`).
+ */
+calendar_graph_client_id?: string | null; 
+/**
+ * M5-P5f: Verzeichnis (Tenant) der Anmeldung; `None` = `common`.
+ */
+calendar_graph_tenant?: string | null; 
+/**
+ * A2 (Goal Integrationen, E1): Schalter „privat/experimentell“. An UND ein
+ * selbst installiertes yt-dlp gefunden: A3 darf darueber Audio und Untertitel
+ * fuer den eigenen Gebrauch holen. Standard AUS; yt-dlp wird weder gebuendelt
+ * noch geladen. Bleibt auf dem Geraet (kein Sync).
+ */
+meeting_youtube_private?: boolean; 
+/**
+ * A2: Pfad (Datei oder Ordner) eines selbst installierten yt-dlp; `None` =
+ * im PATH suchen. Bleibt auf dem Geraet.
+ */
+meeting_youtube_tool_path?: string | null }
+/**
+ * Eine Freigabe-Anfrage: ein Aufrufer will etwas tun, das „fragen“ verlangt.
+ */
+export type Approval = { id: string; created_at: number; caller: string; integration_id: string | null; 
+/**
+ * Faehigkeit oder Werkzeugname.
+ */
+tool_or_capability: string; 
+/**
+ * Fuer den Menschen: Ziel und Kurzfassung der Argumente, ohne Geheimnisse.
+ */
+args_preview: string | null; state: ApprovalState; decided_at: number | null }
+/**
+ * Zustand einer Freigabe-Anfrage.
+ */
+export type ApprovalState = "pending" | "approved" | "denied" | "expired" | 
+/**
+ * Eine genehmigte Anfrage wurde eingeloest (einmalig).
+ */
+"used"
+export type Attendee = { 
+/**
+ * Klein geschrieben, ohne `mailto:`; `None`, wenn die Quelle keine
+ * Adresse liefert (nur ein Name).
+ */
+email: string | null; name: string | null; organizer: boolean; 
+/**
+ * Wird erst von der Personen-/Einstellungsschicht gesetzt (P5b/P5d).
+ */
+is_self: boolean; partstat: string | null }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
+export type AudioNote = { 
+/**
+ * Der Text, aus dem die Aufnahme entstand — vollstaendig, damit er
+ * zurueck in den Editor kann.
+ */
+text: string; 
+/**
+ * Kennung der verwendeten Stimme; `None` ist die Standardstimme.
+ */
+voice: string | null; 
+/**
+ * Seed der Standardstimme zum Zeitpunkt der Aufnahme.
+ */
+seed: number; 
+/**
+ * Zeitpunkt in Millisekunden seit dem 01.01.1970.
+ */
+created_ms: number; 
+/**
+ * Die Saetze mit ihrer Lage in der Aufnahme. Leer bei Aufnahmen aus
+ * aelteren Fassungen — die Oberflaeche zeigt dann nur den Text.
+ */
+segments?: AudioSegment[] }
+/**
+ * Ein Satz der Aufnahme mit seiner Lage in der Datei.
+ * 
+ * Damit kann die Wiedergabe mitlaufen: welcher Satz gerade klingt und wer
+ * ihn spricht. Ohne Zeitmarken bliebe nur der Fortschrittsbalken, und in
+ * einem Hoerspiel mit mehreren Sprechern sagt der nichts darueber, wo man
+ * gerade ist.
+ */
+export type AudioSegment = { text: string; 
+/**
+ * Sprecher dieses Satzes; `None` ist die Stimme des Stuecks.
+ */
+voice: string | null; start_ms: number; end_ms: number }
+/**
+ * Ein Eintrag des Audit-Logs.
+ */
+export type AuditEntry = { id: number; ts: number; caller: string; integration_id: string | null; capability: string | null; target: string | null; 
+/**
+ * `ok`, `denied`, `error` oder `pending`.
+ */
+outcome: string; detail_json: string | null }
+/**
+ * Wie eine automatische Wahl zustande kam.
+ */
+export type AutoOutcome = 
+/**
+ * Das Modell hat eine Vorlage der Liste benannt.
+ */
+"model" | 
+/**
+ * Leere oder unbekannte Antwort: "Allgemein".
+ */
+"uncertain" | 
+/**
+ * Der Aufruf ist gescheitert (Fehler, Zeitlimit): "Allgemein".
+ */
+"failed"
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
+/**
+ * Eine vom LLM vorgeschlagene Tag-Einfügung. `offset_in_original` ist ein
+ * BYTE-Offset in `original` (Rust-Konvention), `offset_chars` der
+ * Unicode-Skalarwert-Offset (was `chars().count()` bis dahin liefert). Das
+ * Frontend arbeitet mit UTF-16-Offsets (JS-String-Indizes) — es rechnet
+ * `offset_chars` selbst um (Iteration über die Codepoints, Surrogatpaare bei
+ * Zeichen jenseits der Basisebene wie Emoji zählen dort doppelt).
+ * Einstellungen eines Auto-Tagging-Laufs (Dialog vor dem Start; je Seite
+ * persistiert, dazu Vorlagen in den Einstellungen).
+ */
+export type AutoTagOptions = { 
+/**
+ * Tags (Registry-`insert`), die das Modell bevorzugen soll.
+ */
+preferred_tags: string[]; 
+/**
+ * "sparse" | "balanced" | "rich" — wie dicht getaggt wird.
+ */
+coverage: string; 
+/**
+ * Freier Stil-Hinweis ("kindgerecht, ruhig", "dramatisch").
+ */
+style_hint: string; 
+/**
+ * Obergrenze je Satz (1–3).
+ */
+max_per_sentence: number }
+export type AutoTagPreset = { name: string; options: AutoTagOptions }
+/**
+ * Was die UI zeigt: "Automatisch: <Titel>".
+ */
+export type AutoTemplateInfo = { template_id: string; title: string; reason: string; outcome: AutoOutcome }
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
+/**
+ * Avatarquelle einer Stimme: ein hochgeladenes Bild oder ein Icon-Name aus
+ * dem eingebauten Satz.
+ */
+export type Avatar = { kind: "image"; file: string } | { kind: "icon"; name: string }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+export type Book = { id: string; title: string; created_ms: number; 
+/**
+ * Seiten in Reihenfolge der Teile.
+ */
+page_ids: string[]; characters: BookCharacter[]; 
+/**
+ * Sprache der Geschichte (BCP-47-Kurzform), Vorgabe "de".
+ */
+language?: string }
+export type BookCharacter = { name: string; 
+/**
+ * voice_id der Stimme, mit der die Figur spricht (`None` = Standard).
+ */
+voice_id: string | null; description: string }
+export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
+/**
+ * Zustand der Bruecke fuer die Oberflaeche.
+ */
+export type BridgeStatus = { running: boolean; 
+/**
+ * Name der Pipe (nie ein Geheimnis; der Nutzer traegt ihn bei Bedarf in Skripte ein).
+ */
+pipe_name: string | null; 
+/**
+ * Warum sie nicht laeuft.
+ */
+error: string | null; 
+/**
+ * Pfad der laufenden Programmdatei: die Oberflaeche zeigt damit die fertigen Befehle zum
+ * Anbinden (`claude mcp add ... -- "<Pfad>" --mcp`). Kein Geheimnis.
+ */
+exe_path?: string | null }
+/**
+ * Was die Oberflaeche fuer den Knopf „Vorbereiten“ braucht.
+ */
+export type BriefInfo = { event_key: string; event_title: string; 
+/**
+ * Teilnehmende des Termins ohne mich (Anzeige).
+ */
+names: string[]; 
+/**
+ * Anzahl der fruehere Besprechungen mit gemeinsamen Teilnehmenden (0 =
+ * Knopf deaktiviert).
+ */
+shared_meetings: number; 
+/**
+ * Scope fuer `meeting_chat_ask`.
+ */
+filter: ScopeFilter; recipe_id: string; 
+/**
+ * Wert der Recipe-Variable `teilnehmende` (Namen als ein Text).
+ */
+recipe_var: string; recipe_value: string; 
+/**
+ * Der gespeicherte Brief-Verlauf dieses Termins (zweiter Klick).
+ */
+thread_id: string | null }
+/**
+ * Das Hauptfenster soll den Brief zu diesem Termin oeffnen.
+ */
+export type BriefRequestEvent = { event_key: string }
+/**
+ * Budgetstand einer Verbindung im laufenden Kalendermonat.
+ */
+export type BudgetState = { connection_id: string; spent_micro: number; 
+/**
+ * Monatslimit in Mikro-Dollar; `None`, wenn keins gesetzt ist.
+ */
+limit_micro: number | null; 
+/**
+ * Anteil 0..∞ des Limits; `None` ohne Limit.
+ */
+ratio: number | null; enforced: boolean }
 /**
  * Der Arbeitsstand einer noch nicht gespeicherten Stimme.
  */
@@ -2856,23 +5808,311 @@ depth: number; candidates: Candidate[];
  */
 selected: number | null; created_at: number; updated_at: number }
 /**
+ * Ergebnis eines Sammel-Exports: wohin geschrieben wurde und welche
+ * Stimmen dabei scheiterten (z. B. ohne vollstaendige Referenz). Ein
+ * Fehlschlag einzelner Stimmen bricht den Lauf nicht ab — wer zwanzig
+ * Stimmen sichert, will nicht wegen einer halben nochmal anfangen.
+ */
+export type BulkExportReport = { 
+/**
+ * Der Ordner (ungepackt) oder die Zip-Datei (gepackt).
+ */
+path: string; exported: string[]; 
+/**
+ * (voice_id, Fehlermeldung)
+ */
+failed: ([string, string])[] }
+export type CalEvent = { 
+/**
+ * `source:uid:start_ms` - stabil ueber Abrufe, damit `reminded_at` und
+ * `dismissed_at` einen erneuten Abruf ueberleben.
+ */
+key: string; source_id: string; uid: string; title: string; starts_at: number; ends_at: number; all_day: boolean; cancelled: boolean; location: string | null; join_url: string | null; description: string | null; attendees: Attendee[] }
+/**
+ * Art einer Kalenderquelle. `Graph` ist fuer P5f reserviert.
+ */
+export type CalendarKind = "ics" | "graph"
+/**
+ * Eine Kalenderquelle, wie die Oberflaeche sie zeigt. Die ICS-Adresse ist
+ * ein Geheimnis (Lesezugriff auf den ganzen Kalender) und steht NIE hier:
+ * `account_hint` traegt nur den Host bzw. das Benutzerkonto.
+ */
+export type CalendarSource = { id: string; kind: CalendarKind; label: string; account_hint: string | null; enabled: boolean; has_attendee_data: boolean; last_sync_at: number | null; last_ok_at: number | null; last_error: string | null; event_count: number }
+/**
+ * Ergebnis eines Abrufs fuer die Oberflaeche (`CalendarSyncEvent`).
+ */
+export type CalendarSyncEvent = { source_id: string; ok: boolean; count: number }
+/**
+ * Wer eine Faehigkeit benutzt. `User` ist der Nutzer in der Oberflaeche; er
+ * braucht keine Freigabe und hat keine Zeile in `integration_grants`.
+ */
+export type Caller = "user" | "workflow" | "agent_external" | "agent_local"
+/**
+ * Das Recht EINES Aufrufers fuer EINE Faehigkeit.
+ */
+export type CallerMode = { caller: Caller; 
+/**
+ * Die gespeicherte Zeile; `None`: es gilt die Vorgabe (E3).
+ */
+stored: GrantMode | null; 
+/**
+ * Die Vorgabe (E3), wenn keine Zeile gespeichert ist; auch dann sichtbar, wenn
+ * die Richtung die Faehigkeit sperrt und `effective` deshalb „aus“ ist.
+ */
+default_mode: GrantMode; 
+/**
+ * Was tatsaechlich gilt (Richtung, Schalter und Sperren eingerechnet).
+ */
+effective: GrantMode; 
+/**
+ * Maschinenlesbarer Grund, wenn `effective` = aus (`grant_off`,
+ * `direction_blocks`, `integration_disabled`, ...).
+ */
+off_reason: string | null }
+/**
  * Ein Kandidat: ein Wurf, der als Datei auf der Platte liegt.
  */
-export type CandidateSource = "Seed" | "Recording" | "Import"
-export type Candidate = { seed: number; 
+export type Candidate = { 
+/**
+ * Kennzahl des Kandidaten — die Oberflaeche adressiert ihn darueber.
+ * Bei einem gewuerfelten ist das der echte Seed, bei einem
+ * eingespielten nur eine Nummer aus dem ULID-Zufallsanteil.
+ */
+seed: number; 
 /**
  * Dateiname innerhalb des Entwurfsordners, NICHT der volle Pfad —
  * damit ein verschobener Stimmenordner den Entwurf nicht entwertet.
  */
 file: string; created_at: number; 
 /**
- * Woher der Kandidat stammt. Nur ein gewuerfelter traegt beim Speichern
- * einen Seed-Vermerk — eine Zahl, die nichts reproduziert, waere eine
- * vorgetaeuschte Nachvollziehbarkeit.
+ * Woher der Kandidat stammt. Ein gewuerfelter traegt seinen Seed, ein
+ * eingespielter nicht — beim Speichern darf dann kein Seed-Vermerk
+ * entstehen, der eine Reproduzierbarkeit vortaeuscht, die es nicht gibt.
  */
-source: CandidateSource }
+source?: CandidateSource }
+/**
+ * Woher ein Kandidat stammt.
+ * 
+ * `Seed` ist der Standard, damit eine `draft.json` aus Etappe 1 — die dieses
+ * Feld noch nicht kennt — weiter gelesen wird und ihre Kandidaten das
+ * bleiben, was sie waren: gewuerfelte.
+ */
+export type CandidateSource = 
+/**
+ * Aus der Seed-Lotterie gewuerfelt — `seed` reproduziert ihn.
+ */
+"Seed" | 
+/**
+ * Selbst eingesprochen.
+ */
+"Recording" | 
+/**
+ * Aus einer vorhandenen WAV-Datei uebernommen.
+ */
+"Import"
+/**
+ * Eine Faehigkeit, fuer die es je Integration und Aufrufer ein Recht gibt.
+ * Die Schreibweise mit Punkt ist die der Oberflaeche und des Audit-Logs.
+ */
+export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "files.read" | "files.write" | "knowledge.search" | "knowledge.read" | "vault.write" | 
+/**
+ * YouTube-Datei holen (externes Werkzeug, Schalter „privat“, E1).
+ */
+"media.fetch" | "youtube.add" | "meeting.create" | 
+/**
+ * Aufnahme starten: nie `allow` (Einwilligungsdialog, § 201 StGB).
+ */
+"recording.start" | "transcribe.file" | "tts.render" | 
+/**
+ * Daten an einen Webhook senden (B5, n8n-Bruecke).
+ */
+"webhook.post" | 
+/**
+ * Ablaeufe auflisten und Laufprotokolle lesen (B8, Agentenbruecke).
+ */
+"workflow.read" | 
+/**
+ * Einen Ablauf starten (B8): Trockenlauf oder, bei scharfem Ablauf, ein echter Lauf.
+ */
+"workflow.run"
+/**
+ * Eine Zeile der Rechte-Matrix.
+ */
+export type CapabilityView = { capability: Capability; 
+/**
+ * Veraendert diese Faehigkeit etwas (Mail senden, Datei schreiben)?
+ */
+writes: boolean; 
+/**
+ * Nie dauerhaft erlaubt (Aufnahme starten): die Oberflaeche bietet „erlaubt“ nicht an.
+ */
+never_allow: boolean; 
+/**
+ * Erlaubt die Richtung der Integration diese Faehigkeit ueberhaupt?
+ */
+direction_allows: boolean; modes: CallerMode[] }
+export type ChatAnswer = { thread_id: string; message_id: string; 
+/**
+ * Antworttext mit `[1]`, `[2]` ... (leer bei `not_found`).
+ */
+text: string; citations: Citation[]; coverage: Coverage; 
+/**
+ * Das Modell fand in den Auszuegen keinen Beleg (UI zeigt den i18n-Text).
+ */
+not_found: boolean; 
+/**
+ * Antwort ohne ein einziges gueltiges Zitat (UI-Hinweis "ohne Beleg").
+ */
+uncited: boolean; 
+/**
+ * Lokales Modell (sonst gingen Auszuege an einen externen Anbieter).
+ */
+provider_local: boolean }
+/**
+ * Eine gespeicherte Nachricht, fuer die UI aufbereitet
+ * (`meeting_chat_thread`). Unlesbares JSON einer Zeile kostet deren Zitate,
+ * nicht den Verlauf.
+ */
+export type ChatMessage = { id: string; 
+/**
+ * `user` | `assistant`
+ */
+role: string; text: string; citations: Citation[]; coverage: Coverage | null; not_found: boolean; uncited: boolean; created_at: number }
+export type ChatRequest = { 
+/**
+ * Von der UI vergeben; Schluessel fuer Deltas und `meeting_chat_cancel`.
+ */
+request_id: string; 
+/**
+ * `None` = neuer Verlauf.
+ */
+thread_id: string | null; scope: ChatScope; 
+/**
+ * Freitext; darf leer sein, wenn ein Recipe gewaehlt ist (dann ergaenzt er es).
+ */
+question: string; recipe: RecipeCall | null }
+/**
+ * Worauf sich ein Chat bezieht: eine Besprechung (auch waehrend der
+ * Aufnahme) oder viele (alle / Ordner / Person / Zeitraum / Auswahl).
+ */
+export type ChatScope = { kind: "meeting"; meeting_id: string } | { kind: "global"; filter: ScopeFilter }
+/**
+ * Phase eines Laufs fuer `MeetingChatEvent::Stage`.
+ */
+export type ChatStage = "searching" | "reading" | "answering"
+export type ChatThread = { id: string; scope_json: string; meeting_id: string | null; title: string | null; message_count: number; created_at: number; updated_at: number }
+export type ChunkSource = "title" | "transcript" | "user_notes" | "ai_notes" | "slide"
+/**
+ * Ein Beleg in der Antwort. `n` ist die Anzeige-Nummer (`[n]` im Text).
+ * Transkript: `segment_index` + `start_ms` (Epoche `epoch`); Notizen:
+ * `ref_key` (NoteBlock-ID bzw. KI-Notizen-Eintrag "E7").
+ */
+export type Citation = { n: number; meeting_id: string; meeting_title: string; started_at: number | null; source: ChunkSource; epoch: number; segment_index: number | null; start_ms: number | null; ref_key: string | null; 
+/**
+ * Hoechstens 200 Zeichen aus der belegten Stelle.
+ */
+quote: string }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
+/**
+ * Was der Chat gesehen hat (deterministisch; die UI formt daraus die graue
+ * Abdeckungszeile).
+ */
+export type Coverage = { meetings_in_scope: number; meetings_with_hits: number; meetings_read: number; excerpts_read: number; 
+/**
+ * Ohne Vektoren gesucht (nur Stichwortsuche).
+ */
+lexical_only: boolean; 
+/**
+ * LLM-Runden (0 = ohne Treffer gar nicht gefragt, 2 = mit Wiederholung).
+ */
+rounds: number; 
+/**
+ * Es gab mehr passende Stellen, als ins Budget passten.
+ */
+truncated: boolean; 
+/**
+ * Waehrend der Aufnahme gefragt (Live-Auszuege ohne Index).
+ */
+live: boolean; 
+/**
+ * Zitate auf unbekannte Auszugs-IDs, verworfen.
+ */
+dropped_citations: number; 
+/**
+ * Lokales Modell auf CPU: kleineres Budget ("CPU: weniger Auszuege gelesen").
+ */
+cpu_limited: boolean }
 export type CustomSounds = { start: boolean; stop: boolean }
+/**
+ * Einstellung `meeting_detect_mode`.
+ */
+export type DetectMode = 
+/**
+ * Keine Erkennung; die Registry wird nicht einmal gelesen.
+ */
+"off" | 
+/**
+ * Katalog-Apps und Browser (Standard).
+ */
+"meeting_apps" | 
+/**
+ * Jedes Programm mit Mikrofonzugriff, auch ausserhalb des Katalogs.
+ */
+"all_apps"
+/**
+ * What happens to the system's audio output while a dictation runs, so
+ * music or a video neither disturbs the speaker nor ends up in the recording.
+ */
+export type DictationAudio = 
+/**
+ * Leave the output alone.
+ */
+"off" | 
+/**
+ * Mute the default output device; restored afterwards.
+ */
+"mute" | 
+/**
+ * Lower the master volume to `dictation_audio_duck_percent`; restored afterwards.
+ */
+"duck" | 
+/**
+ * Pause whatever media is playing (Windows: system media sessions) and
+ * resume it afterwards. Elsewhere this falls back to `Mute`.
+ */
+"pause"
+/**
+ * Fluss der Daten: was die Integration lesen darf, was sie schreiben darf.
+ */
+export type Direction = "read" | "write" | "both"
+/**
+ * Die Wahl beim Erzeugen.
+ */
+export type DocBasis = { 
+/**
+ * Kennung der Fassung, aus der erzeugt wird; `None`: die aktive Fassung.
+ */
+variant_id: string | null; 
+/**
+ * Sprache des Dokuments (Code); `None` oder `auto`: wie das Transkript.
+ */
+output_language: string | null }
+/**
+ * Was in den Metadaten der Dokumentversion steht und der Oberflaeche gemeldet wird.
+ */
+export type DocumentBasis = { variant_id: string | null; variant_number: number | null; 
+/**
+ * `translation`, `stt`, `retranscribed`, ...
+ */
+variant_kind: string | null; 
+/**
+ * Sprache der Grundlage.
+ */
+language: string | null; 
+/**
+ * Ausgabesprache; `None`: wie die Grundlage.
+ */
+output_language: string | null }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -2880,9 +6120,153 @@ export type EngineType =
  * the file, so this one variant covers the whole transcribe-cpp family.
  */
 "TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
+export type EnhanceStats = { user_notes_total: number; user_notes_by_model: number; user_notes_by_fallback: number; ai_entries: number; ai_entries_sourced: number; dropped_source_ids: number; chunks_total: number; chunks_failed: number[]; single_pass: boolean }
+export type EnhancedEntry = { 
+/**
+ * "E1", "E2", ... in Ausgabereihenfolge.
+ */
+id: string; origin: Origin; text: string; 
+/**
+ * Bei `origin = User`: der Block, aus dem der Text stammt.
+ */
+note_id: string | null; source_segment_ids: number[]; 
+/**
+ * D5: Nummern der Folien (`meeting_slides.number`), auf die sich der Eintrag
+ * belegt (`F7`). Fehlt in aelteren Dokumenten: dann leer.
+ */
+source_slide_ids?: number[]; assignee: string | null; due: string | null; flags: EntryFlags }
+export type EnhancedNotes = { 
+/**
+ * Immer "enhanced@1".
+ */
+format: string; template_id: string | null; template_title: string; 
+/**
+ * `transcripts.segment_epoch` zum Zeitpunkt der Erzeugung.
+ */
+segment_epoch: number; sections: EnhancedSection[]; stats: EnhanceStats }
+export type EnhancedSection = { id: string; title: string; kind: SectionKind; entries: EnhancedEntry[] }
+export type EntryFlags = { 
+/**
+ * KI-Eintrag ohne gueltige Quelle.
+ */
+unsupported: boolean; dropped_sources: number; placed_by_fallback: boolean; edited: boolean }
+/**
+ * Wo ein Eintrag herkommt: Aufnahme und Stelle darin. Ein Klick darauf oeffnet
+ * die Aufnahme und springt zur Audiostelle (`segment_index`, `start_ms`).
+ */
+export type EntrySource = { 
+/**
+ * `SourceRecording::index`.
+ */
+recording: number; meeting_id: string; segment_index: number; start_ms: number }
+/**
+ * Welche Teile in den Export kommen (`meetings_export`, Zwischenablage).
+ * Fehlende Felder gelten als „an“: ein Aufruf ohne Auswahl exportiert alles.
+ */
+export type ExportParts = { ai_notes: boolean; notes: boolean; minutes: boolean; transcript: boolean; participants: boolean }
+/**
+ * Wo in OneDrive geschrieben wird.
+ */
+export type FilesMode = 
+/**
+ * Das ganze OneDrive (`Files.ReadWrite`): Arbeits-/Schulkonten und private Konten.
+ */
+"full" | 
+/**
+ * Nur der App-Ordner (`Files.ReadWrite.AppFolder`): nur private Konten.
+ */
+"app_folder"
+export type FitReport = { estimate: MemoryEstimate; 
+/**
+ * Freies Budget des massgeblichen Speichers (MiB) -- GPU, sonst RAM.
+ */
+free_mb: number; on_gpu: boolean; verdict: FitVerdict }
+export type FitVerdict = 
+/**
+ * Bedarf unter dem freien Budget abzueglich Reserve.
+ */
+"fits" | 
+/**
+ * Bedarf passt gerade noch -- ohne Reserve.
+ */
+"tight" | 
+/**
+ * Bedarf uebersteigt das freie Budget.
+ */
+"unlikely" | 
+/**
+ * Kein GPU-Budget messbar -- Urteil nur gegen den RAM.
+ */
+"unknown"
+/**
+ * Ein Satz, den die Treuepruefung markiert hat.
+ */
+export type FlaggedSentence = { segment_index: number; 
+/**
+ * `numbers`, `names`, `sentences`, `empty`, `length`, `not_translated`.
+ */
+reasons: string[] }
+export type Folder = { id: string; name: string; color: string | null; sort: number; meeting_count: number; created_at: number; updated_at: number }
+/**
+ * Zaehler der Projekte-Spalte neben den Ordnern: alle lebenden Besprechungen
+ * und die ohne lebenden Ordner ("Ohne Projekt").
+ */
+export type FolderCounts = { all: number; unfiled: number }
+/**
+ * Ausgang eines Follow-up-Entwurfs für `meeting_followup_open`.
+ */
+export type FollowupMode = 
+/**
+ * HTML + Text in die Zwischenablage.
+ */
+"copy" | 
+/**
+ * Mailprogramm per `mailto:` öffnen.
+ */
+"mailto" | 
+/**
+ * Als .eml-Datei speichern (`path`).
+ */
+"eml"
+export type GenerateOptions = { book_id: string | null; template_id: string; prompt: string; part_title: string; length_words: number; audience: string; tone: string; language: string; with_tags: boolean; allowed_tags: string[]; 
+/**
+ * Figuren, die vorkommen sollen (Namen aus dem Buch).
+ */
+character_names: string[] }
+export type GeneratedScript = { title: string; script: string; memory: MemoryProposal }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
+export type GpuMemory = { name: string; 
+/**
+ * Budget, das der Treiber diesem Prozess einraeumt (MiB).
+ */
+budget_mb: number; 
+/**
+ * Davon aktuell belegt (MiB) -- systemweit ueber alle Prozesse.
+ */
+used_mb: number; 
+/**
+ * Dedizierter Speicher laut Adapter (MiB); 0 bei reinen iGPUs.
+ */
+dedicated_mb: number; 
+/**
+ * Gemeinsamer Speicher mit der CPU (iGPU, Apple Silicon).
+ */
+shared: boolean }
+/**
+ * Recht: aus, nachfragen oder erlaubt. Die Ordnung `Off < Ask < Allow` macht
+ * „das Strengste gewinnt“ zu `min`.
+ */
+export type GrantMode = "off" | "ask" | "allow"
+/**
+ * Ein Kanalzustand fuer die Oberflaeche (`MeetingEvent::Health`).
+ * `Recovered` nimmt die Bedingung des Kanals zurueck; `VadUnavailable` und
+ * `LoopbackDied` sind einmalige Meldungen des Recorders und bleiben stehen.
+ */
+export type HealthState = "no_data" | "digital_zero" | "silent" | "clipping" | "queue_overflow" | "vad_unavailable" | "loopback_died" | "recovered"
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
+export type HubDevice = { device: string; last_push?: string | null }
+export type HubStatus = { hub_seq?: number; objects?: Partial<{ [key in string]: number }>; devices?: HubDevice[] }
 /**
  * Result of changing keyboard implementation
  */
@@ -2891,47 +6275,271 @@ export type ImplementationChangeResult = { success: boolean;
  * List of binding IDs that were reset to defaults due to incompatibility
  */
 reset_bindings: string[] }
+/**
+ * Jede Aenderung der Warteschlange geht als Ereignis mit dem vollen Stand
+ * hinaus (verlustfrei: ein verpasstes Ereignis wird vom naechsten ersetzt).
+ */
+export type ImportQueueEvent = { snapshot: QueueSnapshot }
 export type ImportedVoice = { id: string; transcript: string }
+/**
+ * Stand des Such-Index fuer die Einstellungszeile "Semantische Suche".
+ * Besprechungen: `total` fertige, davon `lexical_done` mit Stichwortindex
+ * (inkl. eingebetteter) und `embedded` mit allen Vektoren.
+ */
+export type IndexStatus = { total: number; pending: number; lexical_done: number; embedded: number; chunks: number; vectors: number; 
+/**
+ * Embedding-Modell heruntergeladen.
+ */
+model_ready: boolean; 
+/**
+ * Download laeuft.
+ */
+downloading: boolean; 
+/**
+ * Einstellung `meeting_semantic_search`.
+ */
+enabled: boolean; 
+/**
+ * Der Indexer hat Arbeit (Queue, Entprellung oder fehlende Vektoren).
+ */
+running: boolean; 
+/**
+ * Der Embedding-Server laeuft gerade.
+ */
+server_running: boolean; 
+/**
+ * Code des letzten Fehlers der Vektorstufe (`memory_low`, `no_model`, ...).
+ */
+last_error: string | null }
+/**
+ * Eine Integration, wie Oberflaeche und Dump sie sehen. Enthaelt kein Geheimnis.
+ */
+export type Integration = { id: string; kind: Kind; label: string; enabled: boolean; direction: Direction; 
+/**
+ * Art-spezifische Einstellungen als JSON-Objekt, ohne Geheimnisse.
+ */
+config_json: string; 
+/**
+ * Konto/Host zur Anzeige (z. B. `outlook.office365.com`), nie die Adresse.
+ */
+account_hint: string | null; data_class: string | null; created_at: number; updated_at: number; last_ok_at: number | null; last_error: string | null }
+/**
+ * Eine Integration mit allem, was die Seite zeigt.
+ */
+export type IntegrationView = { integration: Integration; 
+/**
+ * Richtungen, die diese Art kennt (ICS nur lesen, SMTP nur schreiben).
+ */
+directions: Direction[]; capabilities: CapabilityView[]; secrets: SecretSlotView[]; 
+/**
+ * Name und Schalter gehoeren dem Kalender (Karte „Kalender“).
+ */
+calendar_managed: boolean; 
+/**
+ * Offene Freigaben zu dieser Integration.
+ */
+pending_approvals: number }
+/**
+ * Was ein Auftrag gerade tut. Die Oberflaeche benennt daran den Fortschritt.
+ */
+export type JobPhase = 
+/**
+ * Audio lesen und dekodieren (Import); Groesse noch unbekannt.
+ */
+"prepare" | 
+/**
+ * Transkription in Bloecken (Import, Neu-Transkription, Nachholen).
+ */
+"transcription" | 
+/**
+ * Enddurchlauf nach dem Stopp einer Aufnahme.
+ */
+"final_pass" | 
+/**
+ * Sprechertrennung (ein Modelllauf je Kanal).
+ */
+"speakers" | 
+/**
+ * KI-Notizen (Schritte statt Audiodauer).
+ */
+"notes" | 
+/**
+ * Protokoll (Bloecke statt Audiodauer).
+ */
+"minutes" | 
+/**
+ * G5: Uebersetzung einer Transkript-Fassung (Bloecke statt Audiodauer).
+ */
+"translation" | 
+/**
+ * D1 (#70, M7): Folien aus einem Video erkennen. `done`/`total` zaehlen ms
+ * POSITION IM VIDEO (Abtastung, danach die Bilder, jeweils von vorn).
+ */
+"slides"
+/**
+ * Fortschritt eines Auftrags: Ereignis und Abfrage haben dieselben Felder.
+ * `done`/`total` zaehlen Millisekunden Audio, in den Phasen `notes` und
+ * `minutes` Schritte (Bloecke).
+ * `total == 0`: Groesse (noch) unbekannt.
+ */
+export type JobProgress = { meeting_id: string; phase: JobPhase; done: number; total: number; 
+/**
+ * Laufzeit des ganzen Auftrags ohne Pausen.
+ */
+elapsed_ms: number; 
+/**
+ * Geschaetzte Restdauer der Phase; `None` in der Anlaufzeit.
+ */
+eta_ms: number | null; state: JobRunState; pausable: boolean }
+/**
+ * Zustand des Auftrags fuer die Anzeige.
+ */
+export type JobRunState = "running" | 
+/**
+ * Pause ist verlangt, der laufende Block wird noch fertig.
+ */
+"pausing" | "paused" | 
+/**
+ * Stopp ist verlangt, der laufende Block wird noch fertig.
+ */
+"stopping"
 export type KeyboardImplementation = "tauri" | "handy_keys"
 /**
- * Einstellungen eines Auto-Tagging-Laufs.
+ * Art einer Integration. `Ics` und `Graph` sind die Kalenderquellen, die das
+ * Register aus `calendar_sources` uebernimmt (gleiche ID).
  */
-export type AutoTagOptions = { preferred_tags: string[]; coverage: string; style_hint: string; max_per_sentence: number }
-export type AutoTagPreset = { name: string; options: AutoTagOptions }
+export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "obsidian" | "wissen" | "agent" | 
+/**
+ * Webhook als Ziel (B5): Adresse eines n8n-Ablaufs o. ae., die Adresse liegt im
+ * Geheimnisspeicher.
+ */
+"webhook"
 export type LLMPrompt = { id: string; name: string; prompt: string }
-export type LlmDownloadKind = "runtime" | "model"
-/** Ein Eintrag der Modellseite fuer das lokale Sprachmodell: Laufzeitpaket oder Modell. */
-export type LlmDownloadInfo = { id: string; kind: LlmDownloadKind; name: string; description: string; size_mb: number; is_downloaded: boolean; is_downloading: boolean; tags: string[]; backend: string | null; for_this_platform: boolean }
-export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
-export type GpuMemory = { name: string; budget_mb: number; used_mb: number; dedicated_mb: number; shared: boolean }
-export type SystemMemory = { ram_total_mb: number; ram_used_mb: number; gpus: GpuMemory[] }
-export type FitVerdict = "fits" | "tight" | "unlikely" | "unknown"
-export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: number; total_mb: number; context_tokens: number; from_metadata: boolean }
-export type FitReport = { estimate: MemoryEstimate; free_mb: number; on_gpu: boolean; verdict: FitVerdict }
-export type LocalLlmStatus = { phase: LocalLlmPhase; model_id: string | null; backend: string | null; port: number | null; message: string | null }
 /**
- * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter. `kind` ist die
- * Vorlage aus `post_process_providers`; mehrere Verbindungen derselben Art sind erlaubt.
+ * Was der Chip im Kopf der Besprechung braucht.
  */
-export type LlmConnection = { id: string; kind: string; label: string; base_url: string; enabled?: boolean; monthly_budget_usd?: number | null; budget_enforced?: boolean }
-export type UsageRange = "today" | "week" | "month" | "all"
-export type UsageEvent = { id: number; ts: number; purpose: string; connection_id: string; connection_kind: string; connection_label: string; model_id: string; model_label: string; prompt_tokens: number; completion_tokens: number; price_input_per_mtok: number | null; price_output_per_mtok: number | null; cost_micro: number; duration_ms: number; ok: boolean; error: string | null }
-export type UsageBucket = { key: string; label: string; calls: number; prompt_tokens: number; completion_tokens: number; cost_micro: number }
-export type UsageSummary = { range: UsageRange; calls: number; failed: number; prompt_tokens: number; completion_tokens: number; cost_micro: number; by_model: UsageBucket[]; by_purpose: UsageBucket[]; by_day: UsageBucket[] }
-export type BudgetState = { connection_id: string; spent_micro: number; limit_micro: number | null; ratio: number | null; enforced: boolean }
+export type LanguageInfo = { 
 /**
- * Ein freigegebenes Modell einer Verbindung. Nur freigegebene Modelle erscheinen in der
- * Auswahl der App. Limits getrennt (Kontext, Eingabe, Ausgabe); Preise je Million Token.
+ * Die Sprache der Besprechung (Code); `None`: unbekannt.
+ */
+code: string | null; 
+/**
+ * `probe`, `text`, `user`, `setting`; `None`: nichts gespeichert (Altbestand).
+ */
+source: string | null; confidence: number | null; 
+/**
+ * Die feste Einstellung, gegen die der Text widersprach.
+ */
+forced: string | null; 
+/**
+ * Der Text widersprach der gewaehlten Sprache.
+ */
+mismatch: string | null; 
+/**
+ * Das Modell, das transkribiert hat, und ob es die Sprache abdeckt.
+ */
+model_id: string | null; model_name: string | null; model_covers: boolean | null; 
+/**
+ * Bessere Wahl, wenn das Modell die Sprache nicht abdeckt.
+ */
+suggestion: ModelSuggestion | null }
+/**
+ * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter.
+ * 
+ * `kind` ist die Vorlage aus `post_process_providers` (z. B. "openai",
+ * "ollama", "local"); Verbindung und Vorlage sind getrennt, damit zwei
+ * OpenAI-kompatible Konten nebeneinander bestehen koennen. Der Schluessel
+ * liegt unter der Verbindungs-`id` in `post_process_api_keys`.
+ */
+export type LlmConnection = { id: string; kind: string; label: string; base_url: string; enabled?: boolean; 
+/**
+ * Monatsbudget in USD; `None` heisst kein Limit. Ab 80 % warnt die
+ * Fussleiste.
+ */
+monthly_budget_usd?: number | null; 
+/**
+ * Hartes Budget: bei 100 % werden Aufrufe verweigert statt nur gewarnt.
+ * Standard aus -- eine Warnung ist selten falsch, eine Sperre mitten
+ * im Protokoll schon.
+ */
+budget_enforced?: boolean }
+/**
+ * Ein Eintrag fuer die Modellseite: Laufzeitpaket oder Modell.
+ */
+export type LlmDownloadInfo = { id: string; kind: LlmDownloadKind; name: string; description: string; size_mb: number; is_downloaded: boolean; is_downloading: boolean; 
+/**
+ * Kuratierte Merkmale (nur Modelle).
+ */
+tags: string[]; 
+/**
+ * Backend-Kennung (nur Laufzeiten): "cuda", "vulkan", "cpu", "metal".
+ */
+backend: string | null; 
+/**
+ * Ob dieses Paket fuer diesen Rechner gedacht ist. Fremde Plattformen
+ * bleiben im Katalog sichtbar, aber nicht ladbar.
+ */
+for_this_platform: boolean }
+export type LlmDownloadKind = "runtime" | "model"
+/**
+ * Ein freigegebenes Modell einer Verbindung. Nur freigegebene Modelle
+ * erscheinen in der Auswahl der App -- ein Anbieter listet Dutzende, von
+ * denen der Nutzer zwei braucht. Limits sind getrennt, weil "Tokenlimit"
+ * allein mehrdeutig ist: Kontext, Eingabe und Ausgabe sind drei Zahlen.
+ * Preise je Million Token; `None` heisst unbekannt, nie null.
  */
 export type LlmModelConfig = { id: string; connection_id: string; remote_id: string; label: string; enabled?: boolean; context_limit?: number | null; max_input_tokens?: number | null; max_output_tokens?: number | null; price_input_per_mtok?: number | null; price_output_per_mtok?: number | null; tags?: string[] }
+export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
+/**
+ * Zustand fuer die Oberflaeche: was laeuft, wo, mit welchem Backend.
+ */
+export type LocalLlmStatus = { phase: LocalLlmPhase; model_id: string | null; backend: string | null; port: number | null; message: string | null }
+export type LocalUpdate = { version: string; path: string; file_name: string }
+/**
+ * Lief das Modell auf diesem Rechner oder bei einem entfernten Anbieter?
+ */
+export type Locality = "local" | "remote"
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * Ergebnis einer Aktion fuer die Oberflaeche: `ok`, sonst ein Fehlercode
+ * (`m365_*` oder `m365_gate|<grund>`), dazu ein Hinweis (z. B. der Ablageort).
+ */
+export type M365ActionResult = { ok: boolean; code: string; detail: string | null }
+export type M365Status = { state: AccountState; client_id: string; tenant: string; account: string | null; display_name: string | null; enabled_capabilities: Capability[]; 
+/**
+ * Faehigkeiten, die sich an diesem Konto einschalten lassen.
+ */
+available_capabilities: Capability[]; files_mode: FilesMode; files_folder: string; required_scopes: string[]; granted_scopes: string[]; missing_scopes: string[]; 
+/**
+ * Zustand des Geheimnisses: `present`, `missing` oder `broken`.
+ */
+secret: string; signing_in: boolean }
+/**
+ * Ein bearbeitbarer Mailentwurf. `body_html` wird beim Kopieren und Speichern
+ * aus `body_text` neu gebaut (`finalize`), damit Änderungen im Dialog nie
+ * hinter einer alten HTML-Fassung zurückbleiben.
+ */
+export type MailDraft = { to: string[]; subject: string; body_text: string; body_html: string }
+/**
+ * Angaben fuer die Konfig-Schnipsel (`claude mcp add ...`, Claude Desktop, Codex).
+ */
+export type McpInfo = { 
+/**
+ * Voller Pfad der laufenden EXE; der Client startet sie mit `--mcp`.
+ */
+exe_path: string }
 export type Meeting = { id: string; title: string; status: string; source: string; started_at: number | null; ended_at: number | null; language: string | null; mic_audio_path: string | null; system_audio_path: string | null; duration_ms: number | null; consent_confirmed_at: number | null; audio_retention_until: number | null; 
 /**
  * Original file path an imported meeting came from. `None` for live
  * recordings. Kept separately from `title` because the title is
  * user-editable (M9) and must be allowed to diverge from the file name.
  */
-source_path: string | null; created_at: number; deleted_at: number | null }
+source_path: string | null; 
+/**
+ * U7: freie Beschreibung (mehrzeilig), vom Nutzer gepflegt. Durchsuchbar
+ * (Such-Index) und Kontext fuer Chat, KI-Notizen und MCP.
+ */
+description: string | null; created_at: number; deleted_at: number | null }
 /**
  * How long a meeting's audio survives after the meeting ends.
  */
@@ -2950,7 +6558,48 @@ export type MeetingAudioRetention =
  * Never delete the audio automatically.
  */
 "forever"
-export type MeetingDocument = { id: string; meeting_id: string; kind: string; body_format: string; body: string; version: number; created_at: number }
+/**
+ * Ereignis eines Chat-Laufs. `delta`: sichtbarer Antworttext in Stuecken
+ * (Zitat-Marker gefiltert; die Endantwort von `meeting_chat_ask` ersetzt
+ * ihn). `stage`: Phase und Runde (Runde 2 = Wiederholung, der bisherige
+ * Text wird verworfen). `failed.code` ist einer von
+ * `chat::EVENT_CODES` (`no_provider`, `no_model`, `memory_low`,
+ * `recording_active_cpu`, `chat_busy`, `empty_scope`, `llm_failed`,
+ * `cancelled`, `recipe_invalid`, `invalid_request`, `meeting_not_found`,
+ * `thread_not_found`, `store_failed`).
+ */
+export type MeetingChatEvent = { kind: "delta"; request_id: string; text: string } | { kind: "stage"; request_id: string; stage: ChatStage; round: number } | { kind: "failed"; request_id: string; code: string }
+/**
+ * Ereignis an Fenster und Rust-Verbraucher (Muster `MeetingEvent`).
+ */
+export type MeetingDetectEvent = { kind: "started"; app_key: string; label: string; class: string } | { kind: "ended"; app_key: string }
+export type MeetingDocument = { id: string; meeting_id: string; kind: string; body_format: string; body: string; version: number; 
+/**
+ * Seconds since the epoch.
+ */
+created_at: number; 
+/**
+ * Template the document was generated from (KI-Notizen); `None` for
+ * minutes and for rows written before M1.
+ */
+template_id: string | null; 
+/**
+ * Version stamp for the optimistic lock of `update_document_body`.
+ * Milliseconds since the epoch for rows written from M1 on; rows written
+ * earlier still carry seconds — the value is only ever compared for
+ * equality, never interpreted, so both work.
+ */
+updated_at: number }
+/**
+ * M2-P2c2: Echo-Unterdrückung der Ich-Spur einer Besprechung (der Systemton
+ * dient als Referenz; Rauschunterdrückung und AGC bleiben immer aus).
+ */
+export type MeetingEchoCancellation = 
+/**
+ * An, sobald der Systemton aufgenommen wird. Heute gleichbedeutend mit
+ * `on`; Platz für eine spätere Headset-Erkennung.
+ */
+"auto" | "on" | "off"
 /**
  * Typed frontend event (pattern: `HistoryUpdatePayload`). `message` on the
  * error variant carries an i18n-able code string, never a prose sentence.
@@ -2961,7 +6610,252 @@ export type MeetingEvent = { kind: "state"; meeting_id: string; status: string; 
  * Consumers that keep a local segment list must clear it — otherwise the
  * new run's segments, which restart at index 0, would append to the old.
  */
-{ kind: "reset"; meeting_id: string }
+{ kind: "reset"; meeting_id: string } | 
+/**
+ * The transcript is final and stored: after the final pass (P2d), or at
+ * once when the live transcript stays (setting `off`, CPU only, skipped).
+ * `epoch` is the generation of the segments (`segment_epoch`); `model` the
+ * engine that produced them, `None` when the final pass was skipped by an
+ * error. Consumers that build on the transcript (AI notes, index) start
+ * here, not at `stop()`.
+ */
+{ kind: "transcript_final"; meeting_id: string; epoch: number; model: string | null } | 
+/**
+ * Zustandswechsel des Ausfallwaechters (M2-P2e, `signal_watch.rs`).
+ * `channel`: 0 = Mikrofon, 1 = Systemton. Nur Wechsel, nie Dauerfeuer;
+ * `recovered` nimmt die Kanalwarnung zurueck, `vad_unavailable` und
+ * `loopback_died` bleiben bis zum Ende der Besprechung stehen.
+ */
+{ kind: "health"; meeting_id: string; channel: number; state: HealthState } | 
+/**
+ * P8a: Fortschritt einer Verarbeitung (Import, Enddurchlauf, Neu-
+ * Transkription, Sprecher, Notizen, Protokoll); hoechstens 2 / s je
+ * Besprechung, Zustandswechsel (Pause, Stopp, Phase) sofort. `done` /
+ * `total` zaehlen ms Audio (Notizen und Protokoll: Bloecke), `total` 0 =
+ * Groesse unbekannt, `eta_ms` `None` = noch in der Anlaufzeit.
+ */
+{ kind: "progress"; meeting_id: string; phase: JobPhase; done: number; total: number; elapsed_ms: number; eta_ms: number | null; state: JobRunState; pausable: boolean } | 
+/**
+ * P8a: der Auftrag zu `meeting_id` ist zu Ende (fertig, gestoppt oder
+ * gescheitert): eine Ansicht, die beim Ende nicht offen war, laedt ihr
+ * Ergebnis daraufhin neu und nimmt den Laufzustand zurueck.
+ */
+{ kind: "job_ended"; meeting_id: string; phase: JobPhase; stopped: boolean }
+/**
+ * Filter der Listensuche. `source` ist die HERKUNFT der Besprechung
+ * (`live` | `import` | `subtitle`), nicht die Chunk-Quelle.
+ */
+export type MeetingFilter = { folder_id: string | null; from: number | null; to: number | null; source: string | null; has_notes: boolean | null; 
+/**
+ * M5-P5d: nur Besprechungen, an denen diese Person (`humans.id`) teilnahm.
+ */
+person_id: string | null; 
+/**
+ * U3 (Projekte): nur Besprechungen ohne lebenden Ordner ("Ohne Projekt").
+ * Hat Vorrang vor `folder_id`.
+ */
+unfiled: boolean | null }
+/**
+ * Fortschritt der Vektorstufe fuer die Einstellungszeile.
+ */
+export type MeetingIndexEvent = { kind: "progress"; done: number; total: number }
+/**
+ * Der gesamte Notizblock einer Besprechung. `revision` ist der Zaehler der
+ * optimistischen Sperre (`save_notes`); `updated_at` in Sekunden wie alle
+ * Zeilen der Tabelle `meeting_notes` (0 = noch nie gespeichert).
+ */
+export type MeetingNotes = { meeting_id: string; blocks: NoteBlock[]; revision: number; updated_at: number }
+/**
+ * Ereignis des KI-Notizen-Laufs. `code` ist einer von `no_provider`,
+ * `no_model`, `memory_low`, `recording_active`, `enhance_busy`,
+ * `no_transcript`, `llm_failed`, `meeting_not_finished`; die Oberflaeche
+ * uebersetzt ihn (Muster `MeetingEvent::Error`).
+ */
+export type MeetingNotesEvent = { kind: "progress"; meeting_id: string; step: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
+/**
+ * Ereignis an das Fenster: `show` = es liegt ein neuer Hinweis vor (die
+ * Oberflaeche holt ihn ueber `meeting_prompt_current`), `close` = zu.
+ */
+export type MeetingPromptEvent = { kind: "show"; prompt_id: string } | { kind: "close" }
+/**
+ * Inhalt eines Hinweises.
+ */
+export type MeetingPromptPayload = { prompt_id: string; 
+/**
+ * `reminder` (Termin steht an); `detected` folgt mit P5c.
+ */
+kind: string; event: CalEvent | null; 
+/**
+ * Verschiedene Teilnehmende des Termins (0 ohne Termin).
+ */
+attendee_count: number; 
+/**
+ * Name der erkannten Anwendung (P5c), sonst `None`.
+ */
+app_label: string | null; 
+/**
+ * B2: nur bei `kind == "workflow_recording"`: ein Ablauf bittet um die Einwilligung
+ * zur Aufnahme. Entschieden wird ueber `meeting_prompt_workflow_decide`, nie ueber
+ * `meetings_start*`: die Aufnahme startet erst, wenn der Ablauf nach der Freigabe
+ * weiterlaeuft.
+ */
+workflow?: PromptWorkflow | null }
+export type MeetingSearchItem = { meeting: Meeting; 
+/**
+ * HTML-sicher: alles ausser den Treffermarkierungen `<mark>...</mark>` ist maskiert.
+ */
+snippet: string | null; hit_source: ChunkSource | null }
+export type MeetingSearchPage = { items: MeetingSearchItem[]; 
+/**
+ * Besprechungen mit Treffern. Bei `truncated` eine Untergrenze.
+ */
+total: number; 
+/**
+ * Die Trefferliste wurde bei `SEARCH_CANDIDATES` Chunks gekappt (Allerwelts-Suchwort).
+ */
+truncated: boolean }
+/**
+ * Eine Folie, wie die Oberflaeche sie liest.
+ */
+export type MeetingSlide = { id: string; meeting_id: string; 
+/**
+ * 1..n in der Reihenfolge der Anlage (bei der ersten Erkennung: nach dem
+ * ersten Auftreten im Video).
+ */
+number: number; 
+/**
+ * `video` | `image`.
+ */
+origin: string; 
+/**
+ * Relativ zum Besprechungsordner: `slides/0007.jpg`.
+ */
+image_path: string; thumb_path: string | null; 
+/**
+ * Wo im Video die Folie zu sehen ist; Ruecksprung = mehrere Bereiche.
+ */
+occurrences: SlideOccurrence[]; ocr_text: string | null; ocr_engine: string | null; kind: string | null; description: string | null; description_model: string | null; 
+/**
+ * Vom Nutzer ausgeblendet (Sprecherbild, Dublette).
+ */
+hidden: boolean }
+/**
+ * Ende eines Folienlaufs. `Done` und `Stopped` tragen die Zaehler des Laufs: die
+ * Oberflaeche laedt danach `list_meeting_slides` neu. `Skipped` ist kein Fehler
+ * (keine Videospur, ffmpeg fehlt): ein Hinweis. `Failed` traegt einen Code aus
+ * `SlideError::code`. Der Fortschritt kommt als `MeetingEvent::Progress`.
+ */
+export type MeetingSlidesEvent = { kind: "done"; meeting_id: string; slides: number; added: number } | { kind: "stopped"; meeting_id: string; slides: number; added: number } | { kind: "skipped"; meeting_id: string; code: string } | { kind: "failed"; meeting_id: string; code: string }
+/**
+ * Ein Sprecher einer Besprechung, wie das Popover ihn braucht.
+ */
+export type MeetingSpeaker = { 
+/**
+ * 0 = Mikrofon, 1 = Systemton (Gegenseite), 2 = Import (Mischspur).
+ */
+channel: number; 
+/**
+ * Nummer im Kanal, ab 1.
+ */
+speaker_index: number; 
+/**
+ * Anzeige: der Name, sonst "Gegenseite 2" / "Raum 1" / "Person 1".
+ */
+label: string; 
+/**
+ * Der vom Nutzer vergebene Name.
+ */
+display_name: string | null; 
+/**
+ * Verweis auf die Personentabelle (gefuellt ab P3d/P5d).
+ */
+human_id: string | null; 
+/**
+ * Redeanteil an der gesamten Sprechzeit, in Prozent (eine Nachkommastelle).
+ */
+share_pct: number }
+export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: number; total_mb: number; context_tokens: number; 
+/**
+ * Woher die KV-Zahlen kommen: aus den Metadaten oder geraten.
+ */
+from_metadata: boolean }
+export type MemoryFile = { kind: string; text: string }
+export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
+/**
+ * Was geaendert werden soll. `None` = unveraendert; eine leere Beschreibung
+ * loescht sie; `participant_ids` und `folder_ids` ersetzen die Menge.
+ */
+export type MetadataEdit = { title: string | null; description: string | null; 
+/**
+ * Beginn in Unix-Sekunden.
+ */
+started_at: number | null; 
+/**
+ * Personen (`humans.id`), die teilgenommen haben.
+ */
+participant_ids: string[] | null; 
+/**
+ * Projekte (Ordner-IDs).
+ */
+folder_ids: string[] | null }
+/**
+ * Ereignis eines Protokoll-Laufs. `code` von `Failed` ist einer der Codes aus
+ * `minutes::ALL_CODES`; die Oberflaeche uebersetzt ihn. Ein abgewiesener zweiter
+ * Start (`minutes_busy`) sendet KEIN Ereignis: der laufende Lauf gehoert dem
+ * ersten Start, und dessen Anzeige darf nicht gestoert werden.
+ */
+export type MinutesEvent = { kind: "progress"; meeting_id: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
+/**
+ * Was die Anzeige zu einem erzeugten Protokoll braucht (aus den Metadaten der
+ * Dokumentversion): mit welcher Vorlage, und ob etwas fehlt.
+ */
+export type MinutesMeta = { document_id: string; template_id: string | null; template_title: string | null; 
+/**
+ * Die automatische Wahl, wenn "Automatisch" gewaehlt war.
+ */
+auto: AutoTemplateInfo | null; 
+/**
+ * Teile des Transkripts konnten nicht ausgewertet werden.
+ */
+incomplete: boolean; 
+/**
+ * Die fehlenden Zeitbereiche (`mm:ss-mm:ss`).
+ */
+gaps: string[]; chunks_total: number; chunks_split: number }
+/**
+ * Woran der Lauf gerade arbeitet.
+ */
+export type MinutesPhase = 
+/**
+ * Vorlage bestimmen (bei "Automatisch" ein kurzer Modellaufruf).
+ */
+"template" | 
+/**
+ * Transkript auswerten: ein Aufruf oder Block fuer Block.
+ */
+"write" | 
+/**
+ * Blockergebnisse zusammenfuehren.
+ */
+"merge"
+/**
+ * Fortschritt eines Laufs. `done`/`total` zaehlen Schritte (Bloecke plus
+ * Zusammenfuehren; im Einzeldurchlauf 0/1 -> 1/1); `total == 0` heisst
+ * unbestimmt.
+ */
+export type MinutesProgress = { phase: MinutesPhase; done: number; total: number }
+/**
+ * Zustand fuer die Oberflaeche, abfragbar beim Einblenden des Reiters.
+ */
+export type MinutesRunState = { running: boolean; progress: MinutesProgress | null; 
+/**
+ * Ein Stopp ist angefordert, der Lauf endet vor dem naechsten Aufruf.
+ */
+cancelling: boolean; 
+/**
+ * Beginn des Laufs (Sekunden seit der Epoche); fuer die Laufzeitanzeige.
+ */
+started_at: number | null }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean; 
 /**
  * Whether the streaming look-ahead (`att_context_right`) can be chosen for
@@ -2969,7 +6863,20 @@ export type ModelInfo = { id: string; name: string; description: string; filenam
  * to any other engine makes the stream refuse to start, so this gates the
  * control rather than letting the user discover the failure mid-dictation.
  */
-supports_stream_lookahead: boolean }
+supports_stream_lookahead: boolean; 
+/**
+ * Lizenz laut Katalog/Modellkarte (None bei lokalen und Altmodellen).
+ */
+license?: string | null; 
+/**
+ * Link auf den Lizenztext.
+ */
+license_url?: string | null; 
+/**
+ * Nur nicht-kommerziell nutzbar (z. B. CC-BY-NC-4.0): die Oberflaeche
+ * zeigt dann einen deutlichen Hinweis (Issue #7, Canary 1B).
+ */
+license_non_commercial?: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 /**
  * Where a model comes from and how Handy obtains it — the routing discriminant
@@ -2995,7 +6902,43 @@ sha256: string | null } } |
  * in a shared cache. Nothing to download.
  */
 "Local"
+/**
+ * Ein Modellvorschlag fuer die Sprache.
+ */
+export type ModelSuggestion = { model_id: string; name: string; 
+/**
+ * Schon installiert (sonst muss es erst unter Modelle geladen werden).
+ */
+downloaded: boolean }
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
+/**
+ * Eine Belegstelle: der Satz, in dem die Person angesprochen wird.
+ */
+export type NameEvidence = { segment_index: number; start_ms: number; quote: string; 
+/**
+ * `thanks`, `address`, `greeting` oder `intro`.
+ */
+rule: string }
+/**
+ * "Person 2 ist vermutlich Andre (3 Belege)".
+ */
+export type NameSuggestion = { channel: number; speaker_index: number; name: string; 
+/**
+ * 0.5 bis 1.0.
+ */
+confidence: number; evidence: NameEvidence[] }
+/**
+ * Ergebnis von `create`: der Zugang und sein Token (nur dieses eine Mal sichtbar).
+ */
+export type NewAgentClient = { client: AgentClient; token: string }
+/**
+ * Ein Block des Notizblocks. Die ID erzeugt das Frontend (ULID); `at_ms` ist
+ * die Audioposition beim Anlegen (`None` = importiert oder nach dem Stopp
+ * geschrieben) auf derselben Zeitachse wie `StoredSegment.start_ms`.
+ */
+export type NoteBlock = { id: string; kind: NoteBlockKind; text: string; at_ms: number | null; checked: boolean }
+export type NoteBlockKind = "paragraph" | "bullet" | "heading" | "todo"
+export type Origin = "user" | "ai"
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "top" | "bottom"
 /**
@@ -3004,55 +6947,236 @@ export type OverlayPosition = "top" | "bottom"
  * `None` hides the overlay entirely. Decoupled from whether the model runs in
  * streaming mode (that is driven purely by model capability).
  */
-export type DictationAudio = "off" | "mute" | "duck" | "pause"
-export type LocalUpdate = { version: string; path: string; file_name: string }
 export type OverlayStyle = "none" | "minimal" | "live"
-export type AudioSegment = { text: string; voice: string | null; start_ms: number; end_ms: number }
-export type AudioNote = { text: string; voice: string | null; seed: number; created_ms: number; segments: AudioSegment[] }
-export type PageFile = { name: string; size: number; modified_ms: number }
-export type BookCharacter = { name: string; voice_id: string | null; description: string }
-export type Book = { id: string; title: string; created_ms: number; page_ids: string[]; characters: BookCharacter[]; language: string }
-export type MemoryFile = { kind: string; text: string }
-export type ScriptTemplate = { id: string; name: string; body: string; builtin: boolean; modified: boolean }
-export type GenerateOptions = { book_id: string | null; template_id: string; prompt: string; part_title: string; length_words: number; audience: string; tone: string; language: string; with_tags: boolean; allowed_tags: string[]; character_names: string[] }
-export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
-export type GeneratedScript = { title: string; script: string; memory: MemoryProposal }
-export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
-export type PackageVoice = { id: string; display_name: string; present: boolean }
 /**
- * Vorschau vor Export und Import eines Seiten-Pakets.
+ * Vorschau vor Export und Import — dieselbe Form für beide Richtungen.
  */
 export type PackagePreview = { title: string; files: string[]; voices: PackageVoice[]; rights_confirmed: boolean }
-export type PageInfo = { id: string; title: string;
+export type PackageVoice = { id: string; display_name: string; 
+/**
+ * Beim Export: ob die Stimme vollständig vorliegt (sonst nicht wählbar).
+ * Beim Import: ob sie auf diesem Rechner schon existiert (dann wird sie
+ * nicht überschrieben).
+ */
+present: boolean }
+export type PageFile = { name: string; size: number; modified_ms: number }
+export type PageInfo = { id: string; title: string; 
 /**
  * Wann der Arbeitsstand zuletzt gespeichert wurde (Unix-Millisekunden,
- * 0 = nie). Wird bei jeder Auflistung aus `state.json` frisch gelesen.
+ * 0 = nie). Wird bei jeder Auflistung aus `state.json` frisch gelesen;
+ * der Wert im Index ist nur ein Abdruck und zählt nicht.
  */
-modified_ms: number;
+modified_ms?: number; 
 /**
- * Anfang des Originaltexts, damit die Seitenliste als Verlauf taugt.
- * Best-effort aus `state.json` gelesen; fehlt das Feld, bleibt sie leer.
+ * Anfang des Originaltexts, damit die Seitenliste als Verlauf taugt:
+ * man erkennt eine Seite am Inhalt, nicht nur am Titel. Best-effort aus
+ * `state.json` gelesen — das Schema gehört der Oberfläche, fehlt das
+ * Feld, bleibt die Vorschau leer.
  */
-preview: string }
+preview?: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
-export type HubDevice = { device: string; last_push: string | null }
-export type HubStatus = { hub_seq: number; objects: { [key in string]: number }; devices: HubDevice[] }
-export type SyncStatus = { connected: boolean; user_email: string | null; device_name: string | null; hub_url: string | null; running: boolean; last_success_ms: number | null; last_error: string | null;
 /**
- * Objekte, die lokal geändert und noch nicht bestätigt sind.
+ * Eine teilnehmende Person einer Besprechung.
  */
-pending: number; dead_letters: number;
+export type Participant = { human_id: string; name: string; email: string | null; company: string | null; 
 /**
- * Der Hub trägt Objekte mit einem anderen Schlüssel (Passwort geändert?).
+ * `organizer`, `attendee` oder `speaker`.
  */
-key_mismatch: boolean;
+role: string; 
 /**
- * Anzahl synchronisierter Seiten laut Ledger.
+ * `calendar`, `speaker` oder `manual`.
  */
-pages: number }
+source: string; is_self: boolean; meeting_count: number }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
+/**
+ * Eine offene Freigabe mit dem Namen der Integration.
+ */
+export type PendingApproval = { approval: Approval; integration_label: string | null; integration_kind: Kind | null }
 export type PermissionAccess = "allowed" | "denied" | "unknown"
+/**
+ * Eine Person mit allem fuer das Popover.
+ */
+export type PersonDetail = { id: string; name: string; email: string | null; company: string | null; is_self: boolean; meeting_count: number; 
+/**
+ * Weitere Adressen, die nach einem Zusammenfuehren zur Person gehoeren.
+ */
+other_emails: string[]; 
+/**
+ * Die juengsten Besprechungen mit der Person, neueste zuerst.
+ */
+recent_meetings: PersonMeeting[] }
+export type PersonMeeting = { id: string; title: string; started_at: number | null }
+/**
+ * Eine Person in der Liste („Personen verwalten“, Filter).
+ */
+export type PersonSummary = { id: string; name: string; email: string | null; company: string | null; 
+/**
+ * „Ich“: Kennzeichen an der Person oder Adresse aus „Meine E-Mail-Adressen“.
+ */
+is_self: boolean; 
+/**
+ * Lebende Besprechungen, an denen die Person teilnahm.
+ */
+meeting_count: number }
+/**
+ * Wohin der Export kam (Pfad relativ zum Ordner).
+ */
+export type PlacedInfo = { rel: string; bytes: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+/**
+ * Eine Aufnahme der Auswahl in der Liste der Oberflaeche.
+ */
+export type ProjectCandidate = { meeting_id: string; 
+/**
+ * Waehlbar? Sonst `reason`.
+ */
+eligible: boolean; 
+/**
+ * `meeting_not_finished` | `no_transcript` | `empty_entry`.
+ */
+reason: string | null; 
+/**
+ * Zahl der Segmente mit Text.
+ */
+segments: number }
+export type ProjectEntry = { text: string; assignee: string | null; due: string | null; 
+/**
+ * Gueltige Belege, chronologisch. Leer = `unsupported`.
+ */
+sources: EntrySource[]; 
+/**
+ * Das Modell hat keinen gueltigen Beleg genannt (der Eintrag bleibt, ist
+ * aber markiert; sonst waere die Belegquote geschoent).
+ */
+unsupported: boolean }
+/**
+ * Protokoll oder Zusammenfassung.
+ */
+export type ProjectKind = "minutes" | "summary"
+/**
+ * Ein gespeichertes Projekt-Protokoll samt allem, was die Anzeige braucht.
+ */
+export type ProjectMinutes = { id: string; folder_id: string; kind: ProjectKind; title: string; 
+/**
+ * Das Markdown (Export, Kopieren).
+ */
+body: string; sections: ProjectSection[]; recordings: SourceRecording[]; meta: ProjectMinutesMeta; 
+/**
+ * Erzeugungszeitpunkt (Sekunden).
+ */
+created_at: number }
+/**
+ * Ende eines Projekt-Protokoll-Laufs. `code` von `Failed` ist einer der Codes aus
+ * `minutes::ALL_CODES` oder `project::EXTRA_CODES`; die Oberflaeche uebersetzt ihn.
+ * Ein abgewiesener zweiter Start (`minutes_busy`) sendet KEIN Ereignis: der laufende
+ * Lauf gehoert dem ersten Start. Der Fortschritt kommt als `MeetingEvent::Progress`
+ * unter dem Schluessel `project-minutes:<projekt>`.
+ */
+export type ProjectMinutesEvent = { kind: "done"; folder_id: string; minutes_id: string } | { kind: "failed"; folder_id: string; code: string; detail: string }
+/**
+ * Herkunft eines Projekt-Protokolls (wie bei Einzelprotokollen): Modell,
+ * Anbieter, Vorlage, Verfahren, Luecken.
+ */
+export type ProjectMinutesMeta = { model: string; provider: string; template_id: string; template_title: string; 
+/**
+ * Die automatische Wahl, wenn "Automatisch" gewaehlt war.
+ */
+auto: AutoTemplateInfo | null; single_pass: boolean; chunks_total: number; chunks_split: number; 
+/**
+ * Teile des Transkripts konnten nicht ausgewertet werden.
+ */
+incomplete: boolean; 
+/**
+ * Die fehlenden Stellen (`Aufnahme 2, 03:15-07:40`).
+ */
+gaps: string[]; 
+/**
+ * Quellen-IDs des Modells, die es im Transkript nicht gab.
+ */
+dropped_sources: number; 
+/**
+ * Eintraege ohne gueltigen Beleg.
+ */
+unsupported_entries: number }
+/**
+ * Eine Zeile der Liste im Projekt.
+ */
+export type ProjectMinutesSummary = { id: string; folder_id: string; kind: ProjectKind; title: string; created_at: number; recordings: number; template_title: string; incomplete: boolean }
+export type ProjectSection = { id: string; title: string; kind: SectionKind; entries: ProjectEntry[] }
+/**
+ * Der Ablauf hinter einer Bitte um Einwilligung (B2).
+ */
+export type PromptWorkflow = { 
+/**
+ * Name des Ablaufs („Kundentermin protokollieren“); bei einem Agenten sein Name.
+ */
+name: string; 
+/**
+ * Titel des Termins bzw. der Besprechung, wenn der Ausloeser einen hat.
+ */
+title: string | null; 
+/**
+ * A8: die Bitte kommt von einem externen Agenten (Claude Code, Codex, ein Skript) statt
+ * von einem Ablauf; `name` ist der Name seines Zugangs.
+ */
+agent?: boolean }
+/**
+ * Ein Eintrag, wie die Oberflaeche ihn zeigt.
+ */
+export type ProvenanceEntry = { id: string; subject_kind: SubjectKind; subject_id: string; subject_revision: number | null; 
+/**
+ * Millisekunden UTC.
+ */
+created_at: number; operation: string; 
+/**
+ * `None` bei rekonstruierten Eintraegen: aus alten Daten ist der
+ * Ausloeser nicht ablesbar.
+ */
+actor_kind: ActorKind | null; actor_ref: string | null; provider: string | null; locality: Locality | null; model_id: string | null; model_label: string | null; usage_event_id: number | null; 
+/**
+ * Token ein (Prompt). `None`, wenn der Anbieter keine meldet.
+ */
+prompt_tokens: number | null; 
+/**
+ * Token aus (Antwort).
+ */
+completion_tokens: number | null; duration_ms: number | null; sources: SourceRef[]; confidence: number | null; 
+/**
+ * Weitere Angaben als JSON-Text (Objekt) oder `None`.
+ */
+params_json: string | null; origin: ProvenanceOrigin }
+/**
+ * Woher ein Eintrag stammt: `Recorded` wurde bei der Erzeugung geschrieben,
+ * `Derived` ist aus aelteren Daten (`generation_metadata_json`, Kopfzeile des
+ * Transkripts) rekonstruiert und traegt nur, was dort stand.
+ */
+export type ProvenanceOrigin = "recorded" | "derived"
+/**
+ * Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
+ * Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).
+ */
+export type QueueSnapshot = { 
+/**
+ * Wartende Besprechungen, die naechste zuerst.
+ */
+waiting: string[]; 
+/**
+ * Laufende Besprechungen (die Reihenfolge des Starts).
+ */
+running: string[]; 
+/**
+ * Davon wegen einer Aufnahme angehalten.
+ */
+held: string[]; 
+/**
+ * Eingestellte Zahl gleichzeitiger Laeufe.
+ */
+limit: number; 
+/**
+ * Warum die wartenden nicht beginnen; `None`, wenn nichts wartet oder der
+ * naechste gleich beginnt.
+ */
+blocked: WaitReason | null }
 /**
  * Fortschritt eines Dokuments — Persistenz-Eintrag und Event-Payload.
  */
@@ -3065,11 +7189,240 @@ key: string; title: string;
  * Nächster zu spielender Satz (0-basiert) = Anzahl fertig gehörter Sätze.
  */
 position: number; total: number; finished: boolean; playing: boolean }
+/**
+ * Aufruf eines Recipes: ID (`builtin:<key>` oder eigene) und Werte der
+ * Variablen nach Name. Werte fuer `folder` sind Ordner-IDs, fuer `meeting`
+ * Besprechungs-IDs, fuer `date_*` `JJJJ-MM-TT`.
+ */
+export type RecipeCall = { recipe_id: string; values?: Partial<{ [key in string]: string }> }
+/**
+ * Recipe fuer die UI (`chat_recipes_list`).
+ */
+export type RecipeItem = { id: string; title: string; builtin: boolean; spec: RecipeSpec; updated_at: number }
+export type RecipeScope = "meeting" | "global" | "any"
+export type RecipeSpec = { 
+/**
+ * Immer 1.
+ */
+version: number; prompt: string; variables?: RecipeVar[]; scope: RecipeScope; 
+/**
+ * Auch waehrend der Aufnahme anbietbar.
+ */
+live_ok?: boolean }
+export type RecipeVar = { 
+/**
+ * `[a-z_]{1,24}`, im Prompt als `{{name}}`.
+ */
+name: string; label: string; kind: RecipeVarKind; required?: boolean; default?: string | null }
+export type RecipeVarKind = "text" | "person" | "folder" | "date_from" | "date_to" | "meeting"
+/**
+ * Laufende Aufnahme und ihre Audioposition (Mikrofon-Zeitachse, ms).
+ */
+export type RecordingPosition = { meeting_id: string; position_ms: number }
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+/**
+ * Ergebnis der Referenz-Analyse: nur ein Vorschlag, nie automatisch aktiv —
+ * der Aufrufer entscheidet, ob `suggested_tags` in `default_tags`
+ * übernommen werden.
+ */
+export type ReferenceAnalysis = { quiet: boolean; suggested_tags: string[] }
+/**
+ * Zustand eines Laufs (Spalte `workflow_runs.state`, CHECK in der Migration).
+ */
+export type RunState = 
+/**
+ * Wartet auf einen freien Platz oder (mit `next_run_at`) auf einen Zeitpunkt.
+ */
+"queued" | 
+/**
+ * Ein Arbeiter haelt den Lauf (Mietvertrag `lease_until`).
+ */
+"running" | 
+/**
+ * Wartet auf die Entscheidung des Nutzers.
+ */
+"awaiting_approval" | "done" | "failed" | "cancelled"
+/**
+ * Zustand einer Laufzeit fuer die Oberflaeche.
+ */
+export type RuntimeState = { 
+/**
+ * Gibt es diese Laufzeit fuer die Plattform/Architektur ueberhaupt?
+ */
+supported: boolean; 
+/**
+ * Vollstaendig vorhanden und startfaehig.
+ */
+ready: boolean; 
+/**
+ * Fehlende Dateien (leer, wenn bereit oder nicht unterstuetzt).
+ */
+missing: string[] }
+/**
+ * Eingrenzung fuer Chat und Suche ueber viele Besprechungen (M4 §6). Alle
+ * gesetzten Felder gelten zugleich (UND).
+ */
+export type ScopeFilter = { meeting_ids: string[] | null; folder_id: string | null; person: string | null; from: number | null; to: number | null; 
+/**
+ * M5-P5d: eine bekannte Person (`humans.id`) statt Freitext; trifft auf
+ * ihre Teilnahmen (`meeting_participants`).
+ */
+person_id: string | null; 
+/**
+ * M5-P5d: der Kalendertermin (Serien-UID), fuer den ein Vorbereitungs-Brief
+ * gefragt wurde. Grenzt nichts ein; der Chat-Verlauf traegt ihn im
+ * `scope_json`, damit ein zweiter Klick den gespeicherten Brief oeffnet.
+ */
+event_uid: string | null }
+export type ScriptTemplate = { id: string; name: string; body: string; builtin: boolean; 
+/**
+ * Eingebaute Vorlage, deren Text der Nutzer geändert hat.
+ */
+modified: boolean }
 export type SecretMap = Partial<{ [key in string]: string }>
+/**
+ * Ein Fach fuer ein Geheimnis und sein Zustand (`present`, `missing`, `broken`).
+ */
+export type SecretSlotView = { slot: string; status: string }
+export type SectionKind = "text" | "tasks"
+/**
+ * Verbindungsart.
+ */
+export type Security = 
+/**
+ * Klartext verbinden, dann `STARTTLS` (Port 587).
+ */
+"starttls" | 
+/**
+ * Sofort TLS (Port 465).
+ */
+"tls" | 
+/**
+ * Klartext: nur gegen Loopback (lokaler Testserver).
+ */
+"plain"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
+/**
+ * Ein Zeitbereich, in dem eine Folie zu sehen ist (ms im Video).
+ */
+export type SlideOccurrence = { start_ms: number; end_ms: number }
+/**
+ * Optionen eines Starts von der Oberflaeche (`detect_meeting_slides`).
+ */
+export type SlideOptions = { 
+/**
+ * Videodatei; ohne Angabe die Quelle des Imports (`Meeting::source_path`).
+ */
+video_path: string | null; 
+/**
+ * Abtastabstand in Sekunden (Voreinstellung 1, zulaessig 0,25 bis 10).
+ */
+sample_interval_s: number | null }
+/**
+ * Zustand der Bildanalyse fuer die Einstellungszeile: Schalter, Dateien, und ob sie auf
+ * diesem Rechner ueberhaupt angeboten werden kann.
+ */
+export type SlideVisionStatus = { 
+/**
+ * Der Schalter (`meeting_slide_vision`).
+ */
+enabled: boolean; 
+/**
+ * Gemma 4 E4B (das Modell des Projektors) ist geladen.
+ */
+model_ready: boolean; 
+/**
+ * Der Bild-Projektor ist geladen.
+ */
+projector_ready: boolean; 
+/**
+ * Der Projektor wird gerade geladen.
+ */
+downloading: boolean; 
+/**
+ * Groesse des Projektor-Downloads in MB.
+ */
+projector_size_mb: number; 
+/**
+ * `ready`, wenn die Analyse laufen koennte, sonst der Grund: `vision_no_gpu` (keine
+ * Grafikkarte oder Speicher nicht messbar), `vision_low_vram` (zu wenig freier
+ * Grafikspeicher), `vision_no_model`, `vision_no_projector`. Die Oberflaeche bietet den
+ * Schalter nur ohne GPU-Grund an.
+ */
+availability: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
-export type StoredSegment = { segment_index: number; text: string; start_ms: number; end_ms: number; channel: number; speaker_index: number | null }
+/**
+ * Eine Aufnahme, die in das Projekt-Protokoll einging. `index` zaehlt ab 1 in
+ * chronologischer Reihenfolge (`R1`, `R2` im Prompt, `A1`, `A2` im Markdown).
+ */
+export type SourceRecording = { index: number; meeting_id: string; title: string; 
+/**
+ * Startzeit der Aufnahme (Sekunden); Importe ohne Start: Anlagezeit.
+ */
+started_at: number; duration_ms: number | null; 
+/**
+ * Zahl der ausgewerteten Transkriptsegmente.
+ */
+segments: number }
+/**
+ * Eine Quelle des Inhalts. `kind`: `transcript`, `meeting`, `notes`, `audio`,
+ * `subtitle`, `youtube`, `rag`, `vault`, `web` (frei erweiterbar, nur
+ * Kleinbuchstaben, Ziffern und `_`).
+ */
+export type SourceRef = { kind: string; ref: string; title: string | null; url: string | null }
+/**
+ * Namen, Zusammenfuehrungen oder Zuordnungen haben sich geaendert: offene
+ * Ansichten laden Segmente und Sprecher neu.
+ */
+export type SpeakersChanged = { meeting_id: string }
+/**
+ * Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).
+ */
+export type StepState = 
+/**
+ * Der Baustein laeuft oder lief, als die App endete: Wirkung unbestimmt.
+ */
+"running" | "done" | 
+/**
+ * Endgueltig gescheitert (nicht mehr wiederholt).
+ */
+"failed" | 
+/**
+ * Vorubergehend gescheitert, ein weiterer Versuch ist eingeplant.
+ */
+"retrying" | 
+/**
+ * Das Recht fehlt (aus) oder die Freigabe wurde verweigert/ist verfallen.
+ */
+"denied" | 
+/**
+ * Bedingung falsch.
+ */
+"skipped" | 
+/**
+ * Trockenlauf: geplant, nichts getan.
+ */
+"planned" | "awaiting_approval" | 
+/**
+ * Der Baustein hat auf spaeter verschoben (`wake_at`).
+ */
+"waiting" | 
+/**
+ * Absturz oder Zeitueberschreitung mit Aussenwirkung: unklar, ob sie eintrat.
+ */
+"uncertain" | 
+/**
+ * Die App endete mitten im Schritt; er wurde neu eingeplant (ohne Aussenwirkung).
+ */
+"interrupted"
+export type StoredSegment = { segment_index: number; text: string; start_ms: number; end_ms: number; channel: number; speaker_index: number | null; 
+/**
+ * M2-P2d: Wortzeiten auf der Kanal-Achse, wenn die Engine sie liefert
+ * (Grundlage fuer M3). Fehlt in allen aelteren `segments_json` und wird
+ * dann nicht geschrieben: alte Zeilen laden und bleiben unveraendert,
+ * keine Migration.
+ */
+words?: WordTime[] | null }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
@@ -3118,6 +7471,60 @@ export type Strength =
  * Für hörbar verrauschte Aufnahmen. Kann die Stimme etwas verfärben.
  */
 "strong"
+/**
+ * Art des erzeugten Inhalts (Spalte `provenance.subject_kind`). Die Liste ist
+ * fest und steht zusaetzlich als CHECK in der Migration.
+ */
+export type SubjectKind = 
+/**
+ * Transkript einer Besprechung; `subject_id` ist die Besprechungs-ID (je
+ * Besprechung gibt es genau ein aktives Transkript).
+ */
+"transcript" | 
+/**
+ * Fassung eines Transkripts (Untertitel, STT, Zusammenfuehrung; A3).
+ */
+"transcript_variant" | 
+/**
+ * Dokument einer Besprechung: Protokoll, KI-Notizen (`meeting_documents.id`).
+ */
+"document" | 
+/**
+ * Zusammenfassung (Video, Buch, A3).
+ */
+"summary" | 
+/**
+ * Notiz im Wissensspeicher / Vault (A6).
+ */
+"knowledge_note" | 
+/**
+ * Erzeugtes Audio (Vorlesen).
+ */
+"tts_audio" | 
+/**
+ * Ausgabe nach aussen: Follow-up-Entwurf, Export, Mail.
+ */
+"export" | 
+/**
+ * Ergebnis eines Workflow-Laufs (Goal B).
+ */
+"run_output"
+/**
+ * Eine verfuegbare Untertitelspur.
+ */
+export type SubtitleTrack = { 
+/**
+ * Sprachcode wie von yt-dlp genannt (`de`, `en`, `de-orig`).
+ */
+language: string; name: string; 
+/**
+ * Automatisch erzeugt (Spracherkennung von YouTube), nicht hochgeladen.
+ */
+auto: boolean; 
+/**
+ * Die Spur, die ohne Nachfrage genommen wird.
+ */
+recommended: boolean }
 export type SummaryOptions = { 
 /**
  * "kurz" (~150 Wörter) | "mittel" (~400) | "lang" (~900)
@@ -3131,90 +7538,287 @@ detail: string;
  * "allgemein" | "fachpublikum" | "management" | "einfache_sprache"
  */
 audience: string }
+export type SyncStatus = { connected: boolean; user_email: string | null; device_name: string | null; hub_url: string | null; running: boolean; last_success_ms: number | null; last_error: string | null; 
 /**
- * Eine vom LLM vorgeschlagene Tag-Einfügung. `offset_in_original` ist ein
- * BYTE-Offset in `original` (Rust-Konvention), `offset_chars` der
- * Unicode-Skalarwert-Offset (was `chars().count()` bis dahin liefert). Das
- * Frontend arbeitet mit UTF-16-Offsets (JS-String-Indizes) — es rechnet
- * `offset_chars` selbst um (Iteration über die Codepoints, Surrogatpaare bei
- * Zeichen jenseits der Basisebene wie Emoji zählen dort doppelt).
+ * Objekte, die lokal geändert und noch nicht bestätigt sind.
  */
+pending: number; dead_letters: number; 
+/**
+ * Der Hub trägt Objekte mit einem anderen Schlüssel (Passwort geändert?).
+ */
+key_mismatch: boolean; 
+/**
+ * Anzahl synchronisierter Seiten laut Ledger.
+ */
+pages: number }
+export type SystemMemory = { ram_total_mb: number; ram_used_mb: number; 
+/**
+ * Leer, wenn kein Adapter messbar ist. Software-Adapter (Microsoft
+ * Basic Render Driver) sind herausgefiltert.
+ */
+gpus: GpuMemory[]; 
+/**
+ * Anteil der App (Local Voice AI samt Kindprozessen wie llama-server)
+ * am RAM, Arbeitssatz in MiB. 0 in `system_memory()`; gefuellt von
+ * `system_memory_with_app()`.
+ */
+app_ram_mb: number; 
+/**
+ * Anteil der App am dedizierten GPU-Speicher der ersten Karte in MiB.
+ * `None`: nicht messbar (kein Windows-Leistungsindikator, keine
+ * dedizierte Karte) -- dann zeigt die Oberflaeche keine Zahl.
+ */
+app_gpu_mb: number | null }
 export type TagInsertion = { offset_in_original: number; offset_chars: number; tag: string }
+/**
+ * Einstellungen, wie die Oberflaeche sie schickt. Felder, die eine Art nicht kennt,
+ * werden ignoriert. `secret` ist das Passwort (SMTP), der Schluessel (Wissen) oder die
+ * Adresse (Webhook); leer oder fehlend bedeutet beim Aendern „unveraendert“.
+ */
+export type TargetSettings = { 
+/**
+ * Ordner oder Vault (absoluter Pfad).
+ */
+path: string | null; 
+/**
+ * Unterordner (Ordner: fuer Exporte; Vault: fuer neue Notizen).
+ */
+subfolder: string | null; host: string | null; port: number | null; security: Security | null; username: string | null; from_address: string | null; from_name: string | null; context_area: string | null; tier: string | null; endpoint: string | null; search_tool: string | null; area: string | null; secret: string | null }
+/**
+ * Vorlage samt Metadaten, wie sie an die UI geht. `builtin` = mitgeliefert
+ * (ID `builtin:<key>`, schreibgeschuetzt). `updated_at` in Sekunden.
+ */
+export type TemplateInfo = { id: string; title: string; builtin: boolean; spec: TemplateSpec; updated_at: number }
+/**
+ * Ein Abschnitt einer Vorlage. `id` ist ein stabiler Schluessel
+ * (`[a-z0-9_]{1,32}`), unter dem das Modell Eintraege ablegt; `title` sieht
+ * der Nutzer; `instruction` geht an das Modell.
+ */
+export type TemplateSection = { id: string; title: string; instruction: string; kind: SectionKind }
+/**
+ * Inhalt einer Vorlage; wird als JSON in `meeting_templates.sections_json`
+ * abgelegt. `version` ist heute immer 1.
+ */
+export type TemplateSpec = { version: number; context: string; sections: TemplateSection[] }
+/**
+ * Ergebnis von „Verbindung testen“: Code fuer die Oberflaeche, kein Freitext.
+ */
+export type TestResult = { ok: boolean; 
+/**
+ * `folder_ok`, `folder_path_not_found`, `folder_path_not_a_folder`,
+ * `folder_unreadable`, `test_not_available`; SMTP `smtp_*`, Vault `vault_*`,
+ * Wissensbasis `wissen_*` (A6).
+ */
+code: string; 
+/**
+ * Klartext zum Fehler (geschwaerzt), soweit der Code allein nicht reicht.
+ */
+detail: string | null }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.
  */
 export type Theme = "system" | "light" | "dark"
+/**
+ * Ergebnis der Erkennung fuer die Oberflaeche.
+ */
+export type ToolStatus = { found: boolean; 
+/**
+ * Der geprueft Pfad (auch wenn es misslang, zur Anzeige).
+ */
+path: string | null; version: string | null; 
+/**
+ * `configured` oder `path`.
+ */
+source: string | null; 
+/**
+ * Code eines Fehlers (siehe `ToolError::code`), sonst `None`.
+ */
+error: string | null }
+/**
+ * Ein Werkzeug aus Sicht eines Zugangs.
+ */
+export type ToolView = { name: string; title: string; description: string; capability: Capability; 
+/**
+ * Recht des Zugangs (ohne Zeile: `off`).
+ */
+client_mode: GrantMode; 
+/**
+ * Was das Tor tatsaechlich entscheidet (Obergrenze der Agent-Integration eingerechnet).
+ */
+effective_mode: GrantMode; 
+/**
+ * Warum `effective_mode` „aus“ ist (`grant_off`, `tool_off`, `integration_disabled`, ...).
+ */
+off_reason: string | null; 
+/**
+ * Hat diese App-Version das Werkzeug? Ohne Handler fehlt es in `tools/list`, auch wenn erlaubt.
+ */
+available: boolean }
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
+/**
+ * Eine Fassung, wie die Oberflaeche sie liest.
+ */
+export type TranscriptVariant = { id: string; meeting_id: string; 
+/**
+ * `subtitles_manual`, `subtitles_auto`, `stt`, `merged`, `retranscribed`, `translation`.
+ */
+kind: string; language: string | null; model: string | null; 
+/**
+ * Laufende Nummer je Besprechung (v1, v2, ...).
+ */
+number: number; 
+/**
+ * Sekunden UTC.
+ */
+created_at: number; active: boolean; segment_count: number; 
+/**
+ * G5: bei einer Uebersetzung die Fassung, aus der sie entstand.
+ */
+source_variant_id: string | null; 
+/**
+ * G5: bei einer Uebersetzung die Sprache der Quellfassung.
+ */
+source_language: string | null; 
+/**
+ * G5: bei einer Uebersetzung die Zahl der Saetze, die die Treuepruefung markiert hat.
+ */
+flagged: number }
 export type TranslateOutcome = { transcript: string; translation: string }
+/**
+ * Der Pruefbericht einer Uebersetzung (steht in der Fassung, `meta_json`).
+ */
+export type TranslationReport = { source_variant_id: string; source_language: string | null; target_language: string; model: string | null; 
+/**
+ * Geprueft wurden alle Saetze.
+ */
+checked: number; 
+/**
+ * Die markierten Saetze (der Name `flagged` wird von `variants` gezaehlt).
+ */
+flagged: FlaggedSentence[]; 
+/**
+ * Bloecke, in denen mindestens die Haelfte der Zeilen fehlte.
+ */
+failed_blocks: number; blocks: number }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.
  */
-language: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean }
+language: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean; 
+/**
+ * Heruntergeladen UND startfaehig: bei einer Stimme zusaetzlich zu den
+ * beiden Dateien eine vollstaendige Piper-Laufzeit (sonst scheitert das
+ * Vorlesen erst spaet); bei der Laufzeit gleich `is_downloaded`. Nur
+ * verwendbare Stimmen darf die Oberflaeche zur Auswahl anbieten.
+ */
+is_usable: boolean; 
+/**
+ * Grund, warum es diesen Eintrag auf dieser Plattform nicht gibt (z. B.
+ * `incomplete_archive`); dann kein Download-Angebot. `None` = normal.
+ */
+unsupported_reason: string | null; 
+/**
+ * Lizenz laut Katalog (Issue #7) und Link auf den Text.
+ */
+license: string | null; license_url: string | null; 
+/**
+ * Nur nicht-kommerziell nutzbar: die Oberflaeche warnt deutlich.
+ */
+license_non_commercial: boolean }
 export type TtsDownloadKind = "runtime" | "voice"
 export type TtsPhase = "stopped" | "starting" | "ready" | "speaking" | "error"
+export type TtsRuntimeStatus = { 
+/**
+ * `windows-x64`, `macos-aarch64`, ... (wie im Katalog).
+ */
+platform: string; piper: RuntimeState; fish: RuntimeState; 
+/**
+ * Ordner, in dem Fish erwartet wird (Einstellung `tts_fish_dir`).
+ */
+fish_dir: string }
 export type TtsStatus = { phase: TtsPhase; owns_server: boolean; message: string | null }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 /**
- * Hoerprobe einer Stimme: derselbe Demotext, mit dieser Stimme erzeugt.
+ * Eine Zeile der Auswertung: Summen je Modell, je Zweck oder je Tag.
  */
-export type Avatar = { kind: "image"; file: string } | { kind: "icon"; name: string }
+export type UsageBucket = { key: string; label: string; calls: number; prompt_tokens: number; completion_tokens: number; cost_micro: number }
 /**
- * Eine Stimme mit ihren Metadaten, fuer die Stimmenuebersicht und die
- * Sprecher-Chips.
+ * Ein gebuchter Aufruf.
+ */
+export type UsageEvent = { id: number; 
+/**
+ * Unix-Sekunden.
+ */
+ts: number; purpose: string; connection_id: string; connection_kind: string; connection_label: string; model_id: string; model_label: string; prompt_tokens: number; completion_tokens: number; price_input_per_mtok: number | null; price_output_per_mtok: number | null; 
+/**
+ * Kosten in Mikro-Dollar (1 USD = 1 000 000).
+ */
+cost_micro: number; duration_ms: number; ok: boolean; error: string | null }
+export type UsageRange = "today" | "week" | "month" | "all"
+export type UsageSummary = { range: UsageRange; calls: number; failed: number; prompt_tokens: number; completion_tokens: number; cost_micro: number; by_model: UsageBucket[]; by_purpose: UsageBucket[]; 
+/**
+ * Je Kalendertag (lokale Zeit), Schluessel `JJJJ-MM-TT`, aufsteigend.
+ */
+by_day: UsageBucket[] }
+/**
+ * Ergebnis von „in Obsidian ablegen“.
+ */
+export type VaultSaveInfo = { 
+/**
+ * Pfad der Notiz relativ zum Vault.
+ */
+rel: string; 
+/**
+ * `created`, `updated` oder `unchanged`.
+ */
+result: string }
+/**
+ * Eine Stimme mit ihren Metadaten, für die Stimmenübersicht.
  */
 export type VoiceInfo = { id: string; meta: VoiceMeta; origin: VoiceOrigin; 
 /**
- * Absoluter Pfad zur Avatar-Datei, falls eine existiert.
+ * Absoluter Pfad zur Avatar-Datei, falls eine existiert — die
+ * Oberfläche spielt sie über das asset-Protokoll aus, ohne sie zu
+ * kopieren (Muster von `VoiceSample::wav_path`).
  */
 avatar_path: string | null }
 /**
- * Metadaten einer Referenzstimme (`meta.json` im Stimmenordner).
+ * Metadaten einer Referenzstimme.
  */
-export type VoiceMeta = { version: number; 
+export type VoiceMeta = { version?: number; 
 /**
- * Freier Anzeigename (Umlaute erlaubt) — NICHT die voice_id.
+ * Freier Anzeigename (Umlaute erlaubt) — NICHT die voice_id (die bleibt
+ * der sanierte Ordnername, siehe `voices::sanitize_voice_id`).
  */
 display_name: string; 
 /**
  * Palette-Key (`"teal"`, `"rose"`, …), KEIN Hex-Wert.
  */
-color: string; avatar: Avatar | null; language: string | null; description: string | null; default_tags: string[]; default_style: string | null; styles: VoiceStyle[]; 
+color: string; avatar?: Avatar | null; 
 /**
- * Dauerhafte Klangregler dieser Stimme — gelten bei JEDEM Vorlesen.
+ * BCP-47-Sprachcode, z. B. `"de-DE"`.
  */
-sound: VoiceSound | null }
+language?: string | null; description?: string | null; 
+/**
+ * Tags, die beim Vorlesen mit dieser Stimme automatisch gelten sollen —
+ * z. B. `["volume up"]` als dauerhafte Kompensation einer leisen
+ * Referenz (siehe [`ReferenceAnalysis`]).
+ */
+default_tags?: string[]; default_style?: string | null; styles?: VoiceStyle[]; 
+/**
+ * Dauerhafte Klangregler dieser Stimme — gelten bei JEDEM Vorlesen, nicht
+ * nur im Baukasten.
+ */
+sound?: VoiceSound | null }
+/**
+ * Herkunft einer Stimme: aus einem Seed abgeleitet (Standardstimme
+ * festgehalten) oder aus einer echten Aufnahme/einem Import.
+ */
 export type VoiceOrigin = { kind: "seed"; value: number } | { kind: "recording" }
 /**
- * Dauerhafte Klangregler einer Stimme.
+ * Hoerprobe einer Stimme: derselbe Demotext, mit dieser Stimme erzeugt.
  */
-export type VoiceSound = { 
-/**
- * Wiedergabetempo, 0,5 bis 2,0. 1,0 = unveraendert.
- */
-speed: number; 
-/**
- * Zusaetzliche Lautstaerke in Dezibel, -12 bis +12. 0 = unveraendert.
- */
-gain_db: number }
-/**
- * Ein benannter Stil einer Stimme (z. B. „fluesternd").
- */
-export type VoiceStyle = { id: string; name: string; tags: string[]; reference: string | null }
-/**
- * Ergebnis eines Sammel-Exports: wohin geschrieben wurde und welche
- * Stimmen dabei scheiterten (z. B. ohne vollstaendige Referenz).
- */
-export type BulkExportReport = {
-/**
- * Der Ordner (ungepackt) oder die Zip-Datei (gepackt).
- */
-path: string; exported: string[];
-/**
- * (voice_id, Fehlermeldung)
- */
-failed: ([string, string])[] }
 export type VoiceSample = { 
 /**
  * Absoluter Pfad zur WAV — die Oberflaeche spielt sie ueber das
@@ -3226,7 +7830,244 @@ wav_path: string;
  * Aufnahmen statt Stimmen.
  */
 transcript: string }
+/**
+ * Dauerhafte Klangregler einer Stimme. Beide Werte wirken beim Abspielen,
+ * nicht bei der Synthese: das Tempo ueber dieselbe Resampling-Stufe, die auch
+ * der Nutzerregler benutzt (multiplikativ zu ihm, siehe
+ * `TtsCore::voice_speed`), die Lautheit als zusaetzlicher Faktor NACH der
+ * Normalisierung (siehe `TtsCore::playback_gain`).
+ * 
+ * Grenzen wie beim Nutzerregler (`PlaybackControls::set_speed`): Tempo per
+ * Resampling zieht die Tonhoehe mit, ausserhalb 0,5..2,0 klingt es nicht mehr
+ * nach der Stimme. `gain_db` bleibt bei +-12 dB, weil die
+ * Aussteuerungsgrenze ohnehin das letzte Wort hat.
+ */
+export type VoiceSound = { 
+/**
+ * Wiedergabetempo, 0,5 bis 2,0. 1,0 = unveraendert.
+ */
+speed: number; 
+/**
+ * Zusaetzliche Lautstaerke in Dezibel, -12 bis +12. 0 = unveraendert.
+ */
+gain_db: number }
+/**
+ * Ein benannter Stil einer Stimme (z. B. „fluesternd") mit eigener,
+ * optionaler Referenzaufnahme.
+ */
+export type VoiceStyle = { 
+/**
+ * Saniert, eindeutig je Stimme.
+ */
+id: string; name: string; tags?: string[]; 
+/**
+ * Interne reference_id `__style_<voice>_<style>` — siehe
+ * [`super::voices::style_dir`].
+ */
+reference?: string | null }
+/**
+ * Warum die wartenden Dateien nicht beginnen.
+ */
+export type WaitReason = 
+/**
+ * Alle erlaubten Plaetze sind belegt (eine Transkription laeuft).
+ */
+"slot" | 
+/**
+ * Fuer einen weiteren gleichzeitigen Lauf reicht der Arbeitsspeicher (oder
+ * Grafikspeicher) nicht: "wartet auf Arbeitsspeicher".
+ */
+"memory" | 
+/**
+ * Eine Live-Aufnahme laeuft und hat Vorrang.
+ */
+"recording"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
+/**
+ * Ein Treffer der Suche (alles fremder Text, bereinigt).
+ */
+export type WissenHit = { title: string; path: string; area: string; snippet: string; score: number; 
+/**
+ * `vault` oder `buch`.
+ */
+source: string; page: number | null; document_id: string | null }
+/**
+ * M2-P2d: one word with its time span in milliseconds. In a
+ * `TimedSegment` relative to the clip, in a stored meeting segment on the
+ * channel timeline (basis for M3's word-to-speaker assignment).
+ */
+export type WordTime = { text: string; start_ms: number; end_ms: number }
+export type WorkflowActionSpec = { id: string; title: string; effect_text: string; fields: WorkflowFieldSpec[]; 
+/**
+ * `pure`, `idempotent` oder `external`.
+ */
+effect: string; heavy_label: string | null; 
+/**
+ * Faehigkeit der Integration, die der Baustein braucht (`mail.send`), sonst leer.
+ */
+capability: string | null }
+/**
+ * Ein Werkzeug, das ein `agent.route`-Schritt anbieten darf.
+ */
+export type WorkflowAgentTool = { name: string; 
+/**
+ * Der Baustein, der es ausfuehrt (hat sein eigenes Recht und seine Freigabe).
+ */
+action: string; description: string; 
+/**
+ * `true`: geht an andere; dann ist die Empfaengerregel Pflicht.
+ */
+sends_mail: boolean; params: WorkflowAgentToolParam[] }
+/**
+ * Ein Argument eines Werkzeugs, das das Modell fuellt.
+ */
+export type WorkflowAgentToolParam = { key: string; 
+/**
+ * `text` oder `date` (Zeitangabe, das Datum rechnet der Code).
+ */
+kind: string; required: boolean; description: string; 
+/**
+ * Hoechstzahl Zeichen (nur `text`).
+ */
+max_chars: number | null }
+export type WorkflowCatalog = { schema: string; max_steps: number; triggers: WorkflowTriggerSpec[]; actions: WorkflowActionSpec[] }
+/**
+ * Stand eines beobachteten YouTube-Kanals.
+ */
+export type WorkflowChannelStatus = { workflow_id: string; workflow_name: string; channel_id: string; last_ok_ms: number | null; failures: number; outage: boolean; last_error: string | null; next_fetch_ms: number }
+/**
+ * Datei, die nur in der Cloud liegt (OneDrive-Platzhalter).
+ */
+export type WorkflowCloudFile = { workflow_id: string; workflow_name: string; name: string }
+/**
+ * Beschreibung eines Felds fuer das Formular.
+ */
+export type WorkflowFieldSpec = { name: string; 
+/**
+ * `text`, `id`, `int`, `bool`, `text_list`, `choice` oder `any`.
+ */
+kind: string; required: boolean; 
+/**
+ * Nur feste Werte, nie `{{...}}` (Empfaenger, Adressen).
+ */
+literal: boolean; min: number | null; max: number | null; options: string[]; 
+/**
+ * Bei Feldern vom Typ `id`: welche Faehigkeit die Integration haben muss (zum Filtern der Auswahl).
+ */
+capability: string | null }
+/**
+ * Ein Befund der Pruefung: wo (JSON-Zeiger, leer = ganze Definition) und was (deutscher Satz).
+ */
+export type WorkflowIssue = { path: string; message: string }
+/**
+ * Ein Ablauf in der Liste.
+ */
+export type WorkflowItem = { id: string; name: string; enabled: boolean; 
+/**
+ * `true`: nicht scharf, jeder Lauf plant nur (Trockenlauf).
+ */
+dry_run: boolean; updated_at: number; 
+/**
+ * Die Definition als JSON-Text (gespeicherte, normalisierte Form).
+ */
+definition_json: string; 
+/**
+ * Kennung des Ausloesers (`calendar.event_starting`) und Zahl der Schritte, ohne die
+ * Definition in der Oberflaeche parsen zu muessen.
+ */
+trigger_kind: string; step_count: number; last_run: WorkflowRunSummary | null; 
+/**
+ * Laeufe, die noch nicht beendet sind (wartend, laufend, auf Freigabe wartend).
+ */
+open_runs: number }
+/**
+ * Ein Lauf mit Schritten und Herkunft.
+ */
+export type WorkflowRunDetail = { run: WorkflowRunSummary; 
+/**
+ * Daten des Ausloesers und Variablen des Laufs (JSON-Text).
+ */
+context_json: string; 
+/**
+ * Die Definition, mit der der Lauf lief (JSON-Text).
+ */
+definition_json: string; 
+/**
+ * Alle Versuche aller Schritte, in der Reihenfolge der Schritte, dann nach Versuch.
+ */
+steps: WorkflowStepRow[]; 
+/**
+ * Herkunft der Ausgaben des Laufs (Schritt, Modell, Quellen).
+ */
+provenance: ProvenanceEntry[]; 
+/**
+ * Der Lauf ist gescheitert und laesst sich wiederholen.
+ */
+can_retry: boolean; 
+/**
+ * Eine Wiederholung braucht die ausdrueckliche Bestaetigung (Wirkung unklar).
+ */
+retry_needs_confirmation: boolean; 
+/**
+ * Der Lauf ist noch nicht beendet und laesst sich abbrechen.
+ */
+can_cancel: boolean }
+/**
+ * Kurzfassung eines Laufs fuer Listen.
+ */
+export type WorkflowRunSummary = { id: string; workflow_id: string; workflow_name: string; 
+/**
+ * Herkunft des Starts: `trigger`, `manual` oder `agent`.
+ */
+origin: string; state: RunState; dry_run: boolean; created_at: number; started_at: number | null; ended_at: number | null; error: string | null; error_code: string | null; wait_reason: string | null; cancel_requested: boolean }
+/**
+ * Ergebnis von Speichern und Import: der gespeicherte Ablauf ODER alle Befunde.
+ */
+export type WorkflowSaveResult = { workflow: WorkflowItem | null; issues: WorkflowIssue[] }
+/**
+ * Antwort auf einen Start von Hand.
+ */
+export type WorkflowStarted = { run_id: string; created: boolean; dry_run: boolean }
+export type WorkflowStatus = { cloud_only: WorkflowCloudFile[]; channels: WorkflowChannelStatus[] }
+export type WorkflowStepRow = { step_id: string; attempt: number; ordinal: number; action: string; 
+/**
+ * Klartext des Bausteins aus dem Katalog.
+ */
+action_title: string | null; state: StepState; error_class: string | null; input_json: string | null; output_json: string | null; error: string | null; 
+/**
+ * Freigabe, auf die der Schritt wartet (Seite „Integrationen“ / Freigabedialog).
+ */
+approval_id: string | null; wake_at: number | null; started_at: number | null; ended_at: number | null }
+export type WorkflowTemplate = { id: string; name: string; description: string; 
+/**
+ * Die Vorlage als JSON-Text.
+ */
+definition_json: string }
+export type WorkflowTriggerSpec = { id: string; title: string; fields: WorkflowFieldSpec[]; 
+/**
+ * Felder, die der Ausloeser unter `trigger.<feld>` liefert (fuer die Hilfe zu Variablen).
+ */
+provides: string[]; 
+/**
+ * Startet von selbst (Kalender, Zeitplan, Datei, Kanal) und nicht auf Zuruf.
+ */
+automatic: boolean }
+/**
+ * Was ein gueltiger Link bezeichnet (fuer die Rueckmeldung im Dialog, ohne Netz).
+ */
+export type YoutubeLinkInfo = { video_id: string; url: string; start_s: number | null }
+/**
+ * Die Angaben zur Quelle, wie die Oberflaeche sie liest (Player, Kopf, Herkunft).
+ */
+export type YoutubeSource = { video_id: string; 
+/**
+ * Bereinigte Adresse (nur die ID), immer aus `video_id` abgeleitet.
+ */
+url: string; title: string; channel: string; channel_url: string | null; thumbnail_url: string | null; 
+/**
+ * Startzeit aus dem Link in Sekunden.
+ */
+start_s: number | null }
 
 /** tauri-specta globals **/
 

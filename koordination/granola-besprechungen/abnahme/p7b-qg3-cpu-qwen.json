@@ -1,0 +1,67 @@
+{
+  "gate": "QG3",
+  "variant": "cpu-qwen",
+  "tag": "",
+  "cpu_cap_percent": 100,
+  "finished": "2026-09-30T00:25:50",
+  "app_exe": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\p7b-cpu\\local-voice-ai.exe",
+  "app_exe_mtime": "2026-09-30T00:07:37",
+  "gpu_backend": false,
+  "scenes": [
+    "scene3_sprint",
+    "scene1_status"
+  ],
+  "audio_ms": 766709,
+  "audio_min": 12.8,
+  "live_model": "parakeet-tdt-0.6b-v3",
+  "live_load_ms": 1087,
+  "live_wall_ms": 42623,
+  "live_segments": 191,
+  "wer_live": 0.06864988558352403,
+  "final_requested": "handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf",
+  "final_plan": "Run { model_id: \"handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf\", max_segment_ms: 18000 }",
+  "final_model": "handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf",
+  "final_kept": null,
+  "final_load_ms": 1352,
+  "final_transcribe_ms": 212767,
+  "final_rtf": 3.797675391390582,
+  "final_segments": 127,
+  "speakers_state": "done",
+  "speakers_wall_ms": 19010,
+  "speakers_channels": [
+    {
+      "audio_ms": 766709,
+      "channel": 1,
+      "model_ms": 18872,
+      "source": "model",
+      "speakers": 2,
+      "turns": 75
+    }
+  ],
+  "stop_to_transcript_final_ms": 237013,
+  "notes": null,
+  "notes_invalid_json_answers": 0,
+  "notes_blocks_dropped": 0,
+  "stop_to_notes_ms": null,
+  "status_after": "ready",
+  "qg3_limit_ms": 180000,
+  "qg3_pass": null,
+  "run": {
+    "args": "--simulate-meeting --scene-mic mic_echo.wav --final-model handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf --json --out C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg3-cpu-qwen.sim.json --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene3_sprint --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene1_status",
+    "env": {
+      "CUDA_VISIBLE_DEVICES": "-1",
+      "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg3-f4b7de05708d48d08e826fe231ff6fd7",
+      "HF_HOME": "C:\\Users\\wolff\\lva-spikes\\p7b\\hf"
+    },
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_ms": 281040,
+    "peak_job_mb": 2904,
+    "free_mb_start": 29772,
+    "leftovers": [],
+    "log": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg3-cpu-qwen.log",
+    "started": "2026-09-30T00:21:07"
+  },
+  "sim_json": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg3-cpu-qwen.sim.json",
+  "system_note": "job object: below-normal priority, memory cap, CPU hard cap; a parallel cargo build (P5f) was running"
+}

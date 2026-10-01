@@ -1,0 +1,31 @@
+{
+  "viewport": {
+    "w": 480,
+    "h": 800
+  },
+  "document": {
+    "scrollHeight": 800,
+    "innerHeight": 800
+  },
+  "main": {
+    "scrollHeight": 1024,
+    "clientHeight": 694,
+    "pageScrolls": true
+  },
+  "scrollables": [
+    {
+      "el": "workspace-content",
+      "cls": "flex-1 workspace-main ",
+      "scrollHeight": 1024,
+      "clientHeight": 694,
+      "top": 0,
+      "height": 694
+    }
+  ],
+  "tabTop": null,
+  "boxes": {
+    "jobPanel": null,
+    "transcript": null,
+    "notesPad": null
+  }
+}

@@ -1,3 +1,5 @@
+use crate::paste_guard::PasteFallback;
+use crate::paste_session::{Gate, HeldRemainder, PasteSession, Surroundings};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +44,9 @@ pub(crate) struct RunState {
     sealed: bool,
     cancelled: bool,
     sentences: HashMap<u64, RegisteredSentence>,
+    /// Focus/target guard of this run. Independent of `safe`: refinement may
+    /// be off and fragments are still inserted, so they still need the guard.
+    session: PasteSession,
 }
 
 impl RunState {
@@ -54,6 +59,7 @@ impl RunState {
             sealed: false,
             cancelled: false,
             sentences: HashMap::new(),
+            session: PasteSession::new(),
         }
     }
 
@@ -68,6 +74,44 @@ impl RunState {
 
     pub(crate) fn wants_context(&self) -> bool {
         self.safe && !self.cancelled
+    }
+
+    /// Whether `fragment` may be inserted into the target right now. Checked for
+    /// every fragment of a live run, with or without refinement: a run whose
+    /// focus moved must not type into the new window (issue #9). A refused
+    /// fragment is buffered in the run's guard and also ends refinement,
+    /// because the text in the target no longer matches what was committed.
+    pub(crate) fn admit_fragment(&mut self, fragment: &str, env: &dyn Surroundings) -> bool {
+        match self.session.gate(fragment, env) {
+            Gate::Deliver { .. } => true,
+            Gate::Held(_) => {
+                self.safe = false;
+                false
+            }
+        }
+    }
+
+    /// Report how the insertion of an admitted fragment went. A failed paste is
+    /// buffered like a refused one; a successful one is re-checked against the
+    /// target window, because focus may have moved while it was in flight.
+    pub(crate) fn finish_delivery(&mut self, fragment: &str, pasted: bool, env: &dyn Surroundings) {
+        if pasted {
+            self.session.confirm_delivery(fragment, env);
+        } else {
+            self.session
+                .not_delivered(fragment, PasteFallback::InjectionFailed);
+        }
+        if self.session.is_blocked() {
+            self.safe = false;
+        }
+    }
+
+    /// The text this run buffered instead of inserting, handed out once.
+    pub(crate) fn take_held(&mut self, run_id: u64) -> Option<HeldRemainder> {
+        if run_id != self.run_id || self.cancelled {
+            return None;
+        }
+        self.session.take_remainder()
     }
 
     pub(crate) fn record_append(
@@ -289,6 +333,9 @@ impl RunState {
             self.cancelled = true;
             self.sealed = true;
             self.safe = false;
+            // A cancelled dictation is dropped as a whole; its buffered
+            // remainder goes with it.
+            self.session = PasteSession::new();
         }
     }
 }
@@ -433,5 +480,153 @@ mod tests {
             .plan_sentence(7, 1, "Text.", "Text!", context())
             .is_none());
         assert!(state.prepare_final(7, Some(context())).is_none());
+    }
+}
+
+/// Issue #9: fragments of a live run were inserted without any focus or target
+/// check, because the only context tracking hung on `refinement_enabled`.
+#[cfg(test)]
+mod live_guard_tests {
+    use super::{ContextKey, RunState};
+    use crate::paste_guard::PasteFallback;
+    use crate::paste_session::testing::{window, FakeDesktop};
+
+    fn context() -> ContextKey {
+        ContextKey {
+            foreground: 10,
+            focus: 20,
+            physical_generation: 30,
+        }
+    }
+
+    /// Mirrors one `Append` of the worker: gate, (pretend to) paste, record.
+    fn append(state: &mut RunState, desk: &FakeDesktop, fragment: &str) -> bool {
+        if !state.admit_fragment(fragment, desk) {
+            return false;
+        }
+        let key = state.wants_context().then(context);
+        state.record_append(fragment, key, key, true);
+        state.finish_delivery(fragment, true, desk);
+        true
+    }
+
+    #[test]
+    fn fragments_are_guarded_even_when_refinement_is_off() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        let mut state = RunState::new(7, false);
+        // The very condition that disabled the old check:
+        assert!(!state.wants_context());
+
+        assert!(append(&mut state, &desk, "Eins."));
+        desk.focus(Some(window(12, 43)));
+        assert!(
+            !append(&mut state, &desk, " Zwei."),
+            "no insertion into the foreign window"
+        );
+    }
+
+    #[test]
+    fn focus_change_buffers_the_rest_in_order_and_reports_it_once() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        let mut state = RunState::new(7, false);
+        assert!(append(&mut state, &desk, "Eins."));
+        desk.focus(Some(window(12, 43)));
+        assert!(!append(&mut state, &desk, " Zwei."));
+        assert!(!append(&mut state, &desk, " Drei."));
+
+        let rest = state.take_held(7).expect("remainder");
+        assert_eq!(rest.text, " Zwei. Drei.");
+        assert_eq!(rest.reason, PasteFallback::FocusChanged);
+        assert_eq!(rest.target, Some(window(11, 42)));
+        assert_eq!(state.take_held(7), None, "reported exactly once");
+    }
+
+    #[test]
+    fn elevated_target_is_fail_closed_for_a_live_run() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        desk.set_elevated(42, true);
+        let mut state = RunState::new(7, false);
+
+        assert!(!append(&mut state, &desk, "Eins."));
+        let rest = state.take_held(7).expect("remainder");
+        assert_eq!(rest.text, "Eins.");
+        assert_eq!(rest.reason, PasteFallback::TargetElevated);
+    }
+
+    #[test]
+    fn normal_case_is_unchanged() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        let mut state = RunState::new(7, true);
+
+        assert!(append(&mut state, &desk, "Erster Satz."));
+        state.register_sentence(7, 1, "Erster Satz.");
+        assert!(append(&mut state, &desk, " Danach."));
+
+        assert_eq!(state.rendered_text(), "Erster Satz. Danach.");
+        assert_eq!(state.take_held(7), None);
+        // Refinement still works for an undisturbed run.
+        assert!(state
+            .plan_sentence(7, 1, "Erster Satz.", "Erster guter Satz.", context())
+            .is_some());
+    }
+
+    #[test]
+    fn a_buffered_fragment_ends_refinement_for_the_run() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        let mut state = RunState::new(7, true);
+        assert!(append(&mut state, &desk, "Text."));
+        state.register_sentence(7, 1, "Text.");
+
+        desk.focus(Some(window(12, 43)));
+        assert!(!append(&mut state, &desk, " Mehr."));
+
+        // The target text no longer matches what was committed: replacing a
+        // sentence there would select the wrong characters.
+        assert!(state
+            .plan_sentence(7, 1, "Text.", "Text!", context())
+            .is_none());
+        assert!(state.prepare_final(7, Some(context())).is_none());
+    }
+
+    #[test]
+    fn failed_paste_buffers_the_fragment_and_blocks_the_rest() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        let mut state = RunState::new(7, false);
+        assert!(state.admit_fragment("Eins.", &desk));
+        state.record_append("Eins.", None, None, false);
+        state.finish_delivery("Eins.", false, &desk);
+
+        assert!(!append(&mut state, &desk, " Zwei."));
+        let rest = state.take_held(7).expect("remainder");
+        assert_eq!(rest.text, "Eins. Zwei.");
+        assert_eq!(rest.reason, PasteFallback::InjectionFailed);
+        assert!(!rest.untouched());
+    }
+
+    #[test]
+    fn focus_moving_during_the_last_paste_is_reported_not_repeated() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        let mut state = RunState::new(7, false);
+        assert!(state.admit_fragment("Eins.", &desk));
+        state.record_append("Eins.", None, None, true);
+        desk.focus(Some(window(12, 43)));
+        state.finish_delivery("Eins.", true, &desk);
+
+        let rest = state.take_held(7).expect("remainder");
+        assert_eq!(rest.reason, PasteFallback::FocusChangedDuringPaste);
+        assert!(!rest.untouched(), "a second attempt could duplicate it");
+    }
+
+    #[test]
+    fn cancel_discards_the_buffer_and_other_runs_get_nothing() {
+        let desk = FakeDesktop::focused(window(11, 42));
+        let mut state = RunState::new(7, false);
+        assert!(append(&mut state, &desk, "Eins."));
+        desk.focus(Some(window(12, 43)));
+        assert!(!append(&mut state, &desk, " Zwei."));
+
+        assert_eq!(state.take_held(8), None, "not this run's buffer");
+        state.cancel(7);
+        assert_eq!(state.take_held(7), None, "cancel drops the dictation");
     }
 }

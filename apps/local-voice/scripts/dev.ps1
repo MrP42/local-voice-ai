@@ -16,6 +16,13 @@
        NTFS-Junction; nur %LOCALAPPDATA%\tcs zu loeschen genuegt nicht.
        'clean-cmake' raeumt beide Seiten.
 
+    Zu Fallstrick 2: die Ursache ist eine Umgebungsvariable. Die cmake-Crate
+    nimmt den Generator aus CMAKE_GENERATOR; ein Lauf in einer Shell mit
+    CMAKE_GENERATOR=Ninja hinterlaesst einen Ninja-Cache, der naechste Lauf ohne
+    die Variable scheitert. Das Skript entfernt die Variable fuer seine Laeufe
+    (LVA_KEEP_CMAKE_GENERATOR=1 behaelt sie) und raeumt einen vorhandenen
+    Nicht-Visual-Studio-Cache vor Test/Build selbst weg.
+
     Jedes Ziel prueft seinen eigenen Exit-Code. Das Skript endet nur dann mit
     0, wenn das Ziel wirklich erfolgreich war.
 
@@ -31,6 +38,8 @@
     bundle      npx tauri build (mit Installer)
     clean-cmake loescht den CMake-Cache auf beiden Seiten der Junction
     harness     pwsh scripts/m8-verify.ps1 (Abnahme-Harness)
+    notices     node scripts/gen-notices.mjs: THIRD-PARTY-NOTICES.md + SBOM
+                (CycloneDX) erzeugen; Argumente wie --only sbom/--check gehen durch
 
 .EXAMPLE
     pwsh -File apps\local-voice\scripts\dev.ps1 test
@@ -40,7 +49,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('test', 'fmt', 'clippy', 'check', 'build', 'bundle', 'clean-cmake', 'harness')]
+    [ValidateSet('test', 'fmt', 'clippy', 'check', 'build', 'bundle', 'clean-cmake', 'harness', 'notices')]
     [string]$Target = 'check',
 
     # Weitere Argumente werden an das jeweilige Werkzeug durchgereicht.
@@ -53,37 +62,13 @@ Set-StrictMode -Version Latest
 
 $AppDir     = Split-Path -Parent $PSScriptRoot          # apps\local-voice
 $TauriDir   = Join-Path $AppDir 'src-tauri'
-$CargoBin   = Join-Path $env:USERPROFILE '.cargo\bin'
+
+# Gemeinsame Waechter (PATH, Assert-Tool, Invoke-Step, CMake-Generator); werden
+# auch von scripts\test-dev-guards.ps1 geprueft.
+. (Join-Path $PSScriptRoot 'lib\dev-guards.ps1')
 
 # ------------------------------------------------------------------- PATH
-if (Test-Path $CargoBin) {
-    if (-not ($env:PATH -split ';' | Where-Object { $_ -ieq $CargoBin })) {
-        $env:PATH = "$CargoBin;$env:PATH"
-    }
-}
-
-function Assert-Tool {
-    param([string]$Name, [string]$Hint)
-    $found = Get-Command $Name -ErrorAction SilentlyContinue
-    if (-not $found) {
-        Write-Host "FEHLT: $Name nicht gefunden. $Hint" -ForegroundColor Red
-        exit 2
-    }
-    Write-Host ("{0,-6} {1}" -f $Name, $found.Source) -ForegroundColor DarkGray
-}
-
-function Invoke-Step {
-    param([string]$Label, [scriptblock]$Body)
-    Write-Host "`n=== $Label ===" -ForegroundColor Cyan
-    & $Body
-    # $LASTEXITCODE gilt nur fuer native Programme; alle Schritte hier sind
-    # native Aufrufe, deshalb ist die Pruefung aussagekraeftig.
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "FEHLGESCHLAGEN: $Label (Exit $LASTEXITCODE)" -ForegroundColor Red
-        exit $LASTEXITCODE
-    }
-    Write-Host "OK: $Label" -ForegroundColor Green
-}
+$CargoBin = Add-CargoToPath
 
 function Clear-CMakeCache {
     # Beide Seiten der Junction: der Cache liegt im echten target-Verzeichnis,
@@ -115,9 +100,30 @@ switch ($Target) {
         Invoke-Step 'harness (m8-verify)' { pwsh -File $script @Rest }
         exit 0
     }
+    'notices' {
+        Assert-Tool 'node' 'Node.js installieren.'
+        $script = Join-Path $PSScriptRoot 'gen-notices.mjs'
+        Invoke-Step 'notices + SBOM (gen-notices.mjs)' { node $script @Rest }
+        exit 0
+    }
 }
 
 Assert-Tool 'cargo' 'Rust installieren oder %USERPROFILE%\.cargo\bin pruefen.'
+
+if ($Target -ne 'fmt') {
+    # Fallstrick 2 (Issue #8): gleicher CMake-Generator wie in der CI, und ein
+    # Cache mit fremdem Generator wird vor dem Lauf geraeumt statt mittendrin
+    # mit "Does not match the generator used previously" abzubrechen.
+    $null = Remove-CMakeGeneratorEnv
+    $foreign = @(Get-ForeignCMakeCaches -TauriDir $TauriDir)
+    if ($foreign.Count -gt 0) {
+        foreach ($f in $foreign) {
+            Write-Host ("CMake-Cache mit Generator '{0}' gefunden: {1}" -f $f.Generator, $f.Path) -ForegroundColor Yellow
+        }
+        Write-Host 'Raeume ihn weg (naechster Build konfiguriert neu, ~7 Minuten).' -ForegroundColor Yellow
+        Clear-CMakeCache
+    }
+}
 
 Push-Location $TauriDir
 try {
@@ -153,7 +159,27 @@ try {
                     }
                     Write-Host ('Signaturschluessel aus ' + $keyFile) -ForegroundColor DarkGray
                 }
-                Invoke-Step 'tauri build (Installer)' { npx tauri build @Rest }
+                # Der Installer rechnet STT wie das Release per Vulkan auf der GPU
+                # (Feature gpu-vulkan, P2f). Das braucht das LunarG-SDK; der
+                # SDK-Installer setzt VULKAN_SDK maschinenweit, eine vor der
+                # Installation geoeffnete Shell sieht es aber noch nicht.
+                $featureArgs = @()
+                if (-not ($Rest -match '^--features')) {
+                    if (-not $env:VULKAN_SDK) {
+                        $env:VULKAN_SDK = [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')
+                    }
+                    if ($env:VULKAN_SDK -and (Test-Path $env:VULKAN_SDK)) {
+                        $sdkBin = Join-Path $env:VULKAN_SDK 'Bin'
+                        if (-not ($env:PATH -split ';' | Where-Object { $_ -ieq $sdkBin })) {
+                            $env:PATH = "$sdkBin;$env:PATH"
+                        }
+                        $featureArgs = @('--features', 'gpu-vulkan')
+                        Write-Host ('Vulkan-SDK ' + $env:VULKAN_SDK + ' -> --features gpu-vulkan') -ForegroundColor DarkGray
+                    } else {
+                        Write-Warning 'VULKAN_SDK fehlt: Installer wird OHNE GPU-STT gebaut (nur CPU). Siehe docs/BUILD-WINDOWS.md, Abschnitt GPU.'
+                    }
+                }
+                Invoke-Step 'tauri build (Installer)' { npx tauri build @featureArgs @Rest }
             }
         }
     }

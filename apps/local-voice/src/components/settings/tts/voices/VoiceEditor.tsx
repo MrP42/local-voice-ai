@@ -68,7 +68,7 @@ export const VoiceEditor: React.FC<VoiceEditorProps> = ({ id, onChanged }) => {
       }
       setMeta(res.data);
       setOriginalName(res.data.display_name);
-      setTagsRaw(res.data.default_tags.join(", "));
+      setTagsRaw((res.data.default_tags ?? []).join(", "));
       setRenameTo(res.data.display_name);
     } catch (e) {
       setError(asMessage(e));
@@ -101,7 +101,7 @@ export const VoiceEditor: React.FC<VoiceEditorProps> = ({ id, onChanged }) => {
       }
       setMeta(next);
       setOriginalName(next.display_name);
-      setTagsRaw(next.default_tags.join(", "));
+      setTagsRaw((next.default_tags ?? []).join(", "));
       setNote(t("tts.voiceEdit.saved"));
       notifyVoicesChanged();
       onChanged();

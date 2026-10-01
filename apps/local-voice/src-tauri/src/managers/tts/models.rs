@@ -49,6 +49,19 @@ pub struct TtsDownloadInfo {
     pub size_mb: u64,
     pub is_downloaded: bool,
     pub is_downloading: bool,
+    /// Heruntergeladen UND startfaehig: bei einer Stimme zusaetzlich zu den
+    /// beiden Dateien eine vollstaendige Piper-Laufzeit (sonst scheitert das
+    /// Vorlesen erst spaet); bei der Laufzeit gleich `is_downloaded`. Nur
+    /// verwendbare Stimmen darf die Oberflaeche zur Auswahl anbieten.
+    pub is_usable: bool,
+    /// Grund, warum es diesen Eintrag auf dieser Plattform nicht gibt (z. B.
+    /// `incomplete_archive`); dann kein Download-Angebot. `None` = normal.
+    pub unsupported_reason: Option<String>,
+    /// Lizenz laut Katalog (Issue #7) und Link auf den Text.
+    pub license: Option<String>,
+    pub license_url: Option<String>,
+    /// Nur nicht-kommerziell nutzbar: die Oberflaeche warnt deutlich.
+    pub license_non_commercial: bool,
 }
 
 /// `<piper_dir>/<platform>` — where a platform's Piper binary and its
@@ -58,21 +71,24 @@ fn runtime_dir(piper_dir: &Path, platform: &str) -> PathBuf {
     piper_dir.join(platform)
 }
 
+/// Name der Lizenzdatei, die beim Einrichten in den Laufzeitordner kommt (K1).
+pub(crate) const RUNTIME_LICENSE_FILE: &str = "LICENSE-espeak-ng-GPL-3.0.txt";
+
+/// Hinweis zu espeak-ng (GPL-3.0-or-later) samt vollem GPL-3.0-Text. Das offizielle Piper-Archiv
+/// enthaelt keine Lizenzdateien (siehe `license_note` im Katalog).
+const RUNTIME_LICENSE_TEXT: &str = concat!(
+    include_str!("licenses/espeak-ng-NOTICE.txt"),
+    include_str!("licenses/GPL-3.0.txt")
+);
+
 /// Whether a COMPLETE Piper runtime sits at `runtime_dir(piper_dir, platform)`
-/// — the binary itself AND its `espeak-ng-data` directory, both required to
-/// run. Mirrors the voice check (`.onnx` AND `.onnx.json`, not just "the
-/// directory exists"): a bare `is_dir()` also reads a leftover empty
-/// directory, or one an interrupted extraction only half-filled, as
-/// "installed" — this is the one place that decides "installed", used by
-/// every caller instead of each re-deriving its own (looser) check.
+/// -- the binary, its `espeak-ng-data` and every library it is linked against
+/// (`availability::piper_ready`). A bare `is_dir()` or "binary exists" also
+/// reads a leftover empty directory, an interrupted extraction or the
+/// incomplete official macOS archive (no `libespeak-ng.1.dylib`) as
+/// "installed"; this is the one place that decides it, used by every caller.
 fn runtime_is_installed(piper_dir: &Path, platform: &str) -> bool {
-    let dir = runtime_dir(piper_dir, platform);
-    let binary_name = if platform.starts_with("windows") {
-        "piper.exe"
-    } else {
-        "piper"
-    };
-    dir.join(binary_name).is_file() && dir.join("espeak-ng-data").is_dir()
+    super::availability::piper_ready(&runtime_dir(piper_dir, platform), platform)
 }
 
 /// `(<piper_dir>/voices/<voice_id>.onnx, <piper_dir>/voices/<voice_id>.onnx.json)`
@@ -107,6 +123,16 @@ fn current_platform() -> Option<&'static str> {
         Some("linux-x64")
     } else {
         None
+    }
+}
+
+/// Lesbare Meldung zu einem `unsupported_reason` des Katalogs.
+fn unsupported_message(reason: &str) -> String {
+    match reason {
+        "incomplete_archive" => "Für dieses System gibt es noch keine vollständige Piper-Laufzeit: \
+             das offizielle Archiv enthält die benötigten Bibliotheken nicht."
+            .to_string(),
+        other => format!("Piper ist auf diesem System nicht verfügbar ({other})."),
     }
 }
 
@@ -182,6 +208,7 @@ impl TtsModelManager {
         is_downloading: impl Fn(&str) -> bool,
     ) -> Vec<TtsDownloadInfo> {
         let mut out = Vec::new();
+        let mut runtime_ready = false;
 
         if let Some(platform) = current_platform() {
             let catalog_id = format!("piper-runtime-{platform}");
@@ -190,6 +217,8 @@ impl TtsModelManager {
                 .find(|e| e.id == catalog_id)
             {
                 let size_bytes: u64 = entry.files.iter().map(|f| f.size_bytes).sum();
+                let installed = runtime_is_installed(piper_dir, platform);
+                runtime_ready = entry.unsupported_reason.is_none() && installed;
                 out.push(TtsDownloadInfo {
                     id: RUNTIME_ID.to_string(),
                     kind: TtsDownloadKind::Runtime,
@@ -197,8 +226,13 @@ impl TtsModelManager {
                     description: entry.description,
                     language: None,
                     size_mb: size_bytes / (1024 * 1024),
-                    is_downloaded: runtime_is_installed(piper_dir, platform),
+                    is_downloaded: installed,
                     is_downloading: is_downloading(RUNTIME_ID),
+                    is_usable: runtime_ready,
+                    unsupported_reason: entry.unsupported_reason,
+                    license: entry.license,
+                    license_url: entry.license_url,
+                    license_non_commercial: entry.license_non_commercial,
                 });
             }
         }
@@ -206,10 +240,16 @@ impl TtsModelManager {
         for entry in catalog::tts_entries(Purpose::TtsVoice) {
             let size_bytes: u64 = entry.files.iter().map(|f| f.size_bytes).sum();
             let (onnx_path, json_path) = voice_paths(piper_dir, &entry.id);
+            let files_present = onnx_path.is_file() && json_path.is_file();
             out.push(TtsDownloadInfo {
                 language: language_of_voice_id(&entry.id),
-                is_downloaded: onnx_path.is_file() && json_path.is_file(),
+                is_downloaded: files_present,
                 is_downloading: is_downloading(&entry.id),
+                is_usable: files_present && runtime_ready,
+                unsupported_reason: None,
+                license: entry.license,
+                license_url: entry.license_url,
+                license_non_commercial: entry.license_non_commercial,
                 id: entry.id,
                 kind: TtsDownloadKind::Voice,
                 name: entry.name,
@@ -279,6 +319,9 @@ impl TtsModelManager {
             .into_iter()
             .find(|e| e.id == catalog_id)
             .ok_or_else(|| format!("No catalog entry for {catalog_id}"))?;
+        if let Some(reason) = entry.unsupported_reason.as_deref() {
+            return Err(unsupported_message(reason));
+        }
         let file = entry
             .files
             .first()
@@ -304,7 +347,12 @@ impl TtsModelManager {
             HttpDownloadOutcome::Cancelled => Ok(()),
             HttpDownloadOutcome::Completed => {
                 let is_zip = file.filename.to_ascii_lowercase().ends_with(".zip");
-                let extracted = Self::extract_runtime_archive(&archive_path, &dest_dir, is_zip);
+                // Erst pruefen, dann ersetzen: ein unvollstaendiges Archiv darf
+                // eine vorhandene Installation nicht verdraengen.
+                let extracted =
+                    Self::extract_runtime_archive_with(&archive_path, &dest_dir, is_zip, &|root| {
+                        Self::verify_runtime(root, platform)
+                    });
                 let _ = fs::remove_file(&archive_path);
                 extracted.map_err(|e| e.to_string())?;
                 let _ = self.app_handle.emit("model-download-complete", RUNTIME_ID);
@@ -452,7 +500,23 @@ impl TtsModelManager {
     /// Archiv liegt lokal als `<platform>.download`, dessen Endung sagt über
     /// das Format nichts aus (der Endungs-Check hier ließ auf Windows jedes
     /// ZIP in den tar.gz-Zweig laufen — „failed to iterate over archive").
-    pub(crate) fn extract_runtime_archive(archive_path: &Path, dest_dir: &Path, is_zip: bool) -> Result<()> {
+    pub(crate) fn extract_runtime_archive(
+        archive_path: &Path,
+        dest_dir: &Path,
+        is_zip: bool,
+    ) -> Result<()> {
+        Self::extract_runtime_archive_with(archive_path, dest_dir, is_zip, &|_| Ok(()))
+    }
+
+    /// Wie [`Self::extract_runtime_archive`], aber `verify` prueft den
+    /// entpackten (und weggeflachten) Ordner, BEVOR `dest_dir` angefasst wird.
+    /// Faellt die Pruefung durch, bleibt eine vorhandene Installation unberuehrt.
+    pub(crate) fn extract_runtime_archive_with(
+        archive_path: &Path,
+        dest_dir: &Path,
+        is_zip: bool,
+        verify: &dyn Fn(&Path) -> Result<()>,
+    ) -> Result<()> {
         let temp_dir = dest_dir.with_file_name(format!(
             "{}.extracting",
             dest_dir
@@ -476,16 +540,44 @@ impl TtsModelManager {
         }
 
         let entries: Vec<_> = fs::read_dir(&temp_dir)?.filter_map(|e| e.ok()).collect();
+        let nested = entries.len() == 1 && entries[0].file_type()?.is_dir();
+        let root = if nested {
+            entries[0].path()
+        } else {
+            temp_dir.clone()
+        };
+        if let Err(e) = verify(&root) {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(e);
+        }
         if dest_dir.exists() {
             fs::remove_dir_all(dest_dir)?;
         }
-        if entries.len() == 1 && entries[0].file_type()?.is_dir() {
-            fs::rename(entries[0].path(), dest_dir)?;
+        if nested {
+            fs::rename(&root, dest_dir)?;
             let _ = fs::remove_dir_all(&temp_dir);
         } else {
             fs::rename(&temp_dir, dest_dir)?;
         }
+        // Die Installation selbst ist fertig; ein nicht schreibbarer Lizenzhinweis kippt sie nicht,
+        // wird aber gemeldet.
+        if let Err(e) = fs::write(dest_dir.join(RUNTIME_LICENSE_FILE), RUNTIME_LICENSE_TEXT) {
+            log::warn!("Lizenzhinweis zu espeak-ng konnte nicht abgelegt werden: {e}");
+        }
         Ok(())
+    }
+
+    /// Ist der entpackte Ordner eine vollstaendige Piper-Laufzeit?
+    fn verify_runtime(root: &Path, platform: &str) -> Result<()> {
+        let missing = super::availability::piper_missing(root, platform);
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Das Piper-Archiv ist unvollständig, es fehlt: {}",
+                missing.join(", ")
+            ))
+        }
     }
 
     fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
@@ -644,7 +736,7 @@ mod tests {
     }
 
     #[test]
-    fn build_downloads_needs_the_binary_and_espeak_data_not_just_the_directory() {
+    fn build_downloads_needs_the_binary_data_and_libraries_not_just_the_directory() {
         let Some(platform) = current_platform() else {
             return; // nothing to assert on a platform with no runtime entry
         };
@@ -652,7 +744,7 @@ mod tests {
         let piper_dir = dir.path().join("piper");
         let rt_dir = runtime_dir(&piper_dir, platform);
 
-        // An interrupted/empty extraction — the directory exists, nothing in it.
+        // An interrupted/empty extraction -- the directory exists, nothing in it.
         fs::create_dir_all(&rt_dir).unwrap();
         let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
         assert!(
@@ -660,26 +752,74 @@ mod tests {
             "an empty runtime directory must not read as installed"
         );
 
-        // Binary present, espeak-ng-data still missing.
-        let binary_name = if platform.starts_with("windows") {
-            "piper.exe"
-        } else {
-            "piper"
-        };
-        fs::write(rt_dir.join(binary_name), b"fake binary").unwrap();
+        // Binary + data, but the linked libraries missing (the macOS bug of #29).
+        fs::write(rt_dir.join(super::super::availability::piper_binary(platform)), b"fake").unwrap();
+        fs::create_dir_all(rt_dir.join("espeak-ng-data")).unwrap();
+        fs::write(rt_dir.join("espeak-ng-data").join("phontab"), b"x").unwrap();
+        fs::write(rt_dir.join("espeak-ng-data").join("phondata"), b"x").unwrap();
         let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
         assert!(
             !downloads[0].is_downloaded,
-            "the binary alone, without espeak-ng-data, must not read as installed"
+            "binary + data without the linked libraries must not read as installed"
         );
 
-        // Both present: now it's complete.
-        fs::create_dir_all(rt_dir.join("espeak-ng-data")).unwrap();
+        // Everything there: now it's complete (unless the catalog marks the platform unsupported).
+        crate::managers::tts::availability::write_piper_fixture(&rt_dir, platform);
         let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
-        assert!(
-            downloads[0].is_downloaded,
-            "binary + espeak-ng-data together must count as installed"
+        assert!(downloads[0].is_downloaded);
+        assert_eq!(downloads[0].is_usable, downloads[0].unsupported_reason.is_none());
+    }
+
+    /// Eine Stimme ist erst verwendbar, wenn auch die Laufzeit vollstaendig ist:
+    /// Modell und Konfiguration allein ergeben den Fehler erst beim Vorlesen.
+    #[test]
+    fn a_voice_is_usable_only_with_a_complete_runtime() {
+        let Some(platform) = current_platform() else {
+            return;
+        };
+        let dir = tempfile::TempDir::new().unwrap();
+        let piper_dir = dir.path().join("piper");
+        let voice_id = catalog::tts_entries(Purpose::TtsVoice)[0].id.clone();
+        let (onnx, json) = voice_paths(&piper_dir, &voice_id);
+        fs::create_dir_all(onnx.parent().unwrap()).unwrap();
+        fs::write(&onnx, b"model").unwrap();
+        fs::write(&json, b"{}").unwrap();
+
+        let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
+        let voice = downloads.iter().find(|d| d.id == voice_id).unwrap();
+        assert!(voice.is_downloaded, "die Dateien sind da");
+        assert!(!voice.is_usable, "ohne Laufzeit nicht verwendbar");
+
+        crate::managers::tts::availability::write_piper_fixture(
+            &runtime_dir(&piper_dir, platform),
+            platform,
         );
+        let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
+        let voice = downloads.iter().find(|d| d.id == voice_id).unwrap();
+        let runtime_supported = downloads[0].unsupported_reason.is_none();
+        assert_eq!(voice.is_usable, runtime_supported);
+
+        // DLL entfernt: wieder unbrauchbar, Auswahl muss das sofort sehen.
+        let lib = crate::managers::tts::availability::piper_libraries(platform)[0];
+        fs::remove_file(runtime_dir(&piper_dir, platform).join(lib)).unwrap();
+        let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
+        let voice = downloads.iter().find(|d| d.id == voice_id).unwrap();
+        assert!(!voice.is_usable && voice.is_downloaded);
+    }
+
+    #[test]
+    fn license_info_reaches_the_download_rows() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let downloads = TtsModelManager::build_downloads(dir.path(), |_| false);
+        let ryan = downloads.iter().find(|d| d.id == "en_US-ryan-high").unwrap();
+        assert!(ryan.license_non_commercial);
+        assert_eq!(ryan.license.as_deref(), Some("CC-BY-NC-SA-4.0"));
+        let thorsten = downloads.iter().find(|d| d.id == "de_DE-thorsten-high").unwrap();
+        // Datensatz CC0, aber vom Lessac-Modell (Blizzard-2013-Forschungslizenz) abgeleitet (K1).
+        assert!(thorsten.license_non_commercial);
+        assert_eq!(thorsten.license.as_deref(), Some("CC0-1.0"));
+        let eva = downloads.iter().find(|d| d.id == "de_DE-eva_k-x_low").unwrap();
+        assert!(!eva.license_non_commercial);
     }
 
     #[test]
@@ -726,6 +866,34 @@ mod tests {
         assert!(dest_dir.join("espeak-ng-data").is_dir());
     }
 
+    /// K1: das Piper-Archiv enthaelt keine Lizenzdateien, espeak-ng steht aber unter
+    /// GPL-3.0-or-later; beim Einrichten kommt deshalb Hinweis plus Lizenztext in den Ordner.
+    #[test]
+    fn die_entpackte_laufzeit_traegt_den_espeak_ng_lizenztext() {
+        use std::io::Write as _;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let archive_path = dir.path().join("windows-x64.download");
+        let file = File::create(&archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let opts: zip::write::SimpleFileOptions = Default::default();
+        writer.start_file("piper/piper.exe", opts).unwrap();
+        writer.write_all(b"fake binary").unwrap();
+        writer.finish().unwrap();
+
+        let dest_dir = dir.path().join("windows-x64");
+        TtsModelManager::extract_runtime_archive(&archive_path, &dest_dir, true).unwrap();
+
+        let text = fs::read_to_string(dest_dir.join(RUNTIME_LICENSE_FILE)).unwrap();
+        assert!(text.contains("espeak-ng"), "Hinweis auf espeak-ng fehlt");
+        assert!(text.contains("GPL-3.0-or-later"));
+        assert!(text.contains("https://github.com/espeak-ng/espeak-ng"));
+        assert!(
+            text.contains("GNU GENERAL PUBLIC LICENSE") && text.contains("Version 3, 29 June 2007"),
+            "der volle GPL-3.0-Text fehlt"
+        );
+    }
+
     /// Gegenprobe: dasselbe ZIP im tar.gz-Zweig ist genau der alte Fehler.
     #[test]
     fn dasselbe_zip_im_tar_zweig_scheitert_wie_vor_dem_fix() {
@@ -747,6 +915,86 @@ mod tests {
             err.to_string().contains("archive") || err.to_string().contains("gzip"),
             "war: {err}"
         );
+    }
+
+    /// Fehler 3 des Issues: ein unvollstaendiger Download darf eine
+    /// funktionierende Installation nicht ersetzen.
+    #[test]
+    fn ein_unvollstaendiges_archiv_laesst_die_vorhandene_installation_unberuehrt() {
+        use std::io::Write as _;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let dest_dir = dir.path().join("windows-x64");
+        crate::managers::tts::availability::write_piper_fixture(&dest_dir, "windows-x64");
+
+        // Archiv ohne die DLLs (wie das offizielle macOS-Archiv ohne dylibs).
+        let archive_path = dir.path().join("windows-x64.download");
+        let file = File::create(&archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let opts: zip::write::SimpleFileOptions = Default::default();
+        writer.start_file("piper/piper.exe", opts).unwrap();
+        writer.write_all(b"new binary").unwrap();
+        writer.finish().unwrap();
+
+        let err = TtsModelManager::extract_runtime_archive_with(
+            &archive_path,
+            &dest_dir,
+            true,
+            &|root| TtsModelManager::verify_runtime(root, "windows-x64"),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("unvollständig"), "{err}");
+        assert!(err.to_string().contains("espeak-ng.dll"), "{err}");
+        assert_eq!(
+            fs::read(dest_dir.join("piper.exe")).unwrap(),
+            b"fixture",
+            "die alte Installation bleibt unveraendert"
+        );
+        assert!(
+            !dir.path().join("windows-x64.extracting").exists(),
+            "Temp-Ordner aufgeraeumt"
+        );
+    }
+
+    #[test]
+    fn ein_vollstaendiges_archiv_ersetzt_die_installation() {
+        use std::io::Write as _;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let archive_path = dir.path().join("windows-x64.download");
+        let file = File::create(&archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let opts: zip::write::SimpleFileOptions = Default::default();
+        for name in [
+            "piper/piper.exe",
+            "piper/espeak-ng.dll",
+            "piper/piper_phonemize.dll",
+            "piper/onnxruntime.dll",
+            "piper/onnxruntime_providers_shared.dll",
+            "piper/espeak-ng-data/phontab",
+            "piper/espeak-ng-data/phondata",
+        ] {
+            writer.start_file(name, opts).unwrap();
+            writer.write_all(b"data").unwrap();
+        }
+        writer.finish().unwrap();
+
+        let dest_dir = dir.path().join("windows-x64");
+        TtsModelManager::extract_runtime_archive_with(&archive_path, &dest_dir, true, &|root| {
+            TtsModelManager::verify_runtime(root, "windows-x64")
+        })
+        .unwrap();
+        assert!(runtime_is_installed(dir.path(), "windows-x64"));
+    }
+
+    #[test]
+    fn macos_laufzeit_ist_laut_katalog_nicht_herunterladbar() {
+        let entry = catalog::tts_entries(Purpose::TtsRuntime)
+            .into_iter()
+            .find(|e| e.id == "piper-runtime-macos-x64")
+            .unwrap();
+        let reason = entry.unsupported_reason.unwrap();
+        assert!(unsupported_message(&reason).contains("vollständige Piper-Laufzeit"));
     }
 
     // ── SHA-mismatch on the REUSED downloader is still an error ─────────────

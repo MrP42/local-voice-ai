@@ -1,6 +1,7 @@
 use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
+use crate::paste_session::HeldOutcome;
 use crate::refinement::injection::InjectionHandle;
 use crate::refinement::ollama::{OllamaRefiner, RefinementStage};
 use crate::refinement::sentences::complete_sentence_ranges;
@@ -22,7 +23,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_specta::Event;
 use transcribe_cpp::{
     Backend, Feature, Model, ModelOptions, ParakeetStreamOptions, RunExtension, RunOptions,
-    Session, StreamExtension, StreamOptions, Task, WhisperRunOptions,
+    Session, SessionOptions, StreamExtension, StreamOptions, Task, WhisperRunOptions,
 };
 use transcribe_rs::{
     onnx::{
@@ -234,6 +235,72 @@ enum LoadedEngine {
     GigaAM(GigaAMModel),
     Canary(CanaryModel),
     Cohere(CohereModel),
+}
+
+/// U7: eine EIGENE Engine fuer einen weiteren gleichzeitigen Import der
+/// Warteschlange (`meetings::queue`). transcribe-cpp 0.2.4 erlaubt auf einem
+/// `Model` hoechstens einen laufenden Aufruf ueber alle Sitzungen; echte
+/// Gleichzeitigkeit braucht ein eigenes `Model` (und damit das Modell noch
+/// einmal im Speicher). Darum steht das Speicher-Tor der Warteschlange davor.
+pub struct ExtraEngine {
+    /// `None`, solange ein Aufruf die Engine gerade benutzt (oder nach einer
+    /// Panik in der Engine: dann ist sie verworfen).
+    engine: Option<LoadedEngine>,
+    model_id: String,
+}
+
+thread_local! {
+    /// U7: die eigene Engine des Import-Threads, der sie gebunden hat. Wer sie
+    /// hat, transkribiert mit ihr statt mit der gemeinsamen Engine
+    /// (`transcribe_segments`); das Laden und Wiederherstellen von Modellen
+    /// (`initiate_model_load_inner`) fasst die gemeinsame Engine dann nicht an.
+    static BOUND_ENGINE: std::cell::RefCell<Option<ExtraEngine>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Haelt die gebundene Engine; beim Loeschen wird sie freigegeben (und damit
+/// ihr Speicher), auch nach einer Panik im Import. Gilt nur im Thread, der sie
+/// erzeugt hat.
+pub struct ExtraEngineBinding {
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+/// Bindet `engine` an den aktuellen Thread, bis die Rueckgabe faellt.
+pub fn bind_extra_engine(engine: ExtraEngine) -> ExtraEngineBinding {
+    BOUND_ENGINE.with(|bound| *bound.borrow_mut() = Some(engine));
+    ExtraEngineBinding {
+        _not_send: std::marker::PhantomData,
+    }
+}
+
+impl Drop for ExtraEngineBinding {
+    fn drop(&mut self) {
+        // Try-Variante: waehrend des Thread-Endes kann der Schluessel schon weg sein.
+        let _ = BOUND_ENGINE.try_with(|bound| {
+            bound.borrow_mut().take();
+        });
+    }
+}
+
+/// Hat dieser Thread eine eigene Engine gebunden?
+pub fn extra_engine_bound() -> bool {
+    BOUND_ENGINE.with(|bound| bound.borrow().is_some())
+}
+
+fn take_bound_engine() -> Option<LoadedEngine> {
+    BOUND_ENGINE.with(|bound| bound.borrow_mut().as_mut().and_then(|e| e.engine.take()))
+}
+
+fn put_back_bound_engine(engine: LoadedEngine) {
+    BOUND_ENGINE.with(|bound| {
+        if let Some(extra) = bound.borrow_mut().as_mut() {
+            extra.engine = Some(engine);
+        }
+    });
+}
+
+fn bound_model_id() -> Option<String> {
+    BOUND_ENGINE.with(|bound| bound.borrow().as_ref().map(|e| e.model_id.clone()))
 }
 
 /// RAII guard that clears the `is_loading` flag and notifies waiters on drop.
@@ -640,6 +707,62 @@ impl TranscriptionManager {
             );
         };
 
+        let loaded_engine = self.build_engine(
+            model_id,
+            &model_info,
+            &model_path,
+            device_index,
+            None,
+            &emit_loading_failed,
+        )?;
+
+        // Update the current engine and model ID
+        {
+            let mut engine = self.lock_engine();
+            *engine = Some(loaded_engine);
+        }
+        {
+            let mut current_model = self.current_model_id.lock().unwrap();
+            *current_model = Some(model_id.to_string());
+        }
+
+        // Reset idle timer so the watcher doesn't immediately unload a just-loaded model
+        self.touch_activity();
+
+        // Emit loading completed event
+        let _ = self.app_handle.emit(
+            "model-state-changed",
+            ModelStateEvent {
+                event_type: "loading_completed".to_string(),
+                model_id: Some(model_id.to_string()),
+                model_name: Some(model_info.name.clone()),
+                error: None,
+            },
+        );
+
+        let load_duration = load_start.elapsed();
+        debug!(
+            "Successfully loaded transcription model: {} (took {}ms)",
+            model_id,
+            load_duration.as_millis()
+        );
+        Ok(())
+    }
+
+    /// Builds the native engine for `model_id`: no registry events, no swap of
+    /// the shared engine. Shared by the normal model load and by the extra
+    /// engines of the meeting import queue (U7). `n_threads` (transcribe-cpp
+    /// only) caps the CPU threads of the session; `None` keeps the library
+    /// default. `emit_loading_failed` reports a failure before it is returned.
+    fn build_engine(
+        &self,
+        model_id: &str,
+        model_info: &crate::managers::model::ModelInfo,
+        model_path: &std::path::Path,
+        device_index: Option<usize>,
+        n_threads: Option<i32>,
+        emit_loading_failed: &dyn Fn(&str),
+    ) -> Result<LoadedEngine> {
         let loaded_engine = match model_info.engine_type {
             EngineType::TranscribeCpp => {
                 // The whisper backend is chosen at load time (transcribe-cpp has
@@ -647,23 +770,26 @@ impl TranscriptionManager {
                 // --device-index flag) hard-select that registered device;
                 // otherwise re-read the persisted accelerator preference (so an
                 // accelerator change marked for reload takes effect here).
-                let (backend, gpu_device) = match device_index {
+                let (backend, device) = match device_index {
                     Some(index) => resolve_device_index(index).inspect_err(|e| {
                         emit_loading_failed(&e.to_string());
                     })?,
                     None => {
                         let settings = get_settings(&self.app_handle);
                         let accelerator = settings.transcribe_accelerator;
-                        (
-                            select_transcribe_backend(accelerator),
-                            resolve_gpu_device(accelerator, settings.transcribe_gpu_device),
-                        )
+                        let device =
+                            resolve_gpu_device(accelerator, settings.transcribe_gpu_device);
+                        // transcribe-cpp 0.2.4: an explicit device must match a
+                        // non-Auto backend, so take the backend from the device.
+                        let backend = device
+                            .as_ref()
+                            .and_then(|d| backend_for_device_kind(&d.kind))
+                            .unwrap_or_else(|| select_transcribe_backend(accelerator));
+                        (backend, device)
                     }
                 };
-                let model_options = ModelOptions {
-                    backend,
-                    gpu_device,
-                };
+                let gpu_device = device.as_ref().and_then(|d| d.index);
+                let model_options = ModelOptions { backend, device };
                 let model = Model::load_with(&model_path, &model_options).map_err(|e| {
                     let error_msg = format!("Failed to load whisper model {}: {}", model_id, e);
                     emit_loading_failed(&error_msg);
@@ -672,7 +798,14 @@ impl TranscriptionManager {
                 // The bound backend may differ from the request (e.g. CPU
                 // fallback under Auto); log what actually loaded.
                 let bound_backend = model.backend();
-                let session = model.session().map_err(|e| {
+                let session = match n_threads {
+                    Some(n) => model.session_with(&SessionOptions {
+                        n_threads: n,
+                        ..Default::default()
+                    }),
+                    None => model.session(),
+                }
+                .map_err(|e| {
                     let error_msg = format!(
                         "Failed to create session for whisper model {}: {}",
                         model_id, e
@@ -693,7 +826,7 @@ impl TranscriptionManager {
                     caps.languages.clone(),
                 );
                 info!(
-                    "Loaded whisper model '{}' (requested {:?}, gpu_device {}, bound backend '{}', \
+                    "Loaded whisper model '{}' (requested {:?}, gpu_device {:?}, bound backend '{}', \
                      supports_streaming={}, supports_translate={}, supports_language_detect={})",
                     model_id,
                     backend,
@@ -775,48 +908,125 @@ impl TranscriptionManager {
                 LoadedEngine::Cohere(engine)
             }
         };
-
-        // Update the current engine and model ID
-        {
-            let mut engine = self.lock_engine();
-            *engine = Some(loaded_engine);
-        }
-        {
-            let mut current_model = self.current_model_id.lock().unwrap();
-            *current_model = Some(model_id.to_string());
-        }
-
-        // Reset idle timer so the watcher doesn't immediately unload a just-loaded model
-        self.touch_activity();
-
-        // Emit loading completed event
-        let _ = self.app_handle.emit(
-            "model-state-changed",
-            ModelStateEvent {
-                event_type: "loading_completed".to_string(),
-                model_id: Some(model_id.to_string()),
-                model_name: Some(model_info.name.clone()),
-                error: None,
-            },
-        );
-
-        let load_duration = load_start.elapsed();
-        debug!(
-            "Successfully loaded transcription model: {} (took {}ms)",
-            model_id,
-            load_duration.as_millis()
-        );
-        Ok(())
+        Ok(loaded_engine)
     }
 
-    /// The model meetings should transcribe with: the dedicated
-    /// `meeting_model` when set, otherwise the dictation model. Pure so the
-    /// fallback rule is testable (empty/whitespace counts as "not set").
-    pub fn meeting_model_target(settings: &AppSettings) -> String {
-        match settings.meeting_model.as_deref().map(str::trim) {
-            Some(id) if !id.is_empty() => id.to_string(),
-            _ => settings.selected_model.clone(),
+    /// U7: laedt eine EIGENE Engine fuer `model_id` (weiterer gleichzeitiger
+    /// Import). Beruehrt weder die gemeinsame Engine noch die Modell-Ereignisse
+    /// der Oberflaeche; `n_threads` begrenzt die CPU-Threads der Sitzung
+    /// (transcribe-cpp). Blockiert bis zum Ende des Ladens, der Aufrufer prueft
+    /// vorher das Speicher-Tor.
+    pub fn load_extra_engine(&self, model_id: &str, n_threads: i32) -> Result<ExtraEngine> {
+        let model_info = self
+            .model_manager
+            .get_model_info(model_id)
+            .ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;
+        if !model_info.is_downloaded {
+            return Err(anyhow::anyhow!("Model not downloaded"));
         }
+        let model_path = self.model_manager.get_model_path(model_id)?;
+        let started = std::time::Instant::now();
+        let engine = self.build_engine(
+            model_id,
+            &model_info,
+            &model_path,
+            None,
+            Some(n_threads.max(1)),
+            &|_| {},
+        )?;
+        info!(
+            "meetings: extra engine '{}' loaded in {} ms ({} CPU threads)",
+            model_id,
+            started.elapsed().as_millis(),
+            n_threads
+        );
+        Ok(ExtraEngine {
+            engine: Some(engine),
+            model_id: model_id.to_string(),
+        })
+    }
+
+    /// U7: Groesse (MB, Katalog) des Besprechungsmodells und ob es auf der GPU
+    /// laufen kann (transcribe-cpp): Eingabe fuer das Speicher-Tor der Warteschlange.
+    pub fn meeting_model_footprint(&self, settings: &AppSettings) -> (u64, bool) {
+        let id = self.meeting_model_target(settings);
+        let info = self.model_manager.get_model_info(&id);
+        let gpu_model = info
+            .as_ref()
+            .is_some_and(|i| matches!(i.engine_type, EngineType::TranscribeCpp));
+        (info.map(|i| i.size_mb).unwrap_or(0), gpu_model)
+    }
+
+    /// The model meetings should transcribe with, see [`choose_meeting_model`].
+    /// Asks the registry whether the default GGUF is on disk; logs which model
+    /// was picked and why (a fallback is only a hint, never an error).
+    pub fn meeting_model_choice(&self, settings: &AppSettings) -> MeetingModelChoice {
+        // G5: der laufende Import hat sein Modell nach der Sprache gewaehlt; jede erneute
+        // Anforderung in diesem Thread (Fehlversuch, nach einer Pause) bleibt dabei.
+        if let Some(id) = LanguageOverride::current_model() {
+            return MeetingModelChoice::Explicit(id);
+        }
+        let default_installed = self
+            .model_manager
+            .get_model_info(MEETING_DEFAULT_MODEL_ID)
+            .is_some_and(|m| m.is_downloaded);
+        let choice = choose_meeting_model(settings, default_installed);
+        match &choice {
+            MeetingModelChoice::Explicit(id) => {
+                debug!("meetings: Modell '{id}' (Nutzerwahl)");
+            }
+            MeetingModelChoice::Default(id) => {
+                debug!("meetings: Standardmodell '{id}'");
+            }
+            MeetingModelChoice::Fallback(id) => {
+                info!(
+                    "meetings: Standardmodell '{MEETING_DEFAULT_MODEL_ID}' nicht installiert,                      Rueckfall auf '{id}' (Hinweis: unter Modelle herunterladen, dann rechnet                      die Mitschrift mit geringerer Fehlerrate)"
+                );
+            }
+        }
+        choice
+    }
+
+    /// Convenience over [`Self::meeting_model_choice`] for the callers that only
+    /// need the id.
+    pub fn meeting_model_target(&self, settings: &AppSettings) -> String {
+        self.meeting_model_choice(settings).id().to_string()
+    }
+
+    /// Kicks off loading the meeting model. When the automatic default fails to
+    /// load (broken file, no RAM), the dictation model is loaded instead so a
+    /// meeting is never left without a transcriber.
+    pub fn initiate_meeting_model_load(&self, settings: &AppSettings) {
+        let choice = self.meeting_model_choice(settings);
+        let fallback = choice.load_fallback(settings);
+        // P1i: nur das Live-Modell der Besprechung geht durch das RAM-Tor; das
+        // Wiederherstellen des Diktatmodells und die Neu-Transkription nicht.
+        self.initiate_model_load_inner(choice.id(), fallback.as_deref(), true);
+    }
+
+    /// Groesse eines Modells in MB laut Katalog (0, wenn unbekannt).
+    fn model_size_mb(&self, model_id: &str) -> u64 {
+        self.model_manager
+            .get_model_info(model_id)
+            .map(|info| info.size_mb)
+            .unwrap_or(0)
+    }
+
+    /// RAM-Tor fuers Live-Modell (`plan_live_load`) mit den Zahlen dieses Rechners.
+    fn live_load_plan(&self, target: &str, fallback: Option<&str>) -> LiveLoadPlan {
+        let reclaimable = self
+            .get_current_model()
+            .filter(|current| current != target)
+            .map(|current| self.model_size_mb(&current))
+            .unwrap_or(0);
+        plan_live_load(
+            self.model_size_mb(target),
+            fallback
+                .filter(|f| *f != target)
+                .map(|f| (f, self.model_size_mb(f))),
+            crate::process_guard::available_ram_mb(),
+            reclaimable,
+        )
     }
 
     /// Like `initiate_model_load`, but for an explicit target: swaps the
@@ -828,6 +1038,37 @@ impl TranscriptionManager {
     /// starts would be transcribed by the meeting model — live meetings
     /// themselves block dictation via the recorder guard.
     pub fn initiate_model_load_target(&self, model_id: &str) {
+        self.initiate_model_load_target_with_fallback(model_id, None);
+    }
+
+    /// G5: wartet, bis ein angestossenes Laden beendet ist (hoechstens `timeout`), und
+    /// sagt, ob `model_id` danach das geladene Modell ist. `false` heisst: das Laden ist
+    /// gescheitert oder dauert zu lang; der Aufrufer bleibt dann beim bisherigen Modell.
+    pub fn wait_until_loaded(&self, model_id: &str, timeout: Duration) -> bool {
+        let guard = self.is_loading.lock().unwrap_or_else(|e| e.into_inner());
+        let (guard, _) = self
+            .loading_condvar
+            .wait_timeout_while(guard, timeout, |loading| *loading)
+            .unwrap_or_else(|e| e.into_inner());
+        drop(guard);
+        self.get_current_model().as_deref() == Some(model_id)
+    }
+
+    /// [`Self::initiate_model_load_target`] plus an optional second model that
+    /// is loaded when the first fails to load.
+    pub fn initiate_model_load_target_with_fallback(&self, model_id: &str, fallback: Option<&str>) {
+        self.initiate_model_load_inner(model_id, fallback, false);
+    }
+
+    /// Kern von `initiate_model_load_target_with_fallback`; `ram_gate` schaltet
+    /// das RAM-Tor vor dem Laden ein (Live-Modell der Besprechung, P1i).
+    fn initiate_model_load_inner(&self, model_id: &str, fallback: Option<&str>, ram_gate: bool) {
+        // U7: ein Import mit eigener Engine laedt, tauscht und stellt nichts an
+        // der gemeinsamen Engine um (sie gehoert Diktat, Aufnahme und dem ersten
+        // Import der Warteschlange).
+        if extra_engine_bound() {
+            return;
+        }
         let mut is_loading = self.is_loading.lock().unwrap();
         if *is_loading {
             return;
@@ -847,14 +1088,64 @@ impl TranscriptionManager {
         *is_loading = true;
         let self_clone = self.clone();
         let target = model_id.to_string();
+        let fallback = fallback.map(str::to_string);
         thread::spawn(move || {
             if reload_pending {
                 self_clone
                     .reload_model_on_next_use
                     .store(false, Ordering::Release);
             }
-            if let Err(e) = self_clone.load_model(&target) {
-                error!("Failed to load model: {}", e);
+            let (target, fallback, skip_if_loaded) = if ram_gate {
+                match self_clone.live_load_plan(&target, fallback.as_deref()) {
+                    LiveLoadPlan::Target => (Some(target), fallback, false),
+                    LiveLoadPlan::Fallback(id) => {
+                        warn!(
+                            "meetings: Live-Modell '{target}' passt nicht in den freien Arbeitsspeicher, Rueckfall auf '{id}'"
+                        );
+                        (Some(id), None, true)
+                    }
+                    LiveLoadPlan::Refuse { need_mb, free_mb } => {
+                        // Nichts laden: ein geladenes Modell bleibt, die Aufnahme
+                        // laeuft damit weiter (oder meldet, dass keins geladen ist).
+                        let message = crate::process_guard::check_ram_for_start(
+                            need_mb.saturating_sub(crate::process_guard::RAM_RESERVE_MB),
+                        )
+                            .err()
+                            .unwrap_or_else(|| {
+                                format!("Zu wenig freier Arbeitsspeicher: {free_mb} MB frei, gebraucht {need_mb} MB")
+                            });
+                        warn!("meetings: Live-Modell '{target}' nicht geladen, RAM-Tor: {message}");
+                        let _ = self_clone.app_handle.emit(
+                            "model-state-changed",
+                            ModelStateEvent {
+                                event_type: "loading_failed".to_string(),
+                                model_id: Some(target),
+                                model_name: None,
+                                error: Some(message),
+                            },
+                        );
+                        (None, None, false)
+                    }
+                }
+            } else {
+                (Some(target), fallback, false)
+            };
+            if let Some(target) = target {
+                // Der Rueckfall des Tors kann das schon geladene Modell sein.
+                let already = skip_if_loaded
+                    && self_clone.is_model_loaded()
+                    && self_clone.get_current_model().as_deref() == Some(target.as_str());
+                if !already {
+                    if let Err(e) = self_clone.load_model(&target) {
+                        error!("Failed to load model: {}", e);
+                        if let Some(fallback) = fallback.filter(|f| *f != target) {
+                            warn!("meetings: Rueckfall auf Modell '{fallback}'");
+                            if let Err(e) = self_clone.load_model(&fallback) {
+                                error!("Failed to load fallback model: {}", e);
+                            }
+                        }
+                    }
+                }
             }
             let mut is_loading = self_clone.is_loading.lock().unwrap();
             *is_loading = false;
@@ -1459,6 +1750,27 @@ impl TranscriptionManager {
         self.stream_injected_len.load(Ordering::Acquire) > 0
     }
 
+    /// Id of the live-injection run that is active now. The stop path reads
+    /// it synchronously, because a new dictation may start (and replace the
+    /// id) while the previous one is still being finalised.
+    pub fn injection_run_id(&self) -> u64 {
+        self.active_injection_run_id.load(Ordering::Acquire)
+    }
+
+    /// The text the live injection kept out of the target window because the
+    /// focus moved, the target is elevated or a paste failed (issue #9).
+    /// Waits for the injection worker to drain its queue first, so call it
+    /// after the stream was finalised.
+    pub(crate) async fn take_held_stream_text(&self, run_id: u64) -> HeldOutcome {
+        if run_id == 0 {
+            return HeldOutcome::Nothing;
+        }
+        let injection = self.injection.clone();
+        tauri::async_runtime::spawn_blocking(move || injection.take_held(run_id))
+            .await
+            .unwrap_or(HeldOutcome::Lost)
+    }
+
     /// Reset the injection cursor at the start of a run.
     pub fn reset_stream_injection(&self) {
         self.stream_injected_len.store(0, Ordering::Release);
@@ -1931,6 +2243,17 @@ impl TranscriptionManager {
     // match) so the dictation path stays byte-identical and M3-stable; the
     // duplication is the price of that stability.
     pub fn transcribe_segments(&self, audio: Vec<f32>) -> Result<Vec<TimedSegment>> {
+        self.transcribe_segments_detecting(audio).map(|(segments, _)| segments)
+    }
+
+    /// G5: wie [`Self::transcribe_segments`], dazu die Sprache, die das Modell selbst
+    /// erkannt hat (nur transcribe-cpp-Modelle mit `lang_detect`, sonst `None`).
+    /// Die Sprachabsicht ist `meeting_language`, ersetzt durch eine Vorgabe dieses
+    /// Threads ([`LanguageOverride`]); die Einstellung wird nie geschrieben.
+    pub fn transcribe_segments_detecting(
+        &self,
+        audio: Vec<f32>,
+    ) -> Result<(Vec<TimedSegment>, Option<String>)> {
         // Update last activity timestamp
         self.touch_activity();
 
@@ -1940,13 +2263,16 @@ impl TranscriptionManager {
         if audio.is_empty() {
             debug!("Empty audio vector");
             self.maybe_unload_immediately("empty audio");
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
 
         let audio_ms = (audio_len as u64 * 1000) / 16_000;
 
+        // U7: ein Import mit eigener Engine (Warteschlange) rechnet mit ihr.
+        let bound = extra_engine_bound();
+
         // Check if model is loaded, if not try to load it
-        {
+        if !bound {
             // If the model is loading, wait for it to complete.
             let mut is_loading = self.is_loading.lock().unwrap();
             while *is_loading {
@@ -1960,12 +2286,16 @@ impl TranscriptionManager {
         }
 
         let settings = get_settings(&self.app_handle);
-        let active_model = self
-            .get_current_model()
-            .unwrap_or_else(|| settings.selected_model.clone());
+        let active_model = if bound {
+            bound_model_id().unwrap_or_else(|| settings.selected_model.clone())
+        } else {
+            self.get_current_model()
+                .unwrap_or_else(|| settings.selected_model.clone())
+        };
         // Meetings use their own language intent and never translate — see
         // meeting_transcription_prefs() for the ruling behind this.
         let (meeting_language, meeting_translate) = meeting_transcription_prefs(&settings);
+        let meeting_language = LanguageOverride::current().unwrap_or(meeting_language);
         let validated_language = effective_language_for_intent(
             &meeting_language,
             self.model_manager.as_ref(),
@@ -1985,22 +2315,33 @@ impl TranscriptionManager {
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
         // which would make the app hang indefinitely on subsequent operations.
         let result = {
-            let mut engine_guard = self.lock_engine();
-
             // Take the engine out so we own it during transcription.
             // If the engine panics, we simply don't put it back (effectively unloading it)
             // instead of poisoning the mutex.
-            let mut engine = match engine_guard.take() {
-                Some(e) => e,
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "Model failed to load after auto-load attempt. Please check your model settings."
-                    ));
+            let mut engine = if bound {
+                // U7: die eigene Engine dieses Threads (kein Mutex, nur ein Nutzer).
+                match take_bound_engine() {
+                    Some(e) => e,
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "The extra transcription engine is gone (an earlier run crashed it)."
+                        ));
+                    }
                 }
+            } else {
+                let mut engine_guard = self.lock_engine();
+                let engine = match engine_guard.take() {
+                    Some(e) => e,
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "Model failed to load after auto-load attempt. Please check your model settings."
+                        ));
+                    }
+                };
+                // Release the lock before transcribing — no mutex held during the engine call
+                drop(engine_guard);
+                engine
             };
-
-            // Release the lock before transcribing — no mutex held during the engine call
-            drop(engine_guard);
 
             // Probe live transcribe-cpp capabilities once, same as transcribe() above —
             // language/translate/custom-word wiring below depends on them.
@@ -2024,7 +2365,7 @@ impl TranscriptionManager {
             }
 
             let transcribe_result =
-                catch_unwind(AssertUnwindSafe(|| -> Result<Vec<TimedSegment>> {
+                catch_unwind(AssertUnwindSafe(|| -> Result<(Vec<TimedSegment>, Option<String>)> {
                     match &mut engine {
                         LoadedEngine::TranscribeCpp(session) => {
                             // Custom words become the initial prompt ONLY for models
@@ -2055,7 +2396,10 @@ impl TranscriptionManager {
 
                             session
                                 .run(&audio, &run_options)
-                                .map(|t| segments_from_result(&t.text, None, audio_ms))
+                                .map(|t| {
+                                    let detected = t.language.clone();
+                                    (segments_from_transcript(&t, audio_ms), detected)
+                                })
                                 .map_err(|e| {
                                     anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
                                 })
@@ -2067,18 +2411,18 @@ impl TranscriptionManager {
                             };
                             parakeet_engine
                                 .transcribe_with(&audio, &params)
-                                .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                                 .map_err(|e| {
                                     anyhow::anyhow!("Parakeet transcription failed: {}", e)
                                 })
                         }
                         LoadedEngine::Moonshine(moonshine_engine) => moonshine_engine
                             .transcribe(&audio, &TranscribeOptions::default())
-                            .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                            .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                             .map_err(|e| anyhow::anyhow!("Moonshine transcription failed: {}", e)),
                         LoadedEngine::MoonshineStreaming(streaming_engine) => streaming_engine
                             .transcribe(&audio, &TranscribeOptions::default())
-                            .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                            .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                             .map_err(|e| {
                                 anyhow::anyhow!("Moonshine streaming transcription failed: {}", e)
                             }),
@@ -2097,14 +2441,14 @@ impl TranscriptionManager {
                             };
                             sense_voice_engine
                                 .transcribe_with(&audio, &params)
-                                .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                                 .map_err(|e| {
                                     anyhow::anyhow!("SenseVoice transcription failed: {}", e)
                                 })
                         }
                         LoadedEngine::GigaAM(gigaam_engine) => gigaam_engine
                             .transcribe(&audio, &TranscribeOptions::default())
-                            .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                            .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                             .map_err(|e| anyhow::anyhow!("GigaAM transcription failed: {}", e)),
                         LoadedEngine::Canary(canary_engine) => {
                             let lang = if validated_language == "auto" {
@@ -2119,7 +2463,7 @@ impl TranscriptionManager {
                             };
                             canary_engine
                                 .transcribe(&audio, &options)
-                                .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                                 .map_err(|e| anyhow::anyhow!("Canary transcription failed: {}", e))
                         }
                         LoadedEngine::Cohere(cohere_engine) => {
@@ -2134,7 +2478,7 @@ impl TranscriptionManager {
                             };
                             cohere_engine
                                 .transcribe(&audio, &options)
-                                .map(|r| segments_from_result(&r.text, r.segments, audio_ms))
+                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
                                 .map_err(|e| anyhow::anyhow!("Cohere transcription failed: {}", e))
                         }
                     }
@@ -2144,13 +2488,29 @@ impl TranscriptionManager {
                 Ok(inner_result) => {
                     // Success or normal error: return the engine unless a model
                     // switch/unload invalidated it while it was in use.
-                    self.return_engine(engine, &active_model);
+                    if bound {
+                        put_back_bound_engine(engine);
+                    } else {
+                        self.return_engine(engine, &active_model);
+                    }
                     inner_result?
                 }
                 Err(panic_payload) => {
                     // Engine panicked — do NOT put it back (it's in an unknown state).
                     // The engine is dropped here, effectively unloading it.
                     let panic_msg = panic_payload_message(panic_payload.as_ref());
+                    if bound {
+                        // U7: nur die eigene Engine ist weg; die gemeinsame (und die
+                        // Anzeige "Modell entladen") bleibt unberuehrt.
+                        error!(
+                            "Extra transcription engine panicked: {}. It has been dropped.",
+                            panic_msg
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Extra transcription engine panicked: {}.",
+                            panic_msg
+                        ));
+                    }
                     error!(
                         "Transcription engine panicked: {}. Model has been unloaded.",
                         panic_msg
@@ -2183,9 +2543,30 @@ impl TranscriptionManager {
             }
         };
 
-        self.maybe_unload_immediately("transcription");
+        // U7: die eigene Engine bleibt bis zum Ende des Imports; "sofort
+        // entladen" gilt der gemeinsamen Engine.
+        if !bound {
+            self.maybe_unload_immediately("transcription");
+        }
 
-        Ok(result)
+        // G7 (Issue #70): Der Greedy-RNN-T-Decoder (Nemotron, Parakeet) bleibt an
+        // unsicheren Stellen auf einem Frame haengen und gibt dasselbe Wort bis
+        // zur festen Obergrenze von 10 Symbolen wiederholt aus. Hier, an der
+        // einen Stelle, ueber die jede Besprechungs-Transkription laeuft (neue
+        // Aufnahme, Neu-Transkription, Import, YouTube), werden solche Laeufe
+        // zusammengefasst. Nur Zahlen ins Log, nie Text.
+        // G5: `result` traegt auch die vom Modell erkannte Sprache; bereinigt werden nur die Segmente.
+        let (segments, detected_language) = result;
+        let (segments, loops) =
+            crate::managers::meetings::hallucination::collapse_loops_fail_open(segments);
+        if loops.runs > 0 {
+            info!(
+                "meetings: {} Wiederholungsschleife(n) im Block zusammengefasst, {} Wort/Woerter entfernt",
+                loops.runs, loops.removed
+            );
+        }
+
+        Ok((segments, detected_language))
     }
 }
 
@@ -2295,6 +2676,150 @@ impl StreamPerf {
     }
 }
 
+thread_local! {
+    /// G5: Sprachvorgabe und Modellwahl fuer die Besprechungs-Transkription DIESES Threads.
+    /// Ein Import (oder eine Neu-Transkription) setzt sie fuer die Dauer seines Laufs;
+    /// mehrere gleichzeitige Importe (Warteschlange) haben je ihren Thread und damit je
+    /// ihre Vorgabe.
+    static MEETING_RUN_OVERRIDE: std::cell::RefCell<(Option<String>, Option<String>)> =
+        const { std::cell::RefCell::new((None, None)) };
+}
+
+/// G5: Sprachabsicht und Modell der Besprechungs-Transkription fuer den aktuellen Thread.
+/// `language`: `Some("en")` = Englisch, `Some("auto")` = erkennen, `None` = die Einstellung
+/// `meeting_language` gilt. `model`: `Some(id)` = dieses Modell gilt als Nutzerwahl, auch
+/// wenn der Lauf es nach einem Fehler oder einer Pause neu anfordert (sonst kaeme das
+/// Standardmodell zurueck); `None` = die Einstellungen gelten. Beim Verlassen kommen die
+/// vorherigen Werte zurueck.
+pub struct LanguageOverride {
+    previous: (Option<String>, Option<String>),
+}
+
+impl LanguageOverride {
+    pub fn set(language: Option<String>, model: Option<String>) -> Self {
+        let previous = MEETING_RUN_OVERRIDE.with(|cell| cell.replace((language, model)));
+        Self { previous }
+    }
+
+    /// Die Sprachvorgabe des aktuellen Threads, falls es eine gibt.
+    pub fn current() -> Option<String> {
+        MEETING_RUN_OVERRIDE.with(|cell| cell.borrow().0.clone())
+    }
+
+    /// Die Modellvorgabe des aktuellen Threads, falls es eine gibt.
+    pub fn current_model() -> Option<String> {
+        MEETING_RUN_OVERRIDE.with(|cell| cell.borrow().1.clone())
+    }
+}
+
+impl Drop for LanguageOverride {
+    fn drop(&mut self) {
+        let previous = std::mem::take(&mut self.previous);
+        MEETING_RUN_OVERRIDE.with(|cell| cell.replace(previous));
+    }
+}
+
+/// M2-P2g (Befund B1): Standard-Live-Modell fuer Besprechungen. Parakeet TDT
+/// 0.6B v3 als GGUF Q8 ueber transcribe-cpp: gleiches Modell wie die ONNX-Fassung,
+/// aber 5,55 % statt 7,86 % WER auf FLEURS-de (docs/m2-evidence/bench.md) und mit
+/// Wortzeiten. Katalog-ID = `"{repo_id}/{datei}"`.
+pub const MEETING_DEFAULT_MODEL_ID: &str =
+    "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf";
+
+/// Welches Modell eine Besprechung nimmt und warum.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MeetingModelChoice {
+    /// Der Nutzer hat in den Einstellungen ein Modell gewaehlt.
+    Explicit(String),
+    /// Keine Wahl, und das Standard-GGUF ist installiert.
+    Default(String),
+    /// Keine Wahl, Standard-GGUF fehlt: das Diktatmodell wie bisher.
+    Fallback(String),
+}
+
+impl MeetingModelChoice {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Explicit(id) | Self::Default(id) | Self::Fallback(id) => id,
+        }
+    }
+
+    /// Das Modell, das zu laden ist, wenn `id()` sich nicht laden laesst. Nur der
+    /// selbst gewaehlte Standard faellt zurueck; eine ausdrueckliche Wahl wird
+    /// nie heimlich ersetzt.
+    pub fn load_fallback(&self, settings: &AppSettings) -> Option<String> {
+        match self {
+            Self::Default(_) => Some(settings.selected_model.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// Was vor dem Laden des Live-Modells einer Besprechung passiert (P1i).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LiveLoadPlan {
+    /// Das gewaehlte Modell laden.
+    Target,
+    /// Das gewaehlte Modell passt nicht in den freien RAM, der Rueckfall schon.
+    Fallback(String),
+    /// Weder das Modell noch ein Rueckfall passen: nichts laden. Ein schon
+    /// geladenes Modell bleibt, wie es ist (die Aufnahme laeuft damit weiter).
+    Refuse { need_mb: u64, free_mb: u64 },
+}
+
+/// RAM-Tor fuers Live-Modell (wie fuer das End-Modell und die anderen
+/// Modellstarts: Bedarf = `final_pass::ram_need_mb`, dazu die Systemreserve).
+/// `free_ram_mb == 0` heisst nicht messbar und blockiert nie.
+/// `reclaimable_mb`: Speicher des Modells, das `load_model` vor dem neuen
+/// freigibt. `fallback`: (Modell-ID, Groesse in MB) des Ersatzes.
+pub fn plan_live_load(
+    target_size_mb: u64,
+    fallback: Option<(&str, u64)>,
+    free_ram_mb: u64,
+    reclaimable_mb: u64,
+) -> LiveLoadPlan {
+    if free_ram_mb == 0 {
+        return LiveLoadPlan::Target;
+    }
+    let available = free_ram_mb.saturating_add(reclaimable_mb);
+    let need = |size_mb: u64| {
+        crate::managers::meetings::final_pass::ram_need_mb(size_mb)
+            + crate::process_guard::RAM_RESERVE_MB
+    };
+    if available >= need(target_size_mb) {
+        return LiveLoadPlan::Target;
+    }
+    if let Some((id, size_mb)) = fallback {
+        if available >= need(size_mb) {
+            return LiveLoadPlan::Fallback(id.to_string());
+        }
+    }
+    LiveLoadPlan::Refuse {
+        need_mb: need(target_size_mb),
+        free_mb: free_ram_mb,
+    }
+}
+
+/// Reine Regel fuer das Besprechungsmodell: die Nutzerwahl (`meeting_model`,
+/// leer/Leerraum = nicht gesetzt) gewinnt immer; ohne Wahl gilt das Standard-GGUF,
+/// wenn installiert, sonst das Diktatmodell (Verhalten vor P2g). Diktat selbst
+/// bleibt unberuehrt.
+pub fn choose_meeting_model(settings: &AppSettings, default_installed: bool) -> MeetingModelChoice {
+    match settings.meeting_model.as_deref().map(str::trim) {
+        Some(id) if !id.is_empty() => MeetingModelChoice::Explicit(id.to_string()),
+        _ if default_installed => MeetingModelChoice::Default(MEETING_DEFAULT_MODEL_ID.to_string()),
+        _ => MeetingModelChoice::Fallback(settings.selected_model.clone()),
+    }
+}
+
+/// [`choose_meeting_model`] nur als ID.
+#[cfg(test)]
+fn meeting_model_for(settings: &AppSettings, default_installed: bool) -> String {
+    choose_meeting_model(settings, default_installed)
+        .id()
+        .to_string()
+}
+
 /// A transcript span with millisecond timestamps. Produced by
 /// `transcribe_segments()` (see docs/superpowers/plans/2026-08-19-m8-meetings-fundament.md).
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -2302,6 +2827,59 @@ pub struct TimedSegment {
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
+    /// M2-P2d: word timings (relative to the clip like `start_ms`), when the
+    /// engine produced them (transcribe-cpp word rows). `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<WordTime>>,
+}
+
+/// M2-P2d: one word with its time span in milliseconds. In a
+/// `TimedSegment` relative to the clip, in a stored meeting segment on the
+/// channel timeline (basis for M3's word-to-speaker assignment).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct WordTime {
+    pub text: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+}
+
+/// M2-P2d: the word rows of a transcribe-cpp result as clip-relative
+/// `WordTime`s. Blank words are dropped, times are clamped into the clip
+/// (engines occasionally overshoot the end by a frame), and `None` means
+/// "no word timing" (the engine produced none), never an empty list.
+pub fn words_from_rows(rows: &[(String, i64, i64)], audio_ms: u64) -> Option<Vec<WordTime>> {
+    let clamp = |t: i64| (t.max(0) as u64).min(audio_ms);
+    let words: Vec<WordTime> = rows
+        .iter()
+        .filter_map(|(text, t0, t1)| {
+            let text = text.trim();
+            if text.is_empty() {
+                return None;
+            }
+            let start_ms = clamp(*t0);
+            Some(WordTime {
+                text: text.to_string(),
+                start_ms,
+                end_ms: clamp(*t1).max(start_ms),
+            })
+        })
+        .collect();
+    (!words.is_empty()).then_some(words)
+}
+
+/// transcribe-cpp result -> segments: the text as one clip-spanning segment
+/// (unchanged meeting behaviour), plus the engine's word rows when present.
+fn segments_from_transcript(t: &transcribe_cpp::Transcript, audio_ms: u64) -> Vec<TimedSegment> {
+    let mut out = segments_from_result(&t.text, None, audio_ms);
+    if let Some(first) = out.first_mut() {
+        let rows: Vec<(String, i64, i64)> = t
+            .words
+            .iter()
+            .map(|w| (w.text.clone(), w.t0_ms, w.t1_ms))
+            .collect();
+        first.words = words_from_rows(&rows, audio_ms);
+    }
+    out
 }
 
 /// Pure conversion from an engine's raw transcription output to
@@ -2325,6 +2903,7 @@ pub fn segments_from_result(
                     start_ms: (s.start * 1000.0).round() as u64,
                     end_ms: (s.end * 1000.0).round() as u64,
                     text,
+                    words: None,
                 })
             })
             .collect();
@@ -2341,6 +2920,7 @@ pub fn segments_from_result(
         start_ms: 0,
         end_ms: audio_ms,
         text: text.to_string(),
+        words: None,
     }]
 }
 
@@ -2438,6 +3018,12 @@ fn post_process_transcription_text(
     custom_words_already_prompted: bool,
 ) -> String {
     fail_open_text_transform(raw, |raw| {
+        // G7 (Issue #70): Decoder-Schleifen ("if if if if if", "s s s sort") vor
+        // allem anderen zusammenfassen; die eigentliche Regel samt Gegenbeispielen
+        // steht in `meetings::hallucination`. Das Live-Tippen waehrend des
+        // Sprechens bleibt unberuehrt: bereits getippter Text laesst sich nicht
+        // zurueckholen, erst der Endtext wird bereinigt.
+        let raw = crate::managers::meetings::hallucination::collapse_loops(&raw).0;
         let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
             apply_custom_words(
                 &raw,
@@ -2574,35 +3160,43 @@ pub fn describe_compute_devices() -> Vec<String> {
         .collect()
 }
 
-/// Resolve a `--list-devices` registry index to the (backend, gpu_device) pair
+/// The transcribe-cpp backend that hosts a device of this `kind`, or `None`
+/// for kinds that cannot host a model.
+fn backend_for_device_kind(kind: &str) -> Option<Backend> {
+    match kind {
+        "cpu" => Some(Backend::Cpu),
+        "metal" => Some(Backend::Metal),
+        "cuda" => Some(Backend::Cuda),
+        "vulkan" => Some(Backend::Vulkan),
+        _ => None,
+    }
+}
+
+/// Resolve a `--list-devices` registry index to the (backend, device) pair
 /// for a transcribe-cpp model load (the `--device-index` flag). The
 /// backend is set explicitly from the device's kind, so there's no "index 0 =
 /// auto" ambiguity. Errors if the index isn't a registered, loadable device.
-fn resolve_device_index(index: usize) -> Result<(Backend, i32)> {
+fn resolve_device_index(index: usize) -> Result<(Backend, Option<transcribe_cpp::Device>)> {
     let device = transcribe_compute_devices()
         .into_iter()
         .find(|d| d.index == Some(index))
         .ok_or_else(|| {
             anyhow::anyhow!("No compute device with index {index} (see --list-devices)")
         })?;
-    let backend = match device.kind.as_str() {
-        "cpu" => Backend::Cpu,
-        "metal" => Backend::Metal,
-        "cuda" => Backend::Cuda,
-        "vulkan" => Backend::Vulkan,
-        other => {
-            return Err(anyhow::anyhow!(
-                "Device index {index} has kind '{other}', which cannot host a model"
-            ))
-        }
-    };
-    // gpu_device is a registry index used only by GPU backends; CPU ignores it.
-    let gpu_device = if matches!(backend, Backend::Cpu) {
-        0
+    let backend = backend_for_device_kind(&device.kind).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Device index {index} has kind '{}', which cannot host a model",
+            device.kind
+        )
+    })?;
+    // transcribe-cpp 0.2.4 selects the exact device by handle; for CPU the
+    // backend's automatic policy is enough (as the old index 0 was).
+    let device = if matches!(backend, Backend::Cpu) {
+        None
     } else {
-        index as i32
+        Some(device)
     };
-    Ok((backend, gpu_device))
+    Ok((backend, device))
 }
 
 /// Map Handy's whisper accelerator setting to a transcribe-cpp [`Backend`].
@@ -2636,34 +3230,34 @@ fn select_transcribe_backend(setting: TranscribeAcceleratorSetting) -> Backend {
     }
 }
 
-/// Resolve the user's stored GPU device choice into a [`ModelOptions::gpu_device`]
-/// registry index for the next model load.
+/// Resolve the user's stored GPU device choice into a [`ModelOptions::device`]
+/// for the next model load.
 ///
 /// Settings store a registry index into [`transcribe_cpp::devices`] (`-1` is the
-/// UI's auto/CPU sentinel); transcribe-cpp treats `0` as "auto / first match" and
-/// rejects an out-of-range or non-GPU index. So an explicit selection is honored
-/// only when the user chose the GPU accelerator and the stored index still
-/// resolves to a registered GPU device — otherwise fall back to `0` so a stale
-/// selection can never fail the load.
-fn resolve_gpu_device(setting: TranscribeAcceleratorSetting, gpu_device: i32) -> i32 {
+/// UI's auto/CPU sentinel, `0` the old "auto / first match"). An explicit
+/// selection is honored only when the user chose the GPU accelerator and the
+/// stored index still resolves to a registered GPU device — otherwise `None`
+/// (the backend's automatic policy) so a stale selection can never fail the load.
+fn resolve_gpu_device(
+    setting: TranscribeAcceleratorSetting,
+    gpu_device: i32,
+) -> Option<transcribe_cpp::Device> {
     if transcribe_gpu_disabled_for_host()
         || setting != TranscribeAcceleratorSetting::Gpu
         || gpu_device <= 0
     {
-        return 0;
+        return None;
     }
-    let still_valid = transcribe_compute_devices()
-        .iter()
-        .any(|d| d.index == Some(gpu_device as usize) && is_transcribe_gpu_device(d));
-    if still_valid {
-        gpu_device
-    } else {
+    let found = transcribe_compute_devices()
+        .into_iter()
+        .find(|d| d.index == Some(gpu_device as usize) && is_transcribe_gpu_device(d));
+    if found.is_none() {
         warn!(
             "Stored transcribe GPU device index {} is no longer available; using auto",
             gpu_device
         );
-        0
     }
+    found
 }
 
 /// Apply the user's ORT accelerator preference to the transcribe-rs global.
@@ -2735,6 +3329,25 @@ fn transcribe_compute_devices() -> Vec<transcribe_cpp::Device> {
     devices
         .into_iter()
         .filter(|device| transcribe_device_allowed(&device.kind, gpu_disabled))
+        .collect()
+}
+
+/// M2-P2d: the GPU devices transcribe-cpp may use, with a FRESH memory
+/// snapshot: (description, free MB; 0 = not reported by the backend). Empty
+/// on a CPU-only build or host. Unlike `cached_gpu_devices` this re-queries,
+/// because the final pass decides on free VRAM right before loading.
+pub fn transcribe_gpu_memory() -> Vec<(String, u64)> {
+    transcribe_compute_devices()
+        .into_iter()
+        .filter(is_transcribe_gpu_device)
+        .map(|d| {
+            let name = if d.description.is_empty() {
+                d.name
+            } else {
+                d.description
+            };
+            (name, d.memory_free / (1024 * 1024))
+        })
         .collect()
 }
 
@@ -2832,6 +3445,52 @@ mod tests {
         assert_eq!(out[0].text, "Ganzer Text.");
     }
 
+    // M2-P2d
+    #[test]
+    fn word_rows_become_clamped_word_times_and_blank_rows_vanish() {
+        let rows = vec![
+            (" Guten".to_string(), 120, 480),
+            ("  ".to_string(), 480, 500),
+            ("Morgen".to_string(), 520, 3_100), // ueber das Clipende hinaus
+            ("x".to_string(), -40, -10),        // vor dem Anfang
+        ];
+        let words = words_from_rows(&rows, 3_000).unwrap();
+        assert_eq!(
+            words,
+            vec![
+                WordTime { text: "Guten".into(), start_ms: 120, end_ms: 480 },
+                WordTime { text: "Morgen".into(), start_ms: 520, end_ms: 3_000 },
+                WordTime { text: "x".into(), start_ms: 0, end_ms: 0 },
+            ]
+        );
+        assert_eq!(words_from_rows(&[], 1_000), None, "keine Wortzeiten, nie leere Liste");
+        assert_eq!(words_from_rows(&[(" ".into(), 0, 5)], 1_000), None);
+    }
+
+    #[test]
+    fn a_transcript_without_word_rows_stays_one_segment_without_words() {
+        let t = transcribe_cpp::Transcript {
+            text: " Hallo Welt ".into(),
+            ..Default::default()
+        };
+        let out = segments_from_transcript(&t, 2_000);
+        assert_eq!(out.len(), 1);
+        assert_eq!((out[0].start_ms, out[0].end_ms), (0, 2_000));
+        assert!(out[0].words.is_none());
+        let with_words = transcribe_cpp::Transcript {
+            text: "Hallo".into(),
+            words: vec![transcribe_cpp::Word {
+                t0_ms: 100,
+                t1_ms: 600,
+                text: "Hallo".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let out = segments_from_transcript(&with_words, 2_000);
+        assert_eq!(out[0].words.as_ref().unwrap()[0].end_ms, 600);
+    }
+
     #[test]
     fn empty_text_yields_no_segments_at_all() {
         assert!(segments_from_result("   ", None, 5_000).is_empty());
@@ -2858,24 +3517,206 @@ mod tests {
     }
 
     #[test]
-    fn meetings_use_their_own_model_and_fall_back_to_dictation() {
+    fn meeting_default_model_is_the_parakeet_v3_gguf_q8_from_the_catalog() {
+        // B1 (M2-P2g): 5,55 % statt 7,86 % WER auf FLEURS-de. Der Eintrag muss
+        // im Katalog stehen und ueber HuggingFace herunterladbar sein.
+        assert_eq!(
+            MEETING_DEFAULT_MODEL_ID,
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf"
+        );
+        let entry = crate::catalog::CATALOG
+            .iter()
+            .find(|d| d.id == MEETING_DEFAULT_MODEL_ID)
+            .expect("Standardmodell fuer Besprechungen fehlt im Katalog");
+        assert!(matches!(
+            entry.source,
+            crate::managers::model::ModelSource::HuggingFace { .. }
+        ));
+        assert_eq!(entry.default_quant.as_deref(), Some("Q8_0"));
+        assert!(
+            crate::catalog::file_in_catalog(
+                "parakeet-tdt-0.6b-v3-Q8_0.gguf",
+                Some("handy-computer/parakeet-tdt-0.6b-v3-gguf")
+            )
+            .is_some(),
+            "Datei muss mit Groesse und Hash im Katalog stehen"
+        );
+    }
+
+    #[test]
+    fn meetings_default_to_the_gguf_when_installed() {
         let mut settings = crate::settings::get_default_settings();
         settings.selected_model = "diktat-modell".into();
+        settings.meeting_model = None;
+        let choice = choose_meeting_model(&settings, true);
         assert_eq!(
-            TranscriptionManager::meeting_model_target(&settings),
-            "diktat-modell",
-            "ohne eigenes Meeting-Modell gilt das Diktat-Modell"
+            choice,
+            MeetingModelChoice::Default(MEETING_DEFAULT_MODEL_ID.into())
+        );
+        assert_eq!(choice.id(), MEETING_DEFAULT_MODEL_ID);
+        assert_eq!(meeting_model_for(&settings, true), MEETING_DEFAULT_MODEL_ID);
+    }
+
+    #[test]
+    fn meetings_fall_back_to_the_dictation_model_without_the_gguf() {
+        let mut settings = crate::settings::get_default_settings();
+        settings.selected_model = "parakeet-tdt-0.6b-v3".into();
+        settings.meeting_model = None;
+        assert_eq!(
+            choose_meeting_model(&settings, false),
+            MeetingModelChoice::Fallback("parakeet-tdt-0.6b-v3".into()),
+            "ohne GGUF: Rueckfall wie bisher (Diktatmodell), kein Abbruch"
         );
         settings.meeting_model = Some("  ".into());
         assert_eq!(
-            TranscriptionManager::meeting_model_target(&settings),
-            "diktat-modell",
+            meeting_model_for(&settings, false),
+            "parakeet-tdt-0.6b-v3",
             "leere Eintraege zaehlen als nicht gesetzt"
         );
-        settings.meeting_model = Some("parakeet-v3".into());
         assert_eq!(
-            TranscriptionManager::meeting_model_target(&settings),
-            "parakeet-v3"
+            meeting_model_for(&settings, true),
+            MEETING_DEFAULT_MODEL_ID,
+            "leer + installiert = Standard"
+        );
+    }
+
+    // ---- P1i: RAM-Tor fuers Live-Modell der Besprechung -----------------------
+
+    const RESERVE: u64 = crate::process_guard::RAM_RESERVE_MB;
+
+    fn need(size_mb: u64) -> u64 {
+        crate::managers::meetings::final_pass::ram_need_mb(size_mb) + RESERVE
+    }
+
+    // ---- U7: eigene Engine fuer weitere gleichzeitige Importe -------------------
+
+    #[test]
+    fn an_extra_engine_belongs_to_the_thread_that_bound_it() {
+        assert!(!extra_engine_bound(), "ohne Bindung rechnet jeder mit der gemeinsamen Engine");
+        let binding = bind_extra_engine(ExtraEngine {
+            engine: None,
+            model_id: "eigenes-modell".into(),
+        });
+        assert!(extra_engine_bound());
+        assert_eq!(bound_model_id().as_deref(), Some("eigenes-modell"));
+        // Ein anderer Thread (Diktat, Aufnahme, der erste Import) sieht nichts davon.
+        std::thread::spawn(|| assert!(!extra_engine_bound()))
+            .join()
+            .unwrap();
+        // Eine Engine, die es nicht mehr gibt (Panik im Lauf), wird nicht erfunden.
+        assert!(take_bound_engine().is_none());
+        drop(binding);
+        assert!(!extra_engine_bound(), "mit der Bindung ist auch die Engine frei");
+        assert_eq!(bound_model_id(), None);
+    }
+
+    #[test]
+    fn rebinding_replaces_the_previous_engine() {
+        let first = bind_extra_engine(ExtraEngine {
+            engine: None,
+            model_id: "a".into(),
+        });
+        let second = bind_extra_engine(ExtraEngine {
+            engine: None,
+            model_id: "b".into(),
+        });
+        assert_eq!(bound_model_id().as_deref(), Some("b"));
+        drop(second);
+        assert!(!extra_engine_bound());
+        drop(first);
+        assert!(!extra_engine_bound());
+    }
+
+    #[test]
+    fn the_live_model_loads_when_the_ram_gate_is_open() {
+        // Genau auf der Grenze (Bedarf + Systemreserve): laden.
+        assert_eq!(plan_live_load(1_500, None, need(1_500), 0), LiveLoadPlan::Target);
+        assert_eq!(plan_live_load(1_500, Some(("diktat", 600)), 64_000, 0), LiveLoadPlan::Target);
+    }
+
+    #[test]
+    fn an_unmeasurable_ram_never_blocks_the_live_model() {
+        // Wie `check_ram_for_start`: 0 heisst "nicht messbar".
+        assert_eq!(plan_live_load(50_000, None, 0, 0), LiveLoadPlan::Target);
+    }
+
+    #[test]
+    fn a_live_model_that_does_not_fit_falls_back_to_the_smaller_dictation_model() {
+        // Ein Byte unter der Grenze: das Standardmodell nicht, das kleine Diktatmodell schon.
+        let free = need(1_500) - 1;
+        assert_eq!(
+            plan_live_load(1_500, Some(("diktat", 400)), free, 0),
+            LiveLoadPlan::Fallback("diktat".to_string())
+        );
+        // Ohne Rueckfall (ausdrueckliche Wahl) oder mit zu grossem Rueckfall: nichts laden.
+        assert_eq!(
+            plan_live_load(1_500, None, free, 0),
+            LiveLoadPlan::Refuse { need_mb: need(1_500), free_mb: free }
+        );
+        assert!(matches!(
+            plan_live_load(1_500, Some(("gross", 3_000)), free, 0),
+            LiveLoadPlan::Refuse { .. }
+        ));
+    }
+
+    /// `load_model` gibt das alte Modell vor dem neuen frei: sein Speicher
+    /// zaehlt zum Verfuegbaren (sonst wuerde ein Wechsel bei knappem RAM ohne
+    /// Grund abgelehnt).
+    #[test]
+    fn the_memory_of_the_model_being_replaced_counts_as_available() {
+        let free = need(1_500) - 500;
+        assert!(matches!(plan_live_load(1_500, None, free, 0), LiveLoadPlan::Refuse { .. }));
+        assert_eq!(plan_live_load(1_500, None, free, 500), LiveLoadPlan::Target);
+        assert!(matches!(plan_live_load(1_500, None, free, 499), LiveLoadPlan::Refuse { .. }));
+    }
+
+    /// Ist nur die Grenze der Modellgroesse unbekannt (Modell nicht im Katalog, 0 MB),
+    /// gilt der Mindestbedarf des Gates, nicht "kostenlos".
+    #[test]
+    fn a_model_of_unknown_size_still_needs_the_minimum() {
+        assert!(matches!(
+            plan_live_load(0, None, RESERVE + 100, 0),
+            LiveLoadPlan::Refuse { .. }
+        ));
+        assert_eq!(plan_live_load(0, None, need(0), 0), LiveLoadPlan::Target);
+    }
+
+    #[test]
+    fn an_explicit_meeting_model_always_wins() {
+        let mut settings = crate::settings::get_default_settings();
+        settings.selected_model = "diktat-modell".into();
+        settings.meeting_model = Some("parakeet-v3".into());
+        for installed in [true, false] {
+            assert_eq!(
+                choose_meeting_model(&settings, installed),
+                MeetingModelChoice::Explicit("parakeet-v3".into())
+            );
+            assert_eq!(meeting_model_for(&settings, installed), "parakeet-v3");
+        }
+        // Auch die ONNX-Variante bleibt waehlbar, obwohl das GGUF installiert ist.
+        settings.meeting_model = Some("parakeet-tdt-0.6b-v3".into());
+        assert_eq!(meeting_model_for(&settings, true), "parakeet-tdt-0.6b-v3");
+    }
+
+    #[test]
+    fn only_the_fallback_needs_a_second_model_to_try() {
+        let mut settings = crate::settings::get_default_settings();
+        settings.selected_model = "diktat-modell".into();
+        settings.meeting_model = None;
+        assert_eq!(
+            choose_meeting_model(&settings, true).load_fallback(&settings),
+            Some("diktat-modell".to_string()),
+            "Standard-GGUF laesst sich nicht laden -> Diktatmodell"
+        );
+        assert_eq!(
+            choose_meeting_model(&settings, false).load_fallback(&settings),
+            None
+        );
+        settings.meeting_model = Some("x".into());
+        assert_eq!(
+            choose_meeting_model(&settings, true).load_fallback(&settings),
+            None,
+            "eine ausdrueckliche Wahl wird nie heimlich ersetzt"
         );
     }
 
@@ -2924,6 +3765,20 @@ mod tests {
         for kind in ["metal", "cuda", "vulkan", "gpu", "unknown"] {
             assert!(!transcribe_device_allowed(kind, true));
         }
+    }
+
+    #[test]
+    fn dictation_text_loses_decoder_loops_but_keeps_real_repeats() {
+        // G7 (Issue #70): dieselben Schleifen wie in Besprechungen, derselbe Filter.
+        // "no no" (zwei) bleibt; der aeltere Handy-Filter `collapse_stutters` im
+        // Diktat fasst ab DREI gleichen Woertern zusammen und bleibt unveraendert.
+        let settings = crate::settings::get_default_settings();
+        let looped = "So no if if if if if if if if if if if the heat death,                       there's y y you can't, no no that is wrong"
+            .to_string();
+        assert_eq!(
+            post_process_transcription_text(looped, &settings, false),
+            "So no if the heat death, there's you can't, no no that is wrong"
+        );
     }
 
     #[test]

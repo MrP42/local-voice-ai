@@ -5,6 +5,7 @@
 //! einen Mock-Server getestet; `TtsManager` ergänzt AppHandle-Belange:
 //! Settings, Events, Prozess-Spawn, Idle-Watchdog und Exit-Teardown.
 
+pub mod availability;
 pub mod builder;
 pub mod compile_cache;
 pub mod notes;
@@ -2002,10 +2003,7 @@ impl TtsManager {
         let python = fish_dir.join(r".venv\Scripts\python.exe");
         let api_script = fish_dir.join("tools").join("api_server.py");
         if !python.exists() || !api_script.exists() {
-            let msg = format!(
-                "Fish Speech nicht gefunden unter '{}'. Erwartet: .venv\\Scripts\\python.exe und tools\\api_server.py — siehe C:\\AI\\fish-speech\\INSTALL-REPORT.md",
-                fish_dir.display()
-            );
+            let msg = availability::fish_not_set_up_message(&fish_dir);
             self.core.set_phase(TtsPhase::Error, Some(msg.clone()));
             return Err(msg);
         }
@@ -2152,6 +2150,17 @@ impl TtsManager {
 
     fn fish_dir(&self) -> std::path::PathBuf {
         std::path::PathBuf::from(crate::settings::get_settings(&self.app).tts_fish_dir)
+    }
+
+    /// Zustand der Laufzeiten (Piper, Fish) -- nur Dateisystem, startet nichts.
+    /// Grundlage dafuer, nur wirklich verwendbare Stimmen anzubieten (#29).
+    pub fn runtime_status(&self) -> availability::TtsRuntimeStatus {
+        let data = self.data_base_dir().unwrap_or_default();
+        availability::runtime_status(
+            &data,
+            &self.fish_dir(),
+            availability::current_platform_id(),
+        )
     }
 
     /// `fish_dir` fuer die Command-Schicht: die Commands brauchen den Pfad,
@@ -3775,10 +3784,17 @@ impl TtsManager {
         // kein Serverprozess ueberleben, egal wer ihn gestartet hat. Ein
         // verwaister Prozess haelt 17 GB VRAM, die niemand mehr freigibt —
         // die App kann ihn danach nicht einmal mehr finden.
-        let port = *self.core.port.lock().unwrap();
-        if let Some(pid) = listening_pid(port) {
-            if let Err(e) = kill_pid(pid) {
-                log::warn!("Could not stop server on port {port}: {e}");
+        //
+        // Ausnahme: Windows beendet gerade die Sitzung. Dann scheitert der
+        // Start von `netstat` mit 0xc0000142, und Windows zeigt bei jedem
+        // Herunterfahren "NETSTAT.EXE - Anwendungsfehler". Einen fremden
+        // Server beendet Windows in dieser Lage selbst.
+        if !crate::process_guard::session_ending() {
+            let port = *self.core.port.lock().unwrap();
+            if let Some(pid) = listening_pid(port) {
+                if let Err(e) = kill_pid(pid) {
+                    log::warn!("Could not stop server on port {port}: {e}");
+                }
             }
         }
         self.core.owns_server.store(false, Ordering::Release);
@@ -3797,9 +3813,14 @@ impl TtsManager {
         // Baum mit, auch Compile-Kinder, die taskkill /T uebersehen kann.
         drop(self.child_guard.lock().unwrap().take());
         if let Some(mut child) = self.child.lock().unwrap().take() {
+            // Beim Herunterfahren kein taskkill: der Start scheitert dann mit
+            // 0xc0000142 samt Fehlerfenster, und das Job-Objekt hat den Baum
+            // oben schon beendet.
             #[cfg(windows)]
-            if let Err(e) = kill_pid(child.id()) {
-                log::warn!("Could not kill fish-speech process tree: {e}");
+            if !crate::process_guard::session_ending() {
+                if let Err(e) = kill_pid(child.id()) {
+                    log::warn!("Could not kill fish-speech process tree: {e}");
+                }
             }
             if let Err(e) = child.kill() {
                 log::debug!("fish-speech child already gone: {e}");

@@ -5,6 +5,14 @@
    utilities */
 @theme inline {
   --color-text: var(--color-text);
+  --color-text-muted: var(--color-text-muted);
+  --color-accent-text: var(--color-accent-text);
+  --color-status-red: var(--color-status-red);
+  --color-status-orange: var(--color-status-orange);
+  --color-status-amber: var(--color-status-amber);
+  --color-status-yellow: var(--color-status-yellow);
+  --color-status-green: var(--color-status-green);
+  --color-status-blue: var(--color-status-blue);
   --color-background: var(--color-background);
   --color-background-ui: var(--color-background-ui);
   --color-logo-primary: var(--color-logo-primary);
@@ -14,6 +22,97 @@
   /* Text and icons sitting on a yellow fill. Always ink, in both themes —
      white on Signalgelb is unreadable (design system, references/logo.md). */
   --color-on-accent: var(--color-on-accent);
+}
+
+/* Gedaempfter Text auf WCAG-AA-Niveau (axe `color-contrast`, Befund B4 aus #66).
+   Die Klassen `text-text/60`, `/50`, `/45`, `/40` und `text-mid-gray` stehen
+   an rund 400 Stellen fuer "leise Schrift". Abgeblendete Schrift erreicht
+   4,5:1 nur oberhalb von etwa 70 % (hell) und haengt von der Flaeche darunter
+   ab. Statt jede Stelle anzufassen, bilden diese Regeln die zu schwachen
+   Stufen auf den festen Token --color-text-muted ab (theme.css: hell 5,69:1,
+   dunkel 6,96:1 auf dem Hintergrund). Zustaende (hover:, focus:) sind
+   spezifischer und behalten Vorrang; `text-text/70` und staerker bleiben, wie
+   sie sind. Neue Stellen: `text-text-muted` verwenden. */
+@layer utilities {
+  .text-text\/60,
+  .text-text\/50,
+  .text-text\/45,
+  .text-text\/40,
+  .text-mid-gray,
+  .text-mid-gray\/80,
+  .text-mid-gray\/70,
+  .placeholder\:text-text\/40::placeholder {
+    color: var(--color-text-muted);
+  }
+
+  /* Markengelb als Schrift (aktive Reiter, Links, Auswahl): auf hell wird es
+     zum Bernstein --color-accent-text, auf dunkel bleibt es Signalgelb. Flaechen
+     (bg-/border-/fill-logo-primary) behalten das Gelb. */
+  .text-logo-primary,
+  .hover\:text-logo-primary:hover,
+  .focus-visible\:text-logo-primary:focus-visible {
+    color: var(--color-accent-text);
+  }
+
+  /* Statusfarben als Schrift: dieselben Stufen, theme-abhaengig. Hell wird zur
+     dunklen Stufe, dunkel zur hellen; `dark:`-Varianten laufen so nie gegen
+     das erzwungene Erscheinungsbild. Flaechen (bg-/border-) bleiben unberuehrt.
+     Gruen/Smaragd und Blau/Himmel teilen sich je ein Token. */
+  .text-red-300,
+  .text-red-400,
+  .text-red-500,
+  .text-red-600,
+  .text-red-700,
+  .hover\:text-red-300:hover,
+  .hover\:text-red-400:hover,
+  .focus-visible\:text-red-400:focus-visible,
+  .text-red-400\/70 {
+    color: var(--color-status-red);
+  }
+
+  .text-orange-400,
+  .text-orange-500 {
+    color: var(--color-status-orange);
+  }
+
+  .text-amber-300,
+  .text-amber-400,
+  .text-amber-500,
+  .text-amber-600,
+  .text-amber-700 {
+    color: var(--color-status-amber);
+  }
+
+  .text-yellow-300,
+  .text-yellow-400,
+  .text-yellow-500,
+  .text-yellow-600,
+  .text-yellow-700 {
+    color: var(--color-status-yellow);
+  }
+
+  .text-green-400,
+  .text-green-500,
+  .text-green-600,
+  .text-green-700 {
+    color: var(--color-status-green);
+  }
+
+  .text-emerald-400,
+  .text-emerald-600,
+  .text-emerald-700 {
+    color: var(--color-status-green);
+  }
+
+  .text-sky-400,
+  .text-sky-600 {
+    color: var(--color-status-blue);
+  }
+
+  .text-blue-400,
+  .text-blue-500 {
+    color: var(--color-status-blue);
+  }
 }
 
 :root {
@@ -77,6 +176,14 @@
  */
 :root[data-theme="light"] {
   --color-text: var(--light-color-text);
+  --color-text-muted: var(--light-color-text-muted);
+  --color-accent-text: var(--light-color-accent-text);
+  --color-status-red: var(--light-color-status-red);
+  --color-status-orange: var(--light-color-status-orange);
+  --color-status-amber: var(--light-color-status-amber);
+  --color-status-yellow: var(--light-color-status-yellow);
+  --color-status-green: var(--light-color-status-green);
+  --color-status-blue: var(--light-color-status-blue);
   --color-background: var(--light-color-background);
   --color-logo-primary: var(--light-color-logo-primary);
   --color-logo-stroke: var(--light-color-logo-stroke);
@@ -84,6 +191,14 @@
 
 :root[data-theme="dark"] {
   --color-text: var(--dark-color-text);
+  --color-text-muted: var(--dark-color-text-muted);
+  --color-accent-text: var(--dark-color-accent-text);
+  --color-status-red: var(--dark-color-status-red);
+  --color-status-orange: var(--dark-color-status-orange);
+  --color-status-amber: var(--dark-color-status-amber);
+  --color-status-yellow: var(--dark-color-status-yellow);
+  --color-status-green: var(--dark-color-status-green);
+  --color-status-blue: var(--dark-color-status-blue);
   --color-background: var(--dark-color-background);
   --color-logo-primary: var(--dark-color-logo-primary);
   --color-logo-stroke: var(--dark-color-logo-stroke);
@@ -395,7 +510,7 @@ textarea:focus::-webkit-resizer {
 /* Der Einklapp-Schalter ist ein Eintrag wie die anderen, nur leiser:
    er gehoert zur Leiste, nicht zu den Bereichen. */
 .workspace-nav__toggle {
-  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  color: var(--color-text-muted);
   margin-top: 4px;
 }
 .workspace-nav__toggle:hover {
@@ -617,6 +732,80 @@ textarea:focus::-webkit-resizer {
   }
 }
 
+/* Vorlesen: Breiten der verstellbaren Spalten kommen als --tts-w vom
+   Layout-Hook (Ziehgriffe, persistent). Die Voreinstellung entspricht den
+   Standardbreiten des Hooks (Pixel statt rem). */
+.tts-workspace__pages {
+  width: var(--tts-w, 208px);
+}
+.tts-workspace__files {
+  width: var(--tts-w, 240px);
+}
+/* Gestapelt: Bedienung oben (natuerliche Hoehe, hoechstens die Haelfte der
+   Spalte, sonst eigener Scroll), Dateien/Hilfe fuellen den Rest und scrollen
+   selbst. */
+.tts-right-column--stacked {
+  width: var(--tts-w, 320px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  min-height: 0;
+}
+.tts-controls--stacked {
+  width: 100%;
+  max-height: 50%;
+}
+.tts-right-column--stacked > .tts-workspace__files {
+  width: 100%;
+  flex: 1 1 0;
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-mid-gray) 20%, transparent);
+  padding-top: 0.5rem;
+}
+
+/* Ziehgriff zwischen zwei Spalten: 12 px Griffflaeche, die mit negativem Rand
+   in die 16 px Luecke der Spalten faellt -- das Layout bleibt so breit wie
+   ohne Griff. Sichtbar wird nur eine duenne Linie bei Hover/Fokus/Ziehen. */
+.tts-resize {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 12px;
+  margin-inline: -14px;
+  align-self: stretch;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.tts-resize::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 5px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color 120ms;
+}
+.tts-resize:hover::after,
+.tts-resize:focus-visible::after,
+.tts-resize[data-dragging="true"]::after {
+  background: var(--color-logo-primary);
+}
+/* Waehrend des Ziehens: keine Textauswahl, Zeiger bleibt ein Spaltenzeiger,
+   auch wenn er ueber dem Editor steht. */
+body.lv-resizing,
+body.lv-resizing * {
+  user-select: none;
+  cursor: col-resize !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tts-resize::after {
+    transition: none;
+  }
+}
+
 /* File/page tools become full-width shelves when three columns cannot fit. */
 @media (max-width: 1100px) {
   .tts-workspace {
@@ -641,6 +830,19 @@ textarea:focus::-webkit-resizer {
   .tts-workspace__files {
     order: 3;
   }
+  /* Umbruch-Layout: keine Ziehgriffe, die rechte Spalte fuellt die Breite. */
+  .tts-resize {
+    display: none;
+  }
+  .tts-right-column--stacked {
+    width: 100%;
+  }
+  .tts-controls--stacked {
+    max-height: none;
+  }
+  .tts-right-column--stacked > .tts-workspace__files {
+    flex: none;
+  }
 }
 
 .workspace-status > div > div:first-child button {
@@ -659,13 +861,31 @@ textarea:focus::-webkit-resizer {
   min-height: 44px;
   align-content: center;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   border-radius: 8px;
 }
 .workspace-disclosure > summary:focus-visible {
   outline: 2px solid var(--color-text);
   outline-offset: 2px;
+}
+
+/* Klappbereich unter dem Editor (Ausdruck & Sprechstil): hoehenbegrenzt und
+   in sich scrollend. Ohne Deckel wuchs er mit den ~95 Tags von "Alle" und
+   drueckte den Editor (min-h-0) unter die textarea-Mindesthoehe -- die Suche
+   lag dann ueber dem Text. Die Ueberschrift klebt oben, damit der Bereich
+   auch mitten im Scrollen zuklappbar bleibt. */
+.workspace-disclosure--scroll {
+  flex: 0 1 auto;
+  max-height: 40%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.workspace-disclosure--scroll > summary {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-background);
 }
 
 /* Arbeitsflaechen mit fester Hoehe (Vorlesen): der Hauptbereich scrollt
@@ -733,7 +953,7 @@ textarea:focus::-webkit-resizer {
   min-width: 2.5rem;
   padding: 0 0.6rem;
   border-radius: 999px;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--color-text) 80%, transparent);
 }
@@ -752,4 +972,65 @@ textarea:focus::-webkit-resizer {
 }
 .tts-controls .mbtn {
   --_mb-size: 2.25rem;
+}
+
+/* Aktionszeile der Bedienspalte: das Zielsprache-Feld steht neben 36-px-
+   Symbolknoepfen und soll dieselbe Hoehe haben (Select setzt sonst 40 px). */
+.tts-actions__lang .app-select__control {
+  height: 36px;
+  min-height: 36px;
+}
+.tts-actions__lang .app-select__value-container {
+  padding-block: 0;
+}
+.tts-actions__lang .app-select__input-container {
+  margin-block: 0;
+  padding-block: 0;
+}
+
+/* Aufnahmen (Variante B): Arbeitsflaeche mit fester Hoehe, auch im schmalen
+   Fenster. Die Seite scrollt nie; jeder Bereich scrollt fuer sich. Steht nach
+   dem 1100-px-Block oben und ueberstimmt dessen "Seite scrollt wieder". */
+.workspace-main--fixed {
+  overflow: hidden;
+}
+.workspace-content--fixed,
+.workspace-content--fixed .page-shell--fill {
+  height: 100%;
+  min-height: 0;
+}
+/* Die Ziehgriffe bleiben auch unter 1100 px sichtbar (Vorlesen blendet sie dort aus). */
+.rec-workspace .tts-resize {
+  display: block;
+}
+/* Waagerechter Griff (gestapeltes Layout): 12 px Flaeche, die in die Luecke
+   faellt; sichtbar wird eine duenne Linie bei Hover/Fokus/Ziehen. */
+.rec-hsplit {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  height: 12px;
+  margin-block: -8px;
+  cursor: row-resize;
+  touch-action: none;
+  outline: none;
+}
+.rec-hsplit::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 5px;
+  height: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color 120ms;
+}
+.rec-hsplit:hover::after,
+.rec-hsplit:focus-visible::after {
+  background: var(--color-logo-primary);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-hsplit::after {
+    transition: none;
+  }
 }

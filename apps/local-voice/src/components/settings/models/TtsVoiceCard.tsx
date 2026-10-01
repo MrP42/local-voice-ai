@@ -1,6 +1,14 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Download, Globe, HardDrive, Loader2, Trash2 } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  Download,
+  Globe,
+  HardDrive,
+  Loader2,
+  Trash2,
+  Wrench,
+} from "lucide-react";
 import type { TtsDownloadInfo } from "@/bindings";
 import { formatModelSize } from "@/lib/utils/format";
 import { getLanguageLabel } from "@/lib/constants/languages";
@@ -24,6 +32,9 @@ interface TtsVoiceCardProps {
    *  tick (same reasoning as `ModelCard`'s parent-computed `status` prop). */
   isDownloading?: boolean;
   isVerifying?: boolean;
+  /** Das Piper-Programm nachladen/reparieren (nur fuer Stimmen, deren Dateien
+   *  da sind, deren Laufzeit aber fehlt oder unvollstaendig ist). */
+  onInstallRuntime?: () => void;
 }
 
 export const TtsVoiceCard: React.FC<TtsVoiceCardProps> = ({
@@ -34,6 +45,7 @@ export const TtsVoiceCard: React.FC<TtsVoiceCardProps> = ({
   downloadProgress,
   isDownloading = false,
   isVerifying = false,
+  onInstallRuntime,
 }) => {
   const { t } = useTranslation();
   const isRuntime = info.kind === "runtime";
@@ -47,20 +59,52 @@ export const TtsVoiceCard: React.FC<TtsVoiceCardProps> = ({
   const displayName = t(nameKey, { defaultValue: info.name });
   const displayDescription = t(descriptionKey, { defaultValue: info.description });
   const languageLabel = info.language ? getLanguageLabel(info.language) : null;
+  // Issue #29: eine Stimme zaehlt erst als nutzbar, wenn auch das Programm da
+  // ist; sonst wird sie als "nicht nutzbar" markiert statt erst beim
+  // Vorlesen zu scheitern.
+  const unsupported = info.unsupported_reason ?? null;
+  const needsRuntime = !isRuntime && info.is_downloaded && !info.is_usable;
+  const license = info.license ?? null;
 
   return (
     <div className="flex flex-col px-4 py-3 gap-2">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
           <h3 className="text-base font-semibold text-text">{displayName}</h3>
-          {info.is_downloaded && (
+          {info.is_downloaded && !needsRuntime && !unsupported && (
             <Badge variant="success">
               {t("settings.models.ttsVoices.status.installed")}
             </Badge>
           )}
+          {needsRuntime && (
+            <Badge variant="warning">
+              {t("settings.models.ttsVoices.status.runtimeMissing")}
+            </Badge>
+          )}
+          {unsupported && (
+            <Badge variant="warning">
+              {t("settings.models.ttsVoices.status.unsupported")}
+            </Badge>
+          )}
+          {info.license_non_commercial && (
+            <Badge variant="warning">
+              {t("settings.models.ttsVoices.license.nonCommercial")}
+            </Badge>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          {!info.is_downloaded && !isDownloading && (
+          {needsRuntime && onInstallRuntime && !isDownloading && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onInstallRuntime}
+              className="flex items-center gap-1.5"
+            >
+              <Wrench className="w-3.5 h-3.5" />
+              <span>{t("settings.models.ttsVoices.actions.installRuntime")}</span>
+            </Button>
+          )}
+          {!info.is_downloaded && !isDownloading && !unsupported && (
             <Button
               variant="secondary"
               size="sm"
@@ -87,6 +131,29 @@ export const TtsVoiceCard: React.FC<TtsVoiceCardProps> = ({
       </div>
 
       <p className="text-text/60 text-sm leading-relaxed">{displayDescription}</p>
+      {unsupported && (
+        <p
+          className="text-amber-700 dark:text-amber-400 text-sm leading-relaxed"
+          data-testid="tts-unsupported-note"
+        >
+          {t(`settings.models.ttsVoices.unsupported.${unsupported}`, {
+            defaultValue: unsupported,
+          })}
+        </p>
+      )}
+      {info.license_non_commercial && (
+        <p
+          className="text-amber-700 dark:text-amber-400 text-sm leading-relaxed"
+          data-testid="tts-nc-note"
+        >
+          {t(`settings.models.ttsVoices.voices.${info.id}.nonCommercialHint`, {
+            // Von einer Forschungs-/NC-Stimme abgeleitete Stimmen erklaeren ihre Herkunft.
+            defaultValue: t("settings.models.ttsVoices.license.nonCommercialHint", {
+              license: license ?? "",
+            }),
+          })}
+        </p>
+      )}
 
       <div className="flex items-center gap-3 text-xs text-text/50">
         {languageLabel && (
@@ -94,6 +161,22 @@ export const TtsVoiceCard: React.FC<TtsVoiceCardProps> = ({
             <Globe className="w-3.5 h-3.5" />
             <span>{languageLabel}</span>
           </div>
+        )}
+        {license && (
+          <span className="flex items-center gap-1.5">
+            <span>
+              {t("settings.models.ttsVoices.license.label", { license })}
+            </span>
+            {info.license_url && (
+              <button
+                type="button"
+                onClick={() => void openUrl(info.license_url as string)}
+                className="underline hover:text-text cursor-pointer"
+              >
+                {t("settings.models.ttsVoices.license.source")}
+              </button>
+            )}
+          </span>
         )}
         {!isDownloading && (
           <span className="flex items-center gap-1.5 ms-auto">

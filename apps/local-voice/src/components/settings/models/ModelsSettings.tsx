@@ -192,6 +192,12 @@ export const ModelsSettings: React.FC = () => {
     }
   };
 
+  // Die Piper-Laufzeit, die eine Stimme nachladen kann -- nur wenn es fuer dieses
+  // System ueberhaupt eine gibt (sonst bietet die Stimmenkarte keinen Knopf an).
+  const ttsRuntimeInfo = ttsDownloads.find(
+    (d) => d.kind === "runtime" && !d.unsupported_reason,
+  );
+
   const ttsDisplayName = (info: (typeof ttsDownloads)[number]): string =>
     t(
       info.kind === "runtime"
@@ -387,6 +393,11 @@ export const ModelsSettings: React.FC = () => {
               isDownloading={info.id in ttsDownloadingIds}
               isVerifying={info.id in ttsVerifyingIds}
               downloadProgress={ttsDownloadProgress[info.id]?.percentage}
+              onInstallRuntime={
+                info.kind === "voice" && ttsRuntimeInfo
+                  ? () => void downloadTtsModel(ttsRuntimeInfo.id)
+                  : undefined
+              }
             />
           ))}
         </SettingsGroup>

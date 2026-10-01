@@ -1,0 +1,16 @@
+1
+00:00:01,000 --> 00:00:04,000
+Ich: Guten Morgen zusammen.
+
+2
+00:00:05,000 --> 00:00:09,000
+Gegenseite: Wir starten mit drei Standorten.
+
+3
+00:00:12,000 --> 00:00:15,500
+Anna Berg: Das Budget & der Zeitplan stehen (snake_case_wort).
+
+4
+01:02:03,000 --> 01:02:05,000
+Danke, bis nächste Woche.
+

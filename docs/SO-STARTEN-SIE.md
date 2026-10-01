@@ -3,6 +3,8 @@
 Kurzanleitung für den stabilisierten Stand vom 17.08.2026.
 Die Voice-AI-Funktionen vom 18.08.2026 (Vorlesen, Stimmen klonen, Übersetzung,
 Stimmwechsler) sind am Ende dieses Dokuments beschrieben.
+Die Besprechungsfunktionen (Notizen, KI-Notizen, Sprecher, Chat, Kalender, Export)
+stehen in [BESPRECHUNGEN.md](BESPRECHUNGEN.md).
 
 Seit dem 18.08.2026 heißt die App **Local Voice AI** (vormals „Sprechstift").
 Seit dem 19.08.2026 heißt auch die Programmdatei `local-voice-ai.exe`, und der
@@ -90,7 +92,7 @@ Umschalten der Modelle im Hauptfenster unter „Modelle".
 |---|---|---|
 | Modell | Parakeet V3 | verifiziert, rund 23-fache Echtzeit, normalisiert Zahlen |
 | Live-Einfügung während des Sprechens | aus | funktioniert, aber ohne Fokusüberwachung — siehe oben |
-| KI-Nachbearbeitung (Ollama) | aus | gehört nicht in den stabilen Pfad |
+| KI-Nachbearbeitung (Ollama) | aus | optional (Diktat → Ausgabe), nur mit Live-Einfügung sichtbar; Ollama bleibt nie Voraussetzung |
 | Debug-Modus | aus | — |
 
 ## Falls etwas klemmt

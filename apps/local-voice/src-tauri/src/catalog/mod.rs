@@ -50,6 +50,15 @@ pub enum Purpose {
     LlmRuntime,
     /// GGUF-Sprachmodell fuer den lokalen Server.
     LlmModel,
+    /// M4-P4b: GGUF-Embedding-Modell fuer den zweiten Server (Besprechungs-
+    /// suche). Getrennt von `LlmModel`, damit es nie als Chat-Modell erscheint.
+    LlmEmbedding,
+    /// D3: Bild-Projektor (`--mmproj`) fuer die Bildanalyse von Folien. Nie in der
+    /// Liste der Sprachmodelle: allein nutzlos, nur mit seinem Modell zu starten.
+    LlmProjector,
+    /// M3-P3a: Sprechertrennungs-Modell (Kategorie "Sprechertrennung",
+    /// `managers::meetings::diarize`). Nie im ASR-Katalog: es transkribiert nicht.
+    Diarization,
 }
 
 /// One model as written in `catalog.json`. Only the fields the descriptor needs
@@ -90,6 +99,34 @@ struct CatalogModel {
     /// taugt, ohne Zahlen zu erfinden.
     #[serde(default)]
     tags: Vec<String>,
+    /// Lizenz laut Quelle (SPDX-Kennung, SPDX-Ausdruck oder Name) -- Issue #7.
+    #[serde(default)]
+    license: Option<String>,
+    #[serde(default)]
+    license_url: Option<String>,
+    /// Herkunfts-/Mischlizenzhinweis (z. B. aus einer Forschungslizenz feinabgestimmt).
+    #[serde(default)]
+    license_note: Option<String>,
+    /// Ausdruecklich nur nicht-kommerziell nutzbar (zusaetzlich zur Erkennung
+    /// am Lizenznamen, etwa `cc-by-nc-4.0`).
+    #[serde(default)]
+    non_commercial: bool,
+    /// Grund, warum dieser Eintrag auf seiner Plattform nicht startet (z. B.
+    /// `incomplete_archive`); die Oberflaeche bietet ihn dann nicht zum
+    /// Download an (Issue #29).
+    #[serde(default)]
+    unsupported_reason: Option<String>,
+}
+
+/// Nicht-kommerzielle Lizenz? Ausdruecklich markiert oder `-NC-` im Namen
+/// (`cc-by-nc-4.0`, `CC-BY-NC-SA-4.0`). Gleiche Regel wie `scripts/lib/notices-core.mjs`.
+pub fn license_is_non_commercial(license: Option<&str>, explicit: bool) -> bool {
+    explicit
+        || license.is_some_and(|l| {
+            l.to_ascii_lowercase()
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|part| part == "nc")
+        })
 }
 
 #[derive(Deserialize, Default)]
@@ -142,6 +179,12 @@ impl From<&CatalogModel> for ModelDescriptor {
             accuracy_score: m.accuracy_score.unwrap_or(0.0) / 100.0,
             recommended_rank: m.recommended_rank,
             recommended: m.recommended,
+            license: m.license.clone(),
+            license_url: m.license_url.clone(),
+            license_non_commercial: license_is_non_commercial(
+                m.license.as_deref(),
+                m.non_commercial,
+            ),
         }
     }
 }
@@ -188,6 +231,11 @@ pub struct TtsCatalogEntry {
     pub description: String,
     pub files: Vec<TtsCatalogFile>,
     pub tags: Vec<String>,
+    pub license: Option<String>,
+    pub license_url: Option<String>,
+    pub license_non_commercial: bool,
+    /// Siehe `CatalogModel::unsupported_reason`.
+    pub unsupported_reason: Option<String>,
 }
 
 /// All bundled catalog entries of the given TTS `purpose`, in catalog order.
@@ -202,6 +250,13 @@ pub fn tts_entries(purpose: Purpose) -> Vec<TtsCatalogEntry> {
             name: m.name.clone(),
             description: m.description.clone(),
             tags: m.tags.clone(),
+            license: m.license.clone(),
+            license_url: m.license_url.clone(),
+            license_non_commercial: license_is_non_commercial(
+                m.license.as_deref(),
+                m.non_commercial,
+            ),
+            unsupported_reason: m.unsupported_reason.clone(),
             files: m
                 .files
                 .iter()
@@ -408,6 +463,29 @@ mod tests {
         );
     }
 
+    /// M4-P4b: das Embedding-Modell hat einen eigenen Zweck -- es darf weder
+    /// als Sprachmodell (Chat) noch im ASR-Katalog auftauchen -- und traegt
+    /// Groesse und Pruefsumme laut M4-Spike.
+    #[test]
+    fn the_embedding_model_has_its_own_purpose_and_a_checksum() {
+        let entries = tts_entries(Purpose::LlmEmbedding);
+        let bge = entries
+            .iter()
+            .find(|e| e.id == "emb-bge-m3-q8")
+            .expect("emb-bge-m3-q8 im Katalog");
+        let file = &bge.files[0];
+        assert_eq!(file.size_bytes, 634_553_760);
+        assert_eq!(
+            file.sha256.as_deref(),
+            Some("950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167")
+        );
+        assert!(file.url.starts_with("https://huggingface.co/gpustack/bge-m3-GGUF/"));
+        assert!(tts_entries(Purpose::LlmModel)
+            .iter()
+            .all(|e| e.id != "emb-bge-m3-q8"));
+        assert!(CATALOG.iter().all(|d| d.id != "emb-bge-m3-q8"));
+    }
+
     #[test]
     fn purpose_tts_variants_parse_and_are_excluded_from_catalog() {
         let voice_json = r#"{
@@ -473,5 +551,120 @@ mod tests {
             "catalog architecture(s) missing from KNOWN_ARCHES: {:?}",
             missing
         );
+    }
+
+    // ── Lizenzangaben (Issue #7) ─────────────────────────────────────────
+
+    #[test]
+    fn license_is_non_commercial_erkennt_nc_lizenzen() {
+        assert!(license_is_non_commercial(Some("cc-by-nc-4.0"), false));
+        assert!(license_is_non_commercial(Some("CC-BY-NC-SA-4.0"), false));
+        assert!(license_is_non_commercial(Some("Blizzard-2013-Research-Licence"), true));
+        assert!(!license_is_non_commercial(Some("cc-by-4.0"), false));
+        assert!(!license_is_non_commercial(Some("Apache-2.0"), false));
+        assert!(!license_is_non_commercial(Some("Unclear"), false));
+        assert!(!license_is_non_commercial(None, false));
+    }
+
+    #[test]
+    fn jeder_asr_eintrag_nennt_eine_konkrete_lizenz() {
+        for d in CATALOG.iter() {
+            let l = d.license.as_deref().unwrap_or("");
+            assert!(
+                !l.is_empty() && !l.eq_ignore_ascii_case("other"),
+                "{}: Lizenz fehlt oder ist nur \"other\" ({l:?})",
+                d.id
+            );
+        }
+    }
+
+    #[test]
+    fn jeder_nicht_asr_eintrag_nennt_eine_lizenz() {
+        for purpose in [
+            Purpose::TtsVoice,
+            Purpose::TtsRuntime,
+            Purpose::LlmRuntime,
+            Purpose::LlmModel,
+            Purpose::LlmEmbedding,
+            Purpose::LlmProjector,
+            Purpose::Diarization,
+        ] {
+            for e in tts_entries(purpose) {
+                assert!(
+                    e.license.as_deref().is_some_and(|l| !l.trim().is_empty()),
+                    "{}: Lizenz fehlt",
+                    e.id
+                );
+                assert!(e.license_url.is_some(), "{}: Lizenz-Link fehlt", e.id);
+            }
+        }
+    }
+
+    #[test]
+    fn canary_1b_ist_als_nicht_kommerziell_markiert_andere_nicht() {
+        let canary = CATALOG
+            .iter()
+            .find(|d| d.id == "handy-computer/canary-1b-gguf/canary-1b-Q5_K_M.gguf")
+            .or_else(|| CATALOG.iter().find(|d| d.id.contains("canary-1b-gguf")))
+            .expect("Canary 1B steht im Katalog");
+        assert!(canary.license_non_commercial);
+        assert_eq!(canary.license.as_deref(), Some("cc-by-nc-4.0"));
+        let nc: Vec<&str> = CATALOG
+            .iter()
+            .filter(|d| d.license_non_commercial)
+            .map(|d| d.id.as_str())
+            .collect();
+        assert_eq!(nc.len(), 1, "nur Canary 1B ist im ASR-Katalog nicht-kommerziell: {nc:?}");
+    }
+
+    #[test]
+    fn nicht_kommerzielle_piper_stimmen_sind_markiert() {
+        let voices = tts_entries(Purpose::TtsVoice);
+        let nc: BTreeSet<&str> = voices
+            .iter()
+            .filter(|v| v.license_non_commercial)
+            .map(|v| v.id.as_str())
+            .collect();
+        // Lessac (Blizzard-2013-Forschungslizenz) und Ryan (CC-BY-NC-SA-4.0) selbst sowie
+        // die davon feinabgestimmten Stimmen (K1): Thorsten, Kerstin, Amy, Alan, Alba.
+        assert_eq!(
+            nc,
+            BTreeSet::from([
+                "de_DE-kerstin-low",
+                "de_DE-thorsten-high",
+                "de_DE-thorsten-medium",
+                "en_GB-alan-medium",
+                "en_GB-alba-medium",
+                "en_US-amy-medium",
+                "en_US-lessac-high",
+                "en_US-lessac-medium",
+                "en_US-ryan-high",
+            ])
+        );
+        // Von Grund auf trainiert (M-AILABS, BSD-3-Clause): frei.
+        assert!(!voices.iter().any(|v| v.id == "de_DE-eva_k-x_low" && v.license_non_commercial));
+    }
+
+    #[test]
+    fn piper_laufzeiten_nennen_das_espeak_ng_copyleft() {
+        for e in tts_entries(Purpose::TtsRuntime) {
+            let l = e.license.unwrap_or_default();
+            assert!(l.contains("GPL-3.0-or-later"), "{}: {l}", e.id);
+        }
+    }
+
+    #[test]
+    fn macos_piper_archive_sind_als_unvollstaendig_markiert_windows_nicht() {
+        let rt = tts_entries(Purpose::TtsRuntime);
+        let by = |id: &str| rt.iter().find(|e| e.id == id).unwrap();
+        assert_eq!(
+            by("piper-runtime-macos-x64").unsupported_reason.as_deref(),
+            Some("incomplete_archive")
+        );
+        assert_eq!(
+            by("piper-runtime-macos-aarch64").unsupported_reason.as_deref(),
+            Some("incomplete_archive")
+        );
+        assert!(by("piper-runtime-windows-x64").unsupported_reason.is_none());
     }
 }

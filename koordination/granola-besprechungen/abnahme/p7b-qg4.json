@@ -1,0 +1,278 @@
+{
+  "gate": "QG4",
+  "started": "2026-09-30T00:00:42",
+  "app_exe": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\p7b-gpu\\local-voice-ai.exe",
+  "app_exe_mtime": "2026-09-29T23:57:30",
+  "scenarios": [
+    {
+      "scenario": "A0-control",
+      "free_ram_cap_mb": null,
+      "run": {
+        "args": "--simulate-meeting --scene-mic mic_echo.wav --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene1_status --final-model handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf --notes --json --out C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg4-A0-control.sim.json",
+        "env": {
+          "HF_HOME": "C:\\Users\\wolff\\lva-spikes\\p7b\\hf",
+          "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg4a0-4262aa9c863e4ac3813bbcd6d2e93902",
+          "LVA_TEST_FREE_RAM_MB": null
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_ms": 48063,
+        "peak_job_mb": 7751,
+        "free_mb_start": 27312,
+        "leftovers": [],
+        "log": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg4-A0-control.log",
+        "started": "2026-09-30T00:00:43"
+      },
+      "meeting_id": "01M3QJYEDXPC3S9D1KSQP771HA",
+      "status_after": "ready",
+      "final_plan": "Run { model_id: \"handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf\", max_segment_ms: 18000 }",
+      "final_kept": null,
+      "final_model": "handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf",
+      "final_wall_ms": 8173,
+      "speakers_state": "done",
+      "speakers_report": {
+        "applied": true,
+        "assigned": 19,
+        "attempts": 1,
+        "channels": [
+          {
+            "audio_ms": 257696,
+            "channel": 1,
+            "model_ms": 996,
+            "source": "model",
+            "speakers": 1,
+            "turns": 19
+          }
+        ],
+        "mic_without_aec": false,
+        "model": "sortformer-4spk-v2.1-q8",
+        "split_added": 0,
+        "state": "done",
+        "unassigned": 0,
+        "wall_ms": 1048
+      },
+      "notes": {
+        "document_id": "01M3QJZTMN1T78GZ7R6Y82VSWW",
+        "error_code": null,
+        "ms": 20956,
+        "ok": true,
+        "provider": "local:llm-gemma4-e4b-q4",
+        "ran": true,
+        "steps": 1,
+        "template": null
+      },
+      "log_lines": [
+        "[2026-09-29][22:01:00][local_voice_ai_lib::managers::meetings::dsp][INFO] meetings: live pipeline drained (segments=41 short=0 silent=0 vad_errors=0 max_cuts=0 hallu[phrase=0 repeat=0 dense=0 share=0] overflow_ms[mic=0 sys=0] lost_ms=0 panics=0 vad_fallback=fa",
+        "[2026-09-29][22:01:09][local_voice_ai_lib::managers::meetings::final_pass][INFO] meetings: final pass done (01M3QJYEDXPC3S9D1KSQP771HA): kept=None epoch=1 segments=41 blocks=41 audio_ms=257670 load_ms=1442 transcribe_ms=4394 wall_ms=8173 catch_up=0/0",
+        "[2026-09-29][22:01:09][local_voice_ai_lib::managers::meetings::notes::enhance][INFO] KI-Notizen: 0 Notizbloecke, 41 Segmente, 4568 Zeichen (Einzeldurchlauf bis 45513)",
+        "[2026-09-29][22:01:09][local_voice_ai_lib::managers::llm::server][INFO] llama-server gestartet (pid 63508, llm-gemma4-e4b-q4 auf 127.0.0.1:14904, Backend cuda)",
+        "[2026-09-29][22:01:30][local_voice_ai_lib::managers::meetings::notes::enhance][INFO] KI-Notizen: 23 Eintraege (23 KI, davon 23 mit Quelle), 0 Quellen verworfen",
+        "{\"aec\":true,\"audio_ms\":257696,\"dsp\":\"segments=41 short=0 silent=0 vad_errors=0 max_cuts=0 hallu[phrase=0 repeat=0 dense=0 share=0] overflow_ms[mic=0 sys=0] lost_ms=0 panics=0 vad_fallback=false backlog_peak=2 aec=true echo_dropped=0\",\"echo\":{\"aligner_jumps\":0,"
+      ]
+    },
+    {
+      "scenario": "A-cap5000",
+      "free_ram_cap_mb": 5000,
+      "run": {
+        "args": "--simulate-meeting --scene-mic mic_echo.wav --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene1_status --final-model handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf --notes --json --out C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg4-A-cap5000.sim.json",
+        "env": {
+          "HF_HOME": "C:\\Users\\wolff\\lva-spikes\\p7b\\hf",
+          "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg4a-b4680e190f874565a21dbc344721e5a2",
+          "LVA_TEST_FREE_RAM_MB": 5000
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_ms": 18444,
+        "peak_job_mb": 1459,
+        "free_mb_start": 26824,
+        "leftovers": [],
+        "log": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg4-A-cap5000.log",
+        "started": "2026-09-30T00:01:33"
+      },
+      "meeting_id": "01M3QJZZNWXRERXDKWPATV2WS8",
+      "status_after": "ready",
+      "final_plan": "Keep(LowRam)",
+      "final_kept": "low_ram",
+      "final_model": null,
+      "final_wall_ms": 3,
+      "speakers_state": "skipped",
+      "speakers_report": {
+        "applied": false,
+        "assigned": 0,
+        "attempts": 0,
+        "channels": [
+          {
+            "audio_ms": 257696,
+            "channel": 1,
+            "model_ms": 0,
+            "skipped": "low_memory",
+            "source": "model",
+            "speakers": 0,
+            "turns": 0
+          }
+        ],
+        "mic_without_aec": false,
+        "model": "sortformer-4spk-v2.1-q8",
+        "split_added": 0,
+        "state": "skipped",
+        "unassigned": 0,
+        "wall_ms": 1
+      },
+      "notes": {
+        "document_id": null,
+        "error_code": "memory_low",
+        "ms": 376,
+        "ok": false,
+        "provider": "local:llm-gemma4-e4b-q4",
+        "ran": true,
+        "steps": 1,
+        "template": null
+      },
+      "log_lines": [
+        "[2026-09-29][22:01:51][local_voice_ai_lib::managers::meetings::dsp][INFO] meetings: live pipeline drained (segments=41 short=0 silent=0 vad_errors=0 max_cuts=0 hallu[phrase=0 repeat=0 dense=0 share=0] overflow_ms[mic=0 sys=0] lost_ms=0 panics=0 vad_fallback=fa",
+        "[2026-09-29][22:01:51][local_voice_ai_lib::managers::meetings::speakers][WARN] meetings: diarization of channel 1 not started: Zu wenig freier Arbeitsspeicher: 4.9 GB frei, gebraucht werden etwa 1.0 GB plus 6 GB Reserve fuer das System. Andere Programme schlie",
+        "[2026-09-29][22:01:51][local_voice_ai_lib::managers::meetings::final_pass][WARN] meetings: final pass skipped for 01M3QJZZNWXRERXDKWPATV2WS8 (LowRam) - live transcript stays",
+        "[2026-09-29][22:01:51][local_voice_ai_lib::managers::meetings::final_pass][INFO] meetings: final pass done (01M3QJZZNWXRERXDKWPATV2WS8): kept=Some(LowRam) epoch=0 segments=0 blocks=0 audio_ms=0 load_ms=0 transcribe_ms=0 wall_ms=3 catch_up=0/0",
+        "[2026-09-29][22:01:52][local_voice_ai_lib::managers::meetings::notes::enhance][INFO] KI-Notizen: 0 Notizbloecke, 59 Segmente, 4866 Zeichen (Einzeldurchlauf bis 45513)",
+        "{\"aec\":true,\"audio_ms\":257696,\"dsp\":\"segments=41 short=0 silent=0 vad_errors=0 max_cuts=0 hallu[phrase=0 repeat=0 dense=0 share=0] overflow_ms[mic=0 sys=0] lost_ms=0 panics=0 vad_fallback=false backlog_peak=2 aec=true echo_dropped=0\",\"echo\":{\"aligner_jumps\":0,"
+      ]
+    },
+    {
+      "scenario": "B-reindex-cap5000",
+      "free_ram_cap_mb": 5000,
+      "run": {
+        "args": "--reindex-meetings --json --out C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg4-B.json",
+        "env": {
+          "HF_HOME": "C:\\Users\\wolff\\lva-spikes\\p7b\\hf",
+          "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg4a-b4680e190f874565a21dbc344721e5a2",
+          "LVA_TEST_FREE_RAM_MB": 5000
+        },
+        "exit_code": 3,
+        "timed_out": false,
+        "wall_ms": 331,
+        "peak_job_mb": 709,
+        "free_mb_start": 26565,
+        "leftovers": [],
+        "log": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg4-B.log",
+        "started": "2026-09-30T00:01:54"
+      },
+      "result": {
+        "chunks": 6,
+        "db": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg4a-b4680e190f874565a21dbc344721e5a2\\meetings.db",
+        "embed_batches": 0,
+        "embed_error": "memory_low",
+        "embed_ms": 264,
+        "embed_server_peak_mb": null,
+        "embed_server_running": false,
+        "embedded_meetings": 0,
+        "indexed": 1,
+        "lexical_meetings": 1,
+        "lexical_ms": 19,
+        "meetings": 1,
+        "mode": "reindex_meetings",
+        "model": "emb-bge-m3-q8",
+        "model_ready": true,
+        "seeded": 0,
+        "skipped_chunks": 0,
+        "vectors": 0
+      },
+      "log_lines": [
+        "[2026-09-29][22:01:54][local_voice_ai_lib::managers::meetings::search::indexer][WARN] Indexer: Vektorstufe pausiert 10 min (memory_low)",
+        "{\"chunks\":6,\"db\":\"C:\\\\Users\\\\wolff\\\\AppData\\\\Local\\\\Temp\\\\lva-p7b-qg4a-b4680e190f874565a21dbc344721e5a2\\\\meetings.db\",\"embed_batches\":0,\"embed_error\":\"memory_low\",\"embed_ms\":264,\"embed_server_peak_mb\":null,\"embed_server_running\":false,\"embedded_meetings\":0,\"in"
+      ]
+    },
+    {
+      "scenario": "C-pdf-cap2000",
+      "free_ram_cap_mb": 2000,
+      "run": {
+        "args": "--export-meeting 01M3QJZZNWXRERXDKWPATV2WS8 --format pdf --out C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg4a-b4680e190f874565a21dbc344721e5a2\\p7b-qg4.pdf",
+        "env": {
+          "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg4a-b4680e190f874565a21dbc344721e5a2",
+          "LVA_TEST_FREE_RAM_MB": 2000
+        },
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_ms": 44,
+        "peak_job_mb": 6,
+        "free_mb_start": 26635,
+        "leftovers": [],
+        "log": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg4-C.log",
+        "started": "2026-09-30T00:01:57"
+      },
+      "pdf_written": false,
+      "log_lines": [
+        "[2026-09-29][22:01:57][local_voice_ai_lib::managers::meetings::store][INFO] Initializing meetings database at \"C:\\\\Users\\\\wolff\\\\AppData\\\\Local\\\\Temp\\\\lva-p7b-qg4a-b4680e190f874565a21dbc344721e5a2\\\\meetings.db\"",
+        "error: pdf_low_memory: Zu wenig freier Arbeitsspeicher f├╝r den PDF-Export (2.0 GB frei). Andere Programme schlie├ƒen und erneut versuchen.",
+        ""
+      ]
+    },
+    {
+      "scenario": "D-cap1500",
+      "free_ram_cap_mb": 1500,
+      "run": {
+        "args": "--simulate-meeting --scene-mic mic_echo.wav --scene C:\\Users\\wolff\\AppData\\Local\\lva-bench\\synth\\scene1_status --final-model handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf --notes --json --out C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg4-D-cap1500.sim.json",
+        "env": {
+          "HF_HOME": "C:\\Users\\wolff\\lva-spikes\\p7b\\hf",
+          "LVA_MEETINGS_DIR": "C:\\Users\\wolff\\AppData\\Local\\Temp\\lva-p7b-qg4d-9a561663cb894e07a4f30b2236210d82",
+          "LVA_TEST_FREE_RAM_MB": 1500
+        },
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_ms": 17971,
+        "peak_job_mb": 1457,
+        "free_mb_start": 26684,
+        "leftovers": [],
+        "log": "C:\\Users\\wolff\\AppData\\Local\\lva-bench\\results\\p7b\\p7b-qg4-D-cap1500.log",
+        "started": "2026-09-30T00:01:59"
+      },
+      "meeting_id": "01M3QK0REBAGH45WGZ2K0MPRKE",
+      "status_after": "ready",
+      "final_plan": "Keep(LowRam)",
+      "final_kept": "low_ram",
+      "final_model": null,
+      "final_wall_ms": 2,
+      "speakers_state": "skipped",
+      "speakers_report": {
+        "applied": false,
+        "assigned": 0,
+        "attempts": 0,
+        "channels": [
+          {
+            "audio_ms": 257696,
+            "channel": 1,
+            "model_ms": 0,
+            "skipped": "low_memory",
+            "source": "model",
+            "speakers": 0,
+            "turns": 0
+          }
+        ],
+        "mic_without_aec": false,
+        "model": "sortformer-4spk-v2.1-q8",
+        "split_added": 0,
+        "state": "skipped",
+        "unassigned": 0,
+        "wall_ms": 0
+      },
+      "notes": {
+        "document_id": null,
+        "error_code": "memory_low",
+        "ms": 318,
+        "ok": false,
+        "provider": "local:llm-gemma4-e4b-q4",
+        "ran": true,
+        "steps": 1,
+        "template": null
+      },
+      "log_lines": [
+        "[2026-09-29][22:02:16][local_voice_ai_lib::managers::meetings::dsp][INFO] meetings: live pipeline drained (segments=41 short=0 silent=0 vad_errors=0 max_cuts=0 hallu[phrase=0 repeat=0 dense=0 share=0] overflow_ms[mic=0 sys=0] lost_ms=0 panics=0 vad_fallback=fa",
+        "[2026-09-29][22:02:16][local_voice_ai_lib::managers::meetings::speakers][WARN] meetings: diarization of channel 1 not started: Zu wenig freier Arbeitsspeicher: 1.5 GB frei, gebraucht werden etwa 1.0 GB plus 6 GB Reserve fuer das System. Andere Programme schlie",
+        "[2026-09-29][22:02:16][local_voice_ai_lib::managers::meetings::final_pass][WARN] meetings: final pass skipped for 01M3QK0REBAGH45WGZ2K0MPRKE (LowRam) - live transcript stays",
+        "[2026-09-29][22:02:16][local_voice_ai_lib::managers::meetings::final_pass][INFO] meetings: final pass done (01M3QK0REBAGH45WGZ2K0MPRKE): kept=Some(LowRam) epoch=0 segments=0 blocks=0 audio_ms=0 load_ms=0 transcribe_ms=0 wall_ms=2 catch_up=0/0",
+        "[2026-09-29][22:02:17][local_voice_ai_lib::managers::meetings::notes::enhance][INFO] KI-Notizen: 0 Notizbloecke, 59 Segmente, 4866 Zeichen (Einzeldurchlauf bis 45513)",
+        "{\"aec\":true,\"audio_ms\":257696,\"dsp\":\"segments=41 short=0 silent=0 vad_errors=0 max_cuts=0 hallu[phrase=0 repeat=0 dense=0 share=0] overflow_ms[mic=0 sys=0] lost_ms=0 panics=0 vad_fallback=false backlog_peak=2 aec=true echo_dropped=0\",\"echo\":{\"aligner_jumps\":0,"
+      ]
+    }
+  ],
+  "finished": "2026-09-30T00:02:19"
+}

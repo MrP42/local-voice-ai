@@ -8,12 +8,29 @@ interface TooltipCoords {
   left: number;
   arrowLeft: number;
   actualPosition: TooltipPosition;
+  /** Neben oder ausserhalb des `avoidRef`-Elements: kein Pfeil zum Ziel. */
+  detached: boolean;
 }
 
 interface TooltipProps {
   targetRef: React.RefObject<HTMLElement>;
   position?: TooltipPosition;
+  /**
+   * Bereich, den die Sprechblase nicht ueberdecken soll (z. B. der Antworttext,
+   * in dem ein Beleg-Chip steht). Sie erscheint dann links oder rechts daneben,
+   * sonst unter bzw. ueber dem Bereich - nie darauf.
+   */
+  avoidRef?: React.RefObject<HTMLElement | null>;
   children: React.ReactNode;
+  /** Fuer aria-describedby des Ziels; ohne Angabe bleibt das Tooltip anonym. */
+  id?: string;
+  /** "tooltip" fuer Bedienelemente, die es per aria-describedby verbinden. */
+  role?: string;
+  /** Breite in px (Standard 200). Kurze Aktionstexte brauchen mehr. */
+  width?: number;
+  /** Mausereignisse durchlassen, damit das Tooltip nie einen Nachbarknopf
+   *  verdeckt, den man gerade anfahren will. */
+  passThrough?: boolean;
 }
 
 const TOOLTIP_WIDTH = 200;
@@ -25,7 +42,12 @@ const DEFAULT_HEIGHT = 60;
 export const Tooltip: React.FC<TooltipProps> = ({
   targetRef,
   position = "top",
+  avoidRef,
   children,
+  id,
+  role,
+  width = TOOLTIP_WIDTH,
+  passThrough = false,
 }) => {
   const [coords, setCoords] = useState<TooltipCoords | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -35,6 +57,67 @@ export const Tooltip: React.FC<TooltipProps> = ({
 
     const targetRect = targetRef.current.getBoundingClientRect();
     const tooltipHeight = tooltipRef.current?.offsetHeight || DEFAULT_HEIGHT;
+
+    const avoidRect = avoidRef?.current?.getBoundingClientRect();
+    if (avoidRect) {
+      const clampTop = (value: number) =>
+        Math.min(
+          Math.max(value, VIEWPORT_PADDING),
+          Math.max(
+            VIEWPORT_PADDING,
+            window.innerHeight - tooltipHeight - VIEWPORT_PADDING,
+          ),
+        );
+      const centeredTop = clampTop(
+        targetRect.top + targetRect.height / 2 - tooltipHeight / 2,
+      );
+      const leftRoom = avoidRect.left - GAP - VIEWPORT_PADDING;
+      const rightRoom =
+        window.innerWidth - avoidRect.right - GAP - VIEWPORT_PADDING;
+      if (leftRoom >= TOOLTIP_WIDTH) {
+        setCoords({
+          top: centeredTop,
+          left: avoidRect.left - GAP - TOOLTIP_WIDTH,
+          arrowLeft: 0,
+          actualPosition: position,
+          detached: true,
+        });
+        return;
+      }
+      if (rightRoom >= TOOLTIP_WIDTH) {
+        setCoords({
+          top: centeredTop,
+          left: avoidRect.right + GAP,
+          arrowLeft: 0,
+          actualPosition: position,
+          detached: true,
+        });
+        return;
+      }
+      // Kein Platz daneben: unter dem Bereich, sonst darueber, sonst (Notlage)
+      // unten am Fenster - immer waagerecht beim Ziel.
+      const below = avoidRect.bottom + GAP;
+      const above = avoidRect.top - GAP - tooltipHeight;
+      const top =
+        below + tooltipHeight <= window.innerHeight - VIEWPORT_PADDING
+          ? below
+          : above >= VIEWPORT_PADDING
+            ? above
+            : clampTop(below);
+      const targetMid = targetRect.left + targetRect.width / 2;
+      const left = Math.min(
+        Math.max(targetMid - TOOLTIP_WIDTH / 2, VIEWPORT_PADDING),
+        window.innerWidth - TOOLTIP_WIDTH - VIEWPORT_PADDING,
+      );
+      setCoords({
+        top,
+        left,
+        arrowLeft: 0,
+        actualPosition: position,
+        detached: true,
+      });
+      return;
+    }
 
     let actualPosition = position;
     let top: number;
@@ -59,21 +142,21 @@ export const Tooltip: React.FC<TooltipProps> = ({
     }
 
     const targetCenter = targetRect.left + targetRect.width / 2;
-    let left = targetCenter - TOOLTIP_WIDTH / 2;
+    let left = targetCenter - width / 2;
 
     if (left < VIEWPORT_PADDING) {
       left = VIEWPORT_PADDING;
-    } else if (left + TOOLTIP_WIDTH > window.innerWidth - VIEWPORT_PADDING) {
-      left = window.innerWidth - TOOLTIP_WIDTH - VIEWPORT_PADDING;
+    } else if (left + width > window.innerWidth - VIEWPORT_PADDING) {
+      left = window.innerWidth - width - VIEWPORT_PADDING;
     }
 
     const arrowLeft = Math.min(
       Math.max(targetCenter - left, ARROW_MARGIN),
-      TOOLTIP_WIDTH - ARROW_MARGIN,
+      width - ARROW_MARGIN,
     );
 
-    setCoords({ top, left, arrowLeft, actualPosition });
-  }, [targetRef, position]);
+    setCoords({ top, left, arrowLeft, actualPosition, detached: false });
+  }, [targetRef, avoidRef, position, width]);
 
   useEffect(() => {
     updatePosition();
@@ -93,21 +176,27 @@ export const Tooltip: React.FC<TooltipProps> = ({
   return createPortal(
     <div
       ref={tooltipRef}
+      id={id}
+      role={role}
       style={{
         position: "fixed",
         top: coords?.top ?? -9999,
         left: coords?.left ?? -9999,
-        width: TOOLTIP_WIDTH,
+        width: width,
         zIndex: 9999,
         opacity: coords ? 1 : 0,
       }}
-      className="px-3 py-2 bg-background border border-mid-gray/80 rounded-lg shadow-lg whitespace-normal transition-opacity duration-150"
+      className={`px-3 py-2 bg-background border border-mid-gray/80 rounded-lg shadow-lg whitespace-normal transition-opacity duration-150${
+        passThrough ? " pointer-events-none" : ""
+      }`}
     >
       {children}
-      <div
-        style={{ left: coords?.arrowLeft ?? 0 }}
-        className={`absolute ${arrowClasses} transform -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-mid-gray/80`}
-      />
+      {!coords?.detached && (
+        <div
+          style={{ left: coords?.arrowLeft ?? 0 }}
+          className={`absolute ${arrowClasses} transform -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-mid-gray/80`}
+        />
+      )}
     </div>,
     document.body,
   );

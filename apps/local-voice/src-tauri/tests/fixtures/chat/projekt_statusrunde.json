@@ -1,0 +1,283 @@
+{
+  "title": "Statusrunde Kundenportal",
+  "folder": "Projekte",
+  "participants": [
+    "Katrin",
+    "Ole",
+    "Deniz",
+    "Nora",
+    "Paul"
+  ],
+  "started_at": "2026-09-15T10:00:00+02:00",
+  "segments": [
+    {
+      "segment_index": 0,
+      "text": "Guten Morgen, Statusrunde Kundenportal. Katrin hier. Dabei sind Ole, Deniz, Nora und Paul. Wir gehen wie immer Budget, Termine und dann die Aufgaben durch.",
+      "start_ms": 2000,
+      "end_ms": 12075,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 1,
+      "text": "Katrin: Zum Budget. Freigegeben sind vierundachtzigtausend Euro, verbraucht haben wir zweiundfünfzigtausend. Das sind zweiundsechzig Prozent.",
+      "start_ms": 13875,
+      "end_ms": 23040,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 2,
+      "text": "Paul: Und wie weit sind wir inhaltlich?",
+      "start_ms": 24840,
+      "end_ms": 27375,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 3,
+      "text": "Katrin: Von vierundzwanzig User Stories sind fünfzehn fertig. Wir liegen also etwas hinter dem Budgetverbrauch.",
+      "start_ms": 29175,
+      "end_ms": 36390,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 4,
+      "text": "Deniz: Das liegt vor allem an der Schnittstelle zum Rechnungssystem. Die hat allein neun Personentage mehr gekostet als geplant.",
+      "start_ms": 38190,
+      "end_ms": 46510,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 5,
+      "text": "Katrin: Ist die Schnittstelle jetzt stabil?",
+      "start_ms": 48310,
+      "end_ms": 51105,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 6,
+      "text": "Deniz: Seit Freitag ja. Der Fehler lag bei der Zeichenkodierung von Kundennamen mit Umlauten.",
+      "start_ms": 52905,
+      "end_ms": 58950,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 7,
+      "text": "Katrin: Gut. Ole, wie sieht es im Frontend aus?",
+      "start_ms": 60750,
+      "end_ms": 63805,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 8,
+      "text": "Ole: Die Ladezeit der Startseite liegt im Moment bei eins Komma acht Sekunden. Unser Ziel sind eins Komma zwei Sekunden.",
+      "start_ms": 65605,
+      "end_ms": 73405,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 9,
+      "text": "Ole: Ich will die Bilder komprimieren und die Kundenliste erst nachladen. Dafür brauche ich etwa drei Tage.",
+      "start_ms": 75205,
+      "end_ms": 82160,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 10,
+      "text": "Katrin: Nimm dir die drei Tage, die Ladezeit ist wichtig für die Abnahme.",
+      "start_ms": 83960,
+      "end_ms": 88705,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 11,
+      "text": "Nora: Zum Test. Wir haben siebzehn offene Tickets, davon drei kritisch. Alle drei betreffen den Login mit Zwei-Faktor-Authentifizierung.",
+      "start_ms": 90505,
+      "end_ms": 99345,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 12,
+      "text": "Nora: Der Lasttest ist für den zweiundzwanzigsten Oktober angesetzt, mit zweitausend gleichzeitigen Nutzern.",
+      "start_ms": 101145,
+      "end_ms": 108165,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 13,
+      "text": "Deniz: Die drei kritischen Login-Fehler übernehme ich, die sind bis Mittwoch nächster Woche behoben.",
+      "start_ms": 109965,
+      "end_ms": 116465,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 14,
+      "text": "Paul: Dann zum Termin. Der Launch des Kundenportals ist für den dritten November geplant. Hält das?",
+      "start_ms": 118265,
+      "end_ms": 124700,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 15,
+      "text": "Katrin: Wenn der Lasttest am zweiundzwanzigsten Oktober klappt, ja. Wenn nicht, verschieben wir den Launch auf den siebzehnten November.",
+      "start_ms": 126500,
+      "end_ms": 135340,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 16,
+      "text": "Paul: Der Vertrieb möchte den Launch schon auf der Messe am zehnten Oktober ankündigen.",
+      "start_ms": 137140,
+      "end_ms": 142795,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 17,
+      "text": "Katrin: Dann bitte nur als Anfang November ankündigen, ohne genaues Datum. Das ist mir sicherer.",
+      "start_ms": 144595,
+      "end_ms": 150835,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 18,
+      "text": "Paul: Einverstanden, das gebe ich so an den Vertrieb weiter.",
+      "start_ms": 152635,
+      "end_ms": 156535,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 19,
+      "text": "Katrin: Noch ein Punkt, die Datenschutzprüfung. Frau Albers vom Datenschutz braucht das Verarbeitungsverzeichnis bis Ende September.",
+      "start_ms": 158335,
+      "end_ms": 166915,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 20,
+      "text": "Nora: Das Verarbeitungsverzeichnis schreibe ich, die Vorlage habe ich noch vom letzten Projekt.",
+      "start_ms": 168715,
+      "end_ms": 174890,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 21,
+      "text": "Katrin: Danke, Nora. Und die Schulung der Kundenbetreuer?",
+      "start_ms": 176690,
+      "end_ms": 180395,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 22,
+      "text": "Paul: Die mache ich selbst, zwei Termine zu je neunzig Minuten in der Woche vor dem Launch.",
+      "start_ms": 182195,
+      "end_ms": 188110,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 23,
+      "text": "Ole: Brauchen wir für die Schulung eine eigene Umgebung?",
+      "start_ms": 189910,
+      "end_ms": 193550,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 24,
+      "text": "Deniz: Ich richte bis Ende Oktober eine Schulungsumgebung mit Testdaten ein.",
+      "start_ms": 195350,
+      "end_ms": 200290,
+      "channel": 1,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 25,
+      "text": "Katrin: Gut, dann fasse ich zusammen. Budget zu zweiundsechzig Prozent verbraucht, fünfzehn von vierundzwanzig Stories fertig.",
+      "start_ms": 202090,
+      "end_ms": 210280,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 26,
+      "text": "Katrin: Aufgaben: Ole optimiert die Ladezeit in drei Tagen, Deniz behebt die Login-Fehler bis Mittwoch und baut die Schulungsumgebung.",
+      "start_ms": 212080,
+      "end_ms": 220790,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 27,
+      "text": "Katrin: Nora schreibt das Verarbeitungsverzeichnis bis Ende September, Paul informiert den Vertrieb und übernimmt die Schulung.",
+      "start_ms": 222590,
+      "end_ms": 230845,
+      "channel": 0,
+      "speaker_index": null
+    },
+    {
+      "segment_index": 28,
+      "text": "Katrin: Nächste Statusrunde in zwei Wochen. Danke euch.",
+      "start_ms": 232645,
+      "end_ms": 236220,
+      "channel": 0,
+      "speaker_index": null
+    }
+  ],
+  "notes": [
+    {
+      "id": "01K6EVALSR0000000000000001",
+      "kind": "bullet",
+      "text": "Budget 52 von 84 T€ (62 %)",
+      "at_ms": 23540,
+      "checked": false
+    },
+    {
+      "id": "01K6EVALSR0000000000000002",
+      "kind": "bullet",
+      "text": "15/24 Stories fertig",
+      "at_ms": 36890,
+      "checked": false
+    },
+    {
+      "id": "01K6EVALSR0000000000000003",
+      "kind": "bullet",
+      "text": "Ladezeit 1,8 s -> Ziel 1,2 s",
+      "at_ms": 82660,
+      "checked": false
+    },
+    {
+      "id": "01K6EVALSR0000000000000004",
+      "kind": "bullet",
+      "text": "Launch 3.11., Fallback 17.11.",
+      "at_ms": 135840,
+      "checked": false
+    },
+    {
+      "id": "01K6EVALSR0000000000000005",
+      "kind": "todo",
+      "text": "Verarbeitungsverzeichnis an Fr. Albers (Nora)",
+      "at_ms": 175390,
+      "checked": false
+    }
+  ]
+}

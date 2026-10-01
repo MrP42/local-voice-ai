@@ -1,0 +1,45 @@
+{
+  "schema": "lva-workflow@1",
+  "name": "Eingangsordner: transkribieren, Protokoll als Word",
+  "description": "Landet eine Audio- oder Videodatei im Eingangsordner, wird sie transkribiert, daraus ein Protokoll erzeugt und als Word-Datei im Zielordner abgelegt.",
+  "trigger": {
+    "type": "folder.file_added",
+    "integration": "folder-eingang",
+    "extensions": ["wav", "mp3", "m4a", "mp4", "mkv"]
+  },
+  "variables": {
+    "protokoll_vorlage": {
+      "type": "string",
+      "default": "",
+      "description": "Name oder Kennung der Protokollvorlage (leer: die der Besprechung bzw. die Standardvorlage; auto: nach Inhalt wählen)"
+    }
+  },
+  "steps": [
+    {
+      "id": "import",
+      "action": "meeting.import",
+      "label": "Datei importieren und transkribieren",
+      "params": {
+        "via": "{{trigger.integration}}",
+        "path": "{{trigger.path}}"
+      }
+    },
+    {
+      "id": "protokoll",
+      "action": "meeting.minutes",
+      "label": "Protokoll erzeugen",
+      "params": { "template": "{{vars.protokoll_vorlage}}" }
+    },
+    {
+      "id": "word",
+      "action": "export.document",
+      "label": "Als Word ablegen",
+      "params": {
+        "format": "docx",
+        "target": "folder-protokolle",
+        "content": "minutes",
+        "name": "{{steps.protokoll.meeting.title}} – Protokoll"
+      }
+    }
+  ]
+}

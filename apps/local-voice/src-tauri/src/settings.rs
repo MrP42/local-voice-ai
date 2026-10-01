@@ -153,6 +153,26 @@ pub enum DictationAudio {
     Pause,
 }
 
+/// M2-P2c2: Echo-Unterdrückung der Ich-Spur einer Besprechung (der Systemton
+/// dient als Referenz; Rauschunterdrückung und AGC bleiben immer aus).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MeetingEchoCancellation {
+    /// An, sobald der Systemton aufgenommen wird. Heute gleichbedeutend mit
+    /// `on`; Platz für eine spätere Headset-Erkennung.
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl MeetingEchoCancellation {
+    /// Läuft die Echo-Unterdrückung? Ohne Systemton fehlt die Referenz.
+    pub fn enabled(self, capture_system: bool) -> bool {
+        capture_system && self != Self::Off
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelUnloadTimeout {
@@ -771,6 +791,133 @@ pub struct AppSettings {
     /// profitieren von Batch-Modellen (z. B. Parakeet V3).
     #[serde(default)]
     pub meeting_model: Option<String>,
+    /// M1-P1f: Systemton (Loopback) ist beim Start einer Besprechung
+    /// vorangehakt. Die Oberflaeche merkt sich die letzte Wahl hier; ohne den
+    /// Schluessel (aeltere settings.json) gilt `true`.
+    #[serde(default = "default_true")]
+    pub meeting_capture_system: bool,
+    /// M1-P1f (E2): KI-Notizen starten automatisch, sobald das Live-Transkript
+    /// endgueltig ist (`MeetingEvent::TranscriptFinal`). Import loest nie aus.
+    #[serde(default = "default_true")]
+    pub meeting_auto_enhance: bool,
+    /// M1-P1f: Vorlage, die neue Besprechungen vorbelegt. `None` = die
+    /// Standardvorlage (`builtin:allgemein`).
+    #[serde(default)]
+    pub meeting_default_template_id: Option<String>,
+    /// M4-P4b (E6): semantische Suche in Besprechungen (Vektoren ueber das
+    /// Embedding-Modell BGE-M3). Wirkt erst, wenn das Modell per Knopf
+    /// heruntergeladen ist; ohne den Schluessel gilt `true`.
+    #[serde(default = "default_true")]
+    pub meeting_semantic_search: bool,
+    /// D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
+    /// (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server
+    /// kurz mit Bild-Projektor. Standard AUS (der Projektor ist ein optionaler 990-MB-
+    /// Download, die Analyse braucht eine Grafikkarte); ohne die Voraussetzungen bleibt es
+    /// bei der Windows-Texterkennung, auch wenn der Schalter an ist.
+    #[serde(default)]
+    pub meeting_slide_vision: bool,
+    /// M2-P2c2: Echo-Unterdrückung der Ich-Spur (`auto` | `on` | `off`). Ohne
+    /// den Schlüssel (ältere settings.json) gilt `auto`.
+    #[serde(default)]
+    pub meeting_echo_cancellation: MeetingEchoCancellation,
+    /// M2-P2d: Enddurchlauf nach dem Stopp: `auto` (mit GPU Qwen3-ASR 1.7B
+    /// bzw. Whisper large-v3, nur CPU: Live-Transkript = Endtranskript), `off`
+    /// oder eine Modell-ID (laeuft auch auf der CPU). Ohne den Schluessel
+    /// (aeltere settings.json) gilt `auto`.
+    #[serde(default = "default_meeting_final_model")]
+    pub meeting_final_model: String,
+    /// M3-P3b: Sprechertrennung nach dem Stopp, beim Import und bei der
+    /// Neu-Transkription: `auto` (Standard, lokal, keine Speicherung
+    /// biometrischer Merkmale) oder `off`. Ohne den Schluessel (aeltere
+    /// settings.json) gilt `auto`; jeder andere Wert als `off` zaehlt als `auto`.
+    #[serde(default = "default_meeting_diarization")]
+    pub meeting_diarization: String,
+    /// U7: wie viele Dateien der Import-Warteschlange gleichzeitig transkribiert
+    /// werden: 1 (Standard), 2 oder 3. Mehr als eine nur, solange Arbeitsspeicher
+    /// (und bei GPU-Modellen Grafikspeicher) fuer die weitere Engine reichen;
+    /// sonst wartet die naechste Datei. Ohne den Schluessel (aeltere
+    /// settings.json) gilt 1; Werte ausserhalb 1 bis 3 zaehlen als der naechste
+    /// gueltige.
+    #[serde(default = "default_meeting_import_parallel")]
+    pub meeting_import_parallel: u32,
+    /// M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
+    /// Mikrofonnutzung: `off` | `meeting_apps` (Standard) | `all_apps`. Nur ein
+    /// Hinweis, nie ein automatischer Start.
+    #[serde(default)]
+    pub meeting_detect_mode: crate::managers::meeting_detect::DetectMode,
+    /// M5-P5c: Programme, die nie gemeldet werden (Dateiname, Anzeigename oder
+    /// Teil des Registry-Schluessels, ohne Gross-/Kleinschreibung).
+    #[serde(default)]
+    pub meeting_detect_ignored_apps: Vec<String>,
+    /// M6-P6c: Meine E-Mail-Adressen. Personen mit diesen Adressen zaehlen bei
+    /// der Follow-up-Mail als "ich" und werden nicht Empfaenger. Ohne den
+    /// Schluessel (aeltere settings.json) leer.
+    #[serde(default)]
+    pub meeting_self_emails: Vec<String>,
+    /// U8: Mein Name. Der Kanal "Ich" und der dominante Sprecher am Mikrofon
+    /// tragen ihn (statt "Ich"); in Personen ist er als "ich" markiert. Ohne den
+    /// Schluessel (aeltere settings.json) oder leer: "Ich".
+    #[serde(default)]
+    pub meeting_self_name: Option<String>,
+    /// M5-P5b (E11): Vorlauf der Erinnerung vor einem Termin in Sekunden;
+    /// 0 = Erinnerung aus. Ohne den Schluessel (aeltere settings.json) gilt 60.
+    #[serde(default = "default_meeting_reminder_lead_s")]
+    pub meeting_reminder_lead_s: u32,
+    /// M5-P5b (E11): auch Termine ohne Teilnehmende und ohne Beitritts-Adresse
+    /// erinnern. Standard aus: ein Einzeltermin ohne Gegenueber ist keine Besprechung.
+    #[serde(default)]
+    pub meeting_reminder_all_events: bool,
+    /// M6-P6e (F21, E13): der lokale MCP-Server (`local-voice-ai.exe --mcp`)
+    /// gibt Besprechungsinhalte an einen KI-Client weiter. Standard AUS; der
+    /// Server liest diese Datei bei jedem Aufruf frisch (`mcp::read_settings`),
+    /// der Name des Feldes ist dort fest verdrahtet (ein Test haelt beide zusammen).
+    #[serde(default)]
+    pub meeting_mcp_enabled: bool,
+    /// M6-P6e (E13): darf der MCP-Server auch das Transkript liefern (`get_transcript`,
+    /// Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
+    #[serde(default = "default_true")]
+    pub meeting_mcp_include_transcript: bool,
+    /// M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
+    /// Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
+    /// `http://localhost`). Es gibt keine eingebaute ID: ohne Eintrag ist die
+    /// Anmeldung gesperrt. Keine Geheimnisse (das Erneuerungs-Token liegt DPAPI-
+    /// verschluesselt in `secrets/`).
+    #[serde(default)]
+    pub calendar_graph_client_id: Option<String>,
+    /// M5-P5f: Verzeichnis (Tenant) der Anmeldung; `None` = `common`.
+    #[serde(default)]
+    pub calendar_graph_tenant: Option<String>,
+    /// A2 (Goal Integrationen, E1): Schalter „privat/experimentell“. An UND ein
+    /// selbst installiertes yt-dlp gefunden: A3 darf darueber Audio und Untertitel
+    /// fuer den eigenen Gebrauch holen. Standard AUS; yt-dlp wird weder gebuendelt
+    /// noch geladen. Bleibt auf dem Geraet (kein Sync).
+    #[serde(default)]
+    pub meeting_youtube_private: bool,
+    /// A2: Pfad (Datei oder Ordner) eines selbst installierten yt-dlp; `None` =
+    /// im PATH suchen. Bleibt auf dem Geraet.
+    #[serde(default)]
+    pub meeting_youtube_tool_path: Option<String>,
+}
+
+fn default_meeting_reminder_lead_s() -> u32 {
+    60
+}
+
+fn default_meeting_final_model() -> String {
+    "auto".to_string()
+}
+
+fn default_meeting_diarization() -> String {
+    "auto".to_string()
+}
+
+fn default_meeting_import_parallel() -> u32 {
+    1
+}
+
+/// M3-P3b: ist die Sprechertrennung eingeschaltet (`meeting_diarization`)?
+pub fn meeting_diarization_enabled(value: &str) -> bool {
+    !value.trim().eq_ignore_ascii_case("off")
 }
 
 fn default_meeting_language() -> String {
@@ -1514,6 +1661,27 @@ pub fn get_default_settings() -> AppSettings {
         meeting_audio_retention: default_meeting_audio_retention(),
         meeting_language: default_meeting_language(),
         meeting_model: None,
+        meeting_capture_system: true,
+        meeting_auto_enhance: true,
+        meeting_default_template_id: None,
+        meeting_semantic_search: true,
+        meeting_slide_vision: false,
+        meeting_echo_cancellation: MeetingEchoCancellation::Auto,
+        meeting_final_model: default_meeting_final_model(),
+        meeting_diarization: default_meeting_diarization(),
+        meeting_import_parallel: default_meeting_import_parallel(),
+        meeting_detect_mode: crate::managers::meeting_detect::DetectMode::default(),
+        meeting_detect_ignored_apps: Vec::new(),
+        meeting_self_emails: Vec::new(),
+        meeting_self_name: None,
+        meeting_reminder_lead_s: default_meeting_reminder_lead_s(),
+        meeting_reminder_all_events: false,
+        meeting_mcp_enabled: false,
+        meeting_mcp_include_transcript: true,
+        calendar_graph_client_id: None,
+        calendar_graph_tenant: None,
+        meeting_youtube_private: false,
+        meeting_youtube_tool_path: None,
     }
 }
 
@@ -2592,5 +2760,275 @@ mod tests {
         assert_eq!(s.tts_port, 8080);
         assert_eq!(s.tts_max_chars, 5000);
         assert_eq!(s.tts_engine, "fish", "ohne Engine-Key bleibt es bei Fish");
+    }
+
+    #[test]
+    fn defaults_enable_capture_system_and_auto_enhance() {
+        let s = get_default_settings();
+        assert!(s.meeting_capture_system, "Systemton ist vorangehakt");
+        assert!(s.meeting_auto_enhance, "KI-Notizen starten automatisch");
+        assert_eq!(s.meeting_default_template_id, None);
+    }
+
+    /// M5-P5b: die Erinnerung ist ohne den Schluessel auf 1 min gestellt und
+    /// betrifft nur echte Besprechungen; eine Wahl bleibt erhalten, auch 0 (aus).
+    #[test]
+    fn meeting_reminder_defaults_and_keeps_a_choice() {
+        let d = get_default_settings();
+        assert_eq!(d.meeting_reminder_lead_s, 60);
+        assert!(!d.meeting_reminder_all_events);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_reminder_lead_s, 60, "nicht 0 (aus) wie beim u32-Typ");
+        assert!(!old.meeting_reminder_all_events);
+        let chosen: AppSettings = serde_json::from_value(serde_json::json!({
+            "meeting_reminder_lead_s": 0,
+            "meeting_reminder_all_events": true,
+        }))
+        .unwrap();
+        assert_eq!(chosen.meeting_reminder_lead_s, 0);
+        assert!(chosen.meeting_reminder_all_events);
+    }
+
+    /// M6-P6e: der lokale MCP-Server ist ohne Zutun AUS (auch bei einer
+    /// settings.json aus einer Fassung vor P6e), das Transkript ist freigegeben,
+    /// sobald er eingeschaltet wird; eine Wahl bleibt erhalten.
+    #[test]
+    fn meeting_mcp_is_off_by_default_and_keeps_a_choice() {
+        let d = get_default_settings();
+        assert!(!d.meeting_mcp_enabled);
+        assert!(d.meeting_mcp_include_transcript);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(!old.meeting_mcp_enabled, "ältere settings.json: Server bleibt aus");
+        assert!(old.meeting_mcp_include_transcript, "nicht false wie beim bool-Typ");
+        let chosen: AppSettings = serde_json::from_value(serde_json::json!({
+            "meeting_mcp_enabled": true,
+            "meeting_mcp_include_transcript": false,
+        }))
+        .unwrap();
+        assert!(chosen.meeting_mcp_enabled);
+        assert!(!chosen.meeting_mcp_include_transcript);
+        // Geräte-Sync: die Freigabe bleibt auf dem Gerät.
+        assert!(!crate::sync::collect::SYNCED_SETTINGS
+            .iter()
+            .any(|key| key.starts_with("meeting_mcp")));
+    }
+
+    /// A2: der Schalter „privat“ ist ohne Zutun AUS (auch bei einer settings.json
+    /// aus einer Fassung vor A2), der Pfad leer; beides bleibt auf dem Geraet.
+    #[test]
+    fn youtube_private_mode_is_off_by_default_and_stays_on_the_device() {
+        let d = get_default_settings();
+        assert!(!d.meeting_youtube_private);
+        assert_eq!(d.meeting_youtube_tool_path, None);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(!old.meeting_youtube_private, "ältere settings.json: bleibt aus");
+        assert_eq!(old.meeting_youtube_tool_path, None);
+        let chosen: AppSettings = serde_json::from_value(serde_json::json!({
+            "meeting_youtube_private": true,
+            "meeting_youtube_tool_path": "C:/Tools/yt-dlp.exe",
+        }))
+        .unwrap();
+        assert!(chosen.meeting_youtube_private);
+        assert_eq!(
+            chosen.meeting_youtube_tool_path.as_deref(),
+            Some("C:/Tools/yt-dlp.exe")
+        );
+        assert!(!crate::sync::collect::SYNCED_SETTINGS
+            .iter()
+            .any(|key| key.starts_with("meeting_youtube")));
+    }
+
+    #[test]
+    fn meeting_p1f_fields_survive_an_old_settings_file() {
+        // Eine settings.json aus einer Fassung vor M1-P1f kennt die Felder
+        // nicht: `serde(default)` muss `true`/`true`/`None` liefern, nicht
+        // das `false` des bool-Typs.
+        let old = serde_json::json!({ "meeting_language": "de", "meeting_model": null });
+        let parsed: AppSettings = serde_json::from_value(old).unwrap();
+        assert!(parsed.meeting_capture_system);
+        assert!(parsed.meeting_auto_enhance);
+        assert_eq!(parsed.meeting_default_template_id, None);
+    }
+
+    /// M4-P4b: eine settings.json ohne den Schluessel schaltet die semantische
+    /// Suche ein (sie wirkt ohnehin erst mit geladenem Modell); ein explizites
+    /// `false` bleibt.
+    #[test]
+    fn meeting_semantic_search_defaults_on_and_keeps_a_choice() {
+        assert!(get_default_settings().meeting_semantic_search);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(old.meeting_semantic_search);
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_semantic_search": false }))
+                .unwrap();
+        assert!(!off.meeting_semantic_search);
+    }
+
+    /// D3: die Bildanalyse fuer Folien ist Standard AUS (auch ohne den Schluessel in einer
+    /// aelteren settings.json); ein explizites `true` bleibt.
+    #[test]
+    fn meeting_slide_vision_defaults_off_and_keeps_a_choice() {
+        assert!(!get_default_settings().meeting_slide_vision);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(!old.meeting_slide_vision);
+        let on: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_slide_vision": true })).unwrap();
+        assert!(on.meeting_slide_vision);
+    }
+
+    #[test]
+    fn calendar_graph_fields_default_to_none_and_keep_a_choice() {
+        let d = get_default_settings();
+        assert_eq!(d.calendar_graph_client_id, None);
+        assert_eq!(d.calendar_graph_tenant, None);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.calendar_graph_client_id, None);
+        assert_eq!(old.calendar_graph_tenant, None);
+        let chosen: AppSettings = serde_json::from_value(serde_json::json!({
+            "calendar_graph_client_id": "11111111-2222-3333-4444-555555555555",
+            "calendar_graph_tenant": "contoso.com",
+        }))
+        .unwrap();
+        assert_eq!(
+            chosen.calendar_graph_client_id.as_deref(),
+            Some("11111111-2222-3333-4444-555555555555")
+        );
+        assert_eq!(chosen.calendar_graph_tenant.as_deref(), Some("contoso.com"));
+    }
+
+    #[test]
+    fn meeting_self_name_defaults_to_none_and_keeps_a_choice() {
+        assert_eq!(get_default_settings().meeting_self_name, None);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_self_name, None);
+        let set: AppSettings = serde_json::from_value(
+            serde_json::json!({ "meeting_self_name": "Patrick Wolff" }),
+        )
+        .unwrap();
+        assert_eq!(set.meeting_self_name.as_deref(), Some("Patrick Wolff"));
+    }
+
+    #[test]
+    fn meeting_self_emails_default_empty_and_keep_a_choice() {
+        assert!(get_default_settings().meeting_self_emails.is_empty());
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(old.meeting_self_emails.is_empty());
+        let set: AppSettings = serde_json::from_value(
+            serde_json::json!({ "meeting_self_emails": ["ich@wolff.de"] }),
+        )
+        .unwrap();
+        assert_eq!(set.meeting_self_emails, vec!["ich@wolff.de".to_string()]);
+    }
+
+    #[test]
+    fn meeting_p1f_fields_keep_an_explicit_choice() {
+        let json = serde_json::json!({
+            "meeting_capture_system": false,
+            "meeting_auto_enhance": false,
+            "meeting_default_template_id": "builtin:vertrieb",
+        });
+        let parsed: AppSettings = serde_json::from_value(json).unwrap();
+        assert!(!parsed.meeting_capture_system);
+        assert!(!parsed.meeting_auto_enhance);
+        assert_eq!(
+            parsed.meeting_default_template_id.as_deref(),
+            Some("builtin:vertrieb")
+        );
+    }
+
+    // M2-P2c2
+    #[test]
+    fn echo_cancellation_defaults_to_auto_and_old_files_load() {
+        assert_eq!(
+            get_default_settings().meeting_echo_cancellation,
+            MeetingEchoCancellation::Auto
+        );
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_echo_cancellation, MeetingEchoCancellation::Auto);
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_echo_cancellation": "off" }))
+                .unwrap();
+        assert_eq!(off.meeting_echo_cancellation, MeetingEchoCancellation::Off);
+    }
+
+    // M5-P5c
+    #[test]
+    fn meeting_detect_defaults_to_meeting_apps_and_old_files_load() {
+        use crate::managers::meeting_detect::DetectMode;
+        let d = get_default_settings();
+        assert_eq!(d.meeting_detect_mode, DetectMode::MeetingApps);
+        assert!(d.meeting_detect_ignored_apps.is_empty());
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_detect_mode, DetectMode::MeetingApps);
+        let set: AppSettings = serde_json::from_value(serde_json::json!({
+            "meeting_detect_mode": "all_apps",
+            "meeting_detect_ignored_apps": ["obs64.exe"],
+        }))
+        .unwrap();
+        assert_eq!(set.meeting_detect_mode, DetectMode::AllApps);
+        assert_eq!(set.meeting_detect_ignored_apps, vec!["obs64.exe".to_string()]);
+    }
+
+    // M2-P2d
+    #[test]
+    fn final_model_defaults_to_auto_and_old_files_load() {
+        assert_eq!(get_default_settings().meeting_final_model, "auto");
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_final_model, "auto");
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_final_model": "off" })).unwrap();
+        assert_eq!(off.meeting_final_model, "off");
+    }
+
+    // U7
+    #[test]
+    fn import_parallelism_defaults_to_one_and_old_files_load() {
+        assert_eq!(get_default_settings().meeting_import_parallel, 1);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_import_parallel, 1, "aeltere settings.json: ein Lauf");
+        let two: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_import_parallel": 2 })).unwrap();
+        assert_eq!(two.meeting_import_parallel, 2);
+    }
+
+    // M3-P3b
+    #[test]
+    fn diarization_defaults_to_auto_and_old_files_load() {
+        assert_eq!(get_default_settings().meeting_diarization, "auto");
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert_eq!(old.meeting_diarization, "auto");
+        assert!(meeting_diarization_enabled(&old.meeting_diarization));
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_diarization": "off" })).unwrap();
+        assert_eq!(off.meeting_diarization, "off");
+        assert!(!meeting_diarization_enabled(&off.meeting_diarization));
+        assert!(!meeting_diarization_enabled(" OFF "));
+        assert!(meeting_diarization_enabled("auto"));
+        assert!(meeting_diarization_enabled(""), "leer = auto");
+        assert!(meeting_diarization_enabled("irgendwas"));
+    }
+
+    #[test]
+    fn echo_cancellation_needs_system_audio_and_is_off_when_switched_off() {
+        use MeetingEchoCancellation::*;
+        assert!(Auto.enabled(true));
+        assert!(On.enabled(true));
+        assert!(!Off.enabled(true), "Einstellung off");
+        for mode in [Auto, On, Off] {
+            assert!(!mode.enabled(false), "ohne Systemton keine Referenz");
+        }
     }
 }

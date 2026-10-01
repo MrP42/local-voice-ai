@@ -1,0 +1,7 @@
+{
+ "Windows OCR de-DE": "47/60",
+ "Tesseract 5.4 deu+eng": "54/60",
+ "RapidOCR v5 latin (4 Thr)": "60/60",
+ "LLM-OCR gemma4-e4b": "60/60",
+ "LLM-OCR gemma4-12b": "60/60"
+}

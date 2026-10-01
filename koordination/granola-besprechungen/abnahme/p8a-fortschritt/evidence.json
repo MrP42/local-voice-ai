@@ -1,0 +1,80 @@
+{
+  "paket": "P8a",
+  "binary": "target/debug/local-voice-ai.exe (Debug, headless)",
+  "sandbox": "LVA_MEETINGS_DIR=<Temp>, nie die echten App-Daten",
+  "eingabe": "45 min Audio (de_test_01.wav wiederholt), Modell whisper-large-v3-turbo Q8_0",
+  "laeufe": [
+    {
+      "datei": "1-import-pause-stopp.events.jsonl",
+      "befehl": "--import-meeting <45min> --job-script pause@12,resume@20,stop@34",
+      "ergebnis": {
+        "status": "cancelled",
+        "segment_count": 174,
+        "last_end_ms": 338137,
+        "duration_ms": 2700000,
+        "audio_file_exists": true
+      },
+      "pause": {
+        "paused_at_ms": 13713,
+        "resumed_at_ms": 20755,
+        "progress_or_segment_events_in_between": 0
+      },
+      "anmerkung": "Pause wirkt am naechsten Block, keine Segmente/Fortschritt waehrend der Pause, Laufzeit steht (12963 ms vor und nach der Pause); Stopp: laufender Block fertig und gespeichert, dann cancelled + job_ended(stopped)"
+    },
+    {
+      "datei": "2-fortsetzen-pause-stopp.events.jsonl",
+      "befehl": "--continue-meeting <id> --job-script pause@8,resume@14,stop@25",
+      "ergebnis": {
+        "status": "cancelled",
+        "segment_count": 359,
+        "last_end_ms": 697447,
+        "duration_ms": 2700000
+      },
+      "pause": {
+        "paused_at_ms": 8072,
+        "resumed_at_ms": 14050,
+        "progress_or_segment_events_in_between": 0
+      },
+      "anmerkung": "Fortsetzen holt nur den Rest (total 2361863 ms), Stopp -> wieder cancelled, keine Luecken-Platzhalter, Indizes lueckenlos"
+    },
+    {
+      "datei": "3-fortsetzen-bis-fertig.events.jsonl",
+      "befehl": "--continue-meeting <id>",
+      "ergebnis": {
+        "status": "ready",
+        "segment_count": 1390,
+        "last_end_ms": 2699837,
+        "duration_ms": 2700000
+      },
+      "anmerkung": "Transkription bis 100 %, danach Phase speakers (done 0 von 2700000, nicht pausierbar, ~80 s), dann ready + transcript_final; Restdauer erscheint nach 8,5 s Laufzeit und faellt gleichmaessig"
+    },
+    {
+      "datei": "4-stopp-in-der-sprechertrennung.events.jsonl",
+      "befehl": "--import-meeting <45min> --job-script stop@speakers+5",
+      "ergebnis": {
+        "status": "ready",
+        "segment_count": 1390,
+        "last_end_ms": 2699709,
+        "duration_ms": 2700000,
+        "audio_file_exists": true
+      },
+      "anmerkung": "Stopp 5 s nach Beginn der Sprechertrennung: Modelllauf endet nach 5,2 s (ungestoert ~80 s), Transkript vollstaendig -> ready ohne Sprecher, job_ended(stopped=true)"
+    },
+    {
+      "datei": "5-kontrolllauf-nach-merge.events.jsonl",
+      "befehl": "--import-meeting <45min> --job-script pause@8,resume@16,stop@24 (Binary nach dem Merge von P1k)",
+      "ergebnis": {
+        "status": "cancelled",
+        "segment_count": 99,
+        "last_end_ms": 192493,
+        "duration_ms": 2700000,
+        "audio_file_exists": true
+      },
+      "pause": {
+        "paused_at_ms": 10766,
+        "resumed_at_ms": 16924,
+        "progress_or_segment_events_in_between": 0
+      }
+    }
+  ]
+}

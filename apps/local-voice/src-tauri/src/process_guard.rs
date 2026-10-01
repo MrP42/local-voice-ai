@@ -29,11 +29,32 @@ pub const RAM_MIN_LIMIT_MB: u64 = 4 * 1024;
 pub const CPU_CAP_PERCENT: u32 = 75;
 pub const WATCH_INTERVAL: Duration = Duration::from_secs(5);
 
+/// M7-P7b (QG4): Testschalter fuer knappen Speicher, ohne den Rechner
+/// wirklich zu fuellen. `LVA_TEST_FREE_RAM_MB=<n>` deckelt den gemessenen
+/// freien RAM auf n MB. Er kann Tore nur SCHLIESSEN, nie oeffnen (Minimum
+/// mit dem Messwert); ungueltige Werte werden ignoriert.
+pub const TEST_FREE_RAM_ENV: &str = "LVA_TEST_FREE_RAM_MB";
+
 /// Freier physischer Speicher in MB (0, wenn nicht messbar).
 pub fn available_ram_mb() -> u64 {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
-    sys.available_memory() / (1024 * 1024)
+    let measured = sys.available_memory() / (1024 * 1024);
+    let cap = std::env::var(TEST_FREE_RAM_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok());
+    capped_free_mb(measured, cap)
+}
+
+/// Messwert unter dem Testdeckel: nie mehr als gemessen, und "nicht
+/// messbar" (0) wird mit Deckel zum Deckel (strenger, nicht offener).
+fn capped_free_mb(measured: u64, cap: Option<u64>) -> u64 {
+    // 0 hiesse "nicht messbar" und liesse alles durch: der Deckel ist >= 1.
+    match cap.map(|c| c.max(1)) {
+        Some(cap) if measured == 0 => cap,
+        Some(cap) => measured.min(cap),
+        None => measured,
+    }
 }
 
 pub fn logical_cpus() -> usize {
@@ -84,6 +105,28 @@ pub fn check_ram_for_start(need_mb: u64) -> Result<u64, String> {
 /// die Reserve — nie unter `RAM_MIN_LIMIT_MB`.
 pub fn memory_limit_mb(free_mb: u64) -> u64 {
     free_mb.saturating_sub(RAM_RESERVE_MB).max(RAM_MIN_LIMIT_MB)
+}
+
+/// Beendet Windows gerade die Sitzung (Herunterfahren, Neustart, Abmelden)?
+///
+/// Dann startet kein neuer Prozess mehr: jeder scheitert beim Laden seiner
+/// DLLs mit 0xc0000142, und Windows zeigt dafuer ein Fehlerfenster. So kam
+/// "NETSTAT.EXE - Anwendungsfehler" bei jedem Herunterfahren zustande
+/// (beobachtet 18. bis 27.09.2026): `stop_server` startete beim Beenden
+/// immer `netstat`. Die Aufraeumwege starten in dieser Lage deshalb keine
+/// Hilfsprogramme. Die eigenen Kindprozesse beendet das Job-Objekt
+/// (KILL_ON_JOB_CLOSE), alles Uebrige beendet Windows ohnehin.
+pub fn session_ending() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SHUTTINGDOWN};
+        // SAFETY: GetSystemMetrics liest nur einen Systemwert und nimmt keine Zeiger.
+        unsafe { GetSystemMetrics(SM_SHUTTINGDOWN) != 0 }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 /// Haelt das Job-Objekt eines Kindprozesses. Beim Drop wird das Job-Objekt
@@ -186,8 +229,14 @@ impl ProcessGuard {
         }
     }
 
+    // Gleiche Signatur wie die Windows-Variante: sonst bricht nur der
+    // macOS-Build (app-v0.20.0), der Windows-Build merkt davon nichts.
     #[cfg(not(windows))]
-    pub fn attach(_child: &std::process::Child, _memory_limit_mb: u64, _cpu_percent: u32) -> Option<Self> {
+    pub fn attach(
+        _child: &std::process::Child,
+        _memory_limit_mb: Option<u64>,
+        _cpu_percent: u32,
+    ) -> Option<Self> {
         None
     }
 }
@@ -291,6 +340,89 @@ mod tests {
         drop(guard);
         assert!(!stdout.contains("ALLOCATED"), "3 GB unter 1-GB-Deckel duerfen nicht gelingen");
         assert!(!out.status.success());
+    }
+
+    /// Wartet auf ein Ereignis, hoechstens `limit`. Die Frist ist nur die Grenze,
+    /// ab der etwas als haengend gilt, nicht Teil der Aussage der Tests: Kinder
+    /// laufen im Job mit BELOW_NORMAL-Prioritaet und verhungern auf einem
+    /// ausgelasteten Rechner (parallele Builds) sekundenlang; gemessen brauchte
+    /// ein `cmd /c echo` 11 bis 21 s statt 0,1 s.
+    #[cfg(windows)]
+    fn wait_for(limit: Duration, mut cond: impl FnMut() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            if cond() {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// Beweis fuer "kein Kindprozess ueberlebt die App": wird das Job-Objekt
+    /// geschlossen (Drop, App-Ende, Absturz), sterben Kind UND Enkel. Das
+    /// Kind ist `cmd`, der Enkel ein `ping` -- wie llama-server oder
+    /// Fish-Speech mit ihren Worker-Prozessen.
+    #[test]
+    #[cfg(windows)]
+    fn closing_the_job_kills_child_and_grandchild() {
+        use crate::managers::llm::app_usage::{process_rows, tree_pids};
+        // Der Enkel lebt ~5 Minuten, laenger als jede Frist unten: nur das
+        // Schliessen des Job-Objekts kann ihn rechtzeitig beenden.
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "ping -n 300 127.0.0.1 >nul"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("cmd");
+        let guard = ProcessGuard::attach(&child, None, 50).expect("Job-Objekt");
+        // Warten, bis cmd den Enkel gestartet hat.
+        let mut grandchildren = Vec::new();
+        let started = wait_for(Duration::from_secs(90), || {
+            let pids = tree_pids(child.id(), &process_rows());
+            grandchildren = pids.into_iter().filter(|p| *p != child.id()).collect();
+            !grandchildren.is_empty()
+        });
+        assert!(started, "cmd hat keinen Enkel gestartet");
+        assert!(child.try_wait().unwrap().is_none(), "Kind lebt vor dem Schliessen");
+
+        drop(guard); // KILL_ON_JOB_CLOSE
+
+        let dead = wait_for(Duration::from_secs(90), || {
+            child.try_wait().unwrap().is_some()
+        });
+        assert!(dead, "das Kind lebt nach dem Schliessen des Job-Objekts");
+        let mut alive: Vec<u32> = Vec::new();
+        let gone = wait_for(Duration::from_secs(90), || {
+            alive = process_rows()
+                .iter()
+                .map(|r| r.pid)
+                .filter(|p| grandchildren.contains(p))
+                .collect();
+            alive.is_empty()
+        });
+        assert!(gone, "Enkel leben noch: {alive:?}");
+    }
+
+    #[test]
+    fn session_is_not_ending_during_a_test_run() {
+        // Waehrend eines Testlaufs faehrt Windows nicht herunter. Meldete die
+        // Abfrage hier "ja", uebersprangen Stopp und Beenden ihr Aufraeumen.
+        assert!(!session_ending());
+    }
+
+    #[test]
+    fn test_cap_only_ever_lowers_the_free_ram() {
+        assert_eq!(capped_free_mb(20_000, None), 20_000);
+        assert_eq!(capped_free_mb(20_000, Some(5_000)), 5_000);
+        // Ein Deckel ueber dem Messwert oeffnet nichts.
+        assert_eq!(capped_free_mb(3_000, Some(50_000)), 3_000);
+        // Nicht messbar blockiert sonst nie; mit Deckel gilt der Deckel.
+        assert_eq!(capped_free_mb(0, None), 0);
+        assert_eq!(capped_free_mb(0, Some(1_500)), 1_500);
+        // Deckel 0 darf nicht als "nicht messbar" alle Tore oeffnen.
+        assert_eq!(capped_free_mb(20_000, Some(0)), 1);
     }
 
     #[test]

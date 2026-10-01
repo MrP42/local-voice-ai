@@ -25,6 +25,7 @@ import { usePersistentState } from "./hooks/usePersistentState";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
+import { pasteNoticeKeys } from "@/lib/utils/pasteNotice";
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -143,6 +144,20 @@ function App() {
     return () => window.removeEventListener("lv-navigate", handler);
   }, [setCurrentSection]);
 
+  // "Vorbereiten" im Hinweisfenster (M5-P5e): das Hauptfenster kommt nach vorn
+  // (Backend), hier wechselt es zu den Aufnahmen. Den Brief oeffnet dort die
+  // Besprechungsseite selbst.
+  useEffect(() => {
+    const unlisten = listen("brief-request-event", () => {
+      window.dispatchEvent(
+        new CustomEvent("lv-navigate", { detail: { section: "meetings" } }),
+      );
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   // Der Geraete-Sync hat Einstellungen von einem anderen Geraet uebernommen:
   // den Store neu lesen, sonst zeigt die Oberflaeche den alten Stand.
   const refreshSettings = useSettingsStore((state) => state.refreshSettings);
@@ -177,16 +192,14 @@ function App() {
     const unlisten = listen<{
       reason: string;
       transcript_in_clipboard: boolean;
+      partial?: boolean;
     }>("paste-fallback", (event) => {
-      const { reason, transcript_in_clipboard } = event.payload;
-      toast.error(t("errors.pasteFallbackTitle"), {
+      const { reason, transcript_in_clipboard, partial } = event.payload;
+      const keys = pasteNoticeKeys(partial, transcript_in_clipboard);
+      toast.error(partial ? t(keys.title) : t("errors.pasteFallbackTitle"), {
         description: `${t(`overlay.notice.reason.${reason}`, {
           defaultValue: t("overlay.notice.reason.injection_failed"),
-        })} ${
-          transcript_in_clipboard
-            ? t("overlay.notice.inClipboard")
-            : t("overlay.notice.inHistory")
-        }`,
+        })} ${t(keys.action)}`,
       });
     });
     return () => {
@@ -357,7 +370,7 @@ function App() {
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             <main
               id="workspace-content"
-              className={`flex-1 workspace-main ${currentSection === "tts" ? "workspace-main--fill" : ""}`}
+              className={`flex-1 workspace-main ${currentSection === "tts" || currentSection === "meetings" ? "workspace-main--fill" : ""} ${currentSection === "meetings" ? "workspace-main--fixed" : ""}`}
               aria-label={t(SECTIONS_CONFIG[currentSection].labelKey)}
             >
               {/* Fluid: the content uses whatever width the window offers, up
@@ -366,7 +379,13 @@ function App() {
                   the column itself). */}
               <div
                 className={`flex flex-col w-full mx-auto p-3 sm:p-4 gap-4 min-w-0 ${
-                  currentSection === "tts" ? "workspace-content--fill" : ""
+                  currentSection === "tts" || currentSection === "meetings"
+                    ? "workspace-content--fill"
+                    : ""
+                } ${
+                  currentSection === "meetings"
+                    ? "workspace-content--fixed"
+                    : ""
                 } ${
                   // Vorlesen ist eine dreispaltige Arbeitsflaeche (Seiten,
                   // Inhalt, Dateien) — der Lese-Deckel wuerde dort die MITTE

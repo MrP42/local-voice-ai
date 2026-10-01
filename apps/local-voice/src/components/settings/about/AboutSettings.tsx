@@ -6,6 +6,9 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Button } from "../../ui/Button";
 
+const NVIDIA_OPEN_MODEL_LICENSE_URL =
+  "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/";
+
 export const AboutSettings: React.FC = () => {
   const { t } = useTranslation();
   const [version, setVersion] = useState("");
@@ -60,6 +63,63 @@ export const AboutSettings: React.FC = () => {
         >
           <div className="text-sm text-mid-gray">
             {t("settings.about.acknowledgments.ggml.details")}
+          </div>
+        </SettingContainer>
+
+        <SettingContainer
+          title={t("settings.about.acknowledgments.models.title")}
+          description={t("settings.about.acknowledgments.models.description")}
+          grouped={true}
+          layout="stacked"
+        >
+          <div className="text-sm text-mid-gray">
+            {t("settings.about.acknowledgments.models.details")}
+          </div>
+        </SettingContainer>
+
+        <SettingContainer
+          title={t("settings.about.acknowledgments.sortformer.title")}
+          description={t(
+            "settings.about.acknowledgments.sortformer.description",
+          )}
+          grouped={true}
+          layout="stacked"
+        >
+          <div className="space-y-2">
+            <div className="text-sm text-mid-gray">
+              {t("settings.about.acknowledgments.sortformer.details")}
+            </div>
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => openUrl(NVIDIA_OPEN_MODEL_LICENSE_URL)}
+            >
+              {t("settings.about.acknowledgments.sortformer.button")}
+            </Button>
+          </div>
+        </SettingContainer>
+
+        <SettingContainer
+          title={t("settings.about.acknowledgments.piper.title")}
+          description={t("settings.about.acknowledgments.piper.description")}
+          grouped={true}
+          layout="stacked"
+        >
+          <div className="text-sm text-mid-gray">
+            {t("settings.about.acknowledgments.piper.details")}
+          </div>
+        </SettingContainer>
+
+        <SettingContainer
+          title={t("settings.about.acknowledgments.libraries.title")}
+          description={t(
+            "settings.about.acknowledgments.libraries.description",
+          )}
+          grouped={true}
+          layout="stacked"
+        >
+          <div className="text-sm text-mid-gray">
+            {t("settings.about.acknowledgments.libraries.details")}
           </div>
         </SettingContainer>
       </SettingsGroup>

@@ -1,0 +1,25 @@
+{
+  "schema": "lva-workflow@1",
+  "name": "Von n8n gerufen: Hinweis anzeigen",
+  "description": "Ein Ablauf mit dem Auslöser „Durch einen Agenten starten“. n8n (oder ein Skript) ruft ihn mit `local-voice-ai.exe ctl workflow run <Kennung> --vars ...` auf; ohne `--live` läuft ein Trockenlauf, mit `--live` zeigt die App den Hinweis wirklich an (der Ablauf muss dafür eingeschaltet und scharf geschaltet sein).",
+  "trigger": {
+    "type": "agent"
+  },
+  "variables": {
+    "nachricht": {
+      "type": "string",
+      "default": "n8n hat angeklopft",
+      "description": "Der Text des Hinweises"
+    }
+  },
+  "steps": [
+    {
+      "id": "hinweis",
+      "action": "notify.local",
+      "label": "Hinweis anzeigen",
+      "params": {
+        "title": "{{vars.nachricht}}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "id": "kundentermin-angebot",
+  "title": "Kundentermin Lagerhalle",
+  "meeting_date": "2026-10-12",
+  "note": "Montag. Absolute Fristen (23. Oktober, 30.10.), 'morgen frueh', ein Vorschlag, der keine Entscheidung ist, und 'bis Quartalsende', das der Code nicht aufloesen kann: dort gilt das (gepruefte) Datum des Modells mit geminderter Konfidenz.",
+  "segments": [
+    { "i": 0, "start_ms": 0, "text": "Danke, dass Sie sich Zeit nehmen. Wir besprechen heute das Angebot für die neue Lagerhalle." },
+    { "i": 1, "start_ms": 11000, "text": "Unser Budget für die Halle ist 480.000 Euro, mehr geht nicht." },
+    { "i": 2, "start_ms": 19000, "text": "Dann reichen wir bis zum 23. Oktober ein überarbeitetes Angebot nach." },
+    { "i": 3, "start_ms": 27000, "text": "Und wir brauchen die Baupläne spätestens am 30.10. von Ihnen." },
+    { "i": 4, "start_ms": 35000, "text": "Die Pläne liefert unser Architekt rechtzeitig, das notiere ich mir." },
+    { "i": 5, "start_ms": 44000, "text": "Wir haben uns auf die Variante B mit Fotovoltaik geeinigt." },
+    { "i": 6, "start_ms": 52000, "text": "Ja, Variante B ist gesetzt, die Variante A fällt weg." },
+    { "i": 7, "start_ms": 60000, "text": "Vielleicht könnten wir den Spatenstich im Frühjahr machen, aber das ist noch offen." },
+    { "i": 8, "start_ms": 70000, "text": "Ich schicke Ihnen morgen früh die Zusammenfassung des Gesprächs." },
+    { "i": 9, "start_ms": 78000, "text": "Der Vertrag soll bis Quartalsende unterschrieben sein." },
+    { "i": 10, "start_ms": 86000, "text": "Gut, dann ist alles geklärt." },
+    { "i": 11, "start_ms": 91000, "text": "Auf Wiedersehen." }
+  ],
+  "responses": [
+    {
+      "todos": [
+        {
+          "text": "Die Zusammenfassung des Gesprächs wird dem Kunden zugeschickt.",
+          "assignee": null,
+          "due_phrase": "morgen früh",
+          "due_date": "2026-10-13",
+          "segments": ["S8"],
+          "quote": "Ich schicke Ihnen morgen früh die Zusammenfassung des Gesprächs."
+        },
+        {
+          "text": "Der Architekt liefert die Baupläne.",
+          "assignee": null,
+          "due_phrase": null,
+          "due_date": null,
+          "segments": ["S4"],
+          "quote": "Die Pläne liefert unser Architekt rechtzeitig"
+        }
+      ],
+      "deadlines": [
+        {
+          "text": "Ein überarbeitetes Angebot nachreichen.",
+          "due_phrase": "bis zum 23. Oktober",
+          "due_date": "2026-10-23",
+          "segments": ["S2"],
+          "quote": "bis zum 23. Oktober ein überarbeitetes Angebot nachreichen"
+        },
+        {
+          "text": "Die Baupläne vom Kunden erhalten.",
+          "due_phrase": "spätestens am 30.10.",
+          "due_date": "2026-10-30",
+          "segments": ["S3"],
+          "quote": "die Baupläne spätestens am 30.10. von Ihnen"
+        },
+        {
+          "text": "Den Vertrag unterschreiben.",
+          "due_phrase": "bis Quartalsende",
+          "due_date": "2026-12-31",
+          "segments": ["S9"],
+          "quote": "Der Vertrag soll bis Quartalsende unterschrieben sein"
+        }
+      ],
+      "decisions": [
+        {
+          "text": "Es wird die Variante B mit Fotovoltaik gebaut.",
+          "segments": ["S5", "S6"],
+          "quote": "Variante B ist gesetzt, die Variante A fällt weg"
+        }
+      ]
+    }
+  ],
+  "golden": {
+    "outcome": "extracted",
+    "chunks": 1,
+    "todos": [
+      { "text_has": "Zusammenfassung", "assignee": null, "due": "2026-10-13", "segments": [8] },
+      { "text_has": "Architekt", "assignee": null, "due": null, "segments": [4] }
+    ],
+    "deadlines": [
+      { "text_has": "Angebot", "due": "2026-10-23", "segments": [2] },
+      { "text_has": "Baupläne", "due": "2026-10-30", "segments": [3] },
+      { "text_has": "Vertrag", "due": "2026-12-31", "segments": [9], "due_source": "modell" }
+    ],
+    "decisions": [
+      { "text_has": "Variante B", "segments": [5, 6] }
+    ],
+    "dropped": [],
+    "notes": [],
+    "min_confidence": 0.8
+  }
+}

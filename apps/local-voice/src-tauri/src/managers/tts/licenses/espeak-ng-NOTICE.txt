@@ -1,0 +1,28 @@
+espeak-ng (GPL-3.0-or-later) in dieser Piper-Laufzeit
+=====================================================
+
+Dieser Ordner enthält die Sprachausgabe-Laufzeit Piper (Version 2023.11.14-2,
+Lizenz MIT), die Local Voice AI auf Wunsch des Nutzers von GitHub geladen hat
+(https://github.com/rhasspy/piper/releases). Das Archiv selbst enthält keine
+Lizenzdateien; diese Datei legt Local Voice AI deshalb beim Einrichten dazu.
+
+Das Piper-Paket enthält als Bibliothek die Phonemisierung espeak-ng
+(espeak-ng.dll unter Windows, libespeak-ng auf macOS) samt dem Ordner
+espeak-ng-data:
+
+  Programm:  espeak-ng
+  Copyright: (C) 2005-2015 Jonathan Duddington, ab 2015 Reece H. Dunn
+             und weitere Mitwirkende
+  Lizenz:    GNU General Public License, Version 3 oder (nach Wahl) jede
+             spätere Version (SPDX: GPL-3.0-or-later)
+  Quelltext: https://github.com/espeak-ng/espeak-ng
+
+Den Quelltext von espeak-ng erhältst du unter der genannten Adresse. Local
+Voice AI startet Piper als eigenständiges Programm (eigener Prozess) und
+verändert espeak-ng nicht. Die weiteren Bestandteile des Pakets sind
+piper-phonemize (MIT) und onnxruntime 1.14.1 (MIT); Piper selbst steht unter
+https://github.com/rhasspy/piper/blob/master/LICENSE.md.
+
+Der Lizenztext der GNU General Public License, Version 3, folgt unten.
+
+

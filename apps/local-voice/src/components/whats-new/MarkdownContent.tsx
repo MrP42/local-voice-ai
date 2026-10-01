@@ -1,10 +1,19 @@
-import React from "react";
+import React, { useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { linkSlideTags, SLIDE_LINK } from "@/lib/meetingSlides";
+
+/** D5: Folienbelege (`[F7]`) eines Protokolls als anklickbare Marken. */
+export interface SlideRefs {
+  /** Gibt es die Folie? Nur dann wird aus `[F7]` ein Link. */
+  known: (slideNumber: number) => boolean;
+  onOpen: (slideNumber: number) => void;
+}
 
 interface MarkdownContentProps {
   markdown: string;
+  slideRefs?: SlideRefs;
 }
 
 const allowedElements = [
@@ -60,6 +69,39 @@ const isSafeImageSrc = (src: string) => {
   return true;
 };
 
+/** Der Text eines React-Teilbaums (nur Zeichenketten und deren Kinder). */
+const textOf = (node: React.ReactNode): string => {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) {
+    return textOf(node.props.children);
+  }
+  return "";
+};
+
+const ExternalLink: React.FC<{
+  href?: string;
+  children?: React.ReactNode;
+}> = ({ children, href }) => {
+  if (!href || !isSafeUrl(href)) {
+    return <>{children}</>;
+  }
+
+  return (
+    <a
+      href={href}
+      rel="noreferrer"
+      onClick={(event) => {
+        event.preventDefault();
+        void openSafeUrl(href);
+      }}
+      className="text-logo-primary underline decoration-logo-primary/40 underline-offset-2 hover:decoration-logo-primary"
+    >
+      {children}
+    </a>
+  );
+};
+
 const components: Components = {
   h1: ({ children }) => (
     <h3 className="text-base font-semibold leading-snug text-text">
@@ -92,17 +134,32 @@ const components: Components = {
   },
   li: ({ children, className }) => {
     const isTaskListItem = className?.includes("task-list-item");
+    // Ein Aufgaben-Kontrollkaestchen hat keine Beschriftung ausser dem Text daneben: der
+    // Aufgabentext wird sein Name (axe `label`). `input` kennt seine Nachbarn nicht, deshalb
+    // gibt der Eintrag ihn weiter.
+    const label = isTaskListItem ? textOf(children).trim() : "";
 
     return (
       <li
         className={`${isTaskListItem ? "list-none" : "pl-1"} marker:text-text/50`}
       >
-        {children}
+        {isTaskListItem && label
+          ? React.Children.map(children, (child) =>
+              React.isValidElement<{ type?: string }>(child) &&
+              child.props.type === "checkbox"
+                ? React.cloneElement(
+                    child as React.ReactElement<Record<string, unknown>>,
+                    { "aria-label": label },
+                  )
+                : child,
+            )
+          : children}
       </li>
     );
   },
-  input: ({ checked, type }) => {
+  input: ({ checked, type, ...rest }) => {
     if (type !== "checkbox") return null;
+    const label = (rest as { "aria-label"?: string })["aria-label"];
 
     return (
       <input
@@ -110,6 +167,7 @@ const components: Components = {
         checked={Boolean(checked)}
         disabled
         readOnly
+        aria-label={label}
         className="me-2 h-3.5 w-3.5 align-middle accent-logo-primary"
       />
     );
@@ -182,39 +240,54 @@ const components: Components = {
       {children}
     </pre>
   ),
-  a: ({ children, href }) => {
-    if (!href || !isSafeUrl(href)) {
-      return <>{children}</>;
-    }
-
-    return (
-      <a
-        href={href}
-        rel="noreferrer"
-        onClick={(event) => {
-          event.preventDefault();
-          void openSafeUrl(href);
-        }}
-        className="text-logo-primary underline decoration-logo-primary/40 underline-offset-2 hover:decoration-logo-primary"
-      >
-        {children}
-      </a>
-    );
-  },
+  a: ({ children, href }) => (
+    <ExternalLink href={href}>{children}</ExternalLink>
+  ),
 };
 
 export const MarkdownContent: React.FC<MarkdownContentProps> = ({
   markdown,
+  slideRefs,
 }) => {
+  const merged = useMemo<Components>(() => {
+    if (!slideRefs) return components;
+    return {
+      ...components,
+      a: (props) => {
+        const match = SLIDE_LINK.exec(props.href ?? "");
+        if (!match) {
+          return (
+            <ExternalLink href={props.href}>{props.children}</ExternalLink>
+          );
+        }
+        const number = Number(match[1]);
+        return (
+          <button
+            type="button"
+            data-testid="slide-ref"
+            data-slide-ref={number}
+            onClick={() => slideRefs.onOpen(number)}
+            className="mx-0.5 inline-flex cursor-pointer items-center rounded-md border border-logo-primary/50 bg-logo-primary/10 px-1 align-baseline text-[11px] font-medium leading-4 tabular-nums text-text hover:bg-logo-primary/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/60"
+          >
+            {props.children}
+          </button>
+        );
+      },
+    };
+  }, [slideRefs]);
+  const source = useMemo(
+    () => (slideRefs ? linkSlideTags(markdown, slideRefs.known) : markdown),
+    [markdown, slideRefs],
+  );
   return (
     <div className="space-y-3">
       <ReactMarkdown
         allowedElements={allowedElements}
-        components={components}
+        components={merged}
         remarkPlugins={[remarkGfm]}
         skipHtml
       >
-        {markdown}
+        {source}
       </ReactMarkdown>
     </div>
   );

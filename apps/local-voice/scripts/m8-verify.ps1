@@ -42,8 +42,14 @@ param(
     [string]$AppExe      = "$PSScriptRoot\..\src-tauri\target\release\local-voice-ai.exe",
     [string]$FixtureDir  = "$PSScriptRoot\..\src-tauri\tests\fixtures",
     [string]$ArtifactDir = "$PSScriptRoot\..\..\..\docs\m8-evidence",
-    [int]$TimeoutSeconds = 1800
+    [int]$TimeoutSeconds = 1800,
+    # Nur den Preflight (EXE vorhanden, Frontend eingebettet) und Ende: fuer
+    # test-m8-verify.ps1 und als schneller Check vor einem langen Lauf.
+    [switch]$PreflightOnly
 )
+
+# Hilfsfunktionen (Remove-Segments, Test-EmbeddedFrontend), getrennt testbar.
+. (Join-Path $PSScriptRoot 'lib\m8-harness.ps1')
 
 # Continue, not Stop: a failing scenario must become a FAIL row, not a dead
 # script. Individual risky calls are guarded explicitly.
@@ -186,8 +192,22 @@ function Get-MeetingDump {
 
 # ---------------------------------------------------------------- preflight
 if (-not (Test-Path $AppExe)) {
-    Write-Host "binary not found: $AppExe - build with 'cargo build --release'" -ForegroundColor Red
+    Write-Host "binary not found: $AppExe - build with 'dev.ps1 build' (cargo build --release yields a non-working binary, see docs/BUILD-WINDOWS.md)" -ForegroundColor Red
     exit 2
+}
+# Der Harness laeuft headless und braucht kein Frontend. Aber `cargo build --release`
+# (fuer den Harness-Umbau noetig) ueberschreibt die GUI-taugliche EXE in
+# target\release mit einer ohne eingebettetes Frontend: headless faellt das nie auf,
+# der GUI-Start ist danach tot (Vorfall 20.08.). Darum VOR dem Lauf warnen (#15).
+$frontend = Test-EmbeddedFrontend -Exe $AppExe
+if (-not $frontend.GuiCapable) {
+    $warning = "diese EXE ist headless-tauglich, aber nicht GUI-tauglich ($($frontend.Reason))"
+    Write-Host ("WARNUNG: $warning. Nach dem Harness ggf. neu bauen: npx tauri build --no-bundle (docs/BUILD-WINDOWS.md, Stolperstein 3).") -ForegroundColor Yellow
+    $script:Notes += "preflight: $warning - nach dem Harness ggf. 'npx tauri build --no-bundle'."
+}
+if ($PreflightOnly) {
+    Write-Host 'Preflight beendet (-PreflightOnly).'
+    exit 0
 }
 New-Item -ItemType Directory -Force -Path $ArtifactDir | Out-Null
 $ArtifactDir = (Resolve-Path $ArtifactDir).Path
@@ -511,33 +531,8 @@ try {
     }
     $r += ""
 
-    # Full segment arrays would make this file unreadable (the 10 min fixture
-    # alone is 9 segments of transcript) and would put the whole spoken text
-    # into a committed document. The counts and boundary times above are what
-    # the assertions use; drop the bodies.
-    function Remove-Segments {
-        param($Obj)
-        if ($null -eq $Obj) { return $null }
-        if ($Obj -is [System.Collections.IDictionary]) {
-            $c = @{}
-            foreach ($k in $Obj.Keys) { $c[$k] = Remove-Segments $Obj[$k] }
-            return $c
-        }
-        # Leading comma: without it PowerShell unwraps a one-element array,
-        # which would print "channels": 2 where the store holds [2].
-        if ($Obj -is [System.Collections.IEnumerable] -and $Obj -isnot [string]) {
-            return , @($Obj | ForEach-Object { Remove-Segments $_ })
-        }
-        if ($Obj -is [pscustomobject]) {
-            $c = @{}
-            foreach ($p in $Obj.PSObject.Properties) {
-                if ($p.Name -eq 'segments') { continue }
-                $c[$p.Name] = Remove-Segments $p.Value
-            }
-            return $c
-        }
-        return $Obj
-    }
+    # Full segment arrays would make this file unreadable; `Remove-Segments`
+    # (lib\m8-harness.ps1) drops the bodies and keeps counts and boundary times.
 
     foreach ($x in $script:Results) {
         if ($null -ne $x.Data) {

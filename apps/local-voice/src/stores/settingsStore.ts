@@ -9,6 +9,8 @@ import type {
   TranscribeAcceleratorSetting,
   OrtAcceleratorSetting,
   MeetingAudioRetention,
+  DetectMode,
+  MeetingEchoCancellation,
   DictationAudio,
 } from "@/bindings";
 import { commands } from "@/bindings";
@@ -204,6 +206,8 @@ const settingUpdaters: {
   theme: (value) => commands.changeThemeSetting(value as string),
   experimental_enabled: (value) =>
     commands.changeExperimentalEnabledSetting(value as boolean),
+  refine_enabled: (value) =>
+    commands.changeRefineEnabledSetting(value as boolean),
   lazy_stream_close: (value) =>
     commands.changeLazyStreamCloseSetting(value as boolean),
   local_update_dir: (value) =>
@@ -228,6 +232,70 @@ const settingUpdaters: {
     commands.changeMeetingLanguageSetting(value as string),
   meeting_model: (value) =>
     commands.changeMeetingModelSetting((value as string | null) ?? null),
+  // M1-P1f
+  meeting_capture_system: (value) =>
+    commands.changeMeetingCaptureSystemSetting(value as boolean),
+  meeting_auto_enhance: (value) =>
+    commands.changeMeetingAutoEnhanceSetting(value as boolean),
+  meeting_default_template_id: (value) =>
+    commands.changeMeetingDefaultTemplateSetting(
+      (value as string | null) ?? null,
+    ),
+  // M4-P4b
+  meeting_semantic_search: (value) =>
+    commands.changeMeetingSemanticSearchSetting(value as boolean),
+  // D3
+  meeting_slide_vision: (value) =>
+    commands.changeMeetingSlideVisionSetting(value as boolean),
+  // M2-P2c2
+  meeting_echo_cancellation: (value) =>
+    commands.changeMeetingEchoCancellationSetting(
+      value as MeetingEchoCancellation,
+    ),
+  // M2-P2d
+  meeting_final_model: (value) =>
+    commands.changeMeetingFinalModelSetting((value as string) || "auto"),
+  // M5-P5c
+  meeting_detect_mode: (value) =>
+    commands.changeMeetingDetectModeSetting(value as DetectMode),
+  meeting_detect_ignored_apps: (value) =>
+    commands.changeMeetingDetectIgnoredAppsSetting((value as string[]) ?? []),
+  // U7
+  meeting_import_parallel: (value) =>
+    commands.changeMeetingImportParallelSetting(value as number),
+  // M3-P3c
+  meeting_diarization: (value) =>
+    commands.changeMeetingDiarizationSetting((value as string) || "auto"),
+  // M6-P6c
+  meeting_self_emails: (value) =>
+    commands.changeMeetingSelfEmailsSetting((value as string[]) ?? []),
+  // U8
+  meeting_self_name: (value) =>
+    commands.changeMeetingSelfNameSetting((value as string | null) ?? null),
+  // M5-P5b
+  meeting_reminder_lead_s: (value) =>
+    commands.changeMeetingReminderLeadSetting(value as number),
+  meeting_reminder_all_events: (value) =>
+    commands.changeMeetingReminderAllEventsSetting(value as boolean),
+  // M5-P5f
+  calendar_graph_client_id: (value) =>
+    commands.changeCalendarGraphClientIdSetting(
+      (value as string | null) ?? null,
+    ),
+  calendar_graph_tenant: (value) =>
+    commands.changeCalendarGraphTenantSetting((value as string | null) ?? null),
+  // M6-P6e
+  meeting_mcp_enabled: (value) =>
+    commands.changeMeetingMcpEnabledSetting(value as boolean),
+  meeting_mcp_include_transcript: (value) =>
+    commands.changeMeetingMcpIncludeTranscriptSetting(value as boolean),
+  // A2 (YouTube)
+  meeting_youtube_private: (value) =>
+    commands.changeMeetingYoutubePrivateSetting(value as boolean),
+  meeting_youtube_tool_path: (value) =>
+    commands.changeMeetingYoutubeToolPathSetting(
+      (value as string | null) ?? null,
+    ),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

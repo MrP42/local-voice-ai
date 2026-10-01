@@ -129,6 +129,13 @@ impl StreamingWavWriter {
     pub fn frames_written(&self) -> u64 {
         self.frames_written
     }
+
+    /// Audio position in milliseconds: everything appended so far, on the
+    /// same timeline as the transcript (`StoredSegment.start_ms`). Uses the
+    /// writer's own sample rate, so it stays right if that ever changes.
+    pub fn position_ms(&self) -> u64 {
+        frames_to_ms(self.frames_written, self.sample_rate)
+    }
 }
 
 fn frames_to_ms(frames: u64, sample_rate: u32) -> u64 {
@@ -229,6 +236,19 @@ mod tests {
         let big_chunk = vec![0i16; 1_000];
         assert!(w.append(&big_chunk).is_err());
         assert_eq!(w.frames_written(), frames_near_limit);
+    }
+
+    #[test]
+    fn position_ms_follows_the_frames_appended_so_far() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("pos.wav");
+        let mut w = StreamingWavWriter::create(&p, 16_000).unwrap();
+        assert_eq!(w.position_ms(), 0);
+        w.append(&vec![0i16; 8_000]).unwrap();
+        assert_eq!(w.frames_written(), 8_000);
+        assert_eq!(w.position_ms(), 500);
+        w.append(&vec![0i16; 8_000 + 16]).unwrap();
+        assert_eq!(w.position_ms(), 1_001); // 16 Frames = 1 ms bei 16 kHz
     }
 
     #[test]

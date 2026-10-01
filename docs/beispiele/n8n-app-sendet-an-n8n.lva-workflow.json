@@ -1,0 +1,24 @@
+{
+  "schema": "lva-workflow@1",
+  "name": "Protokoll an n8n melden",
+  "description": "Ist das Protokoll einer Besprechung fertig, schickt die App eine kurze Meldung an einen n8n-Webhook (Integration „n8n-lokal“, Art Webhook). n8n verarbeitet sie weiter, zum Beispiel für eine Ablage oder eine Nachricht.",
+  "trigger": {
+    "type": "meeting.finished",
+    "stage": "minutes"
+  },
+  "steps": [
+    {
+      "id": "an_n8n",
+      "action": "webhook.post",
+      "label": "An n8n melden",
+      "params": {
+        "via": "n8n-lokal",
+        "body": {
+          "ereignis": "protokoll_fertig",
+          "besprechung": "{{trigger.meeting_id}}",
+          "titel": "{{trigger.title}}"
+        }
+      }
+    }
+  ]
+}

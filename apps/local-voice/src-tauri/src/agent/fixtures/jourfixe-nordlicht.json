@@ -1,0 +1,109 @@
+{
+  "id": "jourfixe-nordlicht",
+  "title": "Jour fixe Projekt Nordlicht",
+  "meeting_date": "2026-10-01",
+  "note": "Donnerstag. Relative Fristen (uebermorgen, Freitag naechster Woche, Ende des Monats, in zwei Wochen) und absolute Frist; zwei Modelldaten sind falsch und werden vom Code ersetzt.",
+  "segments": [
+    { "i": 0, "start_ms": 0, "text": "Guten Morgen zusammen, wir starten den Jour fixe zum Projekt Nordlicht." },
+    { "i": 1, "start_ms": 9000, "text": "Frau Berg, wie steht es um das Angebot für die Stadtwerke?" },
+    { "i": 2, "start_ms": 16000, "text": "Das Angebot ist fast fertig. Ich schicke es bis übermorgen an den Kunden." },
+    { "i": 3, "start_ms": 25000, "text": "Gut. Herr Vogt, Sie rufen bitte den Betriebsrat an und klären die Terminfrage." },
+    { "i": 4, "start_ms": 33000, "text": "Mache ich, das erledige ich bis Freitag nächster Woche." },
+    { "i": 5, "start_ms": 41000, "text": "Dann zur Abnahme: Wir haben besprochen, dass die Abnahme am 15. Oktober stattfindet." },
+    { "i": 6, "start_ms": 50000, "text": "Genau, der 15. Oktober steht, das ist beschlossen." },
+    { "i": 7, "start_ms": 58000, "text": "Wir sollten vielleicht auch über einen Workshop im November nachdenken." },
+    { "i": 8, "start_ms": 66000, "text": "Die Rechnung für September muss bis Ende des Monats raus." },
+    { "i": 9, "start_ms": 73000, "text": "Die Septemberrechnung schreibe ich bis Ende des Monats." },
+    { "i": 10, "start_ms": 81000, "text": "Wir verschieben das Wochenmeeting dauerhaft auf Dienstag um zehn Uhr, einverstanden?" },
+    { "i": 11, "start_ms": 90000, "text": "Einverstanden, dann machen wir das so." },
+    { "i": 12, "start_ms": 97000, "text": "Noch etwas: Frau Berg bereitet in zwei Wochen die Präsentation für den Lenkungskreis vor." },
+    { "i": 13, "start_ms": 106000, "text": "Danke euch, bis nächste Woche." }
+  ],
+  "responses": [
+    {
+      "todos": [
+        {
+          "text": "Frau Berg schickt das Angebot an die Stadtwerke.",
+          "assignee": "Frau Berg",
+          "due_phrase": "bis übermorgen",
+          "due_date": "2026-10-04",
+          "segments": ["S2"],
+          "quote": "Ich schicke es bis übermorgen an den Kunden."
+        },
+        {
+          "text": "Herr Vogt ruft den Betriebsrat an und klärt die Terminfrage.",
+          "assignee": "Herr Vogt",
+          "due_phrase": "bis Freitag nächster Woche",
+          "due_date": "2026-10-02",
+          "segments": ["S3", "S4"],
+          "quote": "das erledige ich bis Freitag nächster Woche"
+        },
+        {
+          "text": "Herr Vogt schreibt die Septemberrechnung.",
+          "assignee": "Herr Vogt",
+          "due_phrase": "bis Ende des Monats",
+          "due_date": null,
+          "segments": ["S8", "S9"],
+          "quote": "Die Septemberrechnung schreibe ich bis Ende des Monats"
+        },
+        {
+          "text": "Frau Berg bereitet die Präsentation für den Lenkungskreis vor.",
+          "assignee": "Frau Berg",
+          "due_phrase": "in zwei Wochen",
+          "due_date": "2026-10-15",
+          "segments": ["S12"],
+          "quote": "Frau Berg bereitet in zwei Wochen die Präsentation für den Lenkungskreis vor"
+        }
+      ],
+      "deadlines": [
+        {
+          "text": "Die Abnahme findet statt.",
+          "due_phrase": "am 15. Oktober",
+          "due_date": "2026-10-15",
+          "segments": ["S5", "S6"],
+          "quote": "die Abnahme am 15. Oktober stattfindet"
+        },
+        {
+          "text": "Die Septemberrechnung muss raus.",
+          "due_phrase": "bis Ende des Monats",
+          "due_date": "2026-10-31",
+          "segments": ["S8"],
+          "quote": "Die Rechnung für September muss bis Ende des Monats raus."
+        }
+      ],
+      "decisions": [
+        {
+          "text": "Die Abnahme findet am 15. Oktober statt.",
+          "segments": ["S5", "S6"],
+          "quote": "der 15. Oktober steht, das ist beschlossen"
+        },
+        {
+          "text": "Das Wochenmeeting findet dauerhaft dienstags um 10 Uhr statt.",
+          "segments": ["S10", "S11"],
+          "quote": "Wir verschieben das Wochenmeeting dauerhaft auf Dienstag um zehn Uhr"
+        }
+      ]
+    }
+  ],
+  "golden": {
+    "outcome": "extracted",
+    "chunks": 1,
+    "todos": [
+      { "text_has": "Angebot", "assignee": "Frau Berg", "due": "2026-10-03", "segments": [2] },
+      { "text_has": "Betriebsrat", "assignee": "Herr Vogt", "due": "2026-10-09", "segments": [3, 4] },
+      { "text_has": "Septemberrechnung", "assignee": "Herr Vogt", "due": "2026-10-31", "segments": [8, 9] },
+      { "text_has": "Präsentation", "assignee": "Frau Berg", "due": "2026-10-15", "segments": [12] }
+    ],
+    "deadlines": [
+      { "text_has": "Abnahme", "due": "2026-10-15", "segments": [5, 6] },
+      { "text_has": "Septemberrechnung", "due": "2026-10-31", "segments": [8] }
+    ],
+    "decisions": [
+      { "text_has": "Abnahme", "segments": [5, 6] },
+      { "text_has": "Wochenmeeting", "segments": [10, 11] }
+    ],
+    "dropped": [],
+    "notes": ["model_date_replaced", "model_date_replaced"],
+    "min_confidence": 0.9
+  }
+}

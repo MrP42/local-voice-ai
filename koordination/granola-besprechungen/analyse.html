@@ -1,0 +1,715 @@
+<title>Besprechungen auf Granola-Niveau</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: Berichtskopf, darunter eine feste Abschnittsleiste und je Abschnitt eine Spalte (max. 1120px).
+   Tabellen werden unter 960px zu Karten. Farben tragen Bedeutung: Blau = Kern, Violett = Komfort, Grau = Nein. */
+:root{
+  --bg:#F3F6F9; --surface:#FFFFFF; --surface-2:#E9EEF3; --fg:#0F1B27; --muted:#4F5F6E;
+  --line:#D2DAE2; --line-strong:#93A3B2;
+  --accent:#0B67A6; --accent-soft:#DDEBF6; --on-accent:#FFFFFF;
+  --komfort:#6A45A8; --komfort-soft:#ECE5F7;
+  --nein:#55636F; --nein-soft:#E4E9EE;
+  --ok:#17703F; --ok-soft:#DCF0E3;
+  --warn:#9A5A00; --warn-soft:#FBEBCB;
+  --f-display:"Bricolage Grotesque","Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+  --f-body:"Instrument Sans","Segoe UI",system-ui,-apple-system,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0B131B; --surface:#121D28; --surface-2:#1A2733; --fg:#E6EDF3; --muted:#9FB0BF;
+    --line:#263443; --line-strong:#4B5F72;
+    --accent:#5DB3EE; --accent-soft:#11314A; --on-accent:#04121D;
+    --komfort:#C1AAEE; --komfort-soft:#2B2242;
+    --nein:#9FB0BF; --nein-soft:#212E3B;
+    --ok:#73D39F; --ok-soft:#12331F;
+    --warn:#F0BA5E; --warn-soft:#3A2B0D;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0B131B; --surface:#121D28; --surface-2:#1A2733; --fg:#E6EDF3; --muted:#9FB0BF;
+  --line:#263443; --line-strong:#4B5F72;
+  --accent:#5DB3EE; --accent-soft:#11314A; --on-accent:#04121D;
+  --komfort:#C1AAEE; --komfort-soft:#2B2242;
+  --nein:#9FB0BF; --nein-soft:#212E3B;
+  --ok:#73D39F; --ok-soft:#12331F;
+  --warn:#F0BA5E; --warn-soft:#3A2B0D;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+body{background:var(--bg);color:var(--fg);font:400 16px/1.55 var(--f-body);-webkit-text-size-adjust:100%}
+.wrap{max-width:1120px;margin-inline:auto;padding-inline:16px}
+a{color:var(--accent)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+code{font:400 .875em var(--f-mono);background:var(--surface-2);padding:.05em .35em;border-radius:4px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0}
+p{margin:0}
+.eyebrow,.lab-s{font:500 .75rem/1.3 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+
+/* Kopf */
+.hero{padding-block:32px 24px}
+.hero h1{font-size:clamp(1.9rem,5.2vw,3rem);line-height:1.08;font-weight:700;letter-spacing:-.01em;margin-top:10px;max-width:22ch}
+.hero .sub{margin-top:14px;max-width:62ch;color:var(--muted);font-size:1.0625rem}
+.facts{list-style:none;padding:0;margin:18px 0 0;display:flex;flex-wrap:wrap;gap:8px}
+.facts li{border:1px solid var(--line-strong);border-radius:999px;padding:4px 12px;font-size:.875rem;background:var(--surface)}
+
+/* Abschnittsleiste */
+.nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--surface);border-block:1px solid var(--line)}
+.nav .wrap{display:flex;gap:4px;overflow-x:auto;scrollbar-width:thin}
+.nav a{flex:none;padding:11px 10px;font-size:.875rem;font-weight:500;color:var(--fg);text-decoration:none;border-bottom:2px solid transparent}
+.nav a:hover{border-bottom-color:var(--accent);color:var(--accent)}
+
+/* Abschnitte */
+section{padding-block:44px 8px;scroll-margin-top:52px}
+section > .wrap > h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:700;letter-spacing:-.005em}
+.lede{margin-top:8px;max-width:70ch;color:var(--muted)}
+h3{font-size:1.125rem;font-weight:600;margin-top:28px;margin-bottom:10px}
+.prose{max-width:72ch;margin-top:16px;display:grid;gap:12px}
+.prose p{font-size:1.0625rem}
+
+/* Chips und Pillen */
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none}
+.chip{display:inline-block;padding:3px 10px;border-radius:999px;font-size:.8125rem;font-weight:500}
+.chip-ok{background:var(--ok-soft);color:var(--ok)}
+.chip-gap{background:var(--warn-soft);color:var(--warn)}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:20px}
+.two > div{display:grid;gap:8px;align-content:start;min-width:0}
+.k{display:inline-block;padding:2px 8px;border-radius:4px;font:500 .75rem/1.4 var(--f-mono)}
+.k-kern{background:var(--accent-soft);color:var(--accent)}
+.k-komfort{background:var(--komfort-soft);color:var(--komfort)}
+.k-nein{background:var(--nein-soft);color:var(--nein)}
+.st{display:inline-flex;align-items:center;gap:6px;font-size:.8125rem;font-weight:500;white-space:nowrap}
+.st::before{content:"";width:9px;height:9px;border-radius:50%;flex:none;border:1.5px solid currentColor}
+.st-offen{color:var(--muted)}
+.st-in_arbeit{color:var(--warn)}
+.st-in_arbeit::before,.st-vorhanden::before,.st-besser::before,.st-gleichwertig::before{background:currentColor}
+.st-vorhanden,.st-besser,.st-gleichwertig{color:var(--ok)}
+.st-verworfen{color:var(--nein);opacity:.85}
+.st-verworfen::before{background:var(--nein-soft)}
+.mb{font:500 .8125rem var(--f-mono)}
+.fref{display:inline-block;font:500 .75rem/1.5 var(--f-mono);padding:0 6px;border:1px solid var(--line-strong);border-radius:4px;background:var(--surface);color:var(--accent);text-decoration:none}
+.fref:hover{background:var(--accent-soft)}
+.bs{display:inline-block;font:500 .6875rem/1.5 var(--f-mono);letter-spacing:.03em;padding:0 6px;border-radius:4px;margin-left:6px;vertical-align:1px;white-space:nowrap}
+.bs-b{background:var(--ok-soft);color:var(--ok)}
+.bs-s{background:var(--nein-soft);color:var(--nein)}
+.bs-v{background:var(--warn-soft);color:var(--warn)}
+
+/* Ablaufbilder */
+.flows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-top:24px}
+.flow{margin:0;min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px}
+.flow h3{margin:0 0 10px;font-size:1rem}
+.flow svg{display:block;width:100%;max-width:440px;height:auto;margin-inline:auto}
+.flow figcaption{margin-top:10px;font-size:.875rem;color:var(--muted)}
+.bx{fill:var(--surface);stroke:var(--line-strong);stroke-width:1}
+.ln{fill:none;stroke:var(--muted);stroke-width:1.5}
+.ahp{fill:var(--muted)}
+.rg-c{fill:var(--warn-soft);stroke:var(--warn);stroke-width:1.2;stroke-dasharray:6 4}
+.rg-l{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.2}
+.t1{font:600 14px var(--f-body);fill:var(--fg)}
+.t2{font:400 12px var(--f-body);fill:var(--muted)}
+.t3{font:500 12px var(--f-body);fill:var(--fg)}
+.tl{font:500 10px var(--f-mono);letter-spacing:.08em}
+.tl-c{fill:var(--warn)}
+.tl-l{fill:var(--accent)}
+.legend{margin-top:14px;font-size:.875rem;color:var(--muted);max-width:80ch}
+.topics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:8px}
+.topic{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;min-width:0}
+.topic h3{margin:0 0 10px;font-size:1rem}
+.topic h4{margin:12px 0 4px;font:600 .75rem/1.3 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.topic h4.me{color:var(--accent)}
+.topic ul{margin:0;padding-left:1.1em;display:grid;gap:5px;font-size:.9375rem}
+
+/* Tabellen, unter 960px als Karten */
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin-top:14px}
+table{border-collapse:collapse;width:100%}
+th{font:500 .75rem/1.3 var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:left;padding:10px 12px;background:var(--surface-2);border-bottom:1px solid var(--line)}
+td{padding:10px 12px;vertical-align:top;border-bottom:1px solid var(--line);font-size:.9375rem}
+tbody tr:last-child td{border-bottom:0}
+table.rt{min-width:940px}
+.rt .c-id{font:500 .8125rem var(--f-mono);white-space:nowrap}
+.rt .c-fn{font-weight:500}
+.rt tr.v{background:var(--surface-2)}
+.rt tr.v td{color:var(--muted)}
+.rt tr:target td{background:var(--accent-soft)}
+.rt tr{scroll-margin-top:60px}
+.c-id{grid-area:id}.c-fn{grid-area:fn}.c-kl{grid-area:kl}.c-ist{grid-area:ist}.c-ziel{grid-area:ziel}.c-m{grid-area:m}.c-st{grid-area:st}
+.tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-top:18px}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button{font:500 .875rem var(--f-body);color:var(--fg);background:var(--surface);border:1px solid var(--line-strong);border-radius:999px;padding:6px 14px;cursor:pointer;min-height:36px}
+.seg button:hover{background:var(--accent-soft)}
+.seg button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+#filter-out{font-size:.875rem;color:var(--muted)}
+.note{margin-top:12px;font-size:.875rem;color:var(--muted);max-width:90ch}
+.note strong{color:var(--fg)}
+.pt{min-width:640px}
+.pt th:first-child,.pt td:first-child{position:sticky;left:0;background:var(--surface);font-weight:600;min-width:150px}
+.pt th:first-child{background:var(--surface-2)}
+.callout{margin-top:14px;padding:12px 14px;border:1px solid var(--ok);background:var(--ok-soft);color:var(--fg);border-radius:6px;font-size:.9375rem}
+.vf{display:grid;gap:4px;justify-items:start}
+.vf small{color:var(--muted);font-size:.8125rem;line-height:1.35}
+.vf .st{color:var(--warn)}
+table.sk{min-width:960px}
+.sk .hd{font-weight:600}
+.src h3{margin-top:0}
+
+/* Kritik als Chancen */
+.crit{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:10px}
+.crit li{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.3fr) minmax(0,1.3fr);gap:10px 20px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.crit h4{margin:0;font:600 1rem/1.3 var(--f-display)}
+.crit .rank{font:500 .75rem var(--f-mono);color:var(--muted);display:block;margin-bottom:4px;letter-spacing:.06em}
+.crit p{font-size:.9375rem}
+.crit .lab-s{display:block;margin-bottom:3px}
+.crit .chance .lab-s{color:var(--ok)}
+.crit .refs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+
+/* Roadmap */
+.scale{position:relative;height:50px;margin:34px 4px 6px}
+.scale .track{position:absolute;left:0;right:0;top:26px;height:14px;border-radius:7px;overflow:hidden;display:flex;border:1px solid var(--line-strong)}
+.scale .plan{width:66.667%;background:var(--accent-soft);border-right:2px solid var(--accent)}
+.scale .res{flex:1;background:var(--warn-soft)}
+.tk{position:absolute;top:0;height:40px;border-left:1px solid var(--line-strong);padding-left:4px;font:500 .75rem/1 var(--f-mono);color:var(--muted)}
+.tk.end{border-left:0;border-right:1px solid var(--line-strong);padding-left:0;padding-right:4px;transform:translateX(-100%)}
+.tk.z{left:0}
+.blegend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.875rem;color:var(--muted);margin-top:8px}
+.blegend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;border:1px solid var(--line-strong)}
+.blegend .l1::before{background:var(--accent-soft);border-color:var(--accent)}
+.blegend .l2::before{background:var(--surface);border-color:var(--line-strong)}
+.blegend .l3::before{background:var(--warn-soft);border-color:var(--warn)}
+.rm{list-style:none;margin:22px 0 0;padding:0;display:grid;gap:10px}
+.ms{display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.ms-id{width:46px;height:46px;border-radius:6px;background:var(--surface-2);display:grid;place-items:center;font:600 1rem var(--f-mono)}
+.ms.now{border-color:var(--warn)}
+.ms.now .ms-id{background:var(--warn);color:var(--surface)}
+.ms-top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 12px}
+.ms-top h3{margin:0;font-size:1.0625rem}
+.ms p{margin-top:4px;font-size:.9375rem}
+.ms-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;font-size:.8125rem;color:var(--muted);margin-top:8px !important}
+.ms-meta .grp{display:inline-flex;flex-wrap:wrap;align-items:center;gap:5px}
+
+/* Risiken */
+.decision{margin-top:22px;border:2px solid var(--accent);border-radius:6px;background:var(--surface);overflow:hidden}
+.dec-head{background:var(--accent);color:var(--on-accent);font:600 1rem var(--f-display);padding:10px 16px}
+.dec-list{list-style:none;margin:0;padding:0}
+.dec-list li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;padding:14px 16px;border-top:1px solid var(--line)}
+.dec-list li:first-child{border-top:0}
+.rid{font:600 .8125rem var(--f-mono);background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:2px 8px;height:fit-content}
+.vs{margin-top:4px;font-size:.9375rem}
+.vs b{color:var(--accent);font-weight:600}
+.dec-foot{padding:10px 16px;border-top:1px solid var(--line);background:var(--surface-2);font-size:.8125rem;color:var(--muted)}
+.rk{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:10px}
+.rk li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 16px}
+.rk .rid{background:var(--nein-soft);color:var(--nein)}
+.rk p{font-size:.9375rem}
+.rk .gm{margin-top:3px;color:var(--muted)}
+.rk .gm b{color:var(--fg);font-weight:600}
+
+/* Quellen */
+.src{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;margin-top:8px}
+.src ul{list-style:none;margin:0;padding:0;display:grid;gap:9px;font-size:.9375rem}
+.src li{overflow-wrap:anywhere}
+.src li span{display:block;color:var(--muted);font-size:.8125rem}
+footer{margin-top:48px;padding-block:22px 40px;border-top:1px solid var(--line);color:var(--muted);font-size:.8125rem}
+
+@media (max-width:960px){
+  .flows,.two,.src{grid-template-columns:minmax(0,1fr)}
+  .topics{grid-template-columns:minmax(0,1fr)}
+  .crit li{grid-template-columns:minmax(0,1fr)}
+  /* Karten statt Tabelle */
+  .tw.cards{overflow:visible;border:0;background:none;margin-top:14px}
+  .cards table,.cards tbody{display:block;min-width:0;width:100%}
+  .cards thead{display:none}
+  .cards tr{display:grid;gap:8px 10px;padding:12px 14px;margin-bottom:10px;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+  .cards tr.v{background:var(--surface-2)}
+  .cards td{display:block;padding:0;border:0;min-width:0}
+  .cards td.lab::before{content:attr(data-l);display:block;font:500 .6875rem/1.3 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:1px}
+  #matrix tr{grid-template-columns:auto auto 1fr auto;grid-template-areas:"id kl m st" "fn fn fn fn" "ist ist ist ist" "ziel ziel ziel ziel";align-items:center}
+  #matrix .c-m{text-align:right}
+  #matrix .c-m::before{content:none}
+  #stack tr{grid-template-columns:minmax(0,1fr)}
+  #stack td.hd{font:600 1.0625rem var(--f-display)}
+}
+@media (max-width:520px){
+  .hero{padding-block:24px 18px}
+  section{padding-block:36px 6px}
+  .ms{grid-template-columns:minmax(0,1fr)}
+  .ms-id{width:auto;height:auto;padding:4px 10px;justify-self:start}
+}
+</style>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Local Voice AI · Goal #59 · Stand 29.09.2026</p>
+    <h1>Besprechungen auf Granola-Niveau</h1>
+    <p class="sub">Was Granola kann, wie es gebaut ist und wie Local Voice AI dasselbe lokal, ohne Abo und mit Audio zum Nachhören erreicht.</p>
+    <ul class="facts">
+      <li>M0 in Arbeit, M1 bis M7 offen</li>
+      <li>30 Funktionen verglichen, 22 davon Kern</li>
+      <li>Budget rund 8 MTok</li>
+    </ul>
+  </div>
+</header>
+
+<nav class="nav" aria-label="Abschnitte">
+  <div class="wrap">
+    <a href="#kurzfazit">Kurzfazit</a>
+    <a href="#technik">Technik</a>
+    <a href="#matrix-abschnitt">Matrix</a>
+    <a href="#preise">Preise und Kritik</a>
+    <a href="#stack-abschnitt">Stack</a>
+    <a href="#roadmap">Roadmap</a>
+    <a href="#risiken">Risiken</a>
+    <a href="#quellen">Quellen</a>
+  </div>
+</nav>
+
+<main>
+
+<section id="kurzfazit">
+  <div class="wrap">
+    <h2>Kurzfazit</h2>
+    <div class="prose">
+      <p>Granola ist ein Notizblock für Besprechungen: Die App schneidet Mikrofon und Systemton lokal mit, ohne Bot im Call, lässt die Sprache in der Cloud transkribieren und erzeugt aus den eigenen Stichpunkten und dem Transkript mit Cloud-Sprachmodellen fertige Notizen. Der Vorsprung liegt in der Bedienung, nicht im Modell: Eigener Text erscheint schwarz, KI-Text grau, und ein Klick führt von jedem Punkt zur Transkriptstelle.</p>
+      <p>Local Voice AI ist schon besser bei Datenschutz und Kosten (alles läuft lokal, 0 € laufend), beim Audio zur Verifikation und beim Datei-Import, die Granola nicht bietet. Es fehlen der Notizblock mit KI-Notizen nach Vorlage, die Sprechertrennung, Chat und Suche über alle Besprechungen, der Kalenderbezug, die Echo-Unterdrückung und ein Live-Transkript mit höchstens 5 Sekunden Verzögerung (heute Blöcke von 20 Sekunden). Der Plan schließt diese Lücken in den Meilensteinen M1 bis M7, zuerst Notizblock und Audio.</p>
+    </div>
+    <div class="two">
+      <div>
+        <span class="lab-s">Schon besser</span>
+        <ul class="chips">
+          <li class="chip chip-ok">Lokal ohne Cloud</li>
+          <li class="chip chip-ok">Audio zum Nachhören</li>
+          <li class="chip chip-ok">Datei-Import</li>
+          <li class="chip chip-ok">0 € laufend</li>
+        </ul>
+      </div>
+      <div>
+        <span class="lab-s">Fehlt noch</span>
+        <ul class="chips">
+          <li class="chip chip-gap">Notizblock und KI-Notizen</li>
+          <li class="chip chip-gap">Sprechertrennung</li>
+          <li class="chip chip-gap">Chat und Suche</li>
+          <li class="chip chip-gap">Kalender</li>
+          <li class="chip chip-gap">Echo-Unterdrückung</li>
+          <li class="chip chip-gap">Live-Latenz ≤ 5 s</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="technik">
+  <div class="wrap">
+    <h2>So funktioniert Granola technisch</h2>
+    <p class="lede">Links der Weg der Daten bei Granola, rechts das lokale Gegenstück in Local Voice AI. Die Kennzeichen zeigen die Belegstufe der Recherche: belegt, sekundär (Presse, Reverse Engineering) oder Vermutung.</p>
+
+    <div class="flows">
+      <figure class="flow">
+        <h3>Granola: Cloud</h3>
+        <svg viewBox="0 0 360 490" role="img" aria-labelledby="g1t g1d">
+          <title id="g1t">Ablauf bei Granola</title>
+          <desc id="g1d">Mikrofon und Systemaudio laufen durch eine Echo-Unterdrückung im Gerät, dann zur Cloud-Transkription bei Deepgram und AssemblyAI und zu einem Cloud-Sprachmodell von OpenAI und Anthropic, das die Enhanced Notes erzeugt.</desc>
+          <defs><marker id="ah1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0 0L10 5L0 10z"/></marker></defs>
+          <rect class="rg-c" x="4" y="146" width="352" height="206" rx="8"/>
+          <text class="tl tl-c" x="16" y="164">CLOUD, AWS USA</text>
+          <rect class="bx" x="8" y="6" width="164" height="52" rx="6"/>
+          <text class="t1" x="90" y="28" text-anchor="middle">Mikrofon</text>
+          <text class="t2" x="90" y="46" text-anchor="middle">wird zu „Me“</text>
+          <rect class="bx" x="188" y="6" width="164" height="52" rx="6"/>
+          <text class="t1" x="270" y="28" text-anchor="middle">Systemaudio</text>
+          <text class="t2" x="270" y="46" text-anchor="middle">wird zu „Them“</text>
+          <path class="ln" d="M90 58V79" marker-end="url(#ah1)"/>
+          <path class="ln" d="M270 58V79" marker-end="url(#ah1)"/>
+          <rect class="bx" x="8" y="80" width="344" height="42" rx="6"/>
+          <text class="t1" x="180" y="99" text-anchor="middle">Echo-Unterdrückung im Gerät</text>
+          <text class="t2" x="180" y="114" text-anchor="middle">Aussage des Gründers, Verfahren unbekannt</text>
+          <path class="ln" d="M180 122V177" marker-end="url(#ah1)"/>
+          <rect class="bx" x="20" y="178" width="320" height="60" rx="6"/>
+          <text class="t1" x="180" y="202" text-anchor="middle">Cloud-Transkription im Streaming</text>
+          <text class="t2" x="180" y="221" text-anchor="middle">Deepgram · AssemblyAI, per WebSocket</text>
+          <path class="ln" d="M180 238V263" marker-end="url(#ah1)"/>
+          <rect class="bx" x="20" y="264" width="194" height="64" rx="6"/>
+          <text class="t1" x="117" y="290" text-anchor="middle">Sprachmodell</text>
+          <text class="t2" x="117" y="309" text-anchor="middle">OpenAI · Anthropic u. a.</text>
+          <rect class="bx" x="230" y="264" width="110" height="64" rx="6"/>
+          <text class="t3" x="285" y="292" text-anchor="middle">Notizen +</text>
+          <text class="t3" x="285" y="309" text-anchor="middle">Kalender</text>
+          <path class="ln" d="M230 296H216" marker-end="url(#ah1)"/>
+          <path class="ln" d="M117 328V383" marker-end="url(#ah1)"/>
+          <rect class="bx" x="8" y="384" width="344" height="68" rx="6"/>
+          <text class="t1" x="180" y="407" text-anchor="middle">Enhanced Notes</text>
+          <text class="t2" x="180" y="425" text-anchor="middle">eigener Text schwarz, KI-Text grau</text>
+          <text class="t2" x="180" y="442" text-anchor="middle">Lupe führt zur Quelle im Transkript</text>
+          <text class="t3" x="180" y="478" text-anchor="middle">Audio wird nicht gespeichert</text>
+        </svg>
+      </figure>
+
+      <figure class="flow">
+        <h3>Local Voice AI: lokal</h3>
+        <svg viewBox="0 0 360 490" role="img" aria-labelledby="g2t g2d">
+          <title id="g2t">Ablauf in Local Voice AI</title>
+          <desc id="g2d">Mikrofon und Systemton (WASAPI-Loopback) laufen durch eine geplante Echo-Unterdrückung, dann durch lokale Transkription mit Parakeet oder Whisper und ein lokales Sprachmodell über llama-server. Das Ergebnis ist ein Protokoll, dazu bleibt das Audio erhalten.</desc>
+          <defs><marker id="ah2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0 0L10 5L0 10z"/></marker></defs>
+          <rect class="rg-l" x="4" y="146" width="352" height="206" rx="8"/>
+          <text class="tl tl-l" x="16" y="164">DEIN RECHNER, KEIN NETZVERKEHR</text>
+          <rect class="bx" x="8" y="6" width="164" height="52" rx="6"/>
+          <text class="t1" x="90" y="28" text-anchor="middle">Mikrofon</text>
+          <text class="t2" x="90" y="46" text-anchor="middle">wird zu „Ich“</text>
+          <rect class="bx" x="188" y="6" width="164" height="52" rx="6"/>
+          <text class="t1" x="270" y="28" text-anchor="middle">Systemton</text>
+          <text class="t2" x="270" y="46" text-anchor="middle">wird zu „Gegenseite“</text>
+          <path class="ln" d="M90 58V79" marker-end="url(#ah2)"/>
+          <path class="ln" d="M270 58V79" marker-end="url(#ah2)"/>
+          <rect class="bx" x="8" y="80" width="344" height="42" rx="6"/>
+          <text class="t1" x="180" y="99" text-anchor="middle">Echo-Unterdrückung (AEC)</text>
+          <text class="t2" x="180" y="114" text-anchor="middle">fehlt heute, geplant in M2</text>
+          <path class="ln" d="M180 122V177" marker-end="url(#ah2)"/>
+          <rect class="bx" x="20" y="178" width="320" height="60" rx="6"/>
+          <text class="t1" x="180" y="198" text-anchor="middle">Transkription lokal</text>
+          <text class="t2" x="180" y="215" text-anchor="middle">Parakeet v3 · Whisper large-v3</text>
+          <text class="t2" x="180" y="230" text-anchor="middle">+ Sprechertrennung (geplant, M3)</text>
+          <path class="ln" d="M180 238V263" marker-end="url(#ah2)"/>
+          <rect class="bx" x="20" y="264" width="194" height="64" rx="6"/>
+          <text class="t1" x="117" y="290" text-anchor="middle">Sprachmodell lokal</text>
+          <text class="t2" x="117" y="309" text-anchor="middle">llama-server · Qwen · Gemma</text>
+          <rect class="bx" x="230" y="264" width="110" height="64" rx="6"/>
+          <text class="t3" x="285" y="285" text-anchor="middle">Notizen +</text>
+          <text class="t3" x="285" y="302" text-anchor="middle">Kalender</text>
+          <text class="t2" x="285" y="319" text-anchor="middle">geplant, M1 und M5</text>
+          <path class="ln" d="M230 296H216" marker-end="url(#ah2)"/>
+          <path class="ln" d="M117 328V383" marker-end="url(#ah2)"/>
+          <rect class="bx" x="8" y="384" width="344" height="68" rx="6"/>
+          <text class="t1" x="180" y="407" text-anchor="middle">Protokoll + Audio</text>
+          <text class="t2" x="180" y="425" text-anchor="middle">heute: Protokoll ohne Nutzernotizen</text>
+          <text class="t2" x="180" y="442" text-anchor="middle">geplant (M1): Quelle springt ins Transkript und Audio</text>
+          <text class="t3" x="180" y="478" text-anchor="middle">Audio bleibt lokal, Aufbewahrung wählbar</text>
+        </svg>
+      </figure>
+    </div>
+    <p class="legend">Gestrichelt und gelb hinterlegt: Die Daten verlassen den Rechner. Blau hinterlegt: alles bleibt lokal. „Geplant“ heißt: noch nicht gebaut, der Meilenstein steht dahinter.</p>
+
+    <h3>Stack, Datenhaltung und Sprechererkennung im Vergleich</h3>
+    <div class="topics">
+      <article class="topic">
+        <h3>Stack</h3>
+        <h4>Granola</h4>
+        <ul>
+          <li>Electron-App (TypeScript, React, Node) mit Backend auf AWS<span class="bs bs-b">belegt</span></li>
+          <li>Transkription über Deepgram und AssemblyAI, live per WebSocket<span class="bs bs-b">belegt</span></li>
+          <li>Notizen aus einer Mischung von OpenAI und Anthropic, ein eigenes Modell lässt sich nicht wählen<span class="bs bs-b">belegt</span></li>
+          <li>Echo-Unterdrückung im Gerät, unabhängig von KI<span class="bs bs-s">sekundär</span></li>
+          <li>Windows-Erfassung vermutlich je Anwendung, unbestätigt<span class="bs bs-v">Vermutung</span></li>
+        </ul>
+        <h4 class="me">Local Voice AI</h4>
+        <ul>
+          <li>Tauri 2 mit Rust und React</li>
+          <li>Transkription lokal über transcribe-cpp und transcribe-rs, unter anderem Parakeet und Whisper</li>
+          <li>Sprachmodell lokal über den gebündelten llama-server (Qwen3, Gemma)</li>
+          <li>Systemton per WASAPI-Loopback, bisher nur Windows</li>
+        </ul>
+      </article>
+      <article class="topic">
+        <h3>Datenhaltung</h3>
+        <h4>Granola</h4>
+        <ul>
+          <li>Audio wird nicht gespeichert, mobil nur kurz zwischengespeichert<span class="bs bs-b">belegt</span></li>
+          <li>Transkript und Notizen liegen bei AWS in den USA, keine EU-Datenresidenz<span class="bs bs-b">belegt</span></li>
+          <li>Training mit anonymisierten Daten ist standardmäßig an, außer bei Enterprise<span class="bs bs-b">belegt</span></li>
+          <li>Lokaler Cache verschlüsselt über Electron safeStorage<span class="bs bs-s">sekundär</span></li>
+        </ul>
+        <h4 class="me">Local Voice AI</h4>
+        <ul>
+          <li>SQLite (<code>meetings.db</code>) plus ein Ordner je Besprechung mit <code>mic.wav</code>, <code>system.wav</code> und Protokoll</li>
+          <li>Aufbewahrung des Audios wählbar, der Standard löscht es nach dem Protokoll</li>
+          <li>Alles lokal, Ziel in M7 ist der Offline-Nachweis für den ganzen Besprechungspfad</li>
+        </ul>
+      </article>
+      <article class="topic">
+        <h3>Sprechererkennung</h3>
+        <h4>Granola</h4>
+        <ul>
+          <li>Desktop: nur „Me“ (Mikrofon) und „Them“ (Systemaudio)<span class="bs bs-b">belegt</span></li>
+          <li>Klarnamen durch Auslesen der Meeting-App-Oberfläche (Accessibility-API), nur für bestimmte Apps<span class="bs bs-b">belegt</span></li>
+          <li>Keine akustische Diarisierung, Zuordnung bricht bei Überlappung und Raumgeräten ein<span class="bs bs-b">belegt</span></li>
+          <li>Mobil „Speaker A, B …“, vermutlich nachträglich berechnet<span class="bs bs-v">Vermutung</span></li>
+        </ul>
+        <h4 class="me">Local Voice AI</h4>
+        <ul>
+          <li>Kanal-Label „Ich“ und „Gegenseite“, der Sprecher-Index bleibt heute leer</li>
+          <li>Importe und Präsenztermine laufen als Mischkanal ohne Trennung</li>
+          <li>Geplant in M3: akustische Diarisierung, Sprecher benennen, Stimme wiedererkennen</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="matrix-abschnitt">
+  <div class="wrap">
+    <h2>Feature-Matrix</h2>
+    <p class="lede">30 Granola-Funktionen gegen den Stand von Local Voice AI vom 29.09.2026. Kern heißt: muss gleichwertig oder besser werden und ist ein Goal-Kriterium. Komfort ist geplant, sperrt das Goal aber nicht. Nein ist bewusst nicht Teil des Ziels.</p>
+
+    <div class="tools">
+      <div class="seg" id="filter" role="group" aria-label="Nach Klasse filtern">
+        <button type="button" data-f="alle" aria-pressed="true">Alle (30)</button>
+        <button type="button" data-f="kern" aria-pressed="false">Kern (22)</button>
+        <button type="button" data-f="komfort" aria-pressed="false">Komfort (4)</button>
+        <button type="button" data-f="nein" aria-pressed="false">Nein (4)</button>
+      </div>
+      <span id="filter-out" aria-live="polite">30 von 30 Funktionen</span>
+    </div>
+
+    <div class="tw cards">
+      <table class="rt" id="matrix">
+        <colgroup><col style="width:56px"><col style="width:19%"><col style="width:84px"><col style="width:22%"><col style="width:30%"><col style="width:56px"><col style="width:104px"></colgroup>
+        <thead><tr><th>ID</th><th>Granola-Funktion</th><th>Klasse</th><th>Local Voice AI heute</th><th>Ziel: gleich oder besser</th><th>M</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr id="f01" data-k="kern"><td class="c-id" data-l="ID">F01</td><td class="c-fn" data-l="Granola-Funktion">Aufnahme ohne Bot: Mikrofon + Systemaudio, Start per Klick</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">vorhanden (Windows), Systemton standardmäßig aus</td><td class="c-ziel lab" data-l="Ziel">Systemton standardmäßig an; Start per Klick, Kürzel und aus Erkennung/Kalender</td><td class="c-m mb" data-l="Meilenstein">M1</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f02" data-k="kern"><td class="c-id" data-l="ID">F02</td><td class="c-fn" data-l="Granola-Funktion">Ausfallsicherheit der Aufnahme (Granola: stille Ausfälle, Nutzerkritik)</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">Watchdog Start-Timeout, Recovery nur <code>recording</code></td><td class="c-ziel lab" data-l="Ziel"><strong>besser:</strong> Pegel-/Stillewächter meldet sofort sichtbar, Recovery auch für <code>processing</code>, Nachtranskription</td><td class="c-m mb" data-l="Meilenstein">M2</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f03" data-k="kern"><td class="c-id" data-l="ID">F03</td><td class="c-fn" data-l="Granola-Funktion">Echo-Behandlung Mikrofon ↔ Lautsprecher</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">fehlt</td><td class="c-ziel lab" data-l="Ziel">AEC auf der Ich-Spur; keine doppelten Sätze ohne Headset</td><td class="c-m mb" data-l="Meilenstein">M2</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f04" data-k="kern"><td class="c-id" data-l="ID">F04</td><td class="c-fn" data-l="Granola-Funktion">Live-Transkript „Me/Them"</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">Pseudo-Live, 20-s-Blöcke</td><td class="c-ziel lab" data-l="Ziel">sichtbare Verzögerung p95 ≤ 5 s; zusätzlich hochwertiger Enddurchlauf</td><td class="c-m mb" data-l="Meilenstein">M2</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f05" data-k="kern"><td class="c-id" data-l="ID">F05</td><td class="c-fn" data-l="Granola-Funktion">Sprachen inkl. Deutsch, Wechsel im Meeting, eigenes Vokabular (30/50 Begriffe)</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">Auto-Sprache; Vokabular nur Whisper</td><td class="c-ziel lab" data-l="Ziel"><strong>besser:</strong> Deutsch-WER gemessen und dokumentiert, Vokabular unbegrenzt für alle Engines (bzw. Nachkorrektur), Ausgabesprache frei wählbar</td><td class="c-m mb" data-l="Meilenstein">M2</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f06" data-k="kern"><td class="c-id" data-l="ID">F06</td><td class="c-fn" data-l="Granola-Funktion">Sprecher: Kanaltrennung + Namen aus Meeting-App</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">nur Kanal „Ich/Gegenseite"</td><td class="c-ziel lab" data-l="Ziel"><strong>besser:</strong> akustische Diarisierung der Gegenseite und von Importen/Präsenz, Sprecher benennen, Stimme wiedererkennen</td><td class="c-m mb" data-l="Meilenstein">M3</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f07" data-k="kern"><td class="c-id" data-l="ID">F07</td><td class="c-fn" data-l="Granola-Funktion">Notizblock während der Besprechung</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">fehlt</td><td class="c-ziel lab" data-l="Ziel">Editor neben dem Live-Transkript, Stichpunkte mit Zeitstempel, absturzsicher gespeichert</td><td class="c-m mb" data-l="Meilenstein">M1</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f08" data-k="kern"><td class="c-id" data-l="ID">F08</td><td class="c-fn" data-l="Granola-Funktion">Enhanced Notes: eigene Notizen + Transkript verschmelzen, Nutzertext schwarz / KI grau, Lupe zur Quelle</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">Protokoll ohne Nutzernotizen</td><td class="c-ziel lab" data-l="Ziel">gleich + <strong>besser:</strong> Quelle springt ins Transkript <strong>und ins Audio</strong>; keine Aussage ohne Beleg im Transkript</td><td class="c-m mb" data-l="Meilenstein">M1</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f09" data-k="kern"><td class="c-id" data-l="ID">F09</td><td class="c-fn" data-l="Granola-Funktion">Vorlagen (29 vorgefertigt, eigene, teilbar)</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">Abschnitte hart codiert</td><td class="c-ziel lab" data-l="Ziel">mitgelieferte deutsche Vorlagen (≥ 8), eigene anlegen/bearbeiten, Export/Import als Datei</td><td class="c-m mb" data-l="Meilenstein">M1</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f10" data-k="kern"><td class="c-id" data-l="ID">F10</td><td class="c-fn" data-l="Granola-Funktion">Notizen bearbeiten und per Anweisung ändern; Action-Item-Checkliste</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">Protokoll nur Vorschau; Aufgaben nur im Text</td><td class="c-ziel lab" data-l="Ziel">Editor für Notizen/Protokoll, „Anweisung anwenden", Aufgaben abhakbar</td><td class="c-m mb" data-l="Meilenstein">M1</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f11" data-k="kern"><td class="c-id" data-l="ID">F11</td><td class="c-fn" data-l="Granola-Funktion">Chat je Besprechung (auch live) mit Inline-Zitaten</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">fehlt</td><td class="c-ziel lab" data-l="Ziel">lokal, Zitate mit Sprung zu Transkript/Audio</td><td class="c-m mb" data-l="Meilenstein">M4</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f12" data-k="kern"><td class="c-id" data-l="ID">F12</td><td class="c-fn" data-l="Granola-Funktion">Chat über alle Besprechungen / Ordner / Person</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">fehlt</td><td class="c-ziel lab" data-l="Ziel">lokale Hybrid-Suche (Volltext + Embeddings), Antworten mit Zitaten</td><td class="c-m mb" data-l="Meilenstein">M4</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f13" data-k="komfort"><td class="c-id" data-l="ID">F13</td><td class="c-fn" data-l="Granola-Funktion">Recipes (gespeicherte Chat-Prompts)</td><td class="c-kl" data-l="Klasse"><span class="k k-komfort">Komfort</span></td><td class="c-ist lab" data-l="Local Voice AI heute">fehlt</td><td class="c-ziel lab" data-l="Ziel">gespeicherte Prompts, <strong>besser:</strong> mit Variablen</td><td class="c-m mb" data-l="Meilenstein">M4</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f14" data-k="kern"><td class="c-id" data-l="ID">F14</td><td class="c-fn" data-l="Granola-Funktion">Ordner/Spaces, Suche</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">Liste ohne Suche</td><td class="c-ziel lab" data-l="Ziel">Ordner, Volltextsuche, Filter</td><td class="c-m mb" data-l="Meilenstein">M4</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f15" data-k="kern"><td class="c-id" data-l="ID">F15</td><td class="c-fn" data-l="Granola-Funktion">Kalender Google/Outlook: Titel, Teilnehmer, Erinnerung 1 min vorher</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">fehlt</td><td class="c-ziel lab" data-l="Ziel">lokal ohne Abo: ICS-Abo und/oder Outlook-Desktop; Titel/Teilnehmer übernehmen, Erinnerung</td><td class="c-m mb" data-l="Meilenstein">M5</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f16" data-k="kern"><td class="c-id" data-l="ID">F16</td><td class="c-fn" data-l="Granola-Funktion">Ad-hoc-Erkennung über Mikrofonnutzung</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">fehlt</td><td class="c-ziel lab" data-l="Ziel">Erkennung laufender Meeting-Apps → Hinweis „Aufnahme starten?"</td><td class="c-m mb" data-l="Meilenstein">M5</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f17" data-k="komfort"><td class="c-id" data-l="ID">F17</td><td class="c-fn" data-l="Granola-Funktion">People/Companies aus Kalender</td><td class="c-kl" data-l="Klasse"><span class="k k-komfort">Komfort</span></td><td class="c-ist lab" data-l="Local Voice AI heute">fehlt</td><td class="c-ziel lab" data-l="Ziel">Personenliste aus Teilnehmern und Sprechernamen, Besprechungen je Person</td><td class="c-m mb" data-l="Meilenstein">M5</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f18" data-k="komfort"><td class="c-id" data-l="ID">F18</td><td class="c-fn" data-l="Granola-Funktion">Pre-Meeting-Brief</td><td class="c-kl" data-l="Klasse"><span class="k k-komfort">Komfort</span></td><td class="c-ist lab" data-l="Local Voice AI heute">fehlt</td><td class="c-ziel lab" data-l="Ziel">Kurzbrief aus früheren Besprechungen mit denselben Teilnehmenden</td><td class="c-m mb" data-l="Meilenstein">M5</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f19" data-k="kern"><td class="c-id" data-l="ID">F19</td><td class="c-fn" data-l="Granola-Funktion">Follow-up-Mail (nur Gmail)</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">fehlt</td><td class="c-ziel lab" data-l="Ziel">Entwurf erzeugen, kopieren/als Mail öffnen (jedes Mailprogramm)</td><td class="c-m mb" data-l="Meilenstein">M6</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f20" data-k="kern"><td class="c-id" data-l="ID">F20</td><td class="c-fn" data-l="Granola-Funktion">Teilen/Export (Link, CSV per Mail)</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">Word/TXT/MD/Zwischenablage</td><td class="c-ziel lab" data-l="Ziel"><strong>besser:</strong> formatierte Zwischenablage, PDF/SRT/JSON; kein gehosteter Link</td><td class="c-m mb" data-l="Meilenstein">M6</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f21" data-k="komfort"><td class="c-id" data-l="ID">F21</td><td class="c-fn" data-l="Granola-Funktion">MCP-Server/API (remote, bezahlt)</td><td class="c-kl" data-l="Klasse"><span class="k k-komfort">Komfort</span></td><td class="c-ist lab" data-l="Local Voice AI heute">fehlt</td><td class="c-ziel lab" data-l="Ziel"><strong>besser:</strong> lokaler MCP-Server (nur lesend) für Claude/Codex</td><td class="c-m mb" data-l="Meilenstein">M6</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f22" data-k="nein" class="v"><td class="c-id" data-l="ID">F22</td><td class="c-fn" data-l="Granola-Funktion">Integrationen Slack/Notion/HubSpot/Zapier</td><td class="c-kl" data-l="Klasse"><span class="k k-nein">Nein</span></td><td class="c-ist lab" data-l="Local Voice AI heute">–</td><td class="c-ziel lab" data-l="Ziel">Cloud-Integrationen außerhalb des Ziels; Export deckt den Bedarf</td><td class="c-m mb" data-l="Meilenstein">–</td><td class="c-st" data-l="Status"><span class="st st-verworfen">verworfen</span></td></tr>
+          <tr id="f23" data-k="nein" class="v"><td class="c-id" data-l="ID">F23</td><td class="c-fn" data-l="Granola-Funktion">Mobile (iOS/Android/Watch), Telefonate</td><td class="c-kl" data-l="Klasse"><span class="k k-nein">Nein</span></td><td class="c-ist lab" data-l="Local Voice AI heute">Apple-App separat</td><td class="c-ziel lab" data-l="Ziel">Non-Scope</td><td class="c-m mb" data-l="Meilenstein">–</td><td class="c-st" data-l="Status"><span class="st st-verworfen">verworfen</span></td></tr>
+          <tr id="f24" data-k="nein" class="v"><td class="c-id" data-l="ID">F24</td><td class="c-fn" data-l="Granola-Funktion">Team-Spaces, Teilen im Team, SSO/SCIM, Audit</td><td class="c-kl" data-l="Klasse"><span class="k k-nein">Nein</span></td><td class="c-ist lab" data-l="Local Voice AI heute">–</td><td class="c-ziel lab" data-l="Ziel">Einzelnutzer, lokal</td><td class="c-m mb" data-l="Meilenstein">–</td><td class="c-st" data-l="Status"><span class="st st-verworfen">verworfen</span></td></tr>
+          <tr id="f25" data-k="nein" class="v"><td class="c-id" data-l="ID">F25</td><td class="c-fn" data-l="Granola-Funktion">Screenshots geteilter Bildschirme (Beta macOS)</td><td class="c-kl" data-l="Klasse"><span class="k k-nein">Nein</span></td><td class="c-ist lab" data-l="Local Voice AI heute">–</td><td class="c-ziel lab" data-l="Ziel">Non-Scope</td><td class="c-m mb" data-l="Meilenstein">–</td><td class="c-st" data-l="Status"><span class="st st-verworfen">verworfen</span></td></tr>
+          <tr id="f26" data-k="kern"><td class="c-id" data-l="ID">F26</td><td class="c-fn" data-l="Granola-Funktion">Transparenz/Einwilligung</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">Einwilligungsdialog (§ 201 StGB)</td><td class="c-ziel lab" data-l="Ziel">gleich; Hinweistext zum Kopieren in den Meeting-Chat</td><td class="c-m mb" data-l="Meilenstein">M1</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f27" data-k="kern"><td class="c-id" data-l="ID">F27</td><td class="c-fn" data-l="Granola-Funktion">Datenschutz: Cloud USA, Training-Default an</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">lokal</td><td class="c-ziel lab" data-l="Ziel"><strong>besser:</strong> kein Netzverkehr im Besprechungspfad (außer bewusst gewähltem externem LLM)</td><td class="c-m mb" data-l="Meilenstein">M7</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+          <tr id="f28" data-k="kern"><td class="c-id" data-l="ID">F28</td><td class="c-fn" data-l="Granola-Funktion">Audio-Wiedergabe zur Verifikation (Granola: keine)</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">vorhanden (Player, Zeit → Audio)</td><td class="c-ziel lab" data-l="Ziel"><strong>besser:</strong> bleibt; Aufbewahrung wählbar</td><td class="c-m mb" data-l="Meilenstein">–</td><td class="c-st" data-l="Status"><span class="st st-vorhanden">vorhanden</span></td></tr>
+          <tr id="f29" data-k="kern"><td class="c-id" data-l="ID">F29</td><td class="c-fn" data-l="Granola-Funktion">Datei-Import (Granola: ausdrücklich nicht geplant)</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">vorhanden (Audio/Video, VTT/SRT)</td><td class="c-ziel lab" data-l="Ziel"><strong>besser:</strong> bleibt; Diarisierung für Importe (F06)</td><td class="c-m mb" data-l="Meilenstein">–</td><td class="c-st" data-l="Status"><span class="st st-vorhanden">vorhanden</span></td></tr>
+          <tr id="f30" data-k="kern"><td class="c-id" data-l="ID">F30</td><td class="c-fn" data-l="Granola-Funktion">Kosten</td><td class="c-kl" data-l="Klasse"><span class="k k-kern">Kern</span></td><td class="c-ist lab" data-l="Local Voice AI heute">lokal</td><td class="c-ziel lab" data-l="Ziel"><strong>besser:</strong> 0 € laufend; alle Modelle lokal nutzbar</td><td class="c-m mb" data-l="Meilenstein">M7</td><td class="c-st" data-l="Status"><span class="st st-offen">offen</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Stand der Status: 2 vorhanden, 24 offen, 4 verworfen. Die Belege je Zeile stehen in der <a href="https://github.com/MrP42/local-voice-ai/blob/feat/granola-besprechungen/koordination/granola-besprechungen/FEATURE-MATRIX.md" target="_blank" rel="noopener">FEATURE-MATRIX.md</a>; ein Kern-Eintrag ohne Beleg zählt als offen.</p>
+  </div>
+</section>
+
+<section id="preise">
+  <div class="wrap">
+    <h2>Preise, Abo-Grenzen und Kritik an Granola</h2>
+    <p class="lede">Preisseite abgerufen am 29.09.2026. Die Kritikpunkte stammen aus Nutzerberichten und Reviews, teils von Konkurrenten, und sind entsprechend zu lesen.</p>
+
+    <h3>Die drei Stufen</h3>
+    <div class="tw">
+      <table class="pt">
+        <thead><tr><th>&nbsp;</th><th>Basic</th><th>Business</th><th>Enterprise</th></tr></thead>
+        <tbody>
+          <tr><td>Preis</td><td>0 USD</td><td>14 USD je Nutzer und Monat, nur monatlich</td><td>ab 35 USD je Nutzer und Monat</td></tr>
+          <tr><td>Historie im Client</td><td>30 Tage, Älteres bleibt gespeichert, ist aber gesperrt</td><td>unbegrenzt</td><td>unbegrenzt</td></tr>
+          <tr><td>Chat über mehrere Besprechungen</td><td>nur Modell „Auto“, 30 Tage</td><td>Auto plus Modellwahl</td><td>wie Business</td></tr>
+          <tr><td>Integrationen</td><td>nur Basis-Slack</td><td>Notion, Zapier, HubSpot, Affinity, Slack</td><td>zusätzlich Salesforce u. a.</td></tr>
+          <tr><td>API</td><td>nein</td><td>ja</td><td>ja, mit Admin-API und Webhooks</td></tr>
+          <tr><td>MCP</td><td>30 Tage, ohne Transkript</td><td>volle Historie mit Transkript</td><td>Admin-Steuerung</td></tr>
+          <tr><td>Briefs und Follow-up-Mails</td><td>nein</td><td>ja</td><td>ja</td></tr>
+          <tr><td>SSO, Audit, Auto-Löschung, HIPAA</td><td>nein</td><td>nein</td><td>ja</td></tr>
+          <tr><td>Trainings-Opt-out</td><td>je Nutzer</td><td>je Nutzer</td><td>für den ganzen Workspace, Standard aus</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">In allen Stufen enthalten: Mobile-Apps, Sprecher-Tags, geteilte Ordner, SOC 2. Business und Enterprise haben eine Testphase; Start-ups und Studierende erhalten auf Antrag 12 Monate Business gratis. Ältere Quellen nennen eine Stufe „Individual“ für 18 USD und ein Limit von 25 Notizen. Seit der Neustrukturierung im Februar 2026 gilt das nicht mehr.</p>
+    <p class="callout">Local Voice AI kostet laufend 0 €. Historie, Chat und Modellwahl hängen an keiner Abo-Stufe, weil alle Modelle lokal laufen (F30).</p>
+
+    <h3>Fünf Schwächen, die Local Voice AI nutzen kann</h3>
+    <ol class="crit">
+      <li>
+        <div><span class="rank">Kritik 1</span><h4>Kein Audio, keine Wiedergabe</h4></div>
+        <div><span class="lab-s">Bei Granola</span><p>Zahlen, Namen und Zusagen lassen sich nicht nachhören. Fehler wie „312.000“ statt „312,1 Mio.“ bleiben unentdeckt. Audio-Aufzeichnung ist laut Hersteller nicht geplant.</p></div>
+        <div class="chance"><span class="lab-s">Chance</span><p>Audio lokal behalten, jeder Beleg springt in den Ton.</p><div class="refs"><a class="fref" href="#f28">F28</a><a class="fref" href="#f08">F08</a></div></div>
+      </li>
+      <li>
+        <div><span class="rank">Kritik 2</span><h4>Schwache Sprecherzuordnung</h4></div>
+        <div><span class="lab-s">Bei Granola</span><p>Desktop nur „Me“ und „Them“. Namen kommen aus dem Auslesen der Meeting-App und brechen ab drei Personen ein. Präsenztermine mit einem Mikrofon sind nicht lösbar. Der Mitgründer nennt es selbst eine Priorität.</p></div>
+        <div class="chance"><span class="lab-s">Chance</span><p>Akustische Diarisierung der Gegenseite und von Importen, Sprecher benennen und wiedererkennen.</p><div class="refs"><a class="fref" href="#f06">F06</a></div></div>
+      </li>
+      <li>
+        <div><span class="rank">Kritik 3</span><h4>Stille Aufnahmeausfälle</h4></div>
+        <div><span class="lab-s">Bei Granola</span><p>Die Sitzung wirkt aktiv, es wird nichts erfasst, und es gibt keinen Alarm. Nutzer berichten von nur etwa 60 % gelungener Aufnahmen. Ohne Audio lässt sich nichts nachholen, der Start ist manuell.</p></div>
+        <div class="chance"><span class="lab-s">Chance</span><p>Pegel- und Stillewächter mit sichtbarem Alarm, Nachtranskription aus dem gespeicherten Audio.</p><div class="refs"><a class="fref" href="#f02">F02</a><a class="fref" href="#f01">F01</a></div></div>
+      </li>
+      <li>
+        <div><span class="rank">Kritik 4</span><h4>Datenschutz und DSGVO</h4></div>
+        <div><span class="lab-s">Bei Granola</span><p>Cloud nur in den USA, Training standardmäßig an (außer Enterprise), Sammelklage wegen heimlicher Aufnahme vom 30.07.2026, Freigabe per Link als Standard.</p></div>
+        <div class="chance"><span class="lab-s">Chance</span><p>Kein Netzverkehr im Besprechungspfad, Einwilligungsdialog bleibt, Hinweistext für den Meeting-Chat.</p><div class="refs"><a class="fref" href="#f27">F27</a><a class="fref" href="#f26">F26</a></div></div>
+      </li>
+      <li>
+        <div><span class="rank">Kritik 5</span><h4>Sprachen und Deutsch</h4></div>
+        <div><span class="lab-s">Bei Granola</span><p>Bei Denglisch entstehen teils englische Notizen trotz deutschem Gespräch (Test eines Konkurrenten). Fachbegriffe und Dialekt sind schwach, die Vokabelliste fasst nur 30 Begriffe je Nutzer.</p></div>
+        <div class="chance"><span class="lab-s">Chance</span><p>Deutsch-Fehlerrate messen und dokumentieren, Ausgabesprache frei wählen, Vokabular ohne Grenze.</p><div class="refs"><a class="fref" href="#f05">F05</a></div></div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section id="stack-abschnitt">
+  <div class="wrap">
+    <h2>Lokaler Stack</h2>
+    <p class="lede">Empfehlung je Baustein aus der Recherche. Die Kennzahlen stammen aus Veröffentlichungen, nicht aus Messungen auf dieser Maschine, und bei STT aus gelesener Sprache. „Verifiziert“ heißt: Download, Lizenz und Messung sind im Spike belegt (Risiko R5). Bis dahin steht überall „nein“.</p>
+
+    <div class="tw cards">
+      <table class="rt sk" id="stack">
+        <colgroup><col style="width:11%"><col style="width:25%"><col style="width:20%"><col style="width:10%"><col style="width:19%"><col style="width:15%"></colgroup>
+        <thead><tr><th>Baustein</th><th>Empfehlung</th><th>Kennzahl</th><th>Lizenz</th><th>Alternative</th><th>Verifiziert?</th></tr></thead>
+        <tbody>
+          <tr><td class="hd" data-l="Baustein">STT live</td><td class="lab" data-l="Empfehlung">Parakeet-TDT-0.6B-v3 (GGUF Q8, 740 MB) auf VAD-Segmenten</td><td class="lab" data-l="Kennzahl">5,24 % WER Deutsch (FLEURS); 13- bis 15-fach Echtzeit auf reiner Laptop-CPU</td><td class="lab" data-l="Lizenz">CC-BY-4.0</td><td class="lab" data-l="Alternative">Voxtral Realtime (echtes Streaming, nur starke GPU)</td><td class="lab" data-l="Verifiziert?"><div class="vf"><span class="st st-in_arbeit">nein</span><small>zu verifizieren auf spontanem Deutsch</small></div></td></tr>
+          <tr><td class="hd" data-l="Baustein">STT Enddurchlauf</td><td class="lab" data-l="Empfehlung">Whisper large-v3 (Q8) oder Qwen3-ASR-1.7B (Q8) über die ganze Aufnahme</td><td class="lab" data-l="Kennzahl">4,13 % bzw. 4,25 % WER Deutsch (FLEURS)</td><td class="lab" data-l="Lizenz">Apache-2.0 / MIT</td><td class="lab" data-l="Alternative">Cohere Transcribe (5,06 %, kein Code-Switching, keine Zeitstempel)</td><td class="lab" data-l="Verifiziert?"><div class="vf"><span class="st st-in_arbeit">nein</span><small>Wahl zwischen beiden per Eigenmessung</small></div></td></tr>
+          <tr><td class="hd" data-l="Baustein">Diarisierung</td><td class="lab" data-l="Empfehlung">NVIDIA Nemotron-3-Diarization (100M, ONNX int8, ca. 120 MB) offline je Kanal; Rückfall Sortformer 4spk</td><td class="lab" data-l="Kennzahl">9,25 % DER AMI (Headset), 11,14 % (Fernfeld); bis 8 Sprecher</td><td class="lab" data-l="Lizenz">OpenMDW-1.1</td><td class="lab" data-l="Alternative">pyannote community-1 (17,0 % DER AMI, CC-BY-4.0, Hugging-Face-Gating)</td><td class="lab" data-l="Verifiziert?"><div class="vf"><span class="st st-in_arbeit">nein</span><small>zu verifizieren: ONNX-Export nur von der Community, Modellname in R5 als unbelegt geführt</small></div></td></tr>
+          <tr><td class="hd" data-l="Baustein">Erfassung</td><td class="lab" data-l="Empfehlung">Windows: <code>wasapi</code>-Crate (vorhanden), Prozess-Loopback optional; macOS: Core-Audio-Tap über <code>cpal</code> ab 0.17</td><td class="lab" data-l="Kennzahl">Prozess-Loopback ab Windows 10 Build 20348; Tap ab macOS 14.6</td><td class="lab" data-l="Lizenz">MIT / Apache</td><td class="lab" data-l="Alternative">ScreenCaptureKit (<code>screencapturekit</code> 10.x)</td><td class="lab" data-l="Verifiziert?"><div class="vf"><span class="st st-in_arbeit">nein</span></div></td></tr>
+          <tr><td class="hd" data-l="Baustein">Echo</td><td class="lab" data-l="Empfehlung">Mikro = „Ich“, Systemton = „Andere“; bei Lautsprechern zusätzlich AEC mit <code>sonora</code> (reines Rust)</td><td class="lab" data-l="Kennzahl">4,2 µs je 10-ms-Frame bei 16 kHz (M4 Max)</td><td class="lab" data-l="Lizenz">BSD-3-Clause</td><td class="lab" data-l="Alternative">Windows-11-eigene AEC (Build ab 22621)</td><td class="lab" data-l="Verifiziert?"><div class="vf"><span class="st st-in_arbeit">nein</span><small>zu verifizieren: Projekt jung (ca. 85 Sterne), in R5 als unbelegt geführt</small></div></td></tr>
+          <tr><td class="hd" data-l="Baustein">VAD</td><td class="lab" data-l="Empfehlung">Silero VAD v6.x (Upgrade von v4 im Repo)</td><td class="lab" data-l="Kennzahl">32 ms je Frame, ca. 100k Parameter; Precision 98,35 %, Recall 96,62 %</td><td class="lab" data-l="Lizenz">MIT</td><td class="lab" data-l="Alternative">TEN VAD (Apache-2.0 mit Agora-Klausel)</td><td class="lab" data-l="Verifiziert?"><div class="vf"><span class="st st-in_arbeit">nein</span><small>zu prüfen: lädt <code>vad-rs</code> das neue Modell?</small></div></td></tr>
+          <tr><td class="hd" data-l="Baustein">LLM für Protokoll</td><td class="lab" data-l="Empfehlung">Qwen3.8-27B (Q5_K_M, 20,9 GB) auf der 4090; Qwen3.5-9B oder Gemma 4 12B (Q4) auf schwächeren Rechnern</td><td class="lab" data-l="Kennzahl">27B: ca. 2.660 tok/s Prefill, ca. 40 tok/s Decode (Community-Messung)</td><td class="lab" data-l="Lizenz">Apache-2.0</td><td class="lab" data-l="Alternative">Qwen3.6-35B-A3B (MoE), Gemma 4 26B-A4B</td><td class="lab" data-l="Verifiziert?"><div class="vf"><span class="st st-in_arbeit">nein</span><small>zu verifizieren: Modellname in R5 unbelegt, keine Messung für deutsche Protokolle gefunden</small></div></td></tr>
+          <tr><td class="hd" data-l="Baustein">Embeddings</td><td class="lab" data-l="Empfehlung">BGE-M3 (dense, GGUF Q8); Qwen3-Embedding-4B für starke Rechner</td><td class="lab" data-l="Kennzahl">MIRACL-de nDCG@10: 57,59 bzw. 62,98</td><td class="lab" data-l="Lizenz">MIT / Apache-2.0</td><td class="lab" data-l="Alternative">EmbeddingGemma-300M (334 MB, Gemma-Bedingungen)</td><td class="lab" data-l="Verifiziert?"><div class="vf"><span class="st st-in_arbeit">nein</span></div></td></tr>
+          <tr><td class="hd" data-l="Baustein">Speicher und Suche</td><td class="lab" data-l="Empfehlung">SQLite (<code>rusqlite</code>, vorhanden) mit <code>sqlite-vec</code> und FTS5, Fusion per RRF</td><td class="lab" data-l="Kennzahl">Brute Force reicht bis ca. 100k Chunks</td><td class="lab" data-l="Lizenz">MIT / Apache</td><td class="lab" data-l="Alternative">LanceDB ab mehr als 1 Mio. Chunks</td><td class="lab" data-l="Verifiziert?"><div class="vf"><span class="st st-in_arbeit">nein</span><small>sqlite-vec ist noch vor Version 1</small></div></td></tr>
+          <tr><td class="hd" data-l="Baustein">Kalender</td><td class="lab" data-l="Empfehlung">Phase 1 ICS-URL, Phase 2 Microsoft Graph mit eigener Client-ID, macOS EventKit</td><td class="lab" data-l="Kennzahl">kostenlos</td><td class="lab" data-l="Lizenz">nicht zutreffend</td><td class="lab" data-l="Alternative">Google Calendar API (Verifizierungsaufwand)</td><td class="lab" data-l="Verifiziert?"><div class="vf"><span class="st st-in_arbeit">nein</span><small>zu verifizieren: ICS-Veröffentlichung ist bei Firmen-M365 oft vom Admin gesperrt</small></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note"><strong>Ausgeschlossen</strong> wegen Nicht-kommerziell-Lizenz: DiariZen und Reverb-Diarization. Llama ist wegen der Meta-Lizenz nicht empfohlen. Vor dem Einbau steht je Baustein ein Spike mit Download, Lizenzprüfung und Messung; liegen die ersten beiden Kandidaten gleichauf, wird die Reihe nicht weitergefahren.</p>
+  </div>
+</section>
+
+<section id="roadmap">
+  <div class="wrap">
+    <h2>Roadmap M0 bis M7</h2>
+    <p class="lede">Jeder Meilenstein endet mit einem anfassbaren Ergebnis. M1 und M2 laufen parallel auf getrennten Dateien, M3 folgt auf M2, M4 auf M1. Abgenommen wird nur über den installierten Installer.</p>
+
+    <h3>Budget: rund 8 MTok</h3>
+    <div class="scale" role="img" aria-label="Skala von 0 bis 12 MTok: Meldung bei 4,0 und 6,4, Planwert 8, harter Stopp bei 12">
+      <div class="track"><div class="plan"></div><div class="res"></div></div>
+      <span class="tk z">0</span>
+      <span class="tk" style="left:33.333%">4,0</span>
+      <span class="tk" style="left:53.333%">6,4</span>
+      <span class="tk" style="left:66.667%">8</span>
+      <span class="tk end" style="left:100%">12</span>
+    </div>
+    <div class="blegend"><span class="l1">Planwert 8 MTok (Spanne 6 bis 10)</span><span class="l2">Zwischenmeldung bei 4,0 und 6,4 MTok</span><span class="l3">harter Stopp bei 12 MTok</span></div>
+
+    <ol class="rm">
+      <li class="ms now"><div class="ms-id">M0</div><div class="ms-body"><div class="ms-top"><h3>Analyse und Plan</h3><span class="st st-in_arbeit">in Arbeit</span></div><p>Analyse-Artefakt (diese Seite) mit Link, Feature-Matrix, Paketplan und Issue #59.</p><p class="ms-meta"><span class="grp">Prüfung: AK1</span></p></div></li>
+      <li class="ms"><div class="ms-id">M1</div><div class="ms-body"><div class="ms-top"><h3>Notizblock und KI-Notizen</h3><span class="st st-offen">offen</span></div><p>Notizblock während der Aufnahme und KI-Notizen nach Vorlage. Nutzertext und KI-Text bleiben unterscheidbar, die Quelle springt ins Transkript. Nachweis: Installer und Screenshot.</p><p class="ms-meta"><span class="grp">Funktionen <a class="fref" href="#f01">F01</a><a class="fref" href="#f07">F07</a><a class="fref" href="#f08">F08</a><a class="fref" href="#f09">F09</a><a class="fref" href="#f10">F10</a><a class="fref" href="#f26">F26</a></span><span class="grp">Prüfung: AK3</span><span class="grp">Abhängigkeit: parallel zu M2</span></p></div></li>
+      <li class="ms"><div class="ms-id">M2</div><div class="ms-body"><div class="ms-top"><h3>Audio und Transkription</h3><span class="st st-offen">offen</span></div><p>Echo-Unterdrückung, Stille-Erkennung, Live-Verzögerung höchstens 5 s, hochwertiger Enddurchlauf, Ausfallwächter und eine Benchmark-Tabelle.</p><p class="ms-meta"><span class="grp">Funktionen <a class="fref" href="#f02">F02</a><a class="fref" href="#f03">F03</a><a class="fref" href="#f04">F04</a><a class="fref" href="#f05">F05</a></span><span class="grp">Prüfung: AK4, AK5, AK6</span><span class="grp">Abhängigkeit: parallel zu M1</span></p></div></li>
+      <li class="ms"><div class="ms-id">M3</div><div class="ms-body"><div class="ms-top"><h3>Sprecher</h3><span class="st st-offen">offen</span></div><p>Diarisierung, Sprecher benennen und wiedererkennen. Nachweis: DER-Tabelle.</p><p class="ms-meta"><span class="grp">Funktionen <a class="fref" href="#f06">F06</a></span><span class="grp">Prüfung: AK7</span><span class="grp">Abhängigkeit: nach M2</span></p></div></li>
+      <li class="ms"><div class="ms-id">M4</div><div class="ms-body"><div class="ms-top"><h3>Chat, Suche, Ordner</h3><span class="st st-offen">offen</span></div><p>Chat, Suche und Ordner über alle Besprechungen. Nachweis: Eval-Tabelle.</p><p class="ms-meta"><span class="grp">Funktionen <a class="fref" href="#f11">F11</a><a class="fref" href="#f12">F12</a><a class="fref" href="#f13">F13</a><a class="fref" href="#f14">F14</a></span><span class="grp">Prüfung: AK8</span><span class="grp">Abhängigkeit: nach M1</span></p></div></li>
+      <li class="ms"><div class="ms-id">M5</div><div class="ms-body"><div class="ms-top"><h3>Kalender und Erkennung</h3><span class="st st-offen">offen</span></div><p>Kalender, Meeting-Erkennung, Personen und Brief vor der Besprechung.</p><p class="ms-meta"><span class="grp">Funktionen <a class="fref" href="#f15">F15</a><a class="fref" href="#f16">F16</a><a class="fref" href="#f17">F17</a><a class="fref" href="#f18">F18</a></span><span class="grp">Prüfung: AK9</span></p></div></li>
+      <li class="ms"><div class="ms-id">M6</div><div class="ms-body"><div class="ms-top"><h3>Nachbereitung und Export</h3><span class="st st-offen">offen</span></div><p>Follow-up-Mail, Export (PDF, SRT, JSON, formatierte Zwischenablage) und ein lokaler MCP-Server.</p><p class="ms-meta"><span class="grp">Funktionen <a class="fref" href="#f19">F19</a><a class="fref" href="#f20">F20</a><a class="fref" href="#f21">F21</a></span><span class="grp">Prüfung: AK10</span></p></div></li>
+      <li class="ms"><div class="ms-id">M7</div><div class="ms-body"><div class="ms-top"><h3>Gesamttest und Abnahme</h3><span class="st st-offen">offen</span></div><p>Gesamttest, Performance, Offline-Nachweis, Installer, Doku und Pull Request.</p><p class="ms-meta"><span class="grp">Funktionen <a class="fref" href="#f27">F27</a><a class="fref" href="#f30">F30</a></span><span class="grp">Prüfung: AK2, AK11, QG1 bis QG9</span><span class="grp">Abhängigkeit: nach M1 bis M6</span></p></div></li>
+    </ol>
+  </div>
+</section>
+
+<section id="risiken">
+  <div class="wrap">
+    <h2>Risiken</h2>
+    <p class="lede">Drei Punkte brauchen eine Entscheidung des Inhabers, die übrigen fünf sind technische Risiken mit Gegenmaßnahme.</p>
+
+    <aside class="decision" aria-labelledby="dec-h">
+      <div class="dec-head" id="dec-h">Deine Entscheidung (Vorschlag)</div>
+      <ul class="dec-list">
+        <li>
+          <span class="rid">R1</span>
+          <div><strong>Budget rund 8 MTok</strong> (Spanne 6 bis 10) über mehrere Sessions.<p class="vs"><b>Vorschlag:</b> so fahren, Meldung je Meilenstein.</p></div>
+        </li>
+        <li>
+          <span class="rid">R2</span>
+          <div><strong>Systemton-Aufnahme standardmäßig an.</strong> Der Einwilligungsdialog bleibt bestehen.<p class="vs"><b>Vorschlag:</b> ja.</p></div>
+        </li>
+        <li>
+          <span class="rid">R3</span>
+          <div><strong>Kalender:</strong> zuerst ICS-URL (kein Konto), danach Microsoft Graph mit eigener Client-ID (PKCE).<p class="vs"><b>Vorschlag:</b> so. Google erst bei Bedarf.</p></div>
+        </li>
+      </ul>
+      <div class="dec-foot">Owner: Patrick. Die Vorschläge stehen so im Goal unter „Risiken / Owner-Entscheidungen“.</div>
+    </aside>
+
+    <h3>Technische Risiken</h3>
+    <ul class="rk">
+      <li><span class="rid">R4</span><div><p><strong>VRAM.</strong> Ein großes LLM (ca. 21 GB) kollidiert mit STT, Diarisierung und Fish.</p><p class="gm"><b>Gegenmaßnahme:</b> GPU-Koordinator, das LLM wird erst nach dem Enddurchlauf geladen.</p></div></li>
+      <li><span class="rid">R5</span><div><p><strong>Unbelegte Angaben.</strong> Modellnamen und Zahlen der Recherche sind teils ungeprüft (Nemotron-3-Diarization, Qwen3.x-27B, <code>sonora</code>).</p><p class="gm"><b>Gegenmaßnahme:</b> jeder Baustein wird erst im Spike verifiziert (Download, Lizenz, Messung), dann eingebaut.</p></div></li>
+      <li><span class="rid">R6</span><div><p><strong>Diarisierung.</strong> Auf deutschen Besprechungen mit mehr als 4 Sprechern und Überlappung unsicher.</p><p class="gm"><b>Gegenmaßnahme:</b> Rückfall auf Sortformer, Sprecher manuell korrigierbar.</p></div></li>
+      <li><span class="rid">R7</span><div><p><strong>Kein Benchmark.</strong> Es gibt keinen öffentlichen deutschen Besprechungs-Benchmark.</p><p class="gm"><b>Gegenmaßnahme:</b> Eigenkorpus aus TTS-Dialogen mit mehreren Stimmen, Echo und Überlappung simuliert; optional echte Aufnahmen mit Referenztext.</p></div></li>
+      <li><span class="rid">R8</span><div><p><strong>Sprechernamen aus Teams und Zoom.</strong> Wie bei Granola nur über das Auslesen der Oberfläche (UI Automation).</p><p class="gm"><b>Gegenmaßnahme:</b> als Komfortfunktion nach M3 einplanen.</p></div></li>
+    </ul>
+  </div>
+</section>
+
+<section id="quellen">
+  <div class="wrap">
+    <h2>Quellen</h2>
+    <div class="src">
+      <div>
+        <h3>Im Repo (Branch feat/granola-besprechungen)</h3>
+        <ul>
+          <li><a href="https://github.com/MrP42/local-voice-ai/blob/feat/granola-besprechungen/koordination/granola-besprechungen/recherche/granola-analyse.md" target="_blank" rel="noopener"><code>recherche/granola-analyse.md</code></a><span>Granola: Features, Technik, Preise, Nutzerkritik</span></li>
+          <li><a href="https://github.com/MrP42/local-voice-ai/blob/feat/granola-besprechungen/koordination/granola-besprechungen/recherche/lokaler-stack.md" target="_blank" rel="noopener"><code>recherche/lokaler-stack.md</code></a><span>Empfehlung je Baustein für den lokalen Stack</span></li>
+          <li><a href="https://github.com/MrP42/local-voice-ai/blob/feat/granola-besprechungen/koordination/granola-besprechungen/recherche/ist-stand.md" target="_blank" rel="noopener"><code>recherche/ist-stand.md</code></a><span>Was Local Voice AI heute schon kann</span></li>
+          <li><a href="https://github.com/MrP42/local-voice-ai/blob/feat/granola-besprechungen/koordination/granola-besprechungen/FEATURE-MATRIX.md" target="_blank" rel="noopener"><code>FEATURE-MATRIX.md</code></a><span>Die 30 Funktionen mit Klasse, Meilenstein und Status</span></li>
+          <li><a href="https://github.com/MrP42/local-voice-ai/blob/feat/granola-besprechungen/koordination/granola-besprechungen/GOAL.md" target="_blank" rel="noopener"><code>GOAL.md</code></a><span>Zielzustand, Akzeptanzkriterien, Meilensteine, Risiken</span></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Extern (Granola)</h3>
+        <ul>
+          <li><a href="https://www.granola.ai/pricing" target="_blank" rel="noopener">www.granola.ai/pricing</a><span>Preise und Stufen</span></li>
+          <li><a href="https://www.granola.ai/security" target="_blank" rel="noopener">www.granola.ai/security</a><span>Sicherheit, Speicherort, Anbieter</span></li>
+          <li><a href="https://www.granola.ai/updates" target="_blank" rel="noopener">www.granola.ai/updates</a><span>Änderungsverlauf 2025 und 2026</span></li>
+          <li><a href="https://docs.granola.ai/help-center/taking-notes/transcription.md" target="_blank" rel="noopener">docs.granola.ai/help-center/taking-notes/transcription.md</a><span>Transkription, Me und Them</span></li>
+          <li><a href="https://docs.granola.ai/help-center/taking-notes/speaker-attribution.md" target="_blank" rel="noopener">docs.granola.ai/help-center/taking-notes/speaker-attribution.md</a><span>Sprecher-Tags über die Meeting-App</span></li>
+          <li><a href="https://docs.granola.ai/help-center/taking-notes/ai-enhanced-notes.md" target="_blank" rel="noopener">docs.granola.ai/help-center/taking-notes/ai-enhanced-notes.md</a><span>Enhanced Notes, Schwarz und Grau, Lupe</span></li>
+          <li><a href="https://docs.granola.ai/help-center/troubleshooting/network-troubleshooting.md" target="_blank" rel="noopener">docs.granola.ai/help-center/troubleshooting/network-troubleshooting.md</a><span>Netzwerk-Freigaben mit den STT-Anbietern</span></li>
+          <li><a href="https://docs.granola.ai/help-center/consent-security-privacy/model-training.md" target="_blank" rel="noopener">docs.granola.ai/help-center/consent-security-privacy/model-training.md</a><span>Sprachmodelle und Training</span></li>
+          <li><a href="https://docs.granola.ai/help-center/feature-requests.md" target="_blank" rel="noopener">docs.granola.ai/help-center/feature-requests.md</a><span>Audio-Aufzeichnung laut Hersteller nicht geplant</span></li>
+          <li><a href="https://www.computerworld.com/article/4206255/granola-lawsuit-raises-concerns-over-ai-note-taking-app-privacy.html" target="_blank" rel="noopener">www.computerworld.com/article/4206255/granola-lawsuit-raises-concerns-over-ai-note-taking-app-privacy.html</a><span>Sammelklage wegen heimlicher Aufnahme</span></li>
+        </ul>
+      </div>
+    </div>
+    <footer>Erzeugt aus den Recherche-Dateien im Branch, Stand 29.09.2026, Issue #59. Zahlen und Aussagen tragen die Belegstufe der Quelle; die Analyse trennt belegt, sekundär und Vermutung.</footer>
+  </div>
+</section>
+
+</main>
+
+<script>
+(function () {
+  var bar = document.getElementById('filter');
+  var out = document.getElementById('filter-out');
+  var rows = document.querySelectorAll('#matrix tbody tr');
+  if (!bar || !rows.length) return;
+  function setFilter(f) {
+    var n = 0;
+    var btns = bar.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].setAttribute('aria-pressed', btns[i].getAttribute('data-f') === f ? 'true' : 'false');
+    }
+    for (var j = 0; j < rows.length; j++) {
+      var show = f === 'alle' || rows[j].getAttribute('data-k') === f;
+      rows[j].hidden = !show;
+      if (show) n++;
+    }
+    out.textContent = n + ' von ' + rows.length + ' Funktionen';
+  }
+  bar.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[data-f]') : null;
+    if (b) setFilter(b.getAttribute('data-f'));
+  });
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest ? e.target.closest('a.fref') : null;
+    if (a) setFilter('alle');
+  });
+})();
+</script>

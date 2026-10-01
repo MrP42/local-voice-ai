@@ -1,0 +1,13 @@
+{
+  "documentScrollHeight": 800,
+  "innerHeight": 800,
+  "mainOverflow": false,
+  "scrollers": [
+    {
+      "id": "rec-controls-area",
+      "scrollHeight": 327,
+      "clientHeight": 168
+    }
+  ],
+  "nested": []
+}

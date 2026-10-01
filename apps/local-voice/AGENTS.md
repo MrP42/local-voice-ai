@@ -73,6 +73,12 @@ A new setting goes into the group inside one of these tabs where a user would
 go looking for it. If none fits, that is a signal the grouping is wrong — fix
 the grouping, do not open a new surface.
 
+**One exception, by the owner's decision (30.09.2026): Integrationen.** Connections
+with a direction and a right per capability (calendars, folders, agents) have their
+own sidebar page between Modelle and Einstellungen (`src/components/integrations/`).
+The calendar sources and the MCP switch moved there; under Einstellungen > Besprechungen
+only a link row remains. This does not open the door for other settings.
+
 **Options belonging to a *model* are not app settings.** They render on the
 model's own card under Modelle (`settings/models/ModelOptions.tsx`), for the
 active model only. A setting that changes its meaning when the active model
@@ -242,6 +248,7 @@ Handy supports command-line parameters on all platforms for integration with scr
 | `--start-hidden`         | Launch without showing the main window (tray icon visible) |
 | `--no-tray`              | Launch without system tray (closing window quits the app)  |
 | `--debug`                | Enable debug mode with verbose (Trace) logging             |
+| `ctl status\|tools\|call\|approval` | Agent bridge client (A7, `src/agent_bridge/`): talks to the running instance over a named pipe, token from `LVA_AGENT_TOKEN` or `--token-file`. Exit 0 ok, 1 error, 2 app not running, 3 tool off or approval denied, 4 login failed, 5 waiting for the user's approval. Runs before any Tauri start-up (like `--mcp`). Evidence against the real EXE: `python scripts/ctl_smoke.py` |
 
 **Key design decisions:**
 

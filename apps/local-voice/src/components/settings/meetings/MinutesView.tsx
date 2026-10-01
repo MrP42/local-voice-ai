@@ -1,30 +1,52 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { save } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { commands, type MeetingDocument } from "@/bindings";
-import { Button } from "../../ui/Button";
+import {
+  commands,
+  events,
+  type MeetingDocument,
+  type MinutesMeta,
+  type MinutesProgress,
+} from "@/bindings";
+import {
+  minutesErrorCode,
+  minutesErrorDetail,
+  phaseKey,
+  progressPercent,
+} from "@/lib/meetingMinutes";
 import { Alert } from "../../ui/Alert";
 import Badge from "../../ui/Badge";
-import { MarkdownContent } from "../../whats-new/MarkdownContent";
-import { Download } from "lucide-react";
+import { IconAction } from "../../ui/IconAction";
+import {
+  MarkdownContent,
+  type SlideRefs,
+} from "../../whats-new/MarkdownContent";
+import { defaultDocBasis } from "./language/DocBasisFields";
+import { Check, Copy, Download, RefreshCw, Sparkles } from "lucide-react";
 
 interface MinutesViewProps {
   meetingId: string;
   meetingTitle: string;
+  /** D5: Folienbelege (`[F7]`) im Protokoll anklickbar machen (Sprung zur Folie). */
+  slideRefs?: SlideRefs;
 }
 
 export const MinutesView: React.FC<MinutesViewProps> = ({
   meetingId,
   meetingTitle,
+  slideRefs,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [doc, setDoc] = useState<MeetingDocument | null>(null);
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
+  // Der Lauf gehoert dem Backend (B14): `running` kommt aus dessen Zustand und
+  // seinen Ereignissen, nicht aus dem Aufruf dieses Reiters. So bleibt der
+  // Knopf gesperrt, wenn man den Reiter verlaesst und wieder oeffnet.
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<MinutesProgress | null>(null);
+  const [meta, setMeta] = useState<MinutesMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  const [autoFile, setAutoFile] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // The rendered preview doubles as the source for the formatted clipboard
   // copy: reading its innerHTML guarantees that what lands in Word is exactly
@@ -49,28 +71,97 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setDoc(minutes[0] ?? null);
   }, [meetingId, t]);
 
-  const refreshAutoFile = useCallback(async () => {
-    const result = await commands.meetingsMinutesFile(meetingId);
-    setAutoFile(result.status === "ok" ? result.data : null);
+  const loadMeta = useCallback(async () => {
+    const result = await commands.meetingsMinutesMeta(meetingId);
+    setMeta(result.status === "ok" ? (result.data ?? null) : null);
+  }, [meetingId]);
+
+  // Beim Einblenden fragen, ob schon ein Lauf besteht (Reiterwechsel).
+  const loadRunState = useCallback(async () => {
+    const result = await commands.meetingsMinutesState(meetingId);
+    if (result.status !== "ok" || !result.data) return;
+    setRunning(result.data.running);
+    setProgress(result.data.running ? (result.data.progress ?? null) : null);
   }, [meetingId]);
 
   useEffect(() => {
     void loadLatest();
-    void refreshAutoFile();
-  }, [loadLatest, refreshAutoFile]);
+    void loadMeta();
+    void loadRunState();
+  }, [loadLatest, loadMeta, loadRunState]);
+
+  const errorText = useCallback(
+    (raw: string) =>
+      t(`meetings.minutes.errors.${minutesErrorCode(raw)}`, {
+        error: minutesErrorDetail(raw),
+        defaultValue: raw,
+      }),
+    [t],
+  );
+
+  // Fortschritt, Ende und Fehler des Laufs -- auch eines, den ein anderer
+  // Aufruf oder ein frueher geoeffneter Reiter gestartet hat.
+  useEffect(() => {
+    const un = events.minutesEvent.listen((event) => {
+      const payload = event.payload;
+      if (payload.meeting_id !== meetingId) return;
+      if (payload.kind === "progress") {
+        setRunning(true);
+        setProgress({
+          phase: payload.phase,
+          done: payload.done,
+          total: payload.total,
+        });
+      } else if (payload.kind === "done") {
+        setRunning(false);
+        setProgress(null);
+        setError(null);
+        void loadLatest();
+        void loadMeta();
+      } else {
+        setRunning(false);
+        setProgress(null);
+        // Ein Stopp ist kein Fehler.
+        if (payload.code !== "minutes_cancelled") {
+          setError(errorText(payload.code));
+        }
+      }
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [meetingId, loadLatest, loadMeta, errorText]);
 
   const generate = async () => {
-    setGenerating(true);
+    setRunning(true);
+    setProgress(null);
     setError(null);
     setSaved(null);
-    const result = await commands.meetingsGenerateMinutes(meetingId);
-    setGenerating(false);
+    // `null`: die Vorlage, die fuer diese Besprechung gewaehlt ist (Menue, Vorlage).
+    // G5: aktive Fassung, Sprache = letzte Wahl bzw. die der App.
+    const result = await commands.meetingsGenerateMinutes(
+      meetingId,
+      null,
+      defaultDocBasis(i18n.language),
+    );
     if (result.status === "error") {
-      setError(result.error);
+      // Ein zweiter Start wird abgewiesen, der erste Lauf laeuft weiter: der
+      // Reiter zeigt ihn weiter als laufend, kein Fehler.
+      if (minutesErrorCode(result.error) === "minutes_busy") {
+        void loadRunState();
+        return;
+      }
+      setRunning(false);
+      setProgress(null);
+      if (minutesErrorCode(result.error) !== "minutes_cancelled") {
+        setError(errorText(result.error));
+      }
       return;
     }
+    setRunning(false);
+    setProgress(null);
     setDoc(result.data);
-    void refreshAutoFile();
+    void loadMeta();
   };
 
   /**
@@ -82,7 +173,16 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   const copyMinutes = async () => {
     if (!doc) return;
     setError(null);
-    const html = previewRef.current?.innerHTML;
+    // D5: die Folienmarken sind im Dokument Schaltflaechen; in der Zwischenablage stehen sie
+    // wieder als Text (`[F7]`), wie im gespeicherten Protokoll.
+    const preview = previewRef.current?.cloneNode(true) as
+      HTMLElement | undefined;
+    preview?.querySelectorAll("[data-slide-ref]").forEach((el) => {
+      el.replaceWith(
+        document.createTextNode(`[F${el.getAttribute("data-slide-ref")}]`),
+      );
+    });
+    const html = preview?.innerHTML;
     try {
       if (html && typeof ClipboardItem !== "undefined") {
         await navigator.clipboard.write([
@@ -139,69 +239,136 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   }
 
   return (
-    <div className="space-y-3">
-      {error && <Alert variant="error">{error}</Alert>}
-
-      <div className="flex gap-2 items-center flex-wrap">
-        <Button onClick={generate} disabled={generating}>
-          {doc
-            ? t("meetings.detail.regenerate")
-            : t("meetings.detail.generate")}
-        </Button>
+    <div className="space-y-2" data-testid="minutes-view">
+      {/* Schmale Werkzeugzeile statt Vorlagenwahl und Textknoepfen: der Inhalt
+          beginnt direkt unter den Reitern. Vorlage waehlen, Vorlagen verwalten und
+          "Neu erzeugen mit Vorlage" stehen im Menue neben "Details". */}
+      <div
+        role="toolbar"
+        aria-label={t("meetings.minutes.toolbar")}
+        data-testid="minutes-toolbar"
+        className="flex flex-wrap items-center gap-2"
+      >
+        <IconAction
+          size="sm"
+          icon={doc ? RefreshCw : Sparkles}
+          label={
+            doc
+              ? t("meetings.detail.regenerate")
+              : t("meetings.detail.generate")
+          }
+          description={t("meetings.minutes.regenerateHint")}
+          testId="minutes-generate"
+          disabled={running}
+          onClick={generate}
+        />
         {doc && (
           <>
-            <Button variant="secondary" onClick={copyMinutes}>
-              {copied
-                ? t("meetings.detail.copied")
-                : t("meetings.minutes.copy")}
-            </Button>
-            <Button
-              variant="secondary"
+            <IconAction
+              size="sm"
+              icon={copied ? Check : Copy}
+              label={
+                copied
+                  ? t("meetings.detail.copied")
+                  : t("meetings.minutes.copy")
+              }
+              description={t("meetings.minutes.copyHint")}
+              testId="minutes-copy"
+              onClick={copyMinutes}
+            />
+            <IconAction
+              size="sm"
+              icon={Download}
+              label={t("meetings.minutes.download")}
+              description={t("meetings.detail.export")}
+              testId="minutes-export"
               onClick={exportMinutes}
-              title={t("meetings.detail.export")}
-              aria-label={t("meetings.detail.export")}
-            >
-              <Download width={16} height={16} />
-            </Button>
+            />
           </>
         )}
-        {generating && (
-          <Badge variant="secondary">{t("meetings.minutes.generating")}</Badge>
+        {running && (
+          <Badge variant="secondary">
+            <span data-testid="minutes-running">
+              {t("meetings.minutes.generating")}
+            </span>
+          </Badge>
         )}
         {saved && (
-          <span className="text-xs text-text/60 break-all">
+          <span className="min-w-0 break-all text-xs text-text/60">
             {t("meetings.minutes.exportSaved", { path: saved })}
           </span>
         )}
       </div>
 
-      {/* Written automatically on generation, so the minutes exist as a file
-          even for someone who never opens the export dialog. */}
-      {doc && autoFile && (
-        <p className="text-xs text-text/60 break-all">
-          {t("meetings.minutes.autoSaved")}{" "}
-          <button
-            type="button"
-            onClick={() => void revealItemInDir(autoFile)}
-            className="underline hover:text-logo-primary cursor-pointer"
-          >
-            {autoFile}
-          </button>
-        </p>
+      {error && <Alert variant="error">{error}</Alert>}
+
+      {running && <MinutesProgressBar progress={progress} />}
+
+      {!running && meta?.incomplete && (
+        <Alert variant="warning">
+          <span data-testid="minutes-incomplete">
+            {t("meetings.minutes.incomplete", {
+              gaps: meta.gaps.length > 0 ? meta.gaps.join(", ") : "?",
+            })}
+          </span>
+        </Alert>
       )}
 
       {doc ? (
         <div
           ref={previewRef}
+          data-testid="minutes-doc"
           className="rounded-lg border border-mid-gray/20 p-4"
         >
-          <MarkdownContent markdown={doc.body} />
+          <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
         </div>
       ) : (
-        !generating && (
+        !running && (
           <p className="text-sm text-text/60">{t("meetings.minutes.empty")}</p>
         )
       )}
+    </div>
+  );
+};
+
+/**
+ * Fortschrittsbalken der Protokoll-Erzeugung: Phase, Schritt und Prozent. Ohne
+ * bekannte Gesamtzahl (Vorlagenwahl, erster Augenblick) laeuft er unbestimmt.
+ */
+const MinutesProgressBar: React.FC<{ progress: MinutesProgress | null }> = ({
+  progress,
+}) => {
+  const { t } = useTranslation();
+  const percent = progressPercent(progress);
+  return (
+    <div className="space-y-1" data-testid="minutes-progress">
+      <div className="flex items-center justify-between text-xs text-text/60">
+        <span data-testid="minutes-phase">
+          {progress
+            ? t(phaseKey(progress.phase))
+            : t("meetings.minutes.generating")}
+        </span>
+        <span data-testid="minutes-percent">
+          {percent !== null && progress
+            ? `${t("meetings.minutes.stepOf", { done: progress.done, total: progress.total })} \u00b7 ${percent} %`
+            : ""}
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label={t("meetings.minutes.progressLabel")}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent ?? undefined}
+        className="h-1.5 w-full overflow-hidden rounded-full bg-mid-gray/20"
+      >
+        <div
+          className={`h-full rounded-full bg-logo-primary transition-[width] duration-300 ${
+            percent === null ? "w-1/3 animate-pulse" : ""
+          }`}
+          style={percent === null ? undefined : { width: `${percent}%` }}
+        />
+      </div>
     </div>
   );
 };

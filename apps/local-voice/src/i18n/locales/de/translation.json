@@ -12,6 +12,7 @@
   "sidebar": {
     "general": "Allgemein",
     "models": "Modelle",
+    "integrations": "Integrationen",
     "advanced": "Erweitert",
     "postProcessing": "Nachbearbeitung",
     "history": "Verlauf",
@@ -28,6 +29,7 @@
     "serverTitle": "Stimme & Wiedergabe",
     "description": "Lokale Sprachausgabe über Fish Speech auf der eigenen GPU. Der Server startet bei Bedarf und wird nach Leerlauf wieder gestoppt, um VRAM freizugeben.",
     "inputPlaceholder": "Text zum Vorlesen eingeben oder einfügen…",
+    "tabsLabel": "Textfassung",
     "tabOriginal": "Original",
     "tabTranslation": "Übersetzung",
     "tabSummary": "Zusammenfassung",
@@ -173,6 +175,13 @@
       "previewSentence": "Alle Hörproben sprechen denselben Satz: „Guten Tag. So klingt diese Stimme: ein kurzer Satz, damit Sie Klangfarbe, Tempo und Betonung vergleichen können.“",
       "previewNeedsEngine": "Noch keine Hörprobe — Erzeugen startet einmalig die Sprach-Engine.",
       "piperOption": "{{name}} · Piper",
+      "piperNoVoice": "Piper – keine Stimme gewählt",
+      "piperVoiceMissing": "Piper – Stimme „{{id}}“ nicht verfügbar",
+      "piperNotSetUp": "{{name}} · Piper – nicht eingerichtet",
+      "fishNotSetUp": "Fish Speech – nicht eingerichtet",
+      "notSetUpHint": "Diese Stimme ist nicht eingerichtet und kann nicht vorlesen. Wählen Sie eine eingerichtete Stimme oder richten Sie sie unter Modelle > Vorlesestimmen ein.",
+      "noEngineHint": "Noch keine Sprachausgabe eingerichtet. Unter Modelle > Vorlesestimmen lässt sich die schlanke Piper-Stimme laden – ohne Grafikkarte und ohne Zusatzsoftware.",
+      "setUp": "Sprachausgabe einrichten",
       "manage": "Stimmen verwalten …",
       "umlautSuggestion": "Anzeigename mit Umlauten: „{{name}}“ übernehmen",
       "scriptVoices": "Skript mit Sprechern",
@@ -183,6 +192,8 @@
     "settings": {
       "fishDir": "Fish-Speech-Ordner",
       "fishDirDescription": "Installationsordner mit .venv und tools/api_server.py.",
+      "fishOptionalTitle": "Fish Speech (optional, nicht eingerichtet)",
+      "fishOptionalDescription": "Fish Speech ist eine zusätzliche Sprachausgabe auf der Grafikkarte mit Stimmklonen. Sie wird nicht benötigt: Piper liest auch ohne sie vor. Zum Einrichten den Installationsordner eintragen. Es fehlt: {{missing}}",
       "port": "Server-Port",
       "portDescription": "Lokaler Port auf 127.0.0.1, auf dem der TTS-Server lauscht.",
       "seed": "Stimm-Seed",
@@ -286,6 +297,7 @@
     },
     "files": {
       "title": "Dateien",
+      "tabsLabel": "Seitenleiste",
       "add": "Datei hinzufügen (wird kopiert)",
       "openFolder": "Ordner im Explorer zeigen",
       "refresh": "Aktualisieren",
@@ -300,6 +312,12 @@
       "listen": "Anhören",
       "useText": "Text übernehmen",
       "defaultVoice": "Standardstimme"
+    },
+    "layout": {
+      "sideBySide": "Bedienung und Dateien nebeneinander anzeigen",
+      "resizePages": "Breite der Seitenliste ändern",
+      "resizeRight": "Breite der rechten Spalte ändern",
+      "resizeFiles": "Breite der Dateileiste ändern"
     },
     "translateAction": "Übersetzen — erzeugt die Übersetzung im zweiten Reiter, spielt nichts ab",
     "summarizeHint": "Zusammenfassen – fasst immer das Original zusammen und legt das Ergebnis in den dritten Reiter, spielt nichts ab",
@@ -484,7 +502,10 @@
       "removeAll_other": "Alle {{count}} entfernen",
       "run": "Skript prüfen",
       "runHint": "Sprecher und Tags im Text prüfen und zur ersten Stelle springen – unabhängig vom Vorlesen.",
-      "speakerName": "„{{name}}“ ist anders geschrieben als der Anzeigename der Stimme."
+      "speakerName": "„{{name}}“ ist anders geschrieben als der Anzeigename der Stimme.",
+      "freeTag": "„{{tag}}“ ist eine freie Beschreibung – Fish setzt sie um. Bei Bedarf ein bekanntes Tag wählen:",
+      "hintCount_one": "{{count}} Hinweis",
+      "hintCount_other": "{{count}} Hinweise"
     },
     "editor": {
       "tagPopoverAria": "Tag bearbeiten",
@@ -543,6 +564,21 @@
         "none": "Keine"
       }
     },
+    "actions": {
+      "menu": "Weitere Aktionen",
+      "menuHint": "Werkstatt, Aufbereiten, Prüfen, Auto-Tagging",
+      "addHint": "Dokument, Webseite oder Datei ergänzen",
+      "dictateHint": "Sprechen statt tippen; der Text kommt ans Ende",
+      "dictateStopHint": "Beendet die Aufnahme und fügt den Text an",
+      "saveHint": "Den Text als Audiodatei speichern",
+      "prewarmHint": "Erzeugt geänderte Sätze ohne Abspielen",
+      "translateHint": "Übersetzung im zweiten Reiter erzeugen",
+      "summarizeHint": "Kurzfassung im dritten Reiter erzeugen",
+      "summaryOptions": "Zusammenfassung anpassen",
+      "summaryOptionsHint": "Umfang, Detailgrad und Zielgruppe wählen",
+      "targetLang": "Zielsprache",
+      "targetLangHint": "Sprache, in die übersetzt wird"
+    },
     "writingRules": {
       "title": "Schreibregeln: Sprecher & Tags",
       "tagsIntro": "Emotions- und Effekt-Tags stehen in eckigen Klammern genau dort, wo sie zu hören sein sollen:",
@@ -553,7 +589,9 @@
     "serverStartTitle": "Fish-Speech-Server starten?",
     "serverStartBody": "Der Server lädt das Sprachmodell in den Grafikspeicher — rund 17 GB — und braucht dafür je nach Einstellung bis zu zwei Minuten. Solange er läuft, rechnet die Übersetzung auf der CPU. Beendet wird er über dasselbe Symbol oder von selbst nach der eingestellten Leerlaufzeit.",
     "export": {
-      "untitled": "Vorlesen"
+      "untitled": "Vorlesen",
+      "scriptStem": "Skript",
+      "summaryStem": "Zusammenfassung"
     },
     "tidy": "Text aufbereiten",
     "tidyHint": "Text fürs Vorlesen aufbereiten – Seitenzahlen, Kopfzeilen, Trennungen und Umbrüche raus, nichts wird gekürzt",
@@ -800,9 +838,59 @@
     },
     "cancel": "Abbrechen",
     "cancelDownload": "Download abbrechen",
-    "legacy": "Veraltet"
+    "legacy": "Veraltet",
+    "nonCommercial": "Nur nicht-kommerziell",
+    "nonCommercialHint": "Lizenz {{license}}: nur für nicht-kommerzielle Nutzung erlaubt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
   },
   "settings": {
+    "meetings": {
+      "captureSystem": "Systemton standardmäßig aufnehmen",
+      "captureSystemDescription": "Vorgabe für das Häkchen „System-Audio mitschneiden“ beim Start. Die letzte Wahl auf der Aufnahmeseite wird hier gemerkt.",
+      "autoEnhance": "KI-Notizen nach der Besprechung automatisch erstellen",
+      "autoEnhanceDescription": "Sobald das Transkript nach dem Stopp vollständig ist, erstellt die KI aus Notizen und Transkript die Besprechungsnotizen. Importe lösen das nie aus. Ohne eingerichteten Sprachmodell-Anbieter passiert nichts.",
+      "defaultTemplate": "Standardvorlage",
+      "defaultTemplateDescription": "Vorlage, die bei neuen Besprechungen vorausgewählt ist.",
+      "semanticSearch": "Semantische Suche",
+      "semanticSearchDescription": "Findet Besprechungen auch über die Bedeutung, nicht nur über gleiche Wörter – für die Suche und den Chat. Braucht das Suchmodell BGE-M3 (635 MB), das lokal auf diesem Rechner läuft. Der Index entsteht im Hintergrund, nie während einer Aufnahme.",
+      "semanticSearchIndex": "Suchmodell und Indexstand",
+      "semanticSearchIndexDescription": "Das Suchmodell wird nur auf Knopfdruck geladen. Ohne Modell funktioniert die Stichwortsuche weiter.",
+      "semanticSearchDownload": "Suchmodell laden (635 MB)",
+      "semanticSearchDownloading": "Wird geladen … {{percent}} %",
+      "semanticSearchDownloadFailed": "Download fehlgeschlagen. Bitte erneut versuchen.",
+      "semanticSearchProgress": "{{done}} / {{total}} Besprechungen",
+      "semanticSearchPaused": "pausiert, neuer Versuch in Kürze",
+      "semanticSearchOff": "Aus – nur Stichwortsuche",
+      "slideVision": "Bildanalyse für Folien",
+      "slideVisionDescription": "Liest den Text erkannter Folien mit einem lokalen Bildmodell (Gemma 4 E4B) noch einmal – Zahlen und Tabellen stimmen dann – und beschreibt jede Folie in einem Satz. Braucht eine Grafikkarte und den Bild-Projektor (rund 1 GB, nur auf Knopfdruck geladen). Das Modell wird nur für den Folienauftrag geladen und danach wieder entladen. Ohne diese Voraussetzungen bleibt es bei der Windows-Texterkennung.",
+      "slideVisionState": "Bild-Projektor",
+      "slideVisionStateDescription": "Der Bild-Projektor wird nur auf Knopfdruck geladen. Ohne ihn werden Folien weiter mit der Windows-Texterkennung gelesen.",
+      "slideVisionDownload": "Bild-Projektor laden ({{size}} MB)",
+      "slideVisionDownloading": "Wird geladen … {{percent}} %",
+      "slideVisionDownloadFailed": "Download fehlgeschlagen. Bitte erneut versuchen.",
+      "slideVisionNoGpu": "Keine geeignete Grafikkarte erkannt – es bleibt bei der Windows-Texterkennung",
+      "slideVisionLowVram": "Zu wenig freier Grafikspeicher (mindestens 6 GB) – es bleibt bei der Windows-Texterkennung",
+      "slideVisionNoModel": "Gemma 4 E4B fehlt – unter „Modelle“ laden",
+      "slideVisionReady": "Bereit",
+      "echoCancellation": "Echo-Unterdrückung",
+      "echoCancellationDescription": "Nimmt die Gegenseite, die aus den Lautsprechern ins Mikrofon zurückkommt, aus Ihrer Spur, damit sie nicht doppelt als „Ich“ im Transkript steht. Braucht den Systemton als Referenz. Die rohe Mikrofonaufnahme bleibt unverändert erhalten. Wirkt ab der nächsten Aufnahme.",
+      "echoCancellationAuto": "Automatisch (mit Systemton)",
+      "echoCancellationOn": "Ein",
+      "echoCancellationOff": "Aus",
+      "detect": "Laufende Besprechungen erkennen",
+      "detectDescription": "Merkt, wenn ein Programm das Mikrofon benutzt (Teams, Zoom, Webex, Slack, Discord, WhatsApp, Skype, Signal oder ein Browser), und weist darauf hin. Gelesen wird nur das Nutzungsprotokoll von Windows, das Mikrofon selbst nie. Es gibt nur einen Hinweis, nie einen automatischen Start.",
+      "detectOff": "Aus",
+      "detectMeetingApps": "Meeting-Apps",
+      "detectAllApps": "Alle Apps",
+      "detectUnavailable": "Auf diesem System nicht verfügbar.",
+      "detectIgnored": "Nie melden für",
+      "detectIgnoredDescription": "Programme, die nie einen Hinweis auslösen. Namen mit Komma trennen, zum Beispiel „obs64.exe, Discord“. Groß- und Kleinschreibung ist egal; ein Namensteil genügt.",
+      "detectIgnoredPlaceholder": "z. B. obs64.exe, Discord",
+      "diarization": "Sprecher automatisch trennen",
+      "diarizationDescription": "Nach dem Stopp, beim Import und bei der Neu-Transkription erkennt ein lokales Modell, wer wann spricht, und beschriftet das Transkript mit „Gegenseite 1“, „Person 2“ usw. Sie können die Sprecher im Transkript benennen. Es wird nichts gespeichert, was eine Stimme wiedererkennt. Wirkt ab dem nächsten Durchlauf.",
+      "selfName": "Mein Name",
+      "selfNameDescription": "Ihr eigener Name im Transkript: Ihr Mikrofon („Ich“) und, wenn das Mikrofon mehrere Personen trennt, der Sprecher mit dem größten Redeanteil tragen immer diesen Namen, auch wenn niemand Sie anspricht. In den Personen sind Sie als „ich“ markiert. Leer lassen: Es bleibt bei „Ich“.",
+      "selfNamePlaceholder": "z. B. Patrick Wolff"
+    },
     "modelSettings": {
       "title": "{{model}}-Einstellungen"
     },
@@ -844,15 +932,18 @@
         "voices": {
           "de_DE-thorsten-high": {
             "name": "Thorsten (hohe Qualität)",
-            "description": "Deutsch. Beste Qualität, größter Download."
+            "description": "Deutsch. Beste Qualität, größter Download.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "de_DE-thorsten-medium": {
             "name": "Thorsten (mittlere Qualität)",
-            "description": "Deutsch. Gute Qualität, kleinerer Download."
+            "description": "Deutsch. Gute Qualität, kleinerer Download.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "de_DE-kerstin-low": {
             "name": "Kerstin (niedrige Qualität)",
-            "description": "Deutsch. Schnell und klein."
+            "description": "Deutsch. Schnell und klein.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Ryan-Stimme abgeleitet, deren Datensatz unter CC-BY-NC-SA-4.0 steht. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "de_DE-eva_k-x_low": {
             "name": "Eva K. (sehr niedrige Qualität)",
@@ -872,25 +963,40 @@
           },
           "en_US-amy-medium": {
             "name": "Amy (mittlere Qualität)",
-            "description": "Englisch (USA). Weibliche Stimme, gute Qualität."
+            "description": "Englisch (USA). Weibliche Stimme, gute Qualität.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "en_GB-alan-medium": {
             "name": "Alan (mittlere Qualität)",
-            "description": "Englisch (GB). Männliche Stimme, gute Qualität."
+            "description": "Englisch (GB). Männliche Stimme, gute Qualität.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "en_GB-alba-medium": {
             "name": "Alba (mittlere Qualität)",
-            "description": "Englisch (GB, schottisch). Weibliche Stimme, gute Qualität."
+            "description": "Englisch (GB, schottisch). Weibliche Stimme, gute Qualität.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           }
         },
         "status": {
           "installed": "Installiert",
-          "downloading": "Lädt … {{percentage}}%"
+          "downloading": "Lädt … {{percentage}}%",
+          "runtimeMissing": "Programm fehlt – nicht nutzbar",
+          "unsupported": "Auf diesem System nicht verfügbar"
         },
         "actions": {
           "download": "Herunterladen",
           "cancel": "Abbrechen",
-          "delete": "Löschen"
+          "delete": "Löschen",
+          "installRuntime": "Programm installieren"
+        },
+        "unsupported": {
+          "incomplete_archive": "Für dieses System ist das offizielle Piper-Archiv unvollständig (es fehlen Bibliotheken). Piper lässt sich hier noch nicht einrichten."
+        },
+        "license": {
+          "label": "Lizenz: {{license}}",
+          "nonCommercial": "Nur nicht-kommerziell",
+          "nonCommercialHint": "Diese Stimme darf nur nicht-kommerziell genutzt werden ({{license}}).",
+          "source": "Lizenztext"
         },
         "deleteConfirm": "{{name}} löschen? Du musst sie erneut herunterladen, um sie wieder zu nutzen.",
         "deleteTitle": "Löschen"
@@ -1028,6 +1134,10 @@
       "experimentalToggle": {
         "label": "Experimentelle Funktionen",
         "description": "Experimentelle Funktionen aktivieren, die sich noch in Entwicklung befinden."
+      },
+      "refineStream": {
+        "label": "Live-Text nachträglich mit Ollama glätten",
+        "description": "Beim Live-Einfügen glättet ein lokal laufendes Ollama jeden Satz (Grammatik, Zeichensetzung, Füllwörter) und ersetzt ihn im Zieldokument. Zahlen, Verneinungen, seltene Begriffe und die Reihenfolge werden geschützt. Wird ein Satz nicht rechtzeitig fertig (4 s je Satz, 12 s am Ende) oder läuft Ollama nicht, bleibt der Originaltext stehen. Ollama ist nie Voraussetzung für Aufnahme, Erkennung oder Einfügen. Standard: aus."
       },
       "lazyStreamClose": {
         "label": "Mikrofon zwischen Diktaten offen halten",
@@ -1341,6 +1451,27 @@
           "title": "ggml",
           "description": "Hochleistungs-Inferenz des Whisper-Spracherkennungsmodells von OpenAI",
           "details": "Local Voice AI verwendet ggml für schnelle, lokale Sprach-zu-Text-Verarbeitung. Dank an Georgi Gerganov und die Mitwirkenden für ihre großartige Arbeit."
+        },
+        "models": {
+          "title": "Modelle",
+          "description": "Werden bei Bedarf geladen, nicht mitgeliefert (Silero VAD ausgenommen)",
+          "details": "Parakeet TDT 0.6B v3 (NVIDIA, CC-BY-4.0) · Qwen3-ASR (Alibaba/Qwen, Apache-2.0) · Whisper large-v3 (OpenAI, Apache-2.0 bzw. MIT) · Silero VAD (MIT) · BGE-M3 (BAAI, MIT) · Qwen3 und Qwen3.5 (Alibaba/Qwen, Apache-2.0) · Gemma 4 (Google, Apache-2.0) · Gemma 3 (Google, Gemma-Nutzungsbedingungen). Die Lizenz jedes Modells steht auf seiner Modellkarte."
+        },
+        "sortformer": {
+          "title": "Sortformer (NVIDIA)",
+          "description": "Sprechertrennung in Besprechungen",
+          "details": "NVIDIA Streaming Sortformer 4spk v2.1 steht unter der NVIDIA Open Model License. Das Modell wird bei Bedarf heruntergeladen und nicht mit der App ausgeliefert.",
+          "button": "Lizenztext lesen"
+        },
+        "piper": {
+          "title": "Piper und Stimmen",
+          "description": "Sprachausgabe (Vorlesen), wird bei Bedarf geladen",
+          "details": "Piper (Rhasspy, MIT) enthält espeak-ng (GPL-3.0-or-later, Quelltext: github.com/espeak-ng/espeak-ng); beim Einrichten legt die App den Lizenztext (LICENSE-espeak-ng-GPL-3.0.txt) in den Ordner der Laufzeit. Stimmen nur für nicht-kommerzielle Nutzung: Lessac (Blizzard-2013-Forschungslizenz), Ryan (CC-BY-NC-SA-4.0) und die davon abgeleiteten Thorsten, Kerstin, Amy, Alan und Alba; sie sind im Katalog gekennzeichnet."
+        },
+        "libraries": {
+          "title": "Bibliotheken",
+          "description": "Echo-Unterdrückung, Kalender und Mail-Export",
+          "details": "sonora (BSD-3-Clause, Echo-Unterdrückung nach WebRTC AEC3) · calcard (Apache-2.0 oder MIT, ICS-Kalender) · mail-builder (Apache-2.0 oder MIT, .eml-Dateien). Alle Lizenzen und Namensnennungen stehen in docs/m2-evidence/ATTRIBUTION.md im Quellcode."
         }
       },
       "whatsNewUpdates": {
@@ -1445,7 +1576,9 @@
           "minutes": "Protokoll",
           "summary": "Zusammenfassung",
           "tagging": "Tags",
-          "translation": "Übersetzung"
+          "translation": "Übersetzung",
+          "enhanced_notes": "KI-Notizen",
+          "followup": "Follow-up-Mail"
         }
       }
     }
@@ -1518,9 +1651,14 @@
       "title": "Text wurde nicht eingefügt",
       "inClipboard": "Der vollständige Text liegt in der Zwischenablage — mit Strg+V (Mac: Cmd+V) einfügen.",
       "inHistory": "Die Zwischenablage ließ sich nicht beschreiben. Der Text steht im Verlauf.",
+      "titlePartial": "Rest des Diktats wurde nicht eingefügt",
+      "partialInClipboard": "Der bereits eingefügte Text steht im Zielfenster. Der Rest liegt in der Zwischenablage — mit Strg+V (Mac: Cmd+V) einfügen.",
+      "partialInHistory": "Der Rest ließ sich nicht bereitstellen. Der vollständige Text steht im Verlauf.",
       "reason": {
         "no_target": "Beim Beenden der Aufnahme war kein Zielfenster bestimmbar.",
+        "live_no_target": "Beim ersten Einfügen war kein Zielfenster bestimmbar.",
         "focus_changed": "Der Fokus wechselte während der Transkription in ein anderes Fenster.",
+        "live_focus_changed": "Der Fokus wechselte während des Diktierens in ein anderes Fenster.",
         "focus_changed_during_paste": "Der Fokus wechselte während des Einfügens in ein anderes Fenster.",
         "target_elevated": "Die Zielanwendung läuft mit Administratorrechten; Windows blockiert Eingaben von Local Voice AI.",
         "injection_failed": "Der Tastendruck zum Einfügen ließ sich nicht zustellen.",
@@ -1558,6 +1696,73 @@
     "recordingIndicator": "Meeting-Aufnahme läuft",
     "dictationBlocked": "Diktat ist gesperrt, solange eine Meeting-Aufnahme läuft.",
     "title": "Besprechungen",
+    "projects": {
+      "title": "Projekte",
+      "collapse": "Projekte einklappen",
+      "expand": "Projekte ausklappen",
+      "open": "Projekte öffnen",
+      "close": "Projekte schließen",
+      "resize": "Breite der Projekte-Spalte",
+      "nameLabel": "Name des Projekts",
+      "namePlaceholder": "Neues Projekt",
+      "new": "Neues Projekt",
+      "newHint": "Ein Projekt wie „Privat“ oder „Kunde Stadtwerke“ anlegen",
+      "newMeeting": "Neue Besprechung",
+      "newMeetingHint": "Eine leere Besprechung im gewählten Projekt anlegen – dort kannst du Notizen schreiben, aufnehmen, eine Datei importieren oder einen Link einfügen",
+      "newMeetingHere": "Neue Besprechung hier",
+      "askHint": "Chat über alle Besprechungen des gewählten Projekts",
+      "more": "Mehr",
+      "moreHint": "Importieren und mehrere Besprechungen auswählen",
+      "filter": {
+        "label": "Filter",
+        "hint": "Zeitraum, Quelle und Notizen eingrenzen",
+        "reset": "Filter zurücksetzen"
+      },
+      "searchIn": "In „{{name}}“ suchen …",
+      "hitsIn_one": "{{count}} Treffer in „{{name}}“",
+      "hitsIn_other": "{{count}} Treffer in „{{name}}“",
+      "all": "Alle Aufnahmen",
+      "none": "Ohne Projekt",
+      "meetingCount_one": "{{count}} Besprechung",
+      "meetingCount_other": "{{count}} Besprechungen",
+      "emptyProject": "Noch leer. Ziehe eine Besprechung hierher.",
+      "moveTo": "In Projekt verschieben …",
+      "rename": "Umbenennen",
+      "moveUp": "Nach oben",
+      "moveDown": "Nach unten",
+      "delete": "Löschen",
+      "deleteTitle": "Projekt löschen?",
+      "deleteBody": "Das Projekt „{{name}}“ wird gelöscht. Die Besprechungen darin bleiben erhalten; liegen sie in keinem anderen Projekt, stehen sie danach unter „Ohne Projekt“.",
+      "droppedMoved": "„{{title}}“ liegt jetzt in „{{project}}“.",
+      "droppedAdded": "„{{title}}“ liegt jetzt auch in „{{project}}“.",
+      "droppedNone": "„{{title}}“ liegt in keinem Projekt mehr.",
+      "undo": "Rückgängig",
+      "dragMove": "verschieben",
+      "dragAdd": "hinzufügen",
+      "nextUp": {
+        "title": "Als Nächstes",
+        "today": "Heute {{time}}",
+        "tomorrow": "Morgen {{time}}",
+        "running": "Läuft jetzt",
+        "empty": "Kein Termin in den nächsten 7 Tagen.",
+        "start": "Termin aufnehmen",
+        "startHint": "Aufnahme zu diesem Termin starten; Titel und Teilnehmende kommen aus dem Kalender",
+        "more": "Weitere Termine heute ({{count}})"
+      }
+    },
+    "layout": {
+      "content": "Arbeitsfläche",
+      "controls": "Bedienung",
+      "rightCollapse": "Bedienung einklappen",
+      "rightExpand": "Bedienung ausklappen",
+      "resizeRight": "Breite der rechten Spalte",
+      "split": "Aufteilung zwischen Arbeitsfläche und Transkript",
+      "lowerTabs": "Notizen, KI-Notizen und Fragen",
+      "contentTabs": "Transkript und Protokoll",
+      "emptyNotes": "Notizen, KI-Notizen und Fragen erscheinen hier, sobald du eine Aufnahme wählst.",
+      "emptyContent": "Wähle eine Aufnahme aus den Projekten oder starte eine neue.",
+      "emptyChat": "Wähle zuerst eine Aufnahme, um Fragen zu ihr zu stellen."
+    },
     "record": {
       "start": "Aufnahme starten",
       "stop": "Beenden",
@@ -1565,8 +1770,50 @@
       "resume": "Weiter",
       "titlePlaceholder": "Titel der Besprechung",
       "captureSystem": "System-Audio (Gegenseite) mitschneiden",
+      "captureSystemHint": "Nimmt zusätzlich den Ton auf, der über Lautsprecher oder Kopfhörer läuft, zum Beispiel die Gegenseite einer Videokonferenz.",
+      "diarizeMic": "Mehrere Personen am Mikrofon",
+      "diarizeMicHint": "Mehrere Personen sprechen in Ihr Mikrofon (z. B. ein Besprechungsraum): Das Mikrofon wird nach der Aufnahme ebenfalls in Sprecher getrennt. Am besten mit Kopfhörern oder Echo-Unterdrückung, sonst kann die Gegenseite als „Raum“ erscheinen.",
       "micLevel": "Mikrofon",
-      "systemLevel": "System"
+      "systemLevel": "System",
+      "health": {
+          "mic": {
+            "no_data": "Das Mikrofon liefert keine Daten. Bitte Anschluss und Geräteauswahl prüfen.",
+            "digital_zero": "Das Mikrofon liefert seit 10 s nur digitale Stille. Ist es stummgeschaltet?",
+            "silent": "Mikrofon liefert seit 30 s kein Signal.",
+            "clipping": "Das Mikrofon ist übersteuert. Bitte den Eingangspegel senken."
+          },
+          "system": {
+            "no_data": "Der Systemton liefert keine Daten.",
+            "digital_zero": "Der Systemton liefert nur digitale Stille.",
+            "silent": "Der Systemton liefert kein Signal.",
+            "clipping": "Der Systemton ist übersteuert."
+          },
+          "queue_overflow": "Die Live-Verarbeitung kommt nicht hinterher. Die Aufnahme ist vollständig, im Live-Transkript können Lücken sein.",
+          "vad_unavailable": "Die Spracherkennung (VAD) ist nicht verfügbar. Das Live-Transkript läuft in groben 20-Sekunden-Blöcken.",
+          "loopback_died": "Der Systemton ist ausgefallen. Die Aufnahme läuft nur mit dem Mikrofon weiter."
+      },
+      "autoNotes": {
+        "running": "KI-Notizen werden erstellt … {{step}}/{{total}}",
+        "done": "Die KI-Notizen sind fertig. Sie stehen in der Besprechung unter „Notizen“.",
+        "failed": {
+          "no_provider": "Es wurden keine KI-Notizen erstellt: Es ist noch kein Sprachmodell-Anbieter eingerichtet. Die Notizen lassen sich später in der Besprechung erstellen.",
+          "no_model": "Es wurden keine KI-Notizen erstellt: Für den gewählten Anbieter ist kein Modell eingetragen.",
+          "memory_low": "Es wurden keine KI-Notizen erstellt: Zu wenig freier Arbeitsspeicher. Bitte andere Programme schließen und die Notizen in der Besprechung erstellen.",
+          "recording_active": "Die KI-Notizen wurden nicht gestartet, weil bereits eine neue Aufnahme läuft. Sie lassen sich danach in der Besprechung erstellen.",
+          "enhance_busy": "Es werden gerade schon KI-Notizen erstellt. Diese Besprechung lässt sich danach von Hand erstellen.",
+          "no_transcript": "Es wurden keine KI-Notizen erstellt: Die Besprechung enthält kein Transkript.",
+          "llm_failed": "Die KI-Notizen konnten nicht erstellt werden. Bitte in der Besprechung erneut versuchen.",
+          "generic": "Die KI-Notizen konnten nicht erstellt werden. Bitte in der Besprechung erneut versuchen."
+        }
+      },
+      "chatNotice": {
+        "title": "Hinweis für den Meeting-Chat",
+        "copy": "Kopieren",
+        "copied": "Kopiert",
+        "copyError": "Kopieren nicht möglich – Text bitte von Hand markieren.",
+        "local": "Hinweis: Ich transkribiere diese Besprechung lokal auf meinem Rechner mit Local Voice AI, um Notizen zu erstellen. Es werden keine Daten an Dritte übertragen.",
+        "remote": "Hinweis: Ich transkribiere diese Besprechung lokal auf meinem Rechner mit Local Voice AI, um Notizen zu erstellen. Für die Notizen wird der Text an {{provider}} übermittelt."
+      }
     },
     "consent": {
       "title": "Einwilligung erforderlich",
@@ -1575,11 +1822,176 @@
       "cancel": "Abbrechen",
       "importBody": "Sie importieren eine bestehende Aufnahme. Dass die Datei existiert, belegt keine Einwilligung — bestätigen Sie, dass alle an diesem Gespräch Beteiligten der Aufzeichnung zugestimmt haben."
     },
+    "calendar": {
+      "title": "Kalender",
+      "description": "Verbindet einen Kalender per Microsoft-Anmeldung (Outlook) oder ICS-Adresse (Outlook, Google, Nextcloud, iCloud). Termine werden alle 15 Minuten abgerufen, bleiben auf diesem Rechner und liefern Titel und Teilnehmende für die Aufnahme.",
+      "connect": "Kalender verbinden",
+      "refresh": "Jetzt aktualisieren",
+      "refreshing": "Wird aktualisiert …",
+      "remove": "Entfernen",
+      "removeConfirm": "Kalender „{{label}}“ entfernen? Die Adresse und die gespeicherten Termine werden gelöscht; bestehende Besprechungen behalten ihren Termin-Bezug.",
+      "removeConfirmYes": "Ja, entfernen",
+      "cancel": "Abbrechen",
+      "empty": "Noch kein Kalender verbunden.",
+      "neverSynced": "noch nicht abgerufen",
+      "syncOk": "{{count}} Termine · {{time}} ✓",
+      "attendeeDataMissing": "Ohne Teilnehmerdaten: Erinnerungen kommen für jeden Termin mit Beitritts-Adresse.",
+      "loadError": "Die Kalender konnten nicht gelesen werden.",
+      "dialog": {
+        "title": "Kalender verbinden",
+        "icsTitle": "ICS-Adresse einfügen",
+        "name": "Name",
+        "namePlaceholder": "z. B. Outlook Arbeit",
+        "url": "ICS-Adresse",
+        "urlPlaceholder": "https://… oder webcal://…",
+        "show": "Adresse anzeigen",
+        "hide": "Adresse verbergen",
+        "connect": "Verbinden",
+        "checking": "Kalender wird geprüft …",
+        "privacy": "Die Adresse gibt Lesezugriff auf den ganzen Kalender. Sie wird verschlüsselt (Windows-Benutzerkonto) auf diesem Rechner gespeichert und nur an den Kalenderanbieter gesendet.",
+        "helpTitle": "Wo finde ich die Adresse?",
+        "outlookTitle": "Outlook (Microsoft 365, Outlook im Web)",
+        "outlookSteps": "Einstellungen → Kalender → Freigegebene Kalender → „Kalender veröffentlichen“. Kalender wählen, Berechtigung „Alle Details anzeigen“ (sonst fehlen die Teilnehmenden), „Veröffentlichen“ und den ICS-Link kopieren. Sperrt die IT das Veröffentlichen, erscheint die Option nicht. Veröffentlichte Kalender werden je nach Anbieter mit einigen Stunden Verzögerung aktualisiert.",
+        "googleTitle": "Google Kalender",
+        "googleSteps": "calendar.google.com → Einstellungen → links den Kalender wählen → „Kalender integrieren“ → „Privatadresse im iCal-Format“ kopieren. Diese Adresse nicht weitergeben: wer sie kennt, sieht den ganzen Kalender.",
+        "otherTitle": "Nextcloud, iCloud u. a.",
+        "otherSteps": "Den Kalender „öffentlich teilen“ bzw. per Link freigeben und den ICS- oder webcal-Link einfügen."
+      },
+      "graph": {
+        "title": "Mit Microsoft anmelden (Outlook, Microsoft 365)",
+        "intro": "Liest den Outlook-Kalender direkt über Microsoft Graph, mit Teilnehmenden und Teams-Link. Nur lesend (Calendars.Read); die Anmeldung läuft im Browser, das Anmelde-Token wird verschlüsselt (Windows-Benutzerkonto) auf diesem Rechner gespeichert.",
+        "clientId": "Anwendungs-(Client-)ID der eigenen Entra-App",
+        "tenant": "Verzeichnis (Tenant), optional",
+        "tenantHint": "„common“ erlaubt Arbeits-, Schul- und private Konten. Für eine einzelne Firma die Verzeichnis-ID oder Domain eintragen.",
+        "noClientId": "Ohne eigene Client-ID ist die Anmeldung nicht möglich. Registriere in Microsoft Entra eine App als „Öffentlicher Client“ mit der Weiterleitungs-URI http://localhost und den Berechtigungen Calendars.Read und User.Read und trage hier ihre Anwendungs-ID ein.",
+        "invalidClientId": "Das ist keine gültige Client-ID. Erwartet wird die Anwendungs-ID der Entra-App im Format 8-4-4-4-12 (Hexzeichen).",
+        "helpLink": "Anleitung von Microsoft",
+        "signIn": "Mit Microsoft anmelden",
+        "waiting": "Warte auf die Anmeldung im Browser …",
+        "cancelSignIn": "Anmeldung abbrechen",
+        "or": "oder",
+        "reauth": "Erneut anmelden",
+        "signOut": "Abmelden",
+        "signOutConfirm": "Konto „{{label}}“ abmelden? Das Anmelde-Token und die gespeicherten Termine werden gelöscht; bestehende Besprechungen behalten ihren Termin-Bezug.",
+        "signOutConfirmYes": "Ja, abmelden"
+      },
+      "reminder": {
+        "title": "Erinnerung vor Terminen",
+        "description": "Ein Hinweisfenster erscheint vor dem Beginn und bietet die Aufnahme an. Es kommt nur bei Besprechungen (ab 2 Teilnehmenden oder mit Beitritts-Adresse), nie während einer Aufnahme.",
+        "off": "Aus",
+        "minute1": "1 Minute vorher",
+        "minutes2": "2 Minuten vorher",
+        "minutes5": "5 Minuten vorher",
+        "allEvents": "Auch Termine ohne Teilnehmende",
+        "allEventsDescription": "Erinnert auch an Termine allein, ohne Gegenüber und ohne Beitritts-Adresse."
+      },
+      "upcoming": {
+        "attendees_one": "{{count}} Teilnehmende",
+        "attendees_other": "{{count}} Teilnehmende"
+      },
+      "suggestion": {
+        "chip": "aus Kalender",
+        "chipWithAttendees_one": "aus Kalender · {{count}} Teilnehmende",
+        "chipWithAttendees_other": "aus Kalender · {{count}} Teilnehmende",
+        "clear": "Terminbezug lösen"
+      }
+    },
+    "prompt": {
+      "noEvent": "Besprechung",
+      "startsIn": "beginnt in {{count}} min",
+      "startsNow": "beginnt jetzt",
+      "runningSince": "läuft seit {{count}} min",
+      "attendees_one": "{{count}} Teilnehmende",
+      "attendees_other": "{{count}} Teilnehmende",
+      "start": "Aufnahme starten",
+      "join": "Beitreten",
+      "later": "Später",
+      "confirm": "Starten",
+      "starting": "Wird gestartet …",
+      "back": "Zurück",
+      "workflow": {
+        "title": "Ein Ablauf möchte aufnehmen",
+        "intro": "Der Ablauf „{{name}}“ möchte jetzt eine Aufnahme starten. Es beginnt nichts, bevor Sie zustimmen.",
+        "start": "Aufnahme starten",
+        "decline": "Nicht aufnehmen",
+        "confirm": "Aufnahme starten"
+      },
+      "agent": {
+        "title": "Ein Agent möchte aufnehmen",
+        "intro": "Der Agent „{{name}}“ möchte jetzt eine Aufnahme starten. Es beginnt nichts, bevor Sie zustimmen.",
+        "start": "Aufnahme starten",
+        "decline": "Nicht aufnehmen",
+        "confirm": "Aufnahme starten"
+      }
+    },
     "live": {
       "empty": "Noch keine Segmente — das erste erscheint nach ~20 Sekunden.",
       "me": "Ich",
       "remote": "Gegenseite",
       "mixed": "Aufnahme"
+    },
+    "speakers": {
+      "title": "Sprecher",
+      "open": "Sprecher benennen oder ändern",
+      "share": "Redeanteil {{pct}} %",
+      "nameLabel": "Umbenennen (gilt überall)",
+      "namePlaceholder": "Name eingeben",
+      "save": "Speichern",
+      "removeName": "Namen entfernen",
+      "mergeTitle": "Mit anderem Sprecher zusammenführen",
+      "mergeWith": "Mit {{label}} zusammenführen",
+      "mergeConfirm": "„{{from}}“ geht in „{{into}}“ auf: Alle Segmente wechseln zu „{{into}}“. Das lässt sich nicht rückgängig machen.",
+      "mergeDo": "Zusammenführen",
+      "cancel": "Abbrechen",
+      "moveTitle": "Nur diesen Satz zuordnen",
+      "moveTo": "Zu {{label}}",
+      "moveNew": "Neuer Sprecher",
+      "knownPeople": "Bekannte Personen",
+      "self": "ich",
+      "suggestion": {
+        "label": "Namensvorschläge",
+        "hint_one": "{{label}} ist vermutlich {{name}} ({{count}} Beleg)",
+        "hint_other": "{{label}} ist vermutlich {{name}} ({{count}} Belege)",
+        "popover_one": "Vermutlich {{name}} ({{count}} Beleg im Gespräch)",
+        "popover_other": "Vermutlich {{name}} ({{count}} Belege im Gespräch)",
+        "accept": "Übernehmen",
+        "dismiss": "Verwerfen",
+        "showEvidence": "Belege zeigen",
+        "hideEvidence": "Belege ausblenden",
+        "quote": "„{{text}}“"
+      },
+      "dialog": {
+        "title": "Sprecher benennen",
+        "hint": "Der Name gilt überall: im Transkript, in den Notizen, im Protokoll, im Export und bei den Personen.",
+        "close": "Schließen",
+        "done": "Fertig",
+        "empty": "In dieser Besprechung wurden keine Sprecher erkannt.",
+        "sentences_one": "{{count}} Satz",
+        "sentences_other": "{{count}} Sätze",
+        "rowName": "Name für {{label}}",
+        "listen": "Anhören",
+        "listenHint": "Springt zu einem längeren Satz dieses Sprechers",
+        "listenFor": "{{label}} anhören",
+        "stop": "Stopp",
+        "stopFor": "{{label}} stoppen"
+      },
+      "notices": {
+        "disabled": "Die Sprechertrennung war für diese Besprechung ausgeschaltet.",
+        "model_missing": "Das Modell zur Sprechertrennung ist nicht installiert, deshalb gibt es hier keine Sprecher.",
+        "crash_loop": "Die Sprechertrennung wurde übersprungen, weil sie zuvor abgestürzt ist.",
+        "low_memory": "Die Sprechertrennung wurde übersprungen: zu wenig freier Arbeitsspeicher.",
+        "failed": "Die Sprechertrennung ist fehlgeschlagen.",
+        "too_long": "Die Aufnahme ist für die Sprechertrennung zu lang.",
+        "unreadable": "Die Audiodatei ließ sich für die Sprechertrennung nicht lesen.",
+        "mic_without_aec": "Das Mikrofon wurde ohne Echo-Unterdrückung getrennt: Die Gegenseite kann als „Raum“ erscheinen. Kopfhörer oder Echo-Unterdrückung helfen."
+      },
+      "errors": {
+        "notFound": "Diesen Sprecher gibt es nicht mehr.",
+        "invalid": "Diese Auswahl ist nicht möglich.",
+        "segmentNotFound": "Dieses Segment gibt es nicht mehr.",
+        "staleEpoch": "Das Transkript wurde inzwischen ersetzt. Bitte neu öffnen.",
+        "failed": "Die Änderung ließ sich nicht speichern."
+      }
     },
     "errors": {
       "consentRequired": "Ohne bestätigte Einwilligung startet keine Aufnahme.",
@@ -1595,11 +2007,23 @@
       "notRecording": "Es läuft aktuell keine Aufnahme.",
       "deleteFailed": "Löschen fehlgeschlagen. Bitte erneut versuchen.",
       "unsupportedFile": "Dieses Dateiformat wird nicht unterstützt (erlaubt: wav, mp3, m4a, mp4, mkv, mov, flac, ogg, vtt, srt).",
+      "targetNotEmpty": "Dieser Eintrag ist nicht mehr leer. Bitte lege eine neue Besprechung an.",
       "notFound": "Diese Besprechung existiert nicht mehr.",
       "noAudio": "Zu dieser Besprechung ist keine Aufzeichnung gespeichert — es gibt nichts, was neu transkribiert werden könnte.",
       "audioMissing": "Die Aufzeichnung liegt nicht mehr auf der Platte (Aufbewahrungsfrist abgelaufen).",
+      "importSourceMissing": "Die Datei wurde gelöscht oder verschoben, bevor sie an der Reihe war.",
+      "importPathInvalid": "Der Dateipfad enthält Zeichen, die nicht unterstützt werden.",
       "retranscribeFailed": "Die Neu-Transkription ist fehlgeschlagen. Das Transkript blieb unverändert.",
-      "listFailed": "Die Besprechungsliste konnte nicht geladen werden: {{error}}"
+      "finalPassSkipped": "Enddurchlauf übersprungen – das Live-Transkript bleibt gültig (Modell fehlt, zu wenig Speicher oder abgebrochen).",
+      "finalPassStopped": "Nachbearbeitung gestoppt – das Live-Transkript bleibt gültig.",
+      "meetingBusy": "Diese Besprechung wird gerade verarbeitet.",
+      "meetingsUnavailable": "Besprechungen sind gerade nicht verfügbar: Die Datenbank ließ sich beim Start nicht öffnen. Bitte die App neu starten; hilft das nicht, steht die Ursache in der Protokolldatei.",
+      "storeFailed": "Die Änderung konnte nicht gespeichert werden.",
+      "subtitleUnreadable": "Die Untertiteldatei konnte nicht gelesen werden.",
+      "subtitleInvalid": "Kein gültiges Untertitelformat erkannt (VTT oder SRT erwartet).",
+      "listFailed": "Die Besprechungsliste konnte nicht geladen werden: {{error}}",
+      "consentNotPending": "Diese Anfrage ist nicht mehr offen: Sie wurde schon entschieden, ist abgelaufen oder der Ablauf wurde abgebrochen.",
+      "consentInvalid": "Das ist keine Anfrage zur Aufnahme."
     },
     "retention": {
       "title": "Aufbewahrung der Audiodatei",
@@ -1614,7 +2038,6 @@
     "list": {
       "title": "Besprechungen",
       "empty": "Noch keine Besprechungen.",
-      "import": "Importieren…",
       "importError": "Import fehlgeschlagen",
       "loading": "Wird geladen…",
       "date": "Datum",
@@ -1622,8 +2045,7 @@
       "deleteConfirmTitle": "Besprechung löschen?",
       "deleteConfirm": "Die Besprechung samt Transkript und Protokoll wird unwiderruflich gelöscht.",
       "deleteButton": "Löschen",
-      "cancel": "Abbrechen",
-      "dropHint": "Dateien hier ablegen, um sie zu importieren"
+      "cancel": "Abbrechen"
     },
     "detail": {
       "transcriptTab": "Transkript",
@@ -1643,13 +2065,205 @@
       "copied": "Kopiert!",
       "exportTranscript": "Transkript exportieren — als Word (.docx), Text oder Markdown",
       "renameTitle": "Umbenennen",
-      "titleLabel": "Titel der Besprechung"
+      "titleLabel": "Titel der Besprechung",
+      "autoscroll": "Automatisch mitscrollen",
+      "autoscrollPaused": "Mitscrollen pausiert – ans Ende scrollen setzt es fort.",
+      "toLiveEnd": "Zum Live-Ende"
     },
     "status": {
       "recording": "Aufnahme läuft",
       "processing": "Wird verarbeitet",
       "ready": "Fertig",
-      "failed": "Fehlgeschlagen"
+      "failed": "Fehlgeschlagen",
+      "cancelled": "Abgebrochen",
+      "queued": "Wartet"
+    },
+    "queue": {
+      "place": "Wartet · Platz {{position}} von {{total}}",
+      "toFront": "Nach vorn ziehen",
+      "toFrontHint": "Diese Datei als Nächste transkribieren",
+      "remove": "Aus der Warteschlange nehmen",
+      "removeHint": "Abbrechen – die Datei bleibt unberührt, „Fortsetzen“ reiht sie wieder ein",
+      "removedTitle": "Aus der Warteschlange genommen",
+      "removedBody": "Diese Datei wurde noch nicht transkribiert. Du kannst sie wieder hinten in der Warteschlange einreihen.",
+      "requeue": "Wieder einreihen",
+      "startsSoon": "Beginnt gleich.",
+      "heldForRecording": "Angehalten – eine Aufnahme läuft",
+      "reason": {
+        "slot": "Eine andere Transkription läuft. Diese Datei ist danach dran.",
+        "memory": "Wartet auf Arbeitsspeicher: für eine weitere gleichzeitige Transkription ist nicht genug frei.",
+        "recording": "Eine Aufnahme läuft und hat Vorrang. Danach geht es automatisch weiter."
+      },
+      "errors": {
+        "notInQueue": "Die Datei steht nicht mehr in der Warteschlange.",
+        "notQueued": "Die Datei wartet nicht mehr."
+      }
+    },
+    "progress": {
+      "percent": "{{percent}} %",
+      "elapsed": "Laufzeit {{time}}",
+      "audioOf": "{{done}} von {{total}} Audio",
+      "videoOf": "{{done}} von {{total}} Video",
+      "stepsOf": "Schritt {{done}} von {{total}}",
+      "pause": "Pausieren",
+      "resume": "Fortsetzen",
+      "stop": "Stoppen",
+      "pauseHint": "Verarbeitung anhalten, der Rechner wird frei",
+      "stopHint": "Abbrechen – das bisherige Transkript bleibt erhalten",
+      "notPausable": "In dieser Phase lässt sich die Verarbeitung nicht pausieren – stoppen geht jederzeit.",
+      "stopTitle": "Verarbeitung stoppen?",
+      "stopBody": "Die bereits transkribierten Abschnitte bleiben erhalten. Die Besprechung gilt dann als abgebrochen; du kannst sie später fortsetzen oder neu transkribieren.",
+      "stopBodyGenerate": "Die Erzeugung wird abgebrochen. Es wird nichts gespeichert; du kannst sie jederzeit neu starten.",
+      "stopBodySlides": "Die bisher erkannten Folien bleiben erhalten. Du kannst die Erkennung später über das Menü der Besprechung neu starten.",
+      "stopCancel": "Abbrechen",
+      "stopConfirm": "Stoppen",
+      "cancelledTitle": "Verarbeitung abgebrochen",
+      "cancelledBody": "Es sind {{count}} Abschnitte transkribiert. Du kannst dort weitermachen, wo es aufgehört hat, oder die Aufnahme über das Menü neu transkribieren.",
+      "continue": "Fortsetzen",
+      "phase": {
+        "prepare": "Vorbereitung",
+        "transcription": "Transkription",
+        "final_pass": "Enddurchlauf",
+        "speakers": "Sprecher",
+        "notes": "KI-Notizen",
+        "minutes": "Protokoll",
+        "translation": "Übersetzung",
+        "slides": "Folien"
+      },
+      "state": {
+        "pausing": "Pause wird eingelegt …",
+        "paused": "Pausiert",
+        "stopping": "Wird gestoppt …"
+      },
+      "eta": {
+        "calculating": "Restdauer wird berechnet …",
+        "few": "noch wenige Sekunden",
+        "seconds": "noch ca. {{count}} s",
+        "minutes": "noch ca. {{count}} Min.",
+        "hours": "noch ca. {{hours}} Std. {{minutes}} Min."
+      },
+      "errors": {
+        "noJob": "Die Verarbeitung ist inzwischen beendet.",
+        "notPausable": "In dieser Phase lässt sich die Verarbeitung nicht pausieren.",
+        "stopping": "Die Verarbeitung wird bereits gestoppt.",
+        "busy": "Für diese Besprechung läuft bereits eine Verarbeitung.",
+        "notCancelled": "Diese Besprechung ist nicht abgebrochen."
+      }
+    },
+    "projectMinutes": {
+      "menu": "Gemeinsam protokollieren",
+      "menuHint": "Mehrere Aufnahmen dieses Projekts wählen und daraus ein gemeinsames Protokoll oder eine Zusammenfassung erzeugen",
+      "needProject": "Wähle zuerst ein Projekt in der Liste.",
+      "bar": {
+        "label": "Aufnahmen für ein gemeinsames Protokoll wählen",
+        "selected_one": "{{count}} Aufnahme gewählt",
+        "selected_other": "{{count}} Aufnahmen gewählt",
+        "all": "Alle",
+        "allHint": "Alle wählbaren Aufnahmen des Projekts auswählen",
+        "none": "Keine",
+        "noneHint": "Die Auswahl aufheben",
+        "start": "Gemeinsam protokollieren …",
+        "needTwo": "Wähle mindestens zwei Aufnahmen.",
+        "cancel": "Abbrechen",
+        "loading": "Aufnahmen werden geprüft …",
+        "loadFailed": "Die Aufnahmen des Projekts konnten nicht geprüft werden."
+      },
+      "reason": {
+        "meeting_not_finished": "Läuft noch",
+        "no_transcript": "Kein Transkript",
+        "empty_entry": "Leer"
+      },
+      "reasonHint": {
+        "meeting_not_finished": "Diese Aufnahme wird noch aufgenommen oder verarbeitet. Sie lässt sich wählen, sobald sie fertig ist.",
+        "no_transcript": "Diese Aufnahme hat kein Transkript, daraus kann nichts protokolliert werden.",
+        "empty_entry": "Ein leerer Eintrag hat noch keine Aufnahme und kein Transkript."
+      },
+      "dialog": {
+        "title": "Gemeinsames Protokoll erzeugen",
+        "body_one": "Aus {{count}} Aufnahme des Projekts „{{project}}“ entsteht ein gemeinsames Dokument. Jede Aussage nennt ihre Quelle.",
+        "body_other": "Aus {{count}} Aufnahmen des Projekts „{{project}}“ entsteht ein gemeinsames Dokument. Die Aufnahmen werden nach Datum zusammengeführt, jede Aussage nennt ihre Quelle.",
+        "kind": "Art",
+        "start": "Erzeugen",
+        "cancel": "Abbrechen"
+      },
+      "kind": {
+        "minutes": "Protokoll",
+        "minutesHint": "Die Abschnitte der Vorlage, ausführlich",
+        "summary": "Zusammenfassung",
+        "summaryHint": "Dieselben Abschnitte, knapp: wenige zusammengefasste Aussagen"
+      },
+      "list": {
+        "heading": "Projekt-Protokolle",
+        "titleMinutes": "Projekt-Protokoll",
+        "titleSummary": "Projekt-Zusammenfassung",
+        "meta_one": "{{date}} · {{count}} Aufnahme",
+        "meta_other": "{{date}} · {{count}} Aufnahmen",
+        "incomplete": "unvollständig",
+        "running": "Projekt-Protokoll wird erzeugt"
+      },
+      "view": {
+        "toolbar": "Projekt-Protokoll: Werkzeuge",
+        "copy": "Kopieren",
+        "copyHint": "Kopiert das Dokument formatiert (für Word und Mail) und als Markdown",
+        "copied": "Kopiert",
+        "copyError": "Das Dokument konnte nicht kopiert werden",
+        "download": "Herunterladen",
+        "downloadHint": "Als Word, Text oder Markdown speichern",
+        "exportError": "Export fehlgeschlagen",
+        "exportSaved": "Gespeichert unter {{path}}",
+        "delete": "Löschen",
+        "deleteHint": "Das Dokument aus dem Projekt löschen; die Aufnahmen bleiben",
+        "deleteTitle": "Projekt-Protokoll löschen?",
+        "deleteBody": "Das Dokument wird gelöscht. Die Aufnahmen, aus denen es entstand, bleiben unverändert.",
+        "deleteCancel": "Abbrechen",
+        "loadError": "Das Dokument konnte nicht geladen werden: {{error}}",
+        "gone": "Dieses Projekt-Protokoll gibt es nicht mehr.",
+        "empty": "keine",
+        "assignee": "Wer: {{name}}",
+        "due": "Bis: {{date}}",
+        "noProof": "ohne Beleg",
+        "noProofHint": "Für diese Aussage hat das Modell keine Stelle im Transkript genannt.",
+        "sourceHint": "{{title}}, {{time}}: öffnet die Aufnahme an dieser Stelle",
+        "sourceDeleted": "Diese Aufnahme gibt es nicht mehr.",
+        "sourcesLabel": "Quellen",
+        "recordings": "Aufnahmen",
+        "recordingOpen": "{{title}} öffnen",
+        "origin": "Herkunft",
+        "originModel": "Modell",
+        "originTemplate": "Vorlage",
+        "originAuto": "automatisch gewählt",
+        "originCreated": "Erzeugt",
+        "originMode": "Verfahren",
+        "modeSingle": "ein Durchlauf",
+        "modeBlocks_one": "{{count}} Block",
+        "modeBlocks_other": "{{count}} Blöcke",
+        "incomplete": "Das Dokument ist unvollständig: {{gaps}} konnte nicht ausgewertet werden. Die vollständigen Transkripte bleiben erhalten.",
+        "droppedSources_one": "Eine vom Modell genannte Quelle gab es im Transkript nicht und wurde verworfen.",
+        "droppedSources_other": "{{count}} vom Modell genannte Quellen gab es im Transkript nicht und wurden verworfen.",
+        "unsupportedEntries_one": "Eine Aussage hat keinen Beleg.",
+        "unsupportedEntries_other": "{{count}} Aussagen haben keinen Beleg."
+      },
+      "run": {
+        "title": "Gemeinsames Protokoll wird erzeugt",
+        "body": "Die gewählten Aufnahmen werden ausgewertet. Du kannst währenddessen andere Aufnahmen ansehen; das Ergebnis erscheint im Projekt.",
+        "starting": "Wird gestartet …",
+        "close": "Schließen",
+        "cancelled": "Die Erzeugung wurde abgebrochen.",
+        "failed": "Das gemeinsame Protokoll konnte nicht erzeugt werden."
+      },
+      "errors": {
+        "minutes_busy": "Für dieses Projekt wird schon ein gemeinsames Protokoll erzeugt.",
+        "folder_not_found": "Das Projekt gibt es nicht mehr.",
+        "no_selection": "Wähle mindestens eine Aufnahme.",
+        "too_many_recordings": "Zu viele Aufnahmen auf einmal. Wähle weniger.",
+        "not_in_project": "Eine der gewählten Aufnahmen gehört nicht (mehr) zu diesem Projekt.",
+        "kind_invalid": "Unbekannte Art des Dokuments.",
+        "meeting_not_found": "Eine der gewählten Aufnahmen gibt es nicht mehr.",
+        "meeting_not_finished": "Eine der gewählten Aufnahmen wird noch verarbeitet.",
+        "meeting_not_finished_named": "„{{title}}“ wird noch verarbeitet.",
+        "no_transcript": "Eine der gewählten Aufnahmen hat kein Transkript.",
+        "no_transcript_named": "„{{title}}“ hat kein Transkript."
+      }
     },
     "minutes": {
       "empty": "Noch kein Protokoll erzeugt.",
@@ -1657,13 +2271,41 @@
       "exportSaved": "Gespeichert unter {{path}}",
       "exportError": "Export fehlgeschlagen",
       "copy": "Protokoll kopieren",
+      "toolbar": "Protokoll: Werkzeuge",
+      "regenerateHint": "Erzeugt das Protokoll mit der gewählten Vorlage neu",
+      "copyHint": "Kopiert das Protokoll formatiert (für Word und Mail) und als Markdown",
+      "download": "Herunterladen",
       "copyError": "Das Protokoll konnte nicht kopiert werden",
       "loadError": "Das Protokoll konnte nicht geladen werden: {{error}}",
-      "autoSaved": "Automatisch abgelegt unter:"
+      "createdWith": "Erzeugt mit der Vorlage: {{title}}",
+      "createdWithAuto": "Erzeugt mit der Vorlage: {{title}} (automatisch gewählt)",
+      "incomplete": "Das Protokoll ist unvollständig: Die Besprechung bei {{gaps}} konnte nicht ausgewertet werden. Das vollständige Transkript bleibt erhalten.",
+      "progressLabel": "Fortschritt des Protokolls",
+      "phase": {
+        "template": "Vorlage wird gewählt …",
+        "write": "Transkript wird ausgewertet …",
+        "merge": "Teile werden zusammengeführt …"
+      },
+      "stepOf": "Schritt {{done}} von {{total}}",
+      "cancelled": "Die Erzeugung wurde abgebrochen.",
+      "errors": {
+        "minutes_busy": "Für diese Besprechung wird schon ein Protokoll erzeugt.",
+        "job_busy": "Für diese Besprechung läuft schon eine andere Verarbeitung (zum Beispiel KI-Notizen).",
+        "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",
+        "meeting_not_found": "Die Besprechung gibt es nicht mehr.",
+        "meeting_not_finished": "Die Aufnahme läuft noch. Das Protokoll kann erst nach dem Stopp erzeugt werden.",
+        "no_transcript": "Es gibt noch kein Transkript, aus dem ein Protokoll entstehen könnte.",
+        "template_not_found": "Diese Vorlage gibt es nicht mehr. Bitte eine andere wählen.",
+        "no_provider": "Kein Sprachmodell eingerichtet (Einstellungen → Nachbearbeitung).",
+        "no_model": "Für den Anbieter ist kein Modell eingetragen (Einstellungen → Nachbearbeitung → Modell).",
+        "memory_low": "Zu wenig freier Arbeitsspeicher für das Sprachmodell. Bitte andere Programme schließen und erneut versuchen.",
+        "llm_failed": "Das Sprachmodell hat kein brauchbares Protokoll geliefert: {{error}}",
+        "store_failed": "Das Protokoll konnte nicht gespeichert werden: {{error}}"
+      }
     },
     "language": {
       "title": "Transkriptionssprache",
-      "description": "Sprache der Meeting-Transkription — unabhängig von der Diktat-Einstellung. Meetings werden nie übersetzt.",
+      "description": "Sprache der Meeting-Transkription — unabhängig von der Diktat-Einstellung. „Automatisch erkennen“ bestimmt die Sprache je Aufnahme aus einer Hörprobe und wählt das passende Modell; eine feste Sprache gilt vor jeder Erkennung. Die Transkription übersetzt nie: Übersetzungen entstehen als eigene Fassung.",
       "auto": "Automatisch erkennen"
     },
     "meta": {
@@ -1678,20 +2320,1065 @@
       "sourceKind": {
         "live": "Live-Aufnahme",
         "import": "Datei-Import",
-        "subtitle": "Untertitel-Import"
+        "subtitle": "Untertitel-Import",
+        "youtube": "YouTube-Link",
+        "empty": "Leerer Eintrag"
       }
     },
     "model": {
       "title": "Transkriptionsmodell",
-      "likeDictation": "Wie Diktat (Standard)",
-      "description": "Eigenes Modell für Besprechungen und Importe. Streaming-Modelle sind fürs Live-Diktat optimiert — Besprechungen transkribieren in Blöcken und profitieren von Batch-Modellen wie Parakeet V3."
+      "likeDictation": "Automatisch (Parakeet V3 GGUF, sonst wie Diktat)",
+      "description": "Eigenes Modell für Besprechungen und Importe. Streaming-Modelle sind fürs Live-Diktat optimiert — Besprechungen transkribieren in Blöcken und profitieren von Batch-Modellen wie Parakeet V3. Automatisch: Parakeet V3 GGUF Q8 (genauer als die ONNX-Fassung), sobald es unter Modelle heruntergeladen ist; sonst das Diktatmodell.",
+      "finalTitle": "Enddurchlauf nach dem Stopp",
+      "finalDescription": "Nach dem Stopp schreibt ein genaueres Modell das ganze Transkript neu; KI-Notizen entstehen erst danach. Automatisch: mit Grafikkarte Whisper Large v3 (sonst Qwen3-ASR 1.7B), ohne Grafikkarte bleibt das Live-Transkript. Ein fest gewähltes Modell läuft auch ohne Grafikkarte, dann dauert eine Stunde Besprechung etwa eine Viertelstunde.",
+      "finalAuto": "Automatisch (empfohlen)",
+      "finalOff": "Aus – Live-Transkript behalten",
+      "parallelTitle": "Gleichzeitige Transkriptionen",
+      "parallelDescription": "Wie viele Dateien gleichzeitig transkribiert werden. Mehr als eine nur, wenn Arbeitsspeicher (und Grafikspeicher) für jede weitere reichen – jede lädt das Modell noch einmal. Sonst wartet die nächste Datei („wartet auf Arbeitsspeicher“). Eine laufende Aufnahme hat immer Vorrang: dann pausiert die Warteschlange.",
+      "parallel1": "1 (Standard)",
+      "parallel2": "2",
+      "parallel3": "3"
+    },
+    "header": {
+      "renameName": "Umbenennen",
+      "renameHint": "Klicken oder F2 drücken, mit Enter speichern",
+      "infoName": "Details",
+      "infoHint": "Status, Quelle, Einwilligung, Modell und Aufbewahrung auf einen Blick",
+      "sourceLive": "Aufnahme",
+      "sourceImport": "Import",
+      "sourceSubtitle": "Untertitel",
+      "sourceYoutube": "YouTube",
+      "sourceEmpty": "Notizblock",
+      "minutes": "{{count}} Min.",
+      "projectHint": "Klicken, um die Besprechung in ein anderes Projekt zu verschieben",
+      "projectMore": "+{{count}}",
+      "peopleMore": "+{{count}}",
+      "peopleMoreLabel": "Weitere Teilnehmende anzeigen und verwalten",
+      "chips": "Eigenschaften der Besprechung",
+      "participants": "{{count}} Teilnehmende",
+      "participantsNone": "Teilnehmende hinzufügen",
+      "participantsHint": "Klicken, um Teilnehmende hinzuzufügen",
+      "participantsTitle": "Teilnehmende",
+      "participantsEmpty": "Noch niemand erfasst.",
+      "participantAddPlaceholder": "Person hinzufügen (Name)",
+      "participantSpeaker": "Sprecher",
+      "participantSpeakerHint": "Den Namen diesem Sprecher zuordnen: „{{label}}“ wird so benannt",
+      "participantUnknown": "Diese Person ist noch nicht bekannt. Sie entsteht aus einem Kalendertermin oder einem benannten Sprecher.",
+      "participantUnknownSpeaker": "Diese Person ist noch nicht bekannt: Wähle den Sprecher, den du so benennst.",
+      "participantAlready": "Schon dabei.",
+      "participantAdd": "Hinzufügen",
+      "participantRemoveHint": "Aus den Teilnehmenden dieser Besprechung entfernen",
+      "template": "Vorlage: {{name}}",
+      "templateHint": "Klicken, um die Vorlage zu wechseln"
+    },
+    "detailsDialog": {
+      "title": "Details",
+      "close": "Schließen",
+      "meetingTitle": "Titel",
+      "projects": "Projekte",
+      "noProjects": "Keinem Projekt zugeordnet",
+      "file": "Datei",
+      "tracks": "Spuren",
+      "trackMic": "Mikrofon",
+      "trackSystem": "Gegenseite (Systemton)",
+      "trackMixed": "Datei (ein Kanal)",
+      "trackNone": "Audio nicht mehr vorhanden",
+      "language": "Sprache",
+      "languageAuto": "Automatisch erkannt",
+      "model": "Modell",
+      "modelNote": "{{name}} (aktuelle Einstellung)",
+      "modelDefault": "Eingestelltes Besprechungsmodell",
+      "template": "Vorlage",
+      "templateDefault": "Standardvorlage",
+      "minutesOrigin": "Protokoll erzeugt",
+      "minutesNone": "Noch kein Protokoll",
+      "minutesBasis": "Grundlage des Protokolls",
+      "notesBasis": "Grundlage der KI-Notizen",
+      "basisNone": "keine Angabe (erzeugt vor dieser Funktion)",
+      "minutesFile": "Protokoll-Ablage",
+      "minutesFileNone": "Noch nicht abgelegt",
+      "minutesFileOpen": "Im Ordner zeigen",
+      "retentionNever": "nie (Einstellung „Behalten“)",
+      "description": "Beschreibung",
+      "noDescription": "Keine Beschreibung",
+      "people": "Teilnehmende",
+      "noPeople": "Keine Teilnehmenden erfasst"
+    },
+    "metadata": {
+      "edit": "Bearbeiten",
+      "save": "Speichern",
+      "saving": "Speichern …",
+      "cancel": "Abbrechen",
+      "title": "Titel",
+      "description": "Beschreibung",
+      "descriptionPlaceholder": "Worum geht es? Thema, Beteiligte, Ziel – durchsuchbar und Kontext für Chat, KI-Notizen und MCP.",
+      "descriptionCount": "{{count}} von {{max}} Zeichen",
+      "datetime": "Datum und Uhrzeit",
+      "participants": "Teilnehmende",
+      "participantsSearch": "Person suchen",
+      "participantsNone": "Keine Person ausgewählt",
+      "noPeopleFound": "Keine Person gefunden.",
+      "removePerson": "{{name}} entfernen",
+      "projects": "Projekte",
+      "noProjectsYet": "Es gibt noch keine Projekte.",
+      "fixedHint": "Quelle und Dateiname lassen sich nicht ändern.",
+      "errors": {
+        "meetingNotFound": "Die Besprechung gibt es nicht mehr.",
+        "titleEmpty": "Der Titel darf nicht leer sein.",
+        "titleTooLong": "Der Titel ist zu lang.",
+        "descriptionTooLong": "Die Beschreibung ist zu lang.",
+        "dateInvalid": "Das Datum ist ungültig.",
+        "personNotFound": "Eine der Personen gibt es nicht mehr.",
+        "folderNotFound": "Eines der Projekte gibt es nicht mehr.",
+        "unknown": "Die Änderungen konnten nicht gespeichert werden."
+      }
+    },
+    "actions": {
+      "group": "Aktionen",
+      "copyName": "Kopieren",
+      "copyHint": "Transkript mit Zeitmarken kopieren (Varianten im Menü)",
+      "copied": "Kopiert",
+      "peopleName": "Personen",
+      "peopleHint": "Teilnehmende und Sprecher verwalten",
+      "menuName": "Menü",
+      "menuHint": "Neu transkribieren, Vorlage, Verschieben, Details, Löschen …",
+      "menuLabel": "Weitere Aktionen",
+      "retranscribe": "Neu transkribieren …",
+      "translate": "Übersetzen nach …",
+      "translateHint": "Übersetzt das Transkript Satz für Satz in eine andere Sprache. Das Original bleibt als eigene Fassung erhalten.",
+      "retranscribeBusy": "Läuft gerade eine Verarbeitung, kann nicht neu transkribiert werden.",
+      "retranscribeNoAudio": "Ohne Audiodatei gibt es nichts neu zu transkribieren.",
+      "regenNotes": "KI-Notizen neu erzeugen",
+      "regenMinutes": "Protokoll neu erzeugen",
+      "regenWithTemplate": "Neu erzeugen mit Vorlage …",
+      "regenWithTemplateTitle": "Neu erzeugen mit Vorlage",
+      "regenWithTemplateBody": "Wähle die Vorlage und danach, was neu erzeugt wird: das Protokoll oder die KI-Notizen.",
+      "template": "Vorlage wählen …",
+      "speakers": "Sprecher benennen …",
+      "speakersNone": "In dieser Besprechung wurden keine Sprecher erkannt.",
+      "rename": "Umbenennen",
+      "move": "In Projekt verschieben …",
+      "copyPlain": "Nur Text kopieren",
+      "exportTranscript": "Transkript als Datei …",
+      "details": "Details …",
+      "delete": "Besprechung löschen …",
+      "deleteLive": "Die Aufnahme läuft noch – erst beenden, dann löschen.",
+      "templateTitle": "Vorlage wählen",
+      "templateBody": "Die Vorlage bestimmt, wie KI-Notizen und Protokoll dieser Besprechung aufgebaut werden.",
+      "close": "Schließen"
+    },
+    "retranscribeDialog": {
+      "title": "Neu transkribieren",
+      "model": "Modell",
+      "cancel": "Abbrechen",
+      "close": "Schließen"
+    },
+    "youtube": {
+      "link": {
+        "title": "YouTube-Link einfügen",
+        "urlLabel": "Link zu einem YouTube-Video",
+        "urlPlaceholder": "https://www.youtube.com/watch?v=…",
+        "projectLabel": "Projekt",
+        "projectNone": "Ohne Projekt",
+        "recognized": "Video erkannt",
+        "startsAt": "Start bei {{time}}",
+        "notice": "Beim Hinzufügen fragt die App einmalig Titel und Kanal bei YouTube ab, ohne Anmeldung und ohne Cookies. Das Video selbst wird erst geladen, wenn du es abspielst.",
+        "add": "Hinzufügen",
+        "adding": "Wird angelegt …",
+        "cancel": "Abbrechen",
+        "added": "„{{title}}“ wurde als Quelle angelegt."
+      },
+      "errors": {
+        "youtube_empty": "Bitte einen YouTube-Link einfügen.",
+        "youtube_too_long": "Der Text ist zu lang für einen Link.",
+        "youtube_invalid_link": "Das ist kein gültiger YouTube-Link zu einem einzelnen Video.",
+        "youtube_not_youtube": "Das ist kein YouTube-Link.",
+        "youtube_playlist": "Playlists folgen später. Bitte den Link eines einzelnen Videos einfügen.",
+        "youtube_channel": "Kanäle werden nicht unterstützt. Bitte den Link eines einzelnen Videos einfügen.",
+        "youtube_disabled": "YouTube ist in den Integrationen ausgeschaltet.",
+        "youtube_busy": "Dieses Video wird gerade angelegt.",
+        "youtube_project_not_found": "Das gewählte Projekt gibt es nicht mehr.",
+        "youtube_unavailable": "Das Video ist nicht verfügbar: privat, gelöscht oder nicht zum Einbetten freigegeben.",
+        "youtube_rate_limited": "YouTube antwortet gerade nicht auf weitere Anfragen. Bitte später erneut versuchen.",
+        "youtube_timeout": "YouTube hat nicht rechtzeitig geantwortet. Bitte erneut versuchen.",
+        "youtube_network": "Keine Verbindung zu YouTube. {{detail}}",
+        "youtube_http": "YouTube antwortete mit dem Status {{detail}}.",
+        "youtube_bad_response": "Die Antwort von YouTube war nicht auswertbar.",
+        "youtube_store_failed": "Die Besprechung konnte nicht gespeichert werden. {{detail}}",
+        "youtube_path_invalid": "Der Pfad ist ungültig.",
+        "youtube_private_off": "Für Untertitel und Transkription yt-dlp selbst installieren und in den Einstellungen „privat“ einschalten.",
+        "youtube_tool_missing": "yt-dlp wurde nicht gefunden. Bitte selbst installieren und den Pfad in den Einstellungen eintragen.",
+        "youtube_tool_outdated": "yt-dlp ist veraltet – bitte aktualisieren (yt-dlp -U) und erneut versuchen.",
+        "youtube_tool_failed": "yt-dlp endete mit Fehlercode {{detail}}.",
+        "youtube_tool_start": "yt-dlp ließ sich nicht starten. {{detail}}",
+        "youtube_no_subtitles": "Dieses Video hat keine Untertitel.",
+        "youtube_cancelled": "Abgebrochen.",
+        "target_not_empty": "Dieser Eintrag ist nicht mehr leer. Der Link wurde nicht übernommen.",
+        "meeting_not_found": "Der Eintrag, in den der Link soll, existiert nicht mehr."
+      },
+      "player": {
+        "region": "YouTube-Video",
+        "title": "YouTube",
+        "collapse": "Video einklappen",
+        "expand": "Video ausklappen",
+        "openExternal": "Auf YouTube öffnen",
+        "play": "Video abspielen",
+        "privacy": "Beim Abspielen verbindet sich die App mit YouTube. Wiedergabe und Werbung bleiben unverändert.",
+        "loading": "Player wird geladen …",
+        "retry": "Erneut versuchen",
+        "resize": "Höhe des Videos ändern",
+        "errors": {
+          "api": "Der YouTube-Player konnte nicht geladen werden. Bitte die Internetverbindung prüfen.",
+          "2": "YouTube meldet einen ungültigen Link.",
+          "5": "Der Player hat einen Fehler gemeldet.",
+          "100": "Das Video wurde nicht gefunden oder ist privat.",
+          "101": "Der Besitzer erlaubt die Wiedergabe außerhalb von YouTube nicht. Über „Auf YouTube öffnen“ geht es im Browser.",
+          "150": "Der Besitzer erlaubt die Wiedergabe außerhalb von YouTube nicht. Über „Auf YouTube öffnen“ geht es im Browser.",
+          "153": "YouTube hat den Player abgelehnt. Über „Auf YouTube öffnen“ geht es im Browser.",
+          "generic": "Das Video lässt sich hier nicht abspielen."
+        }
+      },
+      "settings": {
+        "private": "YouTube: selbst installiertes yt-dlp nutzen (privat, experimentell)",
+        "privateDescription": "Aus (Standard): Videos werden nur im eingebetteten YouTube-Player angesehen. An: Ist yt-dlp von dir selbst installiert, darf die App damit später Audio und Untertitel für den eigenen Gebrauch holen. Die App bündelt yt-dlp nicht und lädt es nicht herunter.",
+        "tool": {
+          "title": "Pfad zu yt-dlp",
+          "description": "Datei oder Ordner von yt-dlp. Leer: die App sucht im PATH.",
+          "placeholder": "Leer lassen, um im PATH zu suchen",
+          "browse": "Durchsuchen …",
+          "check": "Prüfen",
+          "checking": "Suche yt-dlp …",
+          "found": "yt-dlp gefunden: Version {{version}} ({{path}})",
+          "errors": {
+            "not_found": "yt-dlp nicht gefunden. Bitte selbst installieren (z. B. über den Paketmanager) oder den Pfad eintragen.",
+            "not_absolute": "Bitte einen vollständigen Pfad angeben (z. B. C:\\Tools\\yt-dlp.exe).",
+            "bad_name": "Der Dateiname muss mit „yt-dlp“ beginnen (Windows: .exe).",
+            "timeout": "yt-dlp hat nicht rechtzeitig geantwortet.",
+            "failed": "yt-dlp wurde gestartet, meldete aber einen Fehler. Bitte aktualisieren oder neu installieren.",
+            "start_failed": "yt-dlp ließ sich nicht starten.",
+            "not_ytdlp": "Diese Datei antwortet nicht wie yt-dlp."
+          }
+        },
+        "legal": "Hinweis: Das Herunterladen von YouTube-Videos kann gegen die Nutzungsbedingungen von YouTube verstoßen und urheberrechtlich relevant sein (OLG Hamburg, 21.11.2024, 5 U 54/23). Nutzung auf eigene Verantwortung; vor einer Weitergabe der App an Dritte bitte rechtlich prüfen lassen. Keine Rechtsberatung."
+      }
+    },
+    "import": {
+      "target": "Import in das Projekt „{{name}}“",
+      "targetNone": "Import ohne Projekt",
+      "dropInto": "Datei hier ablegen – Import in „{{name}}“",
+      "dropIntoNone": "Datei hier ablegen – Import ohne Projekt"
+    },
+    "empty": {
+      "defaultTitle": "Neue Besprechung",
+      "chip": "Leer",
+      "startTitle": "Noch nichts aufgenommen",
+      "startBody": "Starte eine Aufnahme, importiere eine Datei oder füge einen YouTube-Link ein. Notizen kannst du schon jetzt schreiben.",
+      "startGroup": "Diesen Eintrag füllen",
+      "fillsEntry": "Das Ergebnis füllt den Eintrag „{{title}}“.",
+      "importFirst": "Die erste Datei füllt den Eintrag „{{title}}“, weitere werden neue Besprechungen.",
+      "createFailed": "Der Eintrag konnte nicht angelegt werden.",
+      "transcriptEmpty": "Das Transkript erscheint hier, sobald du aufnimmst oder eine Datei importierst.",
+      "dropIntoEntry": "Datei hier ablegen – füllt „{{title}}“"
+    },
+    "importAction": {
+      "name": "Datei importieren",
+      "hint": "Audio, Video oder Untertitel wählen – oder auf die Arbeitsfläche ziehen",
+      "linkName": "Link einfügen",
+      "linkHint": "YouTube-Link als Quelle anlegen, oder den Link mit Strg+V einfügen"
+    },
+    "recorder": {
+      "running": "Aufnahme läuft",
+      "paused": "Pausiert",
+      "clock": "Aufnahmedauer",
+      "levelsName": "Pegel",
+      "levelsHint": "oben Mikrofon, unten Gegenseite",
+      "pauseHint": "Aufnahme anhalten, ohne sie zu beenden",
+      "resumeHint": "Aufnahme fortsetzen",
+      "stopHint": "Aufnahme beenden – danach entstehen KI-Notizen und Protokoll",
+      "noticeName": "Hinweis kopieren",
+      "noticeCopied": "Hinweis kopiert",
+      "startHint": "Öffnet den Startdialog mit Titel, Projekt, Vorlage und Einwilligung"
+    },
+    "startDialog": {
+      "title": "Aufnahme starten",
+      "titleLabel": "Titel",
+      "project": "Projekt",
+      "projectNone": "Kein Projekt",
+      "options": "Aufnahme-Optionen"
     },
     "retranscribe": {
       "description": "Diese Besprechung erneut aus der Aufzeichnung transkribieren — zum Beispiel mit einem anderen Modell.",
       "configuredModel": "Eingestelltes Besprechungsmodell",
+      "language": "Sprache",
+      "languageAuto": "Automatisch erkennen",
+      "suggestInstalled": "Passend für diese Sprache: {{model}} (installiert, ausgewählt).",
+      "suggestMissing": "Passend für diese Sprache wäre {{model}}. Es ist noch nicht installiert: unter Modelle laden und hier wählen.",
       "start": "Neu transkribieren",
       "running": "Transkribiere…",
-      "runningHint": "Das bisherige Transkript wird nach dem Lauf ersetzt. Bei langen Aufzeichnungen dauert das eine Weile."
+      "runningHint": "Das bisherige Transkript bleibt als Fassung erhalten. Während der Lauf fortschreitet, zeigt die Ansicht den neuen Text; erst am Ende wird er die aktive Fassung. Stoppst du vorher, bleibt das bisherige Transkript aktiv. Bei langen Aufzeichnungen dauert das eine Weile."
+    },
+    "notes": {
+      "tab": "Notizen",
+      "view": {
+        "mine": "Meine Notizen",
+        "ai": "KI-Notizen"
+      },
+      "aiPlaceholder": "Die KI-Notizen erscheinen hier, sobald sie erstellt wurden.",
+      "padTitle": "Deine Notizen",
+      "padHint": "Stichpunkte genügen. Enter speichert einen Punkt mit der Aufnahmezeit, „[ ]“ am Anfang macht daraus eine Aufgabe.",
+      "emptyHint": "Stichpunkte genügen …",
+      "blockLabel": "Notiz",
+      "todoCheck": "Erledigt",
+      "importedHint": "Importierte Besprechung: Notizen ohne Zeitstempel.",
+      "loadError": "Die Notizen konnten nicht geladen werden: {{error}}",
+      "tooLarge": "Die Notizen sind größer als {{limit}} KB und werden nicht mehr gespeichert. Bitte kürzen oder aufteilen.",
+      "conflict": "Die Notizen wurden in einem anderen Fenster geändert. Beide Stände sind zusammengeführt.",
+      "status": {
+        "saving": "Speichert …",
+        "dirty": "Ungespeicherte Änderungen",
+        "saved": "Gespeichert",
+        "error": "Speichern fehlgeschlagen – wird beim nächsten Versuch wiederholt"
+      }
+    },
+    "templates": {
+      "label": "Vorlage",
+      "auto": "Automatisch (nach Inhalt)",
+      "autoChosen": "Automatisch: {{title}}",
+      "autoShort": "{{title}} (automatisch)",
+      "autoPending": "Wird beim Erzeugen nach dem Inhalt gewählt.",
+      "autoUncertain": "Nicht eindeutig – es gilt die Standardvorlage.",
+      "autoFailed": "Die Wahl nach Inhalt hat nicht geklappt – es gilt die Standardvorlage.",
+      "autoReason": "Begründung: {{reason}}",
+      "manage": "Vorlagen verwalten …",
+      "title": "Vorlagen",
+      "description": "Eine Vorlage legt fest, wie aus Notizen und Transkript geordnete Besprechungsnotizen werden.",
+      "close": "Schließen",
+      "builtin": "Mitgeliefert",
+      "sectionCount_one": "{{count}} Abschnitt",
+      "sectionCount_other": "{{count}} Abschnitte",
+      "new": "Neue Vorlage",
+      "import": "Importieren …",
+      "duplicate": "Duplizieren",
+      "edit": "Bearbeiten",
+      "editBuiltin": "Bearbeiten (legt eine Kopie an, Mitgelieferte sind schreibgeschützt)",
+      "editBuiltinNotice": "Mitgelieferte Vorlagen sind schreibgeschützt. Du bearbeitest eine Kopie.",
+      "export": "Exportieren",
+      "delete": "Löschen",
+      "deleteConfirm": "Vorlage „{{title}}“ wirklich löschen?",
+      "deleteYes": "Löschen",
+      "cancel": "Abbrechen",
+      "save": "Speichern",
+      "saved": "Vorlage „{{title}}“ gespeichert.",
+      "duplicated": "Kopie „{{title}}“ angelegt.",
+      "imported": "Vorlage „{{title}}“ importiert.",
+      "exported": "Exportiert nach {{path}}",
+      "fileType": "Vorlage (.lvtemplate.json)",
+      "newTitle": "Neue Vorlage",
+      "editTitle": "Vorlage bearbeiten",
+      "fieldName": "Name",
+      "fieldContext": "Zweck der Besprechung",
+      "fieldContextHint": "Ein bis zwei Sätze, worum es in solchen Besprechungen geht.",
+      "sectionsTitle": "Abschnitte",
+      "sectionTitle": "Titel des Abschnitts",
+      "sectionInstruction": "Anweisung: Was gehört in diesen Abschnitt?",
+      "sectionKind": "Art des Abschnitts",
+      "kindText": "Text",
+      "kindTasks": "Aufgabenliste",
+      "addSection": "Abschnitt hinzufügen",
+      "removeSection": "Abschnitt entfernen",
+      "moveUp": "Nach oben",
+      "moveDown": "Nach unten",
+      "errors": {
+        "generic": "Fehler: {{error}}",
+        "revision_conflict": "Die Notizen wurden zwischenzeitlich geändert.",
+        "template_readonly": "Mitgelieferte Vorlagen sind schreibgeschützt. Bearbeite eine Kopie.",
+        "template_not_found": "Diese Vorlage gibt es nicht mehr.",
+        "exportFailed": "Die Datei konnte nicht geschrieben werden.",
+        "import": {
+          "too_large": "Die Datei ist zu groß (höchstens 64 KB).",
+          "invalid_json": "Die Datei ist keine gültige Vorlagendatei (kein lesbares JSON).",
+          "format": "Die Datei hat ein unbekanntes Format. Erwartet wird eine Vorlagendatei von Local Voice AI (.lvtemplate.json).",
+          "unreadable": "Die Datei konnte nicht gelesen werden."
+        },
+        "invalid": {
+          "title": "Der Name muss 1 bis 60 Zeichen lang sein.",
+          "version": "Diese Vorlagenversion wird nicht unterstützt.",
+          "context_too_long": "Der Zweck darf höchstens 1000 Zeichen lang sein.",
+          "sections_count": "Eine Vorlage braucht 1 bis 10 Abschnitte.",
+          "section_id": "Ein Abschnitt hat eine ungültige Kennung ({{section}}).",
+          "section_id_duplicate": "Zwei Abschnitte haben dieselbe Kennung ({{section}}).",
+          "section_title": "Jeder Abschnitt braucht einen Titel mit 1 bis 60 Zeichen.",
+          "section_instruction_too_long": "Die Anweisung eines Abschnitts darf höchstens 500 Zeichen lang sein.",
+          "tasks_sections": "Es ist höchstens ein Aufgabenlisten-Abschnitt erlaubt."
+        }
+      }
+    },
+    "enhanced": {
+      "empty": "Noch keine KI-Notizen. Sie entstehen aus deinen Notizen und dem Transkript, sobald die Besprechung abgeschlossen ist.",
+      "generate": "KI-Notizen erzeugen",
+      "regenerate": "KI-Notizen neu erzeugen",
+      "toolbar": "KI-Notizen: Werkzeuge",
+      "regenerateHint": "Erzeugt die KI-Notizen mit der gewählten Vorlage neu",
+      "export": "Exportieren – als Word (.docx), Text oder Markdown",
+      "exportSuffix": "KI-Notizen",
+      "exported": "Gespeichert: {{path}}",
+      "versionLabel": "Version {{version}} · {{date}}",
+      "progress": "KI-Notizen werden erstellt … {{step}}/{{total}}",
+      "working": "Die KI arbeitet …",
+      "stopped": "KI-Notizen gestoppt. Es wurde nichts gespeichert.",
+      "providerHint": "Bitte unter Einstellungen → Sprachmodelle einrichten.",
+      "loadError": "Die KI-Notizen konnten nicht geladen werden: {{error}}",
+      "reloaded": "Die KI-Notizen wurden zwischenzeitlich geändert (anderes Fenster oder neuer Lauf) und neu geladen.",
+      "staleSources": "Quellen veraltet – neu erzeugen. Das Transkript wurde seit dem Erzeugen neu erstellt; die Quellverweise passen nicht mehr.",
+      "audioGone": "Das Audio ist nicht mehr vorhanden. Ein Klick auf eine Quelle springt nur ins Transkript.",
+      "oldVersion": "Ältere Version, nur zum Ansehen. Für Änderungen die neueste Version wählen.",
+      "chunksFailed": "{{failed}} von {{total}} Abschnitten des Transkripts konnten nicht ausgewertet werden. Die Notizen sind unvollständig; neu erzeugen kann helfen.",
+      "unreadable": "Diese Version der KI-Notizen lässt sich nicht lesen.",
+      "sectionEmpty": "Keine Einträge",
+      "addEntry": "Eintrag hinzufügen",
+      "newEntry": "Neuer Eintrag",
+      "editEntry": "Eintrag bearbeiten",
+      "editHint": "Klicken zum Bearbeiten – der Eintrag zählt danach als dein Text",
+      "noEvidence": "ohne Beleg",
+      "noEvidenceHint": "Für diesen Eintrag fand die KI keine Stelle im Transkript. Bitte selbst prüfen.",
+      "sourceJump": "Zur Stelle {{time}} im Transkript springen",
+      "sourceStale": "Quellen veraltet – neu erzeugen",
+      "sourceMore": "{{count}} weitere Quellen anzeigen",
+      "slideJump": "Zu Folie {{number}} springen ({{time}})",
+      "taskDone": "Aufgabe erledigt",
+      "due": "bis {{due}}",
+      "instruction": {
+        "label": "Anweisung an die KI",
+        "placeholder": "Anweisung an die KI, z. B. „kürzer“ oder „Namen korrigieren: Maier → Meyer“",
+        "apply": "Anwenden",
+        "hint": "Deine eigenen Notizen bleiben unverändert. Das Ergebnis wird eine neue Version."
+      },
+      "errors": {
+        "generic": "KI-Notizen: {{error}}",
+        "no_provider": "Es ist kein Sprachmodell-Anbieter eingerichtet.",
+        "no_model": "Für den Anbieter ist kein Modell ausgewählt.",
+        "memory_low": "Zu wenig freier Arbeitsspeicher, um das Sprachmodell zu starten. Bitte andere Programme schließen und erneut versuchen.",
+        "recording_active": "Während einer Aufnahme läuft das lokale Sprachmodell nicht. Bitte nach dem Stopp erneut versuchen oder einen entfernten Anbieter wählen.",
+        "enhance_busy": "Es läuft bereits ein KI-Notizen-Lauf. Bitte warten, bis er fertig ist.",
+        "no_transcript": "Es gibt noch kein Transkript. Deine eigenen Notizen bleiben nutzbar und exportierbar.",
+        "llm_failed": "Das Sprachmodell hat keine brauchbare Antwort geliefert. Bitte erneut versuchen.",
+        "meeting_not_finished": "Die Besprechung ist noch nicht abgeschlossen. KI-Notizen gibt es erst nach dem Stopp.",
+        "meeting_not_found": "Die Besprechung wurde nicht gefunden.",
+        "template_not_found": "Die gewählte Vorlage wurde nicht gefunden. Bitte eine andere Vorlage wählen.",
+        "document_not_found": "Diese Version der KI-Notizen gibt es nicht mehr.",
+        "not_enhanced_notes": "Dieses Dokument enthält keine KI-Notizen.",
+        "stale_document": "Die KI-Notizen wurden zwischenzeitlich geändert und neu geladen. Bitte die Änderung wiederholen.",
+        "stale_sources": "Die Quellen dieser Version sind veraltet, weil das Transkript neu erstellt wurde. Bitte KI-Notizen neu erzeugen.",
+        "edit_invalid": "Die Änderung konnte nicht gespeichert werden (ungültige Fassung).",
+        "instruction_invalid": "Die Anweisung ist ungültig: sie darf nicht leer und höchstens 500 Zeichen lang sein.",
+        "store_failed": "Das Speichern in der Datenbank ist fehlgeschlagen."
+      }
+    },
+    "search": {
+      "placeholder": "Besprechungen durchsuchen …",
+      "label": "Besprechungen durchsuchen",
+      "clear": "Suche leeren",
+      "noResults": "Keine Treffer. Neue Besprechungen erscheinen in der Suche, sobald sie indexiert sind.",
+      "noFilterResults": "Keine Besprechungen passen zu diesem Filter.",
+      "truncated": "Sehr viele Treffer – Suche eingrenzen.",
+      "failed": "Suche fehlgeschlagen: {{error}}",
+      "filterInvalid": "Dieser Filter ist ungültig.",
+      "filters": "Filter",
+      "range7": "7 Tage",
+      "range30": "30 Tage",
+      "range365": "12 Monate",
+      "sourceLive": "Aufnahme",
+      "sourceImport": "Import",
+      "sourceSubtitle": "Untertitel",
+      "hasNotes": "Mit Notizen",
+      "hitIn": "Treffer in: {{source}}",
+      "hitSource": {
+        "title": "Titel oder Beschreibung",
+        "transcript": "Transkript",
+        "user_notes": "Meine Notizen",
+        "ai_notes": "KI-Notizen",
+        "slide": "Folie"
+      }
+    },
+    "folders": {
+      "label": "Projekte",
+      "all": "Alle",
+      "add": "Projekt anlegen",
+      "moveTo": "In Projekt verschieben …",
+      "menu": "Aktionen",
+      "rename": "Umbenennen",
+      "delete": "Löschen",
+      "newTitle": "Neues Projekt",
+      "renameTitle": "Projekt umbenennen",
+      "nameLabel": "Name",
+      "namePlaceholder": "z. B. Kunde Stadtwerke",
+      "save": "Speichern",
+      "create": "Anlegen",
+      "cancel": "Abbrechen",
+      "deleteTitle": "Projekt löschen?",
+      "deleteBody": "Das Projekt „{{name}}“ wird gelöscht. Die Besprechungen darin bleiben erhalten.",
+      "pickerTitle": "In Projekt verschieben …",
+      "pickerHint": "Eine Besprechung kann in mehreren Projekten liegen.",
+      "pickerEmpty": "Noch keine Projekte. Lege unten eines an.",
+      "loadFailed": "Projekte konnten nicht geladen werden.",
+      "errors": {
+        "nameInvalid": "Der Name muss 1 bis 60 Zeichen lang sein.",
+        "nameTaken": "Ein Projekt mit diesem Namen gibt es schon.",
+        "notFound": "Dieses Projekt gibt es nicht mehr.",
+        "failed": "Das Projekt konnte nicht gespeichert werden."
+      }
+    },
+    "export": {
+      "button": "Exportieren",
+      "buttonTitle": "Die Besprechung in eine Datei exportieren oder formatiert kopieren",
+      "title": "Besprechung exportieren",
+      "close": "Schließen",
+      "audioHint": "Audio wird nie exportiert.",
+      "partsTitle": "Enthaltene Teile",
+      "parts": {
+        "notes": "Meine Notizen",
+        "ai_notes": "KI-Notizen",
+        "minutes": "Protokoll",
+        "transcript": "Transkript",
+        "participants": "Teilnehmende"
+      },
+      "noParts": "Wähle mindestens einen Teil aus.",
+      "formatsTitle": "Als Datei speichern",
+      "formats": {
+        "docx": "Word",
+        "txt": "TXT",
+        "md": "Markdown",
+        "html": "HTML",
+        "pdf": "PDF",
+        "srt": "SRT",
+        "vtt": "VTT",
+        "json": "JSON"
+      },
+      "subtitleHint": "Untertitel (SRT, VTT) enthalten immer nur das Transkript.",
+      "copy": "Formatiert kopieren",
+      "copyTitle": "Die Besprechung als HTML und Klartext in die Zwischenablage legen – beim Einfügen in Word oder eine Mail bleiben Überschriften und Listen erhalten",
+      "copied": "Formatiert in die Zwischenablage kopiert.",
+      "copyError": "Kopieren fehlgeschlagen: {{error}}",
+      "saved": "Exportiert nach {{path}}",
+      "error": "Export fehlgeschlagen: {{error}}",
+      "pdfFallback": "Alternative: als HTML speichern und die Datei im Browser drucken.",
+      "placeTitle": "Ablegen in",
+      "placeHint": "In einen eingerichteten Ordner oder Vault legen, ohne zu überschreiben.",
+      "placeFolder": "Ordner „{{label}}“",
+      "placeVault": "Als Notiz in „{{label}}“",
+      "placeVaultButton": "Notiz ablegen",
+      "placed": "Abgelegt in „{{label}}“: {{path}}",
+      "vaultCreated": "Notiz angelegt in „{{label}}“: {{path}}",
+      "vaultUpdated": "Notiz aktualisiert in „{{label}}“: {{path}}",
+      "vaultUnchanged": "Notiz in „{{label}}“ ist schon aktuell: {{path}}",
+      "placeError": "Ablegen nicht möglich: {{error}}"
+    },
+    "people": {
+      "chipsLabel": "Teilnehmende",
+      "you": "ich",
+      "role": {
+        "organizer": "Organisator",
+        "attendee": "Teilnehmer",
+        "speaker": "Sprecher"
+      },
+      "source": {
+        "calendar": "Aus dem Kalender",
+        "speaker": "Aus dem Transkript",
+        "manual": "Von Hand"
+      },
+      "popover": {
+        "company": "Firma",
+        "email": "E-Mail",
+        "noEmail": "Keine Adresse bekannt",
+        "meetingsWith_one": "{{count}} Besprechung mit {{name}}",
+        "meetingsWith_other": "{{count}} Besprechungen mit {{name}}",
+        "meetingsFilterTitle": "Liste auf Besprechungen mit {{name}} eingrenzen",
+        "ask": "Fragen",
+        "askTitle": "Alle Besprechungen mit {{name}} befragen",
+        "manage": "Personen verwalten …"
+      },
+      "filter": {
+        "group": "Personenfilter",
+        "chip": "Person: {{name}}",
+        "remove": "Personenfilter „{{name}}“ entfernen"
+      },
+      "dialog": {
+        "title": "Personen verwalten",
+        "description": "Namen ändern oder zwei Einträge derselben Person zusammenführen. Gleiche E-Mail-Adressen und gleiche Namen erkennt die App selbst; alles Weitere entscheiden Sie.",
+        "search": "Personen suchen",
+        "searchLabel": "Personen suchen",
+        "empty": "Noch keine Personen. Sie entstehen aus den Teilnehmenden Ihrer Kalendertermine und aus benannten Sprechern.",
+        "noHits": "Keine Treffer.",
+        "meetings_one": "{{count}} Besprechung",
+        "meetings_other": "{{count}} Besprechungen",
+        "self": "ich",
+        "name": "Name",
+        "email": "E-Mail",
+        "emailHint": "Leer lassen, um die Adresse zu entfernen.",
+        "otherEmails": "Weitere Adressen: {{list}}",
+        "save": "Speichern",
+        "saved": "Gespeichert.",
+        "mergeTitle": "Mit einer anderen Person zusammenführen",
+        "mergeHint": "Diese Person geht in der gewählten auf: Besprechungen, Namen und Adressen wandern mit.",
+        "mergeTarget": "Zusammenführen mit",
+        "mergePick": "Person wählen …",
+        "mergeAction": "Zusammenführen …",
+        "mergeConfirm": "„{{gone}}“ in „{{keep}}“ zusammenführen? Das lässt sich nicht rückgängig machen.",
+        "mergeDo": "Jetzt zusammenführen",
+        "merged": "Zusammengeführt.",
+        "cancel": "Abbrechen",
+        "back": "Zur Liste",
+        "close": "Schließen"
+      },
+      "errors": {
+        "notFound": "Diese Person gibt es nicht mehr.",
+        "nameInvalid": "Bitte einen Namen eingeben.",
+        "emailInvalid": "Das ist keine gültige E-Mail-Adresse.",
+        "emailTaken": "Diese Adresse gehört einer anderen Person. Führen Sie die beiden zusammen.",
+        "mergeInvalid": "Eine Person lässt sich nicht mit sich selbst zusammenführen.",
+        "failed": "Das hat nicht geklappt."
+      },
+      "brief": {
+        "question": "Vorbereitung auf den Termin mit {{names}}",
+        "button": "Vorbereiten",
+        "title_one": "Mit {{count}} früheren Besprechung vorbereiten",
+        "title_other": "Mit {{count}} früheren Besprechungen vorbereiten",
+        "saved": "Gespeicherten Brief öffnen",
+        "none": "Keine früheren Besprechungen mit diesen Teilnehmenden.",
+        "error": "Der Brief lässt sich nicht öffnen."
+      }
+    },
+    "followup": {
+      "button": "Follow-up-Mail",
+      "buttonTitle": "Aus dieser Besprechung einen Mailentwurf erzeugen, den du prüfen und bearbeiten kannst",
+      "title": "Follow-up-Mail",
+      "remote": "Der Entwurf wird mit {{provider}} geschrieben: Auszüge der Besprechung werden an diesen Anbieter übermittelt.",
+      "generate": "Entwurf erzeugen",
+      "generating": "Entwurf wird geschrieben …",
+      "regenerate": "Neu erzeugen",
+      "retry": "Erneut versuchen",
+      "to": "An",
+      "toHint": "Mehrere Adressen mit Komma oder Semikolon trennen.",
+      "noRecipients": "Keine Teilnehmenden mit E-Mail-Adresse bekannt – bitte den Empfänger eintragen.",
+      "subject": "Betreff",
+      "body": "Text",
+      "copy": "Kopieren",
+      "copyTitle": "Text formatiert (HTML und Klartext) in die Zwischenablage legen",
+      "mailto": "Im Mailprogramm öffnen",
+      "eml": "Als .eml speichern",
+      "emlTitle": "Outlook (klassisch) öffnet die Datei als Entwurf; das neue Outlook und Thunderbird öffnen sie eventuell nur zum Lesen.",
+      "close": "Schließen",
+      "copied": "In die Zwischenablage kopiert.",
+      "opened": "Im Mailprogramm geöffnet.",
+      "mailtoClipped": "Der Text war zu lang für den Mail-Link und liegt in der Zwischenablage – im Mailprogramm mit Strg+V einfügen.",
+      "emlSaved": "Gespeichert: {{path}}",
+      "m365": {
+        "via": "Über {{label}} senden",
+        "noRecipients": "Zum Senden braucht die Mail mindestens einen Empfänger.",
+        "confirmTitle": "Senden bestätigen",
+        "confirm": "Die Mail jetzt an {{count}} Empfänger über „{{label}}“ senden? Das lässt sich nicht zurückholen.",
+        "send": "Jetzt senden",
+        "cancel": "Abbrechen",
+        "sent": "Gesendet über „{{label}}“. Die Mail liegt in deinem Ordner „Gesendet“."
+      },
+      "errors": {
+        "followup_empty": "Das Sprachmodell hat auch beim zweiten Versuch keinen Text geliefert. Ein anderes Sprachmodell in den Einstellungen kann helfen.",
+        "followup_no_content": "Kein Inhalt für eine Nachbereitung gefunden – die Aufnahme enthält keine Besprechungspunkte.",
+        "mailto_failed": "Das Mailprogramm ließ sich nicht öffnen. Kopiere den Text stattdessen und füge ihn dort ein.",
+        "clipboard_failed": "Die Zwischenablage ist gerade nicht erreichbar.",
+        "write_failed": "Die Datei konnte nicht gespeichert werden.",
+        "path_missing": "Es wurde kein Speicherort gewählt.",
+        "generic": "Das ging schief ({{error}})."
+      }
+    },
+    "chat": {
+      "ask": "Fragen",
+      "askTitle": "Fragen zu dieser Besprechung (Strg+J)",
+      "panelLabel": "Chat",
+      "scope": {
+        "meeting": "Diese Besprechung",
+        "live": "Laufende Besprechung",
+        "global": "Besprechungen"
+      },
+      "close": "Chat schließen",
+      "placeholder": "Frage stellen … („/“ für Recipes)",
+      "inputLabel": "Frage",
+      "send": "Senden",
+      "cancel": "Abbrechen",
+      "cancelled": "Abgebrochen – nichts gespeichert.",
+      "threads": "Verläufe",
+      "newThread": "Neuer Verlauf",
+      "threadUntitled": "Verlauf ohne Titel",
+      "threadCount_one": "{{count}} Nachricht",
+      "threadCount_other": "{{count}} Nachrichten",
+      "deleteThread": "Verlauf löschen",
+      "empty": "Stell eine Frage – jede Aussage der Antwort ist mit einer Stelle belegt.",
+      "you": "Du",
+      "assistant": "Antwort",
+      "stage": {
+        "searching": "Suche passende Stellen …",
+        "reading": "Lese Auszüge …",
+        "answering": "Antworte …",
+        "retry": "Zweiter Anlauf mit weiteren Stellen …"
+      },
+      "notFound": "Dazu steht in den durchsuchten Besprechungen nichts.",
+      "uncited": "ohne Beleg",
+      "uncitedHint": "Diese Antwort nennt keine belegte Stelle – bitte selbst prüfen.",
+      "citation": {
+        "label": "Beleg {{n}}",
+        "jump": "Zur Stelle springen",
+        "deleted": "Besprechung gelöscht",
+        "source": {
+          "title": "Titel",
+          "transcript": "Transkript",
+          "user_notes": "Meine Notizen",
+          "ai_notes": "KI-Notizen",
+          "slide": "Folie"
+        }
+      },
+      "coverage": {
+        "live": "Live-Mitschrift.",
+        "searched_one": "Durchsucht: {{count}} Besprechung.",
+        "searched_other": "Durchsucht: {{count}} Besprechungen.",
+        "readGlobal": "Gelesen: {{meetings}}, {{excerpts}}.",
+        "read": "Gelesen: {{excerpts}}.",
+        "meetings_one": "{{count}} Besprechung",
+        "meetings_other": "{{count}} Besprechungen",
+        "excerpts_one": "{{count}} Stelle",
+        "excerpts_other": "{{count}} Stellen",
+        "unread_one": "{{count}} weitere mit Treffern nicht gelesen – Frage eingrenzen.",
+        "unread_other": "{{count}} weitere mit Treffern nicht gelesen – Frage eingrenzen.",
+        "truncated": "Es gab mehr passende Stellen, als gelesen werden konnten.",
+        "secondRound": "Zweiter Suchlauf.",
+        "lexicalOnly": "Nur Stichwortsuche.",
+        "cpuLimited": "CPU: weniger Auszüge gelesen.",
+        "dropped_one": "{{count}} ungültiger Beleg verworfen.",
+        "dropped_other": "{{count}} ungültige Belege verworfen."
+      },
+      "remote": {
+        "bar": "Antworten erzeugt {{provider}}. Ausschnitte aus deinen Besprechungen werden dorthin übertragen.",
+        "confirmTitle": "Ausschnitte an {{provider}} senden?",
+        "confirmBody": "Für die Antwort gehen Ausschnitte aus Transkript und Notizen an {{provider}}. Diese Bestätigung gilt für diesen Anbieter und wird nicht erneut abgefragt.",
+        "confirm": "Senden",
+        "cancel": "Abbrechen"
+      },
+      "errors": {
+        "no_provider": "Kein KI-Anbieter eingerichtet (Einstellungen → Nachbearbeitung).",
+        "no_model": "Für den KI-Anbieter ist kein Modell eingetragen.",
+        "memory_low": "Zu wenig freier Arbeitsspeicher für das lokale Modell. Bitte andere Programme schließen.",
+        "recording_active_cpu": "Während der Aufnahme antwortet das lokale Modell nur mit Grafikkarte – sonst leidet die Mitschrift.",
+        "chat_busy": "Es läuft schon eine Frage. Bitte kurz warten.",
+        "empty_scope": "In dieser Eingrenzung gibt es keine Besprechungen.",
+        "llm_failed": "Das Sprachmodell hat nicht geantwortet. Bitte erneut versuchen.",
+        "cancelled": "Abgebrochen – nichts gespeichert.",
+        "recipe_invalid": "Das Recipe passt hier nicht oder ist unvollständig.",
+        "invalid_request": "Die Frage ist leer oder zu lang.",
+        "meeting_not_found": "Die Besprechung gibt es nicht mehr.",
+        "thread_not_found": "Der Verlauf wurde gelöscht.",
+        "store_failed": "Die Antwort konnte nicht gespeichert werden.",
+        "unknown": "Die Frage ist fehlgeschlagen ({{code}})."
+      },
+      "list": {
+        "askAll": "Alle Besprechungen fragen",
+        "select": "Auswählen",
+        "selectDone": "Auswahl beenden",
+        "selected_one": "{{count}} ausgewählt",
+        "selected_other": "{{count}} ausgewählt",
+        "askSelection": "Auswahl fragen",
+        "selectRow": "{{title}} auswählen"
+      },
+      "scopeChips": {
+        "label": "Eingrenzung",
+        "all": "Alle Besprechungen",
+        "folder": "Ordner: {{name}}",
+        "from": "Ab {{date}}",
+        "to": "Bis {{date}}",
+        "person": "Person: {{name}}",
+        "selection_one": "{{count}} Besprechung",
+        "selection_other": "{{count}} Besprechungen",
+        "remove": "{{label}} entfernen"
+      }
+    },
+    "mcp": {
+      "title": "Lokaler MCP-Server (nur lesend)",
+      "description": "Lässt einen KI-Client auf diesem Rechner (Claude, Codex) deine fertigen Besprechungen suchen und lesen. Der Server läuft nur, solange der Client ihn startet, verändert nichts und braucht kein Netzwerk. Standardmäßig aus.",
+      "warning": "Dein KI-Client (Claude, Codex) sendet gelesene Besprechungsinhalte an seinen Anbieter. Sie enthalten Aussagen Dritter (§ 201 StGB, DSGVO): nur einschalten, wenn alle Beteiligten damit einverstanden sind.",
+      "transcript": "Transkript freigeben",
+      "transcriptDescription": "Der Client darf auch das Wortprotokoll lesen (Werkzeug get_transcript und Treffer im Transkript). Ohne Häkchen sieht er nur Notizen, KI-Notizen und Protokoll.",
+      "connect": "Mit einem KI-Client verbinden",
+      "connectDescription": "Diese Angabe im Client eintragen. Der Client startet den Server selbst; ein Neustart der App ist nicht nötig.",
+      "clients": {
+        "claude-code": "Claude Code",
+        "claude-desktop": "Claude Desktop",
+        "codex": "Codex"
+      },
+      "copy": "Kopieren",
+      "copied": "Kopiert.",
+      "copyFailed": "Kopieren nicht möglich – bitte den Text markieren."
+    },
+    "recipes": {
+      "bar": "Recipes",
+      "menu": "Recipe wählen",
+      "manage": "Recipes verwalten",
+      "noMatch": "Kein Recipe passt.",
+      "remove": "Recipe entfernen",
+      "missing": "Bitte „{{label}}“ ausfüllen.",
+      "chooseFolder": "Ordner wählen",
+      "builtin": "Mitgeliefert",
+      "readonly": "Mitgelieferte Recipes sind schreibgeschützt – zum Anpassen duplizieren.",
+      "empty": "Noch keine Recipes.",
+      "duplicate": "Duplizieren",
+      "edit": "Bearbeiten",
+      "delete": "Löschen",
+      "new": "Neues Recipe",
+      "save": "Speichern",
+      "cancel": "Abbrechen",
+      "close": "Schließen",
+      "fieldTitle": "Titel",
+      "fieldPrompt": "Anweisung",
+      "promptHint": "Variablen in doppelten geschweiften Klammern, z. B. {{example}}.",
+      "fieldScope": "Gilt für",
+      "scope": {
+        "meeting": "Eine Besprechung",
+        "global": "Viele Besprechungen",
+        "any": "Beides"
+      },
+      "liveOk": "Auch während der Aufnahme anbieten",
+      "variables": "Variablen",
+      "addVariable": "Variable hinzufügen",
+      "removeVariable": "Variable entfernen",
+      "varName": "Name",
+      "varLabel": "Beschriftung",
+      "varKind": "Art",
+      "varRequired": "Pflicht",
+      "kind": {
+        "text": "Text",
+        "person": "Person",
+        "folder": "Ordner",
+        "date_from": "Datum ab",
+        "date_to": "Datum bis",
+        "meeting": "Besprechung"
+      },
+      "errors": {
+        "invalid": "Das Recipe ist ungültig ({{reason}}).",
+        "readonly": "Mitgelieferte Recipes lassen sich nicht ändern.",
+        "not_found": "Das Recipe gibt es nicht mehr.",
+        "generic": "Speichern fehlgeschlagen: {{error}}"
+      }
+    },
+    "langChip": {
+      "chipLabel": "Sprache der Besprechung: {{name}}. Zum Ändern öffnen.",
+      "chipUnknown": "Sprache unbekannt. Zum Festlegen öffnen.",
+      "unknownShort": "Sprache?",
+      "title": "Sprache der Besprechung",
+      "body": "Die Sprache bestimmt, welches Modell passend transkribiert. Das Transkript ändert sich erst mit einer Neu-Transkription; die bisherige Fassung bleibt erhalten.",
+      "select": "Sprache",
+      "source": {
+        "probe": "Erkannt: Spracherkennung des Modells an einer Hörprobe",
+        "text": "Erkannt: am Text geschätzt",
+        "user": "Von dir gewählt",
+        "setting": "Aus der Einstellung „Sprache“ übernommen",
+        "none": "Keine Herkunft gespeichert (ältere Besprechung)"
+      },
+      "model": "Modell: {{model}}",
+      "forcedHint": "Eingestellt war {{forced}}, der Text ist aber {{language}}. Angezeigt wird die Sprache des Textes.",
+      "mismatchHint": "Der Text wirkt wie {{language}}, gewählt ist {{chosen}}. Die Wahl bleibt, bis du sie änderst.",
+      "notCovered": "Das Modell {{model}} deckt {{language}} nicht ab.",
+      "suggestInstalled": "Besser geeignet: {{model}} (installiert).",
+      "suggestMissing": "Besser geeignet: {{model}} (noch nicht installiert, unter Modelle laden).",
+      "save": "Sprache speichern",
+      "saveRetranscribe": "Speichern und neu transkribieren",
+      "translate": "Übersetzen nach …",
+      "cancel": "Abbrechen",
+      "close": "Schließen",
+      "saved": "Sprache auf {{language}} gesetzt."
+    },
+    "translate": {
+      "title": "Übersetzen nach …",
+      "body": "Das lokale Modell übersetzt das Transkript Satz für Satz. Zeitmarken und Sprecher bleiben, das Original bleibt unverändert und jederzeit wählbar.",
+      "source": "Übersetzen aus Fassung",
+      "target": "Zielsprache",
+      "hint": "Zahlen, Eigennamen und die Satzanzahl werden je Satz geprüft; Abweichungen werden markiert, nie still verworfen. Der Fortschritt steht in der Bedienspalte, ein Stopp legt keine Fassung an.",
+      "start": "Übersetzen",
+      "cancel": "Abbrechen",
+      "close": "Schließen",
+      "done": "Fassung v{{number}} ({{language}}) ist fertig.",
+      "compare": "Vergleichen",
+      "noMerge": "Original und Übersetzung lassen sich nicht zusammenführen.",
+      "allChecked": "Alle Sätze haben die Prüfung auf Zahlen, Namen und Satzanzahl bestanden.",
+      "flaggedSummary_one": "{{count}} Satz ist markiert: bitte prüfen.",
+      "flaggedSummary_other": "{{count}} Sätze sind markiert: bitte prüfen.",
+      "onlyFlagged": "Nur markierte Sätze zeigen",
+      "region": "Original und Übersetzung Satz für Satz",
+      "original": "Original {{language}}",
+      "translation": "Übersetzung {{language}}",
+      "reasons": {
+        "numbers": "Zahl weicht ab",
+        "names": "Name fehlt",
+        "sentences": "Satzanzahl weicht ab",
+        "empty": "leer",
+        "length": "Länge auffällig",
+        "not_translated": "nicht übersetzt"
+      }
+    },
+    "basis": {
+      "variant": "Grundlage (Fassung des Transkripts)",
+      "outputLanguage": "Sprache des Dokuments",
+      "sameAsBasis": "Wie die Grundlage",
+      "hint": "Die Wahl steht im Kopf des Protokolls und im Info-Dialog. Standard ist die aktive Fassung und die Sprache der App bzw. deine letzte Wahl.",
+      "original": "Original",
+      "translation": "Übersetzung",
+      "withLanguage": "{{variant}} ({{language}})",
+      "lineMinutes": "Grundlage: {{basis}} · Protokoll auf {{language}}",
+      "lineMinutesSame": "Grundlage: {{basis}} · Protokoll in der Sprache der Grundlage",
+      "lineNotes": "Grundlage: {{basis}} · KI-Notizen auf {{language}}",
+      "lineNotesSame": "Grundlage: {{basis}} · KI-Notizen in der Sprache der Grundlage"
+    },
+    "variants": {
+      "compareTab": "Vergleich",
+      "chip": "Fassung v{{number}} · {{kind}}",
+      "chipLabel": "Transkript-Fassung wählen",
+      "menuLabel": "Fassungen",
+      "itemLabel": "v{{number}} · {{kind}} · {{count}} Segmente",
+      "itemActive": "{{label}} (aktiv)",
+      "itemLabelFlagged": "{{label}} · {{flagged}} markiert",
+      "compare": "Vergleichen",
+      "activated": "Fassung v{{number}} ist jetzt aktiv.",
+      "kinds": {
+        "subtitles_manual": "Untertitel (manuell)",
+        "subtitles_auto": "Untertitel (automatisch)",
+        "stt": "Eigene Transkription",
+        "merged": "Zusammengeführt",
+        "retranscribed": "Neu transkribiert",
+        "translation": "Übersetzung"
+      },
+      "errors": {
+        "variant_busy": "Die Besprechung wird gerade verarbeitet. Bitte warten, bis es fertig ist.",
+        "variant_not_found": "Die Fassung gibt es nicht mehr.",
+        "variant_empty": "Die Fassung enthält keinen Text.",
+        "variant_no_rerun": "Es läuft keine Neu-Transkription.",
+        "variant_store_failed": "Die Fassung konnte nicht gespeichert werden. {{detail}}",
+        "merge_same_variant": "Bitte zwei verschiedene Fassungen wählen.",
+        "merge_empty": "Eine der Fassungen enthält keinen Text.",
+        "merge_llm_failed": "Das Sprachmodell hat nicht geantwortet. {{detail}}",
+        "merge_rejected": "Die Zusammenführung wurde verworfen: Das Modell hat Text erfunden oder das Format verletzt. Es entsteht keine neue Fassung.",
+        "merge_timeout": "Die Zusammenführung hat zu lange gedauert.",
+        "translate_empty": "Es gibt keinen Text zu übersetzen.",
+        "translate_same_language": "Die Zielsprache ist die Sprache der Fassung. Bitte eine andere Zielsprache wählen.",
+        "translate_cancelled": "Die Übersetzung wurde gestoppt. Es ist keine Fassung entstanden.",
+        "translate_llm_failed": "Das Sprachmodell hat nicht geantwortet. Es ist keine Fassung entstanden. {{detail}}",
+        "translate_rejected": "Mehr als die Hälfte der Abschnitte war unbrauchbar. Es ist keine Fassung entstanden.",
+        "translate_timeout": "Die Übersetzung hat zu lange gedauert.",
+        "no_provider": "Es ist kein Sprachmodell eingerichtet.",
+        "no_model": "Es ist kein Sprachmodell gewählt."
+      },
+      "diff": {
+        "title": "Fassungen vergleichen",
+        "baseLabel": "Fassung A (Basis)",
+        "otherLabel": "Fassung B",
+        "chooseA": "Fassung A wählen",
+        "chooseB": "Fassung B wählen",
+        "merge": "Zusammenführen",
+        "merging": "Wird zusammengeführt …",
+        "mergeHint": "Das lokale Modell verbessert den Text von A mit Hilfe von B und legt eine dritte Fassung an. Erfundener Text wird verworfen.",
+        "legendDel": "nur in A (gelöscht)",
+        "legendIns": "nur in B (eingefügt)",
+        "same": "Die beiden Fassungen sind wortgleich.",
+        "loading": "Lädt …",
+        "need": "Für den Vergleich braucht es zwei Fassungen.",
+        "merged": "Dritte Fassung v{{number}} angelegt. Sie ist noch nicht aktiv.",
+        "region": "Unterschiede je Zeile"
+      },
+      "youtube": {
+        "needTool": "Für Untertitel und Transkription yt-dlp selbst installieren und in den Einstellungen „privat“ einschalten.",
+        "subtitles": "Untertitel laden",
+        "subtitlesBusy": "Suche Untertitel …",
+        "pick": "Sprache der Untertitel",
+        "load": "Laden",
+        "noSubtitles": "Dieses Video hat keine Untertitel. Es bleibt die eigene Transkription.",
+        "own": "Eigene Transkription",
+        "ownBusy": "Transkription läuft …",
+        "loaded": "Untertitel „{{name}}“ sind als Fassung angelegt.",
+        "ownDone": "Die eigene Transkription ist fertig.",
+        "trackManual": "{{name}} (hochgeladen)",
+        "trackAuto": "{{name}} (automatisch)",
+        "tools": "Untertitel und Transkription"
+      }
+    },
+    "slides": {
+      "tab": "Folien",
+      "summary_one": "{{count}} Folie",
+      "summary_other": "{{count}} Folien",
+      "showHidden": "Ausgeblendete anzeigen ({{count}})",
+      "allHidden": "Alle Folien sind ausgeblendet.",
+      "alt": "Folie {{number}}",
+      "numberTime": "Folie {{number}} · {{time}}",
+      "mark": "Folie {{number}}",
+      "playFrom": "Ab {{time}} abspielen",
+      "open": "Folie in Großansicht öffnen",
+      "enlarge": "Großansicht",
+      "hide": "Ausblenden",
+      "unhide": "Wieder einblenden",
+      "hiddenNote": "ausgeblendet",
+      "viewerTitle": "Folie {{number}} von {{total}}",
+      "close": "Schließen",
+      "previous": "Zurück",
+      "next": "Weiter",
+      "visibleAt": "Zu sehen: {{ranges}}",
+      "text": "Text der Folie",
+      "detect": "Folien erkennen",
+      "detectHint": "Sucht im Video die Folien und legt sie als Vorschaubilder ab.",
+      "detectBusy": "Für diese Besprechung läuft bereits eine Verarbeitung.",
+      "done_one": "{{count}} Folie erkannt.",
+      "done_other": "{{count}} Folien erkannt.",
+      "stopped_one": "Folienerkennung gestoppt. {{count}} Folie bleibt erhalten.",
+      "stopped_other": "Folienerkennung gestoppt. {{count}} Folien bleiben erhalten.",
+      "importOption": "Folien erkennen",
+      "importOptionHint": "Bei Videos werden nach dem Import die Folien gesucht. Das läuft im Hintergrund.",
+      "errors": {
+        "recordingActive": "Eine Aufnahme läuft. Die Folien lassen sich danach erkennen.",
+        "notFinished": "Die Besprechung wird noch verarbeitet. Die Folien lassen sich danach erkennen.",
+        "noVideo": "Zu dieser Besprechung gibt es keine Videodatei.",
+        "videoMissing": "Die Videodatei wurde nicht gefunden.",
+        "ffmpegMissing": "Die Folienerkennung braucht ffmpeg, das nicht gefunden wurde.",
+        "ffmpegFailed": "Das Video ließ sich nicht lesen.",
+        "diskFull": "Der Speicherplatz reicht nicht für die Folienbilder.",
+        "tooLong": "Das Video ist für die Folienerkennung zu lang.",
+        "failed": "Die Folienerkennung ist fehlgeschlagen.",
+        "slideNotFound": "Diese Folie gibt es nicht mehr."
+      }
+    },
+    "provenance": {
+      "menu": "Herkunft",
+      "menuLabel": "Aktionen",
+      "title": "Herkunft",
+      "model": "Modell",
+      "tokens": "Token",
+      "tokensValue": "{{input}} ein · {{output}} aus",
+      "duration": "Dauer",
+      "time": "Zeitpunkt",
+      "sources": "Quellen",
+      "openSlide": "Folie anzeigen",
+      "confidence": "Konfidenz",
+      "trigger": "Auslöser",
+      "operation": "Vorgang",
+      "origin": "Angabe",
+      "originRecorded": "bei der Erzeugung festgehalten",
+      "originDerived": "aus älteren Daten rekonstruiert",
+      "empty": "Zu diesem Inhalt liegen keine Herkunftsangaben vor.",
+      "unknown": "unbekannt",
+      "local": "lokal",
+      "remote": "extern",
+      "loading": "Lädt …",
+      "failed": "Die Herkunft konnte nicht gelesen werden.",
+      "close": "Schließen",
+      "actor": {
+        "user": "Nutzer",
+        "auto": "Automatik",
+        "workflow": "Workflow",
+        "agent_external": "Externer Agent",
+        "agent_local": "Lokaler Agent"
+      }
     }
   },
   "micSelector": {
@@ -1741,9 +3428,11 @@
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",
+    "ramApp": "RAM {{used}} / {{total}} GB (App {{app}})",
     "gpu": "GPU {{used}} / {{total}} GB",
+    "gpuApp": "GPU {{used}} / {{total}} GB (App {{app}})",
     "gpuShared": "GPU (gemeinsam) {{used}} / {{total}} GB",
-    "hint": "RAM: verwendet / gesamt. GPU: belegt / Budget des Treibers — kein „freier VRAM“."
+    "hint": "RAM: verwendet / gesamt. GPU: belegt / Budget des Treibers — kein „freier VRAM“. App = Local Voice AI inkl. Modell-Server und Webansicht."
   },
   "help": {
     "title": "Hilfe",
@@ -1781,5 +3470,1359 @@
   },
   "guard": {
     "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
+  },
+  "automations": {
+    "agent": {
+      "operation": {
+        "agent_route": "Werkzeug gewählt (lokaler Agent)",
+        "agent_extract": "Aufgaben, Fristen und Entscheidungen extrahiert"
+      },
+      "kinds": {
+        "todos": "To-dos",
+        "deadlines": "Fristen",
+        "decisions": "Entscheidungen"
+      },
+      "sendsMail": "sendet an andere",
+      "runsAction": "Baustein: {{action}}",
+      "toolFields": "Felder, die das Modell füllt: {{fields}}",
+      "dateKind": "Zeitangabe",
+      "unknownTool": "Dieses Werkzeug gibt es nicht (mehr). Bitte abwählen.",
+      "modelDefault": "Standard-Router",
+      "modelNotLoaded": "{{id}} (nicht geladen)",
+      "previewTitle": "Mit Beispieltext ausprobieren",
+      "previewHintRoute": "Das Modell entscheidet jetzt für diesen Schritt, ohne dass etwas geschieht: keine Mitteilung, keine Mail, keine Freigabe, kein Eintrag in der Herkunft. Ohne Beispieltext gilt das Feld „Daten für die Wahl“.",
+      "previewHintExtract": "Das Modell zieht aus dem Beispieltext (eine Zeile je Satz) To-dos, Fristen und Entscheidungen, ohne dass etwas geschieht. Im Lauf liest der Schritt das Transkript der Besprechung.",
+      "sample": "Beispieltext",
+      "samplePlaceholder": "Zum Beispiel: Frau Berg schickt das Angebot bis übermorgen an den Kunden.",
+      "try": "Mit Beispieltext ausprobieren",
+      "trying": "Das Modell entscheidet …",
+      "noEffect": "Keine Wirkung (Trockenlauf)",
+      "busy": "Der Platz für schwere Schritte ist belegt ({{reason}}). Bitte in etwa {{seconds}} s noch einmal versuchen.",
+      "previewUnreadable": "Die Antwort der Vorschau ließ sich nicht lesen.",
+      "chosen": "Gewähltes Werkzeug: {{tool}}",
+      "recipients": "Empfänger (vom Programm gebildet): {{list}}",
+      "passed": "Begründung: Die Politik hat die Wahl geprüft (Werkzeugliste, Empfänger, Obergrenze, Felder) und durchgelassen. Ausgeführt wird sie nur, wenn ein folgender Schritt mit passender Bedingung sie aufgreift.",
+      "noAction": "Keine Aktion gewählt",
+      "noReason": "Das Modell nannte keinen Grund.",
+      "signals": "Erkannte Aufforderung an die KI im Text: {{list}}",
+      "noItems": "Nichts gefunden.",
+      "counts": "{{todos}} To-dos, {{deadlines}} Fristen, {{decisions}} Entscheidungen",
+      "tokens": "Token: {{input}} ein, {{output}} aus",
+      "confidence": "Konfidenz {{value}} %",
+      "origin": "Herkunft",
+      "segment": "Segment {{n}}",
+      "openSegment": "In der Besprechung an dieser Stelle öffnen"
+    },
+    "title": "Automationen",
+    "loading": "Automationen werden geladen …",
+    "loadError": "Die Automationen ließen sich nicht laden.",
+    "tabs": {
+      "flows": "Abläufe",
+      "runs": "Läufe"
+    },
+    "new": "Neuer Ablauf",
+    "empty": "Es gibt noch keine Abläufe.",
+    "emptyHint": "Ein Ablauf führt auf einen Auslöser hin Schritte aus, etwa „Termin beginnt → aufzeichnen → Protokoll → Mail“. Starten Sie mit einer Vorlage.",
+    "steps_one": "{{count}} Schritt",
+    "steps_other": "{{count}} Schritte",
+    "enabled": "An",
+    "disabled": "Aus",
+    "enabledLabel": "Ablauf „{{name}}“ einschalten",
+    "lastRun": "Letzter Lauf:",
+    "noRun": "Noch kein Lauf",
+    "openRuns_one": "{{count}} Lauf offen",
+    "openRuns_other": "{{count}} Läufe offen",
+    "mode": {
+      "dry": "Trockenlauf",
+      "armed": "Scharf",
+      "dryHint": "Im Trockenlauf plant jeder Lauf nur: es wird nichts geschrieben, gesendet oder aufgenommen. Schalten Sie scharf, wenn der Plan stimmt.",
+      "arm": "Scharf schalten",
+      "disarm": "Zurück in den Trockenlauf",
+      "armAsk": "„{{name}}“ wirklich scharf schalten? Danach wirken die Schritte tatsächlich. Mails an Teilnehmende und Aufnahmen fragen weiterhin vorher nach, wenn das Recht auf „fragen“ steht.",
+      "armedNow": "„{{name}}“ ist scharf geschaltet.",
+      "disarmedNow": "„{{name}}“ ist wieder im Trockenlauf."
+    },
+    "edit": "Bearbeiten",
+    "planShow": "Trockenlauf anzeigen",
+    "exportJson": "Exportieren",
+    "plan": {
+      "title": "Trockenlauf: {{name}}",
+      "description": "Was würde der Ablauf tun, und dürfte er es? Es wird nichts geschrieben, gesendet oder aufgenommen.",
+      "failed": "Der Trockenlauf ließ sich nicht berechnen.",
+      "loading": "Der Plan wird berechnet …",
+      "invalid": "Die Definition ist ungültig, deshalb gibt es keinen Plan:",
+      "summary": "{{steps}} Schritte: {{allowed}} erlaubt, {{ask}} fragen vorher, {{denied}} abgelehnt, {{invalid}} ungültig.",
+      "runsThrough": "Der Ablauf liefe ohne Eingriff durch.",
+      "needsWork": "Es braucht noch Rechte oder Korrekturen.",
+      "sample": "Die Daten des Auslösers sind Beispieldaten.",
+      "varsWithout": "Variablen ohne Vorgabe (müssen beim Start mitgegeben werden): {{names}}",
+      "condition": "Bedingung {{expr}}: {{result}}",
+      "heavy": "Schwere Arbeit: {{what}} (etwa {{ram}} GB Arbeitsspeicher), läuft nacheinander.",
+      "unresolved": "Wird erst beim Lauf bekannt: {{refs}}",
+      "params": "Parameter",
+      "status": {
+        "planned": "geplant",
+        "skipped": "übersprungen",
+        "invalid": "ungültig"
+      },
+      "cond": {
+        "true": "wahr",
+        "false": "falsch, Schritt entfällt",
+        "unknown": "hängt von einem Vorschritt ab",
+        "error": "Fehler"
+      },
+      "perm": {
+        "allowed": "erlaubt",
+        "needs_approval": "fragt vorher",
+        "denied": "abgelehnt",
+        "invalid": "ungültig",
+        "not_required": "kein Recht nötig"
+      }
+    },
+    "probe": "Probelauf starten",
+    "startNow": "Jetzt starten",
+    "startNowDisabled": "Nur für einen eingeschalteten, scharfen Ablauf.",
+    "runsOf": "Läufe",
+    "export": {
+      "title": "„{{name}}“ exportieren",
+      "description": "Die Definition als JSON. Sie enthält keine Zugangsdaten, nur Kennungen aus dem Register der Integrationen.",
+      "copy": "Kopieren",
+      "copied": "Kopiert",
+      "copyFailed": "Das Kopieren ist nicht gelungen. Markieren Sie den Text von Hand.",
+      "toFile": "Als Datei speichern …",
+      "saved": "Gespeichert: {{path}}",
+      "text": "Definition als JSON"
+    },
+    "delete": "Löschen",
+    "deleteAsk": "„{{name}}“ endgültig löschen?",
+    "deleted": "„{{name}}“ wurde gelöscht.",
+    "cancel": "Abbrechen",
+    "close": "Schließen",
+    "back": "Zurück",
+    "errors": {
+      "generic": "Das hat nicht geklappt.",
+      "templateBroken": "Die Vorlage ließ sich nicht lesen.",
+      "unreadable": "Die Definition dieses Ablaufs ließ sich nicht lesen."
+    },
+    "status": {
+      "cloudTitle_one": "{{count}} Datei liegt nur in der Cloud und wird nicht verarbeitet",
+      "cloudTitle_other": "{{count}} Dateien liegen nur in der Cloud und werden nicht verarbeitet",
+      "cloudFile": "{{file}} (Ablauf „{{workflow}}“)",
+      "cloudHint": "OneDrive-Platzhalter werden nie heruntergeladen. Machen Sie die Datei „immer auf diesem Gerät verfügbar“, dann läuft sie mit.",
+      "channelTitle_one": "{{count}} YouTube-Kanal antwortet nicht",
+      "channelTitle_other": "{{count}} YouTube-Kanäle antworten nicht",
+      "channelLine": "{{channel}} (Ablauf „{{workflow}}“): {{failures}} Fehlversuche in Folge",
+      "lastOk": "zuletzt erreichbar {{time}}",
+      "channelHint": "Neue Videos werden nachgeholt, sobald der Kanal wieder antwortet. Nichts geht verloren."
+    },
+    "templates": {
+      "title": "Neuer Ablauf",
+      "description": "Wählen Sie eine Vorlage. Sie wird im nächsten Schritt angepasst (Ordner, Kalender, Konten) und erst mit „Speichern“ angelegt.",
+      "use": "Diese Vorlage verwenden",
+      "blank": "Leerer Ablauf",
+      "blankHint": "Sie wählen Auslöser und Schritte selbst.",
+      "useBlank": "Leer beginnen",
+      "names": {
+        "vorlage-besprechung": "Termin: aufzeichnen, Protokoll, Mail",
+        "eingangsordner-word": "Eingangsordner: transkribieren, Protokoll als Word"
+      }
+    },
+    "import": {
+      "open": "JSON importieren",
+      "title": "Ablauf importieren",
+      "description": "Fügen Sie die Definition (JSON, lva-workflow@1) ein oder lesen Sie sie aus einer Datei. Der Import wird als neuer Ablauf angelegt, ausgeschaltet und im Trockenlauf.",
+      "chooseFile": "Datei wählen …",
+      "text": "Definition (JSON)",
+      "submit": "Importieren",
+      "invalid_one": "Die Definition ist ungültig ({{count}} Befund):",
+      "invalid_other": "Die Definition ist ungültig ({{count}} Befunde):",
+      "done": "„{{name}}“ wurde importiert (ausgeschaltet, im Trockenlauf)."
+    },
+    "editor": {
+      "titleNew": "Neuer Ablauf",
+      "titleEdit": "Ablauf bearbeiten",
+      "general": "Allgemein",
+      "name": "Name",
+      "description": "Beschreibung",
+      "trigger": "Auslöser",
+      "triggerType": "Was startet den Ablauf?",
+      "triggerAuto": "Startet von selbst, sobald der Ablauf eingeschaltet und scharf geschaltet ist.",
+      "triggerManual": "Startet nur auf Zuruf (hier per Knopf oder durch einen Agenten).",
+      "provides": "Verfügbar in Schritten: {{fields}}",
+      "variables": "Variablen",
+      "steps": "Schritte",
+      "noSteps": "Noch kein Schritt. Fügen Sie unten einen Baustein hinzu.",
+      "addStep": "Schritt hinzufügen",
+      "addStepPlaceholder": "Baustein wählen …",
+      "stepTitle": "Schritt {{n}}: {{title}}",
+      "moveUp": "Schritt {{n}} nach oben",
+      "moveDown": "Schritt {{n}} nach unten",
+      "removeStep": "Schritt {{n}} entfernen",
+      "action": "Baustein",
+      "stepId": "Kennung",
+      "stepIdRule": "Kleinbuchstaben, Ziffern und _, mit einem Buchstaben beginnend (höchstens 32 Zeichen).",
+      "stepIdHint": "Spätere Schritte beziehen sich über die Kennung „{{id}}“ auf diesen Schritt.",
+      "stepLabel": "Bezeichnung (optional)",
+      "when": "Bedingung (optional)",
+      "whenHint": "Der Schritt läuft nur, wenn die Bedingung stimmt. Leer: immer.",
+      "heavy": "braucht {{what}} (läuft nacheinander)",
+      "needsRight": "Recht: {{right}}",
+      "errorRules": "Fehlerregel und Wiederholung",
+      "onError": "Bei Fehler",
+      "onErrorFail": "Lauf beenden",
+      "onErrorContinue": "Weitermachen",
+      "maxAttempts": "Versuche (1–10)",
+      "backoff": "Wartezeit in ms",
+      "yes": "Ja",
+      "choose": "Wählen …",
+      "chooseIntegration": "Integration wählen …",
+      "unknownIntegration": "{{id}} (nicht im Register)",
+      "listPlaceholder": "Werte mit Komma trennen",
+      "anyPlaceholder": "Text, Zahl oder JSON",
+      "fromVariable": "Aus Variable",
+      "fixedValue": "Fester Wert",
+      "discardAsk": "Es gibt ungespeicherte Änderungen. Verwerfen?",
+      "discard": "Verwerfen",
+      "keepEditing": "Weiter bearbeiten",
+      "issues_one": "{{count}} Befund der Prüfung:",
+      "issues_other": "{{count}} Befunde der Prüfung:",
+      "notSaved_one": "Nicht gespeichert: {{count}} Befund.",
+      "notSaved_other": "Nicht gespeichert: {{count}} Befunde.",
+      "save": "Speichern",
+      "saved": "Gespeichert. Ein geänderter Ablauf bleibt im Trockenlauf, bis Sie ihn scharf schalten.",
+      "plan": "Trockenlauf anzeigen",
+      "actions": "Aktionen"
+    },
+    "variables": {
+      "empty": "Keine Variablen. Variablen machen einen Ablauf einstellbar, etwa den Namen der Protokollvorlage.",
+      "name": "Name",
+      "type": "Art",
+      "types": {
+        "string": "Text",
+        "number": "Zahl",
+        "bool": "Ja/Nein",
+        "list": "Liste"
+      },
+      "default": "Vorgabe",
+      "description": "Beschreibung",
+      "remove": "Variable {{name}} entfernen",
+      "add": "Variable hinzufügen"
+    },
+    "fields": {
+      "task": {
+        "label": "Aufgabe",
+        "hint": "Was das Modell entscheiden soll, in einem Satz. Ein fester Text, nie aus Daten."
+      },
+      "context": {
+        "label": "Daten für die Wahl",
+        "hint": "Zum Beispiel das Ergebnis eines früheren Schritts. Das Modell behandelt sie als Daten, nie als Anweisung."
+      },
+      "tools": {
+        "label": "Freigegebene Werkzeuge",
+        "hint": "Das Modell darf nur aus dieser Liste wählen (höchstens {{max}}). Ausgeführt wird nur, was ein folgender Schritt mit passender Bedingung tut – mit eigenem Recht und eigener Freigabe."
+      },
+      "recipients": {
+        "label": "Empfängerregel",
+        "hint": "Die Empfänger bildet das Programm aus dieser Regel, nie das Modell."
+      },
+      "max_actions": {
+        "label": "Höchstens Aktionen je Lauf",
+        "hint": "1 bis 10; zählt über alle „Werkzeug wählen“-Schritte des Laufs."
+      },
+      "model": {
+        "label": "Modell",
+        "hint": "Nur ein geladenes lokales Modell; ohne Angabe der Standard-Router."
+      },
+      "reference_date": {
+        "label": "Bezugsdatum",
+        "hint": "Für „morgen“, „Freitag“ usw. (JJJJ-MM-TT); leer: heute."
+      },
+      "kinds": {
+        "label": "Was gezogen wird",
+        "hint": "Ohne Auswahl: To-dos, Fristen und Entscheidungen."
+      },
+      "via": {
+        "label": "Integration",
+        "hint": "Das Konto oder der Ordner, über den der Schritt läuft."
+      },
+      "stop": {
+        "label": "Aufnahme beenden"
+      },
+      "max_minutes": {
+        "label": "Längstens (Minuten)"
+      },
+      "title": {
+        "label": "Titel"
+      },
+      "path": {
+        "label": "Pfad"
+      },
+      "project": {
+        "label": "Projekt (Kennung)"
+      },
+      "template": {
+        "label": "Vorlage",
+        "hint": "Name oder Kennung; leer: Standard, auto: nach Inhalt."
+      },
+      "variant_id": {
+        "label": "Fassung des Transkripts"
+      },
+      "output_language": {
+        "label": "Sprache des Dokuments"
+      },
+      "source": {
+        "label": "Quelle",
+        "hint": "minutes, notes, transcript oder ein Text."
+      },
+      "style": {
+        "label": "Stil",
+        "hint": "kurz, mittel, lang oder management."
+      },
+      "format": {
+        "label": "Format"
+      },
+      "target": {
+        "label": "Zielordner"
+      },
+      "name": {
+        "label": "Dateiname"
+      },
+      "subfolder": {
+        "label": "Unterordner"
+      },
+      "content": {
+        "label": "Inhalt"
+      },
+      "to": {
+        "label": "Empfänger",
+        "hint": "Empfänger werden nie aus Daten gebildet, nur aus dieser Regel."
+      },
+      "list": {
+        "label": "Feste Liste",
+        "hint": "Adressen mit Komma trennen."
+      },
+      "subject": {
+        "label": "Betreff"
+      },
+      "body": {
+        "label": "Text"
+      },
+      "attach": {
+        "label": "Anhänge",
+        "hint": "Liste von Pfaden, z. B. die Datei aus einem früheren Schritt."
+      },
+      "draft": {
+        "label": "Nur als Entwurf"
+      },
+      "event": {
+        "label": "Termin"
+      },
+      "text": {
+        "label": "Text"
+      },
+      "mode": {
+        "label": "Schreibweise"
+      },
+      "section": {
+        "label": "Abschnitt"
+      },
+      "query": {
+        "label": "Suchbegriff"
+      },
+      "limit": {
+        "label": "Höchstens Treffer"
+      },
+      "profile": {
+        "label": "Themenprofil"
+      },
+      "folder": {
+        "label": "Unterordner"
+      },
+      "video_id": {
+        "label": "Video-Kennung"
+      },
+      "channel": {
+        "label": "Kanal"
+      },
+      "url": {
+        "label": "Adresse"
+      },
+      "video": {
+        "label": "Video"
+      },
+      "voice": {
+        "label": "Stimme"
+      },
+      "minutes": {
+        "label": "Minuten"
+      },
+      "every": {
+        "label": "Wie oft"
+      },
+      "at": {
+        "label": "Uhrzeit",
+        "hint": "z. B. 08:00"
+      },
+      "weekdays": {
+        "label": "Wochentage",
+        "hint": "Nur bei „Wöchentlich“, als JSON-Liste."
+      },
+      "integration": {
+        "label": "Quelle (Integration)"
+      },
+      "lead_min": {
+        "label": "Minuten vor Beginn"
+      },
+      "only_meetings": {
+        "label": "Nur Besprechungen"
+      },
+      "title_contains": {
+        "label": "Titel enthält"
+      },
+      "min_attendees": {
+        "label": "Mindestens Teilnehmende"
+      },
+      "stage": {
+        "label": "Stufe"
+      },
+      "extensions": {
+        "label": "Dateiendungen",
+        "hint": "Mit Komma trennen, z. B. wav, mp3."
+      },
+      "stable_seconds": {
+        "label": "Sekunden unverändert",
+        "hint": "So lange darf die Datei sich nicht mehr ändern."
+      },
+      "channel_id": {
+        "label": "Kanal-Kennung",
+        "hint": "UC… mit 24 Zeichen (aus der Kanaladresse)."
+      },
+      "poll_minutes": {
+        "label": "Abruf alle (Minuten)"
+      },
+      "backfill": {
+        "label": "Beim ersten Abruf nachholen",
+        "hint": "Anzahl der neuesten Videos; 0: nur künftige."
+      },
+      "key": {
+        "label": "Schlüssel der Notiz",
+        "hint": "Eine Kennung je Notiz, z. B. video-<ID>: dieselbe Kennung ergibt nie eine zweite Notiz."
+      },
+      "date": {
+        "label": "Datum",
+        "hint": "JJJJ-MM-TT; Vorgabe: Veröffentlichung des Videos."
+      },
+      "entry": {
+        "label": "Eintrag (Sammelnotiz)",
+        "hint": "Z. B. die Video-Kennung: derselbe Eintrag wird ersetzt, ein neuer kommt oben dazu."
+      },
+      "source_title": {
+        "label": "Titel der Quelle"
+      },
+      "source_url": {
+        "label": "Link der Quelle"
+      },
+      "origin": {
+        "label": "Herkunft",
+        "hint": "Ablauf, Lauf und Modell: ein Satz am Ende des Eintrags."
+      },
+      "tags": {
+        "label": "Tags"
+      },
+      "meta": {
+        "label": "Weitere Felder im Frontmatter",
+        "hint": "Objekt aus Namen und Werten, z. B. video_id oder relevanz."
+      },
+      "data_class": {
+        "label": "Datenklasse"
+      },
+      "auto": {
+        "label": "Ohne Freigabe ergänzen",
+        "hint": "Eine vorhandene Notiz auch ohne Freigabe ergänzen, wenn das Recht „erlaubt“ ist. Ohne diese Angabe fragt jede Änderung."
+      },
+      "vault": {
+        "label": "Vault (zusätzlich durchsuchen)",
+        "hint": "Findet auch Notizen, die der Index der Wissensbasis noch nicht kennt."
+      },
+      "threshold": {
+        "label": "Schwelle für „relevant“",
+        "hint": "1 bis 10; Vorgabe 6."
+      },
+      "max_claims": {
+        "label": "Höchstens Aussagen"
+      },
+      "claims": {
+        "label": "Aussagen",
+        "hint": "Ergebnis von „Mit der Wissensbasis abgleichen“ (steps.<id>.claims)."
+      },
+      "score": {
+        "label": "Relevanz (Zahl)"
+      },
+      "reason": {
+        "label": "Begründung"
+      },
+      "published": {
+        "label": "Veröffentlicht"
+      }
+    },
+    "choices": {
+      "recipients": {
+        "me": "Nur ich",
+        "participants": "Teilnehmende",
+        "all": "Alle",
+        "internal": "Nur interne Teilnehmende",
+        "list": "Feste Liste"
+      },
+      "every": {
+        "daily": "Täglich",
+        "weekly": "Wöchentlich"
+      },
+      "stage": {
+        "recording": "Aufnahme beendet",
+        "transcript": "Transkript fertig",
+        "notes": "KI-Notizen fertig",
+        "minutes": "Protokoll fertig"
+      },
+      "stop": {
+        "event_end": "Am Ende des Termins",
+        "manual": "Von Hand",
+        "duration": "Nach fester Dauer"
+      },
+      "format": {
+        "docx": "Word (.docx)",
+        "pdf": "PDF",
+        "md": "Markdown"
+      },
+      "to": {
+        "me": "Nur ich",
+        "participants": "Teilnehmende",
+        "all": "Alle",
+        "list": "Feste Liste"
+      },
+      "content": {
+        "minutes": "Protokoll",
+        "notes": "KI-Notizen",
+        "all": "Alles"
+      },
+      "mode": {
+        "create": "Neu anlegen",
+        "append": "Anhängen"
+      }
+    },
+    "triggers": {
+      "manual": "Von Hand starten",
+      "agent": "Durch einen Agenten starten",
+      "schedule": "Zeitplan",
+      "calendar": {
+        "event_starting": "Termin beginnt",
+        "event_ended": "Termin endet"
+      },
+      "meeting": {
+        "finished": "Besprechung fertig"
+      },
+      "folder": {
+        "file_added": "Datei im Ordner"
+      },
+      "youtube": {
+        "channel_new_video": "Neues Video im Kanal"
+      }
+    },
+    "actions": {
+      "recording": {
+        "start": "Aufnahme starten",
+        "stop": "Aufnahme beenden"
+      },
+      "meeting": {
+        "import": "Datei importieren und transkribieren",
+        "notes": "KI-Notizen erzeugen",
+        "minutes": "Protokoll erzeugen"
+      },
+      "text": {
+        "summarize": "Zusammenfassen"
+      },
+      "export": {
+        "document": "Dokument ablegen"
+      },
+      "mail": {
+        "send": "Mail senden"
+      },
+      "calendar": {
+        "note": "Notiz in den Termin schreiben"
+      },
+      "obsidian": {
+        "note": "Obsidian-Notiz schreiben"
+      },
+      "knowledge": {
+        "search": "Wissen durchsuchen",
+        "rate": "Relevanz bewerten",
+        "reconcile": "Mit der Wissensbasis abgleichen"
+      },
+      "channel": {
+        "report": "Kanal-Management-Summary"
+      },
+      "youtube": {
+        "add_source": "YouTube-Quelle anlegen",
+        "transcript": "YouTube-Transkript holen"
+      },
+      "notify": {
+        "local": "Windows-Mitteilung"
+      },
+      "tts": {
+        "render": "Vorlesen"
+      },
+      "webhook": {
+        "post": "Webhook senden"
+      },
+      "wait": "Warten"
+    },
+    "effectKinds": {
+      "pure": "ändert nichts",
+      "idempotent": "wiederholbar",
+      "external": "wirkt nach außen"
+    },
+    "runs": {
+      "forWorkflow": "Läufe von „{{name}}“",
+      "all": "Alle Läufe, neueste zuerst",
+      "showAll": "Alle zeigen",
+      "openOnly": "Nur offene",
+      "empty": "Noch keine Läufe. Ein Probelauf zeigt, wie ein Lauf aussieht.",
+      "dry": "Trockenlauf",
+      "open": "Öffnen",
+      "loading": "Der Lauf wird geladen …",
+      "origin": "Herkunft des Starts",
+      "created": "Eingereiht",
+      "started": "Gestartet",
+      "ended": "Beendet",
+      "cancelRequested": "Der Abbruch ist vermerkt; der Lauf endet am nächsten Schrittwechsel.",
+      "cancel": "Abbrechen",
+      "cancelled": "Der Lauf wurde abgebrochen.",
+      "cancelPending": "Der Abbruch ist vermerkt; der Lauf endet am nächsten Schrittwechsel.",
+      "retry": "Wiederholen",
+      "retryAccept": "Es ist unklar, ob der Schritt schon gewirkt hat (z. B. eine Mail ging schon hinaus). Ich nehme in Kauf, dass er doppelt wirkt.",
+      "steps": "Schritte",
+      "attempt": "Versuch {{n}}",
+      "wakeAt": "Läuft weiter ab {{time}}",
+      "data": "Daten des Schritts",
+      "input": "Eingabe",
+      "output": "Ergebnis",
+      "provenance": "Herkunft der Ergebnisse",
+      "provenanceDry": "Ein Trockenlauf erzeugt nichts, deshalb gibt es keine Herkunft.",
+      "provenanceInline": "Die Herkunft der KI-Schritte steht bei den Schritten oben.",
+      "provenanceNone": "Dieser Lauf hat (noch) keine Inhalte mit Herkunft erzeugt.",
+      "noModel": "ohne Modell",
+      "local": "lokal",
+      "remote": "extern",
+      "sources_one": "{{count}} Quelle",
+      "sources_other": "{{count}} Quellen",
+      "triggerData": "Daten des Auslösers",
+      "approvalWaiting": "Dieser Lauf wartet auf Ihre Freigabe.",
+      "approvalGone": "Die Freigabe ist nicht mehr offen; der Lauf geht gleich weiter oder endet.",
+      "approvalOpen": "Freigabe prüfen"
+    },
+    "runState": {
+      "queued": "wartet",
+      "running": "läuft",
+      "awaiting_approval": "wartet auf Freigabe",
+      "done": "fertig",
+      "failed": "gescheitert",
+      "cancelled": "abgebrochen"
+    },
+    "stepState": {
+      "running": "läuft",
+      "done": "fertig",
+      "failed": "gescheitert",
+      "retrying": "wird wiederholt",
+      "denied": "abgelehnt",
+      "skipped": "übersprungen",
+      "planned": "geplant",
+      "awaiting_approval": "wartet auf Freigabe",
+      "waiting": "wartet",
+      "uncertain": "Wirkung unklar",
+      "interrupted": "unterbrochen"
+    },
+    "origin": {
+      "trigger": "Auslöser",
+      "manual": "Von Hand",
+      "agent": "Agent"
+    }
+  },
+  "integrations": {
+    "m365": {
+      "dialog": {
+        "title": "Microsoft-365-Konto einrichten",
+        "description": "Mails senden, Dateien in OneDrive ablegen und Notizen an Termine hängen, über deine eigene App-Registrierung in Microsoft Entra. Angemeldet wird im Browser; die App fragt nur die Berechtigungen der eingeschalteten Fähigkeiten an.",
+        "name": "Name",
+        "defaultName": "Microsoft 365",
+        "clientId": "Anwendungs-ID (Client-ID)",
+        "clientIdHint": "Die Anwendungs-ID deiner App-Registrierung. Leer lassen, um die Client-ID des Microsoft-365-Kalenders zu übernehmen. Anleitung: docs/INTEGRATIONEN-M365.md.",
+        "tenant": "Verzeichnis (Mandant)",
+        "tenantHint": "Leer heißt „common“ (Arbeits-, Schul- und private Konten). „consumers“ nur für private Konten.",
+        "capabilities": "Fähigkeiten",
+        "capabilitiesHint": "Die Anmeldung fragt nur die Berechtigungen der eingeschalteten Fähigkeiten an. Eine später eingeschaltete Fähigkeit braucht eine erneute Zustimmung.",
+        "filesMode": "OneDrive-Zugriff",
+        "filesFull": "Ganzes OneDrive (Files.ReadWrite): für Arbeits-, Schul- und private Konten",
+        "filesApp": "Nur der App-Ordner (Files.ReadWrite.AppFolder): nur für private Konten",
+        "filesFolder": "Ordner in OneDrive",
+        "create": "Anlegen"
+      },
+      "caps": {
+        "mail_send": "Follow-up-Mails und Berichte als Mail aus deinem Postfach senden.",
+        "files_write": "Protokolle und Dateien in einen OneDrive-Ordner legen, große Dateien in Stücken.",
+        "calendar_write": "Eine Notiz an den Outlook-Termin einer Besprechung hängen; die Einladung bleibt unverändert."
+      },
+      "panel": {
+        "title": "Microsoft-365-Konto",
+        "loading": "Lade …",
+        "states": {
+          "not_configured": "Nicht eingerichtet: Es fehlt die Client-ID.",
+          "no_capabilities": "Keine Fähigkeit eingeschaltet.",
+          "needs_sign_in": "Anmeldung nötig.",
+          "needs_consent": "Zustimmung erweitern: Eine eingeschaltete Fähigkeit braucht neue Berechtigungen.",
+          "ready": "Angemeldet und bereit."
+        },
+        "account": "Konto: {{account}}",
+        "missing": "Es fehlt die Zustimmung zu: {{scopes}}",
+        "scopes": "Angefragte Berechtigungen",
+        "scopesHint": "Nur die der eingeschalteten Fähigkeiten, dazu die Anmeldung selbst (offline_access) und dein Profil (User.Read).",
+        "save": "Speichern",
+        "saved": "Gespeichert.",
+        "signIn": "Mit Microsoft anmelden",
+        "signInAgain": "Erneut anmelden",
+        "extend": "Zustimmung erweitern",
+        "waiting": "Warte auf die Anmeldung im Browser …",
+        "signOut": "Abmelden",
+        "signedIn": "Angemeldet.",
+        "signedOut": "Abgemeldet. Das Token ist gelöscht.",
+        "checks": "Ausprobieren",
+        "testOk": "Verbunden als {{account}}.",
+        "testMail": "Testmail an mich senden",
+        "testMailOk": "Testmail gesendet. Sieh in deinem Posteingang nach.",
+        "testFile": "Testdatei in OneDrive ablegen",
+        "testFileOk": "Die Datei „{{name}}“ liegt in OneDrive im Ordner „{{folder}}“."
+      },
+      "gate": {
+        "grant_off": "das Recht steht auf „aus“",
+        "integration_disabled": "die Integration ist ausgeschaltet",
+        "capability_not_enabled": "die Fähigkeit ist an diesem Konto nicht eingeschaltet",
+        "capability_not_offered": "das Konto bietet die Fähigkeit nicht an",
+        "direction_blocks": "die Richtung des Kontos erlaubt es nicht",
+        "pending": "es braucht eine Freigabe"
+      },
+      "errors": {
+        "m365_not_configured": "Es ist keine Client-ID eingetragen. Lege eine App-Registrierung an und trage ihre Anwendungs-ID ein.",
+        "m365_no_capability": "Es ist keine Fähigkeit eingeschaltet. Schalte mindestens eine ein, bevor du dich anmeldest.",
+        "m365_capability_off": "Diese Fähigkeit ist an diesem Konto nicht eingeschaltet.",
+        "m365_needs_sign_in": "Die Anmeldung ist abgelaufen oder wurde widerrufen. Bitte melde dich unter Integrationen neu an.",
+        "m365_needs_consent": "Für die eingeschalteten Fähigkeiten fehlen noch Berechtigungen ({{detail}}). Bitte unter Integrationen erneut anmelden und zustimmen.",
+        "m365_denied": "Microsoft hat den Zugriff abgelehnt: {{detail}}",
+        "m365_not_found": "Nicht gefunden: {{detail}}",
+        "m365_storage_full": "Der OneDrive-Speicher ist voll.",
+        "m365_throttled": "Microsoft drosselt die Abfragen. Nächster Versuch in {{detail}} min.",
+        "m365_http": "Microsoft Graph antwortet mit einem Fehler (HTTP {{detail}}).",
+        "m365_network": "Keine Verbindung: {{detail}}",
+        "m365_timeout": "Zeitüberschreitung bei Microsoft.",
+        "m365_uncertain": "Unklar, ob die Aktion ausgeführt wurde ({{detail}}). Bitte erst prüfen (z. B. Ordner „Gesendet“), bevor du es erneut versuchst.",
+        "m365_parse": "Die Antwort von Microsoft ist nicht lesbar.",
+        "m365_invalid": "{{detail}}",
+        "m365_cancelled": "Abgebrochen.",
+        "m365_sign_in_timeout": "Die Anmeldung wurde nicht innerhalb von 5 Minuten abgeschlossen.",
+        "m365_browser": "Der Browser konnte nicht geöffnet werden: {{detail}}",
+        "m365_listener": "Die lokale Anmelde-Schnittstelle konnte nicht gestartet werden: {{detail}}",
+        "m365_config": "{{detail}}",
+        "m365_store": "Speicherfehler: {{detail}}",
+        "m365_memory_low": "{{detail}}",
+        "m365_gate": "Die Rechte erlauben das nicht: {{detail}}."
+      }
+    },
+    "title": "Integrationen",
+    "description": "Verbindungen zu Kalendern, Ordnern und Agenten, jede mit Richtung und einem Recht je Fähigkeit.",
+    "add": "Integration hinzufügen",
+    "back": "Zurück zur Liste",
+    "open": "Rechte und Details",
+    "cancel": "Abbrechen",
+    "close": "Schließen",
+    "loadError": "Die Integrationen konnten nicht geladen werden.",
+    "empty": "Noch keine Integration eingerichtet.",
+    "emptyHint": "Mit „Integration hinzufügen“ richtest du einen Ordner ein oder verbindest einen Kalender.",
+    "tabs": {
+      "connections": "Verbindungen",
+      "automations": "Automationen",
+      "audit": "Protokoll"
+    },
+    "sections": {
+      "connections": "Eingerichtet",
+      "calendars": "Kalender",
+      "calendarsHint": "Kalenderquellen liefern Termine für Titelvorschläge, Erinnerungen und „Als Nächstes“.",
+      "mcp": "MCP und Agenten",
+      "mcpHint": "Lässt KI-Clients auf diesem Rechner deine Besprechungen lesen. Schreibende Zugänge mit Rechten je Werkzeug folgen."
+    },
+    "status": {
+      "off": "Aus",
+      "pending_one": "{{count}} Freigabe offen",
+      "pending_other": "{{count}} Freigaben offen"
+    },
+    "directions": {
+      "read": "Nur lesen",
+      "write": "Nur schreiben",
+      "both": "Lesen und schreiben"
+    },
+    "agentClients": {
+      "intro": "Je Programm (Claude Code, Codex, ein Skript) ein Zugang mit eigenem Schlüssel. Ein Zugang darf nur die Werkzeuge benutzen, die du hier für ihn auf „Fragen“ oder „Erlaubt“ stellst – und nur, soweit die Rechte-Matrix oben („Externer Agent“) es zulässt.",
+      "bridge": {
+        "running": "Agentenbrücke läuft",
+        "stopped": "Agentenbrücke läuft nicht",
+        "pipe": "Pipe: {{name}}",
+        "reason": "Grund: {{error}}",
+        "safe": "Sie ist nur für dich erreichbar (aktueller Windows-Benutzer), nicht über das Netzwerk."
+      },
+      "create": {
+        "open": "Zugang anlegen",
+        "name": "Name des Zugangs",
+        "placeholder": "z. B. Claude Code",
+        "submit": "Anlegen"
+      },
+      "token": {
+        "title": "Schlüssel für „{{label}}“",
+        "warning": "Dieser Schlüssel wird nur jetzt angezeigt. Danach ist er nicht mehr lesbar (gespeichert wird nur ein Fingerabdruck). Kopiere ihn jetzt.",
+        "use": "Im Programm eintragen, z. B. als Umgebungsvariable LVA_AGENT_TOKEN. Neu ausstellen kannst du ihn nur, indem du einen neuen Zugang anlegst.",
+        "copy": "Kopieren",
+        "copied": "Kopiert",
+        "copyFailed": "Das Kopieren hat nicht geklappt: markiere den Schlüssel und kopiere ihn von Hand.",
+        "done": "Fertig, ich habe ihn kopiert"
+      },
+      "loadError": "Die Zugänge lassen sich nicht laden.",
+      "empty": "Noch kein Zugang. Lege einen an, damit sich ein Programm anmelden kann.",
+      "client": {
+        "active": "Aktiv",
+        "revoked": "Zurückgezogen",
+        "created": "Angelegt {{time}}",
+        "lastUsed": "Zuletzt benutzt {{time}}",
+        "neverUsed": "Noch nie benutzt",
+        "revokedAt": "Zurückgezogen {{time}}",
+        "revoke": "Zurückziehen",
+        "revokeConfirm": "„{{label}}“ zurückziehen? Der Schlüssel gilt sofort nicht mehr, auch nicht in einer laufenden Verbindung.",
+        "revokeYes": "Ja, zurückziehen",
+        "delete": "Entfernen",
+        "deleteConfirm": "„{{label}}“ samt Werkzeugrechten entfernen? Das Protokoll bleibt.",
+        "deleteYes": "Ja, entfernen",
+        "tools": "Werkzeuge",
+        "toolsHint": "Alles ist standardmäßig aus. „Fragen“: du entscheidest in der App jedes Mal. „Erlaubt“: das Werkzeug läuft ohne Rückfrage.",
+        "frozen": "Der Zugang ist zurückgezogen: die Rechte sind eingefroren und lassen sich nicht mehr ändern."
+      },
+      "offReason": {
+        "grant_off": "Wirkt noch nicht: die Obergrenze der Integration steht auf „Aus“. Stelle in der Rechte-Matrix oben bei „Externer Agent“ „Fragen“ oder „Erlaubt“ ein.",
+        "tool_off": "Für diesen Zugang ausgeschaltet.",
+        "integration_disabled": "Wirkt nicht: die Integration ist ausgeschaltet.",
+        "direction_blocks": "Wirkt nicht: die Richtung der Integration erlaubt dies nicht.",
+        "capability_not_offered": "Wirkt nicht: diese Integration bietet die Fähigkeit nicht an."
+      },
+      "unavailable": "Werkzeuge mit „Noch nicht verfügbar“ gibt es in dieser Version noch nicht: das Recht ist vorbereitet, aufrufen lassen sie sich erst später.",
+      "unavailableBadge": "Noch nicht verfügbar",
+      "connect": {
+        "title": "Programm anbinden (Claude Code, Codex, Skript)",
+        "intro": "Lege oben einen Zugang an, kopiere seinen Schlüssel und trage ihn an Stelle von <TOKEN> ein. Der Schlüssel gehört nur in die Umgebungsvariable LVA_AGENT_TOKEN, nie in eine Datei im Projekt.",
+        "claude": "Claude Code",
+        "codex": "Codex",
+        "ctl": "Kommandozeile (ctl)",
+        "note": "Die App muss laufen. Was ein Programm tun darf, bestimmst du unten je Werkzeug; eine Aufnahme beginnt nie ohne deine Einwilligung."
+      },
+      "neverAllowShort": "Nie „Erlaubt“: die App zeigt vor jeder Aufnahme den Einwilligungsdialog (§ 201 StGB).",
+      "tools": {
+        "add_youtube_source": {
+          "title": "YouTube-Link als Quelle anlegen",
+          "description": "Legt zu einem YouTube-Link eine Besprechung mit der Quelle YouTube an."
+        },
+        "start_recording": {
+          "title": "Aufnahme starten",
+          "description": "Fragt die App nach einer Aufnahme; die App zeigt immer den Einwilligungsdialog."
+        },
+        "stop_recording": {
+          "title": "Aufnahme beenden",
+          "description": "Beendet die laufende Aufnahme (gleiches Recht wie „Aufnahme starten“)."
+        },
+        "transcribe_file": {
+          "title": "Datei transkribieren",
+          "description": "Transkribiert eine Audio- oder Videodatei und legt eine Besprechung an."
+        },
+        "create_session": {
+          "title": "Session anlegen",
+          "description": "Legt eine Session (Ordner für Aufnahmen) an."
+        },
+        "create_meeting": {
+          "title": "Besprechung anlegen",
+          "description": "Legt eine leere Besprechung an."
+        },
+        "tts_page_create": {
+          "title": "Vorlesen-Seite anlegen",
+          "description": "Legt eine Seite in der Vorlesen-Bibliothek an."
+        },
+        "tts_render_audio": {
+          "title": "Audio erzeugen",
+          "description": "Erzeugt aus einer Vorlesen-Seite eine Audiodatei."
+        },
+        "list_workflows": {
+          "title": "Automationen auflisten",
+          "description": "Listet die Abläufe der Automationen mit Auslöser, Schaltzustand und letztem Lauf."
+        },
+        "run_workflow": {
+          "title": "Ablauf starten",
+          "description": "Startet einen Ablauf als Trockenlauf; scharf nur, wenn der Ablauf scharf geschaltet ist und das Recht es erlaubt."
+        },
+        "get_run": {
+          "title": "Laufprotokoll lesen",
+          "description": "Liest das Protokoll eines Laufs: Zustand, Schritte, Fehler (ohne Geheimnisse und ohne Auslöserdaten)."
+        }
+      }
+    },
+    "modes": {
+      "off": "Aus",
+      "ask": "Fragen",
+      "allow": "Erlaubt"
+    },
+    "callers": {
+      "user": "Du",
+      "workflow": "Workflow",
+      "agent_external": "Externer Agent",
+      "agent_local": "Lokaler Agent"
+    },
+    "kinds": {
+      "youtube": "YouTube",
+      "ics": "Kalender (ICS)",
+      "graph": "Microsoft-365-Kalender",
+      "m365": "Microsoft 365",
+      "smtp": "Postfach (SMTP)",
+      "folder": "Ordner",
+      "obsidian": "Obsidian-Vault",
+      "wissen": "WAI-Wissensbasis",
+      "agent": "Agentenzugang",
+      "webhook": "Webhook (n8n)"
+    },
+    "calendar": {
+      "rights": "Rechte und Richtung"
+    },
+    "catalog": {
+      "title": "Integration hinzufügen",
+      "description": "Wähle, womit sich die App verbinden soll. Jede Verbindung bekommt eine Richtung und ein Recht je Fähigkeit; Schreibendes fragt standardmäßig nach, externe Agenten sind aus.",
+      "soon": "bald",
+      "auto": "automatisch",
+      "items": {
+        "calendar_ics": {
+          "name": "Kalender (ICS-Adresse)",
+          "description": "Termine aus Outlook, Google oder Nextcloud lesen, über eine geheime ICS-Adresse. Nur lesend.",
+          "action": "Kalender verbinden"
+        },
+        "calendar_graph": {
+          "name": "Microsoft-365-Kalender",
+          "description": "Outlook-Termine mit Teilnehmenden über deine Microsoft-Anmeldung (eigene Entra-App).",
+          "action": "Mit Microsoft anmelden"
+        },
+        "folder": {
+          "name": "Ordner",
+          "description": "Ein lokaler oder per OneDrive synchronisierter Ordner als Ablage für Protokolle und Exporte.",
+          "action": "Ordner einrichten"
+        },
+        "youtube": {
+          "name": "YouTube",
+          "description": "Videos per Link in Aufnahmen holen, ansehen und transkribieren.",
+          "note": "Legt sich selbst an, sobald du in Aufnahmen den ersten YouTube-Link einfügst."
+        },
+        "mcp": {
+          "name": "MCP und Agenten",
+          "description": "Lässt KI-Clients wie Claude oder Codex auf diesem Rechner deine Besprechungen lesen.",
+          "action": "Zum MCP-Schalter"
+        },
+        "m365": {
+          "name": "Microsoft 365 (Mail, OneDrive)",
+          "description": "Mails senden, Dateien in OneDrive ablegen und Notizen an Termine hängen, über deine eigene App-Registrierung. Jede Fähigkeit lässt sich einzeln einschalten.",
+          "action": "Konto einrichten"
+        },
+        "smtp": {
+          "name": "Postfach (SMTP)",
+          "description": "Mails über ein eigenes Postfach mit App-Passwort senden (STARTTLS oder TLS).",
+          "action": "Postfach einrichten"
+        },
+        "obsidian": {
+          "name": "Obsidian-Vault",
+          "description": "Besprechungen als Notiz mit Frontmatter in deinem Vault ablegen, ohne Dubletten.",
+          "action": "Vault verbinden"
+        },
+        "wissen": {
+          "name": "WAI-Wissensbasis",
+          "description": "In der Wissensbasis suchen (MCP-Endpunkt mit Zugangsschlüssel).",
+          "action": "Wissensbasis verbinden"
+        },
+        "webhook": {
+          "name": "n8n-Webhook",
+          "description": "Daten aus einem Ablauf an n8n (oder einen anderen Webhook) senden. Die Adresse ist ein Geheimnis und liegt verschlüsselt im Windows-Konto.",
+          "action": "Webhook einrichten"
+        }
+      }
+    },
+    "folder": {
+      "title": "Ordner einrichten",
+      "description": "Ein Ordner auf diesem Rechner, auch ein per OneDrive synchronisierter.",
+      "name": "Name",
+      "path": "Pfad",
+      "pathPlaceholder": "C:\\Ablage\\Berichte",
+      "pick": "Ordner wählen",
+      "create": "Anlegen",
+      "directionHint": "Lesen: Dateien aus dem Ordner holen. Schreiben: Dateien dort ablegen."
+    },
+    "detail": {
+      "connection": "Verbindung",
+      "managedByCalendar": "Name, Schalter und Entfernen gehören zur Karte unter „Kalender“. Hier stellst du Richtung und Rechte ein.",
+      "name": "Name",
+      "rename": "Umbenennen",
+      "status": "Zustand",
+      "okAt": "In Ordnung, geprüft {{time}}",
+      "notTested": "Noch nicht geprüft",
+      "secret": "Zugangsschlüssel",
+      "test": "Verbindung testen",
+      "testing": "Prüfe …",
+      "direction": "Richtung",
+      "directionHint": "Was die Integration darf, bevor Rechte greifen: lesen, schreiben oder beides. Eine Fähigkeit, die die Richtung nicht erlaubt, ist aus.",
+      "rights": "Rechte",
+      "rightsHint": "Je Fähigkeit und Aufrufer: aus, fragen (du entscheidest jedes Mal) oder erlaubt. Du selbst brauchst in der App keine Freigabe.",
+      "resetRights": "Auf Standard zurücksetzen",
+      "clients": "Zugänge",
+      "showAudit": "Protokoll anzeigen",
+      "remove": "Entfernen",
+      "removeConfirm": "„{{label}}“ samt Rechten entfernen? Das Protokoll bleibt.",
+      "removeYes": "Ja, entfernen",
+      "switchOn": "Einschalten",
+      "switchOff": "Ausschalten",
+      "settings": "Einstellungen",
+      "editSettings": "Einstellungen ändern",
+      "settingHost": "Server",
+      "settingFrom": "Absender",
+      "settingLogin": "Anmeldung",
+      "webhookNoTest": "Ein Webhook wird nicht durch Senden getestet, denn jeder Test würde den Ablauf in n8n wirklich auslösen. Ob er ankommt, zeigt der erste Lauf im Protokoll.",
+      "settingEndpoint": "Endpunkt",
+      "settingTool": "Werkzeug",
+      "settingVault": "Vault",
+      "settingSubfolder": "Unterordner",
+      "settingArea": "Bereich",
+      "mailTest": "Testmail an mich senden",
+      "mailTesting": "Sende …",
+      "mailSent": "Testmail gesendet an {{address}}.",
+      "mailPending": "Eine Testmail geht an deine eigene Absenderadresse.",
+      "searchTitle": "Suche ausprobieren",
+      "searchPlaceholder": "Suchbegriff",
+      "searchButton": "Suchen",
+      "searching": "Suche …",
+      "searchNone": "Keine Treffer.",
+      "searchHits_one": "{{count}} Treffer",
+      "searchHits_other": "{{count}} Treffer",
+      "testDetail": "Meldung: {{detail}}"
+    },
+    "secret": {
+      "present": "hinterlegt",
+      "missing": "fehlt, bitte neu einrichten",
+      "broken": "unlesbar, bitte neu einrichten"
+    },
+    "test": {
+      "folder_ok": "Der Ordner ist erreichbar.",
+      "folder_path_not_found": "Der Ordner wurde nicht gefunden.",
+      "folder_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "folder_unreadable": "Der Ordner lässt sich nicht lesen.",
+      "test_not_available": "Für diese Art gibt es noch keinen Test.",
+      "smtp_ok": "Verbindung und Anmeldung sind in Ordnung (es wurde keine Mail gesendet).",
+      "smtp_connect_failed": "Der Mailserver ist nicht erreichbar.",
+      "smtp_timeout": "Der Mailserver antwortet nicht.",
+      "smtp_tls_failed": "Die verschlüsselte Verbindung kam nicht zustande.",
+      "smtp_starttls_unsupported": "Der Server bietet kein STARTTLS an.",
+      "smtp_auth_failed": "Die Anmeldung wurde abgelehnt.",
+      "smtp_auth_unsupported": "Der Server bietet keine Anmeldung mit Passwort an.",
+      "smtp_password_missing": "Das Passwort fehlt.",
+      "smtp_password_broken": "Das gespeicherte Passwort ist unlesbar.",
+      "smtp_config_invalid": "Die Einstellungen sind unvollständig.",
+      "smtp_plain_not_allowed": "Unverschlüsselt ist nur zu diesem Rechner erlaubt.",
+      "smtp_rejected": "Der Server hat die Anfrage abgelehnt.",
+      "smtp_protocol": "Unerwartete Antwort des Servers.",
+      "smtp_message_invalid": "Die Nachricht ist ungültig.",
+      "vault_ok": "Der Vault ist erreichbar und beschreibbar.",
+      "vault_path_missing": "Es ist kein Vault-Ordner angegeben.",
+      "vault_path_relative": "Der Pfad ist nicht vollständig.",
+      "vault_path_not_found": "Der Vault wurde nicht gefunden.",
+      "vault_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "folder_path_escape": "Der Unterordner ist nicht zulässig.",
+      "folder_io": "Im Vault lässt sich nicht schreiben.",
+      "obsidian_config_invalid": "Die Vault-Einstellungen sind unvollständig.",
+      "obsidian_io": "Im Vault lässt sich nicht schreiben.",
+      "wissen_ok": "Adresse, Schlüssel und Suchwerkzeug sind in Ordnung.",
+      "wissen_unreachable": "Die Wissensbasis ist nicht erreichbar.",
+      "wissen_tls_failed": "Die verschlüsselte Verbindung kam nicht zustande.",
+      "wissen_timeout": "Die Wissensbasis antwortet nicht.",
+      "wissen_unauthorized": "Der Zugangsschlüssel wurde abgelehnt.",
+      "wissen_scope_missing": "Dem Schlüssel fehlt der Scope „wissen:read“.",
+      "wissen_rate_limited": "Zu viele Anfragen, bitte kurz warten.",
+      "wissen_endpoint_not_found": "Unter dieser Adresse gibt es keinen MCP-Endpunkt.",
+      "wissen_server_error": "Die Wissensbasis meldet einen Serverfehler.",
+      "wissen_protocol": "Unerwartete Antwort der Wissensbasis.",
+      "wissen_tool_missing": "Das Suchwerkzeug gibt es dort nicht.",
+      "wissen_tool_error": "Die Wissensbasis meldet einen Fehler.",
+      "wissen_token_missing": "Der Zugangsschlüssel fehlt.",
+      "wissen_token_broken": "Der gespeicherte Schlüssel ist unlesbar.",
+      "wissen_config_invalid": "Die Einstellungen sind unvollständig."
+    },
+    "matrix": {
+      "reads": "lesend",
+      "writes": "verändernd",
+      "neverAllow": "Aufnahmen starten nie von allein: die App zeigt vor jeder Aufnahme den Einwilligungsdialog (§ 201 StGB). „Erlaubt“ gibt es hier deshalb nicht.",
+      "effective": "Wirkt jetzt: {{mode}}",
+      "blocked": {
+        "direction_blocks": "Die Richtung der Integration erlaubt dies nicht: ändere die Richtung, damit die Rechte wirken.",
+        "integration_disabled": "Die Integration ist ausgeschaltet: kein Zugriff, solange sie aus ist.",
+        "capability_not_enabled": "Die Fähigkeit ist an diesem Konto nicht eingeschaltet: schalte sie im Abschnitt „Microsoft-365-Konto“ ein, damit die Rechte wirken."
+      }
+    },
+    "capabilities": {
+      "calendar_read": {
+        "title": "Kalender lesen",
+        "description": "Termine und Teilnehmende lesen."
+      },
+      "calendar_write": {
+        "title": "Termine anlegen",
+        "description": "Termine anlegen oder ändern."
+      },
+      "mail_send": {
+        "title": "Mail senden",
+        "description": "E-Mails in deinem Namen versenden."
+      },
+      "files_read": {
+        "title": "Dateien lesen",
+        "description": "Dateien aus dem Ordner holen."
+      },
+      "files_write": {
+        "title": "Dateien schreiben",
+        "description": "Dateien ablegen oder überschreiben."
+      },
+      "knowledge_search": {
+        "title": "Wissen durchsuchen",
+        "description": "In der Wissensbasis suchen."
+      },
+      "knowledge_read": {
+        "title": "Wissen lesen",
+        "description": "Seiten der Wissensbasis lesen."
+      },
+      "vault_write": {
+        "title": "Notiz im Vault ablegen",
+        "description": "Notizen mit Frontmatter schreiben."
+      },
+      "media_fetch": {
+        "title": "YouTube-Datei laden",
+        "description": "Video oder Ton über das selbst installierte Werkzeug laden."
+      },
+      "youtube_add": {
+        "title": "YouTube-Link als Quelle anlegen",
+        "description": "Aus einem Link eine Besprechung machen."
+      },
+      "meeting_create": {
+        "title": "Besprechung anlegen",
+        "description": "Neue Besprechung oder Sitzung erzeugen."
+      },
+      "recording_start": {
+        "title": "Aufnahme starten",
+        "description": "Eine Aufnahme beginnen."
+      },
+      "transcribe_file": {
+        "title": "Datei transkribieren",
+        "description": "Eine Audio- oder Videodatei transkribieren."
+      },
+      "tts_render": {
+        "title": "Vorlesen als Audio erzeugen",
+        "description": "Eine Vorlesen-Seite als Tondatei erzeugen."
+      },
+      "webhook_post": {
+        "title": "Daten an Webhook senden",
+        "description": "Daten an die Adresse des Webhooks schicken (zum Beispiel an n8n)."
+      },
+      "workflow_read": {
+        "title": "Automationen lesen",
+        "description": "Abläufe auflisten und Laufprotokolle lesen."
+      },
+      "workflow_run": {
+        "title": "Ablauf starten",
+        "description": "Einen Ablauf als Trockenlauf oder, wenn er scharf geschaltet ist, echt starten."
+      }
+    },
+    "approvals": {
+      "banner_one": "{{count}} Freigabe wartet auf dich",
+      "banner_other": "{{count}} Freigaben warten auf dich",
+      "review": "Prüfen",
+      "title": "Freigaben",
+      "description": "Diese Aktionen wollen ausgeführt werden und fragen dich vorher.",
+      "none": "Nichts mehr offen.",
+      "request": "{{caller}} möchte „{{action}}“ ausführen. Ziel: {{target}}.",
+      "unknown": "unbekannt",
+      "asked": "Angefragt {{time}}",
+      "allow": "Erlauben",
+      "deny": "Ablehnen",
+      "once": "Eine Freigabe gilt nur für diese eine Aktion und verfällt nach einer Stunde.",
+      "errors": {
+        "approval_not_found": "Diese Freigabe gibt es nicht mehr.",
+        "approval_expired": "Diese Freigabe ist abgelaufen.",
+        "approval_already_decided": "Diese Freigabe ist bereits entschieden.",
+        "consent_required": "Ohne bestätigte Einwilligung startet keine Aufnahme."
+      }
+    },
+    "audit": {
+      "filterIntegration": "Integration",
+      "filterOutcome": "Ergebnis",
+      "filterCaller": "Wer",
+      "all": "Alle",
+      "empty": "Noch keine Einträge. Hier erscheint jede Aktion eines Workflows oder Agenten und jede Änderung an Rechten.",
+      "loadError": "Das Protokoll konnte nicht geladen werden.",
+      "noIntegration": "ohne Integration",
+      "default": "Standard",
+      "outcome": {
+        "ok": "erledigt",
+        "denied": "verweigert",
+        "error": "Fehler",
+        "pending": "wartet"
+      },
+      "decision": {
+        "approved": "erteilt",
+        "denied": "abgelehnt"
+      },
+      "phase": {
+        "created": "Integration angelegt",
+        "updated": "Integration geändert",
+        "deleted": "Integration entfernt",
+        "grant_changed": "Recht geändert: {{mode}} für {{caller}}",
+        "approval_decided": "Freigabe {{decision}}",
+        "approval": "Wartet auf deine Freigabe",
+        "running": "Läuft",
+        "done": "Abgeschlossen"
+      },
+      "reason": {
+        "grant_off": "Das Recht steht auf „aus“",
+        "direction_blocks": "Die Richtung erlaubt dies nicht",
+        "integration_disabled": "Die Integration ist ausgeschaltet",
+        "capability_not_offered": "Die Integration bietet das nicht an",
+        "tool_off": "Das Werkzeug ist ausgeschaltet",
+        "unknown_integration": "Unbekannte Integration",
+        "preview_unsafe": "Nicht vollständig darstellbar, abgelehnt",
+        "too_many_pending": "Zu viele offene Freigaben",
+        "too_many_pending_caller": "Zu viele offene Freigaben dieses Zugangs",
+        "approval_not_found": "Freigabe nicht gefunden",
+        "approval_expired": "Freigabe abgelaufen",
+        "approval_mismatch": "Freigabe passt nicht zur Aktion",
+        "approval_not_granted": "Freigabe nicht erteilt"
+      }
+    },
+    "errors": {
+      "generic": "Das hat nicht geklappt.",
+      "folder_path_missing": "Bitte gib den Pfad des Ordners an.",
+      "folder_path_relative": "Bitte gib einen vollständigen Pfad an, etwa C:\\Ablage\\Berichte.",
+      "folder_path_not_found": "Der Ordner wurde nicht gefunden.",
+      "folder_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "kind_not_available": "Diese Art lässt sich noch nicht einrichten.",
+      "folder_path_escape": "Der Unterordner ist nicht zulässig: kein „..“, kein Laufwerk, keine Sonderzeichen.",
+      "folder_config_invalid": "Die Ordner-Einstellungen sind unvollständig.",
+      "folder_name_invalid": "Der Dateiname ist nicht zulässig.",
+      "folder_io": "Schreiben in den Ordner ist nicht möglich.",
+      "folder_file_too_large": "Die Datei ist zu groß für dieses Ziel.",
+      "folder_no_free_name": "Es gibt schon zu viele Dateien mit diesem Namen.",
+      "vault_path_missing": "Bitte gib den Ordner des Vaults an.",
+      "vault_path_relative": "Bitte gib einen vollständigen Pfad an, etwa C:\\Users\\du\\AI-OS\\vault.",
+      "vault_path_not_found": "Der Vault wurde nicht gefunden.",
+      "vault_path_not_a_folder": "Der Pfad ist kein Ordner.",
+      "obsidian_scan_limit": "Der Vault ist zu groß, um sicher zu prüfen, ob die Notiz schon existiert. Es wurde nichts geschrieben.",
+      "export_format_unsupported": "Dieses Format lässt sich nicht ablegen.",
+      "approval_required": "Dafür ist eine Freigabe nötig."
+    },
+    "moved": {
+      "open": "Auf der Seite „Integrationen“ verwalten",
+      "calendar": {
+        "title": "Kalenderquellen",
+        "description": "Kalender verbinden, Stand ansehen und entfernen: das geht jetzt auf der Seite „Integrationen“."
+      },
+      "mcp": {
+        "title": "Lokaler MCP-Server",
+        "description": "Der Schalter für den MCP-Server und der Konfigurations-Schnipsel stehen jetzt auf der Seite „Integrationen“."
+      }
+    },
+    "target": {
+      "create": "Anlegen",
+      "save": "Speichern",
+      "name": "Name",
+      "secretKeep": "Leer lassen, um das gespeicherte {{what}} zu behalten",
+      "pick": "Ordner wählen",
+      "smtp": {
+        "title": "Postfach (SMTP) einrichten",
+        "titleEdit": "Postfach-Einstellungen",
+        "description": "Zum Senden über dein eigenes Postfach. Das Passwort wird verschlüsselt im Windows-Konto abgelegt, nie in der Datenbank.",
+        "host": "Server",
+        "hostPlaceholder": "smtp.example.de",
+        "port": "Port",
+        "security": "Verschlüsselung",
+        "starttls": "STARTTLS (Port 587)",
+        "tls": "TLS (Port 465)",
+        "username": "Benutzername",
+        "fromAddress": "Absenderadresse",
+        "fromName": "Absendername (optional)",
+        "password": "Passwort",
+        "passwordWhat": "Passwort",
+        "passwordHint": "Bei Gmail und den meisten Anbietern brauchst du ein App-Passwort, nicht das Anmeldepasswort. Microsoft 365 nutzt die Anmeldung mit Konto statt SMTP."
+      },
+      "obsidian": {
+        "title": "Obsidian-Vault verbinden",
+        "titleEdit": "Vault-Einstellungen",
+        "description": "Besprechungen werden als Markdown-Notiz mit Frontmatter in den Vault geschrieben; der AI-OS-Index übernimmt sie beim nächsten Rescan.",
+        "path": "Vault-Ordner",
+        "pathPlaceholder": "C:\\Users\\du\\AI-OS\\vault",
+        "subfolder": "Unterordner für neue Notizen",
+        "contextArea": "Kontextbereich",
+        "tier": "Schreib-Autonomie",
+        "hint": "Eine schon abgelegte Notiz wird beim erneuten Ablegen aktualisiert (Kennung im Frontmatter), nie doppelt angelegt. Deine Ergänzungen außerhalb des Blocks der App bleiben erhalten."
+      },
+      "wissen": {
+        "title": "Wissensbasis verbinden",
+        "titleEdit": "Einstellungen der Wissensbasis",
+        "description": "MCP-Endpunkt des AI-OS. Nur https, der Schlüssel liegt verschlüsselt im Windows-Konto.",
+        "endpoint": "Adresse des Endpunkts",
+        "endpointPlaceholder": "https://os.example.de/mcp",
+        "tool": "Suchwerkzeug",
+        "area": "Bereich (optional)",
+        "token": "Zugangsschlüssel",
+        "tokenWhat": "Schlüssel",
+        "tokenHint": "Der Schlüssel braucht den Scope „wissen:read“ (oder „wissen:read:<bereich>“)."
+      },
+      "webhook": {
+        "title": "Webhook einrichten",
+        "titleEdit": "Webhook-Einstellungen",
+        "description": "Ein Ablauf schickt Daten per POST an diese Adresse, zum Beispiel an einen n8n-Ablauf.",
+        "url": "Adresse des Webhooks",
+        "urlWhat": "die Adresse",
+        "urlPlaceholder": "https://n8n.example.de/webhook/…",
+        "urlHint": "Die Adresse ist ein Geheimnis, denn sie trägt oft den Schlüssel im Pfad. Sie liegt verschlüsselt im Windows-Konto; angezeigt wird später nur der Server. Erlaubt ist nur https, http nur für diesen Rechner (localhost).",
+        "n8nHint": "In n8n: Webhook-Knoten öffnen, die „Production URL“ kopieren und den Ablauf aktivieren. Umleitungen folgt die App nie."
+      },
+      "folder": {
+        "title": "Ordner-Einstellungen",
+        "path": "Ordner",
+        "subfolder": "Unterordner für Exporte (optional)",
+        "subfolderHint": "Exporte landen in diesem Unterordner der Wurzel; er wird bei Bedarf angelegt."
+      }
+    },
+    "areas": {
+      "privat": "Privat",
+      "familie": "Familie",
+      "beruf": "Beruf",
+      "wai": "WAI",
+      "schule_uni": "Schule und Uni",
+      "finanzen": "Finanzen",
+      "gesundheit": "Gesundheit",
+      "behoerden": "Behörden",
+      "projekte": "Projekte",
+      "kunden": "Kunden"
+    },
+    "tiers": {
+      "auto": "auto (App darf frei schreiben)",
+      "logged": "logged (mit Protokoll)",
+      "propose": "propose (Vorschlag zur Triage)",
+      "untouchable": "untouchable (nicht ändern)"
+    }
   }
 }

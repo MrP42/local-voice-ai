@@ -574,6 +574,107 @@ pub fn change_meeting_model_setting(app: AppHandle, model: Option<String>) -> Re
     Ok(())
 }
 
+// M1-P1f
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_capture_system_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_capture_system = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+// M1-P1f
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_auto_enhance_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_auto_enhance = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+// M1-P1f: `None`/leer = Standardvorlage (`builtin:allgemein`).
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_default_template_setting(
+    app: AppHandle,
+    template_id: Option<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_default_template_id = template_id.filter(|t| !t.trim().is_empty());
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+// M2-P2d: `auto` | `off` | Modell-ID; wirkt ab dem naechsten Stopp. Leer = `auto`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_final_model_setting(app: AppHandle, model: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    let model = model.trim();
+    settings.meeting_final_model = if model.is_empty() {
+        "auto".to_string()
+    } else {
+        model.to_string()
+    };
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+// M2-P2c2: wirkt ab der naechsten Aufnahme.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_echo_cancellation_setting(
+    app: AppHandle,
+    mode: settings::MeetingEchoCancellation,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_echo_cancellation = mode;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+// M5-P5c: wirkt beim naechsten Durchlauf des Watchers (hoechstens 2 s).
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_detect_mode_setting(
+    app: AppHandle,
+    mode: crate::managers::meeting_detect::DetectMode,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_detect_mode = mode;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+// M5-P5c: leere Zeilen und Doppelte fallen weg, die Reihenfolge bleibt.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_detect_ignored_apps_setting(
+    app: AppHandle,
+    apps: Vec<String>,
+) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    let apps: Vec<String> = apps
+        .into_iter()
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty() && seen.insert(a.to_ascii_lowercase()))
+        .collect();
+    let mut settings = settings::get_settings(&app);
+    settings.meeting_detect_ignored_apps = apps;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// M5-P5c: kann diese Maschine die Mikrofonnutzung lesen? Sonst zeigt die
+/// Einstellung "auf diesem System nicht verfuegbar".
+#[tauri::command]
+#[specta::specta]
+pub fn meeting_detect_available() -> bool {
+    crate::managers::meeting_detect::available()
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_meeting_language_setting(app: AppHandle, language: String) -> Result<(), String> {
@@ -1570,6 +1671,18 @@ pub fn change_local_update_dir_setting(app: AppHandle, dir: Option<String>) -> R
 pub fn change_append_trailing_space_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.append_trailing_space = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Optionale Ollama-Glaettung beim Live-Einfuegen (Issue #5). Standard aus;
+/// wirkt nur, solange `stream_injection` an ist. Ollama bleibt nie Voraussetzung
+/// fuer Aufnahme, Transkription oder Einfuegung.
+#[tauri::command]
+#[specta::specta]
+pub fn change_refine_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.refine_enabled = enabled;
     settings::write_settings(&app, settings);
     Ok(())
 }
