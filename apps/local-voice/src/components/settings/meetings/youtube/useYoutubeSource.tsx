@@ -6,7 +6,7 @@ import React, {
   useState,
 } from "react";
 import { commands, type Meeting, type YoutubeSource } from "@/bindings";
-import type { TranscriptPlayer } from "../transcriptPlayer";
+import { timedRange, type TranscriptPlayer } from "../transcriptPlayer";
 import {
   YoutubePlayerPanel,
   type YoutubePanelHandle,
@@ -56,6 +56,10 @@ export function useYoutubeSource(meeting: Meeting): YoutubeBinding {
         ? {
             canSeek: true,
             seek: (ms) => handle.current?.seek(ms),
+            ...timedRange(
+              (ms) => handle.current?.seek(ms),
+              () => handle.current?.pause(),
+            ),
           }
         : null,
     [source],

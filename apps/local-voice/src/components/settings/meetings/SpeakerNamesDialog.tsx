@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Play } from "lucide-react";
+import { Play, Square } from "lucide-react";
 import {
   commands,
   type MeetingSpeaker,
@@ -29,6 +29,9 @@ interface SpeakerNamesDialogProps {
 const keyOf = (s: { channel: number; speaker_index: number }) =>
   `${s.channel}-${s.speaker_index}`;
 
+/** Laenger als das spielt die Stimmprobe nie (Millisekunden). */
+const MAX_SAMPLE_MS = 15000;
+
 /**
  * U8: "Sprecher benennen …" aus dem Menü: alle Sprecher der Besprechung auf
  * einen Blick, je Zeile Name (mit Vorschlägen aus den bekannten Personen),
@@ -50,6 +53,62 @@ export const SpeakerNamesDialog: React.FC<SpeakerNamesDialogProps> = ({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  /** Der Sprecher, dessen Stimmprobe gerade laeuft. */
+  const [playing, setPlaying] = useState<string | null>(null);
+  const playingRef = useRef<string | null>(null);
+  // Der Player wird bei jedem Rendern der Detailansicht neu gebaut; fuer das
+  // Stoppen beim Schliessen zaehlt der aktuelle.
+  const playerRef = useRef(player);
+  playerRef.current = player;
+  const [closing, setClosing] = useState(false);
+
+  /** Haelt die eigene Stimmprobe an (nie eine fremde Wiedergabe). */
+  const stopSample = () => {
+    if (playingRef.current === null) return;
+    playingRef.current = null;
+    setPlaying(null);
+    playerRef.current.stop();
+  };
+
+  // Ein frisch geoeffneter Dialog zeigt den gespeicherten Stand, keine alten
+  // Entwuerfe; geschlossen (auch von aussen) laeuft keine Probe weiter.
+  useEffect(() => {
+    if (open) {
+      setDrafts({});
+      setErrors({});
+      return;
+    }
+    if (playingRef.current !== null) {
+      playingRef.current = null;
+      setPlaying(null);
+      playerRef.current.stop();
+    }
+  }, [open]);
+  useEffect(
+    () => () => {
+      if (playingRef.current !== null) playerRef.current.stop();
+    },
+    [],
+  );
+
+  const listen = (speaker: MeetingSpeaker, sample: StoredSegment) => {
+    const key = keyOf(speaker);
+    if (playingRef.current === key) {
+      stopSample();
+      return;
+    }
+    playingRef.current = key;
+    setPlaying(key);
+    playerRef.current.playRange(
+      sample.start_ms,
+      Math.min(sample.end_ms, sample.start_ms + MAX_SAMPLE_MS),
+      speaker.channel,
+      () => {
+        if (playingRef.current === key) playingRef.current = null;
+        setPlaying((current) => (current === key ? null : current));
+      },
+    );
+  };
 
   /** Sätze und Hörprobe (der längste Satz) je Sprecher. */
   const stats = useMemo(() => {
@@ -74,7 +133,15 @@ export const SpeakerNamesDialog: React.FC<SpeakerNamesDialogProps> = ({
     return map;
   }, [segments]);
 
-  const save = async (speaker: MeetingSpeaker, value: string) => {
+  /**
+   * Speichert einen Namen. `true` bei Erfolg; bei einem Fehler steht die
+   * Meldung an der Zeile und der Entwurf bleibt. Neu laden ist Sache des
+   * Aufrufers (einmal je Aktion, nicht je Zeile).
+   */
+  const persist = async (
+    speaker: MeetingSpeaker,
+    value: string,
+  ): Promise<boolean> => {
     const key = keyOf(speaker);
     setBusy(key);
     setErrors((old) => {
@@ -83,37 +150,88 @@ export const SpeakerNamesDialog: React.FC<SpeakerNamesDialogProps> = ({
       return next;
     });
     const trimmed = value.trim();
-    const result = await commands.meetingSpeakerRename(
-      meetingId,
-      speaker.channel,
-      speaker.speaker_index,
-      trimmed === "" ? null : trimmed,
-    );
-    setBusy(null);
-    if (result.status === "error") {
+    try {
+      const result = await commands.meetingSpeakerRename(
+        meetingId,
+        speaker.channel,
+        speaker.speaker_index,
+        trimmed === "" ? null : trimmed,
+      );
+      if (result.status === "error") {
+        setErrors((old) => ({
+          ...old,
+          [key]: speakerErrorText(result.error, t),
+        }));
+        return false;
+      }
+    } catch {
       setErrors((old) => ({
         ...old,
-        [key]: speakerErrorText(result.error, t),
+        [key]: speakerErrorText("generic", t),
       }));
-      return;
+      return false;
+    } finally {
+      setBusy(null);
     }
     setDrafts((old) => {
       const next = { ...old };
       delete next[key];
       return next;
     });
-    onChanged();
+    return true;
+  };
+
+  const save = async (speaker: MeetingSpeaker, value: string) => {
+    if (await persist(speaker, value)) onChanged();
+  };
+
+  /** Eingegebene, noch nicht gespeicherte Namen. */
+  const pending = () =>
+    speakers.filter((speaker) => {
+      const draft = drafts[keyOf(speaker)];
+      return (
+        draft !== undefined && draft.trim() !== (speaker.display_name ?? "")
+      );
+    });
+
+  /**
+   * Schliessen (Fertig, Kreuz, Escape, Klick daneben): eingegebene Namen werden
+   * uebernommen, nicht verworfen. Schlaegt ein Speichern fehl, bleibt der Dialog
+   * offen und zeigt den Fehler an der Zeile.
+   */
+  const requestClose = async () => {
+    if (closing) return;
+    stopSample();
+    const dirty = pending();
+    if (dirty.length === 0) {
+      onOpenChange(false);
+      return;
+    }
+    setClosing(true);
+    let ok = true;
+    let saved = false;
+    for (const speaker of dirty) {
+      const result = await persist(speaker, drafts[keyOf(speaker)] ?? "");
+      ok = ok && result;
+      saved = saved || result;
+    }
+    setClosing(false);
+    if (saved) onChanged();
+    if (ok) onOpenChange(false);
   };
 
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={(next) => {
+        if (next) onOpenChange(true);
+        else void requestClose();
+      }}
       title={t("meetings.speakers.dialog.title")}
       description={t("meetings.speakers.dialog.hint")}
       closeLabel={t("meetings.speakers.dialog.close")}
       footer={
-        <Button onClick={() => onOpenChange(false)}>
+        <Button disabled={closing} onClick={() => void requestClose()}>
           {t("meetings.speakers.dialog.done")}
         </Button>
       }
@@ -139,6 +257,7 @@ export const SpeakerNamesDialog: React.FC<SpeakerNamesDialogProps> = ({
                 ) ?? null;
               const draft = drafts[key] ?? speaker.display_name ?? "";
               const changed = draft.trim() !== (speaker.display_name ?? "");
+              const isPlaying = playing === key;
               return (
                 <li
                   key={key}
@@ -176,7 +295,7 @@ export const SpeakerNamesDialog: React.FC<SpeakerNamesDialogProps> = ({
                       ariaLabel={t("meetings.speakers.dialog.rowName", {
                         label: speaker.label,
                       })}
-                      disabled={busy === key}
+                      disabled={busy === key || closing}
                       inputTestId="speakers-dialog-input"
                       exclude={
                         speaker.display_name ? [speaker.display_name] : []
@@ -186,7 +305,7 @@ export const SpeakerNamesDialog: React.FC<SpeakerNamesDialogProps> = ({
                     <Button
                       type="submit"
                       size="sm"
-                      disabled={busy === key || !changed}
+                      disabled={busy === key || closing || !changed}
                       data-testid="speakers-dialog-save"
                       className="mt-0.5"
                     >
@@ -197,18 +316,34 @@ export const SpeakerNamesDialog: React.FC<SpeakerNamesDialogProps> = ({
                         type="button"
                         size="sm"
                         variant="secondary"
-                        onClick={() =>
-                          player.seek(info.sample.start_ms, speaker.channel)
-                        }
+                        onClick={() => listen(speaker, info.sample)}
                         title={t("meetings.speakers.dialog.listenHint")}
-                        aria-label={t("meetings.speakers.dialog.listenFor", {
-                          label: speaker.label,
-                        })}
+                        aria-label={
+                          isPlaying
+                            ? t("meetings.speakers.dialog.stopFor", {
+                                label: speaker.label,
+                              })
+                            : t("meetings.speakers.dialog.listenFor", {
+                                label: speaker.label,
+                              })
+                        }
+                        aria-pressed={isPlaying}
                         data-testid="speakers-dialog-listen"
                         className="mt-0.5"
                       >
-                        <Play width={12} height={12} aria-hidden="true" />
-                        {t("meetings.speakers.dialog.listen")}
+                        {isPlaying ? (
+                          <Square
+                            width={12}
+                            height={12}
+                            fill="currentColor"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Play width={12} height={12} aria-hidden="true" />
+                        )}
+                        {isPlaying
+                          ? t("meetings.speakers.dialog.stop")
+                          : t("meetings.speakers.dialog.listen")}
                       </Button>
                     )}
                   </form>
