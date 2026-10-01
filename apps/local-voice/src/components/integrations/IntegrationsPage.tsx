@@ -10,10 +10,7 @@ import { MeetingMcpSettings } from "../settings/meetings/MeetingMcpSettings";
 import { usePersistentState } from "../../hooks/usePersistentState";
 import { ApprovalDialog } from "./ApprovalDialog";
 import { AuditView, EMPTY_AUDIT_FILTER, type AuditFilter } from "./AuditView";
-import {
-  CalendarSourceCards,
-  useCalendarSources,
-} from "./CalendarSourceCards";
+import { CalendarSourceCards, useCalendarSources } from "./CalendarSourceCards";
 import { FolderDialog } from "./FolderDialog";
 import { IntegrationCard } from "./IntegrationCard";
 import { IntegrationCatalog } from "./IntegrationCatalog";
@@ -22,9 +19,7 @@ import type { CatalogEntry } from "./model";
 import { useIntegrations, usePendingApprovals } from "./useIntegrations";
 
 type Screen =
-  | { name: "list" }
-  | { name: "catalog" }
-  | { name: "detail"; id: string };
+  { name: "list" } | { name: "catalog" } | { name: "detail"; id: string };
 
 type PageTab = "connections" | "audit";
 const isPageTab = (value: string): value is PageTab =>

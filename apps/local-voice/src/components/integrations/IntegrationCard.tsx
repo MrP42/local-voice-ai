@@ -55,7 +55,9 @@ export const IntegrationCard: React.FC<IntegrationCardProps> = ({
             className="rounded-full bg-logo-primary/30 px-2 py-0.5 font-medium text-text"
             data-testid="integration-pending"
           >
-            {t("integrations.status.pending", { count: view.pending_approvals })}
+            {t("integrations.status.pending", {
+              count: view.pending_approvals,
+            })}
           </span>
         )}
       </div>

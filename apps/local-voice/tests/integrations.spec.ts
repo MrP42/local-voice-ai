@@ -57,6 +57,12 @@ const openDetail = async (page: Page, id: string) => {
 const grant = (page: Page, cap: string, caller: string, mode: string) =>
   page.getByTestId(`grant-${cap}-${caller}-${mode}`);
 
+/** Wählt in einem Auswahlfeld (react-select) einen Eintrag. */
+const pick = async (page: Page, label: string, option: string) => {
+  await page.getByRole("combobox", { name: label, exact: true }).click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+};
+
 const FOLDER = "C:\\Ablage\\Berichte";
 
 /** Legt ueber den Katalog einen Ordner an (Name, Pfad getippt). */
@@ -119,7 +125,9 @@ test.describe("Katalog", () => {
     expect(statuses).toContain("available");
     expect(statuses).toContain("soon");
     // Jede „bald“-Art trägt die Marke und hat keinen Einrichten-Knopf.
-    const soon = page.locator('[data-testid="catalog-item"][data-status="soon"]');
+    const soon = page.locator(
+      '[data-testid="catalog-item"][data-status="soon"]',
+    );
     for (let i = 0; i < (await soon.count()); i++) {
       await expect(soon.nth(i).getByTestId("catalog-soon")).toHaveText("bald");
       await expect(soon.nth(i).getByRole("button")).toHaveCount(0);
@@ -147,7 +155,9 @@ test.describe("Katalog", () => {
     await expect(page.getByTestId("integrations-empty")).toBeVisible();
   });
 
-  test("Kalender (ICS-Adresse) öffnet den Verbinden-Dialog", async ({ page }) => {
+  test("Kalender (ICS-Adresse) öffnet den Verbinden-Dialog", async ({
+    page,
+  }) => {
     await setup(page);
     await openIntegrations(page);
     await openCatalog(page);
@@ -199,7 +209,9 @@ test.describe("Ordner", () => {
     await page.getByTestId("folder-path").fill(FOLDER);
     await page.getByTestId("folder-direction-read").click();
     await page.getByTestId("folder-submit").click();
-    await expect(page.getByTestId("integration-direction")).toHaveText("Nur lesen");
+    await expect(page.getByTestId("integration-direction")).toHaveText(
+      "Nur lesen",
+    );
   });
 
   test("Ordner wählen übernimmt den Pfad des Dialogs", async ({ page }) => {
@@ -282,7 +294,9 @@ test.describe("Detail und Rechte-Matrix", () => {
       "aria-checked",
       "true",
     );
-    expect((await calls(page, "integration_update")).at(-1)!.args).toMatchObject({
+    expect(
+      (await calls(page, "integration_update")).at(-1)!.args,
+    ).toMatchObject({
       id: "int-1",
       direction: "read",
     });
@@ -330,6 +344,10 @@ test.describe("Detail und Rechte-Matrix", () => {
     await expect(page.getByTestId("capability-recording.start")).toContainText(
       "Einwilligungsdialog",
     );
+    // Zugänge (Token je Programm) liefert die Agentenbrücke: bis dahin ein Platzhalter.
+    await expect(page.getByTestId("agent-clients-placeholder")).toContainText(
+      "Agentenbrücke",
+    );
     // Die anderen dürfen.
     await expect(
       grant(page, "meeting.create", "agent_external", "allow"),
@@ -341,7 +359,9 @@ test.describe("Detail und Rechte-Matrix", () => {
     await openIntegrations(page);
     await openDetail(page, "ordner-berichte");
     await page.getByTestId("enabled-toggle").click();
-    expect((await calls(page, "integration_update")).at(-1)!.args).toMatchObject({
+    expect(
+      (await calls(page, "integration_update")).at(-1)!.args,
+    ).toMatchObject({
       id: "ordner-berichte",
       enabled: false,
     });
@@ -364,7 +384,9 @@ test.describe("Detail und Rechte-Matrix", () => {
     );
   });
 
-  test("Rechte zurücksetzen löscht die gespeicherten Zeilen", async ({ page }) => {
+  test("Rechte zurücksetzen löscht die gespeicherten Zeilen", async ({
+    page,
+  }) => {
     await setup(page, DEMO);
     await openIntegrations(page);
     await openDetail(page, "ordner-berichte");
@@ -375,7 +397,9 @@ test.describe("Detail und Rechte-Matrix", () => {
     await expect(
       grant(page, "files.read", "agent_external", "off"),
     ).toHaveAttribute("aria-checked", "true");
-    const sent = (await calls(page, "integration_set_grant")).map((c) => c.args);
+    const sent = (await calls(page, "integration_set_grant")).map(
+      (c) => c.args,
+    );
     expect(sent.every((a) => a.mode === null)).toBe(true);
     expect(sent.length).toBe(2);
   });
@@ -463,7 +487,9 @@ test.describe("Kalenderquellen", () => {
     void source;
   });
 
-  test("der Verweis in den Einstellungen führt auf die Seite", async ({ page }) => {
+  test("der Verweis in den Einstellungen führt auf die Seite", async ({
+    page,
+  }) => {
     await setup(page);
     await nav(page)
       .getByRole("button", { name: "Einstellungen", exact: true })
@@ -512,12 +538,19 @@ test.describe("MCP", () => {
     await page.getByTestId("mcp-settings-link").click();
     const toggle = mcpSwitch(page);
     await expect(toggle).not.toBeChecked();
-    expect(await calls(page, "change_meeting_mcp_enabled_setting")).toHaveLength(0);
+    expect(
+      await calls(page, "change_meeting_mcp_enabled_setting"),
+    ).toHaveLength(0);
     await toggle.evaluate((el) => (el as HTMLInputElement).click());
     await expect
-      .poll(async () => (await calls(page, "change_meeting_mcp_enabled_setting")).length)
+      .poll(
+        async () =>
+          (await calls(page, "change_meeting_mcp_enabled_setting")).length,
+      )
       .toBe(1);
-    expect((await calls(page, "change_meeting_mcp_enabled_setting"))[0].args).toEqual({
+    expect(
+      (await calls(page, "change_meeting_mcp_enabled_setting"))[0].args,
+    ).toEqual({
       enabled: true,
     });
     await expect(page.getByTestId("mcp-snippet")).toContainText(
@@ -651,19 +684,33 @@ test.describe("Protokoll", () => {
     await expect(mine).toContainText("angelegt");
   });
 
-  test("Filter nach Ergebnis und Integration gehen ans Backend", async ({ page }) => {
+  test("Filter nach Ergebnis und Integration gehen ans Backend", async ({
+    page,
+  }) => {
     await setup(page, DEMO);
     await openAudit(page);
-    await page.getByTestId("audit-filter-outcome").selectOption("denied");
+    await pick(page, "Ergebnis", "verweigert");
     await expect(page.getByTestId("audit-row")).toHaveCount(1);
-    expect((await calls(page, "integrations_audit_list")).at(-1)!.args).toMatchObject({
+    expect(
+      (await calls(page, "integrations_audit_list")).at(-1)!.args,
+    ).toMatchObject({
       outcome: "denied",
     });
-    await page.getByTestId("audit-filter-outcome").selectOption("");
-    await page
-      .getByTestId("audit-filter-integration")
-      .selectOption("ordner-archiv");
+    await pick(page, "Ergebnis", "Fehler");
     await expect(page.getByTestId("audit-row")).toHaveCount(1);
+    await expect(page.getByTestId("audit-row")).toContainText(
+      "Zugriff verweigert",
+    );
+    await pick(page, "Integration", "Ablage Berichte");
+    await expect(page.getByTestId("audit-row")).toHaveCount(1);
+    expect(
+      (await calls(page, "integrations_audit_list")).at(-1)!.args,
+    ).toMatchObject({
+      outcome: "error",
+      integrationId: "ordner-berichte",
+    });
+    await pick(page, "Wer", "Du");
+    await expect(page.getByTestId("audit-empty")).toBeVisible();
   });
 
   test("leeres Protokoll sagt es", async ({ page }) => {
@@ -680,8 +727,8 @@ test.describe("Protokoll", () => {
     await openDetail(page, "ordner-archiv");
     await page.getByTestId("integration-audit-link").click();
     await expect(page.getByTestId("audit")).toBeVisible();
-    await expect(page.getByTestId("audit-filter-integration")).toHaveValue(
-      "ordner-archiv",
+    await expect(page.getByTestId("audit-filter-integration")).toContainText(
+      "Archiv (nur lesen)",
     );
     await expect(page.getByTestId("audit-row")).toHaveCount(1);
   });
@@ -727,23 +774,28 @@ for (const theme of ["light", "dark"] as const) {
   test(`axe (WCAG 2 A/AA) ohne serious/critical auf jeder Ansicht - ${theme}`, async ({
     page,
   }) => {
-    await setup(page, DEMO, (value: string) => {
-      (window as any).__settings.theme = value;
-      (window as any).__sources = [
-        {
-          id: "ics-1",
-          kind: "ics",
-          label: "Outlook Arbeit",
-          account_hint: "outlook.office365.com",
-          enabled: true,
-          has_attendee_data: true,
-          last_sync_at: 1_790_000_000_000,
-          last_ok_at: 1_790_000_000_000,
-          last_error: null,
-          event_count: 23,
-        },
-      ];
-    }, theme);
+    await setup(
+      page,
+      DEMO,
+      (value: string) => {
+        (window as any).__settings.theme = value;
+        (window as any).__sources = [
+          {
+            id: "ics-1",
+            kind: "ics",
+            label: "Outlook Arbeit",
+            account_hint: "outlook.office365.com",
+            enabled: true,
+            has_attendee_data: true,
+            last_sync_at: 1_790_000_000_000,
+            last_ok_at: 1_790_000_000_000,
+            last_error: null,
+            event_count: 23,
+          },
+        ];
+      },
+      theme,
+    );
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
     const findings = async (where: string) => {
       await page.addStyleTag({
@@ -760,7 +812,10 @@ for (const theme of ["light", "dark"] as const) {
         .analyze();
       const bad = result.violations
         .filter((v) => v.impact === "critical" || v.impact === "serious")
-        .map((v) => `${where}: ${v.id} ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`);
+        .map(
+          (v) =>
+            `${where}: ${v.id} ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`,
+        );
       expect(bad).toEqual([]);
     };
     await openIntegrations(page);

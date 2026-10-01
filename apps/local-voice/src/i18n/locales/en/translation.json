@@ -3297,6 +3297,8 @@
       "rights": "Rights",
       "rightsHint": "Per capability and caller: off, ask (you decide every time) or allowed. You yourself need no approval in the app.",
       "resetRights": "Reset to defaults",
+      "clients": "Access",
+      "clientsPlaceholder": "Access for external agents (one access per program, with its own key and rights per tool) is set up here as soon as the agent bridge is in place.",
       "showAudit": "Show log",
       "remove": "Remove",
       "removeConfirm": "Remove “{{label}}” with its rights? The log stays.",

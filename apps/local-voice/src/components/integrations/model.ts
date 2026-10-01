@@ -1,9 +1,4 @@
-import type {
-  Caller,
-  Direction,
-  GrantMode,
-  Kind,
-} from "@/bindings";
+import type { Caller, Direction, GrantMode, Kind } from "@/bindings";
 
 /** Aufrufer-Spalten der Rechte-Matrix (Reihenfolge wie im Backend). */
 export const MATRIX_CALLERS: Caller[] = [

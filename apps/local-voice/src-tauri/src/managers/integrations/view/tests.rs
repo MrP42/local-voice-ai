@@ -203,7 +203,10 @@ fn the_view_reports_the_default_next_to_the_stored_mode_even_when_blocked() {
     let v = get_view(&conn, &i.id, &no_secrets, 3_000).unwrap();
     // Schreiben ist durch die Richtung gesperrt: wirksam aus, die Vorgabe bleibt sichtbar.
     let m = mode_of(&v, Capability::FilesWrite, Caller::Workflow);
-    assert_eq!((m.effective, m.default_mode), (GrantMode::Off, GrantMode::Ask));
+    assert_eq!(
+        (m.effective, m.default_mode),
+        (GrantMode::Off, GrantMode::Ask)
+    );
     let m = mode_of(&v, Capability::FilesRead, Caller::AgentExternal);
     assert_eq!(m.default_mode, GrantMode::Off);
     let m = mode_of(&v, Capability::FilesRead, Caller::AgentLocal);
@@ -226,7 +229,10 @@ fn the_view_uses_the_same_rule_as_the_gate_for_the_effective_mode() {
     .unwrap();
     let v = get_view(&conn, &i.id, &no_secrets, 3_000).unwrap();
     let m = mode_of(&v, Capability::FilesWrite, Caller::AgentExternal);
-    assert_eq!((m.stored, m.effective), (Some(GrantMode::Allow), GrantMode::Allow));
+    assert_eq!(
+        (m.stored, m.effective),
+        (Some(GrantMode::Allow), GrantMode::Allow)
+    );
     // Das Tor entscheidet gleich.
     let req = Request {
         caller: Caller::AgentExternal,
@@ -305,12 +311,11 @@ fn recording_start_is_marked_never_allow_and_cannot_be_set_to_allow() {
         .find(|c| c.capability == Capability::RecordingStart)
         .unwrap();
     assert!(rec.never_allow && rec.writes);
-    assert!(
-        v.capabilities
-            .iter()
-            .filter(|c| c.capability != Capability::RecordingStart)
-            .all(|c| !c.never_allow)
-    );
+    assert!(v
+        .capabilities
+        .iter()
+        .filter(|c| c.capability != Capability::RecordingStart)
+        .all(|c| !c.never_allow));
     let err = set_grant_from_ui(
         &conn,
         &agent.id,
@@ -417,7 +422,10 @@ fn setting_and_clearing_a_grant_round_trips_and_survives_reopening() {
     let conn = reopened.get_connection().unwrap();
     let v = get_view(&conn, &i.id, &no_secrets, 3_000).unwrap();
     let m = mode_of(&v, Capability::FilesRead, Caller::AgentExternal);
-    assert_eq!((m.stored, m.effective), (Some(GrantMode::Ask), GrantMode::Ask));
+    assert_eq!(
+        (m.stored, m.effective),
+        (Some(GrantMode::Ask), GrantMode::Ask)
+    );
     // Zurueck auf die Vorgabe.
     set_grant_from_ui(
         &conn,
@@ -487,12 +495,18 @@ fn the_users_changes_stand_in_the_audit_with_caller_user() {
         })
         .collect();
     // Neueste zuerst.
-    assert_eq!(phases, vec!["deleted", "updated", "grant_changed", "created"]);
+    assert_eq!(
+        phases,
+        vec!["deleted", "updated", "grant_changed", "created"]
+    );
     assert!(rows.iter().all(|r| r.caller == "user" && r.outcome == "ok"));
     let grant = &rows[2];
     assert_eq!(grant.capability.as_deref(), Some("files.write"));
     let d: Value = serde_json::from_str(grant.detail_json.as_deref().unwrap()).unwrap();
-    assert_eq!((d["for"].as_str(), d["mode"].as_str()), (Some("agent_external"), Some("ask")));
+    assert_eq!(
+        (d["for"].as_str(), d["mode"].as_str()),
+        (Some("agent_external"), Some("ask"))
+    );
 }
 
 #[test]
@@ -503,7 +517,10 @@ fn a_rename_that_changes_nothing_writes_no_audit_row() {
     let before = audit_entries(&conn, None, None, None, 50).unwrap().len();
     update_from_ui(&conn, &i.id, None, None, None, 2_000).unwrap();
     update_from_ui(&conn, &i.id, None, Some(true), Some(Direction::Both), 2_100).unwrap();
-    assert_eq!(audit_entries(&conn, None, None, None, 50).unwrap().len(), before);
+    assert_eq!(
+        audit_entries(&conn, None, None, None, 50).unwrap().len(),
+        before
+    );
 }
 
 #[test]
@@ -589,7 +606,10 @@ fn approving_lets_the_gate_run_the_action_once_and_the_decision_is_audited() {
     let (i, _) = make_folder(&conn, "Ablage");
     let id = ask_for_write(&conn, &i, 10_000);
     let decided = decide_approval(&conn, &id, true, 12_000).unwrap();
-    assert_eq!(decided.state, crate::managers::integrations::model::ApprovalState::Approved);
+    assert_eq!(
+        decided.state,
+        crate::managers::integrations::model::ApprovalState::Approved
+    );
     assert!(pending_approvals(&conn, 13_000).unwrap().is_empty());
     let args = json!({ "path": "Notiz.md", "bytes": 12 });
     let req = Request {
@@ -608,7 +628,11 @@ fn approving_lets_the_gate_run_the_action_once_and_the_decision_is_audited() {
     let rows = audit_entries(&conn, Some(i.id.clone()), None, Some("user".into()), 50).unwrap();
     let decision = rows
         .iter()
-        .find(|r| r.detail_json.as_deref().is_some_and(|d| d.contains("approval_decided")))
+        .find(|r| {
+            r.detail_json
+                .as_deref()
+                .is_some_and(|d| d.contains("approval_decided"))
+        })
         .expect("Entscheidung im Audit");
     let d: Value = serde_json::from_str(decision.detail_json.as_deref().unwrap()).unwrap();
     assert_eq!(d["decision"], "approved");
@@ -703,7 +727,10 @@ fn testing_a_folder_marks_ok_or_the_error_on_the_entry() {
     let r = test_integration(&conn, &i.id, 6_000).unwrap();
     assert_eq!((r.ok, r.code.as_str()), (false, ERR_PATH_NOT_FOUND));
     let after = store::get(&conn, &i.id).unwrap().unwrap();
-    assert_eq!(after.last_error.as_deref(), Some("Der Ordner wurde nicht gefunden."));
+    assert_eq!(
+        after.last_error.as_deref(),
+        Some("Der Ordner wurde nicht gefunden.")
+    );
     // Und kommt wieder: der Fehler verschwindet.
     std::fs::create_dir_all(&path).unwrap();
     assert!(test_integration(&conn, &i.id, 7_000).unwrap().ok);
@@ -739,5 +766,7 @@ fn deleting_removes_the_integration_and_its_grants_but_keeps_the_audit() {
     assert_eq!(gone.id, i.id);
     assert!(list_views(&conn, &no_secrets, 4_000).unwrap().is_empty());
     assert!(store::list_grants(&conn, &i.id).unwrap().is_empty());
-    assert!(!audit_entries(&conn, Some(i.id), None, None, 50).unwrap().is_empty());
+    assert!(!audit_entries(&conn, Some(i.id), None, None, 50)
+        .unwrap()
+        .is_empty());
 }

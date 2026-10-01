@@ -70,7 +70,11 @@ export const RightsMatrix: React.FC<RightsMatrixProps> = ({
             ))}
             {cap.never_allow && (
               <p className="mb-2 flex items-start gap-1 text-xs text-text-muted">
-                <Lock size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
+                <Lock
+                  size={12}
+                  className="mt-0.5 shrink-0"
+                  aria-hidden="true"
+                />
                 {t("integrations.matrix.neverAllow")}
               </p>
             )}
@@ -106,7 +110,8 @@ export const RightsMatrix: React.FC<RightsMatrixProps> = ({
                             }
                             data-testid={`grant-${cap.capability}-${m.caller}-${mode}`}
                             onClick={() => {
-                              if (!selected) onChange(cap.capability, m.caller, mode);
+                              if (!selected)
+                                onChange(cap.capability, m.caller, mode);
                             }}
                             className={`min-h-9 min-w-[4.25rem] cursor-pointer px-2 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary ${
                               selected

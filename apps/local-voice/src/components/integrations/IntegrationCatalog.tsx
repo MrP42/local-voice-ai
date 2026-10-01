@@ -35,7 +35,9 @@ export const IntegrationCatalog: React.FC<IntegrationCatalogProps> = ({
         </Button>
       </div>
       <div>
-        <h2 className="text-lg font-semibold">{t("integrations.catalog.title")}</h2>
+        <h2 className="text-lg font-semibold">
+          {t("integrations.catalog.title")}
+        </h2>
         <p className="text-sm text-text-muted">
           {t("integrations.catalog.description")}
         </p>

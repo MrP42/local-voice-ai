@@ -152,7 +152,9 @@ export const CalendarSourceCards: React.FC<CalendarSourceCardsProps> = ({
                   aria-hidden="true"
                 />
                 <div className="min-w-0 flex-1">
-                  <span className="font-medium break-words">{source.label}</span>
+                  <span className="font-medium break-words">
+                    {source.label}
+                  </span>
                   {source.account_hint && (
                     <span
                       className="text-text-muted break-all"

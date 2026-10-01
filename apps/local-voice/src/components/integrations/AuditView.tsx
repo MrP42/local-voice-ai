@@ -1,10 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  commands,
-  type AuditEntry,
-  type IntegrationView,
-} from "@/bindings";
+import { commands, type AuditEntry, type IntegrationView } from "@/bindings";
+import { Select, type SelectOption } from "../ui/Select";
 import { capabilityKey } from "./model";
 
 export interface AuditFilter {
@@ -138,66 +135,59 @@ export const AuditView: React.FC<AuditViewProps> = ({
     return parts.join(" · ");
   };
 
-  const selectClass =
-    "min-h-9 max-w-full rounded-md border border-mid-gray/60 bg-mid-gray/10 px-2 py-1 text-sm text-text";
+  const filters: {
+    key: keyof AuditFilter;
+    label: string;
+    options: SelectOption[];
+  }[] = [
+    {
+      key: "integration",
+      label: t("integrations.audit.filterIntegration"),
+      options: views.map((v) => ({
+        value: v.integration.id,
+        label: v.integration.label,
+      })),
+    },
+    {
+      key: "outcome",
+      label: t("integrations.audit.filterOutcome"),
+      options: OUTCOMES.map((o) => ({
+        value: o,
+        label: t(`integrations.audit.outcome.${o}`),
+      })),
+    },
+    {
+      key: "caller",
+      label: t("integrations.audit.filterCaller"),
+      options: CALLERS.map((c) => ({
+        value: c,
+        label: t(`integrations.callers.${c}`),
+      })),
+    },
+  ];
 
   return (
     <div className="space-y-3" data-testid="audit">
       <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1 text-xs text-text-muted">
-          {t("integrations.audit.filterIntegration")}
-          <select
-            className={selectClass}
-            value={filter.integration}
-            onChange={(e) =>
-              onFilterChange({ ...filter, integration: e.target.value })
-            }
-            data-testid="audit-filter-integration"
+        {filters.map(({ key, label: text, options }) => (
+          <div
+            key={key}
+            className="flex min-w-[11rem] flex-col gap-1"
+            data-testid={`audit-filter-${key}`}
           >
-            <option value="">{t("integrations.audit.all")}</option>
-            {views.map((v) => (
-              <option key={v.integration.id} value={v.integration.id}>
-                {v.integration.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-text-muted">
-          {t("integrations.audit.filterOutcome")}
-          <select
-            className={selectClass}
-            value={filter.outcome}
-            onChange={(e) =>
-              onFilterChange({ ...filter, outcome: e.target.value })
-            }
-            data-testid="audit-filter-outcome"
-          >
-            <option value="">{t("integrations.audit.all")}</option>
-            {OUTCOMES.map((o) => (
-              <option key={o} value={o}>
-                {t(`integrations.audit.outcome.${o}`)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-text-muted">
-          {t("integrations.audit.filterCaller")}
-          <select
-            className={selectClass}
-            value={filter.caller}
-            onChange={(e) =>
-              onFilterChange({ ...filter, caller: e.target.value })
-            }
-            data-testid="audit-filter-caller"
-          >
-            <option value="">{t("integrations.audit.all")}</option>
-            {CALLERS.map((c) => (
-              <option key={c} value={c}>
-                {t(`integrations.callers.${c}`)}
-              </option>
-            ))}
-          </select>
-        </label>
+            <span className="text-xs text-text-muted">{text}</span>
+            <Select
+              value={filter[key] || null}
+              options={options}
+              placeholder={t("integrations.audit.all")}
+              ariaLabel={text}
+              menuPortal
+              onChange={(value) =>
+                onFilterChange({ ...filter, [key]: value ?? "" })
+              }
+            />
+          </div>
+        ))}
       </div>
 
       {failed && (

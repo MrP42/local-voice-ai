@@ -72,7 +72,9 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
   };
 
   const call = async <T,>(
-    promise: Promise<{ status: "ok"; data: T } | { status: "error"; error: string }>,
+    promise: Promise<
+      { status: "ok"; data: T } | { status: "error"; error: string }
+    >,
   ): Promise<T> => {
     const result = await promise;
     if (result.status === "error") throw result.error;
@@ -101,7 +103,9 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
     mode: GrantMode | null,
   ) =>
     run(() =>
-      call(commands.integrationSetGrant(integration.id, capability, caller, mode)),
+      call(
+        commands.integrationSetGrant(integration.id, capability, caller, mode),
+      ),
     );
 
   const resetGrants = async () => {
@@ -137,7 +141,9 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
       // Das Backend hat `last_ok_at`/`last_error` gesetzt.
       const list = await commands.integrationsList();
       if (list.status === "ok") {
-        const fresh = list.data?.find((v) => v.integration.id === integration.id);
+        const fresh = list.data?.find(
+          (v) => v.integration.id === integration.id,
+        );
         if (fresh) onChanged(fresh);
       }
     } catch (e) {
@@ -371,6 +377,20 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
           onChange={(cap, caller, mode) => void setGrant(cap, caller, mode)}
         />
       </section>
+
+      {integration.kind === "agent" && (
+        <section className="space-y-1" aria-labelledby="int-clients">
+          <h3 id="int-clients" className="text-sm font-semibold">
+            {t("integrations.detail.clients")}
+          </h3>
+          <p
+            className="text-xs text-text-muted"
+            data-testid="agent-clients-placeholder"
+          >
+            {t("integrations.detail.clientsPlaceholder")}
+          </p>
+        </section>
+      )}
 
       <section className="flex flex-wrap items-center gap-3 border-t border-mid-gray/20 pt-4">
         <Button

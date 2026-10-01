@@ -3297,6 +3297,8 @@
       "rights": "Rechte",
       "rightsHint": "Je Fähigkeit und Aufrufer: aus, fragen (du entscheidest jedes Mal) oder erlaubt. Du selbst brauchst in der App keine Freigabe.",
       "resetRights": "Auf Standard zurücksetzen",
+      "clients": "Zugänge",
+      "clientsPlaceholder": "Zugänge für externe Agenten (je Programm ein Zugang mit eigenem Schlüssel und Rechten je Werkzeug) legst du hier an, sobald die Agentenbrücke eingerichtet ist.",
       "showAudit": "Protokoll anzeigen",
       "remove": "Entfernen",
       "removeConfirm": "„{{label}}“ samt Rechten entfernen? Das Protokoll bleibt.",

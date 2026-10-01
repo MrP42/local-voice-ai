@@ -40,7 +40,8 @@ use super::{secrets, store};
 pub const UI_CREATABLE: [Kind; 1] = [Kind::Folder];
 
 /// Aufrufer-Spalten der Rechte-Matrix, in Anzeigereihenfolge.
-pub const MATRIX_CALLERS: [Caller; 3] = [Caller::Workflow, Caller::AgentExternal, Caller::AgentLocal];
+pub const MATRIX_CALLERS: [Caller; 3] =
+    [Caller::Workflow, Caller::AgentExternal, Caller::AgentLocal];
 
 /// Das Recht EINES Aufrufers fuer EINE Faehigkeit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -406,7 +407,8 @@ pub fn decide_approval(
     approve: bool,
     now_ms: i64,
 ) -> Result<Approval, String> {
-    let decided = approvals::decide(conn, id, approve, now_ms).map_err(|e| approval_error_code(&e))?;
+    let decided =
+        approvals::decide(conn, id, approve, now_ms).map_err(|e| approval_error_code(&e))?;
     audit_user(
         conn,
         decided.integration_id.as_deref().unwrap_or(""),

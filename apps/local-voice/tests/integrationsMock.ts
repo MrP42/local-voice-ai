@@ -108,9 +108,10 @@ export const installIntegrationsMock = async (
           nextId: 1,
           integrations: (options.integrations ?? []).map((i: any) => ({
             enabled: true,
-            direction: KINDS[i.kind]?.directions.length === 1
-              ? KINDS[i.kind].directions[0]
-              : "both",
+            direction:
+              KINDS[i.kind]?.directions.length === 1
+                ? KINDS[i.kind].directions[0]
+                : "both",
             path: null,
             last_error: null,
             grants: {},
@@ -280,7 +281,10 @@ export const installIntegrationsMock = async (
             w.__calls.push({ cmd, args });
             const i = find(args.id as string);
             const key = `${args.capability}|${args.caller}`;
-            if (args.capability === "recording.start" && args.mode === "allow") {
+            if (
+              args.capability === "recording.start" &&
+              args.mode === "allow"
+            ) {
               throw "Aufnahme starten kann nie dauerhaft erlaubt werden.";
             }
             if (args.mode == null) delete i.grants[key];
@@ -303,9 +307,13 @@ export const installIntegrationsMock = async (
             w.__calls.push({ cmd, args });
             let rows = state.audit as any[];
             if (args.integrationId)
-              rows = rows.filter((r) => r.integration_id === args.integrationId);
-            if (args.outcome) rows = rows.filter((r) => r.outcome === args.outcome);
-            if (args.caller) rows = rows.filter((r) => r.caller === args.caller);
+              rows = rows.filter(
+                (r) => r.integration_id === args.integrationId,
+              );
+            if (args.outcome)
+              rows = rows.filter((r) => r.outcome === args.outcome);
+            if (args.caller)
+              rows = rows.filter((r) => r.caller === args.caller);
             return rows.slice(0, Number(args.limit ?? 200));
           }
           case "approvals_pending": {
@@ -360,7 +368,9 @@ export const installIntegrationsMock = async (
             return options.pickedPath ?? "C:\\Ablage\\Berichte";
           // MCP (wie in meeting-mcp.spec.ts)
           case "meeting_mcp_info":
-            return { exe_path: "C:\\Program Files\\Local Voice AI\\local-voice-ai.exe" };
+            return {
+              exe_path: "C:\\Program Files\\Local Voice AI\\local-voice-ai.exe",
+            };
           case "change_meeting_mcp_enabled_setting":
             w.__calls.push({ cmd, args });
             w.__settings.meeting_mcp_enabled = args.enabled;

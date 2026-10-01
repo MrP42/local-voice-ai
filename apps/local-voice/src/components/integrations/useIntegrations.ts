@@ -37,9 +37,7 @@ export function useIntegrations() {
   const upsert = useCallback((view: IntegrationView) => {
     setViews((list) =>
       list.some((v) => v.integration.id === view.integration.id)
-        ? list.map((v) =>
-            v.integration.id === view.integration.id ? view : v,
-          )
+        ? list.map((v) => (v.integration.id === view.integration.id ? view : v))
         : [...list, view],
     );
   }, []);

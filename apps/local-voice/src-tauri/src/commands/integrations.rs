@@ -13,10 +13,8 @@ use tauri::State;
 use crate::managers::integrations::model::{
     Approval, AuditEntry, Caller, Capability, Direction, GrantMode, Integration, Kind,
 };
-use crate::managers::integrations::view::{
-    self, IntegrationView, PendingApproval, TestResult,
-};
 use crate::managers::integrations::secrets;
+use crate::managers::integrations::view::{self, IntegrationView, PendingApproval, TestResult};
 use crate::managers::meetings::store::MeetingStore;
 
 fn conn(store: &MeetingStore) -> Result<rusqlite::Connection, String> {
