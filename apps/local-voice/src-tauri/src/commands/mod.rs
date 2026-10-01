@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod calendar; // M5-P5b
 pub mod history;
+pub mod integration_targets; // A6
 pub mod integrations; // A4
 pub mod integrations_m365; // A5
 pub mod llm;

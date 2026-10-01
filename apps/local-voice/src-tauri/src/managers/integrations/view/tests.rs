@@ -101,9 +101,6 @@ fn kinds_that_need_an_account_cannot_be_created_from_the_ui_yet() {
     let conn = fx.conn();
     for kind in [
         Kind::M365,
-        Kind::Smtp,
-        Kind::Obsidian,
-        Kind::Wissen,
         Kind::Agent,
         Kind::Youtube,
         Kind::Ics,

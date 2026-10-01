@@ -2154,7 +2154,9 @@ async integrationSetGrant(id: string, capability: Capability, caller: Caller, mo
 }
 },
 /**
- * Probiert die Verbindung aus (heute: der Ordner).
+ * Probiert die Verbindung aus: Ordner, SMTP (Verbindung, Verschluesselung, Anmeldung,
+ * ohne Mail), Vault, Wissensbasis (Adresse, Schluessel, Werkzeug; A6). Das Ergebnis
+ * steht auch am Eintrag. Netzwerk und Dateisystem laufen auf einem Arbeitsthread.
  */
 async integrationTest(id: string) : Promise<Result<TestResult, string>> {
     try {
@@ -2193,6 +2195,79 @@ async approvalsPending() : Promise<Result<PendingApproval[], string>> {
 async approvalDecide(id: string, approve: boolean) : Promise<Result<Approval, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("approval_decide", { id, approve }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt eine Integration mit Einstellungen an (SMTP, Ordner, Vault, Wissensbasis); das
+ * Geheimnis geht in den Geheimnisspeicher, nie in die Datenbank. Fehler: Codes
+ * (`folder_*`, `vault_path_*`) oder Klartext der Pruefung.
+ */
+async integrationCreateWithSettings(kind: Kind, label: string, direction: Direction | null, settings: TargetSettings) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_create_with_settings", { kind, label, direction, settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aendert Einstellungen (und optional das Geheimnis: Passwort bzw. Schluessel) einer
+ * SMTP-, Ordner-, Vault- oder Wissens-Integration. Nicht gesendete Felder bleiben,
+ * ein leeres `secret` laesst das Geheimnis unveraendert.
+ */
+async integrationUpdateSettings(id: string, settings: TargetSettings) : Promise<Result<IntegrationView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_update_settings", { id, settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sendet eine Testmail vom SMTP-Postfach an dessen eigene Absenderadresse.
+ */
+async integrationSendTestMail(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_send_test_mail", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Antwort der Suche fuer die Oberflaeche.
+ */
+async wissenSuchen(id: string, query: string, limit: number | null, area: string | null) : Promise<Result<WissenHit[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("wissen_suchen", { id, query, limit, area }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Legt den Export einer Besprechung in einer Ordner-Integration ab („ablegen in“).
+ * Format: `md`, `txt`, `docx`, `html`, `pdf` (die vorhandenen Exporte); Audio nie.
+ * Eine vorhandene Datei wird nie ueberschrieben (`Name (2).md`).
+ */
+async integrationExportToFolder(id: string, meetingId: string, format: string, parts: ExportParts) : Promise<Result<PlacedInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_export_to_folder", { id, meetingId, format, parts }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schreibt die Besprechung als Notiz mit Frontmatter in den Vault (oder
+ * aktualisiert die vorhandene, ohne Dublette). `parts` waehlt die Teile.
+ */
+async integrationSaveToVault(id: string, meetingId: string, parts: ExportParts) : Promise<Result<VaultSaveInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("integration_save_to_vault", { id, meetingId, parts }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6516,6 +6591,10 @@ is_self: boolean;
  * Lebende Besprechungen, an denen die Person teilnahm.
  */
 meeting_count: number }
+/**
+ * Wohin der Export kam (Pfad relativ zum Ordner).
+ */
+export type PlacedInfo = { rel: string; bytes: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * Eine Aufnahme der Auswahl in der Liste der Oberflaeche.
@@ -6746,6 +6825,22 @@ export type SecretMap = Partial<{ [key in string]: string }>
  */
 export type SecretSlotView = { slot: string; status: string }
 export type SectionKind = "text" | "tasks"
+/**
+ * Verbindungsart.
+ */
+export type Security = 
+/**
+ * Klartext verbinden, dann `STARTTLS` (Port 587).
+ */
+"starttls" | 
+/**
+ * Sofort TLS (Port 465).
+ */
+"tls" | 
+/**
+ * Klartext: nur gegen Loopback (lokaler Testserver).
+ */
+"plain"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 /**
  * Ein Zeitbereich, in dem eine Folie zu sehen ist (ms im Video).
@@ -6944,6 +7039,20 @@ app_ram_mb: number;
 app_gpu_mb: number | null }
 export type TagInsertion = { offset_in_original: number; offset_chars: number; tag: string }
 /**
+ * Einstellungen, wie die Oberflaeche sie schickt. Felder, die eine Art nicht kennt,
+ * werden ignoriert. `secret` ist das Passwort (SMTP) oder der Schluessel (Wissen);
+ * leer oder fehlend bedeutet beim Aendern „unveraendert“.
+ */
+export type TargetSettings = { 
+/**
+ * Ordner oder Vault (absoluter Pfad).
+ */
+path: string | null; 
+/**
+ * Unterordner (Ordner: fuer Exporte; Vault: fuer neue Notizen).
+ */
+subfolder: string | null; host: string | null; port: number | null; security: Security | null; username: string | null; from_address: string | null; from_name: string | null; context_area: string | null; tier: string | null; endpoint: string | null; search_tool: string | null; area: string | null; secret: string | null }
+/**
  * Vorlage samt Metadaten, wie sie an die UI geht. `builtin` = mitgeliefert
  * (ID `builtin:<key>`, schreibgeschuetzt). `updated_at` in Sekunden.
  */
@@ -6965,9 +7074,14 @@ export type TemplateSpec = { version: number; context: string; sections: Templat
 export type TestResult = { ok: boolean; 
 /**
  * `folder_ok`, `folder_path_not_found`, `folder_path_not_a_folder`,
- * `folder_unreadable`, `test_not_available`.
+ * `folder_unreadable`, `test_not_available`; SMTP `smtp_*`, Vault `vault_*`,
+ * Wissensbasis `wissen_*` (A6).
  */
-code: string }
+code: string; 
+/**
+ * Klartext zum Fehler (geschwaerzt), soweit der Code allein nicht reicht.
+ */
+detail: string | null }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.
@@ -7096,6 +7210,18 @@ export type UsageSummary = { range: UsageRange; calls: number; failed: number; p
  */
 by_day: UsageBucket[] }
 /**
+ * Ergebnis von „in Obsidian ablegen“.
+ */
+export type VaultSaveInfo = { 
+/**
+ * Pfad der Notiz relativ zum Vault.
+ */
+rel: string; 
+/**
+ * `created`, `updated` oder `unchanged`.
+ */
+result: string }
+/**
  * Eine Stimme mit ihren Metadaten, für die Stimmenübersicht.
  */
 export type VoiceInfo = { id: string; meta: VoiceMeta; origin: VoiceOrigin; 
@@ -7205,6 +7331,14 @@ export type WaitReason =
  */
 "recording"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
+/**
+ * Ein Treffer der Suche (alles fremder Text, bereinigt).
+ */
+export type WissenHit = { title: string; path: string; area: string; snippet: string; score: number; 
+/**
+ * `vault` oder `buch`.
+ */
+source: string; page: number | null; document_id: string | null }
 /**
  * M2-P2d: one word with its time span in milliseconds. In a
  * `TimedSegment` relative to the clip, in a stored meeting segment on the

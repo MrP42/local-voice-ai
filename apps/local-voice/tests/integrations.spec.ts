@@ -735,6 +735,470 @@ test.describe("Protokoll", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A6: SMTP-Postfach, Obsidian-Vault, WAI-Wissensbasis (AK8, UI-Teil)
+// ---------------------------------------------------------------------------
+
+const PASSWORD = "geheim-App-Passwort-123";
+const TOKEN = "wai_GEHEIMER-Schluessel-0123456789";
+
+const openTargetDialog = async (page: Page, id: string) => {
+  await openCatalog(page);
+  await page.getByTestId(`catalog-setup-${id}`).click();
+  await expect(page.getByTestId("target-dialog")).toBeVisible();
+};
+
+const fillSmtp = async (page: Page, password = PASSWORD) => {
+  await page.getByTestId("target-name").fill("Mein Postfach");
+  await page.getByTestId("target-host").fill("smtp.example.de");
+  await page.getByTestId("target-username").fill("patrick");
+  await page.getByTestId("target-from-address").fill("patrick@example.de");
+  await page.getByTestId("target-from-name").fill("Patrick Wolff");
+  await page.getByTestId("target-secret").fill(password);
+};
+
+const createSmtp = async (page: Page) => {
+  await openTargetDialog(page, "smtp");
+  await fillSmtp(page);
+  await page.getByTestId("target-submit").click();
+  await expect(page.getByTestId("integration-detail")).toBeVisible();
+};
+
+const createVault = async (page: Page, path = "D:\\Vaults\\AI-OS") => {
+  await openTargetDialog(page, "obsidian");
+  await page.getByTestId("target-name").fill("AI-OS Vault");
+  await page.getByTestId("target-path").fill(path);
+  await page.getByTestId("target-submit").click();
+};
+
+const createWissen = async (page: Page) => {
+  await openTargetDialog(page, "wissen");
+  await page.getByTestId("target-name").fill("AI-OS Wissen");
+  await page.getByTestId("target-endpoint").fill("https://os.example.de/mcp");
+  await page.getByTestId("target-secret").fill(TOKEN);
+  await page.getByTestId("target-submit").click();
+  await expect(page.getByTestId("integration-detail")).toBeVisible();
+};
+
+test.describe("Katalog der Ziele und Konten", () => {
+  test("Postfach, Vault und Wissensbasis lassen sich jetzt einrichten, bald bleibt nur der Rest", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await openCatalog(page);
+    for (const id of ["smtp", "obsidian", "wissen"]) {
+      await expect(page.getByTestId(`catalog-setup-${id}`)).toBeVisible();
+    }
+    const soon = await page
+      .locator('[data-testid="catalog-item"][data-status="soon"]')
+      .evaluateAll((els) =>
+        els.map((el) => (el as HTMLElement).dataset.catalogId),
+      );
+    expect(soon).toEqual(["m365", "webhook"]);
+    const available = await page
+      .locator('[data-testid="catalog-item"][data-status="available"]')
+      .count();
+    expect(available).toBeGreaterThanOrEqual(6);
+  });
+});
+
+test.describe("SMTP-Postfach", () => {
+  test("Pflichtfelder gelten, das Passwort ist verdeckt und steht nie im Register", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await openTargetDialog(page, "smtp");
+    await expect(page.getByTestId("target-submit")).toBeDisabled();
+    await expect(page.getByTestId("target-secret")).toHaveAttribute(
+      "type",
+      "password",
+    );
+    await fillSmtp(page, "");
+    // Mit Benutzername braucht es ein Passwort.
+    await expect(page.getByTestId("target-submit")).toBeDisabled();
+    await page.getByTestId("target-secret").fill(PASSWORD);
+    await expect(page.getByTestId("target-submit")).toBeEnabled();
+    await page.getByTestId("target-submit").click();
+
+    await expect(page.getByTestId("integration-detail")).toBeVisible();
+    const settings = page.getByTestId("integration-setting");
+    await expect(settings.nth(0)).toContainText("smtp.example.de:587");
+    await expect(settings.nth(0)).toContainText("STARTTLS");
+    await expect(settings.nth(1)).toHaveText("patrick@example.de");
+    await expect(page.getByTestId("integration-detail")).toContainText(
+      "hinterlegt",
+    );
+    // Das Passwort ging einmal ans Backend und kommt nie zurück.
+    const [create] = await calls(page, "integration_create_with_settings");
+    expect(create.args.settings.secret).toBe(PASSWORD);
+    expect(create.args.kind).toBe("smtp");
+    await expect(page.locator("body")).not.toContainText(PASSWORD);
+    const list = await page.evaluate(() => (window as any).__reg.integrations);
+    expect(JSON.stringify(list)).not.toContain(PASSWORD);
+  });
+
+  test("TLS setzt den Port 465 mit, zurück auf STARTTLS wieder 587, ein eigener Port bleibt", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await openTargetDialog(page, "smtp");
+    const port = page.getByTestId("target-port");
+    await expect(port).toHaveValue("587");
+    await page.getByTestId("target-security-tls").click();
+    await expect(port).toHaveValue("465");
+    await page.getByTestId("target-security-starttls").click();
+    await expect(port).toHaveValue("587");
+    await port.fill("2525");
+    await page.getByTestId("target-security-tls").click();
+    await expect(port).toHaveValue("2525");
+  });
+
+  test("Einstellungen ändern: leeres Passwortfeld lässt das Passwort stehen, neue Werte erscheinen", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createSmtp(page);
+    await page.getByTestId("integration-edit-settings").click();
+    await expect(page.getByTestId("target-dialog")).toHaveAttribute(
+      "data-mode",
+      "edit",
+    );
+    await expect(page.getByTestId("target-secret")).toHaveValue("");
+    await expect(page.getByTestId("target-secret")).toHaveAttribute(
+      "placeholder",
+      /gespeicherte Passwort zu behalten/,
+    );
+    await expect(page.getByTestId("target-host")).toHaveValue(
+      "smtp.example.de",
+    );
+    await page.getByTestId("target-host").fill("mail.example.de");
+    await page.getByTestId("target-submit").click();
+    await expect(page.getByTestId("target-dialog")).toHaveCount(0);
+    await expect(page.getByTestId("integration-setting").first()).toContainText(
+      "mail.example.de:587",
+    );
+    const updates = await calls(page, "integration_update_settings");
+    expect(updates).toHaveLength(1);
+    expect(updates[0].args.settings.host).toBe("mail.example.de");
+    expect(updates[0].args.settings.secret).toBeNull();
+  });
+
+  test("Verbindung testen: Erfolg ohne Fehlermeldung", async ({ page }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createSmtp(page);
+    await page.getByTestId("integration-test").click();
+    await expect(page.getByTestId("integration-test-result")).toContainText(
+      "Verbindung und Anmeldung sind in Ordnung",
+    );
+    await expect(page.getByTestId("integration-test-detail")).toHaveCount(0);
+  });
+
+  test("ein abgelehntes Login zeigt Code-Text und die Meldung des Backends", async ({
+    page,
+  }) => {
+    await setup(page, {
+      tests: {
+        smtp: {
+          code: "smtp_auth_failed",
+          detail:
+            "Die Anmeldung wurde abgelehnt. Benutzername oder Passwort stimmen nicht; bei Gmail und anderen ist ein App-Passwort nötig.",
+        },
+      },
+    });
+    await openIntegrations(page);
+    await createSmtp(page);
+    await page.getByTestId("integration-test").click();
+    await expect(page.getByTestId("integration-test-result")).toHaveText(
+      "Die Anmeldung wurde abgelehnt.",
+    );
+    await expect(page.getByTestId("integration-test-detail")).toContainText(
+      "App-Passwort nötig",
+    );
+  });
+
+  test("Testmail: Erfolg nennt die Adresse", async ({ page }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createSmtp(page);
+    await page.getByTestId("smtp-test-mail").click();
+    await expect(page.getByTestId("smtp-test-mail-result")).toHaveText(
+      "Testmail gesendet an patrick@example.de.",
+    );
+    expect(await calls(page, "integration_send_test_mail")).toHaveLength(1);
+  });
+
+  test("Testmail: ein Fehler steht im Klartext", async ({ page }) => {
+    await setup(page, {
+      mailError:
+        "Der Mailserver ist nicht erreichbar: smtp.example.de: Zeitüberschreitung",
+    });
+    await openIntegrations(page);
+    await createSmtp(page);
+    await page.getByTestId("smtp-test-mail").click();
+    await expect(page.getByTestId("smtp-test-mail-result")).toContainText(
+      "Der Mailserver ist nicht erreichbar",
+    );
+  });
+
+  test("das Postfach übersteht Neuladen und hat nur das Recht „E-Mail senden“", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createSmtp(page);
+    await page.reload();
+    await openIntegrations(page);
+    await expect(page.getByTestId("integration-card")).toHaveCount(1);
+    await expect(page.getByTestId("integration-card")).toContainText(
+      "Mein Postfach",
+    );
+    await openDetail(page, "int-1");
+    // SMTP kennt nur die Richtung „Schreiben“.
+    await expect(page.getByTestId("direction-write")).toBeDisabled();
+    await expect(page.getByTestId("direction-both")).toHaveCount(0);
+    await expect(page.getByTestId("rights-matrix")).toContainText(
+      "Mail senden",
+    );
+    await expect(page.getByTestId("capability-mail.send")).toBeVisible();
+  });
+});
+
+test.describe("Obsidian-Vault", () => {
+  test("ein relativer oder fehlender Pfad bleibt im Dialog stehen, es entsteht nichts", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createVault(page, "Vaults\\AI-OS");
+    await expect(page.getByTestId("target-error")).toContainText(
+      "Bitte gib einen vollständigen Pfad an",
+    );
+    await page.getByTestId("target-path").fill("D:\\gibt-es-nicht");
+    await page.getByTestId("target-submit").click();
+    await expect(page.getByTestId("target-error")).toHaveText(
+      "Der Vault wurde nicht gefunden.",
+    );
+    await page.getByTestId("target-cancel").click();
+    await expect(page.getByTestId("integration-card")).toHaveCount(0);
+  });
+
+  test("Ordner wählen füllt Pfad und Namen, Bereich und Autonomie gehen mit", async ({
+    page,
+  }) => {
+    await setup(page, { pickedPath: "D:\\Vaults\\Wissen" });
+    await openIntegrations(page);
+    await openTargetDialog(page, "obsidian");
+    await page.getByTestId("target-pick").click();
+    await expect(page.getByTestId("target-path")).toHaveValue(
+      "D:\\Vaults\\Wissen",
+    );
+    await expect(page.getByTestId("target-name")).toHaveValue("Wissen");
+    await pick(page, "Kontextbereich", "Kunden");
+    await pick(page, "Schreib-Autonomie", "logged (mit Protokoll)");
+    await page.getByTestId("target-submit").click();
+    await expect(page.getByTestId("integration-detail")).toBeVisible();
+    const [create] = await calls(page, "integration_create_with_settings");
+    expect(create.args.settings).toMatchObject({
+      path: "D:\\Vaults\\Wissen",
+      context_area: "kunden",
+      tier: "logged",
+      subfolder: "",
+    });
+    const rows = page.getByTestId("integration-setting");
+    await expect(rows).toContainText(["00_inbox", "Kunden"]);
+  });
+
+  test("Verbindung testen meldet einen verschwundenen Vault mit seinem Text", async ({
+    page,
+  }) => {
+    await setup(page, {
+      tests: { obsidian: { code: "vault_path_not_found" } },
+    });
+    await openIntegrations(page);
+    await createVault(page);
+    await expect(page.getByTestId("integration-detail")).toBeVisible();
+    await page.getByTestId("integration-test").click();
+    await expect(page.getByTestId("integration-test-result")).toHaveText(
+      "Der Vault wurde nicht gefunden.",
+    );
+  });
+
+  test("Erfolg: der Vault ist erreichbar und beschreibbar", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createVault(page);
+    await expect(page.getByTestId("integration-detail")).toBeVisible();
+    await page.getByTestId("integration-test").click();
+    await expect(page.getByTestId("integration-test-result")).toHaveText(
+      "Der Vault ist erreichbar und beschreibbar.",
+    );
+  });
+});
+
+test.describe("WAI-Wissensbasis", () => {
+  test("http außerhalb dieses Rechners wird abgelehnt, ohne Schlüssel gibt es kein Anlegen", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await openTargetDialog(page, "wissen");
+    await page.getByTestId("target-name").fill("Wissen");
+    await page.getByTestId("target-endpoint").fill("http://os.example.de/mcp");
+    await expect(page.getByTestId("target-submit")).toBeDisabled();
+    await page.getByTestId("target-secret").fill(TOKEN);
+    await page.getByTestId("target-submit").click();
+    await expect(page.getByTestId("target-error")).toContainText(
+      "Der Endpunkt muss https verwenden",
+    );
+    await expect(page.getByTestId("integration-card")).toHaveCount(0);
+  });
+
+  test("anlegen: Suchwerkzeug und Endpunkt stehen im Detail, der Schlüssel nicht", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createWissen(page);
+    const rows = page.getByTestId("integration-setting");
+    await expect(rows).toContainText([
+      "https://os.example.de/mcp",
+      "wissen_suchen",
+    ]);
+    await expect(page.locator("body")).not.toContainText(TOKEN);
+    const [create] = await calls(page, "integration_create_with_settings");
+    expect(create.args.settings.secret).toBe(TOKEN);
+    // Nur lesend: die Richtung ist fest.
+    await expect(page.getByTestId("direction-read")).toBeDisabled();
+  });
+
+  test("der Scope-Fehler wird verständlich gemeldet", async ({ page }) => {
+    await setup(page, {
+      tests: {
+        wissen: {
+          code: "wissen_scope_missing",
+          detail:
+            "Der Zugangsschlüssel ist gültig, darf aber nicht in der Wissensbasis suchen: Es fehlt der Scope „wissen:read“ (oder „wissen:read:<bereich>“).",
+        },
+      },
+    });
+    await openIntegrations(page);
+    await createWissen(page);
+    await page.getByTestId("integration-test").click();
+    await expect(page.getByTestId("integration-test-result")).toHaveText(
+      "Dem Schlüssel fehlt der Scope „wissen:read“.",
+    );
+    await expect(page.getByTestId("integration-test-detail")).toContainText(
+      "wissen:read:<bereich>",
+    );
+  });
+
+  test("Probesuche zeigt Treffer mit Titel, Pfad und Textstelle", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createWissen(page);
+    await page.getByTestId("wissen-query").fill("Tagessatz");
+    await page.getByTestId("wissen-query").press("Enter");
+    await expect(page.getByTestId("wissen-hit")).toHaveCount(2);
+    await expect(page.getByTestId("wissen-hits")).toContainText("2 Treffer");
+    await expect(page.getByTestId("wissen-hit").first()).toContainText(
+      "Preisliste 2026",
+    );
+    await expect(page.getByTestId("wissen-hit").first()).toContainText(
+      "10_contexts/wai/preise.md · wai",
+    );
+    await expect(page.getByTestId("wissen-hit").first()).toContainText(
+      "Der Tagessatz beträgt 1.200 EUR.",
+    );
+    const [search] = await calls(page, "wissen_suchen");
+    expect(search.args).toMatchObject({ query: "Tagessatz", limit: 5 });
+  });
+
+  test("ohne Treffer: kurze Meldung", async ({ page }) => {
+    await setup(page, { wissenHits: [] });
+    await openIntegrations(page);
+    await createWissen(page);
+    await page.getByTestId("wissen-query").fill("nichts");
+    await page.getByTestId("wissen-search").click();
+    await expect(page.getByTestId("wissen-hits")).toContainText(
+      "Keine Treffer.",
+    );
+  });
+
+  test("ein Fehler der Suche steht im Klartext", async ({ page }) => {
+    await setup(page, {
+      wissenError:
+        "Der Zugangsschlüssel wurde abgelehnt: ungültig, widerrufen oder abgelaufen.",
+    });
+    await openIntegrations(page);
+    await createWissen(page);
+    await page.getByTestId("wissen-query").fill("x");
+    await page.getByTestId("wissen-search").click();
+    await expect(page.getByTestId("wissen-search-error")).toContainText(
+      "ungültig, widerrufen oder abgelaufen",
+    );
+    await expect(page.getByTestId("wissen-hits")).toHaveCount(0);
+  });
+
+  test("Suchen ist ohne Suchbegriff gesperrt", async ({ page }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createWissen(page);
+    await expect(page.getByTestId("wissen-search")).toBeDisabled();
+    await page.getByTestId("wissen-query").fill("  ");
+    await expect(page.getByTestId("wissen-search")).toBeDisabled();
+  });
+});
+
+test.describe("Barrierefreiheit der neuen Formulare", () => {
+  test("Postfach-Dialog und Wissens-Detail ohne schwere Befunde", async ({
+    page,
+  }) => {
+    await setup(page);
+    const findings = async (where: string) => {
+      await page.addStyleTag({
+        content:
+          "*,*::before,*::after{transition:none!important;animation:none!important}",
+      });
+      await page.waitForTimeout(250);
+      const result = await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa"])
+        .exclude("input.peer")
+        .analyze();
+      const bad = result.violations
+        .filter((v) => v.impact === "critical" || v.impact === "serious")
+        .map(
+          (v) =>
+            `${where}: ${v.id} ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`,
+        );
+      expect(bad).toEqual([]);
+    };
+    await openIntegrations(page);
+    await openTargetDialog(page, "smtp");
+    await findings("Postfach-Dialog");
+    await fillSmtp(page);
+    await page.getByTestId("target-submit").click();
+    await expect(page.getByTestId("integration-detail")).toBeVisible();
+    await page.getByTestId("integration-test").click();
+    await expect(page.getByTestId("integration-test-result")).toBeVisible();
+    await findings("Postfach-Detail");
+    await page.getByTestId("integrations-back").click();
+    await createWissen(page);
+    await page.getByTestId("wissen-query").fill("Tagessatz");
+    await page.getByTestId("wissen-search").click();
+    await expect(page.getByTestId("wissen-hits")).toBeVisible();
+    await findings("Wissens-Detail");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Darstellung
 // ---------------------------------------------------------------------------
 
