@@ -45,3 +45,4 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | K1 | M8 | Webhook-Formular, Lizenzhinweise NC-Stimmen/espeak-ng, KNOWN-LIMITATIONS — lv-coder (D:) | tsc, Specs, gen-notices --check | abgenommen | cf6b5a13 |
 | R0 | M8 | PR-Triage #21/#32/#60/#63 vor Release (Regel 7) — lv-coder-xhigh (D:) | cargo build, Entscheidung je PR | abgenommen (#60,#63 drin, #21 überholt, #32 ausgeklammert) | d2ca22ba |
 | C4 | M6 | #68 Wissens- und Fristaktionen (Vault-Notiz mit Frontmatter, Dublettenschutz, Mitteilung zur Frist, Kalender nur nach Freigabe) — lv-coder (D:) | AK6, AK7 | in_arbeit | |
+| B8 | M5 | #67 Agenten-Zugriff auf Workflows (MCP/CLI list_workflows, run_workflow, get_run), n8n-Brücke Doku + Beispiel — lv-coder (D:) | AK10 mcp_smoke --workflows, ctl workflow run | in_arbeit | |
