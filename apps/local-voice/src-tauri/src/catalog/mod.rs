@@ -621,10 +621,24 @@ mod tests {
             .filter(|v| v.license_non_commercial)
             .map(|v| v.id.as_str())
             .collect();
+        // Lessac (Blizzard-2013-Forschungslizenz) und Ryan (CC-BY-NC-SA-4.0) selbst sowie
+        // die davon feinabgestimmten Stimmen (K1): Thorsten, Kerstin, Amy, Alan, Alba.
         assert_eq!(
             nc,
-            BTreeSet::from(["en_US-lessac-high", "en_US-lessac-medium", "en_US-ryan-high"])
+            BTreeSet::from([
+                "de_DE-kerstin-low",
+                "de_DE-thorsten-high",
+                "de_DE-thorsten-medium",
+                "en_GB-alan-medium",
+                "en_GB-alba-medium",
+                "en_US-amy-medium",
+                "en_US-lessac-high",
+                "en_US-lessac-medium",
+                "en_US-ryan-high",
+            ])
         );
+        // Von Grund auf trainiert (M-AILABS, BSD-3-Clause): frei.
+        assert!(!voices.iter().any(|v| v.id == "de_DE-eva_k-x_low" && v.license_non_commercial));
     }
 
     #[test]

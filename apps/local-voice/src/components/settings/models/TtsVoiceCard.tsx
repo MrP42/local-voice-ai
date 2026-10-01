@@ -146,8 +146,11 @@ export const TtsVoiceCard: React.FC<TtsVoiceCardProps> = ({
           className="text-amber-700 dark:text-amber-400 text-sm leading-relaxed"
           data-testid="tts-nc-note"
         >
-          {t("settings.models.ttsVoices.license.nonCommercialHint", {
-            license: license ?? "",
+          {t(`settings.models.ttsVoices.voices.${info.id}.nonCommercialHint`, {
+            // Von einer Forschungs-/NC-Stimme abgeleitete Stimmen erklaeren ihre Herkunft.
+            defaultValue: t("settings.models.ttsVoices.license.nonCommercialHint", {
+              license: license ?? "",
+            }),
           })}
         </p>
       )}

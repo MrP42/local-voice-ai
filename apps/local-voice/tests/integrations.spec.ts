@@ -111,7 +111,7 @@ test.describe("Seitenleiste", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Katalog", () => {
-  test("mindestens sieben Arten, nicht verfügbare als „bald“ markiert", async ({
+  test("mindestens sieben Arten, „bald“-Arten (falls vorhanden) markiert", async ({
     page,
   }) => {
     await setup(page);
@@ -123,7 +123,7 @@ test.describe("Katalog", () => {
       els.map((el) => (el as HTMLElement).dataset.status),
     );
     expect(statuses).toContain("available");
-    expect(statuses).toContain("soon");
+    expect(statuses).toContain("auto");
     // Jede „bald“-Art trägt die Marke und hat keinen Einrichten-Knopf.
     const soon = page.locator(
       '[data-testid="catalog-item"][data-status="soon"]',
@@ -865,11 +865,134 @@ test.describe("Katalog der Ziele und Konten", () => {
       .evaluateAll((els) =>
         els.map((el) => (el as HTMLElement).dataset.catalogId),
       );
-    expect(soon).toEqual(["webhook"]);
+    // K1: auch der Webhook (n8n) ist jetzt einzurichten, „bald“ ist leer.
+    expect(soon).toEqual([]);
+    await expect(page.getByTestId("catalog-setup-webhook")).toBeVisible();
     const available = await page
       .locator('[data-testid="catalog-item"][data-status="available"]')
       .count();
-    expect(available).toBeGreaterThanOrEqual(6);
+    expect(available).toBeGreaterThanOrEqual(7);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// K1: Webhook (n8n) als Ziel; die Adresse ist das Geheimnis
+// ---------------------------------------------------------------------------
+
+const WEBHOOK_URL = "https://n8n.example.de/webhook/3f9c2e1a-GEHEIM-7b";
+
+const createWebhook = async (page: Page, url = WEBHOOK_URL) => {
+  await openTargetDialog(page, "webhook");
+  await page.getByTestId("target-name").fill("n8n Ablage");
+  await page.getByTestId("target-secret").fill(url);
+  await page.getByTestId("target-submit").click();
+};
+
+test.describe("Webhook (n8n)", () => {
+  test("ohne Adresse gibt es kein Anlegen, die Adresse ist verdeckt, der Hinweis nennt n8n", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await openTargetDialog(page, "webhook");
+    await page.getByTestId("target-name").fill("n8n Ablage");
+    await expect(page.getByTestId("target-submit")).toBeDisabled();
+    await expect(page.getByTestId("target-secret")).toHaveAttribute(
+      "type",
+      "password",
+    );
+    await expect(page.getByTestId("target-dialog")).toContainText("n8n");
+    await expect(page.getByTestId("target-dialog")).toContainText("https");
+    await page.getByTestId("target-secret").fill(WEBHOOK_URL);
+    await expect(page.getByTestId("target-submit")).toBeEnabled();
+  });
+
+  test("http außerhalb dieses Rechners wird abgelehnt", async ({ page }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createWebhook(page, "http://n8n.example.de/webhook/abc");
+    await expect(page.getByTestId("target-error")).toContainText(
+      "https verwenden",
+    );
+    await expect(page.getByTestId("integration-card")).toHaveCount(0);
+  });
+
+  test("http gegen diesen Rechner (lokales n8n) ist erlaubt", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createWebhook(page, "http://localhost:5678/webhook/abc");
+    await expect(page.getByTestId("integration-detail")).toBeVisible();
+    await expect(page.getByTestId("integration-setting")).toContainText(
+      "localhost:5678",
+    );
+  });
+
+  test("anlegen: die Adresse geht als Geheimnis, im Detail steht nur der Server", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createWebhook(page);
+    await expect(page.getByTestId("integration-detail")).toBeVisible();
+    await expect(page.getByTestId("integration-setting")).toContainText(
+      "n8n.example.de",
+    );
+    await expect(page.locator("body")).not.toContainText("GEHEIM");
+    await expect(page.locator("body")).not.toContainText("/webhook/");
+    const [create] = await calls(page, "integration_create_with_settings");
+    expect(create.args.kind).toBe("webhook");
+    expect(create.args.settings.secret).toBe(WEBHOOK_URL);
+    expect(create.args.settings.endpoint).toBeNull();
+    // Nur schreibend: die Richtung ist fest, die Fähigkeit „Webhook senden“ da.
+    await expect(page.getByTestId("direction-write")).toBeDisabled();
+    await expect(page.getByTestId("integration-detail")).toContainText(
+      "Webhook senden",
+    );
+  });
+
+  test("ein Webhook wird nie durch Senden getestet: kein Testknopf, ein Hinweis", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createWebhook(page);
+    await expect(page.getByTestId("integration-detail")).toBeVisible();
+    await expect(page.getByTestId("integration-test")).toHaveCount(0);
+    await expect(page.getByTestId("webhook-no-test")).toContainText(
+      "nicht durch Senden",
+    );
+    expect(await calls(page, "integration_test")).toHaveLength(0);
+  });
+
+  test("bearbeiten: leere Adresse lässt die gespeicherte unverändert, eine neue ersetzt sie", async ({
+    page,
+  }) => {
+    await setup(page);
+    await openIntegrations(page);
+    await createWebhook(page);
+    await page.getByTestId("integration-edit-settings").click();
+    await expect(page.getByTestId("target-dialog")).toHaveAttribute(
+      "data-mode",
+      "edit",
+    );
+    await expect(page.getByTestId("target-secret")).toHaveValue("");
+    await page.getByTestId("target-submit").click();
+    await expect(page.getByTestId("target-dialog")).toHaveCount(0);
+    await page.getByTestId("integration-edit-settings").click();
+    await page
+      .getByTestId("target-secret")
+      .fill("https://hooks.example.org/webhook/neu");
+    await page.getByTestId("target-submit").click();
+    await expect(page.getByTestId("integration-setting")).toContainText(
+      "hooks.example.org",
+    );
+    const updates = await calls(page, "integration_update_settings");
+    expect(updates[0].args.settings.secret).toBeNull();
+    expect(updates[1].args.settings.secret).toBe(
+      "https://hooks.example.org/webhook/neu",
+    );
   });
 });
 

@@ -210,6 +210,9 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
           ...row(t("integrations.detail.settingTool"), cfg("search_tool")),
           ...row(t("integrations.detail.settingArea"), cfg("area")),
         ];
+      case "webhook":
+        // Nur der Server; die Adresse selbst ist ein Geheimnis und kommt nie zurueck.
+        return row(t("integrations.detail.settingHost"), cfg("host"));
       case "folder":
         return row(t("integrations.detail.settingSubfolder"), cfg("subfolder"));
       default:
@@ -348,17 +351,19 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
         {isTargetKind(integration.kind) && (
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-3">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={testing}
-                onClick={() => void test()}
-                data-testid="integration-test"
-              >
-                {testing
-                  ? t("integrations.detail.testing")
-                  : t("integrations.detail.test")}
-              </Button>
+              {integration.kind !== "webhook" && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={testing}
+                  onClick={() => void test()}
+                  data-testid="integration-test"
+                >
+                  {testing
+                    ? t("integrations.detail.testing")
+                    : t("integrations.detail.test")}
+                </Button>
+              )}
               <Button
                 variant="secondary"
                 size="sm"
@@ -380,6 +385,14 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
                 </span>
               )}
             </div>
+            {integration.kind === "webhook" && (
+              <p
+                className="text-xs text-text-muted"
+                data-testid="webhook-no-test"
+              >
+                {t("integrations.detail.webhookNoTest")}
+              </p>
+            )}
             {testResult?.detail && (
               <p
                 className="rounded-lg bg-red-500/10 px-3 py-2 text-sm break-words text-status-red"

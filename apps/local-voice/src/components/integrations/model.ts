@@ -40,14 +40,15 @@ export const configText = (configJson: string, key: string): string => {
   }
 };
 
-/** Arten mit eigenem Einstellungsformular (A6): Konto oder Ziel mit Pfad/Adresse. */
-export type TargetKind = "folder" | "smtp" | "obsidian" | "wissen";
+/** Arten mit eigenem Einstellungsformular (A6, K1): Konto oder Ziel mit Pfad/Adresse. */
+export type TargetKind = "folder" | "smtp" | "obsidian" | "wissen" | "webhook";
 
 export const TARGET_KINDS: readonly Kind[] = [
   "folder",
   "smtp",
   "obsidian",
   "wissen",
+  "webhook",
 ];
 
 export const isTargetKind = (kind: Kind): kind is TargetKind =>
@@ -81,7 +82,7 @@ export interface CatalogEntry {
 /**
  * Der Katalog. „available“: laesst sich hier einrichten. „auto“: legt sich
  * selbst an (YouTube mit dem ersten Link). „soon“: kommt mit einem der
- * naechsten Pakete (Microsoft 365 A5, Webhook Goal B).
+ * naechsten Pakete (derzeit keine Art).
  */
 export const CATALOG: CatalogEntry[] = [
   { id: "calendar_ics", kind: "ics", status: "available" },
@@ -93,7 +94,7 @@ export const CATALOG: CatalogEntry[] = [
   { id: "smtp", kind: "smtp", status: "available" },
   { id: "obsidian", kind: "obsidian", status: "available" },
   { id: "wissen", kind: "wissen", status: "available" },
-  { id: "webhook", kind: null, status: "soon" },
+  { id: "webhook", kind: "webhook", status: "available" },
 ];
 
 export const capabilityKey = (capability: string): string =>

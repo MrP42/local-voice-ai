@@ -921,15 +921,18 @@
         "voices": {
           "de_DE-thorsten-high": {
             "name": "Thorsten (hohe Qualität)",
-            "description": "Deutsch. Beste Qualität, größter Download."
+            "description": "Deutsch. Beste Qualität, größter Download.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "de_DE-thorsten-medium": {
             "name": "Thorsten (mittlere Qualität)",
-            "description": "Deutsch. Gute Qualität, kleinerer Download."
+            "description": "Deutsch. Gute Qualität, kleinerer Download.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "de_DE-kerstin-low": {
             "name": "Kerstin (niedrige Qualität)",
-            "description": "Deutsch. Schnell und klein."
+            "description": "Deutsch. Schnell und klein.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Ryan-Stimme abgeleitet, deren Datensatz unter CC-BY-NC-SA-4.0 steht. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "de_DE-eva_k-x_low": {
             "name": "Eva K. (sehr niedrige Qualität)",
@@ -949,15 +952,18 @@
           },
           "en_US-amy-medium": {
             "name": "Amy (mittlere Qualität)",
-            "description": "Englisch (USA). Weibliche Stimme, gute Qualität."
+            "description": "Englisch (USA). Weibliche Stimme, gute Qualität.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "en_GB-alan-medium": {
             "name": "Alan (mittlere Qualität)",
-            "description": "Englisch (GB). Männliche Stimme, gute Qualität."
+            "description": "Englisch (GB). Männliche Stimme, gute Qualität.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "en_GB-alba-medium": {
             "name": "Alba (mittlere Qualität)",
-            "description": "Englisch (GB, schottisch). Weibliche Stimme, gute Qualität."
+            "description": "Englisch (GB, schottisch). Weibliche Stimme, gute Qualität.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           }
         },
         "status": {
@@ -1445,6 +1451,11 @@
           "description": "Sprechertrennung in Besprechungen",
           "details": "NVIDIA Streaming Sortformer 4spk v2.1 steht unter der NVIDIA Open Model License. Das Modell wird bei Bedarf heruntergeladen und nicht mit der App ausgeliefert.",
           "button": "Lizenztext lesen"
+        },
+        "piper": {
+          "title": "Piper und Stimmen",
+          "description": "Sprachausgabe (Vorlesen), wird bei Bedarf geladen",
+          "details": "Piper (Rhasspy, MIT) enthält espeak-ng (GPL-3.0-or-later, Quelltext: github.com/espeak-ng/espeak-ng); beim Einrichten legt die App den Lizenztext (LICENSE-espeak-ng-GPL-3.0.txt) in den Ordner der Laufzeit. Stimmen nur für nicht-kommerzielle Nutzung: Lessac (Blizzard-2013-Forschungslizenz), Ryan (CC-BY-NC-SA-4.0) und die davon abgeleiteten Thorsten, Kerstin, Amy, Alan und Alba; sie sind im Katalog gekennzeichnet."
         },
         "libraries": {
           "title": "Bibliotheken",
@@ -4278,7 +4289,8 @@
         },
         "webhook": {
           "name": "n8n-Webhook",
-          "description": "Abläufe in n8n anstoßen. Kommt mit den Workflows."
+          "description": "Daten aus einem Ablauf an n8n (oder einen anderen Webhook) senden. Die Adresse ist ein Geheimnis und liegt verschlüsselt im Windows-Konto.",
+          "action": "Webhook einrichten"
         }
       }
     },
@@ -4320,6 +4332,7 @@
       "settingHost": "Server",
       "settingFrom": "Absender",
       "settingLogin": "Anmeldung",
+      "webhookNoTest": "Ein Webhook wird nicht durch Senden getestet, denn jeder Test würde den Ablauf in n8n wirklich auslösen. Ob er ankommt, zeigt der erste Lauf im Protokoll.",
       "settingEndpoint": "Endpunkt",
       "settingTool": "Werkzeug",
       "settingVault": "Vault",
@@ -4603,6 +4616,16 @@
         "token": "Zugangsschlüssel",
         "tokenWhat": "Schlüssel",
         "tokenHint": "Der Schlüssel braucht den Scope „wissen:read“ (oder „wissen:read:<bereich>“)."
+      },
+      "webhook": {
+        "title": "Webhook einrichten",
+        "titleEdit": "Webhook-Einstellungen",
+        "description": "Ein Ablauf schickt Daten per POST an diese Adresse, zum Beispiel an einen n8n-Ablauf.",
+        "url": "Adresse des Webhooks",
+        "urlWhat": "die Adresse",
+        "urlPlaceholder": "https://n8n.example.de/webhook/…",
+        "urlHint": "Die Adresse ist ein Geheimnis, denn sie trägt oft den Schlüssel im Pfad. Sie liegt verschlüsselt im Windows-Konto; angezeigt wird später nur der Server. Erlaubt ist nur https, http nur für diesen Rechner (localhost).",
+        "n8nHint": "In n8n: Webhook-Knoten öffnen, die „Production URL“ kopieren und den Ablauf aktivieren. Umleitungen folgt die App nie."
       },
       "folder": {
         "title": "Ordner-Einstellungen",
