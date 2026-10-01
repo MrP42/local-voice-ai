@@ -4477,7 +4477,8 @@
       "errors": {
         "approval_not_found": "Diese Freigabe gibt es nicht mehr.",
         "approval_expired": "Diese Freigabe ist abgelaufen.",
-        "approval_already_decided": "Diese Freigabe ist bereits entschieden."
+        "approval_already_decided": "Diese Freigabe ist bereits entschieden.",
+        "consent_required": "Ohne bestätigte Einwilligung startet keine Aufnahme."
       }
     },
     "audit": {

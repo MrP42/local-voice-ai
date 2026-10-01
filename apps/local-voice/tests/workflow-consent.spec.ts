@@ -128,6 +128,8 @@ test("Mit Häkchen und Klick geht der Lauf weiter: eine Entscheidung, eine Aufna
     {
       promptId: "p7",
       approve: true,
+      // Das Backend verlangt die Bestätigung zusätzlich (`consent_required`).
+      consentConfirmed: true,
     },
   );
   // Der Ablauf ist weitergelaufen und hat genau eine Aufnahme gestartet ...
@@ -151,6 +153,7 @@ test("Nicht aufnehmen verneint sofort, ohne Häkchen, und der Lauf endet ohne Au
     {
       promptId: "p7",
       approve: false,
+      consentConfirmed: false,
     },
   );
   expect(await run(page)).toEqual({ state: "failed", recordings: 0 });
@@ -294,7 +297,7 @@ test("A8: Auch für einen Agenten gilt: ohne Häkchen keine Entscheidung, mit H�
     )
     .toBe(1);
   expect((await calls(page, "meeting_prompt_workflow_decide"))[0].args).toEqual(
-    { promptId: "p9", approve: true },
+    { promptId: "p9", approve: true, consentConfirmed: true },
   );
   expect(await startCalls(page)).toBe(0);
 });
@@ -310,7 +313,7 @@ test("A8: „Nicht aufnehmen“ verneint die Bitte eines Agenten sofort", async 
     )
     .toBe(1);
   expect((await calls(page, "meeting_prompt_workflow_decide"))[0].args).toEqual(
-    { promptId: "p9", approve: false },
+    { promptId: "p9", approve: false, consentConfirmed: false },
   );
   expect(await run(page)).toEqual({ state: "failed", recordings: 0 });
   expect(await startCalls(page)).toBe(0);

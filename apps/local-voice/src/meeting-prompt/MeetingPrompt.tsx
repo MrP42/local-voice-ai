@@ -123,12 +123,17 @@ const MeetingPrompt: React.FC = () => {
     const result = await commands.meetingPromptWorkflowDecide(
       payload.prompt_id,
       approve,
+      // Das Haekchen ist oben schon verlangt; das Backend verlangt es zusaetzlich.
+      agreed,
     );
     setBusy(false);
     if (result.status === "error") {
       setError(translateMeetingError(result.error, t));
       // Nicht mehr offen (anderswo entschieden, abgelaufen): das Fenster hat nichts mehr zu tun.
-      if (result.error.startsWith("consent_")) {
+      if (
+        result.error.startsWith("consent_") &&
+        result.error !== "consent_required"
+      ) {
         setTimeout(() => setPayload(null), 2500);
       }
       return;

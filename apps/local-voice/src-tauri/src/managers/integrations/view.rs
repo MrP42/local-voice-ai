@@ -427,13 +427,43 @@ fn approval_error_code(e: &ApprovalError) -> String {
     }
 }
 
+/// Braucht die Freigabe die Einwilligungsbestaetigung? Jede Freigabe der Faehigkeit
+/// `recording.start` (Ablauf, Agent), ausser dem Beenden einer Aufnahme (`stop_recording` teilt
+/// sich die Faehigkeit, ist aber keine Einwilligung zum Aufnehmen). Im Zweifel (Freigabe ohne
+/// erkennbares Werkzeug) ja.
+fn needs_consent(conn: &Connection, a: &Approval) -> bool {
+    if a.tool_or_capability != Capability::RecordingStart.as_str() {
+        return false;
+    }
+    !matches!(
+        crate::agent_bridge::clients::approval_link(conn, &a.id),
+        Ok(Some((_, tool))) if tool == "stop_recording"
+    )
+}
+
+/// Fehlercode: eine Freigabe zum Aufnehmen wurde ohne die Einwilligungsbestaetigung erlaubt.
+pub const ERR_CONSENT_REQUIRED: &str = "consent_required";
+
 /// Der Nutzer entscheidet eine Freigabe. Die Entscheidung steht im Audit.
+///
+/// **Aufnahme braucht die Einwilligung (B7n, § 201 StGB):** eine Freigabe fuer `recording.start`
+/// (Ablauf oder Agent) wird nur erlaubt, wenn der Nutzer die Einwilligungsbestaetigung gegeben hat
+/// (`consent_confirmed`, dasselbe Haekchen wie im Hinweisfenster); sonst Fehler
+/// `consent_required`, und die Freigabe bleibt unberuehrt offen. Ablehnen geht immer.
 pub fn decide_approval(
     conn: &Connection,
     id: &str,
     approve: bool,
+    consent_confirmed: bool,
     now_ms: i64,
 ) -> Result<Approval, String> {
+    if approve && !consent_confirmed {
+        if let Ok(Some(a)) = approvals::get(conn, id) {
+            if needs_consent(conn, &a) {
+                return Err(ERR_CONSENT_REQUIRED.to_string());
+            }
+        }
+    }
     let decided =
         approvals::decide(conn, id, approve, now_ms).map_err(|e| approval_error_code(&e))?;
     audit_user(
@@ -446,6 +476,7 @@ pub fn decide_approval(
             "approval_id": decided.id,
             "decision": if approve { "approved" } else { "denied" },
             "requested_by": decided.caller,
+            "consent_confirmed": consent_confirmed,
         }),
         now_ms,
     );

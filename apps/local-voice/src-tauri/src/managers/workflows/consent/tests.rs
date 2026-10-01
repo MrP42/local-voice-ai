@@ -141,7 +141,7 @@ fn decide_refuses_every_approval_that_is_not_a_consent() {
     .unwrap();
     for id in [&mail.id, &agent.id] {
         assert_eq!(
-            decide(&conn, id, true, T0).unwrap_err(),
+            decide(&conn, id, true, true, T0).unwrap_err(),
             ConsentError::NotAConsent
         );
         assert_eq!(
@@ -151,7 +151,7 @@ fn decide_refuses_every_approval_that_is_not_a_consent() {
         );
     }
     assert_eq!(
-        decide(&conn, "gibt-es-nicht", true, T0).unwrap_err(),
+        decide(&conn, "gibt-es-nicht", true, true, T0).unwrap_err(),
         ConsentError::NotFound
     );
 }
@@ -174,20 +174,20 @@ fn deciding_twice_or_after_expiry_or_after_cancelling_reports_not_pending() {
             .clone()
     };
     // Zweimal entscheiden.
-    decide(&conn, &of(&run1), true, T0).unwrap();
+    decide(&conn, &of(&run1), true, true, T0).unwrap();
     assert_eq!(
-        decide(&conn, &of(&run1), true, T0).unwrap_err(),
+        decide(&conn, &of(&run1), true, true, T0).unwrap_err(),
         ConsentError::NotPending
     );
     // Verfallen.
     assert_eq!(
-        decide(&conn, &of(&run2), true, T0 + approvals::TTL_MS + 1).unwrap_err(),
+        decide(&conn, &of(&run2), true, true, T0 + approvals::TTL_MS + 1).unwrap_err(),
         ConsentError::NotPending
     );
     // Lauf abgebrochen: die Freigabe ist zurueckgezogen.
     w.engine.cancel_run(&run3).unwrap();
     assert_eq!(
-        decide(&conn, &of(&run3), true, T0).unwrap_err(),
+        decide(&conn, &of(&run3), true, true, T0).unwrap_err(),
         ConsentError::NotPending
     );
     assert!(!is_pending(&conn, &of(&run3), T0));
@@ -200,7 +200,7 @@ fn a_no_ends_the_request_and_is_not_confused_with_a_yes() {
     w.start_run("Aufnahme", "t1");
     w.engine.tick().unwrap();
     let id = pending(&conn, T0).unwrap()[0].approval_id.clone();
-    decide(&conn, &id, false, T0).unwrap();
+    decide(&conn, &id, false, true, T0).unwrap();
     assert_eq!(
         approvals::get(&conn, &id).unwrap().unwrap().state,
         ApprovalState::Denied
@@ -214,6 +214,42 @@ fn error_codes_follow_the_command_convention() {
     assert_eq!(ConsentError::NotFound.code(), "consent_not_pending");
     assert_eq!(ConsentError::NotAConsent.code(), "consent_invalid");
     assert_eq!(ConsentError::Store("x".into()).code(), "store_failed");
+}
+
+#[test]
+fn allowing_a_recording_without_the_consent_confirmation_is_refused_and_changes_nothing() {
+    let w = world();
+    let conn = w.fx.conn();
+    w.start_run("Aufnahme", "t1");
+    w.engine.tick().unwrap();
+    let id = pending(&conn, T0).unwrap()[0].approval_id.clone();
+    assert_eq!(
+        decide(&conn, &id, true, false, T0).unwrap_err(),
+        ConsentError::ConsentRequired
+    );
+    assert_eq!(ConsentError::ConsentRequired.code(), "consent_required");
+    assert_eq!(
+        approvals::get(&conn, &id).unwrap().unwrap().state,
+        ApprovalState::Pending,
+        "die Bitte bleibt offen, es wurde nichts entschieden"
+    );
+    assert!(is_pending(&conn, &id, T0));
+    // Mit der Bestaetigung geht es; das Nein braucht sie nie.
+    decide(&conn, &id, true, true, T0).unwrap();
+    assert_eq!(
+        approvals::get(&conn, &id).unwrap().unwrap().state,
+        ApprovalState::Approved
+    );
+    let w2 = world();
+    let c2 = w2.fx.conn();
+    w2.start_run("Aufnahme", "t2");
+    w2.engine.tick().unwrap();
+    let id2 = pending(&c2, T0).unwrap()[0].approval_id.clone();
+    decide(&c2, &id2, false, false, T0).unwrap();
+    assert_eq!(
+        approvals::get(&c2, &id2).unwrap().unwrap().state,
+        ApprovalState::Denied
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +322,7 @@ fn stopping_a_recording_is_never_a_consent_to_start_one() {
     let conn = w.fx.conn();
     let (stop, _) = agent_request(&conn, "Claude Code", "stop_recording", "Ziel: stop_recording", "h1");
     assert!(pending(&conn, T0).unwrap().is_empty(), "das Beenden braucht kein Einwilligungsfenster");
-    assert_eq!(decide(&conn, &stop, true, T0).unwrap_err(), ConsentError::NotAConsent);
+    assert_eq!(decide(&conn, &stop, true, true, T0).unwrap_err(), ConsentError::NotAConsent);
     assert_eq!(approvals::get(&conn, &stop).unwrap().unwrap().state, ApprovalState::Pending, "unberuehrt");
 }
 
@@ -296,12 +332,12 @@ fn the_user_can_say_yes_or_no_to_an_agents_request_in_the_window() {
     let conn = w.fx.conn();
     let (yes, _) = agent_request(&conn, "Claude Code", "start_recording", "Ziel: s", "h1");
     let (no, _) = agent_request(&conn, "Codex", "start_recording", "Ziel: s2", "h2");
-    decide(&conn, &yes, true, T0).unwrap();
-    decide(&conn, &no, false, T0).unwrap();
+    decide(&conn, &yes, true, true, T0).unwrap();
+    decide(&conn, &no, false, true, T0).unwrap();
     assert_eq!(approvals::get(&conn, &yes).unwrap().unwrap().state, ApprovalState::Approved);
     assert_eq!(approvals::get(&conn, &no).unwrap().unwrap().state, ApprovalState::Denied);
     assert!(pending(&conn, T0).unwrap().is_empty(), "entschieden: nicht mehr offen");
-    assert_eq!(decide(&conn, &yes, true, T0).unwrap_err(), ConsentError::NotPending);
+    assert_eq!(decide(&conn, &yes, true, true, T0).unwrap_err(), ConsentError::NotPending);
 }
 
 #[test]
@@ -323,5 +359,5 @@ fn another_capability_of_an_agent_is_not_a_consent() {
     .unwrap();
     agent_clients::link_approval(&conn, &a.id, &client.id, "transcribe_file", T0).unwrap();
     assert!(pending(&conn, T0).unwrap().is_empty());
-    assert_eq!(decide(&conn, &a.id, true, T0).unwrap_err(), ConsentError::NotAConsent);
+    assert_eq!(decide(&conn, &a.id, true, true, T0).unwrap_err(), ConsentError::NotAConsent);
 }

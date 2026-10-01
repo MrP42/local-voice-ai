@@ -4477,7 +4477,8 @@
       "errors": {
         "approval_not_found": "This approval no longer exists.",
         "approval_expired": "This approval has expired.",
-        "approval_already_decided": "This approval has already been decided."
+        "approval_already_decided": "This approval has already been decided.",
+        "consent_required": "Recording will not start without confirmed consent."
       }
     },
     "audit": {

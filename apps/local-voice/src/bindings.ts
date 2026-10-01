@@ -2190,11 +2190,12 @@ async approvalsPending() : Promise<Result<PendingApproval[], string>> {
 },
 /**
  * Der Nutzer entscheidet eine Freigabe. Fehler: `approval_not_found`,
- * `approval_expired`, `approval_already_decided`.
+ * `approval_expired`, `approval_already_decided`, `consent_required` (Freigabe zum Aufnehmen
+ * ohne `consent_confirmed = true`: die Einwilligungsbestaetigung, B7n).
  */
-async approvalDecide(id: string, approve: boolean) : Promise<Result<Approval, string>> {
+async approvalDecide(id: string, approve: boolean, consentConfirmed: boolean) : Promise<Result<Approval, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("approval_decide", { id, approve }) };
+    return { status: "ok", data: await TAURI_INVOKE("approval_decide", { id, approve, consentConfirmed }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3584,9 +3585,9 @@ async meetingPromptDismiss(promptId: string, action: string) : Promise<Result<nu
  * Aufnahme startet erst, wenn der Ablauf danach weiterlaeuft. Fehler: `consent_not_pending`
  * (schon entschieden, verfallen oder der Lauf wurde abgebrochen), `consent_invalid`.
  */
-async meetingPromptWorkflowDecide(promptId: string, approve: boolean) : Promise<Result<null, string>> {
+async meetingPromptWorkflowDecide(promptId: string, approve: boolean, consentConfirmed: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_prompt_workflow_decide", { promptId, approve }) };
+    return { status: "ok", data: await TAURI_INVOKE("meeting_prompt_workflow_decide", { promptId, approve, consentConfirmed }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

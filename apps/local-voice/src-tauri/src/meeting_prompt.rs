@@ -371,6 +371,7 @@ pub fn meeting_prompt_workflow_decide(
     store: State<'_, Arc<MeetingStore>>,
     prompt_id: String,
     approve: bool,
+    consent_confirmed: bool,
 ) -> Result<(), String> {
     let (current_id, approval) = {
         let inner = state.lock();
@@ -389,7 +390,20 @@ pub fn meeting_prompt_workflow_decide(
         .get_connection()
         .map_err(|e| format!("store_failed: {e}"))?;
     let now = chrono::Utc::now().timestamp_millis();
-    let result = crate::managers::workflows::consent::decide(&conn, &approval_id, approve, now);
+    let result = crate::managers::workflows::consent::decide(
+        &conn,
+        &approval_id,
+        approve,
+        consent_confirmed,
+        now,
+    );
+    // Ohne Einwilligungsbestaetigung ist nichts entschieden: das Fenster bleibt offen.
+    if matches!(
+        result,
+        Err(crate::managers::workflows::consent::ConsentError::ConsentRequired)
+    ) {
+        return Err("consent_required".to_string());
+    }
     // Entschieden oder nicht mehr offen: der Hinweis ist erledigt.
     close(&app);
     match result {

@@ -50,10 +50,16 @@ export const ApprovalDialog: React.FC<ApprovalDialogProps> = ({
   const [agreed, setAgreed] = useState<Record<string, boolean>>({});
 
   const decide = async (id: string, approve: boolean) => {
+    const item = pending.find((p) => p.approval.id === id);
+    // Ohne Haekchen kein Erlauben, auch nicht per erzwungenem Klick.
+    const confirmed =
+      !!item && needsConsent(item.approval) && agreed[id] === true;
+    if (approve && item && needsConsent(item.approval) && !confirmed) return;
     setBusy(id);
     setError(null);
     try {
-      const result = await commands.approvalDecide(id, approve);
+      // Das Backend verlangt die Bestaetigung zusaetzlich (`consent_required`).
+      const result = await commands.approvalDecide(id, approve, confirmed);
       if (result.status === "error") {
         const code = errorText(result.error);
         setError(

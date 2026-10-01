@@ -602,7 +602,7 @@ fn approving_lets_the_gate_run_the_action_once_and_the_decision_is_audited() {
     let conn = fx.conn();
     let (i, _) = make_folder(&conn, "Ablage");
     let id = ask_for_write(&conn, &i, 10_000);
-    let decided = decide_approval(&conn, &id, true, 12_000).unwrap();
+    let decided = decide_approval(&conn, &id, true, false, 12_000).unwrap();
     assert_eq!(
         decided.state,
         crate::managers::integrations::model::ApprovalState::Approved
@@ -643,7 +643,7 @@ fn denying_blocks_the_action_and_is_audited() {
     let conn = fx.conn();
     let (i, _) = make_folder(&conn, "Ablage");
     let id = ask_for_write(&conn, &i, 10_000);
-    decide_approval(&conn, &id, false, 12_000).unwrap();
+    decide_approval(&conn, &id, false, false, 12_000).unwrap();
     let args = json!({ "path": "Notiz.md", "bytes": 12 });
     let req = Request {
         caller: Caller::AgentExternal,
@@ -674,20 +674,20 @@ fn deciding_twice_or_after_expiry_or_for_an_unknown_id_returns_a_code() {
     let conn = fx.conn();
     let (i, _) = make_folder(&conn, "Ablage");
     let id = ask_for_write(&conn, &i, 10_000);
-    decide_approval(&conn, &id, true, 11_000).unwrap();
+    decide_approval(&conn, &id, true, false, 11_000).unwrap();
     assert_eq!(
-        decide_approval(&conn, &id, false, 12_000).unwrap_err(),
+        decide_approval(&conn, &id, false, false, 12_000).unwrap_err(),
         "approval_already_decided"
     );
     assert_eq!(
-        decide_approval(&conn, "nope", true, 12_000).unwrap_err(),
+        decide_approval(&conn, "nope", true, false, 12_000).unwrap_err(),
         "approval_not_found"
     );
     // Verfallen: nach der Frist (eine Stunde) nicht mehr entscheidbar.
     let late = ask_for_write(&conn, &i, 20_000);
     let after_ttl = 20_000 + approvals::TTL_MS + 1;
     assert_eq!(
-        decide_approval(&conn, &late, true, after_ttl).unwrap_err(),
+        decide_approval(&conn, &late, true, false, after_ttl).unwrap_err(),
         "approval_expired"
     );
     assert!(pending_approvals(&conn, after_ttl).unwrap().is_empty());
@@ -766,4 +766,130 @@ fn deleting_removes_the_integration_and_its_grants_but_keeps_the_audit() {
     assert!(!audit_entries(&conn, Some(i.id), None, None, 50)
         .unwrap()
         .is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// B7n: Aufnahme braucht die Einwilligungsbestaetigung
+// ---------------------------------------------------------------------------
+
+fn ask_to_record(conn: &Connection, caller: &str) -> String {
+    use crate::managers::integrations::approvals::{self, NewApproval};
+    approvals::create(
+        conn,
+        &NewApproval {
+            caller,
+            integration_id: None,
+            capability: "recording.start",
+            args_preview: Some("Titel: Jour fixe"),
+            args_hash: Some("h-rec"),
+        },
+        10_000,
+    )
+    .unwrap()
+    .id
+}
+
+#[test]
+fn a_recording_approval_cannot_be_allowed_without_the_consent_confirmation() {
+    use crate::managers::integrations::model::ApprovalState;
+    let fx = Fx::new();
+    let conn = fx.conn();
+    // Ablauf UND Agent: dieselbe Regel, keine Ausnahme je Aufrufer.
+    for caller in ["workflow", "agent_external", "agent_local"] {
+        let id = ask_to_record(&conn, caller);
+        assert_eq!(
+            decide_approval(&conn, &id, true, false, 12_000).unwrap_err(),
+            ERR_CONSENT_REQUIRED,
+            "{caller}"
+        );
+        assert_eq!(
+            crate::managers::integrations::approvals::get(&conn, &id)
+                .unwrap()
+                .unwrap()
+                .state,
+            ApprovalState::Pending,
+            "{caller}: nichts entschieden, nichts einloesbar"
+        );
+        // Mit der Bestaetigung wird erlaubt und die Bestaetigung steht im Audit.
+        let decided = decide_approval(&conn, &id, true, true, 12_000).unwrap();
+        assert_eq!(decided.state, ApprovalState::Approved, "{caller}");
+    }
+    let rows = audit_entries(&conn, None, None, Some("user".into()), 50).unwrap();
+    let confirmed = rows
+        .iter()
+        .filter(|r| {
+            r.detail_json
+                .as_deref()
+                .is_some_and(|d| d.contains("approval_decided") && d.contains("\"consent_confirmed\":true"))
+        })
+        .count();
+    assert_eq!(confirmed, 3);
+}
+
+#[test]
+fn denying_a_recording_never_needs_the_confirmation_and_other_approvals_do_not_either() {
+    use crate::managers::integrations::model::ApprovalState;
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let id = ask_to_record(&conn, "agent_external");
+    let denied = decide_approval(&conn, &id, false, false, 12_000).unwrap();
+    assert_eq!(denied.state, ApprovalState::Denied);
+    // Eine Freigabe, die keine Aufnahme ist, braucht die Bestaetigung nicht.
+    let (i, _) = make_folder(&conn, "Ablage");
+    let write = ask_for_write(&conn, &i, 10_000);
+    assert_eq!(
+        decide_approval(&conn, &write, true, false, 12_000)
+            .unwrap()
+            .state,
+        ApprovalState::Approved
+    );
+}
+
+#[test]
+fn an_agents_start_recording_needs_the_confirmation_but_stopping_does_not() {
+    use crate::agent_bridge::clients as agent_clients;
+    use crate::managers::integrations::approvals::{self, NewApproval};
+    use crate::managers::integrations::model::ApprovalState;
+    let fx = Fx::new();
+    let conn = fx.conn();
+    let (client, _token) = agent_clients::create(&conn, "Claude Code", None, 9_000).unwrap();
+    let linked = |tool: &str, hash: &str| {
+        let a = approvals::create(
+            &conn,
+            &NewApproval {
+                caller: "agent_external",
+                integration_id: Some(&client.integration_id),
+                capability: "recording.start",
+                args_preview: Some(&format!("Ziel: {tool}")),
+                args_hash: Some(hash),
+            },
+            10_000,
+        )
+        .unwrap();
+        agent_clients::link_approval(&conn, &a.id, &client.id, tool, 10_000).unwrap();
+        a.id
+    };
+    let start = linked("start_recording", "h1");
+    let stop = linked("stop_recording", "h2");
+    assert_eq!(
+        decide_approval(&conn, &start, true, false, 12_000).unwrap_err(),
+        ERR_CONSENT_REQUIRED
+    );
+    assert_eq!(
+        approvals::get(&conn, &start).unwrap().unwrap().state,
+        ApprovalState::Pending
+    );
+    // Das Beenden einer Aufnahme ist keine Einwilligung zum Aufnehmen.
+    assert_eq!(
+        decide_approval(&conn, &stop, true, false, 12_000)
+            .unwrap()
+            .state,
+        ApprovalState::Approved
+    );
+    assert_eq!(
+        decide_approval(&conn, &start, true, true, 12_000)
+            .unwrap()
+            .state,
+        ApprovalState::Approved
+    );
 }

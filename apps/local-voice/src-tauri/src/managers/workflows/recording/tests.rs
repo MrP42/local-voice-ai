@@ -298,7 +298,7 @@ fn after_the_click_the_run_continues_and_the_recording_starts_exactly_once() {
 
     // Der Klick im Hinweisfenster.
     let approval = w.pending()[0].id.clone();
-    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, w.clock.now_ms())
+    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, true, w.clock.now_ms())
         .unwrap();
     assert_eq!(
         w.rec.start_calls(),
@@ -348,7 +348,7 @@ fn a_refused_request_never_starts_a_recording() {
     let run = w.trigger_event(&wf, "t1", 61);
     w.tick();
     let approval = w.pending()[0].id.clone();
-    crate::managers::workflows::consent::decide(&w.conn(), &approval, false, w.clock.now_ms())
+    crate::managers::workflows::consent::decide(&w.conn(), &approval, false, true, w.clock.now_ms())
         .unwrap();
     let report = w.tick();
     assert_eq!(
@@ -493,7 +493,7 @@ fn a_late_approval_for_a_meeting_that_is_over_does_not_record() {
     w.tick();
     let approval = w.pending()[0].id.clone();
     w.clock.advance(40 * MIN); // der Nutzer klickt erst nach dem Ende des Termins
-    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, w.clock.now_ms())
+    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, true, w.clock.now_ms())
         .unwrap();
     let report = w.tick();
     assert_eq!(
@@ -519,7 +519,7 @@ fn a_second_request_while_a_recording_runs_fails_cleanly_and_does_not_ask_again(
     let approval = w.pending()[0].id.clone();
     // Der Nutzer hat inzwischen selbst eine Aufnahme gestartet.
     w.rec.already_recording("manuell");
-    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, w.clock.now_ms())
+    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, true, w.clock.now_ms())
         .unwrap();
     let report = w.tick();
     assert_eq!(
@@ -547,7 +547,7 @@ fn a_missing_microphone_fails_permanently_and_never_asks_a_second_time() {
     w.tick();
     w.rec.fail_next_start("mic_stream_error: kein Geraet");
     let approval = w.pending()[0].id.clone();
-    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, w.clock.now_ms())
+    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, true, w.clock.now_ms())
         .unwrap();
     let report = w.tick();
     assert_eq!(
@@ -579,7 +579,7 @@ fn two_runs_for_the_same_event_ask_twice_but_record_once() {
     w.tick();
     assert_eq!(w.pending().len(), 2);
     for a in w.pending() {
-        crate::managers::workflows::consent::decide(&w.conn(), &a.id, true, w.clock.now_ms())
+        crate::managers::workflows::consent::decide(&w.conn(), &a.id, true, true, w.clock.now_ms())
             .unwrap();
     }
     w.tick();
@@ -606,7 +606,7 @@ fn a_crash_after_the_start_is_confirmed_by_the_recorder_and_never_repeated() {
     let run = w.trigger_event(&wf, "t1", 61);
     w.tick();
     let approval = w.pending()[0].id.clone();
-    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, w.clock.now_ms())
+    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, true, w.clock.now_ms())
         .unwrap();
     // Die App stirbt, nachdem die Aufnahme lief, aber bevor das Journal `done` kennt.
     w.engine.crash_at("rec", CrashPoint::AfterAction);
@@ -638,7 +638,7 @@ fn a_crash_after_the_start_without_proof_is_uncertain_and_never_repeated() {
     let run = w.trigger_event(&wf, "t1", 61);
     w.tick();
     let approval = w.pending()[0].id.clone();
-    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, w.clock.now_ms())
+    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, true, w.clock.now_ms())
         .unwrap();
     w.engine.crash_at("rec", CrashPoint::AfterAction);
     w.tick();
@@ -668,7 +668,7 @@ fn an_app_restart_between_the_click_and_the_start_still_records_exactly_once() {
     let run = w.trigger_event(&wf, "t1", 61);
     w.tick();
     let approval = w.pending()[0].id.clone();
-    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, w.clock.now_ms())
+    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, true, w.clock.now_ms())
         .unwrap();
     // Die App stirbt, bevor der Arbeiter die Entscheidung gesehen hat.
     let other = w.restart();
@@ -726,7 +726,7 @@ fn a_started_recording_is_scheduled_to_end_and_the_shared_tick_stops_it() {
     let run = w.trigger_event(&wf, "t1", 61);
     w.tick();
     let approval = w.pending()[0].id.clone();
-    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, w.clock.now_ms())
+    crate::managers::workflows::consent::decide(&w.conn(), &approval, true, true, w.clock.now_ms())
         .unwrap();
     w.tick();
     assert_eq!(w.run(&run).state, RunState::Done);

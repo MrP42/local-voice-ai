@@ -600,11 +600,13 @@ test.describe("Freigabedialog", () => {
     expect((await calls(page, "approval_decide"))[0].args).toEqual({
       id: "ap-1",
       approve: true,
+      consentConfirmed: false,
     });
     await items.first().getByTestId("approval-deny").click();
     expect((await calls(page, "approval_decide"))[1].args).toEqual({
       id: "ap-2",
       approve: false,
+      consentConfirmed: false,
     });
     // Nichts mehr offen: Dialog zu, Hinweis weg.
     await expect(page.getByTestId("approval-dialog")).toHaveCount(0);
@@ -662,9 +664,21 @@ test.describe("Freigabedialog", () => {
     await expect(start.getByTestId("approval-deny")).toBeEnabled();
     await start.getByTestId("approval-consent").check();
     await start.getByTestId("approval-allow").click();
+    // Das Backend bekommt die Bestaetigung mit (und verlangt sie selbst: `consent_required`).
     expect((await calls(page, "approval_decide"))[0].args).toEqual({
       id: "ap-rec",
       approve: true,
+      consentConfirmed: true,
+    });
+    // Beenden und Ablehnen gehen ohne Bestaetigung.
+    await page
+      .locator('[data-approval-id="ap-stop"]')
+      .getByTestId("approval-allow")
+      .click();
+    expect((await calls(page, "approval_decide"))[1].args).toEqual({
+      id: "ap-stop",
+      approve: true,
+      consentConfirmed: false,
     });
   });
 
