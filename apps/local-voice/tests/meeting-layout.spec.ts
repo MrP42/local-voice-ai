@@ -61,18 +61,23 @@ test("AK2: three areas side by side, projects left, controls right", async ({
   await expect(
     page.getByTestId("rec-sessions").getByRole("heading", { name: "Projekte" }),
   ).toBeVisible();
-  // Die Aufnahmekarte sitzt in der Bedienung, darunter die Reiter.
+  // Die Aufnahmekarte sitzt in der Bedienung, darunter die Reiter (G4: Notizen,
+  // KI-Notizen, Fragen).
   await expect(
     page
       .getByTestId("rec-controls")
       .getByRole("button", { name: /Aufnahme starten/ }),
   ).toBeVisible();
   await expect(
-    page.getByTestId("rec-controls").getByRole("tab", { name: "Transkript" }),
+    page
+      .getByTestId("rec-controls")
+      .getByRole("tab", { name: "Notizen", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(
-    page.getByTestId("rec-controls").getByRole("tab", { name: "Fragen" }),
-  ).toBeVisible();
+  for (const name of ["KI-Notizen", "Fragen"]) {
+    await expect(
+      page.getByTestId("rec-controls").getByRole("tab", { name, exact: true }),
+    ).toBeVisible();
+  }
 });
 
 test("AK2: selecting a recording fills the workspace and the right column", async ({
@@ -82,11 +87,17 @@ test("AK2: selecting a recording fills the workspace and the right column", asyn
   await pickMeeting(page, "m2");
   const content = page.getByTestId("rec-content");
   await expect(content.getByText(TITLE_M2, { exact: true })).toBeVisible();
-  for (const name of ["Notizen", "KI-Notizen", "Protokoll"]) {
+  // G4: Transkript und Protokoll in der Mitte, Notizen rechts unten.
+  for (const name of ["Transkript", "Protokoll"]) {
     await expect(content.getByRole("tab", { name, exact: true })).toBeVisible();
   }
-  // Transkript und Wiedergabe rechts, die Liste bleibt stehen.
-  await expect(page.locator('[data-segment-index="0"]')).toBeVisible();
+  for (const name of ["Notizen", "KI-Notizen", "Fragen"]) {
+    await expect(
+      page.getByTestId("rec-controls").getByRole("tab", { name, exact: true }),
+    ).toBeVisible();
+  }
+  // Das Transkript steht in der Mitte, Wiedergabe rechts, die Liste bleibt stehen.
+  await expect(content.locator('[data-segment-index="0"]')).toBeVisible();
   await expect(
     page
       .getByTestId("rec-controls")
@@ -99,7 +110,7 @@ test("AK2: selecting a recording fills the workspace and the right column", asyn
   await expect(page.locator('[data-meeting-id="m1"]')).toBeVisible();
   const transcript = await box(page, "transcript-scroll");
   const controls = await box(page, "rec-controls");
-  expect(transcript.x).toBeGreaterThanOrEqual(controls.x);
+  expect(transcript.x + transcript.width).toBeLessThanOrEqual(controls.x + 1);
   // Ein Wechsel der Besprechung laesst die Liste stehen.
   await pickMeeting(page, "m4");
   await expect(
@@ -298,15 +309,15 @@ for (const [label, vp] of Object.entries(VIEWPORTS)) {
     expect(r.documentScrollHeight).toBeLessThanOrEqual(r.innerHeight + 1);
     expect(r.mainOverflow, JSON.stringify(r.scrollers)).toBe(false);
     expect(r.nested, JSON.stringify(r.scrollers)).toEqual([]);
-    // Das Transkript fuellt die Resthoehe seiner Spalte und hat keinen
-    // festen Deckel (vorher max-h-96 = 384 px).
+    // Das Transkript fuellt die Resthoehe der Arbeitsflaeche (Mitte) und hat
+    // keinen festen Deckel (vorher max-h-96 = 384 px).
     const transcript = page.getByTestId("transcript-scroll");
     expect(
       await transcript.evaluate((el) => getComputedStyle(el).maxHeight),
     ).toBe("none");
-    const lower = await box(page, "rec-lower");
+    const content = await box(page, "rec-content");
     const t = await box(page, "transcript-scroll");
-    expect(t.y + t.height).toBeLessThanOrEqual(lower.y + lower.height + 1);
+    expect(t.y + t.height).toBeLessThanOrEqual(content.y + content.height + 1);
     expect(t.height).toBeGreaterThan(40);
     expect(
       await transcript.evaluate((el) => el.scrollHeight > el.clientHeight),
@@ -319,9 +330,14 @@ for (const [label, vp] of Object.entries(VIEWPORTS)) {
     await openRecordings(page, vp.width, vp.height);
     await pickMeeting(page, "m2");
     await expect(page.locator('[data-segment-index="0"]')).toBeVisible();
-    for (const name of ["Protokoll", "KI-Notizen", "Notizen"]) {
+    for (const [area, name] of [
+      ["rec-content", "Protokoll"],
+      ["rec-controls", "KI-Notizen"],
+      ["rec-controls", "Notizen"],
+      ["rec-content", "Transkript"],
+    ] as const) {
       await page
-        .getByTestId("rec-content")
+        .getByTestId(area)
         .getByRole("tab", { name, exact: true })
         .click();
       await page.waitForTimeout(100);
@@ -494,16 +510,16 @@ test("AK8: selection and both tab choices survive reload and page switch", async
   await navTo(page, "Aufnahmen");
   await check();
 
-  // Zurueck auf Transkript und Notizen: bleibt ebenfalls.
-  await tabOf(page, "rec-controls", "Transkript").click();
-  await tabOf(page, "rec-content", "KI-Notizen").click();
+  // Zurueck auf Transkript und KI-Notizen: bleibt ebenfalls.
+  await tabOf(page, "rec-content", "Transkript").click();
+  await tabOf(page, "rec-controls", "KI-Notizen").click();
   await page.reload();
   await goToRecordings(page);
-  await expect(tabOf(page, "rec-controls", "Transkript")).toHaveAttribute(
+  await expect(tabOf(page, "rec-content", "Transkript")).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await expect(tabOf(page, "rec-content", "KI-Notizen")).toHaveAttribute(
+  await expect(tabOf(page, "rec-controls", "KI-Notizen")).toHaveAttribute(
     "aria-selected",
     "true",
   );

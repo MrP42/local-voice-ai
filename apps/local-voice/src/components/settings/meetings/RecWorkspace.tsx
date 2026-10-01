@@ -10,22 +10,18 @@ import {
 } from "lucide-react";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { TabList } from "../../ui/TabList";
+import type { LowerTab } from "@/lib/meetingTabs";
 import type { RecLayout } from "./useRecLayout";
 import { useStableSlot } from "./useStableSlot";
 
-/** Reiter der unteren rechten Flaeche. */
-export type RightTab = "transcript" | "chat";
-export const isRightTab = (value: string): value is RightTab =>
-  value === "transcript" || value === "chat";
-
 /** Die Stellen, an denen die Detailansicht ihre Teile einhaengt. */
 export interface RecSlotRefs {
-  /** Arbeitsflaeche: Kopf, Reiter Notizen / KI-Notizen / Protokoll. */
+  /** Arbeitsflaeche (Mitte): Kopf, Reiter Transkript / Protokoll. */
   content: (el: HTMLDivElement | null) => void;
   /** Bedienung: Aktionen, Fortschritt, Wiedergabe. */
   controls: (el: HTMLDivElement | null) => void;
-  /** Transkript (Reiter rechts unten). */
-  transcript: (el: HTMLDivElement | null) => void;
+  /** Notizen und KI-Notizen (Reiter rechts unten). */
+  notes: (el: HTMLDivElement | null) => void;
 }
 
 const ICON_BUTTON =
@@ -111,10 +107,10 @@ interface RecWorkspaceProps {
   idleContent: React.ReactNode;
   /** Bedienung oben rechts (Aufnahmekarte). */
   controls: React.ReactNode;
-  rightTab: RightTab;
-  onRightTab: (tab: RightTab) => void;
-  /** Transkript ohne gewaehlte Besprechung (Hinweis). */
-  idleTranscript: React.ReactNode;
+  rightTab: LowerTab;
+  onRightTab: (tab: LowerTab) => void;
+  /** Notizen ohne gewaehlte Besprechung (Hinweis). */
+  idleNotes: React.ReactNode;
   /** Fragen-Reiter (Chat). */
   chatBody: React.ReactNode;
   /** Ablagefeld ueber der Arbeitsflaeche, solange eine Datei darueber schwebt. */
@@ -122,17 +118,18 @@ interface RecWorkspaceProps {
 }
 
 /**
- * Geruest der Aufnahmen-Seite, Variante B: Projekte | Arbeitsflaeche |
- * Bedienung und Transkript. Jeder Bereich scrollt fuer sich, die Seite nie.
+ * Geruest der Aufnahmen-Seite, Variante B: Projekte | Arbeitsflaeche (Transkript,
+ * Protokoll) | Bedienung und darunter Notizen, KI-Notizen, Fragen. Jeder Bereich
+ * scrollt fuer sich, die Seite nie.
  *
  * - breit (>= 1000 px): drei Bereiche, Ziehgriffe, einklappbar.
  * - mittel (620 bis 999 px): Projekte als Leiste mit Schublade.
  * - schmal (< 620 px): oben die Aufnahmezeile, darunter geteilt die
- *   Arbeitsflaeche (Notizen) und das Transkript bzw. die Fragen, dazwischen
- *   ein waagerechter Griff; Projekte in der Schublade.
+ *   Arbeitsflaeche (Transkript, Protokoll) und Notizen bzw. KI-Notizen bzw.
+ *   Fragen, dazwischen ein waagerechter Griff; Projekte in der Schublade.
  *
  * Die drei Hauptteile (Arbeitsflaeche, Aufnahmezeile samt Bedienung,
- * Transkript/Fragen) sitzen in festen Elementen, die je nach Breite nur an
+ * Notizen/Fragen) sitzen in festen Elementen, die je nach Breite nur an
  * einen anderen Platz gehaengt werden (`useStableSlot`): Ein Fensterwechsel
  * waehrend einer Aufnahme baut weder den Notizblock noch das Live-Transkript
  * oder die Aufnahmekarte neu.
@@ -148,7 +145,7 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
   controls,
   rightTab,
   onRightTab,
-  idleTranscript,
+  idleNotes,
   chatBody,
   dropOverlay,
 }) => {
@@ -183,9 +180,9 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
 
   const projectsTitle = t("meetings.projects.title");
 
-  // Beide Reiter der unteren Flaeche bleiben eingehaengt und werden nur
-  // verborgen: ein Live-Transkript sammelt Saetze aus Ereignissen, ein Chat
-  // haelt eine laufende Antwort -- beides ginge beim Reiterwechsel verloren.
+  // Notizen und Chat der unteren Flaeche bleiben eingehaengt und werden nur
+  // verborgen: ein Chat haelt eine laufende Antwort, der Notizblock ungespeicherte
+  // Zeichen -- beides ginge beim Reiterwechsel verloren.
   // Den Chat gibt es erst nach dem ersten Oeffnen (er laedt beim Einhaengen).
   const [chatSeen, setChatSeen] = useState(rightTab === "chat");
   useEffect(() => {
@@ -288,12 +285,18 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
       aria-label={t("meetings.layout.content")}
       className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-mid-gray/20 bg-background"
     >
+      {/* Der Platz haelt genau die Hoehe der Flaeche: das Transkript fuellt den
+          Rest und scrollt in sich. Reicht die Hoehe auch fuer die Mindesthoehen
+          nicht (Video gross, Fenster klein), scrollt die Flaeche als Ganzes. */}
       <div
         data-testid="rec-content-scroll"
         className="min-h-0 flex-1 overflow-y-auto"
       >
         {detailActive ? (
-          <div ref={slotRefs.content} className="space-y-3 px-4 py-3" />
+          <div
+            ref={slotRefs.content}
+            className="flex h-full min-h-0 flex-col gap-2 px-4 py-3"
+          />
         ) : (
           idleContent
         )}
@@ -309,8 +312,9 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
     </>
   );
 
-  const transcriptTabs = [
-    { id: "transcript" as const, label: t("meetings.detail.transcriptTab") },
+  const lowerTabs = [
+    { id: "notes" as const, label: t("meetings.notes.tab") },
+    { id: "ai" as const, label: t("meetings.notes.view.ai") },
     { id: "chat" as const, label: t("meetings.chat.ask") },
   ];
 
@@ -321,7 +325,7 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
     >
       <TabList
         compact
-        tabs={transcriptTabs}
+        tabs={lowerTabs}
         value={rightTab}
         onChange={onRightTab}
         ariaLabel={t("meetings.layout.lowerTabs")}
@@ -329,19 +333,18 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
       />
       <div
         role="tabpanel"
-        hidden={rightTab !== "transcript"}
+        hidden={rightTab === "chat"}
         className={
-          rightTab === "transcript" ? "flex min-h-0 flex-1 flex-col" : "hidden"
+          rightTab === "chat"
+            ? "hidden"
+            : "flex min-h-0 flex-1 flex-col overflow-y-auto"
         }
-        data-testid="rec-transcript"
+        data-testid="rec-notes"
       >
         {detailActive ? (
-          <div
-            ref={slotRefs.transcript}
-            className="flex min-h-0 flex-1 flex-col gap-2 px-3 py-2"
-          />
+          <div ref={slotRefs.notes} className="space-y-2 px-3 py-1.5" />
         ) : (
-          idleTranscript
+          idleNotes
         )}
       </div>
       {(chatSeen || rightTab === "chat") && (

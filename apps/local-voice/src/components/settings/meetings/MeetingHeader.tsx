@@ -5,27 +5,24 @@ import {
   FileText,
   Folder as FolderIcon,
   Info,
+  LayoutTemplate,
   Mic,
   MonitorPlay,
   NotebookPen,
   Upload,
 } from "lucide-react";
-import type { Meeting, Participant } from "@/bindings";
+import type { Meeting } from "@/bindings";
 import {
   isIndeterminate,
   percentOf,
   type LiveProgress,
 } from "@/lib/meetingJobs";
-import { orderParticipants } from "@/lib/meetingPeople";
+import { formatMeetingDate } from "@/lib/meetingDate";
 import type { QueuePlace } from "@/lib/meetingQueue";
 import { IconAction } from "../../ui/IconAction";
 import { Input } from "../../ui/Input";
 import { TabList, type TabListItem } from "../../ui/TabList";
 import { TooltipTrigger } from "../../ui/TooltipTrigger";
-import { PersonPopover, type PersonRef } from "./people/PersonPopover";
-
-/** Wie viele Avatare die Chipzeile zeigt; der Rest steht hinter "+N". */
-const MAX_AVATARS = 4;
 
 const CHIP =
   "inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-mid-gray/30 px-2 text-xs text-text/80";
@@ -155,7 +152,12 @@ export const StatusChip: React.FC<{
 interface MeetingHeaderProps {
   meeting: Meeting;
   progress?: LiveProgress;
-  participants: Participant[];
+  /** G4: Chip "N Teilnehmende: ..." mit Popover (`ParticipantsPopover`). */
+  participantsSlot: React.ReactNode;
+  /** G4: Name der gewaehlten Vorlage fuer den Chip "Vorlage: X" (`null` = kein Chip). */
+  templateName: string | null;
+  /** G4: Klick auf den Vorlagen-Chip (Vorlage wechseln). */
+  onOpenTemplate: () => void;
   /** Die Projekte, in denen die Besprechung liegt (Namen in Anzeigereihenfolge). */
   projectNames: string[];
   /** Neuer Titel; liefert eine Fehlermeldung oder `null` bei Erfolg. */
@@ -166,14 +168,11 @@ interface MeetingHeaderProps {
   queue?: QueuePlace | null;
   onOpenDetails: () => void;
   onOpenProjects: () => void;
-  onManagePeople: () => void;
-  onPersonFilter: (person: PersonRef) => void;
-  onPersonAsk: (person: PersonRef) => void;
   tabs: TabListItem<string>[];
   tab: string;
   onTab: (id: string) => void;
   tabsLabel: string;
-  /** Schmales Fenster: das Menue mit allen Aktionen sitzt rechts in der Titelzeile. */
+  /** Das Menue (Hamburger) sitzt in der Titelzeile neben "Details" (schmal mit allen Aktionen). */
   menu?: React.ReactNode;
   /**
    * G1 (#70): der Titel steht beim Anzeigen gleich im Eingabefeld (ein eben
@@ -183,33 +182,25 @@ interface MeetingHeaderProps {
   onAutoEditStarted?: () => void;
 }
 
-const dateFormatter = (language: string) =>
-  new Intl.DateTimeFormat(language, {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
 /**
  * Kompakter Kopf der Besprechung (Arbeitsfläche, Variante B): Titel (per Klick
- * oder F2 umbenennbar) mit Info-Symbol, eine Chipzeile (Status, Quelle, Datum,
- * Dauer, Projekt, Personen) und die Reiter. Zusammen nicht höher als 120 px;
- * alles Weitere steht im Details-Dialog.
+ * oder F2 umbenennbar) mit Info-Symbol und Menü, zwei Chipzeilen (Status,
+ * Quelle, Datum mit Jahr, Dauer / Projekt, Teilnehmende, Vorlage) und die Reiter
+ * Transkript / Protokoll. Zusammen nicht höher als 120 px; alles Weitere steht im
+ * Details-Dialog.
  */
 export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
   meeting,
   progress,
   queue,
-  participants,
+  participantsSlot,
+  templateName,
+  onOpenTemplate,
   projectNames,
   onRename,
   renameNonce,
   onOpenDetails,
   onOpenProjects,
-  onManagePeople,
-  onPersonFilter,
-  onPersonAsk,
   tabs,
   tab,
   onTab,
@@ -224,6 +215,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
   const [error, setError] = useState<string | null>(null);
   const titleTip = `${useId()}-tip`;
   const projectTip = `${useId()}-tip`;
+  const templateTip = `${useId()}-tip`;
   const inputRef = useRef<HTMLInputElement>(null);
   // Enter und Escape beenden das Feld, danach löst das Blur kein zweites Speichern aus.
   const finished = useRef(false);
@@ -310,16 +302,13 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
   });
 
   const when = new Date((meeting.started_at ?? meeting.created_at) * 1000);
-  const ordered = orderParticipants(participants);
-  const visible = ordered.slice(0, MAX_AVATARS);
-  const hidden = ordered.length - visible.length;
 
   return (
     <div
       data-testid="rec-detail-head"
       className="@container sticky top-0 z-10 -mx-4 bg-background px-4"
     >
-      <div className="flex h-9 items-center gap-1">
+      <div className="flex h-8 items-center gap-1">
         {editing ? (
           <Input
             ref={inputRef}
@@ -385,93 +374,117 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
         role="group"
         aria-label={t("meetings.header.chips")}
         data-testid="rec-detail-chips"
-        className="flex h-7 items-center gap-1.5 overflow-hidden py-0.5"
+        className="space-y-0.5 py-0.5"
       >
-        <StatusChip meeting={meeting} progress={progress} queue={queue} />
-        <span className={CHIP} title={sourceFull} data-testid="source-chip">
-          <SourceIcon width={12} height={12} aria-hidden="true" />
-          <span className="hidden @[34rem]:inline">{sourceLabel}</span>
-          <span className="sr-only @[34rem]:hidden">{sourceFull}</span>
-        </span>
-        <span className={`${CHIP} tabular-nums`} data-testid="date-chip">
-          {dateFormatter(i18n.language).format(when)}
-        </span>
-        {meeting.duration_ms !== null && meeting.status !== "recording" && (
-          <span className={`${CHIP} tabular-nums`} data-testid="duration-chip">
-            {t("meetings.header.minutes", {
-              count: Math.max(1, Math.round(meeting.duration_ms / 60000)),
-            })}
+        <div
+          data-testid="rec-detail-chips-main"
+          className="flex h-6 items-center gap-1.5 overflow-hidden"
+        >
+          <StatusChip meeting={meeting} progress={progress} queue={queue} />
+          <span className={CHIP} title={sourceFull} data-testid="source-chip">
+            <SourceIcon width={12} height={12} aria-hidden="true" />
+            <span className="hidden @[34rem]:inline">{sourceLabel}</span>
+            <span className="sr-only @[34rem]:hidden">{sourceFull}</span>
           </span>
-        )}
-        {projectNames.length > 0 && (
-          <TooltipTrigger
-            tooltipId={projectTip}
-            className="inline-flex min-w-0 shrink"
-            content={
-              <>
-                <div className="text-sm font-semibold">
-                  <strong>{projectNames.join(", ")}</strong>
-                </div>
-                <div className="text-xs text-text/70">
-                  {t("meetings.header.projectHint")}
-                </div>
-              </>
-            }
-          >
-            <button
-              type="button"
-              onClick={onOpenProjects}
-              aria-describedby={projectTip}
-              data-testid="project-chip"
-              className={`${CHIP} min-w-0 shrink cursor-pointer hover:border-logo-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-logo-primary`}
+          <span className={`${CHIP} tabular-nums`} data-testid="date-chip">
+            {formatMeetingDate(when, i18n.language, "full")}
+          </span>
+          {meeting.duration_ms !== null && meeting.status !== "recording" && (
+            <span
+              className={`${CHIP} tabular-nums`}
+              data-testid="duration-chip"
             >
-              <FolderIcon
-                width={12}
-                height={12}
-                aria-hidden="true"
-                className="shrink-0"
-              />
-              <span className="min-w-0 truncate">{projectNames[0]}</span>
-              {projectNames.length > 1 && (
-                <span className="shrink-0 text-text/60">
-                  {t("meetings.header.projectMore", {
-                    count: projectNames.length - 1,
-                  })}
-                </span>
-              )}
-            </button>
-          </TooltipTrigger>
-        )}
-        {participants.length > 0 && (
-          <span
-            role="group"
-            aria-label={t("meetings.people.chipsLabel")}
-            data-testid="participant-chips"
-            className="ms-auto flex shrink-0 items-center gap-1 ps-1"
-          >
-            {visible.map((participant) => (
-              <PersonPopover
-                key={participant.human_id}
-                participant={participant}
-                compact
-                onFilter={onPersonFilter}
-                onAsk={onPersonAsk}
-                onManage={onManagePeople}
-              />
-            ))}
-            {hidden > 0 && (
+              {t("meetings.header.minutes", {
+                count: Math.max(1, Math.round(meeting.duration_ms / 60000)),
+              })}
+            </span>
+          )}
+        </div>
+        <div
+          data-testid="rec-detail-chips-people"
+          className="flex h-6 items-center gap-1.5 overflow-hidden"
+        >
+          {projectNames.length > 0 && (
+            <TooltipTrigger
+              tooltipId={projectTip}
+              className="inline-flex min-w-0 max-w-[45%] shrink-0"
+              content={
+                <>
+                  <div className="text-sm font-semibold">
+                    <strong>{projectNames.join(", ")}</strong>
+                  </div>
+                  <div className="text-xs text-text/70">
+                    {t("meetings.header.projectHint")}
+                  </div>
+                </>
+              }
+            >
               <button
                 type="button"
-                onClick={onManagePeople}
-                title={t("meetings.header.peopleMoreLabel")}
-                aria-label={t("meetings.header.peopleMoreLabel")}
-                className="inline-flex h-6 cursor-pointer items-center rounded-full border border-mid-gray/30 px-1.5 text-[10px] text-text/70 hover:border-logo-primary"
+                onClick={onOpenProjects}
+                aria-describedby={projectTip}
+                data-testid="project-chip"
+                className={`${CHIP} min-w-0 max-w-full cursor-pointer hover:border-logo-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-logo-primary`}
               >
-                {t("meetings.header.peopleMore", { count: hidden })}
+                <FolderIcon
+                  width={12}
+                  height={12}
+                  aria-hidden="true"
+                  className="shrink-0"
+                />
+                <span className="min-w-0 truncate">{projectNames[0]}</span>
+                {projectNames.length > 1 && (
+                  <span className="shrink-0 text-text/60">
+                    {t("meetings.header.projectMore", {
+                      count: projectNames.length - 1,
+                    })}
+                  </span>
+                )}
               </button>
-            )}
-          </span>
-        )}
+            </TooltipTrigger>
+          )}
+          {participantsSlot}
+          {templateName && (
+            <TooltipTrigger
+              tooltipId={templateTip}
+              className="inline-flex min-w-0 shrink-0 max-w-[40%]"
+              content={
+                <>
+                  <div className="text-sm font-semibold">
+                    <strong>
+                      {t("meetings.header.template", { name: templateName })}
+                    </strong>
+                  </div>
+                  <div className="text-xs text-text/70">
+                    {t("meetings.header.templateHint")}
+                  </div>
+                </>
+              }
+            >
+              <button
+                type="button"
+                onClick={onOpenTemplate}
+                aria-describedby={templateTip}
+                aria-label={t("meetings.header.template", {
+                  name: templateName,
+                })}
+                data-testid="template-chip"
+                className={`${CHIP} min-w-0 max-w-full cursor-pointer hover:border-logo-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-logo-primary`}
+              >
+                <LayoutTemplate
+                  width={12}
+                  height={12}
+                  aria-hidden="true"
+                  className="shrink-0"
+                />
+                {/* Schmal nur das Symbol (wie bei der Quelle); der Name steht im Tooltip. */}
+                <span className="hidden min-w-0 truncate @[34rem]:inline">
+                  {t("meetings.header.template", { name: templateName })}
+                </span>
+              </button>
+            </TooltipTrigger>
+          )}
+        </div>
       </div>
 
       <TabList

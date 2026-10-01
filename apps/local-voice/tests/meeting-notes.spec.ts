@@ -756,10 +756,12 @@ test("Notizblock: Aufnahmeseite zweispaltig mit Transkript (Screenshot)", async 
       padLeft: padBox.left,
       padRight: padBox.right,
       trLeft: transcript.left,
+      trRight: transcript.right,
     };
   });
-  // Ab 1024 px nebeneinander: das Transkript beginnt rechts vom Notizblock.
-  expect(layout.trLeft).toBeGreaterThan(layout.padRight - 1);
+  // Ab 1024 px nebeneinander: G4 - das Transkript steht in der Mitte, der
+  // Notizblock beginnt rechts davon.
+  expect(layout.padLeft).toBeGreaterThan(layout.trRight - 1);
 
   const shot = path.resolve(
     process.cwd(),
@@ -770,8 +772,8 @@ test("Notizblock: Aufnahmeseite zweispaltig mit Transkript (Screenshot)", async 
     await page.screenshot({ path: shot, animations: "disabled" });
   }
 
-  // Schmal (unter 620 px): die Arbeitsflaeche mit dem Notizblock steht ueber dem
-  // rechten Bereich mit dem Transkript. Die Aufnahmezeile rechts ist seit M4
+  // Schmal (unter 620 px): die Arbeitsflaeche mit dem Transkript steht ueber dem
+  // Bereich mit dem Notizblock. Die Aufnahmezeile rechts ist seit M4
   // niedrig, deshalb entscheidet nicht mehr die Notizblock-Hoehe, sondern die
   // Anordnung der beiden Bereiche.
   await page.setViewportSize({ width: 560, height: 900 });
@@ -878,15 +880,15 @@ test("Notizblock: leere Notizen zeigen den Hinweis Stichpunkte genügen", async 
 // Vorlagen
 // ---------------------------------------------------------------------------
 
-// Seit M4 wechselt man die Vorlage ueber das Menue der Bedienspalte
-// ("Vorlage wechseln ..."), nicht mehr ueber eine Auswahl im Reiter.
+// Seit M4 waehlt man die Vorlage ueber das Menue neben "Details"
+// ("Vorlage waehlen ..."), nicht mehr ueber eine Auswahl im Reiter.
 const openTemplateDialog = async (page: Page) => {
   await openDetailNotes(page);
   await page.getByTestId("meeting-menu").click();
   await page
     .getByTestId("menu-template")
     .evaluate((el) => (el as HTMLElement).click());
-  const dialog = page.getByRole("dialog", { name: "Vorlage wechseln" });
+  const dialog = page.getByRole("dialog", { name: "Vorlage wählen" });
   await expect(dialog).toBeVisible();
   return dialog;
 };
@@ -1843,7 +1845,8 @@ test.describe("KI-Notizen", () => {
   }) => {
     await setup(page);
     await openAiNotes(page);
-    await page.getByRole("button", { name: /^Exportieren – als Word/ }).click();
+    // G4: Symbol "Herunterladen" in der Werkzeugzeile (der Tooltip nennt Word, Text, Markdown).
+    await page.getByRole("button", { name: "Herunterladen" }).click();
     await expect(page.getByTestId("exported")).toBeVisible();
     expect((await calls(page, "meeting_notes_markdown"))[0].args).toEqual({
       documentId: "d1",

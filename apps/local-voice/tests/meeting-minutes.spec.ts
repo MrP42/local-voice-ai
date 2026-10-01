@@ -286,9 +286,34 @@ const openMinutes = async (page: Page) => {
 const generateButton = (page: Page) =>
   page.getByRole("button", { name: /^(Erzeugen|Neu erzeugen)$/ });
 
+/**
+ * G4: die Vorlagenwahl steht nicht mehr im Reiter Protokoll, sondern im Menue
+ * (Vorlage waehlen ...): ein Dialog mit der Auswahl und "Vorlagen verwalten".
+ */
+const openTemplateDialog = async (page: Page) => {
+  await page.getByTestId("meeting-menu").click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page
+    .getByTestId("menu-template")
+    .evaluate((el) => (el as HTMLElement).click());
+  const dialog = page.getByTestId("template-dialog");
+  await expect(dialog).toBeVisible();
+  return dialog;
+};
+
+const closeTemplateDialog = async (page: Page) => {
+  await page
+    .getByRole("button", { name: "Schließen", exact: true })
+    .last()
+    .click();
+  await expect(page.getByTestId("template-dialog")).toHaveCount(0);
+};
+
 const pickTemplate = async (page: Page, name: string) => {
-  await page.locator(".app-select__control").first().click();
+  const dialog = await openTemplateDialog(page);
+  await dialog.locator(".app-select__control").click();
   await page.getByRole("option", { name, exact: true }).click();
+  return dialog;
 };
 
 // ---------------------------------------------------------------------------
@@ -321,11 +346,14 @@ test.describe("Protokoll Logik", () => {
 // Vorlagenwahl im Protokoll-Reiter
 // ---------------------------------------------------------------------------
 
-test("Protokoll: Vorlagenwahl bietet die Vorlagen und Automatisch, Erzeugen ruft den Befehl mit der Vorlage", async ({
+test("Protokoll: Vorlagenwahl (Menue) bietet die Vorlagen und Automatisch, Erzeugen nutzt die gemerkte Vorlage", async ({
   page,
 }) => {
   await openMinutes(page);
-  await page.locator(".app-select__control").first().click();
+  // Im Reiter selbst gibt es keine Auswahl mehr (der Inhalt beginnt gleich).
+  await expect(page.locator(".app-select__control")).toHaveCount(0);
+  const dialog = await openTemplateDialog(page);
+  await dialog.locator(".app-select__control").click();
   for (const name of [
     "Automatisch (nach Inhalt)",
     "Allgemein",
@@ -344,39 +372,51 @@ test("Protokoll: Vorlagenwahl bietet die Vorlagen und Automatisch, Erzeugen ruft
     meetingId: "m1",
     templateId: "builtin:vertrieb",
   });
+  await closeTemplateDialog(page);
+  // Der Kopf nennt die Wahl als Chip.
+  await expect(page.getByTestId("template-chip")).toHaveText(
+    "Vorlage: Kundengespräch / Vertrieb",
+  );
 
+  // Erzeugt wird mit der gemerkten Wahl der Besprechung (templateId null).
   await generateButton(page).click();
   await expect
     .poll(async () => (await calls(page, "meetings_generate_minutes")).length)
     .toBe(1);
   expect((await calls(page, "meetings_generate_minutes"))[0].args).toEqual({
     meetingId: "m1",
-    templateId: "builtin:vertrieb",
+    templateId: null,
   });
   await expect(page.getByText("Fertig.")).toBeVisible();
   await expect(generateButton(page)).toBeEnabled();
 });
 
-test("Protokoll: die gemerkte Wahl der Besprechung steht schon im Wähler und geht mit", async ({
+test("Protokoll: die gemerkte Wahl der Besprechung steht im Kopf-Chip und schon im Waehler", async ({
   page,
 }) => {
   await page.addInitScript(() => {
     (window as any).__template = "builtin:vertrieb";
   });
   await openMinutes(page);
-  await expect(page.locator(".app-select__single-value").first()).toHaveText(
+  await expect(page.getByTestId("template-chip")).toHaveText(
+    "Vorlage: Kundengespräch / Vertrieb",
+  );
+  const dialog = await openTemplateDialog(page);
+  await expect(dialog.locator(".app-select__single-value")).toHaveText(
     "Kundengespräch / Vertrieb",
   );
   // Eine Nutzerwahl braucht keine Automatik: kein Hinweis "Automatisch".
   await expect(page.getByTestId("template-auto-note")).toHaveCount(0);
+  await closeTemplateDialog(page);
   await generateButton(page).click();
   await expect
     .poll(async () => (await calls(page, "meetings_generate_minutes")).length)
     .toBe(1);
+  // Der Befehl bekommt keine eigene Vorlage: das Backend nimmt die gemerkte.
   expect(
     ((await calls(page, "meetings_generate_minutes"))[0].args as any)
       .templateId,
-  ).toBe("builtin:vertrieb");
+  ).toBeNull();
 });
 
 test("Protokoll: Automatisch zeigt nach dem Erzeugen, welche Vorlage gewählt wurde", async ({
@@ -394,6 +434,7 @@ test("Protokoll: Automatisch zeigt nach dem Erzeugen, welche Vorlage gewählt wu
   const note = page.getByTestId("template-auto-note");
   await expect(note).toHaveText("Wird beim Erzeugen nach dem Inhalt gewählt.");
   await expect(note).toHaveAttribute("data-state", "pending");
+  await closeTemplateDialog(page);
 
   // Das Backend wählt beim Erzeugen "Kundengespräch / Vertrieb" und meldet das Ende.
   await page.evaluate(() => {
@@ -422,12 +463,22 @@ test("Protokoll: Automatisch zeigt nach dem Erzeugen, welche Vorlage gewählt wu
   expect(
     ((await calls(page, "meetings_generate_minutes"))[0].args as any)
       .templateId,
-  ).toBe("auto");
+  ).toBeNull();
   await emit(page, "minutes-event", {
     kind: "done",
     meeting_id: "m1",
     document_id: "p1",
   });
+  // Der Kopf-Chip nennt die gewaehlte Vorlage; "Erzeugt mit ..." steht im Info-Dialog.
+  await expect(page.getByTestId("template-chip")).toHaveText(
+    "Vorlage: Kundengespräch / Vertrieb (automatisch)",
+  );
+  await page.getByTestId("meeting-details-open").click();
+  await expect(page.getByTestId("minutes-created-with")).toHaveText(
+    "Erzeugt mit der Vorlage: Kundengespräch / Vertrieb (automatisch gewählt)",
+  );
+  await page.keyboard.press("Escape");
+  await openTemplateDialog(page);
   await expect(note).toHaveText("Automatisch: Kundengespräch / Vertrieb");
   await expect(note).toHaveAttribute("data-state", "model");
   await expect(note).toHaveAttribute("data-template-id", "builtin:vertrieb");
@@ -435,11 +486,12 @@ test("Protokoll: Automatisch zeigt nach dem Erzeugen, welche Vorlage gewählt wu
     "title",
     "Begründung: Angebot und Budget des Kunden",
   );
-  await expect(page.getByTestId("minutes-created-with")).toHaveText(
-    "Erzeugt mit der Vorlage: Kundengespräch / Vertrieb (automatisch gewählt)",
-  );
   // Jederzeit änderbar: die Wahl "Allgemein" ersetzt die Automatik.
-  await pickTemplate(page, "Allgemein");
+  await page
+    .getByTestId("template-dialog")
+    .locator(".app-select__control")
+    .click();
+  await page.getByRole("option", { name: "Allgemein", exact: true }).click();
   await expect(note).toHaveCount(0);
 });
 
@@ -457,7 +509,8 @@ test("Protokoll: eine unklare Automatik sagt, dass die Standardvorlage gilt", as
     };
   });
   await openMinutes(page);
-  await expect(page.locator(".app-select__single-value").first()).toHaveText(
+  const dialog = await openTemplateDialog(page);
+  await expect(dialog.locator(".app-select__single-value")).toHaveText(
     "Automatisch (nach Inhalt)",
   );
   await expect(page.getByTestId("template-auto-note")).toContainText(
@@ -484,7 +537,7 @@ test("Protokoll: Reiterwechsel waehrend des Laufs behaelt Sperre und Fortschritt
   ).toBeVisible();
 
   // Reiter verlassen und zurueck: das Backend laeuft weiter, der Reiter fragt nach.
-  await page.getByRole("tab", { name: "Notizen", exact: true }).click();
+  await page.getByRole("tab", { name: "Transkript", exact: true }).click();
   await expect(page.getByTestId("minutes-running")).toHaveCount(0);
   await page.getByRole("tab", { name: "Protokoll", exact: true }).click();
   await expect(page.getByTestId("minutes-running")).toBeVisible();
@@ -523,10 +576,8 @@ test("Protokoll: Reiterwechsel waehrend des Laufs behaelt Sperre und Fortschritt
   await expect(
     page.getByRole("progressbar", { name: "Fortschritt des Protokolls" }),
   ).toHaveAttribute("aria-valuenow", "75");
-  // Auch die Vorlagenwahl ist waehrend des Laufs gesperrt.
-  await expect(page.locator(".app-select__control").first()).toHaveClass(
-    /--is-disabled/,
-  );
+  // Die Vorlagenwahl steht nicht mehr im Reiter (G4); erzeugt wird nur einmal.
+  await expect(page.locator(".app-select__control")).toHaveCount(0);
 
   // Ende: Sperre weg, Protokoll da.
   await page.evaluate(() => {
@@ -663,6 +714,11 @@ test("Protokoll: fehlende Teile des Transkripts stehen als sichtbare Warnung da"
   await expect(page.getByTestId("minutes-incomplete")).toHaveText(
     "Das Protokoll ist unvollständig: Die Besprechung bei 12:00-24:30, 40:00-41:10 konnte nicht ausgewertet werden. Das vollständige Transkript bleibt erhalten.",
   );
+  // "Erzeugt mit der Vorlage ..." steht nicht mehr im Reiter, sondern im Info-Dialog.
+  await expect(page.getByTestId("mid-panel-minutes")).not.toContainText(
+    "Erzeugt mit der Vorlage",
+  );
+  await page.getByTestId("meeting-details-open").click();
   await expect(page.getByTestId("minutes-created-with")).toHaveText(
     "Erzeugt mit der Vorlage: Allgemein",
   );

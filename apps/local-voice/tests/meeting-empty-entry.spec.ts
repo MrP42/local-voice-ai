@@ -85,7 +85,7 @@ test("Plus im Spaltenkopf legt im gewaehlten Projekt einen leeren Eintrag an, oe
     "Kunde Stadtwerke",
   );
   // Es gibt keinen Transkript-Platzhalter einer Aufnahme.
-  await expect(page.getByTestId("rec-transcript")).toContainText(
+  await expect(page.getByTestId("mid-panel-transcript")).toContainText(
     "Das Transkript erscheint hier, sobald du aufnimmst oder eine Datei importierst.",
   );
   await shoot(page, "g1-anlegen");

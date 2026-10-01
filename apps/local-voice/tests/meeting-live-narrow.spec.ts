@@ -120,8 +120,9 @@ test("AK6: bei 480x800 Aufnahme starten, Notiz tippen und Live-Transkript sehen 
   await expect(strip.getByTestId("import-open")).toBeVisible();
   await startRecording(page);
 
-  // Die laufende Aufnahme ist die gewaehlte Besprechung: Notizblock in der
-  // Arbeitsflaeche, der Fokus steht im Eingabefeld.
+  // Die laufende Aufnahme ist die gewaehlte Besprechung: Live-Transkript in der
+  // Arbeitsflaeche (oben), Notizblock im Reiter darunter, der Fokus steht im
+  // Eingabefeld.
   await expect(pad(page)).toBeVisible();
   await expect(page.getByTestId("note-starter")).toBeFocused();
   await expect(strip.getByTestId("rec-live")).toBeVisible();
@@ -165,12 +166,12 @@ test("AK6: bei 480x800 Aufnahme starten, Notiz tippen und Live-Transkript sehen 
   expect(await inViewport(field, 480, 800)).toBe(true);
   const sentence = page.getByText("Wir starten mit dem Budget.");
   expect(await inViewport(sentence, 480, 800)).toBe(true);
-  // Notiz oben, Transkript darunter, Aufnahmezeile darueber.
+  // G4: Transkript oben, Notiz darunter, Aufnahmezeile darueber.
   const b = async (l: Locator) => (await l.boundingBox())!;
   expect((await b(strip)).y + (await b(strip)).height).toBeLessThanOrEqual(
-    (await b(field)).y + 1,
+    (await b(sentence)).y + 1,
   );
-  expect((await b(field)).y).toBeLessThan((await b(sentence)).y);
+  expect((await b(sentence)).y).toBeLessThan((await b(field)).y);
 
   // Die Notiz ist gespeichert, mit Zeitstempel und in der laufenden Besprechung.
   await expect
@@ -186,7 +187,7 @@ test("AK6: bei 480x800 Aufnahme starten, Notiz tippen und Live-Transkript sehen 
   await shoot(page, "nach-m5-live-480");
 });
 
-test("schmal: Kopf mit Titel, Details und Menue, Aufnahmezeile, darunter geteilt Notizen und Transkript", async ({
+test("schmal: Kopf mit Titel, Details und Menue, Aufnahmezeile, darunter geteilt Transkript und Notizen", async ({
   page,
 }) => {
   await openRecordings(page, 480, 800);
@@ -203,7 +204,7 @@ test("schmal: Kopf mit Titel, Details und Menue, Aufnahmezeile, darunter geteilt
   for (const name of [
     "Exportieren",
     "Personen",
-    "Vorlage wechseln …",
+    "Vorlage wählen …",
     "Besprechung löschen …",
   ]) {
     await expect(
@@ -223,11 +224,16 @@ test("schmal: Kopf mit Titel, Details und Menue, Aufnahmezeile, darunter geteilt
   expect(cBox!.y + cBox!.height).toBeLessThanOrEqual(lower!.y + 1);
   expect(Math.abs(cBox!.width - lower!.width)).toBeLessThanOrEqual(2);
   await expect(
-    page.getByTestId("rec-controls").getByRole("tab", { name: "Transkript" }),
+    page
+      .getByTestId("rec-controls")
+      .getByRole("tab", { name: "Notizen", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(
     page.getByTestId("rec-controls").getByRole("tab", { name: "Fragen" }),
   ).toBeVisible();
+  await expect(
+    content.getByRole("tab", { name: "Transkript", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
 });
 
 test("schmal: der waagerechte Griff wirkt mit Maus und Tasten, Doppelklick = halbe-halbe, und bleibt nach dem Neuladen", async ({
@@ -298,10 +304,11 @@ test("Live: Reiterwechsel in beiden Bereichen verliert und doppelt keine Segment
   await liveWith(page, 5);
   expect(await renderedIndices(page)).toEqual([0, 1, 2, 3, 4]);
 
-  // Notizen -> KI-Notizen und Transkript -> Fragen: waehrenddessen kommen Saetze.
+  // Transkript -> Protokoll (Mitte) und Notizen -> Fragen (rechts): waehrenddessen
+  // kommen Saetze.
   await page
     .getByTestId("rec-content")
-    .getByRole("tab", { name: "KI-Notizen", exact: true })
+    .getByRole("tab", { name: "Protokoll", exact: true })
     .click();
   await page
     .getByTestId("rec-controls")
@@ -309,11 +316,11 @@ test("Live: Reiterwechsel in beiden Bereichen verliert und doppelt keine Segment
     .click();
   await emitLive(page, "m-neu", [seg(5, "Live-Satz 5"), seg(6, "Live-Satz 6")]);
   await page
-    .getByTestId("rec-controls")
+    .getByTestId("rec-content")
     .getByRole("tab", { name: "Transkript", exact: true })
     .click();
   await page
-    .getByTestId("rec-content")
+    .getByTestId("rec-controls")
     .getByRole("tab", { name: "Notizen", exact: true })
     .click();
   await expect(page.getByText("Live-Satz 6")).toBeVisible();
@@ -414,13 +421,16 @@ test("Live: Fragen stehen im Reiter der rechten Spalte, nicht unter dem Notizblo
   expect(report.documentScrollHeight).toBeLessThanOrEqual(
     report.innerHeight + 1,
   );
-  // Der Notizblock bleibt daneben stehen und sichtbar.
-  await expect(pad(page)).toBeVisible();
-  // Zurueck zum Transkript: alle Saetze noch da.
+  // G4: Fragen und Notizen sind Reiter derselben Flaeche; das Live-Transkript
+  // bleibt in der Mitte stehen, der Notizblock bleibt eingehaengt (verborgen).
+  await expect(pad(page)).toBeHidden();
+  expect(await renderedIndices(page)).toEqual([0, 1, 2]);
+  // Zurueck zu den Notizen: der Block ist wieder da.
   await page
     .getByTestId("rec-controls")
-    .getByRole("tab", { name: "Transkript", exact: true })
+    .getByRole("tab", { name: "Notizen", exact: true })
     .click();
+  await expect(pad(page)).toBeVisible();
   expect(await renderedIndices(page)).toEqual([0, 1, 2]);
 });
 

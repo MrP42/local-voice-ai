@@ -17,7 +17,19 @@ import { RecorderCard } from "./RecorderCard";
 import { MeetingList } from "./MeetingList";
 import { MeetingDetail } from "./MeetingDetail";
 import { YoutubeLinkHost } from "./youtube/YoutubeLinkHost";
-import { RecWorkspace, isRightTab, type RightTab } from "./RecWorkspace";
+import { RecWorkspace } from "./RecWorkspace";
+import {
+  CENTER_TAB_KEY,
+  LOWER_TAB_KEY,
+  centerFromLegacy,
+  isCenterTab,
+  isLowerTab,
+  lowerFromLegacy,
+  readLegacyTab,
+  type CenterTab,
+  type LowerTab,
+  type NotesTab,
+} from "@/lib/meetingTabs";
 import { useProjects } from "./projects/useProjects";
 import { useMeetingDrag } from "./projects/useMeetingDrag";
 import { ProjectsRail } from "./projects/ProjectsRail";
@@ -99,11 +111,27 @@ export const MeetingsSettings: React.FC = () => {
   // M5-P5d: Personenfilter der Liste; M5-P5e: Brief zu einem Termin.
   const [personFilter, setPersonFilter] = useState<PersonRef | null>(null);
   const [briefRun, setBriefRun] = useState<BriefRun | null>(null);
-  const [rightTab, setRightTab] = usePersistentState<RightTab>(
-    "meetings.rightTab",
-    "transcript",
-    isRightTab,
+  // G4: Mitte = Transkript / Protokoll, rechts unten = Notizen / KI-Notizen /
+  // Fragen. Die alten Schluessel (`meetings.midTab`, `meetings.rightTab`) liefern
+  // beim ersten Start die Anfangswerte.
+  const [centerTab, setCenterTab] = usePersistentState<CenterTab>(
+    CENTER_TAB_KEY,
+    centerFromLegacy(readLegacyTab("meetings.midTab")),
+    isCenterTab,
   );
+  const [rightTab, setRightTab] = usePersistentState<LowerTab>(
+    LOWER_TAB_KEY,
+    lowerFromLegacy(
+      readLegacyTab("meetings.midTab"),
+      readLegacyTab("meetings.rightTab"),
+    ),
+    isLowerTab,
+  );
+  // Der Notizen-Reiter, auf den das Schliessen der Fragen zurueckfuehrt; er
+  // bleibt waehrend der Fragen eingehaengt (Notizblock, ungespeicherte Zeichen).
+  const notesTabRef = useRef<NotesTab>(rightTab === "ai" ? "ai" : "notes");
+  if (rightTab !== "chat") notesTabRef.current = rightTab;
+  const notesTab = notesTabRef.current;
   const recording = useRecordingActive();
   const layout = useRecLayout(recording.active);
   // Projekte (= Ordner) und das Ziehen von Besprechungen darauf.
@@ -122,7 +150,7 @@ export const MeetingsSettings: React.FC = () => {
   // Die Bereiche, in die die Detailansicht ihre Teile legt.
   const [contentEl, setContentEl] = useState<HTMLDivElement | null>(null);
   const [controlsEl, setControlsEl] = useState<HTMLDivElement | null>(null);
-  const [transcriptEl, setTranscriptEl] = useState<HTMLDivElement | null>(null);
+  const [notesEl, setNotesEl] = useState<HTMLDivElement | null>(null);
 
   // Gemerkte Besprechung beim Start laden; gibt es sie nicht mehr, vergessen.
   // Hat inzwischen etwas anderes die Auswahl uebernommen (eine laufende
@@ -164,9 +192,10 @@ export const MeetingsSettings: React.FC = () => {
     (meeting: Meeting) => {
       handledRecording.current = meeting.id;
       select(meeting);
-      setRightTab("transcript");
+      setCenterTab("transcript");
+      setRightTab("notes");
     },
-    [select, setRightTab],
+    [select, setCenterTab, setRightTab],
   );
   useEffect(() => {
     const id = recording.active ? recording.meetingId : null;
@@ -184,9 +213,16 @@ export const MeetingsSettings: React.FC = () => {
       // Ohne Eintrag in der Liste (Datenbank gerade beschaeftigt) trotzdem
       // zeigen: die Aufnahme laeuft, die Notizen muessen tippbar sein.
       select(meeting ?? liveStub(id, titleFallback.current));
-      setRightTab("transcript");
+      setCenterTab("transcript");
+      setRightTab("notes");
     })();
-  }, [recording.active, recording.meetingId, select, setRightTab]);
+  }, [
+    recording.active,
+    recording.meetingId,
+    select,
+    setCenterTab,
+    setRightTab,
+  ]);
 
   // Import: Symbol und Ablage auf der Arbeitsflaeche fuehren in EINEN Weg.
   // Eine laufende Aufnahme behaelt den Fokus; der Import laeuft links mit
@@ -205,9 +241,9 @@ export const MeetingsSettings: React.FC = () => {
         const isTarget = selectedRef.current?.id === meeting.id;
         if (recordingActiveRef.current && !isTarget) return;
         select(meeting);
-        setRightTab("transcript");
+        setCenterTab("transcript");
       },
-      [select, setRightTab],
+      [select, setCenterTab],
     ),
     emptyTarget,
   );
@@ -231,7 +267,8 @@ export const MeetingsSettings: React.FC = () => {
     projects.select(view);
     notifyMeetingsChanged();
     select(result.data);
-    setRightTab("transcript");
+    setCenterTab("transcript");
+    setRightTab("notes");
     setAutoRenameId(result.data.id);
     layout.drawer.setOpen(false);
   };
@@ -342,7 +379,7 @@ export const MeetingsSettings: React.FC = () => {
   const chatOpen = rightTab === "chat" && globalFilter === null;
   const toggleChat = useCallback(() => {
     if (chatOpen) {
-      setRightTab("transcript");
+      setRightTab(notesTabRef.current);
       return;
     }
     // Ein globaler Chat weicht dem Chat dieser Besprechung.
@@ -367,7 +404,7 @@ export const MeetingsSettings: React.FC = () => {
       mode="global"
       onClose={() => {
         openGlobal(null);
-        setRightTab("transcript");
+        setRightTab(notesTabRef.current);
       }}
       onJump={(c) => void openCitation(c)}
       onScopeChange={setGlobalFilter}
@@ -380,7 +417,7 @@ export const MeetingsSettings: React.FC = () => {
       key={selected.id}
       scope={{ kind: "meeting", meeting_id: selected.id }}
       mode={live ? "live" : "meeting"}
-      onClose={() => setRightTab("transcript")}
+      onClose={() => setRightTab(notesTabRef.current)}
       onJump={(c) => void openCitation(c)}
     />
   ) : (
@@ -449,7 +486,7 @@ export const MeetingsSettings: React.FC = () => {
         slotRefs={{
           content: setContentEl,
           controls: setControlsEl,
-          transcript: setTranscriptEl,
+          notes: setNotesEl,
         }}
         idleContent={hint(t("meetings.layout.emptyContent"))}
         controls={
@@ -464,7 +501,7 @@ export const MeetingsSettings: React.FC = () => {
         }
         rightTab={rightTab}
         onRightTab={setRightTab}
-        idleTranscript={hint(t("meetings.layout.emptyTranscript"))}
+        idleNotes={hint(t("meetings.layout.emptyNotes"))}
         chatBody={chatBody}
         dropOverlay={
           dropOver ? (
@@ -493,9 +530,12 @@ export const MeetingsSettings: React.FC = () => {
           slots={{
             content: contentEl,
             controls: controlsEl,
-            transcript: transcriptEl,
+            notes: notesEl,
           }}
-          onShowTranscript={() => setRightTab("transcript")}
+          centerTab={centerTab}
+          onCenterTab={setCenterTab}
+          notesTab={notesTab}
+          onLowerTab={setRightTab}
           chatOpen={chatOpen}
           onChatToggle={toggleChat}
           onMeetingChange={setSelected}
