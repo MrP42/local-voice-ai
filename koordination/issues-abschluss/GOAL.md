@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/issues-abschluss
 iteration: 1
 erstellt: 2026-10-01
-aktualisiert: 2026-10-01T10:39
+aktualisiert: 2026-10-01T11:15
 ---
 
 # Goal: Offene Issues abschliessen, neue Features, Version 0.21.0
@@ -33,7 +33,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - macOS-Builds (PR #32/#60 eines anderen Zugangs) – nur nicht brechen.
 
 ## Akzeptanzkriterien
-- [ ] AK1 — Leerer Eintrag: Playwright → im gewählten Projekt „Neue Besprechung“ anlegen (Plus/Kontextmenü), Eintrag erscheint ohne Audio im Projekt; darin „Aufnahme starten“, „Datei importieren“ und „Link einfügen“ füllen DIESEN Eintrag (keine zweite Besprechung); Rust-Test für leere Besprechung + spätere Quelle.
+- [x] AK1 — Leerer Eintrag: Playwright → im gewählten Projekt „Neue Besprechung“ anlegen (Plus/Kontextmenü), Eintrag erscheint ohne Audio im Projekt; darin „Aufnahme starten“, „Datei importieren“ und „Link einfügen“ füllen DIESEN Eintrag (keine zweite Besprechung); Rust-Test für leere Besprechung + spätere Quelle.
 - [ ] AK2 — Ältere Issues: je Issue Befehl/Test als Beleg im Issue-Kommentar, Issue geschlossen; Owner-Punkte (#6 Löschen, #11 Ignore-Entscheidungen) mit Vorschlag und ausfüllfertigem Befehl kommentiert.
 - [ ] AK3 — U9: Playwright project-minutes grün; Rust-Test Mehrfach-Blocklogik; Quellen je Aufnahme mit Audio-Sprung.
 - [ ] AK4 — #66 Bündel 2: AK7–AK11 aus koordination/integrationen/GOAL.md erfüllt.
@@ -80,12 +80,13 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 | M8 | Release 0.21.0 | offen |
 
 ## Evidence
--
+- 2026-10-01T11:15 AK1 erfüllt — G1 307e7ac7: meeting-empty-entry 13 passed, Rust empty 76 passed, Suite 579 passed
 
 ## Blocker
 -
 
 ## Entscheidungen
+- 2026-10-01 Patrick: mp3lame LGPL als Ausnahme zulassen; Canary 1B mit Hinweis „nur nicht-kommerziell“ behalten; 12 unmaintained-Ignores übernehmen.
 - 2026-10-01 Patrick: Reiter umordnen vor 0.21.0 – Mitte Transkript + Protokoll, rechts unter der Bedienung Notizen, KI-Notizen, Fragen; Kopf zeigt Teilnehmende (Anzahl, Namen) und macht sie dort bearbeitbar (G4).
 - 2026-10-01 Patrick: Budget gestaffelt – jetzt M1–M3 + M8 Release (~2,7 MTok); M4–M7 je einzeln freigeben.
 - 2026-10-01 Patrick (/goal-planner-worker): alle offenen Issues abschließen, neue Features umsetzen, testen, neue Version, Ergebnisse in GitHub; zuerst leerer Eintrag im Projekt.
