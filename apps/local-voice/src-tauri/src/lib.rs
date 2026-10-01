@@ -2044,6 +2044,12 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_variants::transcript_variant_activate,
             commands::meeting_variants::transcript_variant_segments,
             commands::meeting_variants::transcript_variants_merge,
+            commands::meeting_variants::transcript_variant_translate, // G5
+            commands::meeting_variants::transcript_variant_report,
+            commands::meeting_language::meetings_language_info,
+            commands::meeting_language::meetings_set_language,
+            commands::meeting_language::meetings_model_for_language,
+            commands::meeting_language::meetings_document_basis,
             commands::youtube::change_meeting_youtube_private_setting,
             commands::youtube::change_meeting_youtube_tool_path_setting,
             commands::meeting_notes::meeting_notes_get,

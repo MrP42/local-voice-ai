@@ -70,6 +70,8 @@ pub enum JobPhase {
     Notes,
     /// Protokoll (Bloecke statt Audiodauer).
     Minutes,
+    /// G5: Uebersetzung einer Transkript-Fassung (Bloecke statt Audiodauer).
+    Translation,
 }
 
 impl JobPhase {
@@ -81,7 +83,11 @@ impl JobPhase {
     pub fn pausable(self) -> bool {
         matches!(
             self,
-            JobPhase::Transcription | JobPhase::FinalPass | JobPhase::Notes | JobPhase::Minutes
+            JobPhase::Transcription
+                | JobPhase::FinalPass
+                | JobPhase::Notes
+                | JobPhase::Minutes
+                | JobPhase::Translation
         )
     }
 }
@@ -1245,6 +1251,8 @@ mod tests {
         assert!(JobPhase::FinalPass.pausable());
         assert!(JobPhase::Notes.pausable());
         assert!(JobPhase::Minutes.pausable());
+        // G5: eine Uebersetzung laeuft in Bloecken und laesst sich anhalten.
+        assert!(JobPhase::Translation.pausable());
         assert!(!JobPhase::Prepare.pausable());
         assert!(!JobPhase::Speakers.pausable());
     }

@@ -286,6 +286,16 @@ pub(super) fn run_import(
             )
             .map_err(|e| format!("audio_paths_failed: {e}"))?;
 
+        // G5: Sprache bestimmen und das Modell danach waehlen (Einstellung `auto`: Probe
+        // aus dem Audio; Nutzerwahl und feste Einstellung gelten vor jeder Erkennung).
+        // Die Vorgabe gilt fuer diesen Thread, solange `language_plan` lebt.
+        let language_plan = super::language_run::prepare(
+            app,
+            tm,
+            &samples,
+            &super::language_run::RunRequest::default(),
+            Some(job),
+        );
         job.begin_phase(JobPhase::Transcription, duration_ms);
         let run = transcribe_and_store(
             app,
@@ -308,6 +318,8 @@ pub(super) fn run_import(
         // M3-P3b: Sprecher (Einstellung `meeting_diarization`). Ein Fehler hier
         // macht den Import nicht kaputt: das Transkript steht schon.
         run_speaker_step(app, store, meeting_id, Some(job));
+        // G5: die gueltige Sprache (Gegenprobe am Text) und das Modell ablegen.
+        super::language_run::finalize(store, meeting_id, &language_plan, tm.get_current_model());
         Ok(ImportEnd::Done { duration_ms })
     })();
 

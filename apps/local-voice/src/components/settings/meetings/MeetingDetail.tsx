@@ -76,6 +76,16 @@ import { ProvenanceArea } from "./variants/ProvenanceArea";
 import { VariantChip } from "./variants/VariantChip";
 import { YoutubeTranscriptTools } from "./variants/YoutubeTranscriptTools";
 import { translateVariantError, useVariants } from "./variants/useVariants";
+import { LanguageChip } from "./language/LanguageChip";
+import { TranslateDialog } from "./language/TranslateDialog";
+import {
+  DocBasisFields,
+  initialDocBasisChoice,
+  toDocBasis,
+  type DocBasisChoice,
+} from "./language/DocBasisFields";
+import { storeOutputLanguage, useLanguageInfo } from "./language/languages";
+import { documentBasisText, useDocumentBasis } from "./language/documentBasis";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -168,13 +178,19 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   autoRename = false,
   onAutoRenameStarted,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const meetingId = meeting.id;
   const emptyEntry = isEmptyEntry(meeting);
   const meetingTitle = meeting.title;
   // Dialoge und Anfragen aus Menue und Kopf.
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
+  // G5: Vorbelegung des Neu-Transkribierens (aus dem Sprach-Chip) und die Uebersetzung.
+  const [retranscribeInitial, setRetranscribeInitial] = useState<{
+    language: string;
+    modelId: string | null;
+  } | null>(null);
+  const [translateOpen, setTranslateOpen] = useState(false);
   const [speakersOpen, setSpeakersOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
@@ -198,6 +214,14 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   const { variants, reload: reloadVariants } = useVariants(meetingId);
   const reloadVariantsRef = useRef(reloadVariants);
   reloadVariantsRef.current = reloadVariants;
+  // G5: Sprache des Transkripts (Chip im Kopf); neu lesen, wenn sich Status, Sprache oder
+  // die Fassungen aendern (Neu-Transkription, Uebersetzung, Wechsel).
+  const { info: languageInfo, setInfo: setLanguageInfo } = useLanguageInfo(
+    meetingId,
+    `${meeting.status}|${meeting.language ?? ""}|${variants
+      .map((v) => `${v.id}:${v.active ? 1 : 0}:${v.language ?? ""}`)
+      .join(",")}`,
+  );
   const centerTabs = [
     { id: "transcript" as const, label: t("meetings.detail.transcriptTab") },
     { id: "minutes" as const, label: t("meetings.detail.minutesTab") },
@@ -223,6 +247,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   // P8a: laufende Verarbeitung dieser Besprechung (Fortschritt, Pause, Stopp).
   const progressMap = useMeetingProgress();
   const jobProgress = progressMap[meetingId];
+  // G5: Grundlage und Ausgabesprache von Protokoll und KI-Notizen (Info-Dialog); neu
+  // lesen, sobald eine Verarbeitung endet oder der Reiter wechselt.
+  const basisKey = `${jobProgress ? "run" : "idle"}|${centerTab}|${notesTab}`;
+  const minutesBasis = useDocumentBasis(meetingId, "minutes", null, basisKey);
+  const notesBasis = useDocumentBasis(
+    meetingId,
+    "enhanced_notes",
+    null,
+    basisKey,
+  );
   // U7: Import-Warteschlange: Platz solange die Besprechung wartet, und ob ihr
   // laufender Import wegen einer Aufnahme angehalten ist.
   const importQueue = useImportQueue();
@@ -234,7 +268,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     meeting.status === "processing" ||
     (jobProgress !== undefined &&
       jobProgress.phase !== "notes" &&
-      jobProgress.phase !== "minutes");
+      jobProgress.phase !== "minutes" &&
+      jobProgress.phase !== "translation");
   // Das Transkript waechst gerade: Aufnahme oder Verarbeitung.
   const growing = live || transcribing;
   // Automatisch mitscrollen: Schalter (gemerkt) und "folgt gerade". Blaettert
@@ -689,29 +724,45 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   };
 
   /** KI-Notizen bzw. Protokoll neu erzeugen: Reiter zeigen, dann starten. */
-  const regenerateNotes = () => {
+  const regenerateNotes = (choice?: DocBasisChoice) => {
     onLowerTab("ai");
-    void commands.meetingNotesEnhance(meetingId, null).then((result) => {
+    // G5: Grundlage = aktive Fassung, Sprache = letzte Wahl bzw. die der App (ohne Dialog).
+    const basis = toDocBasis(choice ?? initialDocBasisChoice(i18n.language));
+    void commands.meetingNotesEnhance(meetingId, null, basis).then((result) => {
       if (result.status === "error" && result.error !== "stopped") {
         const text = enhanceErrorText(result.error);
         toast.error(t(text.key, text.params));
       }
     });
   };
-  const regenerateMinutes = () => {
+  const regenerateMinutes = (choice?: DocBasisChoice) => {
     setCenterTab("minutes");
-    void commands.meetingsGenerateMinutes(meetingId, null).then((result) => {
-      if (result.status === "error") {
-        const code = minutesErrorCode(result.error);
-        if (code === "minutes_busy" || code === "minutes_cancelled") return;
-        toast.error(
-          t(`meetings.minutes.errors.${code}`, {
-            error: minutesErrorDetail(result.error),
-            defaultValue: result.error,
-          }),
-        );
-      }
-    });
+    const basis = toDocBasis(choice ?? initialDocBasisChoice(i18n.language));
+    void commands
+      .meetingsGenerateMinutes(meetingId, null, basis)
+      .then((result) => {
+        if (result.status === "error") {
+          const code = minutesErrorCode(result.error);
+          if (code === "minutes_busy" || code === "minutes_cancelled") return;
+          toast.error(
+            t(`meetings.minutes.errors.${code}`, {
+              error: minutesErrorDetail(result.error),
+              defaultValue: result.error,
+            }),
+          );
+        }
+      });
+  };
+  // Der Dialog "Neu erzeugen mit Vorlage" merkt sich die Wahl der Fassung und Sprache
+  // bis zum Schliessen; die Sprache wird beim Erzeugen als letzte Wahl gemerkt.
+  const [regenChoice, setRegenChoice] = useState<DocBasisChoice>(() =>
+    initialDocBasisChoice(i18n.language),
+  );
+  const generateWithChoice = (kind: "notes" | "minutes") => {
+    setRegenOpen(false);
+    storeOutputLanguage(regenChoice.outputLanguage);
+    if (kind === "notes") regenerateNotes(regenChoice);
+    else regenerateMinutes(regenChoice);
   };
 
   /**
@@ -833,9 +884,13 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       onCopy={() => void copyTranscript(true)}
       onPeople={() => setPeopleOpen(true)}
       onChatToggle={onChatToggle}
-      onRetranscribe={() => setRetranscribeOpen(true)}
-      onRegenNotes={regenerateNotes}
-      onRegenMinutes={regenerateMinutes}
+      onRetranscribe={() => {
+        setRetranscribeInitial(null);
+        setRetranscribeOpen(true);
+      }}
+      onTranslate={() => setTranslateOpen(true)}
+      onRegenNotes={() => regenerateNotes()}
+      onRegenMinutes={() => regenerateMinutes()}
       onTemplate={() => setTemplateOpen(true)}
       onManageTemplates={() => setManagerOpen(true)}
       onRegenWithTemplate={() => setRegenOpen(true)}
@@ -882,6 +937,13 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         disabled={growing}
         onActivate={(v) => void chooseVariant(v.id)}
         onCompare={() => setCenterTab("compare")}
+        extraItems={[
+          {
+            label: t("meetings.actions.translate"),
+            disabled: growing,
+            onSelect: () => setTranslateOpen(true),
+          },
+        ]}
       />
     </div>
   );
@@ -1122,6 +1184,21 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             onManage={() => setPeopleOpen(true)}
           />
         }
+        languageSlot={
+          <LanguageChip
+            meetingId={meetingId}
+            info={languageInfo}
+            onInfo={setLanguageInfo}
+            hasTranscript={segments.length > 0}
+            hasAudio={hasAudio}
+            busy={growing || jobProgress !== undefined}
+            onRetranscribe={(request) => {
+              setRetranscribeInitial(request);
+              setRetranscribeOpen(true);
+            }}
+            onTranslate={() => setTranslateOpen(true)}
+          />
+        }
         templateName={templateInfo.templateName}
         onOpenTemplate={() => setTemplateOpen(true)}
         projectNames={projectNames}
@@ -1355,6 +1432,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           minutesTemplate: templateInfo.minutesTemplate,
           minutesAuto: templateInfo.minutesAuto,
           minutesFile: templateInfo.minutesFile,
+          minutesBasis: minutesBasis
+            ? documentBasisText(minutesBasis, "minutes", t, i18n.language)
+            : null,
+          notesBasis: notesBasis
+            ? documentBasisText(notesBasis, "enhanced_notes", t, i18n.language)
+            : null,
         }}
       />
       <SpeakerNamesDialog
@@ -1373,6 +1456,18 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         onOpenChange={setRetranscribeOpen}
         meeting={meeting}
         onFinished={loadSegments}
+        initial={retranscribeInitial}
+      />
+      <TranslateDialog
+        open={translateOpen}
+        onOpenChange={setTranslateOpen}
+        meetingId={meetingId}
+        variants={variants}
+        transcriptLanguage={languageInfo?.code ?? null}
+        onTranslated={async () => {
+          await reloadVariants();
+        }}
+        onCompare={() => setCenterTab("compare")}
       />
       <Dialog
         open={templateOpen}
@@ -1409,27 +1504,26 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             <Button
               variant="secondary"
               data-testid="regen-notes-go"
-              onClick={() => {
-                setRegenOpen(false);
-                regenerateNotes();
-              }}
+              onClick={() => generateWithChoice("notes")}
             >
               {t("meetings.actions.regenNotes")}
             </Button>
             <Button
               data-testid="regen-minutes-go"
-              onClick={() => {
-                setRegenOpen(false);
-                regenerateMinutes();
-              }}
+              onClick={() => generateWithChoice("minutes")}
             >
               {t("meetings.actions.regenMinutes")}
             </Button>
           </>
         }
       >
-        <div data-testid="regen-template-dialog">
+        <div className="space-y-4" data-testid="regen-template-dialog">
           <MeetingTemplatePicker meetingId={meetingId} menuPortal />
+          <DocBasisFields
+            variants={variants}
+            value={regenChoice}
+            onChange={setRegenChoice}
+          />
         </div>
       </Dialog>
       <FolderPickerDialog

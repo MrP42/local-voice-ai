@@ -31,6 +31,7 @@ use tauri_specta::Event;
 
 use super::import::{read_wav_i16_mono_16k, run_speaker_step, transcribe_and_store};
 use super::job::{self, JobHandle, JobPhase};
+use super::language_run::{self, RunRequest};
 use super::recorder::MeetingEvent;
 use super::store::{MeetingStatus, MeetingStore};
 use super::variants;
@@ -48,14 +49,28 @@ const CHANNEL_MIXED: u8 = 2;
 /// the configured meeting model (which itself falls back to the dictation
 /// model). The dictation model is restored afterwards either way, exactly as
 /// the import and live-recording paths do.
+///
+/// G5: `language` ist die Wahl im Dialog (`auto` oder leer: erkennen). Ein Sprachcode gilt
+/// vor der Einstellung und vor jeder Erkennung; ohne ausdrueckliches `model_id` waehlt die
+/// App das passende Modell der Sprache (`language_run::prepare`).
 pub async fn retranscribe_meeting(
     app: &tauri::AppHandle,
     store: Arc<MeetingStore>,
     tm: Arc<TranscriptionManager>,
     meeting_id: String,
     model_id: Option<String>,
+    language: Option<String>,
 ) -> Result<(), String> {
-    rerun_meeting(app, store, tm, meeting_id, model_id, RerunSource::Stored).await
+    rerun_meeting(
+        app,
+        store,
+        tm,
+        meeting_id,
+        model_id,
+        language,
+        RerunSource::Stored,
+    )
+    .await
 }
 
 /// Woher das Audio eines Laufs kommt.
@@ -88,8 +103,13 @@ pub async fn rerun_meeting(
     tm: Arc<TranscriptionManager>,
     meeting_id: String,
     model_id: Option<String>,
+    language: Option<String>,
     source: RerunSource,
 ) -> Result<(), String> {
+    let request = RunRequest {
+        language,
+        model_id: model_id.clone(),
+    };
     let meeting = store
         .get_meeting(&meeting_id)
         .map_err(|e| format!("meeting_lookup_failed: {e}"))?
@@ -198,6 +218,7 @@ pub async fn rerun_meeting(
             &blocking_id,
             input,
             &target,
+            &request,
             job.handle(),
         );
         drop(job);
@@ -302,6 +323,7 @@ fn run_retranscribe(
     meeting_id: &str,
     input: Input,
     target: &str,
+    request: &RunRequest,
     job: &Arc<JobHandle>,
 ) -> Result<RetranscribeEnd, String> {
     job.begin_phase(JobPhase::Prepare, 0);
@@ -391,6 +413,15 @@ fn run_retranscribe(
     }
     let total_ms: u64 = tracks.iter().map(|(s, _)| s.len() as u64 / 16).sum();
     let started = std::time::Instant::now();
+    // G5: Sprache und Modell dieses Laufs (Dialog, Einstellung, sonst eine Probe aus dem
+    // laengsten Spur). Ab hier rechnet der Lauf mit `plan.model_id`; die Vorgabe gilt, solange
+    // `plan` lebt.
+    let plan = {
+        let longest = tracks.iter().max_by_key(|(s, _)| s.len()).map(|(s, _)| s.as_slice());
+        super::language_run::prepare(app, tm, longest.unwrap_or(&[]), request, Some(job))
+    };
+    let target_owned = plan.model_id.clone();
+    let target = target_owned.as_str();
 
     let result = (move || -> Result<RetranscribeEnd, String> {
         // B17: das alte Transkript als Fassung sichern, bevor der Lauf in
@@ -489,6 +520,9 @@ fn run_retranscribe(
                 .map_err(|e| format!("variants_finish_failed: {e}"))?
         };
         crate::managers::provenance::generation::record_stt_variant(store, &variant_id, run());
+        // G5: die gueltige Sprache (Gegenprobe am Text) und das Modell an Besprechung,
+        // Transkript und die neue aktive Fassung.
+        language_run::finalize(store, meeting_id, &plan, tm.get_current_model());
         Ok(RetranscribeEnd::Completed)
     })();
 

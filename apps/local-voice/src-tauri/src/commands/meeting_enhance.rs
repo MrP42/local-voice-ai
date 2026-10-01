@@ -14,6 +14,7 @@ use specta::Type;
 use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
+use crate::managers::meetings::basis::DocBasis;
 use crate::managers::meetings::job::{self, JobPhase};
 use crate::managers::meetings::llm_call::resolve_provider_coded;
 use crate::managers::meetings::notes::enhance::{
@@ -103,6 +104,7 @@ pub async fn enhance_and_notify(
     recording_active: bool,
     meeting_id: &str,
     template_id: Option<&str>,
+    doc_basis: &DocBasis,
 ) -> Result<MeetingDocument, String> {
     let settings = crate::settings::get_settings(app);
     if let Err(e) = recording_conflict(&settings, recording_active) {
@@ -127,7 +129,7 @@ pub async fn enhance_and_notify(
     let progress_job = Arc::clone(&handle);
     let run = job::scope(
         Arc::clone(&handle),
-        enhance::enhance_meeting(&settings, store, meeting_id, template_id, move |step, total| {
+        enhance::enhance_meeting_with_basis(&settings, store, meeting_id, template_id, doc_basis, move |step, total| {
             let _ = MeetingNotesEvent::Progress {
                 meeting_id: progress_id.clone(),
                 step,
@@ -296,6 +298,9 @@ fn on_transcript_final(app: &AppHandle, meeting_id: String) {
             recording_active,
             &meeting_id,
             template.as_deref(),
+            // Der Auto-Lauf nach der Aufnahme schreibt wie bisher in der Sprache des
+            // Transkripts; die Wahl der Grundlage und Sprache gibt es nur von Hand.
+            &DocBasis::default(),
         )
         .await
         {
@@ -319,7 +324,9 @@ pub fn register_auto_enhance(app: &AppHandle) {
 /// Erzeugt KI-Notizen fuer eine fertige Besprechung aus Notizblock,
 /// Transkript und Vorlage (`None` = Vorlage der Besprechung, sonst die
 /// Standardvorlage) und legt sie als neue Version ab. Fehler tragen einen
-/// Code als Praefix (`no_provider`, `enhance_busy`, ...).
+/// Code als Praefix (`no_provider`, `enhance_busy`, ...). G5: `basis` waehlt die Fassung des
+/// Transkripts (Standard: die aktive) und die Sprache der Notizen (Standard: wie das
+/// Transkript).
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_notes_enhance(
@@ -328,6 +335,7 @@ pub async fn meeting_notes_enhance(
     recorder: State<'_, Arc<MeetingRecorderManager>>,
     meeting_id: String,
     template_id: Option<String>,
+    basis: Option<DocBasis>,
 ) -> Result<MeetingDocument, String> {
     let store = Arc::clone(&store);
     enhance_and_notify(
@@ -336,6 +344,7 @@ pub async fn meeting_notes_enhance(
         recorder.is_recording(),
         &meeting_id,
         template_id.as_deref(),
+        &basis.unwrap_or_default(),
     )
     .await
 }

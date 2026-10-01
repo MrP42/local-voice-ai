@@ -153,8 +153,8 @@ fn write_legacy_db_for_the_release_smoke_test() {
 /// Wie jede Stufe der Kette aussieht: Version und Tabellen.
 #[test]
 fn the_chain_is_register_then_variants_then_queue() {
-    assert_eq!(MIGRATIONS.len(), 8, "A1 = 5, A3 = 6, U7 = 7");
-    let steps: [(usize, &[&str], &[&str]); 4] = [
+    assert_eq!(MIGRATIONS.len(), 9, "A1 = 5, A3 = 6, U7 = 7, G5 = 8");
+    let steps: [(usize, &[&str], &[&str]); 5] = [
         (5, &[], &["integrations", "transcript_variants", "import_queue"]),
         (
             6,
@@ -170,6 +170,11 @@ fn the_chain_is_register_then_variants_then_queue() {
             8,
             &["integrations", "transcript_variants", "import_queue"],
             &[],
+        ),
+        (
+            9,
+            &["integrations", "transcript_variants", "import_queue"],
+            &["transcript_variants_g5"],
         ),
     ];
     for (upto, present, absent) in steps {
@@ -199,8 +204,8 @@ fn a_database_of_0_20_9_with_data_migrates_through_all_three_steps() {
 
     let store = MeetingStore::open_at(&path).unwrap();
     let conn = store.get_connection().unwrap();
-    assert_eq!(user_version(&conn), 8);
-    assert_eq!(MIGRATIONS.len(), 8);
+    assert_eq!(user_version(&conn), 9);
+    assert_eq!(MIGRATIONS.len(), 9);
 
     // Nichts der Altdaten ging verloren oder wurde veraendert.
     assert_eq!(dump_all(&conn), before, "Altdaten unveraendert");
@@ -252,7 +257,7 @@ fn a_database_of_0_20_9_with_data_migrates_through_all_three_steps() {
     for _ in 0..2 {
         let again = MeetingStore::open_at(&path).unwrap();
         let conn = again.get_connection().unwrap();
-        assert_eq!(user_version(&conn), 8);
+        assert_eq!(user_version(&conn), 9);
         assert_eq!(dump_all(&conn), before);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM transcript_variants"), 3);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM integrations"), 2);
@@ -300,7 +305,7 @@ fn an_abort_in_the_last_step_leaves_the_0_20_9_database_untouched() {
 
     // Mit dem richtigen Stand startet die App danach ganz normal.
     let store = MeetingStore::open_at(&path).unwrap();
-    assert_eq!(user_version(&store.get_connection().unwrap()), 8);
+    assert_eq!(user_version(&store.get_connection().unwrap()), 9);
     assert_eq!(dump_all(&store.get_connection().unwrap()), before);
 }
 
@@ -341,7 +346,7 @@ fn a_database_from_a_u7_only_build_is_adopted() {
 
     let store = MeetingStore::open_at(&path).unwrap();
     let conn = store.get_connection().unwrap();
-    assert_eq!(user_version(&conn), 8, "nach A1, A3 und U7");
+    assert_eq!(user_version(&conn), 9, "nach A1, A3, U7 und G5");
     assert_eq!(dump_all(&conn), before, "Altdaten unveraendert");
     assert!(has_table(&conn, "integrations"), "A1 nachgeholt");
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM integrations"), 2);
@@ -364,7 +369,7 @@ fn a_database_from_a_u7_only_build_is_adopted() {
     // Zweiter Start: nichts mehr anzugleichen, nichts doppelt.
     let again = MeetingStore::open_at(&path).unwrap();
     let conn = again.get_connection().unwrap();
-    assert_eq!(user_version(&conn), 8);
+    assert_eq!(user_version(&conn), 9);
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM transcript_variants"), 3);
 }
 
@@ -384,7 +389,7 @@ fn a_database_of_the_merged_order_is_never_mistaken_for_a_u7_only_one() {
     }
     let store = MeetingStore::open_at(&path).unwrap();
     let conn = store.get_connection().unwrap();
-    assert_eq!(user_version(&conn), 8);
+    assert_eq!(user_version(&conn), 9);
     assert!(has_table(&conn, "transcript_variants"));
     assert!(has_table(&conn, "import_queue"));
 }

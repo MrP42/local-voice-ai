@@ -55,6 +55,10 @@ interface MeetingDetailsDialogProps {
     minutesAuto: boolean;
     /** Pfad, unter dem das Protokoll automatisch abgelegt wurde. */
     minutesFile: string | null;
+    /** G5: "Grundlage: Original (Englisch) · Protokoll auf Deutsch" des juengsten Protokolls. */
+    minutesBasis?: string | null;
+    /** G5: dieselbe Angabe fuer die juengsten KI-Notizen. */
+    notesBasis?: string | null;
   };
 }
 
@@ -243,6 +247,28 @@ export const MeetingDetailsDialog: React.FC<MeetingDetailsDialogProps> = ({
             ) : (
               <span className="text-text/50">
                 {t("meetings.detailsDialog.minutesNone")}
+              </span>
+            ),
+          },
+          {
+            key: "minutes-basis",
+            label: t("meetings.detailsDialog.minutesBasis"),
+            value: template.minutesBasis ? (
+              <span data-testid="minutes-basis">{template.minutesBasis}</span>
+            ) : (
+              <span className="text-text/50">
+                {t("meetings.detailsDialog.basisNone")}
+              </span>
+            ),
+          },
+          {
+            key: "notes-basis",
+            label: t("meetings.detailsDialog.notesBasis"),
+            value: template.notesBasis ? (
+              <span data-testid="notes-basis">{template.notesBasis}</span>
+            ) : (
+              <span className="text-text/50">
+                {t("meetings.detailsDialog.basisNone")}
               </span>
             ),
           },

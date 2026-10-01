@@ -10,6 +10,7 @@ use tauri::State;
 use crate::managers::meetings::import::{import_media_file, import_subtitle_file_into};
 use crate::managers::meetings::job;
 use crate::managers::meetings::queue::{self, ImportQueue};
+use crate::managers::meetings::basis::DocBasis;
 use crate::managers::meetings::minutes::latest_minutes_file;
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 use crate::managers::meetings::retention::delete_audio_files;
@@ -162,8 +163,8 @@ pub async fn meetings_rename(
 }
 
 /// Re-runs the transcription of a finished meeting from its stored audio,
-/// optionally with a different model. Discards the old segments — see
-/// `retranscribe_meeting`.
+/// optionally with a different model and language (G5; `auto`/`None`: detect). The old
+/// transcript stays as a version — see `retranscribe_meeting`.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_retranscribe(
@@ -172,10 +173,11 @@ pub async fn meetings_retranscribe(
     transcription: State<'_, Arc<TranscriptionManager>>,
     meeting_id: String,
     model_id: Option<String>,
+    language: Option<String>,
 ) -> Result<(), String> {
     let store = Arc::clone(&store);
     let transcription = Arc::clone(&transcription);
-    retranscribe_meeting(&app, store, transcription, meeting_id, model_id).await
+    retranscribe_meeting(&app, store, transcription, meeting_id, model_id, language).await
 }
 
 #[tauri::command]
@@ -216,7 +218,9 @@ pub async fn meetings_delete(
 /// (chosen by content) or `None` (the meeting's own choice, else the standard
 /// template). The meeting status stays untouched — a failed generation leaves a
 /// 'ready' meeting 'ready' and only returns the error. One run per meeting: a
-/// second start is refused with `minutes_busy` (P1k, B14).
+/// second start is refused with `minutes_busy` (P1k, B14). G5: `basis` chooses the
+/// transcript version the minutes are written from (default: the active one) and the
+/// language they are written in (default: like the transcript).
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_generate_minutes(
@@ -224,10 +228,17 @@ pub async fn meetings_generate_minutes(
     store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
     template_id: Option<String>,
+    basis: Option<DocBasis>,
 ) -> Result<MeetingDocument, String> {
     let store = Arc::clone(&store);
-    super::meeting_minutes::generate_and_notify(&app, store, &meeting_id, template_id.as_deref())
-        .await
+    super::meeting_minutes::generate_and_notify(
+        &app,
+        store,
+        &meeting_id,
+        template_id.as_deref(),
+        &basis.unwrap_or_default(),
+    )
+    .await
 }
 
 /// Where this meeting's minutes were filed as Markdown, if the file is there.

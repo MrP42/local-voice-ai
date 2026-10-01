@@ -104,6 +104,10 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // `queue_store.rs`, damit dieser Schritt beim Zusammenfuehren mit anderen
     // Zweigen nur aus dieser einen Zeile besteht.
     M::up(super::queue_store::QUEUE_MIGRATION),
+    // G5 (Fassungsart `translation`, Herkunft einer Uebersetzung). Baut
+    // `transcript_variants` neu (CHECK-Bedingung), kopiert jede Zeile unveraendert.
+    // Der SQL-Text steht in `variants.rs`; Naeheres dort.
+    M::up(super::variants::VARIANTS_TRANSLATION_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
