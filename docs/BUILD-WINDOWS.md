@@ -26,7 +26,14 @@ pwsh -File apps\local-voice\scripts\dev.ps1 check         # fmt + clippy + test
 pwsh -File apps\local-voice\scripts\dev.ps1 build         # tauri build --no-bundle
 pwsh -File apps\local-voice\scripts\dev.ps1 clean-cmake   # Stolperstein 2
 pwsh -File apps\local-voice\scripts\dev.ps1 harness       # scripts/m8-verify.ps1
+pwsh -File apps\local-voice\scripts\dev.ps1 notices       # THIRD-PARTY-NOTICES + SBOM
+pwsh -File apps\local-voice\scripts\test-dev-guards.ps1   # prueft die Waechter selbst
 ```
+
+`test-dev-guards.ps1` belegt in wenigen Sekunden ohne Build: fehlt cargo, endet
+`dev.ps1` mit Meldung `FEHLT: cargo nicht gefunden` und Exit 2; ein Schritt mit
+Exit != 0 beendet das Skript mit genau diesem Exit-Code; ein fremder
+CMake-Cache wird erkannt.
 
 Die Handarbeit darunter bleibt gültig und erklärt, was der Wrapper tut.
 
@@ -67,6 +74,40 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\tcs"
 ```
 
 Danach konfiguriert der Build neu (dauert einmalig ~7 Minuten).
+
+**Warum der Generator ueberhaupt wechselt:** Die `cmake`-Crate, ueber die
+`transcribe-cpp-sys` baut, nimmt den Generator aus der **Umgebung**
+(`CMAKE_GENERATOR`, auch `CMAKE_GENERATOR_<target>` und
+`TARGET_CMAKE_GENERATOR`). Ohne Variable waehlt CMake Visual Studio. Ein Lauf in
+einer Shell mit `CMAKE_GENERATOR=Ninja` (Entwickler-Eingabeaufforderung, ein
+anderes Werkzeug) legt einen Ninja-Cache an, der naechste Lauf ohne die Variable
+scheitert. `dev.ps1` entfernt diese Variablen fuer seine Laeufe (immer derselbe
+Generator wie in der CI; `LVA_KEEP_CMAKE_GENERATOR=1` behaelt sie) und raeumt
+einen vorhandenen Cache mit fremdem Generator vor `test`/`build`/`bundle`/`clippy`
+selbst weg. Ein direktes `cargo` in einer Shell mit gesetzter Variable ist davon
+nicht geschuetzt - dafuer bleibt die Handarbeit oben.
+
+## Lizenzen, Third-Party-Notices und SBOM
+
+`dev.ps1 notices` (bzw. `node apps/local-voice/scripts/gen-notices.mjs`) erzeugt
+aus `Cargo.lock` (cargo-about, `src-tauri/about.toml`), `pnpm licenses`, dem
+Modellkatalog und `docs/m2-evidence/ATTRIBUTION.md`:
+
+- `src-tauri/resources/THIRD-PARTY-NOTICES.md` - im Repository und (ueber
+  `resources`) im Installer; nach jeder Aenderung an Abhaengigkeiten oder
+  ATTRIBUTION.md neu erzeugen und mit committen. `--check` prueft, ob die Datei
+  aktuell ist.
+- `src-tauri/target/sbom/local-voice-ai-<version>.cdx.json` - CycloneDX 1.5,
+  Build-Artefakt (nicht im Repository). Enthaelt Rust-Crates (cargo-cyclonedx),
+  npm-Pakete (Entwicklungswerkzeuge mit `scope: excluded`), Modelle und Datensaetze.
+
+Einmalig noetig (reine Entwicklerwerkzeuge, keine Laufzeitabhaengigkeit):
+`cargo install cargo-about --locked --features cli` (MIT OR Apache-2.0) und
+`cargo install cargo-cyclonedx --locked` (Apache-2.0); dazu `pnpm install`.
+
+`cargo deny --no-default-features check` ist das Gate fuer Lizenzen und
+Sicherheitshinweise; `about.toml` fuehrt dagegen alles auf, was im Graphen liegt,
+damit das Verzeichnis nichts verschweigt.
 
 ## Stolperstein 3 — `cargo build --release` erzeugt kein lauffähiges Produkt
 

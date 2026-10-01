@@ -186,7 +186,7 @@ function Get-MeetingDump {
 
 # ---------------------------------------------------------------- preflight
 if (-not (Test-Path $AppExe)) {
-    Write-Host "binary not found: $AppExe - build with 'cargo build --release'" -ForegroundColor Red
+    Write-Host "binary not found: $AppExe - build with 'dev.ps1 build' (cargo build --release yields a non-working binary, see docs/BUILD-WINDOWS.md)" -ForegroundColor Red
     exit 2
 }
 New-Item -ItemType Directory -Force -Path $ArtifactDir | Out-Null
