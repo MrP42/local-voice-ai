@@ -192,8 +192,8 @@ const INTERJECTIONS: &[&str] = &[
 const NUMBER_WORDS: &[&str] = &[
     "zero", "oh", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
     "null", "eins", "ein", "zwei", "drei", "vier", "fünf", "fuenf", "sechs", "sieben", "acht",
-    "neun", "zehn", "zéro", "un", "deux", "trois", "quatre", "cinq", "sept", "huit", "neuf",
-    "dix", "cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve",
+    "neun", "zehn", "zéro", "un", "deux", "trois", "quatre", "cinq", "sept", "huit", "neuf", "dix",
+    "cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve",
 ];
 
 /// Was ein Aufruf zusammengefasst hat. Nur Zahlen, nie Text.
@@ -798,7 +798,10 @@ mod tests {
     fn comma_separated_loop_collapses_and_keeps_the_punctuation() {
         assert_eq!(text_of("Well, well, well, well, okay"), "Well, okay");
         assert_eq!(text_of("Yes yes yes yes."), "Yes.");
-        assert_eq!(text_of("it works, if if if if if, you know"), "it works, if, you know");
+        assert_eq!(
+            text_of("it works, if if if if if, you know"),
+            "it works, if, you know"
+        );
     }
 
     #[test]
@@ -1030,7 +1033,10 @@ mod tests {
         );
         assert_eq!(check_text(&raw), Some(Reason::Repetition));
         let (clean, _) = collapse_loops(&raw);
-        assert_eq!(clean, "I would recommend that we at least have a weekly call");
+        assert_eq!(
+            clean,
+            "I would recommend that we at least have a weekly call"
+        );
         assert_eq!(check_text(&clean), None);
     }
 }

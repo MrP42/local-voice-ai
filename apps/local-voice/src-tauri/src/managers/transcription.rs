@@ -3692,12 +3692,14 @@ mod tests {
     #[test]
     fn dictation_text_loses_decoder_loops_but_keeps_real_repeats() {
         // G7 (Issue #70): dieselben Schleifen wie in Besprechungen, derselbe Filter.
+        // "no no" (zwei) bleibt; der aeltere Handy-Filter `collapse_stutters` im
+        // Diktat fasst ab DREI gleichen Woertern zusammen und bleibt unveraendert.
         let settings = crate::settings::get_default_settings();
-        let looped = "So no if if if if if if if if if if if the heat death,                       there's y y you can't, no no no that is wrong"
+        let looped = "So no if if if if if if if if if if if the heat death,                       there's y y you can't, no no that is wrong"
             .to_string();
         assert_eq!(
             post_process_transcription_text(looped, &settings, false),
-            "So no if the heat death, there's you can't, no no no that is wrong"
+            "So no if the heat death, there's you can't, no no that is wrong"
         );
     }
 
