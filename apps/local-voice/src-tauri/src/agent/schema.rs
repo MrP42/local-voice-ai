@@ -168,19 +168,39 @@ mod tests {
 
     fn tools() -> Vec<ToolSpec> {
         vec![
-            tool("send_mail", json!({"to": {"type": "array"}, "subject": {"type": "string"}}), &["to"]),
-            tool("obsidian_note", json!({"title": {"type": "string"}}), &["title"]),
-            tool(NO_ACTION, json!({"reason": {"type": "string"}}), &["reason"]),
+            tool(
+                "send_mail",
+                json!({"to": {"type": "array"}, "subject": {"type": "string"}}),
+                &["to"],
+            ),
+            tool(
+                "obsidian_note",
+                json!({"title": {"type": "string"}}),
+                &["title"],
+            ),
+            tool(
+                NO_ACTION,
+                json!({"reason": {"type": "string"}}),
+                &["reason"],
+            ),
         ]
     }
 
     #[test]
     fn offered_appends_no_action_and_filters() {
         let all = tools();
-        let names: Vec<_> = offered(&all, None).unwrap().iter().map(|t| t.name.clone()).collect();
+        let names: Vec<_> = offered(&all, None)
+            .unwrap()
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
         assert_eq!(names, ["send_mail", "obsidian_note", NO_ACTION]);
         let only = vec!["obsidian_note".to_string()];
-        let names: Vec<_> = offered(&all, Some(only.as_slice())).unwrap().iter().map(|t| t.name.clone()).collect();
+        let names: Vec<_> = offered(&all, Some(only.as_slice()))
+            .unwrap()
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
         assert_eq!(names, ["obsidian_note", NO_ACTION]);
     }
 
@@ -188,7 +208,9 @@ mod tests {
     fn offered_rejects_unknown_tool_name() {
         let all = tools();
         let bad = vec!["delete_all".to_string()];
-        assert!(offered(&all, Some(bad.as_slice())).unwrap_err().contains("delete_all"));
+        assert!(offered(&all, Some(bad.as_slice()))
+            .unwrap_err()
+            .contains("delete_all"));
     }
 
     #[test]
@@ -204,7 +226,10 @@ mod tests {
             assert!(v["properties"]["tool"]["const"].is_string());
         }
         assert_eq!(variants[2]["properties"]["tool"]["const"], NO_ACTION);
-        assert_eq!(variants[0]["properties"]["arguments"]["required"], json!(["to"]));
+        assert_eq!(
+            variants[0]["properties"]["arguments"]["required"],
+            json!(["to"])
+        );
     }
 
     #[test]
@@ -219,7 +244,10 @@ mod tests {
 
     #[test]
     fn parse_choice_accepts_fenced_json_and_rejects_garbage() {
-        let c = parse_choice("```json\n{\"tool\":\"send_mail\",\"arguments\":{\"to\":[\"a@example.com\"]}}\n```").unwrap();
+        let c = parse_choice(
+            "```json\n{\"tool\":\"send_mail\",\"arguments\":{\"to\":[\"a@example.com\"]}}\n```",
+        )
+        .unwrap();
         assert_eq!(c.tool, "send_mail");
         assert_eq!(c.arguments["to"][0], "a@example.com");
         assert!(parse_choice("{\"tool\":\"send_mail\",\"arguments\":{").is_err());
