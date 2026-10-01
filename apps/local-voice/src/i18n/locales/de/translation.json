@@ -1654,6 +1654,9 @@
       "namePlaceholder": "Neues Projekt",
       "new": "Neues Projekt",
       "newHint": "Ein Projekt wie „Privat“ oder „Kunde Stadtwerke“ anlegen",
+      "newMeeting": "Neue Besprechung",
+      "newMeetingHint": "Eine leere Besprechung im gewählten Projekt anlegen – dort kannst du Notizen schreiben, aufnehmen, eine Datei importieren oder einen Link einfügen",
+      "newMeetingHere": "Neue Besprechung hier",
       "askHint": "Chat über alle Besprechungen des gewählten Projekts",
       "more": "Mehr",
       "moreHint": "Importieren und mehrere Besprechungen auswählen",
@@ -1934,6 +1937,7 @@
       "notRecording": "Es läuft aktuell keine Aufnahme.",
       "deleteFailed": "Löschen fehlgeschlagen. Bitte erneut versuchen.",
       "unsupportedFile": "Dieses Dateiformat wird nicht unterstützt (erlaubt: wav, mp3, m4a, mp4, mkv, mov, flac, ogg, vtt, srt).",
+      "targetNotEmpty": "Dieser Eintrag ist nicht mehr leer. Bitte lege eine neue Besprechung an.",
       "notFound": "Diese Besprechung existiert nicht mehr.",
       "noAudio": "Zu dieser Besprechung ist keine Aufzeichnung gespeichert — es gibt nichts, was neu transkribiert werden könnte.",
       "audioMissing": "Die Aufzeichnung liegt nicht mehr auf der Platte (Aufbewahrungsfrist abgelaufen).",
@@ -2119,7 +2123,8 @@
         "live": "Live-Aufnahme",
         "import": "Datei-Import",
         "subtitle": "Untertitel-Import",
-        "youtube": "YouTube-Link"
+        "youtube": "YouTube-Link",
+        "empty": "Leerer Eintrag"
       }
     },
     "model": {
@@ -2145,6 +2150,7 @@
       "sourceImport": "Import",
       "sourceSubtitle": "Untertitel",
       "sourceYoutube": "YouTube",
+      "sourceEmpty": "Notizblock",
       "minutes": "{{count}} Min.",
       "projectHint": "Klicken, um die Besprechung in ein anderes Projekt zu verschieben",
       "projectMore": "+{{count}}",
@@ -2278,7 +2284,9 @@
         "youtube_tool_failed": "yt-dlp endete mit Fehlercode {{detail}}.",
         "youtube_tool_start": "yt-dlp ließ sich nicht starten. {{detail}}",
         "youtube_no_subtitles": "Dieses Video hat keine Untertitel.",
-        "youtube_cancelled": "Abgebrochen."
+        "youtube_cancelled": "Abgebrochen.",
+        "target_not_empty": "Dieser Eintrag ist nicht mehr leer. Der Link wurde nicht übernommen.",
+        "meeting_not_found": "Der Eintrag, in den der Link soll, existiert nicht mehr."
       },
       "player": {
         "region": "YouTube-Video",
@@ -2331,6 +2339,18 @@
       "targetNone": "Import ohne Projekt",
       "dropInto": "Datei hier ablegen – Import in „{{name}}“",
       "dropIntoNone": "Datei hier ablegen – Import ohne Projekt"
+    },
+    "empty": {
+      "defaultTitle": "Neue Besprechung",
+      "chip": "Leer",
+      "startTitle": "Noch nichts aufgenommen",
+      "startBody": "Starte eine Aufnahme, importiere eine Datei oder füge einen YouTube-Link ein. Notizen kannst du schon jetzt schreiben.",
+      "startGroup": "Diesen Eintrag füllen",
+      "fillsEntry": "Das Ergebnis füllt den Eintrag „{{title}}“.",
+      "importFirst": "Die erste Datei füllt den Eintrag „{{title}}“, weitere werden neue Besprechungen.",
+      "createFailed": "Der Eintrag konnte nicht angelegt werden.",
+      "transcriptEmpty": "Das Transkript erscheint hier, sobald du aufnimmst oder eine Datei importierst.",
+      "dropIntoEntry": "Datei hier ablegen – füllt „{{title}}“"
     },
     "importAction": {
       "name": "Datei importieren",

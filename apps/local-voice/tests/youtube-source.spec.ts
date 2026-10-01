@@ -76,7 +76,11 @@ test.describe("Link einfügen", () => {
 
     const added = await calls(page, "youtube_add_source");
     expect(added).toHaveLength(1);
-    expect(added[0].args).toEqual({ url: LINK, projectId: null });
+    expect(added[0].args).toEqual({
+      url: LINK,
+      projectId: null,
+      targetMeetingId: null,
+    });
 
     // Die neue Besprechung ist gewaehlt: Titel, Quelle YouTube, Kanal.
     await expect(page.getByTestId("meeting-title")).toHaveText(YT_TITLE);
@@ -129,6 +133,7 @@ test.describe("Link einfügen", () => {
     expect((await calls(page, "youtube_add_source"))[0].args).toEqual({
       url: `https://youtu.be/${YT_ID}`,
       projectId: "f2",
+      targetMeetingId: null,
     });
 
     // Eine andere Wahl im Dialog gilt.
@@ -146,6 +151,7 @@ test.describe("Link einfügen", () => {
     expect(all[1].args).toEqual({
       url: `https://youtu.be/${YT_ID}`,
       projectId: "f1",
+      targetMeetingId: null,
     });
   });
 

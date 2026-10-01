@@ -21,6 +21,7 @@ import { MeetingImportAction } from "./MeetingImportAction";
 import { YoutubeLinkAction } from "./youtube/YoutubeLinkAction";
 import { NO_PROJECT, StartRecordingDialog } from "./StartRecordingDialog";
 import { flushAllNotes } from "./notes/useNotesAutosave";
+import { useStartDialogRequest } from "./emptyEntry";
 import {
   getSelectedProject,
   setSelectedProject,
@@ -135,11 +136,17 @@ interface RecorderCardProps {
   onStarted?: (meeting: Meeting) => void;
   /** Der eine Importweg (Symbol "Datei importieren"). */
   importApi: { busy: boolean; pick: () => void };
+  /**
+   * G1 (#70): ein gewaehlter LEERER Eintrag. Dann nimmt die Aufnahme in ihm auf
+   * (Titel, Projekte und Notizen bleiben) statt eine neue Besprechung anzulegen.
+   */
+  target?: Meeting | null;
 }
 
 export const RecorderCard: React.FC<RecorderCardProps> = ({
   onStarted,
   importApi,
+  target = null,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
@@ -184,6 +191,12 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
   const selectedProject = useSelectedProject();
   const selectedProjectRef = useRef(selectedProject.projectId);
   selectedProjectRef.current = selectedProject.projectId;
+  // G1: der leere Eintrag, in den die naechste Aufnahme geht.
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  // Der Titel, den der Dialog zuletzt aus dem Eintrag uebernommen hat: so
+  // erkennt man spaeter, ob der Nutzer ihn selbst geaendert hat.
+  const targetTitleSeen = useRef<string | null>(null);
   // Termine, zu denen schon aufgenommen wurde: kein zweiter Vorschlag.
   const usedEventKeys = useRef(new Set<string>());
   // Besprechung, deren automatische KI-Notizen die Statuszeile zeigt.
@@ -289,14 +302,25 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
   // Titelvorschlag: nur solange der Nutzer nichts eingegeben und den Bezug
   // nicht selbst geloest hat.
   useEffect(() => {
+    // In einen leeren Eintrag gilt dessen Titel, kein Terminvorschlag.
+    if (target) return;
     if (!suggestion || suggestionCleared || eventChoice || title !== "") return;
     if (usedEventKeys.current.has(suggestion.key)) return;
     setEventChoice({ event: suggestion, mode: "auto" });
     setTitle(suggestion.title);
-  }, [suggestion, suggestionCleared, eventChoice, title]);
+  }, [suggestion, suggestionCleared, eventChoice, title, target]);
 
   const openConsent = () => {
     setError(null);
+    // G1: der Dialog zeigt den Titel des Eintrags (der Nutzer kann ihn aendern);
+    // nur ein selbst eingegebener Titel bleibt stehen.
+    const entry = targetRef.current;
+    if (entry && !eventChoice) {
+      if (title.trim() === "" || title === targetTitleSeen.current) {
+        setTitle(entry.title);
+      }
+      targetTitleSeen.current = entry.title;
+    }
     setConsentOpen(true);
     void commands.meetingFoldersList().then((result) => {
       if (result.status !== "ok") return;
@@ -312,6 +336,8 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
     setBusy(true);
     setError(null);
     const typed = title.trim();
+    // G1: ein leerer Eintrag als Ziel (Notizen und Projekte bleiben dort).
+    const targetId = targetRef.current?.id ?? null;
     const result = eventChoice
       ? await commands.meetingsStartFromEvent(
           eventChoice.event.key,
@@ -321,11 +347,13 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
           // Nur ein anderer Titel als der des Termins ist eine Eingabe.
           typed && typed !== eventChoice.event.title ? typed : null,
           eventChoice.mode,
+          targetId,
         )
       : await commands.meetingsStart(
           typed || t("meetings.record.titlePlaceholder"),
           true,
           captureSetting,
+          targetId,
         );
     setBusy(false);
     setConsentOpen(false);
@@ -336,7 +364,9 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
     recordingIdRef.current = result.data.id;
     setStartedWithSystem(captureSetting);
     setElapsedMs(0);
-    const placed = projects.some((p) => p.id === projectChoice);
+    // Ein Eintrag liegt schon in seinen Projekten: der Dialog ordnet nichts zu.
+    const placed =
+      targetId === null && projects.some((p) => p.id === projectChoice);
     if (placed) {
       void commands
         .meetingsSetFolders(result.data.id, [projectChoice])
@@ -345,7 +375,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
     // Die Liste links soll die laufende Aufnahme zeigen: wer in "Alle
     // Aufnahmen" steht, bleibt dort; sonst folgt die Liste dem Ziel.
     const view = getSelectedProject();
-    if (view !== ALL_PROJECTS) {
+    if (targetId === null && view !== ALL_PROJECTS) {
       const target = placed ? projectChoice : NO_PROJECT_VIEW;
       if (view !== target) setSelectedProject(target);
     }
@@ -369,6 +399,10 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
     if (eventChoice) usedEventKeys.current.add(eventChoice.event.key);
     setEventChoice(null);
     setSuggestionCleared(false);
+    if (targetId !== null) {
+      setTitle("");
+      targetTitleSeen.current = null;
+    }
   };
 
   const startFromCard = (event: CalEvent) => {
@@ -393,6 +427,11 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
     consume();
     return subscribeStartRequest(consume);
   }, []);
+
+  // G1: die Startflaeche des leeren Eintrags (Mitte) bittet um den Startdialog.
+  useStartDialogRequest(() => {
+    if (phaseRef.current === "idle") openConsent();
+  });
 
   const clearEventChoice = () => {
     setEventChoice(null);
@@ -600,6 +639,7 @@ export const RecorderCard: React.FC<RecorderCardProps> = ({
         onTitleChange={setTitle}
         eventChoice={eventChoice?.event ?? null}
         onClearEvent={clearEventChoice}
+        targetTitle={target?.title ?? null}
         folders={projects}
         projectId={projectChoice}
         onProjectChange={setProjectChoice}

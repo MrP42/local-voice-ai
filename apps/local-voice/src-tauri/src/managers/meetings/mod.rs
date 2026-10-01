@@ -3,6 +3,7 @@ pub mod chunker;
 pub mod diarize; // M3-P3a
 pub mod dsp;
 pub mod echo;
+pub mod empty; // G1 (#70): leerer Eintrag
 pub mod export;
 pub mod final_pass;
 pub mod followup; // P6f (B13)

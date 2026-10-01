@@ -499,3 +499,124 @@ fn the_capability_used_for_the_network_step_is_allowed_for_the_user_only() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// G1 (#70): ein Link fuellt einen leeren Eintrag
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_link_fills_the_empty_entry_instead_of_creating_a_new_meeting() {
+    let fx = Fx::new();
+    let project = fx.store.folder_save(None, "Podcast", None).unwrap();
+    let target = fx
+        .store
+        .create_empty_meeting("Neue Besprechung", Some(&project.id))
+        .unwrap();
+    let (base, seen) = serve(vec![json_ok(GOOD)]).await;
+
+    let added = add_youtube_source_into(&fx.store, LINK, None, Some(&target.id), &opts(&base))
+        .await
+        .unwrap();
+
+    let m = &added.meeting;
+    assert_eq!(m.id, target.id, "derselbe Eintrag");
+    assert_eq!((m.source.as_str(), m.status.as_str()), ("youtube", "ready"));
+    assert_eq!(m.title, "Lastgang verstehen: Spitzen glätten", "Standardtitel ersetzt");
+    assert_eq!(seen.lock().unwrap().len(), 1, "ein Abruf, wie sonst");
+    assert_eq!(fx.store.meeting_folder_ids(&m.id).unwrap(), vec![project.id.clone()]);
+    assert_eq!(fx.store.list_meetings(0, 10).unwrap().len(), 1, "keine zweite Besprechung");
+    // Die Quelle ist wie bei jedem Link lesbar, der Marker des leeren Eintrags ist weg.
+    let source = read_source(&fx.store, &m.id).unwrap().expect("Quelle");
+    assert_eq!(source.video_id, ID);
+    let meta = fx.store.metadata_json(&m.id).unwrap().unwrap();
+    assert!(meta.get("empty_default_title").is_none(), "{meta}");
+    // Herkunft und Audit wie sonst.
+    let conn = fx.conn();
+    let entries = provenance::list(&conn, SubjectKind::Transcript, &m.id).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].operation, "youtube_source");
+    let audit = youtube_audit(&conn);
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].outcome, "ok");
+}
+
+#[tokio::test]
+async fn a_renamed_empty_entry_keeps_the_title_of_the_user_when_a_link_arrives() {
+    let fx = Fx::new();
+    let target = fx.store.create_empty_meeting("Neue Besprechung", None).unwrap();
+    fx.store.set_title(&target.id, "Mein Titel").unwrap();
+    let (base, _) = serve(vec![json_ok(GOOD)]).await;
+    let added = add_youtube_source_into(&fx.store, LINK, None, Some(&target.id), &opts(&base))
+        .await
+        .unwrap();
+    assert_eq!(added.meeting.title, "Mein Titel");
+    assert_eq!(added.meeting.source, "youtube");
+}
+
+#[tokio::test]
+async fn a_target_that_is_not_empty_is_refused_before_any_traffic() {
+    let fx = Fx::new();
+    let live = fx
+        .store
+        .create_meeting("Live", MeetingSource::Live, Some(1))
+        .unwrap();
+    let (base, seen) = serve(vec![json_ok(GOOD)]).await;
+    let err = add_youtube_source_into(&fx.store, LINK, None, Some(&live.id), &opts(&base))
+        .await
+        .unwrap_err();
+    assert_eq!(err, YoutubeError::Target("target_not_empty"));
+    assert_eq!(err.to_command_error(), "target_not_empty");
+    let err = add_youtube_source_into(&fx.store, LINK, None, Some("gibt-es-nicht"), &opts(&base))
+        .await
+        .unwrap_err();
+    assert_eq!(err, YoutubeError::Target("meeting_not_found"));
+    assert!(seen.lock().unwrap().is_empty(), "kein Abruf");
+    let conn = fx.conn();
+    assert_eq!(count(&conn, "audit_log"), 0, "kein Audit-Eintrag");
+    assert_eq!(fx.store.get_meeting(&live.id).unwrap().unwrap().source, "live");
+}
+
+#[tokio::test]
+async fn a_second_link_for_the_same_entry_is_refused_after_the_first_filled_it() {
+    let fx = Fx::new();
+    let target = fx.store.create_empty_meeting("Neue Besprechung", None).unwrap();
+    let (base, _) = serve(vec![json_ok(GOOD), json_ok(GOOD)]).await;
+    add_youtube_source_into(&fx.store, LINK, None, Some(&target.id), &opts(&base))
+        .await
+        .unwrap();
+    let err = add_youtube_source_into(
+        &fx.store,
+        "https://youtu.be/aaaaaaaaaaa",
+        None,
+        Some(&target.id),
+        &opts(&base),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err, YoutubeError::Target("target_not_empty"));
+    assert_eq!(
+        read_source(&fx.store, &target.id).unwrap().unwrap().video_id,
+        ID,
+        "der erste Link bleibt"
+    );
+}
+
+#[test]
+fn an_entry_that_gets_filled_elsewhere_during_the_write_rolls_back_without_a_trace() {
+    let fx = Fx::new();
+    let target = fx.store.create_empty_meeting("Neue Besprechung", None).unwrap();
+    let video = normalize_link(LINK).unwrap();
+    let meta = VideoMeta {
+        title: "t".into(),
+        channel: "c".into(),
+        channel_url: None,
+        thumbnail_url: None,
+    };
+    let mut conn = fx.conn();
+    // Die Provenienz ist der letzte Schritt: scheitert er, bleibt der Eintrag leer.
+    conn.execute_batch("DROP TABLE provenance;").unwrap();
+    let err = create_meeting_into(&mut conn, &video, &meta, None, Some(&target.id), 1_000)
+        .unwrap_err();
+    assert!(matches!(err, YoutubeError::Store(_)), "{err:?}");
+    assert!(fx.store.is_empty_meeting(&target.id).unwrap(), "weiterhin leer");
+}

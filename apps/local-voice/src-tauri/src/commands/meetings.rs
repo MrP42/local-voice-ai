@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::managers::meetings::import::import_media_file;
+use crate::managers::meetings::import::{import_media_file, import_subtitle_file_into};
 use crate::managers::meetings::job;
 use crate::managers::meetings::queue::{self, ImportQueue};
 use crate::managers::meetings::minutes::latest_minutes_file;
@@ -20,6 +20,10 @@ use crate::managers::transcription::TranscriptionManager;
 
 /// Starting touches audio hardware and can block for seconds (loopback
 /// start-up), hence `spawn_blocking` rather than running on the command task.
+///
+/// G1 (#70): mit `target_meeting_id` nimmt die Aufnahme in einem vorhandenen
+/// LEEREN Eintrag auf (Notizen, Projekte und Id bleiben); ist das Ziel nicht
+/// (mehr) leer, kommt `target_not_empty`. Die Einwilligung gilt in jedem Fall.
 #[tauri::command]
 #[specta::specta]
 pub async fn meetings_start(
@@ -27,13 +31,43 @@ pub async fn meetings_start(
     title: String,
     consent_confirmed: bool,
     capture_system: bool,
+    target_meeting_id: Option<String>,
 ) -> Result<Meeting, String> {
     let recorder = Arc::clone(&recorder);
     tauri::async_runtime::spawn_blocking(move || {
-        recorder.start(title, consent_confirmed, capture_system)
+        recorder.start_into(
+            title,
+            consent_confirmed,
+            capture_system,
+            target_meeting_id.as_deref(),
+        )
     })
     .await
     .map_err(|e| format!("meetings_start panicked: {e}"))?
+}
+
+/// G1 (#70): legt einen leeren Eintrag an, ein Notizblock ohne Audio und ohne
+/// Quelle, auf Wunsch gleich im Projekt `folder_id`. `title` ist der
+/// vorgeschlagene Titel (die Oberflaeche liefert den lokalisierten). Aufnahme,
+/// Datei und YouTube-Link fuellen den Eintrag spaeter (`target_meeting_id` der
+/// jeweiligen Befehle). Fehler: `title_empty`, `title_too_long`, `folder_not_found`.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_create_empty(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    title: String,
+    folder_id: Option<String>,
+) -> Result<Meeting, String> {
+    let store = Arc::clone(&store);
+    let meeting = tauri::async_runtime::spawn_blocking(move || {
+        store.create_empty_meeting(&title, folder_id.as_deref())
+    })
+    .await
+    .map_err(|e| format!("meetings_create_empty panicked: {e}"))?
+    .map_err(|e| e.to_string())?;
+    indexer::submit(&app, IndexJob::Meeting(meeting.id.clone())); // M4-P4b
+    Ok(meeting)
 }
 
 #[tauri::command]
@@ -227,7 +261,10 @@ pub async fn meetings_export_document(path: String, body: String) -> Result<(), 
 }
 
 /// Imports a local audio/video file or a VTT/SRT subtitle file as a new
-/// meeting.
+/// meeting. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
+/// LEEREN Eintrag (Titel, Projekte und Notizen bleiben; der Titel wird nur
+/// ersetzt, solange er der vorgeschlagene ist) und kehrt mit dessen Id zurueck;
+/// ist das Ziel nicht (mehr) leer, kommt `target_not_empty`.
 ///
 /// U7: Audio und Video werden in die Import-Warteschlange gestellt und der
 /// Befehl kehrt SOFORT mit der ID der neuen Besprechung (Status `queued`)
@@ -245,21 +282,39 @@ pub async fn meetings_import_file(
     queue: State<'_, Arc<ImportQueue>>,
     path: String,
     consent_confirmed: bool,
+    target_meeting_id: Option<String>,
 ) -> Result<String, String> {
     let path = PathBuf::from(path);
+    let consent_at = consent_confirmed.then(|| chrono::Utc::now().timestamp());
     if queue::is_subtitle(&path) {
         let store = Arc::clone(&store);
+        if target_meeting_id.is_some() {
+            let title = queue::title_from_path(&path);
+            return tauri::async_runtime::spawn_blocking(move || {
+                import_subtitle_file_into(
+                    &store,
+                    &title,
+                    &path,
+                    consent_at,
+                    target_meeting_id.as_deref(),
+                )
+            })
+            .await
+            .map_err(|e| format!("meetings_import_file panicked: {e}"))?;
+        }
         let transcription = Arc::clone(&transcription);
         return import_media_file(&app, store, transcription, path, consent_confirmed).await;
     }
-    let consent_at = consent_confirmed.then(|| chrono::Utc::now().timestamp());
     let source = path
         .to_str()
         .ok_or_else(|| "import_path_invalid".to_string())?
         .to_string();
-    queue
-        .enqueue(&queue::title_from_path(&path), &source, consent_at)
-        .map(|meeting| meeting.id)
+    let title = queue::title_from_path(&path);
+    match target_meeting_id {
+        Some(target) => queue.enqueue_into(&target, &title, &source, consent_at),
+        None => queue.enqueue(&title, &source, consent_at),
+    }
+    .map(|meeting| meeting.id)
 }
 
 // M6-P6a: Export einer ganzen Besprechung.
@@ -492,7 +547,8 @@ pub fn change_meeting_self_emails_setting(
 /// (Titelvorschlag der Aufnahmekarte). `app_key` gehoert der Erkennung (P5c) und
 /// wird bis dahin nicht gelesen. Ohne bestaetigte Einwilligung startet nichts
 /// (`consent_required` vom Recorder). Fehler NACH dem Start (Verknuepfung,
-/// Vorlage) kippen die laufende Aufnahme nicht; sie stehen im Log.
+/// Vorlage) kippen die laufende Aufnahme nicht; sie stehen im Log. G1 (#70):
+/// `target_meeting_id` wie bei `meetings_start` (Aufnahme in einen leeren Eintrag).
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -506,6 +562,7 @@ pub async fn meetings_start_from_event(
     capture_system: bool,
     title: Option<String>,
     link_mode: Option<String>,
+    target_meeting_id: Option<String>,
 ) -> Result<Meeting, String> {
     use crate::managers::calendar::service::{finish_start, plan_start};
     let _ = app_key; // P5c
@@ -517,7 +574,12 @@ pub async fn meetings_start_from_event(
     let store = Arc::clone(&store);
     let meeting = tauri::async_runtime::spawn_blocking(move || {
         let plan = plan_start(&store, event_key.as_deref(), title.as_deref())?;
-        let meeting = recorder.start(plan.title.clone(), consent_confirmed, capture_system)?;
+        let meeting = recorder.start_into(
+            plan.title.clone(),
+            consent_confirmed,
+            capture_system,
+            target_meeting_id.as_deref(),
+        )?;
         let now = chrono::Utc::now().timestamp_millis();
         for problem in finish_start(&store, &meeting.id, &plan, linked_by, now) {
             log::warn!("meetings_start_from_event: {problem}");

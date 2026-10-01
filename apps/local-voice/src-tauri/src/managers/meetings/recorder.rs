@@ -19,6 +19,7 @@ use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
 use super::chunker::Chunk;
+use super::empty::{coded_error, EmptyFill};
 use super::dsp::{
     ChannelFeed, DspConfig, DspControl, DspNotice, EchoSetup, LivePipeline, MeetingTimeline,
     PcmSink, VadFactory, WavFileSink,
@@ -113,6 +114,30 @@ pub fn check_can_continue(
         return Err("audio_missing".to_string());
     }
     Ok(())
+}
+
+/// Die Zeile einer neuen Live-Aufnahme: eine neue Besprechung oder, mit `target`,
+/// ein vorhandener leerer Eintrag (G1, #70), der zur Aufnahme umgewandelt wird.
+/// Ohne Datenbank-Zugriff ausser dem Store: laesst sich ohne App pruefen.
+pub fn begin_live_row(
+    store: &MeetingStore,
+    title: &str,
+    consent_at: i64,
+    target: Option<&str>,
+) -> Result<Meeting, String> {
+    match target {
+        None => store
+            .create_meeting(title, MeetingSource::Live, Some(consent_at))
+            .map_err(|e| format!("meeting_create_failed: {e}")),
+        Some(id) => {
+            let mut fill = EmptyFill::new(MeetingSource::Live, MeetingStatus::Recording);
+            fill.consent_confirmed_at = Some(consent_at);
+            fill.title = Some(title);
+            store
+                .fill_empty_meeting(id, &fill)
+                .map_err(|e| coded_error("meeting_create_failed", &e))
+        }
+    }
 }
 
 /// Pause/resume only mean something while recording.
@@ -502,11 +527,20 @@ impl MeetingRecorderManager {
     /// Starts a live meeting: creates the row, the folder and both WAV
     /// writers, wires the capture callbacks into the chunk pipeline and turns
     /// the recording indicator on.
-    pub fn start(
+    ///
+    /// G1 (#70): auf Wunsch in einen vorhandenen LEEREN Eintrag
+    /// (`target_meeting_id`) statt in eine neue Besprechung: Notizen,
+    /// Projekte und Id bleiben, der Titel ist der im Startdialog bestaetigte.
+    /// Die Einwilligung gilt zuerst, noch vor jeder Zielpruefung. Ist das Ziel
+    /// nicht (mehr) leer, kommt `target_not_empty` und nichts startet. Scheitert
+    /// der Start danach (Mikrofon, Datei), wird der Eintrag wieder leer, statt als
+    /// "fehlgeschlagene Aufnahme" ohne Ton stehenzubleiben.
+    pub fn start_into(
         &self,
         title: String,
         consent_confirmed: bool,
         capture_system: bool,
+        target_meeting_id: Option<&str>,
     ) -> Result<Meeting, String> {
         consent_gate(consent_confirmed)?;
         let _start_guard = self.start_guard.lock().map_err(|_| "recorder_poisoned")?;
@@ -535,10 +569,26 @@ impl MeetingRecorderManager {
         self.cancel_final_jobs();
 
         let consent_at = chrono::Utc::now().timestamp();
-        let meeting = self
-            .store
-            .create_meeting(&title, MeetingSource::Live, Some(consent_at))
-            .map_err(|e| format!("meeting_create_failed: {e}"))?;
+        let meeting = begin_live_row(&self.store, &title, consent_at, target_meeting_id)?;
+        let started = self.start_row(meeting, capture_system);
+        if let (Err(e), Some(target)) = (&started, target_meeting_id) {
+            // Nichts wurde aufgenommen: der Eintrag wird wieder leer.
+            match self.store.restore_empty_meeting(target) {
+                Ok(true) => {
+                    info!("meetings: Start gescheitert ({e}), Eintrag {target} ist wieder leer");
+                    if let Ok(dir) = super::meetings_data_dir(&self.app) {
+                        let _ = std::fs::remove_dir_all(dir.join(target));
+                    }
+                }
+                Ok(false) => {}
+                Err(err) => warn!("meetings: Eintrag {target} nicht wiederhergestellt: {err}"),
+            }
+        }
+        started
+    }
+
+    /// Der Teil des Starts nach dem Anlegen bzw. Umwandeln der Zeile.
+    fn start_row(&self, meeting: Meeting, capture_system: bool) -> Result<Meeting, String> {
         let meeting_id = meeting.id.clone();
 
         let dir = super::meetings_data_dir(&self.app)
@@ -1395,6 +1445,49 @@ mod tests {
         assert!(!is_orphan_status("cancelled"));
         assert!(!is_orphan_status("ready"));
         assert!(!is_orphan_status("failed"));
+    }
+
+    /// G1 (#70): die Aufnahme laeuft in einem leeren Eintrag, wenn ein Ziel
+    /// angegeben ist: dieselbe Besprechung (Projekt, Notizen), Status
+    /// `recording`, die Einwilligung am Eintrag. Ein nicht leeres Ziel wird
+    /// abgelehnt, ohne etwas zu aendern.
+    #[test]
+    fn a_recording_can_start_in_an_empty_entry_but_not_in_anything_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let folder = store.folder_save(None, "Kunde", None).unwrap().id;
+        let target = store.create_empty_meeting("Neue Besprechung", Some(&folder)).unwrap();
+
+        let started = begin_live_row(&store, "Montag", 99, Some(&target.id)).unwrap();
+        assert_eq!(started.id, target.id, "kein neuer Eintrag");
+        assert_eq!((started.source.as_str(), started.status.as_str()), ("live", "recording"));
+        assert_eq!(started.title, "Montag");
+        assert_eq!(started.consent_confirmed_at, Some(99));
+        assert_eq!(store.meeting_folder_ids(&target.id).unwrap(), vec![folder]);
+        assert_eq!(store.list_meetings(0, 10).unwrap().len(), 1);
+
+        // Ein zweiter Start in dasselbe Ziel: nicht mehr leer.
+        assert_eq!(
+            begin_live_row(&store, "Nochmal", 100, Some(&target.id)).unwrap_err(),
+            "target_not_empty"
+        );
+        assert_eq!(store.get_meeting(&target.id).unwrap().unwrap().title, "Montag");
+        assert_eq!(
+            begin_live_row(&store, "x", 1, Some("gibt-es-nicht")).unwrap_err(),
+            "meeting_not_found"
+        );
+
+        // Ohne Ziel bleibt es eine neue Besprechung.
+        let fresh = begin_live_row(&store, "Neu", 5, None).unwrap();
+        assert_ne!(fresh.id, target.id);
+        assert_eq!(store.list_meetings(0, 10).unwrap().len(), 2);
+    }
+
+    /// Ohne bestaetigte Einwilligung startet nichts, auch nicht in einen leeren
+    /// Eintrag: die Pflicht gilt vor jeder Zielpruefung.
+    #[test]
+    fn the_consent_gate_comes_before_any_target() {
+        assert_eq!(consent_gate(false), Err("consent_required".to_string()));
     }
 
     fn meeting_with(status: &str, mic: Option<&str>, system: Option<&str>) -> Meeting {

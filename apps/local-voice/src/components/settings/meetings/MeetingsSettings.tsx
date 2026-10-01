@@ -28,6 +28,10 @@ import { EMPTY_SCOPE } from "./chat/ScopeChips";
 import type { PersonRef } from "./people/PersonPopover";
 import { useImportDrop, useMeetingImport } from "./useMeetingImport";
 import { useSelectedProject } from "./projects/selectedProject";
+import { findMeeting } from "./findMeeting";
+import { isEmptyEntry, requestStartDialog } from "./emptyEntry";
+import { notifyMeetingsChanged } from "@/lib/meetingsBus";
+import { openYoutubeLinkDialog } from "./youtube/linkBus";
 
 type JumpRequest = { citation: Citation; nonce: number };
 
@@ -40,20 +44,6 @@ type BriefRun = {
     display: string;
   } | null;
   thread: { id: string; nonce: number } | null;
-};
-
-/** Sucht eine Besprechung seitenweise (es gibt keinen Einzelabruf). */
-const findMeeting = async (id: string): Promise<Meeting | null> => {
-  const PAGE = 200;
-  for (let offset = 0; offset < 50 * PAGE; offset += PAGE) {
-    const result = await commands.meetingsList(offset, PAGE);
-    if (result.status !== "ok") return null;
-    const page = result.data ?? [];
-    const hit = page.find((m) => m.id === id);
-    if (hit) return hit;
-    if (page.length < PAGE) return null;
-  }
-  return null;
 };
 
 /** Eine Besprechung, die es in der Liste (noch) nicht gibt, aber gerade aufgenommen wird. */
@@ -85,6 +75,10 @@ const FIND_RECORDING_WAITS_MS = [0, 250, 700];
 export const MeetingsSettings: React.FC = () => {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Meeting | null>(null);
+  const selectedRef = useRef<Meeting | null>(null);
+  selectedRef.current = selected;
+  // G1: ein eben angelegter Eintrag: sein Titel ist gleich umbenennbar.
+  const [autoRenameId, setAutoRenameId] = useState<string | null>(null);
   // Die gewaehlte Besprechung bleibt ueber Neuladen, Seitenwechsel und
   // Neustart (nur die ID; der Datensatz kommt frisch aus dem Backend).
   const [selectedId, setSelectedId] = usePersistentState<string>(
@@ -199,17 +193,62 @@ export const MeetingsSettings: React.FC = () => {
   // Fortschritt weiter.
   const recordingActiveRef = useRef(recording.active);
   recordingActiveRef.current = recording.active;
+  // G1 (#70): ist ein LEERER Eintrag gewaehlt, fuellen Aufnahme, Datei und
+  // Link ihn statt eine neue Besprechung anzulegen.
+  const emptyTarget =
+    selected !== null && isEmptyEntry(selected) ? selected : null;
   const importer = useMeetingImport(
     useCallback(
       (meeting: Meeting) => {
-        if (recordingActiveRef.current) return;
+        // Ein Ziel bleibt gewaehlt (und zeigt jetzt den Import), auch waehrend einer
+        // Aufnahme: es ist ja die Besprechung, die der Nutzer ansieht.
+        const isTarget = selectedRef.current?.id === meeting.id;
+        if (recordingActiveRef.current && !isTarget) return;
         select(meeting);
         setRightTab("transcript");
       },
       [select, setRightTab],
     ),
+    emptyTarget,
   );
   const dropOver = useImportDrop(importer.ask);
+
+  /**
+   * G1 (#70): legt einen leeren Eintrag an (Notizblock ohne Audio und Quelle),
+   * waehlt ihn, oeffnet ihn in der Mitte und stellt den Titel zum Umbenennen
+   * bereit. `folderId`: Projekt (`null` = ohne); `view`: die Zeile der Spalte, die
+   * danach gewaehlt ist, damit der Eintrag in der Liste steht.
+   */
+  const createEmpty = async (folderId: string | null, view: string) => {
+    const result = await commands.meetingsCreateEmpty(
+      t("meetings.empty.defaultTitle"),
+      folderId,
+    );
+    if (result.status === "error") {
+      toast.error(t("meetings.empty.createFailed"));
+      return;
+    }
+    projects.select(view);
+    notifyMeetingsChanged();
+    select(result.data);
+    setRightTab("transcript");
+    setAutoRenameId(result.data.id);
+    layout.drawer.setOpen(false);
+  };
+
+  /** Die drei Wege, einen leeren Eintrag zu fuellen (Startflaeche in der Mitte). */
+  const fillEntry = {
+    record: () => {
+      if (layout.mode !== "narrow" && layout.right.collapsed) {
+        layout.right.setCollapsed(false);
+      }
+      requestStartDialog();
+    },
+    importFile: () => void importer.pick(),
+    link: () => openYoutubeLinkDialog(),
+    recordDisabled: recording.active,
+    importDisabled: importer.busy,
+  };
   const target = useSelectedProject();
   const targetName = target.projectId
     ? projects.folders.find((f) => f.id === target.projectId)?.name
@@ -403,6 +442,7 @@ export const MeetingsSettings: React.FC = () => {
             liveId={recording.active ? recording.meetingId : null}
             personFilter={personFilter}
             onPersonFilterChange={setPersonFilter}
+            onNewMeeting={(folderId, view) => void createEmpty(folderId, view)}
           />
         }
         detailActive={selected !== null}
@@ -414,6 +454,7 @@ export const MeetingsSettings: React.FC = () => {
         idleContent={hint(t("meetings.layout.emptyContent"))}
         controls={
           <RecorderCard
+            target={emptyTarget}
             onStarted={startedHere}
             importApi={{
               busy: importer.busy,
@@ -431,16 +472,20 @@ export const MeetingsSettings: React.FC = () => {
               data-testid="drop-overlay"
               className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-logo-primary bg-background/85 p-4 text-center text-sm font-medium text-logo-primary"
             >
-              {targetName
-                ? t("meetings.import.dropInto", { name: targetName })
-                : t("meetings.import.dropIntoNone")}
+              {emptyTarget
+                ? t("meetings.empty.dropIntoEntry", {
+                    title: emptyTarget.title,
+                  })
+                : targetName
+                  ? t("meetings.import.dropInto", { name: targetName })
+                  : t("meetings.import.dropIntoNone")}
             </div>
           ) : null
         }
       />
       {importer.dialog}
       <DragGhost drag={drag.drag} />
-      <YoutubeLinkHost onCreated={select} />
+      <YoutubeLinkHost onCreated={select} target={emptyTarget} />
       {selected && (
         <MeetingDetail
           key={selected.id}
@@ -462,6 +507,9 @@ export const MeetingsSettings: React.FC = () => {
           }
           live={live}
           compact={layout.mode === "narrow"}
+          fill={fillEntry}
+          autoRename={autoRenameId === selected.id}
+          onAutoRenameStarted={() => setAutoRenameId(null)}
         />
       )}
     </PageShell>

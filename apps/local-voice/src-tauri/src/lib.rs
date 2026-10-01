@@ -1996,6 +1996,7 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             commands::meetings::meetings_start,
+            commands::meetings::meetings_create_empty, // G1 (#70)
             commands::meetings::meetings_pause,
             commands::meetings::meetings_resume,
             commands::meetings::meetings_stop,

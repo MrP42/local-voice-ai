@@ -7,6 +7,7 @@ import {
   Info,
   Mic,
   MonitorPlay,
+  NotebookPen,
   Upload,
 } from "lucide-react";
 import type { Meeting, Participant } from "@/bindings";
@@ -35,7 +36,7 @@ const CHIP =
  * oder fertig. Gleicher Baustein im Detailkopf und im Details-Dialog.
  */
 export const StatusChip: React.FC<{
-  meeting: Pick<Meeting, "status">;
+  meeting: Pick<Meeting, "status"> & Partial<Pick<Meeting, "source">>;
   progress?: LiveProgress;
   /** U7: Platz in der Import-Warteschlange (nur bei Status `queued`). */
   queue?: QueuePlace | null;
@@ -93,6 +94,18 @@ export const StatusChip: React.FC<{
             {t("meetings.progress.percent", { percent })}
           </span>
         )}
+      </span>
+    );
+  }
+  // G1: ein leerer Eintrag ist "fertig" und doch noch nichts: Leer.
+  if (meeting.source === "empty" && meeting.status === "ready") {
+    return (
+      <span
+        className={`${CHIP} border-dashed`}
+        data-testid="status-chip"
+        data-state="empty"
+      >
+        {t("meetings.empty.chip")}
       </span>
     );
   }
@@ -162,6 +175,12 @@ interface MeetingHeaderProps {
   tabsLabel: string;
   /** Schmales Fenster: das Menue mit allen Aktionen sitzt rechts in der Titelzeile. */
   menu?: React.ReactNode;
+  /**
+   * G1 (#70): der Titel steht beim Anzeigen gleich im Eingabefeld (ein eben
+   * angelegter Eintrag). `onAutoEditStarted` meldet, dass es offen ist.
+   */
+  autoEdit?: boolean;
+  onAutoEditStarted?: () => void;
 }
 
 const dateFormatter = (language: string) =>
@@ -196,6 +215,8 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
   onTab,
   tabsLabel,
   menu,
+  autoEdit = false,
+  onAutoEditStarted,
 }) => {
   const { t, i18n } = useTranslation();
   const [editing, setEditing] = useState(false);
@@ -221,6 +242,16 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
     lastNonce.current = renameNonce;
     startEdit();
   }, [renameNonce]);
+
+  // Ein eben angelegter Eintrag: der Titel ist sofort umbenennbar.
+  const autoEditRef = useRef(onAutoEditStarted);
+  autoEditRef.current = onAutoEditStarted;
+  useEffect(() => {
+    if (!autoEdit) return;
+    startEdit();
+    autoEditRef.current?.();
+    // Nur beim Anzeigen mit gesetzter Anfrage.
+  }, [autoEdit]);
 
   useEffect(() => {
     if (!editing) return;
@@ -260,7 +291,9 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
         ? "sourceSubtitle"
         : meeting.source === "youtube"
           ? "sourceYoutube"
-          : "sourceLive";
+          : meeting.source === "empty"
+            ? "sourceEmpty"
+            : "sourceLive";
   const SourceIcon =
     meeting.source === "import"
       ? Upload
@@ -268,7 +301,9 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
         ? FileText
         : meeting.source === "youtube"
           ? MonitorPlay
-          : Mic;
+          : meeting.source === "empty"
+            ? NotebookPen
+            : Mic;
   const sourceLabel = t(`meetings.header.${sourceKey}`);
   const sourceFull = t(`meetings.meta.sourceKind.${meeting.source}`, {
     defaultValue: sourceLabel,

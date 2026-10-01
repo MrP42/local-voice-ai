@@ -41,6 +41,8 @@ const ERROR_KEY_MAP: Record<string, string> = {
   import_panicked: "meetings.errors.importFailed",
   not_in_queue: "meetings.queue.errors.notInQueue",
   not_queued: "meetings.queue.errors.notQueued",
+  // G1 (#70)
+  target_not_empty: "meetings.errors.targetNotEmpty",
 };
 
 /** U7: Fehlercodes beim Bearbeiten der Metadaten als i18n-Schluessel. */

@@ -2076,4 +2076,45 @@ pub(crate) mod tests {
             .unwrap_err()
             .starts_with("meeting_not_found"));
     }
+
+    /// G1 (#70): ein leerer Eintrag laesst sich in jedem Format ohne Fehler
+    /// exportieren: nur die Notizen kommen heraus, kein Transkript, kein Protokoll.
+    #[test]
+    fn ein_leerer_eintrag_laesst_sich_in_jedem_format_exportieren() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
+        let empty = store.create_empty_meeting("Neue Besprechung", None).unwrap();
+        store
+            .save_notes(
+                &empty.id,
+                &[NoteBlock {
+                    id: "N1".to_string(),
+                    kind: NoteBlockKind::Bullet,
+                    text: "Nur eine Notiz".to_string(),
+                    at_ms: None,
+                    checked: false,
+                }],
+                0,
+            )
+            .unwrap();
+        let b = build_bundle(&store, &empty.id).unwrap();
+        assert!(b.segments.is_empty() && b.minutes_md.is_none() && b.enhanced.is_none());
+        let md = bundle_to_markdown(&b, &ExportParts::all());
+        assert!(md.contains("Nur eine Notiz") && !md.contains("## Transkript"), "{md}");
+        for (name, format) in [
+            ("e.md", ExportFormat::Markdown),
+            ("e.txt", ExportFormat::PlainText),
+            ("e.docx", ExportFormat::Docx),
+            ("e.html", ExportFormat::Html),
+            ("e.srt", ExportFormat::Srt),
+            ("e.vtt", ExportFormat::Vtt),
+            ("e.json", ExportFormat::Json),
+        ] {
+            let path = dir.path().join(name);
+            write_export(&path, format, &b, &ExportParts::all())
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(path.exists(), "{name}");
+        }
+        let _ = clipboard_payload(&b, &ExportParts::all());
+    }
 }

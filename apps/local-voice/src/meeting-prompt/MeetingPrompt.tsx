@@ -107,6 +107,8 @@ const MeetingPrompt: React.FC = () => {
       captureSystem,
       null,
       "prompt",
+      // Das Hinweisfenster legt immer eine neue Besprechung an.
+      null,
     );
     setBusy(false);
     if (result.status === "error") {

@@ -241,15 +241,20 @@ pub enum MeetingSource {
     Subtitle,
     /// A2 (Goal Integrationen): Besprechung aus einem YouTube-Link, ohne Audio.
     Youtube,
+    /// G1 (#70): leerer Eintrag, ein Notizblock im Projekt ohne Audio und ohne
+    /// Quelle (`empty.rs`). Wird beim Aufnehmen, Importieren oder Einfuegen
+    /// eines Links zu `Live`/`Import`/`Subtitle`/`Youtube`.
+    Empty,
 }
 
 impl MeetingSource {
-    pub(crate) fn as_str(&self) -> &'static str {
+    pub(crate) const fn as_str(&self) -> &'static str {
         match self {
             MeetingSource::Live => "live",
             MeetingSource::Import => "import",
             MeetingSource::Subtitle => "subtitle",
             MeetingSource::Youtube => "youtube",
+            MeetingSource::Empty => "empty",
         }
     }
 }
@@ -267,7 +272,7 @@ pub enum MeetingStatus {
 }
 
 impl MeetingStatus {
-    fn as_str(&self) -> &'static str {
+    pub(crate) fn as_str(&self) -> &'static str {
         match self {
             MeetingStatus::Recording => "recording",
             MeetingStatus::Processing => "processing",
@@ -1011,7 +1016,7 @@ impl MeetingStore {
             MeetingSource::Live => MeetingStatus::Recording,
             MeetingSource::Import | MeetingSource::Subtitle => MeetingStatus::Processing,
             // Nichts laeuft: es gibt (noch) kein Audio zu verarbeiten.
-            MeetingSource::Youtube => MeetingStatus::Ready,
+            MeetingSource::Youtube | MeetingSource::Empty => MeetingStatus::Ready,
         };
 
         let id = Ulid::new().to_string();

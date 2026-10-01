@@ -3803,4 +3803,28 @@ mod tests {
         assert_eq!((new.chunks_total, new.chunks_split), (5, 2));
         assert_eq!(new.auto.unwrap().outcome, AutoOutcome::Model);
     }
+
+    /// G1 (#70): ein leerer Eintrag (fertig, aber ohne Transkript) meldet
+    /// `no_transcript`, nicht `meeting_not_finished`, und legt kein Dokument an.
+    #[tokio::test]
+    async fn an_empty_entry_reports_no_transcript_for_minutes() {
+        let settings = get_default_settings();
+        let fx = fixture(0);
+        let empty = fx
+            .store
+            .create_empty_meeting("Neue Besprechung", None)
+            .unwrap();
+        let err = generate_guarded(
+            &settings,
+            fx.store.clone(),
+            &empty.id,
+            None,
+            limits(None),
+            &|_| {},
+        )
+        .await
+        .expect_err("ohne Transkript gibt es kein Protokoll");
+        assert_eq!(err.code, "no_transcript");
+        assert!(fx.store.get_documents(&empty.id).unwrap().is_empty());
+    }
 }

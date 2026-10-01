@@ -47,6 +47,9 @@ pub fn youtube_normalize_link(url: String) -> Result<YoutubeLinkInfo, String> {
 /// Legt aus einem Link eine Besprechung mit Quelle YouTube an (ein oEmbed-Abruf
 /// fuer Titel und Kanal, im Audit) im gewaehlten Projekt. Der bewusste Nutzerschritt
 /// „Link einfuegen“; nichts anderes verbindet sich dabei mit YouTube.
+/// G1 (#70): mit `target_meeting_id` fuellt der Link einen vorhandenen LEEREN
+/// Eintrag statt eine neue Besprechung anzulegen (`project_id` entfaellt; ist
+/// das Ziel nicht leer, kommt `target_not_empty` vor jedem Netzzugriff).
 #[tauri::command]
 #[specta::specta]
 pub async fn youtube_add_source(
@@ -54,11 +57,13 @@ pub async fn youtube_add_source(
     store: State<'_, Arc<MeetingStore>>,
     url: String,
     project_id: Option<String>,
+    target_meeting_id: Option<String>,
 ) -> Result<Meeting, String> {
-    let added = source::add_youtube_source(
+    let added = source::add_youtube_source_into(
         &store,
         &url,
         project_id.as_deref(),
+        target_meeting_id.as_deref(),
         &AddOptions::production(),
     )
     .await

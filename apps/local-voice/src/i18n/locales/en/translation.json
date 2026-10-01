@@ -1654,6 +1654,9 @@
       "namePlaceholder": "New project",
       "new": "New project",
       "newHint": "Create a project such as “Private” or “Client Utilities”",
+      "newMeeting": "New meeting",
+      "newMeetingHint": "Create an empty meeting in the selected project – write notes, record, import a file or paste a link there",
+      "newMeetingHere": "New meeting here",
       "askHint": "Chat about all meetings in the selected project",
       "more": "More",
       "moreHint": "Import and select several meetings",
@@ -1934,6 +1937,7 @@
       "notRecording": "No recording is currently running.",
       "deleteFailed": "Deletion failed. Please try again.",
       "unsupportedFile": "This file format is not supported (allowed: wav, mp3, m4a, mp4, mkv, mov, flac, ogg, vtt, srt).",
+      "targetNotEmpty": "This entry is no longer empty. Please create a new meeting.",
       "notFound": "This meeting no longer exists.",
       "noAudio": "No recording stored for this meeting — there is nothing to transcribe again.",
       "audioMissing": "The recording is no longer on disk (retention period expired).",
@@ -2119,7 +2123,8 @@
         "live": "Live recording",
         "import": "File import",
         "subtitle": "Subtitle import",
-        "youtube": "YouTube-Link"
+        "youtube": "YouTube-Link",
+        "empty": "Empty entry"
       }
     },
     "model": {
@@ -2145,6 +2150,7 @@
       "sourceImport": "Import",
       "sourceSubtitle": "Subtitles",
       "sourceYoutube": "YouTube",
+      "sourceEmpty": "Notepad",
       "minutes": "{{count}} min",
       "projectHint": "Click to move the meeting to another project",
       "projectMore": "+{{count}}",
@@ -2278,7 +2284,9 @@
         "youtube_tool_failed": "yt-dlp ended with error code {{detail}}.",
         "youtube_tool_start": "yt-dlp could not be started. {{detail}}",
         "youtube_no_subtitles": "This video has no subtitles.",
-        "youtube_cancelled": "Cancelled."
+        "youtube_cancelled": "Cancelled.",
+        "target_not_empty": "This entry is no longer empty. The link was not added.",
+        "meeting_not_found": "The entry the link was meant for no longer exists."
       },
       "player": {
         "region": "YouTube video",
@@ -2331,6 +2339,18 @@
       "targetNone": "Import without a project",
       "dropInto": "Drop the file here – import into “{{name}}”",
       "dropIntoNone": "Drop the file here – import without a project"
+    },
+    "empty": {
+      "defaultTitle": "New meeting",
+      "chip": "Empty",
+      "startTitle": "Nothing recorded yet",
+      "startBody": "Start a recording, import a file or paste a YouTube link. You can already write notes.",
+      "startGroup": "Fill this entry",
+      "fillsEntry": "The result fills the entry “{{title}}”.",
+      "importFirst": "The first file fills the entry “{{title}}”; further files become new meetings.",
+      "createFailed": "The entry could not be created.",
+      "transcriptEmpty": "The transcript appears here as soon as you record or import a file.",
+      "dropIntoEntry": "Drop the file here – fills “{{title}}”"
     },
     "importAction": {
       "name": "Import file",

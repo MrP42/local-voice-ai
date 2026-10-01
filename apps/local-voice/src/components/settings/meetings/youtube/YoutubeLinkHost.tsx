@@ -41,6 +41,12 @@ const isEditable = (target: EventTarget | null): boolean => {
 interface Props {
   /** Die neue Besprechung wurde angelegt (die Seite waehlt sie aus). */
   onCreated: (meeting: Meeting) => void;
+  /**
+   * G1 (#70): ein gewaehlter LEERER Eintrag. Dann fuellt der Link ihn (Titel
+   * nur, wenn er noch der vorgeschlagene ist; Projekte und Notizen bleiben)
+   * statt eine neue Besprechung anzulegen.
+   */
+  target?: Meeting | null;
 }
 
 /**
@@ -50,8 +56,17 @@ interface Props {
  * kein Dialog den Fokus hat). Geprueft wird der Link im Backend (ohne Netz);
  * erst "Hinzufuegen" fragt einmalig Titel und Kanal bei YouTube ab.
  */
-export const YoutubeLinkHost: React.FC<Props> = ({ onCreated }) => {
+export const YoutubeLinkHost: React.FC<Props> = ({
+  onCreated,
+  target = null,
+}) => {
   const { t } = useTranslation();
+  // Das Ziel gilt so, wie es beim Oeffnen des Dialogs gewaehlt war.
+  const [entry, setEntry] = useState<{ id: string; title: string } | null>(
+    null,
+  );
+  const targetRef = useRef(target);
+  targetRef.current = target;
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [check, setCheck] = useState<Check>({ state: "empty" });
@@ -63,6 +78,8 @@ export const YoutubeLinkHost: React.FC<Props> = ({ onCreated }) => {
   openRef.current = open;
 
   const openDialog = useCallback((initial: string) => {
+    const chosen = targetRef.current;
+    setEntry(chosen ? { id: chosen.id, title: chosen.title } : null);
     setUrl(initial);
     setError(null);
     setBusy(false);
@@ -136,7 +153,11 @@ export const YoutubeLinkHost: React.FC<Props> = ({ onCreated }) => {
     const project = folders.some((f) => f.id === projectChoice)
       ? projectChoice
       : null;
-    const result = await commands.youtubeAddSource(url, project);
+    const result = await commands.youtubeAddSource(
+      url,
+      entry ? null : project,
+      entry?.id ?? null,
+    );
     setBusy(false);
     if (result.status === "error") {
       setError(translateYoutubeError(result.error, t));
@@ -228,24 +249,30 @@ export const YoutubeLinkHost: React.FC<Props> = ({ onCreated }) => {
           </p>
         </div>
 
-        <div className="space-y-1" data-testid="yt-link-project">
-          <span className="text-xs font-medium text-text/60">
-            {t("meetings.youtube.link.projectLabel")}
-          </span>
-          <Select
-            value={
-              folders.some((f) => f.id === projectChoice)
-                ? projectChoice
-                : WITHOUT_PROJECT
-            }
-            options={projectOptions}
-            isClearable={false}
-            disabled={busy}
-            menuPortal
-            placeholder={t("meetings.youtube.link.projectLabel")}
-            onChange={(id) => setProjectChoice(id ?? WITHOUT_PROJECT)}
-          />
-        </div>
+        {entry ? (
+          <p className="text-xs text-text/70" data-testid="yt-link-target">
+            {t("meetings.empty.fillsEntry", { title: entry.title })}
+          </p>
+        ) : (
+          <div className="space-y-1" data-testid="yt-link-project">
+            <span className="text-xs font-medium text-text/60">
+              {t("meetings.youtube.link.projectLabel")}
+            </span>
+            <Select
+              value={
+                folders.some((f) => f.id === projectChoice)
+                  ? projectChoice
+                  : WITHOUT_PROJECT
+              }
+              options={projectOptions}
+              isClearable={false}
+              disabled={busy}
+              menuPortal
+              placeholder={t("meetings.youtube.link.projectLabel")}
+              onChange={(id) => setProjectChoice(id ?? WITHOUT_PROJECT)}
+            />
+          </div>
+        )}
 
         <p className="text-xs text-text/60">
           {t("meetings.youtube.link.notice")}

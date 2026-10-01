@@ -586,6 +586,7 @@ test("AK7: Import per Symbol geht in das links gewaehlte Projekt, Fortschritt an
   expect((await calls(page, "meetings_import_file"))[0].args).toEqual({
     path: "C:/Audio/Kunde Meyer.m4a",
     consentConfirmed: true,
+    targetMeetingId: null,
   });
   await releaseImport(page);
   await expect(page.getByTestId("status-chip")).toHaveAttribute(

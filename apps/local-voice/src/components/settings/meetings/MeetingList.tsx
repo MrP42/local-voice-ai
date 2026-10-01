@@ -19,7 +19,15 @@ import { Dialog } from "../../ui/Dialog";
 import { Alert } from "../../ui/Alert";
 import { IconAction } from "../../ui/IconAction";
 import { ActionMenu } from "../../ui/ActionMenu";
-import { Check, CheckSquare, Menu, MessageSquare, Plus, X } from "lucide-react";
+import {
+  Check,
+  CheckSquare,
+  FilePlus,
+  Menu,
+  MessageSquare,
+  Plus,
+  X,
+} from "lucide-react";
 import { SearchBar, SearchSnippet } from "./search/SearchBar";
 import { EMPTY_FILTER, type ListFilter } from "./search/FilterChips";
 import { ContextMenu } from "./search/FolderChips";
@@ -46,7 +54,11 @@ const DAY_SECONDS = 86_400;
 // forward slash, so a C:\... path came back whole.
 const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
-const statusChipClass = (status: string) => {
+const statusChipClass = (status: string, source?: string) => {
+  // G1: ein leerer Eintrag ist nicht "fertig", sondern leer.
+  if (source === "empty" && status === "ready") {
+    return "border border-dashed border-mid-gray/40 text-text/70";
+  }
   switch (status) {
     case "ready":
       return "bg-green-500/20 text-green-400";
@@ -96,6 +108,12 @@ interface MeetingListProps {
   /** M5-P5d: Filter "Person: Anna Berg" (kommt aus dem Popover der Detailansicht). */
   personFilter?: PersonRef | null;
   onPersonFilterChange?: (person: PersonRef | null) => void;
+  /**
+   * G1 (#70): "Neue Besprechung" (ein leerer Eintrag). `folderId`: das Projekt,
+   * in das er kommt (`null` = ohne Projekt); `view`: die Zeile der Spalte, die
+   * danach gewaehlt wird, damit der neue Eintrag zu sehen ist.
+   */
+  onNewMeeting?: (folderId: string | null, view: string) => void;
 }
 
 /**
@@ -117,6 +135,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   liveId = null,
   personFilter = null,
   onPersonFilterChange,
+  onNewMeeting,
 }) => {
   const { t, i18n } = useTranslation();
   // P8a: laufende Verarbeitungen (Fortschritt, Restdauer) statt nur "Wird verarbeitet".
@@ -166,6 +185,12 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     id: string;
   } | null>(null);
   const [deleteProject, setDeleteProject] = useState<string | null>(null);
+  // G1: Menue der Zeilen "Alle Aufnahmen" und "Ohne Projekt" (nur "Neue Besprechung hier").
+  const [plainMenu, setPlainMenu] = useState<{
+    x: number;
+    y: number;
+    id: typeof ALL_PROJECTS | typeof NO_PROJECT;
+  } | null>(null);
 
   // Wechselt die Auswahl (auch von aussen: Projekt geloescht, Leiste), steht
   // die Liste der neuen Zeile offen.
@@ -542,11 +567,14 @@ export const MeetingList: React.FC<MeetingListProps> = ({
                 meeting.status === "recording")
             ) && (
               <span
-                className={`inline-flex items-center rounded-full px-2 text-[11px] font-medium ${statusChipClass(meeting.status)}`}
+                className={`inline-flex items-center rounded-full px-2 text-[11px] font-medium ${statusChipClass(meeting.status, meeting.source)}`}
+                data-testid="row-status"
               >
-                {t(`meetings.status.${meeting.status}`, {
-                  defaultValue: meeting.status,
-                })}
+                {meeting.source === "empty" && meeting.status === "ready"
+                  ? t("meetings.empty.chip")
+                  : t(`meetings.status.${meeting.status}`, {
+                      defaultValue: meeting.status,
+                    })}
               </span>
             )
           )}
@@ -614,6 +642,16 @@ export const MeetingList: React.FC<MeetingListProps> = ({
 
   const actions = (
     <>
+      {onNewMeeting && (
+        <IconAction
+          size="sm"
+          icon={FilePlus}
+          label={t("meetings.projects.newMeeting")}
+          description={t("meetings.projects.newMeetingHint")}
+          testId="projects-new-meeting"
+          onClick={() => onNewMeeting(folderId, selection)}
+        />
+      )}
       <IconAction
         size="sm"
         icon={Plus}
@@ -757,6 +795,11 @@ export const MeetingList: React.FC<MeetingListProps> = ({
               dropTarget={false}
               dropActive={false}
               onActivate={() => activate(ALL_PROJECTS)}
+              onContextMenu={
+                onNewMeeting
+                  ? (x, y) => setPlainMenu({ x, y, id: ALL_PROJECTS })
+                  : undefined
+              }
             />
             {selection === ALL_PROJECTS && listOpen && meetingsBlock(true)}
             {folders.map((folder) => (
@@ -823,6 +866,11 @@ export const MeetingList: React.FC<MeetingListProps> = ({
               dropTarget
               dropActive={dragging && dropId === NO_PROJECT}
               onActivate={() => activate(NO_PROJECT)}
+              onContextMenu={
+                onNewMeeting
+                  ? (x, y) => setPlainMenu({ x, y, id: NO_PROJECT })
+                  : undefined
+              }
             />
             {selection === NO_PROJECT && listOpen && meetingsBlock(true)}
           </nav>
@@ -880,6 +928,15 @@ export const MeetingList: React.FC<MeetingListProps> = ({
           label={projectMenuTarget.name}
           onClose={() => setProjectMenu(null)}
           items={[
+            ...(onNewMeeting
+              ? [
+                  {
+                    label: t("meetings.projects.newMeetingHere"),
+                    onSelect: () =>
+                      onNewMeeting(projectMenuTarget.id, projectMenuTarget.id),
+                  },
+                ]
+              : []),
             {
               label: t("meetings.projects.rename"),
               onSelect: () => {
@@ -908,6 +965,25 @@ export const MeetingList: React.FC<MeetingListProps> = ({
               label: t("meetings.projects.delete"),
               danger: true,
               onSelect: () => setDeleteProject(projectMenuTarget.id),
+            },
+          ]}
+        />
+      )}
+
+      {plainMenu && onNewMeeting && (
+        <ContextMenu
+          x={plainMenu.x}
+          y={plainMenu.y}
+          label={
+            plainMenu.id === ALL_PROJECTS
+              ? t("meetings.projects.all")
+              : t("meetings.projects.none")
+          }
+          onClose={() => setPlainMenu(null)}
+          items={[
+            {
+              label: t("meetings.projects.newMeetingHere"),
+              onSelect: () => onNewMeeting(null, plainMenu.id),
             },
           ]}
         />

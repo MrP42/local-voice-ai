@@ -4911,4 +4911,44 @@ mod tests {
             .unwrap()
             .contains("- [x] Vertrag prüfen"));
     }
+
+    /// G1 (#70): ein leerer Eintrag mit Notizen, aber ohne Transkript, meldet
+    /// `no_transcript` (kein Absturz, kein Modellaufruf).
+    #[tokio::test]
+    async fn an_empty_entry_reports_no_transcript() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let port = spawn_llm_mock_with(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            ok_body(single_pass_reply())
+        })
+        .await;
+        let good = settings_with_mock_provider(port);
+        let fx = fixture(0);
+        let empty = fx
+            .store
+            .create_empty_meeting("Neue Besprechung", None)
+            .unwrap();
+        fx.store
+            .save_notes(
+                &empty.id,
+                &[note("B1", NoteBlockKind::Bullet, "Nur Notizen", None)],
+                0,
+            )
+            .unwrap();
+        let flag = AtomicBool::new(false);
+        let err = enhance_guarded(
+            &flag,
+            &good,
+            fx.store.clone(),
+            &empty.id,
+            None,
+            limits(None),
+            &|_, _| {},
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error_code(&err), "no_transcript");
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "kein Modellaufruf");
+    }
 }

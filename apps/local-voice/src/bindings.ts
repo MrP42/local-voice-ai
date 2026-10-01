@@ -1547,10 +1547,29 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
 /**
  * Starting touches audio hardware and can block for seconds (loopback
  * start-up), hence `spawn_blocking` rather than running on the command task.
+ * 
+ * G1 (#70): mit `target_meeting_id` nimmt die Aufnahme in einem vorhandenen
+ * LEEREN Eintrag auf (Notizen, Projekte und Id bleiben); ist das Ziel nicht
+ * (mehr) leer, kommt `target_not_empty`. Die Einwilligung gilt in jedem Fall.
  */
-async meetingsStart(title: string, consentConfirmed: boolean, captureSystem: boolean) : Promise<Result<Meeting, string>> {
+async meetingsStart(title: string, consentConfirmed: boolean, captureSystem: boolean, targetMeetingId: string | null) : Promise<Result<Meeting, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_start", { title, consentConfirmed, captureSystem }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_start", { title, consentConfirmed, captureSystem, targetMeetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * G1 (#70): legt einen leeren Eintrag an, ein Notizblock ohne Audio und ohne
+ * Quelle, auf Wunsch gleich im Projekt `folder_id`. `title` ist der
+ * vorgeschlagene Titel (die Oberflaeche liefert den lokalisierten). Aufnahme,
+ * Datei und YouTube-Link fuellen den Eintrag spaeter (`target_meeting_id` der
+ * jeweiligen Befehle). Fehler: `title_empty`, `title_too_long`, `folder_not_found`.
+ */
+async meetingsCreateEmpty(title: string, folderId: string | null) : Promise<Result<Meeting, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_create_empty", { title, folderId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1725,7 +1744,10 @@ async meetingsDelete(meetingId: string) : Promise<Result<null, string>> {
 },
 /**
  * Imports a local audio/video file or a VTT/SRT subtitle file as a new
- * meeting.
+ * meeting. G1 (#70): mit `target_meeting_id` fuellt die Datei einen vorhandenen
+ * LEEREN Eintrag (Titel, Projekte und Notizen bleiben; der Titel wird nur
+ * ersetzt, solange er der vorgeschlagene ist) und kehrt mit dessen Id zurueck;
+ * ist das Ziel nicht (mehr) leer, kommt `target_not_empty`.
  * 
  * U7: Audio und Video werden in die Import-Warteschlange gestellt und der
  * Befehl kehrt SOFORT mit der ID der neuen Besprechung (Status `queued`)
@@ -1735,9 +1757,9 @@ async meetingsDelete(meetingId: string) : Promise<Result<null, string>> {
  * sofort fertig. Fortschritt, Position und Ende kommen ueber
  * `MeetingEvent::Progress`/`State` und `ImportQueueEvent`.
  */
-async meetingsImportFile(path: string, consentConfirmed: boolean) : Promise<Result<string, string>> {
+async meetingsImportFile(path: string, consentConfirmed: boolean, targetMeetingId: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_import_file", { path, consentConfirmed }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_import_file", { path, consentConfirmed, targetMeetingId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1938,10 +1960,13 @@ async youtubeNormalizeLink(url: string) : Promise<Result<YoutubeLinkInfo, string
  * Legt aus einem Link eine Besprechung mit Quelle YouTube an (ein oEmbed-Abruf
  * fuer Titel und Kanal, im Audit) im gewaehlten Projekt. Der bewusste Nutzerschritt
  * „Link einfuegen“; nichts anderes verbindet sich dabei mit YouTube.
+ * G1 (#70): mit `target_meeting_id` fuellt der Link einen vorhandenen LEEREN
+ * Eintrag statt eine neue Besprechung anzulegen (`project_id` entfaellt; ist
+ * das Ziel nicht leer, kommt `target_not_empty` vor jedem Netzzugriff).
  */
-async youtubeAddSource(url: string, projectId: string | null) : Promise<Result<Meeting, string>> {
+async youtubeAddSource(url: string, projectId: string | null, targetMeetingId: string | null) : Promise<Result<Meeting, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("youtube_add_source", { url, projectId }) };
+    return { status: "ok", data: await TAURI_INVOKE("youtube_add_source", { url, projectId, targetMeetingId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2897,11 +2922,12 @@ async meetingMcpInfo() : Promise<Result<McpInfo, string>> {
  * (Titelvorschlag der Aufnahmekarte). `app_key` gehoert der Erkennung (P5c) und
  * wird bis dahin nicht gelesen. Ohne bestaetigte Einwilligung startet nichts
  * (`consent_required` vom Recorder). Fehler NACH dem Start (Verknuepfung,
- * Vorlage) kippen die laufende Aufnahme nicht; sie stehen im Log.
+ * Vorlage) kippen die laufende Aufnahme nicht; sie stehen im Log. G1 (#70):
+ * `target_meeting_id` wie bei `meetings_start` (Aufnahme in einen leeren Eintrag).
  */
-async meetingsStartFromEvent(eventKey: string | null, appKey: string | null, consentConfirmed: boolean, captureSystem: boolean, title: string | null, linkMode: string | null) : Promise<Result<Meeting, string>> {
+async meetingsStartFromEvent(eventKey: string | null, appKey: string | null, consentConfirmed: boolean, captureSystem: boolean, title: string | null, linkMode: string | null, targetMeetingId: string | null) : Promise<Result<Meeting, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_start_from_event", { eventKey, appKey, consentConfirmed, captureSystem, title, linkMode }) };
+    return { status: "ok", data: await TAURI_INVOKE("meetings_start_from_event", { eventKey, appKey, consentConfirmed, captureSystem, title, linkMode, targetMeetingId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

@@ -598,6 +598,7 @@ test.describe("Bedienung oben rechts", () => {
       title: "Kick-off Sommerfest",
       consentConfirmed: true,
       captureSystem: true,
+      targetMeetingId: null,
     });
     await expect
       .poll(async () => (await calls(page, "meetings_set_folders")).length)
@@ -649,6 +650,7 @@ test.describe("Bedienung oben rechts", () => {
     expect((await calls(page, "meetings_import_file"))[0].args).toEqual({
       path: "C:/Audio/Kunde.m4a",
       consentConfirmed: true,
+      targetMeetingId: null,
     });
   });
 

@@ -1950,4 +1950,61 @@ Ansprechpartnerin Frau Lindner");
         assert_eq!(status(&store, &m.id), STATUS_READY);
         assert_eq!(indexer.last_error(), None);
     }
+
+    /// G1 (#70): ein leerer Eintrag (nur Notizen, kein Transkript) wird ohne
+    /// Fehler indexiert, ist ueber seine Notizen und seinen Titel auffindbar und
+    /// faellt aus der Liste, sobald er geloescht ist.
+    #[test]
+    fn an_empty_entry_is_indexed_and_found_by_its_notes_and_never_errors() {
+        use crate::managers::meetings::search::index::MeetingFilter;
+        let (_dir, store) = tmp_store();
+        let store = Arc::new(store);
+        let folder = store.folder_save(None, "Kunde", None).unwrap().id;
+        let empty = store
+            .create_empty_meeting("Neue Besprechung", Some(&folder))
+            .unwrap();
+        store
+            .save_notes(
+                &empty.id,
+                &[NoteBlock {
+                    id: "n1".into(),
+                    kind: NoteBlockKind::Bullet,
+                    text: "Zeppelinstrasse Angebot nachfassen".into(),
+                    at_ms: None,
+                    checked: false,
+                }],
+                0,
+            )
+            .unwrap();
+        let embed = Arc::new(FakeEmbedder::new());
+        let cache: &'static VectorCache = Box::leak(Box::new(VectorCache::new()));
+        let report = reindex_all(store.clone(), embed, cache, false, &|| None).unwrap();
+        assert_eq!(report.meetings, 1);
+        assert_eq!(report.indexed, 1, "der leere Eintrag wird indexiert");
+        let found = store
+            .search_meetings("Zeppelinstrasse", &MeetingFilter::default(), 0, 25)
+            .unwrap();
+        assert_eq!(found.items.len(), 1);
+        assert_eq!(found.items[0].meeting.id, empty.id);
+        assert_eq!(found.items[0].meeting.source, "empty");
+        // Nach Projekt gefiltert und als reine Liste (ohne Suchwort) steht er auch da.
+        let in_project = store
+            .search_meetings(
+                "",
+                &MeetingFilter {
+                    folder_id: Some(folder),
+                    ..MeetingFilter::default()
+                },
+                0,
+                25,
+            )
+            .unwrap();
+        assert_eq!(in_project.items.len(), 1);
+        // Geloescht: weg aus der Suche.
+        store.soft_delete_meeting(&empty.id).unwrap();
+        let gone = store
+            .search_meetings("Zeppelinstrasse", &MeetingFilter::default(), 0, 25)
+            .unwrap();
+        assert!(gone.items.is_empty());
+    }
 }

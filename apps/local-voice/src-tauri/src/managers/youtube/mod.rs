@@ -108,6 +108,9 @@ pub enum YoutubeError {
     NoSubtitles,
     /// A3: vom Nutzer gestoppt.
     Cancelled,
+    /// G1 (#70): der Link sollte einen leeren Eintrag fuellen, der es nicht (mehr)
+    /// ist (`target_not_empty`) oder fehlt (`meeting_not_found`).
+    Target(&'static str),
 }
 
 impl YoutubeError {
@@ -131,6 +134,7 @@ impl YoutubeError {
             YoutubeError::ToolStart(_) => "youtube_tool_start",
             YoutubeError::NoSubtitles => "youtube_no_subtitles",
             YoutubeError::Cancelled => "youtube_cancelled",
+            YoutubeError::Target(code) => code,
         }
     }
 
@@ -193,6 +197,13 @@ impl std::fmt::Display for YoutubeError {
             YoutubeError::ToolStart(m) => write!(f, "yt-dlp ließ sich nicht starten: {m}"),
             YoutubeError::NoSubtitles => write!(f, "Dieses Video hat keine Untertitel."),
             YoutubeError::Cancelled => write!(f, "Abgebrochen."),
+            YoutubeError::Target("meeting_not_found") => {
+                write!(f, "Der Eintrag, in den der Link soll, existiert nicht mehr.")
+            }
+            YoutubeError::Target(_) => write!(
+                f,
+                "Der Eintrag ist nicht mehr leer. Der Link wurde nicht übernommen."
+            ),
         }
     }
 }

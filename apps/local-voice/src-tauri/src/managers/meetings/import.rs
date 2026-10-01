@@ -27,6 +27,7 @@ use log::{error, info};
 use tauri_specta::Event;
 
 use super::chunker::{ChannelChunker, Chunk};
+use super::empty::{coded_error, EmptyFill};
 use super::job::{self, Gate, JobHandle, JobPhase};
 use super::recorder::MeetingEvent;
 use super::retention::MeetingAudioRetention;
@@ -98,14 +99,39 @@ fn import_subtitle_file(
     path: &Path,
     consent_confirmed_at: Option<i64>,
 ) -> Result<String, String> {
+    import_subtitle_file_into(store, title, path, consent_confirmed_at, None)
+}
+
+/// G1 (#70): Untertitel-Import, auf Wunsch in einen vorhandenen LEEREN Eintrag
+/// (`target`) statt in eine neue Besprechung. Die Datei wird zuerst gelesen und
+/// geprueft: eine kaputte Datei laesst das Ziel unberuehrt leer. Fehler des
+/// Ziels: `target_not_empty`, `meeting_not_found`.
+pub fn import_subtitle_file_into(
+    store: &Arc<MeetingStore>,
+    title: &str,
+    path: &Path,
+    consent_confirmed_at: Option<i64>,
+    target: Option<&str>,
+) -> Result<String, String> {
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Untertiteldatei nicht lesbar: {e}"))?;
     let segments = parse_subtitles(&content)?;
     let segment_count = segments.len();
 
-    let meeting = store
-        .create_meeting(title, MeetingSource::Subtitle, consent_confirmed_at)
-        .map_err(|e| format!("meeting_create_failed: {e}"))?;
+    let meeting = match target {
+        Some(target_id) => {
+            let mut fill = EmptyFill::new(MeetingSource::Subtitle, MeetingStatus::Processing);
+            fill.consent_confirmed_at = consent_confirmed_at;
+            fill.title = Some(title);
+            fill.only_if_default = true;
+            store
+                .fill_empty_meeting(target_id, &fill)
+                .map_err(|e| coded_error("meeting_create_failed", &e))?
+        }
+        None => store
+            .create_meeting(title, MeetingSource::Subtitle, consent_confirmed_at)
+            .map_err(|e| format!("meeting_create_failed: {e}"))?,
+    };
     if let Some(source) = path.to_str() {
         if let Err(e) = store.set_source_path(&meeting.id, source) {
             log::warn!("meetings: source_path not stored for subtitle import: {e}");
@@ -856,6 +882,46 @@ Willkommen zum Gespräch.
         conn.execute_batch("DROP TABLE provenance").unwrap();
         let second = import_subtitle_file(&store, "noch einmal", &vtt, None).unwrap();
         assert_eq!(store.get_segments(&second).unwrap().len(), 2);
+    }
+
+    /// G1 (#70): Untertitel in einen leeren Eintrag: dieselbe Besprechung wird
+    /// gefuellt (Projekt, Titel des Nutzers bleiben), eine kaputte Datei oder ein
+    /// nicht leeres Ziel lassen das Ziel unberuehrt.
+    #[test]
+    fn a_subtitle_file_fills_an_empty_entry_and_refuses_anything_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
+        let folder = store.folder_save(None, "Kunde", None).unwrap().id;
+        let target = store.create_empty_meeting("Neue Besprechung", Some(&folder)).unwrap();
+        store.set_title(&target.id, "Mein Titel").unwrap();
+        let vtt = dir.path().join("interview.vtt");
+        std::fs::write(&vtt, "WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+Guten Tag.
+").unwrap();
+        let bad = dir.path().join("kaputt.vtt");
+        std::fs::write(&bad, "").unwrap();
+
+        // Kaputte Datei: das Ziel bleibt ein leerer Eintrag.
+        assert!(import_subtitle_file_into(&store, "kaputt", &bad, None, Some(&target.id)).is_err());
+        assert!(store.is_empty_meeting(&target.id).unwrap());
+
+        let id = import_subtitle_file_into(&store, "interview", &vtt, Some(3), Some(&target.id))
+            .unwrap();
+        assert_eq!(id, target.id, "dieselbe Besprechung");
+        let m = store.get_meeting(&id).unwrap().unwrap();
+        assert_eq!((m.source.as_str(), m.status.as_str()), ("subtitle", "ready"));
+        assert_eq!(m.title, "Mein Titel", "umbenannter Titel bleibt");
+        assert_eq!(m.consent_confirmed_at, Some(3));
+        assert_eq!(store.get_segments(&id).unwrap().len(), 1);
+        assert_eq!(store.meeting_folder_ids(&id).unwrap(), vec![folder]);
+        assert_eq!(store.list_meetings(0, 10).unwrap().len(), 1, "keine zweite Besprechung");
+
+        // Zweiter Versuch: das Ziel ist nicht mehr leer.
+        let err = import_subtitle_file_into(&store, "noch", &vtt, None, Some(&id)).unwrap_err();
+        assert_eq!(err, "target_not_empty");
+        assert_eq!(store.get_segments(&id).unwrap().len(), 1);
     }
 
     #[test]

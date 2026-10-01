@@ -110,6 +110,7 @@ test("Mit Häkchen startet meetings_start_from_event mit consent_confirmed=true 
     captureSystem: true,
     title: null,
     linkMode: "prompt",
+    targetMeetingId: null,
   });
   // Der Start geht nie an den alten Weg ohne Terminbezug.
   expect(await calls(page, "meetings_start")).toHaveLength(0);

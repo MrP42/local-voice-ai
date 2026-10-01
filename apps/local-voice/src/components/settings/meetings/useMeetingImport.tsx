@@ -9,6 +9,7 @@ import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { translateMeetingError } from "./meetingErrors";
 import { useSelectedProject } from "./projects/selectedProject";
+import { findMeeting } from "./findMeeting";
 
 /** Dieselben Endungen fuer Auswahl und Ablage (gleiche Import-Pipeline). */
 export const IMPORT_EXTENSIONS = [
@@ -43,24 +44,35 @@ const LIST_PAGE = 50;
  * Rueckgabe. Die Verarbeitung laeuft im Backend in der Reihenfolge des
  * Hinzufuegens; Platz und Fortschritt kommen ueber Ereignisse. `error` ist der
  * Rohtext des Backends; uebersetzt wird beim Anzeigen.
+ *
+ * G1 (#70): mit `targetId` fuellt die Datei einen vorhandenen LEEREN Eintrag
+ * (Titel, Projekte und Notizen bleiben dort) statt eine neue Besprechung
+ * anzulegen; `projectId` entfaellt dann.
  */
 export async function importIntoProject(
   path: string,
   projectId: string | null,
   onCreated: (meeting: Meeting) => void,
+  targetId: string | null = null,
 ): Promise<{ error: string | null }> {
-  const result = await commands.meetingsImportFile(path, true);
+  const result = await commands.meetingsImportFile(path, true, targetId);
   if (result.status === "error") {
     return { error: result.error };
   }
   const id = result.data;
-  if (projectId) {
+  if (projectId && targetId === null) {
     await commands.meetingsSetFolders(id, [projectId]);
   }
   notifyMeetingsChanged();
-  const list = await commands.meetingsList(0, LIST_PAGE);
-  const meeting =
-    list.status === "ok" ? list.data.find((m) => m.id === id) : undefined;
+  // Ein Ziel kann weit hinten in der Liste stehen: gezielt suchen.
+  let meeting: Meeting | null | undefined;
+  if (targetId !== null) {
+    meeting = await findMeeting(id);
+  } else {
+    const list = await commands.meetingsList(0, LIST_PAGE);
+    meeting =
+      list.status === "ok" ? list.data.find((m) => m.id === id) : undefined;
+  }
   if (meeting) onCreated(meeting);
   return { error: null };
 }
@@ -69,6 +81,8 @@ interface ImportRequest {
   paths: string[];
   projectId: string | null;
   projectName: string | null;
+  /** G1: leerer Eintrag, den die erste Datei fuellt. */
+  target: { id: string; title: string } | null;
 }
 
 /**
@@ -79,11 +93,17 @@ interface ImportRequest {
  * existiert (Auswahl, Fortschritt). U7: nichts sperrt weitere Importe; jede
  * Datei kommt in die Warteschlange und der Dialog steht sofort wieder offen.
  */
-export function useMeetingImport(onCreated: (meeting: Meeting) => void) {
+export function useMeetingImport(
+  onCreated: (meeting: Meeting) => void,
+  /** G1 (#70): ein gewaehlter LEERER Eintrag; die erste Datei fuellt ihn. */
+  target: Meeting | null = null,
+) {
   const { t } = useTranslation();
   const { projectId } = useSelectedProject();
   const projectRef = useRef(projectId);
   projectRef.current = projectId;
+  const targetRef = useRef(target);
+  targetRef.current = target;
   const createdRef = useRef(onCreated);
   createdRef.current = onCreated;
   const [request, setRequest] = useState<ImportRequest | null>(null);
@@ -103,7 +123,13 @@ export function useMeetingImport(onCreated: (meeting: Meeting) => void) {
       if (folder) name = folder.name;
       else id = null;
     }
-    setRequest({ paths, projectId: id, projectName: name });
+    const entry = targetRef.current;
+    setRequest({
+      paths,
+      projectId: id,
+      projectName: name,
+      target: entry ? { id: entry.id, title: entry.title } : null,
+    });
   }, []);
 
   const pick = useCallback(async () => {
@@ -126,11 +152,17 @@ export function useMeetingImport(onCreated: (meeting: Meeting) => void) {
     setRequest(null);
     setBusy(true);
     try {
-      for (const path of current.paths) {
+      for (const [index, path] of current.paths.entries()) {
         const { error } = await importIntoProject(
           path,
           current.projectId,
-          (meeting) => createdRef.current(meeting),
+          (meeting) => {
+            // Mit einem Ziel bleibt dieses gewaehlt: die weiteren Dateien
+            // laufen links mit, ohne die Ansicht zu wechseln.
+            if (index === 0 || !current.target) createdRef.current(meeting);
+          },
+          // Nur die erste Datei fuellt den leeren Eintrag.
+          index === 0 ? (current.target?.id ?? null) : null,
         );
         if (error) toast.error(translateMeetingError(error, t));
         notifyMeetingsChanged();
@@ -173,9 +205,13 @@ export function useMeetingImport(onCreated: (meeting: Meeting) => void) {
               ))}
             </ul>
             <p className="mt-2 text-sm font-medium" data-testid="import-target">
-              {request.projectName
-                ? t("meetings.import.target", { name: request.projectName })
-                : t("meetings.import.targetNone")}
+              {request.target
+                ? t("meetings.empty.importFirst", {
+                    title: request.target.title,
+                  })
+                : request.projectName
+                  ? t("meetings.import.target", { name: request.projectName })
+                  : t("meetings.import.targetNone")}
             </p>
           </>
         )}

@@ -19,7 +19,7 @@
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
-use rusqlite::{params, Connection, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use serde_json::{json, Value};
 use specta::Type;
@@ -35,7 +35,8 @@ use crate::managers::integrations::model::{
     NewIntegration,
 };
 use crate::managers::integrations::store as register;
-use crate::managers::meetings::store::{Meeting, MeetingSource, MeetingStore};
+use crate::managers::meetings::empty::{fill_empty_tx, EmptyFill};
+use crate::managers::meetings::store::{Meeting, MeetingSource, MeetingStatus, MeetingStore};
 use crate::managers::provenance::{self, ActorKind, NewProvenance, SourceRef, SubjectKind};
 
 #[cfg(test)]
@@ -163,6 +164,7 @@ fn project_exists(conn: &Connection, project_id: &str) -> Result<bool, YoutubeEr
 
 /// Besprechung, Projektzuordnung und Provenienz in EINER Transaktion: alles oder
 /// nichts. Rueckgabe: die ID der Besprechung.
+#[cfg(test)]
 pub fn create_meeting(
     conn: &mut Connection,
     video: &YoutubeRef,
@@ -170,46 +172,80 @@ pub fn create_meeting(
     project_id: Option<&str>,
     now_ms: i64,
 ) -> Result<String, YoutubeError> {
+    create_meeting_into(conn, video, meta, project_id, None, now_ms)
+}
+
+/// Wie `create_meeting`; mit `target` (G1, #70) wird statt einer neuen Besprechung
+/// ein vorhandener LEERER Eintrag zur YouTube-Besprechung: Id, Projekte und
+/// Notizen bleiben, `project_id` entfaellt, der Titel wird nur ersetzt, solange
+/// er noch der vorgeschlagene ist. Ein anderes Ziel bricht mit
+/// `Target("target_not_empty")` ab (nichts geschrieben).
+pub fn create_meeting_into(
+    conn: &mut Connection,
+    video: &YoutubeRef,
+    meta: &VideoMeta,
+    project_id: Option<&str>,
+    target: Option<&str>,
+    now_ms: i64,
+) -> Result<String, YoutubeError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if let Some(project) = project_id {
-        if !project_exists(&tx, project)? {
-            return Err(YoutubeError::Project);
+    if target.is_none() {
+        if let Some(project) = project_id {
+            if !project_exists(&tx, project)? {
+                return Err(YoutubeError::Project);
+            }
         }
     }
-    let id = Ulid::new().to_string();
     let secs = now_ms / 1000;
     let url = video.canonical_url();
-    let metadata = json!({
-        METADATA_KEY: {
-            "video_id": video.video_id,
-            "url": url,
-            "title": meta.title,
-            "channel": meta.channel,
-            "channel_url": meta.channel_url,
-            "thumbnail_url": meta.thumbnail_url,
-            "start_s": video.start_s,
-            "added_at": now_ms,
-        }
+    let youtube = json!({
+        "video_id": video.video_id,
+        "url": url,
+        "title": meta.title,
+        "channel": meta.channel,
+        "channel_url": meta.channel_url,
+        "thumbnail_url": meta.thumbnail_url,
+        "start_s": video.start_s,
+        "added_at": now_ms,
     });
-    tx.execute(
-        "INSERT INTO meetings (id, title, status, source, consent_confirmed_at, created_at,
-                               updated_at, metadata_json)
-         VALUES (?1, ?2, 'ready', ?3, NULL, ?4, ?4, ?5)",
-        params![
-            id,
-            meta.title,
-            MeetingSource::Youtube.as_str(),
-            secs,
-            metadata.to_string()
-        ],
-    )?;
-    if let Some(project) = project_id {
-        tx.execute(
-            "INSERT INTO meeting_folder_items (folder_id, meeting_id, added_at)
-             VALUES (?1, ?2, ?3)",
-            params![project, id, secs],
-        )?;
-    }
+    let id = match target {
+        Some(target_id) => {
+            let mut fill = EmptyFill::new(MeetingSource::Youtube, MeetingStatus::Ready);
+            fill.title = Some(&meta.title);
+            fill.only_if_default = true;
+            fill.metadata = Some((METADATA_KEY, youtube));
+            fill_empty_tx(&tx, target_id, &fill).map_err(|e| match e.to_string().as_str() {
+                "meeting_not_found" => YoutubeError::Target("meeting_not_found"),
+                "target_not_empty" => YoutubeError::Target("target_not_empty"),
+                _ => YoutubeError::Store(e.to_string()),
+            })?;
+            target_id.to_string()
+        }
+        None => {
+            let id = Ulid::new().to_string();
+            let metadata = json!({ METADATA_KEY: youtube });
+            tx.execute(
+                "INSERT INTO meetings (id, title, status, source, consent_confirmed_at, created_at,
+                                       updated_at, metadata_json)
+                 VALUES (?1, ?2, 'ready', ?3, NULL, ?4, ?4, ?5)",
+                params![
+                    id,
+                    meta.title,
+                    MeetingSource::Youtube.as_str(),
+                    secs,
+                    metadata.to_string()
+                ],
+            )?;
+            if let Some(project) = project_id {
+                tx.execute(
+                    "INSERT INTO meeting_folder_items (folder_id, meeting_id, added_at)
+                     VALUES (?1, ?2, ?3)",
+                    params![project, id, secs],
+                )?;
+            }
+            id
+        }
+    };
     // Die Herkunft des (kuenftigen) Transkripts: dieser Link. Untertitel und
     // eigene Transkription (A3) haengen ihre Eintraege dahinter an.
     let mut source = SourceRef::new("youtube", &video.video_id, Some(&meta.title));
@@ -234,14 +270,34 @@ fn prepare(
     store: &MeetingStore,
     video: &YoutubeRef,
     project_id: Option<&str>,
+    target: Option<&str>,
     now_ms: i64,
 ) -> Result<(String, i64), YoutubeError> {
     let conn = store
         .get_connection()
         .map_err(|e| YoutubeError::Store(e.to_string()))?;
-    if let Some(project) = project_id {
-        if !project_exists(&conn, project)? {
-            return Err(YoutubeError::Project);
+    match target {
+        // G1: ein Ziel muss ein leerer Eintrag sein, bevor etwas ins Netz geht.
+        Some(target_id) => {
+            let source: Option<String> = conn
+                .query_row(
+                    "SELECT source FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
+                    params![target_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            match source.as_deref() {
+                None => return Err(YoutubeError::Target("meeting_not_found")),
+                Some(crate::managers::meetings::empty::SOURCE_EMPTY) => {}
+                Some(_) => return Err(YoutubeError::Target("target_not_empty")),
+            }
+        }
+        None => {
+            if let Some(project) = project_id {
+                if !project_exists(&conn, project)? {
+                    return Err(YoutubeError::Project);
+                }
+            }
         }
     }
     let integration = ensure_integration(&conn, now_ms)?;
@@ -324,10 +380,23 @@ pub async fn add_youtube_source(
     project_id: Option<&str>,
     opts: &AddOptions,
 ) -> Result<AddedSource, YoutubeError> {
+    add_youtube_source_into(store, raw_url, project_id, None, opts).await
+}
+
+/// Wie `add_youtube_source`; mit `target` (G1, #70) fuellt der Link einen
+/// vorhandenen LEEREN Eintrag (`create_meeting_into`). Ein anderes Ziel wird
+/// abgewiesen, BEVOR etwas ins Netz geht (Tor, Audit und oEmbed bleiben wie sonst).
+pub async fn add_youtube_source_into(
+    store: &MeetingStore,
+    raw_url: &str,
+    project_id: Option<&str>,
+    target: Option<&str>,
+    opts: &AddOptions,
+) -> Result<AddedSource, YoutubeError> {
     let video = normalize_link(raw_url)?;
     let _flight = acquire(store, &video.video_id)?;
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let (integration_id, audit_id) = prepare(store, &video, project_id, now_ms)?;
+    let (integration_id, audit_id) = prepare(store, &video, project_id, target, now_ms)?;
 
     let fetched = oembed::fetch(&opts.oembed_base, &video, &opts.fetch).await;
     finish(
@@ -342,11 +411,12 @@ pub async fn add_youtube_source(
     let mut conn = store
         .get_connection()
         .map_err(|e| YoutubeError::Store(e.to_string()))?;
-    let id = create_meeting(
+    let id = create_meeting_into(
         &mut conn,
         &video,
         &meta,
         project_id,
+        target,
         chrono::Utc::now().timestamp_millis(),
     )?;
     drop(conn);

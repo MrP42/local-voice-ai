@@ -114,9 +114,21 @@ test("waehrend A transkribiert: zwei weitere Dateien in einem Zug -> wartend mit
   // In der Reihenfolge der Angabe eingereiht, jede mit Einwilligung.
   const imports = await calls(page, "meetings_import_file");
   expect(imports.map((c) => c.args)).toEqual([
-    { path: "C:/Audio/Datei A.m4a", consentConfirmed: true },
-    { path: "C:/Audio/Datei B.m4a", consentConfirmed: true },
-    { path: "C:/Audio/Datei C.m4a", consentConfirmed: true },
+    {
+      path: "C:/Audio/Datei A.m4a",
+      consentConfirmed: true,
+      targetMeetingId: null,
+    },
+    {
+      path: "C:/Audio/Datei B.m4a",
+      consentConfirmed: true,
+      targetMeetingId: null,
+    },
+    {
+      path: "C:/Audio/Datei C.m4a",
+      consentConfirmed: true,
+      targetMeetingId: null,
+    },
   ]);
   // A laeuft, B und C haben sofort ihre Besprechung mit Status "wartet".
   await expect(rowOf(page, "m-imp2")).toBeVisible();

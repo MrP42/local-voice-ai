@@ -424,6 +424,26 @@ impl ImportQueue {
         Ok(meeting)
     }
 
+    /// G1 (#70): reiht die Datei ein und fuellt damit einen vorhandenen LEEREN
+    /// Eintrag statt eine neue Besprechung anzulegen (Fehler: `target_not_empty`,
+    /// `meeting_not_found`).
+    pub fn enqueue_into(
+        &self,
+        target_id: &str,
+        title: &str,
+        source_path: &str,
+        consent_confirmed_at: Option<i64>,
+    ) -> Result<Meeting, String> {
+        let meeting = self
+            .inner
+            .deps
+            .store
+            .queue_enqueue_into(target_id, title, source_path, consent_confirmed_at)
+            .map_err(|e| super::empty::coded_error("queue_enqueue_failed", &e))?;
+        self.inner.notify();
+        Ok(meeting)
+    }
+
     /// Reiht eine gestoppte Datei ohne Audio wieder ein (`Fortsetzen`).
     pub fn requeue(&self, meeting_id: &str) -> Result<bool, String> {
         let queued = self

@@ -1614,4 +1614,42 @@ mod tests {
             PathBuf::from("lva-no-appdata-dir")
         );
     }
+
+    /// G1 (#70): ein leerer Eintrag (nur Notizen, noch keine Quelle) bringt den
+    /// Server nicht zum Stolpern: er steht in der Liste, `get_meeting` nennt ihn
+    /// leer bzw. zeigt die Notizen, `get_transcript` und die Suche melden keinen Fehler.
+    #[test]
+    fn an_empty_entry_is_listed_and_readable_without_errors() {
+        use crate::managers::meetings::notes::model::{NoteBlock, NoteBlockKind};
+        let fx = Fx::new();
+        let empty = fx.store.create_empty_meeting("Neue Besprechung", None).unwrap();
+        let list = fx.tool_json("list_meetings", json!({}));
+        assert!(list["meetings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == empty.id.as_str()));
+        let (text, is_error) = fx.tool("get_meeting", json!({ "id": empty.id }));
+        assert!(!is_error, "{text}");
+        assert!(text.contains("keinen Inhalt"), "{text}");
+        fx.store
+            .save_notes(
+                &empty.id,
+                &[NoteBlock {
+                    id: "N1".into(),
+                    kind: NoteBlockKind::Bullet,
+                    text: "Wichtige Vorab-Notiz".into(),
+                    at_ms: None,
+                    checked: false,
+                }],
+                0,
+            )
+            .unwrap();
+        let (text, is_error) = fx.tool("get_meeting", json!({ "id": empty.id }));
+        assert!(!is_error && text.contains("Wichtige Vorab-Notiz"), "{text}");
+        let (text, is_error) = fx.tool("get_transcript", json!({ "id": empty.id }));
+        assert!(!is_error, "{text}");
+        let (text, is_error) = fx.tool("search_meetings", json!({ "query": "Vorab" }));
+        assert!(!is_error, "{text}");
+    }
 }

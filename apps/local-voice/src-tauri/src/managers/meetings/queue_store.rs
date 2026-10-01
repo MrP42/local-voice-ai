@@ -15,7 +15,8 @@ use chrono::Utc;
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use ulid::Ulid;
 
-use super::store::{Meeting, MeetingStore};
+use super::empty::{fill_empty_tx, EmptyFill};
+use super::store::{Meeting, MeetingSource, MeetingStatus, MeetingStore};
 
 /// Migration U7 (nur ADD COLUMN und CREATE, vorhandene Zeilen bleiben
 /// unveraendert): `meetings.description` und die Warteschlange.
@@ -104,6 +105,47 @@ impl MeetingStore {
         )?;
         tx.commit()?;
         self.get_meeting(&id)?
+            .ok_or_else(|| anyhow!("meeting_not_found"))
+    }
+
+    /// G1 (#70): wie `queue_enqueue`, aber die Datei fuellt einen vorhandenen
+    /// LEEREN Eintrag (Titel, Projekte und Notizen bleiben; der Titel wird nur
+    /// ersetzt, solange er noch der vorgeschlagene ist). `target_not_empty`, wenn
+    /// das Ziel nicht (mehr) leer ist, `meeting_not_found`, wenn es fehlt; dann
+    /// geschieht nichts. Besprechung und Warteschlangenzeile in EINER Transaktion.
+    pub fn queue_enqueue_into(
+        &self,
+        target_id: &str,
+        title: &str,
+        source_path: &str,
+        consent_confirmed_at: Option<i64>,
+    ) -> Result<Meeting> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let now = Utc::now().timestamp();
+        let mut fill = EmptyFill::new(MeetingSource::Import, MeetingStatus::Ready);
+        fill.consent_confirmed_at = consent_confirmed_at;
+        fill.source_path = Some(source_path);
+        fill.title = Some(title);
+        fill.only_if_default = true;
+        fill_empty_tx(&tx, target_id, &fill)?;
+        // Der Status ist hier `queued` (nicht in `MeetingStatus`: ein Wert der Warteschlange).
+        tx.execute(
+            "UPDATE meetings SET status = ?2 WHERE id = ?1",
+            params![target_id, STATUS_QUEUED],
+        )?;
+        let seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM import_queue",
+            [],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            "INSERT INTO import_queue (meeting_id, seq, state, enqueued_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![target_id, seq, STATE_WAITING, now],
+        )?;
+        tx.commit()?;
+        self.get_meeting(target_id)?
             .ok_or_else(|| anyhow!("meeting_not_found"))
     }
 
@@ -672,5 +714,59 @@ mod tests {
             version as usize,
             crate::managers::meetings::store::MIGRATIONS.len()
         );
+    }
+
+    // ---- G1 (#70): Datei in einen leeren Eintrag --------------------------------
+
+    #[test]
+    fn a_file_enqueued_into_an_empty_entry_fills_that_very_meeting() {
+        let (_dir, s) = tmp_store();
+        let folder = s.folder_save(None, "Kunde", None).unwrap().id;
+        let empty = s.create_empty_meeting("Neue Besprechung", Some(&folder)).unwrap();
+        let other = enqueue(&s, "davor");
+        let filled = s
+            .queue_enqueue_into(&empty.id, "montag", "C:/in/montag.m4a", Some(5))
+            .unwrap();
+        assert_eq!(filled.id, empty.id, "kein neuer Eintrag");
+        assert_eq!(filled.status, STATUS_QUEUED);
+        assert_eq!(filled.source, "import");
+        assert_eq!(filled.source_path.as_deref(), Some("C:/in/montag.m4a"));
+        assert_eq!(filled.consent_confirmed_at, Some(5));
+        assert_eq!(filled.title, "montag", "vorgeschlagener Titel wird ersetzt");
+        assert_eq!(s.meeting_folder_ids(&empty.id).unwrap(), vec![folder]);
+        assert_eq!(order(&s), vec![other, empty.id.clone()], "hinten eingereiht");
+        assert_eq!(s.list_meetings(0, 10).unwrap().len(), 2, "keine Dublette");
+    }
+
+    #[test]
+    fn a_renamed_empty_entry_keeps_its_title_when_a_file_arrives() {
+        let (_dir, s) = tmp_store();
+        let empty = s.create_empty_meeting("Neue Besprechung", None).unwrap();
+        s.set_title(&empty.id, "Mein Kick-off").unwrap();
+        let filled = s
+            .queue_enqueue_into(&empty.id, "montag", "C:/in/montag.m4a", Some(5))
+            .unwrap();
+        assert_eq!(filled.title, "Mein Kick-off");
+    }
+
+    #[test]
+    fn a_file_is_refused_for_a_target_that_is_not_empty_and_nothing_is_queued() {
+        let (_dir, s) = tmp_store();
+        let live = s.create_meeting("Live", MeetingSource::Live, Some(1)).unwrap();
+        let err = s
+            .queue_enqueue_into(&live.id, "x", "C:/in/x.wav", Some(1))
+            .unwrap_err();
+        assert_eq!(err.to_string(), "target_not_empty");
+        let empty = s.create_empty_meeting("Neue Besprechung", None).unwrap();
+        s.queue_enqueue_into(&empty.id, "x", "C:/in/x.wav", Some(1)).unwrap();
+        let again = s
+            .queue_enqueue_into(&empty.id, "y", "C:/in/y.wav", Some(1))
+            .unwrap_err();
+        assert_eq!(again.to_string(), "target_not_empty", "ein zweiter Import");
+        let missing = s
+            .queue_enqueue_into("gibt-es-nicht", "x", "C:/in/x.wav", Some(1))
+            .unwrap_err();
+        assert_eq!(missing.to_string(), "meeting_not_found");
+        assert_eq!(order(&s), vec![empty.id], "nur die erste Datei wartet");
     }
 }

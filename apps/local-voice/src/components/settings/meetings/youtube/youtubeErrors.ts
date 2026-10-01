@@ -30,6 +30,9 @@ const KNOWN = new Set([
   "youtube_tool_start",
   "youtube_no_subtitles",
   "youtube_cancelled",
+  // G1 (#70): der Link sollte einen leeren Eintrag fuellen, der es nicht mehr ist.
+  "target_not_empty",
+  "meeting_not_found",
 ]);
 
 export const youtubeErrorCode = (raw: string): string =>

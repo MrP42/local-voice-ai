@@ -37,6 +37,8 @@ import { FolderPickerDialog } from "./search/FolderPickerDialog";
 import { MeetingActions } from "./MeetingActions";
 import { MeetingDetailsDialog } from "./MeetingDetailsDialog";
 import { MeetingHeader } from "./MeetingHeader";
+import { EmptyStartCard } from "./EmptyStartCard";
+import { isEmptyEntry } from "./emptyEntry";
 import { RetranscribeDialog } from "./RetranscribeDialog";
 import { SpeakerPopover } from "./SpeakerPopover";
 import { SpeakerNamesDialog } from "./SpeakerNamesDialog";
@@ -124,6 +126,20 @@ interface MeetingDetailProps {
   live?: boolean;
   /** Schmales Fenster: die Aktionen wandern ins Menue des Kopfes. */
   compact?: boolean;
+  /**
+   * G1 (#70): die Wege, einen LEEREN Eintrag zu fuellen (Startflaeche in der
+   * Mitte). Ohne Angabe gibt es keine Startflaeche.
+   */
+  fill?: {
+    record: () => void;
+    importFile: () => void;
+    link: () => void;
+    recordDisabled: boolean;
+    importDisabled: boolean;
+  };
+  /** G1: der Titel ist gleich nach dem Anzeigen umbenennbar (eben angelegt). */
+  autoRename?: boolean;
+  onAutoRenameStarted?: () => void;
 }
 
 export const MeetingDetail: React.FC<MeetingDetailProps> = ({
@@ -139,9 +155,13 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   onPersonAsk,
   live = false,
   compact = false,
+  fill,
+  autoRename = false,
+  onAutoRenameStarted,
 }) => {
   const { t } = useTranslation();
   const meetingId = meeting.id;
+  const emptyEntry = isEmptyEntry(meeting);
   const meetingTitle = meeting.title;
   // Dialoge und Anfragen aus Menue und Kopf.
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -839,7 +859,19 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         }}
         tabsLabel={t("meetings.layout.contentTabs")}
         menu={compact ? actions(true) : undefined}
+        autoEdit={autoRename}
+        onAutoEditStarted={onAutoRenameStarted}
       />
+
+      {emptyEntry && fill && (
+        <EmptyStartCard
+          onRecord={fill.record}
+          onImport={fill.importFile}
+          onLink={fill.link}
+          recordDisabled={fill.recordDisabled}
+          importDisabled={fill.importDisabled}
+        />
+      )}
 
       {meeting.status === "cancelled" && !jobProgress && (
         <div
@@ -1064,7 +1096,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           {t("meetings.list.loading")}
         </p>
       ) : segments.length === 0 ? (
-        <p className="text-sm text-text/60">{t("meetings.live.empty")}</p>
+        <p className="text-sm text-text/60">
+          {emptyEntry
+            ? t("meetings.empty.transcriptEmpty")
+            : t("meetings.live.empty")}
+        </p>
       ) : (
         <ProvenanceArea
           subject={{

@@ -23,6 +23,11 @@ interface StartRecordingDialogProps {
   /** Termin, dem die Aufnahme gehört (Kalender), samt Knopf zum Lösen. */
   eventChoice: CalEvent | null;
   onClearEvent: () => void;
+  /**
+   * G1 (#70): Titel des leeren Eintrags, in den die Aufnahme geht. Dann entfaellt
+   * die Projektwahl (der Eintrag liegt schon in seinen Projekten).
+   */
+  targetTitle?: string | null;
   folders: Folder[];
   projectId: string;
   onProjectChange: (id: string) => void;
@@ -49,6 +54,7 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
   onTitleChange,
   eventChoice,
   onClearEvent,
+  targetTitle = null,
   folders,
   projectId,
   onProjectChange,
@@ -133,24 +139,30 @@ export const StartRecordingDialog: React.FC<StartRecordingDialogProps> = ({
           )}
         </div>
 
-        <div className="space-y-1" data-testid="start-project">
-          <span
-            id="start-project-label"
-            className="text-xs font-medium text-text/60"
-          >
-            {t("meetings.startDialog.project")}
-          </span>
-          <Select
-            ariaLabel={t("meetings.startDialog.project")}
-            value={knownProject}
-            options={projectOptions}
-            isClearable={false}
-            disabled={busy}
-            menuPortal
-            placeholder={t("meetings.startDialog.project")}
-            onChange={(id) => onProjectChange(id ?? NO_PROJECT)}
-          />
-        </div>
+        {targetTitle !== null ? (
+          <p className="text-xs text-text/70" data-testid="start-target">
+            {t("meetings.empty.fillsEntry", { title: targetTitle })}
+          </p>
+        ) : (
+          <div className="space-y-1" data-testid="start-project">
+            <span
+              id="start-project-label"
+              className="text-xs font-medium text-text/60"
+            >
+              {t("meetings.startDialog.project")}
+            </span>
+            <Select
+              ariaLabel={t("meetings.startDialog.project")}
+              value={knownProject}
+              options={projectOptions}
+              isClearable={false}
+              disabled={busy}
+              menuPortal
+              placeholder={t("meetings.startDialog.project")}
+              onChange={(id) => onProjectChange(id ?? NO_PROJECT)}
+            />
+          </div>
+        )}
 
         <div data-testid="record-template">
           <TemplatePicker
