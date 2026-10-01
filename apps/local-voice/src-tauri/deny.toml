@@ -38,21 +38,14 @@ allow = [
 # Deliberately NOT allowed, so the build fails loudly if one ever appears:
 # GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-*, SSPL, BUSL, Commons Clause, CC-BY-NC.
 
-exceptions = []
-
-# OFFEN (Issue #7, Entscheidung Patrick): `cargo deny check licenses` ist ROT, weil
-# mp3lame-encoder 0.2.5 und mp3lame-sys 0.1.11 (MP3-Export, LAME als C-Quellen)
-# unter LGPL-3.0 stehen - die Aussage im Kopf dieser Datei ("kein LGPL-Crate auf dem
-# Windows-Ziel") stimmt dafuer nicht. Beide Crates werden statisch gelinkt.
-# Entweder bewusst zulassen (dann als eigener Commit, Vorschlag):
-#
-#   exceptions = [
-#       { allow = ["LGPL-3.0"], crate = "mp3lame-encoder" },
-#       { allow = ["LGPL-3.0"], crate = "mp3lame-sys" },
-#   ]
-#
-# oder den MP3-Export auf eine permissive Bibliothek umstellen bzw. entfernen.
-# THIRD-PARTY-NOTICES.md fuehrt beide Crates unabhaengig davon auf.
+# Entscheidung Patrick 01.10.2026 (Issue #7/#11): LGPL-3.0 fuer den MP3-Export bewusst
+# zugelassen. mp3lame-encoder 0.2.5 / mp3lame-sys 0.1.11 werden statisch gelinkt; beide
+# stehen in THIRD-PARTY-NOTICES.md. Vor einer kommerziellen Weitergabe der App die
+# LGPL-Pflichten (Austauschbarkeit der Bibliothek) klaeren.
+exceptions = [
+    { allow = ["LGPL-3.0"], crate = "mp3lame-encoder" },
+    { allow = ["LGPL-3.0"], crate = "mp3lame-sys" },
+]
 
 [advisories]
 version = 2
