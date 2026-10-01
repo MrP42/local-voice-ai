@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { createHash } from "node:crypto";
+import { cpus } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,12 +16,24 @@ const devPort =
   Number(process.env.LV_DEV_PORT) || 21000 + (pathHash % 4000) * 2;
 const baseURL = `http://localhost:${devPort}`;
 
+// Worker: ein Viertel der Kerne, hoechstens 8. Der Standard (die Haelfte der Kerne,
+// hier 16) startet ebenso viele Chromium-Instanzen gegen EINEN Vite-Server; auf
+// einem Arbeitsplatz, der nebenher baut, bekommt dann keine Instanz genug CPU, und
+// Klicks warten ueber die Frist hinaus auf das naechste Bild ("waiting for element
+// to be visible, enabled and stable"). Die Laufzeit steigt dafuer nur maessig.
+const localWorkers = Math.max(2, Math.min(8, Math.floor(cpus().length / 4)));
+
 export default defineConfig({
   testDir: "./tests",
+  globalSetup: "./tests/global-setup.ts",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: process.env.CI ? 1 : localWorkers,
+  // Fristen sind Fehlergrenzen, keine Messwerte: ein gesunder Test braucht
+  // Sekunden, ein ausgelasteter Rechner das Mehrfache.
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
   reporter: "html",
   use: {
     baseURL,
