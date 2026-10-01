@@ -4,6 +4,7 @@ gegen eine SANDBOX-Datenbank und spricht das Protokoll wie ein KI-Client.
 
     python scripts/mcp_smoke.py <pfad-zu-local-voice-ai.exe> [--keep]
     python scripts/mcp_smoke.py --write [<pfad-zu-local-voice-ai.exe>] [--keep] [--out ergebnis.json]
+    python scripts/mcp_smoke.py --workflows [<pfad-zu-local-voice-ai.exe>] [--keep] [--out ergebnis.json]
 
 Ablauf (jeder Schritt bricht bei einer Abweichung mit Exit 1 ab):
   1. Sandbox unter %TEMP%: zwei synthetische Besprechungen ueber die
@@ -38,6 +39,15 @@ die Oberflaeche es taete; die Zustimmung des Nutzers ebenfalls. Geprueft werden:
   - Protokollversion 2026-07-28 (server/discover, _meta, -32022) neben dem alten Handshake;
   - `ctl status --json` Exit 0, ohne App Exit 2, Werkzeug „aus“ Exit 3;
   - `--audit-dump --json` enthaelt alle Aktionen, Aufbewahrung gedeckelt, kein Token im Klartext.
+`--workflows` (B8, AK10) prueft die Werkzeuge der Automationen ueber den MCP-Proxy und `ctl` gegen dieselbe
+headless Sandbox-Instanz (Engine mit Arbeiter, zwei Ablaeufe direkt in der Sandbox-Datenbank, vier Zugaenge:
+voll, nur lesend, fragen, ohne Recht). Geprueft werden:
+  - list_workflows (Felder, keine Definition), run_workflow als Trockenlauf (Standard, Herkunft agent) und
+    get_run (Zustand done, Schritte mit Plan, ohne eingesetzte Parameter und Ausloeserdaten);
+  - live=true nur bei scharfem, eingeschaltetem Ablauf (sonst Fehler und KEIN Lauf); request_id ist idempotent;
+  - `ctl workflow list|run|get --json`: Exit 0; ohne Recht Exit 3, ohne Token Exit 4, fragen Exit 5 und die
+    Freigabe gilt nur fuer dieselben Argumente (live);
+  - der Audit-Dump enthaelt workflow.read/workflow.run, Verweigerungen und kein Token.
 Die produktive Datenbank und die Pipe einer laufenden App bleiben unberuehrt (Sandbox-Ordner,
 Pipe-Name `lva-mcp-smoke-...`).
 """
@@ -667,6 +677,329 @@ def run_write(exe: Path, keep: bool, out: "str | None") -> int:
             shutil.rmtree(sandbox, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# --workflows: Automationen ueber die Agentenbruecke (B8, AK10)
+# ---------------------------------------------------------------------------
+
+WF_ARMED = "WF-SMOKE-ARMED"
+WF_DRAFT = "WF-SMOKE-DRAFT"
+
+
+def wf_definition(name: str, steps: list, variables: "dict | None" = None) -> str:
+    definition = {"schema": "lva-workflow@1", "name": name, "trigger": {"type": "manual"}, "steps": steps}
+    if variables:
+        definition["variables"] = variables
+    return json.dumps(definition, ensure_ascii=False)
+
+
+def seed_workflows(bridge: "Bridge") -> "dict[str, tuple[str, str]]":
+    """Zugaenge, Rechte und zwei Ablaeufe, wie die Oberflaeche sie anlegt (hier direkt in der
+    Sandbox-Datenbank). Rueckgabe: Name -> (Token, Kennung des Zugangs)."""
+    now = int(time.time() * 1000)
+    conn = bridge.db()
+    clients: "dict[str, tuple[str, str]]" = {}
+    with conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO integrations (id, kind, label, enabled, direction, config_json, created_at, updated_at)"
+            " VALUES ('agents', 'agent', 'Externe Agenten', 1, 'both', '{}', ?1, ?1)",
+            (now,),
+        )
+        for cap in ("workflow.read", "workflow.run"):
+            conn.execute(
+                "INSERT OR REPLACE INTO integration_grants (integration_id, capability, caller, mode)"
+                " VALUES ('agents', ?1, 'agent_external', 'allow')",
+                (cap,),
+            )
+        for key, label, tools in (
+            ("full", "Smoke-Agent", {"list_workflows": "allow", "run_workflow": "allow", "get_run": "allow"}),
+            ("readonly", "Nur-Lesen-Agent", {"list_workflows": "allow", "get_run": "allow"}),
+            ("ask", "Frage-Agent", {"list_workflows": "allow", "run_workflow": "ask", "get_run": "allow"}),
+            ("none", "Rechtloser Agent", {}),
+        ):
+            token = new_token()
+            client_id = f"C-WF-{key.upper()}"
+            conn.execute(
+                "INSERT INTO agent_clients (id, label, integration_id, token_hash, created_at)"
+                " VALUES (?1, ?2, 'agents', ?3, ?4)",
+                (client_id, label, hashlib.sha256(token.encode()).hexdigest(), now),
+            )
+            for tool, mode in tools.items():
+                conn.execute(
+                    "INSERT INTO agent_tool_grants (client_id, tool, mode) VALUES (?1, ?2, ?3)",
+                    (client_id, tool, mode),
+                )
+            clients[key] = (token, client_id)
+        # Ein scharfer Ablauf (wartet nur: ohne Aussenwirkung) und ein Entwurf (nicht scharf).
+        conn.execute(
+            "INSERT INTO workflows (id, name, enabled, dry_run, schema_version, definition_json, created_at, updated_at)"
+            " VALUES (?1, 'Smoke Wartezeit', 1, 0, 1, ?2, ?3, ?3)",
+            (
+                WF_ARMED,
+                wf_definition(
+                    "Smoke Wartezeit",
+                    [{"id": "warten", "action": "wait", "params": {"minutes": 1}}],
+                    {"thema": {"type": "string", "default": "Budget"}},
+                ),
+                now,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO workflows (id, name, enabled, dry_run, schema_version, definition_json, created_at, updated_at)"
+            " VALUES (?1, 'Smoke Entwurf', 1, 1, 1, ?2, ?3, ?3)",
+            (
+                WF_DRAFT,
+                wf_definition(
+                    "Smoke Entwurf",
+                    [
+                        {"id": "hinweis", "action": "notify.local", "params": {"title": "Hallo aus dem Entwurf"}},
+                        {"id": "pause", "action": "wait", "params": {"minutes": 5}},
+                    ],
+                ),
+                now,
+            ),
+        )
+    conn.close()
+    return clients
+
+
+def run_workflows(exe: Path, keep: bool, out: "str | None") -> int:
+    sandbox = Path(tempfile.mkdtemp(prefix="lva-mcp-wf-smoke-"))
+    bridge = Bridge(exe, sandbox, f"lva-mcp-smoke-{uuid.uuid4().hex[:12]}", "http://127.0.0.1:9/oembed")
+    results: list[dict] = []
+    clients_open: "list[Client]" = []
+
+    def record(name: str, ok: bool, note: str = "") -> None:
+        results.append({"case": name, "ok": ok, "note": note})
+        print(f"{'OK  ' if ok else 'FAIL'} {name}  {note}")
+        if not ok:
+            raise SystemExit(f"Abweichung: {name} {note}")
+
+    def exit_is(name: str, got: int, expected: int, note: str = "") -> None:
+        record(f"{name} (Exit {got}, erwartet {expected})", got == expected, note)
+
+    def proxy(token: str) -> "Client":
+        c = Client(exe, dict(bridge.env, LVA_AGENT_TOKEN=token))
+        clients_open.append(c)
+        c.request(
+            "initialize",
+            {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "mcp_smoke", "version": "1"}},
+        )
+        return c
+
+    def runs() -> "list[sqlite3.Row]":
+        conn = bridge.db()
+        rows = conn.execute("SELECT * FROM workflow_runs ORDER BY created_at").fetchall()
+        conn.close()
+        return rows
+
+    try:
+        print(f"Sandbox: {sandbox}")
+        bridge.start()
+        seeded = seed_workflows(bridge)
+        token, client_id = seeded["full"]
+        (bridge.appdata / "settings_store.json").write_text(
+            json.dumps({"settings": {"meeting_mcp_enabled": True, "meeting_mcp_include_transcript": True}}),
+            encoding="utf-8",
+        )
+
+        # --- MCP-Proxy: die Werkzeuge sind da -----------------------------------------------
+        client = proxy(token)
+        names = [t["name"] for t in client.request("tools/list", {})["result"]["tools"]]
+        record(
+            "tools/list: list_workflows, run_workflow, get_run",
+            all(n in names for n in ("list_workflows", "run_workflow", "get_run")),
+            ",".join(names),
+        )
+        ro = proxy(seeded["readonly"][0])
+        ro_names = [t["name"] for t in ro.request("tools/list", {})["result"]["tools"]]
+        record(
+            "tools/list ohne Starten-Recht: run_workflow fehlt, Lesen bleibt",
+            "run_workflow" not in ro_names and "list_workflows" in ro_names and "get_run" in ro_names,
+        )
+
+        # --- list_workflows ------------------------------------------------------------------
+        res = client.call("list_workflows", {})
+        record("list_workflows ohne Fehler", not res["isError"], res["content"][0]["text"][:80])
+        listing = res["structuredContent"]
+        by_id = {w["id"]: w for w in listing["workflows"]}
+        record("list_workflows: beide Ablaeufe, count/total", listing["count"] == 2 and listing["total"] == 2 and WF_ARMED in by_id and WF_DRAFT in by_id)
+        armed, draft = by_id[WF_ARMED], by_id[WF_DRAFT]
+        record(
+            "list_workflows: Felder (name, enabled, armed, trigger, steps, variables, last_run)",
+            all(k in armed for k in ("name", "enabled", "armed", "can_run_live", "trigger", "steps", "variables", "open_runs", "last_run"))
+            and armed["name"] == "Smoke Wartezeit"
+            and armed["enabled"] is True
+            and armed["armed"] is True
+            and draft["armed"] is False
+            and armed["can_run_live"] is True
+            and draft["can_run_live"] is False
+            and armed["trigger"] == "manual"
+            and armed["steps"] == 1
+            and armed["variables"] == [{"name": "thema", "type": "string", "required": False}]
+            and armed["last_run"] is None,
+            json.dumps(armed, ensure_ascii=False)[:160],
+        )
+        record("list_workflows liefert keine Definition", "definition" not in json.dumps(listing) and "params" not in json.dumps(listing))
+
+        # --- run_workflow: Trockenlauf ---------------------------------------------------------
+        res = client.call("run_workflow", {"workflow_id": WF_DRAFT})
+        record("run_workflow (Standard) -> Trockenlauf", not res["isError"] and res["structuredContent"]["dry_run"] is True, res["content"][0]["text"][:100])
+        started = res["structuredContent"]
+        run_id = started["run_id"]
+        record(
+            "run_workflow: erwartete Felder",
+            all(k in started for k in ("run_id", "workflow_id", "workflow_name", "dry_run", "created", "origin", "state", "hint"))
+            and started["origin"] == "agent"
+            and started["created"] is True
+            and started["workflow_id"] == WF_DRAFT,
+        )
+        rows = runs()
+        record(
+            "Lauf in der Datenbank: Herkunft agent, Trockenlauf, Zugang im Schluessel",
+            len(rows) == 1 and rows[0]["origin"] == "agent" and rows[0]["dry_run"] == 1 and client_id in rows[0]["trigger_key"],
+            str([dict(r)["trigger_key"] for r in rows]),
+        )
+
+        # --- get_run: wartet, bis der Lauf fertig ist ---------------------------------------------
+        deadline = time.time() + 30
+        log: dict = {}
+        while time.time() < deadline:
+            res = client.call("get_run", {"run_id": run_id})
+            log = res["structuredContent"]
+            if log["finished"]:
+                break
+            time.sleep(0.3)
+        record("get_run: der Trockenlauf wird fertig (done)", log.get("finished") is True and log["run"]["state"] == "done", json.dumps(log.get("run"), ensure_ascii=False)[:160])
+        run = log["run"]
+        record(
+            "get_run: erwartete Felder des Laufs",
+            all(k in run for k in ("id", "workflow_id", "workflow_name", "origin", "state", "dry_run", "created_at", "started_at", "ended_at", "error", "error_code"))
+            and run["origin"] == "agent"
+            and run["dry_run"] is True
+            and run["workflow_name"] == "Smoke Entwurf",
+        )
+        steps = log["steps"]
+        record(
+            "get_run: zwei Schritte mit Aktion, Titel, Zustand und Plan-Ausgabe",
+            log["steps_total"] == 2
+            and [s["step_id"] for s in steps] == ["hinweis", "pause"]
+            and steps[0]["action"] == "notify.local"
+            and steps[0]["output"]["status"] == "planned"
+            and all(k in steps[0] for k in ("title", "state", "attempt", "error", "started_at", "ended_at", "output")),
+            json.dumps(steps[0], ensure_ascii=False)[:160],
+        )
+        flat = json.dumps(log, ensure_ascii=False)
+        record("get_run: keine eingesetzten Parameter, Definition oder Ausloeserdaten", "params" not in flat and "definition" not in flat and "context" not in flat)
+        res = client.call("get_run", {"run_id": "01GIBTESNICHT"})
+        record("get_run: unbekannter Lauf -> Fehler im Klartext", res["isError"] and "gibt es nicht" in res["content"][0]["text"])
+
+        # --- scharf nur bei scharfem Ablauf ---------------------------------------------------------
+        before = len(runs())
+        res = client.call("run_workflow", {"workflow_id": WF_DRAFT, "live": True})
+        record(
+            "run_workflow live=true bei nicht scharfem Ablauf -> Fehler, KEIN Lauf",
+            res["isError"] and "nicht scharf" in res["content"][0]["text"] and len(runs()) == before,
+            res["content"][0]["text"][:100],
+        )
+        res = client.call("run_workflow", {"workflow_id": WF_ARMED, "live": True, "vars": {"thema": "Smoke"}, "request_id": "smoke-live-1"})
+        record("run_workflow live=true bei scharfem Ablauf -> echter Lauf", not res["isError"] and res["structuredContent"]["dry_run"] is False, res["content"][0]["text"][:100])
+        live_id = res["structuredContent"]["run_id"]
+        again = client.call("run_workflow", {"workflow_id": WF_ARMED, "live": True, "vars": {"thema": "Smoke"}, "request_id": "smoke-live-1"})
+        record(
+            "dieselbe request_id -> derselbe Lauf (created=false), kein zweiter",
+            again["structuredContent"]["run_id"] == live_id and again["structuredContent"]["created"] is False and len(runs()) == before + 1,
+        )
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            live = client.call("get_run", {"run_id": live_id})["structuredContent"]
+            if live["run"]["wait_reason"]:
+                break
+            time.sleep(0.3)
+        record(
+            "get_run: der echte Lauf wartet im Schritt „Warten“ (ohne Aussenwirkung)",
+            live["run"]["dry_run"] is False
+            and live["run"]["state"] in ("queued", "running")
+            and live["run"]["wait_reason"] == "defer"
+            and live["steps"][0]["step_id"] == "warten"
+            and live["steps"][0]["state"] == "waiting"
+            and "Wartet" in (live["steps"][0]["error"] or ""),
+            json.dumps(live["run"], ensure_ascii=False)[:160],
+        )
+        res = client.call("run_workflow", {"workflow_id": WF_ARMED, "vars": {"unbekannt": 1}})
+        record("run_workflow: nicht deklarierte Variable abgewiesen", res["isError"] and "unbekannt" in res["content"][0]["text"])
+        res = client.call("run_workflow", {"workflow_id": WF_ARMED, "dry_run": False})
+        record("run_workflow: unbekanntes Argument abgewiesen", res["isError"])
+
+        # --- ctl --------------------------------------------------------------------------------------
+        code, text, _ = bridge.ctl("workflow", "list", "--json", token=token)
+        exit_is("ctl workflow list --json", code, 0)
+        record("ctl workflow list: Ablaeufe", json.loads(text)["result"]["result"]["count"] == 2)
+        code, text, _ = bridge.ctl("workflow", "run", WF_DRAFT, "--json", token=token)
+        exit_is("ctl workflow run <id> --json (Trockenlauf)", code, 0)
+        ctl_run = json.loads(text)["result"]["result"]
+        record("ctl workflow run: dry_run und Lauf-Kennung", ctl_run["dry_run"] is True and bool(ctl_run["run_id"]))
+        code, text, _ = bridge.ctl("workflow", "get", ctl_run["run_id"], "--json", token=token)
+        exit_is("ctl workflow get <run> --json", code, 0)
+        record("ctl workflow get: Lauf mit Herkunft agent", json.loads(text)["result"]["result"]["run"]["origin"] == "agent")
+        code, text, _ = bridge.ctl("workflow", "run", WF_DRAFT, "--live", "--json", token=token)
+        exit_is("ctl workflow run --live bei nicht scharfem Ablauf (Fehler, nicht Erfolg)", code, 1, json.loads(text)["error"]["code"])
+        code, _, _ = bridge.ctl("workflow", "run", WF_ARMED, "--live", "--vars", '{"thema":"ctl"}', "--json", token=token)
+        exit_is("ctl workflow run --live bei scharfem Ablauf", code, 0)
+
+        # Ohne Recht: Exit 3; ohne Token: Exit 4
+        code, text, _ = bridge.ctl("workflow", "run", WF_DRAFT, "--json", token=seeded["readonly"][0])
+        exit_is("ctl workflow run ohne Recht (nur Lesen)", code, 3, json.loads(text)["error"]["code"])
+        code, text, _ = bridge.ctl("workflow", "list", "--json", token=seeded["none"][0])
+        exit_is("ctl workflow list ohne jedes Recht", code, 3, json.loads(text)["error"]["code"])
+        code, _, _ = bridge.ctl("workflow", "list", "--json")
+        exit_is("ctl workflow list ohne Token", code, 4)
+        record("ohne Recht entstand kein weiterer Lauf", all(r["origin"] == "agent" for r in runs()) and len(runs()) == before + 3, str(len(runs())))
+
+        # fragen: Exit 5, nach der Freigabe der Nutzer laeuft derselbe Aufruf; die Freigabe gilt an die Argumente gebunden.
+        ask_token = seeded["ask"][0]
+        n_before = len(runs())
+        code, text, _ = bridge.ctl("workflow", "run", WF_ARMED, "--live", "--json", token=ask_token)
+        exit_is("ctl workflow run (fragen) wartet auf den Nutzer", code, 5)
+        aid = json.loads(text)["result"]["approval_id"]
+        record("ohne Freigabe kein Lauf", len(runs()) == n_before)
+        user_decides(bridge, aid, True)
+        code, text, _ = bridge.ctl("workflow", "run", WF_ARMED, "--approval", aid, "--json", token=ask_token)
+        exit_is("freigegeben fuer live, aufgerufen OHNE live -> abgelehnt (Argumente gebunden)", code, 1, json.loads(text)["error"]["code"])
+        code, _, _ = bridge.ctl("workflow", "run", WF_ARMED, "--live", "--approval", aid, "--json", token=ask_token)
+        exit_is("freigegeben, mit denselben Argumenten", code, 0)
+        record("genau ein Lauf kam dazu", len(runs()) == n_before + 1)
+
+        # --- Audit ---------------------------------------------------------------------------------------
+        dump = bridge.audit_dump()
+        caps = dump["by_capability"]
+        record("audit-dump: workflow.read und workflow.run stehen drin", caps.get("workflow.read", 0) >= 1 and caps.get("workflow.run", 0) >= 1, json.dumps(caps))
+        agent_rows = [e for e in dump["entries"] if e["caller"] == "agent_external" and e["capability"] in ("workflow.read", "workflow.run")]
+        record("audit-dump: Aktionen mit Zugang im Ziel", any("Smoke-Agent" in (e["target"] or "") for e in agent_rows))
+        record("audit-dump: Verweigerungen (ohne Recht) stehen als denied drin", any(e["outcome"] == "denied" for e in dump["entries"]))
+        raw = json.dumps(dump)
+        record("kein Token im Audit-Dump", not any(t in raw for t, _ in seeded.values()))
+        return 0
+    except SystemExit as e:
+        print(f"FEHLER: {e}", file=sys.stderr)
+        return 1
+    finally:
+        for c in clients_open:
+            try:
+                c.proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        bridge.stop()
+        failed = [r for r in results if not r["ok"]]
+        print(f"\n{len(results) - len(failed)} von {len(results)} Faellen wie erwartet.")
+        if out:
+            Path(out).write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+        if keep:
+            print(f"Sandbox bleibt: {sandbox}")
+        else:
+            shutil.rmtree(sandbox, ignore_errors=True)
+
+
+
 def names_read_only() -> "list[str]":
     return ["list_meetings", "search_meetings", "get_meeting", "get_transcript", "get_provenance"]
 
@@ -674,6 +1007,14 @@ def names_read_only() -> "list[str]":
 def main() -> int:
     argv = sys.argv[1:]
     out = argv[argv.index("--out") + 1] if "--out" in argv and argv.index("--out") + 1 < len(argv) else None
+    if "--workflows" in argv:
+        positional = [a for i, a in enumerate(argv) if not a.startswith("--") and not (i > 0 and argv[i - 1] == "--out")]
+        default = Path(__file__).resolve().parents[1] / "apps" / "local-voice" / "src-tauri" / "target" / "debug" / "local-voice-ai.exe"
+        exe = Path(positional[0]).resolve() if positional else default
+        if not exe.is_file():
+            print(f"EXE nicht gefunden: {exe}", file=sys.stderr)
+            return 2
+        return run_workflows(exe, "--keep" in argv, out)
     if "--write" in argv:
         positional = [a for i, a in enumerate(argv) if not a.startswith("--") and not (i > 0 and argv[i - 1] == "--out")]
         default = Path(__file__).resolve().parents[1] / "apps" / "local-voice" / "src-tauri" / "target" / "debug" / "local-voice-ai.exe"

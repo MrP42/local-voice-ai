@@ -11,6 +11,7 @@ pub fn all() -> Vec<(&'static str, &'static str)> {
         ("eingangsordner-word", FOLDER_TO_WORD),
         ("termin-protokoll-mail", TERMIN_MAIL),
         ("kanal-wissen", KANAL_WISSEN),
+        ("besprechung-ergebnis", BESPRECHUNG_ERGEBNIS),
     ]
 }
 
@@ -37,3 +38,7 @@ pub const TERMIN_MAIL: &str = include_str!("templates/termin-protokoll-mail.json
 /// Rechte der App-Bausteine (B2, Schritt „Video als Quelle anlegen“). Die Variable `profil` ist das
 /// Themenprofil (R10), `schwelle` die Grenze der Relevanz.
 pub const KANAL_WISSEN: &str = include_str!("templates/kanal-wissen.json");
+/// Besprechung fertig -> extrahieren -> Vault-Notiz, (Kalender), Frist-Erinnerungen (C4, AK6, AK7). Die
+/// Kennungen `vault-1` und `m365-1` sind Platzhalter fuer die Integrationen des Nutzers; der Editor
+/// laesst sie waehlen. Die Erinnerung steht zuletzt, weil der Lauf auf sie wartet.
+pub const BESPRECHUNG_ERGEBNIS: &str = include_str!("templates/besprechung-ergebnis.json");

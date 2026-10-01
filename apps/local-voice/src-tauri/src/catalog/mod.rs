@@ -53,6 +53,9 @@ pub enum Purpose {
     /// M4-P4b: GGUF-Embedding-Modell fuer den zweiten Server (Besprechungs-
     /// suche). Getrennt von `LlmModel`, damit es nie als Chat-Modell erscheint.
     LlmEmbedding,
+    /// D3: Bild-Projektor (`--mmproj`) fuer die Bildanalyse von Folien. Nie in der
+    /// Liste der Sprachmodelle: allein nutzlos, nur mit seinem Modell zu starten.
+    LlmProjector,
     /// M3-P3a: Sprechertrennungs-Modell (Kategorie "Sprechertrennung",
     /// `managers::meetings::diarize`). Nie im ASR-Katalog: es transkribiert nicht.
     Diarization,
@@ -583,6 +586,7 @@ mod tests {
             Purpose::LlmRuntime,
             Purpose::LlmModel,
             Purpose::LlmEmbedding,
+            Purpose::LlmProjector,
             Purpose::Diarization,
         ] {
             for e in tts_entries(purpose) {
@@ -621,10 +625,24 @@ mod tests {
             .filter(|v| v.license_non_commercial)
             .map(|v| v.id.as_str())
             .collect();
+        // Lessac (Blizzard-2013-Forschungslizenz) und Ryan (CC-BY-NC-SA-4.0) selbst sowie
+        // die davon feinabgestimmten Stimmen (K1): Thorsten, Kerstin, Amy, Alan, Alba.
         assert_eq!(
             nc,
-            BTreeSet::from(["en_US-lessac-high", "en_US-lessac-medium", "en_US-ryan-high"])
+            BTreeSet::from([
+                "de_DE-kerstin-low",
+                "de_DE-thorsten-high",
+                "de_DE-thorsten-medium",
+                "en_GB-alan-medium",
+                "en_GB-alba-medium",
+                "en_US-amy-medium",
+                "en_US-lessac-high",
+                "en_US-lessac-medium",
+                "en_US-ryan-high",
+            ])
         );
+        // Von Grund auf trainiert (M-AILABS, BSD-3-Clause): frei.
+        assert!(!voices.iter().any(|v| v.id == "de_DE-eva_k-x_low" && v.license_non_commercial));
     }
 
     #[test]

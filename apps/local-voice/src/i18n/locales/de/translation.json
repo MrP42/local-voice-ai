@@ -860,6 +860,17 @@
       "semanticSearchProgress": "{{done}} / {{total}} Besprechungen",
       "semanticSearchPaused": "pausiert, neuer Versuch in Kürze",
       "semanticSearchOff": "Aus – nur Stichwortsuche",
+      "slideVision": "Bildanalyse für Folien",
+      "slideVisionDescription": "Liest den Text erkannter Folien mit einem lokalen Bildmodell (Gemma 4 E4B) noch einmal – Zahlen und Tabellen stimmen dann – und beschreibt jede Folie in einem Satz. Braucht eine Grafikkarte und den Bild-Projektor (rund 1 GB, nur auf Knopfdruck geladen). Das Modell wird nur für den Folienauftrag geladen und danach wieder entladen. Ohne diese Voraussetzungen bleibt es bei der Windows-Texterkennung.",
+      "slideVisionState": "Bild-Projektor",
+      "slideVisionStateDescription": "Der Bild-Projektor wird nur auf Knopfdruck geladen. Ohne ihn werden Folien weiter mit der Windows-Texterkennung gelesen.",
+      "slideVisionDownload": "Bild-Projektor laden ({{size}} MB)",
+      "slideVisionDownloading": "Wird geladen … {{percent}} %",
+      "slideVisionDownloadFailed": "Download fehlgeschlagen. Bitte erneut versuchen.",
+      "slideVisionNoGpu": "Keine geeignete Grafikkarte erkannt – es bleibt bei der Windows-Texterkennung",
+      "slideVisionLowVram": "Zu wenig freier Grafikspeicher (mindestens 6 GB) – es bleibt bei der Windows-Texterkennung",
+      "slideVisionNoModel": "Gemma 4 E4B fehlt – unter „Modelle“ laden",
+      "slideVisionReady": "Bereit",
       "echoCancellation": "Echo-Unterdrückung",
       "echoCancellationDescription": "Nimmt die Gegenseite, die aus den Lautsprechern ins Mikrofon zurückkommt, aus Ihrer Spur, damit sie nicht doppelt als „Ich“ im Transkript steht. Braucht den Systemton als Referenz. Die rohe Mikrofonaufnahme bleibt unverändert erhalten. Wirkt ab der nächsten Aufnahme.",
       "echoCancellationAuto": "Automatisch (mit Systemton)",
@@ -921,15 +932,18 @@
         "voices": {
           "de_DE-thorsten-high": {
             "name": "Thorsten (hohe Qualität)",
-            "description": "Deutsch. Beste Qualität, größter Download."
+            "description": "Deutsch. Beste Qualität, größter Download.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "de_DE-thorsten-medium": {
             "name": "Thorsten (mittlere Qualität)",
-            "description": "Deutsch. Gute Qualität, kleinerer Download."
+            "description": "Deutsch. Gute Qualität, kleinerer Download.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "de_DE-kerstin-low": {
             "name": "Kerstin (niedrige Qualität)",
-            "description": "Deutsch. Schnell und klein."
+            "description": "Deutsch. Schnell und klein.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Ryan-Stimme abgeleitet, deren Datensatz unter CC-BY-NC-SA-4.0 steht. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "de_DE-eva_k-x_low": {
             "name": "Eva K. (sehr niedrige Qualität)",
@@ -949,15 +963,18 @@
           },
           "en_US-amy-medium": {
             "name": "Amy (mittlere Qualität)",
-            "description": "Englisch (USA). Weibliche Stimme, gute Qualität."
+            "description": "Englisch (USA). Weibliche Stimme, gute Qualität.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "en_GB-alan-medium": {
             "name": "Alan (mittlere Qualität)",
-            "description": "Englisch (GB). Männliche Stimme, gute Qualität."
+            "description": "Englisch (GB). Männliche Stimme, gute Qualität.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           },
           "en_GB-alba-medium": {
             "name": "Alba (mittlere Qualität)",
-            "description": "Englisch (GB, schottisch). Weibliche Stimme, gute Qualität."
+            "description": "Englisch (GB, schottisch). Weibliche Stimme, gute Qualität.",
+            "nonCommercialHint": "Nur nicht-kommerziell: Die Stimme ist von der Lessac-Stimme abgeleitet, deren Trainingsdaten (Blizzard 2013) nur für Forschung lizenziert sind. Die Lizenzlage des Modells ist ungeklärt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
           }
         },
         "status": {
@@ -1445,6 +1462,11 @@
           "description": "Sprechertrennung in Besprechungen",
           "details": "NVIDIA Streaming Sortformer 4spk v2.1 steht unter der NVIDIA Open Model License. Das Modell wird bei Bedarf heruntergeladen und nicht mit der App ausgeliefert.",
           "button": "Lizenztext lesen"
+        },
+        "piper": {
+          "title": "Piper und Stimmen",
+          "description": "Sprachausgabe (Vorlesen), wird bei Bedarf geladen",
+          "details": "Piper (Rhasspy, MIT) enthält espeak-ng (GPL-3.0-or-later, Quelltext: github.com/espeak-ng/espeak-ng); beim Einrichten legt die App den Lizenztext (LICENSE-espeak-ng-GPL-3.0.txt) in den Ordner der Laufzeit. Stimmen nur für nicht-kommerzielle Nutzung: Lessac (Blizzard-2013-Forschungslizenz), Ryan (CC-BY-NC-SA-4.0) und die davon abgeleiteten Thorsten, Kerstin, Amy, Alan und Alba; sie sind im Katalog gekennzeichnet."
         },
         "libraries": {
           "title": "Bibliotheken",
@@ -3450,6 +3472,47 @@
     "memoryLow": "Arbeitsspeicher fast voll: Vorlese- und Sprachmodell-Server wurden gestoppt, damit der Rechner bedienbar bleibt."
   },
   "automations": {
+    "agent": {
+      "operation": {
+        "agent_route": "Werkzeug gewählt (lokaler Agent)",
+        "agent_extract": "Aufgaben, Fristen und Entscheidungen extrahiert"
+      },
+      "kinds": {
+        "todos": "To-dos",
+        "deadlines": "Fristen",
+        "decisions": "Entscheidungen"
+      },
+      "sendsMail": "sendet an andere",
+      "runsAction": "Baustein: {{action}}",
+      "toolFields": "Felder, die das Modell füllt: {{fields}}",
+      "dateKind": "Zeitangabe",
+      "unknownTool": "Dieses Werkzeug gibt es nicht (mehr). Bitte abwählen.",
+      "modelDefault": "Standard-Router",
+      "modelNotLoaded": "{{id}} (nicht geladen)",
+      "previewTitle": "Mit Beispieltext ausprobieren",
+      "previewHintRoute": "Das Modell entscheidet jetzt für diesen Schritt, ohne dass etwas geschieht: keine Mitteilung, keine Mail, keine Freigabe, kein Eintrag in der Herkunft. Ohne Beispieltext gilt das Feld „Daten für die Wahl“.",
+      "previewHintExtract": "Das Modell zieht aus dem Beispieltext (eine Zeile je Satz) To-dos, Fristen und Entscheidungen, ohne dass etwas geschieht. Im Lauf liest der Schritt das Transkript der Besprechung.",
+      "sample": "Beispieltext",
+      "samplePlaceholder": "Zum Beispiel: Frau Berg schickt das Angebot bis übermorgen an den Kunden.",
+      "try": "Mit Beispieltext ausprobieren",
+      "trying": "Das Modell entscheidet …",
+      "noEffect": "Keine Wirkung (Trockenlauf)",
+      "busy": "Der Platz für schwere Schritte ist belegt ({{reason}}). Bitte in etwa {{seconds}} s noch einmal versuchen.",
+      "previewUnreadable": "Die Antwort der Vorschau ließ sich nicht lesen.",
+      "chosen": "Gewähltes Werkzeug: {{tool}}",
+      "recipients": "Empfänger (vom Programm gebildet): {{list}}",
+      "passed": "Begründung: Die Politik hat die Wahl geprüft (Werkzeugliste, Empfänger, Obergrenze, Felder) und durchgelassen. Ausgeführt wird sie nur, wenn ein folgender Schritt mit passender Bedingung sie aufgreift.",
+      "noAction": "Keine Aktion gewählt",
+      "noReason": "Das Modell nannte keinen Grund.",
+      "signals": "Erkannte Aufforderung an die KI im Text: {{list}}",
+      "noItems": "Nichts gefunden.",
+      "counts": "{{todos}} To-dos, {{deadlines}} Fristen, {{decisions}} Entscheidungen",
+      "tokens": "Token: {{input}} ein, {{output}} aus",
+      "confidence": "Konfidenz {{value}} %",
+      "origin": "Herkunft",
+      "segment": "Segment {{n}}",
+      "openSegment": "In der Besprechung an dieser Stelle öffnen"
+    },
     "title": "Automationen",
     "loading": "Automationen werden geladen …",
     "loadError": "Die Automationen ließen sich nicht laden.",
@@ -3646,6 +3709,38 @@
       "add": "Variable hinzufügen"
     },
     "fields": {
+      "task": {
+        "label": "Aufgabe",
+        "hint": "Was das Modell entscheiden soll, in einem Satz. Ein fester Text, nie aus Daten."
+      },
+      "context": {
+        "label": "Daten für die Wahl",
+        "hint": "Zum Beispiel das Ergebnis eines früheren Schritts. Das Modell behandelt sie als Daten, nie als Anweisung."
+      },
+      "tools": {
+        "label": "Freigegebene Werkzeuge",
+        "hint": "Das Modell darf nur aus dieser Liste wählen (höchstens {{max}}). Ausgeführt wird nur, was ein folgender Schritt mit passender Bedingung tut – mit eigenem Recht und eigener Freigabe."
+      },
+      "recipients": {
+        "label": "Empfängerregel",
+        "hint": "Die Empfänger bildet das Programm aus dieser Regel, nie das Modell."
+      },
+      "max_actions": {
+        "label": "Höchstens Aktionen je Lauf",
+        "hint": "1 bis 10; zählt über alle „Werkzeug wählen“-Schritte des Laufs."
+      },
+      "model": {
+        "label": "Modell",
+        "hint": "Nur ein geladenes lokales Modell; ohne Angabe der Standard-Router."
+      },
+      "reference_date": {
+        "label": "Bezugsdatum",
+        "hint": "Für „morgen“, „Freitag“ usw. (JJJJ-MM-TT); leer: heute."
+      },
+      "kinds": {
+        "label": "Was gezogen wird",
+        "hint": "Ohne Auswahl: To-dos, Fristen und Entscheidungen."
+      },
       "via": {
         "label": "Integration",
         "hint": "Das Konto oder der Ordner, über den der Schritt läuft."
@@ -3871,6 +3966,13 @@
       }
     },
     "choices": {
+      "recipients": {
+        "me": "Nur ich",
+        "participants": "Teilnehmende",
+        "all": "Alle",
+        "internal": "Nur interne Teilnehmende",
+        "list": "Feste Liste"
+      },
       "every": {
         "daily": "Täglich",
         "weekly": "Wöchentlich"
@@ -4005,6 +4107,7 @@
       "output": "Ergebnis",
       "provenance": "Herkunft der Ergebnisse",
       "provenanceDry": "Ein Trockenlauf erzeugt nichts, deshalb gibt es keine Herkunft.",
+      "provenanceInline": "Die Herkunft der KI-Schritte steht bei den Schritten oben.",
       "provenanceNone": "Dieser Lauf hat (noch) keine Inhalte mit Herkunft erzeugt.",
       "noModel": "ohne Modell",
       "local": "lokal",
@@ -4256,6 +4359,18 @@
         "tts_render_audio": {
           "title": "Audio erzeugen",
           "description": "Erzeugt aus einer Vorlesen-Seite eine Audiodatei."
+        },
+        "list_workflows": {
+          "title": "Automationen auflisten",
+          "description": "Listet die Abläufe der Automationen mit Auslöser, Schaltzustand und letztem Lauf."
+        },
+        "run_workflow": {
+          "title": "Ablauf starten",
+          "description": "Startet einen Ablauf als Trockenlauf; scharf nur, wenn der Ablauf scharf geschaltet ist und das Recht es erlaubt."
+        },
+        "get_run": {
+          "title": "Laufprotokoll lesen",
+          "description": "Liest das Protokoll eines Laufs: Zustand, Schritte, Fehler (ohne Geheimnisse und ohne Auslöserdaten)."
         }
       }
     },
@@ -4338,7 +4453,8 @@
         },
         "webhook": {
           "name": "n8n-Webhook",
-          "description": "Abläufe in n8n anstoßen. Kommt mit den Workflows."
+          "description": "Daten aus einem Ablauf an n8n (oder einen anderen Webhook) senden. Die Adresse ist ein Geheimnis und liegt verschlüsselt im Windows-Konto.",
+          "action": "Webhook einrichten"
         }
       }
     },
@@ -4380,6 +4496,7 @@
       "settingHost": "Server",
       "settingFrom": "Absender",
       "settingLogin": "Anmeldung",
+      "webhookNoTest": "Ein Webhook wird nicht durch Senden getestet, denn jeder Test würde den Ablauf in n8n wirklich auslösen. Ob er ankommt, zeigt der erste Lauf im Protokoll.",
       "settingEndpoint": "Endpunkt",
       "settingTool": "Werkzeug",
       "settingVault": "Vault",
@@ -4519,6 +4636,14 @@
       "webhook_post": {
         "title": "Daten an Webhook senden",
         "description": "Daten an die Adresse des Webhooks schicken (zum Beispiel an n8n)."
+      },
+      "workflow_read": {
+        "title": "Automationen lesen",
+        "description": "Abläufe auflisten und Laufprotokolle lesen."
+      },
+      "workflow_run": {
+        "title": "Ablauf starten",
+        "description": "Einen Ablauf als Trockenlauf oder, wenn er scharf geschaltet ist, echt starten."
       }
     },
     "approvals": {
@@ -4663,6 +4788,16 @@
         "token": "Zugangsschlüssel",
         "tokenWhat": "Schlüssel",
         "tokenHint": "Der Schlüssel braucht den Scope „wissen:read“ (oder „wissen:read:<bereich>“)."
+      },
+      "webhook": {
+        "title": "Webhook einrichten",
+        "titleEdit": "Webhook-Einstellungen",
+        "description": "Ein Ablauf schickt Daten per POST an diese Adresse, zum Beispiel an einen n8n-Ablauf.",
+        "url": "Adresse des Webhooks",
+        "urlWhat": "die Adresse",
+        "urlPlaceholder": "https://n8n.example.de/webhook/…",
+        "urlHint": "Die Adresse ist ein Geheimnis, denn sie trägt oft den Schlüssel im Pfad. Sie liegt verschlüsselt im Windows-Konto; angezeigt wird später nur der Server. Erlaubt ist nur https, http nur für diesen Rechner (localhost).",
+        "n8nHint": "In n8n: Webhook-Knoten öffnen, die „Production URL“ kopieren und den Ablauf aktivieren. Umleitungen folgt die App nie."
       },
       "folder": {
         "title": "Ordner-Einstellungen",

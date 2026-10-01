@@ -290,6 +290,15 @@ test.describe("Zugänge der Agentenbrücke", () => {
     // Die Texte der Werkzeuge kommen aus der Übersetzung, nicht aus dem Backend.
     await expect(c).toContainText("Datei transkribieren");
     await expect(c).toContainText("Legt eine leere Besprechung an.");
+    // B8: die Werkzeuge der Automationen mit eigenen Rechten und deutschen Texten.
+    for (const name of ["list_workflows", "run_workflow", "get_run"]) {
+      await expect(tool(page, "C-1", name, "off")).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    }
+    await expect(c).toContainText("Ablauf starten");
+    await expect(c).toContainText("Laufprotokoll lesen");
 
     // Auf „Fragen“ gestellt, aber die Obergrenze (Rechte-Matrix) steht auf „Aus“: der Grund steht da.
     await tool(page, "C-1", "transcribe_file", "ask").click();

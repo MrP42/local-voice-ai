@@ -84,8 +84,9 @@ const DEFAULT_PORT: Record<Security, string> = {
 };
 
 /**
- * Formular je Art (A6): SMTP-Postfach, Obsidian-Vault, WAI-Wissensbasis und die
- * Ordner-Einstellungen. Das Passwort bzw. der Schluessel geht einmal ans Backend und
+ * Formular je Art (A6, K1): SMTP-Postfach, Obsidian-Vault, WAI-Wissensbasis, Webhook
+ * (n8n) und die Ordner-Einstellungen. Das Passwort, der Schluessel bzw. die Adresse des
+ * Webhooks geht einmal ans Backend und
  * wird dort verschluesselt abgelegt; die Oberflaeche bekommt es nie zurueck (beim
  * Bearbeiten bleibt das Feld leer = unveraendert).
  */
@@ -183,6 +184,10 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
           area: form.area.trim(),
           secret: form.secret || null,
         };
+      case "webhook":
+        // Die Adresse ist das Geheimnis (n8n traegt den Schluessel im Pfad); leer beim
+        // Bearbeiten = unveraendert.
+        return { ...base, secret: form.secret.trim() || null };
     }
   };
 
@@ -230,6 +235,8 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
         return filled(form.path);
       case "wissen":
         return filled(form.endpoint) && (!!editing || filled(form.secret));
+      case "webhook":
+        return !!editing || filled(form.secret);
     }
   })();
 
@@ -523,6 +530,32 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
               }),
               t("integrations.target.wissen.tokenHint"),
             )}
+          </>
+        )}
+
+        {kind === "webhook" && (
+          <>
+            {field(
+              "secret",
+              t("integrations.target.webhook.url"),
+              text("secret", "secret", {
+                type: "password",
+                autoComplete: "new-password",
+                spellCheck: false,
+                placeholder: editing
+                  ? t("integrations.target.secretKeep", {
+                      what: t("integrations.target.webhook.urlWhat"),
+                    })
+                  : t("integrations.target.webhook.urlPlaceholder"),
+              }),
+              t("integrations.target.webhook.urlHint"),
+            )}
+            <p
+              className="text-xs text-text-muted"
+              data-testid="target-webhook-n8n"
+            >
+              {t("integrations.target.webhook.n8nHint")}
+            </p>
           </>
         )}
 

@@ -148,6 +148,12 @@
 //! `toast` die Windows-Mitteilung. Vorlage `eingangsordner-word` in `templates`.
 //! Fehlerfaelle, Idempotenz und Rechte stehen im Kopf von `app_actions`.
 //!
+//! Bausteine von Paket C4 (Wissen und Fristen des lokalen Agenten): `agent_notes` mit `agent.note` (Besprechungsergebnis
+//! als Vault-Notiz mit AI-OS-Frontmatter, eine Notiz je Besprechung), `deadline.remind` (Windows-Mitteilung zum
+//! eingestellten Zeitpunkt vor einer Frist, am Takt der Engine) und `deadline.calendar` (ganztaegiger Termin je
+//! Frist, immer erst nach Freigabe). Vorlage `besprechung-ergebnis` in `templates`. Fehlerfaelle im Kopf von
+//! `agent_notes`.
+//!
 //! Baustein von Paket B7 (Oberflaeche): `ui` ist die Rechnung hinter den Kommandos `workflow_*`
 //! (`commands::workflows`): Katalog fuer das Formular, Pruefung mit JSON-Zeiger, Trockenlauf,
 //! Listen, Laufprotokoll, Export/Import. Die Oberflaeche (`src/components/automations`, Reiter
@@ -174,10 +180,17 @@
 //! (der A3-Weg) und `SubtitleOutcome`. Vorlage `kanal-wissen` in `templates`. Fehlerfaelle und Rechte stehen im
 //! Kopf von `knowledge`.
 //!
+//! Baustein von Paket C3 (Lokaler Agent): `agent_route` (`agent.route`: das lokale Modell waehlt aus
+//! der Werkzeugliste des Schritts EIN Werkzeug; die Politik steht in `agent::policy`, ausgefuehrt wird
+//! in den folgenden Schritten mit ihrem Recht am Tor). Fehlerfaelle im Kopf von `agent_route`.
+//!
 #![allow(dead_code)]
 
 pub mod action;
 pub mod agent_actions; // C2
+pub mod agent_notes; // C4
+pub mod agent_preview; // C5
+pub mod agent_route; // C3
 pub mod app_actions; // B4
 pub mod app_services; // B4
 pub mod builtin;

@@ -2087,6 +2087,9 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_slides::list_meeting_slides,
             commands::meeting_slides::set_meeting_slide_hidden,
             commands::meeting_slides::meeting_slides_dir,
+            commands::meeting_slides::change_meeting_slide_vision_setting,
+            commands::meeting_slides::meeting_slide_vision_status,
+            commands::meeting_slides::meeting_slide_vision_download,
             commands::meetings::meetings_export_document,
             // M1-P1c
             commands::provenance::provenance_get, // A1
@@ -2254,6 +2257,8 @@ pub fn run(cli_args: CliArgs) {
             commands::workflows::workflow_read_file,
             commands::workflows::workflow_import,
             commands::workflows::workflow_status,
+            commands::workflows::workflow_agent_tools,
+            commands::workflows::workflow_agent_preview,
             // M5-P5d/P5e
             commands::people::people_list,
             commands::people::people_get,
@@ -3369,10 +3374,9 @@ fn run_headless_agent_bridge(app: &AppHandle, args: &CliArgs) -> i32 {
         // A8: die echten Handler gegen die Sandbox-Datenbank, mit der Attrappe des Hosts
         // (keine Warteschlange, kein Recorder, ein Testton statt der Sprach-Engine).
         let pages = agent_bridge::tools::sandbox::SandboxHost::pages_dir_for(std::path::Path::new(dir));
-        handlers.push(Arc::new(agent_bridge::tools::AppTools::new(
-            store.clone(),
-            Arc::new(agent_bridge::tools::sandbox::SandboxHost::new(store.clone(), pages)),
-        )));
+        let host = Arc::new(agent_bridge::tools::sandbox::SandboxHost::new(store.clone(), pages));
+        host.start_workflow_worker(); // B8: Laeufe der Automationen werden fertig
+        handlers.push(Arc::new(agent_bridge::tools::AppTools::new(store.clone(), host)));
     }
     agent_bridge::runtime::run_headless(store, handlers, args.seconds)
 }

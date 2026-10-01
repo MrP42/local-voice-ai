@@ -13,6 +13,7 @@ import { useSettings } from "../../../hooks/useSettings";
 import { MeetingDetectSettings } from "./MeetingDetectSettings";
 import { MeetingSelfNameSetting } from "./MeetingSelfNameSetting";
 import { MeetingSemanticSearchSetting } from "./MeetingSemanticSearchSetting";
+import { MeetingSlideVisionSetting } from "./MeetingSlideVisionSetting";
 
 /**
  * Die Vorgaben der Aufnahme (M1-P1f, M2-P2c2, M3-P3c), als Zeilen der
@@ -125,6 +126,7 @@ export const MeetingNotesSettings: React.FC = () => {
       </SettingContainer>
       <MeetingSelfNameSetting />
       <MeetingSemanticSearchSetting />
+      <MeetingSlideVisionSetting />
       <MeetingDetectSettings />
     </>
   );

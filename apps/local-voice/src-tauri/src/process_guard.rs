@@ -229,8 +229,14 @@ impl ProcessGuard {
         }
     }
 
+    // Gleiche Signatur wie die Windows-Variante: sonst bricht nur der
+    // macOS-Build (app-v0.20.0), der Windows-Build merkt davon nichts.
     #[cfg(not(windows))]
-    pub fn attach(_child: &std::process::Child, _memory_limit_mb: u64, _cpu_percent: u32) -> Option<Self> {
+    pub fn attach(
+        _child: &std::process::Child,
+        _memory_limit_mb: Option<u64>,
+        _cpu_percent: u32,
+    ) -> Option<Self> {
         None
     }
 }

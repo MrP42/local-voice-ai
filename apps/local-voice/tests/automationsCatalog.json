@@ -225,6 +225,262 @@
         "title": "Zusammenfassen"
       },
       {
+        "capability": null,
+        "effect": "pure",
+        "effect_text": "Aus dem Transkript To-dos, Fristen und Entscheidungen mit dem lokalen Sprachmodell ziehen (mit Belegen, ohne Aussenwirkung)",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text_list",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "kinds",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachmodell",
+        "id": "agent.extract",
+        "title": "Aufgaben, Fristen und Entscheidungen extrahieren"
+      },
+      {
+        "capability": "vault.write",
+        "effect": "idempotent",
+        "effect_text": "To-dos, Fristen und Entscheidungen aus Schritt „{{p.from}}“ mit Belegen als Notiz in den Vault {{p.via}} schreiben (eine Notiz je Besprechung, ein zweiter Lauf aktualisiert sie)",
+        "fields": [
+          {
+            "capability": "vault.write",
+            "kind": "id",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "from",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": null,
+        "id": "agent.note",
+        "title": "Besprechungsergebnis als Vault-Notiz ablegen"
+      },
+      {
+        "capability": null,
+        "effect": "idempotent",
+        "effect_text": "Zu jeder Frist aus Schritt „{{p.from}}“ eine Windows-Mitteilung zum eingestellten Zeitpunkt davor anzeigen; der Lauf wartet bis dahin",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "from",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 30,
+            "min": 0,
+            "name": "days_before",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "at",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "bool",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "todos",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "bool",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "skip_model_dates",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": null,
+        "id": "deadline.remind",
+        "title": "Frist-Erinnerung"
+      },
+      {
+        "capability": "calendar.write",
+        "effect": "external",
+        "effect_text": "Fristen aus Schritt „{{p.from}}“ als ganztägige Termine in {{p.via}} eintragen (immer erst nach Ihrer Freigabe, mit Liste der Einträge)",
+        "fields": [
+          {
+            "capability": "calendar.write",
+            "kind": "id",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "via",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "from",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "bool",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "todos",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "bool",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "skip_model_dates",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": null,
+        "id": "deadline.calendar",
+        "title": "Kalendereintrag zur Frist"
+      },
+      {
+        "capability": null,
+        "effect": "pure",
+        "effect_text": "Das lokale Sprachmodell wählt aus den freigegebenen Werkzeugen höchstens eines; es führt nichts selbst aus, die folgenden Schritte wirken nur nach ihrer Bedingung und mit ihren Rechten",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "task",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "context",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text_list",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "tools",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "choice",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "recipients",
+            "options": [
+              "me",
+              "participants",
+              "all",
+              "internal",
+              "list"
+            ],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text_list",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "list",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": true,
+            "max": 10,
+            "min": 1,
+            "name": "max_actions",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "model",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "reference_date",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachmodell",
+        "id": "agent.route",
+        "title": "Werkzeug wählen (lokaler Agent)"
+      },
+      {
         "capability": "files.write",
         "effect": "idempotent",
         "effect_text": "Dokument als {{p.format}} in {{p.target}} ablegen",
@@ -419,8 +675,8 @@
       },
       {
         "capability": "vault.write",
-        "effect": "external",
-        "effect_text": "Notiz {{p.path}} in {{p.via}} schreiben",
+        "effect": "idempotent",
+        "effect_text": "Notiz „{{p.title}}“ in {{p.via}} schreiben (je Schlüssel eine Notiz, nie doppelt; eine vorhandene nur nach Freigabe ändern)",
         "fields": [
           {
             "capability": "vault.write",
@@ -438,7 +694,17 @@
             "literal": false,
             "max": null,
             "min": null,
-            "name": "path",
+            "name": "key",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "title",
             "options": [],
             "required": true
           },
@@ -454,15 +720,12 @@
           },
           {
             "capability": null,
-            "kind": "choice",
+            "kind": "text",
             "literal": false,
             "max": null,
             "min": null,
-            "name": "mode",
-            "options": [
-              "create",
-              "append"
-            ],
+            "name": "name",
+            "options": [],
             "required": false
           },
           {
@@ -471,7 +734,100 @@
             "literal": false,
             "max": null,
             "min": null,
-            "name": "section",
+            "name": "folder",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "date",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "entry",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "source_title",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "source_url",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "origin",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text_list",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "tags",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "any",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "meta",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "choice",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "data_class",
+            "options": [
+              "internal",
+              "confidential"
+            ],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "bool",
+            "literal": true,
+            "max": null,
+            "min": null,
+            "name": "auto",
             "options": [],
             "required": false
           }
@@ -522,8 +878,8 @@
       },
       {
         "capability": null,
-        "effect": "idempotent",
-        "effect_text": "Relevanz des Inhalts nach dem Themenprofil bewerten",
+        "effect": "pure",
+        "effect_text": "Relevanz des Inhalts nach dem Themenprofil bewerten (0 bis 10, mit Begründung)",
         "fields": [
           {
             "capability": null,
@@ -543,6 +899,16 @@
             "min": null,
             "name": "profile",
             "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 10,
+            "min": 1,
+            "name": "threshold",
+            "options": [],
             "required": false
           }
         ],
@@ -551,12 +917,12 @@
         "title": "Relevanz bewerten"
       },
       {
-        "capability": "vault.write",
-        "effect": "external",
-        "effect_text": "Aussagen mit {{p.via}} abgleichen (neu / vorhanden / ergänzt / widerspricht) und Ergänzungen schreiben",
+        "capability": "knowledge.search",
+        "effect": "pure",
+        "effect_text": "Aussagen mit der Wissensbasis {{p.via}} abgleichen (neu / vorhanden / ergänzt / widerspricht); schreibt nichts",
         "fields": [
           {
-            "capability": "vault.write",
+            "capability": "knowledge.search",
             "kind": "id",
             "literal": false,
             "max": null,
@@ -564,6 +930,16 @@
             "name": "via",
             "options": [],
             "required": true
+          },
+          {
+            "capability": null,
+            "kind": "id",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "vault",
+            "options": [],
+            "required": false
           },
           {
             "capability": null,
@@ -581,7 +957,97 @@
             "literal": false,
             "max": null,
             "min": null,
-            "name": "folder",
+            "name": "video_id",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "title",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 20,
+            "min": 1,
+            "name": "max_claims",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "int",
+            "literal": false,
+            "max": 10,
+            "min": 1,
+            "name": "limit",
+            "options": [],
+            "required": false
+          }
+        ],
+        "heavy_label": "Sprachmodell",
+        "id": "knowledge.reconcile",
+        "title": "Mit der Wissensbasis abgleichen"
+      },
+      {
+        "capability": null,
+        "effect": "pure",
+        "effect_text": "Management-Summary zum Video „{{p.title}}“ erzeugen (Neuigkeiten, Erkenntnisse, Handlungsempfehlungen, Quellen)",
+        "fields": [
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "source",
+            "options": [],
+            "required": true
+          },
+          {
+            "capability": null,
+            "kind": "any",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "claims",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "any",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "score",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "reason",
+            "options": [],
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "title",
             "options": [],
             "required": false
           },
@@ -594,26 +1060,26 @@
             "name": "video_id",
             "options": [],
             "required": false
-          }
-        ],
-        "heavy_label": "Sprachmodell",
-        "id": "knowledge.reconcile",
-        "title": "Mit der Wissensbasis abgleichen"
-      },
-      {
-        "capability": "vault.write",
-        "effect": "external",
-        "effect_text": "Management-Summary zum Kanal {{p.channel}} in {{p.via}} ablegen",
-        "fields": [
+          },
           {
-            "capability": "vault.write",
-            "kind": "id",
+            "capability": null,
+            "kind": "text",
             "literal": false,
             "max": null,
             "min": null,
-            "name": "via",
+            "name": "url",
             "options": [],
-            "required": true
+            "required": false
+          },
+          {
+            "capability": null,
+            "kind": "text",
+            "literal": false,
+            "max": null,
+            "min": null,
+            "name": "published",
+            "options": [],
+            "required": false
           },
           {
             "capability": null,
@@ -622,16 +1088,6 @@
             "max": null,
             "min": null,
             "name": "channel",
-            "options": [],
-            "required": true
-          },
-          {
-            "capability": null,
-            "kind": "text",
-            "literal": false,
-            "max": null,
-            "min": null,
-            "name": "source",
             "options": [],
             "required": false
           }
@@ -683,7 +1139,7 @@
       {
         "capability": "media.fetch",
         "effect": "idempotent",
-        "effect_text": "Transkript des Videos {{p.video}} über {{p.via}} holen",
+        "effect_text": "Untertitel des Videos {{p.video}} über {{p.via}} als Transkript holen",
         "fields": [
           {
             "capability": "media.fetch",
@@ -706,7 +1162,7 @@
             "required": true
           }
         ],
-        "heavy_label": "Transkription",
+        "heavy_label": null,
         "id": "youtube.transcript",
         "title": "YouTube-Transkript holen"
       },

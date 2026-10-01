@@ -27,6 +27,11 @@
 //!    Prompts von Protokoll, KI-Notizen und Chat eingewoben (`[Folie 7 · 04:12] Text`),
 //!    steht als Chunks (`ChunkSource::Slide`) im Suchindex und belegt Aussagen als `[F7]`;
 //!    die Bildbeschreibung nur gekennzeichnet (`{Bild: ...}`, R2).
+//! 6. **Bildanalyse (D3)** ([`vision`]): auf Wunsch (Einstellung, Standard aus, nur mit GPU und
+//!    Projektor) liest Gemma 4 E4B den Text der Textfolien neu (ersetzt den OCR-Text, Zahlen
+//!    und Tabellen stimmen) und beschreibt jede Folie in einem Satz (`description`). Der Server
+//!    startet dafuer mit Bild-Projektor und wird nach dem Lauf beendet; ohne die Voraussetzungen
+//!    bleibt es bei der Windows-OCR.
 //!
 //! # Fehlerfaelle und Absicherung
 //!
@@ -53,6 +58,7 @@ pub mod ocr;
 pub mod prompt;
 pub mod run;
 pub mod store;
+pub mod vision;
 #[cfg(test)]
 pub(crate) mod test_support;
 

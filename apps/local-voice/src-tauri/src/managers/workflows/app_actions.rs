@@ -167,6 +167,18 @@ pub trait AppServices: Send + Sync {
         unavailable()
     }
 
+    /// Wohin `agent.route` (Goal C, C3) seine Anfragen schickt: der lokale Server ueber den
+    /// Modellverwalter mit dem Router-Modell (`model`, sonst `agent::route::DEFAULT_ROUTER_MODEL`),
+    /// nur wenn es geladen ist (`agent::route::route_model`). Unabhaengig vom Anbieter der
+    /// Nachbearbeitung: Gemma 4 E4B verfehlte das Eval-Gate der Werkzeugwahl. Ohne App
+    /// (Trockenlauf-Kommandozeile, Tests) `NotAvailable`.
+    fn agent_route_target(
+        &self,
+        _model: Option<&str>,
+    ) -> Result<crate::agent::runtime::Target, ServiceError> {
+        unavailable()
+    }
+
     fn generate_notes(
         &self,
         req: &GenRequest,

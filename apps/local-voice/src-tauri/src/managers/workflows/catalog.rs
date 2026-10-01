@@ -421,6 +421,99 @@ static ACTIONS: &[ActionSpec] = &[
         needs: NeedsSpec::None,
     },
     ActionSpec {
+        id: "agent.note",
+        title: "Besprechungsergebnis als Vault-Notiz ablegen",
+        effect_text: "To-dos, Fristen und Entscheidungen aus Schritt „{{p.from}}“ mit Belegen als Notiz in den Vault {{p.via}} schreiben (eine Notiz je Besprechung, ein zweiter Lauf aktualisiert sie)",
+        fields: &[
+            // Der Vault ist ein fester Wert: Daten aus dem Transkript waehlen kein Ziel.
+            literal("via", FieldKind::Id, true),
+            // Kennung des Extraktionsschritts (`agent.extract`), Vorgabe `extract`.
+            literal("from", FieldKind::Text, false),
+        ],
+        // Die Notiz traegt eine feste Kennung (`lva_id`): ein zweiter Lauf ersetzt den
+        // verwalteten Block derselben Datei, er legt keine zweite an.
+        effect: EffectKind::Idempotent,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::VaultWrite,
+            via: "via",
+            target: Some("from"),
+        },
+    },
+    ActionSpec {
+        id: "deadline.remind",
+        title: "Frist-Erinnerung",
+        effect_text: "Zu jeder Frist aus Schritt „{{p.from}}“ eine Windows-Mitteilung zum eingestellten Zeitpunkt davor anzeigen; der Lauf wartet bis dahin",
+        fields: &[
+            literal("from", FieldKind::Text, false),
+            // So viele Tage vor der Frist (0 = am Tag der Frist), Vorgabe 1.
+            field("days_before", FieldKind::Int { min: 0, max: 30 }, false),
+            // Uhrzeit der Mitteilung (`HH:MM`, Ortszeit), Vorgabe `09:00`.
+            field("at", FieldKind::Text, false),
+            // Auch To-dos mit Faelligkeitsdatum erinnern (Vorgabe: nur Fristen).
+            field("todos", FieldKind::Bool, false),
+            // Fristen, deren Datum das Sprachmodell geschaetzt hat, nicht erinnern.
+            field("skip_model_dates", FieldKind::Bool, false),
+        ],
+        // Eine Mitteilung je Frist, hoechstens einmal (Herkunftsregister): eine Wiederholung
+        // nach einem Absturz zeigt nichts doppelt.
+        effect: EffectKind::Idempotent,
+        heavy: None,
+        needs: NeedsSpec::None,
+    },
+    ActionSpec {
+        id: "deadline.calendar",
+        title: "Kalendereintrag zur Frist",
+        effect_text: "Fristen aus Schritt „{{p.from}}“ als ganztägige Termine in {{p.via}} eintragen (immer erst nach Ihrer Freigabe, mit Liste der Einträge)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            literal("from", FieldKind::Text, false),
+            field("todos", FieldKind::Bool, false),
+            field("skip_model_dates", FieldKind::Bool, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::CalendarWrite,
+            via: "via",
+            target: Some("from"),
+        },
+    },
+    ActionSpec {
+        id: "agent.route",
+        title: "Werkzeug wählen (lokaler Agent)",
+        effect_text: "Das lokale Sprachmodell wählt aus den freigegebenen Werkzeugen höchstens eines; es führt nichts selbst aus, die folgenden Schritte wirken nur nach ihrer Bedingung und mit ihren Rechten",
+        fields: &[
+            // Alles Folgende bis auf `context` und `reference_date` sind FESTE Werte: Daten (Transkript,
+            // Mail, Modellausgabe) bestimmen weder die Aufgabe noch die Werkzeuge, die Empfaengerregel,
+            // die Obergrenze oder das Modell.
+            literal("task", FieldKind::Text, true),
+            // Daten fuer die Wahl (nicht vertrauenswuerdig, im Prompt als Daten markiert).
+            field("context", FieldKind::Text, false),
+            // Namen aus `agent::policy::catalog()`: `notify_local`, `send_mail`, `calendar_note`.
+            literal("tools", FieldKind::TextList, true),
+            // Empfaengerregel wie bei `mail.send`; Pflicht mit dem Werkzeug `send_mail`. Die Empfaenger
+            // bildet der Code, das Modell nennt keine.
+            literal(
+                "recipients",
+                FieldKind::Choice(&["me", "participants", "all", "internal", "list"]),
+                false,
+            ),
+            literal("list", FieldKind::TextList, false),
+            // Hoechstens so viele Werkzeugwahlen je Lauf (alle `agent.route`-Schritte zusammen); die
+            // harte Grenze liegt bei 10.
+            literal("max_actions", FieldKind::Int { min: 1, max: 10 }, false),
+            // Router-Modell; ohne Angabe `llm-qwen3.5-9b-q4`. Nur ein geladenes Modell.
+            literal("model", FieldKind::Text, false),
+            // Bezug fuer relative Zeitangaben (ISO-Datum oder -Zeitpunkt); ohne Angabe heute.
+            field("reference_date", FieldKind::Text, false),
+        ],
+        // Rechnet nur (Modellaufruf) und schreibt nichts ausser der Provenienz: beliebig wiederholbar.
+        effect: EffectKind::Pure,
+        heavy: Some(LLM),
+        needs: NeedsSpec::None,
+    },
+    ActionSpec {
         id: "export.document",
         title: "Dokument ablegen",
         effect_text: "Dokument als {{p.format}} in {{p.target}} ablegen",

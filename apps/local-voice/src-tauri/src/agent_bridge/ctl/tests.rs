@@ -41,6 +41,42 @@ fn the_verbs_and_global_flags_parse_in_any_order() {
 }
 
 #[test]
+fn the_workflow_verbs_map_to_the_workflow_tools() {
+    let call = |args: &[&str]| match parse(args).verb {
+        Verb::Workflow { action } => action.as_call().unwrap(),
+        other => panic!("{other:?}"),
+    };
+    let (tool, a, approval) = call(&["workflow", "list", "--json"]);
+    assert_eq!((tool, a, approval), ("list_workflows", json!({}), None));
+    let (tool, a, _) = call(&["workflow", "get", "RUN1"]);
+    assert_eq!((tool, a), ("get_run", json!({ "run_id": "RUN1" })));
+    // Ohne --live: kein live-Feld, also der Standard (Trockenlauf).
+    let (tool, a, _) = call(&["workflow", "run", "WF1"]);
+    assert_eq!((tool, a), ("run_workflow", json!({ "workflow_id": "WF1" })));
+    let (_, a, approval) = call(&[
+        "workflow", "run", "WF1", "--live", "--vars", r#"{"thema":"x"}"#, "--request-id", "R9", "--approval", "A1",
+    ]);
+    assert_eq!(
+        a,
+        json!({ "workflow_id": "WF1", "live": true, "vars": { "thema": "x" }, "request_id": "R9" })
+    );
+    assert_eq!(approval.as_deref(), Some("A1"));
+    // Kaputte Variablen scheitern vor dem Verbinden (Exit 1).
+    let bad = parse(&["workflow", "run", "WF1", "--vars", "[1]"]);
+    let env = CtlEnv {
+        pipe_name: Ok("unused".to_string()),
+        token: Ok(Some("lvat_x".to_string())),
+        deadline: Duration::from_secs(5),
+    };
+    let r = execute(&bad, &env);
+    assert_eq!(r.exit, EXIT_ERROR);
+    assert_eq!(r.json["error"]["code"], json!("bad_args"));
+    assert!(Wrapper::try_parse_from(["ctl", "workflow"]).is_err());
+    assert!(Wrapper::try_parse_from(["ctl", "workflow", "run"]).is_err());
+    assert!(Wrapper::try_parse_from(["ctl", "workflow", "get"]).is_err());
+}
+
+#[test]
 fn unknown_verbs_and_missing_arguments_are_refused_by_the_parser() {
     assert!(Wrapper::try_parse_from(["ctl"]).is_err());
     assert!(Wrapper::try_parse_from(["ctl", "frobnicate"]).is_err());
@@ -273,6 +309,69 @@ mod live {
         assert_eq!(f.calls.all()[0].1, json!({"title": "T"}));
         let tools = ctl(&["tools"], env(&name, Some(&f.token))).await;
         assert!(tools.text.contains("create_meeting"));
+    }
+
+    #[tokio::test]
+    async fn workflow_run_is_exit_0_with_the_right_and_exit_3_without() {
+        let f = Fixture::new();
+        let name = unique_name();
+        let _s = start(&f, &name).await;
+        // Ohne Recht: Exit 3, das Werkzeug lief nicht.
+        for args in [
+            vec!["workflow", "run", "WF1", "--json"],
+            vec!["workflow", "list", "--json"],
+            vec!["workflow", "get", "RUN1", "--json"],
+        ] {
+            let r = ctl(&args, env(&name, Some(&f.token))).await;
+            assert_eq!(r.exit, EXIT_DENIED, "{args:?}: {r:?}");
+            assert_eq!(r.json["error"]["code"], json!("tool_off"));
+        }
+        assert_eq!(f.calls.len(), 0);
+        // Ohne Token: Exit 4 (wie bei `call`).
+        assert_eq!(ctl(&["workflow", "list"], env(&name, None)).await.exit, EXIT_AUTH);
+
+        // Mit Recht: Exit 0, die Argumente kommen genau so an.
+        f.grant("run_workflow", GrantMode::Allow);
+        f.grant("list_workflows", GrantMode::Allow);
+        f.grant("get_run", GrantMode::Allow);
+        let r = ctl(&["workflow", "run", "WF1", "--json"], env(&name, Some(&f.token))).await;
+        assert_eq!(r.exit, EXIT_OK, "{r:?}");
+        assert_eq!(r.json["result"]["status"], json!("done"));
+        assert_eq!(r.json["result"]["result"]["ran"], json!("run_workflow"));
+        let r = ctl(&["workflow", "run", "WF1", "--live", "--json"], env(&name, Some(&f.token))).await;
+        assert_eq!(r.exit, EXIT_OK, "{r:?}");
+        assert_eq!(ctl(&["workflow", "list"], env(&name, Some(&f.token))).await.exit, EXIT_OK);
+        assert_eq!(ctl(&["workflow", "get", "RUN1"], env(&name, Some(&f.token))).await.exit, EXIT_OK);
+        let calls = f.calls.all();
+        assert_eq!(calls[0].0, "run_workflow");
+        assert_eq!(calls[0].1, json!({ "workflow_id": "WF1" }));
+        assert_eq!(calls[1].1, json!({ "workflow_id": "WF1", "live": true }));
+        assert_eq!(calls[2].0, "list_workflows");
+        assert_eq!(calls[3].0, "get_run");
+    }
+
+    #[tokio::test]
+    async fn workflow_run_with_ask_is_exit_5_until_the_user_decides() {
+        let cfg = Config {
+            approval_wait: Duration::from_millis(200),
+            ..fast_config()
+        };
+        let f = Fixture::with(cfg, &ALL_TOOLS);
+        f.grant("run_workflow", GrantMode::Ask);
+        let name = unique_name();
+        let _s = start(&f, &name).await;
+        let r = ctl(&["workflow", "run", "WF1", "--live", "--json"], env(&name, Some(&f.token))).await;
+        assert_eq!(r.exit, EXIT_PENDING, "{r:?}");
+        let id = r.json["result"]["approval_id"].as_str().unwrap().to_string();
+        assert_eq!(f.calls.len(), 0);
+        f.user_decides(&id, true);
+        let r = ctl(
+            &["workflow", "run", "WF1", "--live", "--approval", &id, "--json"],
+            env(&name, Some(&f.token)),
+        )
+        .await;
+        assert_eq!(r.exit, EXIT_OK, "{r:?}");
+        assert_eq!(f.calls.len(), 1);
     }
 
     #[tokio::test]

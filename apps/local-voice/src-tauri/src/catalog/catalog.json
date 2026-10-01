@@ -5227,6 +5227,7 @@
       "license": "CC0-1.0",
       "license_url": "https://github.com/thorstenMueller/Thorsten-Voice",
       "license_note": "Datensatz Thorsten-Voice (CC0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.",
+      "non_commercial": true,
       "files": [
         {
           "filename": "de_DE-thorsten-high.onnx",
@@ -5252,6 +5253,7 @@
       "license": "CC0-1.0",
       "license_url": "https://github.com/thorstenMueller/Thorsten-Voice",
       "license_note": "Datensatz Thorsten-Voice (CC0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.",
+      "non_commercial": true,
       "files": [
         {
           "filename": "de_DE-thorsten-medium.onnx",
@@ -5277,6 +5279,7 @@
       "license": "CC0-1.0",
       "license_url": "https://github.com/rhasspy/dataset-voice-kerstin",
       "license_note": "Datensatz Kerstin (CC0). Modell von der englischen Ryan-Stimme feinabgestimmt; deren Datensatz steht unter CC-BY-NC-SA-4.0 (nicht kommerziell). Lizenzlage des Modells ungeklärt.",
+      "non_commercial": true,
       "files": [
         {
           "filename": "de_DE-kerstin-low.onnx",
@@ -5405,6 +5408,7 @@
       "license": "CC-BY-SA-4.0 (laut Piper-Maintainer; Datensatz unklar)",
       "license_url": "https://github.com/MycroftAI/mimic3-voices",
       "license_note": "Mimic-3-Stimme. Laut Piper-Maintainer stehen die Mycroft-Modelle unter CC-BY-SA-4.0, die Lizenz des Datensatzes ist unbekannt (rhasspy/piper#253). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.",
+      "non_commercial": true,
       "files": [
         {
           "filename": "en_US-amy-medium.onnx",
@@ -5430,6 +5434,7 @@
       "license": "Unklar (Mimic-3-Repo CC-BY-SA-4.0, Stimmen-Datei: All Rights Reserved)",
       "license_url": "https://github.com/MycroftAI/mimic3-voices/tree/master/voices/en_UK/apope_low",
       "license_note": "Mimic-3-Stimme apope (Alan Pope): das Repo steht unter CC-BY-SA-4.0, die LICENSE-Datei der Stimme nennt \"Copyright 2022 Mycroft AI, All Rights Reserved\". Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.",
+      "non_commercial": true,
       "files": [
         {
           "filename": "en_GB-alan-medium.onnx",
@@ -5455,6 +5460,7 @@
       "license": "CC-BY-4.0",
       "license_url": "https://creativecommons.org/licenses/by/4.0/",
       "license_note": "Datensatz Alba (CSTR, Univ. Edinburgh, CC-BY-4.0). Modell von der englischen Lessac-Stimme feinabgestimmt; deren Trainingsdaten (Blizzard 2013) stehen unter einer reinen Forschungslizenz ohne kommerzielle Nutzung. Lizenzlage des Modells ungeklärt.",
+      "non_commercial": true,
       "files": [
         {
           "filename": "en_GB-alba-medium.onnx",
@@ -5736,6 +5742,26 @@
           "size_bytes": 7121861440,
           "sha256": "0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42",
           "url": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf"
+        }
+      ]
+    },
+    {
+      "id": "llm-gemma4-e4b-mmproj",
+      "name": "Gemma 4 E4B Bild-Projektor (Folienanalyse)",
+      "description": "Optionaler Bild-Projektor für Gemma 4 E4B: liest Zahlen und Tabellen auf Folien zuverlässig und beschreibt Bilder. Wird nur für die Bildanalyse von Folien geladen (rund 0,8 GB Grafikspeicher, nur mit Grafikkarte sinnvoll).",
+      "purpose": "llm-projector",
+      "license": "Apache-2.0",
+      "license_url": "https://ai.google.dev/gemma/docs/gemma_4_license",
+      "tags": [
+        "bildanalyse"
+      ],
+      "files": [
+        {
+          "filename": "gemma-4-E4B-it-mmproj-F16.gguf",
+          "quant": "F16",
+          "size_bytes": 990372672,
+          "sha256": "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51",
+          "url": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-F16.gguf"
         }
       ]
     },

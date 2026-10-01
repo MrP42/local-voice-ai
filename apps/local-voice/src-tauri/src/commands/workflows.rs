@@ -13,9 +13,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::managers::meetings::store::MeetingStore;
+use crate::managers::workflows::agent_preview::{self, WorkflowAgentTool};
+use crate::managers::workflows::app_services::AppServicesImpl;
 use crate::managers::workflows::hub::WorkflowHub;
 use crate::managers::workflows::ui::{
     self, WorkflowCatalog, WorkflowItem, WorkflowRunDetail, WorkflowRunSummary, WorkflowSaveResult,
@@ -233,4 +235,49 @@ pub async fn workflow_status(hub: Hub<'_>) -> Result<WorkflowStatus, String> {
         hub.cloud_only_files(),
         hub.channel_status(),
     ))
+}
+
+/// Die Werkzeuge, die ein Schritt „Werkzeug wählen“ anbieten darf (Mehrfachauswahl im Editor).
+#[tauri::command]
+#[specta::specta]
+pub async fn workflow_agent_tools() -> Result<Vec<WorkflowAgentTool>, String> {
+    Ok(agent_preview::tools())
+}
+
+/// „Mit Beispieltext ausprobieren“ (C5): die Modellentscheidung eines KI-Schritts, ohne Wirkung
+/// (kein Lauf, keine Freigabe, keine Provenienz). `definition_json`: der Entwurf aus dem Editor;
+/// ohne ihn gilt der gespeicherte Ablauf `workflow_id`. Ergebnis als JSON-Text; `busy: true`, wenn
+/// der schwere Platz belegt ist.
+#[tauri::command]
+#[specta::specta]
+pub async fn workflow_agent_preview(
+    app: AppHandle,
+    hub: Hub<'_>,
+    workflow_id: Option<String>,
+    definition_json: Option<String>,
+    step_id: String,
+    sample_text: Option<String>,
+) -> Result<String, String> {
+    let hub: Arc<WorkflowHub> = Arc::clone(&hub);
+    // Der Modellaufruf blockiert (eigene Laufzeit): nie auf dem Aufgabenpool der Befehle.
+    tauri::async_runtime::spawn_blocking(move || {
+        let services = AppServicesImpl::new(&app);
+        let gate = hub.engine().heavy_gate();
+        let target = agent_preview::Target {
+            workflow_id: workflow_id.as_deref(),
+            definition_json: definition_json.as_deref(),
+            step_id: &step_id,
+        };
+        agent_preview::preview(
+            hub.engine(),
+            &services,
+            &*gate,
+            &target,
+            sample_text.as_deref(),
+            chrono::Utc::now().timestamp_millis(),
+            &|| false,
+        )
+    })
+    .await
+    .map_err(|e| format!("Die Vorschau brach ab ({e})."))?
 }

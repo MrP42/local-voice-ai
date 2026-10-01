@@ -89,6 +89,12 @@ pub struct StartOptions {
     /// M4-P4b: `Some` startet den Server im Embedding-Modus (zweiter Prozess
     /// neben dem Chat-Server, M4 V4). `None` = Chat-Server wie bisher.
     pub embedding: Option<EmbeddingOpts>,
+    /// D3 (Folien-Bildanalyse): Bild-Projektor (`--mmproj`). Nur im Chat-Modus;
+    /// der Server wird dafuer mit `-b 2048 -ub 2048` gestartet (ein Bild braucht
+    /// ~1 000 Token in EINEM Batch, sonst bricht llama.cpp ab -- Spike M7).
+    /// Der Projektor kostet ~0,8 GB Grafikspeicher dauerhaft: die App startet
+    /// ihn nur fuer einen Folienauftrag damit und danach wieder ohne.
+    pub mmproj: Option<PathBuf>,
 }
 
 /// Embedding-Modus von `llama-server` (M4 §4, D3): `--embedding --pooling
@@ -115,6 +121,10 @@ pub const EMBED_CPU_THREADS: usize = 4;
 /// RAM-Bedarf fuer das Start-Gate des Embedding-Servers (MB): gemessene
 /// Spitze 1,9 GB (M4), unabhaengig von der kleinen Modelldatei.
 pub const EMBED_RAM_NEED_MB: u64 = 2048;
+/// Batchgroesse beim Start mit Bild-Projektor (`-b`/`-ub`): ein Bild wird in
+/// ~1 000 Token zerlegt, die ein Nicht-Kausal-Block in EINEM Batch sehen muss
+/// (`GGML_ASSERT ... n_ubatch >= n_tokens` bei 512, Gemma 4 12B im Spike).
+pub const VISION_BATCH_TOKENS: u32 = 2048;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
@@ -139,6 +149,16 @@ pub(crate) fn server_args(opts: &StartOptions, port: u16, cpu_threads: usize) ->
             args.extend(["--parallel".into(), "1".into()]);
             // Nicht alle Kerne: die Oberflaeche des Rechners bleibt bedienbar.
             args.extend(["-t".into(), cpu_threads.to_string()]);
+            if let Some(mmproj) = &opts.mmproj {
+                args.extend([
+                    "--mmproj".into(),
+                    mmproj.to_string_lossy().into_owned(),
+                    "-b".into(),
+                    VISION_BATCH_TOKENS.to_string(),
+                    "-ub".into(),
+                    VISION_BATCH_TOKENS.to_string(),
+                ]);
+            }
         }
         Some(emb) => {
             args.extend([
@@ -181,6 +201,8 @@ struct Running {
     port: u16,
     model_id: String,
     backend: String,
+    /// Laeuft er mit Bild-Projektor (`--mmproj`)?
+    mmproj: bool,
 }
 
 /// Ein Absturz, dessen Neustart noch aussteht.
@@ -356,15 +378,22 @@ impl LocalLlmServer {
     /// sein Prozess noch lebt (P1h/B4: ein toter Prozess galt vorher weiter
     /// als bereit). Rein lesend; den Port prueft nur `live_port`.
     fn serving_port(&self, model_id: &str) -> Option<u16> {
+        self.serving_port_for(model_id, false)
+    }
+
+    /// Wie `serving_port`; `need_mmproj` verlangt zusaetzlich einen Server MIT
+    /// Bild-Projektor. Ein Server mit Projektor bedient auch reinen Text, darum
+    /// genuegt er jeder Anfrage (kein Neustart mitten in einem Folienauftrag);
+    /// umgekehrt genuegt ein Server ohne Projektor einer Bildanfrage nicht.
+    fn serving_port_for(&self, model_id: &str, need_mmproj: bool) -> Option<u16> {
         let ready = matches!(self.phase.lock().unwrap().0, LocalLlmPhase::Ready);
         if !ready {
             return None;
         }
-        self.running
-            .lock()
-            .unwrap()
-            .as_mut()
-            .and_then(|r| (r.model_id == model_id && exit_of(r).is_none()).then_some(r.port))
+        self.running.lock().unwrap().as_mut().and_then(|r| {
+            (r.model_id == model_id && (r.mmproj || !need_mmproj) && exit_of(r).is_none())
+                .then_some(r.port)
+        })
     }
 
     /// Laeuft der Server gerade mit genau diesem Modell (Prozess lebt)?
@@ -376,8 +405,23 @@ impl LocalLlmServer {
     /// Verbindung = tot). Liefert den Port zur Wiederverwendung; sonst `None`,
     /// und der Aufrufer geht ueber `ensure`, das den Absturz behandelt.
     pub async fn live_port(&self, model_id: &str) -> Option<u16> {
-        let port = self.serving_port(model_id)?;
+        self.live_port_for(model_id, false).await
+    }
+
+    /// Wie `live_port`, mit `need_mmproj` wie bei `serving_port_for`.
+    pub async fn live_port_for(&self, model_id: &str, need_mmproj: bool) -> Option<u16> {
+        let port = self.serving_port_for(model_id, need_mmproj)?;
         (self.probe(port).await != Health::Down).then_some(port)
+    }
+
+    /// D3: laeuft der Server gerade MIT Bild-Projektor? Der Folienauftrag stoppt
+    /// ihn danach, damit der naechste Chat wieder ohne die ~0,8 GB startet.
+    pub fn has_vision(&self) -> bool {
+        self.running
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|r| r.mmproj)
     }
 
     /// M4-P4b: Ist der verwaltete Prozess inzwischen beendet (Absturz, Deckel
@@ -419,6 +463,7 @@ impl LocalLlmServer {
             port: 1,
             model_id: model_id.to_string(),
             backend: "cpu".into(),
+            mmproj: false,
         });
         self.set_phase(LocalLlmPhase::Ready, None);
     }
@@ -438,7 +483,7 @@ impl LocalLlmServer {
     pub async fn ensure(&self, binary: &Path, opts: StartOptions, log_path: Option<PathBuf>) -> Result<u16, String> {
         let _serial = self.start_lock.lock().await;
         self.detect_crash().await;
-        if let Some(port) = self.serving_port(&opts.model_id) {
+        if let Some(port) = self.serving_port_for(&opts.model_id, opts.mmproj.is_some()) {
             return Ok(port);
         }
         let kind = self.admit_start(&opts.model_id)?;
@@ -635,6 +680,11 @@ impl LocalLlmServer {
             self.set_phase(LocalLlmPhase::Error, Some(msg.clone()));
             return Err(msg);
         }
+        if let Some(mmproj) = opts.mmproj.as_deref().filter(|p| !p.is_file()) {
+            let msg = format!("Bild-Projektor fehlt: {}", mmproj.display());
+            self.set_phase(LocalLlmPhase::Error, Some(msg.clone()));
+            return Err(msg);
+        }
         let port = free_port()?;
         self.stop_requested.store(false, Ordering::Release);
         self.set_phase(LocalLlmPhase::Starting, None);
@@ -648,7 +698,13 @@ impl LocalLlmServer {
         let need_mb = if opts.embedding.is_some() {
             model_mb.max(EMBED_RAM_NEED_MB)
         } else {
+            // D3: der Projektor (~1 GB) wird mit dem Modell geladen und zaehlt mit.
             model_mb
+                + opts
+                    .mmproj
+                    .as_deref()
+                    .and_then(|p| std::fs::metadata(p).ok())
+                    .map_or(0, |m| m.len() / (1024 * 1024))
         };
         let free_mb = crate::process_guard::check_ram_for_start(need_mb).map_err(|msg| {
             self.set_phase(LocalLlmPhase::Error, Some(msg.clone()));
@@ -675,6 +731,7 @@ impl LocalLlmServer {
             port,
             model_id: opts.model_id.clone(),
             backend: opts.backend.clone(),
+            mmproj: opts.mmproj.is_some(),
         });
 
         let started = Instant::now();
@@ -861,6 +918,7 @@ mod tests {
                     context_tokens: 4096,
                     gpu_layers: 99,
                     embedding: None,
+                    mmproj: None,
                 },
                 None,
             )
@@ -890,6 +948,7 @@ mod tests {
             context_tokens: 4096,
             gpu_layers: 99,
             embedding,
+            mmproj: None,
         }
     }
 
@@ -935,6 +994,28 @@ mod tests {
         assert_eq!(creation_flags(&opts("cuda", None)), CREATE_NO_WINDOW);
     }
 
+    /// D3: mit Bild-Projektor kommen `--mmproj <Datei> -b 2048 -ub 2048` dazu
+    /// (ohne den Batch bricht llama.cpp bei grossen Bildern ab); alles andere
+    /// bleibt die Kommandozeile des Chat-Servers.
+    #[test]
+    fn vision_args_add_mmproj_and_a_big_batch_to_the_chat_server_only() {
+        let mut with = opts("cuda", None);
+        with.mmproj = Some(PathBuf::from("C:/m/mmproj.gguf"));
+        let args = server_args(&with, 5000, 16);
+        assert_eq!(pair(&args, "--mmproj").as_deref(), Some("C:/m/mmproj.gguf"));
+        assert_eq!(pair(&args, "-b").as_deref(), Some("2048"));
+        assert_eq!(pair(&args, "-ub").as_deref(), Some("2048"));
+        assert_eq!(pair(&args, "--parallel").as_deref(), Some("1"));
+        assert_eq!(args.last().map(String::as_str), Some("--no-webui"));
+        // Ohne den Projektor: kein -b/-ub, kein --mmproj (die alte Kommandozeile).
+        let plain = server_args(&opts("cuda", None), 5000, 16);
+        assert!(!plain.iter().any(|a| a == "--mmproj" || a == "-b" || a == "-ub"));
+        // Der Embedding-Modus kennt keinen Projektor.
+        let mut emb = opts("cuda", Some(BGE));
+        emb.mmproj = Some(PathBuf::from("x.gguf"));
+        assert!(!server_args(&emb, 1, 16).iter().any(|a| a == "--mmproj"));
+    }
+
     /// Auf dem CPU-Backend bekommt der Embedding-Server hoechstens 4 Threads
     /// und startet mit Prozessklasse BELOW_NORMAL (0x4000).
     #[test]
@@ -975,6 +1056,7 @@ mod tests {
             port: 1,
             model_id: "m".into(),
             backend: "cpu".into(),
+            mmproj: false,
         });
         assert!(server.has_process());
         assert!(server.child_exited());
@@ -1151,6 +1233,7 @@ mod tests {
                     context_tokens: 512,
                     gpu_layers: 0,
                     embedding: None,
+                    mmproj: None,
                 }
             }
 
@@ -1197,6 +1280,53 @@ mod tests {
         }
 
         const CRASHED: &str = "server_crashed:";
+
+        /// D3: ein Server OHNE Projektor genuegt einer Bildanfrage nicht (Neustart mit
+        /// `--mmproj`); ein Server MIT Projektor bedient danach jede Anfrage weiter
+        /// (kein Neustart mitten im Folienauftrag), und `has_vision` meldet ihn.
+        #[tokio::test]
+        async fn a_vision_request_restarts_a_plain_server_once_and_then_serves_everyone() {
+            let h = Harness::new(RESTART_COOLDOWN);
+            let exe = std::env::current_exe().expect("Test-EXE");
+            let projector = h.model.with_extension("mmproj.gguf");
+            std::fs::write(&projector, b"x").expect("Projektordatei");
+            h.ensure().await.expect("Start ohne Projektor");
+            assert_eq!(h.spawned(), 1);
+            assert!(!h.server.has_vision());
+            assert!(h.server.live_port_for("m", true).await.is_none());
+
+            let mut vision = h.opts("m");
+            vision.mmproj = Some(projector.clone());
+            h.server.ensure(&exe, vision.clone(), None).await.expect("Start mit Projektor");
+            assert_eq!(h.spawned(), 2, "Neustart mit Projektor");
+            assert!(h.server.has_vision());
+
+            // Weitere Bild- UND Textanfragen: derselbe Prozess.
+            h.server.ensure(&exe, vision, None).await.unwrap();
+            h.ensure().await.unwrap();
+            assert_eq!(h.spawned(), 2, "kein weiterer Start");
+            assert!(h.server.live_port("m").await.is_some());
+
+            // Nach dem Auftrag: Stopp, der naechste Text startet wieder ohne Projektor.
+            h.server.stop();
+            assert!(!h.server.has_vision());
+            h.ensure().await.unwrap();
+            assert_eq!(h.spawned(), 3);
+            assert!(!h.server.has_vision());
+            let _ = std::fs::remove_file(&projector);
+        }
+
+        /// D3: fehlt die Projektordatei, scheitert der Start lesbar, ohne Prozess.
+        #[tokio::test]
+        async fn a_missing_projector_file_fails_before_any_process_starts() {
+            let h = Harness::new(RESTART_COOLDOWN);
+            let exe = std::env::current_exe().expect("Test-EXE");
+            let mut vision = h.opts("m");
+            vision.mmproj = Some(h.model.with_extension("gibt-es-nicht.gguf"));
+            let err = h.server.ensure(&exe, vision, None).await.unwrap_err();
+            assert!(err.contains("Bild-Projektor fehlt"), "{err}");
+            assert_eq!(h.spawned(), 0);
+        }
 
         #[tokio::test]
         async fn a_dead_process_is_cleared_and_the_next_ensure_starts_a_new_one() {
@@ -1475,6 +1605,7 @@ mod tests {
                 parallel: 2,
                 below_normal: true,
             }),
+            mmproj: None,
         };
         let server = LocalLlmServer::new();
 

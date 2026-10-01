@@ -98,6 +98,7 @@ export const installIntegrationsMock = async (
           directions: ["read"],
           caps: ["knowledge.search", "knowledge.read"],
         },
+        webhook: { directions: ["write"], caps: ["webhook.post"] },
         youtube: { directions: ["read"], caps: ["media.fetch", "youtube.add"] },
         agent: {
           directions: ["read", "write", "both"],
@@ -107,6 +108,8 @@ export const installIntegrationsMock = async (
             "transcribe.file",
             "tts.render",
             "youtube.add",
+            "workflow.read",
+            "workflow.run",
           ],
         },
       };
@@ -116,6 +119,7 @@ export const installIntegrationsMock = async (
         "knowledge.search",
         "knowledge.read",
         "media.fetch",
+        "workflow.read",
       ]);
       const CALLERS = ["workflow", "agent_external", "agent_local"];
 
@@ -223,10 +227,15 @@ export const installIntegrationsMock = async (
             }),
           })),
           secrets:
-            i.kind === "smtp" || i.kind === "wissen"
+            i.kind === "smtp" || i.kind === "wissen" || i.kind === "webhook"
               ? [
                   {
-                    slot: i.kind === "smtp" ? "password" : "token",
+                    slot:
+                      i.kind === "smtp"
+                        ? "password"
+                        : i.kind === "webhook"
+                          ? "url"
+                          : "token",
                     status: i.secret ? "present" : "missing",
                   },
                 ]
@@ -252,6 +261,25 @@ export const installIntegrationsMock = async (
           outcome: "ok",
           detail_json: JSON.stringify(detail),
         });
+      };
+      // Wie `webhook::parse_url`: nur https, http nur gegen diesen Rechner; liefert den Server.
+      const webhookHost = (raw: unknown): string => {
+        const text = String(raw ?? "").trim();
+        if (!text) throw "Die Adresse des Webhooks fehlt.";
+        let url: URL;
+        try {
+          url = new URL(text);
+        } catch {
+          throw "Die Adresse des Webhooks ist ungültig (zum Beispiel https://host/webhook/abc).";
+        }
+        const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(
+          url.hostname,
+        );
+        if (url.protocol === "http:" && !loopback)
+          throw "Der Webhook muss https verwenden (http nur auf diesem Rechner).";
+        if (url.protocol !== "https:" && url.protocol !== "http:")
+          throw "Der Webhook muss mit https:// beginnen.";
+        return url.host;
       };
       const find = (id: string) => {
         const i = state.integrations.find((x: any) => x.id === id);
@@ -472,6 +500,11 @@ export const installIntegrationsMock = async (
                 area: st.area ?? "",
               });
               secret = true;
+            } else if (kind === "webhook") {
+              // Wie das Backend: die Adresse ist das Geheimnis, in der Konfiguration
+              // steht nur der Server.
+              Object.assign(cfg, { host: webhookHost(st.secret) });
+              secret = true;
             } else {
               throw "kind_not_available";
             }
@@ -526,6 +559,9 @@ export const installIntegrationsMock = async (
             }
             for (const [k, v] of Object.entries(map)) {
               if (st[k] != null) i.config[v] = st[k];
+            }
+            if (i.kind === "webhook" && st.secret) {
+              i.config.host = webhookHost(st.secret);
             }
             if (st.secret) i.secret = true;
             audit(i.id, null, {
