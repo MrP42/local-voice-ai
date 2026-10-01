@@ -30,10 +30,12 @@ use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
 use crate::commands::meetings::{require_managed, store_err};
+use crate::managers::llm::vision::{self as llm_vision, VisionPlan};
 use crate::managers::meetings::job::{self, JobGuard};
 use crate::managers::meetings::recorder::MeetingRecorderManager;
 use crate::managers::meetings::slides::ocr::{self, OcrBackend};
 use crate::managers::meetings::slides::run::{self, SlideOutcome, SlideRun};
+use crate::managers::meetings::slides::vision::{LocalVision, VisionBackend};
 use crate::managers::meetings::slides::store::MeetingSlide;
 use crate::managers::meetings::slides::{SlideDetectConfig, SlideError, SlideOptions};
 use crate::managers::meetings::store::MeetingStore;
@@ -160,6 +162,7 @@ fn execute(
     video: &Path,
     meeting_dir: &Path,
     cfg: &SlideDetectConfig,
+    vision: VisionPlan,
 ) {
     let handle = Arc::clone(job.handle());
     let outcome = catch_unwind(AssertUnwindSafe(|| {
@@ -172,6 +175,18 @@ fn execute(
                 None
             }
         };
+        // Bildanalyse (D3): nur mit dem Plan `Ready` (Schalter an, GPU, Projektor, Speicher);
+        // sonst bleibt es bei der Windows-OCR. Der Leser startet den Server erst bei der
+        // ersten Frage und gibt ihn am Ende des Laufs frei.
+        let local_vision = LocalVision::new();
+        let vision_backend: Option<&dyn VisionBackend> = match vision {
+            VisionPlan::Ready => Some(&local_vision),
+            VisionPlan::Unavailable(code) => {
+                log::info!("slides: Bildanalyse gewuenscht, aber nicht moeglich ({code}), es bleibt bei der Texterkennung");
+                None
+            }
+            VisionPlan::Off => None,
+        };
         run::run(
             &handle,
             &SlideRun {
@@ -181,6 +196,7 @@ fn execute(
                 meeting_dir,
                 cfg,
                 ocr: reader,
+                vision: vision_backend,
                 pid_out: None,
             },
         )
@@ -244,13 +260,15 @@ pub async fn detect_meeting_slides(
         .map_err(|e| format!("app_data_dir_failed: {e}"))?;
     let meeting_dir = meeting_dir_of(&base, &meeting_id).map_err(str::to_string)?;
     let cfg = options.to_config();
+    // D3: Bildanalyse nur, wenn gewuenscht UND moeglich (GPU, Projektor, Grafikspeicher).
+    let vision = llm_vision::vision_plan(crate::settings::get_settings(&app).meeting_slide_vision).await;
 
     let job = job::global()
         .try_start(&meeting_id, job::app_emit(&app))
         .map_err(|e| e.to_string())?;
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        execute(&app, &store, job, &meeting_id, &video, &meeting_dir, &cfg);
+        execute(&app, &store, job, &meeting_id, &video, &meeting_dir, &cfg, vision);
     });
     Ok(())
 }
@@ -299,6 +317,82 @@ pub async fn meeting_slides_dir(app: AppHandle, meeting_id: String) -> Result<St
         .map_err(|e| format!("app_data_dir_failed: {e}"))?;
     let dir = meeting_dir_of(&base, &meeting_id).map_err(str::to_string)?;
     Ok(dir.to_string_lossy().into_owned())
+}
+
+// ---------------------------------------------------------------------------
+// D3: Einstellung "Bildanalyse fuer Folien"
+// ---------------------------------------------------------------------------
+
+/// Zustand der Bildanalyse fuer die Einstellungszeile: Schalter, Dateien, und ob sie auf
+/// diesem Rechner ueberhaupt angeboten werden kann.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SlideVisionStatus {
+    /// Der Schalter (`meeting_slide_vision`).
+    pub enabled: bool,
+    /// Gemma 4 E4B (das Modell des Projektors) ist geladen.
+    pub model_ready: bool,
+    /// Der Bild-Projektor ist geladen.
+    pub projector_ready: bool,
+    /// Der Projektor wird gerade geladen.
+    pub downloading: bool,
+    /// Groesse des Projektor-Downloads in MB.
+    pub projector_size_mb: u64,
+    /// `ready`, wenn die Analyse laufen koennte, sonst der Grund: `vision_no_gpu` (keine
+    /// Grafikkarte oder Speicher nicht messbar), `vision_low_vram` (zu wenig freier
+    /// Grafikspeicher), `vision_no_model`, `vision_no_projector`. Die Oberflaeche bietet den
+    /// Schalter nur ohne GPU-Grund an.
+    pub availability: String,
+}
+
+/// Die Groesse des Projektors laut Katalog in MB (0, wenn der Eintrag fehlt).
+fn projector_size_mb() -> u64 {
+    crate::catalog::tts_entries(crate::catalog::Purpose::LlmProjector)
+        .into_iter()
+        .find(|e| e.id == llm_vision::VISION_PROJECTOR_ID)
+        .map_or(0, |e| e.files.iter().map(|f| f.size_bytes).sum::<u64>() / (1024 * 1024))
+}
+
+/// Der Zustand, rein aus den Messwerten und dem Schalter.
+pub fn vision_status_from(enabled: bool, facts: &llm_vision::VisionFacts) -> SlideVisionStatus {
+    SlideVisionStatus {
+        enabled,
+        model_ready: facts.model_present,
+        projector_ready: facts.projector_present,
+        downloading: facts.downloading,
+        projector_size_mb: projector_size_mb(),
+        availability: facts.plan_if_enabled().code().to_string(),
+    }
+}
+
+/// Einstellung `meeting_slide_vision` (Standard aus). Wirkt beim naechsten Folienlauf.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meeting_slide_vision_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = crate::settings::get_settings(&app);
+    settings.meeting_slide_vision = enabled;
+    crate::settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Zustand der Bildanalyse (Dateien, GPU, freier Grafikspeicher) fuer die Einstellung.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_slide_vision_status(app: AppHandle) -> Result<SlideVisionStatus, String> {
+    let facts = llm_vision::gather_facts().await;
+    Ok(vision_status_from(
+        crate::settings::get_settings(&app).meeting_slide_vision,
+        &facts,
+    ))
+}
+
+/// Laedt den Bild-Projektor (990 MB) -- nur auf Knopfdruck, nie von selbst. Das Modell
+/// (Gemma 4 E4B) kommt wie jedes Sprachmodell ueber die Modellliste.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_slide_vision_download(
+    runtime: tauri::State<'_, Arc<crate::managers::llm::LlmRuntimeManager>>,
+) -> Result<(), String> {
+    runtime.download(llm_vision::VISION_PROJECTOR_ID).await
 }
 
 #[cfg(test)]
@@ -378,6 +472,10 @@ mod tests {
             text_slides: 0,
             ohne_text: 0,
             ocr_failed: 0,
+            vision_model: None,
+            vision_slides: 0,
+            vision_failed: 0,
+            vision_unavailable: None,
         };
         assert_eq!(
             event_for("m", &Ok(summary(SlideOutcome::Done))),
@@ -415,5 +513,29 @@ mod tests {
             MeetingSlidesEvent::Failed { code, .. } => assert_eq!(code, "slides_ffmpeg_failed"),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// D3: die Einstellungszeile bekommt aus Messwerten und Schalter genau den Grund, warum die
+    /// Bildanalyse (nicht) angeboten wird; die Projektor-Groesse kommt aus dem Katalog.
+    #[test]
+    fn the_vision_status_names_why_it_is_not_offered() {
+        let facts = |backend: Option<&str>, vram: Option<u64>, projector: bool| llm_vision::VisionFacts {
+            model_present: true,
+            projector_present: projector,
+            downloading: false,
+            backend: backend.map(str::to_string),
+            free_vram_mb: vram,
+        };
+        let ready = vision_status_from(false, &facts(Some("cuda"), Some(20_000), true));
+        assert_eq!(ready.availability, "ready");
+        assert!(!ready.enabled, "angeboten ist nicht eingeschaltet");
+        assert_eq!(ready.projector_size_mb, 944, "990 372 672 Byte");
+        let cpu = vision_status_from(true, &facts(Some("cpu"), None, true));
+        assert_eq!((cpu.availability.as_str(), cpu.enabled), ("vision_no_gpu", true));
+        let low = vision_status_from(false, &facts(Some("vulkan"), Some(2_000), true));
+        assert_eq!(low.availability, "vision_low_vram");
+        let none = vision_status_from(false, &facts(Some("cuda"), Some(20_000), false));
+        assert_eq!(none.availability, "vision_no_projector");
+        assert!(!none.projector_ready);
     }
 }

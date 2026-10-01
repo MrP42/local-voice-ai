@@ -12,6 +12,7 @@ pub mod estimate;
 pub mod resources;
 pub mod runtime;
 pub mod server;
+pub mod vision;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -93,6 +94,18 @@ pub async fn resolve_base_url(provider: &PostProcessProvider, model: &str) -> Re
 /// liefert seine Adresse. Startet ihn bei Bedarf -- die Laufzeit wird per
 /// Selbsttest gewaehlt.
 pub async fn ensure_local(model_id: &str) -> Result<String, String> {
+    ensure_local_with(model_id, false).await
+}
+
+/// D3: wie [`ensure_local`], aber der Server laeuft MIT Bild-Projektor
+/// (`--mmproj`, `-b/-ub 2048`). Ein laufender Server ohne Projektor wird dafuer
+/// neu gestartet; ein Server mit Projektor bedient danach jede Anfrage, bis
+/// [`release_vision`] ihn beendet. Fehlt der Projektor, kommt `no_projector: ...`.
+pub async fn ensure_local_vision(model_id: &str) -> Result<String, String> {
+    ensure_local_with(model_id, true).await
+}
+
+async fn ensure_local_with(model_id: &str, vision: bool) -> Result<String, String> {
     let runtime = RUNTIME
         .get()
         .ok_or_else(|| "Lokales Sprachmodell nicht initialisiert".to_string())?;
@@ -103,13 +116,22 @@ pub async fn ensure_local(model_id: &str) -> Result<String, String> {
     // Sonst weiter zu `ensure`, das einen Absturz abraeumt, hoechstens einmal
     // pro Minute neu startet und sonst `server_crashed: ...` meldet.
     touch_local();
-    if let Some(port) = server.live_port(model_id).await {
+    if let Some(port) = server.live_port_for(model_id, vision).await {
         return Ok(format!("http://127.0.0.1:{port}/v1"));
     }
     let model_path = runtime
         .model_path(model_id)
         .filter(|p| p.is_file())
         .ok_or_else(|| format!("Modell nicht geladen: {model_id}"))?;
+    let mmproj = if vision {
+        let path = runtime
+            .projector_path(vision::VISION_PROJECTOR_ID)
+            .filter(|p| p.is_file())
+            .ok_or_else(|| format!("{}: Bild-Projektor nicht geladen", vision::CODE_NO_PROJECTOR))?;
+        Some(path)
+    } else {
+        None
+    };
     let (_, backend, binary) = runtime.resolve_runtime().await?;
     let gpu_layers = if backend == "cpu" { 0 } else { 99 };
     let context_tokens = plan_context(&model_path, &backend).await;
@@ -124,6 +146,7 @@ pub async fn ensure_local(model_id: &str) -> Result<String, String> {
                 context_tokens,
                 gpu_layers,
                 embedding: None,
+                mmproj,
             },
             Some(runtime.log_path()),
         )
@@ -201,21 +224,7 @@ pub async fn stop_local_if_idle(limit: Option<std::time::Duration>) -> bool {
     if !local_idle_expired(idle, limit, false) {
         return false;
     }
-    let busy = match server.status().port {
-        Some(port) => match reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(2))
-            .build()
-        {
-            Ok(client) => match client.get(format!("http://127.0.0.1:{port}/slots")).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    slots_busy(&resp.text().await.unwrap_or_default())
-                }
-                _ => false,
-            },
-            Err(_) => false,
-        },
-        None => false,
-    };
+    let busy = server_busy(server).await;
     if busy {
         touch_local();
         return false;
@@ -227,6 +236,46 @@ pub async fn stop_local_if_idle(limit: Option<std::time::Duration>) -> bool {
     let server = server.clone();
     let _ = tokio::task::spawn_blocking(move || server.stop()).await;
     true
+}
+
+/// Rechnet der Chat-Server gerade (`/slots`)? Unklar zaehlt als "nein".
+async fn server_busy(server: &LocalLlmServer) -> bool {
+    let Some(port) = server.status().port else {
+        return false;
+    };
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    else {
+        return false;
+    };
+    match client.get(format!("http://127.0.0.1:{port}/slots")).send().await {
+        Ok(resp) if resp.status().is_success() => slots_busy(&resp.text().await.unwrap_or_default()),
+        _ => false,
+    }
+}
+
+/// D3: Ende eines Folienauftrags. Laeuft der Chat-Server mit Bild-Projektor,
+/// wird er beendet, damit der naechste Chat wieder OHNE die ~0,8 GB Grafikspeicher
+/// startet (Neustart bei der naechsten Anfrage). Rechnet er gerade fuer jemand
+/// anderen (eine Anfrage hat sich an den Projektor-Server gehaengt), bleibt er: der
+/// Leerlauf-Stopp (`stop_local_if_idle`) raeumt ihn spaeter ab. Liefert, ob gestoppt wurde.
+pub async fn release_vision() -> bool {
+    let Some(server) = SERVER.get() else { return false };
+    if !server.has_vision() || server_busy(server).await {
+        return false;
+    }
+    log::info!("Chat-Server: Folienauftrag beendet, Bild-Projektor wird entladen");
+    let server = server.clone();
+    tokio::task::spawn_blocking(move || {
+        // Zwischen Pruefung und Stopp kann ein anderer Start gelaufen sein: nur einen
+        // Server MIT Projektor beenden.
+        if server.has_vision() {
+            server.stop();
+        }
+    })
+    .await
+    .is_ok()
 }
 
 /// Kontext fuer einen Start, je freiem Grafikspeicher (`context`). Fehler beim
@@ -448,6 +497,7 @@ pub async fn ensure_embedding(model_id: &str) -> Result<String, String> {
                     parallel: 2,
                     below_normal: true,
                 }),
+                mmproj: None,
             },
             Some(runtime.embed_log_path()),
         )

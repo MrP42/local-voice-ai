@@ -53,6 +53,9 @@ pub enum Purpose {
     /// M4-P4b: GGUF-Embedding-Modell fuer den zweiten Server (Besprechungs-
     /// suche). Getrennt von `LlmModel`, damit es nie als Chat-Modell erscheint.
     LlmEmbedding,
+    /// D3: Bild-Projektor (`--mmproj`) fuer die Bildanalyse von Folien. Nie in der
+    /// Liste der Sprachmodelle: allein nutzlos, nur mit seinem Modell zu starten.
+    LlmProjector,
     /// M3-P3a: Sprechertrennungs-Modell (Kategorie "Sprechertrennung",
     /// `managers::meetings::diarize`). Nie im ASR-Katalog: es transkribiert nicht.
     Diarization,
@@ -583,6 +586,7 @@ mod tests {
             Purpose::LlmRuntime,
             Purpose::LlmModel,
             Purpose::LlmEmbedding,
+            Purpose::LlmProjector,
             Purpose::Diarization,
         ] {
             for e in tts_entries(purpose) {

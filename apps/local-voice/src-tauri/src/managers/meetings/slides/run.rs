@@ -37,6 +37,7 @@ use log::{info, warn};
 
 use super::ffmpeg::{self, Flow, SampleHook, SampleTick};
 use super::ocr::{self, OcrBackend};
+use super::vision::{self, SlideAnalysis, VisionBackend};
 use super::store::{NewSlide, SlideRecord, ORIGIN_VIDEO};
 use super::{
     clamp_last_end, group_by_hash, hamming, merge_occurrences, segment, SlideDetectConfig,
@@ -56,6 +57,11 @@ pub struct SlideRun<'a> {
     /// Texterkennung (D2); `None`: Folien ohne Text (andere Plattform, keine
     /// OCR-Sprache, Tests der Erkennung allein).
     pub ocr: Option<&'a dyn OcrBackend>,
+    /// Bildanalyse (D3): Gemma liest den Text neu (ersetzt bei Textfolien den OCR-Text)
+    /// und beschreibt jede Folie. `None`: aus (Standard), nicht moeglich (keine GPU, kein
+    /// Projektor) oder keine Texterkennung da: der Lauf bleibt der von D2. Der Leser wird am
+    /// Ende des Laufs freigegeben (`VisionBackend::release`).
+    pub vision: Option<&'a dyn VisionBackend>,
     /// Bekommt die PID des Abtast-ffmpeg (Diagnose, Tests); in der App `None`.
     pub pid_out: Option<&'a AtomicU32>,
 }
@@ -92,6 +98,14 @@ pub struct SlideSummary {
     pub ohne_text: u32,
     /// Hash-Gruppen, deren Text nicht gelesen werden konnte (bleiben ohne Art).
     pub ocr_failed: u32,
+    /// Kennung der Bildanalyse dieses Laufs (`gemma-4-e4b`); `None`: sie war aus oder nicht moeglich.
+    pub vision_model: Option<&'static str>,
+    /// Folien dieses Laufs, zu denen die Bildanalyse Text oder Beschreibung lieferte.
+    pub vision_slides: u32,
+    /// Verworfene oder gescheiterte Antworten der Bildanalyse (leer, unbekannte Klasse, Verbindung).
+    pub vision_failed: u32,
+    /// Grund (Fehlertext des Servers), wenn die Bildanalyse mitten im Lauf nicht zu haben war.
+    pub vision_unavailable: Option<String>,
 }
 
 impl SlideSummary {
@@ -107,6 +121,10 @@ impl SlideSummary {
             text_slides: 0,
             ohne_text: 0,
             ocr_failed: 0,
+            vision_model: None,
+            vision_slides: 0,
+            vision_failed: 0,
+            vision_unavailable: None,
         }
     }
 }
@@ -303,6 +321,142 @@ fn store_text(ctx: &SlideRun<'_>, slide_id: &str, read: &TextRead) -> bool {
     }
 }
 
+/// Gibt den Bildleser frei, sobald der Lauf ihn nicht mehr braucht oder endet (auch bei
+/// Stopp, Fehler und Panik): der Server mit Projektor soll nicht liegen bleiben.
+struct ReleaseOnDrop<'a>(Option<&'a dyn VisionBackend>);
+
+impl Drop for ReleaseOnDrop<'_> {
+    fn drop(&mut self) {
+        if let Some(vision) = self.0.take() {
+            vision.release();
+        }
+    }
+}
+
+/// D3: das Bild zu einer Folie fuer die Bildanalyse: das Kandidatenbild (frisch gelesen),
+/// sonst das gespeicherte einer vorhandenen Folie, sonst aus dem Video geholt. `Ok(None)`:
+/// gestoppt.
+fn image_for_group(
+    ctx: &SlideRun<'_>,
+    candidates: &CandidateDir,
+    hash_group: usize,
+    group: &SlideGroup,
+    stored: Option<&SlideRecord>,
+    stop: &AtomicBool,
+) -> Result<Option<PathBuf>, SlideError> {
+    let candidate = candidates.full(hash_group);
+    if candidate.is_file() {
+        return Ok(Some(candidate));
+    }
+    if let Some(path) = stored
+        .map(|r| ctx.meeting_dir.join(&r.slide.image_path))
+        .filter(|p| p.is_file())
+    {
+        return Ok(Some(path));
+    }
+    candidates.ensure()?;
+    match ffmpeg::extract_frame(
+        ctx.video,
+        group.rep_ms,
+        &candidate,
+        Some(&candidates.thumb(hash_group)),
+        stop,
+    ) {
+        Ok(()) => Ok(Some(candidate)),
+        Err(SlideError::Cancelled) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// D3: die Bildanalyse je endgueltiger Folie. Fragt nur, was fehlt: Text bei Textfolien
+/// (Art `text`) ohne Gemma-Text, eine Beschreibung bei Folien ohne. Kontrollpunkt je Folie
+/// (Pause, Stopp). Eine gescheiterte oder verworfene Antwort laesst die Folie unveraendert;
+/// ist der Server nicht zu haben, endet die Analyse dieses Laufs (`vision_unavailable`).
+/// `Ok(None)`: gestoppt.
+#[allow(clippy::too_many_arguments)]
+fn analyze_groups(
+    job: &Arc<JobHandle>,
+    ctx: &SlideRun<'_>,
+    backend: &dyn VisionBackend,
+    groups: &[SlideGroup],
+    hash_group_of: &[usize],
+    reads: &[Option<TextRead>],
+    existing: &[SlideRecord],
+    candidates: &CandidateDir,
+    stop: &AtomicBool,
+    summary: &mut SlideSummary,
+) -> Result<Option<Vec<Option<SlideAnalysis>>>, SlideError> {
+    let mut out: Vec<Option<SlideAnalysis>> = vec![None; groups.len()];
+    let unclaimed = vec![false; existing.len()];
+    for (gi, group) in groups.iter().enumerate() {
+        match job.checkpoint(&|| false) {
+            Gate::Go { .. } => {}
+            Gate::Stopped | Gate::Cancelled => return Ok(None),
+        }
+        let hash_group = hash_group_of[group.first];
+        let stored = nearest_existing(existing, &unclaimed, group.hash, ctx.cfg.hash_threshold)
+            .map(|i| &existing[i]);
+        // Nur Folien mit lesbarem Windows-Text werden neu gelesen: wo die OCR nichts fand
+        // (Foto, Sprecher), wuerde Gemma eher erfinden.
+        let text_slide = reads[hash_group]
+            .as_ref()
+            .is_some_and(|r| ocr::kind_of(&r.text) == ocr::KIND_TEXT);
+        let (read_text, describe) = match stored {
+            Some(r) => (
+                text_slide && r.slide.ocr_engine.as_deref() != Some(backend.id()),
+                r.slide.description.is_none(),
+            ),
+            None => (text_slide, true),
+        };
+        if !read_text && !describe {
+            job.advance(group.rep_ms);
+            continue;
+        }
+        let Some(image) = image_for_group(ctx, candidates, hash_group, group, stored, stop)? else {
+            return Ok(None);
+        };
+        let analysis = vision::analyze_slide(backend, &image, read_text, describe);
+        summary.vision_failed += analysis.failed;
+        if analysis.text.is_some() || analysis.description.is_some() {
+            summary.vision_slides += 1;
+        }
+        let unavailable = analysis.unavailable.clone();
+        out[gi] = Some(analysis);
+        if let Some(why) = unavailable {
+            warn!("slides: Bildanalyse nicht verfuegbar, Rest ohne ({})", why.chars().take(120).collect::<String>());
+            summary.vision_unavailable = Some(why);
+            break;
+        }
+        job.advance(group.rep_ms);
+    }
+    Ok(Some(out))
+}
+
+/// Schreibt das Ergebnis der Bildanalyse: Gemmas Text ersetzt den OCR-Text (Engine und Art
+/// folgen dem neuen Text), die Beschreibung kommt dazu. `true`, wenn sich etwas geaendert hat.
+fn store_vision(ctx: &SlideRun<'_>, slide_id: &str, analysis: &SlideAnalysis, engine: &str) -> bool {
+    let mut changed = false;
+    if let Some(text) = &analysis.text {
+        match ctx
+            .store
+            .slide_set_text(slide_id, Some(text), Some(engine), Some(ocr::kind_of(text)))
+        {
+            Ok(found) => changed |= found,
+            Err(e) => warn!("slides: Gemma-Text der Folie {slide_id} nicht gespeichert ({e})"),
+        }
+    }
+    if let Some(description) = &analysis.description {
+        match ctx
+            .store
+            .slide_set_description(slide_id, Some(description), Some(engine))
+        {
+            Ok(found) => changed |= found,
+            Err(e) => warn!("slides: Beschreibung der Folie {slide_id} nicht gespeichert ({e})"),
+        }
+    }
+    changed
+}
+
 /// Wie [`run`], aber `after_slide` wird nach jeder verarbeiteten Folie gerufen
 /// (Index ab 0): in der App ein leerer Haken, in Tests ein Stopp an einer
 /// bestimmten Stelle.
@@ -358,6 +512,10 @@ pub fn run_with(
         text_slides: 0,
         ohne_text: 0,
         ocr_failed: 0,
+        vision_model: None,
+        vision_slides: 0,
+        vision_failed: 0,
+        vision_unavailable: None,
     };
 
     // Ordner, Reste, vorhandene Folien.
@@ -428,6 +586,37 @@ pub fn run_with(
         }
     }
 
+    // 3c. Bildanalyse (D3): Gemma liest den Text neu und beschreibt. Nur mit Texterkennung
+    // (sie ersetzt OCR-Text); der Leser wird danach freigegeben, auch wenn der Lauf endet.
+    let vision_backend: Option<&dyn VisionBackend> = ctx.vision.filter(|_| ctx.ocr.is_some());
+    summary.vision_model = vision_backend.map(|v| v.id());
+    let release = ReleaseOnDrop(vision_backend);
+    let mut visions: Vec<Option<SlideAnalysis>> = vec![None; groups.len()];
+    if let Some(backend) = vision_backend {
+        info!("slides: Bildanalyse {}", backend.id());
+        job.begin_phase_ex(JobPhase::Slides, total_ms, true);
+        match analyze_groups(
+            job,
+            ctx,
+            backend,
+            &groups,
+            &hash_group_of,
+            &reads,
+            &existing,
+            &candidates,
+            &stop,
+            &mut summary,
+        )? {
+            Some(done) => visions = done,
+            None => {
+                summary.outcome = SlideOutcome::Stopped;
+                return Ok(summary);
+            }
+        }
+    }
+    drop(release);
+    let vision_engine = vision_backend.map_or(vision::ENGINE_GEMMA, |v| v.id());
+
     // 4. Bilder und Zeilen.
     job.begin_phase_ex(JobPhase::Slides, total_ms, true);
     let mut claimed = vec![false; existing.len()];
@@ -481,6 +670,10 @@ pub fn run_with(
                         changed |= store_text(ctx, &record.slide.id, read);
                     }
                 }
+                // Bildanalyse (D3): Gemma-Text und Beschreibung.
+                if let Some(analysis) = &visions[index] {
+                    changed |= store_vision(ctx, &record.slide.id, analysis, vision_engine);
+                }
                 if changed {
                     summary.updated += 1;
                 }
@@ -528,6 +721,9 @@ pub fn run_with(
                         if let Some(read) = &reads[hash_group_of[group.first]] {
                             store_text(ctx, &slide.id, read);
                         }
+                        if let Some(analysis) = &visions[index] {
+                            store_vision(ctx, &slide.id, analysis, vision_engine);
+                        }
                     }
                     Err(e) => {
                         // Keine Zeile ohne Datei und keine Datei ohne Zeile.
@@ -544,13 +740,15 @@ pub fn run_with(
     }
     job.advance(total_ms);
     info!(
-        "slides: {} Folien erkannt ({} neu, {} aktualisiert; Text {}, ohne Text {}, nicht gelesen {})",
+        "slides: {} Folien erkannt ({} neu, {} aktualisiert; Text {}, ohne Text {}, nicht gelesen {}; Bildanalyse {} Folien, {} verworfen)",
         summary.groups,
         summary.added,
         summary.updated,
         summary.text_slides,
         summary.ohne_text,
-        summary.ocr_failed
+        summary.ocr_failed,
+        summary.vision_slides,
+        summary.vision_failed
     );
     Ok(summary)
 }
@@ -595,6 +793,7 @@ mod tests {
                 meeting_dir,
                 cfg,
                 ocr: None,
+                vision: None,
                 pid_out: None,
             }
         }
@@ -1009,6 +1208,7 @@ mod tests {
             meeting_dir: &md,
             cfg: &cfg,
             ocr: None,
+            vision: None,
             pid_out: None,
         };
         assert_eq!(run(&handle, &ctx).unwrap_err(), SlideError::VideoMissing);

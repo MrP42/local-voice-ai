@@ -936,6 +936,131 @@ async fn complete_once(
     Ok(deliver_whole(completion, on_delta))
 }
 
+// ---------------------------------------------------------------------------
+// D3: Bildanfrage (Folien) an einen OpenAI-kompatiblen Server mit Projektor
+// ---------------------------------------------------------------------------
+//
+// Regeln aus dem Spike M7 (`koordination/bild-video/spike/spike-bericht.md`):
+// - KEIN `response_format: json_schema` bei Bildanfragen: Gemma 4 E4B lief damit
+//   auf echten Bildern bis `max_tokens` in eine Leerzeichen-Schleife (18 von 35
+//   Antworten unbrauchbar). Der Aufrufer fragt nach einfachem Zeilenformat und
+//   wertet selbst aus.
+// - `max_tokens` klein halten (Beschreibung <= 200); ein Bild kostet ~1 000
+//   Eingabe-Token, die der Server dank `-b/-ub 2048` in einem Batch sieht.
+// - Denken aus (`enable_thinking: false`), wie bei den Textaufrufen.
+// Kein Verbrauchs-Ledger: der Aufruf geht nur an den lokalen Server und kostet kein Geld.
+
+/// Hoechste Bilddatei, die gesendet wird (ein 1080p-JPEG hat ~100 kB).
+pub const IMAGE_MAX_BYTES: usize = 8 * 1024 * 1024;
+/// Obergrenze fuer `max_tokens` einer Bildanfrage.
+pub const IMAGE_MAX_TOKENS: u32 = 1024;
+/// Wartezeit einer Bildanfrage: 2 s auf der GPU, ~100 s auf der CPU.
+const IMAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// MIME-Typ einer Bilddatei nach Endung; `None` fuer alles, was kein Bild ist.
+pub fn image_mime(path: &std::path::Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// Der Body einer Bildanfrage: eine Nutzernachricht aus Bild (`image_url` mit
+/// base64-Data-URL) und Text. Rein, damit der Aufbau testbar ist.
+pub fn image_request_body(
+    model: &str,
+    prompt: &str,
+    mime: &str,
+    image: &[u8],
+    max_tokens: u32,
+) -> Value {
+    use base64::Engine as _;
+    let data_url = format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(image)
+    );
+    serde_json::json!({
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                { "type": "image_url", "image_url": { "url": data_url } },
+                { "type": "text", "text": prompt },
+            ],
+        }],
+        "temperature": 0.1,
+        "max_tokens": max_tokens.clamp(1, IMAGE_MAX_TOKENS),
+        "chat_template_kwargs": { "enable_thinking": false },
+    })
+}
+
+/// Antwort einer Bildanfrage: der Text (leer, wenn der Server keinen lieferte) und ob
+/// er abgeschnitten wurde (`finish_reason == "length"`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageReply {
+    pub content: String,
+    pub truncated: bool,
+}
+
+/// Schickt `image` samt `prompt` an `<base_url>/chat/completions` (`base_url` endet auf
+/// `/v1`). Fehlertexte tragen einen Code als Praefix: `image_unreadable`,
+/// `image_unsupported`, `image_empty`, `image_too_large`, `request_failed`, `bad_response`.
+pub async fn post_image_prompt(
+    base_url: &str,
+    model: &str,
+    image: &std::path::Path,
+    prompt: &str,
+    max_tokens: u32,
+) -> Result<ImageReply, String> {
+    let mime =
+        image_mime(image).ok_or_else(|| "image_unsupported: kein JPEG/PNG/WebP".to_string())?;
+    let bytes = std::fs::read(image).map_err(|e| format!("image_unreadable: {e}"))?;
+    if bytes.is_empty() {
+        return Err("image_empty: Bilddatei ist leer".to_string());
+    }
+    if bytes.len() > IMAGE_MAX_BYTES {
+        return Err(format!("image_too_large: {} Byte", bytes.len()));
+    }
+    let body = image_request_body(model, prompt, mime, &bytes, max_tokens);
+    drop(bytes);
+    let client = reqwest::Client::builder()
+        .timeout(IMAGE_TIMEOUT)
+        .build()
+        .map_err(|e| format!("request_failed: {e}"))?;
+    let response = client
+        .post(format!("{}/chat/completions", base_url.trim_end_matches('/')))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("request_failed: {e}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        let head: String = text.chars().take(300).collect();
+        return Err(format!("request_failed: HTTP {status}: {head}"));
+    }
+    let completion: ChatCompletionResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("bad_response: {e}"))?;
+    let first = completion.choices.first();
+    Ok(ImageReply {
+        content: first
+            .and_then(|c| c.message.content.clone())
+            .unwrap_or_default(),
+        truncated: first
+            .and_then(|c| c.finish_reason.as_deref())
+            .is_some_and(|r| r == "length"),
+    })
+}
+
 #[cfg(test)]
 mod stream_tests {
     use super::*;
@@ -957,15 +1082,15 @@ mod stream_tests {
 
     /// Antwort des Roh-Mocks: Status, Content-Type und Stuecke, die mit einer
     /// kleinen Pause einzeln geschrieben werden (Body endet mit dem Schliessen).
-    struct RawReply {
-        status: u16,
-        content_type: &'static str,
-        chunks: Vec<Vec<u8>>,
+    pub(super) struct RawReply {
+        pub(super) status: u16,
+        pub(super) content_type: &'static str,
+        pub(super) chunks: Vec<Vec<u8>>,
     }
 
     /// Mock-Server: `handler(n, body)` bekommt die laufende Nummer der Anfrage
     /// und ihren Body.
-    async fn spawn_raw_mock(
+    pub(super) async fn spawn_raw_mock(
         handler: impl Fn(usize, &str) -> RawReply + Send + Sync + 'static,
     ) -> u16 {
         let handler = Arc::new(handler);
@@ -1402,5 +1527,172 @@ mod stream_tests {
         .unwrap();
         assert!(text.chars().count() <= STREAM_MAX_CHARS);
         assert!(text.chars().count() >= STREAM_MAX_CHARS - 4096);
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::stream_tests::{spawn_raw_mock, RawReply};
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn json_reply(content: Value, finish: &str) -> RawReply {
+        let body = serde_json::json!({
+            "choices": [{ "message": { "content": content }, "finish_reason": finish }]
+        });
+        RawReply {
+            status: 200,
+            content_type: "application/json",
+            chunks: vec![body.to_string().into_bytes()],
+        }
+    }
+
+    fn temp_image(name: &str, bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        (dir, path)
+    }
+
+    /// Der Body: Nachricht aus Bild (base64-Data-URL) und Text, KEIN `response_format`
+    /// (Spike: Schema-Zwang laeuft bei Bildern in Leerzeichen), kleines `max_tokens`,
+    /// Denken aus.
+    #[test]
+    fn the_request_carries_a_data_url_and_never_a_json_schema() {
+        use base64::Engine as _;
+        let png: &[u8] = &[0x89, b'P', b'N', b'G', 1, 2];
+        let body = image_request_body("llm-gemma4-e4b-q4", "Was steht da?", "image/png", png, 200);
+        assert_eq!(body["model"], "llm-gemma4-e4b-q4");
+        assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(body["messages"][0]["role"], "user");
+        let content = &body["messages"][0]["content"];
+        assert_eq!(content[0]["type"], "image_url");
+        let expected = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png)
+        );
+        assert_eq!(content[0]["image_url"]["url"].as_str(), Some(expected.as_str()));
+        assert_eq!(
+            content[1],
+            serde_json::json!({ "type": "text", "text": "Was steht da?" })
+        );
+        assert!(
+            body.get("response_format").is_none(),
+            "kein json_schema bei Bildern"
+        );
+        assert!(body.get("stream").is_none());
+        assert_eq!(body["max_tokens"], 200);
+        assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
+        // Die Obergrenze gilt auch, wenn der Aufrufer mehr (oder nichts) verlangt.
+        let big = image_request_body("m", "p", "image/jpeg", b"x", 100_000);
+        assert_eq!(big["max_tokens"], IMAGE_MAX_TOKENS);
+        let zero = image_request_body("m", "p", "image/jpeg", b"x", 0);
+        assert_eq!(zero["max_tokens"], 1);
+    }
+
+    #[test]
+    fn mime_follows_the_extension_and_rejects_non_images() {
+        let mime = |n: &str| image_mime(std::path::Path::new(n));
+        assert_eq!(mime("a.jpg"), Some("image/jpeg"));
+        assert_eq!(mime("a.JPEG"), Some("image/jpeg"));
+        assert_eq!(mime("a.png"), Some("image/png"));
+        assert_eq!(mime("a.webp"), Some("image/webp"));
+        assert_eq!(mime("a.gif"), None);
+        assert_eq!(mime("a.txt"), None);
+        assert_eq!(mime("a"), None);
+    }
+
+    /// Ende zu Ende gegen einen Test-Server: der Server sieht genau den Body, die Antwort kommt an.
+    #[tokio::test]
+    async fn a_reply_comes_back_and_the_server_saw_the_image() {
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let sink = Arc::clone(&seen);
+        let port = spawn_raw_mock(move |_, body| {
+            sink.lock().unwrap().push(body.to_string());
+            json_reply(
+                Value::String("sprecher_raum\nEine Person am Pult.".into()),
+                "stop",
+            )
+        })
+        .await;
+        let (_dir, image) = temp_image("0001.jpg", b"jpegbytes");
+        let reply = post_image_prompt(
+            &format!("http://127.0.0.1:{port}/v1"),
+            "m",
+            &image,
+            "Frage",
+            200,
+        )
+        .await
+        .unwrap();
+        assert_eq!(reply.content, "sprecher_raum\nEine Person am Pult.");
+        assert!(!reply.truncated);
+        let sent: Value = serde_json::from_str(&seen.lock().unwrap()[0]).unwrap();
+        assert_eq!(sent["messages"][0]["content"][1]["text"], "Frage");
+        assert!(sent["messages"][0]["content"][0]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/jpeg;base64,"));
+    }
+
+    /// Abgeschnitten, null und Leerzeichen: kein Fehler der Verbindung, der Aufrufer entscheidet.
+    #[tokio::test]
+    async fn truncated_null_and_blank_replies_are_reported_not_hidden() {
+        let port = spawn_raw_mock(|n, _| match n {
+            0 => json_reply(Value::String("abc".into()), "length"),
+            1 => json_reply(Value::Null, "stop"),
+            _ => json_reply(Value::String("   ".into()), "stop"),
+        })
+        .await;
+        let (_dir, image) = temp_image("a.png", b"png");
+        let url = format!("http://127.0.0.1:{port}/v1");
+        // Die Mock-Nummer zaehlt die Verbindungen: nacheinander abfragen.
+        let first = post_image_prompt(&url, "m", &image, "p", 50).await.unwrap();
+        assert_eq!((first.content.as_str(), first.truncated), ("abc", true));
+        let second = post_image_prompt(&url, "m", &image, "p", 50).await.unwrap();
+        assert_eq!((second.content.as_str(), second.truncated), ("", false));
+        let third = post_image_prompt(&url, "m", &image, "p", 50).await.unwrap();
+        assert_eq!(
+            third.content, "   ",
+            "Leerzeichen-Antwort wird unveraendert geliefert"
+        );
+    }
+
+    #[tokio::test]
+    async fn bad_images_and_server_errors_carry_a_code() {
+        let port = spawn_raw_mock(|_, _| RawReply {
+            status: 500,
+            content_type: "text/plain",
+            chunks: vec![b"kaputt".to_vec()],
+        })
+        .await;
+        let url = format!("http://127.0.0.1:{port}/v1");
+        let (_dir, image) = temp_image("a.jpg", b"x");
+        let err = post_image_prompt(&url, "m", &image, "p", 50)
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("request_failed: HTTP 500"), "{err}");
+        assert!(err.contains("kaputt"), "{err}");
+
+        let (_d2, empty) = temp_image("e.jpg", b"");
+        let err = post_image_prompt(&url, "m", &empty, "p", 50)
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("image_empty"), "{err}");
+        let (_d3, text) = temp_image("a.txt", b"x");
+        let err = post_image_prompt(&url, "m", &text, "p", 50)
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("image_unsupported"), "{err}");
+        let missing = std::path::Path::new("Z:/gibt/es/nicht.jpg");
+        let err = post_image_prompt(&url, "m", missing, "p", 50)
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("image_unreadable"), "{err}");
+        // Kein Server: Verbindungsfehler, kein Haenger.
+        let err = post_image_prompt("http://127.0.0.1:1/v1", "m", &image, "p", 50)
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("request_failed"), "{err}");
     }
 }

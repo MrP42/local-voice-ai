@@ -2057,6 +2057,40 @@ async meetingSlidesDir(meetingId: string) : Promise<Result<string, string>> {
 }
 },
 /**
+ * Einstellung `meeting_slide_vision` (Standard aus). Wirkt beim naechsten Folienlauf.
+ */
+async changeMeetingSlideVisionSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_slide_vision_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zustand der Bildanalyse (Dateien, GPU, freier Grafikspeicher) fuer die Einstellung.
+ */
+async meetingSlideVisionStatus() : Promise<Result<SlideVisionStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_slide_vision_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laedt den Bild-Projektor (990 MB) -- nur auf Knopfdruck, nie von selbst. Das Modell
+ * (Gemma 4 E4B) kommt wie jedes Sprachmodell ueber die Modellliste.
+ */
+async meetingSlideVisionDownload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_slide_vision_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Writes a document the user assembled in the app to a path they picked in
  * the system save dialog — as Markdown, plain text or Word, chosen by the
  * file extension.
@@ -5428,6 +5462,14 @@ meeting_default_template_id?: string | null;
  */
 meeting_semantic_search?: boolean; 
 /**
+ * D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
+ * (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server
+ * kurz mit Bild-Projektor. Standard AUS (der Projektor ist ein optionaler 990-MB-
+ * Download, die Analyse braucht eine Grafikkarte); ohne die Voraussetzungen bleibt es
+ * bei der Windows-Texterkennung, auch wenn der Schalter an ist.
+ */
+meeting_slide_vision?: boolean; 
+/**
  * M2-P2c2: Echo-Unterdrückung der Ich-Spur (`auto` | `on` | `off`). Ohne
  * den Schlüssel (ältere settings.json) gilt `auto`.
  */
@@ -7243,6 +7285,38 @@ video_path: string | null;
  * Abtastabstand in Sekunden (Voreinstellung 1, zulaessig 0,25 bis 10).
  */
 sample_interval_s: number | null }
+/**
+ * Zustand der Bildanalyse fuer die Einstellungszeile: Schalter, Dateien, und ob sie auf
+ * diesem Rechner ueberhaupt angeboten werden kann.
+ */
+export type SlideVisionStatus = { 
+/**
+ * Der Schalter (`meeting_slide_vision`).
+ */
+enabled: boolean; 
+/**
+ * Gemma 4 E4B (das Modell des Projektors) ist geladen.
+ */
+model_ready: boolean; 
+/**
+ * Der Bild-Projektor ist geladen.
+ */
+projector_ready: boolean; 
+/**
+ * Der Projektor wird gerade geladen.
+ */
+downloading: boolean; 
+/**
+ * Groesse des Projektor-Downloads in MB.
+ */
+projector_size_mb: number; 
+/**
+ * `ready`, wenn die Analyse laufen koennte, sonst der Grund: `vision_no_gpu` (keine
+ * Grafikkarte oder Speicher nicht messbar), `vision_low_vram` (zu wenig freier
+ * Grafikspeicher), `vision_no_model`, `vision_no_projector`. Die Oberflaeche bietet den
+ * Schalter nur ohne GPU-Grund an.
+ */
+availability: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
  * Eine Aufnahme, die in das Projekt-Protokoll einging. `index` zaehlt ab 1 in
@@ -7465,8 +7539,8 @@ app_gpu_mb: number | null }
 export type TagInsertion = { offset_in_original: number; offset_chars: number; tag: string }
 /**
  * Einstellungen, wie die Oberflaeche sie schickt. Felder, die eine Art nicht kennt,
- * werden ignoriert. `secret` ist das Passwort (SMTP) oder der Schluessel (Wissen);
- * leer oder fehlend bedeutet beim Aendern „unveraendert“.
+ * werden ignoriert. `secret` ist das Passwort (SMTP), der Schluessel (Wissen) oder die
+ * Adresse (Webhook); leer oder fehlend bedeutet beim Aendern „unveraendert“.
  */
 export type TargetSettings = { 
 /**

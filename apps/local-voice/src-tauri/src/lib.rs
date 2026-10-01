@@ -2087,6 +2087,9 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_slides::list_meeting_slides,
             commands::meeting_slides::set_meeting_slide_hidden,
             commands::meeting_slides::meeting_slides_dir,
+            commands::meeting_slides::change_meeting_slide_vision_setting,
+            commands::meeting_slides::meeting_slide_vision_status,
+            commands::meeting_slides::meeting_slide_vision_download,
             commands::meetings::meetings_export_document,
             // M1-P1c
             commands::provenance::provenance_get, // A1
