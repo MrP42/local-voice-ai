@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/issues-abschluss
 iteration: 1
 erstellt: 2026-10-01
-aktualisiert: 2026-10-01T11:59
+aktualisiert: 2026-10-01T16:49
 ---
 
 # Goal: Offene Issues abschliessen, neue Features, Version 0.21.0
@@ -96,7 +96,7 @@ Alle offenen Issues des Repos sind umgesetzt und geschlossen oder mit belegtem G
 - 2026-10-01 Patrick (/goal-planner-worker): alle offenen Issues abschließen, neue Features umsetzen, testen, neue Version, Ergebnisse in GitHub; zuerst leerer Eintrag im Projekt.
 
 ## Nächste empfohlene Aktion
-Ergebnisse G2b/G5/G2f/G3 validieren, mergen; Lizenzfragen espeak-ng/NC-Stimmen an Patrick; dann M8 0.21.0
+Nach Freigabe durch Patrick: Integrationslauf auf HEAD (cargo build, --list-models, cargo test --lib, tsc, volle Playwright), Codex-Sicherheitsreview (A7/A8/B5/B7n Gate+Einwilligung), Fenster-Block m10-verify, Version 0.21.0 + Installer; offen: B6, B8, C3-C5, D3 (Owner O1), D8, Webhook-Formular
 
 ## Verlauf
 - 2026-10-01T10:38 DISCOVERY — Goal State angelegt
@@ -105,4 +105,5 @@ Ergebnisse G2b/G5/G2f/G3 validieren, mergen; Lizenzfragen espeak-ng/NC-Stimmen a
 - 2026-10-01T10:39 PLANNING (Runde 1) — M1 zuerst
 - 2026-10-01T10:39 EXECUTING (Runde 1) — G1 laeuft (wt-goal)
 - 2026-10-01T11:59 EXECUTING (Runde 1) — G2b, G5, G2f (wt-u7), G3 (wt-g2c) laufen; G2d abgenommen
+- 2026-10-01T16:49 EXECUTING (Runde 1) — Rechner auf Patricks Wunsch frei: keine Worker/Tests aktiv. Integrationslauf 97f3c24b: build ok, 3766/3767 (Katalog-Test, behoben 02b9a296)
 
