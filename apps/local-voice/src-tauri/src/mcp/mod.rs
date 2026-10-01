@@ -1453,7 +1453,14 @@ mod tests {
     #[test]
     fn a_locked_database_answers_with_a_retry_hint_and_recovers() {
         let fx = Fx::new();
+        // Die Datenbank steht im WAL-Modus (G8): ein gewoehnlicher Schreiber, auch
+        // mit BEGIN EXCLUSIVE, sperrt Leser nicht mehr aus (das ist der Gewinn).
+        // Eine Sperre, an der der Leser scheitert, haelt nur ein Prozess im
+        // exklusiven Sperrmodus: er nimmt die Datei, bis die Verbindung endet.
         let writer = rusqlite::Connection::open(fx.db_path()).unwrap();
+        writer
+            .pragma_update(None, "locking_mode", "EXCLUSIVE")
+            .unwrap();
         writer.execute_batch("BEGIN EXCLUSIVE").unwrap();
         let started = std::time::Instant::now();
         for (name, args) in [
@@ -1469,6 +1476,7 @@ mod tests {
             "der Server wartet ohne Ende"
         );
         writer.execute_batch("ROLLBACK").unwrap();
+        drop(writer); // der Sperrmodus endet mit der Verbindung
         assert!(
             !fx.tool("list_meetings", json!({})).1,
             "nach der Sperre geht es wieder"

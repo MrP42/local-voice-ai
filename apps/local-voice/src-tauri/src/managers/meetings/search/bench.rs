@@ -75,6 +75,10 @@ pub struct BenchConfig {
     pub seed: u64,
     /// Ordner, in dem der Temp-Ordner entsteht (Standard: Temp-Verzeichnis des Systems).
     pub temp_root: Option<PathBuf>,
+    /// Grenze fuer p95 (ms), ab der der Lauf als nicht bestanden gilt (Exit 3).
+    /// Der Messlauf nimmt [`P95_LIMIT_MS`]; Tests mit kleiner Datenmenge pruefen
+    /// die Pipeline, nicht die Geschwindigkeit, und geben eine weite Grenze mit.
+    pub limit_ms: f64,
 }
 
 impl Default for BenchConfig {
@@ -86,6 +90,7 @@ impl Default for BenchConfig {
             iterations: 20,
             seed: 42,
             temp_root: None,
+            limit_ms: P95_LIMIT_MS,
         }
     }
 }
@@ -368,8 +373,8 @@ pub fn run_bench(cfg: &BenchConfig) -> Result<BenchReport> {
         hybrid_p50_ms: percentile(&all_hybrid, 0.5),
         hybrid_p95_ms: hybrid_p95,
         hybrid_scoped_p95_ms: percentile(&scoped_hybrid, 0.95),
-        limit_ms: P95_LIMIT_MS,
-        pass: ui_p95 < P95_LIMIT_MS && hybrid_p95 < P95_LIMIT_MS,
+        limit_ms: cfg.limit_ms,
+        pass: ui_p95 < cfg.limit_ms && hybrid_p95 < cfg.limit_ms,
         per_query,
     })
 }
@@ -383,12 +388,24 @@ pub fn run_cli(
     iterations: Option<usize>,
     temp_root: Option<PathBuf>,
 ) -> (i32, serde_json::Value) {
+    run_cli_with_limit(meetings, chunks, iterations, temp_root, P95_LIMIT_MS)
+}
+
+/// Wie [`run_cli`], mit eigener p95-Grenze (Tests mit kleiner Datenmenge).
+fn run_cli_with_limit(
+    meetings: Option<usize>,
+    chunks: Option<usize>,
+    iterations: Option<usize>,
+    temp_root: Option<PathBuf>,
+    limit_ms: f64,
+) -> (i32, serde_json::Value) {
     let defaults = BenchConfig::default();
     let cfg = BenchConfig {
         meetings: meetings.unwrap_or(defaults.meetings),
         chunks_per_meeting: chunks.unwrap_or(defaults.chunks_per_meeting),
         iterations: iterations.unwrap_or(defaults.iterations),
         temp_root,
+        limit_ms,
         ..defaults
     };
     match run_bench(&cfg) {
@@ -410,6 +427,9 @@ pub fn run_cli(
 mod tests {
     use super::*;
 
+    /// So weit, dass nur eine Pipeline, die steht, die Grenze reisst.
+    const TEST_LIMIT_MS: f64 = 60_000.0;
+
     fn small(temp_root: Option<PathBuf>) -> BenchConfig {
         BenchConfig {
             meetings: 12,
@@ -418,6 +438,12 @@ mod tests {
             iterations: 3,
             seed: 1,
             temp_root,
+            // Die Pipeline wird geprueft, nicht die Geschwindigkeit: ein Debug-Build
+            // unter paralleler Last braucht fuer 360 Chunks Sekunden (gemessen: 7,8 s
+            // Aufbau, p95 ueber 500 ms). Die echte Grenze (500 ms, `P95_LIMIT_MS`) prueft
+            // der Messlauf `bench_search_500` im Release-Build; dass die Grenze das
+            // Ergebnis steuert, prueft `the_limit_decides_pass_and_the_exit_code`.
+            limit_ms: TEST_LIMIT_MS,
         }
     }
 
@@ -456,7 +482,7 @@ mod tests {
         );
         assert!(by_name("haeufig").hybrid_hits > 0);
         assert!(report.db_mb > 0.0 && report.vector_index_mb > 0.0);
-        assert_eq!(report.limit_ms, 500.0);
+        assert_eq!(report.limit_ms, TEST_LIMIT_MS);
         // Die Sandbox-DB ist weg.
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
         // JSON-Form fuer das aufrufende Skript.
@@ -516,11 +542,35 @@ mod tests {
     #[test]
     fn the_cli_wrapper_reports_success_as_exit_code_zero() {
         let root = tempfile::tempdir().unwrap();
-        let (code, json) = run_cli(Some(6), Some(20), Some(2), Some(root.path().to_path_buf()));
+        let (code, json) = run_cli_with_limit(
+            Some(6),
+            Some(20),
+            Some(2),
+            Some(root.path().to_path_buf()),
+            TEST_LIMIT_MS,
+        );
         assert_eq!(code, 0);
         assert_eq!(json["pass"], true);
         assert_eq!(json["meetings"], 6);
         assert_eq!(json["chunks_per_meeting"], 20);
+    }
+
+    #[test]
+    fn the_limit_decides_pass_and_the_exit_code() {
+        let root = tempfile::tempdir().unwrap();
+        // Eine Grenze, die keine Messung unterbietet: nicht bestanden, Exit 3.
+        let strict = BenchConfig {
+            limit_ms: 0.0,
+            ..small(Some(root.path().to_path_buf()))
+        };
+        let failed = run_bench(&strict).unwrap();
+        assert!(!failed.pass);
+        assert_eq!(failed.exit_code(), 3);
+        assert_eq!(failed.limit_ms, 0.0);
+        // Die Voreinstellung der Kommandozeile bleibt die Grenze aus dem Entwurf.
+        assert_eq!(BenchConfig::default().limit_ms, P95_LIMIT_MS);
+        assert_eq!(P95_LIMIT_MS, 500.0);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 
     /// Der eigentliche Messlauf (500 x 200 Chunks, 1024 Dimensionen). Teuer:
