@@ -40,6 +40,8 @@ use crate::managers::calendar::reminder::distinct_attendees;
 use crate::managers::meetings::recorder::{MeetingEvent, MeetingRecorderManager};
 use crate::managers::meetings::store::MeetingStore;
 
+use super::app_actions;
+use super::app_services::AppServicesImpl;
 use super::consent;
 use super::engine::{Engine, EngineHandle, EngineObserver};
 use super::recording::{
@@ -182,6 +184,7 @@ impl WorkflowHub {
         let stops = Arc::new(StopSchedule::default());
         let recording: Arc<dyn RecordingControl> = Arc::new(AppRecording { app: app.clone() });
         recording::install(&engine, recording.clone(), stops.clone());
+        app_actions::install(&engine, Arc::new(AppServicesImpl::new(app)));
         engine.set_observer(Arc::new(PromptObserver { app: app.clone() }));
         let handle = engine.spawn();
         register_meeting_listeners(app);

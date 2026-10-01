@@ -91,9 +91,17 @@
 //!   bei einer Freigabe fuer einen beendeten Termin startet keine Aufnahme (`recording::tests::*`,
 //!   `consent::tests::*`, Playwright `workflow-consent.spec.ts`).
 
+//! Bausteine von Paket B4 (App-Bausteine): `app_actions` (KI-Notizen, Protokoll, Zusammenfassung,
+//! Ablegen in einen Ordner, Vorlesen als Audiodatei, lokale Mitteilung) hinter dem Trait
+//! `AppServices`; `app_services` ist dessen Umsetzung in der App (eingehaengt in `hub::start`),
+//! `toast` die Windows-Mitteilung. Vorlage `eingangsordner-word` in `templates`.
+//! Fehlerfaelle, Idempotenz und Rechte stehen im Kopf von `app_actions`.
+//!
 #![allow(dead_code)]
 
 pub mod action;
+pub mod app_actions; // B4
+pub mod app_services; // B4
 pub mod builtin;
 pub mod catalog;
 pub mod cli;
@@ -109,6 +117,7 @@ pub mod recording; // B2
 pub mod schema;
 pub mod store;
 pub mod templates;
+pub mod toast; // B4
 pub mod trigger; // B2
 pub mod validate;
 

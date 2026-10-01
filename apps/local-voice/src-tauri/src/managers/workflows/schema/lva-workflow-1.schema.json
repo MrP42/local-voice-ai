@@ -275,7 +275,15 @@
               "params": {
                 "additionalProperties": false,
                 "properties": {
+                  "output_language": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
                   "template": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "variant_id": {
                     "maxLength": 4000,
                     "type": "string"
                   }
@@ -334,7 +342,15 @@
               "params": {
                 "additionalProperties": false,
                 "properties": {
+                  "output_language": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
                   "template": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "variant_id": {
                     "maxLength": 4000,
                     "type": "string"
                   }
@@ -458,6 +474,21 @@
               "params": {
                 "additionalProperties": false,
                 "properties": {
+                  "content": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "minutes",
+                          "notes",
+                          "all"
+                        ]
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
                   "format": {
                     "anyOf": [
                       {

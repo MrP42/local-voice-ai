@@ -364,7 +364,13 @@ static ACTIONS: &[ActionSpec] = &[
         id: "meeting.notes",
         title: "KI-Notizen erzeugen",
         effect_text: "KI-Notizen zur Besprechung erzeugen",
-        fields: &[field("template", FieldKind::Text, false)],
+        fields: &[
+            // Kennung oder Titel einer Vorlage, `auto` (nach Inhalt) oder leer (Vorgabe).
+            field("template", FieldKind::Text, false),
+            // G5: Fassung des Transkripts und Sprache des Dokuments.
+            field("variant_id", FieldKind::Text, false),
+            field("output_language", FieldKind::Text, false),
+        ],
         effect: EffectKind::Idempotent,
         heavy: Some(LLM),
         needs: NeedsSpec::None,
@@ -373,7 +379,11 @@ static ACTIONS: &[ActionSpec] = &[
         id: "meeting.minutes",
         title: "Protokoll erzeugen",
         effect_text: "Protokoll zur Besprechung erzeugen",
-        fields: &[field("template", FieldKind::Text, false)],
+        fields: &[
+            field("template", FieldKind::Text, false),
+            field("variant_id", FieldKind::Text, false),
+            field("output_language", FieldKind::Text, false),
+        ],
         effect: EffectKind::Idempotent,
         heavy: Some(LLM),
         needs: NeedsSpec::None,
@@ -381,9 +391,11 @@ static ACTIONS: &[ActionSpec] = &[
     ActionSpec {
         id: "text.summarize",
         title: "Zusammenfassen",
-        effect_text: "Text zusammenfassen",
+        effect_text: "Zusammenfassung erzeugen (Quelle: {{p.source}})",
         fields: &[
+            // `minutes`, `notes`, `transcript` (der Besprechung des Laufs) oder ein Text.
             field("source", FieldKind::Text, true),
+            // `kurz`, `mittel`, `lang` oder `management`.
             field("style", FieldKind::Text, false),
         ],
         effect: EffectKind::Idempotent,
@@ -399,6 +411,12 @@ static ACTIONS: &[ActionSpec] = &[
             field("target", FieldKind::Id, true),
             field("name", FieldKind::Text, false),
             field("subfolder", FieldKind::Text, false),
+            // Was abgelegt wird; ohne Angabe das Protokoll.
+            field(
+                "content",
+                FieldKind::Choice(&["minutes", "notes", "all"]),
+                false,
+            ),
         ],
         effect: EffectKind::Idempotent,
         heavy: None,
@@ -580,7 +598,7 @@ static ACTIONS: &[ActionSpec] = &[
     ActionSpec {
         id: "tts.render",
         title: "Vorlesen",
-        effect_text: "Text als Sprache ausgeben",
+        effect_text: "Text als Audiodatei sprechen lassen",
         fields: &[
             field("text", FieldKind::Text, true),
             field("voice", FieldKind::Text, false),

@@ -205,6 +205,9 @@ windows = { version = "0.61.3", features = [
   "Graphics_Imaging",
   "Storage",
   "Storage_Streams",
+  # B4 (Workflow-Baustein notify.local): Windows-Mitteilung (Toast) mit XML-Text.
+  "UI_Notifications",
+  "Data_Xml_Dom",
 ] }
 winreg = "0.55"
 # M6-P6b: PDF-Export ueber ein verstecktes WebView2-Fenster (PrintToPdf). Gleiche
