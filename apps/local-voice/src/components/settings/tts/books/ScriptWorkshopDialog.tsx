@@ -30,6 +30,7 @@ import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { TAG_REGISTRY } from "@/lib/tags/registry";
 import { exportFileName } from "@/lib/utils/exportName";
+import { sortVoicesByLabel } from "@/lib/voices/sortVoices";
 
 type Step = "book" | "characters" | "memory" | "template" | "generate";
 const STEPS: Step[] = ["book", "characters", "memory", "template", "generate"];
@@ -390,7 +391,10 @@ export const ScriptWorkshopDialog: React.FC<ScriptWorkshopDialogProps> = ({
 
   const voiceOptions = [
     { value: "", label: t("tts.workshop.voiceDefault") },
-    ...voices.map((v) => ({ value: v.id, label: v.meta.display_name || v.id })),
+    ...sortVoicesByLabel(
+      voices.map((v) => ({ value: v.id, label: v.meta.display_name || v.id })),
+      (o) => o.label,
+    ),
   ];
 
   const stepLabel = (s: Step) => t(`tts.workshop.steps.${s}`);
