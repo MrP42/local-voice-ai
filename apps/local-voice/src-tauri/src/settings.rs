@@ -210,6 +210,11 @@ pub struct LlmConnection {
     /// im Protokoll schon.
     #[serde(default)]
     pub budget_enforced: bool,
+    /// Der Nutzer bestaetigt, dass das Training mit seinen Daten im Konto des
+    /// Anbieters abgeschaltet ist (Mistral, Abo-Plaene). Zaehlt fuer das
+    /// Regelwerk nur, wo der Anbieter das Abschalten anbietet.
+    #[serde(default)]
+    pub training_opt_out: bool,
 }
 
 /// Ein freigegebenes Modell einer Verbindung. Nur freigegebene Modelle
@@ -551,6 +556,11 @@ pub struct AppSettings {
     /// (`managers::llm::external`).
     #[serde(default)]
     pub llm_model_dirs: Vec<String>,
+    /// Regelwerk fuer Sprachmodelle (`managers::compliance`): EU, nur lokal
+    /// oder keine Einschraenkung. Gesperrte Modelle sind nicht waehlbar und
+    /// bekommen keine Anfrage.
+    #[serde(default)]
+    pub compliance_profile: crate::managers::compliance::ComplianceProfile,
     /// Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
     /// Kept so older stores still deserialize; no longer read by the audio path.
     #[serde(default)]
@@ -1289,6 +1299,16 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             models_endpoint: Some("/models".to_string()),
             supports_structured_output: false,
         },
+        // Mistral (Frankreich): OpenAI-kompatibel, Verarbeitung in der EU --
+        // die naheliegende Wahl unter dem Regelwerk "EU".
+        PostProcessProvider {
+            id: "mistral".to_string(),
+            label: "Mistral".to_string(),
+            base_url: "https://api.mistral.ai/v1".to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: Some("/models".to_string()),
+            supports_structured_output: true,
+        },
         PostProcessProvider {
             id: "groq".to_string(),
             label: "Groq".to_string(),
@@ -1604,6 +1624,7 @@ pub fn get_default_settings() -> AppSettings {
         llm_models: Vec::new(),
         llm_active_model_id: None,
         llm_model_dirs: Vec::new(),
+        compliance_profile: Default::default(),
         mute_while_recording: false,
         dictation_audio: DictationAudio::default(),
         dictation_audio_duck_percent: default_dictation_audio_duck_percent(),
@@ -1902,6 +1923,7 @@ fn migrate_legacy_providers_to_connections(settings: &mut AppSettings) {
             enabled: true,
             monthly_budget_usd: None,
             budget_enforced: false,
+            training_opt_out: false,
         });
         if let Some(remote) = chosen.filter(|m| !m.is_empty()) {
             models.push(LlmModelConfig {
@@ -2579,6 +2601,7 @@ mod tests {
             enabled: true,
             monthly_budget_usd: None,
             budget_enforced: false,
+            training_opt_out: false,
         });
         settings.settings_schema_version = 1;
         let raw = serde_json::json!({
@@ -2603,6 +2626,7 @@ mod tests {
             enabled: true,
             monthly_budget_usd: None,
             budget_enforced: false,
+            training_opt_out: false,
         });
         settings
             .llm_models
@@ -2638,6 +2662,7 @@ mod tests {
             enabled: false,
             monthly_budget_usd: None,
             budget_enforced: false,
+            training_opt_out: false,
         });
         settings
             .llm_models

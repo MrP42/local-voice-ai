@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod calendar; // M5-P5a
+pub mod compliance; // Regelwerk fuer Cloud-Modelle
 pub mod gguf_meta;
 pub mod history;
 pub mod integrations; // A1 (Goal Integrationen)

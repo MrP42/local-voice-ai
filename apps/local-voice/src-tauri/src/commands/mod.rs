@@ -2,6 +2,7 @@ pub mod agent_bridge; // A7
 pub mod audio;
 pub mod big_stack; // Hotfix 0.21.1: lange Auftraege auf eigenem Thread mit grossem Stack
 pub mod calendar; // M5-P5b
+pub mod compliance; // Regelwerk + Schild
 pub mod history;
 pub mod integration_targets; // A6
 pub mod integrations; // A4

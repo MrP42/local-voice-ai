@@ -281,6 +281,8 @@ pub async fn send_chat_completion_checked(
 ) -> Result<ChatReply, String> {
     // Hartes Budget: die Verweigerung ist bewusst ungebucht -- es wurde ja
     // nichts verbraucht.
+    // Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts.
+    crate::managers::compliance::check_call(provider)?;
     usage::check_budget(provider, model)?;
     let started = std::time::Instant::now();
     let (result, tokens) = match send_inner(
@@ -520,6 +522,8 @@ pub async fn send_ollama_native(
     prompt: String,
     cpu_only: bool,
 ) -> Result<Option<String>, String> {
+    // Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts.
+    crate::managers::compliance::check_call(provider)?;
     usage::check_budget(provider, model)?;
     let started = std::time::Instant::now();
     let (result, tokens) = match ollama_native_inner(url, model, prompt, cpu_only).await {
@@ -775,6 +779,8 @@ pub async fn send_chat_completion_stream(
     messages: Vec<StreamMessage>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<String, String> {
+    // Regelwerk vor dem Budget: ein gesperrter Anbieter bekommt gar nichts.
+    crate::managers::compliance::check_call(provider)?;
     usage::check_budget(provider, model)?;
     let started = std::time::Instant::now();
     let (result, tokens) = match stream_inner(provider, api_key, model, messages, on_delta).await {
