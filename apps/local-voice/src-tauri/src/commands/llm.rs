@@ -358,9 +358,13 @@ pub fn llm_suggest_model_dirs() -> Vec<String> {
 #[specta::specta]
 pub async fn llm_rescan_model_dirs(app: AppHandle) -> Result<(), String> {
     let manager = app.state::<Arc<LlmRuntimeManager>>().inner().clone();
-    tokio::task::spawn_blocking(move || manager.rescan_external())
+    let scanner = manager.clone();
+    tokio::task::spawn_blocking(move || scanner.rescan_external())
         .await
         .map_err(|e| e.to_string())?;
+    // Moegliche Ersatzmodelle fuer App-Kopien gleich pruefen, damit die
+    // Liste das Aufraeumen anbieten kann.
+    manager.probe_duplicate_candidates().await;
     Ok(())
 }
 

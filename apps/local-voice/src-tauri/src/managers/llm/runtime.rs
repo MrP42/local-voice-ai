@@ -234,6 +234,31 @@ impl LlmRuntimeManager {
         Ok(compat)
     }
 
+    /// Prueft die fremden Modelle, die eine geladene App-Kopie ersetzen
+    /// koennten (gleiche Bauart, Groesse, Schichtzahl) und noch ungeprueft
+    /// sind. Erst danach kann die Liste das Aufraeumen anbieten -- ohne dass
+    /// jemand jedes Modell einzeln pruefen muss. Wenige Modelle, je ~5 s.
+    pub async fn probe_duplicate_candidates(&self) {
+        let own: Vec<ModelIdent> = catalog::tts_entries(Purpose::LlmModel)
+            .into_iter()
+            .filter_map(|e| e.files.first().map(|f| self.models_dir().join(&f.filename)))
+            .filter(|p| p.is_file())
+            .filter_map(|p| self.own_ident(&p))
+            .collect();
+        let candidates: Vec<String> = self
+            .external_models()
+            .into_iter()
+            .filter(|m| m.compat == Compat::Unchecked)
+            .filter(|m| m.ident.as_ref().is_some_and(|i| own.contains(i)))
+            .map(|m| m.id)
+            .collect();
+        for id in candidates {
+            if let Err(e) = self.probe_external(&id).await {
+                log::warn!("Ladeversuch {id}: {e}");
+            }
+        }
+    }
+
     /// Ist das Modell ein fremdes, das sicher nicht laedt? Dann mit Grund.
     pub fn external_incompatibility(&self, id: &str) -> Option<String> {
         match self.external_model(id)?.compat {
