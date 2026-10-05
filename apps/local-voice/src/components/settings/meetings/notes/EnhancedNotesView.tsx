@@ -581,9 +581,12 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
         data-testid="enhanced-entry"
         data-entry-id={entry.id}
         data-origin={ai ? "ai" : "user"}
-        className="flex items-start gap-2"
+        // Umbrechend: in der schmalen Bedienspalte nahmen die Belegchips dem
+        // Text sonst fast die ganze Breite (ein Wort je Zeile). Unter 10rem
+        // Textbreite rutschen sie rechtsbuendig unter den Text.
+        className="flex flex-wrap items-start gap-x-2 gap-y-0.5"
       >
-        <div className="min-w-0 flex-1">
+        <div className="min-w-[10rem] flex-1">
           <EntryText
             entry={entry}
             done={done}
@@ -594,7 +597,7 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
             onFinish={finishEdit}
           />
         </div>
-        <div className="flex shrink-0 items-center pt-0.5">
+        <div className="ml-auto flex max-w-full shrink-0 items-center pt-0.5">
           {noEvidence ? (
             <span
               data-testid="no-evidence"

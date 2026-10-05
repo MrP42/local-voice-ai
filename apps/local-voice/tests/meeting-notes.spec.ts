@@ -1598,6 +1598,26 @@ test.describe("KI-Notizen", () => {
     await expect(page.getByTestId("stale-hint")).toHaveCount(0);
   });
 
+  // 05.10.2026: in der schmalen Bedienspalte nahmen die Belegchips dem Text die
+  // Breite -- ein Wort je Zeile. Jetzt rutschen sie unter den Text.
+  test("KI-Notizen: in schmaler Spalte bleibt der Text breit, Chips darunter", async ({
+    page,
+  }) => {
+    await setup(page);
+    const view = await openAiNotes(page);
+    await view.evaluate((el) => {
+      (el as HTMLElement).style.width = "300px";
+    });
+    const ai = entryOf(page, "E2");
+    const text = await ai.getByTestId("entry-text").boundingBox();
+    const chip = await ai.locator('[data-source-id="12"]').boundingBox();
+    expect(text && chip).toBeTruthy();
+    // Mindestens 10rem Text statt eines Wortes.
+    expect(text!.width).toBeGreaterThanOrEqual(150);
+    // Chips unterhalb des Textanfangs, nicht daneben.
+    expect(chip!.y).toBeGreaterThan(text!.y + 5);
+  });
+
   // P1i (B11): ein Transkriptteil, der auch nach dem Halbieren nicht ausgewertet
   // werden konnte, macht die Notizen "unvollstaendig" -- die Oberflaeche sagt es.
   test("KI-Notizen: nicht ausgewertete Transkriptteile werden als unvollständig gewarnt", async ({
