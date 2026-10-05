@@ -61,7 +61,9 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "get_selected_model") return "";
           if (cmd === "meetings_is_recording") return false;
           if (cmd === "tts_server_status") return { phase: "stopped", message: null };
-          if (cmd === "llm_local_list") return downloads;
+          // Kopie wie aus dem echten Backend: der Store friert seinen Zustand
+          // ein (immer), und spaetere Aenderungen hier verpufften sonst still.
+          if (cmd === "llm_local_list") return JSON.parse(JSON.stringify(downloads));
           if (cmd === "llm_suggest_model_dirs") return ["D:\\ollama\\models", "C:\\Users\\x\\.lmstudio\\models"];
           if (cmd === "llm_set_model_dirs") {
             saved.dirs = args?.dirs;
