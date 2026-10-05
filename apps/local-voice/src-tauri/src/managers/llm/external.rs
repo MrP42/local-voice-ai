@@ -42,11 +42,16 @@ const MAX_DEPTH: u8 = 5;
 /// Fehler kam: beide bekannten Pruefungen (Kopfwerte, Tensoranzahl) laufen
 /// vor den Gewichten und scheiterten im Spike nach 0,4-0,6 s.
 const PROBE_GRACE: Duration = Duration::from_secs(5);
-/// Hoechstdauer eines Ladeversuchs, falls der Prozess gar nichts schreibt.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Architekturen, die keine Chat-Modelle sind.
-const NON_CHAT_ARCHS: [&str; 6] = ["clip", "bert", "nomic-bert", "nomic-bert-moe", "jina-bert-v2", "t5encoder"];
+const NON_CHAT_ARCHS: [&str; 6] = [
+    "clip",
+    "bert",
+    "nomic-bert",
+    "nomic-bert-moe",
+    "jina-bert-v2",
+    "t5encoder",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -114,7 +119,10 @@ pub fn detect_ollama_store() -> Option<PathBuf> {
     let from_env = std::env::var_os("OLLAMA_MODELS").map(PathBuf::from);
     let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(|h| PathBuf::from(h).join(".ollama").join("models"));
-    from_env.into_iter().chain(home).find(|p| is_ollama_store(p))
+    from_env
+        .into_iter()
+        .chain(home)
+        .find(|p| is_ollama_store(p))
 }
 
 /// Typische GGUF-Ablage von LM Studio, falls vorhanden.
@@ -160,13 +168,14 @@ fn read_head(path: &Path) -> Option<HeadInfo> {
 }
 
 pub(crate) fn classify(general: &GgufMetadata, arch_meta: &GgufMetadata, arch: &str) -> HeadInfo {
-    let skip = if general.get_str("general.type") == Some("mmproj") || NON_CHAT_ARCHS.contains(&arch) {
-        Some("projector_or_encoder")
-    } else if arch_meta.get_u64(&format!("{arch}.pooling_type")).is_some() {
-        Some("embedding")
-    } else {
-        None
-    };
+    let skip =
+        if general.get_str("general.type") == Some("mmproj") || NON_CHAT_ARCHS.contains(&arch) {
+            Some("projector_or_encoder")
+        } else if arch_meta.get_u64(&format!("{arch}.pooling_type")).is_some() {
+            Some("embedding")
+        } else {
+            None
+        };
     let incompatible = arch_meta
         .get_u64(&format!("{arch}.vision.block_count"))
         .map(|_| "ollama_merged_vision".to_string());
@@ -328,11 +337,20 @@ fn manifest_files(manifests: &Path) -> Vec<(PathBuf, String)> {
     for host in dirs(manifests).into_iter().filter(|p| p.is_dir()) {
         let official = host.file_name().is_some_and(|n| n == "registry.ollama.ai");
         for ns in dirs(&host).into_iter().filter(|p| p.is_dir()) {
-            let ns_name = ns.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let ns_name = ns
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
             for model in dirs(&ns).into_iter().filter(|p| p.is_dir()) {
-                let model_name = model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let model_name = model
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 for tag in dirs(&model).into_iter().filter(|p| p.is_file()) {
-                    let tag_name = tag.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    let tag_name = tag
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
                     let name = if official && ns_name == "library" {
                         format!("{model_name}:{tag_name}")
                     } else {
@@ -420,7 +438,12 @@ fn cache_key(path: &Path) -> Option<String> {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    Some(format!("{}|{}|{}", path.to_string_lossy().to_lowercase(), meta.len(), mtime))
+    Some(format!(
+        "{}|{}|{}",
+        path.to_string_lossy().to_lowercase(),
+        meta.len(),
+        mtime
+    ))
 }
 
 impl ProbeCache {
@@ -461,7 +484,10 @@ pub(crate) enum ProbeLine {
 
 pub(crate) fn classify_line(line: &str) -> ProbeLine {
     if let Some(i) = line.find("error loading model") {
-        let reason = line[i..].trim_start_matches("error loading model").trim_start_matches(':').trim();
+        let reason = line[i..]
+            .trim_start_matches("error loading model")
+            .trim_start_matches(':')
+            .trim();
         return ProbeLine::Failed(reason.to_string());
     }
     if line.contains("failed to load model") || line.contains("unknown model architecture") {
@@ -487,7 +513,18 @@ pub fn probe(binary: &Path, model: &Path) -> Compat {
     cmd.arg("-m")
         .arg(model)
         .args(["--host", "127.0.0.1", "--port", &port.to_string()])
-        .args(["-ngl", "0", "-c", "512", "--parallel", "1", "--no-warmup", "--no-repack", "-fit", "off"])
+        .args([
+            "-ngl",
+            "0",
+            "-c",
+            "512",
+            "--parallel",
+            "1",
+            "--no-warmup",
+            "--no-repack",
+            "-fit",
+            "off",
+        ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .stdin(std::process::Stdio::null());
@@ -543,9 +580,6 @@ pub fn probe(binary: &Path, model: &Path) -> Compat {
         if started.elapsed() >= PROBE_GRACE {
             break Compat::Ok;
         }
-        if started.elapsed() >= PROBE_TIMEOUT {
-            break Compat::Unchecked;
-        }
     };
     let _ = child.kill();
     let _ = child.wait();
@@ -561,7 +595,10 @@ mod tests {
 
     fn meta(pairs: &[(&str, GgufValue)]) -> GgufMetadata {
         GgufMetadata {
-            kv: pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+            kv: pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
         }
     }
 
@@ -569,10 +606,48 @@ mod tests {
         GgufValue::String(v.to_string())
     }
 
+    /// Gegen echte Ordner und die echte Laufzeit (nur von Hand):
+    /// `LV_MODEL_DIRS="D:\ollama\models;C:\...\.lmstudio\models"`
+    /// `LV_LLAMA_SERVER=...\llama-server.exe`
+    /// `cargo test --lib real_model_dirs -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_model_dirs_scan_and_probe() {
+        let dirs: Vec<String> = std::env::var("LV_MODEL_DIRS")
+            .expect("LV_MODEL_DIRS")
+            .split(';')
+            .map(str::to_string)
+            .collect();
+        let server = PathBuf::from(std::env::var("LV_LLAMA_SERVER").expect("LV_LLAMA_SERVER"));
+        let started = Instant::now();
+        let models = scan(&dirs, &ProbeCache::default());
+        println!("Scan: {} Modelle in {:?}", models.len(), started.elapsed());
+        for m in &models {
+            let t = Instant::now();
+            let compat = match &m.compat {
+                Compat::Incompatible(_) => m.compat.clone(),
+                _ => probe(&server, Path::new(&m.path)),
+            };
+            println!(
+                "{:<55} {:>6} MB  {:?}  Kopf={:?}  Pruefung {:?} in {:?}",
+                m.name,
+                m.size_bytes >> 20,
+                m.source,
+                m.ident,
+                compat,
+                t.elapsed()
+            );
+        }
+        assert!(!models.is_empty());
+    }
+
     /// Die Koepfe aus dem Spike vom 05.10.2026.
     #[test]
     fn ollama_merged_vision_is_incompatible_plain_text_model_is_not() {
-        let general = meta(&[("general.architecture", s("qwen35")), ("general.type", s("model"))]);
+        let general = meta(&[
+            ("general.architecture", s("qwen35")),
+            ("general.type", s("model")),
+        ]);
         let merged = meta(&[
             ("qwen35.block_count", GgufValue::U32(32)),
             ("qwen35.vision.block_count", GgufValue::U32(27)),
@@ -593,13 +668,20 @@ mod tests {
         assert!(head.incompatible.is_none());
         assert_eq!(
             head.ident,
-            Some(ModelIdent { arch: "qwen35".into(), size_label: "27B".into(), layers: 65 })
+            Some(ModelIdent {
+                arch: "qwen35".into(),
+                size_label: "27B".into(),
+                layers: 65
+            })
         );
     }
 
     #[test]
     fn projectors_and_embeddings_are_skipped() {
-        let mmproj = meta(&[("general.architecture", s("clip")), ("general.type", s("mmproj"))]);
+        let mmproj = meta(&[
+            ("general.architecture", s("clip")),
+            ("general.type", s("mmproj")),
+        ]);
         assert!(classify(&mmproj, &meta(&[]), "clip").skip.is_some());
         let bert = meta(&[("general.architecture", s("bert"))]);
         assert!(classify(&bert, &meta(&[]), "bert").skip.is_some());
@@ -615,7 +697,10 @@ mod tests {
             ("general.name", s("Gemma-4-12B-It")),
             ("general.size_label", s("12B")),
         ]);
-        let ollama = meta(&[("general.architecture", s("gemma4")), ("general.size_label", s("12B"))]);
+        let ollama = meta(&[
+            ("general.architecture", s("gemma4")),
+            ("general.size_label", s("12B")),
+        ]);
         let layers = meta(&[("gemma4.block_count", GgufValue::U32(48))]);
         assert_eq!(
             classify(&unsloth, &layers, "gemma4").ident,
@@ -640,22 +725,38 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let line = "0.00.620.004 E llama_model_load: error loading model: done_getting_tensors: wrong number of tensors; expected 1014, got 658";
-        assert!(matches!(classify_line(line), ProbeLine::Failed(r) if r.contains("wrong number of tensors")));
-        assert_eq!(classify_line("0.04.542.234 I srv  llama_server: model loaded"), ProbeLine::Loaded);
-        assert_eq!(classify_line("W model has unused tensor blk.64.attn_norm.weight"), ProbeLine::Other);
+        assert!(
+            matches!(classify_line(line), ProbeLine::Failed(r) if r.contains("wrong number of tensors"))
+        );
+        assert_eq!(
+            classify_line("0.04.542.234 I srv  llama_server: model loaded"),
+            ProbeLine::Loaded
+        );
+        assert_eq!(
+            classify_line("W model has unused tensor blk.64.attn_norm.weight"),
+            ProbeLine::Other
+        );
     }
 
     #[test]
     fn ids_are_stable_and_prefixed() {
         let a = id_for_path(Path::new(r"D:\ollama\models\blobs\sha256-abc"));
-        assert_eq!(a, id_for_path(Path::new(r"D:\OLLAMA\models\blobs\sha256-abc")));
+        assert_eq!(
+            a,
+            id_for_path(Path::new(r"D:\OLLAMA\models\blobs\sha256-abc"))
+        );
         assert!(is_external_id(&a));
         assert_eq!(a.len(), EXTERNAL_PREFIX.len() + 12);
-        assert_ne!(a, id_for_path(Path::new(r"D:\ollama\models\blobs\sha256-abd")));
+        assert_ne!(
+            a,
+            id_for_path(Path::new(r"D:\ollama\models\blobs\sha256-abd"))
+        );
     }
 
     fn write_manifest(store: &Path, rel: &[&str], digest: &str) {
-        let dir = rel[..rel.len() - 1].iter().fold(store.join("manifests"), |p, s| p.join(s));
+        let dir = rel[..rel.len() - 1]
+            .iter()
+            .fold(store.join("manifests"), |p, s| p.join(s));
         std::fs::create_dir_all(&dir).unwrap();
         let json = format!(
             r#"{{"layers":[{{"mediaType":"application/vnd.ollama.image.license","digest":"sha256:lic"}},{{"mediaType":"application/vnd.ollama.image.model","digest":"{digest}"}}]}}"#
@@ -672,12 +773,29 @@ mod tests {
     fn ollama_tags_on_one_blob_become_one_entry_and_cloud_models_vanish() {
         let store = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(store.path().join("blobs")).unwrap();
-        sparse_file(&store.path().join("blobs").join("sha256-aaa"), MIN_MODEL_BYTES + 1);
-        write_manifest(store.path(), &["registry.ollama.ai", "library", "qwen3", "8b"], "sha256:aaa");
-        write_manifest(store.path(), &["registry.ollama.ai", "library", "qwen3", "latest"], "sha256:aaa");
-        write_manifest(store.path(), &["registry.ollama.ai", "richardyoung", "coder", "q4"], "sha256:missing");
+        sparse_file(
+            &store.path().join("blobs").join("sha256-aaa"),
+            MIN_MODEL_BYTES + 1,
+        );
+        write_manifest(
+            store.path(),
+            &["registry.ollama.ai", "library", "qwen3", "8b"],
+            "sha256:aaa",
+        );
+        write_manifest(
+            store.path(),
+            &["registry.ollama.ai", "library", "qwen3", "latest"],
+            "sha256:aaa",
+        );
+        write_manifest(
+            store.path(),
+            &["registry.ollama.ai", "richardyoung", "coder", "q4"],
+            "sha256:missing",
+        );
         // Cloud-Modell: Manifest ohne Modell-Layer.
-        let cloud = store.path().join("manifests/registry.ollama.ai/library/kimi/cloud");
+        let cloud = store
+            .path()
+            .join("manifests/registry.ollama.ai/library/kimi/cloud");
         std::fs::create_dir_all(cloud.parent().unwrap()).unwrap();
         std::fs::write(&cloud, r#"{"layers":[]}"#).unwrap();
 
@@ -693,14 +811,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let nested = dir.path().join("lmstudio-community").join("gemma");
         std::fs::create_dir_all(&nested).unwrap();
-        sparse_file(&nested.join("gemma-4-12B-it-QAT-Q4_0.gguf"), MIN_MODEL_BYTES + 1);
+        sparse_file(
+            &nested.join("gemma-4-12B-it-QAT-Q4_0.gguf"),
+            MIN_MODEL_BYTES + 1,
+        );
         sparse_file(&nested.join("mmproj-gemma-4-12B.gguf"), MIN_MODEL_BYTES + 1);
         sparse_file(&nested.join("tiny.gguf"), 1024);
         sparse_file(&nested.join("big-00001-of-00002.gguf"), MIN_MODEL_BYTES + 1);
         sparse_file(&nested.join("big-00002-of-00002.gguf"), MIN_MODEL_BYTES + 1);
         std::fs::write(nested.join("readme.txt"), b"x").unwrap();
-        let labels: Vec<String> = scan_folder(dir.path()).into_iter().map(|c| c.label).collect();
-        assert_eq!(labels, vec!["big-00001-of-00002", "gemma-4-12B-it-QAT-Q4_0"]);
+        let labels: Vec<String> = scan_folder(dir.path())
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        assert_eq!(
+            labels,
+            vec!["big-00001-of-00002", "gemma-4-12B-it-QAT-Q4_0"]
+        );
     }
 
     #[test]

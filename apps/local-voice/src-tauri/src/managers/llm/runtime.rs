@@ -313,7 +313,9 @@ impl LlmRuntimeManager {
         if external::is_external_id(model_id) {
             // Keine Quelle im Netz: die Datei liegt ja schon da, und die
             // Prognose liest ihren Kopf.
-            return self.external_model(model_id).map(|m| (m.size_bytes, String::new()));
+            return self
+                .external_model(model_id)
+                .map(|m| (m.size_bytes, String::new()));
         }
         let entry = catalog::tts_entries(Purpose::LlmModel)
             .into_iter()

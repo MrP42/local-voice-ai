@@ -260,7 +260,10 @@ pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String
         return Err(format!("{} ist noch nicht geladen", info.name));
     }
     if let Some(reason) = runtime.external_incompatibility(&model_id) {
-        return Err(format!("{}: {reason}", crate::managers::llm::CODE_EXTERNAL_INCOMPATIBLE));
+        return Err(format!(
+            "{}: {reason}",
+            crate::managers::llm::CODE_EXTERNAL_INCOMPATIBLE
+        ));
     }
     let mut s = settings::get_settings(&app);
     let connection_id = match s
@@ -331,7 +334,8 @@ pub async fn llm_set_model_dirs(app: AppHandle, dirs: Vec<String>) -> Result<(),
     let mut s = settings::get_settings(&app);
     s.llm_model_dirs = cleaned.clone();
     settings::write_settings(&app, s);
-    app.state::<Arc<LlmRuntimeManager>>().set_model_dirs(cleaned);
+    app.state::<Arc<LlmRuntimeManager>>()
+        .set_model_dirs(cleaned);
     llm_rescan_model_dirs(app).await
 }
 
