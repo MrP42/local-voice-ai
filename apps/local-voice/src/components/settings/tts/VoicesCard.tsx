@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { commands, type VoiceInfo } from "@/bindings";
 import { umlautSuggestion } from "@/lib/voices/speakerMarkers";
+import { sortVoicesByLabel } from "@/lib/voices/sortVoices";
 import { Archive, Download, Pencil, Trash2, Upload, Wand2 } from "lucide-react";
 import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -68,7 +69,12 @@ export const VoicesCard = () => {
   const refreshVoices = useCallback(async () => {
     // Faellt die Abfrage aus, bleibt die Liste leer statt undefiniert: ein
     // fehlender Rueckgabewert riss sonst die ganze Vorlesen-Seite mit.
-    setVoices((await commands.ttsListVoiceInfos()) ?? []);
+    setVoices(
+      sortVoicesByLabel(
+        (await commands.ttsListVoiceInfos()) ?? [],
+        (v) => v.meta.display_name || v.id,
+      ),
+    );
     // Das Dropdown an der Transportleiste haelt seine eigene Liste — dieses
     // Ereignis haelt beide zusammen, ohne dass sie sich kennen muessen.
     window.dispatchEvent(new CustomEvent("lv-voices-changed"));
