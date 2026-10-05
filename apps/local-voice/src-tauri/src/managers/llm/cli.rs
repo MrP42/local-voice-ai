@@ -352,6 +352,28 @@ mod tests {
         assert!(c.windows(2).any(|w| w[0] == "--sandbox" && w[1] == "read-only"));
     }
 
+    /// Gegen die echten CLIs mit dem Login des Nutzers (nur von Hand):
+    /// `cargo test --lib real_cli_calls -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_cli_calls() {
+        for (cli, model) in [(Cli::Claude, "sonnet"), (Cli::Codex, "gpt-6-astra")] {
+            let bin = locate(cli).expect("CLI installiert");
+            let t = std::time::Instant::now();
+            let r = call(
+                cli,
+                &bin,
+                model,
+                Some("Du schreibst knappe deutsche Protokolle. Antworte nur mit dem Ergebnis."),
+                "Fasse in einem Satz zusammen: Das Release wird auf Freitag verschoben, Anna repariert die Tests.",
+            );
+            println!("{cli:?} {} in {:?}: {r:?}", bin.display(), t.elapsed());
+            let r = r.expect("Antwort");
+            assert!(r.text.contains("Freitag"), "{}", r.text);
+            assert!(r.prompt_tokens > 0);
+        }
+    }
+
     #[test]
     fn templates_are_recognised_by_their_address() {
         assert_eq!(Cli::from_base_url("cli://claude"), Some(Cli::Claude));
