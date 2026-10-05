@@ -6,6 +6,7 @@ import { MicSelector } from "./MicSelector";
 import { LlmSelector } from "./LlmSelector";
 import { ResourceMeter } from "./ResourceMeter";
 import UpdateChecker from "../update-checker";
+import { ComplianceShield } from "../compliance/ComplianceShield";
 
 const Footer: React.FC = () => {
   const [version, setVersion] = useState("");
@@ -38,12 +39,16 @@ const Footer: React.FC = () => {
           <ResourceMeter />
         </div>
 
+        {/* Schild: sicher und regelkonform? Immer sichtbar, auch schmal. */}
+        <div className="flex items-center gap-2">
+          <ComplianceShield />
         {/* Update Status */}
         <div className="hidden sm:flex items-center gap-1">
           <UpdateChecker />
           <span>•</span>
           {/* eslint-disable-next-line i18next/no-literal-string */}
           <span>v{version}</span>
+        </div>
         </div>
       </div>
     </div>

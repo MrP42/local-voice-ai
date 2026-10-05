@@ -843,6 +843,25 @@
     "nonCommercialHint": "Lizenz {{license}}: nur für nicht-kommerzielle Nutzung erlaubt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
   },
   "settings": {
+    "compliance": {
+        "title": "Regelwerk",
+        "profile": "Geltende Regeln für Sprachmodelle",
+        "profiles": {
+          "eu": {
+            "label": "EU (EU-KI-VO, DSGVO)",
+            "description": "Nur Anbieter mit Verarbeitung in der EU (oder geprüfter Absicherung), Auftragsverarbeitungsvertrag und ohne Training mit deinen Daten. Alles andere ist gesperrt."
+          },
+          "local_only": {
+            "label": "Nur lokal",
+            "description": "Nichts verlässt den Rechner. Alle Cloud-Modelle sind gesperrt."
+          },
+          "none": {
+            "label": "Keine Einschränkung",
+            "description": "Alle Modelle sind nutzbar; Cloud-Modelle werden nur gekennzeichnet."
+          }
+        },
+        "disclaimer": "Die Einstufung beruht auf den dokumentierten Angaben der Anbieter (Stand 06.10.2026) und ist keine Rechtsberatung."
+    },
     "meetings": {
       "captureSystem": "Systemton standardmäßig aufnehmen",
       "captureSystemDescription": "Vorgabe für das Häkchen „System-Audio mitschneiden“ beim Start. Die letzte Wahl auf der Aufnahmeseite wird hier gemerkt.",
@@ -1543,6 +1562,24 @@
       }
     },
     "llm": {
+        "connections": {
+          "region": "Region",
+          "trainingOptOut": "Training im Konto abgeschaltet",
+          "trainingOptOutDescription": "Bestätige erst, wenn du das Training mit deinen Daten in den Konto-Einstellungen des Anbieters abgeschaltet hast. Unter dem Regelwerk „EU“ ist der Anbieter sonst gesperrt."
+        },
+        "cli": {
+          "claude_cli": "Nutzt dein Claude-Abo (Pro/Max) über das installierte Claude Code. Angemeldet wird in Claude Code selbst (claude, dann /login) – die App sieht keine Zugangsdaten. Nur für die eigene Nutzung. Unter dem Regelwerk „EU“ gesperrt (USA, kein AVV).",
+          "codex_cli": "Nutzt dein ChatGPT-Abo (Plus/Pro) über die installierte Codex CLI. Angemeldet wird in Codex selbst (codex login). Achtung: Die Nutzungsbedingungen von OpenAI empfehlen für programmgesteuerte Nutzung API-Schlüssel; der Weg über das Abo ist eine Grauzone. Unter dem Regelwerk „EU“ gesperrt (USA, kein AVV)."
+        },
+        "regions": {
+          "eu-central-1": "EU – Frankfurt",
+          "eu-west-1": "EU – Irland",
+          "eu-south-1": "EU – Mailand",
+          "eu-north-1": "EU – Stockholm",
+          "us-east-1": "USA – Virginia",
+          "us-east-2": "USA – Ohio",
+          "us-west-2": "USA – Oregon"
+        },
       "active": {
         "title": "Sprachmodell",
         "model": "Aktives Modell",
@@ -4862,5 +4899,61 @@
       "propose": "propose (Vorschlag zur Triage)",
       "untouchable": "untouchable (nicht ändern)"
     }
+  },
+  "compliance": {
+      "reasons": {
+        "local": "Läuft auf diesem Rechner – nichts verlässt das Gerät.",
+        "no_restriction": "Regelwerk „Keine Einschränkung“: Cloud-Modelle sind erlaubt.",
+        "cloud_not_allowed": "Regelwerk „Nur lokal“: Cloud-Modelle sind gesperrt.",
+        "facts_unknown": "Für diesen Anbieter liegen keine geprüften Angaben vor.",
+        "trains_on_data": "Der Anbieter trainiert mit deinen Daten.",
+        "training_unknown": "Unklar, ob der Anbieter mit deinen Daten trainiert.",
+        "training_opt_out_missing": "Training mit deinen Daten ist an – im Konto abschalten und an der Verbindung bestätigen.",
+        "training_opt_out_attested": "Training laut deiner Bestätigung abgeschaltet.",
+        "no_dpa": "Kein Auftragsverarbeitungsvertrag (AVV) für diesen Zugang.",
+        "dpa_unknown": "Unklar, ob ein Auftragsverarbeitungsvertrag (AVV) besteht.",
+        "third_country_dpf": "Verarbeitung außerhalb der EU, abgesichert über das EU-US Data Privacy Framework.",
+        "third_country_no_safeguard": "Verarbeitung außerhalb der EU ohne geprüfte Absicherung.",
+        "facts_stale": "Die Anbieterangaben sind älter als 180 Tage.",
+        "eu_ok": "Verarbeitung in der EU, AVV vorhanden, kein Training mit deinen Daten."
+      },
+      "countries": {
+        "US": "USA",
+        "EU": "EU",
+        "DE": "Deutschland (Frankfurt)",
+        "IE": "Irland",
+        "IT": "Italien (Mailand)",
+        "SE": "Schweden (Stockholm)",
+        "FR": "Frankreich",
+        "unknown": "unbekannt"
+      },
+      "badge": {
+        "cloud": "Cloud-Modell · Server: {{where}}",
+        "local": "Lokales Modell – läuft auf diesem Rechner",
+        "blocked": "Vom Regelwerk gesperrt"
+      },
+      "shield": {
+        "title": "Sicherheit und Regelwerk",
+        "green": "Sicher und regelkonform",
+        "yellow": "Erlaubt, mit Hinweisen",
+        "red": "Verstoß gegen das Regelwerk",
+        "where": "Regelwerk ändern: Einstellungen › Nachbearbeitung › Regelwerk.",
+        "sources": "Anbieterangaben geprüft am {{date}}:",
+        "disclaimer": "Das Schild prüft dokumentierte Anbieterangaben gegen das Regelwerk. Es ersetzt keine Datenschutzprüfung."
+      },
+      "checks": {
+        "profile_eu": "Regelwerk: EU (EU-KI-VO und DSGVO)",
+        "profile_local_only": "Regelwerk: Nur lokal",
+        "profile_none": "Regelwerk: Keine Einschränkung",
+        "model_local": "Aktives Modell „{{detail}}“ läuft lokal.",
+        "model_cloud_ok": "Aktives Modell „{{detail}}“ ist ein Cloud-Modell und erlaubt.",
+        "model_cloud_conditional": "Aktives Modell „{{detail}}“ ist erlaubt, mit Bedingung.",
+        "model_blocked": "Aktives Modell „{{detail}}“ ist gesperrt – es bekommt keine Anfragen.",
+        "model_none": "Kein Sprachmodell aktiv.",
+        "keys_plaintext": "{{detail}} API-Schlüssel liegen unverschlüsselt in den Einstellungen.",
+        "keys_protected": "Keine unverschlüsselten API-Schlüssel.",
+        "blocked_calls": "Gesperrte Aufrufe in den letzten 24 Stunden: {{detail}}",
+        "cloud_errors": "{{detail}} fehlgeschlagene Cloud-Aufrufe in den letzten 24 Stunden."
+      }
   }
 }

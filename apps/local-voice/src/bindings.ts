@@ -413,6 +413,28 @@ async llmProbeExternal(id: string) : Promise<Result<Compat, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async complianceStatus() : Promise<ShieldStatus> {
+    return await TAURI_INVOKE("compliance_status");
+},
+async complianceAssessModels() : Promise<ModelCompliance[]> {
+    return await TAURI_INVOKE("compliance_assess_models");
+},
+async complianceSetProfile(profile: ComplianceProfile) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("compliance_set_profile", { profile }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async complianceSetTrainingOptOut(connectionId: string, optOut: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("compliance_set_training_opt_out", { connectionId, optOut }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * RAM und GPU-Speicherbudget fuer die Fussleiste, dazu der Anteil der App
  * (samt Kindprozessen). Auf einem Blocking-Thread: DXGI und die
@@ -5266,7 +5288,12 @@ llm_connections?: LlmConnection[]; llm_models?: LlmModelConfig[]; llm_active_mod
  * dort, statt sie ein zweites Mal herunterzuladen
  * (`managers::llm::external`).
  */
-llm_model_dirs?: string[];
+llm_model_dirs?: string[]; 
+/**
+ * Regelwerk fuer Sprachmodelle (`managers::compliance`): EU, nur lokal
+ * oder keine Einschraenkung.
+ */
+compliance_profile?: ComplianceProfile;
 /**
  * Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
  * Kept so older stores still deserialize; no longer read by the audio path.
@@ -6512,7 +6539,12 @@ monthly_budget_usd?: number | null;
  * Standard aus -- eine Warnung ist selten falsch, eine Sperre mitten
  * im Protokoll schon.
  */
-budget_enforced?: boolean }
+budget_enforced?: boolean; 
+/**
+ * Der Nutzer bestaetigt, dass das Training mit seinen Daten im Konto des
+ * Anbieters abgeschaltet ist.
+ */
+training_opt_out?: boolean }
 /**
  * Ein Eintrag fuer die Modellseite: Laufzeitpaket oder Modell.
  */
@@ -6553,6 +6585,13 @@ export type ExternalSource =
  * Kann der `llama-server` der App die Datei laden?
  */
 export type Compat = { state: "unchecked" } | { state: "ok" } | { state: "incompatible"; reason: string }
+export type ComplianceProfile = "eu" | "local_only" | "none"
+export type Verdict = "allowed" | "conditional" | "blocked"
+export type Assessment = { verdict: Verdict; cloud: boolean; countries: string[]; reasons: string[]; sources: string[]; checked: string | null }
+export type ModelCompliance = { model_id: string; assessment: Assessment }
+export type ShieldLevel = "green" | "yellow" | "red"
+export type ShieldCheck = { id: string; level: ShieldLevel; detail: string | null }
+export type ShieldStatus = { level: ShieldLevel; profile: ComplianceProfile; active_model: string | null; active: Assessment | null; checks: ShieldCheck[] }
 export type LlmDownloadKind = "runtime" | "model"
 /**
  * Ein freigegebenes Modell einer Verbindung. Nur freigegebene Modelle

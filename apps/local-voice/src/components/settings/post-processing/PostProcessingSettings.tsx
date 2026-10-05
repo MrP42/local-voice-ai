@@ -22,6 +22,7 @@ import { usePostProcessProviderState } from "../PostProcessingSettingsApi/usePos
 import { ShortcutInput } from "../ShortcutInput";
 import { useSettings } from "../../../hooks/useSettings";
 import { LlmConnectionsSettings } from "./LlmConnectionsSettings";
+import { ComplianceSettings } from "./ComplianceSettings";
 import { UsageOverview } from "./UsageOverview";
 
 const PostProcessingSettingsApiComponent: React.FC = () => {
@@ -435,6 +436,8 @@ export const PostProcessingSettings: React.FC = () => {
   // die Funktion tut, entscheidet allein das aktive Modell.
   return (
     <div className="w-full space-y-6">
+      <ComplianceSettings />
+
       <LlmConnectionsSettings />
 
       <UsageOverview />
