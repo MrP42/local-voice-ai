@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { Cpu, Download, HardDrive, Loader2, Trash2 } from "lucide-react";
 import { commands, type FitReport, type LlmDownloadInfo } from "@/bindings";
 import { Button } from "../../ui/Button";
@@ -27,7 +28,7 @@ interface LlmModelCardProps {
 }
 
 /** Klartext fuer den Grund, warum ein fremdes Modell nicht laedt. */
-const reasonText = (t: (k: string, o?: object) => string, reason: string) =>
+const reasonText = (t: TFunction, reason: string) =>
   reason === "ollama_merged_vision" || reason === "server_exited"
     ? t(`settings.models.llm.external.reasons.${reason}`)
     : t("settings.models.llm.external.reasons.generic", { reason });
@@ -60,7 +61,8 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
   const tags: string[] = isRuntime ? [] : info.tags;
   const external = info.external;
   const compat = external?.compat.state;
-  const incompatible = external?.compat.state === "incompatible" ? external.compat : null;
+  const incompatible =
+    external?.compat.state === "incompatible" ? external.compat : null;
 
   // Passt es rein? Einmal je Karte, gegen das aktuell freie Budget. Ohne
   // Backend (Browser-Test) bleibt das Feld leer -- lieber nichts als Zahlen,
@@ -98,7 +100,11 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
               </Badge>
               <Badge
                 variant={
-                  compat === "ok" ? "success" : compat === "incompatible" ? "warning" : "secondary"
+                  compat === "ok"
+                    ? "success"
+                    : compat === "incompatible"
+                      ? "warning"
+                      : "secondary"
                 }
                 data-compat={compat}
               >
@@ -107,7 +113,9 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
             </>
           ) : (
             info.is_downloaded && (
-              <Badge variant="success">{t("settings.models.llm.status.installed")}</Badge>
+              <Badge variant="success">
+                {t("settings.models.llm.status.installed")}
+              </Badge>
             )
           )}
           {isActive && <Badge variant="primary">{t("settings.models.llm.status.active")}</Badge>}
@@ -156,15 +164,19 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
               </span>
             </Button>
           )}
-          {info.is_downloaded && !isRuntime && !isActive && onActivate && !incompatible && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => onActivate(info.id)}
-            >
-              {t("settings.models.llm.actions.use")}
-            </Button>
-          )}
+          {info.is_downloaded &&
+            !isRuntime &&
+            !isActive &&
+            onActivate &&
+            !incompatible && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => onActivate(info.id)}
+              >
+                {t("settings.models.llm.actions.use")}
+              </Button>
+            )}
           {/* Fremde Dateien gehoeren Ollama, LM Studio oder dem Nutzer --
               ohne Entfernen-Knopf. */}
           {info.is_downloaded && !external && (
@@ -186,10 +198,16 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
           {external.path}
         </p>
       ) : (
-        <p className="text-text/60 text-sm leading-relaxed">{info.description}</p>
+        <p className="text-text/60 text-sm leading-relaxed">
+          {info.description}
+        </p>
       )}
       {incompatible && (
-        <p className="text-xs text-red-500" role="note" data-incompatible-reason>
+        <p
+          className="text-xs text-red-500"
+          role="note"
+          data-incompatible-reason
+        >
           {reasonText(t, incompatible.reason)}
         </p>
       )}
@@ -199,7 +217,9 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
           data-replaceable-by={info.replaceable_by}
         >
           <p className="text-xs text-text/70 flex-1 min-w-0">
-            {t("settings.models.llm.replace.hint", { name: info.replaceable_by })}
+            {t("settings.models.llm.replace.hint", {
+              name: info.replaceable_by,
+            })}
           </p>
           <Button
             variant="secondary"

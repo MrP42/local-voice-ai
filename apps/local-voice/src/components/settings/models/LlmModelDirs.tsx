@@ -42,7 +42,9 @@ export const LlmModelDirs: React.FC<LlmModelDirsProps> = ({ foundCount }) => {
   };
 
   const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
-  const openSuggestions = suggestions.filter((s) => !dirs.some((d) => same(d, s)));
+  const openSuggestions = suggestions.filter(
+    (s) => !dirs.some((d) => same(d, s)),
+  );
 
   return (
     <div className="flex flex-col px-4 py-3 gap-2" data-testid="llm-model-dirs">
@@ -64,7 +66,9 @@ export const LlmModelDirs: React.FC<LlmModelDirsProps> = ({ foundCount }) => {
               disabled={rescanning}
               className="flex items-center gap-1.5"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${rescanning ? "animate-spin" : ""}`} />
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${rescanning ? "animate-spin" : ""}`}
+              />
               <span>{t("settings.models.llm.dirs.rescan")}</span>
             </Button>
           )}
@@ -81,7 +85,9 @@ export const LlmModelDirs: React.FC<LlmModelDirsProps> = ({ foundCount }) => {
         </div>
       </div>
       {dirs.length === 0 ? (
-        <p className="text-xs text-text/50">{t("settings.models.llm.dirs.empty")}</p>
+        <p className="text-xs text-text/50">
+          {t("settings.models.llm.dirs.empty")}
+        </p>
       ) : (
         <ul className="flex flex-col gap-1">
           {dirs.map((dir) => (

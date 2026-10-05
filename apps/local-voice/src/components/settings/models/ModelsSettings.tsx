@@ -83,10 +83,14 @@ export const ModelsSettings: React.FC = () => {
   const llmRuntimes = llm.downloads.filter(
     (d) => d.kind === "runtime" && d.for_this_platform,
   );
-  const llmModels = llm.downloads.filter((d) => d.kind === "model" && !d.external);
+  const llmModels = llm.downloads.filter(
+    (d) => d.kind === "model" && !d.external,
+  );
   // Modelle aus Modellordnern (Ollama, LM Studio, eigene) -- eigener Block
   // unter dem Katalog, damit klar bleibt, was die App selbst geladen hat.
-  const llmExternal = llm.downloads.filter((d) => d.kind === "model" && d.external);
+  const llmExternal = llm.downloads.filter(
+    (d) => d.kind === "model" && d.external,
+  );
   const deleteLlmCopy = async (id: string) => {
     const info = llmModels.find((m) => m.id === id);
     if (!info?.replaceable_by) return;
@@ -401,7 +405,11 @@ export const ModelsSettings: React.FC = () => {
               onDownload={() => {}}
               onCancel={() => {}}
               onDelete={() => {}}
-              onProbe={llmRuntimeInstalled ? (id) => void llm.probeExternal(id) : undefined}
+              onProbe={
+                llmRuntimeInstalled
+                  ? (id) => void llm.probeExternal(id)
+                  : undefined
+              }
               isProbing={info.id in llm.probingIds}
               onActivate={
                 llmRuntimeInstalled
