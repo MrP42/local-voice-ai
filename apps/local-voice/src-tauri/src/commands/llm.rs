@@ -254,6 +254,9 @@ pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String
     if !info.is_downloaded {
         return Err(format!("{} ist noch nicht geladen", info.name));
     }
+    if let Some(reason) = runtime.external_incompatibility(&model_id) {
+        return Err(format!("{}: {reason}", crate::managers::llm::CODE_EXTERNAL_INCOMPATIBLE));
+    }
     let mut s = settings::get_settings(&app);
     let connection_id = match s
         .llm_connections
@@ -304,6 +307,63 @@ pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String
     s.sync_legacy_from_llm();
     settings::write_settings(&app, s);
     Ok(())
+}
+
+// ---- Modellordner (fremde GGUF-Dateien, Ollama-Speicher) ------------------
+
+/// Die Modellordner setzen und sofort neu einlesen. Leere und doppelte
+/// Eintraege fallen weg; die Reihenfolge bleibt die des Nutzers.
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_set_model_dirs(app: AppHandle, dirs: Vec<String>) -> Result<(), String> {
+    let mut cleaned: Vec<String> = Vec::new();
+    for d in dirs {
+        let d = d.trim().to_string();
+        if !d.is_empty() && !cleaned.iter().any(|c| c.eq_ignore_ascii_case(&d)) {
+            cleaned.push(d);
+        }
+    }
+    let mut s = settings::get_settings(&app);
+    s.llm_model_dirs = cleaned;
+    settings::write_settings(&app, s);
+    llm_rescan_model_dirs(app).await
+}
+
+/// Ordner, die hier wahrscheinlich Modelle enthalten: der Ollama-Speicher
+/// und die Ablage von LM Studio -- als Vorschlag, eingetragen wird nichts.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_suggest_model_dirs() -> Vec<String> {
+    use crate::managers::llm::external;
+    external::detect_ollama_store()
+        .into_iter()
+        .chain(external::detect_lmstudio_dir())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
+}
+
+/// Modellordner neu durchsuchen (nach `ollama pull` oder einem neuen Download
+/// in LM Studio).
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_rescan_model_dirs(app: AppHandle) -> Result<(), String> {
+    let manager = app.state::<Arc<LlmRuntimeManager>>().inner().clone();
+    tokio::task::spawn_blocking(move || manager.rescan_external())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Ladeversuch fuer ein Modell aus einem Modellordner: laedt es mit der
+/// Laufzeit der App? Das Ergebnis wird gemerkt.
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_probe_external(
+    app: AppHandle,
+    id: String,
+) -> Result<crate::managers::llm::external::Compat, String> {
+    let manager = app.state::<Arc<LlmRuntimeManager>>().inner().clone();
+    manager.probe_external(&id).await
 }
 
 /// RAM und GPU-Speicherbudget fuer die Fussleiste, dazu der Anteil der App

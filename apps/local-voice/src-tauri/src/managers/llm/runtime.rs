@@ -18,6 +18,7 @@ use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
 use hf_hub::api::tokio::CancellationToken;
 
+use super::external::{self, Compat, ExternalModel, ExternalSource, ModelIdent, ProbeCache};
 use crate::catalog::{self, Purpose, TtsCatalogEntry};
 use crate::managers::model::download::{HttpDownloadEvent, HttpDownloadOutcome};
 use crate::managers::model::ModelManager;
@@ -56,6 +57,18 @@ pub struct LlmDownloadInfo {
     /// Ob dieses Paket fuer diesen Rechner gedacht ist. Fremde Plattformen
     /// bleiben im Katalog sichtbar, aber nicht ladbar.
     pub for_this_platform: bool,
+    /// Nur Modelle aus einem Modellordner: woher, welche Datei, laedt es?
+    pub external: Option<ExternalInfo>,
+    /// Nur geladene Katalogmodelle: Name eines geprueften fremden Modells,
+    /// das dasselbe ist -- die App-Kopie ist dann entbehrlich.
+    pub replaceable_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct ExternalInfo {
+    pub source: ExternalSource,
+    pub path: String,
+    pub compat: Compat,
 }
 
 /// Plattform-Kennung wie in den Katalog-Kennungen (`llm-runtime-<hier>-…`).
@@ -119,6 +132,12 @@ pub struct LlmRuntimeManager {
     cancel_flags: Mutex<HashMap<String, CancellationToken>>,
     /// Ergebnis des letzten Selbsttests: welches Backend laeuft hier.
     resolved_backend: Mutex<Option<String>>,
+    /// Letzter Scan der Modellordner und die Ordner, fuer die er gilt. Der
+    /// Scan liest jeden Dateikopf -- er laeuft, wenn sich die Ordner aendern
+    /// oder jemand neu suchen laesst, nicht bei jedem Auflisten.
+    external: Mutex<Option<(Vec<String>, Vec<ExternalModel>)>>,
+    /// Kennung (Bauart/Groesse/Schichten) der eigenen Modelldateien, je Pfad.
+    own_idents: Mutex<HashMap<PathBuf, Option<ModelIdent>>>,
 }
 
 impl LlmRuntimeManager {
@@ -132,7 +151,91 @@ impl LlmRuntimeManager {
             base_dir: base.join("llm"),
             cancel_flags: Mutex::new(HashMap::new()),
             resolved_backend: Mutex::new(None),
+            external: Mutex::new(None),
+            own_idents: Mutex::new(HashMap::new()),
         })
+    }
+
+    fn probe_cache_path(&self) -> PathBuf {
+        self.base_dir.join("external-probe.json")
+    }
+
+    fn configured_dirs(&self) -> Vec<String> {
+        crate::settings::get_settings(&self.app_handle).llm_model_dirs
+    }
+
+    /// Modelle aus den Modellordnern -- aus dem letzten Scan, sofern er fuer
+    /// die eingestellten Ordner gilt; sonst wird jetzt gescannt.
+    pub fn external_models(&self) -> Vec<ExternalModel> {
+        let dirs = self.configured_dirs();
+        if let Some((scanned, models)) = self.external.lock().unwrap().as_ref() {
+            if *scanned == dirs {
+                return models.clone();
+            }
+        }
+        self.rescan_external_with(dirs)
+    }
+
+    /// Modellordner neu einlesen (neue Dateien, geloeschte Ollama-Modelle).
+    pub fn rescan_external(&self) -> Vec<ExternalModel> {
+        self.rescan_external_with(self.configured_dirs())
+    }
+
+    fn rescan_external_with(&self, dirs: Vec<String>) -> Vec<ExternalModel> {
+        let probes = ProbeCache::load(&self.probe_cache_path());
+        let models = external::scan(&dirs, &probes);
+        *self.external.lock().unwrap() = Some((dirs, models.clone()));
+        models
+    }
+
+    fn external_model(&self, id: &str) -> Option<ExternalModel> {
+        if !external::is_external_id(id) {
+            return None;
+        }
+        self.external_models().into_iter().find(|m| m.id == id)
+    }
+
+    /// Ladeversuch fuer ein fremdes Modell (siehe `external::probe`); das
+    /// Ergebnis wird gemerkt und steht sofort in der Liste.
+    pub async fn probe_external(&self, id: &str) -> Result<Compat, String> {
+        let model = self
+            .external_model(id)
+            .ok_or_else(|| format!("Unbekanntes Modell: {id}"))?;
+        if let Compat::Incompatible(_) = model.compat {
+            // Am Kopf erkannt -- ein Ladeversuch kaeme zum selben Ergebnis.
+            return Ok(model.compat);
+        }
+        let (_, _, binary) = self.resolve_runtime().await?;
+        let path = PathBuf::from(&model.path);
+        let probe_path = path.clone();
+        let compat = tokio::task::spawn_blocking(move || external::probe(&binary, &probe_path))
+            .await
+            .map_err(|e| format!("Ladeversuch abgebrochen: {e}"))?;
+        let cache_file = self.probe_cache_path();
+        let mut cache = ProbeCache::load(&cache_file);
+        cache.set(&path, compat.clone());
+        cache.save(&cache_file);
+        if let Some((_, models)) = self.external.lock().unwrap().as_mut() {
+            if let Some(m) = models.iter_mut().find(|m| m.id == id) {
+                m.compat = compat.clone();
+            }
+        }
+        Ok(compat)
+    }
+
+    /// Ist das Modell ein fremdes, das sicher nicht laedt? Dann mit Grund.
+    pub fn external_incompatibility(&self, id: &str) -> Option<String> {
+        match self.external_model(id)?.compat {
+            Compat::Incompatible(reason) => Some(reason),
+            _ => None,
+        }
+    }
+
+    fn own_ident(&self, path: &Path) -> Option<ModelIdent> {
+        let mut memo = self.own_idents.lock().unwrap();
+        memo.entry(path.to_path_buf())
+            .or_insert_with(|| external::ident_of_file(path))
+            .clone()
     }
 
     fn runtime_dir(&self, runtime_id: &str) -> PathBuf {
@@ -149,6 +252,9 @@ impl LlmRuntimeManager {
 
     /// Der Pfad einer Modelldatei -- ob sie existiert, sagt `is_file()`.
     pub fn model_path(&self, model_id: &str) -> Option<PathBuf> {
+        if external::is_external_id(model_id) {
+            return self.external_model(model_id).map(|m| PathBuf::from(m.path));
+        }
         let entry = catalog::tts_entries(Purpose::LlmModel)
             .into_iter()
             .find(|e| e.id == model_id)?;
@@ -193,6 +299,11 @@ impl LlmRuntimeManager {
     /// Dateigroesse und Quelle eines Modells laut Katalog (fuer die
     /// Speicherprognose, auch vor dem Download).
     pub fn model_source(&self, model_id: &str) -> Option<(u64, String)> {
+        if external::is_external_id(model_id) {
+            // Keine Quelle im Netz: die Datei liegt ja schon da, und die
+            // Prognose liest ihren Kopf.
+            return self.external_model(model_id).map(|m| (m.size_bytes, String::new()));
+        }
         let entry = catalog::tts_entries(Purpose::LlmModel)
             .into_iter()
             .find(|e| e.id == model_id)?;
@@ -320,13 +431,23 @@ impl LlmRuntimeManager {
                 kind: LlmDownloadKind::Runtime,
                 name: e.name,
                 description: e.description,
+                external: None,
+                replaceable_by: None,
             });
         }
+        let externals = self.external_models();
         for e in catalog::tts_entries(Purpose::LlmModel) {
-            let downloaded = e
-                .files
-                .first()
-                .is_some_and(|f| self.models_dir().join(&f.filename).is_file());
+            let file = e.files.first().map(|f| self.models_dir().join(&f.filename));
+            let downloaded = file.as_ref().is_some_and(|p| p.is_file());
+            let replaceable_by = file
+                .filter(|_| downloaded)
+                .and_then(|p| self.own_ident(&p))
+                .and_then(|ident| {
+                    externals
+                        .iter()
+                        .find(|x| x.compat == Compat::Ok && x.ident.as_ref() == Some(&ident))
+                        .map(|x| x.name.clone())
+                });
             out.push(LlmDownloadInfo {
                 is_downloaded: downloaded,
                 is_downloading: self.is_downloading(&e.id),
@@ -338,6 +459,28 @@ impl LlmRuntimeManager {
                 kind: LlmDownloadKind::Model,
                 name: e.name,
                 description: e.description,
+                external: None,
+                replaceable_by,
+            });
+        }
+        for m in externals {
+            out.push(LlmDownloadInfo {
+                id: m.id,
+                kind: LlmDownloadKind::Model,
+                name: m.name,
+                description: String::new(),
+                size_mb: m.size_bytes / (1024 * 1024),
+                is_downloaded: true,
+                is_downloading: false,
+                tags: Vec::new(),
+                backend: None,
+                for_this_platform: true,
+                external: Some(ExternalInfo {
+                    source: m.source,
+                    path: m.path,
+                    compat: m.compat,
+                }),
+                replaceable_by: None,
             });
         }
         out
@@ -488,6 +631,10 @@ impl LlmRuntimeManager {
     }
 
     pub fn delete(&self, id: &str) -> Result<(), String> {
+        if external::is_external_id(id) {
+            // Die Datei gehoert Ollama, LM Studio oder dem Nutzer -- nicht uns.
+            return Err("external_model_not_deletable".to_string());
+        }
         let (entry, kind) = self
             .entry(id)
             .ok_or_else(|| format!("Unbekannter Katalogeintrag: {id}"))?;

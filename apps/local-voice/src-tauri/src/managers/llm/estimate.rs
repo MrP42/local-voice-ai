@@ -188,30 +188,7 @@ pub fn verdict(total_mb: u64, free_mb: u64, on_gpu: bool) -> FitVerdict {
 /// Metadaten aus dem Kopf einer lokalen Datei (waechst nach, bis der Kopf
 /// vollstaendig ist -- dasselbe Muster wie bei den Diktatmodellen).
 pub fn shape_from_file(path: &std::path::Path) -> Option<KvShape> {
-    use std::io::Read;
-    let mut size = 256usize << 10;
-    let max = 16usize << 20;
-    loop {
-        let mut file = std::fs::File::open(path).ok()?;
-        let mut buf = vec![0u8; size];
-        let mut filled = 0;
-        while filled < buf.len() {
-            match file.read(&mut buf[filled..]) {
-                Ok(0) => break,
-                Ok(n) => filled += n,
-                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(_) => return None,
-            }
-        }
-        buf.truncate(filled);
-        match gguf_meta::parse_header(&buf, PROBE_KEYS) {
-            Ok(meta) => return KvShape::from_metadata(&meta),
-            Err(GgufError::Truncated { needed }) if needed > filled && size < max => {
-                size = needed.max(size * 2).min(max);
-            }
-            Err(_) => return None,
-        }
-    }
+    KvShape::from_metadata(&gguf_meta::read_file_header(path, PROBE_KEYS)?)
 }
 
 /// Metadaten aus dem Kopf einer entfernten Datei per HTTP-Range -- fuer die
