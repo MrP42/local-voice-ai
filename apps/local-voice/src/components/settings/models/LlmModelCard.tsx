@@ -98,18 +98,20 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
               <Badge variant="secondary">
                 {t(`settings.models.llm.external.source.${external.source}`)}
               </Badge>
-              <Badge
-                variant={
-                  compat === "ok"
-                    ? "success"
-                    : compat === "incompatible"
-                      ? "warning"
-                      : "secondary"
-                }
-                data-compat={compat}
-              >
-                {t(`settings.models.llm.external.compat.${compat}`)}
-              </Badge>
+              {/* Badge reicht keine data-Attribute durch -- daher die Huelle. */}
+              <span data-compat={compat} className="inline-flex">
+                <Badge
+                  variant={
+                    compat === "ok"
+                      ? "success"
+                      : compat === "incompatible"
+                        ? "warning"
+                        : "secondary"
+                  }
+                >
+                  {t(`settings.models.llm.external.compat.${compat}`)}
+                </Badge>
+              </span>
             </>
           ) : (
             info.is_downloaded && (

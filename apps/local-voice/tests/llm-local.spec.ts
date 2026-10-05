@@ -185,8 +185,10 @@ test("a detected folder is offered, not added on its own", async ({ page }) => {
   await openModels(page);
   const dirs = page.getByTestId("llm-model-dirs");
   // Ollama steht schon drin, also wird nur LM Studio vorgeschlagen.
-  await expect(dirs.locator("[data-suggested-dir]")).toHaveCount(1);
-  await dirs.locator('[data-suggested-dir="C:\\Users\\x\\.lmstudio\\models"]').click();
+  const suggestion = dirs.locator("[data-suggested-dir]");
+  await expect(suggestion).toHaveCount(1);
+  await expect(suggestion).toContainText(".lmstudio");
+  await suggestion.click();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.dirs))
     .toEqual(["D:\\ollama\\models", "C:\\Users\\x\\.lmstudio\\models"]);
