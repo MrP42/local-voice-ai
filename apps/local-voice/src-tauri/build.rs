@@ -16,6 +16,17 @@ fn main() {
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
     {
         println!("cargo:rustc-link-arg-bins=/STACK:16777216");
+        // Test executables get no app manifest from tauri-build, so Windows loads the
+        // legacy comctl32 v5 for them, which lacks `TaskDialogIndirect` (imported via
+        // the dialog stack): every `cargo test` died at load with
+        // STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139) before running a single test
+        // (05.10.2026). Bins keep tauri-build's manifest; only tests get this one.
+        println!("cargo:rustc-link-arg-tests=/MANIFEST:EMBED");
+        println!(
+            "cargo:rustc-link-arg-tests=/MANIFESTDEPENDENCY:type='win32' \
+             name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+             processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
+        );
     }
 
     // Linux ships transcribe-cpp as a shared libtranscribe + loadable ggml
