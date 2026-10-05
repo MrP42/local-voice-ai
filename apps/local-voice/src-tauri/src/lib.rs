@@ -235,6 +235,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         managers::llm::LlmRuntimeManager::new(app_handle)
             .expect("Failed to initialize LLM runtime manager"),
     );
+    llm_runtime.set_model_dirs(settings::get_settings(app_handle).llm_model_dirs);
     let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
     managers::llm::install_globals(llm_runtime.clone(), llm_server.clone());
     // Speicherwächter: faellt der freie RAM unter die Notgrenze, stoppt die
@@ -1277,7 +1278,10 @@ fn simulate_notes(
         });
     }
     let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
-        Ok(runtime) => Arc::new(runtime),
+        Ok(runtime) => {
+            runtime.set_model_dirs(settings::get_settings(app).llm_model_dirs);
+            Arc::new(runtime)
+        }
         Err(e) => {
             return serde_json::json!({ "ran": false, "error": format!("llm runtime: {e}") })
         }
@@ -3680,7 +3684,10 @@ fn run_headless_translate_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> 
         }
     }
     let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
-        Ok(runtime) => Arc::new(runtime),
+        Ok(runtime) => {
+            runtime.set_model_dirs(settings::get_settings(app).llm_model_dirs);
+            Arc::new(runtime)
+        }
         Err(e) => {
             eprintln!("error: LLM runtime unavailable: {e}");
             return 1;
@@ -3883,7 +3890,10 @@ fn run_headless_followup_draft(app: &AppHandle, args: &CliArgs, id: &str) -> i32
         }
     }
     let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
-        Ok(runtime) => Arc::new(runtime),
+        Ok(runtime) => {
+            runtime.set_model_dirs(settings::get_settings(app).llm_model_dirs);
+            Arc::new(runtime)
+        }
         Err(e) => {
             eprintln!("error: LLM runtime unavailable: {e}");
             return 1;
@@ -3979,7 +3989,10 @@ fn run_headless_reindex_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         }
     }
     let runtime = match managers::llm::LlmRuntimeManager::new(app) {
-        Ok(runtime) => Arc::new(runtime),
+        Ok(runtime) => {
+            runtime.set_model_dirs(settings::get_settings(app).llm_model_dirs);
+            Arc::new(runtime)
+        }
         Err(e) => {
             eprintln!("error: llm runtime unavailable: {e}");
             return 1;
@@ -4085,7 +4098,10 @@ fn run_headless_eval_chat(app: &AppHandle, args: &CliArgs, dir: &std::path::Path
         managers::meetings::notes::eval::apply_model_override(&mut settings, model.trim());
     }
     let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
-        Ok(runtime) => Arc::new(runtime),
+        Ok(runtime) => {
+            runtime.set_model_dirs(settings::get_settings(app).llm_model_dirs);
+            Arc::new(runtime)
+        }
         Err(e) => {
             eprintln!("error: LLM runtime unavailable: {e}");
             return 1;
@@ -4155,7 +4171,10 @@ fn run_headless_eval_agent(app: &AppHandle, args: &CliArgs) -> i32 {
         return 2;
     };
     let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
-        Ok(runtime) => Arc::new(runtime),
+        Ok(runtime) => {
+            runtime.set_model_dirs(settings::get_settings(app).llm_model_dirs);
+            Arc::new(runtime)
+        }
         Err(e) => {
             eprintln!("error: LLM runtime unavailable: {e}");
             return 1;
@@ -4210,7 +4229,10 @@ fn run_headless_agent_extract(app: &AppHandle, args: &CliArgs, path: &std::path:
         }
     };
     let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
-        Ok(runtime) => Arc::new(runtime),
+        Ok(runtime) => {
+            runtime.set_model_dirs(settings::get_settings(app).llm_model_dirs);
+            Arc::new(runtime)
+        }
         Err(e) => {
             eprintln!("error: LLM runtime unavailable: {e}");
             return 1;
@@ -4262,7 +4284,10 @@ fn run_headless_eval_notes(app: &AppHandle, args: &CliArgs, dir: &std::path::Pat
     }
 
     let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
-        Ok(runtime) => Arc::new(runtime),
+        Ok(runtime) => {
+            runtime.set_model_dirs(settings::get_settings(app).llm_model_dirs);
+            Arc::new(runtime)
+        }
         Err(e) => {
             eprintln!("error: LLM runtime unavailable: {e}");
             return 1;
@@ -4323,7 +4348,10 @@ fn run_headless_eval_minutes(app: &AppHandle, args: &CliArgs, dir: &std::path::P
         eval::apply_model_override(&mut settings, model.trim());
     }
     let llm_runtime = match managers::llm::LlmRuntimeManager::new(app) {
-        Ok(runtime) => Arc::new(runtime),
+        Ok(runtime) => {
+            runtime.set_model_dirs(settings::get_settings(app).llm_model_dirs);
+            Arc::new(runtime)
+        }
         Err(e) => {
             eprintln!("error: LLM runtime unavailable: {e}");
             return 1;

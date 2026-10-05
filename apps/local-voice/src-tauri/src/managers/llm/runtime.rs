@@ -138,6 +138,11 @@ pub struct LlmRuntimeManager {
     external: Mutex<Option<(Vec<String>, Vec<ExternalModel>)>>,
     /// Kennung (Bauart/Groesse/Schichten) der eigenen Modelldateien, je Pfad.
     own_idents: Mutex<HashMap<PathBuf, Option<ModelIdent>>>,
+    /// Die eingestellten Modellordner (`AppSettings::llm_model_dirs`), gesetzt
+    /// beim Start und bei jeder Aenderung. Bewusst kein `settings::get_settings`
+    /// hier: das zoege die Dialogschicht in die Test-Exe (siehe `usage.rs`,
+    /// `SettingsSource`) -- sie startete dann nicht mehr.
+    model_dirs: Mutex<Vec<String>>,
 }
 
 impl LlmRuntimeManager {
@@ -153,7 +158,13 @@ impl LlmRuntimeManager {
             resolved_backend: Mutex::new(None),
             external: Mutex::new(None),
             own_idents: Mutex::new(HashMap::new()),
+            model_dirs: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Die Modellordner uebernehmen. Der naechste Zugriff liest sie neu ein.
+    pub fn set_model_dirs(&self, dirs: Vec<String>) {
+        *self.model_dirs.lock().unwrap() = dirs;
     }
 
     fn probe_cache_path(&self) -> PathBuf {
@@ -161,7 +172,7 @@ impl LlmRuntimeManager {
     }
 
     fn configured_dirs(&self) -> Vec<String> {
-        crate::settings::get_settings(&self.app_handle).llm_model_dirs
+        self.model_dirs.lock().unwrap().clone()
     }
 
     /// Modelle aus den Modellordnern -- aus dem letzten Scan, sofern er fuer
