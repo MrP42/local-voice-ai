@@ -1309,6 +1309,34 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             models_endpoint: Some("/models".to_string()),
             supports_structured_output: true,
         },
+        // OpenAI mit EU-Datenresidenz: nur fuer API-Projekte mit EU-Region
+        // (Freischaltung bei OpenAI noetig, sonst lehnt der Endpunkt ab).
+        PostProcessProvider {
+            id: "openai_eu".to_string(),
+            label: "OpenAI (EU-Datenresidenz)".to_string(),
+            base_url: "https://eu.api.openai.com/v1".to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: Some("/models".to_string()),
+            supports_structured_output: true,
+        },
+        // Abo statt API-Schluessel: die offiziellen CLIs mit dem eigenen Login
+        // (`managers::llm::cli`). Kein Schluessel, keine Kosten je Token.
+        PostProcessProvider {
+            id: "claude_cli".to_string(),
+            label: "Claude-Abo (Claude Code)".to_string(),
+            base_url: crate::managers::llm::cli::CLAUDE_CLI_URL.to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: None,
+            supports_structured_output: false,
+        },
+        PostProcessProvider {
+            id: "codex_cli".to_string(),
+            label: "ChatGPT-Abo (Codex)".to_string(),
+            base_url: crate::managers::llm::cli::CODEX_CLI_URL.to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: None,
+            supports_structured_output: false,
+        },
         PostProcessProvider {
             id: "groq".to_string(),
             label: "Groq".to_string(),

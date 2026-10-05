@@ -328,6 +328,10 @@ async fn send_inner(
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
 ) -> Result<(ChatReply, TokenUsage), String> {
+    // Abo-Modelle (Claude Code, Codex) laufen ueber die CLI des Anbieters.
+    if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url) {
+        return send_cli(cli, model, user_content, system_prompt, json_schema).await;
+    }
     // Fuer den lokalen Anbieter ist die Adresse erst bekannt, wenn der
     // Server laeuft -- und der wird hier bei Bedarf gestartet.
     let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;
@@ -417,6 +421,63 @@ async fn send_inner(
     ))
 }
 
+/// Abo-Modell ueber die CLI. Ein Schema wandert in den Systemtext (die CLIs
+/// kennen keine strukturierte Ausgabe); ein Codeblock um das JSON wird entfernt.
+async fn send_cli(
+    cli: crate::managers::llm::cli::Cli,
+    model: &str,
+    user_content: String,
+    system_prompt: Option<String>,
+    json_schema: Option<Value>,
+) -> Result<(ChatReply, TokenUsage), String> {
+    use crate::managers::llm::cli;
+    let binary = cli::locate(cli)
+        .ok_or_else(|| "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string())?;
+    let wants_json = json_schema.is_some();
+    let system = match json_schema {
+        Some(schema) => Some(format!(
+            "{}
+
+Antworte ausschliesslich mit einem JSON-Objekt nach diesem JSON-Schema, ohne Erklaerung und ohne Codeblock:
+{}",
+            system_prompt.unwrap_or_default(),
+            schema
+        )),
+        None => system_prompt,
+    };
+    let model = model.to_string();
+    let reply = tokio::task::spawn_blocking(move || {
+        cli::call(cli, &binary, &model, system.as_deref(), &user_content)
+    })
+    .await
+    .map_err(|e| format!("cli_failed: {e}"))??;
+    let text = if wants_json {
+        strip_code_fence(&reply.text)
+    } else {
+        reply.text
+    };
+    Ok((
+        ChatReply {
+            content: Some(text),
+            truncated: false,
+        },
+        TokenUsage {
+            prompt_tokens: reply.prompt_tokens,
+            completion_tokens: reply.completion_tokens,
+        },
+    ))
+}
+
+/// ```json … ``` um eine JSON-Antwort entfernen.
+fn strip_code_fence(text: &str) -> String {
+    let t = text.trim();
+    let Some(rest) = t.strip_prefix("```") else {
+        return t.to_string();
+    };
+    let rest = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic());
+    rest.strip_suffix("```").unwrap_or(rest).trim().to_string()
+}
+
 /// Fetch available models from an OpenAI-compatible API
 /// Returns a list of model IDs
 pub async fn fetch_models(
@@ -427,6 +488,9 @@ pub async fn fetch_models(
     // kein Server laufen, und einer ohne Modell koennte es auch nicht.
     if crate::managers::llm::is_local(provider) {
         return Ok(crate::managers::llm::downloaded_model_ids());
+    }
+    if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url) {
+        return Ok(cli.models().iter().map(|m| m.to_string()).collect());
     }
     let base_url = provider.base_url.trim_end_matches('/');
     let url = format!("{}/models", base_url);
@@ -807,6 +871,29 @@ async fn stream_inner(
     messages: Vec<StreamMessage>,
     on_delta: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<(String, TokenUsage), String> {
+    if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url) {
+        // Die CLI liefert am Stueck: Systemteile als Systemtext, der Rest als
+        // Gespraech mit Rollen.
+        let system: Vec<&str> = messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.as_str())
+            .collect();
+        let dialog: Vec<String> = messages
+            .iter()
+            .filter(|m| m.role != "system")
+            .map(|m| format!("{}: {}", m.role, m.content))
+            .collect();
+        let system = (!system.is_empty()).then(|| system.join("
+
+"));
+        let (reply, tokens) = send_cli(cli, model, dialog.join("
+
+"), system, None).await?;
+        let text = reply.content.unwrap_or_default();
+        on_delta(&text);
+        return Ok((text, tokens));
+    }
     use futures_util::StreamExt;
 
     let resolved = crate::managers::llm::resolve_base_url(provider, model).await?;
