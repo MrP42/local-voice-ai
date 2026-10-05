@@ -70,6 +70,13 @@ pub fn downloaded_model_ids() -> Vec<String> {
             r.list_downloads()
                 .into_iter()
                 .filter(|d| d.kind == LlmDownloadKind::Model && d.is_downloaded)
+                // Fremde Modelle, die diese Laufzeit nicht laden kann, sind
+                // nicht waehlbar.
+                .filter(|d| {
+                    !d.external
+                        .as_ref()
+                        .is_some_and(|x| matches!(x.compat, external::Compat::Incompatible(_)))
+                })
                 .map(|d| d.id)
                 .collect()
         })

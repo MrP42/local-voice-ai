@@ -371,6 +371,49 @@ async llmLocalActivate(modelId: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Die Modellordner setzen und sofort neu einlesen. Leere und doppelte
+ * Eintraege fallen weg; die Reihenfolge bleibt die des Nutzers.
+ */
+async llmSetModelDirs(dirs: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_model_dirs", { dirs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ordner, die hier wahrscheinlich Modelle enthalten: der Ollama-Speicher
+ * und die Ablage von LM Studio -- als Vorschlag, eingetragen wird nichts.
+ */
+async llmSuggestModelDirs() : Promise<string[]> {
+    return await TAURI_INVOKE("llm_suggest_model_dirs");
+},
+/**
+ * Modellordner neu durchsuchen (nach `ollama pull` oder einem neuen Download
+ * in LM Studio).
+ */
+async llmRescanModelDirs() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_rescan_model_dirs") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ladeversuch fuer ein Modell aus einem Modellordner: laedt es mit der
+ * Laufzeit der App? Das Ergebnis wird gemerkt.
+ */
+async llmProbeExternal(id: string) : Promise<Result<Compat, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_probe_external", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * RAM und GPU-Speicherbudget fuer die Fussleiste, dazu der Anteil der App
  * (samt Kindprozessen). Auf einem Blocking-Thread: DXGI und die
  * Prozessliste sind schnell, aber nicht async; die App-Messung ist auf eine
@@ -5216,7 +5259,14 @@ whats_new_last_seen_version?: string; selected_model?: string; onboarding_comple
  * bleiben als Spiegel des aktiven Modells bestehen, bis alle Verbraucher
  * auf `active_llm_model` umgestellt sind (siehe `sync_legacy_from_llm`).
  */
-llm_connections?: LlmConnection[]; llm_models?: LlmModelConfig[]; llm_active_model_id?: string | null; 
+llm_connections?: LlmConnection[]; llm_models?: LlmModelConfig[]; llm_active_model_id?: string | null;
+/**
+ * Weitere Ordner mit Sprachmodellen (GGUF-Ordner wie der von LM Studio
+ * oder der Modellspeicher von Ollama). Die App laedt die Modelle von
+ * dort, statt sie ein zweites Mal herunterzuladen
+ * (`managers::llm::external`).
+ */
+llm_model_dirs?: string[];
 /**
  * Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
  * Kept so older stores still deserialize; no longer read by the audio path.
@@ -6479,7 +6529,30 @@ backend: string | null;
  * Ob dieses Paket fuer diesen Rechner gedacht ist. Fremde Plattformen
  * bleiben im Katalog sichtbar, aber nicht ladbar.
  */
-for_this_platform: boolean }
+for_this_platform: boolean;
+/**
+ * Nur Modelle aus einem Modellordner: woher, welche Datei, laedt es?
+ */
+external: ExternalInfo | null;
+/**
+ * Nur geladene Katalogmodelle: Name eines geprueften fremden Modells,
+ * das dasselbe ist -- die App-Kopie ist dann entbehrlich.
+ */
+replaceable_by: string | null }
+export type ExternalInfo = { source: ExternalSource; path: string; compat: Compat }
+export type ExternalSource =
+/**
+ * Ein Ordner mit `.gguf`-Dateien.
+ */
+"folder" |
+/**
+ * Der Modellspeicher von Ollama (`manifests/` + `blobs/`).
+ */
+"ollama"
+/**
+ * Kann der `llama-server` der App die Datei laden?
+ */
+export type Compat = { state: "unchecked" } | { state: "ok" } | { state: "incompatible"; reason: string }
 export type LlmDownloadKind = "runtime" | "model"
 /**
  * Ein freigegebenes Modell einer Verbindung. Nur freigegebene Modelle

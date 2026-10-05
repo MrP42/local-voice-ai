@@ -174,8 +174,13 @@ use crate::managers::llm::{LlmDownloadInfo, LlmRuntimeManager, LocalLlmServer, L
 
 #[tauri::command]
 #[specta::specta]
-pub fn llm_local_list(app: AppHandle) -> Vec<LlmDownloadInfo> {
-    app.state::<Arc<LlmRuntimeManager>>().list_downloads()
+pub async fn llm_local_list(app: AppHandle) -> Vec<LlmDownloadInfo> {
+    // Nicht auf dem Hauptthread: der erste Aufruf liest die Koepfe aller
+    // Modelle in den Modellordnern (Ollama: zwei Dutzend Dateien).
+    let manager = app.state::<Arc<LlmRuntimeManager>>().inner().clone();
+    tokio::task::spawn_blocking(move || manager.list_downloads())
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]

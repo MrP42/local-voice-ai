@@ -8,6 +8,7 @@ import { useModelStore } from "@/stores/modelStore";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { TtsVoiceCard } from "./TtsVoiceCard";
 import { LlmModelCard } from "./LlmModelCard";
+import { LlmModelDirs } from "./LlmModelDirs";
 import type { LlmModelConfig } from "@/bindings";
 import { useLlmLocalStore } from "@/stores/llmLocalStore";
 import { useSettings } from "@/hooks/useSettings";
@@ -82,7 +83,22 @@ export const ModelsSettings: React.FC = () => {
   const llmRuntimes = llm.downloads.filter(
     (d) => d.kind === "runtime" && d.for_this_platform,
   );
-  const llmModels = llm.downloads.filter((d) => d.kind === "model");
+  const llmModels = llm.downloads.filter((d) => d.kind === "model" && !d.external);
+  // Modelle aus Modellordnern (Ollama, LM Studio, eigene) -- eigener Block
+  // unter dem Katalog, damit klar bleibt, was die App selbst geladen hat.
+  const llmExternal = llm.downloads.filter((d) => d.kind === "model" && d.external);
+  const deleteLlmCopy = async (id: string) => {
+    const info = llmModels.find((m) => m.id === id);
+    if (!info?.replaceable_by) return;
+    const ok = await ask(
+      t("settings.models.llm.replace.confirm", {
+        model: info.name,
+        name: info.replaceable_by,
+      }),
+      { kind: "warning" },
+    );
+    if (ok) await llm.deleteModel(id);
+  };
   const llmRuntimeInstalled = llmRuntimes.some((d) => d.is_downloaded);
 
   // click outside handler for language dropdown
@@ -359,6 +375,7 @@ export const ModelsSettings: React.FC = () => {
               onDownload={(id) => void llm.downloadModel(id)}
               onCancel={(id) => void llm.cancelDownload(id)}
               onDelete={(id) => void llm.deleteModel(id)}
+              onDeleteCopy={(id) => void deleteLlmCopy(id)}
               onActivate={
                 llmRuntimeInstalled
                   ? (id) =>
@@ -370,6 +387,30 @@ export const ModelsSettings: React.FC = () => {
               isDownloading={info.id in llm.downloadingIds}
               isVerifying={info.id in llm.verifyingIds}
               downloadProgress={llm.downloadProgress[info.id]?.percentage}
+            />
+          ))}
+          <LlmModelDirs foundCount={llmExternal.length} />
+          {llmExternal.map((info) => (
+            <LlmModelCard
+              key={info.id}
+              info={info}
+              isActive={activeLocalModelId === info.id}
+              isServing={
+                llm.status?.phase === "ready" && llm.status.model_id === info.id
+              }
+              onDownload={() => {}}
+              onCancel={() => {}}
+              onDelete={() => {}}
+              onProbe={llmRuntimeInstalled ? (id) => void llm.probeExternal(id) : undefined}
+              isProbing={info.id in llm.probingIds}
+              onActivate={
+                llmRuntimeInstalled
+                  ? (id) =>
+                      void llm.activate(id).then((ok) => {
+                        if (ok) void refreshSettings();
+                      })
+                  : undefined
+              }
             />
           ))}
         </SettingsGroup>
