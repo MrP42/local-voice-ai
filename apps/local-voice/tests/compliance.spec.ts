@@ -95,7 +95,8 @@ test("cloud models carry cloud and flag, blocked ones cannot be chosen", async (
   await expect(blocked.locator("[data-model-badges]")).toHaveAttribute("data-verdict", "blocked");
   await expect(blocked.locator('[data-flag="US"]')).toBeVisible();
   await expect(blocked).toHaveAttribute("aria-disabled", "true");
-  await blocked.click();
+  // Erzwungen: auch ein Klick auf das gesperrte Element waehlt nichts.
+  await blocked.click({ force: true });
   expect(await page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.active)).toBeUndefined();
 
   const eu = page.locator('[data-llm-option="bedrock:claude"]');
