@@ -9,6 +9,7 @@
 pub mod app_usage;
 pub mod context;
 pub mod estimate;
+pub mod external;
 pub mod resources;
 pub mod runtime;
 pub mod server;
@@ -19,7 +20,7 @@ use std::sync::{Arc, OnceLock};
 
 pub use estimate::FitReport;
 pub use resources::SystemMemory;
-pub use runtime::{LlmDownloadInfo, LlmDownloadKind, LlmRuntimeManager};
+pub use runtime::{ExternalInfo, LlmDownloadInfo, LlmDownloadKind, LlmRuntimeManager};
 pub use server::{LocalLlmServer, LocalLlmStatus, StartOptions, CODE_SERVER_CRASHED};
 
 use crate::settings::PostProcessProvider;
@@ -36,6 +37,10 @@ pub const LOCAL_PLACEHOLDER_URL: &str = "http://127.0.0.1:0/v1";
 /// klein genug, dass der KV-Cache nicht den Speicher frisst. Boden der
 /// automatischen Wahl (`context::choose_context_tokens`, P1g).
 pub const DEFAULT_CONTEXT_TOKENS: u32 = 8192;
+
+/// Fehlercode: das gewaehlte Modell aus einem Modellordner laedt mit dieser
+/// Laufzeit nicht (`external::Compat::Incompatible`).
+pub const CODE_EXTERNAL_INCOMPATIBLE: &str = "external_incompatible";
 
 static RUNTIME: OnceLock<Arc<LlmRuntimeManager>> = OnceLock::new();
 static SERVER: OnceLock<Arc<LocalLlmServer>> = OnceLock::new();
@@ -65,6 +70,13 @@ pub fn downloaded_model_ids() -> Vec<String> {
             r.list_downloads()
                 .into_iter()
                 .filter(|d| d.kind == LlmDownloadKind::Model && d.is_downloaded)
+                // Fremde Modelle, die diese Laufzeit nicht laden kann, sind
+                // nicht waehlbar.
+                .filter(|d| {
+                    !d.external
+                        .as_ref()
+                        .is_some_and(|x| matches!(x.compat, external::Compat::Incompatible(_)))
+                })
                 .map(|d| d.id)
                 .collect()
         })
@@ -118,6 +130,12 @@ async fn ensure_local_with(model_id: &str, vision: bool) -> Result<String, Strin
     touch_local();
     if let Some(port) = server.live_port_for(model_id, vision).await {
         return Ok(format!("http://127.0.0.1:{port}/v1"));
+    }
+    // Fremdes Modell, das diese Laufzeit nicht laden kann (Ollama-Sonderformat):
+    // gleich sagen, statt einen Server zu starten, der nach 0,4 s abstuerzt und
+    // die Neustart-Sperre ausloest.
+    if let Some(reason) = runtime.external_incompatibility(model_id) {
+        return Err(format!("{CODE_EXTERNAL_INCOMPATIBLE}: {reason}"));
     }
     let model_path = runtime
         .model_path(model_id)

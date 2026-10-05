@@ -545,6 +545,12 @@ pub struct AppSettings {
     pub llm_models: Vec<LlmModelConfig>,
     #[serde(default)]
     pub llm_active_model_id: Option<String>,
+    /// Weitere Ordner mit Sprachmodellen (GGUF-Ordner wie der von LM Studio
+    /// oder der Modellspeicher von Ollama). Die App laedt die Modelle von
+    /// dort, statt sie ein zweites Mal herunterzuladen
+    /// (`managers::llm::external`).
+    #[serde(default)]
+    pub llm_model_dirs: Vec<String>,
     /// Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
     /// Kept so older stores still deserialize; no longer read by the audio path.
     #[serde(default)]
@@ -1597,6 +1603,7 @@ pub fn get_default_settings() -> AppSettings {
         llm_connections: Vec::new(),
         llm_models: Vec::new(),
         llm_active_model_id: None,
+        llm_model_dirs: Vec::new(),
         mute_while_recording: false,
         dictation_audio: DictationAudio::default(),
         dictation_audio_duck_percent: default_dictation_audio_duck_percent(),

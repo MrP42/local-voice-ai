@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { Cpu, Download, HardDrive, Loader2, Trash2 } from "lucide-react";
 import { commands, type FitReport, type LlmDownloadInfo } from "@/bindings";
 import { Button } from "../../ui/Button";
@@ -16,10 +17,21 @@ interface LlmModelCardProps {
   onCancel: (id: string) => void;
   onDelete: (id: string) => void;
   onActivate?: (id: string) => void;
+  /** Nur Modelle aus Modellordnern: Ladeversuch starten. */
+  onProbe?: (id: string) => void;
+  isProbing?: boolean;
+  /** Nur Katalogmodelle mit geprueftem Ersatz: App-Kopie loeschen. */
+  onDeleteCopy?: (id: string) => void;
   downloadProgress?: number;
   isDownloading?: boolean;
   isVerifying?: boolean;
 }
+
+/** Klartext fuer den Grund, warum ein fremdes Modell nicht laedt. */
+const reasonText = (t: TFunction, reason: string) =>
+  reason === "ollama_merged_vision" || reason === "server_exited"
+    ? t(`settings.models.llm.external.reasons.${reason}`)
+    : t("settings.models.llm.external.reasons.generic", { reason });
 
 /**
  * Eine Karte für ein Laufzeitpaket oder ein Sprachmodell.
@@ -37,6 +49,9 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
   onCancel,
   onDelete,
   onActivate,
+  onProbe,
+  isProbing = false,
+  onDeleteCopy,
   downloadProgress,
   isDownloading = false,
   isVerifying = false,
@@ -44,13 +59,18 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
   const { t } = useTranslation();
   const isRuntime = info.kind === "runtime";
   const tags: string[] = isRuntime ? [] : info.tags;
+  const external = info.external;
+  const compat = external?.compat.state;
+  const incompatible =
+    external?.compat.state === "incompatible" ? external.compat : null;
 
   // Passt es rein? Einmal je Karte, gegen das aktuell freie Budget. Ohne
   // Backend (Browser-Test) bleibt das Feld leer -- lieber nichts als Zahlen,
   // die niemand gemessen hat.
   const [fit, setFit] = useState<FitReport | null>(null);
   useEffect(() => {
-    if (isRuntime) return;
+    // Ein Modell, das sicher nicht laedt, braucht keine Speicherprognose.
+    if (isRuntime || incompatible) return;
     let cancelled = false;
     void commands
       .llmLocalFit(info.id, null)
@@ -61,7 +81,7 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [info.id, isRuntime]);
+  }, [info.id, isRuntime, incompatible]);
   const gb = (mb: number) => (mb / 1024).toFixed(1).replace(".", ",");
 
   return (
@@ -73,8 +93,32 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
           <h3 className="text-base font-semibold text-text">{info.name}</h3>
-          {info.is_downloaded && (
-            <Badge variant="success">{t("settings.models.llm.status.installed")}</Badge>
+          {external ? (
+            <>
+              <Badge variant="secondary">
+                {t(`settings.models.llm.external.source.${external.source}`)}
+              </Badge>
+              {/* Badge reicht keine data-Attribute durch -- daher die Huelle. */}
+              <span data-compat={compat} className="inline-flex">
+                <Badge
+                  variant={
+                    compat === "ok"
+                      ? "success"
+                      : compat === "incompatible"
+                        ? "warning"
+                        : "secondary"
+                  }
+                >
+                  {t(`settings.models.llm.external.compat.${compat}`)}
+                </Badge>
+              </span>
+            </>
+          ) : (
+            info.is_downloaded && (
+              <Badge variant="success">
+                {t("settings.models.llm.status.installed")}
+              </Badge>
+            )
           )}
           {isActive && <Badge variant="primary">{t("settings.models.llm.status.active")}</Badge>}
           {isServing && (
@@ -105,16 +149,39 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
               <span>{t("settings.models.llm.actions.download")}</span>
             </Button>
           )}
-          {info.is_downloaded && !isRuntime && !isActive && onActivate && (
+          {external && compat === "unchecked" && onProbe && (
             <Button
-              variant="primary"
+              variant="secondary"
               size="sm"
-              onClick={() => onActivate(info.id)}
+              onClick={() => onProbe(info.id)}
+              disabled={isProbing}
+              title={t("settings.models.llm.external.probeHint")}
+              className="flex items-center gap-1.5"
             >
-              {t("settings.models.llm.actions.use")}
+              {isProbing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              <span>
+                {isProbing
+                  ? t("settings.models.llm.external.probing")
+                  : t("settings.models.llm.external.probe")}
+              </span>
             </Button>
           )}
-          {info.is_downloaded && (
+          {info.is_downloaded &&
+            !isRuntime &&
+            !isActive &&
+            onActivate &&
+            !incompatible && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => onActivate(info.id)}
+              >
+                {t("settings.models.llm.actions.use")}
+              </Button>
+            )}
+          {/* Fremde Dateien gehoeren Ollama, LM Studio oder dem Nutzer --
+              ohne Entfernen-Knopf. */}
+          {info.is_downloaded && !external && (
             <Button
               variant="ghost"
               size="sm"
@@ -128,7 +195,49 @@ export const LlmModelCard: React.FC<LlmModelCardProps> = ({
           )}
         </div>
       </div>
-      <p className="text-text/60 text-sm leading-relaxed">{info.description}</p>
+      {external ? (
+        <p className="text-text/50 text-xs break-all" title={external.path}>
+          {external.path}
+        </p>
+      ) : (
+        <p className="text-text/60 text-sm leading-relaxed">
+          {info.description}
+        </p>
+      )}
+      {incompatible && (
+        <p
+          className="text-xs text-red-500"
+          role="note"
+          data-incompatible-reason
+        >
+          {reasonText(t, incompatible.reason)}
+        </p>
+      )}
+      {info.replaceable_by && onDeleteCopy && (
+        <div
+          className="flex items-center justify-between gap-2 flex-wrap rounded-md bg-mid-gray/10 px-3 py-2"
+          data-replaceable-by={info.replaceable_by}
+        >
+          <p className="text-xs text-text/70 flex-1 min-w-0">
+            {t("settings.models.llm.replace.hint", {
+              name: info.replaceable_by,
+            })}
+          </p>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => onDeleteCopy(info.id)}
+            className="flex items-center gap-1.5"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>
+              {t("settings.models.llm.replace.action", {
+                size: formatModelSize(info.size_mb),
+              })}
+            </span>
+          </Button>
+        </div>
+      )}
       {fit && (
         <p
           className={`text-xs ${

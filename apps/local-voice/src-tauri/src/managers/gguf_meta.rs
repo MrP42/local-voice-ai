@@ -321,6 +321,36 @@ fn skip_value(cur: &mut ByteCursor, value_type: u32) -> Result<(), GgufError> {
     }
 }
 
+/// Kopf einer lokalen GGUF-Datei lesen: zuerst 256 KiB, dann so viel mehr,
+/// wie der Parser verlangt (bis 16 MiB -- Tokenizer-Listen grosser Modelle
+/// sind mehrere MiB lang). `None`, wenn die Datei kein lesbares GGUF ist.
+pub fn read_file_header(path: &std::path::Path, wanted_keys: &[&str]) -> Option<GgufMetadata> {
+    use std::io::Read;
+    let mut size = 256usize << 10;
+    let max = 16usize << 20;
+    loop {
+        let mut file = std::fs::File::open(path).ok()?;
+        let mut buf = vec![0u8; size];
+        let mut filled = 0;
+        while filled < buf.len() {
+            match file.read(&mut buf[filled..]) {
+                Ok(0) => break,
+                Ok(n) => filled += n,
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => return None,
+            }
+        }
+        buf.truncate(filled);
+        match parse_header(&buf, wanted_keys) {
+            Ok(meta) => return Some(meta),
+            Err(GgufError::Truncated { needed }) if needed > filled && size < max => {
+                size = needed.max(size * 2).min(max);
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 /// Parse the GGUF metadata header from `bytes`. `bytes` may be the whole file or
 /// just a leading prefix (e.g. an HTTP Range fetch); a prefix too short to hold
 /// the full metadata section returns [`GgufError::Truncated`].

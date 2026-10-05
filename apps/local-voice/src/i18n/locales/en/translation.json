@@ -1083,6 +1083,43 @@
           "unlikely": "Unlikely to fit: needs ≈ {{need}} GB, only {{free}} GB free",
           "unknown": "Needs ≈ {{need}} GB — GPU memory not measurable here",
           "rough": "(rough estimate)"
+        },
+        "dirs": {
+          "title": "Model folders",
+          "description": "Models already stored by Ollama, LM Studio or in a folder of your own are loaded straight from there — nothing is stored twice.",
+          "add": "Add folder",
+          "remove": "Remove folder",
+          "rescan": "Scan again",
+          "suggest": "Add {{path}}",
+          "empty": "No model folder added yet.",
+          "found_one": "{{count}} model found",
+          "found_other": "{{count}} models found",
+          "sectionTitle": "From model folders"
+        },
+        "external": {
+          "source": {
+            "ollama": "Ollama",
+            "folder": "Folder"
+          },
+          "compat": {
+            "ok": "Checked",
+            "unchecked": "Unchecked",
+            "incompatible": "Won't load"
+          },
+          "probe": "Check",
+          "probing": "Checking …",
+          "probeHint": "Loads the model for a few seconds as a trial, without using GPU memory.",
+          "reasons": {
+            "ollama_merged_vision": "Ollama stored this model in its own format (vision part embedded), which the app cannot read. It remains usable through the \"Ollama\" connection.",
+            "server_exited": "The trial load stopped without an error message.",
+            "generic": "Trial load failed: {{reason}}"
+          },
+          "notDeletable": "This file belongs to Ollama, LM Studio or you — the app does not delete it."
+        },
+        "replace": {
+          "hint": "Also available as \"{{name}}\" in a model folder and loads from there. The app's copy is not needed.",
+          "action": "Delete app copy (frees {{size}})",
+          "confirm": "Delete the app's copy of \"{{model}}\"? The model stays usable through \"{{name}}\"."
         }
       }
     },

@@ -1042,6 +1042,43 @@
           "unlikely": "Passt wahrscheinlich nicht: braucht ≈ {{need}} GB, frei nur {{free}} GB",
           "unknown": "Braucht ≈ {{need}} GB — GPU-Speicher hier nicht messbar",
           "rough": "(grob geschätzt)"
+        },
+        "dirs": {
+          "title": "Modellordner",
+          "description": "Modelle, die schon in Ollama, LM Studio oder einem eigenen Ordner liegen, lädt die App direkt von dort — nichts wird doppelt gespeichert.",
+          "add": "Ordner hinzufügen",
+          "remove": "Ordner entfernen",
+          "rescan": "Neu durchsuchen",
+          "suggest": "{{path}} hinzufügen",
+          "empty": "Noch kein Modellordner eingetragen.",
+          "found_one": "{{count}} Modell gefunden",
+          "found_other": "{{count}} Modelle gefunden",
+          "sectionTitle": "Aus Modellordnern"
+        },
+        "external": {
+          "source": {
+            "ollama": "Ollama",
+            "folder": "Ordner"
+          },
+          "compat": {
+            "ok": "Geprüft",
+            "unchecked": "Ungeprüft",
+            "incompatible": "Lädt nicht"
+          },
+          "probe": "Prüfen",
+          "probing": "Prüft …",
+          "probeHint": "Lädt das Modell probeweise wenige Sekunden lang, ohne Grafikspeicher zu belegen.",
+          "reasons": {
+            "ollama_merged_vision": "Ollama hat dieses Modell in einem eigenen Format gespeichert (Bildteil eingebettet), das die App nicht lesen kann. Über die Verbindung „Ollama“ ist es weiter nutzbar.",
+            "server_exited": "Der Ladeversuch brach ohne Fehlermeldung ab.",
+            "generic": "Ladeversuch gescheitert: {{reason}}"
+          },
+          "notDeletable": "Die Datei gehört Ollama, LM Studio oder dir — die App löscht sie nicht."
+        },
+        "replace": {
+          "hint": "Liegt auch als „{{name}}“ in einem Modellordner vor und lädt von dort. Die App-Kopie ist entbehrlich.",
+          "action": "App-Kopie löschen ({{size}} frei)",
+          "confirm": "Die App-Kopie von „{{model}}“ löschen? Das Modell bleibt über „{{name}}“ nutzbar."
         }
       }
     },

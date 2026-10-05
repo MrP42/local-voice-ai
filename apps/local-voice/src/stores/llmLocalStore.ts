@@ -32,6 +32,13 @@ interface LlmLocalStore {
   deleteModel: (id: string) => Promise<boolean>;
   activate: (id: string) => Promise<boolean>;
   stopServer: () => Promise<void>;
+  /** Modellordner setzen (laedt die Liste danach neu). */
+  setModelDirs: (dirs: string[]) => Promise<boolean>;
+  rescanModelDirs: () => Promise<void>;
+  /** Ladeversuch fuer ein Modell aus einem Modellordner. */
+  probeExternal: (id: string) => Promise<void>;
+  probingIds: Record<string, true>;
+  rescanning: boolean;
 }
 
 export const useLlmLocalStore = create<LlmLocalStore>()(
@@ -44,6 +51,54 @@ export const useLlmLocalStore = create<LlmLocalStore>()(
     loading: true,
     error: null,
     initialized: false,
+    probingIds: {},
+    rescanning: false,
+
+    setModelDirs: async (dirs) => {
+      set({ error: null, rescanning: true });
+      try {
+        const result = await commands.llmSetModelDirs(dirs);
+        if (result.status !== "ok") {
+          set({ error: String(result.error) });
+          return false;
+        }
+        await get().loadDownloads();
+        return true;
+      } finally {
+        set({ rescanning: false });
+      }
+    },
+
+    rescanModelDirs: async () => {
+      set({ error: null, rescanning: true });
+      try {
+        await commands.llmRescanModelDirs();
+        await get().loadDownloads();
+      } finally {
+        set({ rescanning: false });
+      }
+    },
+
+    // Der Ladeversuch dauert bis zu fuenf Sekunden; bis dahin zeigt die Karte
+    // einen Kreisel statt des Knopfs.
+    probeExternal: async (id) => {
+      set(
+        produce((state: LlmLocalStore) => {
+          state.probingIds[id] = true;
+        }),
+      );
+      try {
+        const result = await commands.llmProbeExternal(id);
+        if (result.status !== "ok") set({ error: String(result.error) });
+        await get().loadDownloads();
+      } finally {
+        set(
+          produce((state: LlmLocalStore) => {
+            delete state.probingIds[id];
+          }),
+        );
+      }
+    },
 
     loadDownloads: async () => {
       try {

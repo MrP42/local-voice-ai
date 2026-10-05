@@ -15,6 +15,7 @@ import { canonicalizeTags, canonicalizeTagsAt } from "@/lib/tags/registry";
 import { useTagLanguage } from "./tags/tagLanguage";
 import { ScriptWorkshopDialog } from "./books/ScriptWorkshopDialog";
 import { audioExportName } from "@/lib/utils/exportName";
+import { sortVoicesByLabel } from "@/lib/voices/sortVoices";
 import { useSettings } from "../../../hooks/useSettings";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { ShortcutInput } from "../ShortcutInput";
@@ -1832,12 +1833,17 @@ export const TtsSettings = () => {
                                 label: t("tts.voices.scriptVoices"),
                               },
                               // Anzeigename statt technischer Kennung.
-                              ...voices.map((id) => ({
-                                value: id,
-                                label:
-                                  speakers.find((sp) => sp.id === id)
-                                    ?.displayName ?? id,
-                              })),
+                              // Alphabetisch nach diesem Namen, nicht nach
+                              // der Kennung (siehe sortVoices).
+                              ...sortVoicesByLabel(
+                                voices.map((id) => ({
+                                  value: id,
+                                  label:
+                                    speakers.find((sp) => sp.id === id)
+                                      ?.displayName ?? id,
+                                })),
+                                (o) => o.label,
+                              ),
                             ]
                           : []),
                         // Nur verwendbare Piper-Stimmen sind wählbar; eine
