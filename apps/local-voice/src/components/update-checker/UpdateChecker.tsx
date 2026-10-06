@@ -210,7 +210,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     } else {
       setShowUpToDate(true);
       if (upToDateTimeoutRef.current) clearTimeout(upToDateTimeoutRef.current);
-      upToDateTimeoutRef.current = setTimeout(() => setShowUpToDate(false), 3000);
+      upToDateTimeoutRef.current = setTimeout(
+        () => setShowUpToDate(false),
+        3000,
+      );
     }
   };
 
@@ -406,8 +409,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
           }`}
           data-testid="footer-version"
         >
-          {/* eslint-disable-next-line i18next/no-literal-string */}
-          v{version}
+          {`v${version}`}
           {offered && (
             <span className="ms-1" aria-hidden="true">
               ↑
