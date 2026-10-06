@@ -66,7 +66,9 @@ pub fn locate(cli: Cli) -> Option<PathBuf> {
         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
     let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
     let names: &[&str] = match (cli, cfg!(windows)) {
-        (Cli::Claude, true) => &["claude.exe", "claude.cmd"],
+        // Nur das native Programm: ein `.cmd`-Skript liefe ueber cmd.exe, und
+        // der Systemprompt im Argument koennte dort Befehle einschleusen.
+        (Cli::Claude, true) => &["claude.exe"],
         (Cli::Claude, false) => &["claude"],
         (Cli::Codex, true) => &["codex.cmd", "codex.exe"],
         (Cli::Codex, false) => &["codex"],
@@ -241,6 +243,10 @@ pub fn call(
     system: Option<&str>,
     user: &str,
 ) -> Result<CliReply, String> {
+    // Nur bekannte Modellnamen gelangen auf die Kommandozeile.
+    if !cli.models().contains(&model) {
+        return Err(format!("cli_model_not_in_plan: {model}"));
+    }
     let work = std::env::temp_dir().join("local-voice-cli");
     std::fs::create_dir_all(&work).map_err(|e| format!("cli_failed: {e}"))?;
     // Codex erhaelt den Systemtext vor der Aufgabe -- `exec` kennt keinen
@@ -284,20 +290,42 @@ pub fn call(
     }
 }
 
-/// `codex` ist unter Windows ein npm-Skript (`codex.cmd`), das ohne Shell
-/// nicht startet.
+/// Wie die CLI gestartet wird -- nie ueber `cmd /C`: cmd.exe wertet
+/// Anfuehrungszeichen anders aus als Rust sie setzt, ein `"` mit `&` in einem
+/// Argument koennte dort einen Befehl ausfuehren.
+///
+/// `codex` ist unter Windows ein npm-Skript (`codex.cmd`), das nur
+/// `node …\node_modules\@openai\codex\bin\codex.js` aufruft. Das tun wir
+/// direkt. Fehlt Node im PATH, startet Rusts `Command` das Skript selbst --
+/// es maskiert die Argumente fuer Stapeldateien sicher oder lehnt ab
+/// (Schutz seit Rust 1.77).
 fn launcher(binary: &Path) -> (PathBuf, Vec<String>) {
-    let is_cmd = binary
+    let is_script = binary
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
-    if cfg!(windows) && is_cmd {
-        (
-            PathBuf::from("cmd"),
-            vec!["/C".into(), binary.to_string_lossy().into_owned()],
-        )
-    } else {
-        (binary.to_path_buf(), Vec::new())
+    if cfg!(windows) && is_script {
+        let script = binary.parent().map(|d| {
+            d.join("node_modules")
+                .join("@openai")
+                .join("codex")
+                .join("bin")
+                .join("codex.js")
+        });
+        if let (Some(script), Some(node)) = (script.filter(|s| s.is_file()), find_node()) {
+            return (node, vec![script.to_string_lossy().into_owned()]);
+        }
     }
+    (binary.to_path_buf(), Vec::new())
+}
+
+fn find_node() -> Option<PathBuf> {
+    let name = if cfg!(windows) { "node.exe" } else { "node" };
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
 }
 
 fn wait_with_timeout(
@@ -421,6 +449,37 @@ mod tests {
             assert!(r.text.contains("Freitag"), "{}", r.text);
             assert!(r.prompt_tokens > 0);
         }
+    }
+
+    /// Sicherheitsbefund 06.10.2026: kein Start ueber `cmd /C`, keine fremden
+    /// Modellnamen auf der Kommandozeile.
+    #[test]
+    fn never_launches_through_cmd_and_rejects_unknown_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let shim = dir.path().join("codex.cmd");
+        std::fs::write(&shim, b"@echo off").unwrap();
+        let (program, args) = launcher(&shim);
+        assert_ne!(program.file_name().and_then(|n| n.to_str()), Some("cmd"));
+        assert!(!args.iter().any(|a| a.eq_ignore_ascii_case("/C")));
+
+        // Mit codex.js daneben: node + Skript (sofern Node im PATH liegt).
+        let js = dir.path().join("node_modules/@openai/codex/bin");
+        std::fs::create_dir_all(&js).unwrap();
+        std::fs::write(js.join("codex.js"), b"").unwrap();
+        let (program, args) = launcher(&shim);
+        if find_node().is_some() {
+            assert!(
+                program
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .ends_with("node.exe")
+                    || program.ends_with("node")
+            );
+            assert!(args[0].ends_with("codex.js"));
+        }
+
+        let err = call(Cli::Codex, &shim, "gpt-6 & calc", None, "x").unwrap_err();
+        assert!(err.starts_with("cli_model_not_in_plan"), "{err}");
     }
 
     #[test]
