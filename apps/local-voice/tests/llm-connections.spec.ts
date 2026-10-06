@@ -130,7 +130,8 @@ test("the polish feature has no off switch any more", async ({ page }) => {
 
 test("only released models are offered as active model", async ({ page }) => {
   await openTab(page);
-  const active = page.locator(".w-72").first();
+  // Die Regelwerk-Auswahl (#76) steht davor und hat dieselbe Breite.
+  const active = page.locator(".w-72:not([data-compliance-profile])").first();
   await expect(active).toContainText("gpt-4.1-mini");
   await active.click();
   // Die zweite Verbindung hat nichts freigegeben -- nichts von ihr im Menue.
