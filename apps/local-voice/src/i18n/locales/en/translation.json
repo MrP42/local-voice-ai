@@ -1646,7 +1646,14 @@
         "budget": "Monthly budget (USD)",
         "budgetNone": "no limit",
         "budgetEnforced": "Hard budget",
-        "budgetEnforcedDescription": "At 100 % calls are refused instead of just warned about. Off: the footer warns from 80 %, everything keeps running."
+        "budgetEnforcedDescription": "At 100 % calls are refused instead of just warned about. Off: the footer warns from 80 %, everything keeps running.",
+        "keyMissing": "No API key has been entered for this connection yet. Paste it above, leave the field, then load again.",
+        "keyMissingAbo": "No API key has been entered for this connection. An API key is a separate, pay-per-use account with the provider. For your subscription, add “{{abo}}” below instead.",
+        "keyRejected": "The provider rejects the key (HTTP {{status}}). Please check that it is complete and still valid.",
+        "aboTemplate": {
+          "claude_cli": "Claude subscription (Claude Code)",
+          "codex_cli": "ChatGPT subscription (Codex)"
+        }
       },
       "model": {
         "active": "active",

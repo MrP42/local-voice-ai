@@ -1646,7 +1646,14 @@
         "budget": "Monatsbudget (USD)",
         "budgetNone": "kein Limit",
         "budgetEnforced": "Hartes Budget",
-        "budgetEnforcedDescription": "Bei 100 % werden Aufrufe verweigert statt nur gewarnt. Aus: die Fußleiste warnt ab 80 %, alles läuft weiter."
+        "budgetEnforcedDescription": "Bei 100 % werden Aufrufe verweigert statt nur gewarnt. Aus: die Fußleiste warnt ab 80 %, alles läuft weiter.",
+        "keyMissing": "Für diese Verbindung ist noch kein API-Schlüssel eingetragen. Bitte oben einfügen und das Feld verlassen, dann erneut laden.",
+        "keyMissingAbo": "Für diese Verbindung ist kein API-Schlüssel eingetragen. Ein API-Schlüssel ist ein eigenes, nach Verbrauch bezahltes Konto beim Anbieter. Für dein Abo stattdessen unten „{{abo}}“ hinzufügen.",
+        "keyRejected": "Der Anbieter lehnt den Schlüssel ab (HTTP {{status}}). Bitte prüfen, ob er vollständig und noch gültig ist.",
+        "aboTemplate": {
+          "claude_cli": "Claude-Abo (Claude Code)",
+          "codex_cli": "ChatGPT-Abo (Codex)"
+        }
       },
       "model": {
         "active": "aktiv",

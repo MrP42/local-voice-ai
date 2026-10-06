@@ -33,6 +33,23 @@ const KEYLESS_KINDS = new Set([
   "codex_cli",
 ]);
 
+/// API-Vorlagen, zu denen es ein Abo gibt: ohne Schluessel auf die Abo-Vorlage verweisen.
+const SUBSCRIPTION_OF: Record<string, string> = {
+  anthropic: "claude_cli",
+  openai: "codex_cli",
+  openai_eu: "codex_cli",
+};
+
+/// Fehler beim Laden der Modelle als Klartext: abgelehnter Schluessel statt Roh-JSON.
+const remoteErrorText = (
+  t: (key: string, options?: Record<string, unknown>) => string,
+  raw: string,
+): string => {
+  const status = raw.match(/\((40[13])[^)]*\)/)?.[1];
+  if (status) return t("settings.llm.connections.keyRejected", { status });
+  return raw;
+};
+
 /// Anbieter, bei denen sich das Training im Konto abschalten laesst -- dort
 /// zaehlt die Bestaetigung fuer das Regelwerk.
 const OPT_OUT_KINDS = new Set(["mistral", "claude_cli", "codex_cli"]);
@@ -236,12 +253,24 @@ const ConnectionRow: React.FC<RowProps> = ({
     run(() => commands.llmUpsertConnection({ ...connection, ...patch }));
 
   const loadModels = async () => {
-    setLoading(true);
     setRemoteError(null);
+    // Ohne Schluessel gar nicht erst fragen: der Anbieter antwortet nur mit 401.
+    if (!keyless && !apiKey.trim()) {
+      const abo = SUBSCRIPTION_OF[connection.kind];
+      setRemoteError(
+        abo
+          ? t("settings.llm.connections.keyMissingAbo", {
+              abo: t(`settings.llm.connections.aboTemplate.${abo}`),
+            })
+          : t("settings.llm.connections.keyMissing"),
+      );
+      return;
+    }
+    setLoading(true);
     const result = await commands.llmListRemoteModels(connection.id);
     setLoading(false);
     if (result.status === "ok") setRemote(result.data);
-    else setRemoteError(String(result.error));
+    else setRemoteError(remoteErrorText(t, String(result.error)));
   };
 
   const release = (remoteId: string, on: boolean) =>
