@@ -228,7 +228,10 @@ export const LlmSection: React.FC<{ query: string }> = ({ query }) => {
         id="llm-runtime"
         title={t("settings.models.groups.runtime")}
         count={runtimes.length}
-        defaultOpen={!runtimeInstalled}
+        // Zu, ausser es fehlt wirklich eine Laufzeit. Nicht ueber
+        // `defaultOpen`: das wuerde schon vor dem Laden der Liste gemerkt.
+        defaultOpen={false}
+        forceOpen={!runtimeInstalled && runtimes.length > 0}
       >
         {runtimes.map((r) => (
           <RuntimeRow key={r.id} info={r} />
