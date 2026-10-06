@@ -130,7 +130,7 @@ export const LlmSelector: React.FC = () => {
       void commands
         .llmPs()
         .then((loaded) => {
-          if (!cancelled) setOllamaLoaded(loaded);
+          if (!cancelled) setOllamaLoaded(Array.isArray(loaded) ? loaded : []);
         })
         .catch(() => {
           // Ohne Backend (Browser-Test) bleibt nichts geladen.
@@ -218,7 +218,8 @@ export const LlmSelector: React.FC = () => {
     const result = await commands.llmWarm();
     setOllamaBusy(false);
     if (result.status === "error") setOllamaError(result.error);
-    setOllamaLoaded(await commands.llmPs());
+    const now = await commands.llmPs();
+    setOllamaLoaded(Array.isArray(now) ? now : []);
   };
 
   /** Alles, was Ollama gerade hält, aus dem Speicher nehmen. */
@@ -227,7 +228,8 @@ export const LlmSelector: React.FC = () => {
     setOllamaError(null);
     const result = await commands.llmUnload();
     if (result.status === "error") setOllamaError(result.error);
-    setOllamaLoaded(await commands.llmPs());
+    const now = await commands.llmPs();
+    setOllamaLoaded(Array.isArray(now) ? now : []);
   };
 
   const showOllama =
@@ -349,6 +351,13 @@ export const LlmSelector: React.FC = () => {
                 >
                   <div className="flex items-center gap-2 text-sm text-text/80">
                     <span className="min-w-0 truncate">{model.label}</span>
+                    {model.effort && (
+                      <span className="text-xs text-text/50" data-llm-effort>
+                        {t(`settings.llm.effortLevels.${model.effort}`, {
+                          defaultValue: model.effort,
+                        })}
+                      </span>
+                    )}
                     <ModelBadges assessment={assessment} />
                   </div>
                   <div className="text-xs text-text/50">{connection.label}</div>

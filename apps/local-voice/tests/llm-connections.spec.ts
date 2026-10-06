@@ -89,8 +89,11 @@ test.beforeEach(async ({ page }) => {
             return args?.connectionId === "ollama-1"
               ? ["qwen3:4b", "gemma3:4b", "nomic-embed-text"]
               : ["gpt-4.1-mini", "gpt-4.1"];
+          if (cmd === "llm_model_efforts")
+            return args?.connectionId === "openai-1" ? ["low", "medium", "high", "xhigh", "max"] : [];
           if (cmd === "llm_upsert_model") {
-            const model = args?.model as { connection_id: string; remote_id: string };
+            const model = args?.model as { connection_id: string; remote_id: string; effort?: string | null };
+            if (model.effort !== undefined) saved.effort = model.effort;
             const id = `${model.connection_id}:${model.remote_id}`;
             saved.upsertModel = id;
             const list = settings.llm_models as unknown[];
@@ -195,4 +198,16 @@ test("a rejected key is explained instead of the raw provider JSON", async ({ pa
   await page.getByRole("button", { name: "Modelle laden" }).click();
   await expect(page.getByText("Der Anbieter lehnt den Schlüssel ab (HTTP 401)", { exact: false })).toBeVisible();
   await expect(page.getByText(/Unauthorized/)).toHaveCount(0);
+});
+
+test("subscription models offer an effort per released model", async ({ page }) => {
+  await openTab(page);
+  // gpt-4.1-mini gehoert zu openai-1; die Attrappe meldet fuer sie Stufen wie bei einem Abo-Modell.
+  await page.getByRole("button", { name: "OpenAI", exact: true }).click();
+  const select = page.locator('[data-effort-select="openai-1:gpt-4.1-mini"]');
+  await expect(select).toBeVisible();
+  await select.selectOption("high");
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.effort))
+    .toBe("high");
 });

@@ -273,6 +273,13 @@ async llmSetActiveModel(id: string | null) : Promise<Result<null, string>> {
  * Freigeben. Spricht die Vorlage der Verbindung an, aber mit deren Adresse
  * und Schluessel, damit zwei Konten derselben Art getrennt bleiben.
  */
+/**
+ * Effort-Stufen, die ein Modell einer Verbindung annimmt (Abo ueber die CLI:
+ * Claude `--effort`, Codex laut eigenem Katalog). Leer: nicht einstellbar.
+ */
+async llmModelEfforts(connectionId: string, remoteId: string) : Promise<string[]> {
+    return await TAURI_INVOKE("llm_model_efforts", { connectionId, remoteId });
+},
 async llmListRemoteModels(connectionId: string) : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_list_remote_models", { connectionId }) };
@@ -6636,7 +6643,12 @@ export type LlmDownloadKind = "runtime" | "model"
  * allein mehrdeutig ist: Kontext, Eingabe und Ausgabe sind drei Zahlen.
  * Preise je Million Token; `None` heisst unbekannt, nie null.
  */
-export type LlmModelConfig = { id: string; connection_id: string; remote_id: string; label: string; enabled?: boolean; context_limit?: number | null; max_input_tokens?: number | null; max_output_tokens?: number | null; price_input_per_mtok?: number | null; price_output_per_mtok?: number | null; tags?: string[] }
+export type LlmModelConfig = { id: string; connection_id: string; remote_id: string; label: string; enabled?: boolean; context_limit?: number | null; max_input_tokens?: number | null; max_output_tokens?: number | null; price_input_per_mtok?: number | null; price_output_per_mtok?: number | null; tags?: string[];
+/**
+ * Effort (Denktiefe) fuer Abo-Modelle ueber die CLI: `low` bis `max` (Codex
+ * auch `ultra`); `None` = Vorgabe der CLI.
+ */
+effort?: string | null }
 export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
 /**
  * Zustand fuer die Oberflaeche: was laeuft, wo, mit welchem Backend.

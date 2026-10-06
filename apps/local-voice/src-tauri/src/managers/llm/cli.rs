@@ -23,11 +23,154 @@ pub const CODEX_CLI_URL: &str = "cli://codex";
 /// Wie lange ein Aufruf hoechstens dauern darf (lange Protokolle).
 const CALL_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// Modelle, die die CLI mit einem Abo annimmt. Claude: Aliase der CLI.
-/// Codex: mit ChatGPT-Konto lehnt der Server u. a. `gpt-6.1-sol` und `gpt-6`
-/// ab, `gpt-6-astra` geht (Spike 06.10.2026).
-pub const CLAUDE_MODELS: &[&str] = &["sonnet", "opus", "haiku"];
-pub const CODEX_MODELS: &[&str] = &["gpt-6-astra"];
+/// Claude-Modelle: Aliase (immer das neueste) und volle Namen (feste Version).
+/// Alle mit `claude -p --model … --effort low` geprueft (06.10.2026).
+pub const CLAUDE_MODELS: &[&str] = &[
+    "fable",
+    "opus",
+    "sonnet",
+    "haiku",
+    "claude-fable-5-1",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-4-5-20251001",
+];
+/// Effort-Stufen von `claude --effort`.
+pub const CLAUDE_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+/// Codex: die Liste kommt aus dem Modellkatalog, den Codex selbst laedt
+/// (`~/.codex/models_cache.json`, nur `visibility: list`), dazu das Modell aus
+/// `~/.codex/config.toml`. Ohne Katalog diese Rueckfallliste (Stand 06.10.2026).
+/// Neue Modelle (z. B. `gpt-6.1-sol`) nimmt der Server nur von einer aktuellen
+/// Codex-CLI an; eine alte meldet „not supported when using Codex with a
+/// ChatGPT account“.
+pub const CODEX_FALLBACK: &[&str] = &[
+    "gpt-6.1-sol",
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+];
+pub const CODEX_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+/// Alle Effort-Stufen, die eine CLI je annimmt (Pruefung vor dem Aufruf).
+const KNOWN_EFFORTS: &[&str] = &["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+
+/// Ein Modell der CLI mit den Effort-Stufen, die es annimmt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CliModel {
+    pub id: String,
+    pub efforts: Vec<String>,
+    pub default_effort: Option<String>,
+}
+
+/// Modellname, wie er auf die Kommandozeile darf: Buchstaben, Ziffern, `.`, `-`,
+/// `_`, hoechstens 64 Zeichen. Es gibt keine Shell dazwischen; die Regel haelt
+/// trotzdem jedes Sonderzeichen fern.
+pub fn valid_model_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+}
+
+pub fn valid_effort(s: &str) -> bool {
+    KNOWN_EFFORTS.contains(&s)
+}
+
+/// Modell und Effort aus der gespeicherten Angabe `modell@effort`.
+pub fn split_spec(spec: &str) -> (&str, Option<&str>) {
+    match spec.split_once('@') {
+        Some((m, e)) if !e.is_empty() => (m, Some(e)),
+        Some((m, _)) => (m, None),
+        None => (spec, None),
+    }
+}
+
+fn codex_home() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("CODEX_HOME") {
+        return Some(PathBuf::from(dir));
+    }
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(|h| PathBuf::from(h).join(".codex"))
+}
+
+/// Modelle aus dem Codex-Katalog (Datei ohne Zugangsdaten; der Kontoteil wird
+/// nicht gelesen).
+pub(crate) fn codex_catalog(home: &Path) -> Vec<CliModel> {
+    let Ok(text) = std::fs::read_to_string(home.join("models_cache.json")) else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    v.get("models")
+        .and_then(|m| m.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|m| m.get("visibility").and_then(|x| x.as_str()) == Some("list"))
+        .filter_map(|m| {
+            let id = m.get("slug").and_then(|x| x.as_str())?;
+            if !valid_model_name(id) {
+                return None;
+            }
+            let efforts: Vec<String> = m
+                .get("supported_reasoning_levels")
+                .and_then(|x| x.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|l| l.get("effort").and_then(|e| e.as_str()))
+                .filter(|e| valid_effort(e))
+                .map(str::to_string)
+                .collect();
+            Some(CliModel {
+                id: id.to_string(),
+                efforts,
+                default_effort: m
+                    .get("default_reasoning_level")
+                    .and_then(|x| x.as_str())
+                    .filter(|e| valid_effort(e))
+                    .map(str::to_string),
+            })
+        })
+        .collect()
+}
+
+/// Das Standardmodell aus `config.toml` (Zeile `model = "…"`).
+pub(crate) fn codex_configured_model(home: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(home.join("config.toml")).ok()?;
+    text.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("model")?.trim_start();
+        let value = rest.strip_prefix('=')?.trim().trim_matches('"');
+        valid_model_name(value).then(|| value.to_string())
+    })
+}
+
+fn standard(ids: &[&str], efforts: &[&str]) -> Vec<CliModel> {
+    ids.iter()
+        .map(|id| CliModel {
+            id: id.to_string(),
+            efforts: efforts.iter().map(|e| e.to_string()).collect(),
+            default_effort: None,
+        })
+        .collect()
+}
+
+/// Codex-Liste: Katalog (sonst Rueckfallliste) plus das eingestellte Modell.
+pub(crate) fn codex_models_in(home: Option<&Path>) -> Vec<CliModel> {
+    let mut models = home.map(codex_catalog).unwrap_or_default();
+    if models.is_empty() {
+        models = standard(CODEX_FALLBACK, CODEX_EFFORTS);
+    }
+    if let Some(configured) = home.and_then(codex_configured_model) {
+        if !models.iter().any(|m| m.id == configured) {
+            models.insert(0, standard(&[configured.as_str()], CODEX_EFFORTS).remove(0));
+        }
+    }
+    models
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cli {
@@ -44,11 +187,21 @@ impl Cli {
         }
     }
 
-    pub fn models(self) -> &'static [&'static str] {
+    /// Die Modelle, die diese CLI anbietet (Codex: aus ihrem Katalog).
+    pub fn models(self) -> Vec<CliModel> {
         match self {
-            Self::Claude => CLAUDE_MODELS,
-            Self::Codex => CODEX_MODELS,
+            Self::Claude => standard(CLAUDE_MODELS, CLAUDE_EFFORTS),
+            Self::Codex => codex_models_in(codex_home().as_deref()),
         }
+    }
+
+    /// Effort-Stufen eines Modells; leer, wenn das Modell unbekannt ist.
+    pub fn efforts(self, model: &str) -> Vec<String> {
+        self.models()
+            .into_iter()
+            .find(|m| m.id == model)
+            .map(|m| m.efforts)
+            .unwrap_or_default()
     }
 }
 
@@ -89,7 +242,31 @@ pub fn locate(cli: Cli) -> Option<PathBuf> {
 }
 
 /// Argumente des isolierten Aufrufs (Prompt kommt ueber stdin).
-pub(crate) fn args(cli: Cli, model: &str, system: Option<&str>) -> Vec<String> {
+pub(crate) fn args(
+    cli: Cli,
+    model: &str,
+    effort: Option<&str>,
+    system: Option<&str>,
+) -> Vec<String> {
+    let mut a = args_without_effort(cli, model, system);
+    if let Some(e) = effort {
+        match cli {
+            Cli::Claude => {
+                a.push("--effort".into());
+                a.push(e.to_string());
+            }
+            // Vor dem abschliessenden "-" (Prompt aus stdin).
+            Cli::Codex => {
+                let at = a.len() - 1;
+                a.insert(at, format!("model_reasoning_effort=\"{e}\""));
+                a.insert(at, "-c".into());
+            }
+        }
+    }
+    a
+}
+
+fn args_without_effort(cli: Cli, model: &str, system: Option<&str>) -> Vec<String> {
     match cli {
         Cli::Claude => {
             let mut a: Vec<String> = [
@@ -226,7 +403,11 @@ pub(crate) fn classify_error(msg: &str) -> String {
     {
         format!("cli_not_logged_in: {msg}")
     } else if lower.contains("not supported when using codex with a chatgpt account") {
-        format!("cli_model_not_in_plan: {msg}")
+        // Meist ist die Codex-CLI zu alt fuer das Modell (06.10.2026: 0.153.3
+        // lehnt gpt-6.1-sol ab, 0.160.1 nimmt es an).
+        format!(
+            "cli_model_not_in_plan: Dieses Modell nimmt der Server von der installierten              Codex-CLI nicht an. Meist hilft ein Update: npm i -g @openai/codex@latest ({msg})"
+        )
     } else if lower.contains("usage limit") || lower.contains("rate limit") || lower.contains("429")
     {
         format!("cli_limit_reached: {msg}")
@@ -243,9 +424,13 @@ pub fn call(
     system: Option<&str>,
     user: &str,
 ) -> Result<CliReply, String> {
-    // Nur bekannte Modellnamen gelangen auf die Kommandozeile.
-    if !cli.models().contains(&model) {
+    // `modell@effort`; auf die Kommandozeile kommt nur, was die Regeln erlaubt.
+    let (model, effort) = split_spec(model);
+    if !valid_model_name(model) {
         return Err(format!("cli_model_not_in_plan: {model}"));
+    }
+    if let Some(e) = effort.filter(|e| !valid_effort(e)) {
+        return Err(format!("cli_failed: unbekannte Effort-Stufe {e}"));
     }
     let work = std::env::temp_dir().join("local-voice-cli");
     std::fs::create_dir_all(&work).map_err(|e| format!("cli_failed: {e}"))?;
@@ -256,7 +441,7 @@ pub fn call(
         _ => user.to_string(),
     };
     let (program, mut argv) = launcher(binary);
-    argv.extend(args(cli, model, system));
+    argv.extend(args(cli, model, effort, system));
     let mut cmd = Command::new(program);
     cmd.args(&argv)
         .current_dir(&work)
@@ -408,7 +593,7 @@ mod tests {
 
     #[test]
     fn calls_are_isolated_from_the_users_configuration() {
-        let a = args(Cli::Claude, "sonnet", Some("System"));
+        let a = args(Cli::Claude, "sonnet", None, Some("System"));
         for flag in [
             "--setting-sources",
             "--strict-mcp-config",
@@ -420,7 +605,7 @@ mod tests {
         }
         // --bare liest den Abo-Login nicht.
         assert!(!a.iter().any(|x| x == "--bare"));
-        let c = args(Cli::Codex, "gpt-6-astra", None);
+        let c = args(Cli::Codex, "gpt-6-astra", None, None);
         assert!(c
             .windows(2)
             .any(|w| w[0] == "-c" && w[1] == "mcp_servers={}"));
@@ -434,7 +619,7 @@ mod tests {
     #[test]
     #[ignore]
     fn real_cli_calls() {
-        for (cli, model) in [(Cli::Claude, "sonnet"), (Cli::Codex, "gpt-6-astra")] {
+        for (cli, model) in [(Cli::Claude, "sonnet@low"), (Cli::Codex, "gpt-6-astra@low")] {
             let bin = locate(cli).expect("CLI installiert");
             let t = std::time::Instant::now();
             let r = call(
@@ -480,6 +665,65 @@ mod tests {
 
         let err = call(Cli::Codex, &shim, "gpt-6 & calc", None, "x").unwrap_err();
         assert!(err.starts_with("cli_model_not_in_plan"), "{err}");
+    }
+
+    #[test]
+    fn effort_goes_to_the_right_flag_and_the_prompt_stays_last() {
+        let a = args(Cli::Claude, "opus", Some("high"), None);
+        assert!(a.windows(2).any(|w| w[0] == "--effort" && w[1] == "high"));
+        let c = args(Cli::Codex, "gpt-6.1-sol", Some("xhigh"), None);
+        assert!(c
+            .windows(2)
+            .any(|w| w[0] == "-c" && w[1] == "model_reasoning_effort=\"xhigh\""));
+        assert_eq!(c.last().map(String::as_str), Some("-"));
+        assert_eq!(
+            split_spec("gpt-6.1-sol@high"),
+            ("gpt-6.1-sol", Some("high"))
+        );
+        assert_eq!(split_spec("sonnet"), ("sonnet", None));
+    }
+
+    #[test]
+    fn names_and_efforts_are_checked_before_the_command_line() {
+        for ok in ["gpt-6.1-sol", "claude-haiku-4-5-20251001", "fable"] {
+            assert!(valid_model_name(ok), "{ok}");
+        }
+        for bad in ["", "gpt-6 & calc", "a\"b", "x;y", "../x", &"a".repeat(65)] {
+            assert!(!valid_model_name(bad), "{bad}");
+        }
+        assert!(valid_effort("ultra") && !valid_effort("high; rm"));
+        let dir = tempfile::tempdir().unwrap();
+        let shim = dir.path().join("claude.exe");
+        std::fs::write(&shim, b"").unwrap();
+        let err = call(Cli::Claude, &shim, "opus@turbo", None, "x").unwrap_err();
+        assert!(err.contains("Effort"), "{err}");
+    }
+
+    #[test]
+    fn the_codex_list_comes_from_its_catalog_plus_the_configured_model() {
+        let dir = tempfile::tempdir().unwrap();
+        // Ohne Katalog: Rueckfallliste.
+        let fallback = codex_models_in(Some(dir.path()));
+        assert!(fallback.iter().any(|m| m.id == "gpt-6.1-sol"));
+        std::fs::write(
+            dir.path().join("models_cache.json"),
+            r#"{"identity":{"geheim":"nie gelesen"},"models":[
+              {"slug":"gpt-6-astra","visibility":"list","default_reasoning_level":"medium",
+               "supported_reasoning_levels":[{"effort":"low"},{"effort":"ultra"},{"effort":"x;y"}]},
+              {"slug":"gpt-reserve","visibility":"hide","supported_reasoning_levels":[]},
+              {"slug":"bad name","visibility":"list","supported_reasoning_levels":[]}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            "model = \"gpt-6.1-sol\"\nmodel_reasoning_effort = \"medium\"\n",
+        )
+        .unwrap();
+        let models = codex_models_in(Some(dir.path()));
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["gpt-6.1-sol", "gpt-6-astra"]);
+        assert_eq!(models[1].efforts, ["low", "ultra"]);
+        assert_eq!(models[1].default_effort.as_deref(), Some("medium"));
     }
 
     #[test]
