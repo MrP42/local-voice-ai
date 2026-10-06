@@ -1600,11 +1600,6 @@
       }
     },
     "llm": {
-        "connections": {
-          "region": "Region",
-          "trainingOptOut": "Training turned off in my account",
-          "trainingOptOutDescription": "Only confirm once you have turned off training on your data in the provider's account settings. Under the \"EU\" rule set the provider is blocked otherwise."
-        },
         "cli": {
           "claude_cli": "Uses your Claude subscription (Pro/Max) through the installed Claude Code. Sign in inside Claude Code itself (claude, then /login) – the app never sees credentials. Personal use only. Blocked under the \"EU\" rule set (USA, no DPA).",
           "codex_cli": "Uses your ChatGPT subscription (Plus/Pro) through the installed Codex CLI. Sign in inside Codex itself (codex login). Note: OpenAI's terms recommend API keys for programmatic use; going through the subscription is a grey area. Blocked under the \"EU\" rule set (USA, no DPA)."
@@ -1653,7 +1648,10 @@
         "aboTemplate": {
           "claude_cli": "Claude subscription (Claude Code)",
           "codex_cli": "ChatGPT subscription (Codex)"
-        }
+        },
+        "region": "Region",
+        "trainingOptOut": "Training turned off in my account",
+        "trainingOptOutDescription": "Only confirm once you have turned off training on your data in the provider's account settings. Under the \"EU\" rule set the provider is blocked otherwise."
       },
       "model": {
         "active": "active",
@@ -1662,7 +1660,9 @@
         "context": "Context (tokens)",
         "maxOutput": "Max. output (tokens)",
         "priceIn": "Price input / M",
-        "priceOut": "Price output / M"
+        "priceOut": "Price output / M",
+        "effort": "Effort",
+        "effortDefault": "Default"
       },
       "usage": {
         "title": "Usage",
@@ -1699,6 +1699,15 @@
           "enhanced_notes": "AI notes",
           "followup": "Follow-up e-mail"
         }
+      },
+      "effortLevels": {
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "extra high",
+        "max": "max",
+        "ultra": "ultra (with delegation)"
       }
     }
   },

@@ -242,6 +242,10 @@ pub struct LlmModelConfig {
     pub price_output_per_mtok: Option<f64>,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Effort (Denktiefe) fuer Abo-Modelle ueber die CLI: `low` bis `max` (Codex
+    /// auch `ultra`); `None` = Vorgabe der CLI.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -1779,7 +1783,15 @@ impl AppSettings {
         };
         let kind = connection.kind.clone();
         let base_url = connection.base_url.clone();
-        let remote = model.remote_id.clone();
+        // Abo-Modelle ueber die CLI: Effort reist als `modell@effort` mit
+        // (`cli::call` trennt es wieder); andere Anbieter bekommen den Namen.
+        let remote = match (
+            crate::managers::llm::cli::Cli::from_base_url(&base_url),
+            model.effort.as_deref().filter(|e| !e.is_empty()),
+        ) {
+            (Some(_), Some(effort)) => format!("{}@{effort}", model.remote_id),
+            _ => model.remote_id.clone(),
+        };
         self.post_process_provider_id = kind.clone();
         if let Some(template) = self.post_process_provider_mut(&kind) {
             template.base_url = base_url;
@@ -1974,6 +1986,7 @@ fn migrate_legacy_providers_to_connections(settings: &mut AppSettings) {
                 price_input_per_mtok: None,
                 price_output_per_mtok: None,
                 tags: Vec::new(),
+                effort: None,
             });
         }
     }
@@ -2517,6 +2530,7 @@ mod tests {
             price_input_per_mtok: None,
             price_output_per_mtok: None,
             tags: Vec::new(),
+            effort: None,
         }
     }
 

@@ -1600,11 +1600,6 @@
       }
     },
     "llm": {
-        "connections": {
-          "region": "Region",
-          "trainingOptOut": "Training im Konto abgeschaltet",
-          "trainingOptOutDescription": "Bestätige erst, wenn du das Training mit deinen Daten in den Konto-Einstellungen des Anbieters abgeschaltet hast. Unter dem Regelwerk „EU“ ist der Anbieter sonst gesperrt."
-        },
         "cli": {
           "claude_cli": "Nutzt dein Claude-Abo (Pro/Max) über das installierte Claude Code. Angemeldet wird in Claude Code selbst (claude, dann /login) – die App sieht keine Zugangsdaten. Nur für die eigene Nutzung. Unter dem Regelwerk „EU“ gesperrt (USA, kein AVV).",
           "codex_cli": "Nutzt dein ChatGPT-Abo (Plus/Pro) über die installierte Codex CLI. Angemeldet wird in Codex selbst (codex login). Achtung: Die Nutzungsbedingungen von OpenAI empfehlen für programmgesteuerte Nutzung API-Schlüssel; der Weg über das Abo ist eine Grauzone. Unter dem Regelwerk „EU“ gesperrt (USA, kein AVV)."
@@ -1653,7 +1648,10 @@
         "aboTemplate": {
           "claude_cli": "Claude-Abo (Claude Code)",
           "codex_cli": "ChatGPT-Abo (Codex)"
-        }
+        },
+        "region": "Region",
+        "trainingOptOut": "Training im Konto abgeschaltet",
+        "trainingOptOutDescription": "Bestätige erst, wenn du das Training mit deinen Daten in den Konto-Einstellungen des Anbieters abgeschaltet hast. Unter dem Regelwerk „EU“ ist der Anbieter sonst gesperrt."
       },
       "model": {
         "active": "aktiv",
@@ -1662,7 +1660,9 @@
         "context": "Kontext (Token)",
         "maxOutput": "Max. Ausgabe (Token)",
         "priceIn": "Preis Eingabe / Mio.",
-        "priceOut": "Preis Ausgabe / Mio."
+        "priceOut": "Preis Ausgabe / Mio.",
+        "effort": "Effort",
+        "effortDefault": "Vorgabe"
       },
       "usage": {
         "title": "Verbrauch",
@@ -1699,6 +1699,15 @@
           "enhanced_notes": "KI-Notizen",
           "followup": "Follow-up-Mail"
         }
+      },
+      "effortLevels": {
+        "minimal": "minimal",
+        "low": "niedrig",
+        "medium": "mittel",
+        "high": "hoch",
+        "xhigh": "sehr hoch",
+        "max": "maximal",
+        "ultra": "ultra (mit Delegation)"
       }
     }
   },

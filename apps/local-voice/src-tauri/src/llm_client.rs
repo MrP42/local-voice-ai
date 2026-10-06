@@ -488,7 +488,7 @@ pub async fn fetch_models(
         return Ok(crate::managers::llm::downloaded_model_ids());
     }
     if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url) {
-        return Ok(cli.models().iter().map(|m| m.to_string()).collect());
+        return Ok(cli.models().into_iter().map(|m| m.id).collect());
     }
     let base_url = provider.base_url.trim_end_matches('/');
     let url = format!("{}/models", base_url);

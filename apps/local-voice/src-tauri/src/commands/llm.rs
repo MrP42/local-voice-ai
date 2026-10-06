@@ -165,6 +165,20 @@ pub async fn llm_list_remote_models(
     crate::llm_client::fetch_models(&provider, api_key).await
 }
 
+/// Effort-Stufen, die ein Modell einer Verbindung annimmt (Abo ueber die CLI:
+/// Claude `--effort`, Codex laut eigenem Katalog). Leer: nicht einstellbar.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_model_efforts(app: AppHandle, connection_id: String, remote_id: String) -> Vec<String> {
+    let s = settings::get_settings(&app);
+    s.llm_connections
+        .iter()
+        .find(|c| c.id == connection_id)
+        .and_then(|c| crate::managers::llm::cli::Cli::from_base_url(&c.base_url))
+        .map(|cli| cli.efforts(&remote_id))
+        .unwrap_or_default()
+}
+
 /// Schluessel einer Verbindung setzen. Abgelegt unter der Verbindungs-`id`,
 /// nicht unter der Vorlage -- zwei Konten derselben Art brauchen zwei
 /// Schluessel. Der aeltere Befehl prueft gegen die Vorlagen und wuerde eine
@@ -325,6 +339,7 @@ pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String
             price_input_per_mtok: Some(0.0),
             price_output_per_mtok: Some(0.0),
             tags: info.tags.clone(),
+            effort: None,
         });
     } else if let Some(m) = s.llm_models.iter_mut().find(|m| m.id == id) {
         m.enabled = true;

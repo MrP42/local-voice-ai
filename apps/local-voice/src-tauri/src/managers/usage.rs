@@ -790,6 +790,7 @@ mod tests {
             price_input_per_mtok: Some(pin),
             price_output_per_mtok: Some(pout),
             tags: Vec::new(),
+            effort: None,
         }
     }
 

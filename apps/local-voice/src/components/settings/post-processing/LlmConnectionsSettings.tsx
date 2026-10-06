@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   commands,
@@ -543,6 +543,22 @@ const ModelRow: React.FC<{
   const { t } = useTranslation();
   const assessment = useComplianceStore((s) => s.byModel[model.id]);
   const [details, setDetails] = useState(false);
+  // Effort-Stufen (nur Abo-Modelle ueber die CLI kennen welche).
+  const [efforts, setEfforts] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    commands
+      .llmModelEfforts(model.connection_id, model.remote_id)
+      .then((list) => {
+        if (!cancelled) setEfforts(list);
+      })
+      .catch(() => {
+        // Ohne Backend: keine Auswahl.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [model.connection_id, model.remote_id]);
 
   const num = (value: string): number | null => {
     const n = Number(value.replace(",", "."));
@@ -583,6 +599,26 @@ const ModelRow: React.FC<{
           <Badge variant="success">{t("settings.llm.model.active")}</Badge>
         )}
         <span className="flex-1" />
+        {efforts.length > 0 && (
+          <label className="flex items-center gap-1 text-xs text-text/60">
+            {t("settings.llm.model.effort")}
+            <select
+              value={model.effort ?? ""}
+              onChange={(e) => void save({ effort: e.target.value || null })}
+              className="rounded border border-mid-gray/30 bg-background px-1.5 py-0.5 text-xs text-text"
+              data-effort-select={model.id}
+            >
+              <option value="">{t("settings.llm.model.effortDefault")}</option>
+              {efforts.map((level) => (
+                <option key={level} value={level}>
+                  {t(`settings.llm.effortLevels.${level}`, {
+                    defaultValue: level,
+                  })}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <Button
           size="sm"
           variant="secondary"
