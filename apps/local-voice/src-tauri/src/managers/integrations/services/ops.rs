@@ -36,7 +36,7 @@ impl Account<'_> {
             })
     }
 
-    fn field_opt(&self, key: &str) -> Option<String> {
+    pub(super) fn field_opt(&self, key: &str) -> Option<String> {
         self.field(key).ok()
     }
 
@@ -69,7 +69,7 @@ impl Account<'_> {
     }
 
     /// Anmeldung an die Anfrage haengen.
-    fn auth(&self, req: ApiRequest) -> Result<ApiRequest, ServiceError> {
+    pub(super) fn auth(&self, req: ApiRequest) -> Result<ApiRequest, ServiceError> {
         let token = self.token.trim();
         if token.is_empty() {
             return Err(ServiceError::Config(
@@ -816,6 +816,7 @@ pub fn check(acc: &Account, exec: &mut Exec) -> Result<String, ServiceError> {
             "/crm/v3/objects/notes?limit=1",
         )?)?,
         ServiceId::Pipedrive => exec(get("https://api.pipedrive.com", "/api/v1/users/me")?)?,
+        ServiceId::Icloud => return super::caldav::check(acc, exec),
         ServiceId::Airtable => exec(get(
             "https://api.airtable.com",
             &format!(

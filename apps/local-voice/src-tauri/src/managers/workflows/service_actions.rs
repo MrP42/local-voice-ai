@@ -178,7 +178,7 @@ pub fn actions(services: Arc<dyn AppServices>, exec: Exec) -> Vec<Arc<dyn Action
         .collect()
 }
 
-fn step_err(e: ServiceError) -> StepError {
+pub(super) fn step_err(e: ServiceError) -> StepError {
     let text = e.to_string();
     match e.class() {
         Class::NotSent => StepError::Transient(text),

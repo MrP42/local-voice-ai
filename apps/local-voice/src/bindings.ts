@@ -6038,7 +6038,11 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
 /**
  * Datensatz anhaengen (Airtable).
  */
-"record.write"
+"record.write" |
+/**
+ * Mail als Entwurf im Postfach ablegen (Outlook, Scope `Mail.ReadWrite`); geht an niemanden.
+ */
+"mail.draft"
 /**
  * Eine Zeile der Rechte-Matrix.
  */
@@ -7736,7 +7740,8 @@ export type AuthKind =
  */
 "raw_authorization" |
 /**
- * HTTP Basic mit E-Mail (Feld `email`) und Token (Atlassian).
+ * HTTP Basic mit E-Mail (Feld `email`) und Token (Atlassian; iCloud: Apple-ID und
+ * app-spezifisches Passwort).
  */
 "basic_email_token" |
 /**
@@ -7748,7 +7753,11 @@ export type AuthKind =
  */
 "trello_key_token"
 export type ServiceField = { key: string; required: boolean }
-export type ServiceId = "slack" | "teams" | "discord" | "notion" | "confluence" | "asana" | "clickup" | "jira" | "trello" | "todoist" | "monday" | "linear" | "github" | "hubspot" | "pipedrive" | "airtable"
+export type ServiceId = "slack" | "teams" | "discord" | "notion" | "confluence" | "asana" | "clickup" | "jira" | "trello" | "todoist" | "monday" | "linear" | "github" | "hubspot" | "pipedrive" | "airtable" |
+/**
+ * iCloud-Kalender per CalDAV (Welle 3): Folgetermine schreiben.
+ */
+"icloud"
 /**
  * Ein Dienst, wie die Oberflaeche ihn fuer den Dialog „Integration hinzufuegen“ braucht.
  */

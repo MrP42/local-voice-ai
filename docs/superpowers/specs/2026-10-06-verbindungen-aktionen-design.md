@@ -61,8 +61,17 @@ gegen das Register, Größen-/Zeitgrenzen, Fehlerklassen 401/403 → `auth`, 404
 | `files.save` – Protokoll ablegen | OneDrive | Protokoll |
 Dazu bestehend: `webhook.post`, `mail.send`, `obsidian.note`/`agent.note`, `export.document`.
 
-Idempotenz: Schlüssel je Lauf+Schritt+Eintrag (eine Wiederholung legt keine Dubletten an,
-soweit der Dienst es erlaubt; sonst Merker im Laufprotokoll).
+**Umgesetzt (Stand 06.10.)** – Abweichungen vom Entwurf:
+- `crm.tasks_from` entfällt als eigener Baustein: `task.create_from` arbeitet auch mit HubSpot
+  und Pipedrive (beide haben `task.create`).
+- `mail.draft` hat eine eigene Fähigkeit `mail.draft` (Scope `Mail.ReadWrite`, beim Einschalten
+  „Zustimmung erweitern“); ein Entwurf erreicht niemanden, E3 greift nicht.
+- `files.save` = `export.document` mit einem Microsoft-365-Konto als Ziel (OneDrive, nie
+  überschreiben: OneDrive vergibt bei gleichem Namen einen freien).
+- `calendar.followup`: Outlook (mit `invite` werden Teilnehmende eingeladen, dann immer
+  Freigabe) und iCloud als Dienst `icloud` (CalDAV-`PUT` mit `If-None-Match`, UID aus
+  Lauf+Schritt, ohne Einladungen). Lesen von iCloud bleibt beim ICS-Freigabelink.
+- Teams-Kanal per Graph: nicht umgesetzt (der Teams-Workflows-Webhook deckt Posten ab).
 
 ## Tests
 Je Dienst: Attrappe (Loopback-HTTP) prüft Methode, Pfad, Kopf (Auth), Körper nach API-Doku,

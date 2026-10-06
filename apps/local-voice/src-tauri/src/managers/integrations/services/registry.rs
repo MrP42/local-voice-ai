@@ -29,10 +29,12 @@ pub enum ServiceId {
     Hubspot,
     Pipedrive,
     Airtable,
+    /// iCloud-Kalender per CalDAV (Welle 3): Folgetermine schreiben.
+    Icloud,
 }
 
 impl ServiceId {
-    pub const ALL: [ServiceId; 16] = [
+    pub const ALL: [ServiceId; 17] = [
         ServiceId::Slack,
         ServiceId::Teams,
         ServiceId::Discord,
@@ -49,6 +51,7 @@ impl ServiceId {
         ServiceId::Hubspot,
         ServiceId::Pipedrive,
         ServiceId::Airtable,
+        ServiceId::Icloud,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -70,7 +73,8 @@ pub enum AuthKind {
     Bearer,
     /// `Authorization: <token>` ohne Vorsilbe (ClickUp, monday, Linear-API-Key).
     RawAuthorization,
-    /// HTTP Basic mit E-Mail (Feld `email`) und Token (Atlassian).
+    /// HTTP Basic mit E-Mail (Feld `email`) und Token (Atlassian; iCloud: Apple-ID und
+    /// app-spezifisches Passwort).
     BasicEmailToken,
     /// `x-api-token: <token>` (Pipedrive).
     ApiTokenHeader,
@@ -112,9 +116,9 @@ const fn opt(key: &'static str) -> FieldDef {
     }
 }
 
-use Capability::{ChatPost, CrmWrite, PageWrite, RecordWrite, TaskCreate};
+use Capability::{CalendarWrite, ChatPost, CrmWrite, PageWrite, RecordWrite, TaskCreate};
 
-static DEFS: [ServiceDef; 16] = [
+static DEFS: [ServiceDef; 17] = [
     ServiceDef {
         id: "slack",
         label: "Slack",
@@ -285,6 +289,18 @@ static DEFS: [ServiceDef; 16] = [
         capability_ids: &["record.write"],
         fields: &[req("base_id"), req("table")],
         token_help_url: "https://airtable.com/developers/web/guides/personal-access-tokens",
+    },
+    ServiceDef {
+        id: "icloud",
+        label: "iCloud-Kalender",
+        auth: AuthKind::BasicEmailToken,
+        // caldav.icloud.com und die Kalender-Server pNN-caldav.icloud.com.
+        hosts: &[HostRule::Suffix("icloud.com")],
+        capabilities: &[CalendarWrite],
+        capability_ids: &["calendar.write"],
+        // Apple-ID; Kalender nach Namen (ohne Angabe: der erste mit Terminen).
+        fields: &[req("email"), opt("calendar")],
+        token_help_url: "https://support.apple.com/de-de/102654",
     },
 ];
 

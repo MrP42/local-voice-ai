@@ -38,6 +38,7 @@ pub fn field_label(key: &str) -> &'static str {
         "repo" => "Repository",
         "base_id" => "Base-ID",
         "table" => "Tabelle",
+        "calendar" => "Kalender (Name)",
         _ => "Feld",
     }
 }
@@ -138,6 +139,7 @@ pub fn normalize(raw: &Value) -> Result<(Value, Option<String>), String> {
             out.insert("host".into(), json!(host));
             Some(host)
         }
+        _ if id == ServiceId::Icloud => Some("caldav.icloud.com".to_string()),
         _ => out
             .get("site")
             .and_then(Value::as_str)

@@ -199,6 +199,7 @@ pub mod cli;
 pub mod consent; // B2
 pub mod engine;
 pub mod expr;
+pub mod followup_actions; // Welle 2 Verbindungen (Outlook)
 pub mod heavy;
 pub mod hub; // B2
 pub mod import; // B3

@@ -678,7 +678,9 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
               "secret",
               info.auth === "webhook_url"
                 ? t("integrations.target.service.webhookUrl")
-                : t("integrations.target.service.token"),
+                : t(`integrations.target.service.tokenFor.${info.id}`, {
+                    defaultValue: t("integrations.target.service.token"),
+                  }),
               text("secret", "secret", {
                 type: "password",
                 autoComplete: "new-password",

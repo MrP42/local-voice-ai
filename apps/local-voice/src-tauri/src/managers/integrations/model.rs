@@ -100,7 +100,14 @@ impl Kind {
             Kind::Youtube => &[MediaFetch, YoutubeAdd],
             Kind::Ics => &[CalendarRead],
             Kind::Graph => &[CalendarRead, CalendarWrite],
-            Kind::M365 => &[CalendarRead, CalendarWrite, MailSend, FilesRead, FilesWrite],
+            Kind::M365 => &[
+                CalendarRead,
+                CalendarWrite,
+                MailSend,
+                MailDraft,
+                FilesRead,
+                FilesWrite,
+            ],
             Kind::Smtp => &[MailSend],
             Kind::Folder => &[FilesRead, FilesWrite],
             Kind::Obsidian => &[VaultWrite, FilesRead],
@@ -115,7 +122,14 @@ impl Kind {
                 WorkflowRun,
             ],
             Kind::Webhook => &[WebhookPost],
-            Kind::Service => &[ChatPost, TaskCreate, PageWrite, CrmWrite, RecordWrite],
+            Kind::Service => &[
+                ChatPost,
+                TaskCreate,
+                PageWrite,
+                CrmWrite,
+                RecordWrite,
+                CalendarWrite,
+            ],
         }
     }
 }
@@ -223,10 +237,13 @@ pub enum Capability {
     /// Datensatz anhaengen (Airtable).
     #[serde(rename = "record.write")]
     RecordWrite,
+    /// Mail als Entwurf im Postfach ablegen (Outlook, Scope `Mail.ReadWrite`); geht an niemanden.
+    #[serde(rename = "mail.draft")]
+    MailDraft,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 22] = [
+    pub const ALL: [Capability; 23] = [
         Capability::CalendarRead,
         Capability::CalendarWrite,
         Capability::MailSend,
@@ -249,6 +266,7 @@ impl Capability {
         Capability::PageWrite,
         Capability::CrmWrite,
         Capability::RecordWrite,
+        Capability::MailDraft,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -275,6 +293,7 @@ impl Capability {
             Capability::PageWrite => "page.write",
             Capability::CrmWrite => "crm.write",
             Capability::RecordWrite => "record.write",
+            Capability::MailDraft => "mail.draft",
         }
     }
 

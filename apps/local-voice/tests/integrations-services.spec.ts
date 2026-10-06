@@ -32,10 +32,10 @@ const connect = async (page: Page, id: string) => {
 const TOKEN = "2/1209/GEHEIM-asana-token";
 const SLACK = "https://hooks.slack.com/services/T0/B0/GEHEIM";
 
-test("der Katalog zeigt 16 Dienste in fünf Gruppen", async ({ page }) => {
+test("der Katalog zeigt 17 Dienste in sechs Gruppen", async ({ page }) => {
   await setup(page);
   const services = page.getByTestId("catalog-service");
-  await expect(services).toHaveCount(16);
+  await expect(services).toHaveCount(17);
   const ids = await services.evaluateAll((els) =>
     els.map((el) => (el as HTMLElement).dataset.service),
   );
@@ -56,8 +56,16 @@ test("der Katalog zeigt 16 Dienste in fünf Gruppen", async ({ page }) => {
     "hubspot",
     "pipedrive",
     "airtable",
+    "icloud",
   ]);
-  for (const group of ["Kanäle", "Aufgaben und Tickets", "Seiten und Wiki", "CRM", "Tabellen"]) {
+  for (const group of [
+    "Kanäle",
+    "Aufgaben und Tickets",
+    "Seiten und Wiki",
+    "CRM",
+    "Tabellen",
+    "Kalender",
+  ]) {
     await expect(page.getByTestId("catalog-services")).toContainText(group);
   }
 });
@@ -146,6 +154,27 @@ test("Jira: optionale Felder sind gekennzeichnet, Pflichtfelder sperren das Anle
   await expect(page.getByTestId("target-submit")).toBeDisabled();
   await page.getByTestId("target-svc-project_key").fill("LV");
   await expect(page.getByTestId("target-submit")).toBeEnabled();
+});
+
+test("iCloud: Apple-ID und app-spezifisches Passwort, Kalendername optional", async ({
+  page,
+}) => {
+  await setup(page);
+  await connect(page, "icloud");
+  const dialog = page.getByTestId("target-dialog");
+  await expect(dialog).toContainText("App-spezifisches Passwort");
+  await expect(dialog).toContainText("Kalender (Name) (optional)");
+  await page.getByTestId("target-name").fill("iCloud privat");
+  await page.getByTestId("target-svc-email").fill("ich@icloud.com");
+  await page.getByTestId("target-secret").fill("abcd-efgh-ijkl-mnop");
+  await page.getByTestId("target-submit").click();
+  await expect(page.getByTestId("integration-detail")).toContainText(
+    "iCloud-Kalender",
+  );
+  await expect(page.getByTestId("integration-detail")).toContainText(
+    "Termine anlegen",
+  );
+  await expect(page.locator("body")).not.toContainText("abcd-efgh");
 });
 
 test("Bilder für die Abnahme (nur mit SCREENS_DIR)", async ({ page }) => {

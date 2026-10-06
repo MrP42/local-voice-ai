@@ -244,6 +244,15 @@ export const installIntegrationsMock = async (
             { key: "table", required: true },
           ],
         },
+        icloud: {
+          label: "iCloud-Kalender",
+          auth: "basic_email_token",
+          capabilities: ["calendar.write"],
+          fields: [
+            { key: "email", required: true },
+            { key: "calendar", required: false },
+          ],
+        },
       };
       const READS = new Set([
         "calendar.read",
@@ -430,9 +439,7 @@ export const installIntegrationsMock = async (
         }
         if (url.protocol !== "https:") throw "Der Dienst muss https verwenden.";
         const ok = (SERVICES[service].hosts ?? []).some((h) =>
-          h.startsWith(".")
-            ? url.hostname.endsWith(h)
-            : url.hostname === h,
+          h.startsWith(".") ? url.hostname.endsWith(h) : url.hostname === h,
         );
         if (!ok)
           throw `Die Adresse gehört nicht zu diesem Dienst (${url.hostname}).`;
@@ -535,7 +542,11 @@ export const installIntegrationsMock = async (
                     code: "service_ok",
                     detail: "Adresse geprüft (ohne Testnachricht).",
                   }
-                : { ok: true, code: "service_ok", detail: "Verbunden (Kundenprojekt)." };
+                : {
+                    ok: true,
+                    code: "service_ok",
+                    detail: "Verbunden (Kundenprojekt).",
+                  };
             }
             const okCode: Record<string, string> = {
               smtp: "smtp_ok",
@@ -765,7 +776,10 @@ export const installIntegrationsMock = async (
               )) {
                 i.config[k] = v;
               }
-              if (st.secret && SERVICES[i.config.service]?.auth === "webhook_url")
+              if (
+                st.secret &&
+                SERVICES[i.config.service]?.auth === "webhook_url"
+              )
                 i.config.host = serviceHost(i.config.service, st.secret);
             }
             if (st.secret) i.secret = true;

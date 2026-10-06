@@ -108,7 +108,8 @@ export const CATALOG: CatalogEntry[] = [
 
 /** Dienste (Welle 1) im Katalog, nach Zweck gruppiert. Felder und Anmeldung liefert das
  * Backend (`integrationServices`); die Namen sind Marken und werden nicht uebersetzt. */
-export type ServiceGroup = "chat" | "tasks" | "pages" | "crm" | "records";
+export type ServiceGroup =
+  "chat" | "tasks" | "pages" | "crm" | "records" | "calendar";
 
 export const SERVICE_GROUPS: { group: ServiceGroup; ids: ServiceId[] }[] = [
   { group: "chat", ids: ["slack", "teams", "discord"] },
@@ -128,6 +129,7 @@ export const SERVICE_GROUPS: { group: ServiceGroup; ids: ServiceId[] }[] = [
   { group: "pages", ids: ["notion", "confluence"] },
   { group: "crm", ids: ["hubspot", "pipedrive"] },
   { group: "records", ids: ["airtable"] },
+  { group: "calendar", ids: ["icloud"] },
 ];
 
 export const SERVICE_LABELS: Record<ServiceId, string> = {
@@ -147,6 +149,7 @@ export const SERVICE_LABELS: Record<ServiceId, string> = {
   hubspot: "HubSpot",
   pipedrive: "Pipedrive",
   airtable: "Airtable",
+  icloud: "iCloud-Kalender",
 };
 
 const isServiceId = (s: string): s is ServiceId => s in SERVICE_LABELS;

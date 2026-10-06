@@ -4103,6 +4103,18 @@
       "fields": {
         "label": "Felder",
         "hint": "Feldname und Wert als JSON, z. B. {\"Titel\": \"…\", \"Dauer\": 45}."
+      },
+      "day": {
+        "label": "Tag",
+        "hint": "JJJJ-MM-TT, auch aus einem früheren Schritt."
+      },
+      "time": {
+        "label": "Uhrzeit",
+        "hint": "HH:MM (Ortszeit); leer: 09:00."
+      },
+      "invite": {
+        "label": "Einladen",
+        "hint": "Wer eine Einladung bekommt; ohne Angabe nur dein Kalender. Einladungen an andere brauchen immer deine Freigabe."
       }
     },
     "choices": {
@@ -4147,6 +4159,14 @@
       "mode": {
         "create": "Neu anlegen",
         "append": "Anhängen"
+      },
+      "invite": {
+        "none": "Niemanden",
+        "me": "Nur ich",
+        "participants": "Teilnehmende",
+        "all": "Alle",
+        "internal": "Nur intern",
+        "list": "Feste Liste"
       }
     },
     "triggers": {
@@ -4184,10 +4204,12 @@
         "document": "Dokument ablegen"
       },
       "mail": {
-        "send": "Mail senden"
+        "send": "Mail senden",
+        "draft": "Mail-Entwurf anlegen"
       },
       "calendar": {
-        "note": "Notiz in den Termin schreiben"
+        "note": "Notiz in den Termin schreiben",
+        "followup": "Folgetermin anlegen"
       },
       "obsidian": {
         "note": "Obsidian-Notiz schreiben"
@@ -4325,7 +4347,8 @@
       "caps": {
         "mail_send": "Follow-up-Mails und Berichte als Mail aus deinem Postfach senden.",
         "files_write": "Protokolle und Dateien in einen OneDrive-Ordner legen, große Dateien in Stücken.",
-        "calendar_write": "Eine Notiz an den Outlook-Termin einer Besprechung hängen; die Einladung bleibt unverändert."
+        "calendar_write": "Eine Notiz an den Outlook-Termin einer Besprechung hängen; die Einladung bleibt unverändert.",
+        "mail_draft": "Follow-up-Mails als Entwurf in Outlook ablegen, zum Prüfen und Senden von Hand (braucht das Recht Mail.ReadWrite)."
       },
       "panel": {
         "title": "Microsoft-365-Konto",
@@ -4639,6 +4662,10 @@
           "records": {
             "title": "Tabellen",
             "description": "Jede Besprechung als Zeile im Meeting-Log."
+          },
+          "calendar": {
+            "title": "Kalender",
+            "description": "Folgetermine direkt in deinen iCloud-Kalender schreiben (CalDAV). Lesen geht im Kalender-Bereich über den ICS-Freigabelink."
           }
         }
       }
@@ -4862,6 +4889,10 @@
       "record_write": {
         "title": "Datensätze anlegen",
         "description": "Eine Zeile an eine Tabelle anhängen (Airtable)."
+      },
+      "mail_draft": {
+        "title": "Mail-Entwürfe anlegen",
+        "description": "Mails als Entwurf in Outlook ablegen; gesendet wird von Hand."
       }
     },
     "approvals": {
@@ -5050,7 +5081,7 @@
           },
           "email": {
             "label": "E-Mail des Kontos",
-            "hint": "Die Anmeldung bei Atlassian ist E-Mail plus API-Token."
+            "hint": "Atlassian: E-Mail plus API-Token. iCloud: deine Apple-ID plus app-spezifisches Passwort."
           },
           "space_id": {
             "label": "Bereichs-ID (Space)",
@@ -5098,7 +5129,15 @@
           "table": {
             "label": "Tabelle",
             "hint": "Name oder ID der Tabelle."
+          },
+          "calendar": {
+            "label": "Kalender (Name)",
+            "hint": "Name wie in der Kalender-App; ohne Angabe der erste Kalender mit Terminen.",
+            "placeholder": "z. B. Privat"
           }
+        },
+        "tokenFor": {
+          "icloud": "App-spezifisches Passwort"
         }
       }
     },

@@ -51,6 +51,7 @@ const ICONS: Record<string, LucideIcon> = {
   hubspot: Users,
   pipedrive: Users,
   airtable: Table2,
+  icloud: CalendarDays,
 };
 
 export const KindIcon: React.FC<{ kind: string; size?: number }> = ({

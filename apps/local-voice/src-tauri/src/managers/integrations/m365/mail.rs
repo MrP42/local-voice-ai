@@ -272,7 +272,51 @@ pub fn message_from_draft(draft: &MailDraft) -> Result<MailMessage, M365Error> {
     MailMessage::new(&d.to, &[], &d.subject, MailBody::Html(d.body_html))
 }
 
+/// Ein angelegter Entwurf: Kennung und Link zum Oeffnen in Outlook.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DraftCreated {
+    pub id: String,
+    pub web_link: Option<String>,
+}
+
 impl M365Service {
+    /// Legt die Mail als Entwurf im Ordner „Entwürfe“ ab (Scope `Mail.ReadWrite`); sie geht an
+    /// niemanden. Nicht wiederholbar: bei unklarem Ausgang `Uncertain`.
+    pub async fn create_draft(
+        &self,
+        a: &Acct,
+        msg: &MailMessage,
+    ) -> Result<DraftCreated, M365Error> {
+        a.require(Capability::MailDraft)?;
+        let body = msg
+            .to_graph_json()
+            .get("message")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let url = format!("{}/me/messages", self.graph_base());
+        let reply = self
+            .send_authed(a, false, |c, token| {
+                c.post(&url)
+                    .bearer_auth(token)
+                    .header(reqwest::header::ACCEPT, "application/json")
+                    .json(&body)
+            })
+            .await?;
+        if !reply.is_success() {
+            return Err(error_of(&reply, "Entwurf"));
+        }
+        let v = reply.json()?;
+        let id = v
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| M365Error::Parse("Antwort ohne Kennung des Entwurfs".to_string()))?;
+        Ok(DraftCreated {
+            id,
+            web_link: v.get("webLink").and_then(Value::as_str).map(str::to_string),
+        })
+    }
+
     /// Sendet die Mail (Scope `Mail.Send`). Siehe Moduldoku.
     pub async fn send_mail(&self, a: &Acct, msg: &MailMessage) -> Result<(), M365Error> {
         a.require(Capability::MailSend)?;

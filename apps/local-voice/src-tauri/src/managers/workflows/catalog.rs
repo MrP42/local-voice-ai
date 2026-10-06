@@ -558,8 +558,7 @@ static ACTIONS: &[ActionSpec] = &[
             field("body", FieldKind::Text, false),
             // Pfad oder Liste von Pfaden; nur Dateien in den Ordner-Integrationen des Nutzers.
             field("attach", FieldKind::Any, false),
-            // Entwuerfe anlegen ist noch nicht moeglich (Scope `Mail.ReadWrite`); `true` wird
-            // beim Speichern abgelehnt. Die Freigabe mit Vorschau ersetzt den Entwurf.
+            // `true` wird beim Speichern abgelehnt: Entwuerfe legt `mail.draft` an.
             field("draft", FieldKind::Bool, false),
             // `true`: auch an andere als mich ohne Freigabe senden, wenn das Recht „erlaubt“
             // ist (E3: je Ablauf aenderbar). Ohne diese Angabe verlangt jede Mail an Dritte
@@ -800,6 +799,60 @@ static ACTIONS: &[ActionSpec] = &[
             capability: Capability::WebhookPost,
             via: "via",
             target: Some("via"),
+        },
+    },
+    // Outlook (Welle 2, `followup_actions`).
+    ActionSpec {
+        id: "mail.draft",
+        title: "Mail-Entwurf anlegen",
+        effect_text: "Entwurf in Outlook ({{p.via}}) an die Empfängerregel „{{p.to}}“ anlegen, Betreff „{{p.subject}}“; gesendet wird von Hand",
+        fields: &[
+            // Wie `mail.send`: Konto und Empfaengerregel fest, nie aus Daten.
+            literal("via", FieldKind::Id, true),
+            literal(
+                "to",
+                FieldKind::Choice(&["me", "participants", "all", "internal", "list"]),
+                true,
+            ),
+            literal("list", FieldKind::TextList, false),
+            field("subject", FieldKind::Text, true),
+            field("body", FieldKind::Text, false),
+            field("attach", FieldKind::Any, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::MailDraft,
+            via: "via",
+            target: Some("to"),
+        },
+    },
+    ActionSpec {
+        id: "calendar.followup",
+        title: "Folgetermin anlegen",
+        effect_text: "Folgetermin „{{p.title}}“ am {{p.day}} um {{p.time}} im Kalender {{p.via}} anlegen",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            field("title", FieldKind::Text, true),
+            // JJJJ-MM-TT und HH:MM (Ortszeit), duerfen aus Schritten kommen.
+            field("day", FieldKind::Text, true),
+            field("time", FieldKind::Text, false),
+            field("minutes", FieldKind::Int { min: 5, max: 480 }, false),
+            field("body", FieldKind::Text, false),
+            // Einladen (Outlook): feste Regel wie bei der Mail; ohne Angabe nur der eigene Kalender.
+            literal(
+                "invite",
+                FieldKind::Choice(&["none", "me", "participants", "all", "internal", "list"]),
+                false,
+            ),
+            literal("list", FieldKind::TextList, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::CalendarWrite,
+            via: "via",
+            target: Some("title"),
         },
     },
     // Dienste (Welle 1, `service_actions`): das Ziel ist immer eine feste Dienst-Integration

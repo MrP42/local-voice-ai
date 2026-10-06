@@ -4103,6 +4103,18 @@
       "fields": {
         "label": "Fields",
         "hint": "Field name and value as JSON, e.g. {\"Title\": \"…\", \"Duration\": 45}."
+      },
+      "day": {
+        "label": "Day",
+        "hint": "YYYY-MM-DD, also from an earlier step."
+      },
+      "time": {
+        "label": "Time",
+        "hint": "HH:MM (local time); empty: 09:00."
+      },
+      "invite": {
+        "label": "Invite",
+        "hint": "Who gets an invitation; empty: only your calendar. Invitations to others always need your approval."
       }
     },
     "choices": {
@@ -4147,6 +4159,14 @@
       "mode": {
         "create": "Create new",
         "append": "Append"
+      },
+      "invite": {
+        "none": "Nobody",
+        "me": "Only me",
+        "participants": "Attendees",
+        "all": "Everyone",
+        "internal": "Internal only",
+        "list": "Fixed list"
       }
     },
     "triggers": {
@@ -4184,10 +4204,12 @@
         "document": "Save document"
       },
       "mail": {
-        "send": "Send mail"
+        "send": "Send mail",
+        "draft": "Create mail draft"
       },
       "calendar": {
-        "note": "Write note into the event"
+        "note": "Write note into the event",
+        "followup": "Create follow-up meeting"
       },
       "obsidian": {
         "note": "Write Obsidian note"
@@ -4325,7 +4347,8 @@
       "caps": {
         "mail_send": "Send follow-up mails and reports as mail from your mailbox.",
         "files_write": "Put minutes and files into a OneDrive folder, large files in chunks.",
-        "calendar_write": "Attach a note to the Outlook event of a meeting; the invitation stays unchanged."
+        "calendar_write": "Attach a note to the Outlook event of a meeting; the invitation stays unchanged.",
+        "mail_draft": "Save follow-up mails as drafts in Outlook to review and send yourself (needs the Mail.ReadWrite permission)."
       },
       "panel": {
         "title": "Microsoft 365 account",
@@ -4639,6 +4662,10 @@
           "records": {
             "title": "Tables",
             "description": "Every meeting as a row in the meeting log."
+          },
+          "calendar": {
+            "title": "Calendar",
+            "description": "Write follow-up meetings straight into your iCloud calendar (CalDAV). Reading works in the calendar area via the ICS sharing link."
           }
         }
       }
@@ -4862,6 +4889,10 @@
       "record_write": {
         "title": "Create records",
         "description": "Append a row to a table (Airtable)."
+      },
+      "mail_draft": {
+        "title": "Create mail drafts",
+        "description": "Save mails as drafts in Outlook; you send them yourself."
       }
     },
     "approvals": {
@@ -5050,7 +5081,7 @@
           },
           "email": {
             "label": "Account email",
-            "hint": "Atlassian signs in with email plus API token."
+            "hint": "Atlassian: email plus API token. iCloud: your Apple ID plus an app-specific password."
           },
           "space_id": {
             "label": "Space ID",
@@ -5098,7 +5129,15 @@
           "table": {
             "label": "Table",
             "hint": "Name or ID of the table."
+          },
+          "calendar": {
+            "label": "Calendar (name)",
+            "hint": "Name as in the Calendar app; empty: the first calendar with events.",
+            "placeholder": "e.g. Personal"
           }
+        },
+        "tokenFor": {
+          "icloud": "App-specific password"
         }
       }
     },

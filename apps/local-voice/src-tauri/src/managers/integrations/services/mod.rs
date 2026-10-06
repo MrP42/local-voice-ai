@@ -7,7 +7,9 @@
 //! - `http`: Ausfuehren einer Anfrage (nur HTTPS, keine Umleitungen, Grenzen).
 //! - `markdown`: Protokoll-Markdown in Notion-Bloecke, Confluence-Storage, Jira-ADF.
 //! - `ops`: die Operationen je Dienst als reine Anfrage-Bauer mit austauschbarem Ausfuehrer.
+//! - `caldav`: iCloud-Kalender (Welle 3): Kalender suchen, Folgetermin anlegen.
 
+pub mod caldav;
 pub mod config;
 pub mod http;
 pub mod markdown;

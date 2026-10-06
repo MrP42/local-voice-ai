@@ -18,6 +18,8 @@ pub enum Method {
     Post,
     Patch,
     Put,
+    /// WebDAV/CalDAV: Eigenschaften lesen (iCloud-Kalender).
+    Propfind,
 }
 
 /// Eine Anfrage an einen Dienst. `headers` kann Geheimnisse tragen (Authorization) und wird
@@ -28,6 +30,8 @@ pub struct ApiRequest {
     pub url: url::Url,
     pub headers: Vec<(String, String)>,
     pub body: Option<Value>,
+    /// Koerper als Text mit eigenem Inhaltstyp (CalDAV: XML, iCalendar); statt `body`.
+    pub raw: Option<(String, String)>,
 }
 
 impl std::fmt::Debug for ApiRequest {
@@ -48,7 +52,14 @@ impl ApiRequest {
             url,
             headers: Vec::new(),
             body: None,
+            raw: None,
         }
+    }
+
+    /// Text-Koerper mit Inhaltstyp (XML, iCalendar).
+    pub fn raw(mut self, content_type: &str, body: impl Into<String>) -> Self {
+        self.raw = Some((content_type.to_string(), body.into()));
+        self
     }
 
     pub fn header(mut self, name: &str, value: impl Into<String>) -> Self {
@@ -75,11 +86,26 @@ impl ApiRequest {
 pub struct ApiReply {
     pub status: u16,
     pub json: Value,
+    /// Der Koerper als Text (CalDAV-Antworten sind XML); hoechstens `max_response_bytes`.
+    pub text: String,
 }
 
 impl ApiReply {
     pub fn ok(json: Value) -> Self {
-        Self { status: 200, json }
+        Self {
+            status: 200,
+            json,
+            text: String::new(),
+        }
+    }
+
+    /// Eine Text-Antwort (XML), z. B. `207 Multi-Status`.
+    pub fn text(status: u16, text: impl Into<String>) -> Self {
+        Self {
+            status,
+            json: Value::Null,
+            text: text.into(),
+        }
     }
 }
 
@@ -252,11 +278,12 @@ pub fn check_url(
 
 /// Fuehrt eine Anfrage aus. Blockiert; eigener Thread mit eigener Laufzeit (wie der Webhook).
 pub fn execute(req: &ApiRequest, opts: &HttpOpts) -> Result<ApiReply, ServiceError> {
-    let body = match &req.body {
-        Some(v) => Some(serde_json::to_vec(v).map_err(|_| {
+    let body = match (&req.body, &req.raw) {
+        (_, Some((_, text))) => Some(text.as_bytes().to_vec()),
+        (Some(v), None) => Some(serde_json::to_vec(v).map_err(|_| {
             ServiceError::Config("Die Daten ließen sich nicht als JSON schreiben.".into())
         })?),
-        None => None,
+        (None, None) => None,
     };
     if let Some(b) = &body {
         if b.len() > MAX_REQUEST_BYTES {
@@ -302,10 +329,13 @@ async fn execute_async(
         Method::Post => reqwest::Method::POST,
         Method::Patch => reqwest::Method::PATCH,
         Method::Put => reqwest::Method::PUT,
+        Method::Propfind => reqwest::Method::from_bytes(b"PROPFIND")
+            .map_err(|_| ServiceError::Config("PROPFIND ist nicht verfügbar.".into()))?,
     };
-    let mut rb = client
-        .request(method, req.url.clone())
-        .header(ACCEPT, "application/json");
+    let mut rb = client.request(method, req.url.clone());
+    if req.raw.is_none() {
+        rb = rb.header(ACCEPT, "application/json");
+    }
     for (name, value) in &req.headers {
         let (Ok(n), Ok(v)) = (
             HeaderName::from_bytes(name.as_bytes()),
@@ -318,7 +348,12 @@ async fn execute_async(
         rb = rb.header(n, v);
     }
     if let Some(b) = body {
-        rb = rb.header(CONTENT_TYPE, "application/json").body(b);
+        let content_type = req
+            .raw
+            .as_ref()
+            .map(|(ct, _)| ct.as_str())
+            .unwrap_or("application/json");
+        rb = rb.header(CONTENT_TYPE, content_type).body(b);
     }
     let mut resp = rb.send().await.map_err(|e| map_send(&host, &e))?;
     let status = resp.status().as_u16();
@@ -344,8 +379,9 @@ async fn execute_async(
         }
     }
     let json: Value = serde_json::from_slice(&buf).unwrap_or(Value::Null);
+    let text = String::from_utf8_lossy(&buf).into_owned();
     match status {
-        200..=299 => Ok(ApiReply { status, json }),
+        200..=299 => Ok(ApiReply { status, json, text }),
         300..=399 => Err(ServiceError::Redirect(status)),
         401 | 403 => Err(ServiceError::Auth(status)),
         404 => Err(ServiceError::NotFound),
